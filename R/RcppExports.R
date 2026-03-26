@@ -13,8 +13,16 @@ constant_site_prob_jc <- function(parent, child, edge_length, nTip, kStates, roo
     .Call(`_MkPrime_constant_site_prob_jc`, parent, child, edge_length, nTip, kStates, root_freqs, rate_multipliers)
 }
 
+singleton_site_prob_jc <- function(parent, child, edge_length, nTip, kStates, root_freqs, rate_multipliers) {
+    .Call(`_MkPrime_singleton_site_prob_jc`, parent, child, edge_length, nTip, kStates, root_freqs, rate_multipliers)
+}
+
 constant_site_prob_mkn <- function(parent, child, edge_length, nTip, rate_loss, root_freqs, rate_multipliers) {
     .Call(`_MkPrime_constant_site_prob_mkn`, parent, child, edge_length, nTip, rate_loss, root_freqs, rate_multipliers)
+}
+
+singleton_site_prob_mkn <- function(parent, child, edge_length, nTip, rate_loss, root_freqs, rate_multipliers) {
+    .Call(`_MkPrime_singleton_site_prob_mkn`, parent, child, edge_length, nTip, rate_loss, root_freqs, rate_multipliers)
 }
 
 mk_prime_relabel_log <- function(kPrime, kObs) {

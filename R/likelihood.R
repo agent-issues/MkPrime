@@ -23,15 +23,16 @@
 #'   0 means no rate variation. Default 0.
 #' @param nCat Number of ACRV rate categories. Default 6.
 #' @param coding Ascertainment bias correction type. `"none"` for no
-#'   correction, `"variable"` for conditioning on variable characters.
-#'   Default `"variable"`.
+#'   correction, `"variable"` for conditioning on variable characters,
+#'   `"informative"` for conditioning on parsimony-informative characters
+#'   (excludes constant + singleton patterns). Default `"variable"`.
 #' @param relabel Logical. Apply Mk' relabelling correction for
 #'   transformational characters? Set to `FALSE` for standard Mk
 #'   likelihood (e.g., for validation against phangorn). Default `TRUE`.
 #'
 #' @return Scalar log-likelihood.
 #' @export
-mkp_loglikelihood <- function(tree, mkd,
+MkpLogLikelihood <- function(tree, mkd,
                                kPrime = NULL,
                                rate_loss = 1.0,
                                rate_log_sd = 0,
@@ -44,7 +45,7 @@ mkp_loglikelihood <- function(tree, mkd,
   if (!inherits(mkd, "MkPrimeData")) {
     cli::cli_abort("{.arg mkd} must be a {.cls MkPrimeData} object.")
   }
-  coding <- match.arg(coding, c("variable", "none"))
+  coding <- match.arg(coding, c("variable", "informative", "none"))
 
   # Default kPrime: use kObs for transformational, known_k for known, 2 for neo
   if (is.null(kPrime)) {
@@ -88,10 +89,15 @@ mkp_loglikelihood <- function(tree, mkd,
       }
 
       # Ascertainment correction
-      if (coding == "variable") {
-        pconst <- constant_site_prob_mkn(parent, child, edge_length,
+      if (coding != "none") {
+        puninf <- constant_site_prob_mkn(parent, child, edge_length,
                                          nTip, rate_loss, root_freqs, rates)
-        ll <- ll - nCharPart * log(1 - pconst)
+        if (coding == "informative") {
+          puninf <- puninf + singleton_site_prob_mkn(
+            parent, child, edge_length, nTip, rate_loss, root_freqs, rates
+          )
+        }
+        ll <- ll - nCharPart * log(1 - puninf)
       }
 
     } else if (part$type == "known") {
@@ -107,10 +113,15 @@ mkp_loglikelihood <- function(tree, mkd,
                          tip_states, kStates, root_freqs)
       }
 
-      if (coding == "variable") {
-        pconst <- constant_site_prob_jc(parent, child, edge_length,
+      if (coding != "none") {
+        puninf <- constant_site_prob_jc(parent, child, edge_length,
                                         nTip, kStates, root_freqs, rates)
-        ll <- ll - nCharPart * log(1 - pconst)
+        if (coding == "informative") {
+          puninf <- puninf + singleton_site_prob_jc(
+            parent, child, edge_length, nTip, kStates, root_freqs, rates
+          )
+        }
+        ll <- ll - nCharPart * log(1 - puninf)
       }
 
     } else {
@@ -134,10 +145,15 @@ mkp_loglikelihood <- function(tree, mkd,
                                sub_states, kp, root_freqs)
         }
 
-        if (coding == "variable") {
-          pconst <- constant_site_prob_jc(parent, child, edge_length,
+        if (coding != "none") {
+          puninf <- constant_site_prob_jc(parent, child, edge_length,
                                           nTip, kp, root_freqs, rates)
-          sub_ll <- sub_ll - nCharSub * log(1 - pconst)
+          if (coding == "informative") {
+            puninf <- puninf + singleton_site_prob_jc(
+              parent, child, edge_length, nTip, kp, root_freqs, rates
+            )
+          }
+          sub_ll <- sub_ll - nCharSub * log(1 - puninf)
         }
 
         ll <- ll + sub_ll

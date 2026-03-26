@@ -4,8 +4,8 @@
 
 #' Specify an MkPrime model
 #'
-#' @param coding Ascertainment bias correction: `"variable"` (default) or
-#'   `"none"`.
+#' @param coding Ascertainment bias correction: `"variable"` (default),
+#'   `"informative"`, or `"none"`.
 #' @param nCat Number of ACRV rate categories (default 6).
 #' @param relabel Apply Mk' relabelling correction for transformational
 #'   characters? Default `TRUE`.
@@ -37,7 +37,7 @@ MkPrimeModel <- function(
     kprime_hyper_a = 1,
     kprime_hyper_b = 1
 ) {
-  coding <- match.arg(coding, c("variable", "none"))
+  coding <- match.arg(coding, c("variable", "informative", "none"))
 
   # Derive tree_length_rate from exp_steps if not provided
 
