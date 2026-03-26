@@ -162,7 +162,7 @@ are for targeted iteration only (build + run 1–2 specific test files).
 
 | File | Purpose |
 |------|---------|
-| `issues.md` | Human-entered issues (agents triage → `to-do.md`) |
+| `u.nnn` | User issue files (agents triage → `to-do.md`, then delete) |
 | `to-do.md` | Task queue (active/open tasks only) |
 | `completed-tasks.md` | Archive of completed tasks |
 | `coordination.md` | Strategic plan and phase tracking |

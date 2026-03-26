@@ -1,6 +1,4 @@
-# MkPrime — Issues
+# Deprecated
 
-Human-entered issues for agent triage. Agents claim the bottom-most
-unclaimed issue, triage it into `to-do.md`, and delete the block.
-
----
+This file is no longer used. Create individual `u.nnn` files instead
+(e.g. `u.001`, `u.002`). See `../AGENTS.md` → "User issue files".
