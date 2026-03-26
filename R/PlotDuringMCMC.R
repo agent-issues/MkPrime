@@ -6,7 +6,7 @@
 #'
 #' A progress callback that draws multi-panel base-R trace plots showing
 #' log-posterior and key parameter values across iterations. Intended to be
-#' passed as `progress_fn` to [MkPrimeMCMC()], either directly or via the
+#' passed as `progressFn` to [MkPrimeMCMC()], either directly or via the
 #' convenience string `"default"`.
 #'
 #' @param info A named list produced by the MCMC loop, containing:
@@ -14,20 +14,20 @@
 #'     \item{iter}{Current iteration number.}
 #'     \item{nIter}{Total iterations.}
 #'     \item{warmup}{Number of warmup iterations.}
-#'     \item{in_warmup}{Logical; `TRUE` if still in warmup.}
+#'     \item{inWarmup}{Logical; `TRUE` if still in warmup.}
 #'     \item{nRuns}{Number of independent runs.}
 #'     \item{nChains}{Number of chains per run.}
-#'     \item{run_samples}{List of per-run sample matrices (may contain
+#'     \item{runSamples}{List of per-run sample matrices (may contain
 #'       `NULL` if no post-warmup samples yet).}
-#'     \item{current_state}{List of per-run cold chain state lists.}
-#'     \item{recent_acceptance}{Rolling acceptance rate.}
+#'     \item{currentState}{List of per-run cold chain state lists.}
+#'     \item{recentAcceptance}{Rolling acceptance rate.}
 #'     \item{elapsed}{Elapsed wall-clock seconds.}
-#'     \item{param_names}{Column names of the sample matrix.}
+#'     \item{paramNames}{Column names of the sample matrix.}
 #'   }
 #'
 #' @details
 #' During warmup (before post-warmup samples exist), a single-panel
-#' log-posterior trace is drawn from `current_state` values accumulated
+#' log-posterior trace is drawn from `currentState` values accumulated
 #' by the callback itself. After warmup, multi-panel traces show
 #' log-posterior plus key model parameters from the saved samples.
 #'
@@ -37,22 +37,22 @@
 #' @return Called for its side effect (drawing a plot). Returns `info`
 #'   invisibly.
 #' @export
-mkp_trace_plot <- function(info) {
+MkpTracePlot <- function(info) {
   nRuns <- info$nRuns
 
   # Determine which parameters to plot from saved samples
-  has_samples <- !is.null(info$run_samples[[1]])
-  if (has_samples) {
-    cnames <- colnames(info$run_samples[[1]])
-    key_params <- intersect(
+  hasSamples <- !is.null(info$runSamples[[1]])
+  if (hasSamples) {
+    cnames <- colnames(info$runSamples[[1]])
+    keyParams <- intersect(
       c("log_posterior", "tree_length", "rate_loss", "rate_log_sd", "p"),
       cnames
     )
   } else {
-    key_params <- "log_posterior"
+    keyParams <- "log_posterior"
   }
 
-  nPanels <- length(key_params)
+  nPanels <- length(keyParams)
   nCol <- min(3L, nPanels)
   nRow <- ceiling(nPanels / nCol)
 
@@ -67,24 +67,24 @@ mkp_trace_plot <- function(info) {
                 mgp = c(2, 0.6, 0))
   on.exit(par(oldpar))
 
-  elapsed_str <- .format_elapsed(info$elapsed)
-  acc_str <- format(round(info$recent_acceptance, 3), nsmall = 3)
+  elapsedStr <- .FormatElapsed(info$elapsed)
+  accStr <- format(round(info$recentAcceptance, 3), nsmall = 3)
 
-  for (param in key_params) {
-    if (has_samples) {
-      .plot_trace_panel(param, info$run_samples, nRuns, colors,
-                        info$warmup, info$nIter)
+  for (param in keyParams) {
+    if (hasSamples) {
+      .PlotTracePanel(param, info$runSamples, nRuns, colors,
+                      info$warmup, info$nIter)
     } else {
       # During warmup, show current-state log-posterior
-      .plot_warmup_panel(info$current_state, nRuns, colors,
-                         info$iter, info$nIter)
+      .PlotWarmupPanel(info$currentState, nRuns, colors,
+                       info$iter, info$nIter)
     }
   }
 
   # Overall title
-  title_text <- sprintf("Iter %d / %d  |  acc: %s  |  %s",
-                        info$iter, info$nIter, acc_str, elapsed_str)
-  mtext(title_text, outer = TRUE, line = -1.2, cex = 0.9)
+  titleText <- sprintf("Iter %d / %d  |  acc: %s  |  %s",
+                       info$iter, info$nIter, accStr, elapsedStr)
+  mtext(titleText, outer = TRUE, line = -1.2, cex = 0.9)
 
   invisible(info)
 }
@@ -92,25 +92,25 @@ mkp_trace_plot <- function(info) {
 
 #' Plot a single trace panel from saved samples
 #' @keywords internal
-.plot_trace_panel <- function(param, run_samples, nRuns, colors,
-                              warmup, nIter) {
+.PlotTracePanel <- function(param, runSamples, nRuns, colors,
+                             warmup, nIter) {
   # Collect data from all runs for y-axis range
-  all_vals <- unlist(lapply(run_samples, function(s) {
+  allVals <- unlist(lapply(runSamples, function(s) {
     if (!is.null(s) && param %in% colnames(s)) s[, param]
   }))
 
-  if (length(all_vals) == 0L || all(is.na(all_vals))) {
+  if (length(allVals) == 0L || all(is.na(allVals))) {
     plot.new()
     title(main = param)
     return(invisible(NULL))
   }
 
-  ylim <- range(all_vals, na.rm = TRUE)
+  ylim <- range(allVals, na.rm = TRUE)
   if (diff(ylim) == 0) ylim <- ylim + c(-1, 1)
 
   first <- TRUE
   for (run in seq_len(nRuns)) {
-    s <- run_samples[[run]]
+    s <- runSamples[[run]]
     if (is.null(s) || !param %in% colnames(s)) next
     vals <- s[, param]
     n <- length(vals)
@@ -132,8 +132,8 @@ mkp_trace_plot <- function(info) {
 
 #' Plot log-posterior during warmup (no saved samples yet)
 #' @keywords internal
-.plot_warmup_panel <- function(current_state, nRuns, colors, iter, nIter) {
-  logp <- vapply(current_state, function(s) {
+.PlotWarmupPanel <- function(currentState, nRuns, colors, iter, nIter) {
+  logp <- vapply(currentState, function(s) {
     s$log_lik + s$log_prior
   }, numeric(1))
 
@@ -145,7 +145,7 @@ mkp_trace_plot <- function(info) {
 
 #' Create a PNG-writing progress callback
 #'
-#' Returns a progress callback function suitable for `progress_fn` in
+#' Returns a progress callback function suitable for `progressFn` in
 #' [MkPrimeMCMC()]. Each invocation writes a trace-plot PNG and a JSON
 #' status file to the specified directory. Files are written atomically
 #' (write to temp, then rename) so that external consumers (e.g., a
@@ -156,17 +156,17 @@ mkp_trace_plot <- function(info) {
 #' @param width,height PNG dimensions in pixels.
 #'
 #' @return A function with signature `function(info)` suitable for use
-#'   as `progress_fn`.
+#'   as `progressFn`.
 #'
 #' @details
 #' Two files are written on each call:
 #' \describe{
-#'   \item{`mkp_progress.png`}{Trace plots (same as [mkp_trace_plot()]).}
+#'   \item{`mkp_progress.png`}{Trace plots (same as [MkpTracePlot()]).}
 #'   \item{`mkp_progress.json`}{JSON object with fields `iter`, `nIter`,
-#'     `warmup`, `in_warmup`, `elapsed`, and `recent_acceptance`.}
+#'     `warmup`, `inWarmup`, `elapsed`, and `recentAcceptance`.}
 #' }
 #' @export
-mkp_png_progress <- function(dir, width = 800, height = 600) {
+MkpPngProgress <- function(dir, width = 800, height = 600) {
   force(dir)
   force(width)
   force(height)
@@ -174,30 +174,30 @@ mkp_png_progress <- function(dir, width = 800, height = 600) {
   if (!dir.exists(dir)) dir.create(dir, recursive = TRUE)
 
   function(info) {
-    tmp_png <- file.path(dir, "mkp_progress_tmp.png")
-    final_png <- file.path(dir, "mkp_progress.png")
+    tmpPng <- file.path(dir, "mkp_progress_tmp.png")
+    finalPng <- file.path(dir, "mkp_progress.png")
 
-    grDevices::png(tmp_png, width = width, height = height)
+    grDevices::png(tmpPng, width = width, height = height)
     on.exit(grDevices::dev.off(), add = TRUE)
-    mkp_trace_plot(info)
+    MkpTracePlot(info)
     grDevices::dev.off()
     on.exit(NULL)  # dev.off() already called
-    file.rename(tmp_png, final_png)
+    file.rename(tmpPng, finalPng)
 
-    .write_progress_json(info, file.path(dir, "mkp_progress.json"))
+    .WriteProgressJson(info, file.path(dir, "mkp_progress.json"))
   }
 }
 
 
 #' Write a minimal JSON status file (no jsonlite dependency)
 #' @keywords internal
-.write_progress_json <- function(info, file) {
+.WriteProgressJson <- function(info, file) {
   json <- sprintf(
-    paste0('{"iter":%d,"nIter":%d,"warmup":%d,"in_warmup":%s,',
-           '"elapsed":%.1f,"recent_acceptance":%.4f}'),
+    paste0('{"iter":%d,"nIter":%d,"warmup":%d,"inWarmup":%s,',
+           '"elapsed":%.1f,"recentAcceptance":%.4f}'),
     info$iter, info$nIter, info$warmup,
-    if (info$in_warmup) "true" else "false",
-    info$elapsed, info$recent_acceptance
+    if (info$inWarmup) "true" else "false",
+    info$elapsed, info$recentAcceptance
   )
   writeLines(json, file)
 }
@@ -205,7 +205,7 @@ mkp_png_progress <- function(dir, width = 800, height = 600) {
 
 #' Format elapsed seconds as human-readable string
 #' @keywords internal
-.format_elapsed <- function(seconds) {
+.FormatElapsed <- function(seconds) {
   if (seconds < 60) {
     sprintf("%.0fs", seconds)
   } else if (seconds < 3600) {

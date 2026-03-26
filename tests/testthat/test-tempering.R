@@ -2,20 +2,20 @@
 
 # --- Temperature ladder ---
 
-test_that(".build_temperature_ladder gives correct structure", {
+test_that(".BuildTemperatureLadder gives correct structure", {
   # Single chain: just beta = 1
 
-  expect_equal(MkPrime:::.build_temperature_ladder(1L, 0.2), 1.0)
+  expect_equal(MkPrime:::.BuildTemperatureLadder(1L, 0.2), 1.0)
 
   # Two chains: cold + hot
-  b2 <- MkPrime:::.build_temperature_ladder(2L, 0.2)
+  b2 <- MkPrime:::.BuildTemperatureLadder(2L, 0.2)
   expect_equal(length(b2), 2)
   expect_equal(b2[1], 1.0)
   expect_equal(b2[2], 0.2)
 
   # Four chains: geometric spacing
 
-  b4 <- MkPrime:::.build_temperature_ladder(4L, 0.2)
+  b4 <- MkPrime:::.BuildTemperatureLadder(4L, 0.2)
   expect_equal(length(b4), 4)
   expect_equal(b4[1], 1.0)
   expect_equal(b4[4], 0.2)
@@ -23,7 +23,7 @@ test_that(".build_temperature_ladder gives correct structure", {
   expect_equal(diff(log(b4)), rep(log(0.2) / 3, 3), tolerance = 1e-12)
 
   # All betas should be in (0, 1]
-  b8 <- MkPrime:::.build_temperature_ladder(8L, 0.1)
+  b8 <- MkPrime:::.BuildTemperatureLadder(8L, 0.1)
   expect_true(all(b8 > 0))
   expect_true(all(b8 <= 1))
   expect_equal(b8[1], 1.0)
@@ -34,7 +34,7 @@ test_that(".build_temperature_ladder gives correct structure", {
 test_that("Temperature ladder is monotonically decreasing", {
   for (nC in c(2, 4, 6, 8)) {
     for (h in c(0.01, 0.1, 0.2, 0.5, 0.9)) {
-      b <- MkPrime:::.build_temperature_ladder(nC, h)
+      b <- MkPrime:::.BuildTemperatureLadder(nC, h)
       expect_true(all(diff(b) < 0),
                   label = paste("nChains =", nC, "heat =", h))
     }
@@ -68,16 +68,16 @@ test_that("MkPrimeMCMC stores nChains and heat", {
 
 # --- Chain swap proposal ---
 
-test_that(".propose_chain_swap is no-op for single chain", {
+test_that(".ProposeChainSwap is no-op for single chain", {
   state <- list(log_lik = -100, log_prior = -10)
-  result <- MkPrime:::.propose_chain_swap(list(state), 1.0)
+  result <- MkPrime:::.ProposeChainSwap(list(state), 1.0)
   expect_equal(length(result$chains), 1)
   expect_null(result$pair)
   expect_false(result$accepted)
 })
 
 
-test_that(".propose_chain_swap picks adjacent pairs", {
+test_that(".ProposeChainSwap picks adjacent pairs", {
   states <- lapply(1:4, function(i) {
     list(log_lik = -100 + i * 10, log_prior = -5)
   })
@@ -86,7 +86,7 @@ test_that(".propose_chain_swap picks adjacent pairs", {
   set.seed(6418)
   pairs_seen <- integer(0)
   for (i in 1:200) {
-    result <- MkPrime:::.propose_chain_swap(states, betas)
+    result <- MkPrime:::.ProposeChainSwap(states, betas)
     expect_equal(length(result$pair), 2)
     expect_equal(result$pair[2], result$pair[1] + 1L)
     pairs_seen <- c(pairs_seen, result$pair[1])
@@ -96,7 +96,7 @@ test_that(".propose_chain_swap picks adjacent pairs", {
 })
 
 
-test_that(".propose_chain_swap exchanges states on acceptance", {
+test_that(".ProposeChainSwap exchanges states on acceptance", {
   # Construct states where swap is very favorable
   # (beta_i - beta_j) * (logLik_j - logLik_i) >> 0
   # Chain 1 (cold, beta=1) has low logLik, chain 2 (hot, beta=0.1) has high
@@ -107,7 +107,7 @@ test_that(".propose_chain_swap exchanges states on acceptance", {
   set.seed(3847)
   n_swaps <- 0
   for (i in 1:100) {
-    result <- MkPrime:::.propose_chain_swap(
+    result <- MkPrime:::.ProposeChainSwap(
       list(state1, state2), c(1.0, 0.1)
     )
     if (result$accepted) {
@@ -134,22 +134,22 @@ test_that("Chain swap acceptance follows correct formula", {
 
   set.seed(2911)
   n_accept <- sum(vapply(1:100, function(i) {
-    MkPrime:::.propose_chain_swap(list(state1, state2), c(1.0, 0.5))$accepted
+    MkPrime:::.ProposeChainSwap(list(state1, state2), c(1.0, 0.5))$accepted
   }, logical(1)))
   expect_equal(n_accept, 100)
 
   # Reverse: cold chain has higher logLik → swap unfavorable
   # log_alpha = (1.0 - 0.5) * (-100 - (-50)) = 0.5 * (-50) = -25
   n_accept2 <- sum(vapply(1:100, function(i) {
-    MkPrime:::.propose_chain_swap(list(state2, state1), c(1.0, 0.5))$accepted
+    MkPrime:::.ProposeChainSwap(list(state2, state1), c(1.0, 0.5))$accepted
   }, logical(1)))
   expect_equal(n_accept2, 0)
 })
 
 
-# --- Heated MH acceptance in .do_move ---
+# --- Heated MH acceptance in .DoMove ---
 
-test_that("Heated .do_move is more permissive than cold", {
+test_that("Heated .DoMove is more permissive than cold", {
   # Use real data to test that heated chains accept more proposals
   library(ape)
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
@@ -158,10 +158,10 @@ test_that("Heated .do_move is more permissive than cold", {
   pd <- TreeTools::MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
   model <- MkPrimeModel()
-  model <- MkPrime:::.finalize_model(model, tree, mkd)
+  model <- MkPrime:::.FinalizeModel(model, tree, mkd)
 
   tree <- ape::reorder.phylo(tree, "postorder")
-  state <- MkPrime:::.init_state(tree, mkd, model)
+  state <- MkPrime:::.InitState(tree, mkd, model)
 
   tuning <- list(
     scale_tree_length = 2.0,
@@ -179,14 +179,14 @@ test_that("Heated .do_move is more permissive than cold", {
   set.seed(7562)
   n_cold <- 0L
   for (i in 1:200) {
-    result <- MkPrime:::.do_move(move, state, mkd, model, tuning, beta = 1.0)
+    result <- MkPrime:::.DoMove(move, state, mkd, model, tuning, beta = 1.0)
     if (result$accept) n_cold <- n_cold + 1L
   }
 
   set.seed(7562)
   n_hot <- 0L
   for (i in 1:200) {
-    result <- MkPrime:::.do_move(move, state, mkd, model, tuning, beta = 0.1)
+    result <- MkPrime:::.DoMove(move, state, mkd, model, tuning, beta = 0.1)
     if (result$accept) n_hot <- n_hot + 1L
   }
 
@@ -195,7 +195,7 @@ test_that("Heated .do_move is more permissive than cold", {
 })
 
 
-test_that(".do_move with beta=1 is identical to unheated", {
+test_that(".DoMove with beta=1 is identical to unheated", {
   # Verify that beta=1 gives same MH ratio as the old formula
   library(ape)
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
@@ -204,9 +204,9 @@ test_that(".do_move with beta=1 is identical to unheated", {
   pd <- TreeTools::MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
   model <- MkPrimeModel()
-  model <- MkPrime:::.finalize_model(model, tree, mkd)
+  model <- MkPrime:::.FinalizeModel(model, tree, mkd)
   tree <- ape::reorder.phylo(tree, "postorder")
-  state <- MkPrime:::.init_state(tree, mkd, model)
+  state <- MkPrime:::.InitState(tree, mkd, model)
   tuning <- MkPrimeMCMC()$tuning
 
   move <- list(name = "tree_length", type = "scale",
@@ -219,12 +219,12 @@ test_that(".do_move with beta=1 is identical to unheated", {
   # which is the original formula
   set.seed(1294)
   results_beta1 <- replicate(50, {
-    MkPrime:::.do_move(move, state, mkd, model, tuning, beta = 1.0)$accept
+    MkPrime:::.DoMove(move, state, mkd, model, tuning, beta = 1.0)$accept
   })
 
   set.seed(1294)
   results_default <- replicate(50, {
-    MkPrime:::.do_move(move, state, mkd, model, tuning)$accept
+    MkPrime:::.DoMove(move, state, mkd, model, tuning)$accept
   })
 
   expect_identical(results_beta1, results_default)
@@ -318,8 +318,8 @@ test_that("Cold chain samples have valid posteriors under tempering", {
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 1000L, thin = 5L, warmup = 500L,
                         nChains = 4L, heat = 0.1))
 
-  # Cold chain samples should have log_post = log_lik + log_prior
-  # (unheated; stored in state$log_post which is log_lik + log_prior)
+  # Cold chain samples should have log_post = log_lik + LogPrior
+  # (unheated; stored in state$log_post which is log_lik + LogPrior)
   samps <- result$samples
   log_post <- samps[, "log_posterior"]
   log_lik <- samps[, "log_likelihood"]
@@ -328,7 +328,7 @@ test_that("Cold chain samples have valid posteriors under tempering", {
   # At minimum, they should be finite and ordered consistently
   expect_true(all(is.finite(log_post)))
   expect_true(all(is.finite(log_lik)))
-  # log_post = log_lik + log_prior; verify consistency
+  # log_post = log_lik + LogPrior; verify consistency
   # (can't guarantee sign of either, but they should track together)
   expect_true(all(log_post < 100))
 })
@@ -336,20 +336,20 @@ test_that("Cold chain samples have valid posteriors under tempering", {
 
 # --- Adaptive temperature tuning (M-031) ---
 
-test_that(".adapt_temperatures is no-op with insufficient data", {
+test_that(".AdaptTemperatures is no-op with insufficient data", {
   betas <- c(1.0, 0.6, 0.3, 0.1)
   # Not enough proposals (total < 20)
-  result <- MkPrime:::.adapt_temperatures(betas, c(1, 1, 1), c(5, 5, 5))
+  result <- MkPrime:::.AdaptTemperatures(betas, c(1, 1, 1), c(5, 5, 5))
   expect_equal(result, betas)
   # Single chain
-  expect_equal(MkPrime:::.adapt_temperatures(1.0, integer(0), integer(0)), 1.0)
+  expect_equal(MkPrime:::.AdaptTemperatures(1.0, integer(0), integer(0)), 1.0)
 })
 
 
-test_that(".adapt_temperatures increases heat when swaps too low", {
+test_that(".AdaptTemperatures increases heat when swaps too low", {
   betas <- c(1.0, 0.6, 0.3, 0.1)
   # Very low swap acceptance → should bring temps closer (increase heat)
-  new_betas <- MkPrime:::.adapt_temperatures(
+  new_betas <- MkPrime:::.AdaptTemperatures(
     betas, c(1, 1, 1), c(100, 100, 100), target = 0.25
   )
   # Hottest chain should be warmer (closer to 1)
@@ -357,10 +357,10 @@ test_that(".adapt_temperatures increases heat when swaps too low", {
 })
 
 
-test_that(".adapt_temperatures decreases heat when swaps too high", {
+test_that(".AdaptTemperatures decreases heat when swaps too high", {
   betas <- c(1.0, 0.6, 0.3, 0.1)
   # Very high swap acceptance → should spread temps further (decrease heat)
-  new_betas <- MkPrime:::.adapt_temperatures(
+  new_betas <- MkPrime:::.AdaptTemperatures(
     betas, c(90, 90, 90), c(100, 100, 100), target = 0.25
   )
   # Hottest chain should be colder (further from 1)
@@ -368,10 +368,10 @@ test_that(".adapt_temperatures decreases heat when swaps too high", {
 })
 
 
-test_that(".adapt_temperatures stays no-op near target", {
+test_that(".AdaptTemperatures stays no-op near target", {
   betas <- c(1.0, 0.6, 0.3, 0.1)
   # Swap rate ~25% → minimal change
-  new_betas <- MkPrime:::.adapt_temperatures(
+  new_betas <- MkPrime:::.AdaptTemperatures(
     betas, c(25, 25, 25), c(100, 100, 100), target = 0.25
   )
   # Should barely change
@@ -379,10 +379,10 @@ test_that(".adapt_temperatures stays no-op near target", {
 })
 
 
-test_that(".adapt_temperatures respects heat bounds", {
+test_that(".AdaptTemperatures respects heat bounds", {
   # Very aggressive → heat should not exceed 0.95
   betas_wide <- c(1.0, 0.001)
-  result <- MkPrime:::.adapt_temperatures(
+  result <- MkPrime:::.AdaptTemperatures(
     betas_wide, c(0), c(100), target = 0.25
   )
   expect_lte(result[2], 0.95)
@@ -390,7 +390,7 @@ test_that(".adapt_temperatures respects heat bounds", {
 
   # Very conservative → heat should not go below 0.01
   betas_close <- c(1.0, 0.94)
-  result2 <- MkPrime:::.adapt_temperatures(
+  result2 <- MkPrime:::.AdaptTemperatures(
     betas_close, c(100), c(100), target = 0.25
   )
   expect_gte(result2[2], 0.01)
@@ -512,14 +512,14 @@ test_that("Multi-run with tempering works", {
 })
 
 
-test_that(".perturb_start produces valid trees", {
+test_that(".PerturbStart produces valid trees", {
   library(ape)
   set.seed(3521)
   tree <- rtree(10)
   tree <- unroot(tree)
 
   for (i in 1:20) {
-    perturbed <- MkPrime:::.perturb_start(tree)
+    perturbed <- MkPrime:::.PerturbStart(tree)
     expect_s3_class(perturbed, "phylo")
     expect_equal(length(perturbed$tip.label), 10L)
     expect_true(all(perturbed$edge.length > 0))
@@ -528,10 +528,10 @@ test_that(".perturb_start produces valid trees", {
 })
 
 
-test_that(".perturb_start handles small trees", {
+test_that(".PerturbStart handles small trees", {
   library(ape)
   tree <- read.tree(text = "(t1:0.1,t2:0.2,t3:0.3);")
-  perturbed <- MkPrime:::.perturb_start(tree)
+  perturbed <- MkPrime:::.PerturbStart(tree)
   expect_s3_class(perturbed, "phylo")
 })
 

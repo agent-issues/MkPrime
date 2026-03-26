@@ -13,28 +13,28 @@
 #   - char_indices: integer vector of original character column indices
 #   - nChar: number of characters in this partition
 #   - tip_states: integer matrix (nTip x nChar), 0-indexed, NA for ambiguous
-.build_partitions <- function(mkd) {
+.BuildPartitions <- function(mkd) {
   partitions <- list()
 
   # Neomorphic: all grouped together (all binary, same model)
-  neo_idx <- which(mkd$type == "neomorphic")
-  if (length(neo_idx)) {
+  neoIdx <- which(mkd$type == "neomorphic")
+  if (length(neoIdx)) {
     partitions[[length(partitions) + 1L]] <- list(
       type = "neomorphic",
       kObs = 2L,
       k = NA_integer_,
-      char_indices = neo_idx,
-      nChar = length(neo_idx),
-      tip_states = mkd$matrix[, neo_idx, drop = FALSE]
+      char_indices = neoIdx,
+      nChar = length(neoIdx),
+      tip_states = mkd$matrix[, neoIdx, drop = FALSE]
     )
   }
 
   # Transformational: group by kObs
-  trans_idx <- which(mkd$type == "transformational")
-  if (length(trans_idx)) {
-    trans_kObs <- mkd$kObs[trans_idx]
-    for (ko in sort(unique(trans_kObs))) {
-      sel <- trans_idx[trans_kObs == ko]
+  transIdx <- which(mkd$type == "transformational")
+  if (length(transIdx)) {
+    transKObs <- mkd$kObs[transIdx]
+    for (ko in sort(unique(transKObs))) {
+      sel <- transIdx[transKObs == ko]
       partitions[[length(partitions) + 1L]] <- list(
         type = "transformational",
         kObs = ko,
@@ -47,11 +47,11 @@
   }
 
   # Known: group by known_k
-  known_idx <- which(mkd$type == "known")
-  if (length(known_idx)) {
-    known_k_vals <- mkd$known_k[known_idx]
-    for (kv in sort(unique(known_k_vals))) {
-      sel <- known_idx[known_k_vals == kv]
+  knownIdx <- which(mkd$type == "known")
+  if (length(knownIdx)) {
+    knownKVals <- mkd$known_k[knownIdx]
+    for (kv in sort(unique(knownKVals))) {
+      sel <- knownIdx[knownKVals == kv]
       partitions[[length(partitions) + 1L]] <- list(
         type = "known",
         kObs = max(mkd$kObs[sel]),

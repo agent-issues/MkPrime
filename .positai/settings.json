@@ -1,0 +1,11 @@
+{
+  "permission": {
+    "webfetch": {
+      "https://raw.githubusercontent.com/*": "allow"
+    },
+    "edit": {
+      "*.qmd": "allow",
+      "*/DESCRIPTION": "allow"
+    }
+  }
+}

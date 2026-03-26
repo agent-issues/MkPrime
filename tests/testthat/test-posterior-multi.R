@@ -115,7 +115,7 @@ test_that("Result includes stop_reason and actual_iter", {
   set.seed(3382)
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 100000L, thin = 5L,
-                        warmup = 100L, max_time = 0.5))
+                        warmup = 100L, maxTime = 0.5))
 
   expect_equal(result$stop_reason, "max_time")
   expect_lt(result$actual_iter, 100000L)

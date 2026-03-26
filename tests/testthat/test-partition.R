@@ -51,7 +51,7 @@ test_that("Known characters group by known_k", {
                 nrow = 5, ncol = 3,
                 dimnames = list(paste0("t", 1:5), NULL))
   pd <- MatrixToPhyDat(mat)
-  mkd <- MkPrimeData(pd, known_states = c("1" = 5L, "2" = 3L, "3" = 5L))
+  mkd <- MkPrimeData(pd, knownStates = c("1" = 5L, "2" = 3L, "3" = 5L))
 
   # All known; group by known_k: k=3 (char 2) and k=5 (chars 1, 3)
   expect_length(mkd$partitions, 2L)
@@ -73,7 +73,7 @@ test_that("Mixed types produce correct partition ordering", {
                 nrow = 5, ncol = 3,
                 dimnames = list(paste0("t", 1:5), NULL))
   pd <- MatrixToPhyDat(mat)
-  mkd <- MkPrimeData(pd, neomorphic = 1L, known_states = c("3" = 4L))
+  mkd <- MkPrimeData(pd, neomorphic = 1L, knownStates = c("3" = 4L))
 
   # Ordering: neomorphic, transformational, known
   expect_length(mkd$partitions, 3L)

@@ -13,7 +13,7 @@ test_that("Checkpoint file is written at check intervals", {
   set.seed(8901)
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 1000L, thin = 5L, warmup = 200L,
-                        check_every = 300L, checkpoint_file = cp_file))
+                        checkEvery = 300L, checkpointFile = cp_file))
 
   # Checkpoint should exist
 
@@ -41,7 +41,7 @@ test_that("Checkpoint contains valid run state", {
   set.seed(1450)
   RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 1000L, thin = 5L, warmup = 200L,
-                        check_every = 300L, checkpoint_file = cp_file))
+                        checkEvery = 300L, checkpointFile = cp_file))
 
   cp <- readRDS(cp_file)
   expect_equal(length(cp$runs), 2)
@@ -55,7 +55,7 @@ test_that("Checkpoint contains valid run state", {
 })
 
 
-test_that("resume_mkprime continues from checkpoint", {
+test_that("ResumeMkPrime continues from checkpoint", {
   library(ape)
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
@@ -69,14 +69,14 @@ test_that("resume_mkprime continues from checkpoint", {
   set.seed(7766)
   result1 <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 5000L, thin = 5L, warmup = 200L,
-                        check_every = 300L, checkpoint_file = cp_file,
-                        max_time = 0.5))
+                        checkEvery = 300L, checkpointFile = cp_file,
+                        maxTime = 0.5))
 
   expect_true(file.exists(cp_file))
   n_samples_before <- nrow(result1$samples)
 
   # Resume
-  result2 <- resume_mkprime(cp_file, pd, tree)
+  result2 <- ResumeMkPrime(cp_file, pd, tree)
 
   # Should have more samples (or at least as many)
   expect_gte(nrow(result2$samples), n_samples_before)
@@ -84,7 +84,7 @@ test_that("resume_mkprime continues from checkpoint", {
 })
 
 
-test_that("Checkpoint without checkpoint_file does nothing", {
+test_that("Checkpoint without checkpointFile does nothing", {
   library(ape)
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
@@ -92,10 +92,10 @@ test_that("Checkpoint without checkpoint_file does nothing", {
   pd <- TreeTools::MatrixToPhyDat(mat)
 
   set.seed(6611)
-  # No checkpoint_file: should run normally
+  # No checkpointFile: should run normally
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L,
-                        check_every = 100L))
+                        checkEvery = 100L))
 
   expect_s3_class(result, "MkPosterior")
   expect_equal(nrow(result$samples), 60L)

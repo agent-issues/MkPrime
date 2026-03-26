@@ -7,13 +7,13 @@
 #' @param data A `phyDat` object (from ape or TreeTools).
 #' @param neomorphic Integer vector of character indices to treat as neomorphic
 #'   (asymmetric binary, 0 = absent, 1 = present). Default: none.
-#' @param known_states Named integer vector specifying the known true number of
+#' @param knownStates Named integer vector specifying the known true number of
 #'   states for specific characters. Names are character indices (as strings),
 #'   values are the true k. Characters listed here use standard Mk(k) with no
 #'   k' inference.
 #'
 #' @details
-#' Characters not listed in `neomorphic` or `known_states` are classified as
+#' Characters not listed in `neomorphic` or `knownStates` are classified as
 #' **transformational** and will have their true state count k' inferred under
 #' the Mk' model.
 #'
@@ -46,15 +46,15 @@
 #' @export
 MkPrimeData <- function(data,
                          neomorphic = integer(0),
-                         known_states = integer(0)) {
+                         knownStates = integer(0)) {
   if (!inherits(data, "phyDat")) {
     cli::cli_abort("{.arg data} must be a {.cls phyDat} object.")
   }
 
-  char_matrix <- .PhyDatToIntMatrix(data)
-  nTip <- nrow(char_matrix)
-  nChar <- ncol(char_matrix)
-  taxon_names <- rownames(char_matrix)
+  charMatrix <- .PhyDatToIntMatrix(data)
+  nTip <- nrow(charMatrix)
+  nChar <- ncol(charMatrix)
+  taxonNames <- rownames(charMatrix)
   levels <- attr(data, "levels")
 
   # Validate neomorphic indices
@@ -65,33 +65,33 @@ MkPrimeData <- function(data,
     )
   }
 
-  # Validate known_states
-  if (length(known_states)) {
-    ks_idx <- as.integer(names(known_states))
-    if (any(is.na(ks_idx)) || any(ks_idx < 1) || any(ks_idx > nChar)) {
+  # Validate knownStates
+  if (length(knownStates)) {
+    ksIdx <- as.integer(names(knownStates))
+    if (any(is.na(ksIdx)) || any(ksIdx < 1) || any(ksIdx > nChar)) {
       cli::cli_abort(
-        "{.arg known_states} names must be character indices between 1 and
+        "{.arg knownStates} names must be character indices between 1 and
         {nChar}."
       )
     }
-    if (any(known_states < 2L)) {
-      cli::cli_abort("{.arg known_states} values must be >= 2.")
+    if (any(knownStates < 2L)) {
+      cli::cli_abort("{.arg knownStates} values must be >= 2.")
     }
   } else {
-    ks_idx <- integer(0)
+    ksIdx <- integer(0)
   }
 
   # Check for overlap
-  overlap <- intersect(neomorphic, ks_idx)
+  overlap <- intersect(neomorphic, ksIdx)
   if (length(overlap)) {
     cli::cli_abort(
       "Character{?s} {overlap} appear{?s/} in both {.arg neomorphic} and
-      {.arg known_states}."
+      {.arg knownStates}."
     )
   }
 
   # Compute kObs per character
-  kObs <- apply(char_matrix, 2, function(col) {
+  kObs <- apply(charMatrix, 2, function(col) {
     length(unique(col[!is.na(col)]))
   })
 
@@ -106,40 +106,40 @@ MkPrimeData <- function(data,
     if (!length(keep)) {
       cli::cli_abort("No variable characters remain after dropping invariants.")
     }
-    char_matrix <- char_matrix[, keep, drop = FALSE]
+    charMatrix <- charMatrix[, keep, drop = FALSE]
     kObs <- kObs[keep]
 
-    # Remap neomorphic and known_states indices
-    old_to_new <- rep(NA_integer_, nChar)
-    old_to_new[keep] <- seq_along(keep)
-    neomorphic <- as.integer(na.omit(old_to_new[neomorphic]))
-    if (length(ks_idx)) {
-      survived <- !is.na(old_to_new[ks_idx])
-      new_ks_idx <- old_to_new[ks_idx[survived]]
-      known_states <- known_states[survived]
-      names(known_states) <- as.character(new_ks_idx)
-      ks_idx <- new_ks_idx
+    # Remap neomorphic and knownStates indices
+    oldToNew <- rep(NA_integer_, nChar)
+    oldToNew[keep] <- seq_along(keep)
+    neomorphic <- as.integer(na.omit(oldToNew[neomorphic]))
+    if (length(ksIdx)) {
+      survived <- !is.na(oldToNew[ksIdx])
+      newKsIdx <- oldToNew[ksIdx[survived]]
+      knownStates <- knownStates[survived]
+      names(knownStates) <- as.character(newKsIdx)
+      ksIdx <- newKsIdx
     }
     nChar <- length(keep)
   }
 
   # Validate neomorphic characters are binary (after dropping invariants)
   if (length(neomorphic)) {
-    neo_not_binary <- neomorphic[kObs[neomorphic] != 2L]
-    if (length(neo_not_binary)) {
+    neoNotBinary <- neomorphic[kObs[neomorphic] != 2L]
+    if (length(neoNotBinary)) {
       cli::cli_warn(
-        "Neomorphic character{?s} {neo_not_binary} {?has/have} kObs != 2.
+        "Neomorphic character{?s} {neoNotBinary} {?has/have} kObs != 2.
         Neomorphic model assumes exactly 2 states."
       )
     }
   }
 
-  # Validate known_states >= kObs (after dropping invariants)
-  if (length(known_states)) {
-    too_small <- ks_idx[known_states < kObs[ks_idx]]
-    if (length(too_small)) {
+  # Validate knownStates >= kObs (after dropping invariants)
+  if (length(knownStates)) {
+    tooSmall <- ksIdx[knownStates < kObs[ksIdx]]
+    if (length(tooSmall)) {
       cli::cli_abort(
-        "Character{?s} {too_small}: {.arg known_states} is less than the
+        "Character{?s} {tooSmall}: {.arg knownStates} is less than the
         observed state count (kObs). k must be >= kObs."
       )
     }
@@ -148,49 +148,49 @@ MkPrimeData <- function(data,
   # Classify characters
   type <- rep("transformational", nChar)
   type[neomorphic] <- "neomorphic"
-  if (length(ks_idx)) {
-    type[ks_idx] <- "known"
+  if (length(ksIdx)) {
+    type[ksIdx] <- "known"
   }
 
   # Build known_k vector (NA for non-known characters)
-  known_k <- rep(NA_integer_, nChar)
-  if (length(known_states)) {
-    known_k[ks_idx] <- as.integer(known_states)
+  knownK <- rep(NA_integer_, nChar)
+  if (length(knownStates)) {
+    knownK[ksIdx] <- as.integer(knownStates)
   }
 
   mkd <- structure(
     list(
-      matrix = char_matrix,
+      matrix = charMatrix,
       nTip = nTip,
       nChar = nChar,
-      taxon_names = taxon_names,
+      taxon_names = taxonNames,
       type = type,
       kObs = kObs,
-      known_k = known_k,
+      known_k = knownK,
       levels = levels
     ),
     class = "MkPrimeData"
   )
 
-  mkd$partitions <- .build_partitions(mkd)
+  mkd$partitions <- .BuildPartitions(mkd)
   mkd
 }
 
 
 #' @export
 print.MkPrimeData <- function(x, ...) {
-  type_counts <- table(x$type)
+  typeCounts <- table(x$type)
   cli::cli_h2("MkPrimeData: {x$nTip} taxa, {x$nChar} characters")
-  for (tp in names(type_counts)) {
-    cli::cli_bullets(c("*" = "{type_counts[[tp]]} {tp}"))
+  for (tp in names(typeCounts)) {
+    cli::cli_bullets(c("*" = "{typeCounts[[tp]]} {tp}"))
   }
   nPart <- length(x$partitions)
   cli::cli_bullets(c(
     "i" = "{nPart} partition{?s} (grouped by type and kObs)"
   ))
-  kObs_range <- range(x$kObs)
+  kObsRange <- range(x$kObs)
   cli::cli_bullets(c(
-    "i" = "kObs range: {kObs_range[1]}\u2013{kObs_range[2]}"
+    "i" = "kObs range: {kObsRange[1]}\u2013{kObsRange[2]}"
   ))
   invisible(x)
 }
@@ -218,12 +218,14 @@ summary.MkPrimeData <- function(object, ...) {
 #' @return Integer vector of character indices suitable for the
 #'   `neomorphic` argument of [MkPrimeData()].
 #' @export
-auto_detect_neomorphic <- function(data) {
+AutoDetectNeomorphic <- function(data) {
   if (!inherits(data, "phyDat")) {
     cli::cli_abort("{.arg data} must be a {.cls phyDat} object.")
   }
   mat <- .PhyDatToIntMatrix(data)
+  # Real levels (gap excluded) — matches the 0-based indexing in .PhyDatToIntMatrix
   lvls <- attr(data, "levels")
+  lvls <- lvls[lvls != "-"]
   neo <- integer(0)
   for (j in seq_len(ncol(mat))) {
     states <- unique(mat[, j])
@@ -242,33 +244,64 @@ auto_detect_neomorphic <- function(data) {
 # Convert phyDat to an integer matrix (0-indexed states, NA for ambiguous)
 #
 # Each row is a taxon, each column is a character. States are integers
-# corresponding to positions in `levels`. Ambiguous states (e.g. "?")
-# are NA.
+# 0, 1, ..., k-1 for the real data levels. Ambiguous states (e.g. "?") and
+# the gap character ("-") are NA.
+#
+# Some phyDat objects (e.g. from TreeTools::ReadAsPhyDat) include "-" as a
+# genuine entry in `levels`, where its contrast row maps to a single column
+# rather than to all columns. This makes "-" look like a real state (state 0)
+# and shifts all actual states up by one, causing out-of-bounds access in the
+# C++ pruning code. We handle this by building an explicit mapping from
+# contrast column to clean 0-based state, excluding the gap character.
 .PhyDatToIntMatrix <- function(data) {
-  contrast <- attr(data, "contrast")
-  levels <- attr(data, "levels")
-  weight <- attr(data, "weight")
-  index <- attr(data, "index")
-  nr <- attr(data, "nr")
-  taxa <- names(data)
-  nTip <- length(taxa)
-  nLevels <- length(levels)
+  contrast  <- attr(data, "contrast")
+  levels    <- attr(data, "levels")
+  weight    <- attr(data, "weight")
+  index     <- attr(data, "index")
+  nr        <- attr(data, "nr")
+  taxa      <- names(data)
+  nTip      <- length(taxa)
 
-  # For each row of the contrast matrix, determine if it's a single state
-  # (exactly one 1) or ambiguous (multiple 1s)
-  single_state <- apply(contrast, 1, function(row) {
+  # Real data levels: exclude the gap character "-"
+  realMask <- levels != "-"
+  realCols <- which(realMask)          # 1-indexed positions in `levels`
+
+  # Map: contrast column index (1-based) -> clean 0-based state, NA for gap
+  colToState <- rep(NA_integer_, length(levels))
+  colToState[realCols] <- seq_along(realCols) - 1L
+
+  # For each allLevel row in the contrast matrix, determine if it resolves to
+  # a single real state (exactly one 1 in a real column) or is ambiguous/gap
+  singleState <- apply(contrast, 1, function(row) {
     which1 <- which(row == 1)
-    if (length(which1) == 1L) which1 - 1L else NA_integer_  # 0-indexed
+    if (length(which1) == 1L) colToState[which1] else NA_integer_
   })
 
   # Build the unique-pattern matrix (nTip x nr)
-  pattern_mat <- matrix(NA_integer_, nrow = nTip, ncol = nr)
+  patternMat <- matrix(NA_integer_, nrow = nTip, ncol = nr)
   for (i in seq_len(nTip)) {
-    pattern_mat[i, ] <- single_state[data[[i]]]
+    patternMat[i, ] <- singleState[data[[i]]]
   }
 
   # Expand to full character matrix using index
-  char_matrix <- pattern_mat[, index, drop = FALSE]
-  rownames(char_matrix) <- taxa
-  char_matrix
+  charMatrix <- patternMat[, index, drop = FALSE]
+  rownames(charMatrix) <- taxa
+
+  # Per-character: remap states to contiguous 0-based integers.
+  # A character may only use a subset of NEXUS state labels (e.g. {1,2,3}
+  # with "0" never observed), leaving state values that exceed kObs - 1 and
+  # cause out-of-bounds access in the C++ pruning arrays. For symmetric models
+  # (Mk, Mk') the label assignment is arbitrary, so this remapping is valid.
+  for (j in seq_len(ncol(charMatrix))) {
+    col <- charMatrix[, j]
+    notNa <- !is.na(col)
+    observed <- sort(unique(col[notNa]))
+    if (length(observed) == 0L ||
+        identical(observed, seq(0L, length(observed) - 1L))) {
+      next  # already contiguous and 0-based
+    }
+    charMatrix[notNa, j] <- match(col[notNa], observed) - 1L
+  }
+
+  charMatrix
 }

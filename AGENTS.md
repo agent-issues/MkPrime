@@ -56,7 +56,7 @@ Full design rationale: `../.positai/plans/mkprime-r.md`.
 | Type | Packages |
 |------|----------|
 | **Imports** | Rcpp, ape, TreeTools, cli |
-| **Suggests** | coda (ESS/PSRF), treess (tree-space ESS), TreeSearch (GUI), testthat |
+| **Suggests** | coda (ESS/PSRF), treess (tree-space ESS), TreeSearch (dataset + GUI), testthat |
 | **LinkingTo** | Rcpp |
 
 ---
@@ -155,6 +155,26 @@ are for targeted iteration only (build + run 1–2 specific test files).
 | RevBayes C++ impl | `../revbayes-ms/` | Native `dnMkPrime` distribution |
 | Best-practice phylo | `../neotrans/` | Compound Dirichlet, ACRV, MkN, etc. |
 | StratoBayes arch | `../StratoBayes/` | Architectural template (MCMC engine, tempering) |
+
+---
+
+## Naming conventions
+
+| Scope | Convention | Examples |
+|-------|------------|---------|
+| Exported functions | **PascalCase** | `RunMkPrime`, `MkPrimeData`, `ConvergenceDiagnostics` |
+| Internal functions (dot-prefixed) | **`.PascalCase`** | `.InitState`, `.BuildMoves`, `.FinalizeModel` |
+| Non-exported helpers (no dot) | **PascalCase** | `ProposeScale`, `LogPrior`, `DiscreteLognormalRates` |
+| Function parameters | **camelCase** | `knownStates`, `fixTopology`, `treeLengthShape`, `checkEvery` |
+| Local variables | **camelCase** | `nEdge`, `transIdx`, `charMatrix`, `startTree` |
+| Model parameter names (MCMC state, column names) | **snake_case** | `tree_length`, `rate_loss`, `rate_log_sd`, `log_posterior` |
+| S3 class names | **PascalCase** | `MkPrimeData`, `MkPrimeModel`, `MkPosterior` |
+
+**Model parameter names** (`rate_loss`, `tree_length`, `rate_log_sd`, `kPrime`, `rel_br_lengths`, etc.)
+are intentionally kept in snake_case because they are domain terminology that appears
+in output column names, documentation, and RevBayes cross-references.
+
+See `CONTRIBUTING.md` for the full rationale and worked examples.
 
 ---
 

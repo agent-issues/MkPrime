@@ -1,6 +1,6 @@
-test_that("discrete_lognormal_rates returns nCat rates with mean 1", {
+test_that("DiscreteLognormalRates returns nCat rates with mean 1", {
   for (sd in c(0.1, 0.5, 1, 2)) {
-    rates <- MkPrime:::discrete_lognormal_rates(sd, nCat = 6L)
+    rates <- MkPrime:::DiscreteLognormalRates(sd, nCat = 6L)
     expect_length(rates, 6)
     expect_equal(mean(rates), 1.0, tolerance = 1e-10)
     expect_true(all(rates > 0))
@@ -8,14 +8,14 @@ test_that("discrete_lognormal_rates returns nCat rates with mean 1", {
 })
 
 
-test_that("discrete_lognormal_rates with sd=0 returns all 1s", {
-  rates <- MkPrime:::discrete_lognormal_rates(0, nCat = 6L)
+test_that("DiscreteLognormalRates with sd=0 returns all 1s", {
+  rates <- MkPrime:::DiscreteLognormalRates(0, nCat = 6L)
   expect_equal(rates, rep(1.0, 6))
 })
 
 
-test_that("discrete_lognormal_rates are sorted ascending", {
-  rates <- MkPrime:::discrete_lognormal_rates(1.0, nCat = 6L)
+test_that("DiscreteLognormalRates are sorted ascending", {
+  rates <- MkPrime:::DiscreteLognormalRates(1.0, nCat = 6L)
   expect_equal(rates, sort(rates))
 })
 
@@ -69,7 +69,7 @@ test_that("ACRV produces different likelihood than non-ACRV for variable rates",
   root_freqs <- rep(1 / 3, 3)
   tips <- matrix(c(0L, 1L, 2L, 0L, 0L, 0L, 1L, 1L), ncol = 2)
 
-  rates <- MkPrime:::discrete_lognormal_rates(1.0, nCat = 6L)
+  rates <- MkPrime:::DiscreteLognormalRates(1.0, nCat = 6L)
 
   ll_no_acrv <- MkPrime:::pruning_jc(
     tree$edge[, 1], tree$edge[, 2], tree$edge.length,

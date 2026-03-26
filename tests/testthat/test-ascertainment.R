@@ -81,7 +81,7 @@ test_that("MkN constant site prob with rate_loss=1 matches JC(2)", {
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   tree <- reorder(tree, "postorder")
   root_freqs <- c(0.5, 0.5)
-  rates <- MkPrime:::discrete_lognormal_rates(0.5, 6L)
+  rates <- MkPrime:::DiscreteLognormalRates(0.5, 6L)
 
   pconst_jc <- MkPrime:::constant_site_prob_jc(
     tree$edge[, 1], tree$edge[, 2], tree$edge.length,
@@ -203,7 +203,7 @@ test_that("Singleton prob works with ACRV", {
     4L, 3L, rf, 1.0
   )
 
-  rates <- MkPrime:::discrete_lognormal_rates(1.0, 6L)
+  rates <- MkPrime:::DiscreteLognormalRates(1.0, 6L)
   psingle_acrv <- MkPrime:::singleton_site_prob_jc(
     tree$edge[, 1], tree$edge[, 2], tree$edge.length,
     4L, 3L, rf, rates
@@ -329,7 +329,7 @@ test_that("Constant site prob works with ACRV", {
     4L, 3L, root_freqs, 1.0
   )
 
-  rates <- MkPrime:::discrete_lognormal_rates(1.0, 6L)
+  rates <- MkPrime:::DiscreteLognormalRates(1.0, 6L)
   pconst_acrv <- MkPrime:::constant_site_prob_jc(
     tree$edge[, 1], tree$edge[, 2], tree$edge.length,
     4L, 3L, root_freqs, rates

@@ -9,7 +9,7 @@ test_that("Standard Mk likelihood matches phangorn (2-state)", {
 
   fit <- phangorn::pml(tree, pd, model = "ER")
   mkd <- MkPrimeData(pd)
-  ll <- mkp_loglikelihood(tree, mkd, coding = "none",
+  ll <- MkpLogLikelihood(tree, mkd, coding = "none",
                           rate_log_sd = 0, relabel = FALSE)
 
   expect_equal(ll, fit$logLik, tolerance = 1e-10)
@@ -29,7 +29,7 @@ test_that("Standard Mk likelihood matches phangorn (3-state, multi-char)", {
 
   fit <- phangorn::pml(tree, pd, model = "ER")
   mkd <- MkPrimeData(pd)
-  ll <- mkp_loglikelihood(tree, mkd, coding = "none",
+  ll <- MkpLogLikelihood(tree, mkd, coding = "none",
                           rate_log_sd = 0, relabel = FALSE)
 
   expect_equal(ll, fit$logLik, tolerance = 1e-10)
@@ -49,7 +49,7 @@ test_that("Standard Mk likelihood matches phangorn (10 tips, 8 chars)", {
 
   fit <- phangorn::pml(tree, pd, model = "ER")
   mkd <- MkPrimeData(pd)
-  ll <- mkp_loglikelihood(tree, mkd, coding = "none",
+  ll <- MkpLogLikelihood(tree, mkd, coding = "none",
                           rate_log_sd = 0, relabel = FALSE)
 
   expect_equal(ll, fit$logLik, tolerance = 1e-10)
@@ -65,9 +65,9 @@ test_that("Mk' relabelling increases log-likelihood when applied", {
   pd <- TreeTools::MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
-  ll_no_relabel <- mkp_loglikelihood(tree, mkd, coding = "none",
+  ll_no_relabel <- MkpLogLikelihood(tree, mkd, coding = "none",
                                      rate_log_sd = 0, relabel = FALSE)
-  ll_relabel <- mkp_loglikelihood(tree, mkd, coding = "none",
+  ll_relabel <- MkpLogLikelihood(tree, mkd, coding = "none",
                                   rate_log_sd = 0, relabel = TRUE)
 
   # Relabelling correction with kPrime = kObs adds k*log(k) > 0
@@ -84,9 +84,9 @@ test_that("Ascertainment correction increases likelihood", {
   pd <- TreeTools::MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
-  ll_none <- mkp_loglikelihood(tree, mkd, coding = "none",
+  ll_none <- MkpLogLikelihood(tree, mkd, coding = "none",
                                rate_log_sd = 0, relabel = FALSE)
-  ll_var <- mkp_loglikelihood(tree, mkd, coding = "variable",
+  ll_var <- MkpLogLikelihood(tree, mkd, coding = "variable",
                               rate_log_sd = 0, relabel = FALSE)
 
   # Variable coding divides by P(variable) < 1, so logL increases
@@ -105,16 +105,16 @@ test_that("ACRV changes likelihood vs no rate variation", {
   pd <- TreeTools::MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
-  ll_no_acrv <- mkp_loglikelihood(tree, mkd, coding = "none",
+  ll_no_acrv <- MkpLogLikelihood(tree, mkd, coding = "none",
                                   rate_log_sd = 0, relabel = FALSE)
-  ll_acrv <- mkp_loglikelihood(tree, mkd, coding = "none",
+  ll_acrv <- MkpLogLikelihood(tree, mkd, coding = "none",
                                rate_log_sd = 1.0, relabel = FALSE)
 
   expect_false(isTRUE(all.equal(ll_no_acrv, ll_acrv)))
 })
 
 
-test_that("mkp_loglikelihood handles mixed partition types", {
+test_that("MkpLogLikelihood handles mixed partition types", {
   library(ape)
 
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
@@ -124,9 +124,9 @@ test_that("mkp_loglikelihood handles mixed partition types", {
                 4, 3,
                 dimnames = list(paste0("t", 1:4), NULL))
   pd <- TreeTools::MatrixToPhyDat(mat)
-  mkd <- MkPrimeData(pd, neomorphic = 1L, known_states = c("3" = 3L))
+  mkd <- MkPrimeData(pd, neomorphic = 1L, knownStates = c("3" = 3L))
 
-  ll <- mkp_loglikelihood(tree, mkd, coding = "none",
+  ll <- MkpLogLikelihood(tree, mkd, coding = "none",
                           rate_log_sd = 0, relabel = FALSE)
   expect_true(is.finite(ll))
   expect_lt(ll, 0)

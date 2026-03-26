@@ -45,7 +45,7 @@ test_that("RunMkPrime handles known state-space characters", {
   pd <- TreeTools::MatrixToPhyDat(mat)
 
   set.seed(2837)
-  result <- RunMkPrime(pd, tree, known_states = c("1" = 4L),
+  result <- RunMkPrime(pd, tree, knownStates = c("1" = 4L),
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L))
 
   expect_s3_class(result, "MkPosterior")
@@ -65,7 +65,7 @@ test_that("RunMkPrime handles mixed character types", {
 
   set.seed(9201)
   result <- RunMkPrime(pd, tree, neomorphic = 1L,
-    known_states = c("3" = 3L),
+    knownStates = c("3" = 3L),
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L))
 
   expect_s3_class(result, "MkPosterior")
@@ -103,7 +103,7 @@ test_that("Acceptance rates are non-degenerate (fixed topology)", {
   pd <- TreeTools::MatrixToPhyDat(mat)
 
   set.seed(8371)
-  result <- RunMkPrime(pd, tree, fix_topology = TRUE,
+  result <- RunMkPrime(pd, tree, fixTopology = TRUE,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 2000L, thin = 10L, warmup = 1000L))
 
   # No move type should have 0% or 100% acceptance
@@ -159,9 +159,9 @@ test_that("Tree file logging writes Newick trees", {
   on.exit(unlink(tf), add = TRUE)
 
   set.seed(5193)
-  result <- RunMkPrime(pd, tree, fix_topology = TRUE,
+  result <- RunMkPrime(pd, tree, fixTopology = TRUE,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L,
-                        tree_file = tf))
+                        treeFile = tf))
 
   # File should exist and have one Newick string per sample
   expect_true(file.exists(tf))

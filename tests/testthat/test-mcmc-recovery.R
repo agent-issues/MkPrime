@@ -46,12 +46,12 @@ test_that("MCMC recovers tree_length from binary data (fixed topology)", {
   pd <- TreeTools::MatrixToPhyDat(sim_mat)
   mkd <- MkPrimeData(pd)
 
-  # Set exp_steps near the true value for a reasonable prior
+  # Set expSteps near the true value for a reasonable prior
   set.seed(4592)
   result <- RunMkPrime(
     mkd, true_tree,
     model = MkPrimeModel(coding = "variable", relabel = TRUE,
-                          exp_steps = true_tl),
+                          expSteps = true_tl),
     mcmc = MkPrimeMCMC(nIter = 15000L, thin = 10L, warmup = 7500L)
   )
 
@@ -109,7 +109,7 @@ test_that("MCMC recovers rate_log_sd = 0 (no ACRV)", {
   set.seed(6614)
   result <- RunMkPrime(
     pd, true_tree,
-    model = MkPrimeModel(coding = "variable", exp_steps = 10),
+    model = MkPrimeModel(coding = "variable", expSteps = 10),
     mcmc = MkPrimeMCMC(nIter = 10000L, thin = 10L, warmup = 5000L)
   )
 
@@ -162,7 +162,7 @@ test_that("MCMC: k' stays near kObs for simple binary data", {
   set.seed(8103)
   result <- RunMkPrime(
     pd, true_tree,
-    model = MkPrimeModel(coding = "variable", exp_steps = 10),
+    model = MkPrimeModel(coding = "variable", expSteps = 10),
     mcmc = MkPrimeMCMC(nIter = 8000L, thin = 10L, warmup = 4000L)
   )
 

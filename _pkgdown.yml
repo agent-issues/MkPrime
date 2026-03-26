@@ -1,0 +1,52 @@
+url: https://mk-prime.github.io/r/
+
+home:
+  title: MkPrime
+  description: >
+    Bayesian phylogenetic inference from discrete morphological characters
+    under the Mk' model, which infers the true number of character states
+    including those not observed in the data.
+
+template:
+  bootstrap: 5
+
+navbar:
+  structure:
+    left:  [intro, reference, articles]
+    right: [search, github]
+  components:
+    github:
+      icon: fab fa-github fa-lg
+      href: https://github.com/mk-prime/r
+      aria-label: GitHub
+
+articles:
+  - title: Getting started
+    navbar: ~
+    contents:
+      - hyoliths
+
+reference:
+  - title: Running an analysis
+    desc: >
+      The main workflow: prepare data, specify a model, configure MCMC,
+      and run.
+    contents:
+      - RunMkPrime
+      - MkPrimeData
+      - MkPrimeModel
+      - MkPrimeMCMC
+
+  - title: Diagnostics and results
+    desc: >
+      Assess convergence, inspect the posterior, and resume interrupted runs.
+    contents:
+      - ConvergenceDiagnostics
+      - MkpLogLikelihood
+      - ResumeMkPrime
+
+  - title: Progress visualization
+    desc: Callbacks for monitoring a running MCMC.
+    contents:
+      - MkpTracePlot
+      - MkpPngProgress

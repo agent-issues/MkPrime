@@ -1,5 +1,5 @@
 # Tests for per-character k' in likelihood
-# M-013: verify mkp_loglikelihood correctly handles kPrime > kObs
+# M-013: verify MkpLogLikelihood correctly handles kPrime > kObs
 
 test_that("kPrime = kObs gives same result as default (no kPrime arg)", {
   library(ape)
@@ -9,9 +9,9 @@ test_that("kPrime = kObs gives same result as default (no kPrime arg)", {
   pd <- TreeTools::MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
-  ll_default <- mkp_loglikelihood(tree, mkd, coding = "none",
+  ll_default <- MkpLogLikelihood(tree, mkd, coding = "none",
                                   rate_log_sd = 0, relabel = FALSE)
-  ll_explicit <- mkp_loglikelihood(tree, mkd, kPrime = mkd$kObs,
+  ll_explicit <- MkpLogLikelihood(tree, mkd, kPrime = mkd$kObs,
                                    coding = "none", rate_log_sd = 0,
                                    relabel = FALSE)
   expect_equal(ll_explicit, ll_default, tolerance = 1e-12)
@@ -26,10 +26,10 @@ test_that("kPrime > kObs gives different likelihood than kPrime = kObs", {
   pd <- TreeTools::MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
-  ll_k2 <- mkp_loglikelihood(tree, mkd, kPrime = 2L,
+  ll_k2 <- MkpLogLikelihood(tree, mkd, kPrime = 2L,
                               coding = "none", rate_log_sd = 0,
                               relabel = FALSE)
-  ll_k5 <- mkp_loglikelihood(tree, mkd, kPrime = 5L,
+  ll_k5 <- MkpLogLikelihood(tree, mkd, kPrime = 5L,
                               coding = "none", rate_log_sd = 0,
                               relabel = FALSE)
 
@@ -48,16 +48,16 @@ test_that("kPrime > kObs: likelihood decreases with larger k (no relabel)", {
   pd <- TreeTools::MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
-  ll_k2 <- mkp_loglikelihood(tree, mkd, kPrime = 2L,
+  ll_k2 <- MkpLogLikelihood(tree, mkd, kPrime = 2L,
                               coding = "none", rate_log_sd = 0,
                               relabel = FALSE)
-  ll_k3 <- mkp_loglikelihood(tree, mkd, kPrime = 3L,
+  ll_k3 <- MkpLogLikelihood(tree, mkd, kPrime = 3L,
                               coding = "none", rate_log_sd = 0,
                               relabel = FALSE)
-  ll_k5 <- mkp_loglikelihood(tree, mkd, kPrime = 5L,
+  ll_k5 <- MkpLogLikelihood(tree, mkd, kPrime = 5L,
                               coding = "none", rate_log_sd = 0,
                               relabel = FALSE)
-  ll_k10 <- mkp_loglikelihood(tree, mkd, kPrime = 10L,
+  ll_k10 <- MkpLogLikelihood(tree, mkd, kPrime = 10L,
                                coding = "none", rate_log_sd = 0,
                                relabel = FALSE)
 
@@ -78,25 +78,25 @@ test_that("Per-character kPrime: different k' per character", {
   mkd <- MkPrimeData(pd)
 
   # Char 1: k'=2, Char 2: k'=4
-  ll_mixed <- mkp_loglikelihood(tree, mkd, kPrime = c(2L, 4L),
+  ll_mixed <- MkpLogLikelihood(tree, mkd, kPrime = c(2L, 4L),
                                  coding = "none", rate_log_sd = 0,
                                  relabel = FALSE)
 
   # Should equal sum of individual calls with respective k'
-  ll_c1 <- mkp_loglikelihood(tree, mkd, kPrime = c(2L, 2L),
+  ll_c1 <- MkpLogLikelihood(tree, mkd, kPrime = c(2L, 2L),
                               coding = "none", rate_log_sd = 0,
                               relabel = FALSE)
-  ll_c2 <- mkp_loglikelihood(tree, mkd, kPrime = c(4L, 4L),
+  ll_c2 <- MkpLogLikelihood(tree, mkd, kPrime = c(4L, 4L),
                               coding = "none", rate_log_sd = 0,
                               relabel = FALSE)
 
   # For single-character reference: compute individually
   mkd1 <- MkPrimeData(pd[, 1])
   mkd2 <- MkPrimeData(pd[, 2])
-  ll_ref1 <- mkp_loglikelihood(tree, mkd1, kPrime = 2L,
+  ll_ref1 <- MkpLogLikelihood(tree, mkd1, kPrime = 2L,
                                 coding = "none", rate_log_sd = 0,
                                 relabel = FALSE)
-  ll_ref2 <- mkp_loglikelihood(tree, mkd2, kPrime = 4L,
+  ll_ref2 <- MkpLogLikelihood(tree, mkd2, kPrime = 4L,
                                 coding = "none", rate_log_sd = 0,
                                 relabel = FALSE)
 
@@ -115,10 +115,10 @@ test_that("kPrime with relabelling: k'=kObs has correction, k'>kObs smaller", {
   # With relabelling: higher k' adds a correction that decreases with k'
   # But the raw likelihood also decreases with k'
   # Combined effect: the posterior (logL + relabel) should favor small k'
-  ll_k2_rel <- mkp_loglikelihood(tree, mkd, kPrime = 2L,
+  ll_k2_rel <- MkpLogLikelihood(tree, mkd, kPrime = 2L,
                                   coding = "none", rate_log_sd = 0,
                                   relabel = TRUE)
-  ll_k5_rel <- mkp_loglikelihood(tree, mkd, kPrime = 5L,
+  ll_k5_rel <- MkpLogLikelihood(tree, mkd, kPrime = 5L,
                                   coding = "none", rate_log_sd = 0,
                                   relabel = TRUE)
 
@@ -137,13 +137,13 @@ test_that("kPrime with ascertainment correction and k' > kObs", {
   pd <- TreeTools::MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
-  ll <- mkp_loglikelihood(tree, mkd, kPrime = 4L,
+  ll <- MkpLogLikelihood(tree, mkd, kPrime = 4L,
                            coding = "variable", rate_log_sd = 0,
                            relabel = FALSE)
   expect_true(is.finite(ll))
 
   # Ascertainment correction should still increase likelihood
-  ll_none <- mkp_loglikelihood(tree, mkd, kPrime = 4L,
+  ll_none <- MkpLogLikelihood(tree, mkd, kPrime = 4L,
                                 coding = "none", rate_log_sd = 0,
                                 relabel = FALSE)
   expect_gt(ll, ll_none)
@@ -158,13 +158,13 @@ test_that("kPrime with ACRV and k' > kObs", {
   pd <- TreeTools::MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
-  ll <- mkp_loglikelihood(tree, mkd, kPrime = 3L,
+  ll <- MkpLogLikelihood(tree, mkd, kPrime = 3L,
                            coding = "none", rate_log_sd = 0.5,
                            relabel = FALSE)
   expect_true(is.finite(ll))
 
   # ACRV should change result vs no ACRV
-  ll_no_acrv <- mkp_loglikelihood(tree, mkd, kPrime = 3L,
+  ll_no_acrv <- MkpLogLikelihood(tree, mkd, kPrime = 3L,
                                    coding = "none", rate_log_sd = 0,
                                    relabel = FALSE)
   expect_false(isTRUE(all.equal(ll, ll_no_acrv)))
@@ -179,7 +179,7 @@ test_that("Large kPrime still produces finite likelihood", {
   pd <- TreeTools::MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
-  ll <- mkp_loglikelihood(tree, mkd, kPrime = 50L,
+  ll <- MkpLogLikelihood(tree, mkd, kPrime = 50L,
                            coding = "none", rate_log_sd = 0,
                            relabel = FALSE)
   expect_true(is.finite(ll))

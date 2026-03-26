@@ -12,7 +12,7 @@ test_that("NNI produces valid binary tree", {
 
   set.seed(6183)
   for (i in seq_len(50)) {
-    prop <- MkPrime:::propose_nni(tree, tl, rel_br)
+    prop <- MkPrime:::ProposeNni(tree, tl, rel_br)
     nt <- prop$tree
 
     # Still a valid phylo
@@ -48,7 +48,7 @@ test_that("NNI changes topology on 4-tip tree", {
   set.seed(3812)
   n_changed <- 0
   for (i in seq_len(20)) {
-    prop <- MkPrime:::propose_nni(tree, tl, rel_br)
+    prop <- MkPrime:::ProposeNni(tree, tl, rel_br)
     prop_newick <- write.tree(prop$tree)
     if (prop_newick != original_newick) n_changed <- n_changed + 1
   }
@@ -57,15 +57,15 @@ test_that("NNI changes topology on 4-tip tree", {
 })
 
 
-test_that("NNI returns -Inf log_hastings for 3-tip tree", {
+test_that("NNI returns -Inf logHastings for 3-tip tree", {
   library(ape)
   tree <- read.tree(text = "(t1:0.1,t2:0.2,t3:0.3);")
   tree <- reorder.phylo(tree, "postorder")
   tl <- sum(tree$edge.length)
   rel_br <- tree$edge.length / tl
 
-  prop <- MkPrime:::propose_nni(tree, tl, rel_br)
-  expect_equal(prop$log_hastings, -Inf)
+  prop <- MkPrime:::ProposeNni(tree, tl, rel_br)
+  expect_equal(prop$logHastings, -Inf)
 })
 
 
@@ -81,7 +81,7 @@ test_that("NNI on larger tree preserves structure", {
   rel_br <- tree$edge.length / tl
 
   for (i in seq_len(30)) {
-    prop <- MkPrime:::propose_nni(tree, tl, rel_br)
+    prop <- MkPrime:::ProposeNni(tree, tl, rel_br)
     nt <- prop$tree
     expect_equal(length(nt$tip.label), nTip)
     expect_equal(nrow(nt$edge), nEdge)
@@ -104,8 +104,8 @@ test_that("NNI Hastings ratio is zero (symmetric)", {
   rel_br <- tree$edge.length / tl
 
   for (i in seq_len(20)) {
-    prop <- MkPrime:::propose_nni(tree, tl, rel_br)
-    expect_equal(prop$log_hastings, 0)
+    prop <- MkPrime:::ProposeNni(tree, tl, rel_br)
+    expect_equal(prop$logHastings, 0)
   }
 })
 
@@ -121,7 +121,7 @@ test_that("NNI preserves individual edge lengths", {
   rel_br <- tree$edge.length / tl
 
   set.seed(9137)
-  prop <- MkPrime:::propose_nni(tree, tl, rel_br)
+  prop <- MkPrime:::ProposeNni(tree, tl, rel_br)
 
   # Same multiset of edge lengths (reordered but same values)
   expect_setequal(prop$tree$edge.length, tree$edge.length)
@@ -138,15 +138,15 @@ test_that("NNI explores all 3 topologies on 4-tip tree", {
   # Repeatedly apply NNI; on 4 tips there are 3 unrooted topologies
   set.seed(5501)
   topologies <- character(200)
-  current_tree <- tree
-  current_rel <- rel_br
+  currentTree <- tree
+  currentRel <- rel_br
   for (i in seq_len(200)) {
-    prop <- MkPrime:::propose_nni(current_tree, tl, current_rel)
-    if (prop$log_hastings > -Inf) {
-      current_tree <- prop$tree
-      current_rel <- prop$rel_br_lengths
+    prop <- MkPrime:::ProposeNni(currentTree, tl, currentRel)
+    if (prop$logHastings > -Inf) {
+      currentTree <- prop$tree
+      currentRel <- prop$rel_br_lengths
     }
-    topologies[i] <- write.tree(current_tree)
+    topologies[i] <- write.tree(currentTree)
   }
   # Should visit more than 1 topology
   expect_gt(length(unique(topologies)), 1)
@@ -167,8 +167,8 @@ test_that("SPR produces valid binary tree", {
   rel_br <- tree$edge.length / tl
 
   for (i in seq_len(50)) {
-    prop <- MkPrime:::propose_spr(tree, tl, rel_br)
-    if (!is.finite(prop$log_hastings)) next
+    prop <- MkPrime:::ProposeSpr(tree, tl, rel_br)
+    if (!is.finite(prop$logHastings)) next
     nt <- prop$tree
 
     expect_s3_class(nt, "phylo")
@@ -194,8 +194,8 @@ test_that("SPR preserves total tree length", {
   rel_br <- tree$edge.length / tl
 
   for (i in seq_len(30)) {
-    prop <- MkPrime:::propose_spr(tree, tl, rel_br)
-    if (!is.finite(prop$log_hastings)) next
+    prop <- MkPrime:::ProposeSpr(tree, tl, rel_br)
+    if (!is.finite(prop$logHastings)) next
     expect_equal(sum(prop$tree$edge.length), tl, tolerance = 1e-12)
   }
 })
@@ -213,8 +213,8 @@ test_that("SPR changes topology on medium tree", {
 
   n_changed <- 0
   for (i in seq_len(50)) {
-    prop <- MkPrime:::propose_spr(tree, tl, rel_br)
-    if (!is.finite(prop$log_hastings)) next
+    prop <- MkPrime:::ProposeSpr(tree, tl, rel_br)
+    if (!is.finite(prop$logHastings)) next
     if (write.tree(prop$tree) != original_newick) n_changed <- n_changed + 1
   }
   expect_gt(n_changed, 0)
@@ -231,10 +231,10 @@ test_that("SPR Hastings ratio is finite", {
   rel_br <- tree$edge.length / tl
 
   for (i in seq_len(30)) {
-    prop <- MkPrime:::propose_spr(tree, tl, rel_br)
+    prop <- MkPrime:::ProposeSpr(tree, tl, rel_br)
     # Should be finite (not NaN or Inf) unless the move was rejected
-    if (is.finite(prop$log_hastings)) {
-      expect_false(is.nan(prop$log_hastings))
+    if (is.finite(prop$logHastings)) {
+      expect_false(is.nan(prop$logHastings))
     }
   }
 })
@@ -252,8 +252,8 @@ test_that("SPR on small tree (5 tips) works", {
   set.seed(8173)
   n_valid <- 0
   for (i in seq_len(50)) {
-    prop <- MkPrime:::propose_spr(tree, tl, rel_br)
-    if (is.finite(prop$log_hastings)) {
+    prop <- MkPrime:::ProposeSpr(tree, tl, rel_br)
+    if (is.finite(prop$logHastings)) {
       n_valid <- n_valid + 1
       expect_equal(length(prop$tree$tip.label), nTip)
       expect_equal(nrow(prop$tree$edge), nEdge)
@@ -275,22 +275,22 @@ test_that("SPR chain explores tree space", {
   rel_br <- tree$edge.length / tl
 
   topologies <- character(200)
-  current_tree <- tree
-  current_rel <- rel_br
+  currentTree <- tree
+  currentRel <- rel_br
   for (i in seq_len(200)) {
-    prop <- MkPrime:::propose_spr(current_tree, tl, current_rel)
-    if (is.finite(prop$log_hastings)) {
-      current_tree <- prop$tree
-      current_rel <- prop$rel_br_lengths
+    prop <- MkPrime:::ProposeSpr(currentTree, tl, currentRel)
+    if (is.finite(prop$logHastings)) {
+      currentTree <- prop$tree
+      currentRel <- prop$rel_br_lengths
     }
-    topologies[i] <- write.tree(current_tree)
+    topologies[i] <- write.tree(currentTree)
   }
   # SPR should explore more topologies than NNI
   expect_gt(length(unique(topologies)), 3)
 })
 
 
-test_that(".descendants finds all descendant nodes", {
+test_that(".Descendants finds all descendant nodes", {
   library(ape)
   tree <- read.tree(text = "((t1:1,t2:1):1,(t3:1,(t4:1,t5:1):1):1);")
   tree <- reorder.phylo(tree, "postorder")
@@ -299,10 +299,10 @@ test_that(".descendants finds all descendant nodes", {
   root <- nTip + 1L
 
   # Descendants of a tip: empty
-  expect_length(MkPrime:::.descendants(1L, tree$edge, nTip), 0)
+  expect_length(MkPrime:::.Descendants(1L, tree$edge, nTip), 0)
 
   # Descendants of root: all non-root nodes
-  desc_root <- MkPrime:::.descendants(root, tree$edge, nTip)
+  desc_root <- MkPrime:::.Descendants(root, tree$edge, nTip)
   all_nodes <- seq_len(nTip + nNode)
   expect_setequal(desc_root, setdiff(all_nodes, root))
 })

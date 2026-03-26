@@ -9,3 +9,4 @@
 ^agent-.*\.md$
 ^LICENSE\.md$
 ^\.positai$
+^\.claude$

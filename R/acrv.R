@@ -6,19 +6,19 @@
 
 #' Compute discretized lognormal rate categories
 #'
-#' @param rate_log_sd Standard deviation on the log scale (sigma parameter
+#' @param rateLogSd Standard deviation on the log scale (sigma parameter
 #'   of the lognormal). When 0, returns a single category with rate 1.
 #' @param nCat Number of discrete rate categories (default 6).
 #'
 #' @return Numeric vector of `nCat` rate multipliers, normalized to mean 1.
 #' @keywords internal
-discrete_lognormal_rates <- function(rate_log_sd, nCat = 6L) {
-  if (rate_log_sd <= 0) {
+DiscreteLognormalRates <- function(rateLogSd, nCat = 6L) {
+  if (rateLogSd <= 0) {
     return(rep(1.0, nCat))
   }
 
   # Lognormal with mean 1: mu = -sigma^2/2
-  mu <- -rate_log_sd^2 / 2
+  mu <- -rateLogSd^2 / 2
 
   # Category boundaries at quantiles
   boundaries <- qnorm(seq(0, 1, length.out = nCat + 1L))
@@ -32,8 +32,8 @@ discrete_lognormal_rates <- function(rate_log_sd, nCat = 6L) {
 
   # Simpler approach: use the midpoint quantile of each category
   midpoints <- (seq_len(nCat) - 0.5) / nCat
-  log_rates <- qnorm(midpoints, mean = mu, sd = rate_log_sd)
-  rates <- exp(log_rates)
+  logRates <- qnorm(midpoints, mean = mu, sd = rateLogSd)
+  rates <- exp(logRates)
 
   # Normalize to mean 1
   rates / mean(rates)

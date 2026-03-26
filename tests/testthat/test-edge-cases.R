@@ -54,7 +54,7 @@ test_that("Neomorphic index remapping after invariant drop", {
 })
 
 
-test_that("known_states index remapping after invariant drop", {
+test_that("knownStates index remapping after invariant drop", {
   mat <- matrix(c(0, 0, 0, 0, 0,
                   0, 1, 2, 1, 0,
                   0, 1, 0, 1, 0),
@@ -62,9 +62,9 @@ test_that("known_states index remapping after invariant drop", {
                 dimnames = list(paste0("t", 1:5), NULL))
   pd <- MatrixToPhyDat(mat)
 
-  # known_states on char 3 (original); becomes char 2 after drop
+  # knownStates on char 3 (original); becomes char 2 after drop
   expect_warning(
-    mkd <- MkPrimeData(pd, known_states = c("3" = 4L)),
+    mkd <- MkPrimeData(pd, knownStates = c("3" = 4L)),
     "invariant"
   )
   expect_equal(mkd$nChar, 2L)
