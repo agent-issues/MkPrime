@@ -119,6 +119,33 @@ comparison, TBR, HMC.
 
 ---
 
+
+### Phase 8: MCMC performance — C++ inner loop
+**Status:** PLANNED (2026-03-26)
+**Goal:** Port MCMC hot path from R to C++, eliminating per-iteration R
+overhead. Use TreeTools C++ headers for tree manipulation.
+
+**Sub-phases:**
+- **8a (P1):** Quick R-side wins — eliminate redundant `ape::reorder.phylo`
+  from likelihood, pre-compute move weights, bypass validation in hot path.
+- **8b (P2):** Port NNI/SPR/BetaSimplex proposals to C++, using TreeTools
+  C++ headers for tree reordering and descendant-finding.
+- **8c (P2):** C++ MCMC inner loop — `do_move()` propose/evaluate/accept
+  cycle, then the outer iteration loop with R callbacks for progress/sampling.
+- **8d (P3):** Partial likelihood recalculation — cache partition likelihoods,
+  only recompute affected partitions per move type.
+
+**Design notes:**
+- TreeTools provides C++ headers (`preorder_edges_and_nodes`,
+  `descendant_edges`, `postorder_order`) via `inst/include/TreeTools/`.
+  Link via `LinkingTo: TreeTools` in DESCRIPTION.
+- `TreeTools::Preorder()` is ~1.6x faster than `ape::reorder.phylo()`.
+- The conditional-likelihood workspace (`std::vector<std::vector<double>>`)
+  is currently reallocated per likelihood call — should be pre-allocated
+  once in a C++ state struct and reused.
+- R remains responsible for: initialization, progress display, sample
+  storage, checkpointing, adaptation logic, and result assembly.
+
 ## Agent Allocation
 
 Currently single-agent. Multi-agent (2 agents) planned from Phase 4 onward,
