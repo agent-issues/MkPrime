@@ -23,3 +23,10 @@
 | M-019 | Proposal adaptation | A | 2026-03-26 | `41105eb`. Multiplicative tuning during warmup. |
 | M-020 | MkPosterior result object | A | 2026-03-26 | `41105eb`. print/summary/plot methods, ESS via coda. |
 | M-021 | Integration validation | A | 2026-03-26 | `41105eb`. Posterior recovery on simulated data. 466 total tests. |
+| M-022 | Topology as mutable MCMC state | A | 2026-03-26 | `7dcd780`. state$tree stores topology; .do_move() updated. |
+| M-023 | NNI proposal on unrooted binary trees | A | 2026-03-26 | `7dcd780`. Symmetric (Hastings=0), swaps across internal edges. |
+| M-024 | SPR proposal on unrooted binary trees | A | 2026-03-26 | `7dcd780`. Node u moves; Jacobian correction log(l_regraft/l_merge). |
+| M-025 | Tree move integration into MCMC loop | A | 2026-03-26 | `7dcd780`. NNI wt=nEdge/2, SPR wt=nEdge/4, fix_topology param. |
+| M-026 | exp_steps default from Fitch parsimony | A | 2026-03-26 | `266dc07`. Matches phangorn exactly. |
+| M-027 | Tree logging to Newick file | A | 2026-03-26 | `266dc07`. tree_file param in MkPrimeMCMC, append-mode. |
+| M-028 | Tree topology recovery test | A | 2026-03-26 | `fd38bd2`. Recovers true 5-tip tree from simulated data. ~2059 tests. |

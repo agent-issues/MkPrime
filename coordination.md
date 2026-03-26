@@ -4,7 +4,7 @@ Last updated: 2026-03-26
 
 ## Project State
 
-**Phase:** 3 (Basic MCMC) — COMPLETE. Ready for Phase 4 (Tree search).
+**Phase:** 4 (Tree search) — COMPLETE. Ready for Phase 5 (Tempering + convergence).
 
 MkPrime is a new R package for Bayesian phylogenetic inference under the
 Mk' model. The architecture follows StratoBayes (C++ hot loop via Rcpp,
@@ -79,7 +79,7 @@ priors, integration validation.
 - Recovers known tree from simulated data (integration validation)
 
 ### Phase 5: Parallel tempering + convergence
-**Status:** Not started
+**Status:** Not started — next phase
 **Goal:** Multiple chains with adaptive temperature spacing, convergence
 monitoring, stopping rules, checkpointing.
 
