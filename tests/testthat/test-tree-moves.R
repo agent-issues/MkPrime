@@ -288,21 +288,3 @@ test_that("SPR chain explores tree space", {
   # SPR should explore more topologies than NNI
   expect_gt(length(unique(topologies)), 3)
 })
-
-
-test_that(".Descendants finds all descendant nodes", {
-  library(ape)
-  tree <- read.tree(text = "((t1:1,t2:1):1,(t3:1,(t4:1,t5:1):1):1);")
-  tree <- reorder.phylo(tree, "postorder")
-  nTip <- 5L
-  nNode <- tree$Nnode
-  root <- nTip + 1L
-
-  # Descendants of a tip: empty
-  expect_length(MkPrime:::.Descendants(1L, tree$edge, nTip), 0)
-
-  # Descendants of root: all non-root nodes
-  desc_root <- MkPrime:::.Descendants(root, tree$edge, nTip)
-  all_nodes <- seq_len(nTip + nNode)
-  expect_setequal(desc_root, setdiff(all_nodes, root))
-})

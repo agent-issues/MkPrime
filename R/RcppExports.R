@@ -45,6 +45,14 @@ pruning_mkn <- function(parent, child, edge_length, tip_states, rate_loss, root_
     .Call(`_MkPrime_pruning_mkn`, parent, child, edge_length, tip_states, rate_loss, root_freqs)
 }
 
+spr_proposal <- function(edge, nTip, treeLength, relBrLengths) {
+    .Call(`_MkPrime_spr_proposal`, edge, nTip, treeLength, relBrLengths)
+}
+
+beta_simplex_proposal <- function(x, index, tuning) {
+    .Call(`_MkPrime_beta_simplex_proposal`, x, index, tuning)
+}
+
 jc_transition_probs <- function(k, t) {
     .Call(`_MkPrime_jc_transition_probs`, k, t)
 }
@@ -55,5 +63,9 @@ mkn_transition_probs <- function(rate_loss, t) {
 
 mkn_stationary_freqs <- function(rate_loss) {
     .Call(`_MkPrime_mkn_stationary_freqs`, rate_loss)
+}
+
+nni_proposal <- function(edge, nTip, treeLength, relBrLengths) {
+    .Call(`_MkPrime_nni_proposal`, edge, nTip, treeLength, relBrLengths)
 }
 
