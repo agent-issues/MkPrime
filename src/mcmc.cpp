@@ -163,19 +163,17 @@ double get_state_log_lik(SEXP statePtr) {
 
 
 // ---------------------------------------------------------------------------
-// do_move_cpp: full propose/evaluate/accept — updates state in-place
+// do_move_impl: internal propose/evaluate/accept (raw pointers, no SEXP).
+// do_move_cpp:  Rcpp-exported SEXP wrapper — calls do_move_impl.
 //
 // moveType: 0=scale_tl, 1=scale_rl, 2=scale_rls, 3=scale_rn,
 //           4=beta_simplex, 5=nni, 6=spr, 7=int_walk, 8=scale_p
 // ---------------------------------------------------------------------------
 
-// [[Rcpp::export]]
-bool do_move_cpp(SEXP dataPtr, SEXP statePtr,
-                 int moveType, int charIdx,
-                 double scaleTuning, double betaSimplexTuning,
-                 int intWalkWindow, double beta) {
-  McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
-  McmcState* state = Rcpp::XPtr<McmcState>(statePtr).get();
+static bool do_move_impl(McmcData* data, McmcState* state,
+                         int moveType, int charIdx,
+                         double scaleTuning, double betaSimplexTuning,
+                         int intWalkWindow, double beta) {
 
   // Snapshot scalar state for rollback
   double oldTL   = state->treeLength;
@@ -359,4 +357,184 @@ bool do_move_cpp(SEXP dataPtr, SEXP statePtr,
   if (moveType == 4) state->relBrLengths = oldRelBr;
   if (moveType == 7) state->kPrime = oldKPrime;
   return false;
+}
+
+
+// [[Rcpp::export]]
+bool do_move_cpp(SEXP dataPtr, SEXP statePtr,
+                 int moveType, int charIdx,
+                 double scaleTuning, double betaSimplexTuning,
+                 int intWalkWindow, double beta) {
+  McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
+  McmcState* state = Rcpp::XPtr<McmcState>(statePtr).get();
+  return do_move_impl(data, state, moveType, charIdx,
+                      scaleTuning, betaSimplexTuning, intWalkWindow, beta);
+}
+
+
+// ---------------------------------------------------------------------------
+// run_mcmc_batch_cpp: C++ inner loop — runs nBatch iterations for one run.
+//
+// Handles weighted move selection, do_move_impl calls, chain swaps, and
+// sample collection. R calls this per-batch (default 200 iters) and handles
+// adaptation, convergence checks, progress, and checkpointing at boundaries.
+//
+// stateXPtrs          List of nChains XPtr<McmcState>; index 0 = cold chain
+// betas               Per-chain temperature (cold = 1.0)
+// moveTypeCodes       Move type codes 0–8, length nMoves
+// transIdxCpp         0-based global kPrime indices for transformational chars
+// moveWeights         Unnormalized proposal weights, length nMoves
+// chainScaleTunings   NumericMatrix nChains × nMoves — scale tuning per move
+// chainBsmpTunings    NumericVector nChains — beta-simplex tuning
+// chainIntWalkWins    IntegerVector nChains — int-walk window
+// nBatch              Number of iterations to run
+// startIter           Global iteration counter at batch start (1-based)
+// warmup              Total warmup iterations; samples saved for iter > warmup
+// thin                Save cold-chain state every thin-th post-warmup iter
+// hasNeo              Whether rate_neo is a model parameter
+// nEdge               Number of edges (length of relBrLengths)
+// ---------------------------------------------------------------------------
+
+// [[Rcpp::export]]
+List run_mcmc_batch_cpp(
+    SEXP dataPtr,
+    List stateXPtrs,
+    NumericVector betas,
+    IntegerVector moveTypeCodes,
+    IntegerVector transIdxCpp,
+    NumericVector moveWeights,
+    NumericMatrix chainScaleTunings,
+    NumericVector chainBsmpTunings,
+    IntegerVector chainIntWalkWins,
+    int nBatch,
+    int startIter,
+    int warmup,
+    int thin,
+    bool hasNeo,
+    int nEdge
+) {
+  McmcData* data = Rcpp::XPtr<McmcData>(dataPtr).get();
+  int nChains    = stateXPtrs.size();
+  int nMoves     = moveTypeCodes.size();
+  int nTrans     = transIdxCpp.size();
+
+  // Extract raw state pointers
+  std::vector<McmcState*> states(nChains);
+  for (int ch = 0; ch < nChains; ++ch)
+    states[ch] = Rcpp::XPtr<McmcState>(stateXPtrs[ch]).get();
+
+  // Cumulative move weights for O(nMoves) weighted sampling
+  std::vector<double> cumWeights(nMoves);
+  double totalWeight = 0.0;
+  for (int m = 0; m < nMoves; ++m) {
+    totalWeight += moveWeights[m];
+    cumWeights[m] = totalWeight;
+  }
+
+  // Accept/propose counters (nChains × nMoves)
+  IntegerMatrix acceptCounts(nChains, nMoves);
+  IntegerMatrix proposeCounts(nChains, nMoves);
+  int nSwapPairs = std::max(0, nChains - 1);
+  IntegerVector swapAccept(nSwapPairs, 0);
+  IntegerVector swapPropose(nSwapPairs, 0);
+
+  // Sample storage
+  int nScalarCols = 6 + (hasNeo ? 1 : 0) + nTrans + nEdge;
+  int maxSaved    = nBatch / thin + 2;
+  std::vector<std::vector<double>> scalarRows;
+  scalarRows.reserve(maxSaved);
+  List edgeSamples;
+
+  // Main iteration loop
+  for (int i = 0; i < nBatch; ++i) {
+    int iter = startIter + i;
+
+    // Advance each chain
+    for (int ch = 0; ch < nChains; ++ch) {
+      // Weighted move selection
+      double u = R::unif_rand() * totalWeight;
+      int moveIdx = 0;
+      while (moveIdx < nMoves - 1 && u > cumWeights[moveIdx]) ++moveIdx;
+
+      proposeCounts(ch, moveIdx)++;
+
+      int moveType = moveTypeCodes[moveIdx];
+
+      // charIdx for int_walk (kPrime) move
+      int charIdx = 0;
+      if (moveType == 7 && nTrans > 0) {
+        int r = static_cast<int>(R::unif_rand() * nTrans);
+        if (r >= nTrans) r = nTrans - 1;
+        charIdx = transIdxCpp[r];
+      }
+
+      bool accepted = do_move_impl(
+        data, states[ch],
+        moveType, charIdx,
+        chainScaleTunings(ch, moveIdx),
+        chainBsmpTunings[ch],
+        chainIntWalkWins[ch],
+        betas[ch]
+      );
+      if (accepted) acceptCounts(ch, moveIdx)++;
+    }
+
+    // Chain swap: propose one random adjacent pair per iteration
+    if (nChains > 1) {
+      int iPair = static_cast<int>(R::unif_rand() * nSwapPairs);
+      if (iPair >= nSwapPairs) iPair = nSwapPairs - 1;
+      int jPair  = iPair + 1;
+      swapPropose[iPair]++;
+      double logAlpha = (betas[iPair] - betas[jPair]) *
+                        (states[jPair]->logLik - states[iPair]->logLik);
+      if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+        std::swap(*states[iPair], *states[jPair]);
+        swapAccept[iPair]++;
+      }
+    }
+
+    // Save cold chain (index 0) sample post-warmup on thinning interval
+    if (iter > warmup && (iter - warmup) % thin == 0) {
+      McmcState* s0 = states[0];
+      std::vector<double> row(nScalarCols);
+      int col = 0;
+      row[col++] = s0->logLik + s0->logPrior;   // log_post
+      row[col++] = s0->logLik;
+      row[col++] = s0->treeLength;
+      row[col++] = s0->rateLoss;
+      row[col++] = s0->rateLogSd;
+      row[col++] = s0->p;
+      if (hasNeo) row[col++] = s0->rateNeo;
+      for (int j = 0; j < nTrans; ++j)
+        row[col++] = static_cast<double>(s0->kPrime[transIdxCpp[j]]);
+      for (int k = 0; k < nEdge; ++k)
+        row[col++] = s0->relBrLengths[k];
+      scalarRows.push_back(row);
+
+      // Edge matrix for tree reconstruction in R
+      IntegerMatrix edgeMat(nEdge, 2);
+      for (int k = 0; k < nEdge; ++k) {
+        edgeMat(k, 0) = s0->parent[k];
+        edgeMat(k, 1) = s0->child[k];
+      }
+      edgeSamples.push_back(edgeMat);
+    }
+  }
+
+  // Pack scalar rows into R matrix
+  int nSaved = static_cast<int>(scalarRows.size());
+  NumericMatrix scalarMat(nSaved, nScalarCols);
+  for (int i = 0; i < nSaved; ++i)
+    for (int j = 0; j < nScalarCols; ++j)
+      scalarMat(i, j) = scalarRows[i][j];
+
+  return List::create(
+    _["accept_counts"]  = acceptCounts,
+    _["propose_counts"] = proposeCounts,
+    _["swap_accept"]    = swapAccept,
+    _["swap_propose"]   = swapPropose,
+    _["scalar_samples"] = scalarMat,
+    _["edge_samples"]   = edgeSamples,
+    _["n_saved"]        = nSaved
+  );
 }

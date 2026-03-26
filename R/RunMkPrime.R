@@ -100,31 +100,25 @@ RunMkPrime <- function(data, tree,
   treeFile <- mcmc$treeFile
   if (!is.null(treeFile)) writeLines("", treeFile)
 
-  # Stopping state
-  stopReason <- "max_iter"
   startTime <- proc.time()["elapsed"]
-
-  # Progress callback
   hasProgressFn <- !is.null(mcmc$progressFn) && !is.null(mcmc$plotEvery)
 
   # Progress bar state
   coldLogpost <- {s <- get_mcmc_state(runs[[1]]$chainStates[[1]]); s$logPost}
   recentAcc <- 0
-  recentWindow <- 500L
-  recentAccepts <- logical(recentWindow)
-  recentPos <- 0L
-  lastMinEss <- NA_real_
-  lastMaxPsrf <- NA_real_
-
-  # ESS/PSRF summary for the progress bar (updated at each convergence check)
   convergeSummary <- ""
 
-  # Pre-compute move weight vector. Weights are constant (adaptation only
-  # adjusts proposal scales, not move frequencies).
+  # Constant inputs for the C++ batch function
+  batchSize   <- 200L
   moveWeights <- vapply(moves, `[[`, numeric(1), "weight")
+  moveTypeCodes <- vapply(moves, function(m) .kMoveTypes[[m$name]], integer(1L))
+  transIdx0 <- if (nTrans > 0L) transIdx - 1L else integer(0L)
 
-  # Initialize C++ MCMC data structure (partitions + model params)
+  # Initialize C++ data pointer (created once)
   mcmcData <- .InitMcmcData(mkd, model)
+
+  # Column indices in scalar_samples for tree reconstruction (1-based R)
+  brColStart <- 6L + hasNeo + nTrans + 1L  # first br_ column
 
   cli::cli_progress_bar(
     "MCMC", total = mcmc$nIter,
@@ -136,122 +130,125 @@ RunMkPrime <- function(data, tree,
     )
   )
 
-  for (iter in seq_len(mcmc$nIter)) {
-    # --- Advance all runs by one iteration ---
+  stopReason <- "max_iter"
+  actualIter <- mcmc$nIter
+
+  for (batchStart in seq(1L, mcmc$nIter, by = batchSize)) {
+    batchEnd <- min(batchStart + batchSize - 1L, mcmc$nIter)
+    nBatch   <- batchEnd - batchStart + 1L
+    r1Result <- NULL
+
     for (run in seq_len(nRuns)) {
       r <- runs[[run]]
-      nChains <- mcmc$nChains
 
-      # Propose moves for each chain
-      for (ch in seq_len(nChains)) {
-        moveIdx <- sample.int(length(moves), 1L, prob = moveWeights)
-        move <- moves[[moveIdx]]
-        r$chain_propose[[ch]][moveIdx] <-
-          r$chain_propose[[ch]][moveIdx] + 1L
+      scaleTunings <- .BuildScaleTuningMatrix(r$chain_tuning, moves)
+      bsTunings <- vapply(r$chain_tuning,
+                          function(t) t$beta_simplex, numeric(1L))
+      iwWins <- vapply(r$chain_tuning,
+                       function(t) as.integer(t$int_walk_window), integer(1L))
 
-        accepted <- .DoMove(move, r$chainStates[[ch]],
-                            tuning = r$chain_tuning[[ch]], beta = r$betas[ch],
-                            transIdx = transIdx, mcmcData = mcmcData)
+      result <- run_mcmc_batch_cpp(
+        mcmcData, r$chainStates, r$betas,
+        moveTypeCodes, transIdx0, moveWeights,
+        scaleTunings, bsTunings, iwWins,
+        nBatch, batchStart, mcmc$warmup, mcmc$thin,
+        hasNeo, nEdge
+      )
+      if (run == 1L) r1Result <- result
 
-        if (accepted$accept) {
-          r$chain_accept[[ch]][moveIdx] <-
-            r$chain_accept[[ch]][moveIdx] + 1L
-        }
+      # Accumulate accept/propose counts (cumulative for adaptation)
+      for (ch in seq_len(mcmc$nChains)) {
+        r$chain_accept[[ch]]  <- r$chain_accept[[ch]]  +
+          as.integer(result$accept_counts[ch, ])
+        r$chain_propose[[ch]] <- r$chain_propose[[ch]] +
+          as.integer(result$propose_counts[ch, ])
+      }
+      if (mcmc$nChains > 1L) {
+        r$swap_accept  <- r$swap_accept  + result$swap_accept
+        r$swap_propose <- r$swap_propose + result$swap_propose
+      }
 
-        # Track recent acceptance for run 1, cold chain
-        if (run == 1L && ch == 1L) {
-          recentPos <- (recentPos %% recentWindow) + 1L
-          recentAccepts[recentPos] <- accepted$accept
+      # Store samples and reconstruct trees
+      nSaved <- result$n_saved
+      if (nSaved > 0L) {
+        for (i in seq_len(nSaved)) {
+          r$saved_idx <- r$saved_idx + 1L
+          r$samples[r$saved_idx, ] <- result$scalar_samples[i, ]
+          tl    <- result$scalar_samples[i, 3L]
+          relBr <- result$scalar_samples[i, brColStart:(brColStart + nEdge - 1L)]
+          curTree <- structure(
+            list(edge        = result$edge_samples[[i]],
+                 edge.length = tl * relBr,
+                 Nnode       = as.integer(nEdge / 2L + 1L),
+                 tip.label   = tipLabels),
+            class = "phylo"
+          )
+          r$tree_samples[[r$saved_idx]] <- curTree
+          if (!is.null(treeFile))
+            cat(ape::write.tree(curTree), "\n", file = treeFile, append = TRUE)
         }
       }
 
-      # Chain swaps
-      if (nChains > 1L) {
-        swapResult <- .ProposeChainSwap(r$chainStates, r$betas)
-        r$chainStates <- swapResult$chains
-        if (!is.null(swapResult$pair)) {
-          pairIdx <- swapResult$pair[1]
-          r$swap_propose[pairIdx] <- r$swap_propose[pairIdx] + 1L
-          if (swapResult$accepted) {
-            r$swap_accept[pairIdx] <- r$swap_accept[pairIdx] + 1L
-          }
-        }
-      }
-
-      # Adaptation during warmup
-      if (iter <= mcmc$warmup && iter %% 200L == 0L) {
-        for (ch in seq_len(nChains)) {
+      # Adapt tuning during warmup (at every batch boundary within warmup)
+      if (batchEnd <= mcmc$warmup) {
+        for (ch in seq_len(mcmc$nChains)) {
           r$chain_tuning[[ch]] <- .AdaptTuning(
             r$chain_tuning[[ch]], r$chain_accept[[ch]],
             r$chain_propose[[ch]], moves
           )
         }
-        if (nChains > 1L) {
+        if (mcmc$nChains > 1L)
           r$betas <- .AdaptTemperatures(r$betas, r$swap_accept,
                                         r$swap_propose)
-        }
-      }
-
-      # Save cold chain samples post-warmup
-      if (iter > mcmc$warmup && (iter - mcmc$warmup) %% mcmc$thin == 0L) {
-        r$saved_idx <- r$saved_idx + 1L
-        r$samples[r$saved_idx, ] <- .StateToRow(r$chainStates[[1]], mkd, nEdge)
-        curTree <- .StateToTree(r$chainStates[[1]], tipLabels)
-        r$tree_samples[[r$saved_idx]] <- curTree
-        if (!is.null(treeFile)) {
-          cat(ape::write.tree(curTree), "\n", file = treeFile,
-              append = TRUE)
-        }
       }
 
       runs[[run]] <- r
     }
 
-    # Progress
-    if (iter %% 100L == 0L) {
-      nRecent <- min(iter, recentWindow)
-      recentAcc <- sum(recentAccepts[seq_len(nRecent)]) / nRecent
-      coldLogpost <- {s <- get_mcmc_state(runs[[1]]$chainStates[[1]]); s$logPost}
-      cli::cli_progress_update()
+    # Progress update after each batch
+    coldLogpost <- {s <- get_mcmc_state(runs[[1]]$chainStates[[1]]); s$logPost}
+    if (!is.null(r1Result)) {
+      batchAcc  <- sum(r1Result$accept_counts[1L, ])
+      batchProp <- sum(r1Result$propose_counts[1L, ])
+      if (batchProp > 0L) recentAcc <- batchAcc / batchProp
     }
+    cli::cli_progress_update(set = batchEnd)
 
-    # Progress callback (trace plots)
-    if (hasProgressFn && iter %% mcmc$plotEvery == 0L) {
-      info <- .BuildProgressInfo(runs, iter, mcmc, startTime,
+    # Progress callback (trace plots); trigger if batchEnd crosses a plotEvery multiple
+    if (hasProgressFn &&
+        (batchEnd %/% mcmc$plotEvery) > ((batchStart - 1L) %/% mcmc$plotEvery)) {
+      info <- .BuildProgressInfo(runs, batchEnd, mcmc, startTime,
                                  recentAcc, paramNames)
       mcmc$progressFn(info)
     }
 
-    # --- Stopping rule checks + checkpointing ---
+    # Stopping rule: max wall-clock time
     if (!is.null(mcmc$maxTime)) {
-      elapsed <- proc.time()["elapsed"] - startTime
-      if (elapsed >= mcmc$maxTime) {
+      if (proc.time()["elapsed"] - startTime >= mcmc$maxTime) {
         stopReason <- "max_time"
+        actualIter <- batchEnd
         break
       }
     }
 
-    doCheck <- iter > mcmc$warmup && !is.null(mcmc$checkEvery) &&
-               iter %% mcmc$checkEvery == 0L
+    # Convergence check + checkpoint; trigger if batchEnd crosses a checkEvery multiple
+    doCheck <- batchEnd > mcmc$warmup && !is.null(mcmc$checkEvery) &&
+               (batchEnd %/% mcmc$checkEvery) > ((batchStart - 1L) %/% mcmc$checkEvery)
 
     if (doCheck) {
-      # Checkpoint
-      if (!is.null(mcmc$checkpointFile)) {
-        .SaveCheckpoint(runs, mcmc, iter, mcmc$checkpointFile)
-      }
+      if (!is.null(mcmc$checkpointFile))
+        .SaveCheckpoint(runs, mcmc, batchEnd, mcmc$checkpointFile)
 
-      # Convergence check
       if (nRuns >= 2L) {
         diagCheck <- .CheckConvergence(runs, paramNames, mcmc)
         if (!is.null(diagCheck)) {
-          lastMinEss <- diagCheck$minEss
-          lastMaxPsrf <- diagCheck$maxPsrf
           convergeSummary <- sprintf(
             " | ESS: %d | PSRF: %.3f",
-            as.integer(lastMinEss), lastMaxPsrf
+            as.integer(diagCheck$minEss), diagCheck$maxPsrf
           )
           if (diagCheck$converged) {
             stopReason <- "converged"
+            actualIter <- batchEnd
             break
           }
         }
@@ -259,8 +256,6 @@ RunMkPrime <- function(data, tree,
     }
   }
   cli::cli_progress_done()
-
-  actualIter <- min(iter, mcmc$nIter)
 
   # --- Build result ---
   .BuildResult(runs, model, mkd, mcmc, actualIter, stopReason)
@@ -582,72 +577,107 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     }
   }
 
+  # Batch-based resume loop (mirrors RunMkPrime batch approach)
+  batchSize     <- 200L
+  moveTypeCodes <- vapply(moves, function(m) .kMoveTypes[[m$name]], integer(1L))
+  transIdx0     <- if (length(transIdx) > 0L) transIdx - 1L else integer(0L)
+  hasNeo        <- any(mkd$type == "neomorphic")
+  brColStart    <- 6L + hasNeo + length(transIdx) + 1L
+
   cli::cli_progress_bar(
     "Resuming MCMC", total = mcmc$nIter - startIter + 1L,
     format = "{cli::pb_bar} {cli::pb_current}/{cli::pb_total} (from iter {startIter})"
   )
 
-  for (iter in seq(startIter, mcmc$nIter)) {
+  stopReason <- "max_iter"
+  actualIter <- mcmc$nIter
+
+  for (batchStart in seq(startIter, mcmc$nIter, by = batchSize)) {
+    batchEnd <- min(batchStart + batchSize - 1L, mcmc$nIter)
+    nBatch   <- batchEnd - batchStart + 1L
+
     for (run in seq_len(nRuns)) {
       r <- runs[[run]]
-      nChains <- mcmc$nChains
 
-      for (ch in seq_len(nChains)) {
-        moveIdx <- sample.int(length(moves), 1L, prob = moveWeights)
-        move <- moves[[moveIdx]]
-        r$chain_propose[[ch]][moveIdx] <-
-          r$chain_propose[[ch]][moveIdx] + 1L
+      scaleTunings <- .BuildScaleTuningMatrix(r$chain_tuning, moves)
+      bsTunings <- vapply(r$chain_tuning,
+                          function(t) t$beta_simplex, numeric(1L))
+      iwWins <- vapply(r$chain_tuning,
+                       function(t) as.integer(t$int_walk_window), integer(1L))
 
-        accepted <- .DoMove(move, r$chainStates[[ch]],
-                            tuning = r$chain_tuning[[ch]], beta = r$betas[ch],
-                            transIdx = transIdx, mcmcData = mcmcData)
+      result <- run_mcmc_batch_cpp(
+        mcmcData, r$chainStates, r$betas,
+        moveTypeCodes, transIdx0, moveWeights,
+        scaleTunings, bsTunings, iwWins,
+        nBatch, batchStart, mcmc$warmup, mcmc$thin,
+        hasNeo, nEdge
+      )
 
-        if (accepted$accept) {
-          r$chain_accept[[ch]][moveIdx] <-
-            r$chain_accept[[ch]][moveIdx] + 1L
+      for (ch in seq_len(mcmc$nChains)) {
+        r$chain_accept[[ch]]  <- r$chain_accept[[ch]]  +
+          as.integer(result$accept_counts[ch, ])
+        r$chain_propose[[ch]] <- r$chain_propose[[ch]] +
+          as.integer(result$propose_counts[ch, ])
+      }
+      if (mcmc$nChains > 1L) {
+        r$swap_accept  <- r$swap_accept  + result$swap_accept
+        r$swap_propose <- r$swap_propose + result$swap_propose
+      }
+
+      nSaved <- result$n_saved
+      if (nSaved > 0L) {
+        for (i in seq_len(nSaved)) {
+          r$saved_idx <- r$saved_idx + 1L
+          r$samples[r$saved_idx, ] <- result$scalar_samples[i, ]
+          tl    <- result$scalar_samples[i, 3L]
+          relBr <- result$scalar_samples[i, brColStart:(brColStart + nEdge - 1L)]
+          r$tree_samples[[r$saved_idx]] <- structure(
+            list(edge        = result$edge_samples[[i]],
+                 edge.length = tl * relBr,
+                 Nnode       = as.integer(nEdge / 2L + 1L),
+                 tip.label   = tipLabels),
+            class = "phylo"
+          )
         }
       }
 
-      if (nChains > 1L) {
-        swapResult <- .ProposeChainSwap(r$chainStates, r$betas)
-        r$chainStates <- swapResult$chains
-        if (!is.null(swapResult$pair)) {
-          pairIdx <- swapResult$pair[1]
-          r$swap_propose[pairIdx] <- r$swap_propose[pairIdx] + 1L
-          if (swapResult$accepted) {
-            r$swap_accept[pairIdx] <- r$swap_accept[pairIdx] + 1L
-          }
+      # Adapt tuning if still in warmup
+      if (batchEnd <= mcmc$warmup) {
+        for (ch in seq_len(mcmc$nChains)) {
+          r$chain_tuning[[ch]] <- .AdaptTuning(
+            r$chain_tuning[[ch]], r$chain_accept[[ch]],
+            r$chain_propose[[ch]], moves
+          )
         }
-      }
-
-      if (iter > mcmc$warmup && (iter - mcmc$warmup) %% mcmc$thin == 0L) {
-        r$saved_idx <- r$saved_idx + 1L
-        r$samples[r$saved_idx, ] <- .StateToRow(r$chainStates[[1]], mkd, nEdge)
-        r$tree_samples[[r$saved_idx]] <- .StateToTree(r$chainStates[[1]], tipLabels)
+        if (mcmc$nChains > 1L)
+          r$betas <- .AdaptTemperatures(r$betas, r$swap_accept,
+                                        r$swap_propose)
       }
 
       runs[[run]] <- r
     }
 
-    if (!is.null(mcmc$maxTime)) {
-      elapsed <- proc.time()["elapsed"] - startTime
-      if (elapsed >= mcmc$maxTime) {
-        stopReason <- "max_time"
-        break
-      }
-    }
+    cli::cli_progress_update(set = batchEnd - startIter + 1L)
 
-    if (iter %% 100L == 0L) cli::cli_progress_update()
-
-    if (hasProgressFn && iter %% mcmc$plotEvery == 0L) {
-      info <- .BuildProgressInfo(runs, iter, mcmc, startTime,
+    if (hasProgressFn &&
+        !is.null(mcmc$plotEvery) &&
+        (batchEnd %/% mcmc$plotEvery) > ((batchStart - 1L) %/% mcmc$plotEvery)) {
+      info <- .BuildProgressInfo(runs, batchEnd, mcmc, startTime,
                                  0, paramNames)
       mcmc$progressFn(info)
+    }
+
+    if (!is.null(mcmc$maxTime)) {
+      if (proc.time()["elapsed"] - startTime >= mcmc$maxTime) {
+        stopReason <- "max_time"
+        actualIter <- batchEnd
+        break
+      }
     }
   }
   cli::cli_progress_done()
 
-  .BuildResult(runs, model, mkd, mcmc, min(iter, mcmc$nIter), stopReason)
+  .BuildResult(runs, model, mkd, mcmc, actualIter, stopReason)
 }
 
 
@@ -706,6 +736,29 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     elapsed = as.numeric(proc.time()["elapsed"] - startTime),
     paramNames = paramNames
   )
+}
+
+
+#' Build scale tuning matrix for run_mcmc_batch_cpp (nChains × nMoves)
+#' @keywords internal
+.BuildScaleTuningMatrix <- function(chainTuning, moves) {
+  nChains <- length(chainTuning)
+  nMoves <- length(moves)
+  mat <- matrix(0.5, nChains, nMoves)
+  for (ch in seq_len(nChains)) {
+    tun <- chainTuning[[ch]]
+    for (m in seq_along(moves)) {
+      mat[ch, m] <- switch(moves[[m]]$name,
+        tree_length = tun$scale_tree_length,
+        rate_loss   = tun$scale_rate_loss,
+        rate_log_sd = tun$scale_rate_log_sd,
+        rate_neo    = tun$scale_rate_neo %||% 0.5,
+        p           = tun$scale_p,
+        0.5
+      )
+    }
+  }
+  mat
 }
 
 

@@ -61,6 +61,10 @@ do_move_cpp <- function(dataPtr, statePtr, moveType, charIdx, scaleTuning, betaS
     .Call(`_MkPrime_do_move_cpp`, dataPtr, statePtr, moveType, charIdx, scaleTuning, betaSimplexTuning, intWalkWindow, beta)
 }
 
+run_mcmc_batch_cpp <- function(dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, nBatch, startIter, warmup, thin, hasNeo, nEdge) {
+    .Call(`_MkPrime_run_mcmc_batch_cpp`, dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, nBatch, startIter, warmup, thin, hasNeo, nEdge)
+}
+
 prepare_mcmc_data <- function(partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB) {
     .Call(`_MkPrime_prepare_mcmc_data`, partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB)
 }
