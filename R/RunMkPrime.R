@@ -117,6 +117,13 @@ RunMkPrime <- function(data, tree,
   # Initialize C++ data pointer (created once)
   mcmcData <- .InitMcmcData(mkd, model)
 
+  # Populate per-partition log-likelihood cache (M-064)
+  for (run in seq_len(nRuns)) {
+    for (ch in seq_len(mcmc$nChains)) {
+      fill_partition_cache(mcmcData, runs[[run]]$chainStates[[ch]])
+    }
+  }
+
   # Column indices in scalar_samples for tree reconstruction (1-based R)
   brColStart <- 6L + hasNeo + nTrans + 1L  # first br_ column
 
@@ -558,6 +565,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   tipLabels <- tree$tip.label
   transIdx <- which(mkd$type == "transformational")
   mcmcData <- .InitMcmcData(mkd, model)
+
+  # Populate per-partition log-likelihood cache (M-064)
+  for (run in seq_len(nRuns)) {
+    for (ch in seq_len(mcmc$nChains)) {
+      fill_partition_cache(mcmcData, runs[[run]]$chainStates[[ch]])
+    }
+  }
 
   # Rebuild XPtr<McmcState> from serialized R chain state lists.
   # Checkpoints store r$chains as plain R lists (see .SaveCheckpoint).

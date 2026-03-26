@@ -34,6 +34,8 @@ struct McmcState {
   IntegerVector kPrime;
   double logLik;
   double logPrior;
+  // Per-partition log-likelihood cache (M-064)
+  std::vector<double> partLogLik;
 };
 
 
@@ -125,6 +127,23 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
   s->logLik       = logLik;
   s->logPrior     = logPrior;
   return Rcpp::XPtr<McmcState>(s, true);
+}
+
+
+// [[Rcpp::export]]
+void fill_partition_cache(SEXP dataPtr, SEXP statePtr) {
+  McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
+  McmcState* state = Rcpp::XPtr<McmcState>(statePtr).get();
+  int nParts = (int)data->parts.size();
+  int nEdge  = state->relBrLengths.size();
+  NumericVector edgeLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    edgeLen[i] = state->treeLength * state->relBrLengths[i];
+  state->partLogLik.resize(nParts);
+  for (int pi = 0; pi < nParts; ++pi)
+    state->partLogLik[pi] = cpp_partition_log_likelihood(
+      *data, pi, state->parent, state->child, edgeLen,
+      state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo);
 }
 
 
@@ -320,26 +339,76 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     return false;
   }
 
-  // Evaluate likelihood (edge matrix + absolute lengths)
-  int nEdge = state->relBrLengths.size();
-  IntegerMatrix propEdge(nEdge, 2);
-  NumericVector propEdgeLen(nEdge);
-  for (int i = 0; i < nEdge; ++i) {
-    propEdge(i, 0) = state->parent[i];
-    propEdge(i, 1) = state->child[i];
-    propEdgeLen[i] = state->treeLength * state->relBrLengths[i];
-  }
-  double newLogLik = cpp_log_likelihood(
-    *data, propEdge, propEdgeLen, state->kPrime,
-    state->rateLoss, state->rateLogSd, state->rateNeo);
+  // ---- Likelihood evaluation (M-064: partial recomputation) ----
+  bool likChanges = (moveType != 8);
+  bool hasPLC = !state->partLogLik.empty();
+  double newLogLik;
+  std::vector<double> newPC;
 
-  // Accept/reject
+  if (!likChanges) {
+    newLogLik = state->logLik;
+  } else if (!hasPLC) {
+    int nEdge = state->relBrLengths.size();
+    IntegerMatrix propEdge(nEdge, 2);
+    NumericVector propEdgeLen(nEdge);
+    for (int i = 0; i < nEdge; ++i) {
+      propEdge(i, 0) = state->parent[i];
+      propEdge(i, 1) = state->child[i];
+      propEdgeLen[i] = state->treeLength * state->relBrLengths[i];
+    }
+    newLogLik = cpp_log_likelihood(*data, propEdge, propEdgeLen,
+      state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo);
+  } else {
+    int nParts = (int)data->parts.size();
+    int nEdge = state->relBrLengths.size();
+    NumericVector propEdgeLen(nEdge);
+    for (int i = 0; i < nEdge; ++i)
+      propEdgeLen[i] = state->treeLength * state->relBrLengths[i];
+    newPC = state->partLogLik;
+    switch (moveType) {
+      case 1:
+      case 3: {
+        newLogLik = state->logLik;
+        for (size_t ni = 0; ni < data->neoPartIndices.size(); ++ni) {
+          int pi = data->neoPartIndices[ni];
+          double v = cpp_partition_log_likelihood(*data, pi,
+            state->parent, state->child, propEdgeLen,
+            state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo);
+          newLogLik += (v - newPC[pi]);
+          newPC[pi] = v;
+        }
+        break;
+      }
+      case 7: {
+        int ap = data->charToPartition[charIdx];
+        newLogLik = state->logLik;
+        if (ap >= 0) {
+          double v = cpp_partition_log_likelihood(*data, ap,
+            state->parent, state->child, propEdgeLen,
+            state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo);
+          newLogLik += (v - newPC[ap]);
+          newPC[ap] = v;
+        }
+        break;
+      }
+      default: {
+        newLogLik = 0.0;
+        for (int pi = 0; pi < nParts; ++pi) {
+          newPC[pi] = cpp_partition_log_likelihood(*data, pi,
+            state->parent, state->child, propEdgeLen,
+            state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo);
+          newLogLik += newPC[pi];
+        }
+        break;
+      }
+    }
+  }
   double logAlpha = beta * (newLogLik - state->logLik) +
                     (newLogPrior - state->logPrior) + logHastings;
-
   if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
     state->logLik   = newLogLik;
     state->logPrior = newLogPrior;
+    if (!newPC.empty()) state->partLogLik = std::move(newPC);
     return true;
   }
 

@@ -106,6 +106,7 @@ mkp_stepping_stone <- function(data, tree,
   mcmcData <- .InitMcmcData(mkd, model)
   transIdx  <- which(mkd$type == "transformational")
   statePtr  <- .InitMcmcChain(state)
+  fill_partition_cache(mcmcData, statePtr)
 
   logRatios <- numeric(nStones)
 

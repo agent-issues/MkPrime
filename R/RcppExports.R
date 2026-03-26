@@ -49,6 +49,10 @@ init_mcmc_state <- function(parent, child, relBrLengths, treeLength, rateLoss, r
     .Call(`_MkPrime_init_mcmc_state`, parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior)
 }
 
+fill_partition_cache <- function(dataPtr, statePtr) {
+    invisible(.Call(`_MkPrime_fill_partition_cache`, dataPtr, statePtr))
+}
+
 get_mcmc_state <- function(statePtr) {
     .Call(`_MkPrime_get_mcmc_state`, statePtr)
 }

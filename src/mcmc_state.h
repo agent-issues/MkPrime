@@ -27,6 +27,10 @@ struct McmcData {
   Rcpp::IntegerVector kObs;           // global kObs, length nChar
   Rcpp::IntegerVector transIdxGlobal; // 0-based indices of trans chars in kPrime
 
+  // Partition index maps for partial likelihood recomputation (M-064)
+  std::vector<int> neoPartIndices;    // partition indices where type == 0
+  std::vector<int> charToPartition;   // global char idx -> partition index
+
   // Model/prior parameters
   int nCat;
   int codingType;  // 0 = none, 1 = variable, 2 = informative
@@ -50,4 +54,12 @@ double cpp_log_likelihood(
     double rateLogSd,
     double rateNeo);
 
+
+// Per-partition log-likelihood for partial recomputation (M-064).
+double cpp_partition_log_likelihood(
+    const McmcData& data, int partIdx,
+    Rcpp::IntegerVector parent, Rcpp::IntegerVector child,
+    Rcpp::NumericVector edgeLen,
+    const Rcpp::IntegerVector& kPrime,
+    double rateLoss, double rateLogSd, double rateNeo);
 #endif  // MKPRIME_MCMC_STATE_H
