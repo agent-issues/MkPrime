@@ -4,7 +4,7 @@ Last updated: 2026-03-26
 
 ## Project State
 
-**Phase:** 4 (Tree search) — COMPLETE. Ready for Phase 5 (Tempering + convergence).
+**Phase:** 5 (Parallel tempering + convergence) — IN PROGRESS.
 
 MkPrime is a new R package for Bayesian phylogenetic inference under the
 Mk' model. The architecture follows StratoBayes (C++ hot loop via Rcpp,
@@ -49,39 +49,43 @@ including ACRV and ascertainment bias correction.
 - Integration validation: posterior recovers simulated parameters ✓
 
 ### Phase 4: Tree search
-**Status:** IN PROGRESS (tasks M-022 through M-028)
+**Status:** COMPLETE (2026-03-26)
 **Goal:** NNI and SPR topology proposals, tree logging, parsimony-informed
-priors, integration validation.
-
-**Task breakdown:**
-- M-022: Topology as mutable MCMC state (infrastructure)
-- M-023: NNI proposal on unrooted binary trees
-- M-024: SPR proposal on unrooted binary trees
-- M-025: Tree move integration into MCMC loop + adaptation
-- M-026: exp_steps default from parsimony score
-- M-027: Tree logging to Newick file
-- M-028: Integration validation (tree recovery)
-
-**Design decisions:**
-- R implementation for tree moves (MCMC loop is in R; C++ deferred to Phase 5
-  when the hot loop migrates). Tree manipulation is O(1); the bottleneck is
-  likelihood evaluation, already in C++.
-- Unrooted binary trees have fixed nEdge = 2n−3 regardless of topology, so
-  the state vector length is constant across moves.
-- Compound Dirichlet prior already implicit (tree_length × Gamma, rel_br_lengths
-  × Dirichlet(1)). Phase 4 doesn't change the prior form; Phase 7 may add
-  internal/external α differentiation.
-
-**Exit criteria:**
-- Topology moves preserve tree invariants (binary, correct tips, correct nEdge)
-- NNI and SPR with correct Hastings ratios
-- Tree logging to file (Newick)
-- Recovers known tree from simulated data (integration validation)
+priors, integration validation. Tasks M-022 through M-028.
 
 ### Phase 5: Parallel tempering + convergence
-**Status:** Not started — next phase
+**Status:** IN PROGRESS (tasks M-029 through M-036)
 **Goal:** Multiple chains with adaptive temperature spacing, convergence
 monitoring, stopping rules, checkpointing.
+
+**Task breakdown:**
+- M-029: Parallel tempering core (multi-chain + temperature ladder)
+- M-030: Chain swap proposals between adjacent temperatures
+- M-031: Adaptive temperature tuning
+- M-032: Independent runs (nRuns outer loop)
+- M-033: Convergence monitoring (ESS + PSRF)
+- M-034: Stopping rules (ESS/PSRF/time/iter thresholds)
+- M-035: Checkpointing (save/restore)
+- M-036: MkPosterior multi-run updates
+
+**Design decisions:**
+- Geometric temperature ladder: β_i = heat^((i-1)/(nChains-1)). Cold
+  chain β=1, hottest β=heat (default 0.2).
+- Heated acceptance: only likelihood is tempered (β×logLik + logPrior).
+  Prior is unheated to maintain proper support.
+- State stores unheated logLik/logPrior. Heated posterior computed on the
+  fly for MH acceptance.
+- Per-chain independent tuning: heated chains need different proposal widths.
+- Independent runs for PSRF: nRuns≥2 enables Gelman–Rubin convergence
+  diagnostics across cold chains from different runs.
+- Sequential execution of runs. Parallel (future/furrr) deferred.
+
+**Exit criteria:**
+- Parallel tempering improves mixing vs single chain (measured by ESS/iter)
+- Chain swap acceptance 23–30% between adjacent pairs
+- PSRF < 1.05 on simulated data with sufficient iterations
+- Checkpoint save/restore produces identical continuation
+- MkPosterior reports combined diagnostics across runs
 
 ### Phase 6: Progress display + GUI hooks
 **Status:** Not started

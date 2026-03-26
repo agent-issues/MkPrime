@@ -4,7 +4,15 @@
 \alias{MkPrimeMCMC}
 \title{Configure MCMC settings}
 \usage{
-MkPrimeMCMC(nIter = 10000L, thin = 10L, warmup = NULL, tuning = list())
+MkPrimeMCMC(
+  nIter = 10000L,
+  thin = 10L,
+  warmup = NULL,
+  nChains = 1L,
+  heat = 0.2,
+  tree_file = NULL,
+  tuning = list()
+)
 }
 \arguments{
 \item{nIter}{Total iterations (including warmup). Default 10,000.}
@@ -14,6 +22,19 @@ Default 10.}
 
 \item{warmup}{Number of warmup (adaptation) iterations. Default
 \code{nIter / 2}.}
+
+\item{nChains}{Number of chains in the temperature ladder (parallel
+tempering). Default 1 (no tempering). Set to 4 for typical analyses.
+Chain 1 is the cold chain (beta = 1).}
+
+\item{heat}{Temperature of the hottest chain (0 < heat < 1). Default
+0.2. The temperature ladder uses geometric spacing:
+\code{beta_i = heat^((i-1)/(nChains-1))} for i = 1, ..., nChains.
+Ignored when \code{nChains = 1}.}
+
+\item{tree_file}{Path to write sampled trees in Newick format.
+\code{NULL} (default) disables file logging. Trees are always stored
+in the returned \code{MkPosterior} object regardless.}
 
 \item{tuning}{Named list of initial tuning parameters for each move
 type. See Details.}
@@ -33,5 +54,12 @@ Default tuning values:
 \item \code{scale_rate_log_sd}: 0.5
 \item \code{scale_p}: 0.5
 \item \code{int_walk_window}: 1
+}
+\subsection{Parallel tempering}{
+
+When \code{nChains > 1}, chains run at different temperatures. The cold
+chain (beta = 1) targets the true posterior. Heated chains (beta < 1)
+flatten the likelihood surface, aiding exploration. Chain swap proposals
+(see M-030) exchange states between adjacent temperatures.
 }
 }

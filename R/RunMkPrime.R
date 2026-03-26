@@ -2,11 +2,13 @@
 #
 # Phase 3: single chain, fixed topology, R-side loop.
 # Phase 4: topology moves (NNI, SPR) via mutable state$tree.
+# Phase 5: parallel tempering (multiple chains, temperature ladder).
 
 #' Run Bayesian MCMC under the MkPrime model
 #'
 #' Metropolis-Hastings MCMC sampling tree topology, branch lengths, model
 #' parameters, and per-character k' (for transformational characters).
+#' Supports parallel tempering with a geometric temperature ladder.
 #'
 #' @param data A `phyDat` object or `MkPrimeData` object.
 #' @param tree A `phylo` object (starting topology).
@@ -52,14 +54,34 @@ RunMkPrime <- function(data, tree,
   has_trans <- length(trans_idx) > 0
   nTrans <- length(trans_idx)
 
-  # --- Initialize MCMC state (tree topology stored in state) ---
-  state <- .init_state(tree, mkd, model)
+  nChains <- mcmc$nChains
 
-  # --- Build move schedule ---
+  # --- Temperature ladder ---
+  betas <- .build_temperature_ladder(nChains, mcmc$heat)
+
+  # --- Initialize per-chain states ---
+  chains <- vector("list", nChains)
+  for (ch in seq_len(nChains)) {
+    chains[[ch]] <- .init_state(tree, mkd, model)
+  }
+
+  # --- Build move schedule (shared across chains) ---
   moves <- .build_moves(nEdge, nTrans, has_neo, mcmc,
                         fix_topology = fix_topology)
 
-  # --- Pre-allocate sample storage ---
+  # --- Per-chain acceptance tracking and tuning ---
+  chain_accept <- vector("list", nChains)
+  chain_propose <- vector("list", nChains)
+  chain_tuning <- vector("list", nChains)
+  move_names <- vapply(moves, `[[`, character(1), "name")
+  for (ch in seq_len(nChains)) {
+    chain_accept[[ch]] <- integer(length(moves))
+    chain_propose[[ch]] <- integer(length(moves))
+    names(chain_accept[[ch]]) <- names(chain_propose[[ch]]) <- move_names
+    chain_tuning[[ch]] <- mcmc$tuning
+  }
+
+  # --- Pre-allocate sample storage (cold chain only) ---
   nSaved <- as.integer((mcmc$nIter - mcmc$warmup) / mcmc$thin)
   param_names <- .param_names(mkd, nEdge)
   samples <- matrix(NA_real_, nrow = nSaved, ncol = length(param_names),
@@ -73,56 +95,80 @@ RunMkPrime <- function(data, tree,
     writeLines("", tree_file)
   }
 
-  # Acceptance tracking
-  accept_count <- integer(length(moves))
-  propose_count <- integer(length(moves))
-  names(accept_count) <- names(propose_count) <- vapply(
-    moves, `[[`, character(1), "name"
-  )
-
-  # Adaptation state
-  tuning <- mcmc$tuning
+  # --- Swap tracking ---
+  if (nChains > 1L) {
+    swap_accept <- integer(nChains - 1L)
+    swap_propose <- integer(nChains - 1L)
+  }
 
   # --- MCMC loop ---
   cli::cli_progress_bar(
     "MCMC", total = mcmc$nIter,
-    format = "{cli::pb_bar} {cli::pb_current}/{cli::pb_total} | logP: {format(round(state$log_post, 1), nsmall = 1)} | acc: {format(round(recent_acc, 2), nsmall = 2)}"
+    format = paste0(
+      "{cli::pb_bar} {cli::pb_current}/{cli::pb_total}",
+      " | logP: {format(round(cold_logpost, 1), nsmall = 1)}",
+      " | acc: {format(round(recent_acc, 2), nsmall = 2)}",
+      if (nChains > 1L) " | chains: {nChains}" else ""
+    )
   )
+  cold_logpost <- chains[[1]]$log_lik + chains[[1]]$log_prior
   recent_acc <- 0
   recent_window <- 500L
   recent_accepts <- logical(recent_window)
   recent_pos <- 0L
 
   for (iter in seq_len(mcmc$nIter)) {
-    # Select move
-    move_idx <- sample.int(length(moves), 1L, prob = vapply(
-      moves, `[[`, numeric(1), "weight"
-    ))
-    move <- moves[[move_idx]]
-    propose_count[move_idx] <- propose_count[move_idx] + 1L
+    # --- Propose moves for each chain ---
+    for (ch in seq_len(nChains)) {
+      move_idx <- sample.int(length(moves), 1L, prob = vapply(
+        moves, `[[`, numeric(1), "weight"
+      ))
+      move <- moves[[move_idx]]
+      chain_propose[[ch]][move_idx] <- chain_propose[[ch]][move_idx] + 1L
 
-    # Generate proposal
-    accepted <- .do_move(move, state, mkd, model, tuning)
+      accepted <- .do_move(move, chains[[ch]], mkd, model,
+                           chain_tuning[[ch]], beta = betas[ch])
 
-    if (accepted$accept) {
-      state <- accepted$state
-      accept_count[move_idx] <- accept_count[move_idx] + 1L
+      if (accepted$accept) {
+        chains[[ch]] <- accepted$state
+        chain_accept[[ch]][move_idx] <- chain_accept[[ch]][move_idx] + 1L
+      }
+
+      # Track recent acceptance for cold chain only
+      if (ch == 1L) {
+        recent_pos <- (recent_pos %% recent_window) + 1L
+        recent_accepts[recent_pos] <- accepted$accept
+      }
     }
 
-    # Track recent acceptance
-    recent_pos <- (recent_pos %% recent_window) + 1L
-    recent_accepts[recent_pos] <- accepted$accept
+    # --- Chain swap proposal (M-030 placeholder) ---
+    if (nChains > 1L) {
+      swap_result <- .propose_chain_swap(chains, betas)
+      chains <- swap_result$chains
+      if (!is.null(swap_result$pair)) {
+        pair_idx <- swap_result$pair[1]
+        swap_propose[pair_idx] <- swap_propose[pair_idx] + 1L
+        if (swap_result$accepted) {
+          swap_accept[pair_idx] <- swap_accept[pair_idx] + 1L
+        }
+      }
+    }
 
-    # Adaptation during warmup
+    # --- Adaptation during warmup (per-chain) ---
     if (iter <= mcmc$warmup && iter %% 200L == 0L) {
-      tuning <- .adapt_tuning(tuning, accept_count, propose_count, moves)
+      for (ch in seq_len(nChains)) {
+        chain_tuning[[ch]] <- .adapt_tuning(
+          chain_tuning[[ch]], chain_accept[[ch]],
+          chain_propose[[ch]], moves
+        )
+      }
     }
 
-    # Save samples post-warmup
+    # --- Save cold chain samples post-warmup ---
     if (iter > mcmc$warmup && (iter - mcmc$warmup) %% mcmc$thin == 0L) {
       saved_idx <- saved_idx + 1L
-      samples[saved_idx, ] <- .state_to_row(state, mkd, nEdge)
-      cur_tree <- .state_to_tree(state)
+      samples[saved_idx, ] <- .state_to_row(chains[[1]], mkd, nEdge)
+      cur_tree <- .state_to_tree(chains[[1]])
       tree_samples[[saved_idx]] <- cur_tree
       if (!is.null(tree_file)) {
         cat(ape::write.tree(cur_tree), "\n", file = tree_file, append = TRUE)
@@ -132,26 +178,50 @@ RunMkPrime <- function(data, tree,
     if (iter %% 100L == 0L) {
       n_recent <- min(iter, recent_window)
       recent_acc <- sum(recent_accepts[seq_len(n_recent)]) / n_recent
+      cold_logpost <- chains[[1]]$log_lik + chains[[1]]$log_prior
       cli::cli_progress_update()
     }
   }
   cli::cli_progress_done()
 
   # --- Build result ---
-  MkPosterior(
+  cold_acceptance <- chain_accept[[1]] / pmax(chain_propose[[1]], 1L)
+
+  result <- MkPosterior(
     samples = samples,
     trees = tree_samples,
-    acceptance = accept_count / pmax(propose_count, 1L),
+    acceptance = cold_acceptance,
     model = model,
     data = mkd,
     mcmc = mcmc,
     warmup = mcmc$warmup,
-    tuning = tuning
+    tuning = chain_tuning[[1]]
   )
+
+  # Attach tempering info
+  if (nChains > 1L) {
+    result$betas <- betas
+    result$swap_rates <- swap_accept / pmax(swap_propose, 1L)
+    result$chain_acceptance <- lapply(seq_len(nChains), function(ch) {
+      chain_accept[[ch]] / pmax(chain_propose[[ch]], 1L)
+    })
+  }
+
+  result
 }
 
 
 # --- Internal helpers ---
+
+#' Build geometric temperature ladder
+#' @keywords internal
+.build_temperature_ladder <- function(nChains, heat) {
+  if (nChains == 1L) return(1.0)
+  # beta_1 = 1 (cold), beta_nChains = heat
+  # beta_i = heat^((i-1) / (nChains-1))
+  heat^(seq(0, 1, length.out = nChains))
+}
+
 
 #' Initialize MCMC state from tree and data
 #' @keywords internal
@@ -174,7 +244,7 @@ RunMkPrime <- function(data, tree,
     p = 0.5
   )
 
-  # Compute initial likelihood and prior
+  # Compute initial likelihood and prior (unheated)
   state$log_lik <- mkp_loglikelihood(
     tree, mkd,
     kPrime = state$kPrime,
@@ -237,8 +307,13 @@ RunMkPrime <- function(data, tree,
 
 
 #' Execute a move and return accept/reject decision
+#'
+#' @param beta Inverse temperature (1 = cold chain, < 1 = heated).
+#'   The heated MH acceptance is:
+#'   `log_alpha = beta * (logLik_new - logLik_old) +
+#'                (logPrior_new - logPrior_old) + log_hastings`
 #' @keywords internal
-.do_move <- function(move, state, mkd, model, tuning) {
+.do_move <- function(move, state, mkd, model, tuning, beta = 1.0) {
   proposed <- state
 
   switch(move$type,
@@ -287,13 +362,13 @@ RunMkPrime <- function(data, tree,
     return(list(accept = FALSE, state = state))
   }
 
-  # Compute proposed prior
+  # Compute proposed prior (unheated)
   proposed$log_prior <- log_prior(proposed, model, mkd)
   if (!is.finite(proposed$log_prior)) {
     return(list(accept = FALSE, state = state))
   }
 
-  # Compute proposed likelihood — topology from state, branch lengths derived
+  # Compute proposed likelihood (unheated)
   tmp_tree <- proposed$tree
   tmp_tree$edge.length <- proposed$tree_length * proposed$rel_br_lengths
   proposed$log_lik <- mkp_loglikelihood(
@@ -307,13 +382,48 @@ RunMkPrime <- function(data, tree,
   )
   proposed$log_post <- proposed$log_lik + proposed$log_prior
 
-  # MH accept/reject
-  log_alpha <- proposed$log_post - state$log_post + log_hastings
+  # Heated MH acceptance: only likelihood is tempered
+
+  log_alpha <- beta * (proposed$log_lik - state$log_lik) +
+               (proposed$log_prior - state$log_prior) +
+               log_hastings
+
   if (is.finite(log_alpha) && log(runif(1)) < log_alpha) {
     list(accept = TRUE, state = proposed)
   } else {
     list(accept = FALSE, state = state)
   }
+}
+
+
+#' Propose a swap between two adjacent chains
+#'
+#' Selects a random adjacent pair and proposes exchanging their full states.
+#' @return List with `chains` (possibly swapped), `pair` (integer vector of
+#'   length 2 giving the lower index), and `accepted` (logical).
+#' @keywords internal
+.propose_chain_swap <- function(chains, betas) {
+  nChains <- length(chains)
+  if (nChains < 2L) {
+    return(list(chains = chains, pair = NULL, accepted = FALSE))
+  }
+
+  # Pick random adjacent pair
+  i <- sample.int(nChains - 1L, 1L)
+  j <- i + 1L
+
+  # Swap acceptance: exp((beta_i - beta_j) * (logLik_j - logLik_i))
+  log_alpha <- (betas[i] - betas[j]) *
+               (chains[[j]]$log_lik - chains[[i]]$log_lik)
+
+  accepted <- is.finite(log_alpha) && log(runif(1)) < log_alpha
+  if (accepted) {
+    tmp <- chains[[i]]
+    chains[[i]] <- chains[[j]]
+    chains[[j]] <- tmp
+  }
+
+  list(chains = chains, pair = c(i, j), accepted = accepted)
 }
 
 
@@ -402,6 +512,5 @@ RunMkPrime <- function(data, tree,
     }
   }
 
-  # Reset counters implicitly — caller should track
   tuning
 }

@@ -4,7 +4,7 @@
 \alias{.build_moves}
 \title{Build move schedule}
 \usage{
-.build_moves(nEdge, nTrans, has_neo, mcmc)
+.build_moves(nEdge, nTrans, has_neo, mcmc, fix_topology = FALSE)
 }
 \description{
 Build move schedule

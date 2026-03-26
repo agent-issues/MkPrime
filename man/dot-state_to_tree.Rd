@@ -4,7 +4,7 @@
 \alias{.state_to_tree}
 \title{Reconstruct a phylo object from current state}
 \usage{
-.state_to_tree(state, tree)
+.state_to_tree(state)
 }
 \description{
 Reconstruct a phylo object from current state

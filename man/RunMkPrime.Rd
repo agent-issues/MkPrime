@@ -10,13 +10,14 @@ RunMkPrime(
   neomorphic = integer(0),
   known_states = integer(0),
   model = NULL,
-  mcmc = NULL
+  mcmc = NULL,
+  fix_topology = FALSE
 )
 }
 \arguments{
 \item{data}{A \code{phyDat} object or \code{MkPrimeData} object.}
 
-\item{tree}{A \code{phylo} object (the fixed topology).}
+\item{tree}{A \code{phylo} object (starting topology).}
 
 \item{neomorphic, known_states}{Passed to \code{\link[=MkPrimeData]{MkPrimeData()}} if \code{data} is
 a \code{phyDat} object.}
@@ -24,12 +25,15 @@ a \code{phyDat} object.}
 \item{model}{An \code{MkPrimeModel} object, or \code{NULL} for defaults.}
 
 \item{mcmc}{An \code{MkPrimeMCMC} object, or \code{NULL} for defaults.}
+
+\item{fix_topology}{Logical. If \code{TRUE}, tree topology is fixed (Phase 3
+behaviour). Default \code{FALSE} enables NNI and SPR topology proposals.}
 }
 \value{
 An \code{MkPosterior} object.
 }
 \description{
-Metropolis-Hastings MCMC on a fixed tree topology, sampling branch
-lengths, model parameters, and per-character k' (for transformational
-characters).
+Metropolis-Hastings MCMC sampling tree topology, branch lengths, model
+parameters, and per-character k' (for transformational characters).
+Supports parallel tempering with a geometric temperature ladder.
 }

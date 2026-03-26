@@ -4,7 +4,12 @@
 \alias{.do_move}
 \title{Execute a move and return accept/reject decision}
 \usage{
-.do_move(move, state, mkd, model, tree, tuning)
+.do_move(move, state, mkd, model, tuning, beta = 1)
+}
+\arguments{
+\item{beta}{Inverse temperature (1 = cold chain, < 1 = heated).
+The heated MH acceptance is:
+\code{log_alpha = beta * (logLik_new - logLik_old) + (logPrior_new - logPrior_old) + log_hastings}}
 }
 \description{
 Execute a move and return accept/reject decision
