@@ -19,14 +19,13 @@ Task IDs use `M-nnn` prefix (MkPrime) to avoid collision with TreeSearch
 | ID | Pri | Status | Blocks | Description | Notes |
 |----|-----|--------|--------|-------------|-------|
 | M-003 | P1 | ASSIGNED (A) | M-006 | **`MkPrimeData()` — phyDat input and character classification.** Accept a `phyDat` object + optional character annotations. Auto-detect neomorphic (binary with state 0 = "absent") vs transformational (multi-state). Allow user override. Return a structured list with partitioned characters. | Input: `phyDat` from TreeTools/ape. |
-| M-004 | P1 | ASSIGNED (A) | — | **Data validation and edge cases.** Handle: invariant characters (warn + drop), missing data (NA / `?` states), characters with only 1 observed state, empty taxa. Test each case. | |
-| M-005 | P1 | ASSIGNED (A) | — | **Unit tests for data layer.** Test character classification, partitioning, edge cases. Use small hand-crafted `phyDat` objects. Validate round-trip: `phyDat` → `MkPrimeData()` → internal structures. | |
+
 
 ## Phase 2: Likelihood engine (C++)
 
 | ID | Pri | Status | Blocks | Description | Notes |
 |----|-----|--------|--------|-------------|-------|
-| M-006 | P1 | OPEN | M-008, M-009, M-010 | **JC(k') rate matrix and P(t).** Implement analytical eigendecomposition for JC(k'): `P_ij(t) = (1/k') + ((k'-1)/k') * exp(-k't/(k'-1))` for i=j, `(1/k') - (1/k') * exp(-k't/(k'-1))` for i≠j. Rcpp-exported function that returns P(t) matrix given k' and t. | O(1) computation — no matrix exponentiation needed. |
+| M-006 | P1 | ASSIGNED (A) | M-008, M-009, M-010 | **JC(k') rate matrix and P(t).** Implement analytical eigendecomposition for JC(k'): `P_ij(t) = (1/k') + ((k'-1)/k') * exp(-k't/(k'-1))` for i=j, `(1/k') - (1/k') * exp(-k't/(k'-1))` for i≠j. Rcpp-exported function that returns P(t) matrix given k' and t. | O(1) computation — no matrix exponentiation needed. |
 | M-007 | P1 | OPEN | M-008, M-009 | **MkN rate matrix and P(t).** Implement asymmetric 2-state Q-matrix with `rate_loss` parameter. Analytical P(t) for 2×2. Rcpp-exported. | Simpler than JC(k') but different parameterization. |
 | M-008 | P1 | OPEN | M-010, M-011 | **Felsenstein pruning (C++).** Post-order traversal computing conditional likelihoods at each node. Input: tree topology (parent-child arrays), branch lengths, tip-state data, P(t) matrices. Output: log-likelihood at root. | Core hot-path code. Design the data layout carefully (column-major tip states, flat arrays). |
 | M-009 | P2 | OPEN | M-011 | **ACRV: discretized lognormal rate categories.** Implement 6-category discretized lognormal (Wagner 2012). Given `rate_log_sd`, compute category rates and weights. Integrate into likelihood: sum over rate categories. | `rate_log_sd ~ Gamma(1, 1)` prior. |

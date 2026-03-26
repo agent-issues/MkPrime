@@ -5,3 +5,15 @@ mkp_hello <- function() {
     .Call(`_MkPrime_mkp_hello`)
 }
 
+jc_transition_probs <- function(k, t) {
+    .Call(`_MkPrime_jc_transition_probs`, k, t)
+}
+
+mkn_transition_probs <- function(rate_loss, t) {
+    .Call(`_MkPrime_mkn_transition_probs`, rate_loss, t)
+}
+
+mkn_stationary_freqs <- function(rate_loss) {
+    .Call(`_MkPrime_mkn_stationary_freqs`, rate_loss)
+}
+

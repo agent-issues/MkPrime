@@ -13,7 +13,7 @@ R orchestration). The full design plan is in `../.positai/plans/mkprime-r.md`.
 ## Phase Plan
 
 ### Phase 1: Foundation (package skeleton + data layer)
-**Status:** Not started
+**Status:** COMPLETE (2026-03-26)
 **Goal:** Working package that accepts `phyDat` input, classifies characters
 into neomorphic/transformational/known types, partitions by kObs, and produces
 the internal data structures the C++ likelihood engine will consume.
