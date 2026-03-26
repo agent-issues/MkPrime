@@ -1,19 +1,21 @@
 # Main MCMC entry point for MkPrime
 #
 # Phase 3: single chain, fixed topology, R-side loop.
+# Phase 4: topology moves (NNI, SPR) via mutable state$tree.
 
 #' Run Bayesian MCMC under the MkPrime model
 #'
-#' Metropolis-Hastings MCMC on a fixed tree topology, sampling branch
-#' lengths, model parameters, and per-character k' (for transformational
-#' characters).
+#' Metropolis-Hastings MCMC sampling tree topology, branch lengths, model
+#' parameters, and per-character k' (for transformational characters).
 #'
 #' @param data A `phyDat` object or `MkPrimeData` object.
-#' @param tree A `phylo` object (the fixed topology).
+#' @param tree A `phylo` object (starting topology).
 #' @param neomorphic,known_states Passed to [MkPrimeData()] if `data` is
 #'   a `phyDat` object.
 #' @param model An `MkPrimeModel` object, or `NULL` for defaults.
 #' @param mcmc An `MkPrimeMCMC` object, or `NULL` for defaults.
+#' @param fix_topology Logical. If `TRUE`, tree topology is fixed (Phase 3
+#'   behaviour). Default `FALSE` enables NNI and SPR topology proposals.
 #'
 #' @return An `MkPosterior` object.
 #' @export
@@ -21,7 +23,8 @@ RunMkPrime <- function(data, tree,
                        neomorphic = integer(0),
                        known_states = integer(0),
                        model = NULL,
-                       mcmc = NULL) {
+                       mcmc = NULL,
+                       fix_topology = FALSE) {
 
   # --- Input processing ---
   if (inherits(data, "MkPrimeData")) {
@@ -40,7 +43,7 @@ RunMkPrime <- function(data, tree,
 
   model <- .finalize_model(model, tree, mkd)
 
-  # Precompute tree structure (fixed topology)
+  # Precompute tree structure
   tree <- ape::reorder.phylo(tree, "postorder")
   nEdge <- nrow(tree$edge)
 
@@ -49,11 +52,12 @@ RunMkPrime <- function(data, tree,
   has_trans <- length(trans_idx) > 0
   nTrans <- length(trans_idx)
 
-  # --- Initialize MCMC state ---
+  # --- Initialize MCMC state (tree topology stored in state) ---
   state <- .init_state(tree, mkd, model)
 
   # --- Build move schedule ---
-  moves <- .build_moves(nEdge, nTrans, has_neo, mcmc)
+  moves <- .build_moves(nEdge, nTrans, has_neo, mcmc,
+                        fix_topology = fix_topology)
 
   # --- Pre-allocate sample storage ---
   nSaved <- as.integer((mcmc$nIter - mcmc$warmup) / mcmc$thin)
@@ -92,7 +96,7 @@ RunMkPrime <- function(data, tree,
     propose_count[move_idx] <- propose_count[move_idx] + 1L
 
     # Generate proposal
-    accepted <- .do_move(move, state, mkd, model, tree, tuning)
+    accepted <- .do_move(move, state, mkd, model, tuning)
 
     if (accepted$accept) {
       state <- accepted$state
@@ -112,7 +116,7 @@ RunMkPrime <- function(data, tree,
     if (iter > mcmc$warmup && (iter - mcmc$warmup) %% mcmc$thin == 0L) {
       saved_idx <- saved_idx + 1L
       samples[saved_idx, ] <- .state_to_row(state, mkd, nEdge)
-      tree_samples[[saved_idx]] <- .state_to_tree(state, tree)
+      tree_samples[[saved_idx]] <- .state_to_tree(state)
     }
 
     if (iter %% 100L == 0L) {
@@ -151,6 +155,7 @@ RunMkPrime <- function(data, tree,
   if (length(known_idx)) kPrime[known_idx] <- mkd$known_k[known_idx]
 
   state <- list(
+    tree = tree,
     tree_length = tree_length,
     rel_br_lengths = rel_br,
     rate_loss = 1.0,
@@ -160,11 +165,8 @@ RunMkPrime <- function(data, tree,
   )
 
   # Compute initial likelihood and prior
-  edge_length <- state$tree_length * state$rel_br_lengths
-  tmp_tree <- tree
-  tmp_tree$edge.length <- edge_length
   state$log_lik <- mkp_loglikelihood(
-    tmp_tree, mkd,
+    tree, mkd,
     kPrime = state$kPrime,
     rate_loss = state$rate_loss,
     rate_log_sd = state$rate_log_sd,
@@ -181,13 +183,23 @@ RunMkPrime <- function(data, tree,
 
 #' Build move schedule
 #' @keywords internal
-.build_moves <- function(nEdge, nTrans, has_neo, mcmc) {
+.build_moves <- function(nEdge, nTrans, has_neo, mcmc,
+                         fix_topology = FALSE) {
   moves <- list(
     list(name = "tree_length", type = "scale", target = "tree_length",
          weight = 1),
     list(name = "branch_lengths", type = "beta_simplex",
          target = "rel_br_lengths", weight = max(1, nEdge / 3))
   )
+
+  if (!fix_topology && nEdge >= 5L) {
+    moves <- c(moves, list(
+      list(name = "nni", type = "nni", target = NULL,
+           weight = max(1, nEdge / 2)),
+      list(name = "spr", type = "spr", target = NULL,
+           weight = max(1, nEdge / 4))
+    ))
+  }
 
   if (nTrans > 0) {
     moves <- c(moves, list(
@@ -216,7 +228,7 @@ RunMkPrime <- function(data, tree,
 
 #' Execute a move and return accept/reject decision
 #' @keywords internal
-.do_move <- function(move, state, mkd, model, tree, tuning) {
+.do_move <- function(move, state, mkd, model, tuning) {
   proposed <- state
 
   switch(move$type,
@@ -230,6 +242,20 @@ RunMkPrime <- function(data, tree,
       prop <- propose_beta_simplex(state$rel_br_lengths,
                                     tuning = tuning$beta_simplex)
       proposed$rel_br_lengths <- prop$value
+      log_hastings <- prop$log_hastings
+    },
+    nni = {
+      prop <- propose_nni(state$tree, state$tree_length,
+                          state$rel_br_lengths)
+      proposed$tree <- prop$tree
+      proposed$rel_br_lengths <- prop$rel_br_lengths
+      log_hastings <- prop$log_hastings
+    },
+    spr = {
+      prop <- propose_spr(state$tree, state$tree_length,
+                          state$rel_br_lengths)
+      proposed$tree <- prop$tree
+      proposed$rel_br_lengths <- prop$rel_br_lengths
       log_hastings <- prop$log_hastings
     },
     int_walk = {
@@ -257,10 +283,9 @@ RunMkPrime <- function(data, tree,
     return(list(accept = FALSE, state = state))
   }
 
-  # Compute proposed likelihood
-  edge_length <- proposed$tree_length * proposed$rel_br_lengths
-  tmp_tree <- tree
-  tmp_tree$edge.length <- edge_length
+  # Compute proposed likelihood — topology from state, branch lengths derived
+  tmp_tree <- proposed$tree
+  tmp_tree$edge.length <- proposed$tree_length * proposed$rel_br_lengths
   proposed$log_lik <- mkp_loglikelihood(
     tmp_tree, mkd,
     kPrime = proposed$kPrime,
@@ -315,8 +340,8 @@ RunMkPrime <- function(data, tree,
 
 #' Reconstruct a phylo object from current state
 #' @keywords internal
-.state_to_tree <- function(state, tree) {
-  t <- tree
+.state_to_tree <- function(state) {
+  t <- state$tree
   t$edge.length <- state$tree_length * state$rel_br_lengths
   t
 }
@@ -326,13 +351,17 @@ RunMkPrime <- function(data, tree,
 #' @keywords internal
 .adapt_tuning <- function(tuning, accept_count, propose_count, moves) {
   targets <- c(
-    tree_length = 0.35, branch_lengths = 0.23, kPrime = 0.35,
+    tree_length = 0.35, branch_lengths = 0.23,
+    nni = 0.23, spr = 0.10,
+    kPrime = 0.35,
     p = 0.35, rate_loss = 0.35, rate_log_sd = 0.35
   )
 
   tuning_keys <- c(
     tree_length = "scale_tree_length",
     branch_lengths = "beta_simplex",
+    nni = NA_character_,
+    spr = NA_character_,
     kPrime = "int_walk_window",
     p = "scale_p",
     rate_loss = "scale_rate_loss",

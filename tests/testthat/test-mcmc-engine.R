@@ -95,7 +95,7 @@ test_that("MkPosterior print, summary, plot methods work", {
 })
 
 
-test_that("Acceptance rates are non-degenerate", {
+test_that("Acceptance rates are non-degenerate (fixed topology)", {
   library(ape)
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
@@ -103,7 +103,7 @@ test_that("Acceptance rates are non-degenerate", {
   pd <- TreeTools::MatrixToPhyDat(mat)
 
   set.seed(8371)
-  result <- RunMkPrime(pd, tree,
+  result <- RunMkPrime(pd, tree, fix_topology = TRUE,
     mcmc = MkPrimeMCMC(nIter = 2000L, thin = 10L, warmup = 1000L))
 
   # No move type should have 0% or 100% acceptance
@@ -111,4 +111,61 @@ test_that("Acceptance rates are non-degenerate", {
     expect_gt(result$acceptance[nm], 0, label = paste(nm, "acceptance > 0"))
     expect_lt(result$acceptance[nm], 1, label = paste(nm, "acceptance < 1"))
   }
+  # Should NOT have topology moves
+ expect_false("nni" %in% names(result$acceptance))
+  expect_false("spr" %in% names(result$acceptance))
+})
+
+
+test_that("MCMC with topology moves runs on 8-tip tree", {
+  library(ape)
+  set.seed(4523)
+  tree <- rtree(8)
+  tree <- unroot(tree)
+  mat <- matrix(sample(0:1, 8 * 5, replace = TRUE), 8, 5,
+                dimnames = list(tree$tip.label, NULL))
+  # Ensure variable characters (not all same)
+  for (j in seq_len(ncol(mat))) {
+    if (length(unique(mat[, j])) == 1) mat[1, j] <- 1L - mat[1, j]
+  }
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nIter = 1000L, thin = 5L, warmup = 500L))
+
+  expect_s3_class(result, "MkPosterior")
+  # Should have NNI and SPR moves
+  expect_true("nni" %in% names(result$acceptance))
+  expect_true("spr" %in% names(result$acceptance))
+  # NNI should have some acceptance
+  expect_gt(result$acceptance["nni"], 0)
+  # All sampled trees should be valid
+  for (tr in result$trees) {
+    expect_s3_class(tr, "phylo")
+    expect_equal(length(tr$tip.label), 8L)
+    expect_true(all(tr$edge.length > 0))
+  }
+})
+
+
+test_that("Topology moves explore different topologies", {
+  library(ape)
+  set.seed(9317)
+  tree <- rtree(8)
+  tree <- unroot(tree)
+  nTip <- length(tree$tip.label)
+  # Random binary data with enough characters to give signal
+  mat <- matrix(sample(0:1, nTip * 10, replace = TRUE), nTip, 10,
+                dimnames = list(tree$tip.label, NULL))
+  for (j in seq_len(ncol(mat))) {
+    if (length(unique(mat[, j])) == 1) mat[1, j] <- 1L - mat[1, j]
+  }
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nIter = 5000L, thin = 10L, warmup = 2500L))
+
+  # Should sample at least a few different topologies
+  newicks <- vapply(result$trees, ape::write.tree, character(1))
+  expect_gt(length(unique(newicks)), 1)
 })

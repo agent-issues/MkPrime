@@ -49,15 +49,34 @@ including ACRV and ascertainment bias correction.
 - Integration validation: posterior recovers simulated parameters ✓
 
 ### Phase 4: Tree search
-**Status:** Not started
-**Goal:** SPR and NNI topology proposals, compound Dirichlet branch length
-prior, tree logging.
+**Status:** IN PROGRESS (tasks M-022 through M-028)
+**Goal:** NNI and SPR topology proposals, tree logging, parsimony-informed
+priors, integration validation.
+
+**Task breakdown:**
+- M-022: Topology as mutable MCMC state (infrastructure)
+- M-023: NNI proposal on unrooted binary trees
+- M-024: SPR proposal on unrooted binary trees
+- M-025: Tree move integration into MCMC loop + adaptation
+- M-026: exp_steps default from parsimony score
+- M-027: Tree logging to Newick file
+- M-028: Integration validation (tree recovery)
+
+**Design decisions:**
+- R implementation for tree moves (MCMC loop is in R; C++ deferred to Phase 5
+  when the hot loop migrates). Tree manipulation is O(1); the bottleneck is
+  likelihood evaluation, already in C++.
+- Unrooted binary trees have fixed nEdge = 2n−3 regardless of topology, so
+  the state vector length is constant across moves.
+- Compound Dirichlet prior already implicit (tree_length × Gamma, rel_br_lengths
+  × Dirichlet(1)). Phase 4 doesn't change the prior form; Phase 7 may add
+  internal/external α differentiation.
 
 **Exit criteria:**
-- Topology moves preserve tree invariants
-- Branch length prior correctly implemented
+- Topology moves preserve tree invariants (binary, correct tips, correct nEdge)
+- NNI and SPR with correct Hastings ratios
 - Tree logging to file (Newick)
-- Recovers known tree from simulated data
+- Recovers known tree from simulated data (integration validation)
 
 ### Phase 5: Parallel tempering + convergence
 **Status:** Not started
