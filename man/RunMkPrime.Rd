@@ -35,6 +35,6 @@ An \code{MkPosterior} object.
 \description{
 Metropolis-Hastings MCMC sampling tree topology, branch lengths, model
 parameters, and per-character k' (for transformational characters).
-Supports parallel tempering with a geometric temperature ladder and
-multiple independent runs for convergence diagnostics.
+Supports parallel tempering with a geometric temperature ladder,
+multiple independent runs, convergence monitoring, and early stopping.
 }

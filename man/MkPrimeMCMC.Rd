@@ -11,6 +11,10 @@ MkPrimeMCMC(
   nRuns = 2L,
   nChains = 1L,
   heat = 0.2,
+  max_time = NULL,
+  min_ess = NULL,
+  max_psrf = NULL,
+  check_every = 1000L,
   tree_file = NULL,
   tuning = list()
 )
@@ -36,6 +40,18 @@ Chain 1 is the cold chain (beta = 1).}
 0.2. The temperature ladder uses geometric spacing:
 \code{beta_i = heat^((i-1)/(nChains-1))} for i = 1, ..., nChains.
 Ignored when \code{nChains = 1}.}
+
+\item{max_time}{Maximum wall-clock time in seconds. \code{NULL} (default)
+means no time limit.}
+
+\item{min_ess}{Minimum effective sample size for early stopping.
+\code{NULL} (default) disables ESS-based stopping.}
+
+\item{max_psrf}{Maximum PSRF for early stopping. \code{NULL} (default)
+disables PSRF-based stopping. Requires \code{nRuns >= 2}.}
+
+\item{check_every}{Check convergence every this many iterations
+(default 1000). Only used when stopping criteria are set.}
 
 \item{tree_file}{Path to write sampled trees in Newick format.
 \code{NULL} (default) disables file logging. Trees are always stored

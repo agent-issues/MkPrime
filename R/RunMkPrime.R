@@ -2,14 +2,14 @@
 #
 # Phase 3: single chain, fixed topology, R-side loop.
 # Phase 4: topology moves (NNI, SPR) via mutable state$tree.
-# Phase 5: parallel tempering, independent runs, convergence.
+# Phase 5: parallel tempering, independent runs, convergence, stopping.
 
 #' Run Bayesian MCMC under the MkPrime model
 #'
 #' Metropolis-Hastings MCMC sampling tree topology, branch lengths, model
 #' parameters, and per-character k' (for transformational characters).
-#' Supports parallel tempering with a geometric temperature ladder and
-#' multiple independent runs for convergence diagnostics.
+#' Supports parallel tempering with a geometric temperature ladder,
+#' multiple independent runs, convergence monitoring, and early stopping.
 #'
 #' @param data A `phyDat` object or `MkPrimeData` object.
 #' @param tree A `phylo` object (starting topology).
@@ -46,7 +46,6 @@ RunMkPrime <- function(data, tree,
 
   model <- .finalize_model(model, tree, mkd)
 
-  # Precompute tree structure
   tree <- ape::reorder.phylo(tree, "postorder")
   nEdge <- nrow(tree$edge)
 
@@ -54,60 +53,181 @@ RunMkPrime <- function(data, tree,
   trans_idx <- which(mkd$type == "transformational")
   nTrans <- length(trans_idx)
 
-  # Build move schedule (shared across all runs and chains)
   moves <- .build_moves(nEdge, nTrans, has_neo, mcmc,
                         fix_topology = fix_topology)
 
   nRuns <- mcmc$nRuns
 
-  # --- Run MCMC (single or multiple independent runs) ---
-  run_results <- vector("list", nRuns)
-
+  # --- Initialize per-run state ---
+  runs <- vector("list", nRuns)
   for (run in seq_len(nRuns)) {
-    if (nRuns > 1L) {
-      cli::cli_h3("Run {run}/{nRuns}")
-    }
-
-    # Generate starting tree for this run
-    if (run == 1L) {
-      start_tree <- tree
-    } else {
-      start_tree <- .perturb_start(tree)
-    }
-
-    run_results[[run]] <- .run_single(
-      start_tree, mkd, model, mcmc, moves, nEdge, nTrans,
-      run_id = run
-    )
+    start_tree <- if (run == 1L) tree else .perturb_start(tree)
+    runs[[run]] <- .init_run(start_tree, mkd, model, mcmc, moves)
   }
 
-  # --- Combine results across runs ---
-  .combine_runs(run_results, model, mkd, mcmc)
+  # --- Interleaved MCMC loop ---
+  nSaved_per_run <- as.integer((mcmc$nIter - mcmc$warmup) / mcmc$thin)
+  param_names <- .param_names(mkd, nEdge)
+
+  # Pre-allocate storage per run
+  for (run in seq_len(nRuns)) {
+    runs[[run]]$samples <- matrix(NA_real_, nrow = nSaved_per_run,
+                                  ncol = length(param_names),
+                                  dimnames = list(NULL, param_names))
+    runs[[run]]$tree_samples <- vector("list", nSaved_per_run)
+    runs[[run]]$saved_idx <- 0L
+  }
+
+  # Tree file
+  tree_file <- mcmc$tree_file
+  if (!is.null(tree_file)) writeLines("", tree_file)
+
+  # Stopping state
+  stop_reason <- "max_iter"
+  start_time <- proc.time()["elapsed"]
+
+  # Progress bar
+  cli::cli_progress_bar(
+    "MCMC", total = mcmc$nIter,
+    format = paste0(
+      "{cli::pb_bar} {cli::pb_current}/{cli::pb_total}",
+      " | logP: {format(round(cold_logpost, 1), nsmall = 1)}",
+      " | acc: {format(round(recent_acc, 2), nsmall = 2)}",
+      if (nRuns > 1L) " | runs: {nRuns}" else "",
+      if (mcmc$nChains > 1L) " | chains: {mcmc$nChains}" else ""
+    )
+  )
+  cold_logpost <- runs[[1]]$chains[[1]]$log_lik +
+                  runs[[1]]$chains[[1]]$log_prior
+  recent_acc <- 0
+  recent_window <- 500L
+  recent_accepts <- logical(recent_window)
+  recent_pos <- 0L
+
+  for (iter in seq_len(mcmc$nIter)) {
+    # --- Advance all runs by one iteration ---
+    for (run in seq_len(nRuns)) {
+      r <- runs[[run]]
+      nChains <- mcmc$nChains
+
+      # Propose moves for each chain
+      for (ch in seq_len(nChains)) {
+        move_idx <- sample.int(length(moves), 1L, prob = vapply(
+          moves, `[[`, numeric(1), "weight"
+        ))
+        move <- moves[[move_idx]]
+        r$chain_propose[[ch]][move_idx] <-
+          r$chain_propose[[ch]][move_idx] + 1L
+
+        accepted <- .do_move(move, r$chains[[ch]], mkd, model,
+                             r$chain_tuning[[ch]], beta = r$betas[ch])
+
+        if (accepted$accept) {
+          r$chains[[ch]] <- accepted$state
+          r$chain_accept[[ch]][move_idx] <-
+            r$chain_accept[[ch]][move_idx] + 1L
+        }
+
+        # Track recent acceptance for run 1, cold chain
+        if (run == 1L && ch == 1L) {
+          recent_pos <- (recent_pos %% recent_window) + 1L
+          recent_accepts[recent_pos] <- accepted$accept
+        }
+      }
+
+      # Chain swaps
+      if (nChains > 1L) {
+        swap_result <- .propose_chain_swap(r$chains, r$betas)
+        r$chains <- swap_result$chains
+        if (!is.null(swap_result$pair)) {
+          pair_idx <- swap_result$pair[1]
+          r$swap_propose[pair_idx] <- r$swap_propose[pair_idx] + 1L
+          if (swap_result$accepted) {
+            r$swap_accept[pair_idx] <- r$swap_accept[pair_idx] + 1L
+          }
+        }
+      }
+
+      # Adaptation during warmup
+      if (iter <= mcmc$warmup && iter %% 200L == 0L) {
+        for (ch in seq_len(nChains)) {
+          r$chain_tuning[[ch]] <- .adapt_tuning(
+            r$chain_tuning[[ch]], r$chain_accept[[ch]],
+            r$chain_propose[[ch]], moves
+          )
+        }
+        if (nChains > 1L) {
+          r$betas <- .adapt_temperatures(r$betas, r$swap_accept,
+                                         r$swap_propose)
+        }
+      }
+
+      # Save cold chain samples post-warmup
+      if (iter > mcmc$warmup && (iter - mcmc$warmup) %% mcmc$thin == 0L) {
+        r$saved_idx <- r$saved_idx + 1L
+        r$samples[r$saved_idx, ] <- .state_to_row(r$chains[[1]], mkd, nEdge)
+        cur_tree <- .state_to_tree(r$chains[[1]])
+        r$tree_samples[[r$saved_idx]] <- cur_tree
+        if (!is.null(tree_file)) {
+          cat(ape::write.tree(cur_tree), "\n", file = tree_file,
+              append = TRUE)
+        }
+      }
+
+      runs[[run]] <- r
+    }
+
+    # Progress
+    if (iter %% 100L == 0L) {
+      n_recent <- min(iter, recent_window)
+      recent_acc <- sum(recent_accepts[seq_len(n_recent)]) / n_recent
+      cold_logpost <- runs[[1]]$chains[[1]]$log_lik +
+                      runs[[1]]$chains[[1]]$log_prior
+      cli::cli_progress_update()
+    }
+
+    # --- Stopping rule checks ---
+    if (!is.null(mcmc$max_time)) {
+      elapsed <- proc.time()["elapsed"] - start_time
+      if (elapsed >= mcmc$max_time) {
+        stop_reason <- "max_time"
+        break
+      }
+    }
+
+    if (iter > mcmc$warmup && !is.null(mcmc$check_every) &&
+        iter %% mcmc$check_every == 0L && nRuns >= 2L) {
+      diag <- .check_convergence(runs, param_names, mcmc)
+      if (!is.null(diag) && diag$converged) {
+        stop_reason <- "converged"
+        break
+      }
+    }
+  }
+  cli::cli_progress_done()
+
+  actual_iter <- min(iter, mcmc$nIter)
+
+  # --- Build result ---
+  .build_result(runs, model, mkd, mcmc, actual_iter, stop_reason)
 }
 
 
-# --- Per-run MCMC engine ---
+# --- Run initialization ---
 
-#' Run a single MCMC chain set (one "run")
+#' Initialize state for a single run
 #' @keywords internal
-.run_single <- function(tree, mkd, model, mcmc, moves, nEdge, nTrans,
-                        run_id = 1L) {
+.init_run <- function(tree, mkd, model, mcmc, moves) {
   nChains <- mcmc$nChains
-
-  # --- Temperature ladder ---
   betas <- .build_temperature_ladder(nChains, mcmc$heat)
 
-  # --- Initialize per-chain states ---
   chains <- vector("list", nChains)
   for (ch in seq_len(nChains)) {
     chains[[ch]] <- .init_state(tree, mkd, model)
   }
 
-  # --- Per-chain acceptance tracking and tuning ---
-  chain_accept <- vector("list", nChains)
-  chain_propose <- vector("list", nChains)
-  chain_tuning <- vector("list", nChains)
   move_names <- vapply(moves, `[[`, character(1), "name")
+  chain_accept <- chain_propose <- chain_tuning <- vector("list", nChains)
   for (ch in seq_len(nChains)) {
     chain_accept[[ch]] <- integer(length(moves))
     chain_propose[[ch]] <- integer(length(moves))
@@ -115,144 +235,112 @@ RunMkPrime <- function(data, tree,
     chain_tuning[[ch]] <- mcmc$tuning
   }
 
-  # --- Pre-allocate sample storage (cold chain only) ---
-  nSaved <- as.integer((mcmc$nIter - mcmc$warmup) / mcmc$thin)
-  param_names <- .param_names(mkd, nEdge)
-  samples <- matrix(NA_real_, nrow = nSaved, ncol = length(param_names),
-                    dimnames = list(NULL, param_names))
-  tree_samples <- vector("list", nSaved)
-  saved_idx <- 0L
-
-  # Tree file logging (only run 1, or append with run label)
-  tree_file <- mcmc$tree_file
-  if (!is.null(tree_file) && run_id == 1L) {
-    writeLines("", tree_file)
+  swap_accept <- swap_propose <- if (nChains > 1L) {
+    integer(nChains - 1L)
+  } else {
+    integer(0)
   }
 
-  # --- Swap tracking ---
-  if (nChains > 1L) {
-    swap_accept <- integer(nChains - 1L)
-    swap_propose <- integer(nChains - 1L)
-  }
-
-  # --- MCMC loop ---
-  run_label <- if (mcmc$nRuns > 1L) paste0(" [run ", run_id, "]") else ""
-  cli::cli_progress_bar(
-    paste0("MCMC", run_label), total = mcmc$nIter,
-    format = paste0(
-      "{cli::pb_bar} {cli::pb_current}/{cli::pb_total}",
-      " | logP: {format(round(cold_logpost, 1), nsmall = 1)}",
-      " | acc: {format(round(recent_acc, 2), nsmall = 2)}",
-      if (nChains > 1L) " | chains: {nChains}" else ""
-    )
+  list(
+    chains = chains,
+    betas = betas,
+    chain_accept = chain_accept,
+    chain_propose = chain_propose,
+    chain_tuning = chain_tuning,
+    swap_accept = swap_accept,
+    swap_propose = swap_propose
   )
-  cold_logpost <- chains[[1]]$log_lik + chains[[1]]$log_prior
-  recent_acc <- 0
-  recent_window <- 500L
-  recent_accepts <- logical(recent_window)
-  recent_pos <- 0L
-
-  for (iter in seq_len(mcmc$nIter)) {
-    # --- Propose moves for each chain ---
-    for (ch in seq_len(nChains)) {
-      move_idx <- sample.int(length(moves), 1L, prob = vapply(
-        moves, `[[`, numeric(1), "weight"
-      ))
-      move <- moves[[move_idx]]
-      chain_propose[[ch]][move_idx] <- chain_propose[[ch]][move_idx] + 1L
-
-      accepted <- .do_move(move, chains[[ch]], mkd, model,
-                           chain_tuning[[ch]], beta = betas[ch])
-
-      if (accepted$accept) {
-        chains[[ch]] <- accepted$state
-        chain_accept[[ch]][move_idx] <- chain_accept[[ch]][move_idx] + 1L
-      }
-
-      if (ch == 1L) {
-        recent_pos <- (recent_pos %% recent_window) + 1L
-        recent_accepts[recent_pos] <- accepted$accept
-      }
-    }
-
-    # --- Chain swap proposal ---
-    if (nChains > 1L) {
-      swap_result <- .propose_chain_swap(chains, betas)
-      chains <- swap_result$chains
-      if (!is.null(swap_result$pair)) {
-        pair_idx <- swap_result$pair[1]
-        swap_propose[pair_idx] <- swap_propose[pair_idx] + 1L
-        if (swap_result$accepted) {
-          swap_accept[pair_idx] <- swap_accept[pair_idx] + 1L
-        }
-      }
-    }
-
-    # --- Adaptation during warmup ---
-    if (iter <= mcmc$warmup && iter %% 200L == 0L) {
-      for (ch in seq_len(nChains)) {
-        chain_tuning[[ch]] <- .adapt_tuning(
-          chain_tuning[[ch]], chain_accept[[ch]],
-          chain_propose[[ch]], moves
-        )
-      }
-      if (nChains > 1L) {
-        betas <- .adapt_temperatures(betas, swap_accept, swap_propose)
-      }
-    }
-
-    # --- Save cold chain samples post-warmup ---
-    if (iter > mcmc$warmup && (iter - mcmc$warmup) %% mcmc$thin == 0L) {
-      saved_idx <- saved_idx + 1L
-      samples[saved_idx, ] <- .state_to_row(chains[[1]], mkd, nEdge)
-      cur_tree <- .state_to_tree(chains[[1]])
-      tree_samples[[saved_idx]] <- cur_tree
-      if (!is.null(tree_file)) {
-        cat(ape::write.tree(cur_tree), "\n", file = tree_file, append = TRUE)
-      }
-    }
-
-    if (iter %% 100L == 0L) {
-      n_recent <- min(iter, recent_window)
-      recent_acc <- sum(recent_accepts[seq_len(n_recent)]) / n_recent
-      cold_logpost <- chains[[1]]$log_lik + chains[[1]]$log_prior
-      cli::cli_progress_update()
-    }
-  }
-  cli::cli_progress_done()
-
-  # --- Build per-run result ---
-  cold_acceptance <- chain_accept[[1]] / pmax(chain_propose[[1]], 1L)
-
-  result <- list(
-    samples = samples,
-    trees = tree_samples,
-    acceptance = cold_acceptance,
-    tuning = chain_tuning[[1]]
-  )
-
-  if (nChains > 1L) {
-    result$betas <- betas
-    result$swap_rates <- swap_accept / pmax(swap_propose, 1L)
-    result$chain_acceptance <- lapply(seq_len(nChains), function(ch) {
-      chain_accept[[ch]] / pmax(chain_propose[[ch]], 1L)
-    })
-  }
-
-  result
 }
 
 
-# --- Combine multiple runs ---
+# --- Convergence check during MCMC ---
 
-#' Combine results from multiple independent runs
+#' Check convergence criteria (called during the loop)
 #' @keywords internal
-.combine_runs <- function(run_results, model, mkd, mcmc) {
-  nRuns <- length(run_results)
+.check_convergence <- function(runs, param_names, mcmc) {
+  if (!requireNamespace("coda", quietly = TRUE)) return(NULL)
+
+  key_cols <- .key_param_cols(
+    matrix(0, 1, length(param_names), dimnames = list(NULL, param_names))
+  )
+
+  # Gather saved samples from each run
+  per_run_samples <- lapply(runs, function(r) {
+    idx <- r$saved_idx
+    if (idx < 10L) return(NULL)
+    r$samples[seq_len(idx), key_cols, drop = FALSE]
+  })
+
+  if (any(vapply(per_run_samples, is.null, logical(1)))) return(NULL)
+
+  # Compute PSRF
+  chain_list <- lapply(per_run_samples, function(s) coda::mcmc(s))
+  mcmc_list <- coda::mcmc.list(chain_list)
+
+  gd <- tryCatch(
+    coda::gelman.diag(mcmc_list, multivariate = FALSE),
+    error = function(e) NULL
+  )
+  if (is.null(gd)) return(NULL)
+
+  max_psrf <- max(gd$psrf[, 1], na.rm = TRUE)
+
+  # Compute min ESS across all runs combined
+  combined <- do.call(rbind, per_run_samples)
+  ess <- apply(combined, 2, function(col) {
+    if (sd(col, na.rm = TRUE) == 0) return(NA_real_)
+    coda::effectiveSize(coda::mcmc(col))
+  })
+  min_ess <- min(ess, na.rm = TRUE)
+
+  converged <- TRUE
+  if (!is.null(mcmc$min_ess) && min_ess < mcmc$min_ess) {
+    converged <- FALSE
+  }
+  if (!is.null(mcmc$max_psrf) && max_psrf > mcmc$max_psrf) {
+    converged <- FALSE
+  }
+
+  list(converged = converged, min_ess = min_ess, max_psrf = max_psrf)
+}
+
+
+# --- Build final result ---
+
+#' Build MkPosterior from all runs
+#' @keywords internal
+.build_result <- function(runs, model, mkd, mcmc, actual_iter, stop_reason) {
+  nRuns <- length(runs)
+
+  # Trim samples to actual saved count
+  for (run in seq_len(nRuns)) {
+    idx <- runs[[run]]$saved_idx
+    if (idx > 0L) {
+      runs[[run]]$samples <- runs[[run]]$samples[seq_len(idx), , drop = FALSE]
+      runs[[run]]$tree_samples <- runs[[run]]$tree_samples[seq_len(idx)]
+    } else {
+      runs[[run]]$samples <- runs[[run]]$samples[integer(0), , drop = FALSE]
+      runs[[run]]$tree_samples <- list()
+    }
+  }
+
+  # Per-run summaries
+  per_run_summaries <- lapply(runs, function(r) {
+    cold_acc <- r$chain_accept[[1]] / pmax(r$chain_propose[[1]], 1L)
+    result <- list(
+      samples = r$samples,
+      trees = r$tree_samples,
+      acceptance = cold_acc
+    )
+    if (mcmc$nChains > 1L) {
+      result$betas <- r$betas
+      result$swap_rates <- r$swap_accept / pmax(r$swap_propose, 1L)
+    }
+    result
+  })
 
   if (nRuns == 1L) {
-    # Single run: preserve Phase 4 result structure
-    r <- run_results[[1]]
+    r <- per_run_summaries[[1]]
     result <- MkPosterior(
       samples = r$samples,
       trees = r$trees,
@@ -261,71 +349,60 @@ RunMkPrime <- function(data, tree,
       data = mkd,
       mcmc = mcmc,
       warmup = mcmc$warmup,
-      tuning = r$tuning
+      tuning = runs[[1]]$chain_tuning[[1]]
     )
     if (!is.null(r$betas)) {
       result$betas <- r$betas
       result$swap_rates <- r$swap_rates
-      result$chain_acceptance <- r$chain_acceptance
+      result$chain_acceptance <- lapply(seq_len(mcmc$nChains), function(ch) {
+        runs[[1]]$chain_accept[[ch]] /
+          pmax(runs[[1]]$chain_propose[[ch]], 1L)
+      })
     }
-    return(result)
-  }
+  } else {
+    all_samples <- do.call(rbind, lapply(per_run_summaries, `[[`, "samples"))
+    all_trees <- do.call(c, lapply(per_run_summaries, `[[`, "trees"))
+    avg_acceptance <- Reduce(`+`, lapply(per_run_summaries, `[[`,
+                                         "acceptance")) / nRuns
 
-  # Multiple runs: combine cold chain samples
-  all_samples <- do.call(rbind, lapply(run_results, `[[`, "samples"))
-  all_trees <- do.call(c, lapply(run_results, `[[`, "trees"))
-
-  # Per-run results for diagnostics
-  per_run <- lapply(run_results, function(r) {
-    list(
-      samples = r$samples,
-      trees = r$trees,
-      acceptance = r$acceptance,
-      betas = r$betas,
-      swap_rates = r$swap_rates
+    result <- MkPosterior(
+      samples = all_samples,
+      trees = all_trees,
+      acceptance = avg_acceptance,
+      model = model,
+      data = mkd,
+      mcmc = mcmc,
+      warmup = mcmc$warmup,
+      tuning = runs[[1]]$chain_tuning[[1]]
     )
-  })
 
-  # Average acceptance across runs
-  avg_acceptance <- Reduce(`+`, lapply(run_results, `[[`, "acceptance")) / nRuns
+    result$nRuns <- nRuns
+    result$per_run <- per_run_summaries
 
-  result <- MkPosterior(
-    samples = all_samples,
-    trees = all_trees,
-    acceptance = avg_acceptance,
-    model = model,
-    data = mkd,
-    mcmc = mcmc,
-    warmup = mcmc$warmup,
-    tuning = run_results[[1]]$tuning
-  )
-
-  result$nRuns <- nRuns
-  result$per_run <- per_run
-
-  # Tempering info from first run (representative)
-  if (!is.null(run_results[[1]]$betas)) {
-    result$betas <- run_results[[1]]$betas
-    result$swap_rates <- run_results[[1]]$swap_rates
-    result$chain_acceptance <- run_results[[1]]$chain_acceptance
+    if (mcmc$nChains > 1L) {
+      result$betas <- runs[[1]]$betas
+      result$swap_rates <- per_run_summaries[[1]]$swap_rates
+      result$chain_acceptance <- lapply(seq_len(mcmc$nChains), function(ch) {
+        runs[[1]]$chain_accept[[ch]] /
+          pmax(runs[[1]]$chain_propose[[ch]], 1L)
+      })
+    }
   }
 
+  result$stop_reason <- stop_reason
+  result$actual_iter <- actual_iter
   result
 }
 
 
-# --- Start perturbation for independent runs ---
+# --- Start perturbation ---
 
 #' Generate a perturbed starting tree for independent runs
-#'
-#' Applies random NNI moves to create a different starting topology while
-#' preserving tip labels and tree structure.
 #' @keywords internal
 .perturb_start <- function(tree) {
   nTip <- length(tree$tip.label)
   if (nTip < 4L) return(tree)
 
-  # Apply 2-5 random NNI moves
   n_nni <- sample(2:5, 1)
   for (i in seq_len(n_nni)) {
     tree_length <- sum(tree$edge.length)
@@ -335,9 +412,8 @@ RunMkPrime <- function(data, tree,
     tree$edge.length <- tree_length * prop$rel_br_lengths
   }
 
-  # Also jitter branch lengths slightly
-  tree$edge.length <- tree$edge.length * exp(rnorm(length(tree$edge.length),
-                                                     sd = 0.1))
+  tree$edge.length <- tree$edge.length *
+    exp(rnorm(length(tree$edge.length), sd = 0.1))
   tree
 }
 
@@ -552,8 +628,6 @@ RunMkPrime <- function(data, tree,
   overall_rate <- sum(swap_accept) / total_propose
 
   heat <- betas[nChains]
-  # heat^adj where adj < 1 → increases heat (closer temps, easier swaps)
-  # and adj > 1 → decreases heat (wider spread, harder swaps)
   adj <- exp(0.5 * (overall_rate - target))
   heat_new <- heat^adj
 

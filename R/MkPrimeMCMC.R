@@ -17,6 +17,14 @@
 #'   0.2. The temperature ladder uses geometric spacing:
 #'   `beta_i = heat^((i-1)/(nChains-1))` for i = 1, ..., nChains.
 #'   Ignored when `nChains = 1`.
+#' @param max_time Maximum wall-clock time in seconds. `NULL` (default)
+#'   means no time limit.
+#' @param min_ess Minimum effective sample size for early stopping.
+#'   `NULL` (default) disables ESS-based stopping.
+#' @param max_psrf Maximum PSRF for early stopping. `NULL` (default)
+#'   disables PSRF-based stopping. Requires `nRuns >= 2`.
+#' @param check_every Check convergence every this many iterations
+#'   (default 1000). Only used when stopping criteria are set.
 #' @param tree_file Path to write sampled trees in Newick format.
 #'   `NULL` (default) disables file logging. Trees are always stored
 #'   in the returned `MkPosterior` object regardless.
@@ -48,6 +56,10 @@ MkPrimeMCMC <- function(
     nRuns = 2L,
     nChains = 1L,
     heat = 0.2,
+    max_time = NULL,
+    min_ess = NULL,
+    max_psrf = NULL,
+    check_every = 1000L,
     tree_file = NULL,
     tuning = list()
 ) {
@@ -80,9 +92,13 @@ MkPrimeMCMC <- function(
   )
   tuning <- modifyList(defaults, tuning)
 
+  if (!is.null(check_every)) check_every <- as.integer(check_every)
+
   structure(
     list(nIter = nIter, thin = thin, warmup = warmup,
          nRuns = nRuns, nChains = nChains, heat = heat,
+         max_time = max_time, min_ess = min_ess, max_psrf = max_psrf,
+         check_every = check_every,
          tree_file = tree_file, tuning = tuning),
     class = "MkPrimeMCMC"
   )

@@ -7,7 +7,6 @@
 .perturb_start(tree)
 }
 \description{
-Applies random NNI moves to create a different starting topology while
-preserving tip labels and tree structure.
+Generate a perturbed starting tree for independent runs
 }
 \keyword{internal}
