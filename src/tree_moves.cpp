@@ -3,6 +3,10 @@
 // NNI: for an internal edge (u, v), swap one child of v with one child of u.
 // All operations on integer parent/child vectors; postorder reordering via
 // TreeTools::postorder_order() rather than ape::reorder.phylo().
+//
+// M-065: Added _impl versions that accept parent/child vectors directly
+// (called from do_move_impl). The Rcpp-exported versions remain as thin
+// wrappers that decompose the edge matrix and call _impl.
 
 #include <Rcpp.h>
 #include <TreeTools/renumber_tree.h>
@@ -12,98 +16,122 @@ using namespace Rcpp;
 
 
 // ---------------------------------------------------------------------------
-// NNI proposal (Nearest Neighbour Interchange)
+// NNI proposal — vector-based implementation
 // ---------------------------------------------------------------------------
-//
-// Inputs (all in ape edge-matrix convention, 1-based node indices):
-//   edge         nEdge x 2 integer matrix (parent | child)
-//   nTip         number of tips
-//   treeLength   current total tree length
-//   relBrLengths nEdge-length vector of relative branch lengths (sum = 1)
-//
-// Returns a list with:
-//   edge         new edge matrix in postorder
-//   rel_br_lengths  new relative branch lengths (consistent with new row order)
-//   logHastings  0 (symmetric proposal) or -Inf if NNI is not applicable
 
-// [[Rcpp::export]]
-List nni_proposal(IntegerMatrix edge, int nTip, double treeLength,
-                  NumericVector relBrLengths) {
-  int nEdge = edge.nrow();
+List nni_proposal_impl(IntegerVector parent, IntegerVector child,
+                       int nTip, double treeLength,
+                       NumericVector relBrLengths) {
+  int nEdge = parent.size();
 
-  // --- Find internal edges: both endpoints are internal nodes (> nTip) ---
+  // Find internal edges: both endpoints are internal nodes (> nTip)
   std::vector<int> internalRows;
   internalRows.reserve(nEdge / 2);
   for (int i = 0; i < nEdge; i++) {
-    if (edge(i, 0) > nTip && edge(i, 1) > nTip) {
+    if (parent[i] > nTip && child[i] > nTip) {
       internalRows.push_back(i);
     }
   }
 
   if (internalRows.empty()) {
-    // Too few tips for NNI (n <= 3); return unchanged with -Inf Hastings
-    return List::create(_["edge"] = edge,
+    return List::create(_["parent"] = parent,
+                        _["child"] = child,
                         _["rel_br_lengths"] = relBrLengths,
                         _["logHastings"] = R_NegInf);
   }
 
-  // --- Pick a random internal edge ---
+  // Pick a random internal edge
   int pickInternal = (int)(unif_rand() * (double)internalRows.size());
-  if (pickInternal >= (int)internalRows.size()) pickInternal = internalRows.size() - 1;
+  if (pickInternal >= (int)internalRows.size())
+    pickInternal = internalRows.size() - 1;
   int edgeRow = internalRows[pickInternal];
-  int u = edge(edgeRow, 0);
-  int v = edge(edgeRow, 1);
+  int u = parent[edgeRow];
+  int v = child[edgeRow];
 
-  // --- Find v's children and u's other children (not v) ---
+  // Find v's children and u's other children (not v)
   std::vector<int> vChildRows, uSibRows;
   for (int i = 0; i < nEdge; i++) {
-    if (edge(i, 0) == v) {
+    if (parent[i] == v) {
       vChildRows.push_back(i);
-    } else if (edge(i, 0) == u && edge(i, 1) != v) {
+    } else if (parent[i] == u && child[i] != v) {
       uSibRows.push_back(i);
     }
   }
 
   if (vChildRows.empty() || uSibRows.empty()) {
-    // Degenerate tree — should not happen on a binary unrooted tree
-    return List::create(_["edge"] = edge,
+    return List::create(_["parent"] = parent,
+                        _["child"] = child,
                         _["rel_br_lengths"] = relBrLengths,
                         _["logHastings"] = R_NegInf);
   }
 
-  // --- Pick one child of v and one sibling of v (child of u) to swap ---
+  // Pick one child of v and one sibling of v to swap
   int pickV = (int)(unif_rand() * (double)vChildRows.size());
   if (pickV >= (int)vChildRows.size()) pickV = vChildRows.size() - 1;
   int pickU = (int)(unif_rand() * (double)uSibRows.size());
   if (pickU >= (int)uSibRows.size()) pickU = uSibRows.size() - 1;
 
-  int cRow = vChildRows[pickV];  // row of v's selected child
-  int wRow = uSibRows[pickU];    // row of u's selected other child
+  int cRow = vChildRows[pickV];
+  int wRow = uSibRows[pickU];
 
-  // --- Swap: move cRow's subtree to u, wRow's subtree to v ---
-  IntegerMatrix newEdge = clone(edge);
-  newEdge(cRow, 0) = u;
-  newEdge(wRow, 0) = v;
+  // Swap: move cRow's subtree to u, wRow's subtree to v
+  IntegerVector newParent = clone(parent);
+  IntegerVector newChild = clone(child);
+  newParent[cRow] = u;
+  newParent[wRow] = v;
 
-  // --- Compute absolute branch lengths for reorder-safe reconstruction ---
+  // Absolute branch lengths for reorder-safe reconstruction
   NumericVector absLen(nEdge);
   for (int i = 0; i < nEdge; i++) {
     absLen[i] = treeLength * relBrLengths[i];
   }
 
-  // --- Reorder to postorder using TreeTools::postorder_order() ---
-  IntegerVector order = TreeTools::postorder_order(newEdge);
+  // Build temporary edge matrix for postorder_order()
+  IntegerMatrix tmpEdge(nEdge, 2);
+  for (int i = 0; i < nEdge; i++) {
+    tmpEdge(i, 0) = newParent[i];
+    tmpEdge(i, 1) = newChild[i];
+  }
+  IntegerVector order = TreeTools::postorder_order(tmpEdge);
 
-  IntegerMatrix orderedEdge(nEdge, 2);
+  IntegerVector ordParent(nEdge), ordChild(nEdge);
   NumericVector orderedRelBr(nEdge);
   for (int i = 0; i < nEdge; i++) {
-    int j = order[i] - 1;  // 1-based → 0-based
-    orderedEdge(i, 0) = newEdge(j, 0);
-    orderedEdge(i, 1) = newEdge(j, 1);
+    int j = order[i] - 1;
+    ordParent[i] = newParent[j];
+    ordChild[i] = newChild[j];
     orderedRelBr[i] = absLen[j] / treeLength;
   }
 
-  return List::create(_["edge"] = orderedEdge,
+  return List::create(_["parent"] = ordParent,
+                      _["child"] = ordChild,
                       _["rel_br_lengths"] = orderedRelBr,
                       _["logHastings"] = 0.0);
+}
+
+
+// Rcpp-exported wrapper (for R callers via ProposeNni)
+// [[Rcpp::export]]
+List nni_proposal(IntegerMatrix edge, int nTip, double treeLength,
+                  NumericVector relBrLengths) {
+  int nEdge = edge.nrow();
+  IntegerVector parent(nEdge), child(nEdge);
+  for (int i = 0; i < nEdge; ++i) {
+    parent[i] = edge(i, 0);
+    child[i] = edge(i, 1);
+  }
+  List result = nni_proposal_impl(parent, child, nTip, treeLength,
+                                  relBrLengths);
+
+  // Reconstruct edge matrix for R-side compatibility
+  IntegerVector rp = result["parent"];
+  IntegerVector rc = result["child"];
+  IntegerMatrix outEdge(nEdge, 2);
+  for (int i = 0; i < nEdge; ++i) {
+    outEdge(i, 0) = rp[i];
+    outEdge(i, 1) = rc[i];
+  }
+  return List::create(_["edge"] = outEdge,
+                      _["rel_br_lengths"] = result["rel_br_lengths"],
+                      _["logHastings"] = result["logHastings"]);
 }

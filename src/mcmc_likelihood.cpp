@@ -7,6 +7,9 @@
 // entirely in C++, calling the existing C++ pruning functions directly.
 // This eliminates the per-iteration R overhead of partition looping and
 // Rcpp list construction.
+//
+// M-065: cpp_log_likelihood now accepts parent/child vectors directly,
+// avoiding edge matrix construction/decomposition round-trips.
 
 #include "mcmc_state.h"
 #include <cmath>
@@ -86,18 +89,6 @@ static NumericVector mkn_stationary(double rateLoss) {
   return f;
 }
 
-// Extract parent/child from edge matrix
-static void edge_to_vecs(IntegerMatrix edge,
-                          IntegerVector& parent, IntegerVector& child) {
-  int n = edge.nrow();
-  parent = IntegerVector(n);
-  child  = IntegerVector(n);
-  for (int i = 0; i < n; ++i) {
-    parent[i] = edge(i, 0);
-    child[i]  = edge(i, 1);
-  }
-}
-
 
 // ---------------------------------------------------------------------------
 // C++ log-likelihood orchestration (mirrors .MkpLogLikelihood in R)
@@ -108,7 +99,6 @@ static void edge_to_vecs(IntegerMatrix edge,
 //
 // Computes log-likelihood for partition partIdx only, allowing partial
 // recomputation when only a subset of partitions is affected by a move.
-// Uses flat-buffer pruning when ClWorkspace is available.
 // ---------------------------------------------------------------------------
 
 double cpp_partition_log_likelihood(
@@ -193,118 +183,29 @@ double cpp_partition_log_likelihood(
 }
 
 
+// M-065: accepts parent/child vectors directly — no edge matrix decomposition.
 double cpp_log_likelihood(
     const McmcData& data,
-    IntegerMatrix edge,
+    IntegerVector parent,
+    IntegerVector child,
     NumericVector edgeLen,
     const IntegerVector& kPrime,
     double rateLoss,
     double rateLogSd,
     double rateNeo) {
 
-  IntegerVector parent, child;
-  edge_to_vecs(edge, parent, child);
-
-  int nTip = data.nTip;
-  NumericVector rates = cpp_acrv_rates(rateLogSd, data.nCat);
-  bool useAcrv = (rateLogSd > 0.0);
-  int coding = data.codingType;
   double totalLoglik = 0.0;
-
   for (int pi = 0; pi < (int)data.parts.size(); ++pi) {
-    const PartInfo& part = data.parts[pi];
-    double ll = 0.0;
-
-    if (part.type == 0) {
-      // Neomorphic: MkN with rate_neo scalar
-      NumericVector neoEl(edgeLen.size());
-      for (int i = 0; i < edgeLen.size(); ++i) neoEl[i] = edgeLen[i] * rateNeo;
-      NumericVector rootFreqs = mkn_stationary(rateLoss);
-
-      ll = useAcrv ? pruning_mkn_acrv(parent, child, neoEl, part.tipStates,
-                                       rateLoss, rootFreqs, rates)
-                   : pruning_mkn(parent, child, neoEl, part.tipStates,
-                                  rateLoss, rootFreqs);
-      if (coding != 0) {
-        double p = constant_site_prob_mkn(parent, child, neoEl, nTip,
-                                          rateLoss, rootFreqs, rates);
-        if (coding == 2) p += singleton_site_prob_mkn(parent, child, neoEl, nTip,
-                                                       rateLoss, rootFreqs, rates);
-        ll -= part.tipStates.ncol() * std::log(1.0 - p);
-      }
-
-    } else if (part.type == 2) {
-      // Known state space
-      int kStates = part.k;
-      NumericVector rootFreqs(kStates, 1.0 / kStates);
-
-      ll = useAcrv ? pruning_jc_acrv(parent, child, edgeLen, part.tipStates,
-                                      kStates, rootFreqs, rates)
-                   : pruning_jc(parent, child, edgeLen, part.tipStates,
-                                 kStates, rootFreqs);
-      if (coding != 0) {
-        double p = constant_site_prob_jc(parent, child, edgeLen, nTip,
-                                         kStates, rootFreqs, rates);
-        if (coding == 2) p += singleton_site_prob_jc(parent, child, edgeLen, nTip,
-                                                      kStates, rootFreqs, rates);
-        ll -= part.tipStates.ncol() * std::log(1.0 - p);
-      }
-
-    } else {
-      // Transformational: sub-group by kPrime value
-      int nCharPart = part.tipStates.ncol();
-      IntegerVector kPrimePart(nCharPart);
-      for (int ci = 0; ci < nCharPart; ++ci) {
-        kPrimePart[ci] = kPrime[part.globalCharIdx[ci]];
-      }
-
-      // Get sorted unique kPrime values
-      IntegerVector uniqKp = sort_unique(kPrimePart);
-
-      for (int ui = 0; ui < uniqKp.size(); ++ui) {
-        int kp = uniqKp[ui];
-        std::vector<int> cols;
-        for (int ci = 0; ci < nCharPart; ++ci) {
-          if (kPrimePart[ci] == kp) cols.push_back(ci);
-        }
-        int nSub = (int)cols.size();
-        IntegerMatrix sub(nTip, nSub);
-        for (int c = 0; c < nSub; ++c) {
-          for (int t = 0; t < nTip; ++t) sub(t, c) = part.tipStates(t, cols[c]);
-        }
-        NumericVector rootFreqs(kp, 1.0 / kp);
-
-        double subLl = useAcrv ? pruning_jc_acrv(parent, child, edgeLen, sub,
-                                                   kp, rootFreqs, rates)
-                                : pruning_jc(parent, child, edgeLen, sub,
-                                              kp, rootFreqs);
-        if (coding != 0) {
-          double p = constant_site_prob_jc(parent, child, edgeLen, nTip,
-                                           kp, rootFreqs, rates);
-          if (coding == 2) p += singleton_site_prob_jc(parent, child, edgeLen, nTip,
-                                                        kp, rootFreqs, rates);
-          subLl -= nSub * std::log(1.0 - p);
-        }
-        ll += subLl;
-      }
-
-      // Relabelling correction
-      if (data.relabel) {
-        for (int ci = 0; ci < nCharPart; ++ci) {
-          ll += mk_prime_relabel_log(kPrimePart[ci], part.kObsLocal[ci]);
-        }
-      }
-    }
-
-    totalLoglik += ll;
+    totalLoglik += cpp_partition_log_likelihood(
+      data, pi, parent, child, edgeLen, kPrime,
+      rateLoss, rateLogSd, rateNeo);
   }
-
   return totalLoglik;
 }
 
 
 // ---------------------------------------------------------------------------
-// prepare_mcmc_data: convert R mkd + model → XPtr<McmcData>
+// prepare_mcmc_data: convert R mkd + model -> XPtr<McmcData>
 // ---------------------------------------------------------------------------
 
 // [[Rcpp::export]]
@@ -358,7 +259,6 @@ SEXP prepare_mcmc_data(List partitions_r,
                  (ptype == "transformational") ? 1 : 2;
     if (pinfo.type == 0) d->neoPartIndices.push_back(pi);
 
-    // k: NA for non-known types
     SEXP k_sexp = p_r["k"];
     pinfo.k = (Rf_isNull(k_sexp) || IntegerVector::is_na(as<int>(k_sexp))) ? 0
                                                                             : as<int>(k_sexp);
@@ -366,7 +266,6 @@ SEXP prepare_mcmc_data(List partitions_r,
     pinfo.tipStates = as<IntegerMatrix>(p_r["tip_states"]);
     if (d->nTip == 0) d->nTip = pinfo.tipStates.nrow();
 
-    // char_indices in R are 1-based → convert to 0-based
     IntegerVector ci_r = as<IntegerVector>(p_r["char_indices"]);
     pinfo.globalCharIdx = IntegerVector(ci_r.size());
     for (int ci = 0; ci < ci_r.size(); ++ci) {
@@ -374,7 +273,6 @@ SEXP prepare_mcmc_data(List partitions_r,
       d->charToPartition[ci_r[ci] - 1] = pi;
     }
 
-    // kObs local: look up from global kObs
     int nCharPart = pinfo.tipStates.ncol();
     pinfo.kObsLocal = IntegerVector(nCharPart);
     for (int ci = 0; ci < nCharPart; ++ci) {

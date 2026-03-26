@@ -3,6 +3,10 @@
 // McmcState (mutable per chain) holds tree + parameters.
 // do_move_cpp() performs a full MH step, modifying state in-place.
 // R creates states via init_mcmc_state(), reads via get_mcmc_state().
+//
+// M-065: Eliminated IntegerMatrix round-trips. do_move_impl now calls
+// *_proposal_impl (parent/child vectors) and cpp_log_likelihood (vectors)
+// directly, avoiding repeated matrix construction/decomposition.
 
 #include "mcmc_state.h"
 #include <TreeTools/renumber_tree.h>
@@ -11,10 +15,13 @@
 using namespace Rcpp;
 
 // Forward declarations for proposals in other TUs
-List nni_proposal(IntegerMatrix edge, int nTip, double treeLength,
-                  NumericVector relBrLengths);
-List spr_proposal(IntegerMatrix edge, int nTip, double treeLength,
-                  NumericVector relBrLengths);
+// M-065: vector-based _impl versions (no edge matrix)
+List nni_proposal_impl(IntegerVector parent, IntegerVector child,
+                       int nTip, double treeLength,
+                       NumericVector relBrLengths);
+List spr_proposal_impl(IntegerVector parent, IntegerVector child,
+                       int nTip, double treeLength,
+                       NumericVector relBrLengths);
 List beta_simplex_proposal(NumericVector x, int index, double tuning);
 
 
@@ -70,7 +77,7 @@ static double cpp_log_prior(
 
   double lp = 0.0;
 
-  // Tree length: Gamma(shape, rate) — R::dgamma uses scale = 1/rate
+  // Tree length: Gamma(shape, rate)
   lp += R::dgamma(treeLength, data.treeLengthShape,
                    1.0 / data.treeLengthRate, 1);
 
@@ -187,6 +194,9 @@ double get_state_log_lik(SEXP statePtr) {
 //
 // moveType: 0=scale_tl, 1=scale_rl, 2=scale_rls, 3=scale_rn,
 //           4=beta_simplex, 5=nni, 6=spr, 7=int_walk, 8=scale_p
+//
+// M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
+// Likelihood calls use vectors directly (no IntegerMatrix construction).
 // ---------------------------------------------------------------------------
 
 static bool do_move_impl(McmcData* data, McmcState* state,
@@ -243,46 +253,32 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       logHastings = as<double>(prop["logHastings"]);
       break;
     }
-    case 5: { // NNI
+    case 5: { // NNI — M-065: call _impl directly with vectors
       oldParent = clone(state->parent);
       oldChild  = clone(state->child);
       oldRelBr  = clone(state->relBrLengths);
-      IntegerMatrix edge(state->parent.size(), 2);
-      for (int i = 0; i < state->parent.size(); ++i) {
-        edge(i, 0) = state->parent[i];
-        edge(i, 1) = state->child[i];
-      }
-      List prop = nni_proposal(edge, data->nTip, state->treeLength,
-                               state->relBrLengths);
+      List prop = nni_proposal_impl(state->parent, state->child,
+                                    data->nTip, state->treeLength,
+                                    state->relBrLengths);
       logHastings = as<double>(prop["logHastings"]);
       if (!R_FINITE(logHastings)) return false;
-      IntegerMatrix newEdge = as<IntegerMatrix>(prop["edge"]);
-      for (int i = 0; i < state->parent.size(); ++i) {
-        state->parent[i] = newEdge(i, 0);
-        state->child[i]  = newEdge(i, 1);
-      }
+      state->parent       = as<IntegerVector>(prop["parent"]);
+      state->child        = as<IntegerVector>(prop["child"]);
       state->relBrLengths = as<NumericVector>(prop["rel_br_lengths"]);
       topologyChanged = true;
       break;
     }
-    case 6: { // SPR
+    case 6: { // SPR — M-065: call _impl directly with vectors
       oldParent = clone(state->parent);
       oldChild  = clone(state->child);
       oldRelBr  = clone(state->relBrLengths);
-      IntegerMatrix edge(state->parent.size(), 2);
-      for (int i = 0; i < state->parent.size(); ++i) {
-        edge(i, 0) = state->parent[i];
-        edge(i, 1) = state->child[i];
-      }
-      List prop = spr_proposal(edge, data->nTip, state->treeLength,
-                               state->relBrLengths);
+      List prop = spr_proposal_impl(state->parent, state->child,
+                                    data->nTip, state->treeLength,
+                                    state->relBrLengths);
       logHastings = as<double>(prop["logHastings"]);
       if (!R_FINITE(logHastings)) return false;
-      IntegerMatrix newEdge = as<IntegerMatrix>(prop["edge"]);
-      for (int i = 0; i < state->parent.size(); ++i) {
-        state->parent[i] = newEdge(i, 0);
-        state->child[i]  = newEdge(i, 1);
-      }
+      state->parent       = as<IntegerVector>(prop["parent"]);
+      state->child        = as<IntegerVector>(prop["child"]);
       state->relBrLengths = as<NumericVector>(prop["rel_br_lengths"]);
       topologyChanged = true;
       break;
@@ -339,7 +335,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     return false;
   }
 
-  // ---- Likelihood evaluation (M-064: partial recomputation) ----
+  // ---- Likelihood evaluation (M-064: partial, M-065: vectors) ----
   bool likChanges = (moveType != 8);
   bool hasPLC = !state->partLogLik.empty();
   double newLogLik;
@@ -348,16 +344,14 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   if (!likChanges) {
     newLogLik = state->logLik;
   } else if (!hasPLC) {
+    // M-065: pass parent/child vectors directly (no IntegerMatrix)
     int nEdge = state->relBrLengths.size();
-    IntegerMatrix propEdge(nEdge, 2);
     NumericVector propEdgeLen(nEdge);
-    for (int i = 0; i < nEdge; ++i) {
-      propEdge(i, 0) = state->parent[i];
-      propEdge(i, 1) = state->child[i];
+    for (int i = 0; i < nEdge; ++i)
       propEdgeLen[i] = state->treeLength * state->relBrLengths[i];
-    }
-    newLogLik = cpp_log_likelihood(*data, propEdge, propEdgeLen,
-      state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo);
+    newLogLik = cpp_log_likelihood(*data, state->parent, state->child,
+      propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
+      state->rateNeo);
   } else {
     int nParts = (int)data->parts.size();
     int nEdge = state->relBrLengths.size();
@@ -447,21 +441,6 @@ bool do_move_cpp(SEXP dataPtr, SEXP statePtr,
 // Handles weighted move selection, do_move_impl calls, chain swaps, and
 // sample collection. R calls this per-batch (default 200 iters) and handles
 // adaptation, convergence checks, progress, and checkpointing at boundaries.
-//
-// stateXPtrs          List of nChains XPtr<McmcState>; index 0 = cold chain
-// betas               Per-chain temperature (cold = 1.0)
-// moveTypeCodes       Move type codes 0–8, length nMoves
-// transIdxCpp         0-based global kPrime indices for transformational chars
-// moveWeights         Unnormalized proposal weights, length nMoves
-// chainScaleTunings   NumericMatrix nChains × nMoves — scale tuning per move
-// chainBsmpTunings    NumericVector nChains — beta-simplex tuning
-// chainIntWalkWins    IntegerVector nChains — int-walk window
-// nBatch              Number of iterations to run
-// startIter           Global iteration counter at batch start (1-based)
-// warmup              Total warmup iterations; samples saved for iter > warmup
-// thin                Save cold-chain state every thin-th post-warmup iter
-// hasNeo              Whether rate_neo is a model parameter
-// nEdge               Number of edges (length of relBrLengths)
 // ---------------------------------------------------------------------------
 
 // [[Rcpp::export]]
@@ -500,7 +479,7 @@ List run_mcmc_batch_cpp(
     cumWeights[m] = totalWeight;
   }
 
-  // Accept/propose counters (nChains × nMoves)
+  // Accept/propose counters (nChains x nMoves)
   IntegerMatrix acceptCounts(nChains, nMoves);
   IntegerMatrix proposeCounts(nChains, nMoves);
   int nSwapPairs = std::max(0, nChains - 1);

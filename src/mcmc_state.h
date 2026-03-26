@@ -45,9 +45,11 @@ struct McmcData {
 
 // C++ log-likelihood orchestration — declared here, defined in
 // mcmc_likelihood.cpp, called from mcmc.cpp.
+// M-065: accepts parent/child vectors directly (no edge matrix round-trip).
 double cpp_log_likelihood(
     const McmcData& data,
-    Rcpp::IntegerMatrix edge,
+    Rcpp::IntegerVector parent,
+    Rcpp::IntegerVector child,
     Rcpp::NumericVector edgeLen,
     const Rcpp::IntegerVector& kPrime,
     double rateLoss,
