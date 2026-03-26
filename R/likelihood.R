@@ -26,6 +26,8 @@
 #'   correction, `"variable"` for conditioning on variable characters,
 #'   `"informative"` for conditioning on parsimony-informative characters
 #'   (excludes constant + singleton patterns). Default `"variable"`.
+#' @param rate_neo Rate scalar for the neomorphic partition relative to
+#'   transformational (which is fixed at 1.0). Default 1.0 (equal rates).
 #' @param relabel Logical. Apply Mk' relabelling correction for
 #'   transformational characters? Set to `FALSE` for standard Mk
 #'   likelihood (e.g., for validation against phangorn). Default `TRUE`.
@@ -38,6 +40,7 @@ MkpLogLikelihood <- function(tree, mkd,
                                rate_log_sd = 0,
                                nCat = 6L,
                                coding = "variable",
+                               rate_neo = 1.0,
                                relabel = TRUE) {
   if (!inherits(tree, "phylo")) {
     cli::cli_abort("{.arg tree} must be a {.cls phylo} object.")
@@ -77,24 +80,25 @@ MkpLogLikelihood <- function(tree, mkd,
     nCharPart <- part$nChar
 
     if (part$type == "neomorphic") {
-      # MkN model
+      # MkN model — apply partition rate scalar
+      neo_el <- edge_length * rate_neo
       root_freqs <- as.numeric(mkn_stationary_freqs(rate_loss))
 
       if (rate_log_sd > 0) {
-        ll <- pruning_mkn_acrv(parent, child, edge_length,
+        ll <- pruning_mkn_acrv(parent, child, neo_el,
                                tip_states, rate_loss, root_freqs, rates)
       } else {
-        ll <- pruning_mkn(parent, child, edge_length,
+        ll <- pruning_mkn(parent, child, neo_el,
                           tip_states, rate_loss, root_freqs)
       }
 
-      # Ascertainment correction
+      # Ascertainment correction (uses scaled branches)
       if (coding != "none") {
-        puninf <- constant_site_prob_mkn(parent, child, edge_length,
+        puninf <- constant_site_prob_mkn(parent, child, neo_el,
                                          nTip, rate_loss, root_freqs, rates)
         if (coding == "informative") {
           puninf <- puninf + singleton_site_prob_mkn(
-            parent, child, edge_length, nTip, rate_loss, root_freqs, rates
+            parent, child, neo_el, nTip, rate_loss, root_freqs, rates
           )
         }
         ll <- ll - nCharPart * log(1 - puninf)

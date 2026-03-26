@@ -35,11 +35,11 @@
 #'   iterations. `NULL` (default) disables progress plotting (the `cli`
 #'   progress bar still runs). Typical values: 100--500.
 #' @param progress_fn Progress callback function, the string `"default"`,
-#'   or `NULL`. When `"default"`, uses [mkp_trace_plot()] for live
+#'   or `NULL`. When `"default"`, uses [MkpTracePlot()] for live
 #'   base-R trace plots. A custom function must accept a single argument:
 #'   a named list with fields `iter`, `nIter`, `warmup`, `in_warmup`,
 #'   `nRuns`, `nChains`, `run_samples`, `current_state`,
-#'   `recent_acceptance`, and `elapsed`. See [mkp_trace_plot()] for
+#'   `recent_acceptance`, and `elapsed`. See [MkpTracePlot()] for
 #'   details.
 #' @param tuning Named list of initial tuning parameters for each move
 #'   type. See Details.
@@ -104,6 +104,7 @@ MkPrimeMCMC <- function(
     scale_rate_loss = 0.5,
     scale_rate_log_sd = 0.5,
     scale_p = 0.5,
+    scale_rate_neo = 0.5,
     int_walk_window = 1L
   )
   tuning <- modifyList(defaults, tuning)
@@ -113,7 +114,7 @@ MkPrimeMCMC <- function(
 
   # Resolve progress_fn
   if (identical(progress_fn, "default")) {
-    progress_fn <- mkp_trace_plot
+    progress_fn <- MkpTracePlot
   }
   if (!is.null(progress_fn) && !is.function(progress_fn)) {
     cli::cli_abort(

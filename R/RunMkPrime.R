@@ -40,6 +40,13 @@ RunMkPrime <- function(data, tree,
   if (!inherits(tree, "phylo")) {
     cli::cli_abort("{.arg tree} must be a {.cls phylo} object.")
   }
+  if (is.null(tree$edge.length)) {
+    cli::cli_abort(c(
+      "{.arg tree} has no branch lengths.",
+      "i" = "Supply a tree with edge lengths, e.g. \\
+             {.code TreeTools::NJTree(data, edgeLengths = TRUE)}."
+    ))
+  }
 
   if (is.null(model)) model <- MkPrimeModel()
   if (is.null(mcmc)) mcmc <- MkPrimeMCMC()
@@ -308,7 +315,7 @@ RunMkPrime <- function(data, tree,
   # Compute min ESS across all runs combined
   combined <- do.call(rbind, per_run_samples)
   ess <- apply(combined, 2, function(col) {
-    if (sd(col, na.rm = TRUE) == 0) return(NA_real_)
+    s <- sd(col, na.rm = TRUE); if (is.na(s) || s == 0) return(NA_real_)
     coda::effectiveSize(coda::mcmc(col))
   })
   min_ess <- min(ess, na.rm = TRUE)
@@ -445,7 +452,7 @@ RunMkPrime <- function(data, tree,
 #'
 #' @return An `MkPosterior` object with combined samples.
 #' @export
-resume_mkprime <- function(checkpoint_file, data, tree,
+ResumeMkPrime <- function(checkpoint_file, data, tree,
                            neomorphic = integer(0),
                            known_states = integer(0),
                            model = NULL) {
@@ -653,6 +660,8 @@ resume_mkprime <- function(checkpoint_file, data, tree,
   known_idx <- which(mkd$type == "known")
   if (length(known_idx)) kPrime[known_idx] <- mkd$known_k[known_idx]
 
+  has_neo <- any(mkd$type == "neomorphic")
+
   state <- list(
     tree = tree,
     tree_length = tree_length,
@@ -663,13 +672,19 @@ resume_mkprime <- function(checkpoint_file, data, tree,
     p = 0.5
   )
 
-  state$log_lik <- mkp_loglikelihood(
+  # Partition rate scalar for neomorphic characters
+  if (has_neo) {
+    state$rate_neo <- 1.0
+  }
+
+  state$log_lik <- MkpLogLikelihood(
     tree, mkd,
     kPrime = state$kPrime,
     rate_loss = state$rate_loss,
     rate_log_sd = state$rate_log_sd,
     nCat = model$nCat,
     coding = model$coding,
+    rate_neo = state$rate_neo %||% 1.0,
     relabel = model$relabel
   )
   state$log_prior <- log_prior(state, model, mkd)
@@ -711,7 +726,9 @@ resume_mkprime <- function(checkpoint_file, data, tree,
   if (has_neo) {
     moves <- c(moves, list(
       list(name = "rate_loss", type = "scale", target = "rate_loss",
-           weight = 1.5)
+           weight = 1.5),
+      list(name = "rate_neo", type = "scale", target = "rate_neo",
+           weight = 1)
     ))
   }
 
@@ -782,13 +799,14 @@ resume_mkprime <- function(checkpoint_file, data, tree,
 
   tmp_tree <- proposed$tree
   tmp_tree$edge.length <- proposed$tree_length * proposed$rel_br_lengths
-  proposed$log_lik <- mkp_loglikelihood(
+  proposed$log_lik <- MkpLogLikelihood(
     tmp_tree, mkd,
     kPrime = proposed$kPrime,
     rate_loss = proposed$rate_loss,
     rate_log_sd = proposed$rate_log_sd,
     nCat = model$nCat,
     coding = model$coding,
+    rate_neo = proposed$rate_neo %||% 1.0,
     relabel = model$relabel
   )
   proposed$log_post <- proposed$log_lik + proposed$log_prior
@@ -858,6 +876,10 @@ resume_mkprime <- function(checkpoint_file, data, tree,
   names <- c("log_posterior", "log_likelihood", "tree_length",
              "rate_loss", "rate_log_sd", "p")
 
+  if (any(mkd$type == "neomorphic")) {
+    names <- c(names, "rate_neo")
+  }
+
   trans_idx <- which(mkd$type == "transformational")
   if (length(trans_idx)) {
     names <- c(names, paste0("kPrime_", trans_idx))
@@ -872,11 +894,14 @@ resume_mkprime <- function(checkpoint_file, data, tree,
 #' Extract state values to a row vector for storage
 #' @keywords internal
 .state_to_row <- function(state, mkd, nEdge) {
+  rate_neo_val <- if (!is.null(state$rate_neo)) state$rate_neo else numeric(0)
+
   trans_idx <- which(mkd$type == "transformational")
   kp <- if (length(trans_idx)) as.numeric(state$kPrime[trans_idx]) else numeric(0)
 
   c(state$log_post, state$log_lik, state$tree_length,
     state$rate_loss, state$rate_log_sd, state$p,
+    rate_neo_val,
     kp,
     state$rel_br_lengths)
 }
@@ -898,7 +923,8 @@ resume_mkprime <- function(checkpoint_file, data, tree,
     tree_length = 0.35, branch_lengths = 0.23,
     nni = 0.23, spr = 0.10,
     kPrime = 0.35,
-    p = 0.35, rate_loss = 0.35, rate_log_sd = 0.35
+    p = 0.35, rate_loss = 0.35, rate_log_sd = 0.35,
+    rate_neo = 0.35
   )
 
   tuning_keys <- c(
@@ -909,7 +935,8 @@ resume_mkprime <- function(checkpoint_file, data, tree,
     kPrime = "int_walk_window",
     p = "scale_p",
     rate_loss = "scale_rate_loss",
-    rate_log_sd = "scale_rate_log_sd"
+    rate_log_sd = "scale_rate_log_sd",
+    rate_neo = "scale_rate_neo"
   )
 
   for (move in moves) {

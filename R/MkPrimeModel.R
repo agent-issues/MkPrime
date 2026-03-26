@@ -20,6 +20,8 @@
 #'   on `rate_log_sd` (ACRV dispersion). Defaults: shape = 1, rate = 1.
 #' @param kprime_hyper_a,kprime_hyper_b Parameters for the Beta prior on the
 #'   geometric hyperprior parameter `p`. Defaults: a = 1, b = 1 (uniform).
+#' @param rate_neo_meanlog,rate_neo_sdlog Parameters for the LogNormal prior
+#'   on the neomorphic partition rate scalar. Defaults: meanlog = 0, sdlog = 2.
 #'
 #' @return An S3 object of class `MkPrimeModel`.
 #' @export
@@ -35,7 +37,9 @@ MkPrimeModel <- function(
     rate_log_sd_shape = 1,
     rate_log_sd_rate = 1,
     kprime_hyper_a = 1,
-    kprime_hyper_b = 1
+    kprime_hyper_b = 1,
+    rate_neo_meanlog = 0,
+    rate_neo_sdlog = 2
 ) {
   coding <- match.arg(coding, c("variable", "informative", "none"))
 
@@ -58,7 +62,9 @@ MkPrimeModel <- function(
       rate_log_sd_shape = rate_log_sd_shape,
       rate_log_sd_rate = rate_log_sd_rate,
       kprime_hyper_a = kprime_hyper_a,
-      kprime_hyper_b = kprime_hyper_b
+      kprime_hyper_b = kprime_hyper_b,
+      rate_neo_meanlog = rate_neo_meanlog,
+      rate_neo_sdlog = rate_neo_sdlog
     ),
     class = "MkPrimeModel"
   )
@@ -152,6 +158,7 @@ log_prior <- function(state, model, mkd) {
 
   has_neo <- any(mkd$type == "neomorphic")
   if (has_neo && state$rate_loss <= 0) return(-Inf)
+  if (has_neo && !is.null(state$rate_neo) && state$rate_neo <= 0) return(-Inf)
 
   trans_idx <- which(mkd$type == "transformational")
   if (length(trans_idx)) {
@@ -179,6 +186,14 @@ log_prior <- function(state, model, mkd) {
                       meanlog = model$rate_loss_meanlog,
                       sdlog = model$rate_loss_sdlog,
                       log = TRUE)
+
+    # rate_neo: partition rate scalar (LogNormal prior)
+    if (!is.null(state$rate_neo)) {
+      lp <- lp + dlnorm(state$rate_neo,
+                         meanlog = model$rate_neo_meanlog,
+                         sdlog = model$rate_neo_sdlog,
+                         log = TRUE)
+    }
   }
 
   # rate_log_sd: Gamma prior (rate_log_sd = 0 is a boundary; dgamma(0) = 0
@@ -220,7 +235,8 @@ print.MkPrimeModel <- function(x, ...) {
     "Tree length prior: Gamma({x$tree_length_shape}, {x$tree_length_rate %||% 'auto'})",
     "rate_loss prior: LogNormal({x$rate_loss_meanlog}, {x$rate_loss_sdlog})",
     "rate_log_sd prior: Gamma({x$rate_log_sd_shape}, {x$rate_log_sd_rate})",
-    "k' hyperprior p: Beta({x$kprime_hyper_a}, {x$kprime_hyper_b})"
+    "k' hyperprior p: Beta({x$kprime_hyper_a}, {x$kprime_hyper_b})",
+    "rate_neo prior: LogNormal({x$rate_neo_meanlog}, {x$rate_neo_sdlog})"
   ))
   invisible(x)
 }
