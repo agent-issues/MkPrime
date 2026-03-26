@@ -13,6 +13,14 @@ mkp_hello <- function() {
     .Call(`_MkPrime_mkp_hello`)
 }
 
+pruning_jc <- function(parent, child, edge_length, tip_states, kStates, root_freqs) {
+    .Call(`_MkPrime_pruning_jc`, parent, child, edge_length, tip_states, kStates, root_freqs)
+}
+
+pruning_mkn <- function(parent, child, edge_length, tip_states, rate_loss, root_freqs) {
+    .Call(`_MkPrime_pruning_mkn`, parent, child, edge_length, tip_states, rate_loss, root_freqs)
+}
+
 jc_transition_probs <- function(k, t) {
     .Call(`_MkPrime_jc_transition_probs`, k, t)
 }
