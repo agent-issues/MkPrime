@@ -94,19 +94,9 @@ mkp_loglikelihood <- function(tree, mkd,
         ll <- ll - nCharPart * log(1 - pconst)
       }
 
-    } else {
-      # JC model (transformational or known)
-      kStates <- part$kObs
-      if (part$type == "known") {
-        kStates <- part$k
-      } else {
-        # For transformational, use the max kPrime in this partition
-        # (all chars share the same kObs but may have different kPrime;
-        # however within a partition, we compute with a single k for the
-        # rate matrix. For now, use kObs as the matrix size.)
-        # TODO: handle per-character kPrime properly in the pruning
-        kStates <- part$kObs
-      }
+    } else if (part$type == "known") {
+      # Known state space: all chars use the fixed k
+      kStates <- part$k
       root_freqs <- rep(1.0 / kStates, kStates)
 
       if (rate_log_sd > 0) {
@@ -117,16 +107,44 @@ mkp_loglikelihood <- function(tree, mkd,
                          tip_states, kStates, root_freqs)
       }
 
-      # Ascertainment correction
       if (coding == "variable") {
         pconst <- constant_site_prob_jc(parent, child, edge_length,
                                         nTip, kStates, root_freqs, rates)
         ll <- ll - nCharPart * log(1 - pconst)
       }
 
-      # Relabelling correction for transformational characters (Mk' model)
-      if (relabel && part$type == "transformational") {
-        kPrime_part <- kPrime[part$char_indices]
+    } else {
+      # Transformational: sub-group by current kPrime value.
+      # Characters with different k' need different JC(k') matrices.
+      kPrime_part <- kPrime[part$char_indices]
+      ll <- 0.0
+
+      for (kp in sort(unique(kPrime_part))) {
+        cols <- which(kPrime_part == kp)
+        sub_states <- tip_states[, cols, drop = FALSE]
+        nCharSub <- length(cols)
+
+        root_freqs <- rep(1.0 / kp, kp)
+
+        if (rate_log_sd > 0) {
+          sub_ll <- pruning_jc_acrv(parent, child, edge_length,
+                                    sub_states, kp, root_freqs, rates)
+        } else {
+          sub_ll <- pruning_jc(parent, child, edge_length,
+                               sub_states, kp, root_freqs)
+        }
+
+        if (coding == "variable") {
+          pconst <- constant_site_prob_jc(parent, child, edge_length,
+                                          nTip, kp, root_freqs, rates)
+          sub_ll <- sub_ll - nCharSub * log(1 - pconst)
+        }
+
+        ll <- ll + sub_ll
+      }
+
+      # Relabelling correction (per character)
+      if (relabel) {
         relabel_corr <- mk_prime_relabel_log_batch(
           as.integer(kPrime_part), part$kObs
         )
