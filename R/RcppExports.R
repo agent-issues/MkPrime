@@ -9,6 +9,14 @@ pruning_mkn_acrv <- function(parent, child, edge_length, tip_states, rate_loss, 
     .Call(`_MkPrime_pruning_mkn_acrv`, parent, child, edge_length, tip_states, rate_loss, root_freqs, rate_multipliers)
 }
 
+constant_site_prob_jc <- function(parent, child, edge_length, nTip, kStates, root_freqs, rate_multipliers) {
+    .Call(`_MkPrime_constant_site_prob_jc`, parent, child, edge_length, nTip, kStates, root_freqs, rate_multipliers)
+}
+
+constant_site_prob_mkn <- function(parent, child, edge_length, nTip, rate_loss, root_freqs, rate_multipliers) {
+    .Call(`_MkPrime_constant_site_prob_mkn`, parent, child, edge_length, nTip, rate_loss, root_freqs, rate_multipliers)
+}
+
 mk_prime_relabel_log <- function(kPrime, kObs) {
     .Call(`_MkPrime_mk_prime_relabel_log`, kPrime, kObs)
 }
