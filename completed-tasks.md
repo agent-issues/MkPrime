@@ -45,3 +45,11 @@
 | M-042 | _pkgdown.yml for MkPrime | A | 2026-03-26 | Created by human; confirmed present. |
 | M-043 | Auto-detect neomorphic characters | A | 2026-03-26 | auto_detect_neomorphic(): checks level labels {0,1}; wired into EasyMkPrime data loading. 14 new tests. |
 | M-041 | Migrate issues protocol to u.nnn files | A | 2026-03-26 | Updated parent, TreeSearch, MkPrime AGENTS.md. Deprecated issues.md files. |
+| M-044 | C++ singleton_site_prob_jc() | A | 2026-03-26 | n pseudo-chars × k*(k-1) JC symmetry. ACRV averaging. |
+| M-045 | C++ singleton_site_prob_mkn() | A | 2026-03-26 | 2n pseudo-chars (asymmetric states). |
+| M-046 | R-level coding="informative" | A | 2026-03-26 | MkpLogLikelihood + MkPrimeModel support. P(uninf) = P(const) + P(singleton). |
+| M-047 | Tests for coding="informative" | A | 2026-03-26 | 20 new tests in test-ascertainment.R. |
+| M-048 | Partition rate scalar (rate_neo) | A | 2026-03-26 | Multiplies neomorphic branch lengths. LogNormal prior, scale proposal, adaptive tuning. |
+| M-049 | Tests for rate_neo | A | 2026-03-26 | Likelihood, prior, MCMC smoke test, backward compat. |
+| M-050 | Stepping-stone marginal likelihood | A | 2026-03-26 | mkp_stepping_stone(): power posterior with Beta(α,1) schedule. |
+| M-051 | Tests for stepping-stone | A | 2026-03-26 | 11 tests: finite output, consistency, neomorphic, fixed topology. |

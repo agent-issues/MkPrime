@@ -102,10 +102,20 @@ monitoring, stopping rules, checkpointing.
 **Deferred to Phase 6b:**
 - TreeSearch GUI integration hook ("Bayesian (Mk')" mode in EasyTrees)
 
-### Phase 7: Extensions (future)
-**Status:** Not started
+### Phase 7: Extensions
+**Status:** Core complete (2026-03-26). Deferred items remain.
 **Goal:** `"informative"` coding, partition rates, siteMatrices, model
 comparison, TBR, HMC.
+
+**Completed (M-044–M-051):**
+- `coding = "informative"` ascertainment correction (singleton site probs)
+- Partition rate scalar `rate_neo` (neomorphic-specific rate multiplier)
+- Stepping-stone marginal likelihood estimation (`mkp_stepping_stone()`)
+
+**Deferred:**
+- Beta-distributed Q-matrix heterogeneity (siteMatrices)
+- TBR moves (if SPR mixing insufficient)
+- HMC for branch lengths (if MH mixing insufficient)
 
 ---
 

@@ -32,28 +32,12 @@ Planned work:
 
 ## Phase 7: Extensions
 
-### 7a: `coding = "informative"` ascertainment correction
+### 7a–c: COMPLETE
 
-| ID | Priority | Status | Description |
-|----|----------|--------|-------------|
-| M-044 | P1 | OPEN | C++ `singleton_site_prob_jc()` — compute P(autapomorphy) by running n singleton pseudo-characters through pruning. With ACRV averaging. |
-| M-045 | P1 | OPEN | C++ `singleton_site_prob_mkn()` — asymmetric version: 2n pseudo-characters (each tip as sole 0 among 1s, and sole 1 among 0s). |
-| M-046 | P1 | OPEN | R-level `coding = "informative"` support: `MkPrimeModel()` accepts `"informative"`; `MkpLogLikelihood()` computes P(uninformative) = P(constant) + P(singleton) and applies correction. |
-| M-047 | P1 | OPEN | Tests: validate `coding = "informative"` against RevBayes reference likelihoods on hyoliths dataset. Unit tests for singleton prob functions. |
-
-### 7b: Partition-specific rate scalars
-
-| ID | Priority | Status | Description |
-|----|----------|--------|-------------|
-| M-048 | P2 | OPEN | Add `rate_neo` parameter (rate multiplier for neomorphic partition, default 1.0). Multiply branch lengths by rate scalar in likelihood. LogNormal(0, 2) prior. Scale proposal. Transformational rate fixed at 1.0 for identifiability. |
-| M-049 | P2 | OPEN | Tests: partition rate scalar recovery on simulated data; verify identifiability constraint. |
-
-### 7c: Stepping-stone marginal likelihood
-
-| ID | Priority | Status | Description |
-|----|----------|--------|-------------|
-| M-050 | P2 | OPEN | Implement `mkp_stepping_stone()`: run MCMC at K power posteriors (β from 0→1), compute marginal likelihood via stepping-stone estimator (Xie et al. 2011). Return log-marginal-likelihood with SE. |
-| M-051 | P2 | OPEN | Tests: verify marginal likelihood on simple tree where analytical solution is tractable. |
+M-044 through M-051 done. See `completed-tasks.md`.
+- `coding = "informative"` ascertainment correction (singleton probs + R-level support)
+- Partition rate scalar `rate_neo` (neomorphic-specific rate multiplier)
+- Stepping-stone marginal likelihood (`mkp_stepping_stone()`)
 
 ### 7d: Deferred extensions
 
