@@ -23,6 +23,19 @@ M-037 through M-039 done. Core progress display infrastructure in place:
 - Console trace plots (mkp_trace_plot)
 - PNG output for Shiny polling (mkp_png_progress)
 
+## Infrastructure
+
+| ID | Priority | Status | Description |
+|----|----------|--------|-------------|
+| M-041 | P3 | OPEN | Update parent AGENTS.md: replace `issues.md` block protocol with `u.nnn` file scanning. Agents scan for `u.*` files at session start, triage → `to-do.md`, delete file. Apply to MkPrime, TreeSearch, and parent `GitHub/`. |
+| M-042 | P3 | OPEN | Create `inst/_pkgdown.yml` for MkPrime (model on TreeSearch). Add pkgdown GHA workflow. |
+
+## EasyMkPrime app improvements
+
+| ID | Priority | Status | Description |
+|----|----------|--------|-------------|
+| M-043 | P2 | OPEN | Auto-detect neomorphic characters: pre-populate the "Neomorphic characters" input with indices where state `0` occurs. Characters with `0` and states other than `1` should be elevated to transformational. |
+
 ## Phase 6b: TreeSearch integration (deferred)
 
 *Not yet broken into tasks.*
