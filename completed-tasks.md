@@ -13,3 +13,4 @@
 | M-009 | ACRV discretized lognormal rate categories | A | 2026-03-26 | `f2d5ee3`. 6-category midpoint quantiles. |
 | M-010 | Ascertainment bias correction (variable coding) | A | 2026-03-26 | `ffb5769`. Constant site probability. |
 | M-011 | Mk' relabelling correction | A | 2026-03-26 | `e001c74`. lgamma-based, scalar + batch. |
+| M-012 | Likelihood validation + mkp_loglikelihood() | A | 2026-03-26 | `25e08ad`. Matches phangorn to machine epsilon. 194 total tests. |

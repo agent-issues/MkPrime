@@ -4,7 +4,7 @@ Last updated: 2026-03-26
 
 ## Project State
 
-**Phase:** 1 (Foundation) — not yet started.
+**Phase:** 2 (Likelihood engine) — COMPLETE. Ready for Phase 3 (MCMC).
 
 MkPrime is a new R package for Bayesian phylogenetic inference under the
 Mk' model. The architecture follows StratoBayes (C++ hot loop via Rcpp,
@@ -25,7 +25,7 @@ the internal data structures the C++ likelihood engine will consume.
 - Unit tests pass
 
 ### Phase 2: Likelihood engine (C++)
-**Status:** Not started
+**Status:** COMPLETE (2026-03-26)
 **Goal:** Correct likelihood computation for all three character types,
 including ACRV and ascertainment bias correction.
 

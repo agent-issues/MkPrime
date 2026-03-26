@@ -14,8 +14,14 @@ Task IDs use `M-nnn` prefix (MkPrime) to avoid collision with TreeSearch
 
 ---
 
-## Phase 2: Likelihood engine (C++) — nearly complete
+## Phase 3: Basic MCMC (fixed topology)
 
-| ID | Pri | Status | Blocks | Description | Notes |
-|----|-----|--------|--------|-------------|-------|
-| M-012 | P1 | ASSIGNED (A) | — | **Likelihood validation.** Compare MkPrime likelihoods against RevBayes on a set of reference trees and datasets. Test: (a) Mk with known k, (b) MkN, (c) Mk' with fixed k', (d) with ACRV, (e) with ascertainment correction. Must match to within numerical tolerance (~1e-6). | Use `../mkprime/` reference data. May need to generate RevBayes reference values. |
+*Not yet broken into tasks. Phase 2 just completed.*
+
+Planned work:
+- MH proposals for continuous parameters (Scale, BetaSimplex)
+- BoundedIntegerWalk for k'_i
+- Single chain, no tempering
+- Sample accumulation to file
+- Console progress bar
+- MkPosterior result object
