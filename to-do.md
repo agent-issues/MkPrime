@@ -16,14 +16,20 @@ Task IDs use `M-nnn` prefix (MkPrime) to avoid collision with TreeSearch
 
 All Phase 5 tasks (M-029 through M-036) are done. See `completed-tasks.md`.
 
-## Phase 6: Progress display + GUI hooks
+## Phase 6: Progress display + GUI hooks — COMPLETE (core)
+
+M-037 through M-039 done. Core progress display infrastructure in place:
+- Callback architecture (plot_every, progress_fn)
+- Console trace plots (mkp_trace_plot)
+- PNG output for Shiny polling (mkp_png_progress)
+
+## Phase 6b: Shiny module + TreeSearch integration (deferred)
 
 *Not yet broken into tasks.*
 
 Planned work:
-- PlotDuringMCMC: log-posterior traces, parameter traces
-- PNG-based progress for Shiny integration
-- TreeSearch GUI module (Suggests: MkPrime)
+- MkPrime Shiny module (mkprime_ui/mkprime_server)
+- TreeSearch GUI integration (Suggests: MkPrime)
 
 ## Phase 7: Extensions (future)
 

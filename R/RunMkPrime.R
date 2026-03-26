@@ -86,6 +86,9 @@ RunMkPrime <- function(data, tree,
   stop_reason <- "max_iter"
   start_time <- proc.time()["elapsed"]
 
+  # Progress callback
+  has_progress_fn <- !is.null(mcmc$progress_fn) && !is.null(mcmc$plot_every)
+
   # Progress bar
   cli::cli_progress_bar(
     "MCMC", total = mcmc$nIter,
@@ -184,6 +187,13 @@ RunMkPrime <- function(data, tree,
       cold_logpost <- runs[[1]]$chains[[1]]$log_lik +
                       runs[[1]]$chains[[1]]$log_prior
       cli::cli_progress_update()
+    }
+
+    # Progress callback (trace plots)
+    if (has_progress_fn && iter %% mcmc$plot_every == 0L) {
+      info <- .build_progress_info(runs, iter, mcmc, start_time,
+                                   recent_acc, param_names)
+      mcmc$progress_fn(info)
     }
 
     # --- Stopping rule checks + checkpointing ---
@@ -494,6 +504,7 @@ resume_mkprime <- function(checkpoint_file, data, tree,
   # Resume loop
   stop_reason <- "max_iter"
   start_time <- proc.time()["elapsed"]
+  has_progress_fn <- !is.null(mcmc$progress_fn) && !is.null(mcmc$plot_every)
 
   cli::cli_progress_bar(
     "Resuming MCMC", total = mcmc$nIter - start_iter + 1L,
@@ -553,6 +564,12 @@ resume_mkprime <- function(checkpoint_file, data, tree,
     }
 
     if (iter %% 100L == 0L) cli::cli_progress_update()
+
+    if (has_progress_fn && iter %% mcmc$plot_every == 0L) {
+      info <- .build_progress_info(runs, iter, mcmc, start_time,
+                                   0, param_names)
+      mcmc$progress_fn(info)
+    }
   }
   cli::cli_progress_done()
 
@@ -584,6 +601,39 @@ resume_mkprime <- function(checkpoint_file, data, tree,
 
 
 # --- Internal helpers ---
+
+#' Build the progress info list for callbacks
+#' @keywords internal
+.build_progress_info <- function(runs, iter, mcmc, start_time,
+                                 recent_acc, param_names) {
+  nRuns <- length(runs)
+  run_samples <- lapply(runs, function(r) {
+    idx <- r$saved_idx
+    if (idx > 0L) r$samples[seq_len(idx), , drop = FALSE] else NULL
+  })
+
+  current_state <- lapply(runs, function(r) {
+    s <- r$chains[[1]]
+    list(log_lik = s$log_lik, log_prior = s$log_prior,
+         tree_length = s$tree_length, rate_loss = s$rate_loss,
+         rate_log_sd = s$rate_log_sd, p = s$p)
+  })
+
+  list(
+    iter = iter,
+    nIter = mcmc$nIter,
+    warmup = mcmc$warmup,
+    in_warmup = iter <= mcmc$warmup,
+    nRuns = nRuns,
+    nChains = mcmc$nChains,
+    run_samples = run_samples,
+    current_state = current_state,
+    recent_acceptance = recent_acc,
+    elapsed = as.numeric(proc.time()["elapsed"] - start_time),
+    param_names = param_names
+  )
+}
+
 
 #' Build geometric temperature ladder
 #' @keywords internal

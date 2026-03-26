@@ -88,8 +88,17 @@ monitoring, stopping rules, checkpointing.
 - MkPosterior reports combined diagnostics across runs
 
 ### Phase 6: Progress display + GUI hooks
-**Status:** Not started
+**Status:** Core COMPLETE (2026-03-26). Shiny module deferred to 6b.
 **Goal:** Live MCMC traces, PNG-based Shiny integration, TreeSearch GUI module.
+
+**Completed (M-037–M-039):**
+- Progress callback infrastructure (plot_every, progress_fn in MkPrimeMCMC)
+- mkp_trace_plot(): multi-panel base-R trace plots (per-run, warmup-aware)
+- mkp_png_progress(): factory fn writing atomic PNG + JSON for Shiny polling
+
+**Deferred to Phase 6b:**
+- MkPrime Shiny module (mkprime_ui/mkprime_server with callr background)
+- TreeSearch GUI integration hook
 
 ### Phase 7: Extensions (future)
 **Status:** Not started

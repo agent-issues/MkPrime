@@ -38,3 +38,6 @@
 | M-034 | Stopping rules + interleaved runs | A | 2026-03-26 | `266f571`. max_time, min_ess, max_psrf, check_every. Lockstep run architecture. |
 | M-035 | Checkpointing | A | 2026-03-26 | `79ccb6a`. checkpoint_file, resume_mkprime(). |
 | M-036 | MkPosterior multi-run updates | A | 2026-03-26 | `623b9a9`. ESS/PSRF in summary, per-run traces in plot. 2898 total tests. |
+| M-037 | Progress callback infrastructure | A | 2026-03-26 | plot_every + progress_fn params in MkPrimeMCMC; .build_progress_info() in RunMkPrime + resume. |
+| M-038 | PlotDuringMCMC — console trace plots | A | 2026-03-26 | mkp_trace_plot(): multi-panel base-R traces, per-run colors, warmup handling. |
+| M-039 | PNG progress writer | A | 2026-03-26 | mkp_png_progress(): factory fn, atomic PNG rename, hand-rolled JSON status. 46 new tests. |

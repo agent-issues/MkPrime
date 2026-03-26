@@ -31,6 +31,16 @@
 #' @param tree_file Path to write sampled trees in Newick format.
 #'   `NULL` (default) disables file logging. Trees are always stored
 #'   in the returned `MkPosterior` object regardless.
+#' @param plot_every Integer; invoke the progress callback every this many
+#'   iterations. `NULL` (default) disables progress plotting (the `cli`
+#'   progress bar still runs). Typical values: 100--500.
+#' @param progress_fn Progress callback function, the string `"default"`,
+#'   or `NULL`. When `"default"`, uses [mkp_trace_plot()] for live
+#'   base-R trace plots. A custom function must accept a single argument:
+#'   a named list with fields `iter`, `nIter`, `warmup`, `in_warmup`,
+#'   `nRuns`, `nChains`, `run_samples`, `current_state`,
+#'   `recent_acceptance`, and `elapsed`. See [mkp_trace_plot()] for
+#'   details.
 #' @param tuning Named list of initial tuning parameters for each move
 #'   type. See Details.
 #'
@@ -65,6 +75,8 @@ MkPrimeMCMC <- function(
     check_every = 1000L,
     checkpoint_file = NULL,
     tree_file = NULL,
+    plot_every = NULL,
+    progress_fn = NULL,
     tuning = list()
 ) {
   nIter <- as.integer(nIter)
@@ -97,13 +109,25 @@ MkPrimeMCMC <- function(
   tuning <- modifyList(defaults, tuning)
 
   if (!is.null(check_every)) check_every <- as.integer(check_every)
+  if (!is.null(plot_every)) plot_every <- as.integer(plot_every)
+
+  # Resolve progress_fn
+  if (identical(progress_fn, "default")) {
+    progress_fn <- mkp_trace_plot
+  }
+  if (!is.null(progress_fn) && !is.function(progress_fn)) {
+    cli::cli_abort(
+      "{.arg progress_fn} must be a function, {.val default}, or {.val NULL}."
+    )
+  }
 
   structure(
     list(nIter = nIter, thin = thin, warmup = warmup,
          nRuns = nRuns, nChains = nChains, heat = heat,
          max_time = max_time, min_ess = min_ess, max_psrf = max_psrf,
          check_every = check_every, checkpoint_file = checkpoint_file,
-         tree_file = tree_file, tuning = tuning),
+         tree_file = tree_file, plot_every = plot_every,
+         progress_fn = progress_fn, tuning = tuning),
     class = "MkPrimeMCMC"
   )
 }
