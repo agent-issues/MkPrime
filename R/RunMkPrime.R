@@ -65,6 +65,7 @@ RunMkPrime <- function(data, tree,
   # POSTORDER INVARIANT: all topology proposals maintain this ordering.
   tree <- TreeTools::Postorder(tree)
   nEdge <- nrow(tree$edge)
+  tipLabels <- tree$tip.label
 
   hasNeo <- any(mkd$type == "neomorphic")
   transIdx <- which(mkd$type == "transformational")
@@ -107,8 +108,7 @@ RunMkPrime <- function(data, tree,
   hasProgressFn <- !is.null(mcmc$progressFn) && !is.null(mcmc$plotEvery)
 
   # Progress bar state
-  coldLogpost <- runs[[1]]$chains[[1]]$log_lik +
-                 runs[[1]]$chains[[1]]$log_prior
+  coldLogpost <- {s <- get_mcmc_state(runs[[1]]$chainStates[[1]]); s$logPost}
   recentAcc <- 0
   recentWindow <- 500L
   recentAccepts <- logical(recentWindow)
@@ -122,6 +122,9 @@ RunMkPrime <- function(data, tree,
   # Pre-compute move weight vector. Weights are constant (adaptation only
   # adjusts proposal scales, not move frequencies).
   moveWeights <- vapply(moves, `[[`, numeric(1), "weight")
+
+  # Initialize C++ MCMC data structure (partitions + model params)
+  mcmcData <- .InitMcmcData(mkd, model)
 
   cli::cli_progress_bar(
     "MCMC", total = mcmc$nIter,
@@ -146,11 +149,11 @@ RunMkPrime <- function(data, tree,
         r$chain_propose[[ch]][moveIdx] <-
           r$chain_propose[[ch]][moveIdx] + 1L
 
-        accepted <- .DoMove(move, r$chains[[ch]], mkd, model,
-                            r$chain_tuning[[ch]], beta = r$betas[ch])
+        accepted <- .DoMove(move, r$chainStates[[ch]],
+                            tuning = r$chain_tuning[[ch]], beta = r$betas[ch],
+                            transIdx = transIdx, mcmcData = mcmcData)
 
         if (accepted$accept) {
-          r$chains[[ch]] <- accepted$state
           r$chain_accept[[ch]][moveIdx] <-
             r$chain_accept[[ch]][moveIdx] + 1L
         }
@@ -164,8 +167,8 @@ RunMkPrime <- function(data, tree,
 
       # Chain swaps
       if (nChains > 1L) {
-        swapResult <- .ProposeChainSwap(r$chains, r$betas)
-        r$chains <- swapResult$chains
+        swapResult <- .ProposeChainSwap(r$chainStates, r$betas)
+        r$chainStates <- swapResult$chains
         if (!is.null(swapResult$pair)) {
           pairIdx <- swapResult$pair[1]
           r$swap_propose[pairIdx] <- r$swap_propose[pairIdx] + 1L
@@ -192,8 +195,8 @@ RunMkPrime <- function(data, tree,
       # Save cold chain samples post-warmup
       if (iter > mcmc$warmup && (iter - mcmc$warmup) %% mcmc$thin == 0L) {
         r$saved_idx <- r$saved_idx + 1L
-        r$samples[r$saved_idx, ] <- .StateToRow(r$chains[[1]], mkd, nEdge)
-        curTree <- .StateToTree(r$chains[[1]])
+        r$samples[r$saved_idx, ] <- .StateToRow(r$chainStates[[1]], mkd, nEdge)
+        curTree <- .StateToTree(r$chainStates[[1]], tipLabels)
         r$tree_samples[[r$saved_idx]] <- curTree
         if (!is.null(treeFile)) {
           cat(ape::write.tree(curTree), "\n", file = treeFile,
@@ -208,8 +211,7 @@ RunMkPrime <- function(data, tree,
     if (iter %% 100L == 0L) {
       nRecent <- min(iter, recentWindow)
       recentAcc <- sum(recentAccepts[seq_len(nRecent)]) / nRecent
-      coldLogpost <- runs[[1]]$chains[[1]]$log_lik +
-                     runs[[1]]$chains[[1]]$log_prior
+      coldLogpost <- {s <- get_mcmc_state(runs[[1]]$chainStates[[1]]); s$logPost}
       cli::cli_progress_update()
     }
 
@@ -278,6 +280,12 @@ RunMkPrime <- function(data, tree,
     chains[[ch]] <- .InitState(tree, mkd, model)
   }
 
+  # Convert R states to C++ XPtr states
+  chainStates <- vector("list", nChains)
+  for (ch in seq_len(nChains)) {
+    chainStates[[ch]] <- .InitMcmcChain(chains[[ch]])
+  }
+
   moveNames <- vapply(moves, `[[`, character(1), "name")
   chainAccept <- chainPropose <- chainTuning <- vector("list", nChains)
   for (ch in seq_len(nChains)) {
@@ -294,7 +302,7 @@ RunMkPrime <- function(data, tree,
   }
 
   list(
-    chains = chains,
+    chainStates = chainStates,
     betas = betas,
     chain_accept = chainAccept,
     chain_propose = chainPropose,
@@ -452,14 +460,30 @@ RunMkPrime <- function(data, tree,
 #' Save MCMC checkpoint to RDS
 #' @keywords internal
 .SaveCheckpoint <- function(runs, mcmc, iter, file) {
-  checkpoint <- list(
-    runs = runs,
-    mcmc = mcmc,
-    iter = iter,
-    timestamp = Sys.time(),
-    version = 1L
-  )
-  saveRDS(checkpoint, file)
+  # XPtr<McmcState> objects cannot be serialized across R sessions.
+  # Convert chain states to R lists via get_mcmc_state() before saving.
+  serialRuns <- lapply(runs, function(r) {
+    r$chains <- lapply(r$chainStates, function(ptr) {
+      s <- get_mcmc_state(ptr)
+      list(
+        log_lik        = s$logLik,
+        log_prior      = s$logPrior,
+        log_post       = s$logPost,
+        tree_length    = s$treeLength,
+        rel_br_lengths = s$relBrLengths,
+        rate_loss      = s$rateLoss,
+        rate_log_sd    = s$rateLogSd,
+        rate_neo       = s$rateNeo,
+        p              = s$p,
+        kPrime         = s$kPrime,
+        edge           = s$edge
+      )
+    })
+    r$chainStates <- NULL  # never serialize raw XPtrs
+    r
+  })
+  saveRDS(list(runs = serialRuns, mcmc = mcmc, iter = iter,
+               timestamp = Sys.time(), version = 1L), file)
 }
 
 
@@ -536,6 +560,27 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 
   # Pre-compute move weight vector (constant across all iterations).
   moveWeights <- vapply(moves, `[[`, numeric(1), "weight")
+  tipLabels <- tree$tip.label
+  transIdx <- which(mkd$type == "transformational")
+  mcmcData <- .InitMcmcData(mkd, model)
+
+  # Rebuild XPtr<McmcState> from serialized R chain state lists.
+  # Checkpoints store r$chains as plain R lists (see .SaveCheckpoint).
+  for (run in seq_len(nRuns)) {
+    nChains <- mcmc$nChains
+    runs[[run]]$chainStates <- vector("list", nChains)
+    for (ch in seq_len(nChains)) {
+      ch_r <- runs[[run]]$chains[[ch]]
+      runs[[run]]$chainStates[[ch]] <- init_mcmc_state(
+        ch_r$edge[, 1], ch_r$edge[, 2],
+        ch_r$rel_br_lengths, ch_r$tree_length,
+        ch_r$rate_loss, ch_r$rate_log_sd,
+        ch_r$rate_neo %||% 1.0, ch_r$p %||% 0.5,
+        as.integer(ch_r$kPrime),
+        ch_r$log_lik, ch_r$log_prior
+      )
+    }
+  }
 
   cli::cli_progress_bar(
     "Resuming MCMC", total = mcmc$nIter - startIter + 1L,
@@ -553,19 +598,19 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
         r$chain_propose[[ch]][moveIdx] <-
           r$chain_propose[[ch]][moveIdx] + 1L
 
-        accepted <- .DoMove(move, r$chains[[ch]], mkd, model,
-                            r$chain_tuning[[ch]], beta = r$betas[ch])
+        accepted <- .DoMove(move, r$chainStates[[ch]],
+                            tuning = r$chain_tuning[[ch]], beta = r$betas[ch],
+                            transIdx = transIdx, mcmcData = mcmcData)
 
         if (accepted$accept) {
-          r$chains[[ch]] <- accepted$state
           r$chain_accept[[ch]][moveIdx] <-
             r$chain_accept[[ch]][moveIdx] + 1L
         }
       }
 
       if (nChains > 1L) {
-        swapResult <- .ProposeChainSwap(r$chains, r$betas)
-        r$chains <- swapResult$chains
+        swapResult <- .ProposeChainSwap(r$chainStates, r$betas)
+        r$chainStates <- swapResult$chains
         if (!is.null(swapResult$pair)) {
           pairIdx <- swapResult$pair[1]
           r$swap_propose[pairIdx] <- r$swap_propose[pairIdx] + 1L
@@ -577,8 +622,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 
       if (iter > mcmc$warmup && (iter - mcmc$warmup) %% mcmc$thin == 0L) {
         r$saved_idx <- r$saved_idx + 1L
-        r$samples[r$saved_idx, ] <- .StateToRow(r$chains[[1]], mkd, nEdge)
-        r$tree_samples[[r$saved_idx]] <- .StateToTree(r$chains[[1]])
+        r$samples[r$saved_idx, ] <- .StateToRow(r$chainStates[[1]], mkd, nEdge)
+        r$tree_samples[[r$saved_idx]] <- .StateToTree(r$chainStates[[1]], tipLabels)
       }
 
       runs[[run]] <- r
@@ -642,10 +687,10 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   })
 
   currentState <- lapply(runs, function(r) {
-    s <- r$chains[[1]]
-    list(log_lik = s$log_lik, log_prior = s$log_prior,
-         tree_length = s$tree_length, rate_loss = s$rate_loss,
-         rate_log_sd = s$rate_log_sd, p = s$p)
+    s <- get_mcmc_state(r$chainStates[[1]])
+    list(log_lik = s$logLik, log_prior = s$logPrior,
+         tree_length = s$treeLength, rate_loss = s$rateLoss,
+         rate_log_sd = s$rateLogSd, p = s$p)
   })
 
   list(
@@ -764,11 +809,91 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 }
 
 
-#' Execute a move and return accept/reject decision
-#'
-#' @param beta Inverse temperature (1 = cold chain, < 1 = heated).
+# --- Move type integer codes (must match src/mcmc.cpp) ---
+# 0=scale_tl, 1=scale_rl, 2=scale_rls, 3=scale_rn,
+# 4=beta_simplex, 5=nni, 6=spr, 7=int_walk, 8=scale_p
+.kMoveTypes <- c(
+  tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
+  rate_neo = 3L, branch_lengths = 4L,
+  nni = 5L, spr = 6L, kPrime = 7L, p = 8L
+)
+
+#' Initialize the C++ MCMC data structure (call once before loop)
 #' @keywords internal
-.DoMove <- function(move, state, mkd, model, tuning, beta = 1.0) {
+.InitMcmcData <- function(mkd, model) {
+  # Replace NA with -1 in tip states for C++
+  parts <- lapply(mkd$partitions, function(p) {
+    ts <- p$tip_states
+    ts[is.na(ts)] <- -1L
+    storage.mode(ts) <- "integer"
+    p$tip_states <- ts
+    # Ensure k is integer (NA_integer_ for non-known)
+    if (is.na(p$k)) p$k <- 0L
+    p
+  })
+  prepare_mcmc_data(
+    parts, as.integer(mkd$kObs), mkd$type,
+    any(mkd$type == "neomorphic"),
+    model$nCat, model$coding, model$relabel,
+    model$treeLengthShape, model$treeLengthRate,
+    model$rateLossMeanlog, model$rateLossSdlog,
+    model$rateLogSdShape, model$rateLogSdRate,
+    model$rateNeoMeanlog, model$rateNeoSdlog,
+    model$kprimeHyperA, model$kprimeHyperB
+  )
+}
+
+#' Convert an R state to a C++ XPtr<McmcState>
+#' @keywords internal
+.InitMcmcChain <- function(state) {
+  init_mcmc_state(
+    state$tree$edge[, 1], state$tree$edge[, 2],
+    state$rel_br_lengths, state$tree_length,
+    state$rate_loss, state$rate_log_sd,
+    state$rate_neo %||% 1.0, state$p %||% 0.5,
+    as.integer(state$kPrime),
+    state$log_lik, state$log_prior
+  )
+}
+
+#' Execute a move via C++ XPtr engine
+#'
+#' @return list(accept, statePtr) where statePtr is the (possibly updated) XPtr.
+#' @keywords internal
+#' Execute a move via C++ XPtr engine (or R fallback for tests)
+#'
+#' @keywords internal
+.DoMove <- function(move, stateOrPtr, mkdOrData = NULL, modelOrTuning = NULL,
+                    tuning = NULL, beta = 1.0,
+                    transIdx = integer(0), mcmcData = NULL) {
+  # Detect XPtr mode: mcmcData is provided and stateOrPtr is externalptr
+  if (!is.null(mcmcData) && inherits(stateOrPtr, "externalptr")) {
+    moveCode <- .kMoveTypes[[move$name]]
+    charIdx <- if (moveCode == 7L && length(transIdx) > 0L) {
+      sample(transIdx, 1L) - 1L
+    } else {
+      0L
+    }
+    scaleTun <- switch(move$name,
+      tree_length = tuning$scale_tree_length,
+      rate_loss   = tuning$scale_rate_loss,
+      rate_log_sd = tuning$scale_rate_log_sd,
+      rate_neo    = tuning$scale_rate_neo,
+      p           = tuning$scale_p,
+      0.5
+    )
+    accepted <- do_move_cpp(
+      mcmcData, stateOrPtr, moveCode, charIdx,
+      scaleTun, tuning$beta_simplex, tuning$int_walk_window, beta
+    )
+    return(list(accept = accepted, statePtr = stateOrPtr))
+  }
+
+  # Fallback: old R interface for tests
+  # stateOrPtr = R state list, mkdOrData = mkd, modelOrTuning = model
+  state <- stateOrPtr
+  mkd <- mkdOrData
+  model <- modelOrTuning
   proposed <- state
 
   switch(move$type,
@@ -822,7 +947,6 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 
   tmpTree <- proposed$tree
   tmpTree$edge.length <- proposed$tree_length * proposed$rel_br_lengths
-  # Use internal fast-path: tree is guaranteed postorder by the invariant
   proposed$log_lik <- .MkpLogLikelihood(
     tmpTree, mkd,
     kPrime = proposed$kPrime,
@@ -845,8 +969,6 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     list(accept = FALSE, state = state)
   }
 }
-
-
 #' Propose a swap between two adjacent chains
 #' @keywords internal
 .ProposeChainSwap <- function(chains, betas) {
@@ -858,8 +980,19 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   i <- sample.int(nChains - 1L, 1L)
   j <- i + 1L
 
-  logAlpha <- (betas[i] - betas[j]) *
-              (chains[[j]]$log_lik - chains[[i]]$log_lik)
+  # Handle both XPtr and R-list states
+  lik_j <- if (inherits(chains[[j]], "externalptr")) {
+    get_state_log_lik(chains[[j]])
+  } else {
+    chains[[j]]$log_lik
+  }
+  lik_i <- if (inherits(chains[[i]], "externalptr")) {
+    get_state_log_lik(chains[[i]])
+  } else {
+    chains[[i]]$log_lik
+  }
+
+  logAlpha <- (betas[i] - betas[j]) * (lik_j - lik_i)
 
   accepted <- is.finite(logAlpha) && log(runif(1)) < logAlpha
   if (accepted) {
@@ -917,26 +1050,42 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 
 #' Extract state values to a row vector for storage
 #' @keywords internal
-.StateToRow <- function(state, mkd, nEdge) {
-  rateNeoVal <- if (!is.null(state$rate_neo)) state$rate_neo else numeric(0)
+#' Extract state row for sample storage
+#' @param statePtr XPtr<McmcState> or R list (for backward compat)
+#' @keywords internal
+.StateToRow <- function(statePtr, mkd, nEdge, tipLabels = NULL) {
+  state <- get_mcmc_state(statePtr)
+
+  rateNeoVal <- if (!is.null(state$rateNeo) && state$rateNeo != 1.0) {
+    state$rateNeo
+  } else {
+    numeric(0)
+  }
 
   transIdx <- which(mkd$type == "transformational")
   kp <- if (length(transIdx)) as.numeric(state$kPrime[transIdx]) else numeric(0)
 
-  c(state$log_post, state$log_lik, state$tree_length,
-    state$rate_loss, state$rate_log_sd, state$p,
+  c(state$logPost, state$logLik, state$treeLength,
+    state$rateLoss, state$rateLogSd, state$p,
     rateNeoVal,
     kp,
-    state$rel_br_lengths)
+    state$relBrLengths)
 }
 
 
-#' Reconstruct a phylo object from current state
+#' Reconstruct a phylo object from XPtr state
 #' @keywords internal
-.StateToTree <- function(state) {
-  t <- state$tree
-  t$edge.length <- state$tree_length * state$rel_br_lengths
-  t
+.StateToTree <- function(statePtr, tipLabels) {
+  state <- get_mcmc_state(statePtr)
+  structure(
+    list(
+      edge = state$edge,
+      edge.length = state$treeLength * state$relBrLengths,
+      Nnode = nrow(state$edge) / 2L + 1L,
+      tip.label = tipLabels
+    ),
+    class = "phylo"
+  )
 }
 
 

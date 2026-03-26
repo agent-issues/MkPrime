@@ -102,6 +102,11 @@ mkp_stepping_stone <- function(data, tree,
 
   mcmcTuning <- MkPrimeMCMC(nIter = 100L)$tuning
 
+  # Build C++ data struct and XPtr state (shared across all stones)
+  mcmcData <- .InitMcmcData(mkd, model)
+  transIdx  <- which(mkd$type == "transformational")
+  statePtr  <- .InitMcmcChain(state)
+
   logRatios <- numeric(nStones)
 
   # Per-stone importance weights (centered) and their means,
@@ -125,12 +130,11 @@ mkp_stepping_stone <- function(data, tree,
     for (iter in seq_len(warmup + nIter)) {
       moveIdx <- sample.int(length(moves), 1L, prob = moveWeights)
       move <- moves[[moveIdx]]
-      result <- .DoMove(move, state, mkd, model, mcmcTuning,
-                        beta = betaLo)
-      if (result$accept) state <- result$state
+      .DoMove(move, statePtr, mcmcData, mcmcTuning,
+              beta = betaLo, transIdx = transIdx)
 
       if (iter > warmup) {
-        logLiks[iter - warmup] <- state$log_lik
+        logLiks[iter - warmup] <- get_state_log_lik(statePtr)
       }
     }
 

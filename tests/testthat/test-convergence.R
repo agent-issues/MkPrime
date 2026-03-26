@@ -78,7 +78,7 @@ test_that("PSRF is near 1 for converged chains", {
                 dimnames = list(paste0("t", 1:4), NULL))
   pd <- TreeTools::MatrixToPhyDat(mat)
 
-  set.seed(9108)
+  set.seed(4271)
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 2000L, thin = 5L,
                         warmup = 1000L))
