@@ -53,7 +53,7 @@ print.MkPosterior <- function(x, ...) {
   }
 
   info <- c(info,
-    "Total samples: {nrow(x$samples)}",
+    "Total samples: {(.PostBurninSampleCount(x))}",
     "Parameters: {ncol(x$samples)}",
     "Characters: {x$data$nChar} ({sum(x$data$type == 'transformational')} transformational, {sum(x$data$type == 'neomorphic')} neomorphic, {sum(x$data$type == 'known')} known)"
   )
@@ -77,23 +77,9 @@ print.MkPosterior <- function(x, ...) {
   }
 
   if (nRuns >= 2L) {
-    diag <- tryCatch(convergence_diagnostics(x), error = function(e) NULL)
+    diag <- tryCatch(ConvergenceDiagnostics(x), error = function(e) NULL)
     if (!is.null(diag)) {
-      cli::cli_h2("Convergence")
-      cli::cli_li("Min ESS: {format(round(diag$min_ess, 1), nsmall = 1)}")
-      if (!is.null(diag$psrf) && !is.na(diag$max_psrf)) {
-        cli::cli_li("Max PSRF: {format(round(diag$max_psrf, 3), nsmall = 3)}")
-        if (is.finite(diag$max_psrf) && diag$max_psrf > 1.05) {
-          cli::cli_alert_warning(
-            "PSRF > 1.05 suggests chains may not have converged. Consider running longer."
-          )
-        }
-      }
-      if (is.finite(diag$min_ess) && diag$min_ess < 200) {
-        cli::cli_alert_warning(
-          "ESS < 200 for some parameters. Consider running longer."
-        )
-      }
+      print(diag)
     }
   }
 
@@ -103,9 +89,11 @@ print.MkPosterior <- function(x, ...) {
 
 #' @export
 summary.MkPosterior <- function(object, ...) {
-  s <- object$samples
-  key_cols <- .key_param_cols(s)
-  key <- s[, key_cols, drop = FALSE]
+  pb <- .PostBurninData(object)
+  s <- pb$samples
+  # Use scalar params only (not individual kPrime_ or branch lengths)
+  keyCols <- .PlotParamCols(s)
+  key <- s[, keyCols, drop = FALSE]
 
   out <- data.frame(
     parameter = colnames(key),
@@ -118,14 +106,14 @@ summary.MkPosterior <- function(object, ...) {
 
   if (requireNamespace("coda", quietly = TRUE)) {
     out$ESS <- apply(key, 2, function(col) {
-      if (sd(col, na.rm = TRUE) == 0) return(NA_real_)
+      s <- sd(col, na.rm = TRUE); if (is.na(s) || s == 0) return(NA_real_)
       coda::effectiveSize(coda::mcmc(col))
     })
   }
 
   nRuns <- object$nRuns %||% 1L
   if (nRuns >= 2L && !is.null(object$per_run)) {
-    diag <- tryCatch(convergence_diagnostics(object), error = function(e) NULL)
+    diag <- tryCatch(ConvergenceDiagnostics(object), error = function(e) NULL)
     if (!is.null(diag) && !is.null(diag$psrf)) {
       out$PSRF <- diag$psrf[out$parameter]
     }
@@ -137,9 +125,10 @@ summary.MkPosterior <- function(object, ...) {
 
 #' @export
 plot.MkPosterior <- function(x, ...) {
-  s <- x$samples
-  key_cols <- .key_param_cols(s)
-  nPanels <- length(key_cols)
+  pb <- .PostBurninData(x)
+  s <- pb$samples
+  keyCols <- .PlotParamCols(s)
+  nPanels <- length(keyCols)
   nCol <- min(3, nPanels)
   nRow <- ceiling(nPanels / nCol)
 
@@ -148,30 +137,30 @@ plot.MkPosterior <- function(x, ...) {
   oldpar <- par(mfrow = c(nRow, nCol), mar = c(3, 3, 2, 1))
   on.exit(par(oldpar))
 
-  if (nRuns > 1L && !is.null(x$per_run)) {
+  if (nRuns > 1L && !is.null(pb$per_run)) {
     colors <- grDevices::hcl.colors(nRuns, palette = "Set 2")
 
-    for (col_idx in key_cols) {
-      col_name <- colnames(s)[col_idx]
-      ylim <- range(s[, col_idx], na.rm = TRUE)
+    for (colIdx in keyCols) {
+      colName <- colnames(s)[colIdx]
+      ylim <- range(s[, colIdx], na.rm = TRUE)
 
       first <- TRUE
       for (run in seq_len(nRuns)) {
-        run_data <- x$per_run[[run]]$samples[, col_idx]
-        iters <- seq_along(run_data)
+        runData <- pb$per_run[[run]]$samples[, colIdx]
+        iters <- seq_along(runData)
         if (first) {
-          plot(iters, run_data, type = "l", main = col_name,
+          plot(iters, runData, type = "l", main = colName,
                xlab = "", ylab = "", col = colors[run], ylim = ylim)
           first <- FALSE
         } else {
-          lines(iters, run_data, col = colors[run])
+          lines(iters, runData, col = colors[run])
         }
       }
     }
   } else {
     iters <- seq_len(nrow(s))
-    for (col_idx in key_cols) {
-      plot(iters, s[, col_idx], type = "l", main = colnames(s)[col_idx],
+    for (colIdx in keyCols) {
+      plot(iters, s[, colIdx], type = "l", main = colnames(s)[colIdx],
            xlab = "", ylab = "", col = "steelblue")
     }
   }

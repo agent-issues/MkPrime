@@ -19,14 +19,6 @@ R function-call overhead, list allocation/copy, GC pressure, and redundant
 computation. This phase ports the hot path to C++, using TreeTools C++
 headers where available.
 
-### 8a: Quick R-side wins (no C++ changes)
-
-| ID | Priority | Status | Description |
-|----|----------|--------|-------------|
-| M-055 | P1 | ASSIGNED (B) | **Eliminate redundant `ape::reorder.phylo` in `MkpLogLikelihood()`.** The tree is *always* in postorder (invariant maintained by `.InitState()` and all topology proposals). The `ape::reorder.phylo(tree, "postorder")` call at likelihood.R:63 is pure waste — called on every single likelihood evaluation. Remove it; add a documented invariant comment. Also remove the `inherits()` and `match.arg()` validation from the hot-path code by creating an internal `.MkpLogLikelihood()` that skips checks, called from `.DoMove()`; the exported `MkpLogLikelihood()` retains validation for user-facing use. |
-| M-056 | P1 | ASSIGNED (B) | **Pre-compute move weight vector.** `vapply(moves, [[, numeric(1), "weight")` is recomputed inside the innermost loop (per-chain, per-run, per-iteration) at RunMkPrime.R:135. Weights are constant except during adaptation (every 200 iterations). Compute once before the main loop and update only inside the adaptation block. |
-| M-057 | P2 | DONE (C) | **Replace remaining `ape::reorder.phylo` calls with `TreeTools::Postorder`.** Affects proposals.R:171 (NNI), proposals.R:280 (SPR), RunMkPrime.R:65 (init), RunMkPrime.R:483 (resume), MkPrimeModel.R:104 (Fitch). `TreeTools::Preorder()` benchmarks at ~44us vs ape's ~70us. `TreeTools::Postorder()` is ~94us (still builds postorder from preorder), so use `Preorder()` where possible and adapt the C++ pruning to accept preorder edge ordering if beneficial. Add `TreeTools` to `Imports` in DESCRIPTION (already in `Suggests`). |
-
 ### 8b: Port proposals to C++
 
 | ID | Priority | Status | Description |
@@ -52,6 +44,16 @@ headers where available.
 
 ---
 
+## Posterior & analysis improvements
+
+| ID | Priority | Status | Description |
+|----|----------|--------|-------------|
+| M-066 | P1 | DONE (C) | **Automatic burnin selection for MkPosterior.** The posterior object should support tunable burnin that maximizes ESS while minimizing PSRF. Add a `burnin` parameter (number of post-warmup samples to discard) with an automatic selection method that optimizes the ESS/PSRF trade-off. The `MkPosterior` accessors (samples, trees, summary, etc.) should default to returning only post-burnin samples from all runs combined. Provide a method to adjust burnin after the fact (e.g. `SetBurnin(posterior, n)` or a `burnin` argument to accessor functions). Currently, only warmup is discarded; additional burnin is common practice when chains take time to find the typical set even after warmup ends. |
+| M-067 | P2 | OPEN | **Vignette and package documentation references via inst/REFERENCES.bib + Rdpack.** Create `inst/REFERENCES.bib` with all cited references (Sun et al. 2018, Lewis 2001, Xie et al. 2011, etc.). Set up Rdpack for `\insertRef{}` in roxygen docs. Update `hyoliths.qmd` to use `bibliography: ../inst/REFERENCES.bib` (or copy to vignettes/). Check `../TreeTools/` for a working template of this setup. Add `Rdpack` to Imports in DESCRIPTION. |
+| M-068 | P2 | OPEN | **Rogue taxon suppression in hyoliths.qmd consensus tree.** In the tree summary section of `vignettes/hyoliths.qmd`, use `Rogue::QuickRogue()` to identify rogue taxa, then exclude them from the consensus tree. Display which taxa were identified as rogues and show the cleaned consensus. Add `Rogue` to Suggests in DESCRIPTION. |
+
+---
+
 ## Phase 7d: Deferred extensions
 
 | ID | Priority | Status | Description |
@@ -62,27 +64,9 @@ headers where available.
 
 ---
 
-## User issues (triaged)
-
-| ID | Priority | Status | Description |
-|----|----------|--------|-------------|
-| M-066 | P2 | OPEN | **Post-hoc burnin tuning on `MkPosterior`.** Add a `SetBurnin(posterior, burnin)` function that trims samples/trees to post-burnin rows and stores the burnin fraction in the object. Add an `AutoBurnin(posterior)` function that scans possible burnin fractions and selects the one that maximises ESS while minimising PSRF (or a weighted combination). Update `print.MkPosterior()`, `ConvergenceDiagnostics()`, and the `plot` method to respect the stored burnin. By default the posterior should expose only post-burnin samples from all cold chains/runs. |
-| M-067 | P2 | OPEN | **Vignette references via `inst/REFERENCES.bib` + Rd macros.** Move all vignette bibliography entries to `inst/REFERENCES.bib`. Add `Rdpack` to `Imports` and wire up `\insertRef{KEY}{mkp}` macros in Rd/roxygen where relevant. Check `../TreeSearch` for the Rdpack template and DESCRIPTION/NAMESPACE boilerplate. |
-| M-068 | P2 | OPEN | **Rogue taxon suppression in hyoliths vignette.** In the summary section of `vignettes/hyoliths.qmd`, call `Rogue::QuickRogue()` on the posterior tree sample to identify and prune rogue taxa before computing and displaying the consensus tree. Show the rogue taxon list and compare consensus stability before/after pruning. |
-
----
-
 ## Phase 6b: TreeSearch integration (deferred)
 
 *Not yet broken into tasks.*
 
 Planned work:
 - TreeSearch GUI integration hook ("Bayesian (Mk')" mode in EasyTrees)
-
-## Posterior & analysis improvements
-
-| ID | Priority | Status | Description |
-|----|----------|--------|-------------|
-| M-066 | P1 | OPEN | **Automatic burnin selection for MkPosterior.** The posterior object should support tunable burnin that maximizes ESS while minimizing PSRF. Add a `burnin` parameter (number of post-warmup samples to discard) with an automatic selection method that optimizes the ESS/PSRF trade-off. The `MkPosterior` accessors (samples, trees, summary, etc.) should default to returning only post-burnin samples from all runs combined. Provide a method to adjust burnin after the fact (e.g. `set_burnin(posterior, n)` or a `burnin` argument to accessor functions). Currently, only warmup is discarded; additional burnin is common practice when chains take time to find the typical set even after warmup ends. |
-| M-067 | P2 | OPEN | **Vignette and package documentation references via inst/REFERENCES.bib + Rdpack.** Create `inst/REFERENCES.bib` with all cited references (Sun et al. 2018, Lewis 2001, Xie et al. 2011, etc.). Set up Rdpack for `\insertRef{}` in roxygen docs. Update `hyoliths.qmd` to use `bibliography: ../inst/REFERENCES.bib` (or copy to vignettes/). Check `../TreeTools/` for a working template of this setup. Add `Rdpack` to Imports in DESCRIPTION. |
-| M-068 | P2 | OPEN | **Rogue taxon suppression in hyoliths.qmd consensus tree.** In the tree summary section of `vignettes/hyoliths.qmd`, use `Rogue::QuickRogue()` to identify rogue taxa, then exclude them from the consensus tree (e.g. `Consensus(trees[, -rogues])` or `ape::drop.tip(consensus, rogues)`). Display which taxa were identified as rogues and show the cleaned consensus. Add `Rogue` to Suggests in DESCRIPTION. |

@@ -57,3 +57,5 @@
 | M-056 | Pre-compute move weight vector | (prev) | 2026-03-26 | Already implemented — weights pre-computed before main loop. |
 | M-057 | Replace ape::reorder.phylo with TreeTools::Postorder | C | 2026-03-26 | proposals.R, RunMkPrime.R, MkPrimeModel.R. Exported MkpLogLikelihood retains ape for user-facing use. |
 EOF 2>&1
+| M-066 | Automatic burnin selection for MkPosterior | C | 2026-03-26 | SetBurnin(), AutoBurnin(), .PostBurninData(). summary/print/plot/ConvergenceDiagnostics all respect burnin. 25 new tests. |
+EOF 2>&1
