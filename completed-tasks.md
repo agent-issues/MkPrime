@@ -60,9 +60,7 @@
 | M-058 | C++ NNI proposal (nni_proposal in tree_moves.cpp) | B | 2026-03-26 | TreeTools::postorder_order() for reordering. R wrapper reconstructs phylo. Fixes heredoc contamination in proposals.cpp/.R. 3197 tests pass. |
 | M-059 | C++ SPR proposal (spr_proposal in proposals.cpp) | C | 2026-03-26 | BFS descendant exclusion, Jacobian Hastings ratio. |
 | M-060 | C++ BetaSimplex proposal (beta_simplex_proposal in proposals.cpp) | C | 2026-03-26 | In-place via R::rbeta/dbeta. |
+| M-061 | C++ MCMC inner loop (do_move_cpp, McmcState XPtr) | B/C | 2026-03-26 | mcmc.cpp: McmcState XPtr, do_move_cpp() (all proposals + prior + lik in C++). mcmc_likelihood.cpp: prepare_mcmc_data(), cpp_log_likelihood(). mcmc_state.h: McmcData/McmcState. R: .InitMcmcData, .InitMcmcChain, .DoMove (XPtr path), .SaveCheckpoint serializes XPtrs. SteppingStone updated to use new engine. 3197 tests pass. |
 | M-066 | Automatic burnin selection for MkPosterior | C | 2026-03-26 | SetBurnin(), AutoBurnin(), .PostBurninData(). summary/print/plot/ConvergenceDiagnostics all respect burnin. 25 new tests. |
-EOF 2>&1
 | M-067 | Vignette and package doc references via Rdpack | C | 2026-03-26 | inst/REFERENCES.bib (9 entries), Rdpack in Imports/RdMacros, \insertCite in MkpLogLikelihood, bibliography in hyoliths.qmd. |
-EOF 2>&1
 | M-068 | Rogue taxon suppression in hyoliths.qmd | C | 2026-03-26 | Rogue::QuickRogue() in consensus tree section, both production and demo blocks. Rogue added to Suggests. |
-EOF 2>&1

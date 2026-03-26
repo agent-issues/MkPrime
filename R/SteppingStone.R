@@ -130,8 +130,8 @@ mkp_stepping_stone <- function(data, tree,
     for (iter in seq_len(warmup + nIter)) {
       moveIdx <- sample.int(length(moves), 1L, prob = moveWeights)
       move <- moves[[moveIdx]]
-      .DoMove(move, statePtr, mcmcData, mcmcTuning,
-              beta = betaLo, transIdx = transIdx)
+      .DoMove(move, statePtr, tuning = mcmcTuning,
+              beta = betaLo, transIdx = transIdx, mcmcData = mcmcData)
 
       if (iter > warmup) {
         logLiks[iter - warmup] <- get_state_log_lik(statePtr)
