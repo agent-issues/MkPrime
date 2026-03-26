@@ -27,6 +27,7 @@ Imports:
     rlang,
     TreeTools
 Suggests:
+    Rogue,
     bslib (>= 0.5.0),
     callr,
     coda,

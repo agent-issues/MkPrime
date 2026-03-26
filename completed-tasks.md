@@ -61,3 +61,5 @@ EOF 2>&1
 EOF 2>&1
 | M-067 | Vignette and package doc references via Rdpack | C | 2026-03-26 | inst/REFERENCES.bib (9 entries), Rdpack in Imports/RdMacros, \insertCite in MkpLogLikelihood, bibliography in hyoliths.qmd. |
 EOF 2>&1
+| M-068 | Rogue taxon suppression in hyoliths.qmd | C | 2026-03-26 | Rogue::QuickRogue() in consensus tree section, both production and demo blocks. Rogue added to Suggests. |
+EOF 2>&1

@@ -276,8 +276,18 @@ to summarize topology:
 #| eval: false
 # Majority-rule consensus from a production run
 allTrees <- c(posterior$run_1$trees, posterior$run_2$trees)
+
+# Identify and exclude rogue taxa that destabilize the consensus
+rogues <- Rogue::QuickRogue(allTrees)
+rogueNames <- rogues$taxon[rogues$taxon != ""]
+if (length(rogueNames) > 0L) {
+  cat("Rogue taxa identified:", paste(rogueNames, collapse = ", "), "\n")
+  allTrees <- lapply(allTrees, ape::drop.tip, tip = rogueNames)
+  class(allTrees) <- "multiPhylo"
+}
+
 consensus <- TreeTools::Consensus(allTrees, p = 0.5)
-plot(consensus, cex = 0.6, main = "Majority-rule consensus")
+plot(consensus, cex = 0.6, main = "Majority-rule consensus (rogues excluded)")
 ```
 
 
@@ -285,9 +295,20 @@ plot(consensus, cex = 0.6, main = "Majority-rule consensus")
 #| eval: true
 # Majority-rule consensus from a demo run
 allTrees <- posteriorDemo$trees[-(1:100)]
+
+# Identify rogue taxa
+rogues <- Rogue::QuickRogue(allTrees)
+rogueNames <- rogues$taxon[rogues$taxon != ""]
+if (length(rogueNames) > 0L) {
+  cat("Rogue taxa:", paste(rogueNames, collapse = ", "), "\n")
+  allTrees <- lapply(allTrees, ape::drop.tip, tip = rogueNames)
+  class(allTrees) <- "multiPhylo"
+}
+
 consensus <- TreeTools::Consensus(allTrees, p = 0.5)
-plot(consensus, cex = 0.6, main = "Majority-rule consensus")
+plot(consensus, cex = 0.6, main = "Majority-rule consensus (rogues excluded)")
 ```
+
 
 ## Saving and resuming
 
