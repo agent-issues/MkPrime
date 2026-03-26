@@ -148,6 +148,33 @@ test_that("MCMC with topology moves runs on 8-tip tree", {
 })
 
 
+test_that("Tree file logging writes Newick trees", {
+  library(ape)
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  tf <- tempfile(fileext = ".trees")
+  on.exit(unlink(tf), add = TRUE)
+
+  set.seed(5193)
+  result <- RunMkPrime(pd, tree, fix_topology = TRUE,
+    mcmc = MkPrimeMCMC(nIter = 500L, thin = 5L, warmup = 200L,
+                        tree_file = tf))
+
+  # File should exist and have one Newick string per sample
+  expect_true(file.exists(tf))
+  lines <- readLines(tf)
+  # Remove empty first line from initialization
+  lines <- lines[nzchar(lines)]
+  expect_equal(length(lines), nrow(result$samples))
+  # Each line should parse as a valid tree
+  parsed <- lapply(lines, function(x) read.tree(text = x))
+  expect_true(all(vapply(parsed, inherits, logical(1), "phylo")))
+})
+
+
 test_that("Topology moves explore different topologies", {
   library(ape)
   set.seed(9317)

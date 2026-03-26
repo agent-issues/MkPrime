@@ -77,16 +77,60 @@ MkPrimeModel <- function(
 #' @keywords internal
 .finalize_model <- function(model, tree, mkd) {
   if (is.null(model$exp_steps)) {
-    # Default: nChar * mean_kObs / 4 gives a rough expected changes estimate.
-    # A better default would use parsimony score, but that requires the
-    # original phyDat. Users can set exp_steps explicitly for more control.
-    mean_kObs <- mean(mkd$kObs)
-    model$exp_steps <- max(1, mkd$nChar * (mean_kObs - 1) / 2)
+    model$exp_steps <- max(1, .fitch_score(tree, mkd))
   }
   if (is.null(model$tree_length_rate)) {
     model$tree_length_rate <- 2 / model$exp_steps
   }
   model
+}
+
+
+#' Fitch parsimony score on a tree
+#'
+#' Simple post-order Fitch algorithm. Used to set a data-informed default
+#' for `exp_steps` (the expected tree length).
+#'
+#' @param tree A `phylo` object.
+#' @param mkd An `MkPrimeData` object.
+#' @return Integer parsimony score.
+#' @keywords internal
+.fitch_score <- function(tree, mkd) {
+  tree <- ape::reorder.phylo(tree, "postorder")
+  edge <- tree$edge
+  nTip <- length(tree$tip.label)
+  nNode <- tree$Nnode
+
+  # Align matrix rows with tree tip order
+  tip_mat <- mkd$matrix[tree$tip.label, , drop = FALSE]
+
+  total <- 0L
+  for (j in seq_len(ncol(tip_mat))) {
+    # Initialize state sets: list of integer vectors per node
+    sets <- vector("list", nTip + nNode)
+    for (i in seq_len(nTip)) {
+      s <- tip_mat[i, j]
+      sets[[i]] <- if (is.na(s)) seq.int(0L, mkd$kObs[j] - 1L) else s
+    }
+
+    for (i in seq_len(nrow(edge))) {
+      p <- edge[i, 1]
+      ch <- edge[i, 2]
+      if (is.null(sets[[p]])) {
+        sets[[p]] <- sets[[ch]]
+      } else {
+        inter <- intersect(sets[[p]], sets[[ch]])
+        if (length(inter) > 0L) {
+          sets[[p]] <- inter
+        } else {
+          sets[[p]] <- union(sets[[p]], sets[[ch]])
+          total <- total + 1L
+        }
+      }
+    }
+  }
+
+  total
 }
 
 

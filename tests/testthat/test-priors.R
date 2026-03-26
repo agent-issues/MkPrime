@@ -1,4 +1,4 @@
-# Tests for MkPrimeModel and log_prior (M-014)
+# Tests for MkPrimeModel, log_prior (M-014), and Fitch parsimony (M-026)
 
 test_that("MkPrimeModel creates valid object with defaults", {
   model <- MkPrimeModel()
@@ -166,4 +166,32 @@ test_that("log_prior: k' prior favors kObs when p is high", {
 
   # High p means geometric is concentrated near 0 (kObs)
   expect_gt(lp_low, lp_high)
+})
+
+
+test_that("Fitch parsimony matches hand calculation", {
+  library(ape)
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  # Char 1: (0,0,1,1) -> 1 change; Char 2: (0,1,0,1) -> 2 changes
+  mat <- matrix(c(0, 0, 1, 1, 0, 1, 0, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd)
+
+  expect_equal(MkPrime:::.fitch_score(tree, mkd), 3L)
+})
+
+
+test_that("Fitch score used for exp_steps default", {
+  library(ape)
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 0, 1, 1, 0, 1, 0, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd)
+
+  model <- MkPrimeModel()
+  finalized <- MkPrime:::.finalize_model(model, tree, mkd)
+  expect_equal(finalized$exp_steps, 3)
+  expect_equal(finalized$tree_length_rate, 2 / 3)
 })

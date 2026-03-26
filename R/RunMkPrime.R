@@ -67,6 +67,12 @@ RunMkPrime <- function(data, tree,
   tree_samples <- vector("list", nSaved)
   saved_idx <- 0L
 
+  # Tree file logging
+  tree_file <- mcmc$tree_file
+  if (!is.null(tree_file)) {
+    writeLines("", tree_file)
+  }
+
   # Acceptance tracking
   accept_count <- integer(length(moves))
   propose_count <- integer(length(moves))
@@ -116,7 +122,11 @@ RunMkPrime <- function(data, tree,
     if (iter > mcmc$warmup && (iter - mcmc$warmup) %% mcmc$thin == 0L) {
       saved_idx <- saved_idx + 1L
       samples[saved_idx, ] <- .state_to_row(state, mkd, nEdge)
-      tree_samples[[saved_idx]] <- .state_to_tree(state)
+      cur_tree <- .state_to_tree(state)
+      tree_samples[[saved_idx]] <- cur_tree
+      if (!is.null(tree_file)) {
+        cat(ape::write.tree(cur_tree), "\n", file = tree_file, append = TRUE)
+      }
     }
 
     if (iter %% 100L == 0L) {

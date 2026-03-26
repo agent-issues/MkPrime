@@ -7,6 +7,9 @@
 #'   Default 10.
 #' @param warmup Number of warmup (adaptation) iterations. Default
 #'   `nIter / 2`.
+#' @param tree_file Path to write sampled trees in Newick format.
+#'   `NULL` (default) disables file logging. Trees are always stored
+#'   in the returned `MkPosterior` object regardless.
 #' @param tuning Named list of initial tuning parameters for each move
 #'   type. See Details.
 #'
@@ -25,6 +28,7 @@ MkPrimeMCMC <- function(
     nIter = 10000L,
     thin = 10L,
     warmup = NULL,
+    tree_file = NULL,
     tuning = list()
 ) {
   nIter <- as.integer(nIter)
@@ -43,7 +47,8 @@ MkPrimeMCMC <- function(
   tuning <- modifyList(defaults, tuning)
 
   structure(
-    list(nIter = nIter, thin = thin, warmup = warmup, tuning = tuning),
+    list(nIter = nIter, thin = thin, warmup = warmup,
+         tree_file = tree_file, tuning = tuning),
     class = "MkPrimeMCMC"
   )
 }
