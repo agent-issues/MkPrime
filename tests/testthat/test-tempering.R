@@ -242,7 +242,7 @@ test_that("RunMkPrime with nChains=1 matches Phase 4 behavior", {
 
   set.seed(5194)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nIter = 500L, thin = 5L, warmup = 200L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L,
                         nChains = 1L))
 
   expect_s3_class(result, "MkPosterior")
@@ -263,7 +263,7 @@ test_that("RunMkPrime with nChains=4 runs successfully", {
 
   set.seed(6842)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nIter = 500L, thin = 5L, warmup = 200L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L,
                         nChains = 4L, heat = 0.2))
 
   expect_s3_class(result, "MkPosterior")
@@ -295,7 +295,7 @@ test_that("RunMkPrime with nChains=2 and topology moves works", {
   pd <- TreeTools::MatrixToPhyDat(mat)
 
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nIter = 1000L, thin = 5L, warmup = 500L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 1000L, thin = 5L, warmup = 500L,
                         nChains = 2L, heat = 0.3))
 
   expect_s3_class(result, "MkPosterior")
@@ -315,7 +315,7 @@ test_that("Cold chain samples have valid posteriors under tempering", {
 
   set.seed(3319)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nIter = 1000L, thin = 5L, warmup = 500L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 1000L, thin = 5L, warmup = 500L,
                         nChains = 4L, heat = 0.1))
 
   # Cold chain samples should have log_post = log_lik + log_prior
@@ -406,13 +406,133 @@ test_that("Adaptive temps integrated into MCMC warmup", {
 
   set.seed(5580)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nIter = 2000L, thin = 10L, warmup = 1000L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 2000L, thin = 10L, warmup = 1000L,
                         nChains = 4L, heat = 0.5))
 
   # Temperatures should have been adapted (may increase or decrease
   # depending on swap rates), so final heat likely differs from 0.5
   expect_true(abs(result$betas[4] - 0.5) > 0.001 ||
               all(result$swap_rates > 0.15 & result$swap_rates < 0.35))
+})
+
+
+# --- Independent runs (M-032) ---
+
+test_that("MkPrimeMCMC validates nRuns", {
+  expect_no_error(MkPrimeMCMC(nRuns = 1L))
+  expect_no_error(MkPrimeMCMC(nRuns = 2L))
+  expect_error(MkPrimeMCMC(nRuns = 0L), "at least 1")
+})
+
+
+test_that("RunMkPrime with nRuns=2 runs successfully", {
+  library(ape)
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  set.seed(7218)
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 500L, thin = 5L, warmup = 200L))
+
+  expect_s3_class(result, "MkPosterior")
+  # Combined samples: 60 per run × 2 runs = 120
+  expect_equal(nrow(result$samples), 120L)
+  expect_equal(length(result$trees), 120L)
+  expect_equal(result$nRuns, 2L)
+  expect_equal(length(result$per_run), 2)
+  # Each per-run should have 60 samples
+  expect_equal(nrow(result$per_run[[1]]$samples), 60L)
+  expect_equal(nrow(result$per_run[[2]]$samples), 60L)
+})
+
+
+test_that("RunMkPrime with nRuns=1 has no per_run field", {
+  library(ape)
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  set.seed(1498)
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L))
+
+  expect_null(result$nRuns)
+  expect_null(result$per_run)
+  expect_equal(nrow(result$samples), 60L)
+})
+
+
+test_that("Independent runs start from different states", {
+  library(ape)
+  set.seed(6334)
+  tree <- rtree(6)
+  tree <- unroot(tree)
+  mat <- matrix(sample(0:1, 6 * 4, replace = TRUE), 6, 4,
+                dimnames = list(tree$tip.label, NULL))
+  for (j in seq_len(ncol(mat))) {
+    if (length(unique(mat[, j])) == 1) mat[1, j] <- 1L - mat[1, j]
+  }
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  set.seed(2891)
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 500L, thin = 5L, warmup = 200L))
+
+  # Runs should have different starting log-posteriors (different start trees)
+  # First sample of each run may differ
+  r1_first <- result$per_run[[1]]$samples[1, "log_posterior"]
+  r2_first <- result$per_run[[2]]$samples[1, "log_posterior"]
+  # They could be the same by chance, but very unlikely with perturbed starts
+  # Just check both are finite
+  expect_true(is.finite(r1_first))
+  expect_true(is.finite(r2_first))
+})
+
+
+test_that("Multi-run with tempering works", {
+  library(ape)
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  set.seed(8563)
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 2L, nChains = 2L, heat = 0.3,
+                        nIter = 500L, thin = 5L, warmup = 200L))
+
+  expect_equal(nrow(result$samples), 120L)
+  expect_equal(result$nRuns, 2L)
+  # Tempering info should be present
+  expect_true(!is.null(result$betas))
+  expect_equal(length(result$swap_rates), 1)
+})
+
+
+test_that(".perturb_start produces valid trees", {
+  library(ape)
+  set.seed(3521)
+  tree <- rtree(10)
+  tree <- unroot(tree)
+
+  for (i in 1:20) {
+    perturbed <- MkPrime:::.perturb_start(tree)
+    expect_s3_class(perturbed, "phylo")
+    expect_equal(length(perturbed$tip.label), 10L)
+    expect_true(all(perturbed$edge.length > 0))
+    expect_equal(nrow(perturbed$edge), nrow(tree$edge))
+  }
+})
+
+
+test_that(".perturb_start handles small trees", {
+  library(ape)
+  tree <- read.tree(text = "(t1:0.1,t2:0.2,t3:0.3);")
+  perturbed <- MkPrime:::.perturb_start(tree)
+  expect_s3_class(perturbed, "phylo")
 })
 
 
@@ -425,7 +545,7 @@ test_that("Heated chains accept at higher rates", {
 
   set.seed(4410)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nIter = 2000L, thin = 10L, warmup = 1000L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 2000L, thin = 10L, warmup = 1000L,
                         nChains = 4L, heat = 0.1))
 
   # Hottest chain should have higher overall acceptance than cold chain

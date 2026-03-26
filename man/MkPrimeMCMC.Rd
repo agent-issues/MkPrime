@@ -8,6 +8,7 @@ MkPrimeMCMC(
   nIter = 10000L,
   thin = 10L,
   warmup = NULL,
+  nRuns = 2L,
   nChains = 1L,
   heat = 0.2,
   tree_file = NULL,
@@ -22,6 +23,10 @@ Default 10.}
 
 \item{warmup}{Number of warmup (adaptation) iterations. Default
 \code{nIter / 2}.}
+
+\item{nRuns}{Number of independent runs. Default 2. Each run has its
+own set of \code{nChains} chains. Convergence diagnostics (PSRF) require
+\code{nRuns >= 2}.}
 
 \item{nChains}{Number of chains in the temperature ladder (parallel
 tempering). Default 1 (no tempering). Set to 4 for typical analyses.

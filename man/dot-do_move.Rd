@@ -7,9 +7,7 @@
 .do_move(move, state, mkd, model, tuning, beta = 1)
 }
 \arguments{
-\item{beta}{Inverse temperature (1 = cold chain, < 1 = heated).
-The heated MH acceptance is:
-\code{log_alpha = beta * (logLik_new - logLik_old) + (logPrior_new - logPrior_old) + log_hastings}}
+\item{beta}{Inverse temperature (1 = cold chain, < 1 = heated).}
 }
 \description{
 Execute a move and return accept/reject decision

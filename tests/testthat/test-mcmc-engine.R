@@ -9,7 +9,7 @@ test_that("RunMkPrime runs on simple transformational data", {
 
   set.seed(5194)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nIter = 500L, thin = 5L, warmup = 200L))
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L))
 
   expect_s3_class(result, "MkPosterior")
   expect_equal(nrow(result$samples), 60L)
@@ -27,7 +27,7 @@ test_that("RunMkPrime handles neomorphic characters", {
 
   set.seed(4781)
   result <- RunMkPrime(pd, tree, neomorphic = 1L,
-    mcmc = MkPrimeMCMC(nIter = 500L, thin = 5L, warmup = 200L))
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L))
 
   expect_s3_class(result, "MkPosterior")
   expect_true("rate_loss" %in% names(result$acceptance))
@@ -46,7 +46,7 @@ test_that("RunMkPrime handles known state-space characters", {
 
   set.seed(2837)
   result <- RunMkPrime(pd, tree, known_states = c("1" = 4L),
-    mcmc = MkPrimeMCMC(nIter = 500L, thin = 5L, warmup = 200L))
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L))
 
   expect_s3_class(result, "MkPosterior")
   # No kPrime columns (no transformational chars)
@@ -66,7 +66,7 @@ test_that("RunMkPrime handles mixed character types", {
   set.seed(9201)
   result <- RunMkPrime(pd, tree, neomorphic = 1L,
     known_states = c("3" = 3L),
-    mcmc = MkPrimeMCMC(nIter = 500L, thin = 5L, warmup = 200L))
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L))
 
   expect_s3_class(result, "MkPosterior")
   # Should have kPrime_2 (char 2 is transformational)
@@ -83,7 +83,7 @@ test_that("MkPosterior print, summary, plot methods work", {
 
   set.seed(7712)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nIter = 300L, thin = 3L, warmup = 150L))
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 300L, thin = 3L, warmup = 150L))
 
   expect_no_error(print(result))
   s <- summary(result)
@@ -104,7 +104,7 @@ test_that("Acceptance rates are non-degenerate (fixed topology)", {
 
   set.seed(8371)
   result <- RunMkPrime(pd, tree, fix_topology = TRUE,
-    mcmc = MkPrimeMCMC(nIter = 2000L, thin = 10L, warmup = 1000L))
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 2000L, thin = 10L, warmup = 1000L))
 
   # No move type should have 0% or 100% acceptance
   for (nm in names(result$acceptance)) {
@@ -131,7 +131,7 @@ test_that("MCMC with topology moves runs on 8-tip tree", {
   pd <- TreeTools::MatrixToPhyDat(mat)
 
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nIter = 1000L, thin = 5L, warmup = 500L))
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 1000L, thin = 5L, warmup = 500L))
 
   expect_s3_class(result, "MkPosterior")
   # Should have NNI and SPR moves
@@ -160,7 +160,7 @@ test_that("Tree file logging writes Newick trees", {
 
   set.seed(5193)
   result <- RunMkPrime(pd, tree, fix_topology = TRUE,
-    mcmc = MkPrimeMCMC(nIter = 500L, thin = 5L, warmup = 200L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L,
                         tree_file = tf))
 
   # File should exist and have one Newick string per sample
@@ -190,7 +190,7 @@ test_that("Topology moves explore different topologies", {
   pd <- TreeTools::MatrixToPhyDat(mat)
 
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nIter = 5000L, thin = 10L, warmup = 2500L))
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 5000L, thin = 10L, warmup = 2500L))
 
   # Should sample at least a few different topologies
   newicks <- vapply(result$trees, ape::write.tree, character(1))

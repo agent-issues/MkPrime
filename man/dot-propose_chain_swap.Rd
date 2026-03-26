@@ -6,11 +6,7 @@
 \usage{
 .propose_chain_swap(chains, betas)
 }
-\value{
-List with \code{chains} (possibly swapped), \code{pair} (integer vector of
-length 2 giving the lower index), and \code{accepted} (logical).
-}
 \description{
-Selects a random adjacent pair and proposes exchanging their full states.
+Propose a swap between two adjacent chains
 }
 \keyword{internal}

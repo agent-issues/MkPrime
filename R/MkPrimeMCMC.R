@@ -7,6 +7,9 @@
 #'   Default 10.
 #' @param warmup Number of warmup (adaptation) iterations. Default
 #'   `nIter / 2`.
+#' @param nRuns Number of independent runs. Default 2. Each run has its
+#'   own set of `nChains` chains. Convergence diagnostics (PSRF) require
+#'   `nRuns >= 2`.
 #' @param nChains Number of chains in the temperature ladder (parallel
 #'   tempering). Default 1 (no tempering). Set to 4 for typical analyses.
 #'   Chain 1 is the cold chain (beta = 1).
@@ -42,6 +45,7 @@ MkPrimeMCMC <- function(
     nIter = 10000L,
     thin = 10L,
     warmup = NULL,
+    nRuns = 2L,
     nChains = 1L,
     heat = 0.2,
     tree_file = NULL,
@@ -51,8 +55,12 @@ MkPrimeMCMC <- function(
   thin <- as.integer(thin)
   if (is.null(warmup)) warmup <- as.integer(nIter / 2)
   warmup <- as.integer(warmup)
+  nRuns <- as.integer(nRuns)
   nChains <- as.integer(nChains)
 
+  if (nRuns < 1L) {
+    cli::cli_abort("{.arg nRuns} must be at least 1.")
+  }
   if (nChains < 1L) {
     cli::cli_abort("{.arg nChains} must be at least 1.")
   }
@@ -74,7 +82,7 @@ MkPrimeMCMC <- function(
 
   structure(
     list(nIter = nIter, thin = thin, warmup = warmup,
-         nChains = nChains, heat = heat,
+         nRuns = nRuns, nChains = nChains, heat = heat,
          tree_file = tree_file, tuning = tuning),
     class = "MkPrimeMCMC"
   )

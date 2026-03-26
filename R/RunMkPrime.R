@@ -2,13 +2,14 @@
 #
 # Phase 3: single chain, fixed topology, R-side loop.
 # Phase 4: topology moves (NNI, SPR) via mutable state$tree.
-# Phase 5: parallel tempering (multiple chains, temperature ladder).
+# Phase 5: parallel tempering, independent runs, convergence.
 
 #' Run Bayesian MCMC under the MkPrime model
 #'
 #' Metropolis-Hastings MCMC sampling tree topology, branch lengths, model
 #' parameters, and per-character k' (for transformational characters).
-#' Supports parallel tempering with a geometric temperature ladder.
+#' Supports parallel tempering with a geometric temperature ladder and
+#' multiple independent runs for convergence diagnostics.
 #'
 #' @param data A `phyDat` object or `MkPrimeData` object.
 #' @param tree A `phylo` object (starting topology).
@@ -51,9 +52,46 @@ RunMkPrime <- function(data, tree,
 
   has_neo <- any(mkd$type == "neomorphic")
   trans_idx <- which(mkd$type == "transformational")
-  has_trans <- length(trans_idx) > 0
   nTrans <- length(trans_idx)
 
+  # Build move schedule (shared across all runs and chains)
+  moves <- .build_moves(nEdge, nTrans, has_neo, mcmc,
+                        fix_topology = fix_topology)
+
+  nRuns <- mcmc$nRuns
+
+  # --- Run MCMC (single or multiple independent runs) ---
+  run_results <- vector("list", nRuns)
+
+  for (run in seq_len(nRuns)) {
+    if (nRuns > 1L) {
+      cli::cli_h3("Run {run}/{nRuns}")
+    }
+
+    # Generate starting tree for this run
+    if (run == 1L) {
+      start_tree <- tree
+    } else {
+      start_tree <- .perturb_start(tree)
+    }
+
+    run_results[[run]] <- .run_single(
+      start_tree, mkd, model, mcmc, moves, nEdge, nTrans,
+      run_id = run
+    )
+  }
+
+  # --- Combine results across runs ---
+  .combine_runs(run_results, model, mkd, mcmc)
+}
+
+
+# --- Per-run MCMC engine ---
+
+#' Run a single MCMC chain set (one "run")
+#' @keywords internal
+.run_single <- function(tree, mkd, model, mcmc, moves, nEdge, nTrans,
+                        run_id = 1L) {
   nChains <- mcmc$nChains
 
   # --- Temperature ladder ---
@@ -64,10 +102,6 @@ RunMkPrime <- function(data, tree,
   for (ch in seq_len(nChains)) {
     chains[[ch]] <- .init_state(tree, mkd, model)
   }
-
-  # --- Build move schedule (shared across chains) ---
-  moves <- .build_moves(nEdge, nTrans, has_neo, mcmc,
-                        fix_topology = fix_topology)
 
   # --- Per-chain acceptance tracking and tuning ---
   chain_accept <- vector("list", nChains)
@@ -89,9 +123,9 @@ RunMkPrime <- function(data, tree,
   tree_samples <- vector("list", nSaved)
   saved_idx <- 0L
 
-  # Tree file logging
+  # Tree file logging (only run 1, or append with run label)
   tree_file <- mcmc$tree_file
-  if (!is.null(tree_file)) {
+  if (!is.null(tree_file) && run_id == 1L) {
     writeLines("", tree_file)
   }
 
@@ -102,8 +136,9 @@ RunMkPrime <- function(data, tree,
   }
 
   # --- MCMC loop ---
+  run_label <- if (mcmc$nRuns > 1L) paste0(" [run ", run_id, "]") else ""
   cli::cli_progress_bar(
-    "MCMC", total = mcmc$nIter,
+    paste0("MCMC", run_label), total = mcmc$nIter,
     format = paste0(
       "{cli::pb_bar} {cli::pb_current}/{cli::pb_total}",
       " | logP: {format(round(cold_logpost, 1), nsmall = 1)}",
@@ -134,14 +169,13 @@ RunMkPrime <- function(data, tree,
         chain_accept[[ch]][move_idx] <- chain_accept[[ch]][move_idx] + 1L
       }
 
-      # Track recent acceptance for cold chain only
       if (ch == 1L) {
         recent_pos <- (recent_pos %% recent_window) + 1L
         recent_accepts[recent_pos] <- accepted$accept
       }
     }
 
-    # --- Chain swap proposal (M-030 placeholder) ---
+    # --- Chain swap proposal ---
     if (nChains > 1L) {
       swap_result <- .propose_chain_swap(chains, betas)
       chains <- swap_result$chains
@@ -156,14 +190,12 @@ RunMkPrime <- function(data, tree,
 
     # --- Adaptation during warmup ---
     if (iter <= mcmc$warmup && iter %% 200L == 0L) {
-      # Adapt proposal tuning (per-chain)
       for (ch in seq_len(nChains)) {
         chain_tuning[[ch]] <- .adapt_tuning(
           chain_tuning[[ch]], chain_accept[[ch]],
           chain_propose[[ch]], moves
         )
       }
-      # Adapt temperature ladder
       if (nChains > 1L) {
         betas <- .adapt_temperatures(betas, swap_accept, swap_propose)
       }
@@ -189,21 +221,16 @@ RunMkPrime <- function(data, tree,
   }
   cli::cli_progress_done()
 
-  # --- Build result ---
+  # --- Build per-run result ---
   cold_acceptance <- chain_accept[[1]] / pmax(chain_propose[[1]], 1L)
 
-  result <- MkPosterior(
+  result <- list(
     samples = samples,
     trees = tree_samples,
     acceptance = cold_acceptance,
-    model = model,
-    data = mkd,
-    mcmc = mcmc,
-    warmup = mcmc$warmup,
     tuning = chain_tuning[[1]]
   )
 
-  # Attach tempering info
   if (nChains > 1L) {
     result$betas <- betas
     result$swap_rates <- swap_accept / pmax(swap_propose, 1L)
@@ -216,14 +243,111 @@ RunMkPrime <- function(data, tree,
 }
 
 
+# --- Combine multiple runs ---
+
+#' Combine results from multiple independent runs
+#' @keywords internal
+.combine_runs <- function(run_results, model, mkd, mcmc) {
+  nRuns <- length(run_results)
+
+  if (nRuns == 1L) {
+    # Single run: preserve Phase 4 result structure
+    r <- run_results[[1]]
+    result <- MkPosterior(
+      samples = r$samples,
+      trees = r$trees,
+      acceptance = r$acceptance,
+      model = model,
+      data = mkd,
+      mcmc = mcmc,
+      warmup = mcmc$warmup,
+      tuning = r$tuning
+    )
+    if (!is.null(r$betas)) {
+      result$betas <- r$betas
+      result$swap_rates <- r$swap_rates
+      result$chain_acceptance <- r$chain_acceptance
+    }
+    return(result)
+  }
+
+  # Multiple runs: combine cold chain samples
+  all_samples <- do.call(rbind, lapply(run_results, `[[`, "samples"))
+  all_trees <- do.call(c, lapply(run_results, `[[`, "trees"))
+
+  # Per-run results for diagnostics
+  per_run <- lapply(run_results, function(r) {
+    list(
+      samples = r$samples,
+      trees = r$trees,
+      acceptance = r$acceptance,
+      betas = r$betas,
+      swap_rates = r$swap_rates
+    )
+  })
+
+  # Average acceptance across runs
+  avg_acceptance <- Reduce(`+`, lapply(run_results, `[[`, "acceptance")) / nRuns
+
+  result <- MkPosterior(
+    samples = all_samples,
+    trees = all_trees,
+    acceptance = avg_acceptance,
+    model = model,
+    data = mkd,
+    mcmc = mcmc,
+    warmup = mcmc$warmup,
+    tuning = run_results[[1]]$tuning
+  )
+
+  result$nRuns <- nRuns
+  result$per_run <- per_run
+
+  # Tempering info from first run (representative)
+  if (!is.null(run_results[[1]]$betas)) {
+    result$betas <- run_results[[1]]$betas
+    result$swap_rates <- run_results[[1]]$swap_rates
+    result$chain_acceptance <- run_results[[1]]$chain_acceptance
+  }
+
+  result
+}
+
+
+# --- Start perturbation for independent runs ---
+
+#' Generate a perturbed starting tree for independent runs
+#'
+#' Applies random NNI moves to create a different starting topology while
+#' preserving tip labels and tree structure.
+#' @keywords internal
+.perturb_start <- function(tree) {
+  nTip <- length(tree$tip.label)
+  if (nTip < 4L) return(tree)
+
+  # Apply 2-5 random NNI moves
+  n_nni <- sample(2:5, 1)
+  for (i in seq_len(n_nni)) {
+    tree_length <- sum(tree$edge.length)
+    rel_br <- tree$edge.length / tree_length
+    prop <- propose_nni(tree, tree_length, rel_br)
+    tree <- prop$tree
+    tree$edge.length <- tree_length * prop$rel_br_lengths
+  }
+
+  # Also jitter branch lengths slightly
+  tree$edge.length <- tree$edge.length * exp(rnorm(length(tree$edge.length),
+                                                     sd = 0.1))
+  tree
+}
+
+
 # --- Internal helpers ---
 
 #' Build geometric temperature ladder
 #' @keywords internal
 .build_temperature_ladder <- function(nChains, heat) {
   if (nChains == 1L) return(1.0)
-  # beta_1 = 1 (cold), beta_nChains = heat
-  # beta_i = heat^((i-1) / (nChains-1))
   heat^(seq(0, 1, length.out = nChains))
 }
 
@@ -234,7 +358,6 @@ RunMkPrime <- function(data, tree,
   tree_length <- sum(tree$edge.length)
   rel_br <- tree$edge.length / tree_length
 
-  # Default k' = kObs for all characters
   kPrime <- mkd$kObs
   known_idx <- which(mkd$type == "known")
   if (length(known_idx)) kPrime[known_idx] <- mkd$known_k[known_idx]
@@ -249,7 +372,6 @@ RunMkPrime <- function(data, tree,
     p = 0.5
   )
 
-  # Compute initial likelihood and prior (unheated)
   state$log_lik <- mkp_loglikelihood(
     tree, mkd,
     kPrime = state$kPrime,
@@ -314,9 +436,6 @@ RunMkPrime <- function(data, tree,
 #' Execute a move and return accept/reject decision
 #'
 #' @param beta Inverse temperature (1 = cold chain, < 1 = heated).
-#'   The heated MH acceptance is:
-#'   `log_alpha = beta * (logLik_new - logLik_old) +
-#'                (logPrior_new - logPrior_old) + log_hastings`
 #' @keywords internal
 .do_move <- function(move, state, mkd, model, tuning, beta = 1.0) {
   proposed <- state
@@ -349,7 +468,6 @@ RunMkPrime <- function(data, tree,
       log_hastings <- prop$log_hastings
     },
     int_walk = {
-      # Pick a random transformational character
       trans_idx <- which(mkd$type == "transformational")
       char_i <- sample(trans_idx, 1L)
       prop <- propose_bounded_int_walk(
@@ -362,18 +480,15 @@ RunMkPrime <- function(data, tree,
     }
   )
 
-  # Early rejection if Hastings ratio is -Inf
   if (!is.finite(log_hastings)) {
     return(list(accept = FALSE, state = state))
   }
 
-  # Compute proposed prior (unheated)
   proposed$log_prior <- log_prior(proposed, model, mkd)
   if (!is.finite(proposed$log_prior)) {
     return(list(accept = FALSE, state = state))
   }
 
-  # Compute proposed likelihood (unheated)
   tmp_tree <- proposed$tree
   tmp_tree$edge.length <- proposed$tree_length * proposed$rel_br_lengths
   proposed$log_lik <- mkp_loglikelihood(
@@ -386,8 +501,6 @@ RunMkPrime <- function(data, tree,
     relabel = model$relabel
   )
   proposed$log_post <- proposed$log_lik + proposed$log_prior
-
-  # Heated MH acceptance: only likelihood is tempered
 
   log_alpha <- beta * (proposed$log_lik - state$log_lik) +
                (proposed$log_prior - state$log_prior) +
@@ -402,10 +515,6 @@ RunMkPrime <- function(data, tree,
 
 
 #' Propose a swap between two adjacent chains
-#'
-#' Selects a random adjacent pair and proposes exchanging their full states.
-#' @return List with `chains` (possibly swapped), `pair` (integer vector of
-#'   length 2 giving the lower index), and `accepted` (logical).
 #' @keywords internal
 .propose_chain_swap <- function(chains, betas) {
   nChains <- length(chains)
@@ -413,11 +522,9 @@ RunMkPrime <- function(data, tree,
     return(list(chains = chains, pair = NULL, accepted = FALSE))
   }
 
-  # Pick random adjacent pair
   i <- sample.int(nChains - 1L, 1L)
   j <- i + 1L
 
-  # Swap acceptance: exp((beta_i - beta_j) * (logLik_j - logLik_i))
   log_alpha <- (betas[i] - betas[j]) *
                (chains[[j]]$log_lik - chains[[i]]$log_lik)
 
@@ -433,16 +540,6 @@ RunMkPrime <- function(data, tree,
 
 
 #' Adapt temperature ladder based on swap acceptance rates
-#'
-#' Adjusts the `heat` parameter (temperature of the hottest chain) to
-#' achieve ~25% swap acceptance between adjacent pairs. The ladder is
-#' then reconstructed with geometric spacing.
-#'
-#' @param betas Current temperature ladder.
-#' @param swap_accept Integer vector of swap acceptances per adjacent pair.
-#' @param swap_propose Integer vector of swap proposals per adjacent pair.
-#' @param target Target swap acceptance rate (default 0.25).
-#' @return Updated temperature ladder.
 #' @keywords internal
 .adapt_temperatures <- function(betas, swap_accept, swap_propose,
                                 target = 0.25) {
@@ -454,15 +551,12 @@ RunMkPrime <- function(data, tree,
 
   overall_rate <- sum(swap_accept) / total_propose
 
-  # Adjust heat: if swap rate too low, increase heat (bring temps closer);
-  # if too high, decrease heat (spread temps further)
   heat <- betas[nChains]
   # heat^adj where adj < 1 → increases heat (closer temps, easier swaps)
   # and adj > 1 → decreases heat (wider spread, harder swaps)
   adj <- exp(0.5 * (overall_rate - target))
   heat_new <- heat^adj
 
-  # Clamp to reasonable range
   heat_new <- max(0.01, min(0.95, heat_new))
 
   .build_temperature_ladder(nChains, heat_new)
@@ -480,7 +574,6 @@ RunMkPrime <- function(data, tree,
     names <- c(names, paste0("kPrime_", trans_idx))
   }
 
-  # Branch length proportions (abbreviated)
   names <- c(names, paste0("br_", seq_len(nEdge)))
 
   names
@@ -538,13 +631,10 @@ RunMkPrime <- function(data, tree,
     tk <- tuning_keys[nm]
 
     if (!is.na(tk) && !is.null(tuning[[tk]])) {
-      # Multiplicative adjustment
       adj <- exp(0.5 * (rate - target))
       if (nm == "kPrime") {
-        # Integer window: adjust multiplicatively, round, clamp to >= 1
         tuning[[tk]] <- max(1L, as.integer(round(tuning[[tk]] * adj)))
       } else if (nm == "branch_lengths") {
-        # BetaSimplex: higher tuning = more conservative; invert direction
         tuning[[tk]] <- tuning[[tk]] / adj
         tuning[[tk]] <- max(2, tuning[[tk]])
       } else {
