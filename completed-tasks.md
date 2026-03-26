@@ -64,3 +64,4 @@
 | M-066 | Automatic burnin selection for MkPosterior | C | 2026-03-26 | SetBurnin(), AutoBurnin(), .PostBurninData(). summary/print/plot/ConvergenceDiagnostics all respect burnin. 25 new tests. |
 | M-067 | Vignette and package doc references via Rdpack | C | 2026-03-26 | inst/REFERENCES.bib (9 entries), Rdpack in Imports/RdMacros, \insertCite in MkpLogLikelihood, bibliography in hyoliths.qmd. |
 | M-068 | Rogue taxon suppression in hyoliths.qmd | C | 2026-03-26 | Rogue::QuickRogue() in consensus tree section, both production and demo blocks. Rogue added to Suggests. |
+| M-062 | C++ outer iteration loop (run_mcmc_batch_cpp) | B | 2026-03-26 | `002f603`. Refactored `do_move_cpp` into `do_move_impl` (raw ptrs) + thin wrapper. `run_mcmc_batch_cpp()` runs 200-iter batches: weighted move selection, chain swaps (std::swap), sample collection. R loop calls it per-batch, handles adaptation/convergence/progress. 335+ tests pass. |

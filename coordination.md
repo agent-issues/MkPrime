@@ -121,7 +121,7 @@ comparison, TBR, HMC.
 
 
 ### Phase 8: MCMC performance — C++ inner loop
-**Status:** PLANNED (2026-03-26)
+**Status:** IN PROGRESS (2026-03-26) â€” 8b (proposals) and 8c (inner loop) complete; 8d (partial likelihood) open.
 **Goal:** Port MCMC hot path from R to C++, eliminating per-iteration R
 overhead. Use TreeTools C++ headers for tree manipulation.
 
