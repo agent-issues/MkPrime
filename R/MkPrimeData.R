@@ -95,16 +95,46 @@ MkPrimeData <- function(data,
     length(unique(col[!is.na(col)]))
   })
 
-  # Validate neomorphic characters are binary
-  neo_not_binary <- neomorphic[kObs[neomorphic] != 2L]
-  if (length(neo_not_binary)) {
+  # Drop invariant characters (kObs <= 1) before further validation
+  invariant <- which(kObs <= 1L)
+  if (length(invariant)) {
     cli::cli_warn(
-      "Neomorphic character{?s} {neo_not_binary} {?has/have} kObs != 2.
-      Neomorphic model assumes exactly 2 states."
+      "Dropping {length(invariant)} invariant character{?s} (kObs <= 1):
+      {?column/columns} {invariant}."
     )
+    keep <- setdiff(seq_len(nChar), invariant)
+    if (!length(keep)) {
+      cli::cli_abort("No variable characters remain after dropping invariants.")
+    }
+    char_matrix <- char_matrix[, keep, drop = FALSE]
+    kObs <- kObs[keep]
+
+    # Remap neomorphic and known_states indices
+    old_to_new <- rep(NA_integer_, nChar)
+    old_to_new[keep] <- seq_along(keep)
+    neomorphic <- as.integer(na.omit(old_to_new[neomorphic]))
+    if (length(ks_idx)) {
+      survived <- !is.na(old_to_new[ks_idx])
+      new_ks_idx <- old_to_new[ks_idx[survived]]
+      known_states <- known_states[survived]
+      names(known_states) <- as.character(new_ks_idx)
+      ks_idx <- new_ks_idx
+    }
+    nChar <- length(keep)
   }
 
-  # Validate known_states >= kObs
+  # Validate neomorphic characters are binary (after dropping invariants)
+  if (length(neomorphic)) {
+    neo_not_binary <- neomorphic[kObs[neomorphic] != 2L]
+    if (length(neo_not_binary)) {
+      cli::cli_warn(
+        "Neomorphic character{?s} {neo_not_binary} {?has/have} kObs != 2.
+        Neomorphic model assumes exactly 2 states."
+      )
+    }
+  }
+
+  # Validate known_states >= kObs (after dropping invariants)
   if (length(known_states)) {
     too_small <- ks_idx[known_states < kObs[ks_idx]]
     if (length(too_small)) {

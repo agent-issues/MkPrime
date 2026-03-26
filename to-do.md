@@ -19,9 +19,8 @@ Task IDs use `M-nnn` prefix (MkPrime) to avoid collision with TreeSearch
 | ID | Pri | Status | Blocks | Description | Notes |
 |----|-----|--------|--------|-------------|-------|
 | M-003 | P1 | ASSIGNED (A) | M-006 | **`MkPrimeData()` — phyDat input and character classification.** Accept a `phyDat` object + optional character annotations. Auto-detect neomorphic (binary with state 0 = "absent") vs transformational (multi-state). Allow user override. Return a structured list with partitioned characters. | Input: `phyDat` from TreeTools/ape. |
-| M-003 | P1 | ASSIGNED (A) | M-006 | **Character partitioning by kObs.** Within each type (neomorphic/transformational/known), group characters by their observed state count (kObs). Build the internal data structures needed by the likelihood engine: tip-state matrices per partition. | This is the data layout the C++ code will consume. |
-| M-004 | P1 | OPEN | — | **Data validation and edge cases.** Handle: invariant characters (warn + drop), missing data (NA / `?` states), characters with only 1 observed state, empty taxa. Test each case. | |
-| M-005 | P1 | OPEN | — | **Unit tests for data layer.** Test character classification, partitioning, edge cases. Use small hand-crafted `phyDat` objects. Validate round-trip: `phyDat` → `MkPrimeData()` → internal structures. | |
+| M-004 | P1 | ASSIGNED (A) | — | **Data validation and edge cases.** Handle: invariant characters (warn + drop), missing data (NA / `?` states), characters with only 1 observed state, empty taxa. Test each case. | |
+| M-005 | P1 | ASSIGNED (A) | — | **Unit tests for data layer.** Test character classification, partitioning, edge cases. Use small hand-crafted `phyDat` objects. Validate round-trip: `phyDat` → `MkPrimeData()` → internal structures. | |
 
 ## Phase 2: Likelihood engine (C++)
 
