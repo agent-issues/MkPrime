@@ -55,3 +55,5 @@
 | M-051 | Tests for stepping-stone | A | 2026-03-26 | 11 tests: finite output, consistency, neomorphic, fixed topology. |
 | M-055 | Eliminate redundant ape::reorder.phylo from likelihood hot path | C | 2026-03-26 | .MkpLogLikelihood() internal fast-path; .DoMove() and .InitState() use it. |
 | M-056 | Pre-compute move weight vector | (prev) | 2026-03-26 | Already implemented — weights pre-computed before main loop. |
+| M-057 | Replace ape::reorder.phylo with TreeTools::Postorder | C | 2026-03-26 | proposals.R, RunMkPrime.R, MkPrimeModel.R. Exported MkpLogLikelihood retains ape for user-facing use. |
+EOF 2>&1

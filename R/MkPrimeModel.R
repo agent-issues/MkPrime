@@ -1,6 +1,6 @@
 # Model specification for MkPrime MCMC
 #
-# Defines priors and model options. Used by RunMkPrime() and log_prior().
+# Defines priors and model options. Used by RunMkPrime() and LogPrior().
 
 #' Specify an MkPrime model
 #'
@@ -9,18 +9,18 @@
 #' @param nCat Number of ACRV rate categories (default 6).
 #' @param relabel Apply Mk' relabelling correction for transformational
 #'   characters? Default `TRUE`.
-#' @param tree_length_shape,tree_length_rate Shape and rate for the Gamma prior
-#'   on tree length. Defaults: shape = 2, rate = 2 / `exp_steps`.
-#' @param exp_steps Expected number of character state changes. Used to set
+#' @param treeLengthShape,treeLengthRate Shape and rate for the Gamma prior
+#'   on tree length. Defaults: shape = 2, rate = 2 / `expSteps`.
+#' @param expSteps Expected number of character state changes. Used to set
 #'   the tree length prior scale. Default `NULL` (computed from parsimony score
 #'   of the starting tree).
-#' @param rate_loss_meanlog,rate_loss_sdlog Parameters for the LogNormal prior
+#' @param rateLossMeanlog,rateLossSdlog Parameters for the LogNormal prior
 #'   on `rate_loss` (neomorphic asymmetry). Defaults: meanlog = 0, sdlog = 2.
-#' @param rate_log_sd_shape,rate_log_sd_rate Shape and rate for the Gamma prior
+#' @param rateLogSdShape,rateLogSdRate Shape and rate for the Gamma prior
 #'   on `rate_log_sd` (ACRV dispersion). Defaults: shape = 1, rate = 1.
-#' @param kprime_hyper_a,kprime_hyper_b Parameters for the Beta prior on the
+#' @param kprimeHyperA,kprimeHyperB Parameters for the Beta prior on the
 #'   geometric hyperprior parameter `p`. Defaults: a = 1, b = 1 (uniform).
-#' @param rate_neo_meanlog,rate_neo_sdlog Parameters for the LogNormal prior
+#' @param rateNeoMeanlog,rateNeoSdlog Parameters for the LogNormal prior
 #'   on the neomorphic partition rate scalar. Defaults: meanlog = 0, sdlog = 2.
 #'
 #' @return An S3 object of class `MkPrimeModel`.
@@ -29,24 +29,23 @@ MkPrimeModel <- function(
     coding = "variable",
     nCat = 6L,
     relabel = TRUE,
-    tree_length_shape = 2,
-    tree_length_rate = NULL,
-    exp_steps = NULL,
-    rate_loss_meanlog = 0,
-    rate_loss_sdlog = 2,
-    rate_log_sd_shape = 1,
-    rate_log_sd_rate = 1,
-    kprime_hyper_a = 1,
-    kprime_hyper_b = 1,
-    rate_neo_meanlog = 0,
-    rate_neo_sdlog = 2
+    treeLengthShape = 2,
+    treeLengthRate = NULL,
+    expSteps = NULL,
+    rateLossMeanlog = 0,
+    rateLossSdlog = 2,
+    rateLogSdShape = 1,
+    rateLogSdRate = 1,
+    kprimeHyperA = 1,
+    kprimeHyperB = 1,
+    rateNeoMeanlog = 0,
+    rateNeoSdlog = 2
 ) {
   coding <- match.arg(coding, c("variable", "informative", "none"))
 
-  # Derive tree_length_rate from exp_steps if not provided
-
-  if (is.null(tree_length_rate) && !is.null(exp_steps)) {
-    tree_length_rate <- 2 / exp_steps
+  # Derive treeLengthRate from expSteps if not provided
+  if (is.null(treeLengthRate) && !is.null(expSteps)) {
+    treeLengthRate <- 2 / expSteps
   }
 
   structure(
@@ -54,17 +53,17 @@ MkPrimeModel <- function(
       coding = coding,
       nCat = as.integer(nCat),
       relabel = relabel,
-      tree_length_shape = tree_length_shape,
-      tree_length_rate = tree_length_rate,
-      exp_steps = exp_steps,
-      rate_loss_meanlog = rate_loss_meanlog,
-      rate_loss_sdlog = rate_loss_sdlog,
-      rate_log_sd_shape = rate_log_sd_shape,
-      rate_log_sd_rate = rate_log_sd_rate,
-      kprime_hyper_a = kprime_hyper_a,
-      kprime_hyper_b = kprime_hyper_b,
-      rate_neo_meanlog = rate_neo_meanlog,
-      rate_neo_sdlog = rate_neo_sdlog
+      treeLengthShape = treeLengthShape,
+      treeLengthRate = treeLengthRate,
+      expSteps = expSteps,
+      rateLossMeanlog = rateLossMeanlog,
+      rateLossSdlog = rateLossSdlog,
+      rateLogSdShape = rateLogSdShape,
+      rateLogSdRate = rateLogSdRate,
+      kprimeHyperA = kprimeHyperA,
+      kprimeHyperB = kprimeHyperB,
+      rateNeoMeanlog = rateNeoMeanlog,
+      rateNeoSdlog = rateNeoSdlog
     ),
     class = "MkPrimeModel"
   )
@@ -73,7 +72,7 @@ MkPrimeModel <- function(
 
 #' Finalize model with data-derived defaults
 #'
-#' Sets `exp_steps` and `tree_length_rate` if not user-specified.
+#' Sets `expSteps` and `treeLengthRate` if not user-specified.
 #' Called internally by [RunMkPrime()] before MCMC starts.
 #'
 #' @param model An `MkPrimeModel` object.
@@ -81,12 +80,12 @@ MkPrimeModel <- function(
 #' @param mkd An `MkPrimeData` object.
 #' @return Updated `MkPrimeModel` with all defaults resolved.
 #' @keywords internal
-.finalize_model <- function(model, tree, mkd) {
-  if (is.null(model$exp_steps)) {
-    model$exp_steps <- max(1, .fitch_score(tree, mkd))
+.FinalizeModel <- function(model, tree, mkd) {
+  if (is.null(model$expSteps)) {
+    model$expSteps <- max(1, .FitchScore(tree, mkd))
   }
-  if (is.null(model$tree_length_rate)) {
-    model$tree_length_rate <- 2 / model$exp_steps
+  if (is.null(model$treeLengthRate)) {
+    model$treeLengthRate <- 2 / model$expSteps
   }
   model
 }
@@ -95,27 +94,27 @@ MkPrimeModel <- function(
 #' Fitch parsimony score on a tree
 #'
 #' Simple post-order Fitch algorithm. Used to set a data-informed default
-#' for `exp_steps` (the expected tree length).
+#' for `expSteps` (the expected tree length).
 #'
 #' @param tree A `phylo` object.
 #' @param mkd An `MkPrimeData` object.
 #' @return Integer parsimony score.
 #' @keywords internal
-.fitch_score <- function(tree, mkd) {
-  tree <- ape::reorder.phylo(tree, "postorder")
+.FitchScore <- function(tree, mkd) {
+  tree <- TreeTools::Postorder(tree)
   edge <- tree$edge
   nTip <- length(tree$tip.label)
   nNode <- tree$Nnode
 
   # Align matrix rows with tree tip order
-  tip_mat <- mkd$matrix[tree$tip.label, , drop = FALSE]
+  tipMat <- mkd$matrix[tree$tip.label, , drop = FALSE]
 
   total <- 0L
-  for (j in seq_len(ncol(tip_mat))) {
+  for (j in seq_len(ncol(tipMat))) {
     # Initialize state sets: list of integer vectors per node
     sets <- vector("list", nTip + nNode)
     for (i in seq_len(nTip)) {
-      s <- tip_mat[i, j]
+      s <- tipMat[i, j]
       sets[[i]] <- if (is.na(s)) seq.int(0L, mkd$kObs[j] - 1L) else s
     }
 
@@ -149,49 +148,49 @@ MkPrimeModel <- function(
 #' @param mkd An `MkPrimeData` object (for kObs and character types).
 #' @return Scalar log-prior density.
 #' @keywords internal
-log_prior <- function(state, model, mkd) {
+LogPrior <- function(state, model, mkd) {
   # Boundary checks — return -Inf for out-of-support values
 
   if (state$tree_length <= 0) return(-Inf)
   if (state$rate_log_sd < 0) return(-Inf)
   if (any(state$rel_br_lengths <= 0)) return(-Inf)
 
-  has_neo <- any(mkd$type == "neomorphic")
-  if (has_neo && state$rate_loss <= 0) return(-Inf)
-  if (has_neo && !is.null(state$rate_neo) && state$rate_neo <= 0) return(-Inf)
+  hasNeo <- any(mkd$type == "neomorphic")
+  if (hasNeo && state$rate_loss <= 0) return(-Inf)
+  if (hasNeo && !is.null(state$rate_neo) && state$rate_neo <= 0) return(-Inf)
 
-  trans_idx <- which(mkd$type == "transformational")
-  if (length(trans_idx)) {
+  transIdx <- which(mkd$type == "transformational")
+  if (length(transIdx)) {
     if (state$p <= 0 || state$p >= 1) return(-Inf)
-    if (any(state$kPrime[trans_idx] < mkd$kObs[trans_idx])) return(-Inf)
+    if (any(state$kPrime[transIdx] < mkd$kObs[transIdx])) return(-Inf)
   }
 
   lp <- 0.0
 
   # Tree length: Gamma prior
   lp <- lp + dgamma(state$tree_length,
-                     shape = model$tree_length_shape,
-                     rate = model$tree_length_rate,
+                     shape = model$treeLengthShape,
+                     rate = model$treeLengthRate,
                      log = TRUE)
 
   # Relative branch lengths: Dirichlet(1, ..., 1) = uniform on simplex
   # log-density is constant: log((n-1)!). Doesn't affect MH ratios but
   # included for correct log-posterior reporting.
-  n_edges <- length(state$rel_br_lengths)
-  lp <- lp + lfactorial(n_edges - 1L)
+  nEdges <- length(state$rel_br_lengths)
+  lp <- lp + lfactorial(nEdges - 1L)
 
   # rate_loss: LogNormal prior (neomorphic characters only)
-  if (has_neo) {
+  if (hasNeo) {
     lp <- lp + dlnorm(state$rate_loss,
-                      meanlog = model$rate_loss_meanlog,
-                      sdlog = model$rate_loss_sdlog,
+                      meanlog = model$rateLossMeanlog,
+                      sdlog = model$rateLossSdlog,
                       log = TRUE)
 
     # rate_neo: partition rate scalar (LogNormal prior)
     if (!is.null(state$rate_neo)) {
       lp <- lp + dlnorm(state$rate_neo,
-                         meanlog = model$rate_neo_meanlog,
-                         sdlog = model$rate_neo_sdlog,
+                         meanlog = model$rateNeoMeanlog,
+                         sdlog = model$rateNeoSdlog,
                          log = TRUE)
     }
   }
@@ -200,24 +199,24 @@ log_prior <- function(state, model, mkd) {
   # for shape >= 1, but log(0) = -Inf. Treat 0 specially as a valid point.)
   if (state$rate_log_sd > 0) {
     lp <- lp + dgamma(state$rate_log_sd,
-                       shape = model$rate_log_sd_shape,
-                       rate = model$rate_log_sd_rate,
+                       shape = model$rateLogSdShape,
+                       rate = model$rateLogSdRate,
                        log = TRUE)
   }
   # When rate_log_sd == 0 and shape == 1, the density is finite (rate);
   # when shape > 1, density is 0. Handle both:
-  if (state$rate_log_sd == 0 && model$rate_log_sd_shape > 1) return(-Inf)
+  if (state$rate_log_sd == 0 && model$rateLogSdShape > 1) return(-Inf)
 
   # k'_i: Geometric(p) shifted by kObs_i
   # P(k'_i = kObs_i + u) = p * (1-p)^u, u = 0, 1, 2, ...
-  if (length(trans_idx)) {
-    u <- state$kPrime[trans_idx] - mkd$kObs[trans_idx]
-    lp <- lp + length(trans_idx) * log(state$p) + sum(u) * log1p(-state$p)
+  if (length(transIdx)) {
+    u <- state$kPrime[transIdx] - mkd$kObs[transIdx]
+    lp <- lp + length(transIdx) * log(state$p) + sum(u) * log1p(-state$p)
 
     # p: Beta hyperprior
     lp <- lp + dbeta(state$p,
-                     shape1 = model$kprime_hyper_a,
-                     shape2 = model$kprime_hyper_b,
+                     shape1 = model$kprimeHyperA,
+                     shape2 = model$kprimeHyperB,
                      log = TRUE)
   }
 
@@ -232,11 +231,11 @@ print.MkPrimeModel <- function(x, ...) {
     "Coding: {x$coding}",
     "ACRV categories: {x$nCat}",
     "Relabelling correction: {x$relabel}",
-    "Tree length prior: Gamma({x$tree_length_shape}, {x$tree_length_rate %||% 'auto'})",
-    "rate_loss prior: LogNormal({x$rate_loss_meanlog}, {x$rate_loss_sdlog})",
-    "rate_log_sd prior: Gamma({x$rate_log_sd_shape}, {x$rate_log_sd_rate})",
-    "k' hyperprior p: Beta({x$kprime_hyper_a}, {x$kprime_hyper_b})",
-    "rate_neo prior: LogNormal({x$rate_neo_meanlog}, {x$rate_neo_sdlog})"
+    "Tree length prior: Gamma({x$treeLengthShape}, {x$treeLengthRate %||% 'auto'})",
+    "rate_loss prior: LogNormal({x$rateLossMeanlog}, {x$rateLossSdlog})",
+    "rate_log_sd prior: Gamma({x$rateLogSdShape}, {x$rateLogSdRate})",
+    "k' hyperprior p: Beta({x$kprimeHyperA}, {x$kprimeHyperB})",
+    "rate_neo prior: LogNormal({x$rateNeoMeanlog}, {x$rateNeoSdlog})"
   ))
   invisible(x)
 }

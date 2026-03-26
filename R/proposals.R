@@ -1,8 +1,8 @@
 # MCMC proposal functions for MkPrime
 #
-# Scalar/simplex proposals return list(value = ..., log_hastings = ...).
+# Scalar/simplex proposals return list(value = ..., logHastings = ...).
 # Tree topology proposals return list(tree = ..., rel_br_lengths = ...,
-#   log_hastings = ...).
+#   logHastings = ...).
 # The Hastings ratio is log q(current | proposed) - log q(proposed | current).
 
 #' Scale proposal for positive scalars
@@ -12,12 +12,12 @@
 #'
 #' @param x Current value (positive scalar).
 #' @param tuning Scale parameter controlling proposal width.
-#' @return `list(value, log_hastings)`.
+#' @return `list(value, logHastings)`.
 #' @keywords internal
-propose_scale <- function(x, tuning = 1.0) {
+ProposeScale <- function(x, tuning = 1.0) {
   u <- runif(1)
   m <- exp(tuning * (u - 0.5))
-  list(value = x * m, log_hastings = log(m))
+  list(value = x * m, logHastings = log(m))
 }
 
 
@@ -30,12 +30,12 @@ propose_scale <- function(x, tuning = 1.0) {
 #' @param index Index of the element to perturb. If NULL, picks randomly.
 #' @param tuning Concentration parameter (higher = more conservative).
 #'   Effective concentration is `tuning * 2`.
-#' @return `list(value, log_hastings)`.
+#' @return `list(value, logHastings)`.
 #' @keywords internal
-propose_beta_simplex <- function(x, index = NULL, tuning = 10.0) {
+ProposeBetaSimplex <- function(x, index = NULL, tuning = 10.0) {
   n <- length(x)
   if (n < 2L) {
-    return(list(value = x, log_hastings = 0))
+    return(list(value = x, logHastings = 0))
   }
 
   if (is.null(index)) {
@@ -46,62 +46,62 @@ propose_beta_simplex <- function(x, index = NULL, tuning = 10.0) {
   if (other >= index) other <- other + 1L
 
   # Current values of the two elements
-  old_a <- x[index]
-  old_b <- x[other]
-  total <- old_a + old_b
+  oldA <- x[index]
+  oldB <- x[other]
+  total <- oldA + oldB
 
   if (total <= 0) {
-    return(list(value = x, log_hastings = 0))
+    return(list(value = x, logHastings = 0))
   }
 
-  # Current fraction: f = old_a / total
-  old_f <- old_a / total
+  # Current fraction: f = oldA / total
+  oldF <- oldA / total
 
-  # Propose new fraction from Beta centered on old_f
-  alpha <- old_f * tuning + 1
-  beta_param <- (1 - old_f) * tuning + 1
-  new_f <- rbeta(1, alpha, beta_param)
+  # Propose new fraction from Beta centered on oldF
+  alpha <- oldF * tuning + 1
+  betaParam <- (1 - oldF) * tuning + 1
+  newF <- rbeta(1, alpha, betaParam)
 
   # Compute new values
-  new_a <- new_f * total
-  new_b <- (1 - new_f) * total
-  x_new <- x
-  x_new[index] <- new_a
-  x_new[other] <- new_b
+  newA <- newF * total
+  newB <- (1 - newF) * total
+  xNew <- x
+  xNew[index] <- newA
+  xNew[other] <- newB
 
   # Hastings ratio: q(old|new) / q(new|old)
-  # Forward: Beta(old_f * tuning + 1, (1-old_f) * tuning + 1) at new_f
-  # Reverse: Beta(new_f * tuning + 1, (1-new_f) * tuning + 1) at old_f
-  log_fwd <- dbeta(new_f, alpha, beta_param, log = TRUE)
-  rev_alpha <- new_f * tuning + 1
-  rev_beta <- (1 - new_f) * tuning + 1
-  log_rev <- dbeta(old_f, rev_alpha, rev_beta, log = TRUE)
+  # Forward: Beta(oldF * tuning + 1, (1-oldF) * tuning + 1) at newF
+  # Reverse: Beta(newF * tuning + 1, (1-newF) * tuning + 1) at oldF
+  logFwd <- dbeta(newF, alpha, betaParam, log = TRUE)
+  revAlpha <- newF * tuning + 1
+  revBeta <- (1 - newF) * tuning + 1
+  logRev <- dbeta(oldF, revAlpha, revBeta, log = TRUE)
 
-  list(value = x_new, log_hastings = log_rev - log_fwd)
+  list(value = xNew, logHastings = logRev - logFwd)
 }
 
 
 #' BoundedIntegerWalk proposal
 #'
 #' Proposes x' = x + delta where delta ~ Uniform(-window, ..., window).
-#' Rejects (returns current value with log_hastings = -Inf) if x' < lower.
+#' Rejects (returns current value with logHastings = -Inf) if x' < lower.
 #'
 #' @param x Current integer value.
 #' @param lower Lower bound (inclusive).
 #' @param window Half-width of the proposal window.
-#' @return `list(value, log_hastings)`.
+#' @return `list(value, logHastings)`.
 #' @keywords internal
-propose_bounded_int_walk <- function(x, lower, window = 1L) {
+ProposeBoundedIntWalk <- function(x, lower, window = 1L) {
   delta <- sample(-window:window, 1L)
-  x_new <- x + delta
+  xNew <- x + delta
 
-  if (x_new < lower) {
-    return(list(value = x, log_hastings = -Inf))
+  if (xNew < lower) {
+    return(list(value = x, logHastings = -Inf))
   }
 
-  # Symmetric proposal: log_hastings = 0
+  # Symmetric proposal: logHastings = 0
   # (Both x→x' and x'→x have same number of valid proposals)
-  list(value = x_new, log_hastings = 0)
+  list(value = xNew, logHastings = 0)
 }
 
 
@@ -118,62 +118,62 @@ propose_bounded_int_walk <- function(x, lower, window = 1L) {
 #' @param tree A `phylo` object in postorder (unrooted binary).
 #' @param tree_length Current total tree length.
 #' @param rel_br_lengths Current relative branch lengths (simplex).
-#' @return `list(tree, rel_br_lengths, log_hastings)`. The returned tree
+#' @return `list(tree, rel_br_lengths, logHastings)`. The returned tree
 #'   is in postorder.
 #' @keywords internal
-propose_nni <- function(tree, tree_length, rel_br_lengths) {
+ProposeNni <- function(tree, tree_length, rel_br_lengths) {
   nTip <- length(tree$tip.label)
   edge <- tree$edge
 
   # Internal edges: both endpoints are internal nodes
-  internal_rows <- which(edge[, 1] > nTip & edge[, 2] > nTip)
+  internalRows <- which(edge[, 1] > nTip & edge[, 2] > nTip)
 
-  if (length(internal_rows) == 0L) {
+  if (length(internalRows) == 0L) {
     # Too few tips for NNI (n <= 3)
     return(list(tree = tree, rel_br_lengths = rel_br_lengths,
-                log_hastings = -Inf))
+                logHastings = -Inf))
   }
 
   # Pick a random internal edge
-  edge_idx <- if (length(internal_rows) == 1L) {
-    internal_rows
+  edgeIdx <- if (length(internalRows) == 1L) {
+    internalRows
   } else {
-    sample(internal_rows, 1L)
+    sample(internalRows, 1L)
   }
-  u <- edge[edge_idx, 1]
-  v <- edge[edge_idx, 2]
+  u <- edge[edgeIdx, 1]
+  v <- edge[edgeIdx, 2]
 
   # v's children (always exactly 2)
-  v_child_rows <- which(edge[, 1] == v)
-  v_children <- edge[v_child_rows, 2]
+  vChildRows <- which(edge[, 1] == v)
+  vChildren <- edge[vChildRows, 2]
 
   # u's children other than v (1 if non-root, 2 if root)
-  u_sib_rows <- which(edge[, 1] == u & edge[, 2] != v)
-  u_siblings <- edge[u_sib_rows, 2]
+  uSibRows <- which(edge[, 1] == u & edge[, 2] != v)
+  uSiblings <- edge[uSibRows, 2]
 
   # Pick one child of v and one sibling on u's side to swap
-  c_idx <- sample.int(length(v_children), 1L)
-  w_idx <- sample.int(length(u_siblings), 1L)
+  cIdx <- sample.int(length(vChildren), 1L)
+  wIdx <- sample.int(length(uSiblings), 1L)
 
-  c_row <- v_child_rows[c_idx]
-  w_row <- u_sib_rows[w_idx]
+  cRow <- vChildRows[cIdx]
+  wRow <- uSibRows[wIdx]
 
   # Swap: change parent of selected v-child to u, parent of u-sibling to v
-  new_edge <- edge
-  new_edge[c_row, 1] <- u
-  new_edge[w_row, 1] <- v
+  newEdge <- edge
+  newEdge[cRow, 1] <- u
+  newEdge[wRow, 1] <- v
 
   # Rebuild tree and reorder to postorder
   # Edge lengths must be absolute for reorder to preserve associations
-  new_tree <- tree
-  new_tree$edge <- new_edge
-  new_tree$edge.length <- tree_length * rel_br_lengths
-  new_tree <- ape::reorder.phylo(new_tree, "postorder")
+  newTree <- tree
+  newTree$edge <- newEdge
+  newTree$edge.length <- tree_length * rel_br_lengths
+  newTree <- TreeTools::Postorder(newTree)
 
   # Recompute relative branch lengths (row order may have changed)
-  new_rel_br <- new_tree$edge.length / tree_length
+  newRelBr <- newTree$edge.length / tree_length
 
-  list(tree = new_tree, rel_br_lengths = new_rel_br, log_hastings = 0)
+  list(tree = newTree, rel_br_lengths = newRelBr, logHastings = 0)
 }
 
 
@@ -189,109 +189,109 @@ propose_nni <- function(tree, tree_length, rel_br_lengths) {
 #' 3 out of 2n-3 edges. C++ implementation (Phase 5) will handle this.
 #'
 #' The Hastings ratio includes a Jacobian correction for the edge length
-#' redistribution: `log(l_regraft) - log(l_merge)`, where `l_regraft` is
-#' the regraft edge length and `l_merge` is the sum of the two edges
+#' redistribution: `log(lRegraft) - log(lMerge)`, where `lRegraft` is
+#' the regraft edge length and `lMerge` is the sum of the two edges
 #' merged during suppression.
 #'
 #' @param tree A `phylo` object in postorder (unrooted binary).
 #' @param tree_length Current total tree length.
 #' @param rel_br_lengths Current relative branch lengths (simplex).
-#' @return `list(tree, rel_br_lengths, log_hastings)`. The returned tree
+#' @return `list(tree, rel_br_lengths, logHastings)`. The returned tree
 #'   is in postorder.
 #' @keywords internal
-propose_spr <- function(tree, tree_length, rel_br_lengths) {
+ProposeSpr <- function(tree, tree_length, rel_br_lengths) {
   nTip <- length(tree$tip.label)
   nEdge <- nrow(tree$edge)
   edge <- tree$edge
-  edge_length <- tree_length * rel_br_lengths
+  edgeLength <- tree_length * rel_br_lengths
   root <- nTip + 1L
 
   # Eligible prune edges: parent != root
-  eligible_prune <- which(edge[, 1] != root)
-  if (length(eligible_prune) == 0L) {
+  eligiblePrune <- which(edge[, 1] != root)
+  if (length(eligiblePrune) == 0L) {
     return(list(tree = tree, rel_br_lengths = rel_br_lengths,
-                log_hastings = -Inf))
+                logHastings = -Inf))
   }
 
-  prune_row <- if (length(eligible_prune) == 1L) {
-    eligible_prune
+  pruneRow <- if (length(eligiblePrune) == 1L) {
+    eligiblePrune
   } else {
-    sample(eligible_prune, 1L)
+    sample(eligiblePrune, 1L)
   }
-  u <- edge[prune_row, 1]
-  v <- edge[prune_row, 2]
+  u <- edge[pruneRow, 1]
+  v <- edge[pruneRow, 2]
 
   # u's parent and v's sibling (u != root, so exactly 1 parent, 1 sibling)
-  parent_row <- which(edge[, 2] == u)
-  p <- edge[parent_row, 1]
-  sib_row <- which(edge[, 1] == u & edge[, 2] != v)
-  w <- edge[sib_row, 2]
+  parentRow <- which(edge[, 2] == u)
+  p <- edge[parentRow, 1]
+  sibRow <- which(edge[, 1] == u & edge[, 2] != v)
+  w <- edge[sibRow, 2]
 
   # Find all descendants of v (for exclusion)
-  desc_v <- .descendants(v, edge, nTip)
+  descV <- .Descendants(v, edge, nTip)
 
   # Exclude: subtree edges (child in v's subtree or v itself) + adjacent to u
-  subtree_and_prune <- which(edge[, 2] %in% c(v, desc_v))
-  adjacent_to_u <- which(edge[, 1] == u | edge[, 2] == u)
-  exclude <- union(subtree_and_prune, adjacent_to_u)
-  candidate_regraft <- setdiff(seq_len(nEdge), exclude)
+  subtreeAndPrune <- which(edge[, 2] %in% c(v, descV))
+  adjacentToU <- which(edge[, 1] == u | edge[, 2] == u)
+  exclude <- union(subtreeAndPrune, adjacentToU)
+  candidateRegraft <- setdiff(seq_len(nEdge), exclude)
 
-  if (length(candidate_regraft) == 0L) {
+  if (length(candidateRegraft) == 0L) {
     return(list(tree = tree, rel_br_lengths = rel_br_lengths,
-                log_hastings = -Inf))
+                logHastings = -Inf))
   }
 
-  regraft_row <- if (length(candidate_regraft) == 1L) {
-    candidate_regraft
+  regraftRow <- if (length(candidateRegraft) == 1L) {
+    candidateRegraft
   } else {
-    sample(candidate_regraft, 1L)
+    sample(candidateRegraft, 1L)
   }
-  a <- edge[regraft_row, 1]
-  b <- edge[regraft_row, 2]
+  a <- edge[regraftRow, 1]
+  b <- edge[regraftRow, 2]
 
   tau <- runif(1)
 
   # Lengths for Hastings ratio
-  l_regraft <- edge_length[regraft_row]
-  l_merge <- edge_length[parent_row] + edge_length[sib_row]
+  lRegraft <- edgeLength[regraftRow]
+  lMerge <- edgeLength[parentRow] + edgeLength[sibRow]
 
   # --- Perform the SPR ---
-  new_edge <- edge
-  new_el <- edge_length
+  newEdge <- edge
+  newEl <- edgeLength
 
   # 1. Suppress u: (p -> u) becomes (p -> w), length absorbs (u -> w)
-  new_edge[parent_row, 2] <- w
-  new_el[parent_row] <- l_merge
+  newEdge[parentRow, 2] <- w
+  newEl[parentRow] <- lMerge
 
   # 2. Insert u on regraft edge: (a -> b) becomes (a -> u)
-  new_edge[regraft_row, 2] <- u
-  new_el[regraft_row] <- tau * l_regraft
+  newEdge[regraftRow, 2] <- u
+  newEl[regraftRow] <- tau * lRegraft
 
-  # 3. Reuse sib_row for (u -> b)
-  new_edge[sib_row, ] <- c(u, b)
-  new_el[sib_row] <- (1 - tau) * l_regraft
+  # 3. Reuse sibRow for (u -> b)
+  newEdge[sibRow, ] <- c(u, b)
+  newEl[sibRow] <- (1 - tau) * lRegraft
 
   # Prune edge (u -> v) unchanged
 
   # Rebuild tree and reorder to postorder
-  new_tree <- tree
-  new_tree$edge <- new_edge
-  new_tree$edge.length <- new_el
-  new_tree <- ape::reorder.phylo(new_tree, "postorder")
+  newTree <- tree
+  newTree$edge <- newEdge
+  newTree$edge.length <- newEl
+  newTree <- TreeTools::Postorder(newTree)
 
-  new_rel_br <- new_tree$edge.length / tree_length
+  newRelBr <- newTree$edge.length / tree_length
 
-  # Hastings: Jacobian from splitting l_regraft vs merging l_merge
+  # Hastings: Jacobian from splitting lRegraft vs merging lMerge
   # Discrete part cancels (same |eligible| and |candidates| both ways)
-  log_hastings <- log(l_regraft) - log(l_merge)
+  logHastings <- log(lRegraft) - log(lMerge)
 
-  list(tree = new_tree, rel_br_lengths = new_rel_br, log_hastings = log_hastings)
+  list(tree = newTree, rel_br_lengths = newRelBr, logHastings = logHastings)
 }
 
 
 #' Find all descendant node IDs (BFS)
 #' @keywords internal
-.descendants <- function(node, edge, nTip) {
+.Descendants <- function(node, edge, nTip) {
   children <- edge[edge[, 1] == node, 2]
   if (length(children) == 0L) return(integer(0))
   desc <- children

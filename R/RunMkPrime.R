@@ -63,7 +63,7 @@ RunMkPrime <- function(data, tree,
   model <- .FinalizeModel(model, tree, mkd)
 
   # POSTORDER INVARIANT: all topology proposals maintain this ordering.
-  tree <- ape::reorder.phylo(tree, "postorder")
+  tree <- TreeTools::Postorder(tree)
   nEdge <- nrow(tree$edge)
 
   hasNeo <- any(mkd$type == "neomorphic")
@@ -495,7 +495,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   }
 
   if (is.null(model)) model <- MkPrimeModel()
-  tree <- ape::reorder.phylo(tree, "postorder")
+  tree <- TreeTools::Postorder(tree)
   model <- .FinalizeModel(model, tree, mkd)
 
   runs <- checkpoint$runs
