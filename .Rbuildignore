@@ -1,0 +1,11 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^\.gitignore$
+^AGENTS\.md$
+^to-do\.md$
+^coordination\.md$
+^completed-tasks\.md$
+^issues\.md$
+^agent-.*\.md$
+^LICENSE\.md$
+^\.positai$

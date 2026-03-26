@@ -1,0 +1,37 @@
+Package: MkPrime
+Title: Bayesian Phylogenetic Inference Under the Mk' Model
+Version: 0.0.0.9000
+Authors@R: c(
+    person("Martin R.", "Smith", email = "martin.smith@durham.ac.uk",
+           role = c("aut", "cre", "cph"),
+           comment = c(ORCID = "0000-0001-5660-1727"))
+  )
+Description: Bayesian inference of phylogenetic trees from discrete
+    morphological characters under the Mk' (Mk-prime) model, which infers
+    the true number of character states including those not observed in the
+    data. Supports three character types in a single analysis: asymmetric
+    binary (neomorphic), Mk' with inferred state count (transformational),
+    and standard Mk with known state space. Implements Markov chain Monte
+    Carlo with parallel tempering, among-character rate variation, and
+    ascertainment bias correction.
+License: GPL (>= 3)
+URL: https://github.com/mk-prime/r
+BugReports: https://github.com/mk-prime/r/issues
+Depends:
+    R (>= 4.1)
+Imports:
+    ape,
+    cli,
+    Rcpp,
+    TreeTools
+Suggests:
+    coda,
+    testthat (>= 3.0.0),
+    treess,
+    TreeSearch
+LinkingTo:
+    Rcpp
+Config/testthat/edition: 3
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
