@@ -56,7 +56,7 @@
 | M-055 | Eliminate redundant ape::reorder.phylo from likelihood hot path | C | 2026-03-26 | .MkpLogLikelihood() internal fast-path; .DoMove() and .InitState() use it. |
 | M-056 | Pre-compute move weight vector | (prev) | 2026-03-26 | Already implemented — weights pre-computed before main loop. |
 | M-057 | Replace ape::reorder.phylo with TreeTools::Postorder | C | 2026-03-26 | proposals.R, RunMkPrime.R, MkPrimeModel.R. Exported MkpLogLikelihood retains ape for user-facing use. |
-EOF 2>&1
+| M-069 | Fix stepping-stone postorder invariant + NaN SE | B | 2026-03-26 | mkp_stepping_stone() now reorders tree before .InitState(). .EssVector() handles NaN sd. SE loop handles degenerate stones (all -Inf logLiks). 3199 tests pass. |
 | M-066 | Automatic burnin selection for MkPosterior | C | 2026-03-26 | SetBurnin(), AutoBurnin(), .PostBurninData(). summary/print/plot/ConvergenceDiagnostics all respect burnin. 25 new tests. |
 EOF 2>&1
 | M-067 | Vignette and package doc references via Rdpack | C | 2026-03-26 | inst/REFERENCES.bib (9 entries), Rdpack in Imports/RdMacros, \insertCite in MkpLogLikelihood, bibliography in hyoliths.qmd. |

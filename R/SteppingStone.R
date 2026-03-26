@@ -87,6 +87,10 @@ mkp_stepping_stone <- function(data, tree,
   # betas[1] = 0 (prior only), betas[nStones + 1] = 1 (full posterior)
 
   # --- Initialize MCMC state ---
+  # POSTORDER INVARIANT: .MkpLogLikelihood() (internal fast-path) requires
+  # edges in postorder. Reorder here so .InitState() and all subsequent
+  # topology proposals maintain the invariant.
+  tree <- TreeTools::Postorder(tree)
   state <- .InitState(tree, mkd, model)
 
   nEdge <- nrow(tree$edge)
@@ -134,14 +138,26 @@ mkp_stepping_stone <- function(data, tree,
     # log r_k = log( (1/n) * sum_i exp((betaHi - betaLo) * logLik_i) )
     # Use log-sum-exp for numerical stability
     deltaBeta <- betaHi - betaLo
-    shifted <- deltaBeta * logLiks
-    maxShifted <- max(shifted)
-    Lk <- exp(shifted - maxShifted) # centered importance weights
-    rk <- mean(Lk)
-    logRatios[stone] <- maxShifted + log(rk)
-
-    stoneWeights[[stone]] <- Lk
-    stoneMeans[stone] <- rk
+    # Remove -Inf logLiks (can occur when sampling near the prior; those
+    # samples contribute zero importance weight and are numerically harmless
+    # if at least one finite sample exists, but cause NaN via -Inf - (-Inf)
+    # if ALL logLiks are -Inf)
+    finiteLogLiks <- logLiks[is.finite(logLiks)]
+    if (length(finiteLogLiks) == 0L) {
+      # Degenerate stone — flag as unreliable; set weights to 0
+      logRatios[stone] <- NaN
+      stoneWeights[[stone]] <- numeric(0)
+      stoneMeans[stone] <- NaN
+    } else {
+      shifted <- deltaBeta * logLiks
+      maxShifted <- max(shifted, na.rm = TRUE)
+      Lk <- exp(shifted - maxShifted) # centered importance weights
+      Lk[!is.finite(Lk)] <- 0         # -Inf logLiks → weight 0
+      rk <- mean(Lk)
+      logRatios[stone] <- maxShifted + log(rk)
+      stoneWeights[[stone]] <- Lk
+      stoneMeans[stone] <- rk
+    }
   }
 
   logMarginal <- sum(logRatios)
@@ -154,18 +170,30 @@ mkp_stepping_stone <- function(data, tree,
   for (stone in seq_len(nStones)) {
     Lk <- stoneWeights[[stone]]
     rk <- stoneMeans[stone]
+
+    # Degenerate stone: no finite logLiks were available
+    if (length(Lk) == 0L || !is.finite(rk)) {
+      varLogRatios[stone] <- NA_real_
+      unreliable <- c(unreliable, paste0(stone, " (beta=",
+                                          round(betas[stone], 4), ", degenerate)"))
+      next
+    }
+
     essK <- .EssVector(Lk)
     vzrK <- var(Lk) / essK
     ratio <- vzrK / rk^2
     varLogRatios[stone] <- ratio
 
-    if (ratio > 0.1) {
+    if (is.finite(ratio) && ratio > 0.1) {
       unreliable <- c(unreliable, paste0(stone, " (beta=",
                                           round(betas[stone], 4), ")"))
+    } else if (!is.finite(ratio)) {
+      unreliable <- c(unreliable, paste0(stone, " (beta=",
+                                          round(betas[stone], 4), ", degenerate)"))
     }
   }
 
-  se <- sqrt(sum(varLogRatios))
+  se <- sqrt(sum(varLogRatios, na.rm = TRUE))
 
   if (length(unreliable) > 0L && verbose) {
     cli::cli_warn(c(
@@ -203,11 +231,14 @@ mkp_stepping_stone <- function(data, tree,
   if (n < 2L) return(1)
 
   s <- sd(x)
-  if (is.na(s) || s == 0) return(as.numeric(n))
+  # is.na() does not catch NaN (NaN is not NA in R); use !is.finite() instead
+  if (!is.finite(s) || s == 0) return(as.numeric(n))
 
   if (requireNamespace("coda", quietly = TRUE)) {
     ess <- as.numeric(coda::effectiveSize(coda::mcmc(x)))
-    return(max(ess, 1))
+    # effectiveSize can return 0 or NA/NaN for degenerate inputs
+    if (!is.finite(ess) || ess < 1) return(1)
+    return(ess)
   }
 
   # Fallback: initial positive sequence estimator (Geyer 1992)
