@@ -30,3 +30,11 @@
 | M-026 | exp_steps default from Fitch parsimony | A | 2026-03-26 | `266dc07`. Matches phangorn exactly. |
 | M-027 | Tree logging to Newick file | A | 2026-03-26 | `266dc07`. tree_file param in MkPrimeMCMC, append-mode. |
 | M-028 | Tree topology recovery test | A | 2026-03-26 | `fd38bd2`. Recovers true 5-tip tree from simulated data. ~2059 tests. |
+| M-029 | Parallel tempering core (multi-chain + temp ladder) | A | 2026-03-26 | `4fe7fe8`. Geometric beta ladder, heated MH acceptance, per-chain tuning. |
+| M-030 | Chain swap proposals | A | 2026-03-26 | `4fe7fe8`. Adjacent pair swaps with correct Metropolis criterion. |
+| M-031 | Adaptive temperature tuning | A | 2026-03-26 | `77042ae`. Multiplicative heat adjustment targeting 25% swap rate. |
+| M-032 | Independent runs (nRuns) | A | 2026-03-26 | `911464b`. Per-run state, .perturb_start(), .combine_runs(). |
+| M-033 | Convergence monitoring (ESS + PSRF) | A | 2026-03-26 | `2e05242`. convergence_diagnostics() via coda. |
+| M-034 | Stopping rules + interleaved runs | A | 2026-03-26 | `266f571`. max_time, min_ess, max_psrf, check_every. Lockstep run architecture. |
+| M-035 | Checkpointing | A | 2026-03-26 | `79ccb6a`. checkpoint_file, resume_mkprime(). |
+| M-036 | MkPosterior multi-run updates | A | 2026-03-26 | `623b9a9`. ESS/PSRF in summary, per-run traces in plot. 2898 total tests. |
