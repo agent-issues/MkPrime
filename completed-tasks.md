@@ -59,3 +59,5 @@
 EOF 2>&1
 | M-066 | Automatic burnin selection for MkPosterior | C | 2026-03-26 | SetBurnin(), AutoBurnin(), .PostBurninData(). summary/print/plot/ConvergenceDiagnostics all respect burnin. 25 new tests. |
 EOF 2>&1
+| M-067 | Vignette and package doc references via Rdpack | C | 2026-03-26 | inst/REFERENCES.bib (9 entries), Rdpack in Imports/RdMacros, \insertCite in MkpLogLikelihood, bibliography in hyoliths.qmd. |
+EOF 2>&1

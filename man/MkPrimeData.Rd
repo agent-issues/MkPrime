@@ -4,7 +4,7 @@
 \alias{MkPrimeData}
 \title{Prepare morphological data for Mk' analysis}
 \usage{
-MkPrimeData(data, neomorphic = integer(0), known_states = integer(0))
+MkPrimeData(data, neomorphic = integer(0), knownStates = integer(0))
 }
 \arguments{
 \item{data}{A \code{phyDat} object (from ape or TreeTools).}
@@ -12,7 +12,7 @@ MkPrimeData(data, neomorphic = integer(0), known_states = integer(0))
 \item{neomorphic}{Integer vector of character indices to treat as neomorphic
 (asymmetric binary, 0 = absent, 1 = present). Default: none.}
 
-\item{known_states}{Named integer vector specifying the known true number of
+\item{knownStates}{Named integer vector specifying the known true number of
 states for specific characters. Names are character indices (as strings),
 values are the true k. Characters listed here use standard Mk(k) with no
 k' inference.}
@@ -39,7 +39,7 @@ neomorphic (asymmetric binary), transformational (Mk' with inferred k'),
 or known state space (standard Mk with user-specified k).
 }
 \details{
-Characters not listed in \code{neomorphic} or \code{known_states} are classified as
+Characters not listed in \code{neomorphic} or \code{knownStates} are classified as
 \strong{transformational} and will have their true state count k' inferred under
 the Mk' model.
 

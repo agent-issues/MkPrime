@@ -12,6 +12,11 @@
 
 #' Compute log-likelihood of morphological data on a tree
 #'
+#' Evaluates the Mk' likelihood \insertCite{Lewis2001}{MkPrime} via
+#' Felsenstein pruning \insertCite{Felsenstein1981}{MkPrime}, with optional
+#' ACRV \insertCite{Harrison2014}{MkPrime} and ascertainment bias correction.
+#'
+#' @references \insertAllCited{}
 #' @param tree A `phylo` object (from ape). Must be unrooted or rooted.
 #' @param mkd A `MkPrimeData` object.
 #' @param kPrime Integer vector of length `mkd$nChar`. The assumed true number

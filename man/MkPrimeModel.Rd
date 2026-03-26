@@ -8,41 +8,46 @@ MkPrimeModel(
   coding = "variable",
   nCat = 6L,
   relabel = TRUE,
-  tree_length_shape = 2,
-  tree_length_rate = NULL,
-  exp_steps = NULL,
-  rate_loss_meanlog = 0,
-  rate_loss_sdlog = 2,
-  rate_log_sd_shape = 1,
-  rate_log_sd_rate = 1,
-  kprime_hyper_a = 1,
-  kprime_hyper_b = 1
+  treeLengthShape = 2,
+  treeLengthRate = NULL,
+  expSteps = NULL,
+  rateLossMeanlog = 0,
+  rateLossSdlog = 2,
+  rateLogSdShape = 1,
+  rateLogSdRate = 1,
+  kprimeHyperA = 1,
+  kprimeHyperB = 1,
+  rateNeoMeanlog = 0,
+  rateNeoSdlog = 2
 )
 }
 \arguments{
-\item{coding}{Ascertainment bias correction: \code{"variable"} (default) or
-\code{"none"}.}
+\item{coding}{Ascertainment bias correction: \code{"variable"} (default),
+\code{"informative"}, or \code{"none"}.}
 
 \item{nCat}{Number of ACRV rate categories (default 6).}
 
 \item{relabel}{Apply Mk' relabelling correction for transformational
 characters? Default \code{TRUE}.}
 
-\item{tree_length_shape, tree_length_rate}{Shape and rate for the Gamma prior
-on tree length. Defaults: shape = 2, rate = 2 / \code{exp_steps}.}
+\item{treeLengthShape, treeLengthRate}{Shape and rate for the Gamma prior
+on tree length. Defaults: shape = 2, rate = 2 / \code{expSteps}.}
 
-\item{exp_steps}{Expected number of character state changes. Used to set
+\item{expSteps}{Expected number of character state changes. Used to set
 the tree length prior scale. Default \code{NULL} (computed from parsimony score
 of the starting tree).}
 
-\item{rate_loss_meanlog, rate_loss_sdlog}{Parameters for the LogNormal prior
+\item{rateLossMeanlog, rateLossSdlog}{Parameters for the LogNormal prior
 on \code{rate_loss} (neomorphic asymmetry). Defaults: meanlog = 0, sdlog = 2.}
 
-\item{rate_log_sd_shape, rate_log_sd_rate}{Shape and rate for the Gamma prior
+\item{rateLogSdShape, rateLogSdRate}{Shape and rate for the Gamma prior
 on \code{rate_log_sd} (ACRV dispersion). Defaults: shape = 1, rate = 1.}
 
-\item{kprime_hyper_a, kprime_hyper_b}{Parameters for the Beta prior on the
+\item{kprimeHyperA, kprimeHyperB}{Parameters for the Beta prior on the
 geometric hyperprior parameter \code{p}. Defaults: a = 1, b = 1 (uniform).}
+
+\item{rateNeoMeanlog, rateNeoSdlog}{Parameters for the LogNormal prior
+on the neomorphic partition rate scalar. Defaults: meanlog = 0, sdlog = 2.}
 }
 \value{
 An S3 object of class \code{MkPrimeModel}.

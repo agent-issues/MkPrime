@@ -8,10 +8,10 @@ RunMkPrime(
   data,
   tree,
   neomorphic = integer(0),
-  known_states = integer(0),
+  knownStates = integer(0),
   model = NULL,
   mcmc = NULL,
-  fix_topology = FALSE
+  fixTopology = FALSE
 )
 }
 \arguments{
@@ -19,14 +19,14 @@ RunMkPrime(
 
 \item{tree}{A \code{phylo} object (starting topology).}
 
-\item{neomorphic, known_states}{Passed to \code{\link[=MkPrimeData]{MkPrimeData()}} if \code{data} is
+\item{neomorphic, knownStates}{Passed to \code{\link[=MkPrimeData]{MkPrimeData()}} if \code{data} is
 a \code{phyDat} object.}
 
 \item{model}{An \code{MkPrimeModel} object, or \code{NULL} for defaults.}
 
 \item{mcmc}{An \code{MkPrimeMCMC} object, or \code{NULL} for defaults.}
 
-\item{fix_topology}{Logical. If \code{TRUE}, tree topology is fixed (Phase 3
+\item{fixTopology}{Logical. If \code{TRUE}, tree topology is fixed (Phase 3
 behaviour). Default \code{FALSE} enables NNI and SPR topology proposals.}
 }
 \value{

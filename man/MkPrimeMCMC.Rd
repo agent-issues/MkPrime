@@ -11,12 +11,14 @@ MkPrimeMCMC(
   nRuns = 2L,
   nChains = 1L,
   heat = 0.2,
-  max_time = NULL,
-  min_ess = NULL,
-  max_psrf = NULL,
-  check_every = 1000L,
-  checkpoint_file = NULL,
-  tree_file = NULL,
+  maxTime = NULL,
+  minEss = NULL,
+  maxPsrf = NULL,
+  checkEvery = 1000L,
+  checkpointFile = NULL,
+  treeFile = NULL,
+  plotEvery = NULL,
+  progressFn = NULL,
   tuning = list()
 )
 }
@@ -42,25 +44,37 @@ Chain 1 is the cold chain (beta = 1).}
 \code{beta_i = heat^((i-1)/(nChains-1))} for i = 1, ..., nChains.
 Ignored when \code{nChains = 1}.}
 
-\item{max_time}{Maximum wall-clock time in seconds. \code{NULL} (default)
+\item{maxTime}{Maximum wall-clock time in seconds. \code{NULL} (default)
 means no time limit.}
 
-\item{min_ess}{Minimum effective sample size for early stopping.
+\item{minEss}{Minimum effective sample size for early stopping.
 \code{NULL} (default) disables ESS-based stopping.}
 
-\item{max_psrf}{Maximum PSRF for early stopping. \code{NULL} (default)
+\item{maxPsrf}{Maximum PSRF for early stopping. \code{NULL} (default)
 disables PSRF-based stopping. Requires \code{nRuns >= 2}.}
 
-\item{check_every}{Check convergence every this many iterations
+\item{checkEvery}{Check convergence every this many iterations
 (default 1000). Only used when stopping criteria are set.}
 
-\item{checkpoint_file}{Path to write checkpoint RDS files. \code{NULL}
+\item{checkpointFile}{Path to write checkpoint RDS files. \code{NULL}
 (default) disables checkpointing. Checkpoints are saved at each
 convergence check interval.}
 
-\item{tree_file}{Path to write sampled trees in Newick format.
+\item{treeFile}{Path to write sampled trees in Newick format.
 \code{NULL} (default) disables file logging. Trees are always stored
 in the returned \code{MkPosterior} object regardless.}
+
+\item{plotEvery}{Integer; invoke the progress callback every this many
+iterations. \code{NULL} (default) disables progress plotting (the \code{cli}
+progress bar still runs). Typical values: 100--500.}
+
+\item{progressFn}{Progress callback function, the string \code{"default"},
+or \code{NULL}. When \code{"default"}, uses \code{\link[=MkpTracePlot]{MkpTracePlot()}} for live
+base-R trace plots. A custom function must accept a single argument:
+a named list with fields \code{iter}, \code{nIter}, \code{warmup}, \code{inWarmup},
+\code{nRuns}, \code{nChains}, \code{runSamples}, \code{currentState},
+\code{recentAcceptance}, and \code{elapsed}. See \code{\link[=MkpTracePlot]{MkpTracePlot()}} for
+details.}
 
 \item{tuning}{Named list of initial tuning parameters for each move
 type. See Details.}

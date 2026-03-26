@@ -1,0 +1,313 @@
+---
+title: "Bayesian Mk' analysis of the hyolith dataset"
+format: html
+bibliography: references.bib
+vignette: >
+  %\VignetteIndexEntry{Bayesian Mk' analysis of the hyolith dataset}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup}
+#| include: false
+library(MkPrime)
+```
+
+## Overview
+
+This vignette walks through a complete Bayesian phylogenetic analysis using
+MkPrime on a real morphological dataset: 225 characters scored for 54 hyolith
+and outgroup taxa, from @Sun2018, available in the **TreeSearch**
+package as `Sun2018.nex`.
+
+The Mk' model extends the standard Mk model by treating the true number of
+character states as a latent variable. Rather than assuming that all states
+seen in the data are the only states that exist, Mk' infers a per-character k'
+from a shared hyperprior. This matters for morphological data where characters
+are scored for the organisms currently in hand and unobserved states are
+plausible.
+
+## Packages
+
+All steps below use packages already listed in MkPrime's dependencies:
+**ape**, **TreeTools**, and **TreeSearch** (for the example dataset).
+
+```{r packages}
+#| message: false
+library(MkPrime)
+```
+
+## Loading morphological data
+
+Read the NEXUS file with `TreeTools::ReadAsPhyDat()`, which correctly
+handles MorphoBank-style NEXUS files including polymorphic state codings
+(`(0,1)`, `{1,2}`, etc.):
+
+```{r load-data}
+nexFile <- system.file("datasets/Sun2018.nex", package = "TreeSearch")
+pd <- TreeTools::ReadAsPhyDat(nexFile)
+cat(sprintf(
+  "phyDat: %d taxa, %d characters, %d state levels\n",
+  length(pd),
+  sum(attr(pd, "weight")),
+  length(attr(pd, "levels"))
+))
+```
+
+## Classifying characters
+
+MkPrime supports three character types in a single analysis:
+
+| Type | Argument | When to use |
+|------|----------|-------------|
+| **Neomorphic** | `neomorphic =` | Binary absent/present; asymmetric gain/loss rates |
+| **Transformational** | (default) | True k' unknown and inferred from the data |
+| **Known state space** | `knownStates =` | k fixed and known *a priori* |
+
+This NEXUS file encodes character type in the `STATELABELS` block: characters
+whose first state label is `[Transformational character]` are ordered
+transformational series; the remaining binary characters are absent/present
+neomorphic characters. We parse this directly:
+
+```{r parse-character-types}
+nexLines <- readLines(nexFile)
+
+# Locate the STATELABELS and MATRIX blocks
+slStart    <- grep("^\\s+STATELABELS", nexLines) + 1L
+matrixLine <- grep("^\\s+MATRIX",      nexLines)
+slEnd      <- matrixLine[matrixLine > slStart][1L] - 1L
+slBlock    <- nexLines[slStart:slEnd]
+
+# Lines containing only a number introduce each character's label set
+charHeaderLines <- grep("^\\s+\\d+\\s*$", slBlock)
+charNums         <- as.integer(trimws(slBlock[charHeaderLines]))
+
+# Collect all state labels per character; test for the marker phrase
+charLabelRanges <- Map(
+  function(start, end) slBlock[start:end],
+  charHeaderLines + 1L,
+  c(charHeaderLines[-1L] - 1L, length(slBlock))
+)
+isTrans <- vapply(charLabelRanges, function(lbls) {
+  any(grepl("\\[Transformational character\\]", lbls, ignore.case = TRUE))
+}, logical(1))
+
+transformationalChars <- charNums[isTrans]
+neomorphicChars       <- charNums[!isTrans]
+
+cat(sprintf(
+  "%d transformational, %d neomorphic characters\n",
+  length(transformationalChars), length(neomorphicChars)
+))
+```
+
+Characters not listed in `neomorphic` default to transformational in
+`MkPrimeData()`, so we only need to pass the neomorphic indices.
+
+## Preparing the data object
+
+`MkPrimeData()` validates and partitions the characters:
+
+```{r mkprime-data}
+mkd <- MkPrimeData(pd, neomorphic = neomorphicChars)
+mkd
+```
+
+## Starting tree
+
+MkPrime samples tree topology during MCMC but requires a starting topology.
+`TreeTools::NJTree()` builds a rooted neighbor-joining tree directly from a
+`phyDat` object using Hamming distances. We then unroot it: MkPrime uses
+unrooted trees because the model is time-reversible and the root placement
+does not affect the likelihood.
+
+```{r starting-tree}
+startTree <- TreeTools::NJTree(pd, edgeLengths = TRUE)
+startTree <- TreeTools::UnrootTree(startTree)
+# NJ can produce small negative branch lengths when taxa are very similar;
+# clamp these before passing to RunMkPrime (which will warn and clamp anyway).
+startTree$edge.length[startTree$edge.length < 0] <- 1e-8
+```
+
+## Model specification
+
+`MkPrimeModel()` configures priors and the statistical model:
+
+```{r model-spec}
+model <- MkPrimeModel(
+  coding  = "variable",  # @Lewis2001 ascertainment bias correction
+  nCat    = 6L,          # discrete lognormal ACRV rate categories
+  relabel = TRUE         # Mk' relabelling correction for transformational chars
+)
+model
+```
+
+`expSteps = NULL` (default) sets the tree-length prior scale automatically
+from the Fitch parsimony score of the starting tree.
+
+## MCMC configuration
+
+For a **production run** on this dataset we recommend:
+
+```{r mcmc-production}
+mcmcProduction <- MkPrimeMCMC(
+  nIter          = 200000L,
+  thin           = 100L,
+  warmup         = 50000L,
+  nRuns          = 2L,       # 2 independent runs for PSRF diagnostics
+  nChains        = 4L,       # parallel tempering chains
+  heat           = 0.2,
+  minEss         = 200L,     # stop early when min ESS exceeds 200
+  maxPsrf        = 1.05,     # stop early when max PSRF drops below 1.05
+  checkEvery     = 5000L,
+  treeFile       = "hyoliths_trees.nwk"
+)
+```
+
+For this vignette we use a much shorter demo run:
+
+```{r mcmc-demo}
+mcmcDemo <- MkPrimeMCMC(
+  nIter   = 5000L,
+  thin    = 10L,
+  warmup  = 2000L,
+  nRuns   = 2L,
+  nChains = 1L    # no parallel tempering in demo
+)
+```
+
+## Running the analysis
+
+Pass the `phyDat` object directly to `RunMkPrime()` together with the
+neomorphic character indices. The function calls `MkPrimeData()` internally if
+you pass a `phyDat` rather than a pre-built `MkPrimeData` object:
+
+Production run (not evaluated here — expected wall time: 1–4 hours):
+
+```{r run-production}
+#| eval: false
+set.seed(8203)
+posterior <- RunMkPrime(
+  data       = pd,
+  tree       = startTree,
+  neomorphic = neomorphicChars,
+  model      = model,
+  mcmc       = mcmcProduction
+)
+saveRDS(posterior, "hyoliths_posterior.rds")
+```
+
+Demo run:
+
+```{r run-demo}
+#| cache: true
+set.seed(8203)
+posteriorDemo <- RunMkPrime(
+  data       = pd,
+  tree       = startTree,
+  neomorphic = neomorphicChars,
+  model      = model,
+  mcmc       = mcmcDemo
+)
+```
+
+## Convergence diagnostics
+
+Before interpreting results, confirm that the chains have converged.
+`ConvergenceDiagnostics()` computes the effective sample size (ESS) and
+potential scale reduction factor (PSRF; @GelmanRubin1992) across runs:
+
+```{r convergence}
+diag <- ConvergenceDiagnostics(posteriorDemo)
+print(diag)
+```
+
+A well-converged run should show ESS ≥ 200 and PSRF ≤ 1.05 for all scalar
+parameters. The demo run is far too short to meet these criteria.
+
+Trace plots give a visual check on stationarity and mixing:
+
+```{r trace-plot}
+#| fig-width: 7
+#| fig-height: 5
+plot(posteriorDemo)
+```
+
+## Summarizing the posterior
+
+`summary()` reports posterior mean, median, 95% credible interval, ESS, and
+PSRF for each scalar parameter:
+
+```{r summary}
+summary(posteriorDemo)
+```
+
+### Key parameters
+
+| Parameter | Interpretation |
+|-----------|---------------|
+| `log_posterior` | Log unnormalized posterior density |
+| `tree_length` | Total branch length |
+| `rate_loss` | Asymmetry for neomorphic characters (rate loss / rate gain) |
+| `rate_log_sd` | Dispersion of the lognormal ACRV distribution |
+| `p` | Geometric hyperprior parameter; controls prior expected k' |
+| `kPrime_[i]` | Posterior k' for transformational character *i* |
+
+### k' posterior estimates
+
+Characters with posterior k' > kObs (observed state count) carry probability
+that additional states exist but were not sampled. To examine these from a
+production run:
+
+```{r kprime-summary}
+kprimeCols <- grep("^kPrime_", colnames(posteriorDemo$samples), value = TRUE)
+if (length(kprimeCols) > 0L) {
+  kpMeans <- colMeans(posteriorDemo$samples[, kprimeCols, drop = FALSE])
+  head(sort(kpMeans, decreasing = TRUE), 10)
+}
+```
+
+### Posterior tree distribution
+
+Sampled trees are stored in the returned object. Use **TreeTools**
+to summarize topology:
+
+```{r tree-summary}
+#| eval: false
+# Majority-rule consensus from a production run
+allTrees <- c(posterior$run_1$trees, posterior$run_2$trees)
+consensus <- TreeTools::Consensus(allTrees, p = 0.5)
+plot(consensus, cex = 0.6, main = "Majority-rule consensus")
+```
+
+
+```{r tree-summary-demo}
+#| eval: true
+# Majority-rule consensus from a demo run
+allTrees <- posteriorDemo$trees[-(1:100)]
+consensus <- TreeTools::Consensus(allTrees, p = 0.5)
+plot(consensus, cex = 0.6, main = "Majority-rule consensus")
+```
+
+## Saving and resuming
+
+```{r save-load}
+#| eval: false
+saveRDS(posterior, "hyoliths_posterior.rds")
+posterior <- readRDS("hyoliths_posterior.rds")
+```
+
+To enable checkpoint files (which allow resuming after interruption):
+
+```{r checkpoint}
+#| eval: false
+mcmcCheckpointed <- MkPrimeMCMC(
+  nIter          = 200000L,
+  thin           = 100L,
+  warmup         = 50000L,
+  nRuns          = 2L,
+  nChains        = 4L,
+  checkpointFile = "hyoliths_checkpoint.rds"
+)
+```
+
