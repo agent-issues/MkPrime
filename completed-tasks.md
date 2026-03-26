@@ -67,3 +67,5 @@
 | M-062 | C++ outer iteration loop (run_mcmc_batch_cpp) | B | 2026-03-26 | `002f603`. Refactored `do_move_cpp` into `do_move_impl` (raw ptrs) + thin wrapper. `run_mcmc_batch_cpp()` runs 200-iter batches: weighted move selection, chain swaps (std::swap), sample collection. R loop calls it per-batch, handles adaptation/convergence/progress. 335+ tests pass. |
 | M-064 | Partial likelihood recalculation for parameter-only moves | C | 2026-03-26 | `de0d7c3`. Per-partition caching: p moves skip lik entirely, rate_loss/rate_neo recompute only neomorphic partitions, kPrime recompute only affected partition. cpp_partition_log_likelihood() + fill_partition_cache(). MCMC engine tests 3.4s→2.2s (~35% speedup). |
 EOF 2>&1
+
+| M-065 | Eliminate edge matrix round-trips in C++ MCMC | C | a34d674: vector-based cpp_log_likelihood, nni/spr_proposal_impl; -71 lines net |
