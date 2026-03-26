@@ -186,7 +186,7 @@ RunMkPrime <- function(data, tree,
       cli::cli_progress_update()
     }
 
-    # --- Stopping rule checks ---
+    # --- Stopping rule checks + checkpointing ---
     if (!is.null(mcmc$max_time)) {
       elapsed <- proc.time()["elapsed"] - start_time
       if (elapsed >= mcmc$max_time) {
@@ -195,12 +195,22 @@ RunMkPrime <- function(data, tree,
       }
     }
 
-    if (iter > mcmc$warmup && !is.null(mcmc$check_every) &&
-        iter %% mcmc$check_every == 0L && nRuns >= 2L) {
-      diag <- .check_convergence(runs, param_names, mcmc)
-      if (!is.null(diag) && diag$converged) {
-        stop_reason <- "converged"
-        break
+    do_check <- iter > mcmc$warmup && !is.null(mcmc$check_every) &&
+                iter %% mcmc$check_every == 0L
+
+    if (do_check) {
+      # Checkpoint
+      if (!is.null(mcmc$checkpoint_file)) {
+        .save_checkpoint(runs, mcmc, iter, mcmc$checkpoint_file)
+      }
+
+      # Convergence check
+      if (nRuns >= 2L) {
+        diag <- .check_convergence(runs, param_names, mcmc)
+        if (!is.null(diag) && diag$converged) {
+          stop_reason <- "converged"
+          break
+        }
       }
     }
   }
@@ -392,6 +402,161 @@ RunMkPrime <- function(data, tree,
   result$stop_reason <- stop_reason
   result$actual_iter <- actual_iter
   result
+}
+
+
+# --- Checkpointing ---
+
+#' Save MCMC checkpoint to RDS
+#' @keywords internal
+.save_checkpoint <- function(runs, mcmc, iter, file) {
+  checkpoint <- list(
+    runs = runs,
+    mcmc = mcmc,
+    iter = iter,
+    timestamp = Sys.time(),
+    version = 1L
+  )
+  saveRDS(checkpoint, file)
+}
+
+
+#' Resume MCMC from a checkpoint
+#'
+#' Loads a checkpoint file and continues the MCMC from where it left off.
+#' The remaining iterations will be appended to the existing samples.
+#'
+#' @param checkpoint_file Path to the checkpoint RDS file.
+#' @param data A `phyDat` or `MkPrimeData` object (must match original).
+#' @param model An `MkPrimeModel` object (must match original).
+#' @param tree A `phylo` object (used only for model finalization).
+#' @param neomorphic,known_states Passed to [MkPrimeData()] if `data`
+#'   is a `phyDat` object.
+#'
+#' @return An `MkPosterior` object with combined samples.
+#' @export
+resume_mkprime <- function(checkpoint_file, data, tree,
+                           neomorphic = integer(0),
+                           known_states = integer(0),
+                           model = NULL) {
+  checkpoint <- readRDS(checkpoint_file)
+
+  if (is.null(checkpoint$version) || checkpoint$version != 1L) {
+    cli::cli_abort("Unsupported checkpoint version.")
+  }
+
+  if (inherits(data, "MkPrimeData")) {
+    mkd <- data
+  } else {
+    mkd <- MkPrimeData(data, neomorphic = neomorphic,
+                       known_states = known_states)
+  }
+
+  if (is.null(model)) model <- MkPrimeModel()
+  tree <- ape::reorder.phylo(tree, "postorder")
+  model <- .finalize_model(model, tree, mkd)
+
+  runs <- checkpoint$runs
+  mcmc <- checkpoint$mcmc
+  start_iter <- checkpoint$iter + 1L
+
+  nRuns <- mcmc$nRuns
+  nEdge <- ncol(runs[[1]]$samples) -
+    length(.key_param_cols(runs[[1]]$samples)) -
+    sum(grepl("^br_", colnames(runs[[1]]$samples))) +
+    sum(grepl("^br_", colnames(runs[[1]]$samples)))
+  # Infer nEdge from br_ columns
+  nEdge <- sum(grepl("^br_", colnames(runs[[1]]$samples)))
+
+  has_neo <- any(mkd$type == "neomorphic")
+  nTrans <- sum(mkd$type == "transformational")
+
+  moves <- .build_moves(nEdge, nTrans, has_neo, mcmc,
+                        fix_topology = FALSE)
+  param_names <- colnames(runs[[1]]$samples)
+
+  # Extend sample storage if needed
+  total_saved <- as.integer((mcmc$nIter - mcmc$warmup) / mcmc$thin)
+  for (run in seq_len(nRuns)) {
+    current_rows <- nrow(runs[[run]]$samples)
+    if (current_rows < total_saved) {
+      extra <- matrix(NA_real_, nrow = total_saved - current_rows,
+                      ncol = ncol(runs[[run]]$samples),
+                      dimnames = list(NULL, param_names))
+      runs[[run]]$samples <- rbind(runs[[run]]$samples, extra)
+      runs[[run]]$tree_samples <- c(
+        runs[[run]]$tree_samples,
+        vector("list", total_saved - length(runs[[run]]$tree_samples))
+      )
+    }
+  }
+
+  # Resume loop
+  stop_reason <- "max_iter"
+  start_time <- proc.time()["elapsed"]
+
+  cli::cli_progress_bar(
+    "Resuming MCMC", total = mcmc$nIter - start_iter + 1L,
+    format = "{cli::pb_bar} {cli::pb_current}/{cli::pb_total} (from iter {start_iter})"
+  )
+
+  for (iter in seq(start_iter, mcmc$nIter)) {
+    for (run in seq_len(nRuns)) {
+      r <- runs[[run]]
+      nChains <- mcmc$nChains
+
+      for (ch in seq_len(nChains)) {
+        move_idx <- sample.int(length(moves), 1L, prob = vapply(
+          moves, `[[`, numeric(1), "weight"
+        ))
+        move <- moves[[move_idx]]
+        r$chain_propose[[ch]][move_idx] <-
+          r$chain_propose[[ch]][move_idx] + 1L
+
+        accepted <- .do_move(move, r$chains[[ch]], mkd, model,
+                             r$chain_tuning[[ch]], beta = r$betas[ch])
+
+        if (accepted$accept) {
+          r$chains[[ch]] <- accepted$state
+          r$chain_accept[[ch]][move_idx] <-
+            r$chain_accept[[ch]][move_idx] + 1L
+        }
+      }
+
+      if (nChains > 1L) {
+        swap_result <- .propose_chain_swap(r$chains, r$betas)
+        r$chains <- swap_result$chains
+        if (!is.null(swap_result$pair)) {
+          pair_idx <- swap_result$pair[1]
+          r$swap_propose[pair_idx] <- r$swap_propose[pair_idx] + 1L
+          if (swap_result$accepted) {
+            r$swap_accept[pair_idx] <- r$swap_accept[pair_idx] + 1L
+          }
+        }
+      }
+
+      if (iter > mcmc$warmup && (iter - mcmc$warmup) %% mcmc$thin == 0L) {
+        r$saved_idx <- r$saved_idx + 1L
+        r$samples[r$saved_idx, ] <- .state_to_row(r$chains[[1]], mkd, nEdge)
+        r$tree_samples[[r$saved_idx]] <- .state_to_tree(r$chains[[1]])
+      }
+
+      runs[[run]] <- r
+    }
+
+    if (!is.null(mcmc$max_time)) {
+      elapsed <- proc.time()["elapsed"] - start_time
+      if (elapsed >= mcmc$max_time) {
+        stop_reason <- "max_time"
+        break
+      }
+    }
+
+    if (iter %% 100L == 0L) cli::cli_progress_update()
+  }
+  cli::cli_progress_done()
+
+  .build_result(runs, model, mkd, mcmc, min(iter, mcmc$nIter), stop_reason)
 }
 
 

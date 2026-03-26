@@ -15,6 +15,7 @@ MkPrimeMCMC(
   min_ess = NULL,
   max_psrf = NULL,
   check_every = 1000L,
+  checkpoint_file = NULL,
   tree_file = NULL,
   tuning = list()
 )
@@ -52,6 +53,10 @@ disables PSRF-based stopping. Requires \code{nRuns >= 2}.}
 
 \item{check_every}{Check convergence every this many iterations
 (default 1000). Only used when stopping criteria are set.}
+
+\item{checkpoint_file}{Path to write checkpoint RDS files. \code{NULL}
+(default) disables checkpointing. Checkpoints are saved at each
+convergence check interval.}
 
 \item{tree_file}{Path to write sampled trees in Newick format.
 \code{NULL} (default) disables file logging. Trees are always stored

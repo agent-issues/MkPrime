@@ -25,6 +25,9 @@
 #'   disables PSRF-based stopping. Requires `nRuns >= 2`.
 #' @param check_every Check convergence every this many iterations
 #'   (default 1000). Only used when stopping criteria are set.
+#' @param checkpoint_file Path to write checkpoint RDS files. `NULL`
+#'   (default) disables checkpointing. Checkpoints are saved at each
+#'   convergence check interval.
 #' @param tree_file Path to write sampled trees in Newick format.
 #'   `NULL` (default) disables file logging. Trees are always stored
 #'   in the returned `MkPosterior` object regardless.
@@ -60,6 +63,7 @@ MkPrimeMCMC <- function(
     min_ess = NULL,
     max_psrf = NULL,
     check_every = 1000L,
+    checkpoint_file = NULL,
     tree_file = NULL,
     tuning = list()
 ) {
@@ -98,7 +102,7 @@ MkPrimeMCMC <- function(
     list(nIter = nIter, thin = thin, warmup = warmup,
          nRuns = nRuns, nChains = nChains, heat = heat,
          max_time = max_time, min_ess = min_ess, max_psrf = max_psrf,
-         check_every = check_every,
+         check_every = check_every, checkpoint_file = checkpoint_file,
          tree_file = tree_file, tuning = tuning),
     class = "MkPrimeMCMC"
   )
