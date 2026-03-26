@@ -128,7 +128,7 @@ MkPrimeData <- function(data,
     known_k[ks_idx] <- as.integer(known_states)
   }
 
-  structure(
+  mkd <- structure(
     list(
       matrix = char_matrix,
       nTip = nTip,
@@ -141,6 +141,9 @@ MkPrimeData <- function(data,
     ),
     class = "MkPrimeData"
   )
+
+  mkd$partitions <- .build_partitions(mkd)
+  mkd
 }
 
 
@@ -151,6 +154,10 @@ print.MkPrimeData <- function(x, ...) {
   for (tp in names(type_counts)) {
     cli::cli_bullets(c("*" = "{type_counts[[tp]]} {tp}"))
   }
+  nPart <- length(x$partitions)
+  cli::cli_bullets(c(
+    "i" = "{nPart} partition{?s} (grouped by type and kObs)"
+  ))
   kObs_range <- range(x$kObs)
   cli::cli_bullets(c(
     "i" = "kObs range: {kObs_range[1]}\u2013{kObs_range[2]}"
