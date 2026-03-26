@@ -23,13 +23,12 @@ M-037 through M-039 done. Core progress display infrastructure in place:
 - Console trace plots (mkp_trace_plot)
 - PNG output for Shiny polling (mkp_png_progress)
 
-## Phase 6b: Shiny module + TreeSearch integration (deferred)
+## Phase 6b: TreeSearch integration (deferred)
 
 *Not yet broken into tasks.*
 
 Planned work:
-- MkPrime Shiny module (mkprime_ui/mkprime_server)
-- TreeSearch GUI integration (Suggests: MkPrime)
+- TreeSearch GUI integration hook ("Bayesian (Mk')" mode in EasyTrees)
 
 ## Phase 7: Extensions (future)
 

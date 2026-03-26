@@ -96,9 +96,11 @@ monitoring, stopping rules, checkpointing.
 - mkp_trace_plot(): multi-panel base-R trace plots (per-run, warmup-aware)
 - mkp_png_progress(): factory fn writing atomic PNG + JSON for Shiny polling
 
+- M-040: EasyMkPrime() standalone Shiny app — bslib UI, callr background
+  MCMC, PNG progress polling, results tabs (traces, summary, consensus).
+
 **Deferred to Phase 6b:**
-- MkPrime Shiny module (mkprime_ui/mkprime_server with callr background)
-- TreeSearch GUI integration hook
+- TreeSearch GUI integration hook ("Bayesian (Mk')" mode in EasyTrees)
 
 ### Phase 7: Extensions (future)
 **Status:** Not started
