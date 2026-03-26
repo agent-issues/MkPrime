@@ -9,8 +9,7 @@ MkPosterior(samples, trees, acceptance, model, data, mcmc, warmup, tuning)
 \arguments{
 \item{samples}{Matrix of posterior samples (nSaved x nParams).}
 
-\item{trees}{List of \code{phylo} objects (sampled trees with varying
-branch lengths, fixed topology).}
+\item{trees}{List of \code{phylo} objects (sampled trees).}
 
 \item{acceptance}{Named numeric vector of acceptance rates per move.}
 

@@ -23,6 +23,7 @@ Imports:
     ape,
     cli,
     Rcpp,
+    rlang,
     TreeTools
 Suggests:
     coda,
