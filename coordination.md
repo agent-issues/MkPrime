@@ -4,7 +4,7 @@ Last updated: 2026-03-26
 
 ## Project State
 
-**Phase:** 2 (Likelihood engine) — COMPLETE. Ready for Phase 3 (MCMC).
+**Phase:** 3 (Basic MCMC) — COMPLETE. Ready for Phase 4 (Tree search).
 
 MkPrime is a new R package for Bayesian phylogenetic inference under the
 Mk' model. The architecture follows StratoBayes (C++ hot loop via Rcpp,
@@ -37,15 +37,16 @@ including ACRV and ascertainment bias correction.
 - **Likelihoods match RevBayes to within ~1e-6** on reference datasets
 
 ### Phase 3: Basic MCMC (fixed topology)
-**Status:** Not started
+**Status:** COMPLETE (2026-03-26)
 **Goal:** Single-chain MCMC on continuous parameters + k'_i with fixed tree.
 
 **Exit criteria:**
-- MH proposals for continuous parameters (Scale, BetaSimplex)
-- BoundedIntegerWalk for k'_i
-- Produces valid posterior samples
-- Console progress bar
-- MkPosterior result object with basic summaries
+- MH proposals for continuous parameters (Scale, BetaSimplex) ✓
+- BoundedIntegerWalk for k'_i ✓
+- Produces valid posterior samples ✓
+- Console progress bar ✓
+- MkPosterior result object with basic summaries ✓
+- Integration validation: posterior recovers simulated parameters ✓
 
 ### Phase 4: Tree search
 **Status:** Not started

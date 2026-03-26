@@ -14,14 +14,14 @@ Task IDs use `M-nnn` prefix (MkPrime) to avoid collision with TreeSearch
 
 ---
 
-## Phase 3: Basic MCMC (fixed topology)
+## Phase 4: Tree search
 
-*Not yet broken into tasks. Phase 2 just completed.*
+*Not yet broken into tasks. Phase 3 just completed.*
 
 Planned work:
-- MH proposals for continuous parameters (Scale, BetaSimplex)
-- BoundedIntegerWalk for k'_i
-- Single chain, no tempering
-- Sample accumulation to file
-- Console progress bar
-- MkPosterior result object
+- SPR and NNI proposals (C++)
+- Compound Dirichlet branch length prior
+- Uniform topology prior
+- exp_steps default from Goloboff-Wagner parsimony score
+- Tree logging (Newick to file)
+- Validate topology moves preserve tree invariants

@@ -5,7 +5,7 @@
 
 # MkPrime — Agent Development Notes
 
-## Current phase: greenfield development (Phase 1–2)
+## Current phase: greenfield development (Phase 1–3)
 
 The package is being built from scratch. Agents should:
 
@@ -69,14 +69,14 @@ mkp/
 ├── NAMESPACE
 ├── R/
 │   ├── MkPrimeData.R        # phyDat input, character classification, partitioning
-│   ├── MkPrimeModel.R       # Model specification: priors, ACRV, partitioning
-│   ├── MkPrimeMCMC.R        # MCMC configuration object
-│   ├── RunMkPrime.R         # Main entry point: orchestrate MCMC
-│   ├── Tempering.R          # Parallel tempering (temperature ladder, swaps)
-│   ├── Proposals.R          # R-side proposal logic (scheduling, adaptation)
-│   ├── Convergence.R        # ESS, PSRF monitoring, stopping rules
-│   ├── PlotDuringMCMC.R     # Live progress plots
-│   ├── MkPosterior.R        # Results object (lazy summaries, tree consensus)
+│   ├── MkPrimeModel.R       # Model specification: priors, ACRV options
+│   ├── MkPrimeMCMC.R        # MCMC configuration object (nIter, thin, tuning)
+│   ├── RunMkPrime.R         # Main entry point: single-chain MH engine
+│   ├── proposals.R          # Scale, BetaSimplex, BoundedIntegerWalk proposals
+│   ├── MkPosterior.R        # Results object (samples, print/summary/plot)
+│   ├── Tempering.R          # (Phase 5) Parallel tempering
+│   ├── Convergence.R        # (Phase 5) ESS, PSRF monitoring, stopping rules
+│   ├── PlotDuringMCMC.R     # (Phase 6) Live progress plots
 │   └── utils.R              # Helpers
 ├── src/
 │   ├── likelihood.cpp       # Felsenstein pruning, per-partition likelihood
