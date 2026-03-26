@@ -107,3 +107,62 @@ test_that("MkPrimeData integer matrix is 0-indexed", {
   mkd <- MkPrimeData(pd)
   expect_equal(range(mkd$matrix, na.rm = TRUE), c(0L, 2L))
 })
+
+
+# ===== auto_detect_neomorphic =====
+
+test_that("auto_detect_neomorphic finds binary {0,1} characters", {
+  tips <- paste0("t", 1:4)
+  pd <- StringToPhyDat(setNames(c("01", "10", "01", "10"), tips),
+                        tips = tips)
+  neo <- auto_detect_neomorphic(pd)
+  expect_true(length(neo) > 0)
+  # All detected characters should have exactly levels "0" and "1"
+  mat <- MkPrime:::.PhyDatToIntMatrix(pd)
+  lvls <- attr(pd, "levels")
+  for (j in neo) {
+    states <- unique(mat[, j][!is.na(mat[, j])])
+    labels <- sort(lvls[states + 1L])
+    expect_equal(labels, c("0", "1"))
+  }
+})
+
+test_that("auto_detect_neomorphic returns empty for non-binary data", {
+  tips <- paste0("t", 1:4)
+  pd <- StringToPhyDat(setNames(c("12", "23", "31", "12"), tips),
+                        tips = tips)
+  expect_length(auto_detect_neomorphic(pd), 0L)
+})
+
+test_that("auto_detect_neomorphic excludes chars with 0 and states > 1", {
+  # MatrixToPhyDat gives cleaner control over states
+  mat <- matrix(c(0, 1, 2, 0, 1), nrow = 5, ncol = 1,
+                dimnames = list(paste0("t", 1:5), NULL))
+  pd <- MatrixToPhyDat(mat)
+  # This char has states {0, 1, 2} — not neomorphic
+  expect_length(auto_detect_neomorphic(pd), 0L)
+})
+
+test_that("auto_detect_neomorphic works on real Nexus data", {
+  skip_if_not(file.exists(
+    system.file("extdata", "hyoliths.nex", package = "MkPrime")
+  ))
+  pd <- ReadAsPhyDat(
+    system.file("extdata", "hyoliths.nex", package = "MkPrime")
+  )
+  neo <- auto_detect_neomorphic(pd)
+  # Should find a substantial number of neomorphic characters
+  expect_true(length(neo) >= 100)
+  # All detected chars should be binary {0,1} in levels
+  mat <- MkPrime:::.PhyDatToIntMatrix(pd)
+  lvls <- attr(pd, "levels")
+  for (j in neo) {
+    states <- unique(mat[, j][!is.na(mat[, j])])
+    labels <- sort(lvls[states + 1L])
+    expect_equal(labels, c("0", "1"))
+  }
+})
+
+test_that("auto_detect_neomorphic rejects non-phyDat input", {
+  expect_error(auto_detect_neomorphic("not_phyDat"), "phyDat")
+})

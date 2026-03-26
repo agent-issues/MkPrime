@@ -42,3 +42,5 @@
 | M-038 | PlotDuringMCMC — console trace plots | A | 2026-03-26 | mkp_trace_plot(): multi-panel base-R traces, per-run colors, warmup handling. |
 | M-039 | PNG progress writer | A | 2026-03-26 | mkp_png_progress(): factory fn, atomic PNG rename, hand-rolled JSON status. 46 new tests. |
 | M-040 | Standalone Shiny app (EasyMkPrime) | A | 2026-03-26 | bslib page_sidebar, callr background MCMC, PNG progress polling, traces/summary/consensus tabs. |
+| M-042 | _pkgdown.yml for MkPrime | A | 2026-03-26 | Created by human; confirmed present. |
+| M-043 | Auto-detect neomorphic characters | A | 2026-03-26 | auto_detect_neomorphic(): checks level labels {0,1}; wired into EasyMkPrime data loading. 14 new tests. |

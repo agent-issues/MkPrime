@@ -207,6 +207,38 @@ summary.MkPrimeData <- function(object, ...) {
 }
 
 
+#' Auto-detect neomorphic character indices
+#'
+#' Identifies binary characters whose states are `0` (absent) and `1`
+#' (present), which are candidates for the asymmetric neomorphic model.
+#' Characters that contain state `0` alongside states other than `1` are
+#' **not** flagged as neomorphic (they remain transformational by default).
+#'
+#' @param data A `phyDat` object.
+#' @return Integer vector of character indices suitable for the
+#'   `neomorphic` argument of [MkPrimeData()].
+#' @export
+auto_detect_neomorphic <- function(data) {
+  if (!inherits(data, "phyDat")) {
+    cli::cli_abort("{.arg data} must be a {.cls phyDat} object.")
+  }
+  mat <- .PhyDatToIntMatrix(data)
+  lvls <- attr(data, "levels")
+  neo <- integer(0)
+  for (j in seq_len(ncol(mat))) {
+    states <- unique(mat[, j])
+    states <- states[!is.na(states)]
+    # Map 0-indexed matrix values to level labels
+    labels <- lvls[states + 1L]
+    # Neomorphic: exactly levels "0" and "1"
+    if (length(labels) == 2L && all(sort(labels) == c("0", "1"))) {
+      neo <- c(neo, j)
+    }
+  }
+  neo
+}
+
+
 # Convert phyDat to an integer matrix (0-indexed states, NA for ambiguous)
 #
 # Each row is a taxon, each column is a character. States are integers

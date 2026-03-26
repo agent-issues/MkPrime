@@ -157,6 +157,14 @@ server <- function(input, output, session) {
                 length(rv$data), attr(rv$data, "nr")),
         type = "message"
       )
+      # Auto-detect neomorphic characters
+      neo <- auto_detect_neomorphic(rv$data)
+      if (length(neo)) {
+        updateTextInput(session, "neomorphic",
+                        value = paste(neo, collapse = ", "))
+      } else {
+        updateTextInput(session, "neomorphic", value = "")
+      }
     }, error = function(e) {
       showNotification(paste("Error loading data:", conditionMessage(e)),
                        type = "error", duration = 10)
