@@ -1,3 +1,4 @@
+
 # Compute the total log-likelihood for a MkPrimeData object on a tree.
 #
 # This is the R-level orchestration function that ties together:
@@ -53,52 +54,64 @@ MkpLogLikelihood <- function(tree, mkd,
   # Default kPrime: use kObs for transformational, known_k for known, 2 for neo
   if (is.null(kPrime)) {
     kPrime <- mkd$kObs
-    known_idx <- which(mkd$type == "known")
-    if (length(known_idx)) {
-      kPrime[known_idx] <- mkd$known_k[known_idx]
+    knownIdx <- which(mkd$type == "known")
+    if (length(knownIdx)) {
+      kPrime[knownIdx] <- mkd$known_k[knownIdx]
     }
   }
 
-  # Reorder tree to postorder
+  # Reorder to postorder for callers without the invariant guarantee.
+  # The MCMC hot path calls .MkpLogLikelihood() directly and maintains
+  # the postorder invariant via .InitState() and all topology proposals.
   tree <- ape::reorder.phylo(tree, "postorder")
+
+  .MkpLogLikelihood(tree, mkd, kPrime, rate_loss, rate_log_sd,
+                    nCat, coding, rate_neo, relabel)
+}
+
+# Internal fast-path likelihood — no validation, no reorder.
+# INVARIANT: tree$edge must already be in postorder. This is guaranteed by
+# .InitState() and all topology proposals (ProposeNni, ProposeSpr).
+.MkpLogLikelihood <- function(tree, mkd, kPrime, rate_loss, rate_log_sd,
+                               nCat, coding, rate_neo, relabel) {
   parent <- tree$edge[, 1]
   child <- tree$edge[, 2]
-  edge_length <- tree$edge.length
+  edgeLength <- tree$edge.length
   nTip <- length(tree$tip.label)
 
   # ACRV rate multipliers
-  rates <- discrete_lognormal_rates(rate_log_sd, nCat)
+  rates <- DiscreteLognormalRates(rate_log_sd, nCat)
 
-  total_loglik <- 0.0
+  totalLoglik <- 0.0
 
   for (part in mkd$partitions) {
     # Prepare tip states: replace NA with -1 for C++
-    tip_states <- part$tip_states
-    tip_states[is.na(tip_states)] <- -1L
-    storage.mode(tip_states) <- "integer"
+    tipStates <- part$tip_states
+    tipStates[is.na(tipStates)] <- -1L
+    storage.mode(tipStates) <- "integer"
 
     nCharPart <- part$nChar
 
     if (part$type == "neomorphic") {
       # MkN model — apply partition rate scalar
-      neo_el <- edge_length * rate_neo
-      root_freqs <- as.numeric(mkn_stationary_freqs(rate_loss))
+      neoEl <- edgeLength * rate_neo
+      rootFreqs <- as.numeric(mkn_stationary_freqs(rate_loss))
 
       if (rate_log_sd > 0) {
-        ll <- pruning_mkn_acrv(parent, child, neo_el,
-                               tip_states, rate_loss, root_freqs, rates)
+        ll <- pruning_mkn_acrv(parent, child, neoEl,
+                               tipStates, rate_loss, rootFreqs, rates)
       } else {
-        ll <- pruning_mkn(parent, child, neo_el,
-                          tip_states, rate_loss, root_freqs)
+        ll <- pruning_mkn(parent, child, neoEl,
+                          tipStates, rate_loss, rootFreqs)
       }
 
       # Ascertainment correction (uses scaled branches)
       if (coding != "none") {
-        puninf <- constant_site_prob_mkn(parent, child, neo_el,
-                                         nTip, rate_loss, root_freqs, rates)
+        puninf <- constant_site_prob_mkn(parent, child, neoEl,
+                                         nTip, rate_loss, rootFreqs, rates)
         if (coding == "informative") {
           puninf <- puninf + singleton_site_prob_mkn(
-            parent, child, neo_el, nTip, rate_loss, root_freqs, rates
+            parent, child, neoEl, nTip, rate_loss, rootFreqs, rates
           )
         }
         ll <- ll - nCharPart * log(1 - puninf)
@@ -107,22 +120,22 @@ MkpLogLikelihood <- function(tree, mkd,
     } else if (part$type == "known") {
       # Known state space: all chars use the fixed k
       kStates <- part$k
-      root_freqs <- rep(1.0 / kStates, kStates)
+      rootFreqs <- rep(1.0 / kStates, kStates)
 
       if (rate_log_sd > 0) {
-        ll <- pruning_jc_acrv(parent, child, edge_length,
-                              tip_states, kStates, root_freqs, rates)
+        ll <- pruning_jc_acrv(parent, child, edgeLength,
+                              tipStates, kStates, rootFreqs, rates)
       } else {
-        ll <- pruning_jc(parent, child, edge_length,
-                         tip_states, kStates, root_freqs)
+        ll <- pruning_jc(parent, child, edgeLength,
+                         tipStates, kStates, rootFreqs)
       }
 
       if (coding != "none") {
-        puninf <- constant_site_prob_jc(parent, child, edge_length,
-                                        nTip, kStates, root_freqs, rates)
+        puninf <- constant_site_prob_jc(parent, child, edgeLength,
+                                        nTip, kStates, rootFreqs, rates)
         if (coding == "informative") {
           puninf <- puninf + singleton_site_prob_jc(
-            parent, child, edge_length, nTip, kStates, root_freqs, rates
+            parent, child, edgeLength, nTip, kStates, rootFreqs, rates
           )
         }
         ll <- ll - nCharPart * log(1 - puninf)
@@ -131,49 +144,49 @@ MkpLogLikelihood <- function(tree, mkd,
     } else {
       # Transformational: sub-group by current kPrime value.
       # Characters with different k' need different JC(k') matrices.
-      kPrime_part <- kPrime[part$char_indices]
+      kPrimePart <- kPrime[part$char_indices]
       ll <- 0.0
 
-      for (kp in sort(unique(kPrime_part))) {
-        cols <- which(kPrime_part == kp)
-        sub_states <- tip_states[, cols, drop = FALSE]
+      for (kp in sort(unique(kPrimePart))) {
+        cols <- which(kPrimePart == kp)
+        subStates <- tipStates[, cols, drop = FALSE]
         nCharSub <- length(cols)
 
-        root_freqs <- rep(1.0 / kp, kp)
+        rootFreqs <- rep(1.0 / kp, kp)
 
         if (rate_log_sd > 0) {
-          sub_ll <- pruning_jc_acrv(parent, child, edge_length,
-                                    sub_states, kp, root_freqs, rates)
+          subLl <- pruning_jc_acrv(parent, child, edgeLength,
+                                    subStates, kp, rootFreqs, rates)
         } else {
-          sub_ll <- pruning_jc(parent, child, edge_length,
-                               sub_states, kp, root_freqs)
+          subLl <- pruning_jc(parent, child, edgeLength,
+                               subStates, kp, rootFreqs)
         }
 
         if (coding != "none") {
-          puninf <- constant_site_prob_jc(parent, child, edge_length,
-                                          nTip, kp, root_freqs, rates)
+          puninf <- constant_site_prob_jc(parent, child, edgeLength,
+                                          nTip, kp, rootFreqs, rates)
           if (coding == "informative") {
             puninf <- puninf + singleton_site_prob_jc(
-              parent, child, edge_length, nTip, kp, root_freqs, rates
+              parent, child, edgeLength, nTip, kp, rootFreqs, rates
             )
           }
-          sub_ll <- sub_ll - nCharSub * log(1 - puninf)
+          subLl <- subLl - nCharSub * log(1 - puninf)
         }
 
-        ll <- ll + sub_ll
+        ll <- ll + subLl
       }
 
       # Relabelling correction (per character)
       if (relabel) {
-        relabel_corr <- mk_prime_relabel_log_batch(
-          as.integer(kPrime_part), part$kObs
+        relabelCorr <- mk_prime_relabel_log_batch(
+          as.integer(kPrimePart), part$kObs
         )
-        ll <- ll + sum(relabel_corr)
+        ll <- ll + sum(relabelCorr)
       }
     }
 
-    total_loglik <- total_loglik + ll
+    totalLoglik <- totalLoglik + ll
   }
 
-  total_loglik
+  totalLoglik
 }

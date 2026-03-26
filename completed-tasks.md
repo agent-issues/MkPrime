@@ -53,3 +53,5 @@
 | M-049 | Tests for rate_neo | A | 2026-03-26 | Likelihood, prior, MCMC smoke test, backward compat. |
 | M-050 | Stepping-stone marginal likelihood | A | 2026-03-26 | mkp_stepping_stone(): power posterior with Beta(α,1) schedule. |
 | M-051 | Tests for stepping-stone | A | 2026-03-26 | 11 tests: finite output, consistency, neomorphic, fixed topology. |
+| M-055 | Eliminate redundant ape::reorder.phylo from likelihood hot path | C | 2026-03-26 | .MkpLogLikelihood() internal fast-path; .DoMove() and .InitState() use it. |
+| M-056 | Pre-compute move weight vector | (prev) | 2026-03-26 | Already implemented — weights pre-computed before main loop. |
