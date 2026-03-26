@@ -57,6 +57,9 @@
 | M-056 | Pre-compute move weight vector | (prev) | 2026-03-26 | Already implemented — weights pre-computed before main loop. |
 | M-057 | Replace ape::reorder.phylo with TreeTools::Postorder | C | 2026-03-26 | proposals.R, RunMkPrime.R, MkPrimeModel.R. Exported MkpLogLikelihood retains ape for user-facing use. |
 | M-069 | Fix stepping-stone postorder invariant + NaN SE | B | 2026-03-26 | mkp_stepping_stone() now reorders tree before .InitState(). .EssVector() handles NaN sd. SE loop handles degenerate stones (all -Inf logLiks). 3199 tests pass. |
+| M-058 | C++ NNI proposal (nni_proposal in tree_moves.cpp) | B | 2026-03-26 | TreeTools::postorder_order() for reordering. R wrapper reconstructs phylo. Fixes heredoc contamination in proposals.cpp/.R. 3197 tests pass. |
+| M-059 | C++ SPR proposal (spr_proposal in proposals.cpp) | C | 2026-03-26 | BFS descendant exclusion, Jacobian Hastings ratio. |
+| M-060 | C++ BetaSimplex proposal (beta_simplex_proposal in proposals.cpp) | C | 2026-03-26 | In-place via R::rbeta/dbeta. |
 | M-066 | Automatic burnin selection for MkPosterior | C | 2026-03-26 | SetBurnin(), AutoBurnin(), .PostBurninData(). summary/print/plot/ConvergenceDiagnostics all respect burnin. 25 new tests. |
 EOF 2>&1
 | M-067 | Vignette and package doc references via Rdpack | C | 2026-03-26 | inst/REFERENCES.bib (9 entries), Rdpack in Imports/RdMacros, \insertCite in MkpLogLikelihood, bibliography in hyoliths.qmd. |
