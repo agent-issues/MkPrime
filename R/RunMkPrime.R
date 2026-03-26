@@ -154,13 +154,18 @@ RunMkPrime <- function(data, tree,
       }
     }
 
-    # --- Adaptation during warmup (per-chain) ---
+    # --- Adaptation during warmup ---
     if (iter <= mcmc$warmup && iter %% 200L == 0L) {
+      # Adapt proposal tuning (per-chain)
       for (ch in seq_len(nChains)) {
         chain_tuning[[ch]] <- .adapt_tuning(
           chain_tuning[[ch]], chain_accept[[ch]],
           chain_propose[[ch]], moves
         )
+      }
+      # Adapt temperature ladder
+      if (nChains > 1L) {
+        betas <- .adapt_temperatures(betas, swap_accept, swap_propose)
       }
     }
 
@@ -424,6 +429,43 @@ RunMkPrime <- function(data, tree,
   }
 
   list(chains = chains, pair = c(i, j), accepted = accepted)
+}
+
+
+#' Adapt temperature ladder based on swap acceptance rates
+#'
+#' Adjusts the `heat` parameter (temperature of the hottest chain) to
+#' achieve ~25% swap acceptance between adjacent pairs. The ladder is
+#' then reconstructed with geometric spacing.
+#'
+#' @param betas Current temperature ladder.
+#' @param swap_accept Integer vector of swap acceptances per adjacent pair.
+#' @param swap_propose Integer vector of swap proposals per adjacent pair.
+#' @param target Target swap acceptance rate (default 0.25).
+#' @return Updated temperature ladder.
+#' @keywords internal
+.adapt_temperatures <- function(betas, swap_accept, swap_propose,
+                                target = 0.25) {
+  nChains <- length(betas)
+  if (nChains < 2L) return(betas)
+
+  total_propose <- sum(swap_propose)
+  if (total_propose < 20L) return(betas)
+
+  overall_rate <- sum(swap_accept) / total_propose
+
+  # Adjust heat: if swap rate too low, increase heat (bring temps closer);
+  # if too high, decrease heat (spread temps further)
+  heat <- betas[nChains]
+  # heat^adj where adj < 1 → increases heat (closer temps, easier swaps)
+  # and adj > 1 → decreases heat (wider spread, harder swaps)
+  adj <- exp(0.5 * (overall_rate - target))
+  heat_new <- heat^adj
+
+  # Clamp to reasonable range
+  heat_new <- max(0.01, min(0.95, heat_new))
+
+  .build_temperature_ladder(nChains, heat_new)
 }
 
 

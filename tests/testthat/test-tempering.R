@@ -273,7 +273,10 @@ test_that("RunMkPrime with nChains=4 runs successfully", {
   # Tempering info should be present
   expect_equal(length(result$betas), 4)
   expect_equal(result$betas[1], 1.0)
-  expect_equal(result$betas[4], 0.2)
+  # betas may have been adapted during warmup, but structure is preserved
+  expect_equal(length(result$betas), 4)
+  expect_equal(result$betas[1], 1.0)
+  expect_true(all(diff(result$betas) < 0))
   expect_equal(length(result$swap_rates), 3)
   expect_equal(length(result$chain_acceptance), 4)
 })
@@ -328,6 +331,88 @@ test_that("Cold chain samples have valid posteriors under tempering", {
   # log_post = log_lik + log_prior; verify consistency
   # (can't guarantee sign of either, but they should track together)
   expect_true(all(log_post < 100))
+})
+
+
+# --- Adaptive temperature tuning (M-031) ---
+
+test_that(".adapt_temperatures is no-op with insufficient data", {
+  betas <- c(1.0, 0.6, 0.3, 0.1)
+  # Not enough proposals (total < 20)
+  result <- MkPrime:::.adapt_temperatures(betas, c(1, 1, 1), c(5, 5, 5))
+  expect_equal(result, betas)
+  # Single chain
+  expect_equal(MkPrime:::.adapt_temperatures(1.0, integer(0), integer(0)), 1.0)
+})
+
+
+test_that(".adapt_temperatures increases heat when swaps too low", {
+  betas <- c(1.0, 0.6, 0.3, 0.1)
+  # Very low swap acceptance → should bring temps closer (increase heat)
+  new_betas <- MkPrime:::.adapt_temperatures(
+    betas, c(1, 1, 1), c(100, 100, 100), target = 0.25
+  )
+  # Hottest chain should be warmer (closer to 1)
+  expect_gt(new_betas[4], betas[4])
+})
+
+
+test_that(".adapt_temperatures decreases heat when swaps too high", {
+  betas <- c(1.0, 0.6, 0.3, 0.1)
+  # Very high swap acceptance → should spread temps further (decrease heat)
+  new_betas <- MkPrime:::.adapt_temperatures(
+    betas, c(90, 90, 90), c(100, 100, 100), target = 0.25
+  )
+  # Hottest chain should be colder (further from 1)
+  expect_lt(new_betas[4], betas[4])
+})
+
+
+test_that(".adapt_temperatures stays no-op near target", {
+  betas <- c(1.0, 0.6, 0.3, 0.1)
+  # Swap rate ~25% → minimal change
+  new_betas <- MkPrime:::.adapt_temperatures(
+    betas, c(25, 25, 25), c(100, 100, 100), target = 0.25
+  )
+  # Should barely change
+  expect_equal(new_betas[4], betas[4], tolerance = 0.02)
+})
+
+
+test_that(".adapt_temperatures respects heat bounds", {
+  # Very aggressive → heat should not exceed 0.95
+  betas_wide <- c(1.0, 0.001)
+  result <- MkPrime:::.adapt_temperatures(
+    betas_wide, c(0), c(100), target = 0.25
+  )
+  expect_lte(result[2], 0.95)
+  expect_gte(result[2], 0.01)
+
+  # Very conservative → heat should not go below 0.01
+  betas_close <- c(1.0, 0.94)
+  result2 <- MkPrime:::.adapt_temperatures(
+    betas_close, c(100), c(100), target = 0.25
+  )
+  expect_gte(result2[2], 0.01)
+})
+
+
+test_that("Adaptive temps integrated into MCMC warmup", {
+  library(ape)
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  set.seed(5580)
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nIter = 2000L, thin = 10L, warmup = 1000L,
+                        nChains = 4L, heat = 0.5))
+
+  # Temperatures should have been adapted (may increase or decrease
+  # depending on swap rates), so final heat likely differs from 0.5
+  expect_true(abs(result$betas[4] - 0.5) > 0.001 ||
+              all(result$swap_rates > 0.15 & result$swap_rates < 0.35))
 })
 
 
