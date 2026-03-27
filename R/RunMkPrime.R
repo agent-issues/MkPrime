@@ -126,38 +126,48 @@ RunMkPrime <- function(data, tree,
   pCols       <- if (isLogseries) 0L else 1L
   brColStart  <- 5L + pCols + hasNeo + nTrans + 1L
 
-  # --- Sequential per-run loop ---
-  # Each run is fully self-contained via .RunMkPrimeSingleRun(), which
-  # accepts R-serializable state and reconstructs C++ XPtrs internally.
-  # This makes it safe to swap in future::future() workers for parallel
-  # execution (Phase 10b / M-093b) without changing this loop.
+  # --- Parallel or sequential execution ---
   stopReason <- "max_iter"
   actualIter <- if (is.finite(mcmc$nIter)) mcmc$nIter else mcmc$warmup
 
-  for (run in seq_len(nRuns)) {
-    runs[[run]] <- .RunMkPrimeSingleRun(
-      mkd, model, mcmc, runs[[run]], moves, tipLabels, run,
-      paramNames, nEdge, brColStart,
-      logFilePath    = if (isStreaming) logFilePaths[run] else NULL,
-      cancelFile     = mcmc$cancelFile,
-      # Per-run checkpointing only supported for nRuns = 1; for nRuns > 1
-      # the combined checkpoint format is not yet used in sequential mode.
-      checkpointFile = if (nRuns == 1L) mcmc$checkpointFile else NULL,
-      startIter      = 1L,
-      isStreaming    = isStreaming,
-      convWindowSize = convWindowSize,
-      treeFile       = treeFile
-    )
-    stopReason <- runs[[run]]$stop_reason
-    actualIter <- runs[[run]]$actual_iter
-    if (stopReason == "cancelled") break
-  }
+  if (isTRUE(mcmc$parallel) && nRuns > 1L) {
+    # Parallel: launch future workers; orchestrator polls for convergence.
+    parResult    <- .RunParallelRuns(mkd, model, mcmc, runs, moves, tipLabels,
+                                      paramNames, nEdge, brColStart, treeFile,
+                                      isStreaming, logFilePaths, convWindowSize)
+    runs         <- parResult$runs
+    logFilePaths <- parResult$logFilePaths
+    stopReason   <- parResult$stopReason
+    actualIter   <- parResult$actualIter
+    isStreaming   <- !is.null(logFilePaths)
+  } else {
+    # Sequential: run each run to completion before starting the next.
+    # .RunMkPrimeSingleRun() accepts R-serializable state, reconstructs
+    # C++ XPtrs internally, and returns serialized state — making each
+    # call safe to replace with a future::future() worker (M-095 / M-096).
+    for (run in seq_len(nRuns)) {
+      runs[[run]] <- .RunMkPrimeSingleRun(
+        mkd, model, mcmc, runs[[run]], moves, tipLabels, run,
+        paramNames, nEdge, brColStart,
+        logFilePath    = if (isStreaming) logFilePaths[run] else NULL,
+        cancelFile     = mcmc$cancelFile,
+        # Per-run checkpointing only for nRuns = 1; for nRuns > 1 the
+        # combined checkpoint is saved below after all runs complete.
+        checkpointFile = if (nRuns == 1L) mcmc$checkpointFile else NULL,
+        startIter      = 1L,
+        isStreaming    = isStreaming,
+        convWindowSize = convWindowSize,
+        treeFile       = treeFile
+      )
+      stopReason <- runs[[run]]$stop_reason
+      actualIter <- runs[[run]]$actual_iter
+      if (stopReason == "cancelled") break
+    }
 
-  # For nRuns > 1, save a combined checkpoint after all runs complete.
-  # (Per-run checkpointing inside .RunMkPrimeSingleRun is only for nRuns = 1;
-  # here we checkpoint at run granularity so state is not silently discarded.)
-  if (nRuns > 1L && !is.null(mcmc$checkpointFile)) {
-    .SaveCheckpoint(runs, mcmc, actualIter, paramNames, mcmc$checkpointFile)
+    # For nRuns > 1, save combined checkpoint at run granularity.
+    if (nRuns > 1L && !is.null(mcmc$checkpointFile)) {
+      .SaveCheckpoint(runs, mcmc, actualIter, paramNames, mcmc$checkpointFile)
+    }
   }
 
   # --- Build result ---
@@ -531,6 +541,127 @@ RunMkPrime <- function(data, tree,
 }
 
 
+# --- Parallel run orchestration ---
+
+#' Launch and manage parallel independent MCMC runs via `future`
+#'
+#' Called by [RunMkPrime()] when `mcmc$parallel = TRUE` and `nRuns > 1`.
+#' Spawns `nRuns` non-blocking futures each calling [.RunMkPrimeSingleRun()],
+#' then polls for convergence / time limits / user cancel. When a stopping
+#' criterion fires, writes per-run cancel files so workers exit cleanly.
+#'
+#' @return Named list: `runs`, `logFilePaths`, `stopReason`, `actualIter`.
+#' @keywords internal
+.RunParallelRuns <- function(mkd, model, mcmc, runs, moves, tipLabels,
+                              paramNames, nEdge, brColStart, treeFile,
+                              isStreaming, logFilePaths, convWindowSize) {
+  nRuns <- mcmc$nRuns
+
+  if (!requireNamespace("future", quietly = TRUE)) {
+    cli::cli_abort(c(
+      "Package {.pkg future} is required for parallel runs.",
+      "i" = "Install it with: {.code install.packages(\"future\")}",
+      "i" = "Then set a plan before calling RunMkPrime(): \\
+             {.code future::plan(\"multisession\", workers = {nRuns})}"
+    ))
+  }
+
+  # Parallel mode requires streaming so the orchestrator can read samples.
+  if (!isStreaming) {
+    tmpLog <- tempfile(fileext = ".log")
+    cli::cli_alert_info(c(
+      "Parallel mode requires {.arg logFile} (workers share samples via disk).",
+      "i" = "Auto-assigning: {.file {tmpLog}}"
+    ))
+    mcmc$logFile   <- tmpLog
+    convWindowSize <- .ComputeConvWindowSize(mcmc)
+    logFilePaths   <- .OpenLogFiles(mcmc$logFile, paramNames, nRuns)
+  }
+
+  # Per-run cancel files (orchestrator signals each worker individually).
+  cancelFiles <- vapply(seq_len(nRuns), function(i) tempfile(), character(1L))
+
+  # Launch nRuns persistent workers — each runs its full batch loop.
+  fList <- vector("list", nRuns)
+  for (run in seq_len(nRuns)) {
+    runState <- runs[[run]]
+    logPath  <- logFilePaths[run]
+    cfPath   <- cancelFiles[run]
+    fList[[run]] <- future::future(
+      {
+        .RunMkPrimeSingleRun(
+          mkd, model, mcmc, runState, moves, tipLabels, run,
+          paramNames, nEdge, brColStart,
+          logFilePath    = logPath,
+          cancelFile     = cfPath,
+          checkpointFile = NULL,
+          startIter      = 1L,
+          isStreaming    = TRUE,
+          convWindowSize = convWindowSize,
+          treeFile       = treeFile
+        )
+      },
+      seed = TRUE
+    )
+  }
+
+  # Polling loop: sleep → check stopping criteria → signal workers if needed.
+  startTime    <- proc.time()["elapsed"]
+  pollInterval <- mcmc$pollInterval %||% 10L
+  stopReason   <- "max_iter"
+  actualIter   <- if (is.finite(mcmc$nIter)) mcmc$nIter else mcmc$warmup
+
+  repeat {
+    Sys.sleep(pollInterval)
+
+    # User cancel file (shared across runs)
+    if (!is.null(mcmc$cancelFile) && file.exists(mcmc$cancelFile)) {
+      for (cf in cancelFiles) file.create(cf)
+      stopReason <- "cancelled"
+      break
+    }
+
+    # Wall-clock time limit
+    elapsed <- proc.time()["elapsed"] - startTime
+    if (!is.null(mcmc$maxTime) && elapsed >= mcmc$maxTime) {
+      for (cf in cancelFiles) file.create(cf)
+      stopReason <- "max_time"
+      break
+    }
+
+    # Convergence (reads log files from disk)
+    diagCheck <- .CheckConvergenceFromLogs(logFilePaths, paramNames, mcmc)
+    if (!is.null(diagCheck)) {
+      cli::cli_alert_info(
+        "Parallel poll ({.field {.FormatElapsed(elapsed)}}): \\
+         min ESS = {round(diagCheck$minEss)}"
+      )
+      if (diagCheck$converged) {
+        for (cf in cancelFiles) file.create(cf)
+        stopReason <- "converged"
+        break
+      }
+    }
+
+    # All workers finished naturally
+    if (all(vapply(fList, future::resolved, logical(1L)))) break
+  }
+
+  # Collect results (blocks until each worker is done)
+  completedRuns <- lapply(fList, future::value)
+
+  # Take actualIter from the first completed run
+  actualIter <- completedRuns[[1L]]$actual_iter %||% actualIter
+
+  list(
+    runs         = completedRuns,
+    logFilePaths = logFilePaths,
+    stopReason   = stopReason,
+    actualIter   = actualIter
+  )
+}
+
+
 # --- Convergence check during MCMC ---
 
 #' Check convergence criteria (called during the loop)
@@ -592,6 +723,63 @@ RunMkPrime <- function(data, tree,
   converged   <- hasCriteria &&
     (is.null(mcmc$minEss)  || minEss >= mcmc$minEss) &&
     (is.null(mcmc$maxPsrf) || (nRuns >= 2L && !is.na(maxPsrf) && maxPsrf <= mcmc$maxPsrf))
+
+  list(converged = converged, minEss = minEss, maxPsrf = maxPsrf,
+       ess = ess, psrf = psrf)
+}
+
+
+#' Check convergence by reading log files from disk (parallel mode)
+#'
+#' Reads each run's log file via [ReadMkLog()], extracts key parameters,
+#' and computes ESS (all runs combined) and PSRF (when `nRuns >= 2`).
+#' Returns `NULL` if any log is missing or has fewer than 10 rows.
+#' @keywords internal
+.CheckConvergenceFromLogs <- function(logFilePaths, paramNames, mcmc) {
+  if (!requireNamespace("coda", quietly = TRUE)) return(NULL)
+
+  nRuns   <- length(logFilePaths)
+  keyCols <- .KeyParamCols(
+    matrix(0, 1, length(paramNames), dimnames = list(NULL, paramNames))
+  )
+
+  perRunSamples <- lapply(logFilePaths, function(p) {
+    if (!file.exists(p)) return(NULL)
+    m <- tryCatch(ReadMkLog(p), error = function(e) NULL)
+    if (is.null(m) || nrow(m) < 10L) return(NULL)
+    m[, keyCols, drop = FALSE]
+  })
+
+  if (any(vapply(perRunSamples, is.null, logical(1L)))) return(NULL)
+
+  combined <- do.call(rbind, perRunSamples)
+  ess <- apply(combined, 2, function(col) {
+    s <- sd(col, na.rm = TRUE)
+    if (is.na(s) || s == 0) return(NA_real_)
+    coda::effectiveSize(coda::mcmc(col))
+  })
+  minEss <- min(ess, na.rm = TRUE)
+
+  psrf    <- NULL
+  maxPsrf <- NA_real_
+  if (nRuns >= 2L) {
+    chainList <- lapply(perRunSamples, function(s) coda::mcmc(s))
+    mcmcList  <- coda::mcmc.list(chainList)
+    gd <- tryCatch(
+      coda::gelman.diag(mcmcList, multivariate = FALSE),
+      error = function(e) NULL
+    )
+    if (!is.null(gd)) {
+      psrf    <- gd$psrf[, 1]
+      maxPsrf <- max(psrf, na.rm = TRUE)
+    }
+  }
+
+  hasCriteria <- !is.null(mcmc$minEss) || !is.null(mcmc$maxPsrf)
+  converged   <- hasCriteria &&
+    (is.null(mcmc$minEss)  || minEss >= mcmc$minEss) &&
+    (is.null(mcmc$maxPsrf) || (nRuns >= 2L && !is.na(maxPsrf) &&
+                                maxPsrf <= mcmc$maxPsrf))
 
   list(converged = converged, minEss = minEss, maxPsrf = maxPsrf,
        ess = ess, psrf = psrf)
