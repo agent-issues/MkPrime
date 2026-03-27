@@ -63,6 +63,13 @@
 #'   `nRuns`, `nChains`, `runSamples`, `currentState`,
 #'   `recentAcceptance`, and `elapsed`. See [MkpTracePlot()] for
 #'   details.
+#' @param parallel Logical. If `TRUE` and `nRuns > 1`, independent runs are
+#'   launched as non-blocking `future::future()` workers and the main process
+#'   polls for convergence. Requires the \pkg{future} package (in `Suggests`).
+#'   Set a parallel plan before calling [RunMkPrime()]:
+#'   `future::plan("multisession", workers = nRuns)`. Default `FALSE` (sequential).
+#' @param pollInterval Integer. Seconds between convergence polls in parallel
+#'   mode. Ignored when `parallel = FALSE`. Default `10L`.
 #' @param tuning Named list of initial tuning parameters for each move
 #'   type. See Details.
 #'
@@ -102,7 +109,9 @@ MkPrimeMCMC <- function(
     bufferSize = 500L,
     plotEvery = NULL,
     progressFn = NULL,
-    tuning = list()
+    tuning = list(),
+    parallel = FALSE,
+    pollInterval = 10L
 ) {
   nIter <- if (is.infinite(nIter)) Inf else as.integer(nIter)
   thin <- as.integer(thin)
@@ -153,6 +162,14 @@ MkPrimeMCMC <- function(
   if (!is.null(checkEvery)) checkEvery <- as.integer(checkEvery)
   if (!is.null(plotEvery)) plotEvery <- as.integer(plotEvery)
 
+  if (!is.logical(parallel) || length(parallel) != 1L || is.na(parallel)) {
+    cli::cli_abort("{.arg parallel} must be a length-1 logical (TRUE or FALSE).")
+  }
+  pollInterval <- as.integer(pollInterval)
+  if (pollInterval < 1L) {
+    cli::cli_abort("{.arg pollInterval} must be a positive integer.")
+  }
+
   # Resolve progressFn
   if (identical(progressFn, "default")) {
     progressFn <- MkpTracePlot
@@ -170,7 +187,8 @@ MkPrimeMCMC <- function(
          checkEvery = checkEvery, cancelFile = cancelFile,
          checkpointFile = checkpointFile,
          treeFile = treeFile, logFile = logFile, bufferSize = bufferSize,
-         plotEvery = plotEvery, progressFn = progressFn, tuning = tuning),
+         plotEvery = plotEvery, progressFn = progressFn, tuning = tuning,
+         parallel = parallel, pollInterval = pollInterval),
     class = "MkPrimeMCMC"
   )
 }
