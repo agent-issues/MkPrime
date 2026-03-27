@@ -259,6 +259,94 @@ print.MkpDiagnostics <- function(x, ...) {
 }
 
 
+#' Print a per-parameter ESS/PSRF progress table during MCMC
+#'
+#' Called at each convergence-check interval to show a table of per-parameter
+#' ESS and PSRF (when available). Mirrors the format of
+#' [print.MkpDiagnostics()].
+#'
+#' @param diagCheck Return value of `.CheckConvergence()`.
+#' @param nRuns Number of independent runs.
+#' @param iter Current iteration number.
+#' @param nSamples Total saved samples across all runs.
+#' @keywords internal
+.PrintProgressTable <- function(diagCheck, nRuns, iter, nSamples) {
+  ess  <- diagCheck$ess
+  psrf <- diagCheck$psrf
+  hasPsrf <- !is.null(psrf)
+
+  nms       <- names(ess)
+  scalarNms <- nms[!grepl("^kPrime_", nms) & nms != "log_likelihood"]
+  kPrimeNms <- nms[grepl("^kPrime_", nms)]
+
+  cli::cli_rule(
+    left = sprintf(
+      "Progress diagnostics  (iter %d | %d run%s | %d samples)",
+      iter, nRuns, if (nRuns == 1L) "" else "s", nSamples
+    )
+  )
+
+  if (hasPsrf) {
+    cat(sprintf("  %-20s  %6s  %7s\n", "Parameter", "ESS", "PSRF"))
+  } else {
+    cat(sprintf("  %-20s  %6s\n", "Parameter", "ESS"))
+  }
+  cat(sprintf("  %s\n", strrep("-", if (hasPsrf) 38L else 28L)))
+
+  for (nm in scalarNms) {
+    essStr <- .FmtEss(ess[[nm]])
+    if (hasPsrf && nm %in% names(psrf)) {
+      cat(sprintf("  %-20s  %s  %s\n", nm, essStr, .FmtPsrf(psrf[[nm]])))
+    } else {
+      cat(sprintf("  %-20s  %s\n", nm, essStr))
+    }
+  }
+
+  # kPrime summary row (min / median / max)
+  if (length(kPrimeNms) > 0L) {
+    kpEss    <- ess[kPrimeNms]
+    kpFinite <- kpEss[is.finite(kpEss)]
+    if (length(kpFinite) > 0L) {
+      kpMin <- min(kpFinite)
+      kpMed <- stats::median(kpFinite)
+      kpMax <- max(kpFinite)
+    } else {
+      kpMin <- kpMed <- kpMax <- NA_real_
+    }
+    essRange <- paste0(
+      .ColorEss(kpMin), " / ", .ColorEss(kpMed), " / ", .ColorEss(kpMax),
+      "  (min/med/max)"
+    )
+    label <- sprintf("kPrime (%d)", length(kPrimeNms))
+    if (hasPsrf && any(kPrimeNms %in% names(psrf))) {
+      kpPsrf    <- psrf[kPrimeNms[kPrimeNms %in% names(psrf)]]
+      kpPsrfFin <- kpPsrf[is.finite(kpPsrf)]
+      if (length(kpPsrfFin) > 0L) {
+        psrfRange <- sprintf("%.3f\u2013%.3f", min(kpPsrfFin), max(kpPsrfFin))
+        cat(sprintf("  %-20s  %s  PSRF %s\n", label, essRange, psrfRange))
+      } else {
+        cat(sprintf("  %-20s  %s\n", label, essRange))
+      }
+    } else {
+      cat(sprintf("  %-20s  %s\n", label, essRange))
+    }
+  }
+
+  cat("\n  ESS: ",
+      cli::col_green("\u2265 200"), "  ",
+      cli::col_yellow("100\u2013199"), "  ",
+      cli::col_red("< 100"),
+      "\n", sep = "")
+  if (hasPsrf) {
+    cat("  PSRF: \u2264 1.05 OK  ",
+        cli::col_yellow("1.05\u20131.1"), "  ",
+        cli::col_red("> 1.1"),
+        "\n", sep = "")
+  }
+  invisible(NULL)
+}
+
+
 # Compute topology ESS from sampled trees using treess + TreeDist RF.
 # Returns named numeric vector (frechetCorrelationESS, medianPseudoESS)
 # summed across runs, or NULL if skipped or failed.
