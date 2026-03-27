@@ -4,7 +4,7 @@
 \alias{.StateToRow}
 \title{Extract state values to a row vector for storage}
 \usage{
-.StateToRow(statePtr, mkd, nEdge, tipLabels = NULL)
+.StateToRow(statePtr, mkd, nEdge, tipLabels = NULL, kPrimePrior = "geometric")
 }
 \arguments{
 \item{statePtr}{XPtr\if{html}{\out{<McmcState>}} or R list (for backward compat)}

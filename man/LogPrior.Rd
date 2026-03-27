@@ -9,7 +9,8 @@ LogPrior(state, model, mkd)
 \arguments{
 \item{state}{A list with current parameter values:
 \code{tree_length}, \code{rel_br_lengths}, \code{rate_loss}, \code{rate_log_sd},
-\code{kPrime} (integer vector), \code{p} (hyperprior).}
+\code{kPrime} (integer vector). For \code{kPrimePrior = "geometric"}, also
+\code{p} (hyperprior). For \code{kPrimePrior = "logseries"}, \code{p} is absent.}
 
 \item{model}{An \code{MkPrimeModel} object (finalized).}
 

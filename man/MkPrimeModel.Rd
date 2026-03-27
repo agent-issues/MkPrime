@@ -15,8 +15,10 @@ MkPrimeModel(
   rateLossSdlog = 2,
   rateLogSdShape = 1,
   rateLogSdRate = 1,
+  kPrimePrior = "geometric",
   kprimeHyperA = 1,
   kprimeHyperB = 1,
+  kprimeLogseriesC = 0.7,
   rateNeoMeanlog = 0,
   rateNeoSdlog = 2
 )
@@ -43,8 +45,17 @@ on \code{rate_loss} (neomorphic asymmetry). Defaults: meanlog = 0, sdlog = 2.}
 \item{rateLogSdShape, rateLogSdRate}{Shape and rate for the Gamma prior
 on \code{rate_log_sd} (ACRV dispersion). Defaults: shape = 1, rate = 1.}
 
-\item{kprimeHyperA, kprimeHyperB}{Parameters for the Beta prior on the
-geometric hyperprior parameter \code{p}. Defaults: a = 1, b = 1 (uniform).}
+\item{kPrimePrior}{Prior distribution for the true number of character states
+(\verb{k'}) for transformational characters. One of \code{"geometric"} (default,
+hierarchical geometric with Beta hyperprior on \code{p}) or \code{"logseries"}
+(logarithmic series with fixed parameter \code{c}; matches the RevBayes default).}
+
+\item{kprimeHyperA, kprimeHyperB}{Parameters for the Beta hyperprior on \code{p}
+when \code{kPrimePrior = "geometric"}. Defaults: a = 1, b = 1 (uniform).}
+
+\item{kprimeLogseriesC}{The \code{c} parameter of the log-series prior on \verb{k'}
+when \code{kPrimePrior = "logseries"}. Must be in (0, 1). Default 0.7, matching
+the RevBayes \code{dnMkPrime} default.}
 
 \item{rateNeoMeanlog, rateNeoSdlog}{Parameters for the LogNormal prior
 on the neomorphic partition rate scalar. Defaults: meanlog = 0, sdlog = 2.}
