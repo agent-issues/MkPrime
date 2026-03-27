@@ -104,7 +104,11 @@ RunMkPrime <- function(data, tree,
   }
 
   # --- Interleaved MCMC loop ---
-  nSavedPerRun <- as.integer((mcmc$nIter - mcmc$warmup) / mcmc$thin)
+  nSavedPerRun <- if (is.finite(mcmc$nIter)) {
+    as.integer((mcmc$nIter - mcmc$warmup) / mcmc$thin)
+  } else {
+    2000L  # initial buffer; doubled on the fly when nIter = Inf
+  }
   paramNames <- .ParamNames(mkd, nEdge)
 
   # Pre-allocate storage per run
@@ -149,21 +153,26 @@ RunMkPrime <- function(data, tree,
   # Column indices in scalar_samples for tree reconstruction (1-based R)
   brColStart <- 6L + hasNeo + nTrans + 1L  # first br_ column
 
+  essDisplay  <- "?"
+  psrfDisplay <- "?"
+  batchEnd    <- 0L
   cli::cli_progress_bar(
-    "MCMC", total = mcmc$nIter,
+    "MCMC", total = if (is.finite(mcmc$nIter)) mcmc$nIter else NA,
     format = paste0(
-      "{cli::pb_bar} {cli::pb_current}/{cli::pb_total}",
+      "iter {batchEnd}",
       " | logP: {format(round(coldLogpost, 1), nsmall = 1)}",
-      " | accept: {format(round(recentAcc * 100, 0))}%",
-      "{convergeSummary}"
+      " | ESS: {essDisplay}",
+      " | PSRF: {psrfDisplay}"
     )
   )
 
   stopReason <- "max_iter"
-  actualIter <- mcmc$nIter
+  actualIter <- if (is.finite(mcmc$nIter)) mcmc$nIter else mcmc$warmup
 
-  for (batchStart in seq(1L, mcmc$nIter, by = batchSize)) {
-    batchEnd <- min(batchStart + batchSize - 1L, mcmc$nIter)
+  batchStart <- 1L
+  repeat {
+    batchEnd <- batchStart + batchSize - 1L
+    if (is.finite(mcmc$nIter)) batchEnd <- min(batchEnd, mcmc$nIter)
     nBatch   <- batchEnd - batchStart + 1L
     r1Result <- NULL
 
@@ -202,6 +211,14 @@ RunMkPrime <- function(data, tree,
       if (nSaved > 0L) {
         for (i in seq_len(nSaved)) {
           r$saved_idx <- r$saved_idx + 1L
+          # Grow buffer if needed (nIter = Inf path)
+          if (r$saved_idx > nrow(r$samples)) {
+            n <- nrow(r$samples)
+            extra <- matrix(NA_real_, nrow = n, ncol = ncol(r$samples),
+                            dimnames = list(NULL, colnames(r$samples)))
+            r$samples <- rbind(r$samples, extra)
+            r$tree_samples <- c(r$tree_samples, vector("list", n))
+          }
           r$samples[r$saved_idx, ] <- result$scalar_samples[i, ]
           tl    <- result$scalar_samples[i, 3L]
           relBr <- result$scalar_samples[i, brColStart:(brColStart + nEdge - 1L)]
@@ -271,10 +288,8 @@ RunMkPrime <- function(data, tree,
       if (nRuns >= 2L) {
         diagCheck <- .CheckConvergence(runs, paramNames, mcmc)
         if (!is.null(diagCheck)) {
-          convergeSummary <- sprintf(
-            " | ESS: %d | PSRF: %.3f",
-            as.integer(diagCheck$minEss), diagCheck$maxPsrf
-          )
+          essDisplay  <- as.character(as.integer(diagCheck$minEss))
+          psrfDisplay <- sprintf("%.3f", diagCheck$maxPsrf)
           if (diagCheck$converged) {
             stopReason <- "converged"
             actualIter <- batchEnd
@@ -283,6 +298,10 @@ RunMkPrime <- function(data, tree,
         }
       }
     }
+
+    actualIter <- batchEnd
+    batchStart <- batchEnd + 1L
+    if (is.finite(mcmc$nIter) && batchStart > mcmc$nIter) break
   }
   cli::cli_progress_done()
 
@@ -563,19 +582,21 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
                        fixTopology = FALSE)
   paramNames <- colnames(runs[[1]]$samples)
 
-  # Extend sample storage if needed
-  totalSaved <- as.integer((mcmc$nIter - mcmc$warmup) / mcmc$thin)
-  for (run in seq_len(nRuns)) {
-    currentRows <- nrow(runs[[run]]$samples)
-    if (currentRows < totalSaved) {
-      extra <- matrix(NA_real_, nrow = totalSaved - currentRows,
-                      ncol = ncol(runs[[run]]$samples),
-                      dimnames = list(NULL, paramNames))
-      runs[[run]]$samples <- rbind(runs[[run]]$samples, extra)
-      runs[[run]]$tree_samples <- c(
-        runs[[run]]$tree_samples,
-        vector("list", totalSaved - length(runs[[run]]$tree_samples))
-      )
+  # Extend sample storage if needed (finite nIter only; Inf path grows dynamically)
+  if (is.finite(mcmc$nIter)) {
+    totalSaved <- as.integer((mcmc$nIter - mcmc$warmup) / mcmc$thin)
+    for (run in seq_len(nRuns)) {
+      currentRows <- nrow(runs[[run]]$samples)
+      if (currentRows < totalSaved) {
+        extra <- matrix(NA_real_, nrow = totalSaved - currentRows,
+                        ncol = ncol(runs[[run]]$samples),
+                        dimnames = list(NULL, paramNames))
+        runs[[run]]$samples <- rbind(runs[[run]]$samples, extra)
+        runs[[run]]$tree_samples <- c(
+          runs[[run]]$tree_samples,
+          vector("list", totalSaved - length(runs[[run]]$tree_samples))
+        )
+      }
     }
   }
 
@@ -624,16 +645,28 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   hasNeo        <- any(mkd$type == "neomorphic")
   brColStart    <- 6L + hasNeo + length(transIdx) + 1L
 
+  essDisplay  <- "?"
+  psrfDisplay <- "?"
+  coldLogpost <- {s <- get_mcmc_state(runs[[1]]$chainStates[[1]]); s$logPost}
+  batchEnd    <- startIter - 1L
   cli::cli_progress_bar(
-    "Resuming MCMC", total = mcmc$nIter - startIter + 1L,
-    format = "{cli::pb_bar} {cli::pb_current}/{cli::pb_total} (from iter {startIter})"
+    "Resuming MCMC",
+    total = if (is.finite(mcmc$nIter)) mcmc$nIter - startIter + 1L else NA,
+    format = paste0(
+      "iter {batchEnd}",
+      " | logP: {format(round(coldLogpost, 1), nsmall = 1)}",
+      " | ESS: {essDisplay}",
+      " | PSRF: {psrfDisplay}"
+    )
   )
 
   stopReason <- "max_iter"
-  actualIter <- mcmc$nIter
+  actualIter <- if (is.finite(mcmc$nIter)) mcmc$nIter else startIter - 1L
 
-  for (batchStart in seq(startIter, mcmc$nIter, by = batchSize)) {
-    batchEnd <- min(batchStart + batchSize - 1L, mcmc$nIter)
+  batchStart <- startIter
+  repeat {
+    batchEnd <- batchStart + batchSize - 1L
+    if (is.finite(mcmc$nIter)) batchEnd <- min(batchEnd, mcmc$nIter)
     nBatch   <- batchEnd - batchStart + 1L
 
     for (run in seq_len(nRuns)) {
@@ -668,6 +701,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
       if (nSaved > 0L) {
         for (i in seq_len(nSaved)) {
           r$saved_idx <- r$saved_idx + 1L
+          # Grow buffer if needed (nIter = Inf path)
+          if (r$saved_idx > nrow(r$samples)) {
+            n <- nrow(r$samples)
+            extra <- matrix(NA_real_, nrow = n, ncol = ncol(r$samples),
+                            dimnames = list(NULL, colnames(r$samples)))
+            r$samples <- rbind(r$samples, extra)
+            r$tree_samples <- c(r$tree_samples, vector("list", n))
+          }
           r$samples[r$saved_idx, ] <- result$scalar_samples[i, ]
           tl    <- result$scalar_samples[i, 3L]
           relBr <- result$scalar_samples[i, brColStart:(brColStart + nEdge - 1L)]
@@ -697,6 +738,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
       runs[[run]] <- r
     }
 
+    coldLogpost <- {s <- get_mcmc_state(runs[[1]]$chainStates[[1]]); s$logPost}
     cli::cli_progress_update(set = batchEnd - startIter + 1L)
 
     if (hasProgressFn &&
@@ -714,6 +756,32 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
         break
       }
     }
+
+    # Convergence check + checkpoint (was missing from ResumeMkPrime)
+    doCheck <- batchEnd > mcmc$warmup && !is.null(mcmc$checkEvery) &&
+               (batchEnd %/% mcmc$checkEvery) > ((batchStart - 1L) %/% mcmc$checkEvery)
+
+    if (doCheck) {
+      if (!is.null(mcmc$checkpointFile))
+        .SaveCheckpoint(runs, mcmc, batchEnd, mcmc$checkpointFile)
+
+      if (nRuns >= 2L) {
+        diagCheck <- .CheckConvergence(runs, paramNames, mcmc)
+        if (!is.null(diagCheck)) {
+          essDisplay  <- as.character(as.integer(diagCheck$minEss))
+          psrfDisplay <- sprintf("%.3f", diagCheck$maxPsrf)
+          if (diagCheck$converged) {
+            stopReason <- "converged"
+            actualIter <- batchEnd
+            break
+          }
+        }
+      }
+    }
+
+    actualIter <- batchEnd
+    batchStart <- batchEnd + 1L
+    if (is.finite(mcmc$nIter) && batchStart > mcmc$nIter) break
   }
   cli::cli_progress_done()
 

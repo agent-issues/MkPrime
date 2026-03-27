@@ -89,6 +89,35 @@ test_that(".CheckConvergence returns NULL for insufficient samples", {
 })
 
 
+test_that("nIter = Inf with maxTime stopping works", {
+  library(ape)
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  set.seed(7241)
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 1L, thin = 5L, warmup = 200L, maxTime = 0.5))
+
+  expect_s3_class(result, "MkPosterior")
+  expect_equal(result$stop_reason, "max_time")
+  expect_true(is.infinite(result$mcmc$nIter))
+  expect_gt(nrow(result$samples), 0)
+})
+
+
+test_that("MkPrimeMCMC nIter = Inf default and warmup default", {
+  m_inf <- MkPrimeMCMC()
+  expect_true(is.infinite(m_inf$nIter))
+  expect_equal(m_inf$warmup, 5000L)
+
+  m_finite <- MkPrimeMCMC(nIter = 1000L)
+  expect_equal(m_finite$nIter, 1000L)
+  expect_equal(m_finite$warmup, 500L)  # nIter/2
+})
+
+
 test_that("Early stopping produces fewer samples", {
   library(ape)
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")

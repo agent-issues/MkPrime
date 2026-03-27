@@ -2,11 +2,14 @@
 
 #' Configure MCMC settings
 #'
-#' @param nIter Total iterations (including warmup). Default 10,000.
+#' @param nIter Total iterations (including warmup). Default `Inf`, which
+#'   relies on stopping criteria (`minEss`, `maxPsrf`, `maxTime`) to
+#'   terminate the run. Pass a finite integer to cap the number of iterations
+#'   regardless of convergence.
 #' @param thin Thinning interval (save every `thin`-th iteration).
 #'   Default 10.
 #' @param warmup Number of warmup (adaptation) iterations. Default
-#'   `nIter / 2`.
+#'   `nIter / 2` for finite `nIter`, or 5,000 when `nIter = Inf`.
 #' @param nRuns Number of independent runs. Default 2. Each run has its
 #'   own set of `nChains` chains. Convergence diagnostics (PSRF) require
 #'   `nRuns >= 2`.
@@ -63,7 +66,7 @@
 #' @return An S3 object of class `MkPrimeMCMC`.
 #' @export
 MkPrimeMCMC <- function(
-    nIter = 10000L,
+    nIter = Inf,
     thin = 10L,
     warmup = NULL,
     nRuns = 2L,
@@ -79,9 +82,11 @@ MkPrimeMCMC <- function(
     progressFn = NULL,
     tuning = list()
 ) {
-  nIter <- as.integer(nIter)
+  nIter <- if (is.infinite(nIter)) Inf else as.integer(nIter)
   thin <- as.integer(thin)
-  if (is.null(warmup)) warmup <- as.integer(nIter / 2)
+  if (is.null(warmup)) {
+    warmup <- if (is.finite(nIter)) as.integer(nIter / 2L) else 5000L
+  }
   warmup <- as.integer(warmup)
   nRuns <- as.integer(nRuns)
   nChains <- as.integer(nChains)

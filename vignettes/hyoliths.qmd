@@ -151,12 +151,14 @@ For a **production run** on this dataset we recommend:
 
 ```{r mcmc-production}
 mcmcProduction <- MkPrimeMCMC(
+  # nIter defaults to Inf — runs until convergence criteria are met
   thin           = 100L,
   warmup         = 50000L,
-  nRuns          = 2L,       # 2 independent runs for PSRF diagnostics
+  nRuns          = 2L,       # 2 independent runs (required for PSRF)
   nChains        = 4L,       # parallel tempering chains
-  minEss         = 200L,     # stop early when min ESS exceeds 200
-  maxPsrf        = 1.05,     # stop early when max PSRF drops below 1.05
+  heat           = 0.2,
+  minEss         = 200L,     # stop when min ESS > 200
+  maxPsrf        = 1.05,     # stop when max PSRF < 1.05
   checkEvery     = 5000L,
   treeFile       = "hyoliths_trees.nwk"
 )
@@ -277,17 +279,18 @@ Sampled trees are stored in the returned object.
 allTrees <- posterior$trees
 
 # Identify and exclude rogue taxa that destabilize the consensus
-# rogues <- Rogue::QuickRogue(allTrees)
-# rogueNames <- rogues$taxon[nzchar(rogues$taxon, keepNA = FALSE)]
-# if (length(rogueNames) > 0L) {
-#   cat("Rogue taxa identified:", paste(rogueNames, collapse = ", "), "\n")
-#   allTrees <- lapply(allTrees, ape::drop.tip, tip = rogueNames)
-#   class(allTrees) <- "multiPhylo"
-# }
+rogues <- Rogue::QuickRogue(allTrees)
+rogueNames <- rogues$taxon[nzchar(rogues$taxon, keepNA = FALSE)]
+if (length(rogueNames) > 0L) {
+  cat("Rogue taxa identified:", paste(rogueNames, collapse = ", "), "\n")
+  allTrees <- lapply(allTrees, ape::drop.tip, tip = rogueNames)
+  class(allTrees) <- "multiPhylo"
+}
 
 consensus <- TreeTools::Consensus(allTrees, p = 0.5)
 par(mar = rep(0, 4))
-plot(consensus, cex = 0.6, main = "Majority-rule consensus")
+plot(TreeTools::RootTree(consensus, outgroup),
+     cex = 0.6, main = "Majority-rule consensus")
 ```
 
 
