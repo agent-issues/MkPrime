@@ -65,6 +65,14 @@ get_state_log_lik <- function(statePtr) {
     .Call(`_MkPrime_get_state_log_lik`, statePtr)
 }
 
+eval_full_loglik_cpp <- function(dataPtr, statePtr) {
+    .Call(`_MkPrime_eval_full_loglik_cpp`, dataPtr, statePtr)
+}
+
+eval_full_loglik_at_cpp <- function(dataPtr, statePtr, parent, child, edgeLen) {
+    .Call(`_MkPrime_eval_full_loglik_at_cpp`, dataPtr, statePtr, parent, child, edgeLen)
+}
+
 do_move_cpp <- function(dataPtr, statePtr, moveType, charIdx, scaleTuning, betaSimplexTuning, intWalkWindow, beta) {
     .Call(`_MkPrime_do_move_cpp`, dataPtr, statePtr, moveType, charIdx, scaleTuning, betaSimplexTuning, intWalkWindow, beta)
 }

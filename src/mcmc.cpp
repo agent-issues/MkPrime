@@ -260,6 +260,59 @@ double get_state_log_lik(SEXP statePtr) {
 
 
 // ---------------------------------------------------------------------------
+// compute_full_loglik / compute_full_loglik_at  (M-083)
+//
+// Pure C++ helpers for evaluating the total log-likelihood from within
+// proposal code (GibbsSPR, GibbsSubtreeSwap, Weighted moves).  No R
+// boundary crossing.  Both variants use the state's CL workspace if it
+// has been allocated (allocate_cl_workspace was called).
+//
+// compute_full_loglik_at — evaluate at an arbitrary (parent, child, edgeLen),
+//   but using state's kPrime / rateLoss / rateLogSd / rateNeo unchanged.
+//   Does NOT update state->logLik or state->partLogLik.
+//
+// compute_full_loglik — convenience wrapper: evaluate at state's current tree.
+// ---------------------------------------------------------------------------
+
+static double compute_full_loglik_at(
+    const McmcData& data, McmcState& state,
+    const IntegerVector& parent,
+    const IntegerVector& child,
+    const NumericVector& edgeLen) {
+  return cpp_log_likelihood(
+    data, parent, child, edgeLen,
+    state.kPrime, state.rateLoss, state.rateLogSd, state.rateNeo,
+    state.clWs.ready() ? &state.clWs : nullptr);
+}
+
+static double compute_full_loglik(const McmcData& data, McmcState& state) {
+  int nEdge = state.relBrLengths.size();
+  NumericVector edgeLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    edgeLen[i] = state.treeLength * state.relBrLengths[i];
+  return compute_full_loglik_at(data, state, state.parent, state.child, edgeLen);
+}
+
+
+// Rcpp-exported wrappers: used by R-level tests (test-full-loglik.R).
+// [[Rcpp::export]]
+double eval_full_loglik_cpp(SEXP dataPtr, SEXP statePtr) {
+  McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
+  McmcState* state = Rcpp::XPtr<McmcState>(statePtr).get();
+  return compute_full_loglik(*data, *state);
+}
+
+// [[Rcpp::export]]
+double eval_full_loglik_at_cpp(SEXP dataPtr, SEXP statePtr,
+                                IntegerVector parent, IntegerVector child,
+                                NumericVector edgeLen) {
+  McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
+  McmcState* state = Rcpp::XPtr<McmcState>(statePtr).get();
+  return compute_full_loglik_at(*data, *state, parent, child, edgeLen);
+}
+
+
+// ---------------------------------------------------------------------------
 // do_move_impl: internal propose/evaluate/accept (raw pointers, no SEXP).
 // do_move_cpp:  Rcpp-exported SEXP wrapper — calls do_move_impl.
 //
