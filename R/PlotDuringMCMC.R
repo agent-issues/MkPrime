@@ -203,6 +203,232 @@ MkpPngProgress <- function(dir, width = 800, height = 600) {
 }
 
 
+#' Watch a MkPrime log file and draw live trace plots
+#'
+#' Polls one or more Tracer-compatible log files written by [RunMkPrime()]
+#' (when `logFile` is set in [MkPrimeMCMC()]) and redraws trace plots in the
+#' active graphics device at each interval. Intended to be run interactively
+#' while a `RunMkPrime()` call executes in a background job or another R
+#' session.
+#'
+#' Press **Ctrl+C** (or Escape in RStudio) to stop watching. The last-read
+#' sample data is returned invisibly.
+#'
+#' @param logFiles Character vector of log file paths. For a single run,
+#'   supply the value of `mcmc$logFile` directly. For multiple runs, supply
+#'   the resolved per-run paths (e.g. `"run_1.log"`, `"run_2.log"`), or use
+#'   [MkLogPaths()] to expand a base name.
+#' @param interval Seconds between poll–redraw cycles. Default `2`.
+#' @param params Character vector of parameter names to plot. Default
+#'   `NULL` auto-selects key scalar parameters (`log_posterior`,
+#'   `tree_length`, `rate_loss`, `rate_log_sd`, `p`, plus up to three
+#'   `kPrime_*` columns). Branch lengths and `log_likelihood` are excluded.
+#' @param maxSamples Maximum rows to read per file (tail of file). Set lower
+#'   for faster redraws on large logs. Default `2000`.
+#' @param warmup Integer. If supplied, draws a vertical dashed line at this
+#'   sample index to mark the warmup boundary. Note that log files only
+#'   contain post-warmup samples by default, so this is rarely needed.
+#'   Default `NULL`.
+#'
+#' @return The last-read sample data, invisibly. For a single run, a numeric
+#'   matrix (as returned by [ReadMkLog()]). For multiple runs, a named list
+#'   of such matrices.
+#'
+#' @details
+#' The function waits up to 30 seconds for `logFiles[1]` to appear on disk
+#' (useful when called immediately after launching a background MCMC job).
+#' If the file still does not exist after 30 seconds, the function aborts.
+#'
+#' @seealso [ReadMkLog()] to read a log file after the run has finished.
+#'   [MkpTracePlot()] for the in-memory callback-based alternative.
+#'
+#' @export
+MkpWatchLog <- function(logFiles,
+                         interval   = 2,
+                         params     = NULL,
+                         maxSamples = 2000L,
+                         warmup     = NULL) {
+  .MkpWatchLogImpl(logFiles, interval, params, maxSamples, warmup,
+                   maxUpdates = Inf)
+}
+
+
+# Internal implementation with maxUpdates for testability.
+# @keywords internal
+.MkpWatchLogImpl <- function(logFiles, interval, params, maxSamples, warmup,
+                              maxUpdates = Inf) {
+  logFiles <- as.character(logFiles)
+  if (length(logFiles) == 0L)
+    cli::cli_abort("{.arg logFiles} must be a non-empty character vector.")
+
+  # Wait up to 30 s for the first file to appear
+  waited <- 0L
+  while (!file.exists(logFiles[1L])) {
+    if (waited == 0L)
+      cli::cli_alert_info("Waiting for {.file {logFiles[1L]}} to appear\u2026")
+    Sys.sleep(1)
+    waited <- waited + 1L
+    if (waited >= 30L)
+      cli::cli_abort("Log file {.file {logFiles[1L]}} did not appear after 30 s.")
+  }
+
+  lastData <- NULL
+  nUpdates <- 0L
+
+  tryCatch(
+    repeat {
+      nUpdates <- nUpdates + 1L
+
+      # Read each file (skip silently if it doesn't exist yet)
+      matList <- lapply(logFiles, function(f) {
+        if (!file.exists(f)) return(NULL)
+        tryCatch({
+          m <- ReadMkLog(f)
+          n <- nrow(m)
+          if (n > maxSamples)
+            m <- m[(n - maxSamples + 1L):n, , drop = FALSE]
+          m
+        }, error = function(e) NULL)  # file may be mid-write
+      })
+      matList <- Filter(Negate(is.null), matList)
+
+      if (length(matList) > 0L) {
+        lastData <- if (length(matList) == 1L) matList[[1L]] else matList
+        .WatchLogPlot(matList, params, warmup)
+      }
+
+      if (nUpdates >= maxUpdates) break
+      Sys.sleep(interval)
+    },
+    interrupt = function(e) {
+      nSamples <- if (!is.null(lastData)) {
+        if (is.list(lastData)) sum(vapply(lastData, nrow, integer(1L)))
+        else nrow(lastData)
+      } else 0L
+      cli::cli_alert_info(
+        "Stopped watching. {nSamples} sample{?s} read."
+      )
+    }
+  )
+
+  invisible(lastData)
+}
+
+
+#' Draw trace panels from log file data
+#'
+#' Internal helper called by [MkpWatchLog()]. Takes a list of sample matrices
+#' (one per run, as returned by [ReadMkLog()]) and draws multi-panel trace
+#' plots.
+#'
+#' @param matList Named list of numeric matrices (one per run).
+#' @param params Character vector of parameters to plot, or `NULL` for
+#'   auto-selection.
+#' @param warmup Integer sample index at which to draw a warmup boundary
+#'   line, or `NULL` to skip.
+#' @keywords internal
+.WatchLogPlot <- function(matList, params = NULL, warmup = NULL) {
+  nRuns <- length(matList)
+  # Use column names from the first non-null matrix
+  cnames <- colnames(matList[[1L]])
+
+  # Auto-select parameters if not specified
+  if (is.null(params)) {
+    scalars <- intersect(
+      c("log_posterior", "tree_length", "rate_loss", "rate_log_sd", "p"),
+      cnames
+    )
+    kpCols <- grep("^kPrime_", cnames, value = TRUE)
+    if (length(kpCols) > 3L) kpCols <- kpCols[seq_len(3L)]
+    params <- c(scalars, kpCols)
+  }
+  params <- intersect(params, cnames)
+  if (length(params) == 0L) return(invisible(NULL))
+
+  nPanels <- length(params)
+  nCol    <- min(3L, nPanels)
+  nRow    <- ceiling(nPanels / nCol)
+  colors  <- if (nRuns > 1L) {
+    grDevices::hcl.colors(nRuns, palette = "Set 2")
+  } else {
+    "steelblue"
+  }
+
+  oldpar <- par(mfrow = c(nRow, nCol),
+                mar   = c(3, 3.5, 2.5, 1),
+                mgp   = c(2, 0.6, 0),
+                oma   = c(0, 0, 2, 0))
+  on.exit(par(oldpar))
+
+  # Compute total samples and last iteration for the title
+  totalSamples <- sum(vapply(matList, nrow, integer(1L)))
+  lastIter     <- max(vapply(matList, function(m) {
+    rn <- suppressWarnings(as.integer(rownames(m)))
+    if (all(is.na(rn))) 0L else max(rn, na.rm = TRUE)
+  }, integer(1L)))
+
+  for (param in params) {
+    # Collect all values for y-axis range
+    allVals <- unlist(lapply(matList, function(m) {
+      if (param %in% colnames(m)) m[, param] else NULL
+    }))
+    if (length(allVals) == 0L || all(is.na(allVals))) {
+      plot.new(); title(main = param, cex.main = 0.95); next
+    }
+    ylim <- range(allVals, na.rm = TRUE)
+    if (diff(ylim) == 0) ylim <- ylim + c(-1, 1)
+
+    first <- TRUE
+    for (run in seq_len(nRuns)) {
+      m <- matList[[run]]
+      if (!param %in% colnames(m)) next
+      vals <- m[, param]
+      iters <- suppressWarnings(as.numeric(rownames(m)))
+      if (all(is.na(iters))) iters <- seq_along(vals)
+
+      col <- if (nRuns > 1L) colors[run] else colors[1L]
+      if (first) {
+        plot(iters, vals, type = "l", col = col, ylim = ylim,
+             main = param, xlab = "iter", ylab = "",
+             cex.main = 0.95, las = 1)
+        if (!is.null(warmup) && warmup > min(iters))
+          abline(v = warmup, lty = 2, col = "grey60")
+        first <- FALSE
+      } else {
+        lines(iters, vals, col = col)
+      }
+    }
+  }
+
+  # Overall title
+  mtext(
+    sprintf("iter %s  |  %d sample%s  |  %s",
+            format(lastIter, big.mark = ","),
+            totalSamples,
+            if (totalSamples == 1L) "" else "s",
+            format(Sys.time(), "%H:%M:%S")),
+    outer = TRUE, line = 0.5, cex = 0.9
+  )
+  invisible(NULL)
+}
+
+
+#' Expand a base log file name to per-run paths
+#'
+#' Given a base log file name and a number of runs, returns the resolved
+#' per-run file paths that [RunMkPrime()] would create (e.g. `"run.log"` →
+#' `c("run_1.log", "run_2.log")`). Useful when constructing the `logFiles`
+#' argument to [MkpWatchLog()].
+#'
+#' @param logFile Character. Base log file name as passed to [MkPrimeMCMC()].
+#' @param nRuns Integer. Number of runs.
+#' @return Character vector of length `nRuns`.
+#' @export
+MkLogPaths <- function(logFile, nRuns) {
+  MkPrime:::.LogFilePaths(logFile, as.integer(nRuns))
+}
+
+
 #' Format elapsed seconds as human-readable string
 #' @keywords internal
 .FormatElapsed <- function(seconds) {

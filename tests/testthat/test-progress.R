@@ -333,3 +333,111 @@ test_that(".WriteProgressJson writes valid output", {
   expect_true(grepl('"inWarmup":false', txt))
   expect_true(grepl('"recentAcceptance":0.3450', txt))
 })
+
+
+# ===== M-076: MkpWatchLog =====
+
+# Helper: write a minimal TSV log file for testing
+.mkMockLog <- function(params, nSamples = 50, startIter = 10L, thin = 10L) {
+  f <- tempfile(fileext = ".log")
+  header <- paste(c("Sample", params), collapse = "\t")
+  iters  <- startIter + (seq_len(nSamples) - 1L) * thin
+  rows   <- vapply(seq_len(nSamples), function(i) {
+    vals <- c(iters[i], rnorm(length(params)))
+    paste(vals, collapse = "\t")
+  }, character(1L))
+  writeLines(c(header, rows), f)
+  f
+}
+
+
+test_that(".WatchLogPlot draws without error (single run)", {
+  set.seed(1122)
+  params <- c("log_posterior", "tree_length", "rate_loss", "rate_log_sd", "p")
+  mat <- matrix(rnorm(50 * length(params)), 50, length(params),
+                dimnames = list(as.character(seq(10, 500, 10)), params))
+  expect_no_error(.WatchLogPlot(list(mat)))
+})
+
+
+test_that(".WatchLogPlot draws without error (multi-run)", {
+  set.seed(3344)
+  params <- c("log_posterior", "tree_length", "rate_log_sd")
+  makeM <- function() {
+    m <- matrix(rnorm(30 * length(params)), 30, length(params),
+                dimnames = list(as.character(seq(10, 300, 10)), params))
+    m
+  }
+  expect_no_error(.WatchLogPlot(list(makeM(), makeM())))
+})
+
+
+test_that(".WatchLogPlot handles kPrime columns and auto-selects params", {
+  set.seed(5566)
+  params <- c("log_posterior", "log_likelihood", "tree_length",
+              "rate_log_sd", "p", "kPrime_1", "kPrime_2", "br_1", "br_2")
+  mat <- matrix(rnorm(40 * length(params)), 40, length(params),
+                dimnames = list(as.character(seq(10, 400, 10)), params))
+  # NULL params → auto-select (should exclude log_likelihood and br_)
+  expect_no_error(.WatchLogPlot(list(mat), params = NULL))
+})
+
+
+test_that("MkpWatchLog aborts when file missing and maxUpdates = 0", {
+  expect_error(
+    MkPrime:::.MkpWatchLogImpl("/nonexistent/path/run.log",
+                                interval = 0, params = NULL,
+                                maxSamples = 100, warmup = NULL,
+                                maxUpdates = 0),
+    class = "error"
+  )
+})
+
+
+test_that("MkpWatchLog reads and plots from existing log (maxUpdates = 1)", {
+  set.seed(7788)
+  params <- c("log_posterior", "tree_length", "rate_loss", "rate_log_sd", "p")
+  f <- .mkMockLog(params, nSamples = 40)
+  on.exit(unlink(f))
+
+  result <- MkPrime:::.MkpWatchLogImpl(f, interval = 0, params = NULL,
+                                        maxSamples = 200, warmup = NULL,
+                                        maxUpdates = 1L)
+  expect_true(!is.null(result))
+  expect_true(is.matrix(result))
+  expect_true(all(params %in% colnames(result)))
+  expect_lte(nrow(result), 40)
+})
+
+
+test_that("MkpWatchLog multi-run returns list (maxUpdates = 1)", {
+  set.seed(9900)
+  params <- c("log_posterior", "tree_length", "rate_log_sd", "p")
+  f1 <- .mkMockLog(params, nSamples = 30)
+  f2 <- .mkMockLog(params, nSamples = 30)
+  on.exit({ unlink(f1); unlink(f2) })
+
+  result <- MkPrime:::.MkpWatchLogImpl(c(f1, f2), interval = 0,
+                                        params = NULL, maxSamples = 200,
+                                        warmup = NULL, maxUpdates = 1L)
+  expect_true(is.list(result))
+  expect_length(result, 2L)
+  expect_true(all(vapply(result, is.matrix, logical(1L))))
+})
+
+
+test_that("MkLogPaths expands single-run path unchanged", {
+  expect_equal(MkLogPaths("run.log", 1L), "run.log")
+})
+
+
+test_that("MkLogPaths expands multi-run to per-run paths", {
+  paths <- MkLogPaths("run.log", 3L)
+  expect_equal(paths, c("run_1.log", "run_2.log", "run_3.log"))
+})
+
+
+test_that("MkLogPaths handles paths without extension", {
+  paths <- MkLogPaths("myrun", 2L)
+  expect_equal(paths, c("myrun_1", "myrun_2"))
+})
