@@ -1238,12 +1238,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 # --- Move type integer codes (must match src/mcmc.cpp) ---
 # 0=scale_tl, 1=scale_rl, 2=scale_rls, 3=scale_rn,
 # 4=beta_simplex, 5=nni, 6=spr, 7=int_walk, 8=scale_p (legacy),
-# 9=gibbs_p
+# 9=gibbs_p, 10=gibbs_spr, 11=gibbs_subtree_swap,
+# 12=weighted_br_scale, 13=weighted_spr
 .kMoveTypes <- c(
   tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
   rate_neo = 3L, branch_lengths = 4L,
   nni = 5L, spr = 6L, kPrime = 7L, p = 9L,
-  weighted_branch_lengths = 12L
+  weighted_branch_lengths = 12L,
+  weighted_spr = 13L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)

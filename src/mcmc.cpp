@@ -699,13 +699,279 @@ static bool weighted_branch_scale_impl(
 
 
 // ---------------------------------------------------------------------------
+// weighted_spr_impl  (M-088)
+//
+// WeightedSPR: Gibbs SPR extended to integrate over branch fractions at each
+// candidate reattachment position.  For each candidate, marginalise over B
+// branch-fraction bins (same Beta(0.25,0.25) discretisation as M-087) to
+// produce a marginal weight M_i.  Self (current topology) included in the
+// candidate set.  Sample topology from {self, cand_1, ..., cand_N}
+// proportional to marginal weights; if self drawn, return false (no-op).
+// For chosen candidate, sample a bin from its conditional distribution, draw
+// a fraction from Beta centred on the bin midpoint, construct the final
+// proposed topology, and accept/reject via MH.
+//
+// Hastings ratio: topology selection cancels (Z = Z' by symmetry of the
+// candidate set).  Remaining branch-fraction component:
+//   logHR = log(w_{self,b_old}) + logBeta(f_old | b_old)
+//         - log(w_{chosen,b_new}) - logBeta(f_new | b_new)
+//
+// Cost: O(N × B) likelihood evaluations + 1 for the final proposed state.
+// ---------------------------------------------------------------------------
+static bool weighted_spr_impl(McmcData* data, McmcState* state,
+                               double beta, int nBins) {
+  const int nEdge = state->parent.size();
+  const int nTip  = data->nTip;
+  const int root  = nTip + 1;
+
+  const BranchBins& bins = get_branch_bins(nBins);
+
+  // 1. Eligible prune edges (parent != root)
+  std::vector<int> eligible;
+  eligible.reserve(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    if (state->parent[i] != root) eligible.push_back(i);
+  if (eligible.empty()) return false;
+
+  // 2. Pick random prune edge
+  int pickIdx = (int)(R::unif_rand() * (double)eligible.size());
+  if (pickIdx >= (int)eligible.size()) pickIdx = (int)eligible.size() - 1;
+  const int pruneRow = eligible[pickIdx];
+  const int u = state->parent[pruneRow];
+  const int v = state->child[pruneRow];
+
+  // 3. Find parentRow (edge into u) and sibRow (u's other child)
+  int parentRow = -1, sibRow = -1, sibNode = -1;
+  for (int i = 0; i < nEdge; ++i) {
+    if (state->child[i] == u) parentRow = i;
+    if (state->parent[i] == u && state->child[i] != v) {
+      sibRow = i; sibNode = state->child[i];
+    }
+  }
+  if (parentRow < 0 || sibRow < 0) return false;
+
+  // 4. BFS: mark descendants of v
+  std::vector<bool> isDesc(2 * nTip + 2, false);
+  isDesc[v] = true;
+  if (v > nTip) {
+    std::vector<int> queue = {v};
+    while (!queue.empty()) {
+      int cur = queue.back(); queue.pop_back();
+      for (int i = 0; i < nEdge; ++i) {
+        if (state->parent[i] == cur) {
+          int c = state->child[i];
+          isDesc[c] = true;
+          if (c > nTip) queue.push_back(c);
+        }
+      }
+    }
+  }
+
+  // 5. Collect valid regraft candidate edges (same filter as GibbsSPR)
+  std::vector<int> cands;
+  cands.reserve(nEdge);
+  for (int i = 0; i < nEdge; ++i) {
+    if (isDesc[state->child[i]]) continue;
+    if (state->parent[i] == u || state->child[i] == u) continue;
+    cands.push_back(i);
+  }
+  if (cands.empty()) return false;
+  const int nCand = (int)cands.size();
+
+  // 6. Absolute edge lengths
+  NumericVector absLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    absLen[i] = state->treeLength * state->relBrLengths[i];
+  const double lMerge = absLen[parentRow] + absLen[sibRow];
+  const double fOld = (lMerge > 0.0) ? absLen[parentRow] / lMerge : 0.5;
+
+  // 7. Self marginal: evaluate original topology at each bin midpoint
+  //    varying the branch fraction at parentRow/sibRow (no topology change,
+  //    tree already in preorder → no reorder needed)
+  std::vector<double> selfLL(nBins);
+  double selfMax = R_NegInf;
+  {
+    NumericVector trialAbs = clone(absLen);
+    for (int b = 0; b < nBins; ++b) {
+      trialAbs[parentRow] = bins.mids[b] * lMerge;
+      trialAbs[sibRow]    = (1.0 - bins.mids[b]) * lMerge;
+      selfLL[b] = compute_full_loglik_at(*data, *state,
+                                          state->parent, state->child,
+                                          trialAbs);
+      if (R_FINITE(selfLL[b]) && selfLL[b] > selfMax) selfMax = selfLL[b];
+    }
+  }
+
+  // 8. Candidate marginals: for each candidate SPR, evaluate at each bin
+  //    midpoint varying the branch fraction at the regraft point.
+  //    candLL[ci][b] stores the log-likelihood.
+  std::vector<std::vector<double>> candLL(nCand,
+                                           std::vector<double>(nBins));
+  std::vector<double> candMax(nCand, R_NegInf);
+
+  for (int ci = 0; ci < nCand; ++ci) {
+    const int rr      = cands[ci];
+    const double lReg = absLen[rr];
+
+    // Construct SPR topology once (same as GibbsSPR)
+    IntegerVector np = clone(state->parent);
+    IntegerVector nc = clone(state->child);
+    const int b_node = nc[rr];
+    nc[parentRow] = sibNode;
+    nc[rr]        = u;
+    np[sibRow]    = u;
+    nc[sibRow]    = b_node;
+
+    // Evaluate at each bin midpoint
+    for (int b = 0; b < nBins; ++b) {
+      NumericVector na = clone(absLen);
+      na[parentRow] = lMerge;
+      na[rr]        = bins.mids[b] * lReg;
+      na[sibRow]    = (1.0 - bins.mids[b]) * lReg;
+
+      auto po = TreeTools::preorder_weighted_impl(np, nc, na);
+      IntegerVector op = po.first(_, 0);
+      IntegerVector oc = po.first(_, 1);
+      candLL[ci][b] = compute_full_loglik_at(*data, *state,
+                                              op, oc, po.second);
+      if (R_FINITE(candLL[ci][b]) && candLL[ci][b] > candMax[ci])
+        candMax[ci] = candLL[ci][b];
+    }
+  }
+
+  // 9. Compute marginal weights with a single global offset for stability
+  double globalMax = selfMax;
+  for (int ci = 0; ci < nCand; ++ci)
+    if (candMax[ci] > globalMax) globalMax = candMax[ci];
+  if (!R_FINITE(globalMax)) return false;
+
+  // Self marginal
+  double mSelf = 0.0;
+  std::vector<double> selfW(nBins);
+  for (int b = 0; b < nBins; ++b) {
+    selfW[b] = R_FINITE(selfLL[b]) ?
+                 std::exp(beta * (selfLL[b] - globalMax)) : 0.0;
+    mSelf += selfW[b];
+  }
+
+  // Candidate marginals
+  std::vector<double> mCand(nCand);
+  std::vector<std::vector<double>> candW(nCand,
+                                          std::vector<double>(nBins));
+  double sumM = mSelf;
+  for (int ci = 0; ci < nCand; ++ci) {
+    mCand[ci] = 0.0;
+    for (int b = 0; b < nBins; ++b) {
+      candW[ci][b] = R_FINITE(candLL[ci][b]) ?
+                       std::exp(beta * (candLL[ci][b] - globalMax)) : 0.0;
+      mCand[ci] += candW[ci][b];
+    }
+    sumM += mCand[ci];
+  }
+  if (sumM <= 0.0) return false;
+
+  // 10. Sample topology: self or candidate
+  double rnd = R::unif_rand() * sumM;
+  if (rnd < mSelf) return false;  // self-draw → no-op
+  rnd -= mSelf;
+  int chosen = nCand - 1;
+  for (int ci = 0; ci < nCand - 1; ++ci) {
+    if (rnd < mCand[ci]) { chosen = ci; break; }
+    rnd -= mCand[ci];
+  }
+
+  // 11. Sample bin within chosen candidate
+  int chosenBin = nBins - 1;
+  {
+    double rndBin = R::unif_rand() * mCand[chosen];
+    double cum = 0.0;
+    for (int b = 0; b < nBins; ++b) {
+      cum += candW[chosen][b];
+      if (rndBin < cum) { chosenBin = b; break; }
+    }
+  }
+
+  // 12. Draw fraction from Beta centred on chosen bin's midpoint
+  const double conc = 2.0 * nBins;
+  const double chosenMid = bins.mids[chosenBin];
+  const double alphaNew = chosenMid * conc + 1.0;
+  const double betaNew  = (1.0 - chosenMid) * conc + 1.0;
+  double fNew = R::rbeta(alphaNew, betaNew);
+  if (fNew < 1e-8) fNew = 1e-8;
+  if (fNew > 1.0 - 1e-8) fNew = 1.0 - 1e-8;
+
+  // 13. Construct final proposed topology with fNew
+  const int rr      = cands[chosen];
+  const double lReg = absLen[rr];
+  IntegerVector np  = clone(state->parent);
+  IntegerVector nc  = clone(state->child);
+  NumericVector na  = clone(absLen);
+  const int b_node  = nc[rr];
+  nc[parentRow] = sibNode;  na[parentRow] = lMerge;
+  nc[rr]        = u;        na[rr]        = fNew * lReg;
+  np[sibRow]    = u;        nc[sibRow]    = b_node;
+  na[sibRow]    = (1.0 - fNew) * lReg;
+
+  auto po = TreeTools::preorder_weighted_impl(np, nc, na);
+  IntegerMatrix ordEdge = po.first;
+  NumericVector ordAbs  = po.second;
+
+  IntegerVector op = ordEdge(_, 0);
+  IntegerVector oc = ordEdge(_, 1);
+  double newLogLik = compute_full_loglik_at(*data, *state, op, oc, ordAbs);
+  if (!R_FINITE(newLogLik)) return false;
+
+  // 14. Hastings ratio (branch-fraction component only; topology cancels)
+  int oldBin = nBins - 1;
+  for (int b = 0; b < nBins; ++b) {
+    if (fOld <= bins.breaks[b + 1]) { oldBin = b; break; }
+  }
+  const double oldMid   = bins.mids[oldBin];
+  const double alphaOld = oldMid * conc + 1.0;
+  const double betaOld  = (1.0 - oldMid) * conc + 1.0;
+
+  double logHR = std::log(std::max(selfW[oldBin], 1e-300))
+               + R::dbeta(fOld, alphaOld, betaOld, 1)
+               - std::log(std::max(candW[chosen][chosenBin], 1e-300))
+               - R::dbeta(fNew, alphaNew, betaNew, 1);
+
+  // 15. Prior at proposed state
+  NumericVector propRelBr(nEdge);
+  for (int k = 0; k < nEdge; ++k)
+    propRelBr[k] = ordAbs[k] / state->treeLength;
+
+  double newLogPrior = cpp_log_prior(
+    *data, state->treeLength, propRelBr,
+    state->rateLoss, state->rateLogSd, state->rateNeo,
+    state->p, state->kPrime);
+  if (!R_FINITE(newLogPrior)) return false;
+
+  // 16. MH acceptance
+  double logAlpha = beta * (newLogLik - state->logLik)
+                  + (newLogPrior - state->logPrior) + logHR;
+  if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+    for (int k = 0; k < nEdge; ++k) {
+      state->parent[k]       = ordEdge(k, 0);
+      state->child[k]        = ordEdge(k, 1);
+      state->relBrLengths[k] = propRelBr[k];
+    }
+    state->logLik   = newLogLik;
+    state->logPrior = newLogPrior;
+    state->partLogLik.clear();
+    return true;
+  }
+  return false;
+}
+
+
+// ---------------------------------------------------------------------------
 // do_move_impl: internal propose/evaluate/accept (raw pointers, no SEXP).
 // do_move_cpp:  Rcpp-exported SEXP wrapper — calls do_move_impl.
 //
 // moveType: 0=scale_tl, 1=scale_rl, 2=scale_rls, 3=scale_rn,
 //           4=beta_simplex, 5=nni, 6=spr, 7=int_walk, 8=scale_p (legacy),
 //           9=gibbs_p, 10=gibbs_spr, 11=gibbs_subtree_swap,
-//           12=weighted_br_scale
+//           12=weighted_br_scale, 13=weighted_spr
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -842,6 +1108,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       if (!weighted_branch_scale_impl(data, state, beta, 10, logHastings))
         return false;
       break;
+    }
+    case 13: { // weighted_spr — M-088
+      return weighted_spr_impl(data, state, beta, 10);
     }
     default:
       return false;
