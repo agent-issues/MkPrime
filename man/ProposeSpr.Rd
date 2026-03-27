@@ -20,17 +20,13 @@ is in postorder.
 \description{
 Subtree pruning and regrafting. Picks a random edge (u->v), detaches v's
 subtree, suppresses u (merging its parent and sibling edges), then
-reattaches u on a random backbone edge. Node u "moves" so the edge
-matrix stays the same size; no node renumbering needed.
+reattaches u on a random backbone edge.
 }
 \details{
-Edges adjacent to the root cannot be pruned in this R prototype (the
-root-degree change would require node renumbering). This restricts
-3 out of 2n-3 edges. C++ implementation (Phase 5) will handle this.
+Delegates to C++ (\code{spr_proposal} in proposals.cpp) for edge
+manipulation and postorder reordering.
 
 The Hastings ratio includes a Jacobian correction for the edge length
-redistribution: \code{log(lRegraft) - log(lMerge)}, where \code{lRegraft} is
-the regraft edge length and \code{lMerge} is the sum of the two edges
-merged during suppression.
+redistribution: \code{log(lRegraft) - log(lMerge)}.
 }
 \keyword{internal}

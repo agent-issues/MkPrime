@@ -7,5 +7,10 @@
       "*.qmd": "allow",
       "*/DESCRIPTION": "allow"
     }
+  },
+  "model": {
+    "id": "claude-opus-4-6",
+    "provider": "positai",
+    "thinkingEffort": "high"
   }
 }

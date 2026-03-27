@@ -23,8 +23,7 @@ producing a nearest-neighbor interchange. The proposal is symmetric
 (Hastings ratio = 1).
 }
 \details{
-For unrooted binary trees in ape's rooted representation, the root has
-degree 3 and all other internal nodes have degree 3 (1 parent + 2
-children). Internal edges are those where both endpoints are internal.
+Delegates to C++ (\code{nni_proposal} in tree_moves.cpp) for edge
+manipulation and postorder reordering.
 }
 \keyword{internal}

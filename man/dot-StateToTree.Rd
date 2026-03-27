@@ -2,11 +2,11 @@
 % Please edit documentation in R/RunMkPrime.R
 \name{.StateToTree}
 \alias{.StateToTree}
-\title{Reconstruct a phylo object from current state}
+\title{Reconstruct a phylo object from XPtr state}
 \usage{
-.StateToTree(state)
+.StateToTree(statePtr, tipLabels)
 }
 \description{
-Reconstruct a phylo object from current state
+Reconstruct a phylo object from XPtr state
 }
 \keyword{internal}

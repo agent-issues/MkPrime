@@ -1,10 +1,10 @@
 # MkPrime — Strategic Coordination
 
-Last updated: 2026-03-26
+Last updated: 2026-03-27
 
 ## Project State
 
-**Phase:** 5 (Parallel tempering + convergence) — COMPLETE. Ready for Phase 6 (Progress display + GUI hooks).
+**Phase:** 8 (MCMC performance) — COMPLETE. Phases 1–8 done. Remaining: Phase 6b (TreeSearch GUI hook) and Phase 7d (deferred extensions: M-052, M-053, M-054).
 
 MkPrime is a new R package for Bayesian phylogenetic inference under the
 Mk' model. The architecture follows StratoBayes (C++ hot loop via Rcpp,
@@ -120,8 +120,8 @@ comparison, TBR, HMC.
 ---
 
 
-### Phase 8: MCMC performance � C++ inner loop
-**Status:** IN PROGRESS (2026-03-26) — 8b (proposals) and 8c (inner loop) complete; 8d complete.
+### Phase 8: MCMC performance — C++ inner loop
+**Status:** COMPLETE (2026-03-27). All sub-phases done (8a-8e). ~85% cumulative speedup.
 **Goal:** Port MCMC hot path from R to C++, eliminating per-iteration R
 overhead. Use TreeTools C++ headers for tree manipulation.
 

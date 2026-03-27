@@ -4,9 +4,18 @@
 \alias{.StateToRow}
 \title{Extract state values to a row vector for storage}
 \usage{
-.StateToRow(state, mkd, nEdge)
+.StateToRow(statePtr, mkd, nEdge, tipLabels = NULL)
+}
+\arguments{
+\item{statePtr}{XPtr\if{html}{\out{<McmcState>}} or R list (for backward compat)}
 }
 \description{
 Extract state values to a row vector for storage
 }
+\keyword{Extract}
+\keyword{for}
 \keyword{internal}
+\keyword{row}
+\keyword{sample}
+\keyword{state}
+\keyword{storage}

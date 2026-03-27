@@ -2,14 +2,35 @@
 % Please edit documentation in R/RunMkPrime.R
 \name{.DoMove}
 \alias{.DoMove}
-\title{Execute a move and return accept/reject decision}
+\title{Execute a move via C++ XPtr engine}
 \usage{
-.DoMove(move, state, mkd, model, tuning, beta = 1)
+.DoMove(
+  move,
+  stateOrPtr,
+  mkdOrData = NULL,
+  modelOrTuning = NULL,
+  tuning = NULL,
+  beta = 1,
+  transIdx = integer(0),
+  mcmcData = NULL
+)
 }
-\arguments{
-\item{beta}{Inverse temperature (1 = cold chain, < 1 = heated).}
+\value{
+list(accept, statePtr) where statePtr is the (possibly updated) XPtr.
 }
 \description{
-Execute a move and return accept/reject decision
+Execute a move via C++ XPtr engine
 }
+\keyword{(or}
+\keyword{C++}
+\keyword{Execute}
+\keyword{R}
+\keyword{XPtr}
+\keyword{a}
+\keyword{engine}
+\keyword{fallback}
+\keyword{for}
 \keyword{internal}
+\keyword{move}
+\keyword{tests)}
+\keyword{via}
