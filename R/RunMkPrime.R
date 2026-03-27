@@ -130,7 +130,6 @@ RunMkPrime <- function(data, tree,
   # Progress bar state
   coldLogpost <- {s <- get_mcmc_state(runs[[1]]$chainStates[[1]]); s$logPost}
   recentAcc <- 0
-  convergeSummary <- ""
 
   # Constant inputs for the C++ batch function
   batchSize   <- 200L
@@ -396,13 +395,12 @@ RunMkPrime <- function(data, tree,
   })
   minEss <- min(ess, na.rm = TRUE)
 
-  converged <- TRUE
-  if (!is.null(mcmc$minEss) && minEss < mcmc$minEss) {
-    converged <- FALSE
-  }
-  if (!is.null(mcmc$maxPsrf) && maxPsrf > mcmc$maxPsrf) {
-    converged <- FALSE
-  }
+  # Converged only when at least one criterion is set AND all set criteria pass.
+  # (Avoids spurious early stopping when no criteria are configured.)
+  hasCriteria <- !is.null(mcmc$minEss) || !is.null(mcmc$maxPsrf)
+  converged   <- hasCriteria &&
+    (is.null(mcmc$minEss)  || minEss >= mcmc$minEss) &&
+    (is.null(mcmc$maxPsrf) || (!is.na(maxPsrf) && maxPsrf <= mcmc$maxPsrf))
 
   list(converged = converged, minEss = minEss, maxPsrf = maxPsrf)
 }

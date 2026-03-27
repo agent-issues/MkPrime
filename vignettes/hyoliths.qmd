@@ -151,7 +151,7 @@ For a **production run** on this dataset we recommend:
 
 ```{r mcmc-production}
 mcmcProduction <- MkPrimeMCMC(
-  # nIter defaults to Inf — runs until convergence criteria are met
+  # nIter = Inf (default): run until convergence criteria are met
   thin           = 100L,
   warmup         = 50000L,
   nRuns          = 2L,       # 2 independent runs (required for PSRF)
@@ -289,7 +289,9 @@ if (length(rogueNames) > 0L) {
 
 consensus <- TreeTools::Consensus(allTrees, p = 0.5)
 par(mar = rep(0, 4))
-plot(TreeTools::RootTree(consensus, outgroup),
+outgroup <- c("Tonicella", "Serpula", "Loxosomella")
+par(mar = rep(0, 4))
+plot(TreeTools::SortTree(TreeTools::RootTree(consensus, outgroup)),
      cex = 0.6, main = "Majority-rule consensus")
 ```
 

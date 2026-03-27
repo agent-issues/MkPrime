@@ -11,7 +11,8 @@ RunMkPrime(
   knownStates = integer(0),
   model = NULL,
   mcmc = NULL,
-  fixTopology = FALSE
+  fixTopology = FALSE,
+  overwrite = FALSE
 )
 }
 \arguments{

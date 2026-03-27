@@ -5,7 +5,7 @@
 \title{Configure MCMC settings}
 \usage{
 MkPrimeMCMC(
-  nIter = 10000L,
+  nIter = Inf,
   thin = 10L,
   warmup = NULL,
   nRuns = 2L,
@@ -23,13 +23,16 @@ MkPrimeMCMC(
 )
 }
 \arguments{
-\item{nIter}{Total iterations (including warmup). Default 10,000.}
+\item{nIter}{Total iterations (including warmup). Default \code{Inf}, which
+relies on stopping criteria (\code{minEss}, \code{maxPsrf}, \code{maxTime}) to
+terminate the run. Pass a finite integer to cap the number of iterations
+regardless of convergence.}
 
 \item{thin}{Thinning interval (save every \code{thin}-th iteration).
 Default 10.}
 
 \item{warmup}{Number of warmup (adaptation) iterations. Default
-\code{nIter / 2}.}
+\code{nIter / 2} for finite \code{nIter}, or 5,000 when \code{nIter = Inf}.}
 
 \item{nRuns}{Number of independent runs. Default 2. Each run has its
 own set of \code{nChains} chains. Convergence diagnostics (PSRF) require
