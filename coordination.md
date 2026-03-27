@@ -4,7 +4,7 @@ Last updated: 2026-03-27
 
 ## Project State
 
-**Phase:** 9 (Advanced tree moves) — IN PROGRESS. Phases 1–8 done. Phase 9 active on `mkp-gibbs` worktree (`feature/gibbs-weighted-moves`). Phase 10 (run-level parallelism via `future`) planned on `mkp-parallel` worktree (`feature/parallel-runs`). Also open: Phase 6b (TreeSearch GUI hook) and Phase 7d (deferred extensions: M-052, M-053, M-054).
+**Phase:** 9 (Advanced tree moves) — IN PROGRESS. Phases 1–8 done. Phase 6b main-branch work complete (M-078/M-079/M-081/M-082/M-093); M-080 (TreeSearch hook) open. Phase 9 active on `mkp-gibbs` worktree. Phase 10 (run-level parallelism) planned on `mkp-parallel` worktree. Phase 7d deferred (M-052/M-053/M-054).
 
 MkPrime is a new R package for Bayesian phylogenetic inference under the
 Mk' model. The architecture follows StratoBayes (C++ hot loop via Rcpp,
@@ -213,9 +213,9 @@ the package never sets a plan itself (CRAN policy).
 - Within-run chain parallelism (OpenMP etc.) is explicitly out of scope.
 
 **Sub-phases:**
-- **M-093a (P1):** Extract `RunMkPrimeSingleRun()` — refactor + dedup
-- **M-093b (P2):** Parallel orchestration (`.RunParallelRuns()`, `future`)
-- **M-093c (P2):** Tests + HPC documentation
+- **M-094 (P1):** Extract `RunMkPrimeSingleRun()` — refactor + dedup
+- **M-095 (P2):** Parallel orchestration (`.RunParallelRuns()`, `future`)
+- **M-096 (P2):** Tests + HPC documentation
 
 **Plan file:** `.positai/plans/2026-03-27-1307-plan.md`
 
