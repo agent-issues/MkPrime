@@ -1,0 +1,60 @@
+S-RED finding: MkBayesianServer — Reconnect after OS-killed process hangs forever
+
+## Symptom
+
+If the detached MCMC process is killed by the OS (OOM killer, SIGKILL,
+system shutdown) without writing any signal file (mkp_done.signal,
+mkp_error.txt, or mkp_cancel.signal), then:
+
+1. User reopens the app and clicks "Reconnect".
+2. No signal files are found → `rv$status <- "running"`.
+3. The poll observer fires every 5 s indefinitely.
+4. `rv$proc` is NULL (lost after session restart) so no liveness check
+   is possible via `proc$is_alive()`.
+5. There is no timeout and no way for the app to auto-detect the dead
+   process — the UI is stuck in "Running…" forever.
+
+## Proposed fix
+
+On Reconnect, when no signal files are present, check whether the stored
+PID is still alive before defaulting to "running":
+
+```r
+pidAlive <- .PidIsAlive(job$pid)
+if (!pidAlive) {
+  rv$status <- "error"
+  rv$errorMsg <- sprintf(
+    "Process PID %d is no longer running and left no completion signal.\n
+     The run may have been killed by the OS (OOM, shutdown). Partial log
+     data (if any) is still available in %s.", job$pid, job$logDir)
+  shiny::showNotification(rv$errorMsg, type = "error", duration = 20)
+  return()
+}
+```
+
+Where `.PidIsAlive(pid)` uses the `ps` package if available, otherwise
+falls back to a platform-appropriate check:
+
+```r
+.PidIsAlive <- function(pid) {
+  if (is.na(pid) || pid <= 0L) return(FALSE)
+  if (requireNamespace("ps", quietly = TRUE)) {
+    h <- tryCatch(ps::ps_handle(pid = pid), error = function(e) NULL)
+    return(!is.null(h) && tryCatch(ps::ps_is_running(h), error = function(e) FALSE))
+  }
+  # Fallback: platform-specific
+  if (.Platform$OS.type == "windows") {
+    out <- system2("tasklist", c("/FI", paste0("PID eq ", pid), "/NH"),
+                   stdout = TRUE, stderr = FALSE)
+    return(any(grepl(as.character(pid), out, fixed = TRUE)))
+  }
+  # POSIX: signal 0 tests existence without killing
+  tryCatch(tools::pskill(pid, 0L) == 0L, error = function(e) FALSE)
+}
+```
+
+Add `ps` to Suggests if this is implemented.
+
+## Found by
+
+Agent E, S-RED pass on M-078/M-079 (2026-03-27).

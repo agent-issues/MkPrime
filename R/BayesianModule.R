@@ -51,7 +51,11 @@
     '  }',
     ')',
     'if (!is.null(result)) {',
-    '  saveRDS(result, file.path(.d, "result.rds"))',
+    '  # Write to a temp file then rename so result.rds is either complete or',
+    '  # absent — prevents a partial file if the process is killed during saveRDS.',
+    '  tmp <- paste0(file.path(.d, "result.rds"), ".tmp")',
+    '  saveRDS(result, tmp)',
+    '  file.rename(tmp, file.path(.d, "result.rds"))',
     '  file.create(file.path(.d, "mkp_done.signal"))',
     '}'
   )
@@ -221,6 +225,13 @@ MkBayesianServer <- function(id, dataset, startTree = NULL) {
     # ---- Run -----------------------------------------------------------------
 
     shiny::observeEvent(input$run, {
+      if (rv$status == "running") {
+        shiny::showNotification(
+          "MCMC is already running. Stop it before starting a new run.",
+          type = "warning")
+        return()
+      }
+
       dat <- dataset()
       if (is.null(dat)) {
         shiny::showNotification("Load a dataset before running.", type = "warning")

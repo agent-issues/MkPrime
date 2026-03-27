@@ -155,7 +155,16 @@ server <- function(input, output, session) {
     req(!is.null(jf))
     resultFile <- file.path(dirname(jf), "result.rds")
     if (!file.exists(resultFile)) return(NULL)
-    tryCatch(readRDS(resultFile), error = function(e) NULL)
+    result <- tryCatch(readRDS(resultFile), error = function(e) NULL)
+    if (is.null(result)) return(NULL)
+    # Streaming mode: RunMkPrime writes samples to TSV log files and returns
+    # an MkPosterior with an empty $samples matrix.  Reload from disk so that
+    # plot() and summary() work normally.
+    if (!is.null(result$logFile) && nrow(result$samples) == 0L) {
+      samp <- tryCatch(ReadMkLog(result$logFile), error = function(e) NULL)
+      if (!is.null(samp)) result$samples <- samp
+    }
+    result
   })
 
   # ---- Traces tab ------------------------------------------------------------
