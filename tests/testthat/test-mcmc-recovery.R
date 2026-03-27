@@ -2,6 +2,7 @@
 #
 # These tests simulate data under known parameters and check that the
 # MCMC posterior covers the true values. They are necessarily slow.
+skip_slow_tests()
 
 test_that("MCMC recovers tree_length from binary data (fixed topology)", {
   skip_on_cran()

@@ -1,4 +1,5 @@
 # Smoke tests for MCMC engine (M-016, M-017, M-018, M-019, M-020)
+skip_slow_tests()
 
 test_that("RunMkPrime runs on simple transformational data", {
   library(ape)

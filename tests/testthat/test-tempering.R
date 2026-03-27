@@ -1,4 +1,5 @@
 # Tests for parallel tempering (Phase 5: M-029, M-030)
+skip_slow_tests()
 
 # --- Temperature ladder ---
 

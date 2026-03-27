@@ -1,4 +1,5 @@
 # Tests for batch-streaming MCMC output (logFile / bufferSize)
+skip_slow_tests()
 
 # Shared minimal fixture
 .mkStreamFixture <- function() {

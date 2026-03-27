@@ -558,12 +558,154 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
 
 
 // ---------------------------------------------------------------------------
+// Bin structure for WeightedBranchLengthScale (M-087) — Beta(0.25, 0.25)
+// quantile breakpoints, lazily initialised on first call.
+// ---------------------------------------------------------------------------
+
+struct BranchBins {
+  int nBins = 0;
+  std::vector<double> breaks;  // size nBins+1: [0]=0, [nBins]=1
+  std::vector<double> mids;    // size nBins: midpoint of each bin
+};
+
+static BranchBins s_branchBins;
+
+static const BranchBins& get_branch_bins(int nBins) {
+  if (s_branchBins.nBins == nBins) return s_branchBins;
+  s_branchBins.nBins = nBins;
+  s_branchBins.breaks.resize(nBins + 1);
+  s_branchBins.mids.resize(nBins);
+  s_branchBins.breaks[0] = 0.0;
+  s_branchBins.breaks[nBins] = 1.0;
+  for (int b = 1; b < nBins; ++b)
+    s_branchBins.breaks[b] = R::qbeta((double)b / nBins, 0.25, 0.25, 1, 0);
+  for (int b = 0; b < nBins; ++b)
+    s_branchBins.mids[b] =
+      0.5 * (s_branchBins.breaks[b] + s_branchBins.breaks[b + 1]);
+  return s_branchBins;
+}
+
+
+// ---------------------------------------------------------------------------
+// weighted_branch_scale_impl  (M-087)
+//
+// WeightedBranchLengthScale: pick two branches, discretise the branch-
+// fraction space into B bins (Beta(0.25,0.25) quantile breakpoints),
+// evaluate log-likelihood at each bin midpoint, weight by exp(beta * LL),
+// Gibbs-sample a bin, then draw a new fraction from a Beta centred on the
+// selected midpoint.  Returns logHastings for standard MH acceptance.
+//
+// The bin-selection weights are symmetric (forward == reverse) because
+// midpoint evaluations are independent of the current fraction.
+// logHastings = log(w_oldBin) + logBeta(f_old|a_old,b_old)
+//             - log(w_chosenBin) - logBeta(f_new|a_new,b_new).
+// ---------------------------------------------------------------------------
+static bool weighted_branch_scale_impl(
+    McmcData* data, McmcState* state, double beta, int nBins,
+    double& logHastings) {
+
+  const int nEdge = state->relBrLengths.size();
+  if (nEdge < 2) return false;
+
+  const BranchBins& bins = get_branch_bins(nBins);
+
+  // 1. Pick two branches (same scheme as beta_simplex_impl)
+  int index = static_cast<int>(R::unif_rand() * nEdge);
+  if (index >= nEdge) index = nEdge - 1;
+  int other = static_cast<int>(R::unif_rand() * (nEdge - 1));
+  if (other >= index) ++other;
+  if (other >= nEdge) other = nEdge - 1;
+  if (other == index) other = (index + 1) % nEdge;
+
+  const double oldRelA = state->relBrLengths[index];
+  const double oldRelB = state->relBrLengths[other];
+  const double relTotal = oldRelA + oldRelB;
+  if (relTotal <= 0.0) return false;
+  const double oldF = oldRelA / relTotal;
+
+  // 2. Absolute edge lengths (modify only [index] and [other] per midpoint)
+  NumericVector absLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    absLen[i] = state->treeLength * state->relBrLengths[i];
+  const double absTotal = absLen[index] + absLen[other];
+
+  // 3. Evaluate log-likelihood at each bin midpoint
+  std::vector<double> midLL(nBins);
+  NumericVector trialAbs = clone(absLen);
+  for (int b = 0; b < nBins; ++b) {
+    const double mid = bins.mids[b];
+    trialAbs[index] = mid * absTotal;
+    trialAbs[other] = (1.0 - mid) * absTotal;
+    midLL[b] = compute_full_loglik_at(*data, *state,
+                                       state->parent, state->child, trialAbs);
+  }
+
+  // 4. Compute weights: exp(beta * LL), offset for numerical stability
+  double maxLL = midLL[0];
+  for (int b = 1; b < nBins; ++b)
+    if (R_FINITE(midLL[b]) && midLL[b] > maxLL) maxLL = midLL[b];
+  if (!R_FINITE(maxLL)) return false;
+
+  std::vector<double> weights(nBins);
+  double sumW = 0.0;
+  for (int b = 0; b < nBins; ++b) {
+    weights[b] = R_FINITE(midLL[b]) ?
+                   std::exp(beta * (midLL[b] - maxLL)) : 0.0;
+    sumW += weights[b];
+  }
+  if (sumW <= 0.0) return false;
+
+  // 5. Sample a bin
+  double rnd = R::unif_rand() * sumW;
+  int chosenBin = nBins - 1;
+  {
+    double cum = 0.0;
+    for (int b = 0; b < nBins; ++b) {
+      cum += weights[b];
+      if (rnd < cum) { chosenBin = b; break; }
+    }
+  }
+
+  // 6. Draw fraction from Beta centred on chosen bin's midpoint.
+  //    Concentration = 2 * nBins gives moderate spread matching bin width.
+  const double conc = 2.0 * nBins;
+  const double chosenMid = bins.mids[chosenBin];
+  const double alphaNew = chosenMid * conc + 1.0;
+  const double betaNew  = (1.0 - chosenMid) * conc + 1.0;
+  double newF = R::rbeta(alphaNew, betaNew);
+  if (newF < 1e-8) newF = 1e-8;
+  if (newF > 1.0 - 1e-8) newF = 1.0 - 1e-8;
+
+  // 7. Hastings ratio
+  //    Bin weights cancel (symmetric); within-bin densities remain.
+  int oldBin = nBins - 1;
+  for (int b = 0; b < nBins; ++b) {
+    if (oldF <= bins.breaks[b + 1]) { oldBin = b; break; }
+  }
+  const double oldMid = bins.mids[oldBin];
+  const double alphaOld = oldMid * conc + 1.0;
+  const double betaOld  = (1.0 - oldMid) * conc + 1.0;
+
+  logHastings = std::log(weights[oldBin])
+              + R::dbeta(oldF, alphaOld, betaOld, 1)
+              - std::log(weights[chosenBin])
+              - R::dbeta(newF, alphaNew, betaNew, 1);
+
+  // 8. Apply proposed fraction
+  state->relBrLengths[index] = newF * relTotal;
+  state->relBrLengths[other] = (1.0 - newF) * relTotal;
+  return true;
+}
+
+
+// ---------------------------------------------------------------------------
 // do_move_impl: internal propose/evaluate/accept (raw pointers, no SEXP).
 // do_move_cpp:  Rcpp-exported SEXP wrapper — calls do_move_impl.
 //
 // moveType: 0=scale_tl, 1=scale_rl, 2=scale_rls, 3=scale_rn,
 //           4=beta_simplex, 5=nni, 6=spr, 7=int_walk, 8=scale_p (legacy),
-//           9=gibbs_p, 10=gibbs_spr, 11=gibbs_subtree_swap
+//           9=gibbs_p, 10=gibbs_spr, 11=gibbs_subtree_swap,
+//           12=weighted_br_scale
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -695,6 +837,12 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     case 11: { // gibbs_subtree_swap — M-086
       return gibbs_subtree_swap_impl(data, state, beta);
     }
+    case 12: { // weighted_branch_scale — M-087
+      oldRelBr = clone(state->relBrLengths);
+      if (!weighted_branch_scale_impl(data, state, beta, 10, logHastings))
+        return false;
+      break;
+    }
     default:
       return false;
   }
@@ -702,7 +850,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   if (!R_FINITE(logHastings)) {
     state->treeLength = oldTL; state->rateLoss = oldRL;
     state->rateLogSd = oldRLSD; state->rateNeo = oldRN; state->p = oldP;
-    if (moveType == 4) state->relBrLengths = oldRelBr;
+    if (moveType == 4 || moveType == 12) state->relBrLengths = oldRelBr;
     if (moveType == 7) state->kPrime = oldKPrime;
     return false;
   }
@@ -716,7 +864,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   if (!R_FINITE(newLogPrior)) {
     state->treeLength = oldTL; state->rateLoss = oldRL;
     state->rateLogSd = oldRLSD; state->rateNeo = oldRN; state->p = oldP;
-    if (moveType == 4) state->relBrLengths = oldRelBr;
+    if (moveType == 4 || moveType == 12) state->relBrLengths = oldRelBr;
     if (moveType == 7) state->kPrime = oldKPrime;
     return false;
   }
@@ -817,7 +965,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   state->rateLogSd  = oldRLSD;
   state->rateNeo    = oldRN;
   state->p          = oldP;
-  if (moveType == 4) state->relBrLengths = oldRelBr;
+  if (moveType == 4 || moveType == 12) state->relBrLengths = oldRelBr;
   if (moveType == 7) state->kPrime = oldKPrime;
   return false;
 }

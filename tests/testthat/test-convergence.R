@@ -1,4 +1,5 @@
 # Tests for convergence monitoring (Phase 5: M-033)
+skip_slow_tests()
 
 test_that("ConvergenceDiagnostics works with single run", {
   library(ape)

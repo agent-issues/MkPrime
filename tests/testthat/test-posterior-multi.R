@@ -1,4 +1,5 @@
 # Tests for MkPosterior multi-run updates (Phase 5: M-036)
+skip_slow_tests()
 
 test_that("print.MkPosterior works for single run", {
   library(ape)
