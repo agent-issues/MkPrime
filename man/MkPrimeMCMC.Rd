@@ -22,7 +22,9 @@ MkPrimeMCMC(
   bufferSize = 500L,
   plotEvery = NULL,
   progressFn = NULL,
-  tuning = list()
+  tuning = list(),
+  parallel = FALSE,
+  pollInterval = 10L
 )
 }
 \arguments{
@@ -106,6 +108,15 @@ details.}
 
 \item{tuning}{Named list of initial tuning parameters for each move
 type. See Details.}
+
+\item{parallel}{Logical. If \code{TRUE} and \code{nRuns > 1}, independent runs are
+launched as non-blocking \code{future::future()} workers and the main process
+polls for convergence. Requires the \pkg{future} package (in \code{Suggests}).
+Set a parallel plan before calling \code{\link[=RunMkPrime]{RunMkPrime()}}:
+\code{future::plan("multisession", workers = nRuns)}. Default \code{FALSE} (sequential).}
+
+\item{pollInterval}{Integer. Seconds between convergence polls in parallel
+mode. Ignored when \code{parallel = FALSE}. Default \code{10L}.}
 }
 \value{
 An S3 object of class \code{MkPrimeMCMC}.
