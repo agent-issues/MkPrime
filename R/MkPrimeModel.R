@@ -18,8 +18,15 @@
 #'   on `rate_loss` (neomorphic asymmetry). Defaults: meanlog = 0, sdlog = 2.
 #' @param rateLogSdShape,rateLogSdRate Shape and rate for the Gamma prior
 #'   on `rate_log_sd` (ACRV dispersion). Defaults: shape = 1, rate = 1.
-#' @param kprimeHyperA,kprimeHyperB Parameters for the Beta prior on the
-#'   geometric hyperprior parameter `p`. Defaults: a = 1, b = 1 (uniform).
+#' @param kPrimePrior Prior distribution for the true number of character states
+#'   (`k'`) for transformational characters. One of `"geometric"` (default,
+#'   hierarchical geometric with Beta hyperprior on `p`) or `"logseries"`
+#'   (logarithmic series with fixed parameter `c`; matches the RevBayes default).
+#' @param kprimeHyperA,kprimeHyperB Parameters for the Beta hyperprior on `p`
+#'   when `kPrimePrior = "geometric"`. Defaults: a = 1, b = 1 (uniform).
+#' @param kprimeLogseriesC The `c` parameter of the log-series prior on `k'`
+#'   when `kPrimePrior = "logseries"`. Must be in (0, 1). Default 0.7, matching
+#'   the RevBayes `dnMkPrime` default.
 #' @param rateNeoMeanlog,rateNeoSdlog Parameters for the LogNormal prior
 #'   on the neomorphic partition rate scalar. Defaults: meanlog = 0, sdlog = 2.
 #'
@@ -36,12 +43,22 @@ MkPrimeModel <- function(
     rateLossSdlog = 2,
     rateLogSdShape = 1,
     rateLogSdRate = 1,
+    kPrimePrior = "geometric",
     kprimeHyperA = 1,
     kprimeHyperB = 1,
+    kprimeLogseriesC = 0.7,
     rateNeoMeanlog = 0,
     rateNeoSdlog = 2
 ) {
   coding <- match.arg(coding, c("variable", "informative", "none"))
+  kPrimePrior <- match.arg(kPrimePrior, c("geometric", "logseries"))
+
+  # Warn if logseries-specific param is supplied for geometric prior
+  if (kPrimePrior == "geometric" && !missing(kprimeLogseriesC)) {
+    cli::cli_warn(
+      "{.arg kprimeLogseriesC} is ignored when {.arg kPrimePrior = \"geometric\"}."
+    )
+  }
 
   # Derive treeLengthRate from expSteps if not provided
   if (is.null(treeLengthRate) && !is.null(expSteps)) {
@@ -60,8 +77,10 @@ MkPrimeModel <- function(
       rateLossSdlog = rateLossSdlog,
       rateLogSdShape = rateLogSdShape,
       rateLogSdRate = rateLogSdRate,
+      kPrimePrior = kPrimePrior,
       kprimeHyperA = kprimeHyperA,
       kprimeHyperB = kprimeHyperB,
+      kprimeLogseriesC = kprimeLogseriesC,
       rateNeoMeanlog = rateNeoMeanlog,
       rateNeoSdlog = rateNeoSdlog
     ),
@@ -143,7 +162,8 @@ MkPrimeModel <- function(
 #'
 #' @param state A list with current parameter values:
 #'   `tree_length`, `rel_br_lengths`, `rate_loss`, `rate_log_sd`,
-#'   `kPrime` (integer vector), `p` (hyperprior).
+#'   `kPrime` (integer vector). For `kPrimePrior = "geometric"`, also
+#'   `p` (hyperprior). For `kPrimePrior = "logseries"`, `p` is absent.
 #' @param model An `MkPrimeModel` object (finalized).
 #' @param mkd An `MkPrimeData` object (for kObs and character types).
 #' @return Scalar log-prior density.
@@ -160,9 +180,18 @@ LogPrior <- function(state, model, mkd) {
   if (hasNeo && !is.null(state$rate_neo) && state$rate_neo <= 0) return(-Inf)
 
   transIdx <- which(mkd$type == "transformational")
-  if (length(transIdx)) {
-    if (state$p <= 0 || state$p >= 1) return(-Inf)
+  hasTrans <- length(transIdx) > 0L
+
+  if (hasTrans) {
     if (any(state$kPrime[transIdx] < mkd$kObs[transIdx])) return(-Inf)
+
+    if (identical(model$kPrimePrior, "geometric")) {
+      if (state$p <= 0 || state$p >= 1) return(-Inf)
+    } else {
+      # logseries: validate c
+      c_ls <- model$kprimeLogseriesC
+      if (c_ls <= 0 || c_ls >= 1) return(-Inf)
+    }
   }
 
   lp <- 0.0
@@ -207,17 +236,28 @@ LogPrior <- function(state, model, mkd) {
   # when shape > 1, density is 0. Handle both:
   if (state$rate_log_sd == 0 && model$rateLogSdShape > 1) return(-Inf)
 
-  # k'_i: Geometric(p) shifted by kObs_i
-  # P(k'_i = kObs_i + u) = p * (1-p)^u, u = 0, 1, 2, ...
-  if (length(transIdx)) {
-    u <- state$kPrime[transIdx] - mkd$kObs[transIdx]
-    lp <- lp + length(transIdx) * log(state$p) + sum(u) * log1p(-state$p)
+  if (hasTrans) {
+    if (identical(model$kPrimePrior, "geometric")) {
+      # k'_i: Geometric(p) shifted by kObs_i
+      # P(k'_i = kObs_i + u) = p * (1-p)^u, u = 0, 1, 2, ...
+      u <- state$kPrime[transIdx] - mkd$kObs[transIdx]
+      lp <- lp + length(transIdx) * log(state$p) + sum(u) * log1p(-state$p)
 
-    # p: Beta hyperprior
-    lp <- lp + dbeta(state$p,
-                     shape1 = model$kprimeHyperA,
-                     shape2 = model$kprimeHyperB,
-                     log = TRUE)
+      # p: Beta hyperprior
+      lp <- lp + dbeta(state$p,
+                       shape1 = model$kprimeHyperA,
+                       shape2 = model$kprimeHyperB,
+                       log = TRUE)
+    } else {
+      # k'_i: Logseries(c)
+      # log P(k; c) = k*log(c) - log(k) - log(-log(1-c))
+      # Truncation at kObs cancels in MH ratios; constant included here
+      # for correct absolute log-posterior reporting.
+      c_ls <- model$kprimeLogseriesC
+      kp <- state$kPrime[transIdx]
+      lp <- lp + sum(kp * log(c_ls) - log(kp)) -
+            length(transIdx) * log(-log1p(-c_ls))
+    }
   }
 
   lp
@@ -227,6 +267,13 @@ LogPrior <- function(state, model, mkd) {
 #' @export
 print.MkPrimeModel <- function(x, ...) {
   cli::cli_h1("MkPrime Model")
+
+  k_prior_str <- if (identical(x$kPrimePrior, "logseries")) {
+    "Logseries (c = {x$kprimeLogseriesC})"
+  } else {
+    "Geometric (Beta hyperprior: a = {x$kprimeHyperA}, b = {x$kprimeHyperB})"
+  }
+
   cli::cli_ul(c(
     "Coding: {x$coding}",
     "ACRV categories: {x$nCat}",
@@ -234,7 +281,7 @@ print.MkPrimeModel <- function(x, ...) {
     "Tree length prior: Gamma({x$treeLengthShape}, {x$treeLengthRate %||% 'auto'})",
     "rate_loss prior: LogNormal({x$rateLossMeanlog}, {x$rateLossSdlog})",
     "rate_log_sd prior: Gamma({x$rateLogSdShape}, {x$rateLogSdRate})",
-    "k' hyperprior p: Beta({x$kprimeHyperA}, {x$kprimeHyperB})",
+    paste0("k' prior: ", k_prior_str),
     "rate_neo prior: LogNormal({x$rateNeoMeanlog}, {x$rateNeoSdlog})"
   ))
   invisible(x)

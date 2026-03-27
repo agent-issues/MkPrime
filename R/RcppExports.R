@@ -73,8 +73,12 @@ run_mcmc_batch_cpp <- function(dataPtr, stateXPtrs, betas, moveTypeCodes, transI
     .Call(`_MkPrime_run_mcmc_batch_cpp`, dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, nBatch, startIter, warmup, thin, hasNeo, nEdge)
 }
 
-prepare_mcmc_data <- function(partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB) {
-    .Call(`_MkPrime_prepare_mcmc_data`, partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB)
+debug_mcmc_data <- function(dataPtr) {
+    .Call(`_MkPrime_debug_mcmc_data`, dataPtr)
+}
+
+prepare_mcmc_data <- function(partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC) {
+    .Call(`_MkPrime_prepare_mcmc_data`, partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC)
 }
 
 spr_proposal <- function(edge, nTip, treeLength, relBrLengths) {

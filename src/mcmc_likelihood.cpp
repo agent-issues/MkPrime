@@ -641,7 +641,8 @@ SEXP prepare_mcmc_data(List partitions_r,
                        double rateLossMeanlog, double rateLossSdlog,
                        double rateLogSdShape,  double rateLogSdRate,
                        double rateNeoMeanlog,  double rateNeoSdlog,
-                       double kprimeHyperA,    double kprimeHyperB) {
+                       double kprimeHyperA,    double kprimeHyperB,
+                       bool   kPriorLogseries, double kprimeLogseriesC) {
   McmcData* d = new McmcData();
   d->hasNeo = hasNeo;
   d->nCat = nCat;
@@ -662,6 +663,8 @@ SEXP prepare_mcmc_data(List partitions_r,
   d->rateNeoSdlog    = rateNeoSdlog;
   d->kprimeHyperA    = kprimeHyperA;
   d->kprimeHyperB    = kprimeHyperB;
+  d->kPriorLogseries  = kPriorLogseries;
+  d->kprimeLogseriesC = kprimeLogseriesC;
   d->kObs = kObs_r;
   d->nChar = kObs_r.size();
   d->nTip = 0;
