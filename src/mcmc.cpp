@@ -639,3 +639,4 @@ List run_mcmc_batch_cpp(
     _["n_saved"]        = nSaved
   );
 }
+
