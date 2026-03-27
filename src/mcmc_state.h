@@ -35,6 +35,7 @@ struct McmcData {
   int nCat;
   int codingType;  // 0 = none, 1 = variable, 2 = informative
   bool relabel;
+  std::vector<double> acrvZ;  // OPP-3: precomputed qnorm((i+0.5)/nCat), length nCat
 
   double treeLengthShape, treeLengthRate;
   double rateLossMeanlog,  rateLossSdlog;

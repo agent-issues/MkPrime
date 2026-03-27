@@ -203,12 +203,12 @@ List spr_proposal(IntegerMatrix edge, int nTip, double treeLength,
 // BetaSimplex proposal
 // ---------------------------------------------------------------------------
 
-// [[Rcpp::export]]
-List beta_simplex_proposal(NumericVector x, int index, double tuning) {
+// Internal helper — OPP-5: modifies x in-place, avoids Rcpp::List allocation.
+// Returns false if the proposal is degenerate (total <= 0); sets logHastings.
+bool beta_simplex_impl(NumericVector& x, int index, double tuning,
+                       double& logHastings) {
   const int n = x.size();
-  if (n < 2) {
-    return List::create(_["value"] = x, _["logHastings"] = 0.0);
-  }
+  if (n < 2) { logHastings = 0.0; return true; }
 
   int other = (int)(unif_rand() * (double)(n - 1));
   if (other >= index) ++other;
@@ -218,25 +218,33 @@ List beta_simplex_proposal(NumericVector x, int index, double tuning) {
   const double oldA = x[index];
   const double oldB = x[other];
   const double total = oldA + oldB;
+  if (total <= 0.0) { logHastings = 0.0; return false; }
 
-  if (total <= 0.0) {
-    return List::create(_["value"] = x, _["logHastings"] = 0.0);
-  }
-
-  const double oldF = oldA / total;
-  const double alpha = oldF * tuning + 1.0;
+  const double oldF    = oldA / total;
+  const double alpha   = oldF * tuning + 1.0;
   const double betaPar = (1.0 - oldF) * tuning + 1.0;
-  const double newF = R::rbeta(alpha, betaPar);
+  const double newF    = R::rbeta(alpha, betaPar);
+
+  x[index] = newF * total;
+  x[other] = (1.0 - newF) * total;
+
+  const double logFwd  = R::dbeta(newF, alpha, betaPar, 1);
+  const double revAlpha = newF * tuning + 1.0;
+  const double revBeta  = (1.0 - newF) * tuning + 1.0;
+  logHastings = R::dbeta(oldF, revAlpha, revBeta, 1) - logFwd;
+  return true;
+}
+
+
+// Rcpp-exported wrapper — keeps R-callable interface returning a List.
+// [[Rcpp::export]]
+List beta_simplex_proposal(NumericVector x, int index, double tuning) {
+  const int n = x.size();
+  if (n < 2) return List::create(_["value"] = x, _["logHastings"] = 0.0);
 
   NumericVector xNew = clone(x);
-  xNew[index] = newF * total;
-  xNew[other] = (1.0 - newF) * total;
-
-  const double logFwd = R::dbeta(newF, alpha, betaPar, 1);
-  const double revAlpha = newF * tuning + 1.0;
-  const double revBeta = (1.0 - newF) * tuning + 1.0;
-  const double logRev = R::dbeta(oldF, revAlpha, revBeta, 1);
-
-  return List::create(_["value"] = xNew,
-                      _["logHastings"] = logRev - logFwd);
+  double logHastings;
+  if (!beta_simplex_impl(xNew, index, tuning, logHastings))
+    return List::create(_["value"] = x, _["logHastings"] = 0.0);
+  return List::create(_["value"] = xNew, _["logHastings"] = logHastings);
 }

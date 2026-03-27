@@ -55,7 +55,7 @@ headers where available.
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| M-073 | P1 | OPEN | **Tree ESS in ConvergenceDiagnostics.** Add `trees = TRUE` argument. If `treess` and `TreeDist` installed and `!isFALSE(trees)`, compute topology ESS using `treess::treess(perRunTrees, TreeDist::RobinsonFoulds, methods = treess::getESSMethods(TRUE))`. Subsample each run to ≤1000 trees; if `interactive()` and total trees > threshold, emit a progress message. Extract `frechetCorrelationESS` and `medianPseudoESS`, sum across runs. `print.MkpDiagnostics` always shows a topology row (NA when not computed). Add `treess` and `TreeDist` to Suggests. |
+| M-073 | P1 | DONE (C) | **Tree ESS in ConvergenceDiagnostics.** Add `trees = TRUE` argument. If `treess` and `TreeDist` installed and `!isFALSE(trees)`, compute topology ESS using `treess::treess(perRunTrees, TreeDist::RobinsonFoulds, methods = treess::getESSMethods(TRUE))`. Subsample each run to ≤1000 trees; if `interactive()` and total trees > threshold, emit a progress message. Extract `frechetCorrelationESS` and `medianPseudoESS`, sum across runs. `print.MkpDiagnostics` always shows a topology row (NA when not computed). Add `treess` and `TreeDist` to Suggests. |
 
 ---
 

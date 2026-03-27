@@ -259,13 +259,9 @@ print.MkpDiagnostics <- function(x, ...) {
 }
 
 
-#' Compute topology ESS from sampled trees using treess + TreeDist RF
-#'
-#' @param pb Post-burnin data list (from `.PostBurninData()`).
-#' @param trees `TRUE` to attempt computation, `FALSE` to skip.
-#' @return Named numeric vector (`frechetCorrelationESS`, `medianPseudoESS`)
-#'   summed across runs, or `NULL` if computation was skipped or failed.
-#' @keywords internal
+# Compute topology ESS from sampled trees using treess + TreeDist RF.
+# Returns named numeric vector (frechetCorrelationESS, medianPseudoESS)
+# summed across runs, or NULL if skipped or failed.
 .ComputeTreeEss <- function(pb, trees) {
   if (isFALSE(trees)) return(NULL)
   if (!requireNamespace("treess",   quietly = TRUE)) return(NULL)

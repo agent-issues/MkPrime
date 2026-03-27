@@ -87,30 +87,24 @@ double pruning_jc_acrv(Rcpp::IntegerVector parent,
       double p_same = inv_k + (1.0 - inv_k) * exp_term;
       double p_diff = inv_k - inv_k * exp_term;
 
+      // OPP-1: JC symmetry → O(k) product: new_cl[i] = p_diff*sum + (p_same-p_diff)*cl[i]
+      double diff_coeff = p_same - p_diff;
       if (!initialized[par]) {
         for (int c = 0; c < nChar; ++c) {
           int offset = c * kStates;
-          for (int i = 0; i < kStates; ++i) {
-            double sum = 0.0;
-            for (int j = 0; j < kStates; ++j) {
-              double pij = (i == j) ? p_same : p_diff;
-              sum += pij * CL[ch][offset + j];
-            }
-            CL[par][offset + i] = sum;
-          }
+          double sum_cl = 0.0;
+          for (int j = 0; j < kStates; ++j) sum_cl += CL[ch][offset + j];
+          for (int i = 0; i < kStates; ++i)
+            CL[par][offset + i] = p_diff * sum_cl + diff_coeff * CL[ch][offset + i];
         }
         initialized[par] = true;
       } else {
         for (int c = 0; c < nChar; ++c) {
           int offset = c * kStates;
-          for (int i = 0; i < kStates; ++i) {
-            double sum = 0.0;
-            for (int j = 0; j < kStates; ++j) {
-              double pij = (i == j) ? p_same : p_diff;
-              sum += pij * CL[ch][offset + j];
-            }
-            CL[par][offset + i] *= sum;
-          }
+          double sum_cl = 0.0;
+          for (int j = 0; j < kStates; ++j) sum_cl += CL[ch][offset + j];
+          for (int i = 0; i < kStates; ++i)
+            CL[par][offset + i] *= p_diff * sum_cl + diff_coeff * CL[ch][offset + i];
         }
       }
     }
