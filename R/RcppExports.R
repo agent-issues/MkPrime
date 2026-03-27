@@ -109,6 +109,14 @@ mkn_stationary_freqs <- function(rate_loss) {
     .Call(`_MkPrime_mkn_stationary_freqs`, rate_loss)
 }
 
+swap_subtrees_cpp <- function(edge, nTip, treeLength, relBrLengths, nodeA, nodeB) {
+    .Call(`_MkPrime_swap_subtrees_cpp`, edge, nTip, treeLength, relBrLengths, nodeA, nodeB)
+}
+
+get_valid_swap_partners_cpp <- function(edge, nTip, pruneNode) {
+    .Call(`_MkPrime_get_valid_swap_partners_cpp`, edge, nTip, pruneNode)
+}
+
 nni_proposal <- function(edge, nTip, treeLength, relBrLengths) {
     .Call(`_MkPrime_nni_proposal`, edge, nTip, treeLength, relBrLengths)
 }

@@ -110,6 +110,164 @@ List nni_proposal_impl(IntegerVector parent, IntegerVector child,
 }
 
 
+// ---------------------------------------------------------------------------
+// Subtree swap (M-084)
+//
+// swap_subtrees_impl: exchange the positions of two subtrees.
+//   nodeA and nodeB are child nodes (each has a parent edge).
+//   Their parent connections are swapped; branch lengths swap with them so
+//   total tree length is unchanged and the Jacobian is 1 (logHastings = 0).
+//   Result is reordered to postorder.
+//   Caller must ensure nodeA/nodeB are non-nested, non-sibling, non-root
+//   (use get_valid_swap_partners_impl).
+//
+// get_valid_swap_partners_impl: return all nodes w that are valid swap
+//   partners for pruneNode — i.e. non-descendant, non-ancestor, non-sibling
+//   of pruneNode (and pruneNode must not be the root).
+// ---------------------------------------------------------------------------
+
+// Returns the index of the edge row where child[i] == node, or -1.
+static int find_child_row(const IntegerVector& child, int node) {
+  for (int i = 0; i < child.size(); ++i)
+    if (child[i] == node) return i;
+  return -1;
+}
+
+
+// Internal impl: used by GibbsSubtreeSwap (M-086) and WeightedSubtreeSwap (M-089).
+List swap_subtrees_impl(IntegerVector parent, IntegerVector child,
+                        int nTip, double treeLength,
+                        NumericVector relBrLengths,
+                        int nodeA, int nodeB) {
+  int nEdge = parent.size();
+  int rowA  = find_child_row(child, nodeA);
+  int rowB  = find_child_row(child, nodeB);
+
+  if (rowA < 0 || rowB < 0 || rowA == rowB) {
+    return List::create(_["parent"] = parent,
+                        _["child"] = child,
+                        _["rel_br_lengths"] = relBrLengths,
+                        _["logHastings"] = R_NegInf);
+  }
+
+  // Swap parent assignments and branch lengths
+  IntegerVector newParent  = clone(parent);
+  NumericVector newRelBr   = clone(relBrLengths);
+  newParent[rowA] = parent[rowB];
+  newParent[rowB] = parent[rowA];
+  newRelBr[rowA]  = relBrLengths[rowB];
+  newRelBr[rowB]  = relBrLengths[rowA];
+
+  // Reorder to postorder
+  IntegerMatrix tmpEdge(nEdge, 2);
+  for (int i = 0; i < nEdge; ++i) {
+    tmpEdge(i, 0) = newParent[i];
+    tmpEdge(i, 1) = child[i];
+  }
+  IntegerVector order = TreeTools::postorder_order(tmpEdge);
+
+  IntegerVector ordParent(nEdge), ordChild(nEdge);
+  NumericVector ordRelBr(nEdge);
+  for (int i = 0; i < nEdge; ++i) {
+    int j = order[i] - 1;
+    ordParent[i] = newParent[j];
+    ordChild[i]  = child[j];
+    ordRelBr[i]  = newRelBr[j];
+  }
+
+  return List::create(_["parent"]        = ordParent,
+                      _["child"]         = ordChild,
+                      _["rel_br_lengths"] = ordRelBr,
+                      _["logHastings"]   = 0.0);
+}
+
+
+// Internal impl: enumerate valid swap partners for pruneNode.
+std::vector<int> get_valid_swap_partners_impl(
+    const IntegerVector& parent, const IntegerVector& child,
+    int nTip, int pruneNode) {
+
+  int nEdge  = parent.size();
+  int pruneRow = find_child_row(child, pruneNode);
+  if (pruneRow < 0) return {};   // pruneNode is root — no valid swaps
+
+  int pruneParent = parent[pruneRow];
+  int maxIdx = 2 * nTip + 2;    // safe upper bound on node indices
+
+  // 1. Descendants of pruneNode (BFS)
+  std::vector<bool> isDesc(maxIdx, false);
+  isDesc[pruneNode] = true;
+  if (pruneNode > nTip) {
+    std::vector<int> q = {pruneNode};
+    while (!q.empty()) {
+      int cur = q.back(); q.pop_back();
+      for (int i = 0; i < nEdge; ++i) {
+        if (parent[i] == cur && !isDesc[child[i]]) {
+          isDesc[child[i]] = true;
+          if (child[i] > nTip) q.push_back(child[i]);
+        }
+      }
+    }
+  }
+
+  // 2. Ancestors of pruneNode (walk parent chain to root)
+  std::vector<bool> isAnc(maxIdx, false);
+  {
+    int cur = pruneParent;
+    while (cur > 0 && cur < maxIdx) {
+      isAnc[cur] = true;
+      int row = find_child_row(child, cur);
+      if (row < 0) break;      // cur is root (no parent edge)
+      cur = parent[row];
+    }
+  }
+
+  // 3. Collect valid partners
+  std::vector<int> partners;
+  partners.reserve(nEdge / 2);
+  for (int i = 0; i < nEdge; ++i) {
+    int w = child[i];
+    if (isDesc[w]) continue;               // descendant (incl. pruneNode)
+    if (isAnc[w]) continue;                // ancestor
+    if (parent[i] == pruneParent) continue; // sibling
+    partners.push_back(w);
+  }
+  return partners;
+}
+
+
+// Rcpp-exported wrapper: swap by node IDs (R testing / M-086/M-089 dispatch).
+// [[Rcpp::export]]
+List swap_subtrees_cpp(IntegerMatrix edge, int nTip, double treeLength,
+                       NumericVector relBrLengths, int nodeA, int nodeB) {
+  int nEdge = edge.nrow();
+  IntegerVector par(nEdge), ch(nEdge);
+  for (int i = 0; i < nEdge; ++i) { par[i] = edge(i,0); ch[i] = edge(i,1); }
+
+  List res = swap_subtrees_impl(par, ch, nTip, treeLength, relBrLengths,
+                                 nodeA, nodeB);
+  // Reconstruct edge matrix for R compatibility
+  IntegerVector rp = res["parent"], rc = res["child"];
+  IntegerMatrix outEdge(nEdge, 2);
+  for (int i = 0; i < nEdge; ++i) { outEdge(i,0) = rp[i]; outEdge(i,1) = rc[i]; }
+  return List::create(_["edge"]           = outEdge,
+                      _["rel_br_lengths"] = res["rel_br_lengths"],
+                      _["logHastings"]    = res["logHastings"]);
+}
+
+
+// Rcpp-exported wrapper: return valid swap partners for pruneNode.
+// [[Rcpp::export]]
+IntegerVector get_valid_swap_partners_cpp(IntegerMatrix edge, int nTip,
+                                           int pruneNode) {
+  int nEdge = edge.nrow();
+  IntegerVector par(nEdge), ch(nEdge);
+  for (int i = 0; i < nEdge; ++i) { par[i] = edge(i,0); ch[i] = edge(i,1); }
+  std::vector<int> v = get_valid_swap_partners_impl(par, ch, nTip, pruneNode);
+  return IntegerVector(v.begin(), v.end());
+}
+
+
 // Rcpp-exported wrapper (for R callers via ProposeNni)
 // [[Rcpp::export]]
 List nni_proposal(IntegerMatrix edge, int nTip, double treeLength,
