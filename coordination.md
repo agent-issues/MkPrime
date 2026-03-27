@@ -4,7 +4,7 @@ Last updated: 2026-03-27
 
 ## Project State
 
-**Phase:** 9 (Advanced tree moves) — IN PROGRESS. Phases 1–8 done. Phase 9 active on `mkp-gibbs` worktree (`feature/gibbs-weighted-moves`). Also open: Phase 6b (TreeSearch GUI hook) and Phase 7d (deferred extensions: M-052, M-053, M-054).
+**Phase:** 9 (Advanced tree moves) — IN PROGRESS. Phases 1–8 done. Phase 9 active on `mkp-gibbs` worktree (`feature/gibbs-weighted-moves`). Phase 10 (run-level parallelism via `future`) planned on `mkp-parallel` worktree (`feature/parallel-runs`). Also open: Phase 6b (TreeSearch GUI hook) and Phase 7d (deferred extensions: M-052, M-053, M-054).
 
 MkPrime is a new R package for Bayesian phylogenetic inference under the
 Mk' model. The architecture follows StratoBayes (C++ hot loop via Rcpp,
@@ -78,7 +78,7 @@ monitoring, stopping rules, checkpointing.
 - Per-chain independent tuning: heated chains need different proposal widths.
 - Independent runs for PSRF: nRuns≥2 enables Gelman–Rubin convergence
   diagnostics across cold chains from different runs.
-- Sequential execution of runs. Parallel (future/furrr) deferred.
+- Sequential execution of runs. Parallel execution implemented in Phase 10 (M-093).
 
 **Exit criteria:**
 - Parallel tempering improves mixing vs single chain (measured by ESS/iter)
@@ -133,13 +133,13 @@ comparison, TBR, HMC.
 overhead. Use TreeTools C++ headers for tree manipulation.
 
 **Sub-phases:**
-- **8a (P1):** Quick R-side wins � eliminate redundant `ape::reorder.phylo`
+- **8a (P1):** Quick R-side wins ? eliminate redundant `ape::reorder.phylo`
   from likelihood, pre-compute move weights, bypass validation in hot path.
 - **8b (P2):** Port NNI/SPR/BetaSimplex proposals to C++, using TreeTools
   C++ headers for tree reordering and descendant-finding.
-- **8c (P2):** C++ MCMC inner loop � `do_move()` propose/evaluate/accept
+- **8c (P2):** C++ MCMC inner loop ? `do_move()` propose/evaluate/accept
   cycle, then the outer iteration loop with R callbacks for progress/sampling.
-- **8d (P3):** Partial likelihood recalculation � cache partition likelihoods,
+- **8d (P3):** Partial likelihood recalculation ? cache partition likelihoods,
   only recompute affected partitions per move type.
 
 **Design notes:**
@@ -148,7 +148,7 @@ overhead. Use TreeTools C++ headers for tree manipulation.
   Link via `LinkingTo: TreeTools` in DESCRIPTION.
 - `TreeTools::Preorder()` is ~1.6x faster than `ape::reorder.phylo()`.
 - The conditional-likelihood workspace (`std::vector<std::vector<double>>`)
-  is currently reallocated per likelihood call � should be pre-allocated
+  is currently reallocated per likelihood call ? should be pre-allocated
   once in a C++ state struct and reused.
 - R remains responsible for: initialization, progress display, sample
   storage, checkpointing, adaptation logic, and result assembly.
@@ -188,6 +188,36 @@ after warmup. User can pin specific weights via `moveWeights` in
 - Weighted moves default OFF (`weightedSpr = FALSE`) — too expensive for small
   datasets; user opts in for large trees where O(N×B) is worth the gain.
 - Adaptive scheduler freezes weights at warmup end to preserve detailed balance.
+
+---
+
+### Phase 10: Run-level parallelism via `future`
+**Status:** PLANNED (2026-03-27). Work on `mkp-parallel` worktree (`feature/parallel-runs`).
+**Goal:** Parallelize independent MCMC runs across CPU cores and HPC
+nodes using the `future` package as a backend-agnostic parallelism
+layer. The user sets `future::plan()` before calling `RunMkPrime()`;
+the package never sets a plan itself (CRAN policy).
+
+**Design decisions:**
+- `future` in Suggests (opt-in). Falls back to sequential with a message
+  if not installed or `parallel = FALSE` (the default).
+- Persistent workers: each run is one long-lived `future::future()` call,
+  not a stream of segments. Avoids per-segment XPtr reconstruction and
+  HPC job-submission overhead.
+- XPtr reconstruction: workers call `.InitMcmcData()` + `init_mcmc_state()`
+  internally from serialized R inputs — same pattern as `ResumeMkPrime()`.
+- Convergence signaling: orchestrator polls log files via `ReadMkLog()`;
+  writes cancel files (M-081) when ESS/PSRF criteria are met.
+- Streaming required for mid-run convergence stopping; auto-assigned to
+  `tempfile()` if `logFile` is NULL in parallel mode.
+- Within-run chain parallelism (OpenMP etc.) is explicitly out of scope.
+
+**Sub-phases:**
+- **M-093a (P1):** Extract `RunMkPrimeSingleRun()` — refactor + dedup
+- **M-093b (P2):** Parallel orchestration (`.RunParallelRuns()`, `future`)
+- **M-093c (P2):** Tests + HPC documentation
+
+**Plan file:** `.positai/plans/2026-03-27-1307-plan.md`
 
 ---
 

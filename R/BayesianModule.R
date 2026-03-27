@@ -31,6 +31,71 @@
   do.call(rbind, mats)
 }
 
+# Check whether a PID is still alive.
+# Uses the ps package when available; falls back to platform-specific methods.
+# Returns FALSE for NA/invalid PIDs so callers can treat them as dead.
+# @keywords internal
+.PidIsAlive <- function(pid) {
+  if (is.null(pid) || is.na(pid) || pid <= 0L) return(FALSE)
+  if (requireNamespace("ps", quietly = TRUE)) {
+    h <- tryCatch(ps::ps_handle(pid = as.integer(pid)), error = function(e) NULL)
+    if (is.null(h)) return(FALSE)
+    return(tryCatch(ps::ps_is_running(h), error = function(e) FALSE))
+  }
+  # Windows fallback: tasklist /FI
+  if (.Platform$OS.type == "windows") {
+    out <- tryCatch(
+      system2("tasklist",
+              c("/FI", sprintf("PID eq %d", as.integer(pid)), "/NH"),
+              stdout = TRUE, stderr = FALSE),
+      error = function(e) character(0)
+    )
+    return(any(grepl(as.character(as.integer(pid)), out, fixed = TRUE)))
+  }
+  # POSIX fallback: signal 0 checks existence without killing
+  tryCatch(tools::pskill(as.integer(pid), 0L) == 0L, error = function(e) FALSE)
+}
+
+# Relaunch a stopped run from its checkpoint.
+# Clears stale signal files, relaunches the existing mkp_run.R script
+# (which calls RunMkPrime with overwrite=FALSE, auto-resuming from the
+# checkpoint stored in input_mcmc.rds), and updates rv + job.rds.
+# Returns TRUE on success, FALSE if processx is unavailable or scriptFile
+# is missing.
+# @keywords internal
+.RelaunchFromCheckpoint <- function(job, rv) {
+  if (!requireNamespace("processx", quietly = TRUE)) return(FALSE)
+
+  scriptFile <- job$scriptFile
+  if (is.null(scriptFile) || !file.exists(scriptFile)) return(FALSE)
+
+  # Clear stale signals so the fresh process starts clean
+  for (sig in c(job$cancelFile,
+                file.path(job$logDir, "mkp_done.signal"),
+                file.path(job$logDir, "mkp_error.txt"))) {
+    if (!is.null(sig) && file.exists(sig)) file.remove(sig)
+  }
+
+  proc <- processx::process$new(
+    "Rscript",
+    args      = scriptFile,
+    supervise = FALSE,
+    stdout    = file.path(job$logDir, "mkp_stdout.txt"),
+    stderr    = file.path(job$logDir, "mkp_stderr.txt")
+  )
+
+  job$pid       <- proc$get_pid()
+  job$startTime <- Sys.time()
+  saveRDS(job, file.path(job$logDir, "job.rds"))
+
+  rv$job      <- job
+  rv$proc     <- proc
+  rv$status   <- "running"
+  rv$errorMsg <- NULL
+  # Keep rv$logSamples: existing partial data stays visible during resume
+  TRUE
+}
+
 # Build the R script run by the detached Rscript process.
 # All inputs are read from RDS files in logDir.
 # @keywords internal
@@ -358,6 +423,12 @@ MkBayesianServer <- function(id, dataset, startTree = NULL) {
     })
 
     # ---- Reconnect -----------------------------------------------------------
+    # Decision tree:
+    #   done signal         → "done"  (no relaunch)
+    #   error file          → relaunch from checkpoint if present, else "error"
+    #   cancel signal       → relaunch from checkpoint if present, else "cancelled"
+    #   no signals, PID alive  → "running" (re-attach monitoring)
+    #   no signals, PID dead   → relaunch from checkpoint if present, else "error"
 
     shiny::observeEvent(input$reconnect, {
       logDir  <- trimws(input$logDir)
@@ -378,32 +449,73 @@ MkBayesianServer <- function(id, dataset, startTree = NULL) {
 
       rv$job        <- job
       rv$proc       <- NULL  # process object is lost after session restart
-      rv$logSamples <- NULL
+      rv$logSamples <- .ReadAllLogs(job$logFiles)
       rv$errorMsg   <- NULL
 
-      # Derive status from signal files
+      cpFile   <- job$checkpointFile  # NULL on old job.rds → file.exists(NULL) = FALSE
+      haveCp   <- !is.null(cpFile) && file.exists(cpFile)
+
       if (file.exists(file.path(job$logDir, "mkp_done.signal"))) {
-        rv$logSamples <- .ReadAllLogs(job$logFiles)
-        rv$status     <- "done"
-        shiny::showNotification("Reconnected: analysis already complete.",
-                                type = "message")
+        # ---- Complete --------------------------------------------------------
+        rv$status <- "done"
+        shiny::showNotification("Reconnected: analysis complete.", type = "message")
+
       } else if (file.exists(file.path(job$logDir, "mkp_error.txt"))) {
+        # ---- R-level error ---------------------------------------------------
         rv$errorMsg <- paste(
           readLines(file.path(job$logDir, "mkp_error.txt"), warn = FALSE),
           collapse = "\n"
         )
-        rv$status <- "error"
-        shiny::showNotification("Reconnected: prior run ended with error.",
-                                type = "error")
+        if (haveCp) {
+          shiny::showNotification(
+            paste0("Prior run ended with an error \u2014 resuming from checkpoint.\n",
+                   rv$errorMsg),
+            type = "warning", duration = 10)
+          .RelaunchFromCheckpoint(job, rv)
+        } else {
+          rv$status <- "error"
+          shiny::showNotification(
+            paste0("Prior run ended with an error; no checkpoint to resume from.\n",
+                   rv$errorMsg),
+            type = "error", duration = 15)
+        }
+
       } else if (file.exists(job$cancelFile)) {
-        rv$logSamples <- .ReadAllLogs(job$logFiles)
-        rv$status     <- "cancelled"
-        shiny::showNotification("Reconnected: prior run was cancelled.",
-                                type = "warning")
+        # ---- Cancelled -------------------------------------------------------
+        if (haveCp) {
+          shiny::showNotification(
+            "Prior run was cancelled \u2014 resuming from checkpoint.",
+            type = "message")
+          .RelaunchFromCheckpoint(job, rv)
+        } else {
+          rv$status <- "cancelled"
+          shiny::showNotification(
+            "Prior run was cancelled. No checkpoint available to resume from.",
+            type = "warning")
+        }
+
       } else {
-        rv$status <- "running"
-        shiny::showNotification("Reconnected: monitoring running analysis.",
-                                type = "message")
+        # ---- No signal files: check PID liveness (M-093) --------------------
+        if (.PidIsAlive(job$pid)) {
+          rv$status <- "running"
+          shiny::showNotification("Reconnected: monitoring running analysis.",
+                                  type = "message")
+        } else if (haveCp) {
+          shiny::showNotification(
+            sprintf(paste0("Process PID %d is no longer running",
+                           " \u2014 resuming from checkpoint."),
+                    as.integer(job$pid)),
+            type = "warning")
+          .RelaunchFromCheckpoint(job, rv)
+        } else {
+          rv$status <- "error"
+          rv$errorMsg <- sprintf(
+            paste0("Process PID %d is no longer running and left no",
+                   " checkpoint. The run may have been killed by the OS.",
+                   " Partial log data (if any) is available in:\n%s"),
+            as.integer(job$pid), job$logDir)
+          shiny::showNotification(rv$errorMsg, type = "error", duration = 20)
+        }
       }
     })
 
