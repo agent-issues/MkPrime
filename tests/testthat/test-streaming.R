@@ -272,6 +272,83 @@ test_that("Resume in streaming mode appends without gaps or duplicates", {
   expect_gte(nrow(dat), n_before)
 })
 
+# --- .TruncateLogToN unit tests ---
+
+test_that(".TruncateLogToN removes excess rows", {
+  tf <- tempfile(fileext = ".log")
+  on.exit(unlink(tf), add = TRUE)
+  writeLines(c("Sample\tA\tB",
+               "1\t0.1\t0.2", "2\t0.3\t0.4", "3\t0.5\t0.6"), tf)
+
+  expect_message(.TruncateLogToN(tf, 2L), "discarding")
+  lines <- readLines(tf)
+  expect_equal(length(lines), 3L)  # header + 2 data rows
+  expect_true(startsWith(lines[3], "2\t"))
+})
+
+test_that(".TruncateLogToN is a no-op when counts match", {
+  tf <- tempfile(fileext = ".log")
+  on.exit(unlink(tf), add = TRUE)
+  writeLines(c("Sample\tA\tB", "1\t0.1\t0.2", "2\t0.3\t0.4"), tf)
+
+  .TruncateLogToN(tf, 2L)
+  lines <- readLines(tf)
+  expect_equal(length(lines), 3L)
+})
+
+test_that(".TruncateLogToN warns when log has fewer rows than expected", {
+  tf <- tempfile(fileext = ".log")
+  on.exit(unlink(tf), add = TRUE)
+  writeLines(c("Sample\tA\tB", "1\t0.1\t0.2"), tf)
+
+  expect_warning(.TruncateLogToN(tf, 5L), "fewer rows")
+})
+
+
+# --- Resume truncation integration ---
+
+test_that("Resume truncates post-checkpoint rows from log file", {
+  f <- .mkStreamFixture()
+  log_file <- tempfile(fileext = ".log")
+  cp_file  <- tempfile(fileext = ".rds")
+  on.exit(unlink(c(log_file, cp_file)), add = TRUE)
+
+  set.seed(4419)
+  result1 <- RunMkPrime(f$pd, f$tree,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 2000L, thin = 5L, warmup = 200L,
+                        logFile = log_file, bufferSize = 20L,
+                        checkEvery = 300L, checkpointFile = cp_file,
+                        maxTime = 0.5))
+
+  expect_true(file.exists(cp_file))
+
+  # Read checkpoint to find its saved_idx
+
+  cp <- readRDS(cp_file)
+  cp_saved <- cp$runs[[1]]$saved_idx
+
+  # Append a fake row to simulate post-checkpoint writes (e.g. crash
+  # recovery where BuildResult flushed extra samples)
+  cat("999999\t-100\t-100\t1\t1\t0.5\t0.5\n",
+      file = log_file, append = TRUE)
+  rows_with_fake <- length(readLines(log_file)) - 1L
+  expect_gt(rows_with_fake, cp_saved)
+
+  # Resume should truncate back to checkpoint saved_idx, then continue
+  result2 <- ResumeMkPrime(cp_file, f$pd, f$tree)
+
+  dat <- ReadMkLog(log_file)
+  sampleNums <- as.integer(rownames(dat))
+
+  # Fake row must be gone
+  expect_false(999999L %in% sampleNums)
+  # Strictly increasing — no duplicates or gaps from the splice
+  expect_true(all(diff(sampleNums) > 0))
+  # At least as many samples as the checkpoint recorded
+  expect_gte(nrow(dat), cp_saved)
+})
+
+
 test_that("In-memory mode is unchanged when logFile = NULL", {
   f <- .mkStreamFixture()
 

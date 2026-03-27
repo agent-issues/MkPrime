@@ -58,6 +58,7 @@
                          dimnames = list(NULL, paramNames)),
     flush_iter  = integer(bufferSize),  # MCMC iteration for the Sample column
     flush_idx   = 0L,
+    flushed     = FALSE,  # set TRUE when a flush fires; reset after checkpoint
     conv_window = matrix(NA_real_, nrow = convWindowSize, ncol = nParams,
                          dimnames = list(NULL, paramNames)),
     conv_head   = 0L,   # next write position in the circular window
@@ -91,6 +92,7 @@
   if (r$flush_idx == bufferSize) {
     .FlushBuffer(r$flush_buf, r$flush_idx, r$flush_iter, logFile)
     r$flush_idx <- 0L
+    r$flushed   <- TRUE
   }
 
   # --- convergence window (circular buffer) ---
@@ -109,6 +111,27 @@
   nRows <- if (r$conv_filled) nrow(r$conv_window) else r$conv_head
   if (nRows < minRows) return(NULL)
   if (r$conv_filled) r$conv_window else r$conv_window[seq_len(nRows), , drop = FALSE]
+}
+
+
+# Truncate a log file to exactly nDataRows data lines (plus header).
+# Used on resume to discard samples written after the last checkpoint.
+# @keywords internal
+.TruncateLogToN <- function(logFile, nDataRows) {
+  lines <- readLines(logFile, warn = FALSE)
+  nExpected <- nDataRows + 1L  # header + data
+  if (length(lines) > nExpected) {
+    nDropped <- length(lines) - nExpected
+    cli::cli_alert_info(
+      "Rewinding {.file {logFile}}: discarding {nDropped} post-checkpoint sample{?s}."
+    )
+    writeLines(lines[seq_len(nExpected)], logFile)
+  } else if (length(lines) < nExpected) {
+    cli::cli_warn(c(
+      "Log file {.file {logFile}} has fewer rows than expected.",
+      "i" = "Found {length(lines) - 1L} data row{?s}, checkpoint recorded {nDataRows}."
+    ))
+  }
 }
 
 

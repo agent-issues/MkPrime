@@ -285,6 +285,24 @@ RunMkPrime <- function(data, tree,
       runs[[run]] <- r
     }
 
+    # Streaming: checkpoint immediately after any buffer flush so the
+    # log file and checkpoint saved_idx stay in sync.
+    if (isStreaming && !is.null(mcmc$checkpointFile)) {
+      anyFlushed <- any(vapply(runs, `[[`, logical(1), "flushed"))
+      if (anyFlushed) {
+        # Sync all runs: flush partial buffers so every log matches saved_idx
+        for (run in seq_len(nRuns)) {
+          if (runs[[run]]$flush_idx > 0L) {
+            .FlushBuffer(runs[[run]]$flush_buf, runs[[run]]$flush_idx,
+                         runs[[run]]$flush_iter, logFilePaths[run])
+            runs[[run]]$flush_idx <- 0L
+          }
+          runs[[run]]$flushed <- FALSE
+        }
+        .SaveCheckpoint(runs, mcmc, batchEnd, paramNames, mcmc$checkpointFile)
+      }
+    }
+
     # Progress update after each batch
     coldLogpost <- {s <- get_mcmc_state(runs[[1]]$chainStates[[1]]); s$logPost}
     if (!is.null(r1Result)) {
@@ -632,11 +650,12 @@ RunMkPrime <- function(data, tree,
     })
     r$chainStates <- NULL  # never serialize raw XPtrs
     if (isStreaming) {
-      # Omit the large buffer matrices; they are recreated fresh on resume.
+      # Omit the large buffer matrices and transient flags; recreated on resume.
       # flush_idx should be 0 (caller flushes before checkpointing).
       r$flush_buf   <- NULL
       r$flush_iter  <- NULL
       r$conv_window <- NULL
+      r$flushed     <- NULL
     }
     r
   })
@@ -748,16 +767,20 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
                        kPrimePrior = model$kPrimePrior %||% "geometric")
 
   if (isStreaming) {
-    # Re-initialise fresh stream buffers.
-    # saved_idx is taken from the ACTUAL log file line count, not the
-    # checkpoint state.  This handles the case where the previous run flushed
-    # additional samples after the last checkpoint (e.g. in .BuildResult),
-    # which would otherwise cause duplicate Sample values on resume.
+    # Rewind each log file to the checkpoint's saved_idx.  Any samples
+    # flushed after the last checkpoint (e.g. by .BuildResult on normal
+    # completion, or by a flush that preceded a crash before the next
+    # checkpoint) are discarded — the chain state doesn't cover them.
     for (run in seq_len(nRuns)) {
       logPath  <- logFilePaths[run]
-      # Count data rows in log (all lines minus the header)
-      savedIdx <- length(readLines(logPath, warn = FALSE)) - 1L
-      savedIdx <- max(0L, as.integer(savedIdx))
+      savedIdx <- as.integer(runs[[run]]$saved_idx %||% 0L)
+      .TruncateLogToN(logPath, savedIdx)
+
+      # Clear stale streaming fields before merging fresh buffers
+      runs[[run]]$flush_idx   <- NULL
+      runs[[run]]$flushed     <- NULL
+      runs[[run]]$conv_head   <- NULL
+      runs[[run]]$conv_filled <- NULL
 
       bufs <- .InitStreamBuffers(length(paramNames), paramNames,
                                  mcmc$bufferSize, convWindowSize)
@@ -934,6 +957,22 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
       }
 
       runs[[run]] <- r
+    }
+
+    # Streaming: checkpoint immediately after any buffer flush
+    if (isStreaming && !is.null(mcmc$checkpointFile)) {
+      anyFlushed <- any(vapply(runs, `[[`, logical(1), "flushed"))
+      if (anyFlushed) {
+        for (run in seq_len(nRuns)) {
+          if (runs[[run]]$flush_idx > 0L) {
+            .FlushBuffer(runs[[run]]$flush_buf, runs[[run]]$flush_idx,
+                         runs[[run]]$flush_iter, logFilePaths[run])
+            runs[[run]]$flush_idx <- 0L
+          }
+          runs[[run]]$flushed <- FALSE
+        }
+        .SaveCheckpoint(runs, mcmc, batchEnd, paramNames, mcmc$checkpointFile)
+      }
     }
 
     coldLogpost <- {s <- get_mcmc_state(runs[[1]]$chainStates[[1]]); s$logPost}

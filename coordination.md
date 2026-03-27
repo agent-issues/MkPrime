@@ -4,7 +4,7 @@ Last updated: 2026-03-27
 
 ## Project State
 
-**Phase:** 8 (MCMC performance) — COMPLETE. Phases 1–8 done. Remaining: Phase 6b (TreeSearch GUI hook) and Phase 7d (deferred extensions: M-052, M-053, M-054).
+**Phase:** 9 (Advanced tree moves) — IN PROGRESS. Phases 1–8 done. Phase 9 active on `mkp-gibbs` worktree (`feature/gibbs-weighted-moves`). Also open: Phase 6b (TreeSearch GUI hook) and Phase 7d (deferred extensions: M-052, M-053, M-054).
 
 MkPrime is a new R package for Bayesian phylogenetic inference under the
 Mk' model. The architecture follows StratoBayes (C++ hot loop via Rcpp,
@@ -152,6 +152,44 @@ overhead. Use TreeTools C++ headers for tree manipulation.
   once in a C++ state struct and reused.
 - R remains responsible for: initialization, progress display, sample
   storage, checkpointing, adaptation logic, and result assembly.
+
+### Phase 9: Advanced tree moves — Gibbs & Weighted proposals
+**Status:** IN PROGRESS (2026-03-27). All work on `mkp-gibbs` worktree.
+**Goal:** Add five new topology/branch-length moves from RevBayes's
+`mcmc_tree_moves` branch, adapted for MkPrime's unrooted representation
+and flat-buffer likelihood engine. Add an adaptive move scheduler that
+learns optimal move frequencies during warmup.
+
+**New moves:**
+| Move | Type | Cost | Key idea |
+|------|------|------|----------|
+| GibbsSPR | Topology | O(N) evals | Sample reattachment ∝ posterior weight |
+| GibbsSubtreeSwap | Topology | O(N) evals | Sample swap partner ∝ posterior weight |
+| WeightedBranchLengthScale | Branch | O(B) evals | Integrate over discretised branch fractions |
+| WeightedSPR | Topology+Branch | O(N×B) evals | Marginalise topology × branch fraction jointly |
+| WeightedSubtreeSwap | Topology+Branch | O(N×B) evals | Same as WeightedSPR with swap operation |
+
+**Adaptive scheduler (M-092):** Track `accept_rate / mean_cost` per move
+during warmup; reweight via softmax with annealing temperature; freeze
+after warmup. User can pin specific weights via `moveWeights` in
+`MkPrimeMCMC()`.
+
+**Sub-phases:**
+- **9a (P1 blockers):** M-083 (`compute_full_loglik()` helper), M-084 (subtree-swap op)
+- **9b (Gibbs):** M-085 (GibbsSPR), M-086 (GibbsSubtreeSwap)
+- **9c (Weighted):** M-087 (WeightedBranchLengthScale), M-088 (WeightedSPR), M-089 (WeightedSubtreeSwap)
+- **9d (Integration):** M-090 (dispatch wiring), M-092 (adaptive scheduler), M-091 (mixing validation)
+
+**Plan file:** `.positai/plans/2026-03-27-1100-gibbsweighted-tree-moves-for-unrooted-trees.md`
+
+**Design decisions:**
+- Gibbs/Weighted moves use `exp(β × logLik + logPrior)` weights — compatible
+  with parallel tempering (β from chain's heat; prior unheated).
+- Weighted moves default OFF (`weightedSpr = FALSE`) — too expensive for small
+  datasets; user opts in for large trees where O(N×B) is worth the gain.
+- Adaptive scheduler freezes weights at warmup end to preserve detailed balance.
+
+---
 
 ## Agent Allocation
 

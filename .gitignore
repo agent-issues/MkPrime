@@ -21,3 +21,7 @@ Thumbs.db
 .RData
 .Rproj.user
 Rplots.pdf
+
+# Test run artifacts
+test_output.txt
+test_run*.log

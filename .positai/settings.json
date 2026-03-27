@@ -1,7 +1,8 @@
 {
   "permission": {
     "webfetch": {
-      "https://raw.githubusercontent.com/*": "allow"
+      "https://raw.githubusercontent.com/*": "allow",
+      "https://github.com/*": "allow"
     },
     "edit": {
       "*.qmd": "allow",
@@ -9,7 +10,7 @@
     }
   },
   "model": {
-    "id": "claude-opus-4-6",
+    "id": "claude-sonnet-4-6",
     "provider": "positai",
     "thinkingEffort": "high"
   }
