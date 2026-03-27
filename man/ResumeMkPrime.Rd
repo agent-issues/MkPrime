@@ -31,4 +31,6 @@ An \code{MkPosterior} object with combined samples.
 \description{
 Loads a checkpoint file and continues the MCMC from where it left off.
 The remaining iterations will be appended to the existing samples.
+Called automatically by \code{\link[=RunMkPrime]{RunMkPrime()}} when a checkpoint file exists
+and \code{overwrite = FALSE}.
 }

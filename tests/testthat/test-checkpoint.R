@@ -84,6 +84,58 @@ test_that("ResumeMkPrime continues from checkpoint", {
 })
 
 
+test_that("RunMkPrime auto-resumes from existing checkpoint", {
+  library(ape)
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  cp_file <- tempfile(fileext = ".rds")
+  on.exit(unlink(cp_file), add = TRUE)
+
+  # Run with time limit to create a checkpoint
+  set.seed(4821)
+  mcmcConf <- MkPrimeMCMC(nRuns = 1L, nIter = 5000L, thin = 5L,
+                           warmup = 200L, checkEvery = 300L,
+                           checkpointFile = cp_file, maxTime = 0.5)
+  result1 <- RunMkPrime(pd, tree, mcmc = mcmcConf)
+  expect_true(file.exists(cp_file))
+  n1 <- nrow(result1$samples)
+
+  # Calling RunMkPrime again with same mcmc should auto-resume
+  result2 <- RunMkPrime(pd, tree, mcmc = mcmcConf)
+  expect_s3_class(result2, "MkPosterior")
+  expect_gte(nrow(result2$samples), n1)
+})
+
+
+test_that("RunMkPrime overwrite = TRUE ignores existing checkpoint", {
+  library(ape)
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  cp_file <- tempfile(fileext = ".rds")
+  on.exit(unlink(cp_file), add = TRUE)
+
+  # Create a checkpoint
+  set.seed(3952)
+  mcmcConf <- MkPrimeMCMC(nRuns = 1L, nIter = 1000L, thin = 5L,
+                           warmup = 200L, checkEvery = 300L,
+                           checkpointFile = cp_file)
+  RunMkPrime(pd, tree, mcmc = mcmcConf)
+  expect_true(file.exists(cp_file))
+
+  # overwrite = TRUE starts fresh
+  set.seed(6149)
+  result <- RunMkPrime(pd, tree, mcmc = mcmcConf, overwrite = TRUE)
+  expect_s3_class(result, "MkPosterior")
+  expect_equal(nrow(result$samples), 160L)
+})
+
+
 test_that("Checkpoint without checkpointFile does nothing", {
   library(ape)
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")

@@ -269,8 +269,7 @@ if (length(kprimeCols) > 0L) {
 
 ### Posterior tree distribution
 
-Sampled trees are stored in the returned object. Use **TreeTools**
-to summarize topology:
+Sampled trees are stored in the returned object.
 
 ```{r tree-summary}
 #| eval: false
@@ -280,13 +279,13 @@ to summarize topology:
 allTrees <- posterior$trees
 
 # Identify and exclude rogue taxa that destabilize the consensus
-rogues <- Rogue::QuickRogue(allTrees)
-rogueNames <- rogues$taxon[rogues$taxon != ""]
-if (length(rogueNames) > 0L) {
-  cat("Rogue taxa identified:", paste(rogueNames, collapse = ", "), "\n")
-  allTrees <- lapply(allTrees, ape::drop.tip, tip = rogueNames)
-  class(allTrees) <- "multiPhylo"
-}
+# rogues <- Rogue::QuickRogue(allTrees)
+# rogueNames <- rogues$taxon[rogues$taxon != ""]
+# if (length(rogueNames) > 0L) {
+#   cat("Rogue taxa identified:", paste(rogueNames, collapse = ", "), "\n")
+#   allTrees <- lapply(allTrees, ape::drop.tip, tip = rogueNames)
+#   class(allTrees) <- "multiPhylo"
+# }
 
 consensus <- TreeTools::Consensus(allTrees, p = 0.5)
 plot(consensus, cex = 0.6, main = "Majority-rule consensus (rogues excluded)")
@@ -298,8 +297,9 @@ plot(consensus, cex = 0.6, main = "Majority-rule consensus (rogues excluded)")
 # Majority-rule consensus from a demo run
 allTrees <- posteriorDemo$trees[-(1:100)]
 
+
 # Identify rogue taxa
-rogues <- Rogue::QuickRogue(allTrees)
+rogues <- Rogue::QuickRogue(sample(allTrees, 10))
 rogueNames <- rogues$taxon[rogues$taxon != ""]
 if (length(rogueNames) > 0L) {
   cat("Rogue taxa:", paste(rogueNames, collapse = ", "), "\n")

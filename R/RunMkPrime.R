@@ -19,6 +19,10 @@
 #' @param mcmc An `MkPrimeMCMC` object, or `NULL` for defaults.
 #' @param fixTopology Logical. If `TRUE`, tree topology is fixed (Phase 3
 #'   behaviour). Default `FALSE` enables NNI and SPR topology proposals.
+#' @param overwrite Logical. If `FALSE` (the default) and
+#'   `mcmc$checkpointFile` points to an existing file, the run is
+#'   automatically resumed from that checkpoint.
+#'   Set to `TRUE` to discard the existing checkpoint and start fresh.
 #'
 #' @return An `MkPosterior` object.
 #' @export
@@ -27,7 +31,23 @@ RunMkPrime <- function(data, tree,
                        knownStates = integer(0),
                        model = NULL,
                        mcmc = NULL,
-                       fixTopology = FALSE) {
+                       fixTopology = FALSE,
+                       overwrite = FALSE) {
+
+  # --- Auto-resume from checkpoint ---
+  if (is.null(mcmc)) mcmc <- MkPrimeMCMC()
+  cpFile <- mcmc$checkpointFile
+  if (!overwrite && !is.null(cpFile) && file.exists(cpFile)) {
+    cli::cli_alert_info("Resuming from checkpoint {.file {cpFile}}.")
+    return(ResumeMkPrime(
+      checkpointFile = cpFile,
+      data = data,
+      tree = tree,
+      neomorphic = neomorphic,
+      knownStates = knownStates,
+      model = model
+    ))
+  }
 
   # --- Input processing ---
   if (inherits(data, "MkPrimeData")) {
@@ -58,7 +78,7 @@ RunMkPrime <- function(data, tree,
   }
 
   if (is.null(model)) model <- MkPrimeModel()
-  if (is.null(mcmc)) mcmc <- MkPrimeMCMC()
+  # mcmc already defaulted above (before auto-resume check)
 
   model <- .FinalizeModel(model, tree, mkd)
 
@@ -188,7 +208,7 @@ RunMkPrime <- function(data, tree,
           curTree <- structure(
             list(edge        = result$edge_samples[[i]],
                  edge.length = tl * relBr,
-                 Nnode       = as.integer(nEdge / 2L + 1L),
+                 Nnode       = length(tipLabels) - 2L,
                  tip.label   = tipLabels),
             class = "phylo"
           )
@@ -495,6 +515,8 @@ RunMkPrime <- function(data, tree,
 #'
 #' Loads a checkpoint file and continues the MCMC from where it left off.
 #' The remaining iterations will be appended to the existing samples.
+#' Called automatically by [RunMkPrime()] when a checkpoint file exists
+#' and `overwrite = FALSE`.
 #'
 #' @param checkpointFile Path to the checkpoint RDS file.
 #' @param data A `phyDat` or `MkPrimeData` object (must match original).
@@ -652,7 +674,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
           r$tree_samples[[r$saved_idx]] <- structure(
             list(edge        = result$edge_samples[[i]],
                  edge.length = tl * relBr,
-                 Nnode       = as.integer(nEdge / 2L + 1L),
+                 Nnode       = length(tipLabels) - 2L,
                  tip.label   = tipLabels),
             class = "phylo"
           )
@@ -1152,7 +1174,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     list(
       edge = state$edge,
       edge.length = state$treeLength * state$relBrLengths,
-      Nnode = nrow(state$edge) / 2L + 1L,
+      Nnode = length(tipLabels) - 2L,
       tip.label = tipLabels
     ),
     class = "phylo"

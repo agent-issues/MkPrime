@@ -28,6 +28,11 @@ a \code{phyDat} object.}
 
 \item{fixTopology}{Logical. If \code{TRUE}, tree topology is fixed (Phase 3
 behaviour). Default \code{FALSE} enables NNI and SPR topology proposals.}
+
+\item{overwrite}{Logical. If \code{FALSE} (the default) and
+\code{mcmc$checkpointFile} points to an existing file, the run is
+automatically resumed from that checkpoint.
+Set to \code{TRUE} to discard the existing checkpoint and start fresh.}
 }
 \value{
 An \code{MkPosterior} object.
