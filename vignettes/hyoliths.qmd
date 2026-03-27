@@ -151,12 +151,10 @@ For a **production run** on this dataset we recommend:
 
 ```{r mcmc-production}
 mcmcProduction <- MkPrimeMCMC(
-  nIter          = 200000L,
   thin           = 100L,
   warmup         = 50000L,
   nRuns          = 2L,       # 2 independent runs for PSRF diagnostics
   nChains        = 4L,       # parallel tempering chains
-  heat           = 0.2,
   minEss         = 200L,     # stop early when min ESS exceeds 200
   maxPsrf        = 1.05,     # stop early when max PSRF drops below 1.05
   checkEvery     = 5000L,
@@ -280,7 +278,7 @@ allTrees <- posterior$trees
 
 # Identify and exclude rogue taxa that destabilize the consensus
 # rogues <- Rogue::QuickRogue(allTrees)
-# rogueNames <- rogues$taxon[rogues$taxon != ""]
+# rogueNames <- rogues$taxon[nzchar(rogues$taxon, keepNA = FALSE)]
 # if (length(rogueNames) > 0L) {
 #   cat("Rogue taxa identified:", paste(rogueNames, collapse = ", "), "\n")
 #   allTrees <- lapply(allTrees, ape::drop.tip, tip = rogueNames)
@@ -288,7 +286,8 @@ allTrees <- posterior$trees
 # }
 
 consensus <- TreeTools::Consensus(allTrees, p = 0.5)
-plot(consensus, cex = 0.6, main = "Majority-rule consensus (rogues excluded)")
+par(mar = rep(0, 4))
+plot(consensus, cex = 0.6, main = "Majority-rule consensus")
 ```
 
 
@@ -300,7 +299,7 @@ allTrees <- posteriorDemo$trees[-(1:100)]
 
 # Identify rogue taxa
 rogues <- Rogue::QuickRogue(sample(allTrees, 10))
-rogueNames <- rogues$taxon[rogues$taxon != ""]
+rogueNames <- rogues$taxon[nzchar(rogues$taxon, keepNA = FALSE)]
 if (length(rogueNames) > 0L) {
   cat("Rogue taxa:", paste(rogueNames, collapse = ", "), "\n")
   allTrees <- lapply(allTrees, ape::drop.tip, tip = rogueNames)
@@ -308,7 +307,9 @@ if (length(rogueNames) > 0L) {
 }
 
 consensus <- TreeTools::Consensus(allTrees, p = 0.5)
-plot(consensus, cex = 0.6, main = "Majority-rule consensus (rogues excluded)")
+consTitle <- if (length(rogueNames) > 0L) "Majority-rule consensus (rogues excluded)" else "Majority-rule consensus"
+par(mar = rep(0, 4))
+plot(consensus, cex = 0.6, main = consTitle)
 ```
 
 

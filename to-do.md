@@ -49,7 +49,7 @@ headers where available.
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
 | M-071 | P1 | OPEN | **Progress bar redesign.** Replace `{cli::pb_bar} current/total \| accept% ` with `iter \| ESS: N \| logP: N \| PSRF: N`. A bar is misleading because the run works toward a *convergence* condition, not a fixed iteration count. Make `nIter` default to `Inf` in `MkPrimeMCMC()` (rely on `minEss`/`maxPsrf`/`maxTime` stopping criteria). Update `ResumeMkPrime` progress display to match. Update vignette MCMC configs and docs. |
-| M-072 | P2 | OPEN | **hyoliths.qmd tree-summary-demo chunk fixes.** (a) Add `par(mar = rep(0, 4))` before `plot(consensus, ...)` — do this via a chunk `fig.par` option or an explicit `par()` call. (b) The plot title says "rogues excluded" even when no rogue detection has run; make the title conditional on whether rogues were actually identified and removed. |
+| M-072 | P2 | ASSIGNED (C) | **hyoliths.qmd tree-summary-demo chunk fixes.** (a) Add `par(mar = rep(0, 4))` before `plot(consensus, ...)` — do this via a chunk `fig.par` option or an explicit `par()` call. (b) The plot title says "rogues excluded" even when no rogue detection has run; make the title conditional on whether rogues were actually identified and removed. |
 
 ## Posterior & analysis improvements
 
