@@ -43,6 +43,32 @@ test_that("parallel = TRUE with nRuns = 1 falls back to sequential", {
   expect_s3_class(result, "MkPosterior")
 })
 
+test_that("parallel mode auto-assigns logFile when logFile = NULL", {
+  # Regression: .BuildResult() was using mcmc$logFile (NULL) not logFilePaths
+  # to determine streaming mode, causing a crash on r$samples subscript.
+  skip_if_not_installed("future")
+  library(ape)
+  library(future)
+
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
+                 dimnames = list(paste0("t", 1:4), NULL))
+  pd   <- TreeTools::MatrixToPhyDat(mat)
+
+  old_plan <- future::plan()
+  on.exit(future::plan(old_plan), add = TRUE)
+  future::plan("sequential")
+
+  # No logFile supplied — must be auto-assigned without crashing
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 400L, warmup = 200L,
+                        parallel = TRUE, pollInterval = 1L))
+
+  expect_s3_class(result, "MkPosterior")
+  expect_true(!is.null(result$logFile))
+  expect_true(result$nSamples > 0L)
+})
+
 test_that("parallel orchestration (sequential plan) returns valid MkPosterior", {
   skip_if_not_installed("future")
   library(ape)

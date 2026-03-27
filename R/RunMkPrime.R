@@ -172,6 +172,17 @@ RunMkPrime <- function(data, tree,
     stopReason   <- parResult$stopReason
     actualIter   <- parResult$actualIter
     isStreaming   <- !is.null(logFilePaths)
+
+    # Write tree samples to treeFile if set (workers passed treeFile = NULL
+    # to avoid concurrent file writes; we flush from the collected states).
+    if (!is.null(treeFile)) {
+      for (r in runs) {
+        for (tr in r$tree_samples) {
+          if (!is.null(tr)) cat(ape::write.tree(tr), "\n",
+                                file = treeFile, append = TRUE)
+        }
+      }
+    }
   } else {
     # Sequential: run each run to completion before starting the next.
     # .RunMkPrimeSingleRun() accepts R-serializable state, reconstructs
@@ -630,7 +641,11 @@ RunMkPrime <- function(data, tree,
           startIter      = 1L,
           isStreaming    = TRUE,
           convWindowSize = convWindowSize,
-          treeFile       = treeFile
+          # treeFile must be NULL for parallel workers: multiple processes
+          # appending to the same file path would corrupt Newick output.
+          # Tree samples are still stored in-memory and returned in the run
+          # state, then written by the caller if treeFile is set.
+          treeFile       = NULL
         )
       },
       seed = TRUE
@@ -825,7 +840,10 @@ RunMkPrime <- function(data, tree,
 .BuildResult <- function(runs, model, mkd, mcmc, paramNames, logFilePaths,
                          actualIter, stopReason) {
   nRuns       <- length(runs)
-  isStreaming <- !is.null(mcmc$logFile)
+  # Use logFilePaths (not mcmc$logFile) to determine streaming mode: in
+  # parallel runs, .RunParallelRuns() may auto-assign a tempfile log even
+  # when mcmc$logFile is NULL, so mcmc$logFile would be stale here.
+  isStreaming <- !is.null(logFilePaths)
 
   # Flush any remaining streaming buffer rows, then trim to actual save count
   for (run in seq_len(nRuns)) {
