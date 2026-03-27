@@ -413,16 +413,10 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
     np[sibRow]    = u;        nc[sibRow]    = b;
     na[sibRow]    = 0.5 * lReg;
 
-    IntegerMatrix tmpEdge(nEdge, 2);
-    for (int k = 0; k < nEdge; ++k) { tmpEdge(k,0)=np[k]; tmpEdge(k,1)=nc[k]; }
-    IntegerVector ord = TreeTools::postorder_order(tmpEdge);
-    IntegerVector op(nEdge), oc(nEdge);
-    NumericVector oa(nEdge);
-    for (int k = 0; k < nEdge; ++k) {
-      int j = ord[k] - 1;
-      op[k]=np[j]; oc[k]=nc[j]; oa[k]=na[j];
-    }
-    candLL[ci] = compute_full_loglik_at(*data, *state, op, oc, oa);
+    auto po = TreeTools::preorder_weighted_impl(np, nc, na);
+    IntegerVector op = po.first(_, 0);
+    IntegerVector oc = po.first(_, 1);
+    candLL[ci] = compute_full_loglik_at(*data, *state, op, oc, po.second);
   }
 
   // 8. Sampling weights: exp(β × logLik), current state included
@@ -462,14 +456,13 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
     np[sibRow]    = u;        nc[sibRow]    = b;
     na[sibRow]    = 0.5 * lReg;
 
-    IntegerMatrix tmpEdge(nEdge, 2);
-    for (int k = 0; k < nEdge; ++k) { tmpEdge(k,0)=np[k]; tmpEdge(k,1)=nc[k]; }
-    IntegerVector ord = TreeTools::postorder_order(tmpEdge);
+    auto po = TreeTools::preorder_weighted_impl(np, nc, na);
+    IntegerMatrix ordEdge = po.first;
+    NumericVector ordAbs  = po.second;
     for (int k = 0; k < nEdge; ++k) {
-      int j = ord[k] - 1;
-      state->parent[k]       = np[j];
-      state->child[k]        = nc[j];
-      state->relBrLengths[k] = na[j] / state->treeLength;
+      state->parent[k]       = ordEdge(k, 0);
+      state->child[k]        = ordEdge(k, 1);
+      state->relBrLengths[k] = ordAbs[k] / state->treeLength;
     }
   }
 

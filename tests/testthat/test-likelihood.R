@@ -5,7 +5,7 @@ test_that("JC pruning on 3-taxon tree with 1 binary character", {
   library(ape)
 
   tree <- read.tree(text = "((t1:0.1,t2:0.1):0.1,t3:0.2);")
-  tree <- reorder(tree, "postorder")
+  tree <- TreeTools::Preorder(tree)
 
   tip_states <- matrix(c(0L, 1L, 0L), ncol = 1)
   tip_states_c <- tip_states
@@ -60,7 +60,7 @@ test_that("JC pruning on 3-taxon tree with 1 binary character", {
 test_that("JC pruning: all tips same state → higher likelihood than mixed", {
   library(ape)
   tree <- read.tree(text = "((t1:0.1,t2:0.1):0.1,t3:0.1);")
-  tree <- reorder(tree, "postorder")
+  tree <- TreeTools::Preorder(tree)
   root_freqs <- c(0.5, 0.5)
 
   # All same
@@ -84,7 +84,7 @@ test_that("JC pruning: all tips same state → higher likelihood than mixed", {
 test_that("JC pruning: missing data has higher likelihood than conflicting", {
   library(ape)
   tree <- read.tree(text = "((t1:0.1,t2:0.1):0.1,t3:0.1);")
-  tree <- reorder(tree, "postorder")
+  tree <- TreeTools::Preorder(tree)
   root_freqs <- c(0.5, 0.5)
 
   # t2 has conflicting state
@@ -108,7 +108,7 @@ test_that("JC pruning: missing data has higher likelihood than conflicting", {
 test_that("JC pruning: very long branches → log-lik approaches equiprobable", {
   library(ape)
   tree <- read.tree(text = "((t1:100,t2:100):100,t3:100);")
-  tree <- reorder(tree, "postorder")
+  tree <- TreeTools::Preorder(tree)
   root_freqs <- rep(1 / 3, 3)
 
   tips <- matrix(c(0L, 1L, 2L), ncol = 1)
@@ -130,7 +130,7 @@ test_that("JC pruning: very long branches → log-lik approaches equiprobable", 
 test_that("JC pruning with multiple characters", {
   library(ape)
   tree <- read.tree(text = "((t1:0.1,t2:0.1):0.1,t3:0.2);")
-  tree <- reorder(tree, "postorder")
+  tree <- TreeTools::Preorder(tree)
   root_freqs <- c(0.5, 0.5)
 
   # Two characters: c1 = (0,1,0), c2 = (1,1,0)
@@ -158,7 +158,7 @@ test_that("JC pruning with multiple characters", {
 test_that("JC pruning with k=3 on 4-taxon tree", {
   library(ape)
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
-  tree <- reorder(tree, "postorder")
+  tree <- TreeTools::Preorder(tree)
   root_freqs <- rep(1 / 3, 3)
 
   tips <- matrix(c(0L, 1L, 2L, 0L), ncol = 1)
@@ -177,7 +177,7 @@ test_that("JC pruning with k=3 on 4-taxon tree", {
 test_that("MkN pruning with rate_loss=1 matches JC(2)", {
   library(ape)
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
-  tree <- reorder(tree, "postorder")
+  tree <- TreeTools::Preorder(tree)
   root_freqs <- c(0.5, 0.5)
 
   tips <- matrix(c(0L, 1L, 0L, 1L), ncol = 1)
@@ -199,7 +199,7 @@ test_that("MkN pruning with rate_loss=1 matches JC(2)", {
 test_that("MkN pruning with stationary root freqs", {
   library(ape)
   tree <- read.tree(text = "((t1:0.1,t2:0.1):0.1,t3:0.2);")
-  tree <- reorder(tree, "postorder")
+  tree <- TreeTools::Preorder(tree)
 
   tips <- matrix(c(0L, 1L, 0L), ncol = 1)
   rate_loss <- 2.5
@@ -218,7 +218,7 @@ test_that("MkN pruning with stationary root freqs", {
 test_that("MkN pruning: asymmetric rate changes likelihood", {
   library(ape)
   tree <- read.tree(text = "((t1:0.1,t2:0.1):0.1,t3:0.2);")
-  tree <- reorder(tree, "postorder")
+  tree <- TreeTools::Preorder(tree)
 
   tips <- matrix(c(0L, 1L, 0L), ncol = 1)
 

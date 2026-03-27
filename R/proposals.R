@@ -77,13 +77,13 @@ ProposeBoundedIntWalk <- function(x, lower, window = 1L) {
 #' (Hastings ratio = 1).
 #'
 #' Delegates to C++ (\code{nni_proposal} in tree_moves.cpp) for edge
-#' manipulation and postorder reordering.
+#' manipulation and canonical preorder reordering.
 #'
-#' @param tree A `phylo` object in postorder (unrooted binary).
+#' @param tree A `phylo` object in canonical preorder (unrooted binary).
 #' @param tree_length Current total tree length.
 #' @param rel_br_lengths Current relative branch lengths (simplex).
 #' @return `list(tree, rel_br_lengths, logHastings)`. The returned tree
-#'   is in postorder.
+#'   is in canonical preorder.
 #' @keywords internal
 ProposeNni <- function(tree, tree_length, rel_br_lengths) {
   result <- nni_proposal(tree$edge, length(tree$tip.label),
@@ -110,16 +110,16 @@ ProposeNni <- function(tree, tree_length, rel_br_lengths) {
 #' reattaches u on a random backbone edge.
 #'
 #' Delegates to C++ (\code{spr_proposal} in proposals.cpp) for edge
-#' manipulation and postorder reordering.
+#' manipulation and canonical preorder reordering.
 #'
 #' The Hastings ratio includes a Jacobian correction for the edge length
 #' redistribution: `log(lRegraft) - log(lMerge)`.
 #'
-#' @param tree A `phylo` object in postorder (unrooted binary).
+#' @param tree A `phylo` object in canonical preorder (unrooted binary).
 #' @param tree_length Current total tree length.
 #' @param rel_br_lengths Current relative branch lengths (simplex).
 #' @return `list(tree, rel_br_lengths, logHastings)`. The returned tree
-#'   is in postorder.
+#'   is in canonical preorder.
 #' @keywords internal
 ProposeSpr <- function(tree, tree_length, rel_br_lengths) {
   result <- spr_proposal(tree$edge, length(tree$tip.label),

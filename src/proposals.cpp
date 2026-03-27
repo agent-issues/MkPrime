@@ -146,22 +146,16 @@ List spr_proposal_impl(IntegerVector parent, IntegerVector child,
   newChild[sibRow] = b;
   newAbsLen[sibRow] = (1.0 - tau) * lRegraft;
 
-  // Build temporary edge matrix for postorder_order()
-  IntegerMatrix tmpEdge(nEdge, 2);
-  for (int i = 0; i < nEdge; ++i) {
-    tmpEdge(i, 0) = newParent[i];
-    tmpEdge(i, 1) = newChild[i];
-  }
-  IntegerVector order = TreeTools::postorder_order(tmpEdge);
-
+  // Canonical preorder reordering (topology + branch lengths in one pass)
+  auto po = TreeTools::preorder_weighted_impl(newParent, newChild, newAbsLen);
+  IntegerMatrix ordEdge = po.first;
+  NumericVector ordAbs  = po.second;
   IntegerVector ordParent(nEdge), ordChild(nEdge);
-  NumericVector orderedRelBr(nEdge);
   for (int i = 0; i < nEdge; ++i) {
-    int j = order[i] - 1;
-    ordParent[i] = newParent[j];
-    ordChild[i] = newChild[j];
-    orderedRelBr[i] = newAbsLen[j] / treeLength;
+    ordParent[i] = ordEdge(i, 0);
+    ordChild[i]  = ordEdge(i, 1);
   }
+  NumericVector orderedRelBr = ordAbs / treeLength;
 
   const double logHastings = std::log(lRegraft) - std::log(lMerge);
 

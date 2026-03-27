@@ -11,7 +11,7 @@
 // This is the JC(k) version. The MkN version follows the same pattern.
 //
 // Parameters:
-//   parent, child, edge_length: tree in postorder (1-indexed)
+//   parent, child, edge_length: tree in canonical preorder (1-indexed)
 //   tip_states: nTip x nChar (0-indexed, -1 for missing)
 //   kStates: number of states
 //   root_freqs: equilibrium frequencies (length kStates)
@@ -33,7 +33,7 @@ double pruning_jc_acrv(Rcpp::IntegerVector parent,
   int nCat = rate_multipliers.size();
 
   int maxNode = 0;
-  for (int e = 0; e < nEdge; ++e) {
+  for (int e = nEdge - 1; e >= 0; --e) {
     if (parent[e] > maxNode) maxNode = parent[e];
     if (child[e] > maxNode) maxNode = child[e];
   }
@@ -78,7 +78,7 @@ double pruning_jc_acrv(Rcpp::IntegerVector parent,
     }
 
     // Post-order traversal with scaled branch lengths
-    for (int e = 0; e < nEdge; ++e) {
+    for (int e = nEdge - 1; e >= 0; --e) {
       int par = parent[e];
       int ch = child[e];
       double t = edge_length[e] * rate;
@@ -152,7 +152,7 @@ double pruning_mkn_acrv(Rcpp::IntegerVector parent,
   const int kStates = 2;
 
   int maxNode = 0;
-  for (int e = 0; e < nEdge; ++e) {
+  for (int e = nEdge - 1; e >= 0; --e) {
     if (parent[e] > maxNode) maxNode = parent[e];
     if (child[e] > maxNode) maxNode = child[e];
   }
@@ -191,7 +191,7 @@ double pruning_mkn_acrv(Rcpp::IntegerVector parent,
       initialized[tip] = true;
     }
 
-    for (int e = 0; e < nEdge; ++e) {
+    for (int e = nEdge - 1; e >= 0; --e) {
       int par = parent[e];
       int ch = child[e];
       double t = edge_length[e] * rate;

@@ -10,16 +10,42 @@ library(TreeTools)
 # Fixture helpers
 # ---------------------------------------------------------------------------
 
-# 5-tip postorder tree: ((t1,t2),(t3,(t4,t5)));
-# Internal nodes: 6=root(t1,t2 | t3,(t4,t5)), 7=(t1,t2), 8=(t3,(t4,t5)), 9=(t4,t5)
+# 5-tip preorder tree: ((t1,t2),(t3,(t4,t5)));
+# Canonical preorder renumbers internal nodes in visit order:
+#   root=6, first visited subtree internal=7, etc.
 .tree5 <- function() {
   tr <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,(t4:0.1,t5:0.2):0.12):0.18);")
-  Postorder(tr)
+  Preorder(tr)
 }
 
 .edge5   <- function() .tree5()$edge
 .relBr5  <- function() { tr <- .tree5(); tr$edge.length / sum(tr$edge.length) }
 .treeL5  <- function() sum(.tree5()$edge.length)
+
+# Get all tips that descend from `node` in a tree given by `edge`.
+.tips_below <- function(edge, node, nTip) {
+  if (node <= nTip) return(node)
+  tips <- integer(0)
+  queue <- node
+  while (length(queue) > 0) {
+    cur <- queue[1L]; queue <- queue[-1L]
+    children <- edge[edge[, 1L] == cur, 2L]
+    for (ch in children) {
+      if (ch <= nTip) tips <- c(tips, ch) else queue <- c(queue, ch)
+    }
+  }
+  sort(tips)
+}
+
+# Find the edge-row index whose child subtree contains exactly `tips_set`.
+.find_subtree_row <- function(edge, tips_set, nTip) {
+  for (i in seq_len(nrow(edge))) {
+    nd <- edge[i, 2L]
+    if (nd <= nTip) { if (length(tips_set) == 1L && nd == tips_set) return(i); next }
+    if (setequal(.tips_below(edge, nd, nTip), tips_set)) return(i)
+  }
+  NA_integer_
+}
 
 
 # ---------------------------------------------------------------------------
@@ -32,24 +58,18 @@ test_that("double swap is identity", {
   treeL  <- .treeL5()
   nTip   <- 5L
 
-  # Swap nodes 7 and 9 (both internal, non-nested, non-sibling)
-  res1 <- swap_subtrees_cpp(edge, nTip, treeL, relBr, nodeA = 7L, nodeB = 9L)
+  # Use TIP nodes (labels stable across canonical renumbering)
+  res1 <- swap_subtrees_cpp(edge, nTip, treeL, relBr, nodeA = 1L, nodeB = 4L)
   expect_equal(res1$logHastings, 0.0)
 
-  # Swap them back
+  # Swap the same tips again → identity
   res2 <- swap_subtrees_cpp(res1$edge, nTip, treeL, res1$rel_br_lengths,
-                             nodeA = 7L, nodeB = 9L)
+                             nodeA = 1L, nodeB = 4L)
   expect_equal(res2$logHastings, 0.0)
 
-  # After double swap, edge and relBr should match original (up to postorder)
-  # Match by sorting edge rows
-  orig_sorted <- edge[order(edge[, 1L], edge[, 2L]), ]
-  res2_sorted <- res2$edge[order(res2$edge[, 1L], res2$edge[, 2L]), ]
-  expect_equal(orig_sorted, res2_sorted)
-
-  orig_el  <- sort(treeL * relBr)
-  res2_el  <- sort(treeL * res2$rel_br_lengths)
-  expect_equal(orig_el, res2_el, tolerance = 1e-10)
+  # Canonical preorder is unique per topology → identical edge matrices
+  expect_equal(res2$edge, edge)
+  expect_equal(res2$rel_br_lengths, relBr, tolerance = 1e-10)
 })
 
 
@@ -63,25 +83,19 @@ test_that("swapping two tip nodes exchanges them in the topology", {
   treeL <- .treeL5()
   nTip  <- 5L
 
-  # Swap tip 1 (t1) and tip 3 (t3): result should have t3 where t1 was
-  # and t1 where t3 was — reconstruct to check topology
+  # Swap tip 1 (t1) and tip 3 (t3)
   res <- swap_subtrees_cpp(edge, nTip, treeL, relBr, nodeA = 1L, nodeB = 3L)
   expect_equal(res$logHastings, 0.0)
 
-  # Rebuild phylo and check that t1 and t3 changed places
-  tr_orig <- .tree5()
-  tr_swap <- tr_orig
-  tr_swap$edge       <- res$edge
-  tr_swap$edge.length <- treeL * res$rel_br_lengths
+  # After swap: t3 should be grouped with t2 (was t1's sibling)
+  new_p_t3 <- res$edge[res$edge[, 2L] == 3L, 1L]
+  new_p_t2 <- res$edge[res$edge[, 2L] == 2L, 1L]
+  expect_equal(new_p_t3, new_p_t2)
 
-  # Verify: node 1's parent in original should equal node 3's parent in swapped
-  orig_p1 <- edge[edge[, 2L] == 1L, 1L]  # parent of t1 in original
-  swap_p3 <- res$edge[res$edge[, 2L] == 3L, 1L]  # parent of t3 after swap
-  expect_equal(orig_p1, swap_p3)
-
-  orig_p3 <- edge[edge[, 2L] == 3L, 1L]  # parent of t3 in original
-  swap_p1 <- res$edge[res$edge[, 2L] == 1L, 1L]  # parent of t1 after swap
-  expect_equal(orig_p3, swap_p1)
+  # t1 should now be in the other clade, next to (t4,t5) subtree
+  new_p_t1 <- res$edge[res$edge[, 2L] == 1L, 1L]
+  tips_under_t1_parent <- .tips_below(res$edge, new_p_t1, nTip)
+  expect_true(setequal(tips_under_t1_parent, c(1L, 4L, 5L)))
 })
 
 
@@ -109,20 +123,22 @@ test_that("branch lengths swap when subtrees are exchanged", {
   edge  <- .edge5()
   relBr <- .relBr5()
   treeL <- .treeL5()
+  nTip  <- 5L
 
-  rowA  <- which(edge[, 2L] == 7L)
-  rowB  <- which(edge[, 2L] == 9L)
+  # Identify subtrees by tip content (stable across renumbering)
+  rowA <- .find_subtree_row(edge, c(1L, 2L), nTip)  # (t1, t2) subtree
+  rowB <- .find_subtree_row(edge, c(4L, 5L), nTip)  # (t4, t5) subtree
   origA <- relBr[rowA]
   origB <- relBr[rowB]
 
-  res <- swap_subtrees_cpp(edge, 5L, treeL, relBr, nodeA = 7L, nodeB = 9L)
+  res <- swap_subtrees_cpp(edge, nTip, treeL, relBr, nodeA = 7L, nodeB = 9L)
 
-  # Find rows for nodes 7 and 9 in swapped result (postorder may change rows)
-  new_rowA <- which(res$edge[, 2L] == 7L)
-  new_rowB <- which(res$edge[, 2L] == 9L)
+  # After swap, the subtree containing {1,2} now has the branch length from {4,5}
+  newRowA <- .find_subtree_row(res$edge, c(1L, 2L), nTip)
+  newRowB <- .find_subtree_row(res$edge, c(4L, 5L), nTip)
 
-  expect_equal(res$rel_br_lengths[new_rowA], origB, tolerance = 1e-14)
-  expect_equal(res$rel_br_lengths[new_rowB], origA, tolerance = 1e-14)
+  expect_equal(res$rel_br_lengths[newRowA], origB, tolerance = 1e-14)
+  expect_equal(res$rel_br_lengths[newRowB], origA, tolerance = 1e-14)
 })
 
 
@@ -236,33 +252,24 @@ test_that("swap with root node gives logHastings = -Inf", {
 
 test_that("swap on 4-tip tree matches hand-computed result", {
   # ((t1,t2),(t3,t4))
-  # nTip=4, root=5, internal: 5, 6=(t1,t2), 7=(t3,t4)
-  tr   <- Postorder(read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);"))
+  tr   <- Preorder(read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);"))
   edge <- tr$edge
   relBr <- tr$edge.length / sum(tr$edge.length)
   treeL <- sum(tr$edge.length)
   nTip  <- 4L
 
   # Swap tip 1 (t1) with tip 3 (t3)
-  # Before: parent(t1)=6, parent(t3)=7
-  # After:  parent(t1)=7, parent(t3)=6
   res <- swap_subtrees_cpp(edge, nTip, treeL, relBr, nodeA = 1L, nodeB = 3L)
   expect_equal(res$logHastings, 0.0)
 
-  # Verify parents have swapped
-  new_p1 <- res$edge[res$edge[, 2L] == 1L, 1L]
-  new_p3 <- res$edge[res$edge[, 2L] == 3L, 1L]
-  orig_p1 <- edge[edge[, 2L] == 1L, 1L]
-  orig_p3 <- edge[edge[, 2L] == 3L, 1L]
-
-  expect_equal(new_p1, orig_p3)
-  expect_equal(new_p3, orig_p1)
-
   # Result should be ((t3,t2),(t1,t4)) in terms of tip groupings:
   # t3 and t2 share a parent, t1 and t4 share a parent
-  new_sibling_of_t1 <- setdiff(res$edge[res$edge[,1] == new_p1, 2L], 1L)
+  new_p1 <- res$edge[res$edge[, 2L] == 1L, 1L]
+  new_p3 <- res$edge[res$edge[, 2L] == 3L, 1L]
+
+  new_sibling_of_t1 <- setdiff(res$edge[res$edge[, 1L] == new_p1, 2L], 1L)
   expect_equal(new_sibling_of_t1, 4L)
 
-  new_sibling_of_t3 <- setdiff(res$edge[res$edge[,1] == new_p3, 2L], 3L)
+  new_sibling_of_t3 <- setdiff(res$edge[res$edge[, 1L] == new_p3, 2L], 3L)
   expect_equal(new_sibling_of_t3, 2L)
 })

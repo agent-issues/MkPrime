@@ -100,6 +100,11 @@ static NumericVector mkn_stationary(double rateLoss) {
 //
 // buf layout: buf[node * stride + c * kStates + s]  (node 1-indexed)
 // initFlg:    uint8_t[nNodeMax+1], reset to 0 for each traversal.
+//
+// TRAVERSAL DIRECTION: edges are stored in TreeTools canonical preorder
+// (root → tips, children sorted by smallest descendant).  Iterating edges
+// in reverse (nEdge-1 → 0) is a correct bottom-up Felsenstein pass: every
+// child CL is fully computed before its parent edge is visited.
 // ---------------------------------------------------------------------------
 
 static double pruning_jc_flat(
@@ -136,7 +141,7 @@ static double pruning_jc_flat(
   double inv_k = 1.0 / kStates;
   double km1   = kStates - 1.0;
 
-  for (int e = 0; e < nEdge; ++e) {
+  for (int e = nEdge - 1; e >= 0; --e) {
     int par = parent[e];
     int ch  = child[e];
     double t        = edge_length[e];
@@ -224,7 +229,7 @@ static double pruning_jc_acrv_flat(
       initFlg[tip] = 1;
     }
 
-    for (int e = 0; e < nEdge; ++e) {
+    for (int e = nEdge - 1; e >= 0; --e) {
       int par = parent[e];
       int ch  = child[e];
       double t        = edge_length[e] * rate;
@@ -319,7 +324,7 @@ static double pruning_mkn_flat(
   double inv_lam_01 = rate01 / lambda;
   double inv_lam_10 = rate10 / lambda;
 
-  for (int e = 0; e < nEdge; ++e) {
+  for (int e = nEdge - 1; e >= 0; --e) {
     int par = parent[e];
     int ch  = child[e];
     double t        = edge_length[e];
@@ -408,7 +413,7 @@ static double pruning_mkn_acrv_flat(
       initFlg[tip] = 1;
     }
 
-    for (int e = 0; e < nEdge; ++e) {
+    for (int e = nEdge - 1; e >= 0; --e) {
       int par = parent[e];
       int ch  = child[e];
       double t        = edge_length[e] * rate;

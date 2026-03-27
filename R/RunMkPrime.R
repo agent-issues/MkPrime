@@ -82,8 +82,8 @@ RunMkPrime <- function(data, tree,
 
   model <- .FinalizeModel(model, tree, mkd)
 
-  # POSTORDER INVARIANT: all topology proposals maintain this ordering.
-  tree <- TreeTools::Postorder(tree)
+  # PREORDER INVARIANT: all topology proposals maintain canonical preorder.
+  tree <- TreeTools::Preorder(tree)
   nEdge <- nrow(tree$edge)
   tipLabels <- tree$tip.label
 
@@ -729,7 +729,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   }
 
   if (is.null(model)) model <- MkPrimeModel()
-  tree <- TreeTools::Postorder(tree)
+  tree <- TreeTools::Preorder(tree)
   model <- .FinalizeModel(model, tree, mkd)
 
   runs <- checkpoint$runs
@@ -1163,7 +1163,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     state$rate_neo <- 1.0
   }
 
-  # Tree is already postorder (reordered at init); use internal fast-path
+  # Tree is already preorder (reordered at init); use internal fast-path
   state$log_lik <- .MkpLogLikelihood(
     tree, mkd,
     kPrime = state$kPrime,

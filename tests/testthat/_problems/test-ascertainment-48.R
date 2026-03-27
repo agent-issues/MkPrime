@@ -8,7 +8,7 @@ attach(test_env, warn.conflicts = FALSE)
 # test -------------------------------------------------------------------------
 library(ape)
 tree <- read.tree(text = "((t1:100,t2:100):100,t3:100);")
-tree <- reorder(tree, "postorder")
+tree <- TreeTools::Preorder(tree)
 for (k in c(2, 3, 4)) {
     pconst <- MkPrime:::constant_site_prob_jc(
       tree$edge[, 1], tree$edge[, 2], tree$edge.length,

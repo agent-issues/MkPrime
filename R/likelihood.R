@@ -65,18 +65,18 @@ MkpLogLikelihood <- function(tree, mkd,
     }
   }
 
-  # Reorder to postorder for callers without the invariant guarantee.
+  # Reorder to canonical preorder for callers without the invariant guarantee.
   # The MCMC hot path calls .MkpLogLikelihood() directly and maintains
-  # the postorder invariant via .InitState() and all topology proposals.
-  tree <- ape::reorder.phylo(tree, "postorder")
+  # preorder invariant via .InitState() and all topology proposals.
+  tree <- TreeTools::Preorder(tree)
 
   .MkpLogLikelihood(tree, mkd, kPrime, rate_loss, rate_log_sd,
                     nCat, coding, rate_neo, relabel)
 }
 
 # Internal fast-path likelihood — no validation, no reorder.
-# INVARIANT: tree$edge must already be in postorder. This is guaranteed by
-# .InitState() and all topology proposals (ProposeNni, ProposeSpr).
+# INVARIANT: tree$edge must already be in canonical preorder. Guaranteed by
+# .InitState() and all topology proposals (C++ preorder_weighted_impl).
 .MkpLogLikelihood <- function(tree, mkd, kPrime, rate_loss, rate_log_sd,
                                nCat, coding, rate_neo, relabel) {
   parent <- tree$edge[, 1]

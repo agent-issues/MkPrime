@@ -1,8 +1,9 @@
 // C++ implementations of MCMC tree topology proposals (NNI, SPR).
 //
 // NNI: for an internal edge (u, v), swap one child of v with one child of u.
-// All operations on integer parent/child vectors; postorder reordering via
-// TreeTools::postorder_order() rather than ape::reorder.phylo().
+// All operations on integer parent/child vectors; canonical preorder
+// reordering via TreeTools::preorder_weighted_impl() (children sorted by
+// smallest descendant, nodes renumbered in visit order).
 //
 // M-065: Added _impl versions that accept parent/child vectors directly
 // (called from do_move_impl). The Rcpp-exported versions remain as thin
@@ -80,28 +81,19 @@ List nni_proposal_impl(IntegerVector parent, IntegerVector child,
   newParent[cRow] = u;
   newParent[wRow] = v;
 
-  // Absolute branch lengths for reorder-safe reconstruction
+  // Absolute branch lengths; preorder_weighted_impl reorders both simultaneously.
   NumericVector absLen(nEdge);
-  for (int i = 0; i < nEdge; i++) {
-    absLen[i] = treeLength * relBrLengths[i];
-  }
+  for (int i = 0; i < nEdge; i++) absLen[i] = treeLength * relBrLengths[i];
 
-  // Build temporary edge matrix for postorder_order()
-  IntegerMatrix tmpEdge(nEdge, 2);
-  for (int i = 0; i < nEdge; i++) {
-    tmpEdge(i, 0) = newParent[i];
-    tmpEdge(i, 1) = newChild[i];
-  }
-  IntegerVector order = TreeTools::postorder_order(tmpEdge);
-
+  auto po = TreeTools::preorder_weighted_impl(newParent, newChild, absLen);
+  IntegerMatrix ordEdge = po.first;
+  NumericVector ordAbs  = po.second;
   IntegerVector ordParent(nEdge), ordChild(nEdge);
-  NumericVector orderedRelBr(nEdge);
-  for (int i = 0; i < nEdge; i++) {
-    int j = order[i] - 1;
-    ordParent[i] = newParent[j];
-    ordChild[i] = newChild[j];
-    orderedRelBr[i] = absLen[j] / treeLength;
+  for (int i = 0; i < nEdge; ++i) {
+    ordParent[i] = ordEdge(i, 0);
+    ordChild[i]  = ordEdge(i, 1);
   }
+  NumericVector orderedRelBr = ordAbs / treeLength;
 
   return List::create(_["parent"] = ordParent,
                       _["child"] = ordChild,
@@ -117,7 +109,7 @@ List nni_proposal_impl(IntegerVector parent, IntegerVector child,
 //   nodeA and nodeB are child nodes (each has a parent edge).
 //   Their parent connections are swapped; branch lengths swap with them so
 //   total tree length is unchanged and the Jacobian is 1 (logHastings = 0).
-//   Result is reordered to postorder.
+//   Result is reordered to canonical preorder.
 //   Caller must ensure nodeA/nodeB are non-nested, non-sibling, non-root
 //   (use get_valid_swap_partners_impl).
 //
@@ -158,22 +150,20 @@ List swap_subtrees_impl(IntegerVector parent, IntegerVector child,
   newRelBr[rowA]  = relBrLengths[rowB];
   newRelBr[rowB]  = relBrLengths[rowA];
 
-  // Reorder to postorder
-  IntegerMatrix tmpEdge(nEdge, 2);
-  for (int i = 0; i < nEdge; ++i) {
-    tmpEdge(i, 0) = newParent[i];
-    tmpEdge(i, 1) = child[i];
-  }
-  IntegerVector order = TreeTools::postorder_order(tmpEdge);
+  // Reorder to canonical preorder; preorder_weighted_impl handles both
+  // topology and branch lengths in one pass.
+  NumericVector absLen(nEdge);
+  for (int i = 0; i < nEdge; ++i) absLen[i] = treeLength * newRelBr[i];
 
+  auto po = TreeTools::preorder_weighted_impl(newParent, child, absLen);
+  IntegerMatrix ordEdge = po.first;
+  NumericVector ordAbs  = po.second;
   IntegerVector ordParent(nEdge), ordChild(nEdge);
-  NumericVector ordRelBr(nEdge);
   for (int i = 0; i < nEdge; ++i) {
-    int j = order[i] - 1;
-    ordParent[i] = newParent[j];
-    ordChild[i]  = child[j];
-    ordRelBr[i]  = newRelBr[j];
+    ordParent[i] = ordEdge(i, 0);
+    ordChild[i]  = ordEdge(i, 1);
   }
+  NumericVector ordRelBr = ordAbs / treeLength;
 
   return List::create(_["parent"]        = ordParent,
                       _["child"]         = ordChild,

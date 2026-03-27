@@ -6,7 +6,7 @@
 # unconditionally (self-draw returns false).
 #
 # Testing strategy:
-#   - Structural: output is valid postorder tree, tree length preserved
+#   - Structural: output is valid preorder tree, tree length preserved
 #   - Functional: does change topology; does not mutate scalars
 #   - Statistical: on a tree with one clearly better topology, GibbsSPR
 #     selects it far more often than random (binomial test)
@@ -23,7 +23,7 @@ library(TreeTools)
   # MCMC operates on unrooted trees (2n-3 edges); ape::rtree() defaults to
   # rooted (2n-2 edges), so explicitly request unrooted here.
   tree  <- ape::rtree(nTip, rooted = FALSE)
-  tree  <- TreeTools::Postorder(tree)
+  tree  <- TreeTools::Preorder(tree)
   mat   <- matrix(
     sample(0:2, nTip * 4L, replace = TRUE),
     nrow = nTip, ncol = 4L,
@@ -72,9 +72,9 @@ test_that("GibbsSPR preserves tree length", {
   expect_equal(tl_before, tl_after, tolerance = 1e-12)
 })
 
-test_that("GibbsSPR result is in postorder", {
-  # ape/TreeTools postorder: all edges where nd is parent come BEFORE
-  # the edge where nd is child. i.e., last_as_parent < first_as_child.
+test_that("GibbsSPR result is in canonical preorder", {
+  # TreeTools preorder: edge where nd is child comes BEFORE all edges
+  # where nd is parent. i.e., first_as_child < first_as_parent.
   pts <- .gibbs_pts(seed = 103L)
   .try_move(pts, 10L)
   s   <- get_mcmc_state(pts$statePtr)
@@ -84,10 +84,10 @@ test_that("GibbsSPR result is in postorder", {
   root <- nTip + 1L
   internal <- unique(par[par != root])
   for (nd in internal) {
-    last_as_parent <- tail(which(par == nd), 1L)
-    first_as_child <- which(chi == nd)[1L]
-    expect_true(last_as_parent < first_as_child,
-                info = paste("node", nd, "not in postorder"))
+    first_as_parent <- which(par == nd)[1L]
+    first_as_child  <- which(chi == nd)[1L]
+    expect_true(first_as_child < first_as_parent,
+                info = paste("node", nd, "not in preorder"))
   }
 })
 
@@ -141,7 +141,7 @@ test_that("GibbsSPR samples better topologies more often than random", {
   # likelihood. Use a star-like character matrix that strongly favours
   # ((t1,t2),(t3,t4)).
   tree_good <- read.tree(text = "((t1:0.1,t2:0.1):0.2,(t3:0.1,t4:0.1):0.2);")
-  tree_good <- TreeTools::Postorder(tree_good)
+  tree_good <- TreeTools::Preorder(tree_good)
   # Characters: t1,t2 share state 1; t3,t4 share state 2
   mat <- matrix(c(1,1,0,0, 1,1,0,0, 0,0,1,1, 0,0,1,1,
                    1,1,0,0, 0,0,1,1),
@@ -189,7 +189,7 @@ test_that("GibbsSubtreeSwap preserves tree length", {
   expect_equal(tl_before, tl_after, tolerance = 1e-12)
 })
 
-test_that("GibbsSubtreeSwap result is in postorder", {
+test_that("GibbsSubtreeSwap result is in canonical preorder", {
   pts <- .gibbs_pts(seed = 203L, nTip = 6L)
   .try_move(pts, 11L, max_try = 100L)
   s    <- get_mcmc_state(pts$statePtr)
@@ -199,10 +199,10 @@ test_that("GibbsSubtreeSwap result is in postorder", {
   root <- nTip + 1L
   internal <- unique(par[par != root])
   for (nd in internal) {
-    last_as_parent <- tail(which(par == nd), 1L)
-    first_as_child <- which(chi == nd)[1L]
-    expect_true(last_as_parent < first_as_child,
-                info = paste("node", nd, "not in postorder"))
+    first_as_parent <- which(par == nd)[1L]
+    first_as_child  <- which(chi == nd)[1L]
+    expect_true(first_as_child < first_as_parent,
+                info = paste("node", nd, "not in preorder"))
   }
 })
 

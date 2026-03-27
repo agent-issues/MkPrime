@@ -120,7 +120,7 @@ MkPrimeModel <- function(
 #' @return Integer parsimony score.
 #' @keywords internal
 .FitchScore <- function(tree, mkd) {
-  tree <- TreeTools::Postorder(tree)
+  tree <- TreeTools::Preorder(tree)
   edge <- tree$edge
   nTip <- length(tree$tip.label)
   nNode <- tree$Nnode
@@ -137,7 +137,8 @@ MkPrimeModel <- function(
       sets[[i]] <- if (is.na(s)) seq.int(0L, mkd$kObs[j] - 1L) else s
     }
 
-    for (i in seq_len(nrow(edge))) {
+    # Reverse traversal: preorder edges reversed = bottom-up (Fitch pass)
+    for (i in rev(seq_len(nrow(edge)))) {
       p <- edge[i, 1]
       ch <- edge[i, 2]
       if (is.null(sets[[p]])) {

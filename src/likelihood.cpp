@@ -8,8 +8,10 @@
 // Computes the log-likelihood of a set of characters on a tree, where all
 // characters share the same number of states (kStates) and use the JC model.
 //
-// The tree is given in ape's postorder format: parent[i] and child[i] define
-// edge i, with edges ordered so children are processed before parents.
+// The tree is given in TreeTools canonical preorder: parent[i] / child[i]
+// define edge i with root-to-tip ordering (children sorted by smallest
+// descendant).  Traversal iterates edges in reverse so children are
+// processed before parents (equivalent to postorder for Felsenstein).
 //
 // Tip states are 0-indexed integers. A value of -1 indicates missing data
 // (all states equally likely at that tip for that character).
@@ -37,7 +39,7 @@ double pruning_jc(Rcpp::IntegerVector parent,
   int nNode = nTip + nEdge / 2 + 1; // approx; use max node index instead
   // Find actual nNode from max parent index
   int maxNode = 0;
-  for (int e = 0; e < nEdge; ++e) {
+  for (int e = nEdge - 1; e >= 0; --e) {
     if (parent[e] > maxNode) maxNode = parent[e];
     if (child[e] > maxNode) maxNode = child[e];
   }
@@ -71,7 +73,7 @@ double pruning_jc(Rcpp::IntegerVector parent,
   // Post-order traversal: process edges in the given order
   // For each edge (parent -> child), compute the contribution of this child
   // to the parent's conditional likelihood
-  for (int e = 0; e < nEdge; ++e) {
+  for (int e = nEdge - 1; e >= 0; --e) {
     int par = parent[e]; // 1-indexed
     int ch = child[e];   // 1-indexed
     double t = edge_length[e];
@@ -144,7 +146,7 @@ double pruning_mkn(Rcpp::IntegerVector parent,
   const int kStates = 2;
 
   int maxNode = 0;
-  for (int e = 0; e < nEdge; ++e) {
+  for (int e = nEdge - 1; e >= 0; --e) {
     if (parent[e] > maxNode) maxNode = parent[e];
     if (child[e] > maxNode) maxNode = child[e];
   }
@@ -175,7 +177,7 @@ double pruning_mkn(Rcpp::IntegerVector parent,
   double rate10 = 2.0 * rate_loss / sum_rl;
   double lambda = rate01 + rate10; // = 2.0
 
-  for (int e = 0; e < nEdge; ++e) {
+  for (int e = nEdge - 1; e >= 0; --e) {
     int par = parent[e];
     int ch = child[e];
     double t = edge_length[e];
