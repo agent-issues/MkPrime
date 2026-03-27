@@ -112,7 +112,7 @@ static double pruning_jc_flat(
   int nTip  = tip_states.nrow();
   int nChar = tip_states.ncol();
 
-  int maxNode = 2 * nTip - 2;  // OPP-2: unrooted binary tree; eliminates O(nEdge) scan
+  int maxNode = 2 * nTip - 1;  // OPP-2: +1 covers rooted trees (root = 2*nTip-1)
   int clCols = nChar * kStates;
 
   for (int n = 0; n <= maxNode; ++n) {
@@ -195,7 +195,7 @@ static double pruning_jc_acrv_flat(
   int nChar = tip_states.ncol();
   int nCat  = rate_multipliers.size();
 
-  int maxNode = 2 * nTip - 2;  // OPP-2
+  int maxNode = 2 * nTip - 1;  // OPP-2
   int root   = nTip + 1;
   int clCols = nChar * kStates;
 
@@ -290,7 +290,7 @@ static double pruning_mkn_flat(
   int nChar = tip_states.ncol();
   const int kStates = 2;
 
-  int maxNode = 2 * nTip - 2;  // OPP-2: unrooted binary tree; eliminates O(nEdge) scan
+  int maxNode = 2 * nTip - 1;  // OPP-2: +1 covers rooted trees (root = 2*nTip-1)
   int clCols = nChar * kStates;
 
   for (int n = 0; n <= maxNode; ++n) {
@@ -375,7 +375,7 @@ static double pruning_mkn_acrv_flat(
   int nCat  = rate_multipliers.size();
   const int kStates = 2;
 
-  int maxNode = 2 * nTip - 2;  // OPP-2
+  int maxNode = 2 * nTip - 1;  // OPP-2
   int root   = nTip + 1;
   int clCols = nChar * kStates;
 
@@ -485,7 +485,7 @@ double cpp_partition_log_likelihood(
   double ll = 0.0;
 
   // Determine max node index for workspace fitness check
-  int maxNode = 2 * data.nTip - 2;  // OPP-2
+  int maxNode = 2 * data.nTip - 1;  // OPP-2
 
   if (part.type == 0) {
     // Neomorphic (kStates = 2): use flat-buffer variant when workspace fits.
@@ -641,7 +641,8 @@ SEXP prepare_mcmc_data(List partitions_r,
                        double rateLossMeanlog, double rateLossSdlog,
                        double rateLogSdShape,  double rateLogSdRate,
                        double rateNeoMeanlog,  double rateNeoSdlog,
-                       double kprimeHyperA,    double kprimeHyperB) {
+                       double kprimeHyperA,    double kprimeHyperB,
+                       bool   kPriorLogseries, double kprimeLogseriesC) {
   McmcData* d = new McmcData();
   d->hasNeo = hasNeo;
   d->nCat = nCat;
@@ -662,6 +663,8 @@ SEXP prepare_mcmc_data(List partitions_r,
   d->rateNeoSdlog    = rateNeoSdlog;
   d->kprimeHyperA    = kprimeHyperA;
   d->kprimeHyperB    = kprimeHyperB;
+  d->kPriorLogseries  = kPriorLogseries;
+  d->kprimeLogseriesC = kprimeLogseriesC;
   d->kObs = kObs_r;
   d->nChar = kObs_r.size();
   d->nTip = 0;

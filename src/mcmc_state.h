@@ -42,6 +42,10 @@ struct McmcData {
   double rateLogSdShape,   rateLogSdRate;
   double rateNeoMeanlog,   rateNeoSdlog;
   double kprimeHyperA,     kprimeHyperB;
+
+  // Logseries prior for k' (opt-in alternative to hierarchical geometric)
+  bool   kPriorLogseries;   // true = log-series; false = hierarchical geometric
+  double kprimeLogseriesC;  // c parameter (only used when kPriorLogseries = true)
 };
 
 // Pre-allocated flat CL workspace (M-063): eliminates per-call heap

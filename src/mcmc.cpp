@@ -72,7 +72,8 @@ static double cpp_log_prior(
 
   bool hasTrans = (data.transIdxGlobal.size() > 0);
   if (hasTrans) {
-    if (p <= 0.0 || p >= 1.0) return R_NegInf;
+    // p boundary check only applies to hierarchical geometric
+    if (!data.kPriorLogseries && (p <= 0.0 || p >= 1.0)) return R_NegInf;
     for (int i = 0; i < data.transIdxGlobal.size(); ++i) {
       int gi = data.transIdxGlobal[i];
       if (kPrime[gi] < data.kObs[gi]) return R_NegInf;
@@ -102,13 +103,26 @@ static double cpp_log_prior(
 
   if (hasTrans) {
     int nTrans = data.transIdxGlobal.size();
-    double sumU = 0.0;
-    for (int i = 0; i < nTrans; ++i) {
-      int gi = data.transIdxGlobal[i];
-      sumU += (kPrime[gi] - data.kObs[gi]);
+    if (data.kPriorLogseries) {
+      // Logseries: log P(k'_i; c) = k'_i*log(c) - log(k'_i) - log(-log(1-c))
+      double c = data.kprimeLogseriesC;
+      double logC   = std::log(c);
+      double logNorm = std::log(-std::log1p(-c));  // log(-log(1-c))
+      for (int i = 0; i < nTrans; ++i) {
+        int kp = kPrime[data.transIdxGlobal[i]];
+        lp += kp * logC - std::log(static_cast<double>(kp)) - logNorm;
+      }
+      // No p / Beta term
+    } else {
+      // Hierarchical geometric: P(k'_i = kObs_i + u) = p*(1-p)^u
+      double sumU = 0.0;
+      for (int i = 0; i < nTrans; ++i) {
+        int gi = data.transIdxGlobal[i];
+        sumU += (kPrime[gi] - data.kObs[gi]);
+      }
+      lp += nTrans * std::log(p) + sumU * std::log1p(-p);
+      lp += R::dbeta(p, data.kprimeHyperA, data.kprimeHyperB, 1);
     }
-    lp += nTrans * std::log(p) + sumU * std::log1p(-p);
-    lp += R::dbeta(p, data.kprimeHyperA, data.kprimeHyperB, 1);
   }
 
   return lp;
@@ -540,7 +554,9 @@ List run_mcmc_batch_cpp(
   IntegerVector swapPropose(nSwapPairs, 0);
 
   // Sample storage
-  int nScalarCols = 6 + (hasNeo ? 1 : 0) + nTrans + nEdge;
+  // p column is omitted when using the log-series prior (no hyperparameter)
+  bool includeP = !data->kPriorLogseries;
+  int nScalarCols = 5 + (includeP ? 1 : 0) + (hasNeo ? 1 : 0) + nTrans + nEdge;
   int maxSaved    = nBatch / thin + 2;
   std::vector<std::vector<double>> scalarRows;
   scalarRows.reserve(maxSaved);
@@ -604,7 +620,7 @@ List run_mcmc_batch_cpp(
       row[col++] = s0->treeLength;
       row[col++] = s0->rateLoss;
       row[col++] = s0->rateLogSd;
-      row[col++] = s0->p;
+      if (includeP) row[col++] = s0->p;
       if (hasNeo) row[col++] = s0->rateNeo;
       for (int j = 0; j < nTrans; ++j)
         row[col++] = static_cast<double>(s0->kPrime[transIdxCpp[j]]);
@@ -639,3 +655,24 @@ List run_mcmc_batch_cpp(
     _["n_saved"]        = nSaved
   );
 }
+
+// [[Rcpp::export]]
+List debug_mcmc_data(SEXP dataPtr) {
+  McmcData* data = Rcpp::XPtr<McmcData>(dataPtr).get();
+  return List::create(
+    _["kPriorLogseries"]   = data->kPriorLogseries,
+    _["kprimeLogseriesC"]  = data->kprimeLogseriesC,
+    _["kprimeHyperA"]      = data->kprimeHyperA,
+    _["kprimeHyperB"]      = data->kprimeHyperB,
+    _["treeLengthShape"]   = data->treeLengthShape,
+    _["treeLengthRate"]    = data->treeLengthRate,
+    _["transIdxGlobal"]    = data->transIdxGlobal,
+    _["kObs"]              = data->kObs,
+    _["nCat"]              = data->nCat
+  );
+}
+
+
+
+
+

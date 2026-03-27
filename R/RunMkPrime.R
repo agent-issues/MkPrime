@@ -92,7 +92,8 @@ RunMkPrime <- function(data, tree,
   nTrans <- length(transIdx)
 
   moves <- .BuildMoves(nEdge, nTrans, hasNeo, mcmc,
-                       fixTopology = fixTopology)
+                       fixTopology = fixTopology,
+                       kPrimePrior = model$kPrimePrior %||% "geometric")
 
   nRuns <- mcmc$nRuns
 
@@ -109,7 +110,8 @@ RunMkPrime <- function(data, tree,
   } else {
     2000L  # initial buffer; doubled on the fly when nIter = Inf
   }
-  paramNames  <- .ParamNames(mkd, nEdge)
+  paramNames  <- .ParamNames(mkd, nEdge,
+                             kPrimePrior = model$kPrimePrior %||% "geometric")
   isStreaming <- !is.null(mcmc$logFile)
 
   if (isStreaming) {
@@ -163,8 +165,12 @@ RunMkPrime <- function(data, tree,
     }
   }
 
-  # Column indices in scalar_samples for tree reconstruction (1-based R)
-  brColStart <- 6L + hasNeo + nTrans + 1L  # first br_ column
+  # Column indices in scalar_samples for tree reconstruction (1-based R).
+  # Layout: log_post, log_lik, tree_length, rate_loss, rate_log_sd,
+  #         [p — geometric only], [rate_neo — if hasNeo], kPrime_i..., br_j...
+  isLogseries <- identical(model$kPrimePrior, "logseries")
+  pCols <- if (isLogseries) 0L else 1L
+  brColStart <- 5L + pCols + hasNeo + nTrans + 1L
 
   essDisplay  <- "?"
   psrfDisplay <- "?"
@@ -738,7 +744,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   hasNeo <- any(mkd$type == "neomorphic")
   nTrans <- sum(mkd$type == "transformational")
 
-  moves <- .BuildMoves(nEdge, nTrans, hasNeo, mcmc, fixTopology = FALSE)
+  moves <- .BuildMoves(nEdge, nTrans, hasNeo, mcmc, fixTopology = FALSE,
+                       kPrimePrior = model$kPrimePrior %||% "geometric")
 
   if (isStreaming) {
     # Re-initialise fresh stream buffers.
@@ -820,7 +827,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   moveTypeCodes <- vapply(moves, function(m) .kMoveTypes[[m$name]], integer(1L))
   transIdx0     <- if (length(transIdx) > 0L) transIdx - 1L else integer(0L)
   hasNeo        <- any(mkd$type == "neomorphic")
-  brColStart    <- 6L + hasNeo + length(transIdx) + 1L
+  isLogseries   <- identical(model$kPrimePrior, "logseries")
+  pCols         <- if (isLogseries) 0L else 1L
+  brColStart    <- 5L + pCols + hasNeo + length(transIdx) + 1L
 
   essDisplay  <- "?"
   psrfDisplay <- "?"
@@ -1102,9 +1111,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     rel_br_lengths = relBr,
     rate_loss = 1.0,
     rate_log_sd = 0.5,
-    kPrime = as.integer(kPrime),
-    p = 0.5
+    kPrime = as.integer(kPrime)
   )
+
+  # p hyperparameter only exists for the hierarchical geometric prior
+  if (!identical(model$kPrimePrior, "logseries")) {
+    state$p <- 0.5
+  }
 
   # Partition rate scalar for neomorphic characters
   if (hasNeo) {
@@ -1132,7 +1145,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 #' Build move schedule
 #' @keywords internal
 .BuildMoves <- function(nEdge, nTrans, hasNeo, mcmc,
-                        fixTopology = FALSE) {
+                        fixTopology = FALSE,
+                        kPrimePrior = "geometric") {
   moves <- list(
     list(name = "tree_length", type = "scale", target = "tree_length",
          weight = 1),
@@ -1150,12 +1164,17 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   }
 
   if (nTrans > 0) {
-    moves <- c(moves, list(
+    kPrimeMoves <- list(
       list(name = "kPrime", type = "int_walk", target = "kPrime",
-           weight = max(1, 2 * nTrans)),
-      list(name = "p", type = "scale", target = "p",
-           weight = 1)
-    ))
+           weight = max(1, 2 * nTrans))
+    )
+    # p hyperparameter only exists for hierarchical geometric prior
+    if (!identical(kPrimePrior, "logseries")) {
+      kPrimeMoves <- c(kPrimeMoves, list(
+        list(name = "p", type = "scale", target = "p", weight = 1)
+      ))
+    }
+    moves <- c(moves, kPrimeMoves)
   }
 
   if (hasNeo) {
@@ -1206,7 +1225,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     model$rateLossMeanlog, model$rateLossSdlog,
     model$rateLogSdShape, model$rateLogSdRate,
     model$rateNeoMeanlog, model$rateNeoSdlog,
-    model$kprimeHyperA, model$kprimeHyperB
+    model$kprimeHyperA, model$kprimeHyperB,
+    identical(model$kPrimePrior, "logseries"),
+    model$kprimeLogseriesC %||% 0.7
   )
 }
 
@@ -1396,9 +1417,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 
 #' Parameter names for the sample matrix
 #' @keywords internal
-.ParamNames <- function(mkd, nEdge) {
+.ParamNames <- function(mkd, nEdge, kPrimePrior = "geometric") {
   nms <- c("log_posterior", "log_likelihood", "tree_length",
-           "rate_loss", "rate_log_sd", "p")
+           "rate_loss", "rate_log_sd")
+
+  # p hyperparameter column only exists for hierarchical geometric prior
+  if (!identical(kPrimePrior, "logseries")) {
+    nms <- c(nms, "p")
+  }
 
   if (any(mkd$type == "neomorphic")) {
     nms <- c(nms, "rate_neo")
@@ -1420,7 +1446,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 #' Extract state row for sample storage
 #' @param statePtr XPtr<McmcState> or R list (for backward compat)
 #' @keywords internal
-.StateToRow <- function(statePtr, mkd, nEdge, tipLabels = NULL) {
+.StateToRow <- function(statePtr, mkd, nEdge, tipLabels = NULL,
+                        kPrimePrior = "geometric") {
   state <- get_mcmc_state(statePtr)
 
   rateNeoVal <- if (!is.null(state$rateNeo) && state$rateNeo != 1.0) {
@@ -1429,11 +1456,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     numeric(0)
   }
 
+  # p only included in row when using hierarchical geometric prior
+  pVal <- if (!identical(kPrimePrior, "logseries")) state$p else numeric(0)
+
   transIdx <- which(mkd$type == "transformational")
   kp <- if (length(transIdx)) as.numeric(state$kPrime[transIdx]) else numeric(0)
 
   c(state$logPost, state$logLik, state$treeLength,
-    state$rateLoss, state$rateLogSd, state$p,
+    state$rateLoss, state$rateLogSd, pVal,
     rateNeoVal,
     kp,
     state$relBrLengths)
