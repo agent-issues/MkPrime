@@ -91,6 +91,390 @@ static NumericVector mkn_stationary(double rateLoss) {
 
 
 // ---------------------------------------------------------------------------
+// Flat-buffer pruning helpers (M-063)
+//
+// Drop-in alternatives to pruning_jc / pruning_jc_acrv / pruning_mkn /
+// pruning_mkn_acrv that use a caller-supplied workspace buffer instead of
+// allocating std::vector<std::vector<double>> CL on the heap each call.
+//
+// buf layout: buf[node * stride + c * kStates + s]  (node 1-indexed)
+// initFlg:    uint8_t[nNodeMax+1], reset to 0 for each traversal.
+// ---------------------------------------------------------------------------
+
+static double pruning_jc_flat(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    int kStates, NumericVector root_freqs,
+    double* buf, uint8_t* initFlg, int stride) {
+
+  int nEdge = parent.size();
+  int nTip  = tip_states.nrow();
+  int nChar = tip_states.ncol();
+
+  int maxNode = 0;
+  for (int e = 0; e < nEdge; ++e) {
+    if (parent[e] > maxNode) maxNode = parent[e];
+    if (child[e]  > maxNode) maxNode = child[e];
+  }
+  int clCols = nChar * kStates;
+
+  for (int n = 0; n <= maxNode; ++n) {
+    std::fill(buf + n * stride, buf + n * stride + clCols, 0.0);
+    initFlg[n] = 0;
+  }
+  for (int tip = 1; tip <= nTip; ++tip) {
+    double* cl = buf + tip * stride;
+    for (int c = 0; c < nChar; ++c) {
+      int state  = tip_states(tip - 1, c);
+      int offset = c * kStates;
+      if (state < 0) {
+        for (int s = 0; s < kStates; ++s) cl[offset + s] = 1.0;
+      } else {
+        cl[offset + state] = 1.0;
+      }
+    }
+    initFlg[tip] = 1;
+  }
+
+  double inv_k = 1.0 / kStates;
+  double km1   = kStates - 1.0;
+
+  for (int e = 0; e < nEdge; ++e) {
+    int par = parent[e];
+    int ch  = child[e];
+    double t        = edge_length[e];
+    double exp_term = std::exp(-kStates * t / km1);
+    double p_same   = inv_k + (1.0 - inv_k) * exp_term;
+    double p_diff   = inv_k - inv_k * exp_term;
+    double* clPar   = buf + par * stride;
+    double* clCh    = buf + ch  * stride;
+
+    if (!initFlg[par]) {
+      for (int c = 0; c < nChar; ++c) {
+        int offset = c * kStates;
+        for (int i = 0; i < kStates; ++i) {
+          double sum = 0.0;
+          for (int j = 0; j < kStates; ++j)
+            sum += ((i == j) ? p_same : p_diff) * clCh[offset + j];
+          clPar[offset + i] = sum;
+        }
+      }
+      initFlg[par] = 1;
+    } else {
+      for (int c = 0; c < nChar; ++c) {
+        int offset = c * kStates;
+        for (int i = 0; i < kStates; ++i) {
+          double sum = 0.0;
+          for (int j = 0; j < kStates; ++j)
+            sum += ((i == j) ? p_same : p_diff) * clCh[offset + j];
+          clPar[offset + i] *= sum;
+        }
+      }
+    }
+  }
+
+  int root = nTip + 1;
+  double* clRoot = buf + root * stride;
+  double logLik  = 0.0;
+  for (int c = 0; c < nChar; ++c) {
+    int offset = c * kStates;
+    double sl = 0.0;
+    for (int s = 0; s < kStates; ++s)
+      sl += root_freqs[s] * clRoot[offset + s];
+    if (sl <= 0.0) return R_NegInf;
+    logLik += std::log(sl);
+  }
+  return logLik;
+}
+
+
+static double pruning_jc_acrv_flat(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    int kStates, NumericVector root_freqs,
+    NumericVector rate_multipliers,
+    double* buf, uint8_t* initFlg, int stride) {
+
+  int nEdge = parent.size();
+  int nTip  = tip_states.nrow();
+  int nChar = tip_states.ncol();
+  int nCat  = rate_multipliers.size();
+
+  int maxNode = 0;
+  for (int e = 0; e < nEdge; ++e) {
+    if (parent[e] > maxNode) maxNode = parent[e];
+    if (child[e]  > maxNode) maxNode = child[e];
+  }
+  int root   = nTip + 1;
+  int clCols = nChar * kStates;
+
+  std::vector<double> site_lik_sum(nChar, 0.0);
+  double inv_k = 1.0 / kStates;
+  double km1   = kStates - 1.0;
+
+  for (int cat = 0; cat < nCat; ++cat) {
+    double rate = rate_multipliers[cat];
+
+    for (int n = 0; n <= maxNode; ++n) {
+      std::fill(buf + n * stride, buf + n * stride + clCols, 0.0);
+      initFlg[n] = 0;
+    }
+    for (int tip = 1; tip <= nTip; ++tip) {
+      double* cl = buf + tip * stride;
+      for (int c = 0; c < nChar; ++c) {
+        int state  = tip_states(tip - 1, c);
+        int offset = c * kStates;
+        if (state < 0) {
+          for (int s = 0; s < kStates; ++s) cl[offset + s] = 1.0;
+        } else {
+          cl[offset + state] = 1.0;
+        }
+      }
+      initFlg[tip] = 1;
+    }
+
+    for (int e = 0; e < nEdge; ++e) {
+      int par = parent[e];
+      int ch  = child[e];
+      double t        = edge_length[e] * rate;
+      double exp_term = std::exp(-kStates * t / km1);
+      double p_same   = inv_k + (1.0 - inv_k) * exp_term;
+      double p_diff   = inv_k - inv_k * exp_term;
+      double* clPar   = buf + par * stride;
+      double* clCh    = buf + ch  * stride;
+
+      if (!initFlg[par]) {
+        for (int c = 0; c < nChar; ++c) {
+          int offset = c * kStates;
+          for (int i = 0; i < kStates; ++i) {
+            double sum = 0.0;
+            for (int j = 0; j < kStates; ++j)
+              sum += ((i == j) ? p_same : p_diff) * clCh[offset + j];
+            clPar[offset + i] = sum;
+          }
+        }
+        initFlg[par] = 1;
+      } else {
+        for (int c = 0; c < nChar; ++c) {
+          int offset = c * kStates;
+          for (int i = 0; i < kStates; ++i) {
+            double sum = 0.0;
+            for (int j = 0; j < kStates; ++j)
+              sum += ((i == j) ? p_same : p_diff) * clCh[offset + j];
+            clPar[offset + i] *= sum;
+          }
+        }
+      }
+    }
+
+    double* clRoot = buf + root * stride;
+    for (int c = 0; c < nChar; ++c) {
+      int offset = c * kStates;
+      double sl = 0.0;
+      for (int s = 0; s < kStates; ++s)
+        sl += root_freqs[s] * clRoot[offset + s];
+      site_lik_sum[c] += sl;
+    }
+  }
+
+  double logLik   = 0.0;
+  double inv_nCat = 1.0 / nCat;
+  for (int c = 0; c < nChar; ++c) {
+    double avg = site_lik_sum[c] * inv_nCat;
+    if (avg <= 0.0) return R_NegInf;
+    logLik += std::log(avg);
+  }
+  return logLik;
+}
+
+
+static double pruning_mkn_flat(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    double rate_loss, NumericVector root_freqs,
+    double* buf, uint8_t* initFlg, int stride) {
+
+  int nEdge = parent.size();
+  int nTip  = tip_states.nrow();
+  int nChar = tip_states.ncol();
+  const int kStates = 2;
+
+  int maxNode = 0;
+  for (int e = 0; e < nEdge; ++e) {
+    if (parent[e] > maxNode) maxNode = parent[e];
+    if (child[e]  > maxNode) maxNode = child[e];
+  }
+  int clCols = nChar * kStates;
+
+  for (int n = 0; n <= maxNode; ++n) {
+    std::fill(buf + n * stride, buf + n * stride + clCols, 0.0);
+    initFlg[n] = 0;
+  }
+  for (int tip = 1; tip <= nTip; ++tip) {
+    double* cl = buf + tip * stride;
+    for (int c = 0; c < nChar; ++c) {
+      int state  = tip_states(tip - 1, c);
+      int offset = c * kStates;
+      if (state < 0) {
+        cl[offset + 0] = 1.0;
+        cl[offset + 1] = 1.0;
+      } else {
+        cl[offset + state] = 1.0;
+      }
+    }
+    initFlg[tip] = 1;
+  }
+
+  double sum_rl     = 1.0 + rate_loss;
+  double rate01     = 2.0 / sum_rl;
+  double rate10     = 2.0 * rate_loss / sum_rl;
+  double lambda     = rate01 + rate10;
+  double inv_lam_01 = rate01 / lambda;
+  double inv_lam_10 = rate10 / lambda;
+
+  for (int e = 0; e < nEdge; ++e) {
+    int par = parent[e];
+    int ch  = child[e];
+    double t        = edge_length[e];
+    double exp_term = std::exp(-lambda * t);
+    double P00 = inv_lam_10 + inv_lam_01 * exp_term;
+    double P01 = inv_lam_01 - inv_lam_01 * exp_term;
+    double P10 = inv_lam_10 - inv_lam_10 * exp_term;
+    double P11 = inv_lam_01 + inv_lam_10 * exp_term;
+    double* clPar = buf + par * stride;
+    double* clCh  = buf + ch  * stride;
+
+    if (!initFlg[par]) {
+      for (int c = 0; c < nChar; ++c) {
+        int offset = c * kStates;
+        double cl0 = clCh[offset]; double cl1 = clCh[offset + 1];
+        clPar[offset]     = P00 * cl0 + P01 * cl1;
+        clPar[offset + 1] = P10 * cl0 + P11 * cl1;
+      }
+      initFlg[par] = 1;
+    } else {
+      for (int c = 0; c < nChar; ++c) {
+        int offset = c * kStates;
+        double cl0 = clCh[offset]; double cl1 = clCh[offset + 1];
+        clPar[offset]     *= P00 * cl0 + P01 * cl1;
+        clPar[offset + 1] *= P10 * cl0 + P11 * cl1;
+      }
+    }
+  }
+
+  int root = nTip + 1;
+  double* clRoot = buf + root * stride;
+  double logLik  = 0.0;
+  for (int c = 0; c < nChar; ++c) {
+    int offset = c * kStates;
+    double sl = root_freqs[0] * clRoot[offset] + root_freqs[1] * clRoot[offset + 1];
+    if (sl <= 0.0) return R_NegInf;
+    logLik += std::log(sl);
+  }
+  return logLik;
+}
+
+
+static double pruning_mkn_acrv_flat(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    double rate_loss, NumericVector root_freqs,
+    NumericVector rate_multipliers,
+    double* buf, uint8_t* initFlg, int stride) {
+
+  int nEdge = parent.size();
+  int nTip  = tip_states.nrow();
+  int nChar = tip_states.ncol();
+  int nCat  = rate_multipliers.size();
+  const int kStates = 2;
+
+  int maxNode = 0;
+  for (int e = 0; e < nEdge; ++e) {
+    if (parent[e] > maxNode) maxNode = parent[e];
+    if (child[e]  > maxNode) maxNode = child[e];
+  }
+  int root   = nTip + 1;
+  int clCols = nChar * kStates;
+
+  std::vector<double> site_lik_sum(nChar, 0.0);
+  double sum_rl     = 1.0 + rate_loss;
+  double rate01     = 2.0 / sum_rl;
+  double rate10     = 2.0 * rate_loss / sum_rl;
+  double lambda     = rate01 + rate10;
+  double inv_lam_01 = rate01 / lambda;
+  double inv_lam_10 = rate10 / lambda;
+
+  for (int cat = 0; cat < nCat; ++cat) {
+    double rate = rate_multipliers[cat];
+
+    for (int n = 0; n <= maxNode; ++n) {
+      std::fill(buf + n * stride, buf + n * stride + clCols, 0.0);
+      initFlg[n] = 0;
+    }
+    for (int tip = 1; tip <= nTip; ++tip) {
+      double* cl = buf + tip * stride;
+      for (int c = 0; c < nChar; ++c) {
+        int state  = tip_states(tip - 1, c);
+        int offset = c * kStates;
+        if (state < 0) {
+          cl[offset] = 1.0; cl[offset + 1] = 1.0;
+        } else {
+          cl[offset + state] = 1.0;
+        }
+      }
+      initFlg[tip] = 1;
+    }
+
+    for (int e = 0; e < nEdge; ++e) {
+      int par = parent[e];
+      int ch  = child[e];
+      double t        = edge_length[e] * rate;
+      double exp_term = std::exp(-lambda * t);
+      double P00 = inv_lam_10 + inv_lam_01 * exp_term;
+      double P01 = inv_lam_01 - inv_lam_01 * exp_term;
+      double P10 = inv_lam_10 - inv_lam_10 * exp_term;
+      double P11 = inv_lam_01 + inv_lam_10 * exp_term;
+      double* clPar = buf + par * stride;
+      double* clCh  = buf + ch  * stride;
+
+      if (!initFlg[par]) {
+        for (int c = 0; c < nChar; ++c) {
+          int offset = c * kStates;
+          double cl0 = clCh[offset]; double cl1 = clCh[offset + 1];
+          clPar[offset]     = P00 * cl0 + P01 * cl1;
+          clPar[offset + 1] = P10 * cl0 + P11 * cl1;
+        }
+        initFlg[par] = 1;
+      } else {
+        for (int c = 0; c < nChar; ++c) {
+          int offset = c * kStates;
+          double cl0 = clCh[offset]; double cl1 = clCh[offset + 1];
+          clPar[offset]     *= P00 * cl0 + P01 * cl1;
+          clPar[offset + 1] *= P10 * cl0 + P11 * cl1;
+        }
+      }
+    }
+
+    double* clRoot = buf + root * stride;
+    for (int c = 0; c < nChar; ++c) {
+      int offset = c * kStates;
+      double sl = root_freqs[0] * clRoot[offset] + root_freqs[1] * clRoot[offset + 1];
+      site_lik_sum[c] += sl;
+    }
+  }
+
+  double logLik   = 0.0;
+  double inv_nCat = 1.0 / nCat;
+  for (int c = 0; c < nChar; ++c) {
+    double avg = site_lik_sum[c] * inv_nCat;
+    if (avg <= 0.0) return R_NegInf;
+    logLik += std::log(avg);
+  }
+  return logLik;
+}
+
+
+// ---------------------------------------------------------------------------
 // C++ log-likelihood orchestration (mirrors .MkpLogLikelihood in R)
 // ---------------------------------------------------------------------------
 
@@ -106,7 +490,8 @@ double cpp_partition_log_likelihood(
     IntegerVector parent, IntegerVector child,
     NumericVector edgeLen,
     const IntegerVector& kPrime,
-    double rateLoss, double rateLogSd, double rateNeo) {
+    double rateLoss, double rateLogSd, double rateNeo,
+    ClWorkspace* ws) {
 
   int nTip = data.nTip;
   NumericVector rates = cpp_acrv_rates(rateLogSd, data.nCat);
@@ -116,14 +501,36 @@ double cpp_partition_log_likelihood(
   const PartInfo& part = data.parts[partIdx];
   double ll = 0.0;
 
+  // Determine max node index for workspace fitness check
+  int maxNode = 0;
+  for (int i = 0; i < parent.size(); ++i) {
+    if (parent[i] > maxNode) maxNode = parent[i];
+    if (child[i]  > maxNode) maxNode = child[i];
+  }
+
   if (part.type == 0) {
+    // Neomorphic (kStates = 2): use flat-buffer variant when workspace fits.
+    int neededStride = part.tipStates.ncol() * 2;
+    bool useWs = ws && ws->fits(maxNode, neededStride);
+
     NumericVector neoEl(edgeLen.size());
     for (int i = 0; i < edgeLen.size(); ++i) neoEl[i] = edgeLen[i] * rateNeo;
     NumericVector rootFreqs = mkn_stationary(rateLoss);
-    ll = useAcrv ? pruning_mkn_acrv(parent, child, neoEl, part.tipStates,
-                                     rateLoss, rootFreqs, rates)
-                 : pruning_mkn(parent, child, neoEl, part.tipStates,
-                                rateLoss, rootFreqs);
+
+    if (useWs) {
+      ll = useAcrv
+        ? pruning_mkn_acrv_flat(parent, child, neoEl, part.tipStates,
+                                 rateLoss, rootFreqs, rates,
+                                 ws->buf.data(), ws->init.data(), ws->strideMax)
+        : pruning_mkn_flat(parent, child, neoEl, part.tipStates,
+                            rateLoss, rootFreqs,
+                            ws->buf.data(), ws->init.data(), ws->strideMax);
+    } else {
+      ll = useAcrv ? pruning_mkn_acrv(parent, child, neoEl, part.tipStates,
+                                       rateLoss, rootFreqs, rates)
+                   : pruning_mkn(parent, child, neoEl, part.tipStates,
+                                  rateLoss, rootFreqs);
+    }
     if (coding != 0) {
       double p = constant_site_prob_mkn(parent, child, neoEl, nTip,
                                         rateLoss, rootFreqs, rates);
@@ -132,12 +539,26 @@ double cpp_partition_log_likelihood(
       ll -= part.tipStates.ncol() * std::log(1.0 - p);
     }
   } else if (part.type == 2) {
+    // Known state space (kStates = part.k): flat-buffer when workspace fits.
     int kStates = part.k;
+    int neededStride = part.tipStates.ncol() * kStates;
+    bool useWs = ws && ws->fits(maxNode, neededStride);
+
     NumericVector rootFreqs(kStates, 1.0 / kStates);
-    ll = useAcrv ? pruning_jc_acrv(parent, child, edgeLen, part.tipStates,
-                                    kStates, rootFreqs, rates)
-                 : pruning_jc(parent, child, edgeLen, part.tipStates,
-                               kStates, rootFreqs);
+    if (useWs) {
+      ll = useAcrv
+        ? pruning_jc_acrv_flat(parent, child, edgeLen, part.tipStates,
+                                kStates, rootFreqs, rates,
+                                ws->buf.data(), ws->init.data(), ws->strideMax)
+        : pruning_jc_flat(parent, child, edgeLen, part.tipStates,
+                           kStates, rootFreqs,
+                           ws->buf.data(), ws->init.data(), ws->strideMax);
+    } else {
+      ll = useAcrv ? pruning_jc_acrv(parent, child, edgeLen, part.tipStates,
+                                      kStates, rootFreqs, rates)
+                   : pruning_jc(parent, child, edgeLen, part.tipStates,
+                                 kStates, rootFreqs);
+    }
     if (coding != 0) {
       double p = constant_site_prob_jc(parent, child, edgeLen, nTip,
                                        kStates, rootFreqs, rates);
@@ -146,10 +567,16 @@ double cpp_partition_log_likelihood(
       ll -= part.tipStates.ncol() * std::log(1.0 - p);
     }
   } else {
+    // Transformational: loop over sub-groups sharing the same kPrime value.
+    // Workspace fitness: conservative upper bound nCharPart * max(kPrimePart).
     int nCharPart = part.tipStates.ncol();
     IntegerVector kPrimePart(nCharPart);
     for (int ci = 0; ci < nCharPart; ++ci)
       kPrimePart[ci] = kPrime[part.globalCharIdx[ci]];
+
+    int maxKp = *std::max_element(kPrimePart.begin(), kPrimePart.end());
+    bool wsOk = ws && ws->fits(maxNode, nCharPart * maxKp);
+
     IntegerVector uniqKp = sort_unique(kPrimePart);
     for (int ui = 0; ui < uniqKp.size(); ++ui) {
       int kp = uniqKp[ui];
@@ -161,10 +588,23 @@ double cpp_partition_log_likelihood(
       for (int c = 0; c < nSub; ++c)
         for (int t = 0; t < nTip; ++t) sub(t, c) = part.tipStates(t, cols[c]);
       NumericVector rootFreqs(kp, 1.0 / kp);
-      double subLl = useAcrv ? pruning_jc_acrv(parent, child, edgeLen, sub,
-                                                 kp, rootFreqs, rates)
-                              : pruning_jc(parent, child, edgeLen, sub,
-                                            kp, rootFreqs);
+
+      // Sub-call stride: nSub * kp <= nCharPart * maxKp, so wsOk implies it fits.
+      double subLl;
+      if (wsOk) {
+        subLl = useAcrv
+          ? pruning_jc_acrv_flat(parent, child, edgeLen, sub,
+                                  kp, rootFreqs, rates,
+                                  ws->buf.data(), ws->init.data(), ws->strideMax)
+          : pruning_jc_flat(parent, child, edgeLen, sub,
+                             kp, rootFreqs,
+                             ws->buf.data(), ws->init.data(), ws->strideMax);
+      } else {
+        subLl = useAcrv ? pruning_jc_acrv(parent, child, edgeLen, sub,
+                                           kp, rootFreqs, rates)
+                        : pruning_jc(parent, child, edgeLen, sub,
+                                      kp, rootFreqs);
+      }
       if (coding != 0) {
         double p = constant_site_prob_jc(parent, child, edgeLen, nTip,
                                          kp, rootFreqs, rates);
@@ -184,6 +624,7 @@ double cpp_partition_log_likelihood(
 
 
 // M-065: accepts parent/child vectors directly — no edge matrix decomposition.
+// M-063: optional ClWorkspace* threads flat-buffer workspace through all partitions.
 double cpp_log_likelihood(
     const McmcData& data,
     IntegerVector parent,
@@ -192,13 +633,14 @@ double cpp_log_likelihood(
     const IntegerVector& kPrime,
     double rateLoss,
     double rateLogSd,
-    double rateNeo) {
+    double rateNeo,
+    ClWorkspace* ws) {
 
   double totalLoglik = 0.0;
   for (int pi = 0; pi < (int)data.parts.size(); ++pi) {
     totalLoglik += cpp_partition_log_likelihood(
       data, pi, parent, child, edgeLen, kPrime,
-      rateLoss, rateLogSd, rateNeo);
+      rateLoss, rateLogSd, rateNeo, ws);
   }
   return totalLoglik;
 }

@@ -117,10 +117,12 @@ RunMkPrime <- function(data, tree,
   # Initialize C++ data pointer (created once)
   mcmcData <- .InitMcmcData(mkd, model)
 
-  # Populate per-partition log-likelihood cache (M-064)
+  # Populate per-partition log-likelihood cache (M-064) and pre-allocate
+  # flat CL workspace to eliminate per-call heap allocations (M-063).
   for (run in seq_len(nRuns)) {
     for (ch in seq_len(mcmc$nChains)) {
       fill_partition_cache(mcmcData, runs[[run]]$chainStates[[ch]])
+      allocate_cl_workspace(mcmcData, runs[[run]]$chainStates[[ch]])
     }
   }
 
@@ -566,13 +568,6 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   transIdx <- which(mkd$type == "transformational")
   mcmcData <- .InitMcmcData(mkd, model)
 
-  # Populate per-partition log-likelihood cache (M-064)
-  for (run in seq_len(nRuns)) {
-    for (ch in seq_len(mcmc$nChains)) {
-      fill_partition_cache(mcmcData, runs[[run]]$chainStates[[ch]])
-    }
-  }
-
   # Rebuild XPtr<McmcState> from serialized R chain state lists.
   # Checkpoints store r$chains as plain R lists (see .SaveCheckpoint).
   for (run in seq_len(nRuns)) {
@@ -588,6 +583,15 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
         as.integer(ch_r$kPrime),
         ch_r$log_lik, ch_r$log_prior
       )
+    }
+  }
+
+  # Populate per-partition log-likelihood cache (M-064) and pre-allocate
+  # flat CL workspace (M-063) — must run after chainStates are rebuilt.
+  for (run in seq_len(nRuns)) {
+    for (ch in seq_len(mcmc$nChains)) {
+      fill_partition_cache(mcmcData, runs[[run]]$chainStates[[ch]])
+      allocate_cl_workspace(mcmcData, runs[[run]]$chainStates[[ch]])
     }
   }
 

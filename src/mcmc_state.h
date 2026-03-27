@@ -43,9 +43,37 @@ struct McmcData {
   double kprimeHyperA,     kprimeHyperB;
 };
 
+// Pre-allocated flat CL workspace (M-063): eliminates per-call heap
+// allocations inside the pruning hot path.
+//
+// Layout: buf[node * strideMax + c * kStates + s]  (node 1-indexed)
+// Sized once at MCMC init with headroom for kPrime growth.
+struct ClWorkspace {
+  std::vector<double>  buf;
+  std::vector<uint8_t> init;  // 0=unset, 1=set; uint8_t avoids vector<bool>
+  int nNodeMax  = 0;
+  int strideMax = 0;
+
+  bool ready() const { return !buf.empty(); }
+
+  // True iff workspace can serve a call needing nNode nodes and stride cols.
+  bool fits(int nNode, int stride) const {
+    return ready() && nNode <= nNodeMax && stride <= strideMax;
+  }
+
+  void allocate(int nNode, int stride) {
+    nNodeMax  = nNode;
+    strideMax = stride;
+    buf.assign(static_cast<size_t>(nNode + 1) * stride, 0.0);
+    init.assign(nNode + 1, 0u);
+  }
+};
+
+
 // C++ log-likelihood orchestration — declared here, defined in
 // mcmc_likelihood.cpp, called from mcmc.cpp.
 // M-065: accepts parent/child vectors directly (no edge matrix round-trip).
+// M-063: optional ClWorkspace* eliminates per-call heap allocation.
 double cpp_log_likelihood(
     const McmcData& data,
     Rcpp::IntegerVector parent,
@@ -54,14 +82,17 @@ double cpp_log_likelihood(
     const Rcpp::IntegerVector& kPrime,
     double rateLoss,
     double rateLogSd,
-    double rateNeo);
+    double rateNeo,
+    ClWorkspace* ws = nullptr);
 
 
 // Per-partition log-likelihood for partial recomputation (M-064).
+// M-063: optional ClWorkspace* eliminates per-call heap allocation.
 double cpp_partition_log_likelihood(
     const McmcData& data, int partIdx,
     Rcpp::IntegerVector parent, Rcpp::IntegerVector child,
     Rcpp::NumericVector edgeLen,
     const Rcpp::IntegerVector& kPrime,
-    double rateLoss, double rateLogSd, double rateNeo);
+    double rateLoss, double rateLogSd, double rateNeo,
+    ClWorkspace* ws = nullptr);
 #endif  // MKPRIME_MCMC_STATE_H

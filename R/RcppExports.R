@@ -53,6 +53,10 @@ fill_partition_cache <- function(dataPtr, statePtr) {
     invisible(.Call(`_MkPrime_fill_partition_cache`, dataPtr, statePtr))
 }
 
+allocate_cl_workspace <- function(dataPtr, statePtr) {
+    invisible(.Call(`_MkPrime_allocate_cl_workspace`, dataPtr, statePtr))
+}
+
 get_mcmc_state <- function(statePtr) {
     .Call(`_MkPrime_get_mcmc_state`, statePtr)
 }

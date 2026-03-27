@@ -43,6 +43,8 @@ struct McmcState {
   double logPrior;
   // Per-partition log-likelihood cache (M-064)
   std::vector<double> partLogLik;
+  // Pre-allocated CL workspace (M-063): eliminates per-call heap allocations
+  ClWorkspace clWs;
 };
 
 
@@ -150,7 +152,53 @@ void fill_partition_cache(SEXP dataPtr, SEXP statePtr) {
   for (int pi = 0; pi < nParts; ++pi)
     state->partLogLik[pi] = cpp_partition_log_likelihood(
       *data, pi, state->parent, state->child, edgeLen,
-      state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo);
+      state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
+      state->clWs.ready() ? &state->clWs : nullptr);
+}
+
+
+// ---------------------------------------------------------------------------
+// allocate_cl_workspace: size and allocate the CL workspace in McmcState.
+//
+// Called once from R after fill_partition_cache(). Sizes the workspace to
+// accommodate the largest per-partition pruning call needed given the current
+// tree topology and kPrime values, with headroom for kPrime growth.
+// ---------------------------------------------------------------------------
+
+// [[Rcpp::export]]
+void allocate_cl_workspace(SEXP dataPtr, SEXP statePtr) {
+  McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
+  McmcState* state = Rcpp::XPtr<McmcState>(statePtr).get();
+
+  // nNode = max 1-indexed node in tree
+  int maxNode = 0;
+  for (int i = 0; i < state->parent.size(); ++i) {
+    if (state->parent[i] > maxNode) maxNode = state->parent[i];
+    if (state->child[i]  > maxNode) maxNode = state->child[i];
+  }
+
+  // kPrimeMax: current maximum kPrime across transformational characters,
+  // with +4 headroom so reallocations are infrequent during MCMC.
+  int kPrimeMax = 2;
+  for (int gi = 0; gi < (int)data->transIdxGlobal.size(); ++gi) {
+    int kp = state->kPrime[data->transIdxGlobal[gi]];
+    if (kp > kPrimeMax) kPrimeMax = kp;
+  }
+  int kPrimeWithHeadroom = kPrimeMax + 4;
+
+  // maxStride = max over partitions of (nCharPart * kMax_part).
+  int maxStride = 0;
+  for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
+    const PartInfo& pinfo = data->parts[pi];
+    int nCharPart = pinfo.tipStates.ncol();
+    int kMax = (pinfo.type == 0) ? 2 :
+               (pinfo.type == 2) ? pinfo.k : kPrimeWithHeadroom;
+    int stride = nCharPart * kMax;
+    if (stride > maxStride) maxStride = stride;
+  }
+  if (maxStride < 2) maxStride = 2;
+
+  state->clWs.allocate(maxNode, maxStride);
 }
 
 
@@ -351,7 +399,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       propEdgeLen[i] = state->treeLength * state->relBrLengths[i];
     newLogLik = cpp_log_likelihood(*data, state->parent, state->child,
       propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
-      state->rateNeo);
+      state->rateNeo, state->clWs.ready() ? &state->clWs : nullptr);
   } else {
     int nParts = (int)data->parts.size();
     int nEdge = state->relBrLengths.size();
@@ -362,35 +410,41 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     switch (moveType) {
       case 1:
       case 3: {
+        ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
         newLogLik = state->logLik;
         for (size_t ni = 0; ni < data->neoPartIndices.size(); ++ni) {
           int pi = data->neoPartIndices[ni];
           double v = cpp_partition_log_likelihood(*data, pi,
             state->parent, state->child, propEdgeLen,
-            state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo);
+            state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
+            wsPtr);
           newLogLik += (v - newPC[pi]);
           newPC[pi] = v;
         }
         break;
       }
       case 7: {
+        ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
         int ap = data->charToPartition[charIdx];
         newLogLik = state->logLik;
         if (ap >= 0) {
           double v = cpp_partition_log_likelihood(*data, ap,
             state->parent, state->child, propEdgeLen,
-            state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo);
+            state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
+            wsPtr);
           newLogLik += (v - newPC[ap]);
           newPC[ap] = v;
         }
         break;
       }
       default: {
+        ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
         newLogLik = 0.0;
         for (int pi = 0; pi < nParts; ++pi) {
           newPC[pi] = cpp_partition_log_likelihood(*data, pi,
             state->parent, state->child, propEdgeLen,
-            state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo);
+            state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
+            wsPtr);
           newLogLik += newPC[pi];
         }
         break;
