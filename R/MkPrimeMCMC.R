@@ -34,6 +34,19 @@
 #' @param treeFile Path to write sampled trees in Newick format.
 #'   `NULL` (default) disables file logging. Trees are always stored
 #'   in the returned `MkPosterior` object regardless.
+#' @param logFile Path to write a tab-separated scalar parameter log
+#'   (Tracer-compatible). `NULL` (default) keeps all samples in memory only.
+#'   When set, samples are flushed to disk in batches of `bufferSize`, so the
+#'   file can be opened in Tracer during the run.
+#'   For multiple runs (`nRuns > 1`), separate files are created automatically
+#'   by appending `_1`, `_2`, … before the file extension
+#'   (e.g. `"run.log"` → `"run_1.log"`, `"run_2.log"`).
+#'   See [ReadMkLog()] to load the log back into R after the run.
+#' @param bufferSize Integer. Number of thinned samples to accumulate per run
+#'   before flushing to `logFile`. Ignored when `logFile = NULL`. Default 500.
+#'   Smaller values give more frequent flushes (lower Tracer latency, slightly
+#'   more I/O); larger values amortise write overhead at the cost of slightly
+#'   higher peak memory.
 #' @param plotEvery Integer; invoke the progress callback every this many
 #'   iterations. `NULL` (default) disables progress plotting (the `cli`
 #'   progress bar still runs). Typical values: 100--500.
@@ -78,6 +91,8 @@ MkPrimeMCMC <- function(
     checkEvery = 1000L,
     checkpointFile = NULL,
     treeFile = NULL,
+    logFile = NULL,
+    bufferSize = 500L,
     plotEvery = NULL,
     progressFn = NULL,
     tuning = list()
@@ -101,6 +116,15 @@ MkPrimeMCMC <- function(
     if (heat <= 0 || heat >= 1) {
       cli::cli_abort("{.arg heat} must be in (0, 1), got {heat}.")
     }
+  }
+  if (!is.null(logFile)) {
+    if (!is.character(logFile) || length(logFile) != 1L) {
+      cli::cli_abort("{.arg logFile} must be a length-1 character string or NULL.")
+    }
+  }
+  bufferSize <- as.integer(bufferSize)
+  if (bufferSize < 1L) {
+    cli::cli_abort("{.arg bufferSize} must be a positive integer.")
   }
 
   defaults <- list(
@@ -132,8 +156,8 @@ MkPrimeMCMC <- function(
          nRuns = nRuns, nChains = nChains, heat = heat,
          maxTime = maxTime, minEss = minEss, maxPsrf = maxPsrf,
          checkEvery = checkEvery, checkpointFile = checkpointFile,
-         treeFile = treeFile, plotEvery = plotEvery,
-         progressFn = progressFn, tuning = tuning),
+         treeFile = treeFile, logFile = logFile, bufferSize = bufferSize,
+         plotEvery = plotEvery, progressFn = progressFn, tuning = tuning),
     class = "MkPrimeMCMC"
   )
 }

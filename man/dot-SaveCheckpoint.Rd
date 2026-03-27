@@ -7,6 +7,8 @@
 .SaveCheckpoint(runs, mcmc, iter, file)
 }
 \description{
-Save MCMC checkpoint to RDS
+Version 1 (in-memory mode): stores full run history (samples, trees).
+Version 2 (streaming mode): stores chain state only; samples live in the
+log file.  The large flush_buf and conv_window matrices are excluded.
 }
 \keyword{internal}

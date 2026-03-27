@@ -52,17 +52,32 @@ print.MkPosterior <- function(x, ...) {
     info <- c(info, "Chains per run: {nChains} (cold + {nChains - 1L} heated)")
   }
 
-  info <- c(info,
-    "Total samples: {(.PostBurninSampleCount(x))}",
-    "Parameters: {ncol(x$samples)}",
-    "Characters: {x$data$nChar} ({sum(x$data$type == 'transformational')} transformational, {sum(x$data$type == 'neomorphic')} neomorphic, {sum(x$data$type == 'known')} known)"
-  )
+  if (!is.null(x$logFile)) {
+    info <- c(info,
+      "Total samples: {x$nSamples} (streamed to disk)",
+      "Parameters: {ncol(x$samples)}",
+      "Characters: {x$data$nChar} ({sum(x$data$type == 'transformational')} transformational, {sum(x$data$type == 'neomorphic')} neomorphic, {sum(x$data$type == 'known')} known)"
+    )
+  } else {
+    info <- c(info,
+      "Total samples: {(.PostBurninSampleCount(x))}",
+      "Parameters: {ncol(x$samples)}",
+      "Characters: {x$data$nChar} ({sum(x$data$type == 'transformational')} transformational, {sum(x$data$type == 'neomorphic')} neomorphic, {sum(x$data$type == 'known')} known)"
+    )
+  }
 
   if (!is.null(x$stop_reason)) {
     info <- c(info, "Stopped: {x$stop_reason} (iter {x$actual_iter})")
   }
 
   cli::cli_ul(info)
+
+  if (!is.null(x$logFile)) {
+    cli::cli_alert_info(c(
+      "Streaming mode: samples are on disk, not in memory.",
+      "i" = "Load with: {.code result$samples <- ReadMkLog(result$logFile)}"
+    ))
+  }
 
   cli::cli_h2("Acceptance rates (cold chain)")
   for (nm in names(x$acceptance)) {
@@ -89,6 +104,12 @@ print.MkPosterior <- function(x, ...) {
 
 #' @export
 summary.MkPosterior <- function(object, ...) {
+  if (!is.null(object$logFile) && nrow(object$samples) == 0L) {
+    cli::cli_abort(c(
+      "Samples are not in memory (streaming mode).",
+      "i" = "Load them first: {.code object$samples <- ReadMkLog(object$logFile)}"
+    ))
+  }
   pb <- .PostBurninData(object)
   s <- pb$samples
   # Use scalar params only (not individual kPrime_ or branch lengths)
@@ -125,6 +146,12 @@ summary.MkPosterior <- function(object, ...) {
 
 #' @export
 plot.MkPosterior <- function(x, ...) {
+  if (!is.null(x$logFile) && nrow(x$samples) == 0L) {
+    cli::cli_abort(c(
+      "Samples are not in memory (streaming mode).",
+      "i" = "Load them first: {.code x$samples <- ReadMkLog(x$logFile)}"
+    ))
+  }
   pb <- .PostBurninData(x)
   s <- pb$samples
   keyCols <- .PlotParamCols(s)

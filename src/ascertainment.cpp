@@ -2,27 +2,27 @@
 #include <cmath>
 #include <vector>
 
-// Compute the probability of a constant (invariant) site under JC(k).
+// Ascertainment bias correction functions.
 //
-// This is needed for the ascertainment bias correction (Lewis 2001):
-//   logL_corrected = logL_uncorrected - nChar * log(1 - P_constant)
+// Compute P(constant site) and P(singleton site) under JC(k) and MkN models,
+// used for the Lewis (2001) variable-coding correction:
+//   logL_corrected = logL_raw - nChar * log(1 - P_excluded)
 //
-// P_constant = sum_{s=0}^{k-1} π_s * L(all_tips = s | tree, model)
+// OPP-1: JC matrix-vector product reduced from O(k²) to O(k) per site per
+//        edge, exploiting the two-value JC structure:
+//        new_cl[i] = p_diff * sum_cl + (p_same - p_diff) * cl[i]
+// OPP-2: maxNode = 2*nTip - 1 (covers both rooted and unrooted binary trees;
+//        hot path in mcmc_likelihood.cpp uses 2*nTip-2 since trees are always unrooted there)
+// OPP-4-lite: single flat std::vector<double> CL replaces vector<vector<double>>
+//        (one heap allocation instead of nNode+1 allocations per call)
+
+
+// ---------------------------------------------------------------------------
+// constant_site_prob_jc
 //
-// With ACRV:
-//   P_constant = (1/nCat) * sum_cat sum_s π_s * L(all_tips=s | tree, rate_cat)
-//
-// Implementation: creates k "pseudo-characters" where all tips have state s,
-// then runs a pruning pass for each rate category. Returns P_constant.
-//
-// Parameters:
-//   parent, child, edge_length: tree in postorder (1-indexed)
-//   nTip: number of tips
-//   kStates: number of states
-//   root_freqs: equilibrium frequencies
-//   rate_multipliers: ACRV rate multipliers (length nCat)
-//
-// Returns: P(constant site), a scalar in [0, 1].
+// P(constant site) for JC(k): sum over k constant patterns.
+// Uses k pseudo-characters, one per constant state.
+// ---------------------------------------------------------------------------
 
 // [[Rcpp::export]]
 double constant_site_prob_jc(Rcpp::IntegerVector parent,
@@ -32,113 +32,89 @@ double constant_site_prob_jc(Rcpp::IntegerVector parent,
                              int kStates,
                              Rcpp::NumericVector root_freqs,
                              Rcpp::NumericVector rate_multipliers) {
-  int nEdge = parent.size();
-  int nCat = rate_multipliers.size();
+  const int nEdge = parent.size();
+  const int nCat  = rate_multipliers.size();
+  const int maxNode = 2 * nTip - 1;  // OPP-2
+  const int root    = nTip + 1;
+  const int nChar   = kStates;        // one pseudo-char per constant state
+  const int stride  = nChar * kStates;
 
-  int maxNode = 0;
-  for (int e = 0; e < nEdge; ++e) {
-    if (parent[e] > maxNode) maxNode = parent[e];
-    if (child[e] > maxNode) maxNode = child[e];
-  }
-  int nNode = maxNode;
-  int root = nTip + 1;
+  const double inv_k = 1.0 / kStates;
+  const double km1   = kStates - 1.0;
 
-  // We have kStates "pseudo-characters" (one per constant state pattern)
-  int nChar = kStates;
-  int clSize = nChar * kStates;
-
-  double inv_k = 1.0 / kStates;
-  double km1 = kStates - 1.0;
-
-  std::vector<std::vector<double>> CL(nNode + 1, std::vector<double>(clSize, 0.0));
-  std::vector<bool> initialized(nNode + 1, false);
+  // OPP-4-lite: one flat allocation reused across all nCat categories
+  std::vector<double>  cl_flat((maxNode + 1) * stride, 0.0);
+  std::vector<uint8_t> cl_init(maxNode + 1, 0u);
 
   double total_const_prob = 0.0;
 
   for (int cat = 0; cat < nCat; ++cat) {
-    double rate = rate_multipliers[cat];
+    const double rate = rate_multipliers[cat];
 
-    for (int n = 0; n <= nNode; ++n) {
-      std::fill(CL[n].begin(), CL[n].end(), 0.0);
-      initialized[n] = false;
-    }
+    std::fill(cl_flat.begin(), cl_flat.end(), 0.0);
+    std::fill(cl_init.begin(), cl_init.end(), 0u);
 
-    // Initialize tips: pseudo-char s has all tips in state s
+    // Tips: pseudo-char s has all tips in state s
     for (int tip = 1; tip <= nTip; ++tip) {
-      for (int s = 0; s < kStates; ++s) {
-        int offset = s * kStates;
-        // This tip is in state s for pseudo-char s
-        CL[tip][offset + s] = 1.0;
-      }
-      initialized[tip] = true;
+      double* cl = cl_flat.data() + tip * stride;
+      for (int s = 0; s < kStates; ++s)
+        cl[s * kStates + s] = 1.0;
+      cl_init[tip] = 1;
     }
 
     for (int e = 0; e < nEdge; ++e) {
-      int par = parent[e];
-      int ch = child[e];
-      double t = edge_length[e] * rate;
+      const int par = parent[e];
+      const int ch  = child[e];
+      const double t        = edge_length[e] * rate;
+      const double exp_term = std::exp(-kStates * t / km1);
+      const double p_same   = inv_k + (1.0 - inv_k) * exp_term;
+      const double p_diff   = inv_k - inv_k * exp_term;
+      const double diff_coeff = p_same - p_diff;  // OPP-1
+      double* clPar = cl_flat.data() + par * stride;
+      double* clCh  = cl_flat.data() + ch  * stride;
 
-      double exp_term = std::exp(-kStates * t / km1);
-      double p_same = inv_k + (1.0 - inv_k) * exp_term;
-      double p_diff = inv_k - inv_k * exp_term;
-
-      if (!initialized[par]) {
+      if (!cl_init[par]) {
         for (int c = 0; c < nChar; ++c) {
-          int offset = c * kStates;
-          for (int i = 0; i < kStates; ++i) {
-            double sum = 0.0;
-            for (int j = 0; j < kStates; ++j) {
-              double pij = (i == j) ? p_same : p_diff;
-              sum += pij * CL[ch][offset + j];
-            }
-            CL[par][offset + i] = sum;
-          }
+          const int offset = c * kStates;
+          double sum_cl = 0.0;
+          for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+          for (int i = 0; i < kStates; ++i)
+            clPar[offset + i] = p_diff * sum_cl + diff_coeff * clCh[offset + i];
         }
-        initialized[par] = true;
+        cl_init[par] = 1;
       } else {
         for (int c = 0; c < nChar; ++c) {
-          int offset = c * kStates;
-          for (int i = 0; i < kStates; ++i) {
-            double sum = 0.0;
-            for (int j = 0; j < kStates; ++j) {
-              double pij = (i == j) ? p_same : p_diff;
-              sum += pij * CL[ch][offset + j];
-            }
-            CL[par][offset + i] *= sum;
-          }
+          const int offset = c * kStates;
+          double sum_cl = 0.0;
+          for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+          for (int i = 0; i < kStates; ++i)
+            clPar[offset + i] *= p_diff * sum_cl + diff_coeff * clCh[offset + i];
         }
       }
     }
 
-    // Sum site likelihoods for all constant patterns
+    const double* clRoot = cl_flat.data() + root * stride;
     for (int s = 0; s < kStates; ++s) {
-      int offset = s * kStates;
+      const int offset = s * kStates;
       double site_lik = 0.0;
-      for (int i = 0; i < kStates; ++i) {
-        site_lik += root_freqs[i] * CL[root][offset + i];
-      }
+      for (int i = 0; i < kStates; ++i)
+        site_lik += root_freqs[i] * clRoot[offset + i];
       total_const_prob += site_lik;
     }
   }
 
-  // Average across rate categories
-  total_const_prob /= nCat;
-
-  return total_const_prob;
+  return total_const_prob / nCat;
 }
 
 
-// Compute the probability of a singleton (autapomorphic) site under JC(k).
+// ---------------------------------------------------------------------------
+// singleton_site_prob_jc
 //
-// A singleton pattern has exactly one tip in a unique state (parsimony score 1).
-// Under JC(k) symmetry with uniform root frequencies, all k*(k-1) singleton
-// patterns at a given tip have the same probability, so we only need n
-// pseudo-characters (one per tip, with that tip in state 1 and all others in
-// state 0).
-//
-// P(singleton) = k*(k-1) * sum_j P(all_tips=0, tip_j=1)
-//
-// With ACRV, averaged across rate categories.
+// P(singleton site) for JC(k): under JC symmetry, k*(k-1) singleton patterns
+// at a given tip all have the same probability, so we need only nTip pseudo-
+// characters (one per tip, that tip in state 1, all others in state 0).
+// P(singleton) = k*(k-1) * sum_j P(all=0, tip_j=1)
+// ---------------------------------------------------------------------------
 
 // [[Rcpp::export]]
 double singleton_site_prob_jc(Rcpp::IntegerVector parent,
@@ -148,110 +124,93 @@ double singleton_site_prob_jc(Rcpp::IntegerVector parent,
                               int kStates,
                               Rcpp::NumericVector root_freqs,
                               Rcpp::NumericVector rate_multipliers) {
-  int nEdge = parent.size();
-  int nCat = rate_multipliers.size();
+  const int nEdge   = parent.size();
+  const int nCat    = rate_multipliers.size();
+  const int maxNode = 2 * nTip - 1;  // OPP-2
+  const int root    = nTip + 1;
+  const int nChar   = nTip;
+  const int stride  = nChar * kStates;  // nTip * kStates
 
-  int maxNode = 0;
-  for (int e = 0; e < nEdge; ++e) {
-    if (parent[e] > maxNode) maxNode = parent[e];
-    if (child[e] > maxNode) maxNode = child[e];
-  }
-  int nNode = maxNode;
-  int root = nTip + 1;
+  const double inv_k = 1.0 / kStates;
+  const double km1   = kStates - 1.0;
 
-  // n pseudo-characters: pseudo-char j has tip j = state 1, all others = state 0
-  int nChar = nTip;
-  int clSize = nChar * kStates;
-
-  double inv_k = 1.0 / kStates;
-  double km1 = kStates - 1.0;
-
-  std::vector<std::vector<double>> CL(nNode + 1, std::vector<double>(clSize, 0.0));
-  std::vector<bool> initialized(nNode + 1, false);
+  // OPP-4-lite: one flat allocation reused across all nCat categories
+  std::vector<double>  cl_flat((maxNode + 1) * stride, 0.0);
+  std::vector<uint8_t> cl_init(maxNode + 1, 0u);
 
   double total_singleton_prob = 0.0;
 
   for (int cat = 0; cat < nCat; ++cat) {
-    double rate = rate_multipliers[cat];
+    const double rate = rate_multipliers[cat];
 
-    for (int n = 0; n <= nNode; ++n) {
-      std::fill(CL[n].begin(), CL[n].end(), 0.0);
-      initialized[n] = false;
-    }
+    std::fill(cl_flat.begin(), cl_flat.end(), 0.0);
+    std::fill(cl_init.begin(), cl_init.end(), 0u);
 
-    // Initialize tip CLs
+    // Tips: pseudo-char j has tip j in state 1, all others in state 0
     for (int tip = 1; tip <= nTip; ++tip) {
+      double* cl = cl_flat.data() + tip * stride;
       for (int j = 0; j < nTip; ++j) {
-        int offset = j * kStates;
-        if (j == tip - 1) {
-          // This tip is the singleton: state 1
-          CL[tip][offset + 1] = 1.0;
-        } else {
-          // Background: state 0
-          CL[tip][offset + 0] = 1.0;
-        }
+        const int offset = j * kStates;
+        if (j == tip - 1)
+          cl[offset + 1] = 1.0;  // singleton: state 1
+        else
+          cl[offset + 0] = 1.0;  // background: state 0
       }
-      initialized[tip] = true;
+      cl_init[tip] = 1;
     }
 
-    // Postorder traversal
     for (int e = 0; e < nEdge; ++e) {
-      int par = parent[e];
-      int ch = child[e];
-      double t = edge_length[e] * rate;
+      const int par = parent[e];
+      const int ch  = child[e];
+      const double t        = edge_length[e] * rate;
+      const double exp_term = std::exp(-kStates * t / km1);
+      const double p_same   = inv_k + (1.0 - inv_k) * exp_term;
+      const double p_diff   = inv_k - inv_k * exp_term;
+      const double diff_coeff = p_same - p_diff;  // OPP-1
+      double* clPar = cl_flat.data() + par * stride;
+      double* clCh  = cl_flat.data() + ch  * stride;
 
-      double exp_term = std::exp(-kStates * t / km1);
-      double p_same = inv_k + (1.0 - inv_k) * exp_term;
-      double p_diff = inv_k - inv_k * exp_term;
-
-      if (!initialized[par]) {
+      if (!cl_init[par]) {
         for (int c = 0; c < nChar; ++c) {
-          int offset = c * kStates;
-          for (int i = 0; i < kStates; ++i) {
-            double sum = 0.0;
-            for (int j = 0; j < kStates; ++j) {
-              double pij = (i == j) ? p_same : p_diff;
-              sum += pij * CL[ch][offset + j];
-            }
-            CL[par][offset + i] = sum;
-          }
+          const int offset = c * kStates;
+          double sum_cl = 0.0;
+          for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+          for (int i = 0; i < kStates; ++i)
+            clPar[offset + i] = p_diff * sum_cl + diff_coeff * clCh[offset + i];
         }
-        initialized[par] = true;
+        cl_init[par] = 1;
       } else {
         for (int c = 0; c < nChar; ++c) {
-          int offset = c * kStates;
-          for (int i = 0; i < kStates; ++i) {
-            double sum = 0.0;
-            for (int j = 0; j < kStates; ++j) {
-              double pij = (i == j) ? p_same : p_diff;
-              sum += pij * CL[ch][offset + j];
-            }
-            CL[par][offset + i] *= sum;
-          }
+          const int offset = c * kStates;
+          double sum_cl = 0.0;
+          for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+          for (int i = 0; i < kStates; ++i)
+            clPar[offset + i] *= p_diff * sum_cl + diff_coeff * clCh[offset + i];
         }
       }
     }
 
-    // Sum site likelihoods for all singleton pseudo-characters
+    const double* clRoot = cl_flat.data() + root * stride;
     for (int c = 0; c < nChar; ++c) {
-      int offset = c * kStates;
+      const int offset = c * kStates;
       double site_lik = 0.0;
-      for (int s = 0; s < kStates; ++s) {
-        site_lik += root_freqs[s] * CL[root][offset + s];
-      }
+      for (int s = 0; s < kStates; ++s)
+        site_lik += root_freqs[s] * clRoot[offset + s];
       total_singleton_prob += site_lik;
     }
   }
 
-  // Average across rate categories, multiply by k*(k-1) for JC symmetry
   total_singleton_prob /= nCat;
-  total_singleton_prob *= kStates * (kStates - 1);
-
-  return total_singleton_prob;
+  return total_singleton_prob * kStates * (kStates - 1);
 }
 
 
-// MkN version: constant site probability for 2-state asymmetric model.
+// ---------------------------------------------------------------------------
+// constant_site_prob_mkn
+//
+// P(constant site) for the MkN 2-state asymmetric model.
+// Two pseudo-characters: one for all-0, one for all-1.
+// ---------------------------------------------------------------------------
 
 // [[Rcpp::export]]
 double constant_site_prob_mkn(Rcpp::IntegerVector parent,
@@ -261,99 +220,93 @@ double constant_site_prob_mkn(Rcpp::IntegerVector parent,
                               double rate_loss,
                               Rcpp::NumericVector root_freqs,
                               Rcpp::NumericVector rate_multipliers) {
-  int nEdge = parent.size();
-  int nCat = rate_multipliers.size();
-  const int kStates = 2;
+  const int nEdge    = parent.size();
+  const int nCat     = rate_multipliers.size();
+  const int maxNode  = 2 * nTip - 1;  // OPP-2
+  const int root     = nTip + 1;
+  const int kStates  = 2;
+  const int nChar    = kStates;
+  const int stride   = nChar * kStates;  // 4
 
-  int maxNode = 0;
-  for (int e = 0; e < nEdge; ++e) {
-    if (parent[e] > maxNode) maxNode = parent[e];
-    if (child[e] > maxNode) maxNode = child[e];
-  }
-  int nNode = maxNode;
-  int root = nTip + 1;
+  const double sum_rl     = 1.0 + rate_loss;
+  const double rate01     = 2.0 / sum_rl;
+  const double rate10     = 2.0 * rate_loss / sum_rl;
+  const double lambda     = rate01 + rate10;
+  const double inv_lam_01 = rate01 / lambda;
+  const double inv_lam_10 = rate10 / lambda;
 
-  int nChar = kStates; // 2 pseudo-characters
-  int clSize = nChar * kStates;
-
-  double sum_rl = 1.0 + rate_loss;
-  double rate01 = 2.0 / sum_rl;
-  double rate10 = 2.0 * rate_loss / sum_rl;
-  double lambda = rate01 + rate10;
-
-  std::vector<std::vector<double>> CL(nNode + 1, std::vector<double>(clSize, 0.0));
-  std::vector<bool> initialized(nNode + 1, false);
+  // OPP-4-lite: single flat allocation
+  std::vector<double>  cl_flat((maxNode + 1) * stride, 0.0);
+  std::vector<uint8_t> cl_init(maxNode + 1, 0u);
 
   double total_const_prob = 0.0;
 
   for (int cat = 0; cat < nCat; ++cat) {
-    double rate = rate_multipliers[cat];
+    const double rate = rate_multipliers[cat];
 
-    for (int n = 0; n <= nNode; ++n) {
-      std::fill(CL[n].begin(), CL[n].end(), 0.0);
-      initialized[n] = false;
-    }
+    std::fill(cl_flat.begin(), cl_flat.end(), 0.0);
+    std::fill(cl_init.begin(), cl_init.end(), 0u);
 
+    // Tips: pseudo-char s has all tips in state s (s=0 or s=1)
     for (int tip = 1; tip <= nTip; ++tip) {
-      for (int s = 0; s < kStates; ++s) {
-        CL[tip][s * kStates + s] = 1.0;
-      }
-      initialized[tip] = true;
+      double* cl = cl_flat.data() + tip * stride;
+      for (int s = 0; s < kStates; ++s)
+        cl[s * kStates + s] = 1.0;
+      cl_init[tip] = 1;
     }
 
     for (int e = 0; e < nEdge; ++e) {
-      int par = parent[e];
-      int ch = child[e];
-      double t = edge_length[e] * rate;
-      double exp_term = std::exp(-lambda * t);
-      double inv_lam_01 = rate01 / lambda;
-      double inv_lam_10 = rate10 / lambda;
+      const int par = parent[e];
+      const int ch  = child[e];
+      const double t        = edge_length[e] * rate;
+      const double exp_term = std::exp(-lambda * t);
+      const double P00 = inv_lam_10 + inv_lam_01 * exp_term;
+      const double P01 = inv_lam_01 - inv_lam_01 * exp_term;
+      const double P10 = inv_lam_10 - inv_lam_10 * exp_term;
+      const double P11 = inv_lam_01 + inv_lam_10 * exp_term;
+      double* clPar = cl_flat.data() + par * stride;
+      double* clCh  = cl_flat.data() + ch  * stride;
 
-      double P00 = inv_lam_10 + inv_lam_01 * exp_term;
-      double P01 = inv_lam_01 - inv_lam_01 * exp_term;
-      double P10 = inv_lam_10 - inv_lam_10 * exp_term;
-      double P11 = inv_lam_01 + inv_lam_10 * exp_term;
-
-      if (!initialized[par]) {
+      if (!cl_init[par]) {
         for (int c = 0; c < nChar; ++c) {
-          int offset = c * kStates;
-          double cl0 = CL[ch][offset + 0];
-          double cl1 = CL[ch][offset + 1];
-          CL[par][offset + 0] = P00 * cl0 + P01 * cl1;
-          CL[par][offset + 1] = P10 * cl0 + P11 * cl1;
+          const int offset = c * kStates;
+          const double cl0 = clCh[offset];
+          const double cl1 = clCh[offset + 1];
+          clPar[offset]     = P00 * cl0 + P01 * cl1;
+          clPar[offset + 1] = P10 * cl0 + P11 * cl1;
         }
-        initialized[par] = true;
+        cl_init[par] = 1;
       } else {
         for (int c = 0; c < nChar; ++c) {
-          int offset = c * kStates;
-          double cl0 = CL[ch][offset + 0];
-          double cl1 = CL[ch][offset + 1];
-          CL[par][offset + 0] *= P00 * cl0 + P01 * cl1;
-          CL[par][offset + 1] *= P10 * cl0 + P11 * cl1;
+          const int offset = c * kStates;
+          const double cl0 = clCh[offset];
+          const double cl1 = clCh[offset + 1];
+          clPar[offset]     *= P00 * cl0 + P01 * cl1;
+          clPar[offset + 1] *= P10 * cl0 + P11 * cl1;
         }
       }
     }
 
+    const double* clRoot = cl_flat.data() + root * stride;
     for (int s = 0; s < kStates; ++s) {
-      int offset = s * kStates;
-      double site_lik = root_freqs[0] * CL[root][offset + 0] +
-                        root_freqs[1] * CL[root][offset + 1];
-      total_const_prob += site_lik;
+      const int offset = s * kStates;
+      total_const_prob += root_freqs[0] * clRoot[offset]
+                        + root_freqs[1] * clRoot[offset + 1];
     }
   }
 
-  total_const_prob /= nCat;
-  return total_const_prob;
+  return total_const_prob / nCat;
 }
 
 
-// MkN singleton site probability for 2-state asymmetric model.
+// ---------------------------------------------------------------------------
+// singleton_site_prob_mkn
 //
-// Unlike JC, the two states are NOT symmetric under MkN, so we need
-// 2n pseudo-characters: for each tip j, one with bg=0/single=1 and
-// one with bg=1/single=0.
-//
+// P(singleton site) for MkN 2-state asymmetric model.
+// Unlike JC, states are not symmetric, so we need 2*nTip pseudo-characters:
+// first nTip have bg=0/singleton=1; next nTip have bg=1/singleton=0.
 // P(singleton) = sum_j [P(all=0, j=1) + P(all=1, j=0)]
+// ---------------------------------------------------------------------------
 
 // [[Rcpp::export]]
 double singleton_site_prob_mkn(Rcpp::IntegerVector parent,
@@ -363,105 +316,82 @@ double singleton_site_prob_mkn(Rcpp::IntegerVector parent,
                                double rate_loss,
                                Rcpp::NumericVector root_freqs,
                                Rcpp::NumericVector rate_multipliers) {
-  int nEdge = parent.size();
-  int nCat = rate_multipliers.size();
+  const int nEdge   = parent.size();
+  const int nCat    = rate_multipliers.size();
+  const int maxNode = 2 * nTip - 1;  // OPP-2
+  const int root    = nTip + 1;
   const int kStates = 2;
+  const int nChar   = 2 * nTip;   // 2n pseudo-characters
+  const int stride  = nChar * kStates;
 
-  int maxNode = 0;
-  for (int e = 0; e < nEdge; ++e) {
-    if (parent[e] > maxNode) maxNode = parent[e];
-    if (child[e] > maxNode) maxNode = child[e];
-  }
-  int nNode = maxNode;
-  int root = nTip + 1;
+  const double sum_rl     = 1.0 + rate_loss;
+  const double rate01     = 2.0 / sum_rl;
+  const double rate10     = 2.0 * rate_loss / sum_rl;
+  const double lambda     = rate01 + rate10;
+  const double inv_lam_01 = rate01 / lambda;
+  const double inv_lam_10 = rate10 / lambda;
 
-  // 2n pseudo-characters: first n have bg=0/single=1, next n have bg=1/single=0
-  int nChar = 2 * nTip;
-  int clSize = nChar * kStates;
-
-  double sum_rl = 1.0 + rate_loss;
-  double rate01 = 2.0 / sum_rl;
-  double rate10 = 2.0 * rate_loss / sum_rl;
-  double lambda = rate01 + rate10;
-
-  std::vector<std::vector<double>> CL(nNode + 1, std::vector<double>(clSize, 0.0));
-  std::vector<bool> initialized(nNode + 1, false);
+  // OPP-4-lite: single flat allocation
+  std::vector<double>  cl_flat((maxNode + 1) * stride, 0.0);
+  std::vector<uint8_t> cl_init(maxNode + 1, 0u);
 
   double total_singleton_prob = 0.0;
 
   for (int cat = 0; cat < nCat; ++cat) {
-    double rate = rate_multipliers[cat];
+    const double rate = rate_multipliers[cat];
 
-    for (int n = 0; n <= nNode; ++n) {
-      std::fill(CL[n].begin(), CL[n].end(), 0.0);
-      initialized[n] = false;
-    }
+    std::fill(cl_flat.begin(), cl_flat.end(), 0.0);
+    std::fill(cl_init.begin(), cl_init.end(), 0u);
 
-    // Initialize tip CLs
+    // Tips: first nTip pseudo-chars bg=0/single=1; next nTip bg=1/single=0
     for (int tip = 1; tip <= nTip; ++tip) {
-      // First n pseudo-chars: bg=0, singleton at tip j has state 1
+      double* cl = cl_flat.data() + tip * stride;
       for (int j = 0; j < nTip; ++j) {
-        int offset = j * kStates;
-        if (j == tip - 1) {
-          CL[tip][offset + 1] = 1.0; // singleton: state 1
-        } else {
-          CL[tip][offset + 0] = 1.0; // background: state 0
-        }
+        cl[j * kStates + (j == tip - 1 ? 1 : 0)] = 1.0;           // bg=0, single=1
+        cl[(nTip + j) * kStates + (j == tip - 1 ? 0 : 1)] = 1.0;  // bg=1, single=0
       }
-      // Next n pseudo-chars: bg=1, singleton at tip j has state 0
-      for (int j = 0; j < nTip; ++j) {
-        int offset = (nTip + j) * kStates;
-        if (j == tip - 1) {
-          CL[tip][offset + 0] = 1.0; // singleton: state 0
-        } else {
-          CL[tip][offset + 1] = 1.0; // background: state 1
-        }
-      }
-      initialized[tip] = true;
+      cl_init[tip] = 1;
     }
 
     for (int e = 0; e < nEdge; ++e) {
-      int par = parent[e];
-      int ch = child[e];
-      double t = edge_length[e] * rate;
-      double exp_term = std::exp(-lambda * t);
-      double inv_lam_01 = rate01 / lambda;
-      double inv_lam_10 = rate10 / lambda;
+      const int par = parent[e];
+      const int ch  = child[e];
+      const double t        = edge_length[e] * rate;
+      const double exp_term = std::exp(-lambda * t);
+      const double P00 = inv_lam_10 + inv_lam_01 * exp_term;
+      const double P01 = inv_lam_01 - inv_lam_01 * exp_term;
+      const double P10 = inv_lam_10 - inv_lam_10 * exp_term;
+      const double P11 = inv_lam_01 + inv_lam_10 * exp_term;
+      double* clPar = cl_flat.data() + par * stride;
+      double* clCh  = cl_flat.data() + ch  * stride;
 
-      double P00 = inv_lam_10 + inv_lam_01 * exp_term;
-      double P01 = inv_lam_01 - inv_lam_01 * exp_term;
-      double P10 = inv_lam_10 - inv_lam_10 * exp_term;
-      double P11 = inv_lam_01 + inv_lam_10 * exp_term;
-
-      if (!initialized[par]) {
+      if (!cl_init[par]) {
         for (int c = 0; c < nChar; ++c) {
-          int offset = c * kStates;
-          double cl0 = CL[ch][offset + 0];
-          double cl1 = CL[ch][offset + 1];
-          CL[par][offset + 0] = P00 * cl0 + P01 * cl1;
-          CL[par][offset + 1] = P10 * cl0 + P11 * cl1;
+          const int offset = c * kStates;
+          const double cl0 = clCh[offset];
+          const double cl1 = clCh[offset + 1];
+          clPar[offset]     = P00 * cl0 + P01 * cl1;
+          clPar[offset + 1] = P10 * cl0 + P11 * cl1;
         }
-        initialized[par] = true;
+        cl_init[par] = 1;
       } else {
         for (int c = 0; c < nChar; ++c) {
-          int offset = c * kStates;
-          double cl0 = CL[ch][offset + 0];
-          double cl1 = CL[ch][offset + 1];
-          CL[par][offset + 0] *= P00 * cl0 + P01 * cl1;
-          CL[par][offset + 1] *= P10 * cl0 + P11 * cl1;
+          const int offset = c * kStates;
+          const double cl0 = clCh[offset];
+          const double cl1 = clCh[offset + 1];
+          clPar[offset]     *= P00 * cl0 + P01 * cl1;
+          clPar[offset + 1] *= P10 * cl0 + P11 * cl1;
         }
       }
     }
 
-    // Sum site likelihoods for all singleton pseudo-characters
+    const double* clRoot = cl_flat.data() + root * stride;
     for (int c = 0; c < nChar; ++c) {
-      int offset = c * kStates;
-      double site_lik = root_freqs[0] * CL[root][offset + 0] +
-                        root_freqs[1] * CL[root][offset + 1];
-      total_singleton_prob += site_lik;
+      const int offset = c * kStates;
+      total_singleton_prob += root_freqs[0] * clRoot[offset]
+                            + root_freqs[1] * clRoot[offset + 1];
     }
   }
 
-  total_singleton_prob /= nCat;
-  return total_singleton_prob;
+  return total_singleton_prob / nCat;
 }

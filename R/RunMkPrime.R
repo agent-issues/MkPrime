@@ -109,15 +109,29 @@ RunMkPrime <- function(data, tree,
   } else {
     2000L  # initial buffer; doubled on the fly when nIter = Inf
   }
-  paramNames <- .ParamNames(mkd, nEdge)
+  paramNames  <- .ParamNames(mkd, nEdge)
+  isStreaming <- !is.null(mcmc$logFile)
 
-  # Pre-allocate storage per run
-  for (run in seq_len(nRuns)) {
-    runs[[run]]$samples <- matrix(NA_real_, nrow = nSavedPerRun,
-                                  ncol = length(paramNames),
-                                  dimnames = list(NULL, paramNames))
-    runs[[run]]$tree_samples <- vector("list", nSavedPerRun)
-    runs[[run]]$saved_idx <- 0L
+  if (isStreaming) {
+    convWindowSize <- .ComputeConvWindowSize(mcmc)
+    logFilePaths   <- .OpenLogFiles(mcmc$logFile, paramNames, nRuns)
+    for (run in seq_len(nRuns)) {
+      bufs <- .InitStreamBuffers(length(paramNames), paramNames,
+                                 mcmc$bufferSize, convWindowSize)
+      runs[[run]] <- c(runs[[run]], bufs)
+      runs[[run]]$saved_idx    <- 0L
+      runs[[run]]$tree_samples <- vector("list", 0L)
+    }
+  } else {
+    logFilePaths   <- NULL
+    convWindowSize <- 0L
+    for (run in seq_len(nRuns)) {
+      runs[[run]]$samples <- matrix(NA_real_, nrow = nSavedPerRun,
+                                    ncol = length(paramNames),
+                                    dimnames = list(NULL, paramNames))
+      runs[[run]]$tree_samples <- vector("list", nSavedPerRun)
+      runs[[run]]$saved_idx <- 0L
+    }
   }
 
   # Tree file
@@ -210,17 +224,32 @@ RunMkPrime <- function(data, tree,
       if (nSaved > 0L) {
         for (i in seq_len(nSaved)) {
           r$saved_idx <- r$saved_idx + 1L
-          # Grow buffer if needed (nIter = Inf path)
-          if (r$saved_idx > nrow(r$samples)) {
-            n <- nrow(r$samples)
-            extra <- matrix(NA_real_, nrow = n, ncol = ncol(r$samples),
-                            dimnames = list(NULL, colnames(r$samples)))
-            r$samples <- rbind(r$samples, extra)
-            r$tree_samples <- c(r$tree_samples, vector("list", n))
+          row <- result$scalar_samples[i, ]
+
+          if (isStreaming) {
+            # Scalar samples: flush buffer path
+            iterNum <- mcmc$warmup + r$saved_idx * mcmc$thin
+            r <- .AddToStreamBuffer(r, row, iterNum, logFilePaths[run],
+                                    mcmc$bufferSize, convWindowSize)
+            # Trees: dynamic growth (same as nIter = Inf in-memory path)
+            if (r$saved_idx > length(r$tree_samples)) {
+              n <- max(length(r$tree_samples), 1L)
+              r$tree_samples <- c(r$tree_samples, vector("list", n))
+            }
+          } else {
+            # In-memory: grow sample matrix if needed (nIter = Inf path)
+            if (r$saved_idx > nrow(r$samples)) {
+              n <- nrow(r$samples)
+              extra <- matrix(NA_real_, nrow = n, ncol = ncol(r$samples),
+                              dimnames = list(NULL, colnames(r$samples)))
+              r$samples <- rbind(r$samples, extra)
+              r$tree_samples <- c(r$tree_samples, vector("list", n))
+            }
+            r$samples[r$saved_idx, ] <- row
           }
-          r$samples[r$saved_idx, ] <- result$scalar_samples[i, ]
-          tl    <- result$scalar_samples[i, 3L]
-          relBr <- result$scalar_samples[i, brColStart:(brColStart + nEdge - 1L)]
+
+          tl    <- row[3L]
+          relBr <- row[brColStart:(brColStart + nEdge - 1L)]
           curTree <- structure(
             list(edge        = result$edge_samples[[i]],
                  edge.length = tl * relBr,
@@ -281,14 +310,29 @@ RunMkPrime <- function(data, tree,
                (batchEnd %/% mcmc$checkEvery) > ((batchStart - 1L) %/% mcmc$checkEvery)
 
     if (doCheck) {
-      if (!is.null(mcmc$checkpointFile))
-        .SaveCheckpoint(runs, mcmc, batchEnd, mcmc$checkpointFile)
+      if (!is.null(mcmc$checkpointFile)) {
+        # Flush streaming buffers before writing the checkpoint so that the
+        # log file and the checkpoint are always in sync.
+        if (isStreaming) {
+          for (run in seq_len(nRuns)) {
+            if (runs[[run]]$flush_idx > 0L) {
+              .FlushBuffer(runs[[run]]$flush_buf, runs[[run]]$flush_idx,
+                           runs[[run]]$flush_iter, logFilePaths[run])
+              runs[[run]]$flush_idx <- 0L
+            }
+          }
+        }
+        .SaveCheckpoint(runs, mcmc, batchEnd, paramNames, mcmc$checkpointFile)
+      }
 
       if (nRuns >= 2L) {
-        diagCheck <- .CheckConvergence(runs, paramNames, mcmc)
+        diagCheck <- .CheckConvergence(runs, paramNames, mcmc, isStreaming)
         if (!is.null(diagCheck)) {
-          essDisplay  <- as.character(as.integer(diagCheck$minEss))
-          psrfDisplay <- sprintf("%.3f", diagCheck$maxPsrf)
+          essDisplay <- as.character(as.integer(diagCheck$minEss))
+          if (!is.na(diagCheck$maxPsrf))
+            psrfDisplay <- sprintf("%.3f", diagCheck$maxPsrf)
+          nSamples <- sum(vapply(runs, function(r) r$saved_idx, integer(1L)))
+          .PrintProgressTable(diagCheck, nRuns, batchEnd, nSamples)
           if (diagCheck$converged) {
             stopReason <- "converged"
             actualIter <- batchEnd
@@ -305,7 +349,8 @@ RunMkPrime <- function(data, tree,
   cli::cli_progress_done()
 
   # --- Build result ---
-  .BuildResult(runs, model, mkd, mcmc, actualIter, stopReason)
+  .BuildResult(runs, model, mkd, mcmc, paramNames, logFilePaths,
+               actualIter, stopReason)
 }
 
 
@@ -358,36 +403,35 @@ RunMkPrime <- function(data, tree,
 # --- Convergence check during MCMC ---
 
 #' Check convergence criteria (called during the loop)
+#'
+#' Works for any number of runs. ESS is always computed on combined samples;
+#' PSRF is computed only when `nRuns >= 2`. Returns full per-parameter `ess`
+#' and `psrf` vectors so the caller can display a progress table.
 #' @keywords internal
-.CheckConvergence <- function(runs, paramNames, mcmc) {
+.CheckConvergence <- function(runs, paramNames, mcmc, isStreaming = FALSE) {
   if (!requireNamespace("coda", quietly = TRUE)) return(NULL)
 
+  nRuns <- length(runs)
   keyCols <- .KeyParamCols(
     matrix(0, 1, length(paramNames), dimnames = list(NULL, paramNames))
   )
 
-  # Gather saved samples from each run
+  # Gather saved samples from each run (convergence window in streaming mode)
   perRunSamples <- lapply(runs, function(r) {
-    idx <- r$saved_idx
-    if (idx < 10L) return(NULL)
-    r$samples[seq_len(idx), keyCols, drop = FALSE]
+    if (isStreaming) {
+      rows <- .ConvWindowRows(r, minRows = 10L)
+      if (is.null(rows)) return(NULL)
+      rows[, keyCols, drop = FALSE]
+    } else {
+      idx <- r$saved_idx
+      if (idx < 10L) return(NULL)
+      r$samples[seq_len(idx), keyCols, drop = FALSE]
+    }
   })
 
   if (any(vapply(perRunSamples, is.null, logical(1)))) return(NULL)
 
-  # Compute PSRF
-  chainList <- lapply(perRunSamples, function(s) coda::mcmc(s))
-  mcmcList <- coda::mcmc.list(chainList)
-
-  gd <- tryCatch(
-    coda::gelman.diag(mcmcList, multivariate = FALSE),
-    error = function(e) NULL
-  )
-  if (is.null(gd)) return(NULL)
-
-  maxPsrf <- max(gd$psrf[, 1], na.rm = TRUE)
-
-  # Compute min ESS across all runs combined
+  # ESS on combined samples (works for any nRuns)
   combined <- do.call(rbind, perRunSamples)
   ess <- apply(combined, 2, function(col) {
     s <- sd(col, na.rm = TRUE); if (is.na(s) || s == 0) return(NA_real_)
@@ -395,14 +439,31 @@ RunMkPrime <- function(data, tree,
   })
   minEss <- min(ess, na.rm = TRUE)
 
+  # PSRF (requires >= 2 runs)
+  psrf    <- NULL
+  maxPsrf <- NA_real_
+  if (nRuns >= 2L) {
+    chainList <- lapply(perRunSamples, function(s) coda::mcmc(s))
+    mcmcList  <- coda::mcmc.list(chainList)
+    gd <- tryCatch(
+      coda::gelman.diag(mcmcList, multivariate = FALSE),
+      error = function(e) NULL
+    )
+    if (!is.null(gd)) {
+      psrf    <- gd$psrf[, 1]
+      maxPsrf <- max(psrf, na.rm = TRUE)
+    }
+  }
+
   # Converged only when at least one criterion is set AND all set criteria pass.
   # (Avoids spurious early stopping when no criteria are configured.)
   hasCriteria <- !is.null(mcmc$minEss) || !is.null(mcmc$maxPsrf)
   converged   <- hasCriteria &&
     (is.null(mcmc$minEss)  || minEss >= mcmc$minEss) &&
-    (is.null(mcmc$maxPsrf) || (!is.na(maxPsrf) && maxPsrf <= mcmc$maxPsrf))
+    (is.null(mcmc$maxPsrf) || (nRuns >= 2L && !is.na(maxPsrf) && maxPsrf <= mcmc$maxPsrf))
 
-  list(converged = converged, minEss = minEss, maxPsrf = maxPsrf)
+  list(converged = converged, minEss = minEss, maxPsrf = maxPsrf,
+       ess = ess, psrf = psrf)
 }
 
 
@@ -410,18 +471,26 @@ RunMkPrime <- function(data, tree,
 
 #' Build MkPosterior from all runs
 #' @keywords internal
-.BuildResult <- function(runs, model, mkd, mcmc, actualIter, stopReason) {
-  nRuns <- length(runs)
+.BuildResult <- function(runs, model, mkd, mcmc, paramNames, logFilePaths,
+                         actualIter, stopReason) {
+  nRuns       <- length(runs)
+  isStreaming <- !is.null(mcmc$logFile)
 
-  # Trim samples to actual saved count
+  # Flush any remaining streaming buffer rows, then trim to actual save count
   for (run in seq_len(nRuns)) {
+    if (isStreaming && runs[[run]]$flush_idx > 0L) {
+      .FlushBuffer(runs[[run]]$flush_buf, runs[[run]]$flush_idx,
+                   runs[[run]]$flush_iter, logFilePaths[run])
+      runs[[run]]$flush_idx <- 0L
+    }
     idx <- runs[[run]]$saved_idx
-    if (idx > 0L) {
-      runs[[run]]$samples <- runs[[run]]$samples[seq_len(idx), , drop = FALSE]
-      runs[[run]]$tree_samples <- runs[[run]]$tree_samples[seq_len(idx)]
-    } else {
-      runs[[run]]$samples <- runs[[run]]$samples[integer(0), , drop = FALSE]
-      runs[[run]]$tree_samples <- list()
+    runs[[run]]$tree_samples <- runs[[run]]$tree_samples[seq_len(max(idx, 0L))]
+    if (!isStreaming) {
+      if (idx > 0L) {
+        runs[[run]]$samples <- runs[[run]]$samples[seq_len(idx), , drop = FALSE]
+      } else {
+        runs[[run]]$samples <- runs[[run]]$samples[integer(0), , drop = FALSE]
+      }
     }
   }
 
@@ -429,64 +498,96 @@ RunMkPrime <- function(data, tree,
   perRunSummaries <- lapply(runs, function(r) {
     coldAcc <- r$chain_accept[[1]] / pmax(r$chain_propose[[1]], 1L)
     result <- list(
-      samples = r$samples,
-      trees = r$tree_samples,
-      acceptance = coldAcc
+      samples    = if (isStreaming) NULL else r$samples,
+      trees      = r$tree_samples,
+      acceptance = coldAcc,
+      saved_idx  = r$saved_idx
     )
     if (mcmc$nChains > 1L) {
-      result$betas <- r$betas
+      result$betas      <- r$betas
       result$swap_rates <- r$swap_accept / pmax(r$swap_propose, 1L)
     }
     result
   })
 
-  if (nRuns == 1L) {
-    r <- perRunSummaries[[1]]
-    result <- MkPosterior(
-      samples = r$samples,
-      trees = r$trees,
-      acceptance = r$acceptance,
-      model = model,
-      data = mkd,
-      mcmc = mcmc,
-      warmup = mcmc$warmup,
-      tuning = runs[[1]]$chain_tuning[[1]]
-    )
-    if (!is.null(r$betas)) {
-      result$betas <- r$betas
-      result$swap_rates <- r$swap_rates
-      result$chain_acceptance <- lapply(seq_len(mcmc$nChains), function(ch) {
-        runs[[1]]$chain_accept[[ch]] /
-          pmax(runs[[1]]$chain_propose[[ch]], 1L)
-      })
-    }
-  } else {
-    allSamples <- do.call(rbind, lapply(perRunSummaries, `[[`, "samples"))
+  totalSaved <- sum(vapply(perRunSummaries, `[[`, integer(1), "saved_idx"))
+
+  if (isStreaming) {
+    # Streaming mode: return empty sample matrix with correct columns.
+    # Caller loads samples via ReadMkLog(result$logFile).
+    emptySamples <- matrix(numeric(0), nrow = 0L, ncol = length(paramNames),
+                           dimnames = list(NULL, paramNames))
     allTrees <- do.call(c, lapply(perRunSummaries, `[[`, "trees"))
     avgAcceptance <- Reduce(`+`, lapply(perRunSummaries, `[[`,
                                         "acceptance")) / nRuns
 
     result <- MkPosterior(
-      samples = allSamples,
-      trees = allTrees,
+      samples = emptySamples,
+      trees   = allTrees,
       acceptance = avgAcceptance,
-      model = model,
-      data = mkd,
-      mcmc = mcmc,
-      warmup = mcmc$warmup,
-      tuning = runs[[1]]$chain_tuning[[1]]
+      model = model, data = mkd, mcmc = mcmc,
+      warmup = mcmc$warmup, tuning = runs[[1]]$chain_tuning[[1]]
     )
+    result$logFile  <- logFilePaths
+    result$nSamples <- totalSaved
 
-    result$nRuns <- nRuns
-    result$per_run <- perRunSummaries
-
+    if (nRuns > 1L) {
+      result$nRuns   <- nRuns
+      result$per_run <- perRunSummaries
+    }
     if (mcmc$nChains > 1L) {
       result$betas <- runs[[1]]$betas
       result$swap_rates <- perRunSummaries[[1]]$swap_rates
       result$chain_acceptance <- lapply(seq_len(mcmc$nChains), function(ch) {
-        runs[[1]]$chain_accept[[ch]] /
-          pmax(runs[[1]]$chain_propose[[ch]], 1L)
+        runs[[1]]$chain_accept[[ch]] / pmax(runs[[1]]$chain_propose[[ch]], 1L)
       })
+    }
+    cli::cli_alert_info(c(
+      "Streaming mode: {totalSaved} sample{?s} written to {.file {logFilePaths}}.",
+      "i" = "Load with: {.code result$samples <- ReadMkLog(result$logFile)}"
+    ))
+
+  } else {
+    # In-memory mode (unchanged)
+    if (nRuns == 1L) {
+      r <- perRunSummaries[[1]]
+      result <- MkPosterior(
+        samples = r$samples, trees = r$trees,
+        acceptance = r$acceptance,
+        model = model, data = mkd, mcmc = mcmc,
+        warmup = mcmc$warmup, tuning = runs[[1]]$chain_tuning[[1]]
+      )
+      if (!is.null(r$betas)) {
+        result$betas <- r$betas
+        result$swap_rates <- r$swap_rates
+        result$chain_acceptance <- lapply(seq_len(mcmc$nChains), function(ch) {
+          runs[[1]]$chain_accept[[ch]] /
+            pmax(runs[[1]]$chain_propose[[ch]], 1L)
+        })
+      }
+    } else {
+      allSamples <- do.call(rbind, lapply(perRunSummaries, `[[`, "samples"))
+      allTrees   <- do.call(c,     lapply(perRunSummaries, `[[`, "trees"))
+      avgAcceptance <- Reduce(`+`, lapply(perRunSummaries, `[[`,
+                                          "acceptance")) / nRuns
+
+      result <- MkPosterior(
+        samples = allSamples, trees = allTrees,
+        acceptance = avgAcceptance,
+        model = model, data = mkd, mcmc = mcmc,
+        warmup = mcmc$warmup, tuning = runs[[1]]$chain_tuning[[1]]
+      )
+      result$nRuns   <- nRuns
+      result$per_run <- perRunSummaries
+
+      if (mcmc$nChains > 1L) {
+        result$betas <- runs[[1]]$betas
+        result$swap_rates <- perRunSummaries[[1]]$swap_rates
+        result$chain_acceptance <- lapply(seq_len(mcmc$nChains), function(ch) {
+          runs[[1]]$chain_accept[[ch]] /
+            pmax(runs[[1]]$chain_propose[[ch]], 1L)
+        })
+      }
     }
   }
 
@@ -499,11 +600,17 @@ RunMkPrime <- function(data, tree,
 # --- Checkpointing ---
 
 #' Save MCMC checkpoint to RDS
+#'
+#' Version 1 (in-memory mode): stores full run history (samples, trees).
+#' Version 2 (streaming mode): stores chain state only; samples live in the
+#' log file.  The large flush_buf and conv_window matrices are excluded.
+#'
 #' @keywords internal
-.SaveCheckpoint <- function(runs, mcmc, iter, file) {
-  # XPtr<McmcState> objects cannot be serialized across R sessions.
-  # Convert chain states to R lists via get_mcmc_state() before saving.
+.SaveCheckpoint <- function(runs, mcmc, iter, paramNames, file) {
+  isStreaming <- !is.null(mcmc$logFile)
+
   serialRuns <- lapply(runs, function(r) {
+    # Serialize C++ chain state (XPtrs cannot cross session boundaries)
     r$chains <- lapply(r$chainStates, function(ptr) {
       s <- get_mcmc_state(ptr)
       list(
@@ -521,10 +628,24 @@ RunMkPrime <- function(data, tree,
       )
     })
     r$chainStates <- NULL  # never serialize raw XPtrs
+    if (isStreaming) {
+      # Omit the large buffer matrices; they are recreated fresh on resume.
+      # flush_idx should be 0 (caller flushes before checkpointing).
+      r$flush_buf   <- NULL
+      r$flush_iter  <- NULL
+      r$conv_window <- NULL
+    }
     r
   })
-  saveRDS(list(runs = serialRuns, mcmc = mcmc, iter = iter,
-               timestamp = Sys.time(), version = 1L), file)
+
+  version <- if (isStreaming) 2L else 1L
+  payload <- list(runs = serialRuns, mcmc = mcmc, iter = iter,
+                  timestamp = Sys.time(), version = version)
+  if (isStreaming) {
+    payload$logFilePaths <- .LogFilePaths(mcmc$logFile, length(runs))
+    payload$paramNames   <- paramNames
+  }
+  saveRDS(payload, file)
 }
 
 
@@ -550,9 +671,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
                            model = NULL) {
   checkpoint <- readRDS(checkpointFile)
 
-  if (is.null(checkpoint$version) || checkpoint$version != 1L) {
-    cli::cli_abort("Unsupported checkpoint version.")
+  version <- checkpoint$version %||% 1L
+  if (!version %in% c(1L, 2L)) {
+    cli::cli_abort("Unsupported checkpoint version: {version}.")
   }
+  isStreaming <- version == 2L
 
   if (inherits(data, "MkPrimeData")) {
     mkd <- data
@@ -568,32 +691,69 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   runs <- checkpoint$runs
   mcmc <- checkpoint$mcmc
   startIter <- checkpoint$iter + 1L
-
   nRuns <- mcmc$nRuns
-  # Infer nEdge from br_ columns
-  nEdge <- sum(grepl("^br_", colnames(runs[[1]]$samples)))
+
+  # Derive nEdge and paramNames: version 2 stores them directly;
+  # version 1 derives from the sample matrix column names.
+  if (isStreaming) {
+    nEdge      <- nrow(runs[[1]]$chains[[1]]$edge)
+    paramNames <- checkpoint$paramNames
+    logFilePaths   <- checkpoint$logFilePaths
+    # Validate log files exist before committing to resume
+    for (p in logFilePaths) {
+      if (!file.exists(p)) {
+        cli::cli_abort(c(
+          "Log file not found: {.file {p}}.",
+          "i" = "Cannot resume streaming run without its log file."
+        ))
+      }
+    }
+    convWindowSize <- .ComputeConvWindowSize(mcmc)
+  } else {
+    nEdge      <- sum(grepl("^br_", colnames(runs[[1]]$samples)))
+    paramNames <- colnames(runs[[1]]$samples)
+    logFilePaths   <- NULL
+    convWindowSize <- 0L
+  }
 
   hasNeo <- any(mkd$type == "neomorphic")
   nTrans <- sum(mkd$type == "transformational")
 
-  moves <- .BuildMoves(nEdge, nTrans, hasNeo, mcmc,
-                       fixTopology = FALSE)
-  paramNames <- colnames(runs[[1]]$samples)
+  moves <- .BuildMoves(nEdge, nTrans, hasNeo, mcmc, fixTopology = FALSE)
 
-  # Extend sample storage if needed (finite nIter only; Inf path grows dynamically)
-  if (is.finite(mcmc$nIter)) {
-    totalSaved <- as.integer((mcmc$nIter - mcmc$warmup) / mcmc$thin)
+  if (isStreaming) {
+    # Re-initialise fresh stream buffers.
+    # saved_idx is taken from the ACTUAL log file line count, not the
+    # checkpoint state.  This handles the case where the previous run flushed
+    # additional samples after the last checkpoint (e.g. in .BuildResult),
+    # which would otherwise cause duplicate Sample values on resume.
     for (run in seq_len(nRuns)) {
-      currentRows <- nrow(runs[[run]]$samples)
-      if (currentRows < totalSaved) {
-        extra <- matrix(NA_real_, nrow = totalSaved - currentRows,
-                        ncol = ncol(runs[[run]]$samples),
-                        dimnames = list(NULL, paramNames))
-        runs[[run]]$samples <- rbind(runs[[run]]$samples, extra)
-        runs[[run]]$tree_samples <- c(
-          runs[[run]]$tree_samples,
-          vector("list", totalSaved - length(runs[[run]]$tree_samples))
-        )
+      logPath  <- logFilePaths[run]
+      # Count data rows in log (all lines minus the header)
+      savedIdx <- length(readLines(logPath, warn = FALSE)) - 1L
+      savedIdx <- max(0L, as.integer(savedIdx))
+
+      bufs <- .InitStreamBuffers(length(paramNames), paramNames,
+                                 mcmc$bufferSize, convWindowSize)
+      runs[[run]] <- c(runs[[run]], bufs)
+      runs[[run]]$saved_idx <- savedIdx
+    }
+  } else {
+    # In-memory: extend sample storage if needed (finite nIter path)
+    if (is.finite(mcmc$nIter)) {
+      totalSaved <- as.integer((mcmc$nIter - mcmc$warmup) / mcmc$thin)
+      for (run in seq_len(nRuns)) {
+        currentRows <- nrow(runs[[run]]$samples)
+        if (currentRows < totalSaved) {
+          extra <- matrix(NA_real_, nrow = totalSaved - currentRows,
+                          ncol = ncol(runs[[run]]$samples),
+                          dimnames = list(NULL, paramNames))
+          runs[[run]]$samples <- rbind(runs[[run]]$samples, extra)
+          runs[[run]]$tree_samples <- c(
+            runs[[run]]$tree_samples,
+            vector("list", totalSaved - length(runs[[run]]$tree_samples))
+          )
+        }
       }
     }
   }
@@ -699,17 +859,29 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
       if (nSaved > 0L) {
         for (i in seq_len(nSaved)) {
           r$saved_idx <- r$saved_idx + 1L
-          # Grow buffer if needed (nIter = Inf path)
-          if (r$saved_idx > nrow(r$samples)) {
-            n <- nrow(r$samples)
-            extra <- matrix(NA_real_, nrow = n, ncol = ncol(r$samples),
-                            dimnames = list(NULL, colnames(r$samples)))
-            r$samples <- rbind(r$samples, extra)
-            r$tree_samples <- c(r$tree_samples, vector("list", n))
+          row <- result$scalar_samples[i, ]
+
+          if (isStreaming) {
+            iterNum <- mcmc$warmup + r$saved_idx * mcmc$thin
+            r <- .AddToStreamBuffer(r, row, iterNum, logFilePaths[run],
+                                    mcmc$bufferSize, convWindowSize)
+            if (r$saved_idx > length(r$tree_samples)) {
+              n <- max(length(r$tree_samples), 1L)
+              r$tree_samples <- c(r$tree_samples, vector("list", n))
+            }
+          } else {
+            if (r$saved_idx > nrow(r$samples)) {
+              n <- nrow(r$samples)
+              extra <- matrix(NA_real_, nrow = n, ncol = ncol(r$samples),
+                              dimnames = list(NULL, colnames(r$samples)))
+              r$samples <- rbind(r$samples, extra)
+              r$tree_samples <- c(r$tree_samples, vector("list", n))
+            }
+            r$samples[r$saved_idx, ] <- row
           }
-          r$samples[r$saved_idx, ] <- result$scalar_samples[i, ]
-          tl    <- result$scalar_samples[i, 3L]
-          relBr <- result$scalar_samples[i, brColStart:(brColStart + nEdge - 1L)]
+
+          tl    <- row[3L]
+          relBr <- row[brColStart:(brColStart + nEdge - 1L)]
           r$tree_samples[[r$saved_idx]] <- structure(
             list(edge        = result$edge_samples[[i]],
                  edge.length = tl * relBr,
@@ -755,19 +927,31 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
       }
     }
 
-    # Convergence check + checkpoint (was missing from ResumeMkPrime)
     doCheck <- batchEnd > mcmc$warmup && !is.null(mcmc$checkEvery) &&
                (batchEnd %/% mcmc$checkEvery) > ((batchStart - 1L) %/% mcmc$checkEvery)
 
     if (doCheck) {
-      if (!is.null(mcmc$checkpointFile))
-        .SaveCheckpoint(runs, mcmc, batchEnd, mcmc$checkpointFile)
+      if (!is.null(mcmc$checkpointFile)) {
+        if (isStreaming) {
+          for (run in seq_len(nRuns)) {
+            if (runs[[run]]$flush_idx > 0L) {
+              .FlushBuffer(runs[[run]]$flush_buf, runs[[run]]$flush_idx,
+                           runs[[run]]$flush_iter, logFilePaths[run])
+              runs[[run]]$flush_idx <- 0L
+            }
+          }
+        }
+        .SaveCheckpoint(runs, mcmc, batchEnd, paramNames, mcmc$checkpointFile)
+      }
 
       if (nRuns >= 2L) {
-        diagCheck <- .CheckConvergence(runs, paramNames, mcmc)
+        diagCheck <- .CheckConvergence(runs, paramNames, mcmc, isStreaming)
         if (!is.null(diagCheck)) {
-          essDisplay  <- as.character(as.integer(diagCheck$minEss))
-          psrfDisplay <- sprintf("%.3f", diagCheck$maxPsrf)
+          essDisplay <- as.character(as.integer(diagCheck$minEss))
+          if (!is.na(diagCheck$maxPsrf))
+            psrfDisplay <- sprintf("%.3f", diagCheck$maxPsrf)
+          nSamples <- sum(vapply(runs, function(r) r$saved_idx, integer(1L)))
+          .PrintProgressTable(diagCheck, nRuns, batchEnd, nSamples)
           if (diagCheck$converged) {
             stopReason <- "converged"
             actualIter <- batchEnd
@@ -783,7 +967,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   }
   cli::cli_progress_done()
 
-  .BuildResult(runs, model, mkd, mcmc, actualIter, stopReason)
+  .BuildResult(runs, model, mkd, mcmc, paramNames, logFilePaths,
+               actualIter, stopReason)
 }
 
 
@@ -816,10 +1001,15 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 #' @keywords internal
 .BuildProgressInfo <- function(runs, iter, mcmc, startTime,
                                recentAcc, paramNames) {
-  nRuns <- length(runs)
+  nRuns       <- length(runs)
+  isStreaming <- !is.null(mcmc$logFile)
   runSamples <- lapply(runs, function(r) {
-    idx <- r$saved_idx
-    if (idx > 0L) r$samples[seq_len(idx), , drop = FALSE] else NULL
+    if (isStreaming) {
+      .ConvWindowRows(r, minRows = 1L)
+    } else {
+      idx <- r$saved_idx
+      if (idx > 0L) r$samples[seq_len(idx), , drop = FALSE] else NULL
+    }
   })
 
   currentState <- lapply(runs, function(r) {

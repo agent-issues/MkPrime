@@ -23,6 +23,8 @@ List spr_proposal_impl(IntegerVector parent, IntegerVector child,
                        int nTip, double treeLength,
                        NumericVector relBrLengths);
 List beta_simplex_proposal(NumericVector x, int index, double tuning);
+bool beta_simplex_impl(NumericVector& x, int index, double tuning,
+                       double& logHastings);  // OPP-5: in-place, no List alloc
 
 
 // ---------------------------------------------------------------------------
@@ -259,11 +261,15 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   double oldRN   = state->rateNeo;
   double oldP    = state->p;
 
-  double logHastings = 0.0;
+  double logHastings  = 0.0;
   bool topologyChanged = false;
-  IntegerVector oldParent, oldChild;
-  NumericVector oldRelBr;
+  NumericVector oldRelBr;   // rollback for case 4 only
   IntegerVector oldKPrime;
+
+  // OPP-6: proposed topology held separately; state->parent/child not
+  // overwritten until acceptance → no pre-proposal clone, no rollback copy.
+  IntegerVector proposedParent, proposedChild;
+  NumericVector proposedRelBr;
 
   switch (moveType) {
     case 0: { // scale tree_length
@@ -290,54 +296,47 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       logHastings = std::log(mult);
       break;
     }
-    case 4: { // beta_simplex
+    case 4: { // beta_simplex — OPP-5: call impl directly, no Rcpp::List alloc
       oldRelBr = clone(state->relBrLengths);
       int n_br = state->relBrLengths.size();
       int idx = static_cast<int>(R::unif_rand() * n_br);
       if (idx >= n_br) idx = n_br - 1;
-      List prop = beta_simplex_proposal(state->relBrLengths, idx,
-                                        betaSimplexTuning);
-      state->relBrLengths = as<NumericVector>(prop["value"]);
-      logHastings = as<double>(prop["logHastings"]);
+      if (!beta_simplex_impl(state->relBrLengths, idx,
+                             betaSimplexTuning, logHastings))
+        return false;
       break;
     }
-    case 5: { // NNI — M-065: call _impl directly with vectors
-      oldParent = clone(state->parent);
-      oldChild  = clone(state->child);
-      oldRelBr  = clone(state->relBrLengths);
+    case 5: { // NNI — OPP-6: no pre-proposal clone; defer state update to accept
       List prop = nni_proposal_impl(state->parent, state->child,
                                     data->nTip, state->treeLength,
                                     state->relBrLengths);
       logHastings = as<double>(prop["logHastings"]);
       if (!R_FINITE(logHastings)) return false;
-      state->parent       = as<IntegerVector>(prop["parent"]);
-      state->child        = as<IntegerVector>(prop["child"]);
-      state->relBrLengths = as<NumericVector>(prop["rel_br_lengths"]);
+      proposedParent  = as<IntegerVector>(prop["parent"]);
+      proposedChild   = as<IntegerVector>(prop["child"]);
+      proposedRelBr   = as<NumericVector>(prop["rel_br_lengths"]);
       topologyChanged = true;
       break;
     }
-    case 6: { // SPR — M-065: call _impl directly with vectors
-      oldParent = clone(state->parent);
-      oldChild  = clone(state->child);
-      oldRelBr  = clone(state->relBrLengths);
+    case 6: { // SPR — OPP-6: no pre-proposal clone; defer state update to accept
       List prop = spr_proposal_impl(state->parent, state->child,
                                     data->nTip, state->treeLength,
                                     state->relBrLengths);
       logHastings = as<double>(prop["logHastings"]);
       if (!R_FINITE(logHastings)) return false;
-      state->parent       = as<IntegerVector>(prop["parent"]);
-      state->child        = as<IntegerVector>(prop["child"]);
-      state->relBrLengths = as<NumericVector>(prop["rel_br_lengths"]);
+      proposedParent  = as<IntegerVector>(prop["parent"]);
+      proposedChild   = as<IntegerVector>(prop["child"]);
+      proposedRelBr   = as<NumericVector>(prop["rel_br_lengths"]);
       topologyChanged = true;
       break;
     }
     case 7: { // int_walk kPrime
       oldKPrime = clone(state->kPrime);
-      int oldK = state->kPrime[charIdx];
+      int oldK   = state->kPrime[charIdx];
       int lowerK = data->kObs[charIdx];
-      int range = 2 * intWalkWindow + 1;
-      int delta = static_cast<int>(R::unif_rand() * range) - intWalkWindow;
-      int newK = oldK + delta;
+      int range  = 2 * intWalkWindow + 1;
+      int delta  = static_cast<int>(R::unif_rand() * range) - intWalkWindow;
+      int newK   = oldK + delta;
       if (newK < lowerK) return false;
       state->kPrime[charIdx] = newK;
       logHastings = 0.0;
@@ -356,16 +355,12 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   if (!R_FINITE(logHastings)) {
     state->treeLength = oldTL; state->rateLoss = oldRL;
     state->rateLogSd = oldRLSD; state->rateNeo = oldRN; state->p = oldP;
-    if (topologyChanged) {
-      state->parent = oldParent; state->child = oldChild;
-      state->relBrLengths = oldRelBr;
-    }
     if (moveType == 4) state->relBrLengths = oldRelBr;
     if (moveType == 7) state->kPrime = oldKPrime;
     return false;
   }
 
-  // Evaluate prior
+  // Evaluate prior (relBrLengths prior = lgamma(n), value-independent)
   double newLogPrior = cpp_log_prior(
     *data, state->treeLength, state->relBrLengths,
     state->rateLoss, state->rateLogSd, state->rateNeo,
@@ -374,14 +369,16 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   if (!R_FINITE(newLogPrior)) {
     state->treeLength = oldTL; state->rateLoss = oldRL;
     state->rateLogSd = oldRLSD; state->rateNeo = oldRN; state->p = oldP;
-    if (topologyChanged) {
-      state->parent = oldParent; state->child = oldChild;
-      state->relBrLengths = oldRelBr;
-    }
     if (moveType == 4) state->relBrLengths = oldRelBr;
     if (moveType == 7) state->kPrime = oldKPrime;
     return false;
   }
+
+  // OPP-6: select evaluation topology — proposed values for NNI/SPR,
+  // current state for all other moves.
+  const IntegerVector& evalParent = topologyChanged ? proposedParent : state->parent;
+  const IntegerVector& evalChild  = topologyChanged ? proposedChild  : state->child;
+  const NumericVector& evalRelBr  = topologyChanged ? proposedRelBr  : state->relBrLengths;
 
   // ---- Likelihood evaluation (M-064: partial, M-065: vectors) ----
   bool likChanges = (moveType != 8);
@@ -392,20 +389,19 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   if (!likChanges) {
     newLogLik = state->logLik;
   } else if (!hasPLC) {
-    // M-065: pass parent/child vectors directly (no IntegerMatrix)
-    int nEdge = state->relBrLengths.size();
+    int nEdge = evalRelBr.size();
     NumericVector propEdgeLen(nEdge);
     for (int i = 0; i < nEdge; ++i)
-      propEdgeLen[i] = state->treeLength * state->relBrLengths[i];
-    newLogLik = cpp_log_likelihood(*data, state->parent, state->child,
+      propEdgeLen[i] = state->treeLength * evalRelBr[i];
+    newLogLik = cpp_log_likelihood(*data, evalParent, evalChild,
       propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
       state->rateNeo, state->clWs.ready() ? &state->clWs : nullptr);
   } else {
     int nParts = (int)data->parts.size();
-    int nEdge = state->relBrLengths.size();
+    int nEdge  = evalRelBr.size();
     NumericVector propEdgeLen(nEdge);
     for (int i = 0; i < nEdge; ++i)
-      propEdgeLen[i] = state->treeLength * state->relBrLengths[i];
+      propEdgeLen[i] = state->treeLength * evalRelBr[i];
     newPC = state->partLogLik;
     switch (moveType) {
       case 1:
@@ -415,7 +411,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         for (size_t ni = 0; ni < data->neoPartIndices.size(); ++ni) {
           int pi = data->neoPartIndices[ni];
           double v = cpp_partition_log_likelihood(*data, pi,
-            state->parent, state->child, propEdgeLen,
+            evalParent, evalChild, propEdgeLen,
             state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
             wsPtr);
           newLogLik += (v - newPC[pi]);
@@ -429,7 +425,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         newLogLik = state->logLik;
         if (ap >= 0) {
           double v = cpp_partition_log_likelihood(*data, ap,
-            state->parent, state->child, propEdgeLen,
+            evalParent, evalChild, propEdgeLen,
             state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
             wsPtr);
           newLogLik += (v - newPC[ap]);
@@ -442,7 +438,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         newLogLik = 0.0;
         for (int pi = 0; pi < nParts; ++pi) {
           newPC[pi] = cpp_partition_log_likelihood(*data, pi,
-            state->parent, state->child, propEdgeLen,
+            evalParent, evalChild, propEdgeLen,
             state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
             wsPtr);
           newLogLik += newPC[pi];
@@ -451,26 +447,29 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       }
     }
   }
+
   double logAlpha = beta * (newLogLik - state->logLik) +
                     (newLogPrior - state->logPrior) + logHastings;
   if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
     state->logLik   = newLogLik;
     state->logPrior = newLogPrior;
     if (!newPC.empty()) state->partLogLik = std::move(newPC);
+    // OPP-6: commit proposed topology to state on acceptance
+    if (topologyChanged) {
+      state->parent       = std::move(proposedParent);
+      state->child        = std::move(proposedChild);
+      state->relBrLengths = std::move(proposedRelBr);
+    }
     return true;
   }
 
-  // Reject: rollback
+  // Reject: rollback scalar state only
+  // OPP-6: state->parent/child were never overwritten — no topology rollback needed
   state->treeLength = oldTL;
   state->rateLoss   = oldRL;
   state->rateLogSd  = oldRLSD;
   state->rateNeo    = oldRN;
   state->p          = oldP;
-  if (topologyChanged) {
-    state->parent       = oldParent;
-    state->child        = oldChild;
-    state->relBrLengths = oldRelBr;
-  }
   if (moveType == 4) state->relBrLengths = oldRelBr;
   if (moveType == 7) state->kPrime = oldKPrime;
   return false;

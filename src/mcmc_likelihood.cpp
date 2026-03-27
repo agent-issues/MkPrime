@@ -67,15 +67,16 @@ double mk_prime_relabel_log(int kPrime, int kObs);
 // Helpers
 // ---------------------------------------------------------------------------
 
-static NumericVector cpp_acrv_rates(double rateLogSd, int nCat) {
+// OPP-3: acrvZ = precomputed qnorm((i+0.5)/nCat) stored in McmcData — no
+// transcendental calls per iteration; only exp() + scaling remain.
+static NumericVector cpp_acrv_rates(double rateLogSd, int nCat,
+                                    const std::vector<double>& acrvZ) {
   if (rateLogSd <= 0.0) return NumericVector(nCat, 1.0);
   double mu = -rateLogSd * rateLogSd / 2.0;
   NumericVector rates(nCat);
   double total = 0.0;
   for (int i = 0; i < nCat; ++i) {
-    double mid = ((double)i + 0.5) / nCat;
-    double z = R::qnorm(mid, 0.0, 1.0, 1, 0);
-    rates[i] = std::exp(mu + rateLogSd * z);
+    rates[i] = std::exp(mu + rateLogSd * acrvZ[i]);
     total += rates[i];
   }
   for (int i = 0; i < nCat; ++i) rates[i] *= nCat / total;
@@ -111,11 +112,7 @@ static double pruning_jc_flat(
   int nTip  = tip_states.nrow();
   int nChar = tip_states.ncol();
 
-  int maxNode = 0;
-  for (int e = 0; e < nEdge; ++e) {
-    if (parent[e] > maxNode) maxNode = parent[e];
-    if (child[e]  > maxNode) maxNode = child[e];
-  }
+  int maxNode = 2 * nTip - 2;  // OPP-2: unrooted binary tree; eliminates O(nEdge) scan
   int clCols = nChar * kStates;
 
   for (int n = 0; n <= maxNode; ++n) {
@@ -149,26 +146,24 @@ static double pruning_jc_flat(
     double* clPar   = buf + par * stride;
     double* clCh    = buf + ch  * stride;
 
+    // OPP-1: JC symmetry → O(k) product: new_cl[i] = p_diff*sum + (p_same-p_diff)*cl[i]
+    double diff_coeff = p_same - p_diff;
     if (!initFlg[par]) {
       for (int c = 0; c < nChar; ++c) {
         int offset = c * kStates;
-        for (int i = 0; i < kStates; ++i) {
-          double sum = 0.0;
-          for (int j = 0; j < kStates; ++j)
-            sum += ((i == j) ? p_same : p_diff) * clCh[offset + j];
-          clPar[offset + i] = sum;
-        }
+        double sum_cl = 0.0;
+        for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+        for (int i = 0; i < kStates; ++i)
+          clPar[offset + i] = p_diff * sum_cl + diff_coeff * clCh[offset + i];
       }
       initFlg[par] = 1;
     } else {
       for (int c = 0; c < nChar; ++c) {
         int offset = c * kStates;
-        for (int i = 0; i < kStates; ++i) {
-          double sum = 0.0;
-          for (int j = 0; j < kStates; ++j)
-            sum += ((i == j) ? p_same : p_diff) * clCh[offset + j];
-          clPar[offset + i] *= sum;
-        }
+        double sum_cl = 0.0;
+        for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+        for (int i = 0; i < kStates; ++i)
+          clPar[offset + i] *= p_diff * sum_cl + diff_coeff * clCh[offset + i];
       }
     }
   }
@@ -200,11 +195,7 @@ static double pruning_jc_acrv_flat(
   int nChar = tip_states.ncol();
   int nCat  = rate_multipliers.size();
 
-  int maxNode = 0;
-  for (int e = 0; e < nEdge; ++e) {
-    if (parent[e] > maxNode) maxNode = parent[e];
-    if (child[e]  > maxNode) maxNode = child[e];
-  }
+  int maxNode = 2 * nTip - 2;  // OPP-2
   int root   = nTip + 1;
   int clCols = nChar * kStates;
 
@@ -299,11 +290,7 @@ static double pruning_mkn_flat(
   int nChar = tip_states.ncol();
   const int kStates = 2;
 
-  int maxNode = 0;
-  for (int e = 0; e < nEdge; ++e) {
-    if (parent[e] > maxNode) maxNode = parent[e];
-    if (child[e]  > maxNode) maxNode = child[e];
-  }
+  int maxNode = 2 * nTip - 2;  // OPP-2: unrooted binary tree; eliminates O(nEdge) scan
   int clCols = nChar * kStates;
 
   for (int n = 0; n <= maxNode; ++n) {
@@ -388,11 +375,7 @@ static double pruning_mkn_acrv_flat(
   int nCat  = rate_multipliers.size();
   const int kStates = 2;
 
-  int maxNode = 0;
-  for (int e = 0; e < nEdge; ++e) {
-    if (parent[e] > maxNode) maxNode = parent[e];
-    if (child[e]  > maxNode) maxNode = child[e];
-  }
+  int maxNode = 2 * nTip - 2;  // OPP-2
   int root   = nTip + 1;
   int clCols = nChar * kStates;
 
@@ -494,7 +477,7 @@ double cpp_partition_log_likelihood(
     ClWorkspace* ws) {
 
   int nTip = data.nTip;
-  NumericVector rates = cpp_acrv_rates(rateLogSd, data.nCat);
+  NumericVector rates = cpp_acrv_rates(rateLogSd, data.nCat, data.acrvZ);  // OPP-3
   bool useAcrv = (rateLogSd > 0.0);
   int coding = data.codingType;
 
@@ -502,11 +485,7 @@ double cpp_partition_log_likelihood(
   double ll = 0.0;
 
   // Determine max node index for workspace fitness check
-  int maxNode = 0;
-  for (int i = 0; i < parent.size(); ++i) {
-    if (parent[i] > maxNode) maxNode = parent[i];
-    if (child[i]  > maxNode) maxNode = child[i];
-  }
+  int maxNode = 2 * data.nTip - 2;  // OPP-2
 
   if (part.type == 0) {
     // Neomorphic (kStates = 2): use flat-buffer variant when workspace fits.
@@ -666,6 +645,10 @@ SEXP prepare_mcmc_data(List partitions_r,
   McmcData* d = new McmcData();
   d->hasNeo = hasNeo;
   d->nCat = nCat;
+  // OPP-3: precompute qnorm midpoints once — eliminates nCat qnorm() calls per iteration
+  d->acrvZ.resize(nCat);
+  for (int i = 0; i < nCat; ++i)
+    d->acrvZ[i] = R::qnorm((i + 0.5) / nCat, 0.0, 1.0, 1, 0);
   d->codingType = (codingStr == "none") ? 0 :
                   (codingStr == "variable") ? 1 : 2;
   d->relabel = relabelFlag;

@@ -81,6 +81,21 @@ details.}
 
 \item{tuning}{Named list of initial tuning parameters for each move
 type. See Details.}
+
+\item{logFile}{Path to write a tab-separated scalar parameter log
+(Tracer-compatible). \code{NULL} (default) keeps all samples in memory only.
+When set, samples are flushed to disk in batches of \code{bufferSize}, so the
+file can be opened in Tracer during the run.
+For multiple runs (\code{nRuns > 1}), separate files are created automatically
+by appending \verb{_1}, \verb{_2}, … before the file extension
+(e.g. \code{"run.log"} → \code{"run_1.log"}, \code{"run_2.log"}).
+See \code{\link[=ReadMkLog]{ReadMkLog()}} to load the log back into R after the run.}
+
+\item{bufferSize}{Integer. Number of thinned samples to accumulate per run
+before flushing to \code{logFile}. Ignored when \code{logFile = NULL}. Default 500.
+Smaller values give more frequent flushes (lower Tracer latency, slightly
+more I/O); larger values amortise write overhead at the cost of slightly
+higher peak memory.}
 }
 \value{
 An S3 object of class \code{MkPrimeMCMC}.
