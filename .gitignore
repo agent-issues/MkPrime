@@ -25,3 +25,4 @@ Rplots.pdf
 # Test run artifacts
 test_output.txt
 test_run*.log
+tools/
