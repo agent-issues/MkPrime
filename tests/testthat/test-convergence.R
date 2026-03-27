@@ -108,3 +108,49 @@ test_that(".KeyParamCols excludes branch lengths", {
 test_that("ConvergenceDiagnostics rejects non-MkPosterior", {
   expect_error(ConvergenceDiagnostics(list()), "MkPosterior")
 })
+
+
+test_that("ConvergenceDiagnostics trees=FALSE skips tree ESS", {
+  library(ape)
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  set.seed(2871)
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L))
+
+  diag <- ConvergenceDiagnostics(result, trees = FALSE)
+  expect_null(diag$treeEss)
+  # topology rows still show in print (as NA)
+  out <- capture.output(print(diag))
+  expect_true(any(grepl("topology", out)))
+})
+
+
+test_that("ConvergenceDiagnostics tree ESS computed when treess available", {
+  skip_if_not_installed("treess")
+  skip_if_not_installed("TreeDist")
+
+  library(ape)
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  set.seed(9043)
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 1000L, thin = 5L, warmup = 200L))
+
+  diag <- ConvergenceDiagnostics(result, trees = TRUE)
+  expect_true(!is.null(diag$treeEss))
+  expect_named(diag$treeEss,
+               c("frechetCorrelationESS", "medianPseudoESS"), ignore.order = TRUE)
+  expect_true(all(is.finite(diag$treeEss)))
+  expect_true(all(diag$treeEss > 0))
+
+  # Topology rows appear in print with actual values
+  out <- capture.output(print(diag))
+  expect_true(any(grepl("topology.*Fréchet|topology.*Fre", out)))
+})

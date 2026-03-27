@@ -6,17 +6,24 @@
 #'
 #' Calculates effective sample size (ESS) per parameter and, when
 #' `nRuns >= 2`, the potential scale reduction factor (PSRF, Gelman-Rubin
-#' diagnostic) across runs.
+#' diagnostic) across runs. Optionally computes topology ESS using the
+#' Robinson-Foulds distance via the **treess** and **TreeDist** packages.
 #'
 #' @param posterior An `MkPosterior` object.
+#' @param trees Logical. If `TRUE` (default) and **treess** and **TreeDist**
+#'   are installed, compute topology ESS (Fréchet correlation ESS and median
+#'   pseudo-ESS) from the sampled trees. Set to `FALSE` to skip. Each run is
+#'   subsampled to at most 1,000 trees before computation.
 #' @return An object of class `MkpDiagnostics`, a list with components:
 #'   - `ess`: Named numeric vector of ESS per parameter.
 #'   - `minEss`: Scalar minimum ESS across parameters.
 #'   - `psrf`: Named numeric vector of PSRF point estimates per parameter
 #'     (only if `nRuns >= 2`; `NULL` otherwise).
 #'   - `maxPsrf`: Scalar maximum PSRF (or `NA` if single run).
+#'   - `treeEss`: Named numeric vector with `frechetCorrelationESS` and
+#'     `medianPseudoESS` (or `NULL` if not computed).
 #' @export
-ConvergenceDiagnostics <- function(posterior) {
+ConvergenceDiagnostics <- function(posterior, trees = TRUE) {
   if (!inherits(posterior, "MkPosterior")) {
     cli::cli_abort("{.arg posterior} must be an {.cls MkPosterior} object.")
   }
@@ -37,12 +44,16 @@ ConvergenceDiagnostics <- function(posterior) {
     maxPsrf <- max(psrf, na.rm = TRUE)
   }
 
+  # --- Tree ESS ---
+  treeEss <- .ComputeTreeEss(pb, trees)
+
   structure(
     list(
       ess = ess,
       minEss = min(ess),
       psrf = psrf,
       maxPsrf = maxPsrf,
+      treeEss = treeEss,
       nRuns = nRuns,
       nSamples = nrow(pb$samples),
       burnin = posterior$burnin %||% 0L
@@ -116,6 +127,18 @@ print.MkpDiagnostics <- function(x, ...) {
     } else {
       cat(sprintf("  %-20s  %s\n", label, essRange))
     }
+  }
+
+  # Topology ESS row (always shown; NA when not computed)
+  cat(sprintf("  %s\n", strrep("-", if (hasPsrf) 38L else 28L)))
+  if (!is.null(x$treeEss)) {
+    frech <- x$treeEss[["frechetCorrelationESS"]]
+    mdps  <- x$treeEss[["medianPseudoESS"]]
+    cat(sprintf("  %-20s  %s\n", "topology (Fréchet)",  .FmtEss(frech)))
+    cat(sprintf("  %-20s  %s\n", "topology (med.pseudo)", .FmtEss(mdps)))
+  } else {
+    cat(sprintf("  %-20s  %s\n", "topology (Fréchet)",   formatC("NA", width = 6)))
+    cat(sprintf("  %-20s  %s\n", "topology (med.pseudo)", formatC("NA", width = 6)))
   }
 
   # Legend
@@ -233,4 +256,57 @@ print.MkpDiagnostics <- function(x, ...) {
 #' @keywords internal
 .PlotParamCols <- function(samples) {
   grep("^(log_posterior$|tree_|rate_|p$)", colnames(samples))
+}
+
+
+#' Compute topology ESS from sampled trees using treess + TreeDist RF
+#'
+#' @param pb Post-burnin data list (from `.PostBurninData()`).
+#' @param trees `TRUE` to attempt computation, `FALSE` to skip.
+#' @return Named numeric vector (`frechetCorrelationESS`, `medianPseudoESS`)
+#'   summed across runs, or `NULL` if computation was skipped or failed.
+#' @keywords internal
+.ComputeTreeEss <- function(pb, trees) {
+  if (isFALSE(trees)) return(NULL)
+  if (!requireNamespace("treess",   quietly = TRUE)) return(NULL)
+  if (!requireNamespace("TreeDist", quietly = TRUE)) return(NULL)
+
+  # Build per-run tree lists (post-burnin)
+  perRunTrees <- if (!is.null(pb$per_run)) {
+    lapply(pb$per_run, `[[`, "trees")
+  } else {
+    list(pb$trees)
+  }
+  perRunTrees <- Filter(function(x) length(x) >= 4L, perRunTrees)
+  if (length(perRunTrees) == 0L) return(NULL)
+
+  # Subsample each run to at most 1000 trees (mirrors neotrans approach)
+  maxPerRun <- 1000L
+  totalTrees <- sum(vapply(perRunTrees, length, integer(1L)))
+  if (any(vapply(perRunTrees, length, integer(1L)) > maxPerRun)) {
+    if (interactive()) {
+      cli::cli_alert_info(
+        "Tree ESS: subsampling to {maxPerRun} trees/run \\
+         ({totalTrees} total available)."
+      )
+    }
+    perRunTrees <- lapply(perRunTrees, function(tr) {
+      n <- length(tr)
+      if (n > maxPerRun) tr[round(seq(1, n, length.out = maxPerRun))] else tr
+    })
+  }
+
+  if (interactive()) cli::cli_progress_message("Computing tree ESS\u2026")
+
+  tryCatch({
+    essMat <- do.call(
+      rbind,
+      treess::treess(perRunTrees, TreeDist::RobinsonFoulds,
+                     methods = treess::getESSMethods(TRUE))
+    )[, c("frechetCorrelationESS", "medianPseudoESS"), drop = FALSE]
+    colSums(essMat, na.rm = TRUE)
+  }, error = function(e) {
+    cli::cli_warn("Tree ESS computation failed: {conditionMessage(e)}")
+    NULL
+  })
 }

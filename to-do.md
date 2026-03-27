@@ -51,6 +51,14 @@ headers where available.
 | M-071 | P1 | DONE (C) | **Progress bar redesign.** Replace `{cli::pb_bar} current/total \| accept% ` with `iter \| ESS: N \| logP: N \| PSRF: N`. A bar is misleading because the run works toward a *convergence* condition, not a fixed iteration count. Make `nIter` default to `Inf` in `MkPrimeMCMC()` (rely on `minEss`/`maxPsrf`/`maxTime` stopping criteria). Update `ResumeMkPrime` progress display to match. Update vignette MCMC configs and docs. |
 | M-072 | P2 | DONE (C) | **hyoliths.qmd tree-summary-demo chunk fixes.** (a) Add `par(mar = rep(0, 4))` before `plot(consensus, ...)` — do this via a chunk `fig.par` option or an explicit `par()` call. (b) The plot title says "rogues excluded" even when no rogue detection has run; make the title conditional on whether rogues were actually identified and removed. |
 
+## Convergence diagnostics
+
+| ID | Priority | Status | Description |
+|----|----------|--------|-------------|
+| M-073 | P1 | OPEN | **Tree ESS in ConvergenceDiagnostics.** Add `trees = TRUE` argument. If `treess` and `TreeDist` installed and `!isFALSE(trees)`, compute topology ESS using `treess::treess(perRunTrees, TreeDist::RobinsonFoulds, methods = treess::getESSMethods(TRUE))`. Subsample each run to ≤1000 trees; if `interactive()` and total trees > threshold, emit a progress message. Extract `frechetCorrelationESS` and `medianPseudoESS`, sum across runs. `print.MkpDiagnostics` always shows a topology row (NA when not computed). Add `treess` and `TreeDist` to Suggests. |
+
+---
+
 ## Posterior & analysis improvements
 
 | ID | Priority | Status | Description |

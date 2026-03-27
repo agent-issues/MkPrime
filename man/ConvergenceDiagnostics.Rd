@@ -8,6 +8,11 @@ ConvergenceDiagnostics(posterior)
 }
 \arguments{
 \item{posterior}{An \code{MkPosterior} object.}
+
+\item{trees}{Logical. If \code{TRUE} (default) and \strong{treess} and \strong{TreeDist}
+are installed, compute topology ESS (Fréchet correlation ESS and median
+pseudo-ESS) from the sampled trees. Set to \code{FALSE} to skip. Each run is
+subsampled to at most 1,000 trees before computation.}
 }
 \value{
 An object of class \code{MkpDiagnostics}, a list with components:
@@ -17,10 +22,13 @@ An object of class \code{MkpDiagnostics}, a list with components:
 \item \code{psrf}: Named numeric vector of PSRF point estimates per parameter
 (only if \code{nRuns >= 2}; \code{NULL} otherwise).
 \item \code{maxPsrf}: Scalar maximum PSRF (or \code{NA} if single run).
+\item \code{treeEss}: Named numeric vector with \code{frechetCorrelationESS} and
+\code{medianPseudoESS} (or \code{NULL} if not computed).
 }
 }
 \description{
 Calculates effective sample size (ESS) per parameter and, when
 \code{nRuns >= 2}, the potential scale reduction factor (PSRF, Gelman-Rubin
-diagnostic) across runs.
+diagnostic) across runs. Optionally computes topology ESS using the
+Robinson-Foulds distance via the \strong{treess} and \strong{TreeDist} packages.
 }
