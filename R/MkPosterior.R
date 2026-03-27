@@ -92,7 +92,10 @@ print.MkPosterior <- function(x, ...) {
   }
 
   if (nRuns >= 2L) {
-    diag <- tryCatch(ConvergenceDiagnostics(x), error = function(e) NULL)
+    # trees = FALSE: topology ESS is expensive; call ConvergenceDiagnostics()
+    # explicitly post-run if tree ESS is needed.
+    diag <- tryCatch(ConvergenceDiagnostics(x, trees = FALSE),
+                     error = function(e) NULL)
     if (!is.null(diag)) {
       print(diag)
     }
@@ -134,7 +137,9 @@ summary.MkPosterior <- function(object, ...) {
 
   nRuns <- object$nRuns %||% 1L
   if (nRuns >= 2L && !is.null(object$per_run)) {
-    diag <- tryCatch(ConvergenceDiagnostics(object), error = function(e) NULL)
+    # trees = FALSE: topology ESS is expensive; omit from summary().
+    diag <- tryCatch(ConvergenceDiagnostics(object, trees = FALSE),
+                     error = function(e) NULL)
     if (!is.null(diag) && !is.null(diag$psrf)) {
       out$PSRF <- diag$psrf[out$parameter]
     }

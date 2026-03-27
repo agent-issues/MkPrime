@@ -67,14 +67,14 @@ RunMkPrime <- function(data, tree,
              {.code TreeTools::NJTree(data, edgeLengths = TRUE)}."
     ))
   }
-  nNeg <- sum(tree$edge.length < 0)
+  nNeg <- sum(tree$edge.length <= 0)
   if (nNeg > 0L) {
     cli::cli_warn(c(
-      "{nNeg} negative branch length{?s} clamped to 1e-8.",
-      "i" = "Negative lengths arise in NJ trees when taxa are very similar. \\
+      "{nNeg} non-positive branch length{?s} clamped to 1e-8.",
+      "i" = "Zero or negative lengths arise in NJ trees when taxa are very similar. \\
              They are invalid for likelihood computation."
     ))
-    tree$edge.length[tree$edge.length < 0] <- 1e-8
+    tree$edge.length[tree$edge.length <= 0] <- 1e-8
   }
 
   if (is.null(model)) model <- MkPrimeModel()

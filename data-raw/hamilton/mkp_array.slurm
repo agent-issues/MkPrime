@@ -4,7 +4,7 @@
 #SBATCH --time=8:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=12G
+#SBATCH --mem=2G
 #SBATCH --array=0-259
 #SBATCH --output=/nobackup/pjjg18/mkp-study/logs/mkp_%A_%a.out
 #SBATCH --error=/nobackup/pjjg18/mkp-study/logs/mkp_%A_%a.err
