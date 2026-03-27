@@ -4,7 +4,16 @@
 \alias{.BuildResult}
 \title{Build MkPosterior from all runs}
 \usage{
-.BuildResult(runs, model, mkd, mcmc, actualIter, stopReason)
+.BuildResult(
+  runs,
+  model,
+  mkd,
+  mcmc,
+  paramNames,
+  logFilePaths,
+  actualIter,
+  stopReason
+)
 }
 \description{
 Build MkPosterior from all runs

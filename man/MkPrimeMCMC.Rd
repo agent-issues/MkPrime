@@ -17,6 +17,8 @@ MkPrimeMCMC(
   checkEvery = 1000L,
   checkpointFile = NULL,
   treeFile = NULL,
+  logFile = NULL,
+  bufferSize = 500L,
   plotEvery = NULL,
   progressFn = NULL,
   tuning = list()
@@ -67,21 +69,6 @@ convergence check interval.}
 \code{NULL} (default) disables file logging. Trees are always stored
 in the returned \code{MkPosterior} object regardless.}
 
-\item{plotEvery}{Integer; invoke the progress callback every this many
-iterations. \code{NULL} (default) disables progress plotting (the \code{cli}
-progress bar still runs). Typical values: 100--500.}
-
-\item{progressFn}{Progress callback function, the string \code{"default"},
-or \code{NULL}. When \code{"default"}, uses \code{\link[=MkpTracePlot]{MkpTracePlot()}} for live
-base-R trace plots. A custom function must accept a single argument:
-a named list with fields \code{iter}, \code{nIter}, \code{warmup}, \code{inWarmup},
-\code{nRuns}, \code{nChains}, \code{runSamples}, \code{currentState},
-\code{recentAcceptance}, and \code{elapsed}. See \code{\link[=MkpTracePlot]{MkpTracePlot()}} for
-details.}
-
-\item{tuning}{Named list of initial tuning parameters for each move
-type. See Details.}
-
 \item{logFile}{Path to write a tab-separated scalar parameter log
 (Tracer-compatible). \code{NULL} (default) keeps all samples in memory only.
 When set, samples are flushed to disk in batches of \code{bufferSize}, so the
@@ -96,6 +83,21 @@ before flushing to \code{logFile}. Ignored when \code{logFile = NULL}. Default 5
 Smaller values give more frequent flushes (lower Tracer latency, slightly
 more I/O); larger values amortise write overhead at the cost of slightly
 higher peak memory.}
+
+\item{plotEvery}{Integer; invoke the progress callback every this many
+iterations. \code{NULL} (default) disables progress plotting (the \code{cli}
+progress bar still runs). Typical values: 100--500.}
+
+\item{progressFn}{Progress callback function, the string \code{"default"},
+or \code{NULL}. When \code{"default"}, uses \code{\link[=MkpTracePlot]{MkpTracePlot()}} for live
+base-R trace plots. A custom function must accept a single argument:
+a named list with fields \code{iter}, \code{nIter}, \code{warmup}, \code{inWarmup},
+\code{nRuns}, \code{nChains}, \code{runSamples}, \code{currentState},
+\code{recentAcceptance}, and \code{elapsed}. See \code{\link[=MkpTracePlot]{MkpTracePlot()}} for
+details.}
+
+\item{tuning}{Named list of initial tuning parameters for each move
+type. See Details.}
 }
 \value{
 An S3 object of class \code{MkPrimeMCMC}.

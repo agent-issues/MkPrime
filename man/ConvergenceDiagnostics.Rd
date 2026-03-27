@@ -4,7 +4,7 @@
 \alias{ConvergenceDiagnostics}
 \title{Compute convergence diagnostics for an MkPosterior}
 \usage{
-ConvergenceDiagnostics(posterior)
+ConvergenceDiagnostics(posterior, trees = TRUE)
 }
 \arguments{
 \item{posterior}{An \code{MkPosterior} object.}

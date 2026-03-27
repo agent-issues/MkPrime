@@ -4,9 +4,11 @@
 \alias{.CheckConvergence}
 \title{Check convergence criteria (called during the loop)}
 \usage{
-.CheckConvergence(runs, paramNames, mcmc)
+.CheckConvergence(runs, paramNames, mcmc, isStreaming = FALSE)
 }
 \description{
-Check convergence criteria (called during the loop)
+Works for any number of runs. ESS is always computed on combined samples;
+PSRF is computed only when \code{nRuns >= 2}. Returns full per-parameter \code{ess}
+and \code{psrf} vectors so the caller can display a progress table.
 }
 \keyword{internal}
