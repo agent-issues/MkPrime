@@ -100,6 +100,11 @@ monitoring, stopping rules, checkpointing.
   MCMC, PNG progress polling, results tabs (traces, summary, consensus).
 
 **Phase 6b: TreeSearch GUI integration (tasks defined, not started)**
+
+Architecture: MCMC runs as a detached OS process (survives Shiny timeout/browser
+close); app is a log-file viewer that can connect/reconnect at will. Relies on
+M-075 disk logging and M-076 ReadMkLog. Tasks are sequential:
+- M-081: Cancel-file support in RunMkPrime (prerequisite for clean stop)
 - M-078: `MkBayesianUi()` / `MkBayesianServer()` — reusable Shiny module
 - M-079: Refactor `app.R` to use `MkBayesianServer`
 - M-080: TreeSearch-side `mod_bayesian.R` + "Bayesian (Mk')" tab *(TreeSearch-a)*

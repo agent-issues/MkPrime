@@ -93,16 +93,34 @@ headers where available.
 ## Phase 6b: TreeSearch GUI integration
 
 The goal is a **"Bayesian (Mk')"** mode inside EasyTrees (TreeSearch's Shiny GUI).
-The work is split into three sequential tasks: build a reusable Shiny module in
-MkPrime (M-078), refactor the standalone EasyMkPrime app to use it (M-079), then
-add the hook to the TreeSearch-a repo (M-080).
 
-The module design follows the same callr-background-process + polling pattern
-used in `inst/MkPrime/app.R`. EasyTrees owns data loading; the module owns
-everything from MCMC config through progress display to result delivery.
+### Architecture: MCMC as a detached OS process; Shiny as a log viewer
+
+Long-running MCMC (hours to days) must not be tied to the lifetime of the Shiny
+session. The design is:
+
+1. **Detached process**: "Run" writes a script to a tempfile and launches it as a
+   detached `Rscript` (via `processx::process$new(supervise = FALSE)`), so the
+   MCMC survives browser close, session timeout, and OS-sleep resumption.
+2. **Job file**: a small RDS written beside the logs records `{ pid, logFiles,
+   cancelFile, startTime, status }`, enabling the app to reconnect to a running
+   job after restart.
+3. **Disk-based progress**: the MCMC already writes Tracer-compatible TSV log
+   files every `bufferSize` samples (M-075). The app polls these with
+   `ReadMkLog()` (M-076) and renders trace plots / ESS in-place.
+4. **Clean stop**: "Stop" calls `file.create(cancelFile)`. The MCMC R callback
+   checks for this file at each progress interval and exits cleanly (saves
+   checkpoint). This requires adding cancel-file checking to RunMkPrime (M-081).
+
+This replaces the `callr::r_bg(supervise = TRUE)` approach used in the current
+`app.R` (which dies with the session).
+
+Tasks are sequential: M-081 (cancel support) → M-078 (module) → M-079 (refactor
+app.R) → M-080 (TreeSearch hook).
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| M-078 | P2 | OPEN | **`MkBayesianUi()` / `MkBayesianServer()` — Shiny module for host-app embedding.** New `R/BayesianModule.R`. `MkBayesianUi(id)`: accordion with MCMC config inputs (nRuns, nChains, heat, warmup, minEss, maxTime), neomorphic-character text field (auto-populated from `AutoDetectNeomorphic()` when dataset changes), Run / Stop buttons, progress area. `MkBayesianServer(id, dataset, startTree = NULL)`: `dataset` is a reactive phyDat from the host; launches `callr::r_bg(RunMkPrime(...))`, polls progress PNG, reads result on completion. Returns `list(result = reactive(MkPosterior\|NULL), trees = reactive(multiPhylo\|NULL), status = reactive(chr))`. Extract the shared `callr` launch + polling helpers from `app.R` into private functions (`.LaunchMkpBg()`, `.PollMkpBg()`) to avoid duplication. Requires `callr` in Suggests. `shiny::testServer` smoke test (module instantiates, status starts "idle"). |
-| M-079 | P2 | OPEN | **Refactor `inst/MkPrime/app.R` to use `MkBayesianServer`.** Once M-078 is done, replace the inline MCMC-launch / progress-poll / result-read logic in `app.R` with a call to `MkBayesianServer`. The standalone app retains its own data-loading and starting-tree sections (those are app-specific). The result reactive from the module feeds the existing Traces / Summary / Consensus tabs. Verifies the standalone app still runs end-to-end. |
-| M-080 | P2 | OPEN | **TreeSearch `mod_bayesian.R` — "Bayesian (Mk')" tab in EasyTrees.** *(TreeSearch-a repo; tracked here for coordination.)* `Suggests: MkPrime` added to TreeSearch DESCRIPTION. New `inst/Parsimony/server/mod_bayesian.R`: `bayesian_ui(id)` wraps `MkPrime::MkBayesianUi(id)` and shows a "MkPrime not installed" notice if unavailable; `bayesian_server(id, r, HaveData, UpdateAllTrees, ...)` calls `MkPrime::MkBayesianServer(id, dataset = reactive(r$dataset))` and, on completion, inserts post-burnin trees into `r$allTrees` (displayed as "N posterior trees (unscored)" — no parsimony score computed). New "Bayesian (Mk')" nav tab added to the EasyTrees main panel alongside the existing parsimony-results tabs. |
+| M-081 | P2 | OPEN | **Cancel-file support in RunMkPrime.** Add `cancelFile` parameter to `MkPrimeMCMC()` (default `NULL`). When set, the R-level progress/adaptation callback (called from C++ at each `checkEvery` interval) checks `file.exists(cancelFile)` and, if found, saves a checkpoint and returns `"cancel"` to the C++ loop to break cleanly. Also add to `ResumeMkPrime`. Matched by `MkLogPaths()`-style helper `MkCancelPath(jobDir)` for consistency. Tests: cancel file causes early exit with valid checkpoint. |
+| M-078 | P2 | OPEN | **`MkBayesianUi()` / `MkBayesianServer()` — Shiny module (detached-process design).** New `R/BayesianModule.R`. `MkBayesianUi(id)`: accordion with MCMC config inputs (nRuns, nChains, heat, warmup, minEss, maxTime), `logDir` path field, neomorphic-character text field (auto-populated from `AutoDetectNeomorphic()` when dataset changes), Run / Stop / Reconnect buttons, progress area (trace plot + ESS table, polled from log files). `MkBayesianServer(id, dataset, startTree = NULL)`: `dataset` is a reactive phyDat from the host. "Run" writes a script + launches detached `processx::process$new(supervise = FALSE)`; writes job.rds. "Reconnect" loads an existing job.rds to resume monitoring a running job. Progress polling: `invalidateLater(5000)` reads log files via `ReadMkLog()` and redraws traces. "Stop" calls `file.create(cancelFile)`. Returns `list(jobFile = reactive(path\|NULL), trees = reactive(multiPhylo\|NULL), status = reactive(chr))`. Requires `processx` in Suggests. `shiny::testServer` smoke test. |
+| M-079 | P2 | OPEN | **Refactor `inst/MkPrime/app.R` to use `MkBayesianServer`.** Replace the inline MCMC-launch / progress-poll / result-read logic in `app.R` with a call to `MkBayesianServer`. The standalone app retains its own data-loading and starting-tree sections. The `trees` reactive from the module feeds the existing Traces / Summary / Consensus tabs. Verifies the standalone app still works end-to-end with the new detached-process design. |
+| M-080 | P2 | OPEN | **TreeSearch `mod_bayesian.R` — "Bayesian (Mk')" tab in EasyTrees.** *(TreeSearch-a repo; tracked here for coordination.)* `Suggests: MkPrime` added to TreeSearch DESCRIPTION. New `inst/Parsimony/server/mod_bayesian.R`: `bayesian_ui(id)` wraps `MkPrime::MkBayesianUi(id)` with availability check; `bayesian_server(id, r, HaveData, UpdateAllTrees, ...)` calls `MkPrime::MkBayesianServer(id, dataset = reactive(r$dataset))`. On job completion (status == "done"), reads post-burnin trees from the log directory and inserts into `r$allTrees` (displayed as "N posterior trees (unscored)"). New "Bayesian (Mk')" nav tab in EasyTrees alongside the existing parsimony tabs. |
