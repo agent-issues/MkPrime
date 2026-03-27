@@ -158,10 +158,15 @@ server <- function(input, output, session) {
         type = "message"
       )
       # Auto-detect neomorphic characters
-      neo <- auto_detect_neomorphic(rv$data)
+      neo <- AutoDetectNeomorphic(rv$data)
       if (length(neo)) {
         updateTextInput(session, "neomorphic",
                         value = paste(neo, collapse = ", "))
+        showNotification(
+          sprintf("Auto-detected %d neomorphic character%s (binary {0,1}).",
+                  length(neo), if (length(neo) == 1L) "" else "s"),
+          type = "message", duration = 6
+        )
       } else {
         updateTextInput(session, "neomorphic", value = "")
       }

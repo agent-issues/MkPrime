@@ -86,7 +86,7 @@ headers where available.
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| M-077 | P2 | OPEN | **EasyMkPrime: auto-detect neomorphic characters from data.** When the user loads a phyDat file in the GUI, automatically classify characters as neomorphic vs transformational based on observed state distributions: characters with only {0, 1, ?/-} observed → default to neomorphic; characters with observed states > 1 → transformational. Show the classification in the UI and allow per-character override. Should also expose this logic as a standalone helper (e.g. `.AutoClassifyNeo(mkd)`) so it can be reused and tested independently of the Shiny layer. |
+| M-077 | P2 | DONE (C) | **EasyMkPrime: auto-detect neomorphic characters from data.** `AutoDetectNeomorphic()` standalone helper (MkPrimeData.R); app.R wired to call it on data load, populate neomorphic text input, and show notification. Per-character override via text input; type breakdown shown in dataInfo. |
 
 ---
 
