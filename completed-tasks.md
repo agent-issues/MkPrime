@@ -69,3 +69,4 @@
 EOF 2>&1
 
 | M-065 | Eliminate edge matrix round-trips in C++ MCMC | C | a34d674: vector-based cpp_log_likelihood, nni/spr_proposal_impl; -71 lines net |
+| M-063 | C++ state struct with pre-allocated CL workspace | B | 2026-03-27 | `ClWorkspace` struct (flat `double[]` buf + `uint8_t[]` init, nNodeMax × strideMax) added to `mcmc_state.h` and `McmcState`. Four static flat-buffer pruning helpers (`pruning_jc_flat`, `pruning_jc_acrv_flat`, `pruning_mkn_flat`, `pruning_mkn_acrv_flat`) in `mcmc_likelihood.cpp`; used automatically when workspace fits, fall back to allocating versions when not. `allocate_cl_workspace()` Rcpp export sizes workspace from partition info + kPrimeMax+4 headroom. All three entry points (RunMkPrime, ResumeMkPrime, SteppingStone) call it after fill_partition_cache. Also fixed pre-existing resume bug: fill_partition_cache now runs after init_mcmc_state (not before). 3197 tests pass. |

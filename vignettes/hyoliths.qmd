@@ -275,7 +275,9 @@ to summarize topology:
 ```{r tree-summary}
 #| eval: false
 # Majority-rule consensus from a production run
-allTrees <- c(posterior$run_1$trees, posterior$run_2$trees)
+# posterior$trees already combines all runs; apply extra burnin if desired:
+# posterior <- SetBurnin(posterior, 500)
+allTrees <- posterior$trees
 
 # Identify and exclude rogue taxa that destabilize the consensus
 rogues <- Rogue::QuickRogue(allTrees)
