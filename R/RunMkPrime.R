@@ -1115,7 +1115,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
         rate_loss   = tun$scale_rate_loss,
         rate_log_sd = tun$scale_rate_log_sd,
         rate_neo    = tun$scale_rate_neo %||% 0.5,
-        p           = tun$scale_p,
+        p           = 0.5,  # Gibbs move: scale ignored by C++; placeholder
         0.5
       )
     }
@@ -1210,7 +1210,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     # p hyperparameter only exists for hierarchical geometric prior
     if (!identical(kPrimePrior, "logseries")) {
       kPrimeMoves <- c(kPrimeMoves, list(
-        list(name = "p", type = "scale", target = "p", weight = 1)
+        # Conjugate Gibbs draw: p | k' ~ Beta(a + nTrans, b + sum(k' - kObs))
+        list(name = "p", type = "gibbs_p", target = "p", weight = 1)
       ))
     }
     moves <- c(moves, kPrimeMoves)
@@ -1236,11 +1237,12 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 
 # --- Move type integer codes (must match src/mcmc.cpp) ---
 # 0=scale_tl, 1=scale_rl, 2=scale_rls, 3=scale_rn,
-# 4=beta_simplex, 5=nni, 6=spr, 7=int_walk, 8=scale_p
+# 4=beta_simplex, 5=nni, 6=spr, 7=int_walk, 8=scale_p (legacy),
+# 9=gibbs_p
 .kMoveTypes <- c(
   tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
   rate_neo = 3L, branch_lengths = 4L,
-  nni = 5L, spr = 6L, kPrime = 7L, p = 8L
+  nni = 5L, spr = 6L, kPrime = 7L, p = 9L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)
@@ -1306,8 +1308,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
       rate_loss   = tuning$scale_rate_loss,
       rate_log_sd = tuning$scale_rate_log_sd,
       rate_neo    = tuning$scale_rate_neo,
-      p           = tuning$scale_p,
-      0.5
+      0.5  # default; gibbs_p ignores scaleTun (returns before using it)
     )
     accepted <- do_move_cpp(
       mcmcData, stateOrPtr, moveCode, charIdx,
@@ -1360,6 +1361,16 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
       )
       proposed$kPrime[charI] <- prop$value
       logHastings <- prop$logHastings
+    },
+    gibbs_p = {
+      # Conjugate Beta draw; acceptance = 1, no MH step needed
+      transIdx <- which(mkd$type == "transformational")
+      sumU <- sum(state$kPrime[transIdx] - mkd$kObs[transIdx])
+      proposed$p <- rbeta(1L,
+        shape1 = model$kprimeHyperA + length(transIdx),
+        shape2 = model$kprimeHyperB + sumU)
+      proposed$log_prior <- LogPrior(proposed, model, mkd)
+      return(list(accept = TRUE, state = proposed))
     }
   )
 
@@ -1542,7 +1553,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     nni = NA_character_,
     spr = NA_character_,
     kPrime = "int_walk_window",
-    p = "scale_p",
+    p = NA_character_,       # Gibbs move: no tuning needed
     rate_loss = "scale_rate_loss",
     rate_log_sd = "scale_rate_log_sd",
     rate_neo = "scale_rate_neo"

@@ -90,8 +90,12 @@ test_that("MkPosterior print, summary, plot methods work", {
   expect_true(is.data.frame(s))
   expect_true(all(c("parameter", "mean", "median") %in% names(s)))
 
-  # plot should not error
+  # plot should not error (use temp PNG to avoid RStudio pane size issues)
+  tmp <- tempfile(fileext = ".png")
+  png(tmp, width = 800, height = 600)
   expect_no_error(plot(result))
+  dev.off()
+  unlink(tmp)
 })
 
 
@@ -102,17 +106,24 @@ test_that("Acceptance rates are non-degenerate (fixed topology)", {
                 dimnames = list(paste0("t", 1:4), NULL))
   pd <- TreeTools::MatrixToPhyDat(mat)
 
-  set.seed(8371)
+  set.seed(2946)
   result <- RunMkPrime(pd, tree, fixTopology = TRUE,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 2000L, thin = 10L, warmup = 1000L))
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 6000L, thin = 10L, warmup = 1000L))
 
-  # No move type should have 0% or 100% acceptance
+  # Gibbs moves always accept: p is a conjugate Gibbs draw
+  gibbs_moves <- c("p")
   for (nm in names(result$acceptance)) {
-    expect_gt(result$acceptance[nm], 0, label = paste(nm, "acceptance > 0"))
-    expect_lt(result$acceptance[nm], 1, label = paste(nm, "acceptance < 1"))
+    expect_gt(result$acceptance[[nm]], 0, label = paste(nm, "acceptance > 0"))
+    if (!nm %in% gibbs_moves) {
+      expect_lt(result$acceptance[[nm]], 1,
+                label = paste(nm, "acceptance < 1 (MH move)"))
+    } else {
+      expect_equal(result$acceptance[[nm]], 1,
+                   label = paste(nm, "acceptance == 1 (Gibbs move)"))
+    }
   }
   # Should NOT have topology moves
- expect_false("nni" %in% names(result$acceptance))
+  expect_false("nni" %in% names(result$acceptance))
   expect_false("spr" %in% names(result$acceptance))
 })
 

@@ -165,11 +165,18 @@ void fill_partition_cache(SEXP dataPtr, SEXP statePtr) {
   for (int i = 0; i < nEdge; ++i)
     edgeLen[i] = state->treeLength * state->relBrLengths[i];
   state->partLogLik.resize(nParts);
-  for (int pi = 0; pi < nParts; ++pi)
+  double totalLogLik = 0.0;
+  for (int pi = 0; pi < nParts; ++pi) {
     state->partLogLik[pi] = cpp_partition_log_likelihood(
       *data, pi, state->parent, state->child, edgeLen,
       state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
       state->clWs.ready() ? &state->clWs : nullptr);
+    totalLogLik += state->partLogLik[pi];
+  }
+  // Sync state->logLik with the C++ partition sum.  The R-computed initial
+  // value may differ (e.g. ascertainment correction edge-cases returning -Inf).
+  // A self-consistent logLik is required for the MH acceptance ratio.
+  state->logLik = totalLogLik;
 }
 
 
@@ -257,7 +264,8 @@ double get_state_log_lik(SEXP statePtr) {
 // do_move_cpp:  Rcpp-exported SEXP wrapper — calls do_move_impl.
 //
 // moveType: 0=scale_tl, 1=scale_rl, 2=scale_rls, 3=scale_rn,
-//           4=beta_simplex, 5=nni, 6=spr, 7=int_walk, 8=scale_p
+//           4=beta_simplex, 5=nni, 6=spr, 7=int_walk, 8=scale_p (legacy),
+//           9=gibbs_p
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -356,11 +364,32 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       logHastings = 0.0;
       break;
     }
-    case 8: { // scale p
+    case 8: { // scale p (legacy MH — kept for backward compat, not used by default)
       double mult = std::exp(scaleTuning * (R::unif_rand() - 0.5));
       state->p = oldP * mult;
       logHastings = std::log(mult);
       break;
+    }
+    case 9: { // gibbs_p — conjugate Beta draw, acceptance = 1
+      // Full conditional: p | k' ~ Beta(a + nTrans, b + sum(k'_i - kObs_i))
+      // p does not enter the likelihood, only the prior on k' and p itself.
+      int nTrans = (int)data->transIdxGlobal.size();
+      if (nTrans == 0) return false;  // no transformational chars: skip
+      double sumU = 0.0;
+      for (int i = 0; i < nTrans; ++i) {
+        int gi = data->transIdxGlobal[i];
+        sumU += static_cast<double>(state->kPrime[gi] - data->kObs[gi]);
+      }
+      double shape1 = data->kprimeHyperA + nTrans;
+      double shape2 = data->kprimeHyperB + sumU;
+      state->p = R::rbeta(shape1, shape2);
+      // Recompute prior (p changed; likelihood unchanged)
+      state->logPrior = cpp_log_prior(
+        *data, state->treeLength, state->relBrLengths,
+        state->rateLoss, state->rateLogSd, state->rateNeo,
+        state->p, state->kPrime);
+      state->logLik = state->logLik;  // unchanged
+      return true;  // Gibbs: always accept
     }
     default:
       return false;
