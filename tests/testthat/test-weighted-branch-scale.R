@@ -50,10 +50,11 @@ library(TreeTools)
   FALSE
 }
 
-# Snapshot helper: force a deep copy of relBrLengths
-# (get_mcmc_state()$relBrLengths returns an SEXP reference, not a copy)
+# Snapshot helper: force a deep copy of relBrLengths.
+# get_mcmc_state()$relBrLengths shares the C++ SEXP, and as.double()
+# is a no-op on double vectors; +0 forces a new allocation.
 .snap_br <- function(pts) {
-  as.double(get_mcmc_state(pts$statePtr)$relBrLengths)
+  get_mcmc_state(pts$statePtr)$relBrLengths + 0
 }
 
 # ---------------------------------------------------------------------------
