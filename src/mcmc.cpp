@@ -22,6 +22,13 @@ List nni_proposal_impl(IntegerVector parent, IntegerVector child,
 List spr_proposal_impl(IntegerVector parent, IntegerVector child,
                        int nTip, double treeLength,
                        NumericVector relBrLengths);
+// M-084: subtree swap helpers (tree_moves.cpp)
+List swap_subtrees_impl(IntegerVector parent, IntegerVector child,
+                        int nTip, double treeLength,
+                        NumericVector relBrLengths, int nodeA, int nodeB);
+std::vector<int> get_valid_swap_partners_impl(const IntegerVector& parent,
+                                              const IntegerVector& child,
+                                              int nTip, int pruneNode);
 List beta_simplex_proposal(NumericVector x, int index, double tuning);
 bool beta_simplex_impl(NumericVector& x, int index, double tuning,
                        double& logHastings);  // OPP-5: in-place, no List alloc
@@ -313,12 +320,257 @@ double eval_full_loglik_at_cpp(SEXP dataPtr, SEXP statePtr,
 
 
 // ---------------------------------------------------------------------------
+// gibbs_spr_impl  (M-085)
+//
+// GibbsSPR: enumerate all valid SPR reattachment positions for a randomly
+// chosen subtree, weight each by exp(β × logLik) (prior is topology-
+// independent), sample one proportionally (including the current state
+// to ensure proper discrete Gibbs semantics), and apply.
+//
+// Design choices:
+//   tau = 0.5 (midpoint insertion) → no branch-length Jacobian.
+//   Current state included in candidate set → pure Gibbs, acceptance = 1
+//     on non-self draws; self-draw recorded as a no-op (returns false).
+//   Dirichlet(1,...,1) prior on relBrLengths is uniform and equal for all
+//     candidates → only likelihoods enter the weights.
+// ---------------------------------------------------------------------------
+static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
+  const int nEdge = state->parent.size();
+  const int nTip  = data->nTip;
+  const int root  = nTip + 1;
+
+  // 1. Eligible prune edges (parent != root)
+  std::vector<int> eligible;
+  eligible.reserve(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    if (state->parent[i] != root) eligible.push_back(i);
+  if (eligible.empty()) return false;
+
+  // 2. Pick random prune edge
+  int pickIdx = (int)(R::unif_rand() * (double)eligible.size());
+  if (pickIdx >= (int)eligible.size()) pickIdx = (int)eligible.size() - 1;
+  const int pruneRow = eligible[pickIdx];
+  const int u = state->parent[pruneRow];   // pruned subtree's parent node
+  const int v = state->child[pruneRow];    // pruned subtree root
+
+  // 3. Find parentRow (edge into u) and sibRow (u's other child)
+  int parentRow = -1, sibRow = -1, sibNode = -1;
+  for (int i = 0; i < nEdge; ++i) {
+    if (state->child[i] == u) parentRow = i;
+    if (state->parent[i] == u && state->child[i] != v) {
+      sibRow = i; sibNode = state->child[i];
+    }
+  }
+  if (parentRow < 0 || sibRow < 0) return false;
+
+  // 4. BFS: mark all descendants of v
+  std::vector<bool> isDesc(2 * nTip + 2, false);
+  isDesc[v] = true;
+  if (v > nTip) {
+    std::vector<int> queue = {v};
+    while (!queue.empty()) {
+      int cur = queue.back(); queue.pop_back();
+      for (int i = 0; i < nEdge; ++i) {
+        if (state->parent[i] == cur) {
+          int c = state->child[i];
+          isDesc[c] = true;
+          if (c > nTip) queue.push_back(c);
+        }
+      }
+    }
+  }
+
+  // 5. Collect valid regraft candidate edges
+  std::vector<int> cands;
+  cands.reserve(nEdge);
+  for (int i = 0; i < nEdge; ++i) {
+    if (isDesc[state->child[i]]) continue;
+    if (state->parent[i] == u || state->child[i] == u) continue;
+    cands.push_back(i);
+  }
+  if (cands.empty()) return false;
+  const int nCand = (int)cands.size();
+
+  // 6. Absolute edge lengths (treeLength is preserved across topology change)
+  NumericVector absLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    absLen[i] = state->treeLength * state->relBrLengths[i];
+  const double lMerge = absLen[parentRow] + absLen[sibRow];
+
+  // 7. Compute logLik for each candidate at tau = 0.5
+  std::vector<double> candLL(nCand);
+  for (int ci = 0; ci < nCand; ++ci) {
+    const int rr      = cands[ci];
+    const double lReg = absLen[rr];
+
+    IntegerVector np = clone(state->parent);
+    IntegerVector nc = clone(state->child);
+    NumericVector na = clone(absLen);
+    const int b = nc[rr];
+
+    nc[parentRow] = sibNode;  na[parentRow] = lMerge;
+    nc[rr]        = u;        na[rr]        = 0.5 * lReg;
+    np[sibRow]    = u;        nc[sibRow]    = b;
+    na[sibRow]    = 0.5 * lReg;
+
+    IntegerMatrix tmpEdge(nEdge, 2);
+    for (int k = 0; k < nEdge; ++k) { tmpEdge(k,0)=np[k]; tmpEdge(k,1)=nc[k]; }
+    IntegerVector ord = TreeTools::postorder_order(tmpEdge);
+    IntegerVector op(nEdge), oc(nEdge);
+    NumericVector oa(nEdge);
+    for (int k = 0; k < nEdge; ++k) {
+      int j = ord[k] - 1;
+      op[k]=np[j]; oc[k]=nc[j]; oa[k]=na[j];
+    }
+    candLL[ci] = compute_full_loglik_at(*data, *state, op, oc, oa);
+  }
+
+  // 8. Sampling weights: exp(β × logLik), current state included
+  const double llOrig = state->logLik;
+  double maxLL = llOrig;
+  for (int ci = 0; ci < nCand; ++ci) maxLL = std::max(maxLL, candLL[ci]);
+
+  double wOrig = std::exp(beta * (llOrig - maxLL));
+  std::vector<double> ws(nCand);
+  double sumW = wOrig;
+  for (int ci = 0; ci < nCand; ++ci) {
+    ws[ci] = std::exp(beta * (candLL[ci] - maxLL));
+    sumW  += ws[ci];
+  }
+
+  // 9. Sample: self-draw → no-op (recorded as rejection)
+  double rnd = R::unif_rand() * sumW;
+  if (rnd < wOrig) return false;
+  rnd -= wOrig;
+  int chosen = nCand - 1;
+  for (int ci = 0; ci < nCand - 1; ++ci) {
+    if (rnd < ws[ci]) { chosen = ci; break; }
+    rnd -= ws[ci];
+  }
+
+  // 10. Apply chosen SPR: reconstruct and commit topology to state
+  {
+    const int rr      = cands[chosen];
+    const double lReg = absLen[rr];
+    IntegerVector np  = clone(state->parent);
+    IntegerVector nc  = clone(state->child);
+    NumericVector na  = clone(absLen);
+    const int b = nc[rr];
+
+    nc[parentRow] = sibNode;  na[parentRow] = lMerge;
+    nc[rr]        = u;        na[rr]        = 0.5 * lReg;
+    np[sibRow]    = u;        nc[sibRow]    = b;
+    na[sibRow]    = 0.5 * lReg;
+
+    IntegerMatrix tmpEdge(nEdge, 2);
+    for (int k = 0; k < nEdge; ++k) { tmpEdge(k,0)=np[k]; tmpEdge(k,1)=nc[k]; }
+    IntegerVector ord = TreeTools::postorder_order(tmpEdge);
+    for (int k = 0; k < nEdge; ++k) {
+      int j = ord[k] - 1;
+      state->parent[k]       = np[j];
+      state->child[k]        = nc[j];
+      state->relBrLengths[k] = na[j] / state->treeLength;
+    }
+  }
+
+  // 11. Commit: logLik updated; prior/logPrior unchanged (topology-
+  //     independent); clear per-partition cache (stale after topology change)
+  state->logLik = candLL[chosen];
+  state->partLogLik.clear();
+  return true;
+}
+
+
+// ---------------------------------------------------------------------------
+// gibbs_subtree_swap_impl  (M-086)
+//
+// GibbsSubtreeSwap: enumerate all valid subtree-swap partners for a randomly
+// chosen node, weight by exp(β × logLik), sample proportionally, apply.
+// Same Gibbs semantics and design choices as gibbs_spr_impl.
+// Branch lengths swap with their subtrees (Jacobian = 1); see M-084.
+// ---------------------------------------------------------------------------
+static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
+                                    double beta) {
+  const int nEdge = state->parent.size();
+  const int nTip  = data->nTip;
+
+  // 1. Pick a random node (any edge child is a valid non-root candidate)
+  int pickIdx = (int)(R::unif_rand() * (double)nEdge);
+  if (pickIdx >= nEdge) pickIdx = nEdge - 1;
+  const int nodeA = state->child[pickIdx];
+
+  // 2. Get valid swap partners
+  std::vector<int> partners = get_valid_swap_partners_impl(
+      state->parent, state->child, nTip, nodeA);
+  if (partners.empty()) return false;
+  const int nPart = (int)partners.size();
+
+  // 3. Compute logLik for each candidate swap
+  std::vector<double> candLL(nPart);
+  for (int pi = 0; pi < nPart; ++pi) {
+    List sw = swap_subtrees_impl(clone(state->parent), clone(state->child),
+                                 nTip, state->treeLength,
+                                 clone(state->relBrLengths),
+                                 nodeA, partners[pi]);
+    if (as<double>(sw["logHastings"]) == R_NegInf) {
+      candLL[pi] = R_NegInf;
+      continue;
+    }
+    IntegerVector sp = sw["parent"];
+    IntegerVector sc = sw["child"];
+    NumericVector sr = sw["rel_br_lengths"];
+    NumericVector sa(nEdge);
+    for (int k = 0; k < nEdge; ++k) sa[k] = state->treeLength * sr[k];
+    candLL[pi] = compute_full_loglik_at(*data, *state, sp, sc, sa);
+  }
+
+  // 4. Sampling weights: exp(β × logLik), current state included
+  const double llOrig = state->logLik;
+  double maxLL = llOrig;
+  for (int pi = 0; pi < nPart; ++pi)
+    if (R_FINITE(candLL[pi])) maxLL = std::max(maxLL, candLL[pi]);
+
+  double wOrig = std::exp(beta * (llOrig - maxLL));
+  std::vector<double> ws(nPart);
+  double sumW = wOrig;
+  for (int pi = 0; pi < nPart; ++pi) {
+    ws[pi] = R_FINITE(candLL[pi]) ? std::exp(beta * (candLL[pi] - maxLL)) : 0.0;
+    sumW  += ws[pi];
+  }
+
+  // 5. Sample: self-draw → no-op
+  double rnd = R::unif_rand() * sumW;
+  if (rnd < wOrig) return false;
+  rnd -= wOrig;
+  int chosen = nPart - 1;
+  for (int pi = 0; pi < nPart - 1; ++pi) {
+    if (rnd < ws[pi]) { chosen = pi; break; }
+    rnd -= ws[pi];
+  }
+  if (!R_FINITE(candLL[chosen])) return false;
+
+  // 6. Apply chosen swap
+  List sw = swap_subtrees_impl(clone(state->parent), clone(state->child),
+                               nTip, state->treeLength,
+                               clone(state->relBrLengths),
+                               nodeA, partners[chosen]);
+  state->parent       = as<IntegerVector>(sw["parent"]);
+  state->child        = as<IntegerVector>(sw["child"]);
+  state->relBrLengths = as<NumericVector>(sw["rel_br_lengths"]);
+
+  state->logLik = candLL[chosen];
+  state->partLogLik.clear();
+  return true;
+}
+
+
+// ---------------------------------------------------------------------------
 // do_move_impl: internal propose/evaluate/accept (raw pointers, no SEXP).
 // do_move_cpp:  Rcpp-exported SEXP wrapper — calls do_move_impl.
 //
 // moveType: 0=scale_tl, 1=scale_rl, 2=scale_rls, 3=scale_rn,
 //           4=beta_simplex, 5=nni, 6=spr, 7=int_walk, 8=scale_p (legacy),
-//           9=gibbs_p
+//           9=gibbs_p, 10=gibbs_spr, 11=gibbs_subtree_swap
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -443,6 +695,12 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         state->p, state->kPrime);
       state->logLik = state->logLik;  // unchanged
       return true;  // Gibbs: always accept
+    }
+    case 10: { // gibbs_spr — M-085
+      return gibbs_spr_impl(data, state, beta);
+    }
+    case 11: { // gibbs_subtree_swap — M-086
+      return gibbs_subtree_swap_impl(data, state, beta);
     }
     default:
       return false;
