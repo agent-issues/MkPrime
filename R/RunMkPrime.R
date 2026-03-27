@@ -183,6 +183,14 @@ RunMkPrime <- function(data, tree,
         }
       }
     }
+
+    # Save combined checkpoint after parallel runs.  Workers pass
+    # checkpointFile = NULL (no per-batch checkpointing from workers), so
+    # this is the only checkpoint written for the parallel path.  Useful
+    # for resuming a cancelled run (convergence, maxTime, or cancel file).
+    if (!is.null(mcmc$checkpointFile)) {
+      .SaveCheckpoint(runs, mcmc, actualIter, paramNames, mcmc$checkpointFile)
+    }
   } else {
     # Sequential: run each run to completion before starting the next.
     # .RunMkPrimeSingleRun() accepts R-serializable state, reconstructs

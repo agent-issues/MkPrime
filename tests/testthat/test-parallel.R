@@ -111,6 +111,39 @@ test_that("parallel orchestration (sequential plan) returns valid MkPosterior", 
   expect_true("log_posterior" %in% colnames(samp))
 })
 
+test_that("parallel mode saves checkpoint when checkpointFile is set", {
+  # Regression: checkpoint save was inside sequential else-branch only;
+  # parallel = TRUE + checkpointFile silently wrote nothing.
+  skip_if_not_installed("future")
+  library(ape)
+  library(future)
+
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
+                 dimnames = list(paste0("t", 1:4), NULL))
+  pd   <- TreeTools::MatrixToPhyDat(mat)
+
+  old_plan <- future::plan()
+  on.exit(future::plan(old_plan), add = TRUE)
+  future::plan("sequential")
+
+  cp_file <- tempfile(fileext = ".rds")
+  on.exit(unlink(cp_file), add = TRUE)
+
+  RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 400L, warmup = 200L,
+                        parallel = TRUE, pollInterval = 1L,
+                        checkpointFile = cp_file))
+
+  expect_true(file.exists(cp_file))
+  cp <- readRDS(cp_file)
+  expect_equal(length(cp$runs), 2L)
+  for (r in cp$runs) {
+    expect_true(is.finite(r$chains[[1]]$log_lik))
+    expect_true(r$saved_idx > 0L)
+  }
+})
+
 test_that("parallel orchestration (multisession, 2 workers) returns valid MkPosterior", {
   skip_if_not_installed("future")
   skip_if(!.is_mkprime_installed(),
