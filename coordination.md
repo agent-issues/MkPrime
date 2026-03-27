@@ -99,8 +99,10 @@ monitoring, stopping rules, checkpointing.
 - M-040: EasyMkPrime() standalone Shiny app — bslib UI, callr background
   MCMC, PNG progress polling, results tabs (traces, summary, consensus).
 
-**Deferred to Phase 6b:**
-- TreeSearch GUI integration hook ("Bayesian (Mk')" mode in EasyTrees)
+**Phase 6b: TreeSearch GUI integration (tasks defined, not started)**
+- M-078: `MkBayesianUi()` / `MkBayesianServer()` — reusable Shiny module
+- M-079: Refactor `app.R` to use `MkBayesianServer`
+- M-080: TreeSearch-side `mod_bayesian.R` + "Bayesian (Mk')" tab *(TreeSearch-a)*
 
 ### Phase 7: Extensions
 **Status:** Core complete (2026-03-26). Deferred items remain.
