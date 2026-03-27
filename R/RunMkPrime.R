@@ -305,25 +305,22 @@ RunMkPrime <- function(data, tree,
       }
     }
 
+    # Stopping rule: cancel file (checked every batch for responsiveness)
+    if (!is.null(mcmc$cancelFile) && file.exists(mcmc$cancelFile)) {
+      runs <- .FlushAndSaveCheckpoint(runs, nRuns, mcmc, batchEnd,
+                                      paramNames, isStreaming, logFilePaths)
+      stopReason <- "cancelled"
+      actualIter <- batchEnd
+      break
+    }
+
     # Convergence check + checkpoint; trigger if batchEnd crosses a checkEvery multiple
     doCheck <- batchEnd > mcmc$warmup && !is.null(mcmc$checkEvery) &&
                (batchEnd %/% mcmc$checkEvery) > ((batchStart - 1L) %/% mcmc$checkEvery)
 
     if (doCheck) {
-      if (!is.null(mcmc$checkpointFile)) {
-        # Flush streaming buffers before writing the checkpoint so that the
-        # log file and the checkpoint are always in sync.
-        if (isStreaming) {
-          for (run in seq_len(nRuns)) {
-            if (runs[[run]]$flush_idx > 0L) {
-              .FlushBuffer(runs[[run]]$flush_buf, runs[[run]]$flush_idx,
-                           runs[[run]]$flush_iter, logFilePaths[run])
-              runs[[run]]$flush_idx <- 0L
-            }
-          }
-        }
-        .SaveCheckpoint(runs, mcmc, batchEnd, paramNames, mcmc$checkpointFile)
-      }
+      runs <- .FlushAndSaveCheckpoint(runs, nRuns, mcmc, batchEnd,
+                                      paramNames, isStreaming, logFilePaths)
 
       if (nRuns >= 2L) {
         diagCheck <- .CheckConvergence(runs, paramNames, mcmc, isStreaming)
@@ -649,6 +646,28 @@ RunMkPrime <- function(data, tree,
 }
 
 
+# Flush any pending streaming buffers then save a checkpoint, if configured.
+# Returns the (possibly modified) runs list so flush_idx resets propagate.
+#
+# @keywords internal
+.FlushAndSaveCheckpoint <- function(runs, nRuns, mcmc, batchEnd,
+                                    paramNames, isStreaming, logFilePaths) {
+  if (!is.null(mcmc$checkpointFile)) {
+    if (isStreaming) {
+      for (run in seq_len(nRuns)) {
+        if (runs[[run]]$flush_idx > 0L) {
+          .FlushBuffer(runs[[run]]$flush_buf, runs[[run]]$flush_idx,
+                       runs[[run]]$flush_iter, logFilePaths[run])
+          runs[[run]]$flush_idx <- 0L
+        }
+      }
+    }
+    .SaveCheckpoint(runs, mcmc, batchEnd, paramNames, mcmc$checkpointFile)
+  }
+  runs
+}
+
+
 #' Resume MCMC from a checkpoint
 #'
 #' Loads a checkpoint file and continues the MCMC from where it left off.
@@ -927,22 +946,21 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
       }
     }
 
+    # Stopping rule: cancel file (checked every batch for responsiveness)
+    if (!is.null(mcmc$cancelFile) && file.exists(mcmc$cancelFile)) {
+      runs <- .FlushAndSaveCheckpoint(runs, nRuns, mcmc, batchEnd,
+                                      paramNames, isStreaming, logFilePaths)
+      stopReason <- "cancelled"
+      actualIter <- batchEnd
+      break
+    }
+
     doCheck <- batchEnd > mcmc$warmup && !is.null(mcmc$checkEvery) &&
                (batchEnd %/% mcmc$checkEvery) > ((batchStart - 1L) %/% mcmc$checkEvery)
 
     if (doCheck) {
-      if (!is.null(mcmc$checkpointFile)) {
-        if (isStreaming) {
-          for (run in seq_len(nRuns)) {
-            if (runs[[run]]$flush_idx > 0L) {
-              .FlushBuffer(runs[[run]]$flush_buf, runs[[run]]$flush_idx,
-                           runs[[run]]$flush_iter, logFilePaths[run])
-              runs[[run]]$flush_idx <- 0L
-            }
-          }
-        }
-        .SaveCheckpoint(runs, mcmc, batchEnd, paramNames, mcmc$checkpointFile)
-      }
+      runs <- .FlushAndSaveCheckpoint(runs, nRuns, mcmc, batchEnd,
+                                      paramNames, isStreaming, logFilePaths)
 
       if (nRuns >= 2L) {
         diagCheck <- .CheckConvergence(runs, paramNames, mcmc, isStreaming)

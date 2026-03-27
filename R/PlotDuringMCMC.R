@@ -429,6 +429,22 @@ MkLogPaths <- function(logFile, nRuns) {
 }
 
 
+#' Construct the cancel-signal file path for a job directory
+#'
+#' Returns the conventional cancel-file path used by [RunMkPrime()] when
+#' `cancelFile` is set. Passing a directory rather than a full path keeps
+#' the cancel file alongside the log files in one place.
+#'
+#' @param jobDir Character. Directory that contains the log files for the run.
+#' @return Character(1). Full path to the cancel-signal file
+#'   (`<jobDir>/mkp_cancel.signal`).
+#' @seealso [MkLogPaths()], [MkPrimeMCMC()]
+#' @export
+MkCancelPath <- function(jobDir) {
+  file.path(jobDir, "mkp_cancel.signal")
+}
+
+
 #' Format elapsed seconds as human-readable string
 #' @keywords internal
 .FormatElapsed <- function(seconds) {

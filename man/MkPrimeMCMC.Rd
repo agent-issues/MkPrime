@@ -15,6 +15,7 @@ MkPrimeMCMC(
   minEss = NULL,
   maxPsrf = NULL,
   checkEvery = 1000L,
+  cancelFile = NULL,
   checkpointFile = NULL,
   treeFile = NULL,
   logFile = NULL,
@@ -61,9 +62,16 @@ disables PSRF-based stopping. Requires \code{nRuns >= 2}.}
 \item{checkEvery}{Check convergence every this many iterations
 (default 1000). Only used when stopping criteria are set.}
 
+\item{cancelFile}{Path to a cancel-signal file. \code{NULL} (default) disables
+cancel-file checking. When set, \code{\link[=RunMkPrime]{RunMkPrime()}} checks every 200
+iterations whether this file exists. If it does, the run flushes any
+buffered samples, saves a checkpoint (if \code{checkpointFile} is set), and
+exits with \code{stop_reason = "cancelled"}. Create the file to request a
+clean stop: \code{file.create(cancelFile)}. See also \code{\link[=MkCancelPath]{MkCancelPath()}}.}
+
 \item{checkpointFile}{Path to write checkpoint RDS files. \code{NULL}
 (default) disables checkpointing. Checkpoints are saved at each
-convergence check interval.}
+convergence check interval and on cancel.}
 
 \item{treeFile}{Path to write sampled trees in Newick format.
 \code{NULL} (default) disables file logging. Trees are always stored

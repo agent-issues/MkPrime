@@ -28,9 +28,15 @@
 #'   disables PSRF-based stopping. Requires `nRuns >= 2`.
 #' @param checkEvery Check convergence every this many iterations
 #'   (default 1000). Only used when stopping criteria are set.
+#' @param cancelFile Path to a cancel-signal file. `NULL` (default) disables
+#'   cancel-file checking. When set, [RunMkPrime()] checks every 200
+#'   iterations whether this file exists. If it does, the run flushes any
+#'   buffered samples, saves a checkpoint (if `checkpointFile` is set), and
+#'   exits with `stop_reason = "cancelled"`. Create the file to request a
+#'   clean stop: `file.create(cancelFile)`. See also [MkCancelPath()].
 #' @param checkpointFile Path to write checkpoint RDS files. `NULL`
 #'   (default) disables checkpointing. Checkpoints are saved at each
-#'   convergence check interval.
+#'   convergence check interval and on cancel.
 #' @param treeFile Path to write sampled trees in Newick format.
 #'   `NULL` (default) disables file logging. Trees are always stored
 #'   in the returned `MkPosterior` object regardless.
@@ -89,6 +95,7 @@ MkPrimeMCMC <- function(
     minEss = NULL,
     maxPsrf = NULL,
     checkEvery = 1000L,
+    cancelFile = NULL,
     checkpointFile = NULL,
     treeFile = NULL,
     logFile = NULL,
@@ -115,6 +122,11 @@ MkPrimeMCMC <- function(
   if (nChains > 1L) {
     if (heat <= 0 || heat >= 1) {
       cli::cli_abort("{.arg heat} must be in (0, 1), got {heat}.")
+    }
+  }
+  if (!is.null(cancelFile)) {
+    if (!is.character(cancelFile) || length(cancelFile) != 1L) {
+      cli::cli_abort("{.arg cancelFile} must be a length-1 character string or NULL.")
     }
   }
   if (!is.null(logFile)) {
@@ -155,7 +167,8 @@ MkPrimeMCMC <- function(
     list(nIter = nIter, thin = thin, warmup = warmup,
          nRuns = nRuns, nChains = nChains, heat = heat,
          maxTime = maxTime, minEss = minEss, maxPsrf = maxPsrf,
-         checkEvery = checkEvery, checkpointFile = checkpointFile,
+         checkEvery = checkEvery, cancelFile = cancelFile,
+         checkpointFile = checkpointFile,
          treeFile = treeFile, logFile = logFile, bufferSize = bufferSize,
          plotEvery = plotEvery, progressFn = progressFn, tuning = tuning),
     class = "MkPrimeMCMC"

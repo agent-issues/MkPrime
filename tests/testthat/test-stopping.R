@@ -220,6 +220,72 @@ test_that("nIter = Inf with maxTime stopping works", {
 })
 
 
+test_that("MkPrimeMCMC stores cancelFile", {
+  cf <- tempfile(fileext = ".signal")
+  cfg <- MkPrimeMCMC(cancelFile = cf)
+  expect_equal(cfg$cancelFile, cf)
+})
+
+
+test_that("MkPrimeMCMC rejects non-string cancelFile", {
+  expect_error(MkPrimeMCMC(cancelFile = 123L), "cancelFile")
+  expect_error(MkPrimeMCMC(cancelFile = c("a", "b")), "cancelFile")
+})
+
+
+test_that("cancelFile causes early exit with stop_reason 'cancelled'", {
+  library(ape)
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  cf <- tempfile(fileext = ".signal")
+  # Pre-create the cancel file so the run stops at the first check
+  file.create(cf)
+  on.exit(unlink(cf))
+
+  set.seed(6641)
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 1000000L, thin = 5L,
+                        warmup = 100L, cancelFile = cf))
+
+  expect_equal(result$stop_reason, "cancelled")
+  expect_lt(result$actual_iter, 1000000L)
+})
+
+
+test_that("cancelFile + checkpointFile saves checkpoint on cancel", {
+  library(ape)
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  cf   <- tempfile(fileext = ".signal")
+  ckpt <- tempfile(fileext = ".rds")
+  file.create(cf)
+  on.exit({ unlink(cf); unlink(ckpt) })
+
+  set.seed(8823)
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 1000000L, thin = 5L,
+                        warmup = 100L, cancelFile = cf,
+                        checkpointFile = ckpt))
+
+  expect_equal(result$stop_reason, "cancelled")
+  expect_true(file.exists(ckpt))
+  payload <- readRDS(ckpt)
+  expect_true(is.list(payload))
+  expect_true(!is.null(payload$runs))
+})
+
+
+test_that("MkCancelPath returns path inside jobDir", {
+  expect_equal(MkCancelPath("/tmp/myjob"), "/tmp/myjob/mkp_cancel.signal")
+})
+
+
 test_that("MkPrimeMCMC nIter = Inf default and warmup default", {
   m_inf <- MkPrimeMCMC()
   expect_true(is.infinite(m_inf$nIter))
