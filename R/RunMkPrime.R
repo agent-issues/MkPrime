@@ -1941,9 +1941,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 
   softmaxWeights <- rawWeights / sum(rawWeights) * scoreableBudget
 
-  # Apply floor with iterative enforcement
+  # Apply floor: each free move gets at least wMin of the total budget
   nFree <- length(freeIdx)
-  floorVal <- wMin / nFree
+  floorVal <- wMin
   nScoreable <- length(scoreableIdx)
   floored <- softmaxWeights < floorVal
   if (any(floored) && !all(floored)) {
