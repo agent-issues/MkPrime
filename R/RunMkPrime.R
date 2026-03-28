@@ -1953,7 +1953,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 #' @param warmupProgress Fraction of warmup completed (0 to 1).
 #' @param tStart Starting softmax temperature (default 2.0).
 #' @param tEnd Ending softmax temperature (default 0.5).
-#' @param wMin Floor per free move as fraction of 1 (default 0.05).
+#' @param wMin Floor per free move as fraction of 1 (default 0.01).
 #' @param minProposals Minimum proposals before adapting (default 20).
 #'
 #' @return Updated weight vector (sums to 1).
@@ -1963,7 +1963,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
                                moveDim = rep(1L, length(currentWeights)),
                                pinnedWeights,
                                warmupProgress, tStart = 2.0, tEnd = 0.5,
-                               wMin = 0.05, minProposals = 20L) {
+                               wMin = 0.01, minProposals = 20L) {
   nMoves <- length(currentWeights)
   stopifnot(length(acceptCount) == nMoves,
             length(proposeCount) == nMoves,

@@ -77,10 +77,11 @@
 #' @param weightedSubtreeSwap Logical; include the weighted subtree-swap
 #'   move (default `FALSE`). Cost: O(N * B) likelihood evaluations.
 #' @param tbr Logical; include the TBR (Tree Bisection and Reconnection)
-#'   topology move (default `FALSE`). TBR is a superset of SPR: it additionally
+#'   topology move (default `TRUE`). TBR is a superset of SPR: it additionally
 #'   re-roots the pruned subtree at a random internal edge before regrafting,
 #'   enabling larger jumps in tree space. Cost: O(nEdge) per proposal (same
-#'   as SPR). Recommended for datasets where SPR mixing is poor.
+#'   as SPR). The adaptive scheduler will downweight TBR on small trees where
+#'   SPR is sufficient.
 #' @param blockGibbsBranch Logical; include the block Gibbs branch-length
 #'   sweep move (default `FALSE`). Each call sweeps over all edge pairs
 #'   in random-permutation order, sampling each from an approximate
@@ -188,7 +189,7 @@ MkPrimeMCMC <- function(
     progressFn = NULL,
     gibbsSpr = TRUE,
     gibbsSubtreeSwap = TRUE,
-    tbr = FALSE,
+    tbr = TRUE,
     weightedBranchScale = FALSE,
     weightedSpr = FALSE,
     weightedSubtreeSwap = FALSE,
