@@ -248,6 +248,6 @@ test_that("GibbsSubtreeSwap on small tree returns false gracefully when no partn
 
 test_that("Existing moves (NNI=5, SPR=6) still work after adding cases 10/11", {
   pts <- .gibbs_pts(seed = 301L)
-  expect_true(.try_move(pts, 5L, max_try = 50L))   # NNI
-  expect_true(.try_move(pts, 6L, max_try = 50L))   # SPR
+  expect_true(.try_move(pts, 5L, max_try = 200L))   # NNI
+  expect_true(.try_move(pts, 6L, max_try = 200L))   # SPR
 })

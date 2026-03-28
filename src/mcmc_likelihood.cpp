@@ -13,6 +13,7 @@
 
 #include "mcmc_state.h"
 #include <cmath>
+#include <cstring>
 #include <algorithm>
 #include <set>
 
@@ -212,14 +213,16 @@ static double pruning_jc_acrv_flat(
   double inv_k = 1.0 / kStates;
   double km1   = kStates - 1.0;
 
-  // Initialize tips once (identical for all rate categories).
-  // Explicit zeroing of tip CLs replaces the per-category full-buffer zero.
+  // OPP-CL: tips are constant across rate categories — init once, not per cat.
+  // Zero only tip regions, set observed states; internal nodes overwritten by
+  // the first-child '=' branch so their stale values are harmless.
+  std::memset(initFlg, 0, (maxNode + 1) * sizeof(uint8_t));
   for (int tip = 1; tip <= nTip; ++tip) {
     double* cl = buf + tip * stride;
+    std::fill(cl, cl + clCols, 0.0);
     for (int c = 0; c < nChar; ++c) {
       int state  = tip_states(tip - 1, c);
       int offset = c * kStates;
-      for (int s = 0; s < kStates; ++s) cl[offset + s] = 0.0;
       if (state < 0) {
         for (int s = 0; s < kStates; ++s) cl[offset + s] = 1.0;
       } else {
@@ -232,9 +235,7 @@ static double pruning_jc_acrv_flat(
   for (int cat = 0; cat < nCat; ++cat) {
     double rate = rate_multipliers[cat];
 
-    // Only reset initFlg for internal nodes; tips are pre-initialized.
-    // Internal node buffer values need not be zeroed — initFlg tracks
-    // first-write (= assignment) vs subsequent writes (*= multiplication).
+    // Reset only internal-node init flags (tips stay initialised).
     for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
 
     for (int e = nEdge - 1; e >= 0; --e) {
@@ -247,7 +248,7 @@ static double pruning_jc_acrv_flat(
       double* clPar   = buf + par * stride;
       double* clCh    = buf + ch  * stride;
 
-      // OPP-1: JC symmetry → O(k) product: cl[i] = p_diff*sum + (p_same-p_diff)*cl[i]
+      // OPP-1: JC symmetry → O(k) product
       double diff_coeff = p_same - p_diff;
       if (!initFlg[par]) {
         for (int c = 0; c < nChar; ++c) {
@@ -398,13 +399,14 @@ static double pruning_mkn_acrv_flat(
   double inv_lam_01 = rate01 / lambda;
   double inv_lam_10 = rate10 / lambda;
 
-  // Initialize tips once (identical for all rate categories).
+  // OPP-CL: init tips once (constant across rate categories)
+  std::memset(initFlg, 0, (maxNode + 1) * sizeof(uint8_t));
   for (int tip = 1; tip <= nTip; ++tip) {
     double* cl = buf + tip * stride;
+    std::fill(cl, cl + clCols, 0.0);
     for (int c = 0; c < nChar; ++c) {
       int state  = tip_states(tip - 1, c);
       int offset = c * kStates;
-      cl[offset] = 0.0; cl[offset + 1] = 0.0;
       if (state < 0) {
         cl[offset] = 1.0; cl[offset + 1] = 1.0;
       } else {
@@ -417,7 +419,6 @@ static double pruning_mkn_acrv_flat(
   for (int cat = 0; cat < nCat; ++cat) {
     double rate = rate_multipliers[cat];
 
-    // Only reset initFlg for internal nodes; tips are pre-initialized.
     for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
 
     for (int e = nEdge - 1; e >= 0; --e) {
@@ -566,13 +567,14 @@ static double pruning_f81_het_acrv_flat(
     gain_base = loss_base = 0.0;  // unused for k≥3
   }
 
-  // Initialize tips once (identical for all mixture components).
+  // OPP-CL: init tips once (constant across all cat × bin × rot combos)
+  std::memset(initFlg, 0, (maxNode + 1) * sizeof(uint8_t));
   for (int tip = 1; tip <= nTip; ++tip) {
     double* cl = buf + tip * stride;
+    std::fill(cl, cl + clCols, 0.0);
     for (int c = 0; c < nChar; ++c) {
       int state  = tip_states(tip - 1, c);
       int offset = c * kStates;
-      for (int s = 0; s < kStates; ++s) cl[offset + s] = 0.0;
       if (state < 0) {
         for (int s = 0; s < kStates; ++s) cl[offset + s] = 1.0;
       } else {
@@ -591,12 +593,7 @@ static double pruning_f81_het_acrv_flat(
       for (int rot = 0; rot < nRot; ++rot) {
 
         // --- Build frequency vector π^(bi,rot) ---
-        // For k=2 neomorphic: compose with rate_loss.
-        //   gain_b = gain_base × 2β, loss_b = loss_base × 2(1−β)
-        //   π₁ = gain_b/(gain_b + loss_b), π₀ = 1 − π₁
-        // For k=2 symmetric (baseRL=1): gain_b = β, loss_b = 1−β → π₁ = β
-        // For k≥3: π[rot] = β, others = (1−β)/(k−1)
-        double pi[16];  // max k we'd ever encounter in morphology
+        double pi[16];
         double sumPiSq = 0.0;
 
         if (kStates == 2) {
@@ -616,9 +613,7 @@ static double pruning_f81_het_acrv_flat(
 
         double mu = 1.0 / (1.0 - sumPiSq);
 
-        // --- Init workspace: reset only internal node flags ---
-        // Tip CLs are initialized once before the loop; they don't depend
-        // on the (cat, bin, rotation) combination.
+        // Reset internal-node init flags only
         for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
 
         // --- Tree traversal using F81 P(t) ---
@@ -634,28 +629,27 @@ static double pruning_f81_het_acrv_flat(
           double* clPar = buf + par * stride;
           double* clCh  = buf + ch  * stride;
 
+          // OPP-1 (F81): hoist Σ_j π_j·cl_j out of the i-loop → O(k) per char
           if (!initFlg[par]) {
             for (int c = 0; c < nChar; ++c) {
               int offset = c * kStates;
-              for (int i = 0; i < kStates; ++i) {
-                // P_ij = π_j * one_minus_d + (i==j ? d : 0)
-                // Σ_j P_ij × cl_j = one_minus_d × (Σ_j π_j × cl_j) + d × cl_i
-                double sum_pi_cl = 0.0;
-                for (int j = 0; j < kStates; ++j)
-                  sum_pi_cl += pi[j] * clCh[offset + j];
-                clPar[offset + i] = one_minus_d * sum_pi_cl + d * clCh[offset + i];
-              }
+              double sum_pi_cl = 0.0;
+              for (int j = 0; j < kStates; ++j)
+                sum_pi_cl += pi[j] * clCh[offset + j];
+              double base = one_minus_d * sum_pi_cl;
+              for (int i = 0; i < kStates; ++i)
+                clPar[offset + i] = base + d * clCh[offset + i];
             }
             initFlg[par] = 1;
           } else {
             for (int c = 0; c < nChar; ++c) {
               int offset = c * kStates;
-              for (int i = 0; i < kStates; ++i) {
-                double sum_pi_cl = 0.0;
-                for (int j = 0; j < kStates; ++j)
-                  sum_pi_cl += pi[j] * clCh[offset + j];
-                clPar[offset + i] *= one_minus_d * sum_pi_cl + d * clCh[offset + i];
-              }
+              double sum_pi_cl = 0.0;
+              for (int j = 0; j < kStates; ++j)
+                sum_pi_cl += pi[j] * clCh[offset + j];
+              double base = one_minus_d * sum_pi_cl;
+              for (int i = 0; i < kStates; ++i)
+                clPar[offset + i] *= base + d * clCh[offset + i];
             }
           }
         }
@@ -1190,6 +1184,10 @@ SEXP prepare_mcmc_data(List partitions_r,
     }
   }
 
+  // Initialize branchBins with the default so weighted/block-Gibbs moves
+  // work even if set_branch_bins() is never called (e.g. in unit tests).
+  d->branchBins.init(d->nBranchBins);
+
   // M-052: Q-matrix heterogeneity parameters.
   d->qHeterogeneity = qHeterogeneity;
   d->nBetaCat       = nBetaCat;
@@ -1215,8 +1213,11 @@ SEXP prepare_mcmc_data(List partitions_r,
 }
 
 
-// M-090: setter for nBranchBins (avoids changing prepare_mcmc_data signature)
+// M-090: setter for nBranchBins (avoids changing prepare_mcmc_data signature).
+// Also precomputes the BranchBins breakpoints so no lazy init is needed later.
 // [[Rcpp::export]]
 void set_branch_bins(SEXP dataPtr, int nBins) {
-  Rcpp::XPtr<McmcData>(dataPtr)->nBranchBins = nBins;
+  McmcData* d = Rcpp::XPtr<McmcData>(dataPtr);
+  d->nBranchBins = nBins;
+  d->branchBins.init(nBins);
 }

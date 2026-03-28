@@ -18,6 +18,31 @@ struct PartInfo {
   Rcpp::IntegerVector globalCharIdx; // 0-based map: local char → global kPrime index
 };
 
+// Bin breakpoints for weighted branch-length moves (M-087/088/089/054).
+// Uses Beta(alpha, beta) quantile breakpoints to tile [0,1].
+struct BranchBins {
+  static constexpr double kBinAlpha = 0.25;
+  static constexpr double kBinBeta  = 0.25;
+
+  int nBins = 0;
+  double concentration = 0.0;           // 2 * nBins (Beta concentration for draw)
+  std::vector<double> breaks;           // length nBins+1: breaks[0]=0, breaks[nBins]=1
+  std::vector<double> mids;             // length nBins: midpoint of each bin
+
+  void init(int n) {
+    nBins = n;
+    concentration = 2.0 * n;
+    breaks.resize(n + 1);
+    mids.resize(n);
+    breaks[0] = 0.0;
+    breaks[n] = 1.0;
+    for (int b = 1; b < n; ++b)
+      breaks[b] = R::qbeta(static_cast<double>(b) / n, kBinAlpha, kBinBeta, 1, 0);
+    for (int b = 0; b < n; ++b)
+      mids[b] = 0.5 * (breaks[b] + breaks[b + 1]);
+  }
+};
+
 // Pre-processed MCMC data: created once before the MCMC loop.
 struct McmcData {
   int nTip;
@@ -49,6 +74,7 @@ struct McmcData {
 
   // Weighted-move configuration (M-090)
   int nBranchBins = 10;     // number of branch-fraction bins for weighted moves
+  BranchBins branchBins;    // precomputed bin breakpoints (init by set_branch_bins)
 
   // Q-matrix heterogeneity (M-052): Dirichlet-marginal discretization.
   // When enabled, characters evolve under a mixture of F81 Q-matrices with
