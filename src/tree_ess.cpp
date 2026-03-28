@@ -7,7 +7,12 @@
 // The algorithm generalises univariate autocorrelation ESS to
 // non-Euclidean spaces via Fréchet variance.  This C++ version
 // replaces the R-level loop that repeatedly subsets the distance
-// matrix with in-place accumulation over the squared-distance matrix.
+// matrix.  Instead of recomputing O((n-i)^2) submatrix sums at each
+// lag, it maintains running trailing and leading submatrix sums
+// via O(n)-per-step incremental updates.
+//
+// Complexity: O(n^2) initial sum + O(n * L) for L lags, versus
+// O(n^2 * L) in the naive implementation.
 
 #include <Rcpp.h>
 using namespace Rcpp;
@@ -19,40 +24,62 @@ double frechet_correlation_ess_cpp(const NumericMatrix& dmat_sq,
   const int max_lag = n - min_nsamples - 1;
   if (max_lag < 1) return NA_REAL;
 
-  // P stores paired sums of consecutive correlations (Geyer's initial
-  // positive sequence estimator, as in Vehtari et al.)
+  // R matrices are column-major: dmat_sq(r, c) = data[c * n + r].
+  // Access with varying r (fixed c) is contiguous; varying c is stride-n.
+  // For a symmetric matrix, row_sum(r, a..b) = col_sum(a..b, r),
+  // so we prefer iterating over the column dimension.
+
+  // Total matrix sum: O(n^2), column-contiguous access.
+  double total_sum = 0.0;
+  for (int c = 0; c < n; ++c) {
+    for (int r = 0; r < n; ++r) {
+      total_sum += dmat_sq(r, c);
+    }
+  }
+
+  // Running submatrix sums, updated incrementally at each lag.
+  //   trailing = T(i) = sum(dmat_sq[i..n-1, i..n-1])
+  //   leading  = S(m) = sum(dmat_sq[0..m-1, 0..m-1])  where m = n - i
+  double trailing = total_sum;  // T(0)
+  double leading  = total_sum;  // S(n)
+
   std::vector<double> P;
   P.reserve((max_lag + 1) / 2);
-
   double prev_cor = 1.0;  // cors[0] = 1.0 by definition
 
   for (int i = 1; i <= max_lag; ++i) {
-    // Fréchet variance of samples [i .. n-1] (front-trimmed)
-    // var1 = sum(dmat_sq[i:, i:]) / (2 * m * (m - 1))  where m = n - i
-    double sum1 = 0.0;
     const int m = n - i;
-    for (int r = i; r < n; ++r) {
-      for (int c = i; c < n; ++c) {
-        sum1 += dmat_sq(r, c);
-      }
-    }
-    double var1 = sum1 / (2.0 * m * (m - 1));
 
-    // Fréchet variance of samples [0 .. n-i-1] (back-trimmed)
-    double sum2 = 0.0;
-    for (int r = 0; r < m; ++r) {
-      for (int c = 0; c < m; ++c) {
-        sum2 += dmat_sq(r, c);
+    // T(i) = T(i-1) - 2 * row_sum(i-1, i-1..n-1) + dmat_sq(i-1, i-1)
+    // By symmetry, row_sum = col_sum(i-1..n-1, i-1): contiguous access.
+    {
+      double col_sum = 0.0;
+      for (int r = i - 1; r < n; ++r) {
+        col_sum += dmat_sq(r, i - 1);
       }
+      trailing -= 2.0 * col_sum - dmat_sq(i - 1, i - 1);
     }
-    double var2 = sum2 / (2.0 * m * (m - 1));
 
-    // Mean squared distance at lag i (the i-th super-diagonal)
-    double d12 = 0.0;
-    for (int j = 0; j < n - i; ++j) {
-      d12 += dmat_sq(j, j + i);
+    // S(m) = S(m+1) - 2 * row_sum(m, 0..m) + dmat_sq(m, m)
+    // By symmetry, row_sum = col_sum(0..m, m): contiguous access.
+    {
+      double col_sum = 0.0;
+      for (int r = 0; r <= m; ++r) {
+        col_sum += dmat_sq(r, m);
+      }
+      leading -= 2.0 * col_sum - dmat_sq(m, m);
     }
-    d12 /= (n - i);
+
+    // Super-diagonal sum at lag i (stride-(n+1) access; unavoidable)
+    double d12_sum = 0.0;
+    for (int j = 0; j < m; ++j) {
+      d12_sum += dmat_sq(j, j + i);
+    }
+
+    const double denom = 2.0 * m * (m - 1);
+    double var1 = trailing / denom;
+    double var2 = leading / denom;
+    double d12 = d12_sum / m;
 
     // Lower-bound covariance
     double covar = (var1 + var2 - d12) / 2.0;
