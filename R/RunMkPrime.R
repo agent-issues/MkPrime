@@ -432,25 +432,29 @@ RunMkPrime <- function(data, tree,
   startTime     <- proc.time()["elapsed"]
   hasProgressFn <- !is.null(mcmc$progressFn) && !is.null(mcmc$plotEvery)
 
-  # --- Progress bar ---
+  # --- Progress bar (M-097 rotating ticker) ---
   coldLogpost    <- {s <- get_mcmc_state(r$chainStates[[1]]); s$logPost}
   recentAcc      <- 0
-  essDisplay     <- "?"
   batchEnd       <- startIter - 1L
-  prevTableLines <- 0L
   phaseLabel     <- if (startIter <= mcmc$warmup) "warmup" else "iter"
   progressLabel  <- if (startIter == 1L) "MCMC" else "Resuming MCMC"
   progressTotal  <- if (is.finite(mcmc$nIter)) {
     if (startIter == 1L) mcmc$nIter else mcmc$nIter - startIter + 1L
   } else NA
+
+  # Ticker state: two pages rotate every ~2.1 s wall-clock time.
+  # Page 0: logP + per-parameter ESS.  Page 1: logP + kPrime + acceptance.
+  tickerStart <- proc.time()["elapsed"]
+  tickerPage  <- ""
+  essStr      <- "?"
+  kpStr       <- ""
+
   cli::cli_progress_bar(
     progressLabel,
     total  = progressTotal,
-    format = paste0(
-      "{phaseLabel} {batchEnd}",
-      " | logP: {format(round(coldLogpost, 1), nsmall = 1)}",
-      " | ESS: {essDisplay}"
-    )
+    format = "{phaseLabel} {batchEnd} \u2502 {tickerPage}",
+    format_done = "{phaseLabel} {batchEnd} \u2502 done",
+    clear  = FALSE
   )
 
   stopReason <- "max_iter"
@@ -573,11 +577,26 @@ RunMkPrime <- function(data, tree,
                       moveWeights = moveWeights)
     }
 
-    # Progress update
+    # Progress update (M-097 rotating ticker)
     coldLogpost <- {s <- get_mcmc_state(r$chainStates[[1]]); s$logPost}
     batchAcc  <- sum(result$accept_counts[1L, ])
     batchProp <- sum(result$propose_counts[1L, ])
     if (batchProp > 0L) recentAcc <- batchAcc / batchProp
+
+    logPStr <- format(round(coldLogpost, 1), nsmall = 1)
+    accPct  <- sprintf("%.0f%%", recentAcc * 100)
+    pageIdx <- floor((proc.time()["elapsed"] - tickerStart) / 2.1) %% 2L
+
+    tickerPage <- if (pageIdx == 0L) {
+      sprintf("logP: %s | ESS: %s", logPStr, essStr)
+    } else {
+      if (nzchar(kpStr)) {
+        sprintf("logP: %s | %s | acc: %s", logPStr, kpStr, accPct)
+      } else {
+        sprintf("logP: %s | acc: %s", logPStr, accPct)
+      }
+    }
+
     cli::cli_progress_update(
       set = if (startIter == 1L) batchEnd else batchEnd - startIter + 1L
     )
@@ -629,11 +648,9 @@ RunMkPrime <- function(data, tree,
 
       diagCheck <- .CheckConvergence(list(r), paramNames, mcmc, isStreaming)
       if (!is.null(diagCheck)) {
-        essDisplay <- as.character(as.integer(diagCheck$minEss))
-        prevTableLines <- .PrintProgressTable(
-          diagCheck, 1L, batchEnd, r$saved_idx,
-          prevLines = prevTableLines
-        )
+        # Refresh ticker strings from latest diagnostics (M-097)
+        essStr <- .CompactEssStr(diagCheck$ess)
+        kpStr  <- .CompactKpStr(diagCheck$ess)
         if (diagCheck$converged) {
           stopReason <- "converged"
           actualIter <- batchEnd
@@ -2052,6 +2069,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     kPrime = 0.35,
     p = 0.35, rate_loss = 0.35, rate_log_sd = 0.35,
     rate_neo = 0.35,
+    beta_scale = 0.35,
     # Gibbs/weighted/block moves: no tuning to adapt
     gibbs_spr = NA_real_, gibbs_subtree_swap = NA_real_,
     weighted_branch_lengths = NA_real_,

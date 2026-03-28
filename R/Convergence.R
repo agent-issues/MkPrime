@@ -379,6 +379,50 @@ print.MkpDiagnostics <- function(x, ...) {
 }
 
 
+#' Build compact ESS string for progress ticker (scalar params only)
+#'
+#' Produces an abbreviated summary like `"lP:138 TL:5 p:139 rsd:42"`
+#' for display in the single-line rotating progress bar (M-097).
+#'
+#' @param ess Named numeric vector from `.CheckConvergence()`.
+#' @return Single string; `"?"` if no scalar ESS available.
+#' @keywords internal
+.CompactEssStr <- function(ess) {
+  abbrevs <- c(
+    log_posterior = "lP", tree_length = "TL",
+    rate_loss = "rL", rate_log_sd = "rsd",
+    p = "p", rate_neo = "rN", beta_scale = "bS"
+  )
+  scalarNms <- names(ess)[names(ess) %in% names(abbrevs)]
+  if (length(scalarNms) == 0L) return("?")
+  parts <- vapply(scalarNms, function(nm) {
+    ab <- abbrevs[nm]
+    val <- if (is.finite(ess[nm])) as.character(round(ess[nm])) else "?"
+    paste0(ab, ":", val)
+  }, character(1))
+  paste(parts, collapse = " ")
+}
+
+
+#' Build compact kPrime ESS summary for progress ticker
+#'
+#' Produces a string like `"kP(54): 8/100/162"` (count: min/med/max ESS)
+#' for the second page of the rotating progress bar (M-097).
+#'
+#' @param ess Named numeric vector from `.CheckConvergence()`.
+#' @return String; `""` if no kPrime parameters present.
+#' @keywords internal
+.CompactKpStr <- function(ess) {
+  kpNms <- grep("^kPrime_", names(ess), value = TRUE)
+  if (length(kpNms) == 0L) return("")
+  kpEss <- ess[kpNms]
+  kpFin <- kpEss[is.finite(kpEss)]
+  if (length(kpFin) == 0L) return(sprintf("kP(%d): ?", length(kpNms)))
+  sprintf("kP(%d): %s/%s/%s", length(kpNms),
+          round(min(kpFin)), round(stats::median(kpFin)), round(max(kpFin)))
+}
+
+
 # Compute topology ESS from sampled trees using internal .TreeESS + TreeDist RF.
 # Returns named numeric vector (frechetCorrelationESS, medianPseudoESS)
 # as the minimum across runs (conservative), or NULL if skipped or failed.
