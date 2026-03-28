@@ -30,7 +30,6 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| M-052 | P3 | ASSIGNED (A) | Beta-distributed Q-matrix heterogeneity (siteMatrices). |
 | M-053 | P3 | OPEN | TBR moves (if mixing diagnostics show SPR is insufficient). |
 
 ---
