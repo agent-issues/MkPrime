@@ -54,15 +54,18 @@
 #'   more I/O); larger values amortise write overhead at the cost of slightly
 #'   higher peak memory.
 #' @param plotEvery Integer; invoke the progress callback every this many
-#'   iterations. `NULL` (default) disables progress plotting (the `cli`
-#'   progress bar still runs). Typical values: 100--500.
+#'   iterations. In interactive sessions, defaults to `checkEvery` so that
+#'   live trace plots update alongside convergence checks. Set to `NULL`
+#'   explicitly to disable. Typical values: 500--2000.
 #' @param progressFn Progress callback function, the string `"default"`,
-#'   or `NULL`. When `"default"`, uses [MkpTracePlot()] for live
-#'   base-R trace plots. A custom function must accept a single argument:
-#'   a named list with fields `iter`, `nIter`, `warmup`, `inWarmup`,
-#'   `nRuns`, `nChains`, `runSamples`, `currentState`,
-#'   `recentAcceptance`, and `elapsed`. See [MkpTracePlot()] for
-#'   details.
+#'   or `NULL`. In interactive sessions, defaults to [MkpTracePlot()] for
+#'   live base-R trace plots. In non-interactive sessions (e.g. `Rscript`),
+#'   defaults to `NULL` (no plotting). Setting `plotEvery` without
+#'   `progressFn` also implies `MkpTracePlot`. A custom function must
+#'   accept a single argument: a named list with fields `iter`, `nIter`,
+#'   `warmup`, `inWarmup`, `nRuns`, `nChains`, `runSamples`,
+#'   `currentState`, `recentAcceptance`, and `elapsed`. See
+#'   [MkpTracePlot()] for details.
 #' @param gibbsSpr Logical; include the Gibbs SPR move (default `TRUE`).
 #'   Cost: O(N) likelihood evaluations per proposal, where N is the number
 #'   of candidate reattachment edges.
@@ -76,6 +79,12 @@
 #'   mixing on difficult tree spaces at the cost of slower iterations.
 #' @param weightedSubtreeSwap Logical; include the weighted subtree-swap
 #'   move (default `FALSE`). Cost: O(N * B) likelihood evaluations.
+#' @param tbr Logical; include the TBR (Tree Bisection and Reconnection)
+#'   topology move (default `TRUE`). TBR is a superset of SPR: it additionally
+#'   re-roots the pruned subtree at a random internal edge before regrafting,
+#'   enabling larger jumps in tree space. Cost: O(nEdge) per proposal (same
+#'   as SPR). The adaptive scheduler will downweight TBR on small trees where
+#'   SPR is sufficient.
 #' @param blockGibbsBranch Logical; include the block Gibbs branch-length
 #'   sweep move (default `FALSE`). Each call sweeps over all edge pairs
 #'   in random-permutation order, sampling each from an approximate
@@ -183,6 +192,7 @@ MkPrimeMCMC <- function(
     progressFn = NULL,
     gibbsSpr = TRUE,
     gibbsSubtreeSwap = TRUE,
+    tbr = TRUE,
     weightedBranchScale = FALSE,
     weightedSpr = FALSE,
     weightedSubtreeSwap = FALSE,
@@ -229,6 +239,7 @@ MkPrimeMCMC <- function(
   }
 
   # Validate move toggles
+  tbr <- as.logical(tbr)
   gibbsSpr <- as.logical(gibbsSpr)
   gibbsSubtreeSwap <- as.logical(gibbsSubtreeSwap)
   weightedBranchScale <- as.logical(weightedBranchScale)
@@ -249,7 +260,7 @@ MkPrimeMCMC <- function(
       )
     }
     validNames <- c(
-      "tree_length", "branch_lengths", "nni", "spr", "kPrime", "p",
+      "tree_length", "branch_lengths", "nni", "spr", "tbr", "kPrime", "p",
       "rate_loss", "rate_log_sd", "rate_neo",
       "gibbs_spr", "gibbs_subtree_swap",
       "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
@@ -278,6 +289,7 @@ MkPrimeMCMC <- function(
     scale_rate_log_sd = 0.5,
     scale_p = 0.5,
     scale_rate_neo = 0.5,
+    scale_beta_scale = 0.5,
     int_walk_window = 1L
   )
   tuning <- modifyList(defaults, tuning)
@@ -293,10 +305,28 @@ MkPrimeMCMC <- function(
     cli::cli_abort("{.arg pollInterval} must be a positive integer.")
   }
 
-  # Resolve progressFn
+  # Resolve progressFn / plotEvery defaults
+  # Use match.call() to distinguish "user passed NULL" from "user omitted arg"
+  mc <- match.call()
+  plotEveryExplicit   <- "plotEvery"  %in% names(mc)
+  progressFnExplicit <- "progressFn" %in% names(mc)
+
+  # In interactive sessions, enable live trace plots unless explicitly disabled
+  if (interactive() && !plotEveryExplicit && !progressFnExplicit) {
+    plotEvery <- checkEvery
+    progressFn <- MkpTracePlot
+  }
+
   if (identical(progressFn, "default")) {
     progressFn <- MkpTracePlot
   }
+
+  # If plotEvery is set but progressFn was not explicitly provided,
+  # default to MkpTracePlot
+  if (!is.null(plotEvery) && !progressFnExplicit && is.null(progressFn)) {
+    progressFn <- MkpTracePlot
+  }
+
   if (!is.null(progressFn) && !is.function(progressFn)) {
     cli::cli_abort(
       "{.arg progressFn} must be a function, {.val default}, or {.val NULL}."
@@ -311,6 +341,7 @@ MkPrimeMCMC <- function(
          checkpointFile = checkpointFile,
          treeFile = treeFile, logFile = logFile, bufferSize = bufferSize,
          plotEvery = plotEvery, progressFn = progressFn,
+         tbr = tbr,
          gibbsSpr = gibbsSpr, gibbsSubtreeSwap = gibbsSubtreeSwap,
          weightedBranchScale = weightedBranchScale,
          weightedSpr = weightedSpr,

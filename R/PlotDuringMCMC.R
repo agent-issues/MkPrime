@@ -2,12 +2,55 @@
 #
 # Phase 6: PlotDuringMCMC trace plots and PNG output.
 
+# --- Stateful ESS history for the ESS-over-time panel ---
+.tracePlotEnv <- new.env(parent = emptyenv())
+.tracePlotEnv$essHistory <- NULL   # list of named numeric vectors
+.tracePlotEnv$iterHistory <- NULL  # integer vector (iter at each snapshot)
+.tracePlotEnv$lastIter <- 0L
+
+#' Reset the ESS history used by [MkpTracePlot()]
+#' @keywords internal
+.ResetEssHistory <- function() {
+  .tracePlotEnv$essHistory  <- list()
+  .tracePlotEnv$iterHistory <- integer(0)
+  .tracePlotEnv$lastIter    <- 0L
+}
+
+
+#' Per-parameter color palette
+#'
+#' Returns a named character vector of colors for key parameters.
+#' @keywords internal
+.ParamColors <- function(params) {
+  # Fixed palette: visually distinct, legible on white background
+  palette <- c(
+    log_posterior = "#2166AC",   # blue
+    tree_length   = "#B2182B",  # red
+    rate_loss     = "#762A83",  # purple
+    rate_log_sd   = "#1B7837",  # green
+    rate_neo      = "#E08214",  # orange
+    p             = "#D6604D",  # salmon
+    beta_scale    = "#4393C3"   # light blue
+  )
+  matched <- palette[intersect(params, names(palette))]
+  # Fall back to hcl.colors for any unknown params
+  unknown <- setdiff(params, names(palette))
+  if (length(unknown)) {
+    extra <- grDevices::hcl.colors(length(unknown), "Dark 3")
+    names(extra) <- unknown
+    matched <- c(matched, extra)
+  }
+  matched[params]
+}
+
+
 #' Draw live MCMC trace plots
 #'
 #' A progress callback that draws multi-panel base-R trace plots showing
-#' log-posterior and key parameter values across iterations. Intended to be
-#' passed as `progressFn` to [MkPrimeMCMC()], either directly or via the
-#' convenience string `"default"`.
+#' log-posterior and key parameter values across iterations, plus an
+#' ESS-over-time panel showing effective sample size trajectories.
+#' Intended to be passed as `progressFn` to [MkPrimeMCMC()], either
+#' directly or via the convenience string `"default"`.
 #'
 #' @param info A named list produced by the MCMC loop, containing:
 #'   \describe{
@@ -29,10 +72,13 @@
 #' During warmup (before post-warmup samples exist), a single-panel
 #' log-posterior trace is drawn from `currentState` values accumulated
 #' by the callback itself. After warmup, multi-panel traces show
-#' log-posterior plus key model parameters from the saved samples.
+#' log-posterior plus key model parameters from the saved samples, with
+#' each parameter in a distinct color. A final panel shows ESS over time
+#' for all tracked parameters, using matching colors.
 #'
-#' When `nRuns > 1`, each run is drawn in a distinct color using
-#' [grDevices::hcl.colors()] with the `"Set 2"` palette.
+#' When `nRuns > 1`, trace panels use per-run colors (from
+#' [grDevices::hcl.colors()] with the `"Set 2"` palette) while the
+#' ESS panel uses per-parameter colors with a legend.
 #'
 #' @return Called for its side effect (drawing a plot). Returns `info`
 #'   invisibly.
@@ -45,26 +91,52 @@ MkpTracePlot <- function(info) {
   if (hasSamples) {
     cnames <- colnames(info$runSamples[[1]])
     keyParams <- intersect(
-      c("log_posterior", "tree_length", "rate_loss", "rate_log_sd", "p"),
+      c("log_posterior", "tree_length", "rate_loss", "rate_log_sd",
+        "rate_neo", "p"),
       cnames
     )
   } else {
     keyParams <- "log_posterior"
   }
 
-  nPanels <- length(keyParams)
+  paramColors <- .ParamColors(keyParams)
+  hasCoda <- requireNamespace("coda", quietly = TRUE)
+  showEss <- hasSamples && hasCoda
+
+  # Reset ESS history if new run detected (iter went backwards or in warmup)
+  if (info$inWarmup || info$iter <= .tracePlotEnv$lastIter) {
+    .ResetEssHistory()
+  }
+
+  # Compute and store ESS snapshot
+  if (showEss) {
+    combined <- do.call(rbind, info$runSamples)
+    essSnap <- vapply(keyParams, function(p) {
+      col <- combined[, p]
+      s <- sd(col, na.rm = TRUE)
+      if (is.na(s) || s == 0) return(NA_real_)
+      as.numeric(coda::effectiveSize(coda::mcmc(col)))
+    }, numeric(1))
+    .tracePlotEnv$essHistory  <- c(.tracePlotEnv$essHistory, list(essSnap))
+    .tracePlotEnv$iterHistory <- c(.tracePlotEnv$iterHistory, info$iter)
+    .tracePlotEnv$lastIter    <- info$iter
+  }
+
+  # Panel layout: trace panels + ESS panel (if applicable)
+  nPanels <- length(keyParams) + if (showEss) 1L else 0L
   nCol <- min(3L, nPanels)
   nRow <- ceiling(nPanels / nCol)
 
-  colors <- if (nRuns > 1L) {
+  runColors <- if (nRuns > 1L) {
     grDevices::hcl.colors(nRuns, palette = "Set 2")
   } else {
-    "steelblue"
+    NULL  # single-run: use per-parameter color
   }
 
   oldpar <- par(mfrow = c(nRow, nCol),
                 mar = c(3, 3.5, 2.5, 1),
-                mgp = c(2, 0.6, 0))
+                mgp = c(2, 0.6, 0),
+                oma = c(0, 0, 1.5, 0))
   on.exit(par(oldpar))
 
   elapsedStr <- .FormatElapsed(info$elapsed)
@@ -72,19 +144,31 @@ MkpTracePlot <- function(info) {
 
   for (param in keyParams) {
     if (hasSamples) {
-      .PlotTracePanel(param, info$runSamples, nRuns, colors,
+      traceCol <- if (is.null(runColors)) paramColors[param] else runColors
+      .PlotTracePanel(param, info$runSamples, nRuns, traceCol,
                       info$warmup, info$nIter)
     } else {
-      # During warmup, show current-state log-posterior
-      .PlotWarmupPanel(info$currentState, nRuns, colors,
+      wCol <- if (is.null(runColors)) paramColors[1] else runColors
+      .PlotWarmupPanel(info$currentState, nRuns, wCol,
                        info$iter, info$nIter)
     }
   }
 
+  # ESS-over-time panel
+  if (showEss && length(.tracePlotEnv$essHistory) > 0L) {
+    .PlotEssPanel(.tracePlotEnv$iterHistory,
+                  .tracePlotEnv$essHistory,
+                  paramColors)
+  }
+
   # Overall title
-  titleText <- sprintf("Iter %d / %d  |  acc: %s  |  %s",
-                       info$iter, info$nIter, accStr, elapsedStr)
-  mtext(titleText, outer = TRUE, line = -1.2, cex = 0.9)
+  iterStr <- if (is.finite(info$nIter)) {
+    sprintf("Iter %d / %d", info$iter, info$nIter)
+  } else {
+    sprintf("Iter %d", info$iter)
+  }
+  titleText <- sprintf("%s  |  acc: %s  |  %s", iterStr, accStr, elapsedStr)
+  mtext(titleText, outer = TRUE, line = 0, cex = 0.9)
 
   invisible(info)
 }
@@ -143,6 +227,49 @@ MkpTracePlot <- function(info) {
 }
 
 
+#' Plot ESS-over-time panel
+#'
+#' Draws ESS trajectories for all tracked parameters, with a compact
+#' legend mapping colors to parameter names.
+#' @param iters Integer vector of iteration numbers (x-axis).
+#' @param essHistory List of named numeric vectors (one per snapshot).
+#' @param paramColors Named character vector of colors per parameter.
+#' @keywords internal
+.PlotEssPanel <- function(iters, essHistory, paramColors) {
+  params <- names(essHistory[[1]])
+  nSnap <- length(essHistory)
+
+  # Build matrix: rows = snapshots, cols = params
+  essMat <- do.call(rbind, essHistory)
+
+  # y-axis range (ignore NA)
+  allEss <- as.numeric(essMat)
+  finiteEss <- allEss[is.finite(allEss)]
+  if (length(finiteEss) == 0L) {
+    plot.new()
+    title(main = "ESS", cex.main = 0.95)
+    return(invisible(NULL))
+  }
+  ylim <- c(0, max(finiteEss) * 1.15)
+
+  plot(iters, essMat[, 1], type = "n", ylim = ylim,
+       main = "ESS", xlab = "iter", ylab = "",
+       cex.main = 0.95, las = 1)
+
+  for (p in params) {
+    vals <- essMat[, p]
+    ok <- is.finite(vals)
+    if (any(ok)) {
+      lines(iters[ok], vals[ok], col = paramColors[p], lwd = 1.5)
+    }
+  }
+
+  # Compact legend
+  legend("topleft", legend = params, col = paramColors[params],
+         lwd = 1.5, cex = 0.65, bg = "white", seg.len = 1.2)
+}
+
+
 #' Create a PNG-writing progress callback
 #'
 #' Returns a progress callback function suitable for `progressFn` in
@@ -192,10 +319,11 @@ MkpPngProgress <- function(dir, width = 800, height = 600) {
 #' Write a minimal JSON status file (no jsonlite dependency)
 #' @keywords internal
 .WriteProgressJson <- function(info, file) {
+  nIterJson <- if (is.finite(info$nIter)) info$nIter else "null"
   json <- sprintf(
-    paste0('{"iter":%d,"nIter":%d,"warmup":%d,"inWarmup":%s,',
+    paste0('{"iter":%d,"nIter":%s,"warmup":%d,"inWarmup":%s,',
            '"elapsed":%.1f,"recentAcceptance":%.4f}'),
-    info$iter, info$nIter, info$warmup,
+    info$iter, nIterJson, info$warmup,
     if (info$inWarmup) "true" else "false",
     info$elapsed, info$recentAcceptance
   )

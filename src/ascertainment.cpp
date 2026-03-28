@@ -11,8 +11,7 @@
 // OPP-1: JC matrix-vector product reduced from O(k²) to O(k) per site per
 //        edge, exploiting the two-value JC structure:
 //        new_cl[i] = p_diff * sum_cl + (p_same - p_diff) * cl[i]
-// OPP-2: maxNode = 2*nTip - 1 (covers both rooted and unrooted binary trees;
-//        hot path in mcmc_likelihood.cpp uses 2*nTip-2 since trees are always unrooted there)
+// OPP-2: maxNode = 2*nTip - 1 (covers both rooted and unrooted binary trees)
 // OPP-4-lite: single flat std::vector<double> CL replaces vector<vector<double>>
 //        (one heap allocation instead of nNode+1 allocations per call)
 

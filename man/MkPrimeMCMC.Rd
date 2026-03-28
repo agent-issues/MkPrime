@@ -15,16 +15,13 @@ MkPrimeMCMC(
   minEss = NULL,
   maxPsrf = NULL,
   checkEvery = 1000L,
-  cancelFile = NULL,
   checkpointFile = NULL,
   treeFile = NULL,
   logFile = NULL,
   bufferSize = 500L,
   plotEvery = NULL,
   progressFn = NULL,
-  tuning = list(),
-  parallel = FALSE,
-  pollInterval = 10L
+  tuning = list()
 )
 }
 \arguments{
@@ -64,13 +61,6 @@ disables PSRF-based stopping. Requires \code{nRuns >= 2}.}
 \item{checkEvery}{Check convergence every this many iterations
 (default 1000). Only used when stopping criteria are set.}
 
-\item{cancelFile}{Path to a cancel-signal file. \code{NULL} (default) disables
-cancel-file checking. When set, \code{\link[=RunMkPrime]{RunMkPrime()}} checks every 200
-iterations whether this file exists. If it does, the run flushes any
-buffered samples, saves a checkpoint (if \code{checkpointFile} is set), and
-exits with \code{stop_reason = "cancelled"}. Create the file to request a
-clean stop: \code{file.create(cancelFile)}. See also \code{\link[=MkCancelPath]{MkCancelPath()}}.}
-
 \item{checkpointFile}{Path to write checkpoint RDS files. \code{NULL}
 (default) disables checkpointing. Checkpoints are saved at each
 convergence check interval and on cancel.}
@@ -109,6 +99,48 @@ details.}
 \item{tuning}{Named list of initial tuning parameters for each move
 type. See Details.}
 
+\item{cancelFile}{Path to a cancel-signal file. \code{NULL} (default) disables
+cancel-file checking. When set, \code{\link[=RunMkPrime]{RunMkPrime()}} checks every 200
+iterations whether this file exists. If it does, the run flushes any
+buffered samples, saves a checkpoint (if \code{checkpointFile} is set), and
+exits with \code{stop_reason = "cancelled"}. Create the file to request a
+clean stop: \code{file.create(cancelFile)}. See also \code{\link[=MkCancelPath]{MkCancelPath()}}.}
+
+\item{gibbsSpr}{Logical; include the Gibbs SPR move (default \code{TRUE}).
+Cost: O(N) likelihood evaluations per proposal, where N is the number
+of candidate reattachment edges.}
+
+\item{gibbsSubtreeSwap}{Logical; include the Gibbs subtree-swap move
+(default \code{TRUE}). Cost: O(N) likelihood evaluations.}
+
+\item{weightedBranchScale}{Logical; include the weighted branch-length
+scale move (default \code{FALSE}). Cost: O(B) likelihood evaluations, where
+B = \code{nBranchBins}.}
+
+\item{weightedSpr}{Logical; include the weighted SPR move (default
+\code{FALSE}). Cost: O(N * B) likelihood evaluations. Enable for improved
+mixing on difficult tree spaces at the cost of slower iterations.}
+
+\item{weightedSubtreeSwap}{Logical; include the weighted subtree-swap
+move (default \code{FALSE}). Cost: O(N * B) likelihood evaluations.}
+
+\item{nBranchBins}{Integer; number of branch-fraction bins for weighted
+moves (default \code{10L}). Used by \code{weightedBranchScale}, \code{weightedSpr},
+and \code{weightedSubtreeSwap}. Ignored when all weighted moves are
+disabled. Higher values increase accuracy of the Gibbs approximation
+but cost more likelihood evaluations.}
+
+\item{moveWeights}{Named numeric vector of user-pinned move weights,
+or \code{NULL} (default). When non-NULL, each named entry fixes the
+probability of proposing that move type. Names must match valid move
+names (e.g., \code{"nni"}, \code{"spr"}, \code{"gibbs_spr"}, \code{"tree_length"}, etc.).
+Values must be positive and sum to at most 1. Remaining probability
+is distributed among un-pinned moves by the adaptive scheduler during
+warmup. Example: \code{moveWeights = c(nni = 0.3, spr = 0.2)} fixes NNI
+at 30\% and SPR at 20\%, with the remaining 50\% allocated adaptively
+among other moves. To disable adaptive scheduling entirely, pin all
+moves (sum to 1). See section \strong{Adaptive move scheduling} below.}
+
 \item{parallel}{Logical. If \code{TRUE} and \code{nRuns > 1}, independent runs are
 launched as non-blocking \code{future::future()} workers and the main process
 polls for convergence. Requires the \pkg{future} package (in \code{Suggests}).
@@ -140,5 +172,33 @@ When \code{nChains > 1}, chains run at different temperatures. The cold
 chain (beta = 1) targets the true posterior. Heated chains (beta < 1)
 flatten the likelihood surface, aiding exploration. Chain swap proposals
 (see M-030) exchange states between adjacent temperatures.
+}
+
+\subsection{Gibbs and weighted moves}{
+
+The Gibbs moves (\code{gibbsSpr}, \code{gibbsSubtreeSwap}) evaluate all candidate
+topologies and sample proportional to their posterior weight. They cost
+O(N) likelihood evaluations per proposal (where N is the number of
+candidates, roughly the number of edges) but often achieve much better
+mixing than standard NNI/SPR.
+
+The weighted moves (\code{weightedBranchScale}, \code{weightedSpr},
+\code{weightedSubtreeSwap}) additionally marginalise over a discrete grid
+of branch-fraction placements. This produces proposals that are
+approximately independent of the current state but costs
+O(B) or O(N * B) likelihood evaluations. These are off by default
+and recommended only when standard + Gibbs moves show poor mixing.
+}
+
+\subsection{Adaptive move scheduling}{
+
+During warmup, the MCMC engine tracks per-move acceptance rates and
+wall-clock cost, then reweights the move pool every 200 iterations
+to favor moves with high "acceptances per second" (a proxy for
+ESS/wall-time efficiency). The reweighting uses softmax with a
+temperature that anneals from 2.0 (near-uniform) to 0.5 (more
+peaked) over warmup. At the end of warmup, weights are frozen to
+preserve detailed balance. Use \code{moveWeights} to pin specific move
+frequencies and exclude them from adaptation.
 }
 }

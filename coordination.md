@@ -1,10 +1,10 @@
 # MkPrime — Strategic Coordination
 
-Last updated: 2026-03-27
+Last updated: 2026-03-28
 
 ## Project State
 
-**Phase:** 9 (Advanced tree moves) — IN PROGRESS. Phases 1–8 done. Phase 6b main-branch work complete (M-078/M-079/M-081/M-082/M-093); M-080 (TreeSearch hook) open. Phase 9 active on `mkp-gibbs` worktree. Phase 10 (run-level parallelism) planned on `mkp-parallel` worktree. Phase 7d deferred (M-052/M-053/M-054).
+**Phase:** 9 complete; Phase 6b / 7d active. Phases 1–10 done. Phase 6b: M-080 (TreeSearch hook) assigned to C. Phase 7d deferred (M-052 done, M-053 done).
 
 MkPrime is a new R package for Bayesian phylogenetic inference under the
 Mk' model. The architecture follows StratoBayes (C++ hot loop via Rcpp,
@@ -122,7 +122,7 @@ comparison, TBR, HMC.
 **Deferred:**
 - Beta-distributed Q-matrix heterogeneity (siteMatrices)
 - TBR moves (if SPR mixing insufficient)
-- HMC for branch lengths (if MH mixing insufficient)
+- ~~HMC for branch lengths~~ → replaced by M-054 block Gibbs branch sweep (done)
 
 ---
 
@@ -154,7 +154,7 @@ overhead. Use TreeTools C++ headers for tree manipulation.
   storage, checkpointing, adaptation logic, and result assembly.
 
 ### Phase 9: Advanced tree moves — Gibbs & Weighted proposals
-**Status:** IN PROGRESS (2026-03-27). All work on `mkp-gibbs` worktree.
+**Status:** COMPLETE (2026-03-28). Merged `feature/gibbs-weighted-moves` → main.
 **Goal:** Add five new topology/branch-length moves from RevBayes's
 `mcmc_tree_moves` branch, adapted for MkPrime's unrooted representation
 and flat-buffer likelihood engine. Add an adaptive move scheduler that

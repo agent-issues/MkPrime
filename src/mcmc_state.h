@@ -75,6 +75,20 @@ struct McmcData {
   // Weighted-move configuration (M-090)
   int nBranchBins = 10;     // number of branch-fraction bins for weighted moves
   BranchBins branchBins;    // precomputed bin breakpoints (init by set_branch_bins)
+
+  // Q-matrix heterogeneity (M-052): Dirichlet-marginal discretization.
+  // When enabled, characters evolve under a mixture of F81 Q-matrices with
+  // equilibrium frequencies drawn from a discretized symmetric Dirichlet.
+  // The marginal of one component of Dir(α,...,α) with k components is
+  // Beta(α, (k-1)α).  Bins are quantile midpoints; rotations over k states
+  // enforce labelling symmetry.  Single parameter: betaScale (= α).
+  bool qHeterogeneity = false;
+  int  nBetaCat = 4;        // number of discretization bins (B)
+  double betaScaleShape = 1.0;  // Gamma prior shape for beta_scale
+  double betaScaleRate  = 1.0;  // Gamma prior rate  for beta_scale
+  // Distinct k values present in the dataset (populated at init).
+  // Used to precompute per-k bins when beta_scale changes.
+  std::vector<int> hetKValues;  // e.g., {2, 3, 5}
 };
 
 // Pre-allocated flat CL workspace (M-063): eliminates per-call heap
@@ -108,6 +122,9 @@ struct ClWorkspace {
 // mcmc_likelihood.cpp, called from mcmc.cpp.
 // M-065: accepts parent/child vectors directly (no edge matrix round-trip).
 // M-063: optional ClWorkspace* eliminates per-call heap allocation.
+// M-052: betaScale controls the Dirichlet-marginal Q-matrix mixture.
+// When data.qHeterogeneity is false, betaScale is ignored by the dispatch
+// logic, so callers don't need to conditionally omit it.
 double cpp_log_likelihood(
     const McmcData& data,
     Rcpp::IntegerVector parent,
@@ -117,6 +134,7 @@ double cpp_log_likelihood(
     double rateLoss,
     double rateLogSd,
     double rateNeo,
+    double betaScale = 1.0,
     ClWorkspace* ws = nullptr);
 
 
@@ -128,5 +146,6 @@ double cpp_partition_log_likelihood(
     Rcpp::NumericVector edgeLen,
     const Rcpp::IntegerVector& kPrime,
     double rateLoss, double rateLogSd, double rateNeo,
+    double betaScale = 1.0,
     ClWorkspace* ws = nullptr);
 #endif  // MKPRIME_MCMC_STATE_H

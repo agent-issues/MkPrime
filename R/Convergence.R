@@ -11,21 +11,30 @@
 #'
 #' @param posterior An `MkPosterior` object.
 #' @param trees Logical. If `TRUE` and **TreeDist** is installed, compute
-#'   topology ESS (Fréchet correlation ESS and median pseudo-ESS) from the
-#'   sampled trees. Defaults to `FALSE` because Robinson-Foulds distance
-#'   computation is O(n^2) and can be slow for large posteriors — reserve
-#'   for deliberate post-run calls once parameter ESS has been satisfied.
+#'   topology ESS (median pseudo-ESS) from the sampled trees.
+#'   Defaults to `FALSE`.
 #'   Each run is subsampled to at most 1,000 trees.
+#' @param frechetESS Logical. If `TRUE`, also compute the Fréchet
+#'   correlation ESS (Magee et al. 2021).  This requires the full
+#'   n x n pairwise distance matrix rather than the partial cross-distance
+#'   matrix used for median pseudo-ESS, so is substantially slower.
+#'   Implies `trees = TRUE`.
 #' @return An object of class `MkpDiagnostics`, a list with components:
-#'   - `ess`: Named numeric vector of ESS per parameter.
-#'   - `minEss`: Scalar minimum ESS across parameters.
+#'   - `ess`: Named numeric vector of ESS per parameter (including kPrime).
+#'   - `minEss`: Scalar minimum ESS across **scalar** parameters.
+#'     Individual kPrime values are discrete nuisance parameters that are
+#'     marginalized over, so they are excluded from the summary minimum
+#'     to avoid blocking convergence (see M-098).
 #'   - `psrf`: Named numeric vector of PSRF point estimates per parameter
 #'     (only if `nRuns >= 2`; `NULL` otherwise).
-#'   - `maxPsrf`: Scalar maximum PSRF (or `NA` if single run).
+#'   - `maxPsrf`: Scalar maximum PSRF across scalar parameters (or `NA`
+#'     if single run). kPrime excluded for the same reason as `minEss`.
 #'   - `treeEss`: Named numeric vector with `frechetCorrelationESS` and
 #'     `medianPseudoESS` (or `NULL` if not computed).
+#'     `frechetCorrelationESS` is `NA` unless `frechetESS = TRUE`.
 #' @export
-ConvergenceDiagnostics <- function(posterior, trees = FALSE) {
+ConvergenceDiagnostics <- function(posterior, trees = FALSE,
+                                   frechetESS = FALSE) {
   if (!inherits(posterior, "MkPosterior")) {
     cli::cli_abort("{.arg posterior} must be an {.cls MkPosterior} object.")
   }
@@ -37,22 +46,28 @@ ConvergenceDiagnostics <- function(posterior, trees = FALSE) {
   # --- ESS (combined samples) ---
   ess <- .ComputeEss(pb$samples[, keyCols, drop = FALSE])
 
+  # kPrime are discrete nuisance parameters — exclude from summary min/max
+  # (M-098). Individual kPrime ESS/PSRF remain in the output for display.
+  isConvParam <- !grepl("^kPrime_", names(ess)) & names(ess) != "log_likelihood"
+
   # --- PSRF across runs ---
   psrf <- NULL
   maxPsrf <- NA_real_
 
   if (nRuns >= 2L && !is.null(posterior$per_run)) {
     psrf <- .ComputePsrf(pb$per_run, keyCols)
-    maxPsrf <- max(psrf, na.rm = TRUE)
+    maxPsrf <- max(psrf[isConvParam[names(psrf) %in% names(ess)]],
+                   na.rm = TRUE)
   }
 
   # --- Tree ESS ---
-  treeEss <- .ComputeTreeEss(pb, trees)
+  if (isTRUE(frechetESS)) trees <- TRUE
+  treeEss <- .ComputeTreeEss(pb, trees, frechet = isTRUE(frechetESS))
 
   structure(
     list(
       ess = ess,
-      minEss = min(ess),
+      minEss = min(ess[isConvParam], na.rm = TRUE),
       psrf = psrf,
       maxPsrf = maxPsrf,
       treeEss = treeEss,
@@ -267,12 +282,21 @@ print.MkpDiagnostics <- function(x, ...) {
 #' ESS and PSRF (when available). Mirrors the format of
 #' [print.MkpDiagnostics()].
 #'
+#' On dynamic terminals, consecutive tables overwrite each other using ANSI
+#' cursor-up codes. Pass `prevLines` (the return value of the previous call)
+#' to enable overwriting.
+#'
 #' @param diagCheck Return value of `.CheckConvergence()`.
 #' @param nRuns Number of independent runs.
 #' @param iter Current iteration number.
 #' @param nSamples Total saved samples across all runs.
+#' @param prevLines Number of lines printed by the previous call (0 on first
+#'   call). Used to overwrite the old table on dynamic terminals.
+#' @return Number of lines printed (invisibly), for passing as `prevLines`
+#'   to the next call.
 #' @keywords internal
-.PrintProgressTable <- function(diagCheck, nRuns, iter, nSamples) {
+.PrintProgressTable <- function(diagCheck, nRuns, iter, nSamples,
+                                prevLines = 0L) {
   ess  <- diagCheck$ess
   psrf <- diagCheck$psrf
   hasPsrf <- !is.null(psrf)
@@ -281,26 +305,27 @@ print.MkpDiagnostics <- function(x, ...) {
   scalarNms <- nms[!grepl("^kPrime_", nms) & nms != "log_likelihood"]
   kPrimeNms <- nms[grepl("^kPrime_", nms)]
 
-  cli::cli_rule(
-    left = sprintf(
-      "Progress diagnostics  (iter %d | %d run%s | %d samples)",
-      iter, nRuns, if (nRuns == 1L) "" else "s", nSamples
-    )
-  )
+  # Build all output as a character vector (one element per line)
+  out <- character()
+  out <- c(out, cli::rule(left = sprintf(
+    "Progress diagnostics  (iter %d | %d run%s | %d samples)",
+    iter, nRuns, if (nRuns == 1L) "" else "s", nSamples
+  )))
 
   if (hasPsrf) {
-    cat(sprintf("  %-20s  %6s  %7s\n", "Parameter", "ESS", "PSRF"))
+    out <- c(out, sprintf("  %-20s  %6s  %7s", "Parameter", "ESS", "PSRF"))
   } else {
-    cat(sprintf("  %-20s  %6s\n", "Parameter", "ESS"))
+    out <- c(out, sprintf("  %-20s  %6s", "Parameter", "ESS"))
   }
-  cat(sprintf("  %s\n", strrep("-", if (hasPsrf) 38L else 28L)))
+  out <- c(out, sprintf("  %s", strrep("-", if (hasPsrf) 38L else 28L)))
 
   for (nm in scalarNms) {
     essStr <- .FmtEss(ess[[nm]])
     if (hasPsrf && nm %in% names(psrf)) {
-      cat(sprintf("  %-20s  %s  %s\n", nm, essStr, .FmtPsrf(psrf[[nm]])))
+      out <- c(out, sprintf("  %-20s  %s  %s", nm, essStr,
+                            .FmtPsrf(psrf[[nm]])))
     } else {
-      cat(sprintf("  %-20s  %s\n", nm, essStr))
+      out <- c(out, sprintf("  %-20s  %s", nm, essStr))
     }
   }
 
@@ -325,27 +350,118 @@ print.MkpDiagnostics <- function(x, ...) {
       kpPsrfFin <- kpPsrf[is.finite(kpPsrf)]
       if (length(kpPsrfFin) > 0L) {
         psrfRange <- sprintf("%.3f\u2013%.3f", min(kpPsrfFin), max(kpPsrfFin))
-        cat(sprintf("  %-20s  %s  PSRF %s\n", label, essRange, psrfRange))
+        out <- c(out, sprintf("  %-20s  %s  PSRF %s", label, essRange,
+                              psrfRange))
       } else {
-        cat(sprintf("  %-20s  %s\n", label, essRange))
+        out <- c(out, sprintf("  %-20s  %s", label, essRange))
       }
     } else {
-      cat(sprintf("  %-20s  %s\n", label, essRange))
+      out <- c(out, sprintf("  %-20s  %s", label, essRange))
     }
   }
 
-  cat("\n  ESS: ",
-      cli::col_green("\u2265 200"), "  ",
-      cli::col_yellow("100\u2013199"), "  ",
-      cli::col_red("< 100"),
-      "\n", sep = "")
+  out <- c(out, "", paste0(
+    "  ESS: ",
+    cli::col_green("\u2265 200"), "  ",
+    cli::col_yellow("100\u2013199"), "  ",
+    cli::col_red("< 100")
+  ))
   if (hasPsrf) {
-    cat("  PSRF: \u2264 1.05 OK  ",
-        cli::col_yellow("1.05\u20131.1"), "  ",
-        cli::col_red("> 1.1"),
-        "\n", sep = "")
+    out <- c(out, paste0(
+      "  PSRF: \u2264 1.05 OK  ",
+      cli::col_yellow("1.05\u20131.1"), "  ",
+      cli::col_red("> 1.1")
+    ))
   }
-  invisible(NULL)
+
+  nLines <- length(out)
+
+  # On dynamic terminals, erase the previous table before printing the new one
+  if (prevLines > 0L && cli::is_dynamic_tty()) {
+    cat(sprintf("\x1b[%dA\x1b[0J", prevLines))
+  }
+  cat(paste(out, collapse = "\n"), "\n", sep = "")
+  invisible(nLines)
+}
+
+
+#' Build the full ticker page sequence for the progress bar
+#'
+#' Returns a character vector of page content strings (without the
+#' `logP:` prefix, which the caller prepends).  Summary pages
+#' (minESS/PSRF) are interleaved with detail pages that show 2
+#' parameters each with their full names and colour-coded ESS.
+#'
+#' Colour matches the table conventions: red < 100, yellow 100--199,
+#' plain >= 200.  Non-finite ESS values (e.g. `rate_loss` when no
+#' neomorphic characters are present) are silently dropped.
+#'
+#' @param diagCheck Return value of [.CheckConvergence()].
+#' @return Character vector of page strings.
+#' @keywords internal
+.BuildTickerPages <- function(diagCheck) {
+  summary <- .TickerSummaryStr(diagCheck)
+
+  ess <- diagCheck$ess
+  scalarNms <- names(ess)[!grepl("^(kPrime_|br_|log_likelihood)", names(ess))]
+  scalarNms <- scalarNms[vapply(ess[scalarNms], is.finite, logical(1))]
+
+  if (length(scalarNms) == 0L) return(summary)
+
+  # Detail pages: <= 2 params each, full names, coloured ESS
+  chunks <- split(scalarNms, ceiling(seq_along(scalarNms) / 2))
+  detailPages <- vapply(chunks, function(nms) {
+    parts <- vapply(nms, function(nm) {
+      rval <- round(ess[nm])
+      sval <- as.character(rval)
+      coloured <- if (rval < 100) cli::col_red(sval)
+                  else if (rval < 200) cli::col_yellow(sval)
+                  else cli::col_green(sval)
+      paste0(nm, ": ", coloured)
+    }, character(1))
+    paste0("ESS ", paste(parts, collapse = "  "))
+  }, character(1), USE.NAMES = FALSE)
+
+  # Interleave: [summary, detail1, summary, detail2, ...]
+  pages <- character(0)
+  for (dp in detailPages) {
+    pages <- c(pages, summary, dp)
+  }
+  pages
+}
+
+
+#' Build headline summary string for progress ticker
+#'
+#' Produces `"minESS: 42"` (single run) or
+#' `"minESS: 42 | PSRF: 1.03"` (multi-run) with colour matching
+#' the table conventions.  Used on the dominant ticker page (M-097).
+#'
+#' @param diagCheck Return value of `.CheckConvergence()`.
+#' @return Single string.
+#' @keywords internal
+.TickerSummaryStr <- function(diagCheck) {
+  minEss <- diagCheck$minEss
+  if (!is.finite(minEss)) {
+    essStr <- "?"
+  } else {
+    rval <- round(minEss)
+    sval <- as.character(rval)
+    essStr <- if (rval < 100) cli::col_red(sval)
+              else if (rval < 200) cli::col_yellow(sval)
+              else cli::col_green(sval)
+  }
+  s <- paste0("minESS: ", essStr)
+
+  maxPsrf <- diagCheck$maxPsrf
+  if (!is.na(maxPsrf) && is.finite(maxPsrf)) {
+    psrfFmt <- sprintf("%.2f", maxPsrf)
+    psrfStr <- if (maxPsrf > 1.1) cli::col_red(psrfFmt)
+               else if (maxPsrf > 1.05) cli::col_yellow(psrfFmt)
+               else cli::col_green(psrfFmt)
+    s <- paste0(s, " \u2502 PSRF: ", psrfStr)
+  }
+  s
 }
 
 
@@ -353,12 +469,10 @@ print.MkpDiagnostics <- function(x, ...) {
 # Returns named numeric vector (frechetCorrelationESS, medianPseudoESS)
 # as the minimum across runs (conservative), or NULL if skipped or failed.
 #
-# NOTE: tree ESS via RF distances is expensive (O(n^2) distance matrix) and
-# is intentionally excluded from print()/summary() and from the checkEvery
-# polling callback.  Call ConvergenceDiagnostics(posterior, trees = TRUE)
-# explicitly after a run has finished — or after parameter ESS has been
-# satisfied — to obtain topology ESS.
-.ComputeTreeEss <- function(pb, trees) {
+# When frechet = FALSE (default), only the median pseudo-ESS is computed
+# using a cross-distance matrix (maxRows x n), which is much cheaper than
+# the full n x n pairwise matrix required for Fréchet ESS.
+.ComputeTreeEss <- function(pb, trees, frechet = FALSE) {
   if (isFALSE(trees)) return(NULL)
   if (!requireNamespace("TreeDist", quietly = TRUE)) return(NULL)
 
@@ -391,7 +505,8 @@ print.MkpDiagnostics <- function(x, ...) {
 
   tryCatch({
     chainRows <- lapply(perRunTrees, function(chain) {
-      .TreeESS(chain, dist_fn = TreeDist::RobinsonFoulds)
+      .TreeESS(chain, dist_fn = TreeDist::RobinsonFoulds,
+               frechet = frechet)
     })
     essMat <- do.call(rbind, chainRows)
     # Minimum across runs — conservative multi-chain estimate.

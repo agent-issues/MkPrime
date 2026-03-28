@@ -45,8 +45,8 @@ pruning_mkn <- function(parent, child, edge_length, tip_states, rate_loss, root_
     .Call(`_MkPrime_pruning_mkn`, parent, child, edge_length, tip_states, rate_loss, root_freqs)
 }
 
-init_mcmc_state <- function(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior) {
-    .Call(`_MkPrime_init_mcmc_state`, parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior)
+init_mcmc_state <- function(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale = 1.0) {
+    .Call(`_MkPrime_init_mcmc_state`, parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale)
 }
 
 fill_partition_cache <- function(dataPtr, statePtr) {
@@ -85,8 +85,8 @@ debug_mcmc_data <- function(dataPtr) {
     .Call(`_MkPrime_debug_mcmc_data`, dataPtr)
 }
 
-prepare_mcmc_data <- function(partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC) {
-    .Call(`_MkPrime_prepare_mcmc_data`, partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC)
+prepare_mcmc_data <- function(partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, qHeterogeneity = FALSE, nBetaCat = 4L, betaScaleShape = 1.0, betaScaleRate = 1.0) {
+    .Call(`_MkPrime_prepare_mcmc_data`, partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, qHeterogeneity, nBetaCat, betaScaleShape, betaScaleRate)
 }
 
 set_branch_bins <- function(dataPtr, nBins) {
@@ -115,6 +115,14 @@ mkn_stationary_freqs <- function(rate_loss) {
 
 frechet_correlation_ess_cpp <- function(dmat_sq, min_nsamples) {
     .Call(`_MkPrime_frechet_correlation_ess_cpp`, dmat_sq, min_nsamples)
+}
+
+median_pseudo_ess_cpp <- function(dmat, min_nsamples, max_rows) {
+    .Call(`_MkPrime_median_pseudo_ess_cpp`, dmat, min_nsamples, max_rows)
+}
+
+tbr_proposal <- function(edge, nTip, treeLength, relBrLengths) {
+    .Call(`_MkPrime_tbr_proposal`, edge, nTip, treeLength, relBrLengths)
 }
 
 swap_subtrees_cpp <- function(edge, nTip, treeLength, relBrLengths, nodeA, nodeB) {

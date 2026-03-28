@@ -9,10 +9,12 @@ ConvergenceDiagnostics(posterior, trees = TRUE)
 \arguments{
 \item{posterior}{An \code{MkPosterior} object.}
 
-\item{trees}{Logical. If \code{TRUE} (default) and \strong{treess} and \strong{TreeDist}
-are installed, compute topology ESS (Fréchet correlation ESS and median
-pseudo-ESS) from the sampled trees. Set to \code{FALSE} to skip. Each run is
-subsampled to at most 1,000 trees before computation.}
+\item{trees}{Logical. If \code{TRUE} and \strong{TreeDist} is installed, compute
+topology ESS (Fréchet correlation ESS and median pseudo-ESS) from the
+sampled trees. Defaults to \code{FALSE} because Robinson-Foulds distance
+computation is O(n^2) and can be slow for large posteriors — reserve
+for deliberate post-run calls once parameter ESS has been satisfied.
+Each run is subsampled to at most 1,000 trees.}
 }
 \value{
 An object of class \code{MkpDiagnostics}, a list with components:
@@ -30,5 +32,5 @@ An object of class \code{MkpDiagnostics}, a list with components:
 Calculates effective sample size (ESS) per parameter and, when
 \code{nRuns >= 2}, the potential scale reduction factor (PSRF, Gelman-Rubin
 diagnostic) across runs. Optionally computes topology ESS using the
-Robinson-Foulds distance via the \strong{treess} and \strong{TreeDist} packages.
+Robinson-Foulds distance via \strong{TreeDist}.
 }

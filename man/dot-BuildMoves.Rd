@@ -4,14 +4,7 @@
 \alias{.BuildMoves}
 \title{Build move schedule}
 \usage{
-.BuildMoves(
-  nEdge,
-  nTrans,
-  hasNeo,
-  mcmc,
-  fixTopology = FALSE,
-  kPrimePrior = "geometric"
-)
+.BuildMoves(nEdge, nTrans, hasNeo, mcmc, fixTopology = FALSE)
 }
 \description{
 Build move schedule

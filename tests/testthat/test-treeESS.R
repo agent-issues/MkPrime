@@ -96,28 +96,39 @@ test_that(".FrechetCorrelationESS returns NA for too-short chains", {
 })
 
 # ---- Tests: MedianPseudoESS ----
+#
+# .MedianPseudoESS now uses a C++ Geyer (1992) initial-monotone-sequence
+# estimator (same class as Stan/rstan) instead of coda::effectiveSize
+# (AR spectral).  Reference values differ from treess v1.0.1 which uses
+# coda internally; the Geyer estimator is generally more conservative.
 
-test_that(".MedianPseudoESS matches treess reference (tiny)", {
-  skip_if_not_installed("coda")
-  # treess v1.0.1 reference: 5.520146
-  expect_equal(.MedianPseudoESS(.dmat_tiny), 5.520146, tolerance = 1e-4)
+test_that(".MedianPseudoESS returns Geyer ESS (tiny)", {
+  # Geyer initial-monotone-sequence reference: 5.6271
+  expect_equal(.MedianPseudoESS(.dmat_tiny), 5.6271, tolerance = 1e-3)
 })
 
-test_that(".MedianPseudoESS matches treess reference (n=30)", {
-  skip_if_not_installed("coda")
-  # treess v1.0.1 reference: 29.31821
-  expect_equal(.MedianPseudoESS(.dmat_30), 29.31821, tolerance = 1e-4)
+test_that(".MedianPseudoESS returns Geyer ESS (n=30)", {
+  # Geyer initial-monotone-sequence reference: 16.678
+  expect_equal(.MedianPseudoESS(.dmat_30), 16.678, tolerance = 1e-2)
+})
+
+test_that(".MedianPseudoESS returns n for constant chain", {
+  dmat_const <- matrix(0, 20, 20)
+  expect_equal(.MedianPseudoESS(dmat_const), 20)
+})
+
+test_that(".MedianPseudoESS returns NA for too-short chain", {
+  dmat_short <- matrix(0, 5, 5)
+  expect_true(is.na(.MedianPseudoESS(dmat_short)))
 })
 
 # ---- Tests: .TreeESS wrapper ----
 
-test_that(".TreeESS returns named vector with both methods", {
-  skip_if_not_installed("coda")
+test_that(".TreeESS default returns median only (cross-distance fast path)", {
   skip_if_not_installed("TreeDist")
   skip_if_not_installed("ape")
 
   library(ape)
-  # Build a small set of trees by hand
   tr1 <- read.tree(text = "((a,b),(c,(d,e)));")
   tr2 <- read.tree(text = "(((a,b),c),(d,e));")
   tr3 <- read.tree(text = "((a,(b,c)),(d,e));")
@@ -125,6 +136,39 @@ test_that(".TreeESS returns named vector with both methods", {
 
   result <- .TreeESS(trees)
   expect_named(result, c("frechetCorrelationESS", "medianPseudoESS"))
+  expect_true(is.na(result[["frechetCorrelationESS"]]))
+  expect_true(is.finite(result[["medianPseudoESS"]]))
+  expect_true(result[["medianPseudoESS"]] > 0)
+})
+
+test_that(".TreeESS with frechet = TRUE computes both methods", {
+  skip_if_not_installed("TreeDist")
+  skip_if_not_installed("ape")
+
+  library(ape)
+  tr1 <- read.tree(text = "((a,b),(c,(d,e)));")
+  tr2 <- read.tree(text = "(((a,b),c),(d,e));")
+  tr3 <- read.tree(text = "((a,(b,c)),(d,e));")
+  trees <- c(tr1, tr2, tr3, tr1, tr2, tr3, tr1, tr2, tr3, tr1)
+
+  result <- .TreeESS(trees, frechet = TRUE)
+  expect_named(result, c("frechetCorrelationESS", "medianPseudoESS"))
   expect_true(all(is.finite(result)))
   expect_true(all(result > 0))
+})
+
+test_that("median pseudo-ESS agrees between fast path and full matrix", {
+  skip_if_not_installed("TreeDist")
+  skip_if_not_installed("ape")
+
+  library(ape)
+  tr1 <- read.tree(text = "((a,b),(c,(d,e)));")
+  tr2 <- read.tree(text = "(((a,b),c),(d,e));")
+  tr3 <- read.tree(text = "((a,(b,c)),(d,e));")
+  trees <- c(tr1, tr2, tr3, tr1, tr2, tr3, tr1, tr2, tr3, tr1)
+
+  # n=10, maxRows=200 > 10, so both paths use all rows
+  fast <- .TreeESS(trees, frechet = FALSE)
+  full <- .TreeESS(trees, frechet = TRUE)
+  expect_equal(fast[["medianPseudoESS"]], full[["medianPseudoESS"]])
 })
