@@ -379,10 +379,12 @@ print.MkpDiagnostics <- function(x, ...) {
 }
 
 
-#' Build compact ESS string for progress ticker (scalar params only)
+#' Build compact per-parameter ESS string for progress ticker
 #'
-#' Produces an abbreviated summary like `"lP:138 TL:5 p:139 rsd:42"`
-#' for display in the single-line rotating progress bar (M-097).
+#' Produces a colour-coded abbreviated summary like
+#' `"lP:138 TL:5 p:139 rsd:42"` for display in the single-line
+#' rotating progress bar (M-097).  Colour matches the table
+#' conventions: red < 100, yellow 100--199, plain >= 200.
 #'
 #' @param ess Named numeric vector from `.CheckConvergence()`.
 #' @return Single string; `"?"` if no scalar ESS available.
@@ -397,29 +399,50 @@ print.MkpDiagnostics <- function(x, ...) {
   if (length(scalarNms) == 0L) return("?")
   parts <- vapply(scalarNms, function(nm) {
     ab <- abbrevs[nm]
-    val <- if (is.finite(ess[nm])) as.character(round(ess[nm])) else "?"
-    paste0(ab, ":", val)
+    val <- ess[nm]
+    if (!is.finite(val)) return(paste0(ab, ":?"))
+    rval <- round(val)
+    sval <- as.character(rval)
+    coloured <- if (rval < 100) cli::col_red(sval)
+                else if (rval < 200) cli::col_yellow(sval)
+                else sval
+    paste0(ab, ":", coloured)
   }, character(1))
   paste(parts, collapse = " ")
 }
 
 
-#' Build compact kPrime ESS summary for progress ticker
+#' Build headline summary string for progress ticker
 #'
-#' Produces a string like `"kP(54): 8/100/162"` (count: min/med/max ESS)
-#' for the second page of the rotating progress bar (M-097).
+#' Produces `"minESS: 42"` (single run) or
+#' `"minESS: 42 | PSRF: 1.03"` (multi-run) with colour matching
+#' the table conventions.  Used on the dominant ticker page (M-097).
 #'
-#' @param ess Named numeric vector from `.CheckConvergence()`.
-#' @return String; `""` if no kPrime parameters present.
+#' @param diagCheck Return value of `.CheckConvergence()`.
+#' @return Single string.
 #' @keywords internal
-.CompactKpStr <- function(ess) {
-  kpNms <- grep("^kPrime_", names(ess), value = TRUE)
-  if (length(kpNms) == 0L) return("")
-  kpEss <- ess[kpNms]
-  kpFin <- kpEss[is.finite(kpEss)]
-  if (length(kpFin) == 0L) return(sprintf("kP(%d): ?", length(kpNms)))
-  sprintf("kP(%d): %s/%s/%s", length(kpNms),
-          round(min(kpFin)), round(stats::median(kpFin)), round(max(kpFin)))
+.TickerSummaryStr <- function(diagCheck) {
+  minEss <- diagCheck$minEss
+  if (!is.finite(minEss)) {
+    essStr <- "?"
+  } else {
+    rval <- round(minEss)
+    sval <- as.character(rval)
+    essStr <- if (rval < 100) cli::col_red(sval)
+              else if (rval < 200) cli::col_yellow(sval)
+              else sval
+  }
+  s <- paste0("minESS: ", essStr)
+
+  maxPsrf <- diagCheck$maxPsrf
+  if (!is.na(maxPsrf) && is.finite(maxPsrf)) {
+    psrfFmt <- sprintf("%.2f", maxPsrf)
+    psrfStr <- if (maxPsrf > 1.1) cli::col_red(psrfFmt)
+               else if (maxPsrf > 1.05) cli::col_yellow(psrfFmt)
+               else psrfFmt
+    s <- paste0(s, " \u2502 PSRF: ", psrfStr)
+  }
+  s
 }
 
 

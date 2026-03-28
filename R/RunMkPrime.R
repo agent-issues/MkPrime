@@ -442,12 +442,13 @@ RunMkPrime <- function(data, tree,
     if (startIter == 1L) mcmc$nIter else mcmc$nIter - startIter + 1L
   } else NA
 
-  # Ticker state: two pages rotate every ~2.1 s wall-clock time.
-  # Page 0: logP + per-parameter ESS.  Page 1: logP + kPrime + acceptance.
+  # Ticker state: three pages rotate every ~2.1 s wall-clock time.
+  # Pages 0,2: logP + headline (minESS, maxPSRF).
+  # Page 1:    logP + per-parameter ESS detail.
   tickerStart <- proc.time()["elapsed"]
   tickerPage  <- ""
-  essStr      <- "?"
-  kpStr       <- ""
+  summaryStr  <- "minESS: ?"
+  detailStr   <- "?"
 
   cli::cli_progress_bar(
     progressLabel,
@@ -584,17 +585,12 @@ RunMkPrime <- function(data, tree,
     if (batchProp > 0L) recentAcc <- batchAcc / batchProp
 
     logPStr <- format(round(coldLogpost, 1), nsmall = 1)
-    accPct  <- sprintf("%.0f%%", recentAcc * 100)
-    pageIdx <- floor((proc.time()["elapsed"] - tickerStart) / 2.1) %% 2L
+    pageIdx <- floor((proc.time()["elapsed"] - tickerStart) / 2.1) %% 3L
 
-    tickerPage <- if (pageIdx == 0L) {
-      sprintf("logP: %s | ESS: %s", logPStr, essStr)
+    tickerPage <- if (pageIdx == 1L) {
+      sprintf("logP: %s \u2502 %s", logPStr, detailStr)
     } else {
-      if (nzchar(kpStr)) {
-        sprintf("logP: %s | %s | acc: %s", logPStr, kpStr, accPct)
-      } else {
-        sprintf("logP: %s | acc: %s", logPStr, accPct)
-      }
+      sprintf("logP: %s \u2502 %s", logPStr, summaryStr)
     }
 
     cli::cli_progress_update(
@@ -649,8 +645,8 @@ RunMkPrime <- function(data, tree,
       diagCheck <- .CheckConvergence(list(r), paramNames, mcmc, isStreaming)
       if (!is.null(diagCheck)) {
         # Refresh ticker strings from latest diagnostics (M-097)
-        essStr <- .CompactEssStr(diagCheck$ess)
-        kpStr  <- .CompactKpStr(diagCheck$ess)
+        summaryStr <- .TickerSummaryStr(diagCheck)
+        detailStr  <- .CompactEssStr(diagCheck$ess)
         if (diagCheck$converged) {
           stopReason <- "converged"
           actualIter <- batchEnd
