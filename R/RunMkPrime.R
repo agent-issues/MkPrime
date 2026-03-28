@@ -429,19 +429,21 @@ RunMkPrime <- function(data, tree,
   hasProgressFn <- !is.null(mcmc$progressFn) && !is.null(mcmc$plotEvery)
 
   # --- Progress bar ---
-  coldLogpost   <- {s <- get_mcmc_state(r$chainStates[[1]]); s$logPost}
-  recentAcc     <- 0
-  essDisplay    <- "?"
-  batchEnd      <- startIter - 1L
-  progressLabel <- if (startIter == 1L) "MCMC" else "Resuming MCMC"
-  progressTotal <- if (is.finite(mcmc$nIter)) {
+  coldLogpost    <- {s <- get_mcmc_state(r$chainStates[[1]]); s$logPost}
+  recentAcc      <- 0
+  essDisplay     <- "?"
+  batchEnd       <- startIter - 1L
+  prevTableLines <- 0L
+  phaseLabel     <- if (startIter <= mcmc$warmup) "warmup" else "iter"
+  progressLabel  <- if (startIter == 1L) "MCMC" else "Resuming MCMC"
+  progressTotal  <- if (is.finite(mcmc$nIter)) {
     if (startIter == 1L) mcmc$nIter else mcmc$nIter - startIter + 1L
   } else NA
   cli::cli_progress_bar(
     progressLabel,
     total  = progressTotal,
     format = paste0(
-      "iter {batchEnd}",
+      "{phaseLabel} {batchEnd}",
       " | logP: {format(round(coldLogpost, 1), nsmall = 1)}",
       " | ESS: {essDisplay}"
     )
@@ -547,6 +549,7 @@ RunMkPrime <- function(data, tree,
 
     # Log final adapted weights when warmup ends (M-092)
     if (batchEnd > mcmc$warmup && !weightsLogged) {
+      phaseLabel <- "iter"
       if (isStreaming && !is.null(logFilePath))
         .LogMoveWeights(moveWeights, moveNames, logFilePath)
       cli::cli_alert_info(
@@ -623,7 +626,10 @@ RunMkPrime <- function(data, tree,
       diagCheck <- .CheckConvergence(list(r), paramNames, mcmc, isStreaming)
       if (!is.null(diagCheck)) {
         essDisplay <- as.character(as.integer(diagCheck$minEss))
-        .PrintProgressTable(diagCheck, 1L, batchEnd, r$saved_idx)
+        prevTableLines <- .PrintProgressTable(
+          diagCheck, 1L, batchEnd, r$saved_idx,
+          prevLines = prevTableLines
+        )
         if (diagCheck$converged) {
           stopReason <- "converged"
           actualIter <- batchEnd
@@ -820,7 +826,11 @@ RunMkPrime <- function(data, tree,
     s <- sd(col, na.rm = TRUE); if (is.na(s) || s == 0) return(NA_real_)
     coda::effectiveSize(coda::mcmc(col))
   })
-  minEss <- min(ess, na.rm = TRUE)
+
+  # kPrime are discrete nuisance parameters — exclude from convergence criteria
+  # (M-098). They remain in the `ess` vector for display in .PrintProgressTable.
+  isConvParam <- !grepl("^kPrime_", names(ess)) & names(ess) != "log_likelihood"
+  minEss <- min(ess[isConvParam], na.rm = TRUE)
 
   # PSRF (requires >= 2 runs)
   psrf    <- NULL
@@ -834,7 +844,8 @@ RunMkPrime <- function(data, tree,
     )
     if (!is.null(gd)) {
       psrf    <- gd$psrf[, 1]
-      maxPsrf <- max(psrf, na.rm = TRUE)
+      maxPsrf <- max(psrf[isConvParam[names(psrf) %in% names(ess)]],
+                     na.rm = TRUE)
     }
   }
 
@@ -879,7 +890,10 @@ RunMkPrime <- function(data, tree,
     if (is.na(s) || s == 0) return(NA_real_)
     coda::effectiveSize(coda::mcmc(col))
   })
-  minEss <- min(ess, na.rm = TRUE)
+
+  # Exclude kPrime nuisance parameters from convergence criteria (M-098)
+  isConvParam <- !grepl("^kPrime_", names(ess)) & names(ess) != "log_likelihood"
+  minEss <- min(ess[isConvParam], na.rm = TRUE)
 
   psrf    <- NULL
   maxPsrf <- NA_real_
@@ -892,7 +906,8 @@ RunMkPrime <- function(data, tree,
     )
     if (!is.null(gd)) {
       psrf    <- gd$psrf[, 1]
-      maxPsrf <- max(psrf, na.rm = TRUE)
+      maxPsrf <- max(psrf[isConvParam[names(psrf) %in% names(ess)]],
+                     na.rm = TRUE)
     }
   }
 

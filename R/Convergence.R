@@ -17,11 +17,15 @@
 #'   for deliberate post-run calls once parameter ESS has been satisfied.
 #'   Each run is subsampled to at most 1,000 trees.
 #' @return An object of class `MkpDiagnostics`, a list with components:
-#'   - `ess`: Named numeric vector of ESS per parameter.
-#'   - `minEss`: Scalar minimum ESS across parameters.
+#'   - `ess`: Named numeric vector of ESS per parameter (including kPrime).
+#'   - `minEss`: Scalar minimum ESS across **scalar** parameters.
+#'     Individual kPrime values are discrete nuisance parameters that are
+#'     marginalized over, so they are excluded from the summary minimum
+#'     to avoid blocking convergence (see M-098).
 #'   - `psrf`: Named numeric vector of PSRF point estimates per parameter
 #'     (only if `nRuns >= 2`; `NULL` otherwise).
-#'   - `maxPsrf`: Scalar maximum PSRF (or `NA` if single run).
+#'   - `maxPsrf`: Scalar maximum PSRF across scalar parameters (or `NA`
+#'     if single run). kPrime excluded for the same reason as `minEss`.
 #'   - `treeEss`: Named numeric vector with `frechetCorrelationESS` and
 #'     `medianPseudoESS` (or `NULL` if not computed).
 #' @export
@@ -37,13 +41,18 @@ ConvergenceDiagnostics <- function(posterior, trees = FALSE) {
   # --- ESS (combined samples) ---
   ess <- .ComputeEss(pb$samples[, keyCols, drop = FALSE])
 
+  # kPrime are discrete nuisance parameters — exclude from summary min/max
+  # (M-098). Individual kPrime ESS/PSRF remain in the output for display.
+  isConvParam <- !grepl("^kPrime_", names(ess)) & names(ess) != "log_likelihood"
+
   # --- PSRF across runs ---
   psrf <- NULL
   maxPsrf <- NA_real_
 
   if (nRuns >= 2L && !is.null(posterior$per_run)) {
     psrf <- .ComputePsrf(pb$per_run, keyCols)
-    maxPsrf <- max(psrf, na.rm = TRUE)
+    maxPsrf <- max(psrf[isConvParam[names(psrf) %in% names(ess)]],
+                   na.rm = TRUE)
   }
 
   # --- Tree ESS ---
@@ -52,7 +61,7 @@ ConvergenceDiagnostics <- function(posterior, trees = FALSE) {
   structure(
     list(
       ess = ess,
-      minEss = min(ess),
+      minEss = min(ess[isConvParam], na.rm = TRUE),
       psrf = psrf,
       maxPsrf = maxPsrf,
       treeEss = treeEss,
@@ -267,12 +276,21 @@ print.MkpDiagnostics <- function(x, ...) {
 #' ESS and PSRF (when available). Mirrors the format of
 #' [print.MkpDiagnostics()].
 #'
+#' On dynamic terminals, consecutive tables overwrite each other using ANSI
+#' cursor-up codes. Pass `prevLines` (the return value of the previous call)
+#' to enable overwriting.
+#'
 #' @param diagCheck Return value of `.CheckConvergence()`.
 #' @param nRuns Number of independent runs.
 #' @param iter Current iteration number.
 #' @param nSamples Total saved samples across all runs.
+#' @param prevLines Number of lines printed by the previous call (0 on first
+#'   call). Used to overwrite the old table on dynamic terminals.
+#' @return Number of lines printed (invisibly), for passing as `prevLines`
+#'   to the next call.
 #' @keywords internal
-.PrintProgressTable <- function(diagCheck, nRuns, iter, nSamples) {
+.PrintProgressTable <- function(diagCheck, nRuns, iter, nSamples,
+                                prevLines = 0L) {
   ess  <- diagCheck$ess
   psrf <- diagCheck$psrf
   hasPsrf <- !is.null(psrf)
@@ -281,26 +299,27 @@ print.MkpDiagnostics <- function(x, ...) {
   scalarNms <- nms[!grepl("^kPrime_", nms) & nms != "log_likelihood"]
   kPrimeNms <- nms[grepl("^kPrime_", nms)]
 
-  cli::cli_rule(
-    left = sprintf(
-      "Progress diagnostics  (iter %d | %d run%s | %d samples)",
-      iter, nRuns, if (nRuns == 1L) "" else "s", nSamples
-    )
-  )
+  # Build all output as a character vector (one element per line)
+  out <- character()
+  out <- c(out, cli::rule(left = sprintf(
+    "Progress diagnostics  (iter %d | %d run%s | %d samples)",
+    iter, nRuns, if (nRuns == 1L) "" else "s", nSamples
+  )))
 
   if (hasPsrf) {
-    cat(sprintf("  %-20s  %6s  %7s\n", "Parameter", "ESS", "PSRF"))
+    out <- c(out, sprintf("  %-20s  %6s  %7s", "Parameter", "ESS", "PSRF"))
   } else {
-    cat(sprintf("  %-20s  %6s\n", "Parameter", "ESS"))
+    out <- c(out, sprintf("  %-20s  %6s", "Parameter", "ESS"))
   }
-  cat(sprintf("  %s\n", strrep("-", if (hasPsrf) 38L else 28L)))
+  out <- c(out, sprintf("  %s", strrep("-", if (hasPsrf) 38L else 28L)))
 
   for (nm in scalarNms) {
     essStr <- .FmtEss(ess[[nm]])
     if (hasPsrf && nm %in% names(psrf)) {
-      cat(sprintf("  %-20s  %s  %s\n", nm, essStr, .FmtPsrf(psrf[[nm]])))
+      out <- c(out, sprintf("  %-20s  %s  %s", nm, essStr,
+                            .FmtPsrf(psrf[[nm]])))
     } else {
-      cat(sprintf("  %-20s  %s\n", nm, essStr))
+      out <- c(out, sprintf("  %-20s  %s", nm, essStr))
     }
   }
 
@@ -325,27 +344,38 @@ print.MkpDiagnostics <- function(x, ...) {
       kpPsrfFin <- kpPsrf[is.finite(kpPsrf)]
       if (length(kpPsrfFin) > 0L) {
         psrfRange <- sprintf("%.3f\u2013%.3f", min(kpPsrfFin), max(kpPsrfFin))
-        cat(sprintf("  %-20s  %s  PSRF %s\n", label, essRange, psrfRange))
+        out <- c(out, sprintf("  %-20s  %s  PSRF %s", label, essRange,
+                              psrfRange))
       } else {
-        cat(sprintf("  %-20s  %s\n", label, essRange))
+        out <- c(out, sprintf("  %-20s  %s", label, essRange))
       }
     } else {
-      cat(sprintf("  %-20s  %s\n", label, essRange))
+      out <- c(out, sprintf("  %-20s  %s", label, essRange))
     }
   }
 
-  cat("\n  ESS: ",
-      cli::col_green("\u2265 200"), "  ",
-      cli::col_yellow("100\u2013199"), "  ",
-      cli::col_red("< 100"),
-      "\n", sep = "")
+  out <- c(out, "", paste0(
+    "  ESS: ",
+    cli::col_green("\u2265 200"), "  ",
+    cli::col_yellow("100\u2013199"), "  ",
+    cli::col_red("< 100")
+  ))
   if (hasPsrf) {
-    cat("  PSRF: \u2264 1.05 OK  ",
-        cli::col_yellow("1.05\u20131.1"), "  ",
-        cli::col_red("> 1.1"),
-        "\n", sep = "")
+    out <- c(out, paste0(
+      "  PSRF: \u2264 1.05 OK  ",
+      cli::col_yellow("1.05\u20131.1"), "  ",
+      cli::col_red("> 1.1")
+    ))
   }
-  invisible(NULL)
+
+  nLines <- length(out)
+
+  # On dynamic terminals, erase the previous table before printing the new one
+  if (prevLines > 0L && cli::is_dynamic_tty()) {
+    cat(sprintf("\x1b[%dA\x1b[0J", prevLines))
+  }
+  cat(paste(out, collapse = "\n"), "\n", sep = "")
+  invisible(nLines)
 }
 
 
