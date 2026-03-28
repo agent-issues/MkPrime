@@ -11,11 +11,14 @@
 #'
 #' @param posterior An `MkPosterior` object.
 #' @param trees Logical. If `TRUE` and **TreeDist** is installed, compute
-#'   topology ESS (Fréchet correlation ESS and median pseudo-ESS) from the
-#'   sampled trees. Defaults to `FALSE` because Robinson-Foulds distance
-#'   computation is O(n^2) and can be slow for large posteriors — reserve
-#'   for deliberate post-run calls once parameter ESS has been satisfied.
+#'   topology ESS (median pseudo-ESS) from the sampled trees.
+#'   Defaults to `FALSE`.
 #'   Each run is subsampled to at most 1,000 trees.
+#' @param frechetESS Logical. If `TRUE`, also compute the Fréchet
+#'   correlation ESS (Magee et al. 2021).  This requires the full
+#'   n x n pairwise distance matrix rather than the partial cross-distance
+#'   matrix used for median pseudo-ESS, so is substantially slower.
+#'   Implies `trees = TRUE`.
 #' @return An object of class `MkpDiagnostics`, a list with components:
 #'   - `ess`: Named numeric vector of ESS per parameter (including kPrime).
 #'   - `minEss`: Scalar minimum ESS across **scalar** parameters.
@@ -28,8 +31,10 @@
 #'     if single run). kPrime excluded for the same reason as `minEss`.
 #'   - `treeEss`: Named numeric vector with `frechetCorrelationESS` and
 #'     `medianPseudoESS` (or `NULL` if not computed).
+#'     `frechetCorrelationESS` is `NA` unless `frechetESS = TRUE`.
 #' @export
-ConvergenceDiagnostics <- function(posterior, trees = FALSE) {
+ConvergenceDiagnostics <- function(posterior, trees = FALSE,
+                                   frechetESS = FALSE) {
   if (!inherits(posterior, "MkPosterior")) {
     cli::cli_abort("{.arg posterior} must be an {.cls MkPosterior} object.")
   }
@@ -56,7 +61,8 @@ ConvergenceDiagnostics <- function(posterior, trees = FALSE) {
   }
 
   # --- Tree ESS ---
-  treeEss <- .ComputeTreeEss(pb, trees)
+  if (isTRUE(frechetESS)) trees <- TRUE
+  treeEss <- .ComputeTreeEss(pb, trees, frechet = isTRUE(frechetESS))
 
   structure(
     list(
@@ -463,12 +469,10 @@ print.MkpDiagnostics <- function(x, ...) {
 # Returns named numeric vector (frechetCorrelationESS, medianPseudoESS)
 # as the minimum across runs (conservative), or NULL if skipped or failed.
 #
-# NOTE: tree ESS via RF distances is expensive (O(n^2) distance matrix) and
-# is intentionally excluded from print()/summary() and from the checkEvery
-# polling callback.  Call ConvergenceDiagnostics(posterior, trees = TRUE)
-# explicitly after a run has finished — or after parameter ESS has been
-# satisfied — to obtain topology ESS.
-.ComputeTreeEss <- function(pb, trees) {
+# When frechet = FALSE (default), only the median pseudo-ESS is computed
+# using a cross-distance matrix (maxRows x n), which is much cheaper than
+# the full n x n pairwise matrix required for Fréchet ESS.
+.ComputeTreeEss <- function(pb, trees, frechet = FALSE) {
   if (isFALSE(trees)) return(NULL)
   if (!requireNamespace("TreeDist", quietly = TRUE)) return(NULL)
 
@@ -501,7 +505,8 @@ print.MkpDiagnostics <- function(x, ...) {
 
   tryCatch({
     chainRows <- lapply(perRunTrees, function(chain) {
-      .TreeESS(chain, dist_fn = TreeDist::RobinsonFoulds)
+      .TreeESS(chain, dist_fn = TreeDist::RobinsonFoulds,
+               frechet = frechet)
     })
     essMat <- do.call(rbind, chainRows)
     # Minimum across runs — conservative multi-chain estimate.

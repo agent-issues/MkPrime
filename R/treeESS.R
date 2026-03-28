@@ -11,16 +11,26 @@
 
 #' Compute tree-topology ESS for one MCMC chain
 #'
-#' Computes the Fréchet correlation ESS and median pseudo-ESS for a
-#' sample of phylogenetic trees, using Robinson–Foulds distances.
+#' Computes tree-topology effective sample size for a sample of
+#' phylogenetic trees using Robinson–Foulds distances.
+#'
+#' By default only the median pseudo-ESS is returned.  Set
+#' `frechet = TRUE` to also compute the Fréchet correlation ESS
+#' (Magee et al. 2021); this adds negligible cost since the full
+#' distance matrix is computed either way.
 #'
 #' @param trees A `multiPhylo` list of trees from a single MCMC chain.
 #' @param dist_fn Distance function applied to `trees`; must return a
 #'   `dist` object.  Default: [TreeDist::RobinsonFoulds].
 #' @param min_nsamples Integer; minimum number of samples used when
 #'   computing lag-k statistics (default 5).
+#' @param frechet Logical; if `TRUE`, also compute the Fréchet
+#'   correlation ESS.  Default: `FALSE`.
+#' @param maxRows Maximum rows for median pseudo-ESS subsampling
+#'   (default 200).
 #' @return Named numeric vector with elements `frechetCorrelationESS`
-#'   and `medianPseudoESS`.
+#'   and `medianPseudoESS`.  `frechetCorrelationESS` is `NA` when
+#'   `frechet = FALSE`.
 #' @references
 #' Magee AF, Karcher MD, Matsen IV FA, Minin VN (2021).
 #' "How trustworthy is your tree? Bayesian phylogenetic effective sample
@@ -34,11 +44,16 @@
 #' \emph{Genome Biology and Evolution}, 8(8), 2319--2332.
 #' @keywords internal
 .TreeESS <- function(trees, dist_fn = TreeDist::RobinsonFoulds,
-                     min_nsamples = 5L) {
+                     min_nsamples = 5L, frechet = FALSE,
+                     maxRows = 200L) {
   dmat <- as.matrix(dist_fn(trees))
   c(
-    frechetCorrelationESS = .FrechetCorrelationESS(dmat, min_nsamples),
-    medianPseudoESS       = .MedianPseudoESS(dmat)
+    frechetCorrelationESS = if (frechet) {
+      .FrechetCorrelationESS(dmat, min_nsamples)
+    } else {
+      NA_real_
+    },
+    medianPseudoESS = .MedianPseudoESS(dmat, min_nsamples, maxRows)
   )
 }
 
@@ -67,16 +82,24 @@ if (all(dmat == 0)) return(1)
 #' Median pseudo-ESS (Lanfear et al. 2016)
 #'
 #' Treats each row of the distance matrix as a univariate time series
-#' and returns the median of the per-row ESS estimates from
-#' [coda::effectiveSize].
+#' and returns the median of the per-row ESS estimates.
+#'
+#' Uses a C++ implementation of the Geyer (1992) initial-monotone-sequence
+#' estimator instead of [coda::effectiveSize()] for performance.  For
+#' large matrices, a deterministic subsample of rows is used (the median
+#' stabilises well before all rows are evaluated).
 #'
 #' @param dmat Numeric square distance matrix.
+#' @param min_nsamples Minimum samples for lag computation (default 5).
+#' @param maxRows Maximum rows to evaluate; 0 = all rows.  Default 200.
 #' @return Scalar ESS estimate.
-#' @references Lanfear R, Hua X, Warren DL (2016). \emph{Genome Biology
+#' @references
+#' Lanfear R, Hua X, Warren DL (2016). \emph{Genome Biology
 #'   and Evolution}, 8(8), 2319--2332.
+#'
+#' Geyer CJ (1992). "Practical Markov Chain Monte Carlo."
+#'   \emph{Statistical Science}, 7(4), 473--483.
 #' @keywords internal
-.MedianPseudoESS <- function(dmat) {
-  if (!requireNamespace("coda", quietly = TRUE)) return(NA_real_)
-  all_ess <- apply(dmat, 1, coda::effectiveSize)
-  median(all_ess)
+.MedianPseudoESS <- function(dmat, min_nsamples = 5L, maxRows = 200L) {
+  median_pseudo_ess_cpp(dmat, as.integer(min_nsamples), as.integer(maxRows))
 }

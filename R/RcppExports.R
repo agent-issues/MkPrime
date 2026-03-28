@@ -117,6 +117,10 @@ frechet_correlation_ess_cpp <- function(dmat_sq, min_nsamples) {
     .Call(`_MkPrime_frechet_correlation_ess_cpp`, dmat_sq, min_nsamples)
 }
 
+median_pseudo_ess_cpp <- function(dmat, min_nsamples, max_rows) {
+    .Call(`_MkPrime_median_pseudo_ess_cpp`, dmat, min_nsamples, max_rows)
+}
+
 tbr_proposal <- function(edge, nTip, treeLength, relBrLengths) {
     .Call(`_MkPrime_tbr_proposal`, edge, nTip, treeLength, relBrLengths)
 }
