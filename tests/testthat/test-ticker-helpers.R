@@ -139,11 +139,12 @@ test_that(".TickerSummaryStr colours minESS yellow when 100-199", {
 })
 
 
-test_that(".TickerSummaryStr leaves minESS plain when >= 200", {
+test_that(".TickerSummaryStr colours minESS green when >= 200", {
   withr::local_options(cli.num_colors = 256L)
   diag <- list(minEss = 300, maxPsrf = NA_real_)
   result <- MkPrime:::.TickerSummaryStr(diag)
-  expect_false(cli::ansi_has_any(result))
+  expect_true(cli::ansi_has_any(result))
+  expect_match(cli::ansi_strip(result), "minESS: 300")
 })
 
 
@@ -165,11 +166,12 @@ test_that(".TickerSummaryStr colours PSRF yellow when 1.05-1.1", {
 })
 
 
-test_that(".TickerSummaryStr leaves PSRF plain when <= 1.05", {
+test_that(".TickerSummaryStr colours PSRF green when <= 1.05", {
   withr::local_options(cli.num_colors = 256L)
   diag <- list(minEss = 300, maxPsrf = 1.02)
   result <- MkPrime:::.TickerSummaryStr(diag)
-  expect_false(cli::ansi_has_any(result))
+  # Both minESS (green) and PSRF (green) produce ANSI
+  expect_true(cli::ansi_has_any(result))
 })
 
 

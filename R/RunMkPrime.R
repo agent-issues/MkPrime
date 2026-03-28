@@ -452,8 +452,8 @@ RunMkPrime <- function(data, tree,
   cli::cli_progress_bar(
     progressLabel,
     total  = progressTotal,
-    format = "{phaseLabel} {batchEnd} \u2502 {tickerPage}",
-    format_done = "{phaseLabel} {batchEnd} \u2502 done",
+    format = "{tickerPage}",
+    format_done = "{tickerPage}",
     clear  = FALSE
   )
 
@@ -590,7 +590,12 @@ RunMkPrime <- function(data, tree,
                          format = "f", digits = 1)
     pageIdx   <- floor((proc.time()["elapsed"] - tickerStart) / 1.5) %%
                    length(tickerPages)
-    tickerPage <- sprintf("logP:%s \u2502 %s", logPStr, tickerPages[pageIdx + 1L])
+    # Dim prefix for visual separation; coloured content follows
+    tickerPage <- paste(
+      cli::col_silver(paste(phaseLabel, batchEnd)),
+      "\u2502", sprintf("logP:%s", logPStr),
+      "\u2502", tickerPages[pageIdx + 1L]
+    )
 
     cli::cli_progress_update(
       set = if (startIter == 1L) batchEnd else batchEnd - startIter + 1L
@@ -657,6 +662,9 @@ RunMkPrime <- function(data, tree,
     batchStart <- batchEnd + 1L
     if (is.finite(mcmc$nIter) && batchStart > mcmc$nIter) break
   }
+  tickerPage <- paste(
+    cli::col_silver(paste(phaseLabel, batchEnd)), "\u2502 done"
+  )
   cli::cli_progress_done()
 
   # --- Serialize and return ---

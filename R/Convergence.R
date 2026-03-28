@@ -410,7 +410,7 @@ print.MkpDiagnostics <- function(x, ...) {
       sval <- as.character(rval)
       coloured <- if (rval < 100) cli::col_red(sval)
                   else if (rval < 200) cli::col_yellow(sval)
-                  else sval
+                  else cli::col_green(sval)
       paste0(nm, ": ", coloured)
     }, character(1))
     paste0("ESS ", paste(parts, collapse = "  "))
@@ -443,7 +443,7 @@ print.MkpDiagnostics <- function(x, ...) {
     sval <- as.character(rval)
     essStr <- if (rval < 100) cli::col_red(sval)
               else if (rval < 200) cli::col_yellow(sval)
-              else sval
+              else cli::col_green(sval)
   }
   s <- paste0("minESS: ", essStr)
 
@@ -452,7 +452,7 @@ print.MkpDiagnostics <- function(x, ...) {
     psrfFmt <- sprintf("%.2f", maxPsrf)
     psrfStr <- if (maxPsrf > 1.1) cli::col_red(psrfFmt)
                else if (maxPsrf > 1.05) cli::col_yellow(psrfFmt)
-               else psrfFmt
+               else cli::col_green(psrfFmt)
     s <- paste0(s, " \u2502 PSRF: ", psrfStr)
   }
   s
