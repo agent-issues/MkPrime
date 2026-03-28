@@ -9,11 +9,16 @@
 // directly, avoiding repeated matrix construction/decomposition.
 
 #include "mcmc_state.h"
+#include "gibbs_partial_cl.h"
 #include <TreeTools/renumber_tree.h>
 #include <cmath>
+#include <cstring>
 #include <chrono>
 
 using namespace Rcpp;
+
+// Forward declaration for relabelling correction (corrections.cpp)
+double mk_prime_relabel_log(int kPrime, int kObs);
 
 // Forward declarations for proposals in other TUs
 // M-065: vector-based _impl versions (no edge matrix)
@@ -343,21 +348,25 @@ double eval_full_loglik_at_cpp(SEXP dataPtr, SEXP statePtr,
 
 
 // ---------------------------------------------------------------------------
-// gibbs_spr_impl  (M-085)
+// gibbs_spr_impl  (M-085, M-105 partial CL)
 //
-// GibbsSPR: enumerate all valid SPR reattachment positions for a randomly
-// chosen subtree, weight each by exp(β × logLik) (prior is topology-
-// independent), sample one proportionally (including the current state
-// to ensure proper discrete Gibbs semantics), and apply.
+// GibbsSPR with partial CL reuse: enumerate all valid SPR reattachment
+// positions for a randomly chosen subtree.  Instead of running a full-tree
+// pruning per candidate, cache per-node CLs from one downpass and update
+// only the O(depth) affected path per candidate.
 //
-// Design choices:
-//   tau = 0.5 (midpoint insertion) → no branch-length Jacobian.
-//   Current state included in candidate set → pure Gibbs, acceptance = 1
-//     on non-self draws; self-draw recorded as a no-op (returns false).
-//   Dirichlet(1,...,1) prior on relBrLengths is uniform and equal for all
-//     candidates → only likelihoods enter the weights.
+// Falls back to the old full-evaluation path when Q-heterogeneity is
+// enabled (M-052), since that changes the pruning model.
 // ---------------------------------------------------------------------------
+
+// Old full-evaluation path (used as fallback and for validation)
+static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta);
+
 static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
+  // Fallback: Q-heterogeneity not yet supported in partial CL
+  if (data->qHeterogeneity)
+    return gibbs_spr_impl_full(data, state, beta);
+
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
   const int root  = nTip + 1;
@@ -373,10 +382,10 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
   int pickIdx = (int)(R::unif_rand() * (double)eligible.size());
   if (pickIdx >= (int)eligible.size()) pickIdx = (int)eligible.size() - 1;
   const int pruneRow = eligible[pickIdx];
-  const int u = state->parent[pruneRow];   // pruned subtree's parent node
-  const int v = state->child[pruneRow];    // pruned subtree root
+  const int u = state->parent[pruneRow];
+  const int v = state->child[pruneRow];
 
-  // 3. Find parentRow (edge into u) and sibRow (u's other child)
+  // 3. Find parentRow, sibRow, sibNode
   int parentRow = -1, sibRow = -1, sibNode = -1;
   for (int i = 0; i < nEdge; ++i) {
     if (state->child[i] == u) parentRow = i;
@@ -386,7 +395,7 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
   }
   if (parentRow < 0 || sibRow < 0) return false;
 
-  // 4. BFS: mark all descendants of v
+  // 4. BFS: mark descendants of v
   std::vector<bool> isDesc(2 * nTip + 2, false);
   isDesc[v] = true;
   if (v > nTip) {
@@ -414,32 +423,164 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
   if (cands.empty()) return false;
   const int nCand = (int)cands.size();
 
-  // 6. Absolute edge lengths (treeLength is preserved across topology change)
+  // 6. Absolute edge lengths
   NumericVector absLen(nEdge);
   for (int i = 0; i < nEdge; ++i)
     absLen[i] = state->treeLength * state->relBrLengths[i];
   const double lMerge = absLen[parentRow] + absLen[sibRow];
+  const double lPrune = absLen[pruneRow];
 
-  // 7. Compute logLik for each candidate at tau = 0.5
+  // ===== M-105: Partial CL cache setup =====
+
+  // Build tree navigation from current topology
+  TreeNav topo;
+  topo.build(state->parent, state->child, absLen, nTip);
+
+  // Compute ACRV rates
+  NumericVector rates = gibbs_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ);
+  bool useAcrv = (state->rateLogSd > 0.0);
+  int nCat = useAcrv ? data->nCat : 1;
+  if (!useAcrv) rates = NumericVector(1, 1.0);
+
+  int coding = data->codingType;
+  int maxNode = topo.maxNode;
+
+  // Build CLGroups: one per (partition, kStates) evaluation unit
+  std::vector<CLGroup> groups;
+  // Track which groups belong to which partition (for ascertainment)
+  struct GroupMeta { int partIdx; int nCharInPart; };
+  std::vector<GroupMeta> groupMeta;
+
+  for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
+    const PartInfo& part = data->parts[pi];
+
+    if (part.type == 0) {
+      // Neomorphic: k=2, MkN model
+      CLGroup g;
+      g.isMkN     = true;
+      g.rateLoss  = state->rateLoss;
+      g.rateScale = state->rateNeo;
+      g.tipData   = part.tipStates;
+      g.allocate(maxNode, nCat, part.tipStates.ncol(), 2);
+      groups.push_back(std::move(g));
+      groupMeta.push_back({pi, part.tipStates.ncol()});
+
+    } else if (part.type == 2) {
+      // Known state space: fixed k
+      CLGroup g;
+      g.isMkN     = false;
+      g.rateLoss  = 1.0;
+      g.rateScale = 1.0;
+      g.tipData   = part.tipStates;
+      g.allocate(maxNode, nCat, part.tipStates.ncol(), part.k);
+      groups.push_back(std::move(g));
+      groupMeta.push_back({pi, part.tipStates.ncol()});
+
+    } else {
+      // Transformational: group by kPrime
+      int nCharPart = part.tipStates.ncol();
+      IntegerVector kPrimePart(nCharPart);
+      for (int ci = 0; ci < nCharPart; ++ci)
+        kPrimePart[ci] = state->kPrime[part.globalCharIdx[ci]];
+      IntegerVector uniqKp = sort_unique(kPrimePart);
+
+      for (int ui = 0; ui < uniqKp.size(); ++ui) {
+        int kp = uniqKp[ui];
+        std::vector<int> cols;
+        for (int ci = 0; ci < nCharPart; ++ci)
+          if (kPrimePart[ci] == kp) cols.push_back(ci);
+        int nSub = (int)cols.size();
+
+        IntegerMatrix sub(nTip, nSub);
+        for (int c = 0; c < nSub; ++c)
+          for (int t = 0; t < nTip; ++t)
+            sub(t, c) = part.tipStates(t, cols[c]);
+
+        CLGroup g;
+        g.isMkN     = false;
+        g.rateLoss  = 1.0;
+        g.rateScale = 1.0;
+        g.tipData   = sub;
+        g.allocate(maxNode, nCat, nSub, kp);
+        groups.push_back(std::move(g));
+        groupMeta.push_back({pi, nCharPart});
+      }
+    }
+  }
+
+  // Run caching downpass for each group
+  for (auto& grp : groups)
+    caching_downpass(grp, topo, state->parent, state->child, rates);
+
+  // Compute residual CLs for each group (detach v from u)
+  std::vector<ResidualCL> residuals(groups.size());
+  for (size_t gi = 0; gi < groups.size(); ++gi)
+    compute_residual_cl(residuals[gi], groups[gi], topo, rates, u, sibNode, lMerge);
+
+  // Ascertainment correction: create pseudo-character groups (constant-site
+  // patterns) and process through the same partial CL pipeline.
+  std::vector<CLGroup> pseudoGroups;
+  std::vector<ResidualCL> pseudoResiduals;
+  if (coding != 0) {
+    pseudoGroups.resize(groups.size());
+    pseudoResiduals.resize(groups.size());
+    for (size_t gi = 0; gi < groups.size(); ++gi) {
+      pseudoGroups[gi] = create_const_pseudo_group(
+        groups[gi], nTip, topo.maxNode, nCat);
+      caching_downpass(pseudoGroups[gi], topo, state->parent, state->child, rates);
+      compute_residual_cl(pseudoResiduals[gi], pseudoGroups[gi], topo, rates,
+                          u, sibNode, lMerge);
+    }
+  }
+
+  // ===== Evaluate candidates using partial CLs =====
+
   std::vector<double> candLL(nCand);
   for (int ci = 0; ci < nCand; ++ci) {
-    const int rr      = cands[ci];
+    const int rr = cands[ci];
+    const int a  = state->parent[rr];
+    const int b  = state->child[rr];
     const double lReg = absLen[rr];
+    const double lHalf = 0.5 * lReg;
 
-    IntegerVector np = clone(state->parent);
-    IntegerVector nc = clone(state->child);
-    NumericVector na = clone(absLen);
-    const int b = nc[rr];
+    double totalLL = 0.0;
 
-    nc[parentRow] = sibNode;  na[parentRow] = lMerge;
-    nc[rr]        = u;        na[rr]        = 0.5 * lReg;
-    np[sibRow]    = u;        nc[sibRow]    = b;
-    na[sibRow]    = 0.5 * lReg;
+    for (size_t gi = 0; gi < groups.size(); ++gi) {
+      double grpLL = evaluate_candidate(
+        groups[gi], topo, residuals[gi], rates,
+        v, u, sibNode, lMerge, a, b, lHalf, lPrune);
 
-    auto po = TreeTools::preorder_weighted_impl(np, nc, na);
-    IntegerVector op = po.first(_, 0);
-    IntegerVector oc = po.first(_, 1);
-    candLL[ci] = compute_full_loglik_at(*data, *state, op, oc, po.second);
+      // Ascertainment correction via pseudo-character partial CLs
+      if (coding != 0 && groups[gi].nChar > 0) {
+        double constP = evaluate_const_prob(
+          pseudoGroups[gi], topo, pseudoResiduals[gi], rates,
+          v, u, sibNode, lMerge, a, b, lHalf, lPrune);
+        // TODO: coding == 2 (informative) needs singleton_site_prob too
+        if (constP < 1.0)
+          grpLL -= groups[gi].nChar * std::log(1.0 - constP);
+      }
+
+      totalLL += grpLL;
+    }
+
+    candLL[ci] = totalLL;
+  }
+
+  // Add relabelling correction to candLL — it's a topology-independent
+  // constant that's included in state->logLik but not in evaluate_candidate.
+  if (data->relabel) {
+    double relabelCorr = 0.0;
+    for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
+      const PartInfo& part = data->parts[pi];
+      if (part.type == 1) {  // transformational only
+        int nCharPart = part.tipStates.ncol();
+        for (int ci = 0; ci < nCharPart; ++ci)
+          relabelCorr += mk_prime_relabel_log(
+            state->kPrime[part.globalCharIdx[ci]], part.kObsLocal[ci]);
+      }
+    }
+    for (int ci = 0; ci < nCand; ++ci)
+      candLL[ci] += relabelCorr;
   }
 
   // 8. Sampling weights: exp(β × logLik), current state included
@@ -455,7 +596,7 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
     sumW  += ws[ci];
   }
 
-  // 9. Sample: self-draw → no-op (recorded as rejection)
+  // 9. Sample
   double rnd = R::unif_rand() * sumW;
   if (rnd < wOrig) return false;
   rnd -= wOrig;
@@ -465,7 +606,7 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
     rnd -= ws[ci];
   }
 
-  // 10. Apply chosen SPR: reconstruct and commit topology to state
+  // 10. Apply chosen SPR
   {
     const int rr      = cands[chosen];
     const double lReg = absLen[rr];
@@ -489,8 +630,130 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
     }
   }
 
-  // 11. Commit: logLik updated; prior/logPrior unchanged (topology-
-  //     independent); clear per-partition cache (stale after topology change)
+  // 11. Commit
+  state->logLik = candLL[chosen];
+  state->partLogLik.clear();
+  return true;
+}
+
+
+// Old full-evaluation fallback (Q-het or validation)
+static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta) {
+  const int nEdge = state->parent.size();
+  const int nTip  = data->nTip;
+  const int root  = nTip + 1;
+
+  std::vector<int> eligible;
+  eligible.reserve(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    if (state->parent[i] != root) eligible.push_back(i);
+  if (eligible.empty()) return false;
+
+  int pickIdx = (int)(R::unif_rand() * (double)eligible.size());
+  if (pickIdx >= (int)eligible.size()) pickIdx = (int)eligible.size() - 1;
+  const int pruneRow = eligible[pickIdx];
+  const int u = state->parent[pruneRow];
+  const int v = state->child[pruneRow];
+
+  int parentRow = -1, sibRow = -1, sibNode = -1;
+  for (int i = 0; i < nEdge; ++i) {
+    if (state->child[i] == u) parentRow = i;
+    if (state->parent[i] == u && state->child[i] != v) {
+      sibRow = i; sibNode = state->child[i];
+    }
+  }
+  if (parentRow < 0 || sibRow < 0) return false;
+
+  std::vector<bool> isDesc(2 * nTip + 2, false);
+  isDesc[v] = true;
+  if (v > nTip) {
+    std::vector<int> queue = {v};
+    while (!queue.empty()) {
+      int cur = queue.back(); queue.pop_back();
+      for (int i = 0; i < nEdge; ++i) {
+        if (state->parent[i] == cur) {
+          int c = state->child[i];
+          isDesc[c] = true;
+          if (c > nTip) queue.push_back(c);
+        }
+      }
+    }
+  }
+
+  std::vector<int> cands;
+  cands.reserve(nEdge);
+  for (int i = 0; i < nEdge; ++i) {
+    if (isDesc[state->child[i]]) continue;
+    if (state->parent[i] == u || state->child[i] == u) continue;
+    cands.push_back(i);
+  }
+  if (cands.empty()) return false;
+  const int nCand = (int)cands.size();
+
+  NumericVector absLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    absLen[i] = state->treeLength * state->relBrLengths[i];
+  const double lMerge = absLen[parentRow] + absLen[sibRow];
+
+  std::vector<double> candLL(nCand);
+  for (int ci = 0; ci < nCand; ++ci) {
+    const int rr      = cands[ci];
+    const double lReg = absLen[rr];
+    IntegerVector np = clone(state->parent);
+    IntegerVector nc = clone(state->child);
+    NumericVector na = clone(absLen);
+    const int b = nc[rr];
+    nc[parentRow] = sibNode;  na[parentRow] = lMerge;
+    nc[rr]        = u;        na[rr]        = 0.5 * lReg;
+    np[sibRow]    = u;        nc[sibRow]    = b;
+    na[sibRow]    = 0.5 * lReg;
+    auto po = TreeTools::preorder_weighted_impl(np, nc, na);
+    IntegerVector op = po.first(_, 0);
+    IntegerVector oc = po.first(_, 1);
+    candLL[ci] = compute_full_loglik_at(*data, *state, op, oc, po.second);
+  }
+
+  const double llOrig = state->logLik;
+  double maxLL = llOrig;
+  for (int ci = 0; ci < nCand; ++ci) maxLL = std::max(maxLL, candLL[ci]);
+  double wOrig = std::exp(beta * (llOrig - maxLL));
+  std::vector<double> ws(nCand);
+  double sumW = wOrig;
+  for (int ci = 0; ci < nCand; ++ci) {
+    ws[ci] = std::exp(beta * (candLL[ci] - maxLL));
+    sumW  += ws[ci];
+  }
+
+  double rnd = R::unif_rand() * sumW;
+  if (rnd < wOrig) return false;
+  rnd -= wOrig;
+  int chosen = nCand - 1;
+  for (int ci = 0; ci < nCand - 1; ++ci) {
+    if (rnd < ws[ci]) { chosen = ci; break; }
+    rnd -= ws[ci];
+  }
+
+  {
+    const int rr      = cands[chosen];
+    const double lReg = absLen[rr];
+    IntegerVector np  = clone(state->parent);
+    IntegerVector nc  = clone(state->child);
+    NumericVector na  = clone(absLen);
+    const int b = nc[rr];
+    nc[parentRow] = sibNode;  na[parentRow] = lMerge;
+    nc[rr]        = u;        na[rr]        = 0.5 * lReg;
+    np[sibRow]    = u;        nc[sibRow]    = b;
+    na[sibRow]    = 0.5 * lReg;
+    auto po = TreeTools::preorder_weighted_impl(np, nc, na);
+    IntegerMatrix ordEdge = po.first;
+    NumericVector ordAbs  = po.second;
+    for (int k = 0; k < nEdge; ++k) {
+      state->parent[k]       = ordEdge(k, 0);
+      state->child[k]        = ordEdge(k, 1);
+      state->relBrLengths[k] = ordAbs[k] / state->treeLength;
+    }
+  }
+
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
   return true;
