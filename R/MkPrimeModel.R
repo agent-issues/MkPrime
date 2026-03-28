@@ -29,6 +29,54 @@
 #'   the RevBayes `dnMkPrime` default.
 #' @param rateNeoMeanlog,rateNeoSdlog Parameters for the LogNormal prior
 #'   on the neomorphic partition rate scalar. Defaults: meanlog = 0, sdlog = 2.
+#' @param qHeterogeneity Logical. Enable Q-matrix heterogeneity across
+#'   characters via discretised Dirichlet-marginal equilibrium frequencies?
+#'   Default `FALSE`. When enabled, each character's likelihood is averaged
+#'   over a set of F81 rate matrices whose equilibrium frequencies are drawn
+#'   from `Beta(beta_scale, (k - 1) * beta_scale)`, where `k` is the number
+#'   of states. This is the marginal distribution of one component of a
+#'   symmetric `Dirichlet(beta_scale, ..., beta_scale)`. See the
+#'   \strong{Q-matrix heterogeneity} section below for details.
+#' @param nBetaCat Integer. Number of equal-probability Beta bins for the
+#'   heterogeneity discretisation. Default `4L`. Higher values increase
+#'   accuracy at the cost of compute time (scales linearly with `nBetaCat`).
+#'   Ignored when `qHeterogeneity = FALSE`.
+#' @param betaScaleShape,betaScaleRate Shape and rate for the Gamma prior
+#'   on `beta_scale` (the symmetric Dirichlet concentration parameter).
+#'   Defaults: shape = 1, rate = 1. Ignored when `qHeterogeneity = FALSE`.
+#'
+#' @section Q-matrix heterogeneity:
+#'
+#' Standard Mk and Mk' assume all characters share the same (equal-frequency)
+#' rate matrix. In reality, some morphological characters may have strongly
+#' unequal state frequencies. Q-matrix heterogeneity (`qHeterogeneity = TRUE`)
+#' relaxes this by integrating each character's likelihood over a mixture of
+#' F81 rate matrices \insertCite{Felsenstein1981}{MkPrime} with varying
+#' equilibrium frequencies.
+#'
+#' The mixture is controlled by a single scalar parameter, `beta_scale`
+#' (= \eqn{\alpha}), which acts as the concentration of a symmetric Dirichlet:
+#' \itemize{
+#'   \item Large \eqn{\alpha}: all characters have nearly equal state
+#'     frequencies, recovering the standard Mk/JC model.
+#'   \item Small \eqn{\alpha}: characters can have strongly unequal
+#'     frequencies (one state dominant, others rare).
+#' }
+#'
+#' The key insight is that the marginal distribution of one component of
+#' \eqn{\mathrm{Dirichlet}(\alpha, \ldots, \alpha)} with \eqn{k} components
+#' is \eqn{\mathrm{Beta}(\alpha, (k-1)\alpha)}. This allows a unified
+#' discretisation for characters of any state count: the scheme adapts
+#' automatically to \eqn{k}.
+#'
+#' For binary characters (\eqn{k = 2}), this simplifies to the symmetric
+#' \eqn{\mathrm{Beta}(\alpha, \alpha)}.
+#'
+#' This feature is intended for **model comparison** (e.g. via
+#' [mkp_stepping_stone()]). It multiplies computation time by roughly
+#' \eqn{4-5\times}{4-5x} for binary-dominated datasets.
+#' See `vignette("het-details", package = "MkPrime")` for the full
+#' mathematical derivation.
 #'
 #' @return An S3 object of class `MkPrimeModel`.
 #' @export
@@ -173,6 +221,7 @@ MkPrimeModel <- function(
 #'   `tree_length`, `rel_br_lengths`, `rate_loss`, `rate_log_sd`,
 #'   `kPrime` (integer vector). For `kPrimePrior = "geometric"`, also
 #'   `p` (hyperprior). For `kPrimePrior = "logseries"`, `p` is absent.
+#'   When `qHeterogeneity = TRUE`, also `beta_scale` (positive scalar).
 #' @param model An `MkPrimeModel` object (finalized).
 #' @param mkd An `MkPrimeData` object (for kObs and character types).
 #' @return Scalar log-prior density.

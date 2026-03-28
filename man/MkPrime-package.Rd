@@ -19,5 +19,10 @@ Useful links:
 \author{
 \strong{Maintainer}: Martin R. Smith \email{martin.smith@durham.ac.uk} (\href{https://orcid.org/0000-0001-5660-1727}{ORCID}) [copyright holder]
 
+Other contributors:
+\itemize{
+  \item Andrew F. Magee (\href{https://orcid.org/0000-0001-8831-6226}{ORCID}) (Fréchet correlation ESS and pseudo-ESS methods (treess package)) [contributor]
+}
+
 }
 \keyword{internal}

@@ -7,7 +7,7 @@
 ProposeSpr(tree, tree_length, rel_br_lengths)
 }
 \arguments{
-\item{tree}{A \code{phylo} object in postorder (unrooted binary).}
+\item{tree}{A \code{phylo} object in canonical preorder (unrooted binary).}
 
 \item{tree_length}{Current total tree length.}
 
@@ -15,7 +15,7 @@ ProposeSpr(tree, tree_length, rel_br_lengths)
 }
 \value{
 \code{list(tree, rel_br_lengths, logHastings)}. The returned tree
-is in postorder.
+is in canonical preorder.
 }
 \description{
 Subtree pruning and regrafting. Picks a random edge (u->v), detaches v's
@@ -24,7 +24,7 @@ reattaches u on a random backbone edge.
 }
 \details{
 Delegates to C++ (\code{spr_proposal} in proposals.cpp) for edge
-manipulation and postorder reordering.
+manipulation and canonical preorder reordering.
 
 The Hastings ratio includes a Jacobian correction for the edge length
 redistribution: \code{log(lRegraft) - log(lMerge)}.
