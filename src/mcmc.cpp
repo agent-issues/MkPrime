@@ -36,7 +36,8 @@ List tbr_proposal_impl(IntegerVector parent, IntegerVector child,
                         NumericVector relBrLengths);
 List beta_simplex_proposal(NumericVector x, int index, double tuning);
 bool beta_simplex_impl(NumericVector& x, int index, double tuning,
-                       double& logHastings);  // OPP-5: in-place, no List alloc
+                       double& logHastings, int& outOther,
+                       double& outOldIdx, double& outOldOther);  // OPP-5
 
 
 // ---------------------------------------------------------------------------
@@ -625,7 +626,8 @@ static const BranchBins& get_branch_bins(int nBins) {
 // ---------------------------------------------------------------------------
 static bool weighted_branch_scale_impl(
     McmcData* data, McmcState* state, double beta, int nBins,
-    double& logHastings) {
+    double& logHastings,
+    int& outIdx1, int& outIdx2, double& outOld1, double& outOld2) {
 
   const int nEdge = state->relBrLengths.size();
   if (nEdge < 2) return false;
@@ -642,6 +644,10 @@ static bool weighted_branch_scale_impl(
 
   const double oldRelA = state->relBrLengths[index];
   const double oldRelB = state->relBrLengths[other];
+
+  // Output for O(1) rollback
+  outIdx1 = index; outIdx2 = other;
+  outOld1 = oldRelA; outOld2 = oldRelB;
   const double relTotal = oldRelA + oldRelB;
   if (relTotal <= 0.0) return false;
   const double oldF = oldRelA / relTotal;
@@ -1376,11 +1382,20 @@ static bool do_move_impl(McmcData* data, McmcState* state,
 
   double logHastings  = 0.0;
   bool topologyChanged = false;
-  NumericVector oldRelBr;   // rollback for case 4 only
-  IntegerVector oldKPrime;
+  int oldKPrimeVal = 0;     // single-element rollback for case 7 (kPrime)
+  int kPrimeCharIdx = -1;   // which character was changed
 
-  // OPP-6: proposed topology held separately; state->parent/child not
-  // overwritten until acceptance → no pre-proposal clone, no rollback copy.
+  // O(1) relBr rollback for cases 4 and 12 (save 2 modified elements)
+  int bsIdx1 = -1, bsIdx2 = -1;
+  double bsOldVal1 = 0.0, bsOldVal2 = 0.0;
+
+  // OPP-6b: in-place NNI rollback (2 parent values)
+  bool nniInPlace = false;
+  int nniCRow = -1, nniWRow = -1;
+  int nniSavedP_cRow = 0, nniSavedP_wRow = 0;
+
+  // OPP-6: proposed topology held separately for SPR/TBR; state->parent/child
+  // not overwritten until acceptance → no pre-proposal clone, no rollback copy.
   IntegerVector proposedParent, proposedChild;
   NumericVector proposedRelBr;
 
@@ -1409,26 +1424,64 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       logHastings = std::log(mult);
       break;
     }
-    case 4: { // beta_simplex — OPP-5: call impl directly, no Rcpp::List alloc
-      oldRelBr = clone(state->relBrLengths);
+    case 4: { // beta_simplex — O(1) rollback: save 2 modified elements
       int n_br = state->relBrLengths.size();
       int idx = static_cast<int>(R::unif_rand() * n_br);
       if (idx >= n_br) idx = n_br - 1;
+      bsIdx1 = idx;
       if (!beta_simplex_impl(state->relBrLengths, idx,
-                             betaSimplexTuning, logHastings))
+                             betaSimplexTuning, logHastings,
+                             bsIdx2, bsOldVal1, bsOldVal2))
         return false;
       break;
     }
-    case 5: { // NNI — OPP-6: no pre-proposal clone; defer state update to accept
-      List prop = nni_proposal_impl(state->parent, state->child,
-                                    data->nTip, state->treeLength,
-                                    state->relBrLengths);
-      logHastings = as<double>(prop["logHastings"]);
-      if (!R_FINITE(logHastings)) return false;
-      proposedParent  = as<IntegerVector>(prop["parent"]);
-      proposedChild   = as<IntegerVector>(prop["child"]);
-      proposedRelBr   = as<NumericVector>(prop["rel_br_lengths"]);
-      topologyChanged = true;
+    case 5: { // NNI — OPP-6b: in-place topology modification, O(1) rollback.
+      // NNI only swaps 2 parent assignments. The reversed edge ordering
+      // remains a valid postorder (children processed before parents) because
+      // the moved subtrees stay at positions that are after their new parent's
+      // edge in the original preorder. No reordering needed.
+      const int nEdge = state->parent.size();
+      const int nTip  = data->nTip;
+
+      // Find internal edges (both endpoints internal)
+      std::vector<int> intRows;
+      intRows.reserve(nEdge / 2);
+      for (int i = 0; i < nEdge; ++i)
+        if (state->parent[i] > nTip && state->child[i] > nTip)
+          intRows.push_back(i);
+      if (intRows.empty()) return false;
+
+      int pick = (int)(R::unif_rand() * (double)intRows.size());
+      if (pick >= (int)intRows.size()) pick = intRows.size() - 1;
+      const int edgeRow = intRows[pick];
+      const int u = state->parent[edgeRow];
+      const int v = state->child[edgeRow];
+
+      // Find v's children and u's other children (not v)
+      std::vector<int> vCh, uSib;
+      for (int i = 0; i < nEdge; ++i) {
+        if (state->parent[i] == v)
+          vCh.push_back(i);
+        else if (state->parent[i] == u && state->child[i] != v)
+          uSib.push_back(i);
+      }
+      if (vCh.empty() || uSib.empty()) return false;
+
+      int pV = (int)(R::unif_rand() * (double)vCh.size());
+      if (pV >= (int)vCh.size()) pV = vCh.size() - 1;
+      int pU = (int)(R::unif_rand() * (double)uSib.size());
+      if (pU >= (int)uSib.size()) pU = uSib.size() - 1;
+      const int cRow = vCh[pV];
+      const int wRow = uSib[pU];
+
+      // Save originals for O(1) rollback, then apply in-place
+      nniCRow = cRow; nniWRow = wRow;
+      nniSavedP_cRow = state->parent[cRow];
+      nniSavedP_wRow = state->parent[wRow];
+      state->parent[cRow] = u;
+      state->parent[wRow] = v;
+      nniInPlace = true;
+      logHastings = 0.0;
       break;
     }
     case 6: { // SPR — OPP-6: no pre-proposal clone; defer state update to accept
@@ -1455,9 +1508,10 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       topologyChanged = true;
       break;
     }
-    case 7: { // int_walk kPrime
-      oldKPrime = clone(state->kPrime);
-      int oldK   = state->kPrime[charIdx];
+    case 7: { // int_walk kPrime — O(1) rollback (save single element, not full clone)
+      kPrimeCharIdx = charIdx;
+      oldKPrimeVal  = state->kPrime[charIdx];
+      int oldK      = oldKPrimeVal;
       int lowerK = data->kObs[charIdx];
       int range  = 2 * intWalkWindow + 1;
       int delta  = static_cast<int>(R::unif_rand() * range) - intWalkWindow;
@@ -1500,10 +1554,10 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     case 11: { // gibbs_subtree_swap — M-086
       return gibbs_subtree_swap_impl(data, state, beta);
     }
-    case 12: { // weighted_branch_scale — M-087
-      oldRelBr = clone(state->relBrLengths);
+    case 12: { // weighted_branch_scale — M-087, O(1) rollback
       if (!weighted_branch_scale_impl(data, state, beta,
-                                       data->nBranchBins, logHastings))
+                                       data->nBranchBins, logHastings,
+                                       bsIdx1, bsIdx2, bsOldVal1, bsOldVal2))
         return false;
       break;
     }
@@ -1530,23 +1584,36 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     state->treeLength = oldTL; state->rateLoss = oldRL;
     state->rateLogSd = oldRLSD; state->rateNeo = oldRN; state->p = oldP;
     state->betaScale = oldBS;
-    if (moveType == 4 || moveType == 12) state->relBrLengths = oldRelBr;
-    if (moveType == 7) state->kPrime = oldKPrime;
+    if (bsIdx1 >= 0) {
+      state->relBrLengths[bsIdx1] = bsOldVal1;
+      state->relBrLengths[bsIdx2] = bsOldVal2;
+    }
+    if (moveType == 7 && kPrimeCharIdx >= 0) state->kPrime[kPrimeCharIdx] = oldKPrimeVal;
+    if (nniInPlace) { state->parent[nniCRow] = nniSavedP_cRow; state->parent[nniWRow] = nniSavedP_wRow; }
     return false;
   }
 
-  // Evaluate prior (relBrLengths prior = lgamma(n), value-independent)
-  double newLogPrior = cpp_log_prior(
-    *data, state->treeLength, state->relBrLengths,
-    state->rateLoss, state->rateLogSd, state->rateNeo,
-    state->p, state->kPrime, state->betaScale);
+  // NNI doesn't change any parameter → prior is unchanged; skip evaluation.
+  double newLogPrior;
+  if (nniInPlace) {
+    newLogPrior = state->logPrior;
+  } else {
+    newLogPrior = cpp_log_prior(
+      *data, state->treeLength, state->relBrLengths,
+      state->rateLoss, state->rateLogSd, state->rateNeo,
+      state->p, state->kPrime, state->betaScale);
+  }
 
   if (!R_FINITE(newLogPrior)) {
     state->treeLength = oldTL; state->rateLoss = oldRL;
     state->rateLogSd = oldRLSD; state->rateNeo = oldRN; state->p = oldP;
     state->betaScale = oldBS;
-    if (moveType == 4 || moveType == 12) state->relBrLengths = oldRelBr;
-    if (moveType == 7) state->kPrime = oldKPrime;
+    if (bsIdx1 >= 0) {
+      state->relBrLengths[bsIdx1] = bsOldVal1;
+      state->relBrLengths[bsIdx2] = bsOldVal2;
+    }
+    if (moveType == 7 && kPrimeCharIdx >= 0) state->kPrime[kPrimeCharIdx] = oldKPrimeVal;
+    if (nniInPlace) { state->parent[nniCRow] = nniSavedP_cRow; state->parent[nniWRow] = nniSavedP_wRow; }
     return false;
   }
 
@@ -1637,19 +1704,26 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       state->child        = std::move(proposedChild);
       state->relBrLengths = std::move(proposedRelBr);
     }
+    // OPP-6b: in-place NNI — state->parent already modified in-place.
+    // Partition cache handled by std::move(newPC) above (recomputed via
+    // default branch of the partial-lik switch).
     return true;
   }
 
-  // Reject: rollback scalar state only
-  // OPP-6: state->parent/child were never overwritten — no topology rollback needed
+  // Reject: rollback
   state->treeLength = oldTL;
   state->rateLoss   = oldRL;
   state->rateLogSd  = oldRLSD;
   state->rateNeo    = oldRN;
   state->p          = oldP;
   state->betaScale  = oldBS;
-  if (moveType == 4 || moveType == 12) state->relBrLengths = oldRelBr;
-  if (moveType == 7) state->kPrime = oldKPrime;
+  if (bsIdx1 >= 0) {
+    state->relBrLengths[bsIdx1] = bsOldVal1;
+    state->relBrLengths[bsIdx2] = bsOldVal2;
+  }
+  if (moveType == 7 && kPrimeCharIdx >= 0) state->kPrime[kPrimeCharIdx] = oldKPrimeVal;
+  // OPP-6b: in-place NNI rollback — restore 2 parent values
+  if (nniInPlace) { state->parent[nniCRow] = nniSavedP_cRow; state->parent[nniWRow] = nniSavedP_wRow; }
   return false;
 }
 

@@ -45,21 +45,21 @@ double constant_site_prob_jc(Rcpp::IntegerVector parent,
   std::vector<double>  cl_flat((maxNode + 1) * stride, 0.0);
   std::vector<uint8_t> cl_init(maxNode + 1, 0u);
 
+  // Tip-init hoist: tips are identical across rate categories — init once.
+  for (int tip = 1; tip <= nTip; ++tip) {
+    double* cl = cl_flat.data() + tip * stride;
+    for (int s = 0; s < kStates; ++s)
+      cl[s * kStates + s] = 1.0;
+    cl_init[tip] = 1;
+  }
+
   double total_const_prob = 0.0;
 
   for (int cat = 0; cat < nCat; ++cat) {
     const double rate = rate_multipliers[cat];
 
-    std::fill(cl_flat.begin(), cl_flat.end(), 0.0);
-    std::fill(cl_init.begin(), cl_init.end(), 0u);
-
-    // Tips: pseudo-char s has all tips in state s
-    for (int tip = 1; tip <= nTip; ++tip) {
-      double* cl = cl_flat.data() + tip * stride;
-      for (int s = 0; s < kStates; ++s)
-        cl[s * kStates + s] = 1.0;
-      cl_init[tip] = 1;
-    }
+    // Only reset internal nodes; tips are pre-initialized.
+    for (int n = nTip + 1; n <= maxNode; ++n) cl_init[n] = 0;
 
     for (int e = nEdge - 1; e >= 0; --e) {
       const int par = parent[e];
@@ -137,26 +137,26 @@ double singleton_site_prob_jc(Rcpp::IntegerVector parent,
   std::vector<double>  cl_flat((maxNode + 1) * stride, 0.0);
   std::vector<uint8_t> cl_init(maxNode + 1, 0u);
 
+  // Tip-init hoist: tips are identical across rate categories — init once.
+  for (int tip = 1; tip <= nTip; ++tip) {
+    double* cl = cl_flat.data() + tip * stride;
+    for (int j = 0; j < nTip; ++j) {
+      const int offset = j * kStates;
+      if (j == tip - 1)
+        cl[offset + 1] = 1.0;  // singleton: state 1
+      else
+        cl[offset + 0] = 1.0;  // background: state 0
+    }
+    cl_init[tip] = 1;
+  }
+
   double total_singleton_prob = 0.0;
 
   for (int cat = 0; cat < nCat; ++cat) {
     const double rate = rate_multipliers[cat];
 
-    std::fill(cl_flat.begin(), cl_flat.end(), 0.0);
-    std::fill(cl_init.begin(), cl_init.end(), 0u);
-
-    // Tips: pseudo-char j has tip j in state 1, all others in state 0
-    for (int tip = 1; tip <= nTip; ++tip) {
-      double* cl = cl_flat.data() + tip * stride;
-      for (int j = 0; j < nTip; ++j) {
-        const int offset = j * kStates;
-        if (j == tip - 1)
-          cl[offset + 1] = 1.0;  // singleton: state 1
-        else
-          cl[offset + 0] = 1.0;  // background: state 0
-      }
-      cl_init[tip] = 1;
-    }
+    // Only reset internal nodes; tips are pre-initialized.
+    for (int n = nTip + 1; n <= maxNode; ++n) cl_init[n] = 0;
 
     for (int e = nEdge - 1; e >= 0; --e) {
       const int par = parent[e];
@@ -238,21 +238,21 @@ double constant_site_prob_mkn(Rcpp::IntegerVector parent,
   std::vector<double>  cl_flat((maxNode + 1) * stride, 0.0);
   std::vector<uint8_t> cl_init(maxNode + 1, 0u);
 
+  // Tip-init hoist: tips are identical across rate categories — init once.
+  for (int tip = 1; tip <= nTip; ++tip) {
+    double* cl = cl_flat.data() + tip * stride;
+    for (int s = 0; s < kStates; ++s)
+      cl[s * kStates + s] = 1.0;
+    cl_init[tip] = 1;
+  }
+
   double total_const_prob = 0.0;
 
   for (int cat = 0; cat < nCat; ++cat) {
     const double rate = rate_multipliers[cat];
 
-    std::fill(cl_flat.begin(), cl_flat.end(), 0.0);
-    std::fill(cl_init.begin(), cl_init.end(), 0u);
-
-    // Tips: pseudo-char s has all tips in state s (s=0 or s=1)
-    for (int tip = 1; tip <= nTip; ++tip) {
-      double* cl = cl_flat.data() + tip * stride;
-      for (int s = 0; s < kStates; ++s)
-        cl[s * kStates + s] = 1.0;
-      cl_init[tip] = 1;
-    }
+    // Only reset internal nodes; tips are pre-initialized.
+    for (int n = nTip + 1; n <= maxNode; ++n) cl_init[n] = 0;
 
     for (int e = nEdge - 1; e >= 0; --e) {
       const int par = parent[e];
@@ -334,23 +334,23 @@ double singleton_site_prob_mkn(Rcpp::IntegerVector parent,
   std::vector<double>  cl_flat((maxNode + 1) * stride, 0.0);
   std::vector<uint8_t> cl_init(maxNode + 1, 0u);
 
+  // Tip-init hoist: tips are identical across rate categories — init once.
+  for (int tip = 1; tip <= nTip; ++tip) {
+    double* cl = cl_flat.data() + tip * stride;
+    for (int j = 0; j < nTip; ++j) {
+      cl[j * kStates + (j == tip - 1 ? 1 : 0)] = 1.0;           // bg=0, single=1
+      cl[(nTip + j) * kStates + (j == tip - 1 ? 0 : 1)] = 1.0;  // bg=1, single=0
+    }
+    cl_init[tip] = 1;
+  }
+
   double total_singleton_prob = 0.0;
 
   for (int cat = 0; cat < nCat; ++cat) {
     const double rate = rate_multipliers[cat];
 
-    std::fill(cl_flat.begin(), cl_flat.end(), 0.0);
-    std::fill(cl_init.begin(), cl_init.end(), 0u);
-
-    // Tips: first nTip pseudo-chars bg=0/single=1; next nTip bg=1/single=0
-    for (int tip = 1; tip <= nTip; ++tip) {
-      double* cl = cl_flat.data() + tip * stride;
-      for (int j = 0; j < nTip; ++j) {
-        cl[j * kStates + (j == tip - 1 ? 1 : 0)] = 1.0;           // bg=0, single=1
-        cl[(nTip + j) * kStates + (j == tip - 1 ? 0 : 1)] = 1.0;  // bg=1, single=0
-      }
-      cl_init[tip] = 1;
-    }
+    // Only reset internal nodes; tips are pre-initialized.
+    for (int n = nTip + 1; n <= maxNode; ++n) cl_init[n] = 0;
 
     for (int e = nEdge - 1; e >= 0; --e) {
       const int par = parent[e];

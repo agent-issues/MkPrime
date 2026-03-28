@@ -199,18 +199,24 @@ List spr_proposal(IntegerMatrix edge, int nTip, double treeLength,
 
 // Internal helper — OPP-5: modifies x in-place, avoids Rcpp::List allocation.
 // Returns false if the proposal is degenerate (total <= 0); sets logHastings.
+// Output params for O(1) rollback: outOther = index of second modified element,
+// outOldIdx/outOldOther = original values before modification.
 bool beta_simplex_impl(NumericVector& x, int index, double tuning,
-                       double& logHastings) {
+                       double& logHastings, int& outOther,
+                       double& outOldIdx, double& outOldOther) {
   const int n = x.size();
-  if (n < 2) { logHastings = 0.0; return true; }
+  if (n < 2) { logHastings = 0.0; outOther = index; return true; }
 
   int other = (int)(unif_rand() * (double)(n - 1));
   if (other >= index) ++other;
   if (other >= n) other = n - 1;
   if (other == index) other = (index + 1) % n;
+  outOther = other;
 
   const double oldA = x[index];
   const double oldB = x[other];
+  outOldIdx   = oldA;
+  outOldOther = oldB;
   const double total = oldA + oldB;
   if (total <= 0.0) { logHastings = 0.0; return false; }
 
@@ -238,7 +244,8 @@ List beta_simplex_proposal(NumericVector x, int index, double tuning) {
 
   NumericVector xNew = clone(x);
   double logHastings;
-  if (!beta_simplex_impl(xNew, index, tuning, logHastings))
+  int dummy; double d1, d2;
+  if (!beta_simplex_impl(xNew, index, tuning, logHastings, dummy, d1, d2))
     return List::create(_["value"] = x, _["logHastings"] = 0.0);
   return List::create(_["value"] = xNew, _["logHastings"] = logHastings);
 }

@@ -102,10 +102,13 @@ static NumericVector mkn_stationary(double rateLoss) {
 // buf layout: buf[node * stride + c * kStates + s]  (node 1-indexed)
 // initFlg:    uint8_t[nNodeMax+1], reset to 0 for each traversal.
 //
-// TRAVERSAL DIRECTION: edges are stored in TreeTools canonical preorder
-// (root → tips, children sorted by smallest descendant).  Iterating edges
-// in reverse (nEdge-1 → 0) is a correct bottom-up Felsenstein pass: every
-// child CL is fully computed before its parent edge is visited.
+// TRAVERSAL DIRECTION: edges must be in any valid preorder (root → tips).
+// Iterating in reverse (nEdge-1 → 0) gives a valid bottom-up Felsenstein
+// pass: every child CL is fully computed before its parent edge is visited.
+// Canonical preorder (children sorted by smallest descendant) is the
+// default, but in-place NNI (OPP-6b) may produce non-canonical preorder
+// — still valid because NNI only swaps parent assignments for edges that
+// remain after their new parent's position in the original ordering.
 // ---------------------------------------------------------------------------
 
 static double pruning_jc_flat(
@@ -209,26 +212,30 @@ static double pruning_jc_acrv_flat(
   double inv_k = 1.0 / kStates;
   double km1   = kStates - 1.0;
 
+  // Initialize tips once (identical for all rate categories).
+  // Explicit zeroing of tip CLs replaces the per-category full-buffer zero.
+  for (int tip = 1; tip <= nTip; ++tip) {
+    double* cl = buf + tip * stride;
+    for (int c = 0; c < nChar; ++c) {
+      int state  = tip_states(tip - 1, c);
+      int offset = c * kStates;
+      for (int s = 0; s < kStates; ++s) cl[offset + s] = 0.0;
+      if (state < 0) {
+        for (int s = 0; s < kStates; ++s) cl[offset + s] = 1.0;
+      } else {
+        cl[offset + state] = 1.0;
+      }
+    }
+    initFlg[tip] = 1;
+  }
+
   for (int cat = 0; cat < nCat; ++cat) {
     double rate = rate_multipliers[cat];
 
-    for (int n = 0; n <= maxNode; ++n) {
-      std::fill(buf + n * stride, buf + n * stride + clCols, 0.0);
-      initFlg[n] = 0;
-    }
-    for (int tip = 1; tip <= nTip; ++tip) {
-      double* cl = buf + tip * stride;
-      for (int c = 0; c < nChar; ++c) {
-        int state  = tip_states(tip - 1, c);
-        int offset = c * kStates;
-        if (state < 0) {
-          for (int s = 0; s < kStates; ++s) cl[offset + s] = 1.0;
-        } else {
-          cl[offset + state] = 1.0;
-        }
-      }
-      initFlg[tip] = 1;
-    }
+    // Only reset initFlg for internal nodes; tips are pre-initialized.
+    // Internal node buffer values need not be zeroed — initFlg tracks
+    // first-write (= assignment) vs subsequent writes (*= multiplication).
+    for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
 
     for (int e = nEdge - 1; e >= 0; --e) {
       int par = parent[e];
@@ -240,26 +247,24 @@ static double pruning_jc_acrv_flat(
       double* clPar   = buf + par * stride;
       double* clCh    = buf + ch  * stride;
 
+      // OPP-1: JC symmetry → O(k) product: cl[i] = p_diff*sum + (p_same-p_diff)*cl[i]
+      double diff_coeff = p_same - p_diff;
       if (!initFlg[par]) {
         for (int c = 0; c < nChar; ++c) {
           int offset = c * kStates;
-          for (int i = 0; i < kStates; ++i) {
-            double sum = 0.0;
-            for (int j = 0; j < kStates; ++j)
-              sum += ((i == j) ? p_same : p_diff) * clCh[offset + j];
-            clPar[offset + i] = sum;
-          }
+          double sum_cl = 0.0;
+          for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+          for (int i = 0; i < kStates; ++i)
+            clPar[offset + i] = p_diff * sum_cl + diff_coeff * clCh[offset + i];
         }
         initFlg[par] = 1;
       } else {
         for (int c = 0; c < nChar; ++c) {
           int offset = c * kStates;
-          for (int i = 0; i < kStates; ++i) {
-            double sum = 0.0;
-            for (int j = 0; j < kStates; ++j)
-              sum += ((i == j) ? p_same : p_diff) * clCh[offset + j];
-            clPar[offset + i] *= sum;
-          }
+          double sum_cl = 0.0;
+          for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+          for (int i = 0; i < kStates; ++i)
+            clPar[offset + i] *= p_diff * sum_cl + diff_coeff * clCh[offset + i];
         }
       }
     }
@@ -393,26 +398,27 @@ static double pruning_mkn_acrv_flat(
   double inv_lam_01 = rate01 / lambda;
   double inv_lam_10 = rate10 / lambda;
 
+  // Initialize tips once (identical for all rate categories).
+  for (int tip = 1; tip <= nTip; ++tip) {
+    double* cl = buf + tip * stride;
+    for (int c = 0; c < nChar; ++c) {
+      int state  = tip_states(tip - 1, c);
+      int offset = c * kStates;
+      cl[offset] = 0.0; cl[offset + 1] = 0.0;
+      if (state < 0) {
+        cl[offset] = 1.0; cl[offset + 1] = 1.0;
+      } else {
+        cl[offset + state] = 1.0;
+      }
+    }
+    initFlg[tip] = 1;
+  }
+
   for (int cat = 0; cat < nCat; ++cat) {
     double rate = rate_multipliers[cat];
 
-    for (int n = 0; n <= maxNode; ++n) {
-      std::fill(buf + n * stride, buf + n * stride + clCols, 0.0);
-      initFlg[n] = 0;
-    }
-    for (int tip = 1; tip <= nTip; ++tip) {
-      double* cl = buf + tip * stride;
-      for (int c = 0; c < nChar; ++c) {
-        int state  = tip_states(tip - 1, c);
-        int offset = c * kStates;
-        if (state < 0) {
-          cl[offset] = 1.0; cl[offset + 1] = 1.0;
-        } else {
-          cl[offset + state] = 1.0;
-        }
-      }
-      initFlg[tip] = 1;
-    }
+    // Only reset initFlg for internal nodes; tips are pre-initialized.
+    for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
 
     for (int e = nEdge - 1; e >= 0; --e) {
       int par = parent[e];
@@ -560,6 +566,22 @@ static double pruning_f81_het_acrv_flat(
     gain_base = loss_base = 0.0;  // unused for k≥3
   }
 
+  // Initialize tips once (identical for all mixture components).
+  for (int tip = 1; tip <= nTip; ++tip) {
+    double* cl = buf + tip * stride;
+    for (int c = 0; c < nChar; ++c) {
+      int state  = tip_states(tip - 1, c);
+      int offset = c * kStates;
+      for (int s = 0; s < kStates; ++s) cl[offset + s] = 0.0;
+      if (state < 0) {
+        for (int s = 0; s < kStates; ++s) cl[offset + s] = 1.0;
+      } else {
+        cl[offset + state] = 1.0;
+      }
+    }
+    initFlg[tip] = 1;
+  }
+
   for (int cat = 0; cat < nCat; ++cat) {
     double acrvRate = rate_multipliers[cat];
 
@@ -594,24 +616,10 @@ static double pruning_f81_het_acrv_flat(
 
         double mu = 1.0 / (1.0 - sumPiSq);
 
-        // --- Init workspace ---
-        for (int n = 0; n <= maxNode; ++n) {
-          std::fill(buf + n * stride, buf + n * stride + clCols, 0.0);
-          initFlg[n] = 0;
-        }
-        for (int tip = 1; tip <= nTip; ++tip) {
-          double* cl = buf + tip * stride;
-          for (int c = 0; c < nChar; ++c) {
-            int state  = tip_states(tip - 1, c);
-            int offset = c * kStates;
-            if (state < 0) {
-              for (int s = 0; s < kStates; ++s) cl[offset + s] = 1.0;
-            } else {
-              cl[offset + state] = 1.0;
-            }
-          }
-          initFlg[tip] = 1;
-        }
+        // --- Init workspace: reset only internal node flags ---
+        // Tip CLs are initialized once before the loop; they don't depend
+        // on the (cat, bin, rotation) combination.
+        for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
 
         // --- Tree traversal using F81 P(t) ---
         // P_ij(t) = π_j × (1 − d) + δ_ij × d
@@ -920,84 +928,150 @@ double cpp_partition_log_likelihood(
       }
     }
   } else {
-    // Transformational: loop over sub-groups sharing the same kPrime value.
-    // Workspace fitness: conservative upper bound nCharPart * max(kPrimePart).
+    // Transformational: sub-group by kPrime value when heterogeneous.
     int nCharPart = part.tipStates.ncol();
-    IntegerVector kPrimePart(nCharPart);
-    for (int ci = 0; ci < nCharPart; ++ci)
-      kPrimePart[ci] = kPrime[part.globalCharIdx[ci]];
 
-    int maxKp = *std::max_element(kPrimePart.begin(), kPrimePart.end());
-    bool wsOk = ws && ws->fits(maxNode, nCharPart * maxKp);
+    // Fast path: check if all kPrime in this partition are identical.
+    // Common when k' = kObs for most characters (prior penalizes large k').
+    // Avoids sort_unique, column-scan, and sub-matrix allocation+copy.
+    int kp0 = kPrime[part.globalCharIdx[0]];
+    bool allSame = true;
+    for (int ci = 1; ci < nCharPart; ++ci) {
+      if (kPrime[part.globalCharIdx[ci]] != kp0) { allSame = false; break; }
+    }
 
-    IntegerVector uniqKp = sort_unique(kPrimePart);
-    for (int ui = 0; ui < uniqKp.size(); ++ui) {
-      int kp = uniqKp[ui];
-      std::vector<int> cols;
-      for (int ci = 0; ci < nCharPart; ++ci)
-        if (kPrimePart[ci] == kp) cols.push_back(ci);
-      int nSub = (int)cols.size();
-      IntegerMatrix sub(nTip, nSub);
-      for (int c = 0; c < nSub; ++c)
-        for (int t = 0; t < nTip; ++t) sub(t, c) = part.tipStates(t, cols[c]);
-
-      double subLl;
+    if (allSame) {
+      // All characters share the same k' — use full partition tipStates directly.
+      bool wsOk = ws && ws->fits(maxNode, nCharPart * kp0);
       if (useHet) {
-        // M-052: Het path for transformational sub-group at k' = kp.
         double hetBinsSub[16];
-        compute_het_bins(betaScale, kp, nBC, hetBinsSub);
+        compute_het_bins(betaScale, kp0, nBC, hetBinsSub);
         if (!useAcrv) rates = NumericVector(1, 1.0);
         if (wsOk) {
-          subLl = pruning_f81_het_acrv_flat(
-            parent, child, edgeLen, sub,
-            kp, 1.0, hetBinsSub, nBC, rates,
+          ll += pruning_f81_het_acrv_flat(
+            parent, child, edgeLen, part.tipStates,
+            kp0, 1.0, hetBinsSub, nBC, rates,
             ws->buf.data(), ws->init.data(), ws->strideMax);
         } else {
-          int tmpStride = nSub * kp;
+          int tmpStride = nCharPart * kp0;
           std::vector<double> tmpBuf((maxNode + 1) * tmpStride, 0.0);
           std::vector<uint8_t> tmpInit(maxNode + 1, 0);
-          subLl = pruning_f81_het_acrv_flat(
-            parent, child, edgeLen, sub,
-            kp, 1.0, hetBinsSub, nBC, rates,
+          ll += pruning_f81_het_acrv_flat(
+            parent, child, edgeLen, part.tipStates,
+            kp0, 1.0, hetBinsSub, nBC, rates,
             tmpBuf.data(), tmpInit.data(), tmpStride);
         }
         if (coding != 0) {
           double p = het_constant_site_prob(
-            parent, child, edgeLen, nTip, kp, 1.0, hetBinsSub, nBC, rates);
+            parent, child, edgeLen, nTip, kp0, 1.0, hetBinsSub, nBC, rates);
           if (coding == 2) p += het_singleton_site_prob(
-            parent, child, edgeLen, nTip, kp, 1.0, hetBinsSub, nBC, rates);
-          subLl -= nSub * std::log(1.0 - p);
+            parent, child, edgeLen, nTip, kp0, 1.0, hetBinsSub, nBC, rates);
+          ll -= nCharPart * std::log(1.0 - p);
         }
       } else {
-        // Homogeneous path (original).
-        NumericVector rootFreqs(kp, 1.0 / kp);
+        NumericVector rootFreqs(kp0, 1.0 / kp0);
         if (wsOk) {
-          subLl = useAcrv
-            ? pruning_jc_acrv_flat(parent, child, edgeLen, sub,
-                                    kp, rootFreqs, rates,
+          ll += useAcrv
+            ? pruning_jc_acrv_flat(parent, child, edgeLen, part.tipStates,
+                                    kp0, rootFreqs, rates,
                                     ws->buf.data(), ws->init.data(), ws->strideMax)
-            : pruning_jc_flat(parent, child, edgeLen, sub,
-                               kp, rootFreqs,
+            : pruning_jc_flat(parent, child, edgeLen, part.tipStates,
+                               kp0, rootFreqs,
                                ws->buf.data(), ws->init.data(), ws->strideMax);
         } else {
-          subLl = useAcrv ? pruning_jc_acrv(parent, child, edgeLen, sub,
-                                             kp, rootFreqs, rates)
-                          : pruning_jc(parent, child, edgeLen, sub,
-                                        kp, rootFreqs);
+          ll += useAcrv ? pruning_jc_acrv(parent, child, edgeLen, part.tipStates,
+                                           kp0, rootFreqs, rates)
+                        : pruning_jc(parent, child, edgeLen, part.tipStates,
+                                      kp0, rootFreqs);
         }
         if (coding != 0) {
           double p = constant_site_prob_jc(parent, child, edgeLen, nTip,
-                                           kp, rootFreqs, rates);
+                                           kp0, rootFreqs, rates);
           if (coding == 2) p += singleton_site_prob_jc(parent, child, edgeLen, nTip,
-                                                        kp, rootFreqs, rates);
-          subLl -= nSub * std::log(1.0 - p);
+                                                        kp0, rootFreqs, rates);
+          ll -= nCharPart * std::log(1.0 - p);
         }
       }
-      ll += subLl;
-    }
-    if (data.relabel) {
+      if (data.relabel) {
+        for (int ci = 0; ci < nCharPart; ++ci)
+          ll += mk_prime_relabel_log(kp0, part.kObsLocal[ci]);
+      }
+    } else {
+      // Heterogeneous kPrime: sub-group by value.
+      IntegerVector kPrimePart(nCharPart);
       for (int ci = 0; ci < nCharPart; ++ci)
-        ll += mk_prime_relabel_log(kPrimePart[ci], part.kObsLocal[ci]);
+        kPrimePart[ci] = kPrime[part.globalCharIdx[ci]];
+
+      int maxKp = *std::max_element(kPrimePart.begin(), kPrimePart.end());
+      bool wsOk = ws && ws->fits(maxNode, nCharPart * maxKp);
+
+      IntegerVector uniqKp = sort_unique(kPrimePart);
+      for (int ui = 0; ui < uniqKp.size(); ++ui) {
+        int kp = uniqKp[ui];
+        std::vector<int> cols;
+        for (int ci = 0; ci < nCharPart; ++ci)
+          if (kPrimePart[ci] == kp) cols.push_back(ci);
+        int nSub = (int)cols.size();
+        IntegerMatrix sub(nTip, nSub);
+        for (int c = 0; c < nSub; ++c)
+          for (int t = 0; t < nTip; ++t) sub(t, c) = part.tipStates(t, cols[c]);
+
+        double subLl;
+        if (useHet) {
+          double hetBinsSub[16];
+          compute_het_bins(betaScale, kp, nBC, hetBinsSub);
+          if (!useAcrv) rates = NumericVector(1, 1.0);
+          if (wsOk) {
+            subLl = pruning_f81_het_acrv_flat(
+              parent, child, edgeLen, sub,
+              kp, 1.0, hetBinsSub, nBC, rates,
+              ws->buf.data(), ws->init.data(), ws->strideMax);
+          } else {
+            int tmpStride = nSub * kp;
+            std::vector<double> tmpBuf((maxNode + 1) * tmpStride, 0.0);
+            std::vector<uint8_t> tmpInit(maxNode + 1, 0);
+            subLl = pruning_f81_het_acrv_flat(
+              parent, child, edgeLen, sub,
+              kp, 1.0, hetBinsSub, nBC, rates,
+              tmpBuf.data(), tmpInit.data(), tmpStride);
+          }
+          if (coding != 0) {
+            double p = het_constant_site_prob(
+              parent, child, edgeLen, nTip, kp, 1.0, hetBinsSub, nBC, rates);
+            if (coding == 2) p += het_singleton_site_prob(
+              parent, child, edgeLen, nTip, kp, 1.0, hetBinsSub, nBC, rates);
+            subLl -= nSub * std::log(1.0 - p);
+          }
+        } else {
+          NumericVector rootFreqs(kp, 1.0 / kp);
+          if (wsOk) {
+            subLl = useAcrv
+              ? pruning_jc_acrv_flat(parent, child, edgeLen, sub,
+                                      kp, rootFreqs, rates,
+                                      ws->buf.data(), ws->init.data(), ws->strideMax)
+              : pruning_jc_flat(parent, child, edgeLen, sub,
+                                 kp, rootFreqs,
+                                 ws->buf.data(), ws->init.data(), ws->strideMax);
+          } else {
+            subLl = useAcrv ? pruning_jc_acrv(parent, child, edgeLen, sub,
+                                               kp, rootFreqs, rates)
+                            : pruning_jc(parent, child, edgeLen, sub,
+                                          kp, rootFreqs);
+          }
+          if (coding != 0) {
+            double p = constant_site_prob_jc(parent, child, edgeLen, nTip,
+                                             kp, rootFreqs, rates);
+            if (coding == 2) p += singleton_site_prob_jc(parent, child, edgeLen, nTip,
+                                                          kp, rootFreqs, rates);
+            subLl -= nSub * std::log(1.0 - p);
+          }
+        }
+        ll += subLl;
+      }
+      if (data.relabel) {
+        for (int ci = 0; ci < nCharPart; ++ci)
+          ll += mk_prime_relabel_log(kPrimePart[ci], part.kObsLocal[ci]);
+      }
     }
   }
   return ll;
