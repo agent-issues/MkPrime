@@ -145,9 +145,11 @@ RunMkPrime <- function(data, tree,
   transIdx <- which(mkd$type == "transformational")
   nTrans <- length(transIdx)
 
+  qHet <- isTRUE(model$qHeterogeneity)
   moves <- .BuildMoves(nEdge, nTrans, hasNeo, mcmc,
                        fixTopology = fixTopology,
-                       kPrimePrior = model$kPrimePrior %||% "geometric")
+                       kPrimePrior = model$kPrimePrior %||% "geometric",
+                       qHeterogeneity = qHet)
 
   nRuns <- mcmc$nRuns
 
@@ -159,7 +161,8 @@ RunMkPrime <- function(data, tree,
   }
 
   paramNames  <- .ParamNames(mkd, nEdge,
-                             kPrimePrior = model$kPrimePrior %||% "geometric")
+                             kPrimePrior = model$kPrimePrior %||% "geometric",
+                             qHeterogeneity = qHet)
   isStreaming <- !is.null(mcmc$logFile)
 
   if (isStreaming) {
@@ -178,7 +181,7 @@ RunMkPrime <- function(data, tree,
   #         [p — geometric only], [rate_neo — if hasNeo], kPrime_i..., br_j...
   isLogseries <- identical(model$kPrimePrior, "logseries")
   pCols       <- if (isLogseries) 0L else 1L
-  brColStart  <- 5L + pCols + hasNeo + nTrans + 1L
+  brColStart  <- 5L + pCols + hasNeo + qHet + nTrans + 1L
 
   # --- Parallel or sequential execution ---
   stopReason <- "max_iter"
@@ -347,7 +350,8 @@ RunMkPrime <- function(data, tree,
       ch_r$rate_loss, ch_r$rate_log_sd,
       ch_r$rate_neo %||% 1.0, ch_r$p %||% 0.5,
       as.integer(ch_r$kPrime),
-      ch_r$log_lik, ch_r$log_prior
+      ch_r$log_lik, ch_r$log_prior,
+      ch_r$beta_scale %||% 1.0
     )
   }
   for (ch in seq_len(nChains)) {
@@ -1216,8 +1220,10 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   hasNeo <- any(mkd$type == "neomorphic")
   nTrans <- sum(mkd$type == "transformational")
 
+  qHet <- isTRUE(model$qHeterogeneity)
   moves <- .BuildMoves(nEdge, nTrans, hasNeo, mcmc, fixTopology = FALSE,
-                       kPrimePrior = model$kPrimePrior %||% "geometric")
+                       kPrimePrior = model$kPrimePrior %||% "geometric",
+                       qHeterogeneity = qHet)
 
   if (isStreaming) {
     # Rewind each log file to the checkpoint's saved_idx.  Any samples
@@ -1232,7 +1238,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   tipLabels   <- tree$tip.label
   isLogseries <- identical(model$kPrimePrior, "logseries")
   pCols       <- if (isLogseries) 0L else 1L
-  brColStart  <- 5L + pCols + (any(mkd$type == "neomorphic")) + nTrans + 1L
+  brColStart  <- 5L + pCols + (any(mkd$type == "neomorphic")) + qHet + nTrans + 1L
 
   # --- Sequential per-run loop (same structure as RunMkPrime) ---
   stopReason <- "max_iter"
@@ -1337,6 +1343,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
         rate_loss   = tun$scale_rate_loss,
         rate_log_sd = tun$scale_rate_log_sd,
         rate_neo    = tun$scale_rate_neo %||% 0.5,
+        beta_scale  = tun$scale_beta_scale %||% 0.5,
         p           = 0.5,  # Gibbs move: scale ignored by C++; placeholder
         0.5
       )
@@ -1385,6 +1392,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     state$rate_neo <- 1.0
   }
 
+  # M-052: beta_scale for Q-matrix heterogeneity
+  if (isTRUE(model$qHeterogeneity)) {
+    state$beta_scale <- 1.0
+  }
+
   # Tree is already preorder (reordered at init); use internal fast-path
   state$log_lik <- .MkpLogLikelihood(
     tree, mkd,
@@ -1407,7 +1419,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 #' @keywords internal
 .BuildMoves <- function(nEdge, nTrans, hasNeo, mcmc,
                         fixTopology = FALSE,
-                        kPrimePrior = "geometric") {
+                        kPrimePrior = "geometric",
+                        qHeterogeneity = FALSE) {
   moves <- list(
     list(name = "tree_length", type = "scale", target = "tree_length",
          weight = 1, dim = 1L),
@@ -1494,6 +1507,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
          weight = 1.5, dim = 1L)
   ))
 
+  # M-052: beta_scale for Q-matrix heterogeneity
+  if (isTRUE(qHeterogeneity)) {
+    moves <- c(moves, list(
+      list(name = "beta_scale", type = "scale", target = "beta_scale",
+           weight = 1, dim = 1L)
+    ))
+  }
+
   moves
 }
 
@@ -1503,7 +1524,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 # 4=beta_simplex, 5=nni, 6=spr, 7=int_walk, 8=scale_p (legacy),
 # 9=gibbs_p, 10=gibbs_spr, 11=gibbs_subtree_swap,
 # 12=weighted_br_scale, 13=weighted_spr, 14=weighted_subtree_swap,
-# 15=block_gibbs_branch
+# 15=block_gibbs_branch, 16=scale_beta_scale (M-052)
 .kMoveTypes <- c(
   tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
   rate_neo = 3L, branch_lengths = 4L,
@@ -1512,7 +1533,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   weighted_branch_lengths = 12L,
   weighted_spr = 13L,
   weighted_subtree_swap = 14L,
-  block_gibbs_branch = 15L
+  block_gibbs_branch = 15L,
+  beta_scale = 16L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)
@@ -1538,7 +1560,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     model$rateNeoMeanlog, model$rateNeoSdlog,
     model$kprimeHyperA, model$kprimeHyperB,
     identical(model$kPrimePrior, "logseries"),
-    model$kprimeLogseriesC %||% 0.7
+    model$kprimeLogseriesC %||% 0.7,
+    isTRUE(model$qHeterogeneity),
+    model$nBetaCat %||% 4L,
+    model$betaScaleShape %||% 1.0,
+    model$betaScaleRate %||% 1.0
   )
 }
 
@@ -1551,7 +1577,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     state$rate_loss, state$rate_log_sd,
     state$rate_neo %||% 1.0, state$p %||% 0.5,
     as.integer(state$kPrime),
-    state$log_lik, state$log_prior
+    state$log_lik, state$log_prior,
+    state$beta_scale %||% 1.0
   )
 }
 
@@ -1578,6 +1605,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
       rate_loss   = tuning$scale_rate_loss,
       rate_log_sd = tuning$scale_rate_log_sd,
       rate_neo    = tuning$scale_rate_neo,
+      beta_scale  = tuning$scale_beta_scale,
       0.5  # default; gibbs_p ignores scaleTun (returns before using it)
     )
     accepted <- do_move_cpp(
@@ -1737,7 +1765,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 
 #' Parameter names for the sample matrix
 #' @keywords internal
-.ParamNames <- function(mkd, nEdge, kPrimePrior = "geometric") {
+.ParamNames <- function(mkd, nEdge, kPrimePrior = "geometric",
+                        qHeterogeneity = FALSE) {
   nms <- c("log_posterior", "log_likelihood", "tree_length",
            "rate_loss", "rate_log_sd")
 
@@ -1748,6 +1777,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 
   if (any(mkd$type == "neomorphic")) {
     nms <- c(nms, "rate_neo")
+  }
+
+  # M-052: beta_scale column when Het is enabled
+  if (isTRUE(qHeterogeneity)) {
+    nms <- c(nms, "beta_scale")
   }
 
   transIdx <- which(mkd$type == "transformational")
@@ -1767,7 +1801,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 #' @param statePtr XPtr<McmcState> or R list (for backward compat)
 #' @keywords internal
 .StateToRow <- function(statePtr, mkd, nEdge, tipLabels = NULL,
-                        kPrimePrior = "geometric") {
+                        kPrimePrior = "geometric",
+                        qHeterogeneity = FALSE) {
   state <- get_mcmc_state(statePtr)
 
   rateNeoVal <- if (!is.null(state$rateNeo) && state$rateNeo != 1.0) {
@@ -1779,12 +1814,16 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   # p only included in row when using hierarchical geometric prior
   pVal <- if (!identical(kPrimePrior, "logseries")) state$p else numeric(0)
 
+  # M-052: beta_scale
+  bsVal <- if (isTRUE(qHeterogeneity)) state$betaScale else numeric(0)
+
   transIdx <- which(mkd$type == "transformational")
   kp <- if (length(transIdx)) as.numeric(state$kPrime[transIdx]) else numeric(0)
 
   c(state$logPost, state$logLik, state$treeLength,
     state$rateLoss, state$rateLogSd, pVal,
     rateNeoVal,
+    bsVal,
     kp,
     state$relBrLengths)
 }
@@ -2019,7 +2058,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     gibbs_spr = NA_character_, gibbs_subtree_swap = NA_character_,
     weighted_branch_lengths = NA_character_,
     weighted_spr = NA_character_, weighted_subtree_swap = NA_character_,
-    block_gibbs_branch = NA_character_
+    block_gibbs_branch = NA_character_,
+    beta_scale = "scale_beta_scale"
   )
 
   for (move in moves) {

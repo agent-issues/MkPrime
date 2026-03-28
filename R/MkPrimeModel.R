@@ -48,7 +48,11 @@ MkPrimeModel <- function(
     kprimeHyperB = 1,
     kprimeLogseriesC = 0.7,
     rateNeoMeanlog = 0,
-    rateNeoSdlog = 2
+    rateNeoSdlog = 2,
+    qHeterogeneity = FALSE,
+    nBetaCat = 4L,
+    betaScaleShape = 1,
+    betaScaleRate = 1
 ) {
   coding <- match.arg(coding, c("variable", "informative", "none"))
   kPrimePrior <- match.arg(kPrimePrior, c("geometric", "logseries"))
@@ -82,7 +86,11 @@ MkPrimeModel <- function(
       kprimeHyperB = kprimeHyperB,
       kprimeLogseriesC = kprimeLogseriesC,
       rateNeoMeanlog = rateNeoMeanlog,
-      rateNeoSdlog = rateNeoSdlog
+      rateNeoSdlog = rateNeoSdlog,
+      qHeterogeneity = qHeterogeneity,
+      nBetaCat = as.integer(nBetaCat),
+      betaScaleShape = betaScaleShape,
+      betaScaleRate = betaScaleRate
     ),
     class = "MkPrimeModel"
   )
@@ -261,6 +269,16 @@ LogPrior <- function(state, model, mkd) {
     }
   }
 
+  # M-052: beta_scale prior (Q-matrix heterogeneity)
+  if (isTRUE(model$qHeterogeneity)) {
+    bs <- state$beta_scale
+    if (is.null(bs) || bs <= 0) return(-Inf)
+    lp <- lp + dgamma(bs,
+                       shape = model$betaScaleShape,
+                       rate = model$betaScaleRate,
+                       log = TRUE)
+  }
+
   lp
 }
 
@@ -275,6 +293,12 @@ print.MkPrimeModel <- function(x, ...) {
     "Geometric (Beta hyperprior: a = {x$kprimeHyperA}, b = {x$kprimeHyperB})"
   }
 
+  het_str <- if (isTRUE(x$qHeterogeneity)) {
+    "ON ({x$nBetaCat} bins, beta_scale ~ Gamma({x$betaScaleShape}, {x$betaScaleRate}))"
+  } else {
+    "OFF"
+  }
+
   cli::cli_ul(c(
     "Coding: {x$coding}",
     "ACRV categories: {x$nCat}",
@@ -283,7 +307,8 @@ print.MkPrimeModel <- function(x, ...) {
     "rate_loss prior: LogNormal({x$rateLossMeanlog}, {x$rateLossSdlog})",
     "rate_log_sd prior: Gamma({x$rateLogSdShape}, {x$rateLogSdRate})",
     paste0("k' prior: ", k_prior_str),
-    "rate_neo prior: LogNormal({x$rateNeoMeanlog}, {x$rateNeoSdlog})"
+    "rate_neo prior: LogNormal({x$rateNeoMeanlog}, {x$rateNeoSdlog})",
+    paste0("Q-matrix heterogeneity: ", het_str)
   ))
   invisible(x)
 }
