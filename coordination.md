@@ -189,6 +189,30 @@ after warmup. User can pin specific weights via `moveWeights` in
   datasets; user opts in for large trees where O(N×B) is worth the gain.
 - Adaptive scheduler freezes weights at warmup end to preserve detailed balance.
 
+**M-091 mixing validation** (2026-03-28, Agent B, Vinther 2008 hyoliths,
+23 taxa / 54 chars, 20k iter, debug build):
+
+| Config | Wall (s) | Slowdown | ESS(logP) | ESS(TL) | ESS/s(logP) | ESS/s(TL) | SPR acc | Gibbs SPR acc |
+|--------|----------|----------|-----------|---------|-------------|-----------|---------|---------------|
+| (a) Baseline | 3.1 | 1× | 3.5 | 26.4 | 1.13 | 8.48 | 2.2% | — |
+| (b) +Gibbs | 23.4 | 7.5× | 8.7 | 37.7 | 0.37 | 1.61 | 2.1% | 31.6% |
+| (c) +Weighted | 74.4 | 23.9× | 5.6 | 15.6 | 0.08 | 0.21 | 2.7% | 35.1% |
+
+Findings: (1) Gibbs SPR acceptance is ~15× higher than standard SPR
+(32% vs 2%), but each Gibbs proposal costs O(N) likelihood evaluations.
+On this small dataset the per-iteration cost increase (7.5×) outweighs
+the mixing gain, so **ESS/second favours the baseline for small trees**.
+(2) WeightedSPR adds branch-fraction integration (O(N×B)) on top, making
+it 24× slower per iteration with no net mixing benefit here. (3) All
+configs show low absolute ESS — none mixed well in 20k iterations from a
+random starting tree. (4) Caveats: debug build (-O0); the C++ inner
+loops should be substantially faster at -O2. Gibbs/Weighted moves may
+show positive ESS/s on larger trees where standard SPR acceptance is
+near zero. A production-build comparison on a 50+ taxon dataset is
+needed before concluding.  (5) Bug found during validation: the adaptive
+scheduler floor (`wMin`) was divided by nFree, giving 0.7% per-move
+floor instead of the intended 5%. Fixed in `148d31c`.
+
 ---
 
 ### Phase 10: Run-level parallelism via `future`
