@@ -25,12 +25,12 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
 | M-099 | P2 | OPEN | **Investigate pre-existing segfault on hyoliths dataset (54 taxa, 225 chars).** Crash occurs during MCMC initialization in flat-buffer pruning workspace — likely a buffer overrun. Reproduces on both `main` and `feature/het-dirichlet-marginal` branches. The 20-taxon subset runs fine; the full dataset does not. |
+| M-100 | P2 | OPEN | **Reject `qHeterogeneity = TRUE` + `coding = "informative"` at model validation time.** `het_singleton_site_prob()` is a stub returning 0, so combining Het with informative coding silently produces wrong ascertainment corrections (and therefore wrong likelihoods). Add a validation check in `MkPrimeModel()` (or at the start of `RunMkPrime()`) that errors with a clear message. Remove the guard when Phase 7's F81 singleton correction is implemented. |
 
 ## Misc / UI improvements
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| M-098 | P1 | ASSIGNED (C) | **Exclude kPrime from convergence stopping criteria (u.957).** Remove `kPrime_` from `.KeyParamCols()` so `minEss` / PSRF stopping rules ignore k'. Compute kPrime ESS separately and store as `kPrimeEss` for display only. Update `print.MkpDiagnostics()`, `.PrintProgressTable()`, `.CheckConvergence()`, `.CheckConvergenceFromLogs()`, and docs. |
 
 ## Phase 7d: Deferred extensions
 
