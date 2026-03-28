@@ -299,3 +299,79 @@ safe for the intended use case, but worth tracking as tree sizes grow.
 3. Benchmark with `bench-ab.R` to quantify the gain before moving on.
 4. Implement OPP-2 and OPP-3 together (both are trivial and additive).
 5. Profile again to confirm remaining hotspots and decide on Tier 2 items.
+
+---
+
+## VTune hotspot results — Gibbs/weighted moves (2026-03-28)
+
+**Build:** `-O2 -g -fno-omit-frame-pointer`, symbols preserved (no `-s`)
+**CPU:** Intel i7-10700 (10th gen), 2.904 GHz, 16 logical cores
+**Dataset:** Sun2018 (54 taxa, 225 characters, 3 partition types)
+**Collection:** User-mode sampling (software), no hardware PMU driver
+
+### Top hotspots by config (MkPrime.dll only, % of total CPU)
+
+| Function | Config b (Gibbs) | Config c (WeightedSPR) | Config d (BlockGibbs) |
+|----------|:---:|:---:|:---:|
+| `pruning_jc_acrv` | 42.0% (11.7s) | 41.5% (8.9s) | 40.2% (9.4s) |
+| `_expl_internal` (exp) | 15.2% (4.2s) | 13.0% (2.8s) | 14.4% (3.4s) |
+| `std::fill` (CL zeroing) | 6.3% (1.8s) | 6.5% (1.4s) | 5.9% (1.4s) |
+| `constant_site_prob_jc` | 4.2% (1.2s) | 4.3% (0.9s) | 4.4% (1.0s) |
+| `malloc_base` (ucrtbase) | 4.3% (1.2s) | 4.5% (1.0s) | 4.3% (1.0s) |
+| `vector<vector<double>> ctor` | 1.6% | 1.0% | — |
+| `vector<vector<double>> dtor` | 1.0% | 1.9% | — |
+| `Rcpp::Matrix::offset` | 1.7% | 2.1% | — |
+| `preorder_weighted_impl` | <0.1% | — | — |
+| `clone`-related | <0.1% | — | — |
+| R math (qbeta/rbeta/dbeta) | not visible | not visible | not visible |
+
+### Key findings
+
+1. **Felsenstein pruning dominates uniformly.** `pruning_jc_acrv` + `exp()` =
+   ~55–57% of total CPU time across all configs. This is the O(k²) inner
+   loop (OPP-1) plus `exp(Qt)` per edge. The profile is remarkably stable
+   regardless of which Gibbs/weighted moves are enabled.
+
+2. **CL workspace zeroing (`std::fill`) costs 6–7%.** The flat CL buffer is
+   zeroed before each pruning pass. For 54 taxa with 6 ACRV categories,
+   this is ~650 × nChar × kStates doubles zeroed per full LL evaluation.
+   Could be reduced by lazy zeroing (only clear what's used) or by tracking
+   which entries are stale.
+
+3. **Ascertainment correction (`constant_site_prob_jc`) at 4–5%.** This uses
+   the old jagged `vector<vector<double>>` allocation (OPP-4). The
+   ctor+dtor overhead is ~2.5% combined. Threading `ClWorkspace*` through
+   would eliminate this.
+
+4. **`clone()` and `preorder_weighted_impl` are negligible.** M-104 (reduce
+   clone overhead) has much lower priority than expected. The clone
+   allocations are tiny (~nEdge integers/doubles) compared to the pruning
+   cost per candidate. `preorder_weighted_impl` is under 0.1% in all
+   configs.
+
+5. **`malloc_base` at 4.3%** is distributed across all allocations (Rcpp
+   vector construction, jagged CL in ascertainment, etc.). No single
+   allocation source dominates.
+
+6. **R distribution functions are not visible.** `qbeta`, `rbeta`, `dbeta`
+   do not appear in the weighted-move profiles. The BranchBins precomputation
+   means `qbeta` is only called once at init, and the per-iteration Beta
+   distribution draws are negligible.
+
+### Revised optimization priority
+
+Based on measured hotspots, the priority order for Gibbs/weighted move
+performance is:
+
+1. **OPP-1: JC O(k) product** — 42% of CPU. Highest leverage, helps all
+   move types equally.
+2. **M-105: Partial likelihood reuse** — reduces the *number* of
+   `pruning_jc_acrv` calls per Gibbs/weighted move. Currently each
+   candidate in Gibbs SPR does a full-tree pruning; reusing CLs for
+   unchanged subtrees would cut this to O(depth) per candidate.
+3. **OPP-4: Ascertainment CL allocation** — 4–5% direct + 2.5% ctor/dtor.
+   Thread ClWorkspace through ascertainment functions.
+4. **CL zeroing** — 6% from `std::fill`. Lazy zeroing or dirty-flag
+   tracking.
+5. ~~M-104: clone() reduction~~ — deprioritised; negligible in profile.
+6. **OPP-2/OPP-3** — trivial gains; implement opportunistically.
