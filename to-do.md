@@ -18,21 +18,6 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 ---
 
-## Phase 9: Advanced tree moves — Gibbs & Weighted proposals
-
-All work on this phase happens in the `mkp-gibbs` worktree
-(`feature/gibbs-weighted-moves` branch). Plan file:
-`.positai/plans/2026-03-27-1100-gibbsweighted-tree-moves-for-unrooted-trees.md`.
-
-
-### 9d: Integration, scheduling & validation
-
-| ID | Priority | Status | Description |
-|----|----------|--------|-------------|
-| M-091 | P3 | DONE (B) | **Mixing validation: Gibbs/Weighted vs standard moves.** On the Vinther hyoliths dataset, compare ESS/wall-time between: (a) baseline (NNI + SPR only), (b) + GibbsSPR + GibbsSubtreeSwap, (c) + WeightedSPR, (d) + blockGibbsBranch. Use `MkpWatchLog()` output and `ConvergenceDiagnostics()` to compare. Report topology ESS/hour and scalar-parameter ESS/hour. Document findings in a comment in `coordination.md`. Depends on M-090, M-092, M-054. |
-
----
-
 ## Phase 7d: Deferred extensions
 
 | ID | Priority | Status | Description |
@@ -69,7 +54,7 @@ M-081 → M-078 → M-079 → M-082/M-093 all complete on main. Remaining: M-080
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| M-080 | P2 | OPEN | **TreeSearch `mod_bayesian.R` — "Bayesian (Mk')" tab in EasyTrees.** *(TreeSearch-a repo; tracked here for coordination.)* `Suggests: MkPrime` added to TreeSearch DESCRIPTION. New `inst/Parsimony/server/mod_bayesian.R`: `bayesian_ui(id)` wraps `MkPrime::MkBayesianUi(id)` with availability check; `bayesian_server(id, r, HaveData, UpdateAllTrees, ...)` calls `MkPrime::MkBayesianServer(id, dataset = reactive(r$dataset))`. On job completion (status == "done"), reads post-burnin trees from the log directory and inserts into `r$allTrees` (displayed as "N posterior trees (unscored)"). New "Bayesian (Mk')" nav tab in EasyTrees alongside the existing parsimony tabs. |
+| M-080 | P2 | ASSIGNED (C) | **TreeSearch `mod_bayesian.R` — "Bayesian (Mk')" tab in EasyTrees.** *(TreeSearch-a repo; tracked here for coordination.)* `Suggests: MkPrime` added to TreeSearch DESCRIPTION. New `inst/Parsimony/server/mod_bayesian.R`: `bayesian_ui(id)` wraps `MkPrime::MkBayesianUi(id)` with availability check; `bayesian_server(id, r, HaveData, UpdateAllTrees, ...)` calls `MkPrime::MkBayesianServer(id, dataset = reactive(r$dataset))`. On job completion (status == "done"), reads post-burnin trees from the log directory and inserts into `r$allTrees` (displayed as "N posterior trees (unscored)"). New "Bayesian (Mk')" nav tab in EasyTrees alongside the existing parsimony tabs. |
 
 ---
 
