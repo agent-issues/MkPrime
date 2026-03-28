@@ -39,6 +39,7 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
+| M-110 | P3 | OPEN | **Evaluate starting tree strategy.** NJ trees can produce negative branch lengths (clamped to 1e-8 with a warning). Consider (Goloboff-)Wagner trees or uniform branch lengths as alternatives. Benchmark convergence speed from different starting points. (from u.465) |
 
 ## Phase 7d: Deferred extensions
 
