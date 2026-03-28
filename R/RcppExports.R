@@ -117,6 +117,10 @@ frechet_correlation_ess_cpp <- function(dmat_sq, min_nsamples) {
     .Call(`_MkPrime_frechet_correlation_ess_cpp`, dmat_sq, min_nsamples)
 }
 
+tbr_proposal <- function(edge, nTip, treeLength, relBrLengths) {
+    .Call(`_MkPrime_tbr_proposal`, edge, nTip, treeLength, relBrLengths)
+}
+
 swap_subtrees_cpp <- function(edge, nTip, treeLength, relBrLengths, nodeA, nodeB) {
     .Call(`_MkPrime_swap_subtrees_cpp`, edge, nTip, treeLength, relBrLengths, nodeA, nodeB)
 }

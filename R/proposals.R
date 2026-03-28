@@ -137,3 +137,32 @@ ProposeSpr <- function(tree, tree_length, rel_br_lengths) {
   list(tree = newTree, rel_br_lengths = result$rel_br_lengths,
        logHastings = result$logHastings)
 }
+
+
+#' TBR topology proposal (M-053)
+#'
+#' Tree Bisection and Reconnection. Extends SPR by additionally re-rooting
+#' the pruned subtree at a random internal edge before regrafting.
+#'
+#' @param tree A `phylo` object in canonical preorder (unrooted binary).
+#' @param tree_length Current total tree length.
+#' @param rel_br_lengths Current relative branch lengths (simplex).
+#' @return `list(tree, rel_br_lengths, logHastings)`. The returned tree
+#'   is in canonical preorder.
+#' @keywords internal
+ProposeTbr <- function(tree, tree_length, rel_br_lengths) {
+  result <- tbr_proposal(tree$edge, length(tree$tip.label),
+                         tree_length, rel_br_lengths)
+
+  if (!is.finite(result$logHastings)) {
+    return(list(tree = tree, rel_br_lengths = rel_br_lengths,
+                logHastings = -Inf))
+  }
+
+  newTree <- tree
+  newTree$edge <- result$edge
+  newTree$edge.length <- tree_length * result$rel_br_lengths
+
+  list(tree = newTree, rel_br_lengths = result$rel_br_lengths,
+       logHastings = result$logHastings)
+}

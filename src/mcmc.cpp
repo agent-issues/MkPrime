@@ -30,6 +30,10 @@ List swap_subtrees_impl(IntegerVector parent, IntegerVector child,
 std::vector<int> get_valid_swap_partners_impl(const IntegerVector& parent,
                                               const IntegerVector& child,
                                               int nTip, int pruneNode);
+// M-053: TBR proposal (tree_moves.cpp)
+List tbr_proposal_impl(IntegerVector parent, IntegerVector child,
+                        int nTip, double treeLength,
+                        NumericVector relBrLengths);
 List beta_simplex_proposal(NumericVector x, int index, double tuning);
 bool beta_simplex_impl(NumericVector& x, int index, double tuning,
                        double& logHastings);  // OPP-5: in-place, no List alloc
@@ -1347,7 +1351,8 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
 // moveType: 0=scale_tl, 1=scale_rl, 2=scale_rls, 3=scale_rn,
 //           4=beta_simplex, 5=nni, 6=spr, 7=int_walk, 8=scale_p (legacy),
 //           9=gibbs_p, 10=gibbs_spr, 11=gibbs_subtree_swap,
-//           12=weighted_br_scale, 13=weighted_spr, 14=weighted_subtree_swap
+//           12=weighted_br_scale, 13=weighted_spr, 14=weighted_subtree_swap,
+//           15=block_gibbs_branch, 16=beta_scale, 17=tbr
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -1425,6 +1430,18 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     }
     case 6: { // SPR — OPP-6: no pre-proposal clone; defer state update to accept
       List prop = spr_proposal_impl(state->parent, state->child,
+                                    data->nTip, state->treeLength,
+                                    state->relBrLengths);
+      logHastings = as<double>(prop["logHastings"]);
+      if (!R_FINITE(logHastings)) return false;
+      proposedParent  = as<IntegerVector>(prop["parent"]);
+      proposedChild   = as<IntegerVector>(prop["child"]);
+      proposedRelBr   = as<NumericVector>(prop["rel_br_lengths"]);
+      topologyChanged = true;
+      break;
+    }
+    case 17: { // TBR — M-053: OPP-6 pattern (defer topology commit)
+      List prop = tbr_proposal_impl(state->parent, state->child,
                                     data->nTip, state->treeLength,
                                     state->relBrLengths);
       logHastings = as<double>(prop["logHastings"]);

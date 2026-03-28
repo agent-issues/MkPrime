@@ -388,7 +388,7 @@ test_that(".BuildMoves produces weights that normalize to 1", {
 
 test_that("All move names in .kMoveTypes are valid moveWeights names", {
   validInMcmc <- c(
-    "tree_length", "branch_lengths", "nni", "spr", "kPrime", "p",
+    "tree_length", "branch_lengths", "nni", "spr", "tbr", "kPrime", "p",
     "rate_loss", "rate_log_sd", "rate_neo",
     "gibbs_spr", "gibbs_subtree_swap",
     "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
