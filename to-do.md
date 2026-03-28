@@ -30,10 +30,9 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| M-109 | P1 | OPEN | **Eliminate per-candidate `clone()` + in-place topology in Gibbs SPR/subtree-swap.** Quick win for the Gibbs branch. `gibbs_spr_impl` does 3× `clone()` + `preorder_weighted_impl` per candidate (~100 candidates per proposal). Replace with in-place modification of 3 parent/child/absLen entries + save/restore. Same for `gibbs_subtree_swap_impl`. Also eliminate clone in the "apply chosen" step (step 10). Profiling (2026-03-28): Gibbs moves at 1% weight cause a 12.8× slowdown (2478 → 194 iter/s); 97.7% of Gibbs wall time is in `.Call`. Target branch: `mkp-gibbs`. |
-| M-105 | P2 | OPEN | **Partial likelihood reuse for Gibbs/weighted SPR.** Precomputing the "pruned tree" CL once and only updating the affected path per candidate could reduce per-candidate cost from O(N×C) to O(D×C). **Rprof (2026-03-28): 97.7% of Gibbs workload is in `.Call`; each of ~100 Gibbs SPR candidates triggers a full-tree pruning. At 1% move weight, Gibbs causes 12.8× slowdown (2478 → 194 iter/s on Sun2018).** Partial reuse is the highest-value Gibbs optimization after M-109 (clone elimination). |
+| M-109 | P1 | OPEN | **Partial CL reuse for Gibbs subtree swap.** Port M-105's `caching_downpass`/`evaluate_candidate` pattern from `gibbs_spr_impl` to `gibbs_subtree_swap_impl`. Swap currently does full per-candidate evaluation (3× `clone()` + `swap_subtrees_impl` + `compute_full_loglik_at`). Benchmark (2026-03-28, Sun2018 3k iter): SPR-only with M-105 = 670 iter/s; swap-only = 367 iter/s; swap is the dominant Gibbs bottleneck. Target branch: `mkp-gibbs`. |
+| M-105 | P2 | DONE | **Partial likelihood reuse for Gibbs SPR.** Merged from `feature/gibbs-weighted-moves`. Benchmark confirms 3.9× speedup for Gibbs SPR (670 vs 180 iter/s). |
 | M-108 | P4 | OPEN | **~~Cache/patch postorder after NNI.~~** Superseded for NNI by OPP-6b (in-place NNI eliminates `preorder_weighted_impl` entirely). Remaining value only for SPR/TBR which still call `preorder_weighted_impl`. Priority demoted; SPR/TBR postorder cost is small relative to their per-candidate pruning. |
-| M-104 | P4 | OPEN | **Reduce `clone()` overhead in Gibbs SPR.** Superseded by M-109 which addresses the same clones plus in-place topology. Retained for reference only. |
 
 ## Misc / UI improvements
 

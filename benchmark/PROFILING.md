@@ -473,6 +473,33 @@ tips once before the ACRV category loop, matching the main pruning functions.
 - Partial likelihood caching across proposals (major architectural change).
 - Convert inner pruning `NumericVector` args to `const double*` (~0.1-0.2%).
 
+## Gibbs performance after M-105 merge (2026-03-28)
+
+**Workload:** Sun2018 hyoliths (54 taxa, 148 chars after phyDat dedup),
+3 000 iterations, no warmup, 2-run median. Default move schedule includes
+Gibbs SPR and Gibbs subtree swap at 1% weight each.
+
+| Configuration | iter/s | vs No-Gibbs |
+|---|---|---|
+| No Gibbs (SPR/NNI/TBR/BetaSimplex) | 2564 | 1.0× |
+| Gibbs SPR only (M-105 partial CL) | 670 | 3.8× slower |
+| Gibbs SPR only (full eval, forced fallback) | 180 | 14.2× slower |
+| Gibbs subtree swap only (full eval) | 367 | 7.0× slower |
+| Both Gibbs moves | 337 | 7.6× slower |
+
+**Key findings:**
+
+1. **M-105 delivers 3.7× speedup for Gibbs SPR** (670 vs 180 iter/s). The
+   `caching_downpass`/`evaluate_candidate` partial CL approach successfully
+   reduces per-candidate cost from O(N×C) to O(D×C).
+
+2. **Subtree swap is now the dominant Gibbs bottleneck** (367 vs 670 iter/s).
+   It still uses full per-candidate evaluation. Porting M-105's approach to
+   `gibbs_subtree_swap_impl` (filed as M-109, P1) is the next priority.
+
+3. **Combined overhead is roughly additive**: both at 1% weight ≈ 337 iter/s,
+   close to the sum of individual overheads.
+
 ---
 
 ## VTune hotspot results — Gibbs/weighted moves (2026-03-28)
