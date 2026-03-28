@@ -177,11 +177,13 @@ RunMkPrime <- function(data, tree,
   if (!is.null(treeFile)) writeLines("", treeFile)
 
   # Column indices for tree reconstruction in scalar_samples (1-based R).
-  # Layout: log_post, log_lik, tree_length, rate_loss, rate_log_sd,
-  #         [p — geometric only], [rate_neo — if hasNeo], kPrime_i..., br_j...
+  # Layout: log_post, log_lik, tree_length, [rate_loss — if hasNeo],
+  #         rate_log_sd, [p — geometric only], [rate_neo — if hasNeo],
+  #         [beta_scale — if qHet], kPrime_i..., br_j...
   isLogseries <- identical(model$kPrimePrior, "logseries")
   pCols       <- if (isLogseries) 0L else 1L
-  brColStart  <- 5L + pCols + hasNeo + qHet + nTrans + 1L
+  neoCols     <- if (hasNeo) 2L else 0L   # rate_loss + rate_neo
+  brColStart  <- 4L + neoCols + pCols + qHet + nTrans + 1L
 
   # --- Parallel or sequential execution ---
   stopReason <- "max_iter"
@@ -1343,11 +1345,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     }
   })
 
+  hasNeo <- "rate_loss" %in% paramNames
   currentState <- lapply(runs, function(r) {
     s <- get_mcmc_state(r$chainStates[[1]])
-    list(log_lik = s$logLik, log_prior = s$logPrior,
-         tree_length = s$treeLength, rate_loss = s$rateLoss,
-         rate_log_sd = s$rateLogSd, p = s$p)
+    st <- list(log_lik = s$logLik, log_prior = s$logPrior,
+               tree_length = s$treeLength,
+               rate_log_sd = s$rateLogSd, p = s$p)
+    if (hasNeo) st$rate_loss <- s$rateLoss
+    st
   })
 
   list(
@@ -1812,15 +1817,18 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 #' @keywords internal
 .ParamNames <- function(mkd, nEdge, kPrimePrior = "geometric",
                         qHeterogeneity = FALSE) {
-  nms <- c("log_posterior", "log_likelihood", "tree_length",
-           "rate_loss", "rate_log_sd")
+  hasNeo <- any(mkd$type == "neomorphic")
+
+  nms <- c("log_posterior", "log_likelihood", "tree_length")
+  if (hasNeo) nms <- c(nms, "rate_loss")
+  nms <- c(nms, "rate_log_sd")
 
   # p hyperparameter column only exists for hierarchical geometric prior
   if (!identical(kPrimePrior, "logseries")) {
     nms <- c(nms, "p")
   }
 
-  if (any(mkd$type == "neomorphic")) {
+  if (hasNeo) {
     nms <- c(nms, "rate_neo")
   }
 
@@ -1850,11 +1858,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
                         qHeterogeneity = FALSE) {
   state <- get_mcmc_state(statePtr)
 
-  rateNeoVal <- if (!is.null(state$rateNeo) && state$rateNeo != 1.0) {
-    state$rateNeo
-  } else {
-    numeric(0)
-  }
+  hasNeo <- any(mkd$type == "neomorphic")
+  rateLossVal <- if (hasNeo) state$rateLoss else numeric(0)
+  rateNeoVal  <- if (hasNeo) state$rateNeo else numeric(0)
 
   # p only included in row when using hierarchical geometric prior
   pVal <- if (!identical(kPrimePrior, "logseries")) state$p else numeric(0)
@@ -1866,7 +1872,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   kp <- if (length(transIdx)) as.numeric(state$kPrime[transIdx]) else numeric(0)
 
   c(state$logPost, state$logLik, state$treeLength,
-    state$rateLoss, state$rateLogSd, pVal,
+    rateLossVal, state$rateLogSd, pVal,
     rateNeoVal,
     bsVal,
     kp,

@@ -1720,7 +1720,9 @@ List run_mcmc_batch_cpp(
   // p column is omitted when using the log-series prior (no hyperparameter)
   bool includeP  = !data->kPriorLogseries;
   bool includeBS = data->qHeterogeneity;  // M-052: beta_scale column
-  int nScalarCols = 5 + (includeP ? 1 : 0) + (hasNeo ? 1 : 0) +
+  // Base columns: log_post, log_lik, tree_length, rate_log_sd (4).
+  // rate_loss included only when hasNeo (like rate_neo, p, beta_scale).
+  int nScalarCols = 4 + (hasNeo ? 2 : 0) + (includeP ? 1 : 0) +
                     (includeBS ? 1 : 0) + nTrans + nEdge;
   int maxSaved    = nBatch / thin + 2;
   std::vector<std::vector<double>> scalarRows;
@@ -1788,7 +1790,7 @@ List run_mcmc_batch_cpp(
       row[col++] = s0->logLik + s0->logPrior;   // log_post
       row[col++] = s0->logLik;
       row[col++] = s0->treeLength;
-      row[col++] = s0->rateLoss;
+      if (hasNeo) row[col++] = s0->rateLoss;
       row[col++] = s0->rateLogSd;
       if (includeP) row[col++] = s0->p;
       if (hasNeo) row[col++] = s0->rateNeo;
