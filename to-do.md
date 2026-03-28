@@ -24,7 +24,7 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| M-100 | P2 | OPEN | **Reject `qHeterogeneity = TRUE` + `coding = "informative"` at model validation time.** `het_singleton_site_prob()` is a stub returning 0, so combining Het with informative coding silently produces wrong ascertainment corrections (and therefore wrong likelihoods). Add a validation check in `MkPrimeModel()` (or at the start of `RunMkPrime()`) that errors with a clear message. Remove the guard when Phase 7's F81 singleton correction is implemented. |
+| | | | *(No open bugs)* |
 
 ## Optimization roadmap (Gibbs/weighted moves)
 
