@@ -241,7 +241,10 @@ std::vector<int> get_valid_swap_partners_impl(
 // Hastings ratio:
 //   logHR = log(lRegraft/lMerge)          [SPR Jacobian]
 //         + log(lSubEdge/lMergeSub)       [subtree re-root Jacobian]
-//         + log(nRegraftReverse/nRegraftForward) [candidate count ratio]
+//
+// The candidate-count ratio log(nRegraftReverse/nRegraftForward) is
+// identically 0: re-rooting preserves |desc(v)| and u always has 3
+// adjacent edges, so both counts equal nEdge - |desc(v)| - 2.
 //
 // When v is a tip the re-rooting is skipped and TBR degenerates to SPR.
 // ---------------------------------------------------------------------------
@@ -447,10 +450,10 @@ List tbr_proposal_impl(IntegerVector parent, IntegerVector child,
     candidates.push_back(i);
   }
   if (candidates.empty()) return fail();
-  const int nRegraftForward = (int)candidates.size();
+  const int nCand = (int)candidates.size();
 
-  int pickRegraft = (int)(unif_rand() * (double)nRegraftForward);
-  if (pickRegraft >= nRegraftForward) pickRegraft = nRegraftForward - 1;
+  int pickRegraft = (int)(unif_rand() * (double)nCand);
+  if (pickRegraft >= nCand) pickRegraft = nCand - 1;
   const int regraftRow = candidates[pickRegraft];
   const int b = newChild[regraftRow];
 
@@ -481,40 +484,14 @@ List tbr_proposal_impl(IntegerVector parent, IntegerVector child,
   }
   NumericVector ordRelBr = ordAbs / treeLength;
 
-  // --- Compute nRegraftReverse ---
-  // BFS on proposed topology to count reverse regraft candidates.
-  // In the reverse move, the prune edge is still u → v. After pruning u,
-  // the reverse regraft candidates are edges NOT in v's subtree (which may
-  // have different descendants after re-rooting) and NOT adjacent to u.
-  //
-  // v's descendants in the proposed topology:
-  std::vector<bool> isDescNew(maxNode, false);
-  isDescNew[v] = true;
-  if (v > nTip) {
-    std::vector<int> qNew = {v};
-    while (!qNew.empty()) {
-      int cur = qNew.back(); qNew.pop_back();
-      for (int i = 0; i < nEdge; ++i) {
-        if (ordParent[i] == cur) {
-          isDescNew[ordChild[i]] = true;
-          if (ordChild[i] > nTip) qNew.push_back(ordChild[i]);
-        }
-      }
-    }
-  }
-  int nRegraftReverse = 0;
-  for (int i = 0; i < nEdge; ++i) {
-    if (isDescNew[ordChild[i]]) continue;
-    if (ordParent[i] == u || ordChild[i] == u) continue;
-    ++nRegraftReverse;
-  }
-  if (nRegraftReverse <= 0) nRegraftReverse = 1;  // guard against log(0)
-
   // --- Hastings ratio ---
+  // nRegraftReverse == nRegraftForward always: re-rooting preserves |desc(v)|,
+  // u always has 3 adjacent edges in a binary tree, and the overlap (u→v) is
+  // always 1.  So candidates = nEdge − |desc(v)| − 2 in both directions and
+  // the candidate-count ratio term is identically 0.
   const double logHastings =
       std::log(lRegraft) - std::log(lMerge)
-    + std::log(lSubEdge) - std::log(lMergeSub)
-    + std::log((double)nRegraftReverse) - std::log((double)nRegraftForward);
+    + std::log(lSubEdge) - std::log(lMergeSub);
 
   return List::create(_["parent"]         = ordParent,
                       _["child"]          = ordChild,
