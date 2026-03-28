@@ -715,3 +715,10 @@ SEXP prepare_mcmc_data(List partitions_r,
 
   return Rcpp::XPtr<McmcData>(d, true);
 }
+
+
+// M-090: setter for nBranchBins (avoids changing prepare_mcmc_data signature)
+// [[Rcpp::export]]
+void set_branch_bins(SEXP dataPtr, int nBins) {
+  Rcpp::XPtr<McmcData>(dataPtr)->nBranchBins = nBins;
+}

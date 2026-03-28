@@ -1303,15 +1303,16 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     }
     case 12: { // weighted_branch_scale — M-087
       oldRelBr = clone(state->relBrLengths);
-      if (!weighted_branch_scale_impl(data, state, beta, 10, logHastings))
+      if (!weighted_branch_scale_impl(data, state, beta,
+                                       data->nBranchBins, logHastings))
         return false;
       break;
     }
     case 13: { // weighted_spr — M-088
-      return weighted_spr_impl(data, state, beta, 10);
+      return weighted_spr_impl(data, state, beta, data->nBranchBins);
     }
     case 14: { // weighted_subtree_swap — M-089
-      return weighted_subtree_swap_impl(data, state, beta, 10);
+      return weighted_subtree_swap_impl(data, state, beta, data->nBranchBins);
     }
     default:
       return false;

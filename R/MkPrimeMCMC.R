@@ -63,6 +63,24 @@
 #'   `nRuns`, `nChains`, `runSamples`, `currentState`,
 #'   `recentAcceptance`, and `elapsed`. See [MkpTracePlot()] for
 #'   details.
+#' @param gibbsSpr Logical; include the Gibbs SPR move (default `TRUE`).
+#'   Cost: O(N) likelihood evaluations per proposal, where N is the number
+#'   of candidate reattachment edges.
+#' @param gibbsSubtreeSwap Logical; include the Gibbs subtree-swap move
+#'   (default `TRUE`). Cost: O(N) likelihood evaluations.
+#' @param weightedBranchScale Logical; include the weighted branch-length
+#'   scale move (default `FALSE`). Cost: O(B) likelihood evaluations, where
+#'   B = `nBranchBins`.
+#' @param weightedSpr Logical; include the weighted SPR move (default
+#'   `FALSE`). Cost: O(N * B) likelihood evaluations. Enable for improved
+#'   mixing on difficult tree spaces at the cost of slower iterations.
+#' @param weightedSubtreeSwap Logical; include the weighted subtree-swap
+#'   move (default `FALSE`). Cost: O(N * B) likelihood evaluations.
+#' @param nBranchBins Integer; number of branch-fraction bins for weighted
+#'   moves (default `10L`). Used by `weightedBranchScale`, `weightedSpr`,
+#'   and `weightedSubtreeSwap`. Ignored when all weighted moves are
+#'   disabled. Higher values increase accuracy of the Gibbs approximation
+#'   but cost more likelihood evaluations.
 #' @param tuning Named list of initial tuning parameters for each move
 #'   type. See Details.
 #'
@@ -81,6 +99,21 @@
 #' chain (beta = 1) targets the true posterior. Heated chains (beta < 1)
 #' flatten the likelihood surface, aiding exploration. Chain swap proposals
 #' (see M-030) exchange states between adjacent temperatures.
+#'
+#' ## Gibbs and weighted moves
+#'
+#' The Gibbs moves (`gibbsSpr`, `gibbsSubtreeSwap`) evaluate all candidate
+#' topologies and sample proportional to their posterior weight. They cost
+#' O(N) likelihood evaluations per proposal (where N is the number of
+#' candidates, roughly the number of edges) but often achieve much better
+#' mixing than standard NNI/SPR.
+#'
+#' The weighted moves (`weightedBranchScale`, `weightedSpr`,
+#' `weightedSubtreeSwap`) additionally marginalise over a discrete grid
+#' of branch-fraction placements. This produces proposals that are
+#' approximately independent of the current state but costs
+#' O(B) or O(N * B) likelihood evaluations. These are off by default
+#' and recommended only when standard + Gibbs moves show poor mixing.
 #'
 #' @return An S3 object of class `MkPrimeMCMC`.
 #' @export
@@ -102,6 +135,12 @@ MkPrimeMCMC <- function(
     bufferSize = 500L,
     plotEvery = NULL,
     progressFn = NULL,
+    gibbsSpr = TRUE,
+    gibbsSubtreeSwap = TRUE,
+    weightedBranchScale = FALSE,
+    weightedSpr = FALSE,
+    weightedSubtreeSwap = FALSE,
+    nBranchBins = 10L,
     tuning = list()
 ) {
   nIter <- if (is.infinite(nIter)) Inf else as.integer(nIter)
@@ -139,6 +178,17 @@ MkPrimeMCMC <- function(
     cli::cli_abort("{.arg bufferSize} must be a positive integer.")
   }
 
+  # Validate move toggles
+  gibbsSpr <- as.logical(gibbsSpr)
+  gibbsSubtreeSwap <- as.logical(gibbsSubtreeSwap)
+  weightedBranchScale <- as.logical(weightedBranchScale)
+  weightedSpr <- as.logical(weightedSpr)
+  weightedSubtreeSwap <- as.logical(weightedSubtreeSwap)
+  nBranchBins <- as.integer(nBranchBins)
+  if (nBranchBins < 2L) {
+    cli::cli_abort("{.arg nBranchBins} must be at least 2, got {nBranchBins}.")
+  }
+
   defaults <- list(
     scale_tree_length = 0.5,
     beta_simplex = 10,
@@ -170,7 +220,13 @@ MkPrimeMCMC <- function(
          checkEvery = checkEvery, cancelFile = cancelFile,
          checkpointFile = checkpointFile,
          treeFile = treeFile, logFile = logFile, bufferSize = bufferSize,
-         plotEvery = plotEvery, progressFn = progressFn, tuning = tuning),
+         plotEvery = plotEvery, progressFn = progressFn,
+         gibbsSpr = gibbsSpr, gibbsSubtreeSwap = gibbsSubtreeSwap,
+         weightedBranchScale = weightedBranchScale,
+         weightedSpr = weightedSpr,
+         weightedSubtreeSwap = weightedSubtreeSwap,
+         nBranchBins = nBranchBins,
+         tuning = tuning),
     class = "MkPrimeMCMC"
   )
 }

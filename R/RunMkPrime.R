@@ -155,6 +155,7 @@ RunMkPrime <- function(data, tree,
 
   # Initialize C++ data pointer (created once)
   mcmcData <- .InitMcmcData(mkd, model)
+  set_branch_bins(mcmcData, mcmc$nBranchBins)
 
   # Populate per-partition log-likelihood cache (M-064) and pre-allocate
   # flat CL workspace to eliminate per-call heap allocations (M-063).
@@ -817,6 +818,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   tipLabels <- tree$tip.label
   transIdx <- which(mkd$type == "transformational")
   mcmcData <- .InitMcmcData(mkd, model)
+  set_branch_bins(mcmcData, mcmc$nBranchBins)
 
   # Rebuild XPtr<McmcState> from serialized R chain state lists.
   # Checkpoints store r$chains as plain R lists (see .SaveCheckpoint).
@@ -1200,6 +1202,38 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
       list(name = "spr", type = "spr", target = NULL,
            weight = max(1, nEdge / 4))
     ))
+    # Gibbs topology moves (M-090)
+    if (isTRUE(mcmc$gibbsSpr)) {
+      moves <- c(moves, list(
+        list(name = "gibbs_spr", type = "gibbs_spr", target = NULL,
+             weight = max(1, nEdge / 4))
+      ))
+    }
+    if (isTRUE(mcmc$gibbsSubtreeSwap)) {
+      moves <- c(moves, list(
+        list(name = "gibbs_subtree_swap", type = "gibbs_subtree_swap",
+             target = NULL, weight = max(1, nEdge / 6))
+      ))
+    }
+    # Weighted moves (M-090)
+    if (isTRUE(mcmc$weightedBranchScale)) {
+      moves <- c(moves, list(
+        list(name = "weighted_branch_lengths", type = "weighted_branch_scale",
+             target = "rel_br_lengths", weight = max(1, nEdge / 6))
+      ))
+    }
+    if (isTRUE(mcmc$weightedSpr)) {
+      moves <- c(moves, list(
+        list(name = "weighted_spr", type = "weighted_spr", target = NULL,
+             weight = max(1, nEdge / 8))
+      ))
+    }
+    if (isTRUE(mcmc$weightedSubtreeSwap)) {
+      moves <- c(moves, list(
+        list(name = "weighted_subtree_swap", type = "weighted_subtree_swap",
+             target = NULL, weight = max(1, nEdge / 8))
+      ))
+    }
   }
 
   if (nTrans > 0) {
@@ -1239,11 +1273,12 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 # 0=scale_tl, 1=scale_rl, 2=scale_rls, 3=scale_rn,
 # 4=beta_simplex, 5=nni, 6=spr, 7=int_walk, 8=scale_p (legacy),
 # 9=gibbs_p, 10=gibbs_spr, 11=gibbs_subtree_swap,
-# 12=weighted_br_scale, 13=weighted_spr
+# 12=weighted_br_scale, 13=weighted_spr, 14=weighted_subtree_swap
 .kMoveTypes <- c(
   tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
   rate_neo = 3L, branch_lengths = 4L,
   nni = 5L, spr = 6L, kPrime = 7L, p = 9L,
+  gibbs_spr = 10L, gibbs_subtree_swap = 11L,
   weighted_branch_lengths = 12L,
   weighted_spr = 13L,
   weighted_subtree_swap = 14L
@@ -1548,7 +1583,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     nni = 0.23, spr = 0.10,
     kPrime = 0.35,
     p = 0.35, rate_loss = 0.35, rate_log_sd = 0.35,
-    rate_neo = 0.35
+    rate_neo = 0.35,
+    # Gibbs/weighted moves: no tuning to adapt
+    gibbs_spr = NA_real_, gibbs_subtree_swap = NA_real_,
+    weighted_branch_lengths = NA_real_,
+    weighted_spr = NA_real_, weighted_subtree_swap = NA_real_
   )
 
   tuningKeys <- c(
@@ -1560,7 +1599,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     p = NA_character_,       # Gibbs move: no tuning needed
     rate_loss = "scale_rate_loss",
     rate_log_sd = "scale_rate_log_sd",
-    rate_neo = "scale_rate_neo"
+    rate_neo = "scale_rate_neo",
+    # Gibbs/weighted moves: no tuning to adapt
+    gibbs_spr = NA_character_, gibbs_subtree_swap = NA_character_,
+    weighted_branch_lengths = NA_character_,
+    weighted_spr = NA_character_, weighted_subtree_swap = NA_character_
   )
 
   for (move in moves) {

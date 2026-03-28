@@ -89,6 +89,10 @@ prepare_mcmc_data <- function(partitions_r, kObs_r, charTypes_r, hasNeo, nCat, c
     .Call(`_MkPrime_prepare_mcmc_data`, partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC)
 }
 
+set_branch_bins <- function(dataPtr, nBins) {
+    invisible(.Call(`_MkPrime_set_branch_bins`, dataPtr, nBins))
+}
+
 spr_proposal <- function(edge, nTip, treeLength, relBrLengths) {
     .Call(`_MkPrime_spr_proposal`, edge, nTip, treeLength, relBrLengths)
 }
