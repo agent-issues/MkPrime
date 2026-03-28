@@ -10,7 +10,8 @@ LogPrior(state, model, mkd)
 \item{state}{A list with current parameter values:
 \code{tree_length}, \code{rel_br_lengths}, \code{rate_loss}, \code{rate_log_sd},
 \code{kPrime} (integer vector). For \code{kPrimePrior = "geometric"}, also
-\code{p} (hyperprior). For \code{kPrimePrior = "logseries"}, \code{p} is absent.}
+\code{p} (hyperprior). For \code{kPrimePrior = "logseries"}, \code{p} is absent.
+When \code{qHeterogeneity = TRUE}, also \code{beta_scale} (positive scalar).}
 
 \item{model}{An \code{MkPrimeModel} object (finalized).}
 

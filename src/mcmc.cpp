@@ -55,6 +55,8 @@ struct McmcState {
   std::vector<double> partLogLik;
   // Pre-allocated CL workspace (M-063): eliminates per-call heap allocations
   ClWorkspace clWs;
+  // M-052: Q-matrix heterogeneity — Dirichlet-marginal beta_scale parameter.
+  double betaScale = 1.0;
 };
 
 
@@ -66,7 +68,8 @@ static double cpp_log_prior(
     const McmcData& data,
     double treeLength, const NumericVector& relBrLengths,
     double rateLoss, double rateLogSd, double rateNeo,
-    double p, const IntegerVector& kPrime) {
+    double p, const IntegerVector& kPrime,
+    double betaScale = 1.0) {
 
   if (treeLength <= 0.0) return R_NegInf;
   if (rateLogSd < 0.0)   return R_NegInf;
@@ -133,6 +136,13 @@ static double cpp_log_prior(
     }
   }
 
+  // M-052: beta_scale prior — Gamma(shape, rate)
+  if (data.qHeterogeneity) {
+    if (betaScale <= 0.0) return R_NegInf;
+    lp += R::dgamma(betaScale, data.betaScaleShape,
+                     1.0 / data.betaScaleRate, 1);
+  }
+
   return lp;
 }
 
@@ -146,7 +156,8 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
                      NumericVector relBrLengths, double treeLength,
                      double rateLoss, double rateLogSd, double rateNeo,
                      double p, IntegerVector kPrime,
-                     double logLik, double logPrior) {
+                     double logLik, double logPrior,
+                     double betaScale = 1.0) {
   McmcState* s = new McmcState();
   s->parent       = clone(parent);
   s->child        = clone(child);
@@ -159,6 +170,7 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
   s->kPrime       = clone(kPrime);
   s->logLik       = logLik;
   s->logPrior     = logPrior;
+  s->betaScale    = betaScale;
   return Rcpp::XPtr<McmcState>(s, true);
 }
 
@@ -178,6 +190,7 @@ void fill_partition_cache(SEXP dataPtr, SEXP statePtr) {
     state->partLogLik[pi] = cpp_partition_log_likelihood(
       *data, pi, state->parent, state->child, edgeLen,
       state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
+      state->betaScale,
       state->clWs.ready() ? &state->clWs : nullptr);
     totalLogLik += state->partLogLik[pi];
   }
@@ -256,7 +269,8 @@ List get_mcmc_state(SEXP statePtr) {
     _["kPrime"]        = s->kPrime,
     _["logLik"]        = s->logLik,
     _["logPrior"]      = s->logPrior,
-    _["logPost"]       = s->logLik + s->logPrior
+    _["logPost"]       = s->logLik + s->logPrior,
+    _["betaScale"]     = s->betaScale
   );
 }
 
@@ -290,6 +304,7 @@ static double compute_full_loglik_at(
   return cpp_log_likelihood(
     data, parent, child, edgeLen,
     state.kPrime, state.rateLoss, state.rateLogSd, state.rateNeo,
+    state.betaScale,
     state.clWs.ready() ? &state.clWs : nullptr);
 }
 
@@ -1106,7 +1121,7 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
   double newLogPrior = cpp_log_prior(
     *data, state->treeLength, propRelBr,
     state->rateLoss, state->rateLogSd, state->rateNeo,
-    state->p, state->kPrime);
+    state->p, state->kPrime, state->betaScale);
   if (!R_FINITE(newLogPrior)) return false;
 
   // 16. MH acceptance
@@ -1304,7 +1319,7 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
   double newLogPrior = cpp_log_prior(
     *data, state->treeLength, propRelBr,
     state->rateLoss, state->rateLogSd, state->rateNeo,
-    state->p, state->kPrime);
+    state->p, state->kPrime, state->betaScale);
   if (!R_FINITE(newLogPrior)) return false;
 
   // 13. MH acceptance
@@ -1349,6 +1364,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   double oldRLSD = state->rateLogSd;
   double oldRN   = state->rateNeo;
   double oldP    = state->p;
+  double oldBS   = state->betaScale;  // M-052
 
   double logHastings  = 0.0;
   bool topologyChanged = false;
@@ -1454,7 +1470,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       state->logPrior = cpp_log_prior(
         *data, state->treeLength, state->relBrLengths,
         state->rateLoss, state->rateLogSd, state->rateNeo,
-        state->p, state->kPrime);
+        state->p, state->kPrime, state->betaScale);
       state->logLik = state->logLik;  // unchanged
       return true;  // Gibbs: always accept
     }
@@ -1480,6 +1496,12 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     case 15: { // block_gibbs_branch — M-054 reframed
       return block_gibbs_branch_sweep_impl(data, state, beta, data->nBranchBins);
     }
+    case 16: { // M-052: scale beta_scale
+      double mult = std::exp(scaleTuning * (R::unif_rand() - 0.5));
+      state->betaScale = oldBS * mult;
+      logHastings = std::log(mult);
+      break;
+    }
     default:
       return false;
   }
@@ -1487,6 +1509,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   if (!R_FINITE(logHastings)) {
     state->treeLength = oldTL; state->rateLoss = oldRL;
     state->rateLogSd = oldRLSD; state->rateNeo = oldRN; state->p = oldP;
+    state->betaScale = oldBS;
     if (moveType == 4 || moveType == 12) state->relBrLengths = oldRelBr;
     if (moveType == 7) state->kPrime = oldKPrime;
     return false;
@@ -1496,11 +1519,12 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   double newLogPrior = cpp_log_prior(
     *data, state->treeLength, state->relBrLengths,
     state->rateLoss, state->rateLogSd, state->rateNeo,
-    state->p, state->kPrime);
+    state->p, state->kPrime, state->betaScale);
 
   if (!R_FINITE(newLogPrior)) {
     state->treeLength = oldTL; state->rateLoss = oldRL;
     state->rateLogSd = oldRLSD; state->rateNeo = oldRN; state->p = oldP;
+    state->betaScale = oldBS;
     if (moveType == 4 || moveType == 12) state->relBrLengths = oldRelBr;
     if (moveType == 7) state->kPrime = oldKPrime;
     return false;
@@ -1527,7 +1551,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       propEdgeLen[i] = state->treeLength * evalRelBr[i];
     newLogLik = cpp_log_likelihood(*data, evalParent, evalChild,
       propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
-      state->rateNeo, state->clWs.ready() ? &state->clWs : nullptr);
+      state->rateNeo, state->betaScale,
+      state->clWs.ready() ? &state->clWs : nullptr);
   } else {
     int nParts = (int)data->parts.size();
     int nEdge  = evalRelBr.size();
@@ -1545,7 +1570,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
           double v = cpp_partition_log_likelihood(*data, pi,
             evalParent, evalChild, propEdgeLen,
             state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
-            wsPtr);
+            state->betaScale, wsPtr);
           newLogLik += (v - newPC[pi]);
           newPC[pi] = v;
         }
@@ -1559,7 +1584,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
           double v = cpp_partition_log_likelihood(*data, ap,
             evalParent, evalChild, propEdgeLen,
             state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
-            wsPtr);
+            state->betaScale, wsPtr);
           newLogLik += (v - newPC[ap]);
           newPC[ap] = v;
         }
@@ -1572,7 +1597,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
           newPC[pi] = cpp_partition_log_likelihood(*data, pi,
             evalParent, evalChild, propEdgeLen,
             state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
-            wsPtr);
+            state->betaScale, wsPtr);
           newLogLik += newPC[pi];
         }
         break;
@@ -1602,6 +1627,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   state->rateLogSd  = oldRLSD;
   state->rateNeo    = oldRN;
   state->p          = oldP;
+  state->betaScale  = oldBS;
   if (moveType == 4 || moveType == 12) state->relBrLengths = oldRelBr;
   if (moveType == 7) state->kPrime = oldKPrime;
   return false;
@@ -1675,8 +1701,10 @@ List run_mcmc_batch_cpp(
 
   // Sample storage
   // p column is omitted when using the log-series prior (no hyperparameter)
-  bool includeP = !data->kPriorLogseries;
-  int nScalarCols = 5 + (includeP ? 1 : 0) + (hasNeo ? 1 : 0) + nTrans + nEdge;
+  bool includeP  = !data->kPriorLogseries;
+  bool includeBS = data->qHeterogeneity;  // M-052: beta_scale column
+  int nScalarCols = 5 + (includeP ? 1 : 0) + (hasNeo ? 1 : 0) +
+                    (includeBS ? 1 : 0) + nTrans + nEdge;
   int maxSaved    = nBatch / thin + 2;
   std::vector<std::vector<double>> scalarRows;
   scalarRows.reserve(maxSaved);
@@ -1747,6 +1775,7 @@ List run_mcmc_batch_cpp(
       row[col++] = s0->rateLogSd;
       if (includeP) row[col++] = s0->p;
       if (hasNeo) row[col++] = s0->rateNeo;
+      if (includeBS) row[col++] = s0->betaScale;  // M-052
       for (int j = 0; j < nTrans; ++j)
         row[col++] = static_cast<double>(s0->kPrime[transIdxCpp[j]]);
       for (int k = 0; k < nEdge; ++k)

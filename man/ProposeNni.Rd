@@ -7,7 +7,7 @@
 ProposeNni(tree, tree_length, rel_br_lengths)
 }
 \arguments{
-\item{tree}{A \code{phylo} object in postorder (unrooted binary).}
+\item{tree}{A \code{phylo} object in canonical preorder (unrooted binary).}
 
 \item{tree_length}{Current total tree length.}
 
@@ -15,7 +15,7 @@ ProposeNni(tree, tree_length, rel_br_lengths)
 }
 \value{
 \code{list(tree, rel_br_lengths, logHastings)}. The returned tree
-is in postorder.
+is in canonical preorder.
 }
 \description{
 Picks a random internal edge and swaps one subtree from each side,
@@ -24,6 +24,6 @@ producing a nearest-neighbor interchange. The proposal is symmetric
 }
 \details{
 Delegates to C++ (\code{nni_proposal} in tree_moves.cpp) for edge
-manipulation and postorder reordering.
+manipulation and canonical preorder reordering.
 }
 \keyword{internal}

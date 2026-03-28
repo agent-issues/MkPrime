@@ -15,10 +15,8 @@ MkPrimeModel(
   rateLossSdlog = 2,
   rateLogSdShape = 1,
   rateLogSdRate = 1,
-  kPrimePrior = "geometric",
   kprimeHyperA = 1,
   kprimeHyperB = 1,
-  kprimeLogseriesC = 0.7,
   rateNeoMeanlog = 0,
   rateNeoSdlog = 2
 )
@@ -45,20 +43,38 @@ on \code{rate_loss} (neomorphic asymmetry). Defaults: meanlog = 0, sdlog = 2.}
 \item{rateLogSdShape, rateLogSdRate}{Shape and rate for the Gamma prior
 on \code{rate_log_sd} (ACRV dispersion). Defaults: shape = 1, rate = 1.}
 
+\item{kprimeHyperA, kprimeHyperB}{Parameters for the Beta hyperprior on \code{p}
+when \code{kPrimePrior = "geometric"}. Defaults: a = 1, b = 1 (uniform).}
+
+\item{rateNeoMeanlog, rateNeoSdlog}{Parameters for the LogNormal prior
+on the neomorphic partition rate scalar. Defaults: meanlog = 0, sdlog = 2.}
+
 \item{kPrimePrior}{Prior distribution for the true number of character states
 (\verb{k'}) for transformational characters. One of \code{"geometric"} (default,
 hierarchical geometric with Beta hyperprior on \code{p}) or \code{"logseries"}
 (logarithmic series with fixed parameter \code{c}; matches the RevBayes default).}
 
-\item{kprimeHyperA, kprimeHyperB}{Parameters for the Beta hyperprior on \code{p}
-when \code{kPrimePrior = "geometric"}. Defaults: a = 1, b = 1 (uniform).}
-
 \item{kprimeLogseriesC}{The \code{c} parameter of the log-series prior on \verb{k'}
 when \code{kPrimePrior = "logseries"}. Must be in (0, 1). Default 0.7, matching
 the RevBayes \code{dnMkPrime} default.}
 
-\item{rateNeoMeanlog, rateNeoSdlog}{Parameters for the LogNormal prior
-on the neomorphic partition rate scalar. Defaults: meanlog = 0, sdlog = 2.}
+\item{qHeterogeneity}{Logical. Enable Q-matrix heterogeneity across
+characters via discretised Dirichlet-marginal equilibrium frequencies?
+Default \code{FALSE}. When enabled, each character's likelihood is averaged
+over a set of F81 rate matrices whose equilibrium frequencies are drawn
+from \code{Beta(beta_scale, (k - 1) * beta_scale)}, where \code{k} is the number
+of states. This is the marginal distribution of one component of a
+symmetric \code{Dirichlet(beta_scale, ..., beta_scale)}. See the
+\strong{Q-matrix heterogeneity} section below for details.}
+
+\item{nBetaCat}{Integer. Number of equal-probability Beta bins for the
+heterogeneity discretisation. Default \code{4L}. Higher values increase
+accuracy at the cost of compute time (scales linearly with \code{nBetaCat}).
+Ignored when \code{qHeterogeneity = FALSE}.}
+
+\item{betaScaleShape, betaScaleRate}{Shape and rate for the Gamma prior
+on \code{beta_scale} (the symmetric Dirichlet concentration parameter).
+Defaults: shape = 1, rate = 1. Ignored when \code{qHeterogeneity = FALSE}.}
 }
 \value{
 An S3 object of class \code{MkPrimeModel}.
@@ -66,3 +82,38 @@ An S3 object of class \code{MkPrimeModel}.
 \description{
 Specify an MkPrime model
 }
+\section{Q-matrix heterogeneity}{
+
+
+Standard Mk and Mk' assume all characters share the same (equal-frequency)
+rate matrix. In reality, some morphological characters may have strongly
+unequal state frequencies. Q-matrix heterogeneity (\code{qHeterogeneity = TRUE})
+relaxes this by integrating each character's likelihood over a mixture of
+F81 rate matrices \insertCite{Felsenstein1981}{MkPrime} with varying
+equilibrium frequencies.
+
+The mixture is controlled by a single scalar parameter, \code{beta_scale}
+(= \eqn{\alpha}), which acts as the concentration of a symmetric Dirichlet:
+\itemize{
+\item Large \eqn{\alpha}: all characters have nearly equal state
+frequencies, recovering the standard Mk/JC model.
+\item Small \eqn{\alpha}: characters can have strongly unequal
+frequencies (one state dominant, others rare).
+}
+
+The key insight is that the marginal distribution of one component of
+\eqn{\mathrm{Dirichlet}(\alpha, \ldots, \alpha)} with \eqn{k} components
+is \eqn{\mathrm{Beta}(\alpha, (k-1)\alpha)}. This allows a unified
+discretisation for characters of any state count: the scheme adapts
+automatically to \eqn{k}.
+
+For binary characters (\eqn{k = 2}), this simplifies to the symmetric
+\eqn{\mathrm{Beta}(\alpha, \alpha)}.
+
+This feature is intended for \strong{model comparison} (e.g. via
+\code{\link[=mkp_stepping_stone]{mkp_stepping_stone()}}). It multiplies computation time by roughly
+\eqn{4-5\times}{4-5x} for binary-dominated datasets.
+See \code{vignette("het-details", package = "MkPrime")} for the full
+mathematical derivation.
+}
+

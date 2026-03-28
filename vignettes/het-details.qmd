@@ -1,0 +1,249 @@
+---
+title: "Q-matrix heterogeneity: mathematical details"
+format: html
+bibliography: references.bib
+vignette: >
+  %\VignetteIndexEntry{Q-matrix heterogeneity: mathematical details}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup}
+#| include: false
+library(MkPrime)
+```
+
+## Motivation
+
+The Mk model [@Lewis2001] for discrete morphological characters assumes
+equal equilibrium state frequencies: every character with $k$ observed
+states uses the Jukes--Cantor rate matrix with $\pi_j = 1/k$ for all $j$.
+This is a strong assumption. In practice, some characters may have
+one dominant state while others are more evenly distributed. If the
+data contain this kind of variation and the model ignores it, branch
+lengths and topologies can be biased.
+
+Q-matrix heterogeneity (enabled via `MkPrimeModel(qHeterogeneity = TRUE)`)
+relaxes the equal-frequency assumption by integrating each character's
+likelihood over a mixture of F81 rate matrices [@Felsenstein1981] with
+varying equilibrium frequencies. The mixture is controlled by a single
+MCMC-sampled parameter, `beta_scale` ($= \alpha$), which acts as the
+concentration of a symmetric Dirichlet distribution.
+
+## The model
+
+### F81 transition probabilities
+
+For a character with $k$ states and equilibrium frequencies
+$\boldsymbol{\pi} = (\pi_0, \ldots, \pi_{k-1})$, the F81 model gives
+transition probabilities in closed form:
+
+$$
+P_{ij}(t) = \pi_j + (\delta_{ij} - \pi_j) \exp(-\mu t)
+$$
+
+where $\delta_{ij}$ is the Kronecker delta and $\mu$ is the total
+substitution rate (normalised so that the expected number of changes per
+unit time is 1):
+
+$$
+\mu = \frac{1}{1 - \sum_j \pi_j^2}
+$$
+
+When $\pi_j = 1/k$ for all $j$, this reduces to the JC($k$) model
+(a.k.a. Mk).
+
+### Dirichlet-marginal discretisation
+
+Rather than sampling full frequency vectors from
+$\mathrm{Dirichlet}(\alpha, \ldots, \alpha)$, we exploit the fact that
+**the marginal distribution of any single component** is:
+
+$$
+\pi_s \sim \mathrm{Beta}(\alpha, \; (k-1)\alpha)
+$$
+
+This is a standard property of the Dirichlet distribution. It allows us
+to reduce a $k$-dimensional integral to a one-dimensional discretisation
+that adapts automatically to the number of states $k$.
+
+We discretise $\mathrm{Beta}(\alpha, (k-1)\alpha)$ into $B$
+equal-probability bins (default $B = 4$). The representative value for
+bin $b$ is the **midpoint of the conditional expectation** within that
+bin:
+
+$$
+\beta_b = \frac{
+  F^{-1}_{\mathrm{Beta}}\!\bigl(\tfrac{b - 0.5}{B}\bigr)
+}{}
+$$
+
+where $F^{-1}_{\mathrm{Beta}}$ is the quantile function of
+$\mathrm{Beta}(\alpha, (k-1)\alpha)$.
+
+More precisely, $\beta_b$ is the quantile at probability $(2b - 1) / (2B)$,
+the midpoint of the $b$-th equal-probability interval.
+
+### Frequency vectors via rotation
+
+Given a bin value $\beta_b$, we construct $k$ **rotated** frequency
+vectors, one for each "focal" state $s \in \{0, \ldots, k-1\}$:
+
+$$
+\pi^{(b,s)}_j = \begin{cases}
+  \beta_b & \text{if } j = s \\[4pt]
+  \dfrac{1 - \beta_b}{k - 1} & \text{if } j \neq s
+\end{cases}
+$$
+
+The rotation serves two purposes:
+
+1. **State-labelling symmetry.** Morphological state labels (0, 1, 2, ...)
+   are arbitrary. Averaging over all $k$ rotations ensures that no state
+   is systematically favoured.
+2. **Correct marginal mean.** The average frequency vector across
+   rotations is always $(1/k, \ldots, 1/k)$, regardless of $\beta_b$.
+
+### Likelihood integration
+
+The per-character likelihood under heterogeneity is the average over
+all bins and rotations:
+
+$$
+L_c \;\approx\; \frac{1}{B} \cdot \frac{1}{k}
+  \sum_{b=1}^{B} \sum_{s=0}^{k-1} L_c\!\bigl(\boldsymbol{\pi}^{(b,s)}\bigr)
+$$
+where $L_c(\boldsymbol{\pi})$ denotes the standard Felsenstein pruning
+likelihood for character $c$ evaluated under the F81 model with
+equilibrium frequencies $\boldsymbol{\pi}$.
+
+#### Binary characters ($k = 2$)
+
+For $k = 2$, $\mathrm{Beta}(\alpha, \alpha)$ is symmetric about $1/2$.
+By symmetry, the two rotations for each bin produce the same likelihood
+(the focal state is swapped, but F81 only cares about the frequency
+partition). MkPrime therefore uses only one rotation per bin for binary
+characters, halving the computation.
+
+### Composition with among-character rate variation
+
+Q-matrix heterogeneity and among-character rate variation (ACRV) are
+independent and compose multiplicatively. When both are enabled, each
+character's likelihood is averaged over $n_{\mathrm{Cat}} \times B \times
+n_{\mathrm{rot}}$ components, where $n_{\mathrm{rot}} = 1$ for $k = 2$
+and $n_{\mathrm{rot}} = k$ for $k \geq 3$.
+
+### Composition with `rate_loss` (neomorphic characters)
+
+Neomorphic characters use an asymmetric binary model parameterised by
+`rate_loss` ($\rho$), where the gain rate is $1/(1 + \rho)$ and the loss
+rate is $\rho/(1 + \rho)$, normalised so the total rate is 1.
+
+Under heterogeneity, the equilibrium frequency for bin $b$ modulates
+the asymmetry. The effective gain and loss rates become:
+
+$$
+\text{gain}_b = \frac{1}{1 + \rho} \cdot 2\beta_b, \qquad
+\text{loss}_b = \frac{\rho}{1 + \rho} \cdot 2(1 - \beta_b)
+$$
+
+This is algebraically equivalent to an F81 model with
+$\pi_1 = \text{gain}_b / (\text{gain}_b + \text{loss}_b)$.
+The `rate_loss` parameter retains its interpretation as the global
+asymmetry between gains and losses; `beta_scale` modulates how much
+that asymmetry can vary across characters.
+
+## The `beta_scale` parameter
+
+`beta_scale` ($= \alpha$) is the single scalar controlling all
+heterogeneity. Its interpretation:
+
+| $\alpha$ | Behaviour |
+|----------|-----------|
+| $\alpha \to \infty$ | All bins concentrate at $1/k$; recovers JC($k$). No heterogeneity. |
+| $\alpha = 1$ | Uniform distribution on the simplex. Moderate heterogeneity. |
+| $\alpha \to 0$ | Bins spread to the boundaries; extreme heterogeneity (one state dominates entirely). |
+
+The MCMC places a $\mathrm{Gamma}(\text{shape}, \text{rate})$ prior on
+`beta_scale` and proposes new values via a scale move (multiplicative
+random walk).
+
+## Computational cost
+
+The number of likelihood evaluations per character per MCMC step is
+multiplied by:
+
+- **Binary characters ($k = 2$):** $B$ (no rotation needed).
+- **Multistate characters ($k \geq 3$):** $B \times k$.
+
+For a typical morphological dataset that is 80--90% binary with
+$B = 4$, the effective cost increase is roughly $4$--$5\times$.
+
+## Approximation quality
+
+The "one-special-state" frequency vector $\boldsymbol{\pi}^{(b,s)}$
+cannot represent arbitrary Dirichlet draws. For $k = 3$, a true draw
+might be $(0.5, 0.3, 0.2)$, which is not expressible as any rotation
+of $(\beta, (1-\beta)/2, (1-\beta)/2)$.
+
+This is inherent to any finite discretisation of a multivariate
+distribution via its marginal. The approximation captures:
+
+- The **marginal** variation in individual state frequencies (exactly).
+- The **mean** frequency vector (exactly: always $1/k$ by rotation
+  symmetry).
+- The dominant mode of variation: one state elevated, the rest
+  depressed equally.
+
+It does **not** capture simultaneous elevation of two states at the
+expense of others. For the Mk model—where state labels are arbitrary
+and carry no biological meaning—this is an acceptable trade-off.
+The primary signal is "some states are more common than others," not
+"states 0 and 1 are both common while state 2 is rare."
+
+## Comparison with RevBayes multistate approach
+
+| Aspect | MkPrime | RevBayes multistate |
+|--------|---------|---------------------|
+| Parameters | 1 scalar (`beta_scale`) | $n_{\mathrm{cats}} \times k$ frequency vectors + mixture weights per $k$ |
+| Mixture components | $B \times k$ per $k$ (deterministic given $\alpha$) | $2 \times n_{\mathrm{cats}}$ per $k$ (stochastic) |
+| Symmetry | Rotation averaging | Reversed copies |
+| MCMC mixing | Fast (1D scale move) | Slower (simplex moves in high dimensions) |
+| Flexibility | Moderate (marginal discretisation) | High (arbitrary frequency vectors) |
+
+The MkPrime approach trades some flexibility for dramatically better
+MCMC mixing and a simpler parameterisation. For model comparison
+purposes—where the goal is "does the data support unequal
+frequencies?"—the single-parameter design is sufficient.
+
+## Usage
+
+```{r het-example}
+#| eval: false
+model <- MkPrimeModel(
+  qHeterogeneity = TRUE,
+  nBetaCat       = 4L,
+  betaScaleShape = 1,
+  betaScaleRate  = 1
+)
+```
+
+Compare with a standard (no-Het) analysis using stepping-stone marginal
+likelihoods:
+
+```{r het-comparison}
+#| eval: false
+# Standard model
+resultStd <- RunMkPrime(data, tree, model = MkPrimeModel())
+
+# Het model
+resultHet <- RunMkPrime(data, tree, model = MkPrimeModel(qHeterogeneity = TRUE))
+
+# Compare via stepping-stone
+ssStd <- mkp_stepping_stone(data, tree, model = MkPrimeModel())
+ssHet <- mkp_stepping_stone(data, tree, model = MkPrimeModel(qHeterogeneity = TRUE))
+```
+
+The model with the higher log marginal likelihood is preferred.
+
+## References

@@ -145,6 +145,30 @@ model
 `expSteps = NULL` (default) sets the tree-length prior scale automatically
 from the Fitch parsimony score of the starting tree.
 
+### Q-matrix heterogeneity (optional)
+
+Standard Mk assumes all characters share equal state frequencies. To relax
+this, enable Q-matrix heterogeneity, which integrates each character's
+likelihood over a mixture of F81 rate matrices with varying equilibrium
+frequencies controlled by a single parameter, `beta_scale`:
+
+```{r model-het}
+#| eval: false
+modelHet <- MkPrimeModel(
+  coding           = "variable",
+  nCat             = 6L,
+  qHeterogeneity   = TRUE,
+  nBetaCat         = 4L        # number of discretisation bins
+)
+```
+
+This is primarily useful for **model comparison**: run analyses with and
+without heterogeneity, then compare marginal likelihoods via
+`mkp_stepping_stone()` to see whether the data support unequal state
+frequencies. Expect roughly 4--5$\times$ longer run times for
+binary-dominated datasets. See `vignette("het-details")` for the
+mathematical details.
+
 ## MCMC configuration
 
 For a **production run** on this dataset we recommend:
