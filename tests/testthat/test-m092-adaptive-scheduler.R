@@ -392,7 +392,8 @@ test_that("All move names in .kMoveTypes are valid moveWeights names", {
     "rate_loss", "rate_log_sd", "rate_neo",
     "gibbs_spr", "gibbs_subtree_swap",
     "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
-    "block_gibbs_branch"
+    "block_gibbs_branch",
+    "beta_scale"
   )
   expect_true(all(names(MkPrime:::.kMoveTypes) %in% validInMcmc))
 })
