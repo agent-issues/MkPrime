@@ -101,6 +101,10 @@ mkn_stationary_freqs <- function(rate_loss) {
     .Call(`_MkPrime_mkn_stationary_freqs`, rate_loss)
 }
 
+frechet_correlation_ess_cpp <- function(dmat_sq, min_nsamples) {
+    .Call(`_MkPrime_frechet_correlation_ess_cpp`, dmat_sq, min_nsamples)
+}
+
 nni_proposal <- function(edge, nTip, treeLength, relBrLengths) {
     .Call(`_MkPrime_nni_proposal`, edge, nTip, treeLength, relBrLengths)
 }

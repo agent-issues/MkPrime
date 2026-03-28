@@ -7,15 +7,15 @@
 #' Calculates effective sample size (ESS) per parameter and, when
 #' `nRuns >= 2`, the potential scale reduction factor (PSRF, Gelman-Rubin
 #' diagnostic) across runs. Optionally computes topology ESS using the
-#' Robinson-Foulds distance via the **treess** and **TreeDist** packages.
+#' Robinson-Foulds distance via **TreeDist**.
 #'
 #' @param posterior An `MkPosterior` object.
-#' @param trees Logical. If `TRUE` and **treess** and **TreeDist** are
-#'   installed, compute topology ESS (Fréchet correlation ESS and median
-#'   pseudo-ESS) from the sampled trees. Defaults to `FALSE` because
-#'   Robinson-Foulds distance computation is O(n^2) and can be slow for
-#'   large posteriors — reserve for deliberate post-run calls once parameter
-#'   ESS has been satisfied. Each run is subsampled to at most 1,000 trees.
+#' @param trees Logical. If `TRUE` and **TreeDist** is installed, compute
+#'   topology ESS (Fréchet correlation ESS and median pseudo-ESS) from the
+#'   sampled trees. Defaults to `FALSE` because Robinson-Foulds distance
+#'   computation is O(n^2) and can be slow for large posteriors — reserve
+#'   for deliberate post-run calls once parameter ESS has been satisfied.
+#'   Each run is subsampled to at most 1,000 trees.
 #' @return An object of class `MkpDiagnostics`, a list with components:
 #'   - `ess`: Named numeric vector of ESS per parameter.
 #'   - `minEss`: Scalar minimum ESS across parameters.
@@ -349,13 +349,9 @@ print.MkpDiagnostics <- function(x, ...) {
 }
 
 
-# Compute topology ESS from sampled trees using treess + TreeDist RF.
+# Compute topology ESS from sampled trees using internal .TreeESS + TreeDist RF.
 # Returns named numeric vector (frechetCorrelationESS, medianPseudoESS)
 # as the minimum across runs (conservative), or NULL if skipped or failed.
-#
-# treess::treess() expects a *single chain* (list of trees), not a list of
-# chains.  We call it once per run and take the per-column minimum, which is
-# the conservative multi-chain ESS estimate.
 #
 # NOTE: tree ESS via RF distances is expensive (O(n^2) distance matrix) and
 # is intentionally excluded from print()/summary() and from the checkEvery
@@ -364,7 +360,6 @@ print.MkpDiagnostics <- function(x, ...) {
 # satisfied — to obtain topology ESS.
 .ComputeTreeEss <- function(pb, trees) {
   if (isFALSE(trees)) return(NULL)
-  if (!requireNamespace("treess",   quietly = TRUE)) return(NULL)
   if (!requireNamespace("TreeDist", quietly = TRUE)) return(NULL)
 
   # Build per-run tree lists (post-burnin)
@@ -373,11 +368,10 @@ print.MkpDiagnostics <- function(x, ...) {
   } else {
     list(pb$trees)
   }
-  # treess needs at least 5 samples per chain (its own min.nsamples default)
   perRunTrees <- Filter(function(x) length(x) >= 5L, perRunTrees)
   if (length(perRunTrees) == 0L) return(NULL)
 
-  # Subsample each run to at most 1000 trees (mirrors neotrans approach)
+  # Subsample each run to at most 1000 trees
   maxPerRun <- 1000L
   totalTrees <- sum(vapply(perRunTrees, length, integer(1L)))
   if (any(vapply(perRunTrees, length, integer(1L)) > maxPerRun)) {
@@ -395,15 +389,11 @@ print.MkpDiagnostics <- function(x, ...) {
 
   if (interactive()) cli::cli_progress_message("Computing tree ESS\u2026")
 
-  keepCols <- c("frechetCorrelationESS", "medianPseudoESS")
-  methods  <- treess::getESSMethods(TRUE)
-
   tryCatch({
-    # Call treess once per chain; each call returns a 1-row data frame.
     chainRows <- lapply(perRunTrees, function(chain) {
-      treess::treess(chain, TreeDist::RobinsonFoulds, methods = methods)
+      .TreeESS(chain, dist_fn = TreeDist::RobinsonFoulds)
     })
-    essMat <- do.call(rbind, chainRows)[, keepCols, drop = FALSE]
+    essMat <- do.call(rbind, chainRows)
     # Minimum across runs — conservative multi-chain estimate.
     apply(essMat, 2, min, na.rm = TRUE)
   }, error = function(e) {
