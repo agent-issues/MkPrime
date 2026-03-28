@@ -965,13 +965,211 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
 
 
 // ---------------------------------------------------------------------------
+// weighted_subtree_swap_impl  (M-089)
+//
+// WeightedSubtreeSwap: GibbsSubtreeSwap extended to integrate over branch
+// fractions at each candidate swap partner.  For each candidate B_i, the
+// total branch length (brA + brB_i) is held fixed and redistributed across
+// B bins.  Self (current topology) included as a point weight.  Sample
+// partner from {self, cand_0, ..., cand_N}, then sample bin and fraction
+// for the chosen partner.  MH acceptance corrects the approximation.
+//
+// Cost: O(N × B) likelihood evaluations.
+// ---------------------------------------------------------------------------
+
+// Local helper: find edge row where child[i] == node (mirrors tree_moves.cpp)
+static int find_child_row_local(const IntegerVector& child, int node) {
+  for (int i = 0; i < child.size(); ++i)
+    if (child[i] == node) return i;
+  return -1;
+}
+
+static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
+                                        double beta, int nBins) {
+  const int nEdge = state->parent.size();
+  const int nTip  = data->nTip;
+
+  const BranchBins& bins = get_branch_bins(nBins);
+
+  // 1. Pick a random node (any edge child)
+  int pickIdx = (int)(R::unif_rand() * (double)nEdge);
+  if (pickIdx >= nEdge) pickIdx = nEdge - 1;
+  const int nodeA = state->child[pickIdx];
+
+  // 2. Get valid swap partners
+  std::vector<int> partners = get_valid_swap_partners_impl(
+      state->parent, state->child, nTip, nodeA);
+  if (partners.empty()) return false;
+  const int nPart = (int)partners.size();
+
+  // 3. Find rowA
+  const int rowA = find_child_row_local(state->child, nodeA);
+  if (rowA < 0) return false;
+
+  // 4. Absolute edge lengths
+  NumericVector absLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    absLen[i] = state->treeLength * state->relBrLengths[i];
+
+  // 5. Candidate marginals: for each partner B_i, construct swapped
+  //    topology and evaluate at each bin midpoint
+  std::vector<std::vector<double>> candLL(nPart,
+                                           std::vector<double>(nBins));
+  std::vector<double> candMax(nPart, R_NegInf);
+  std::vector<int> rowBs(nPart);       // edge row for each partner
+  std::vector<double> totals(nPart);   // brA + brB_i
+
+  for (int pi = 0; pi < nPart; ++pi) {
+    int rowB = find_child_row_local(state->child, partners[pi]);
+    if (rowB < 0) { candMax[pi] = R_NegInf; rowBs[pi] = -1; continue; }
+    rowBs[pi]  = rowB;
+    totals[pi] = absLen[rowA] + absLen[rowB];
+
+    // Construct swapped topology: swap parent assignments
+    IntegerVector np = clone(state->parent);
+    np[rowA] = state->parent[rowB];
+    np[rowB] = state->parent[rowA];
+    // child vector unchanged
+
+    for (int b = 0; b < nBins; ++b) {
+      NumericVector na = clone(absLen);
+      na[rowA] = bins.mids[b] * totals[pi];
+      na[rowB] = (1.0 - bins.mids[b]) * totals[pi];
+
+      auto po = TreeTools::preorder_weighted_impl(np, state->child, na);
+      IntegerVector op = po.first(_, 0);
+      IntegerVector oc = po.first(_, 1);
+      candLL[pi][b] = compute_full_loglik_at(*data, *state,
+                                              op, oc, po.second);
+      if (R_FINITE(candLL[pi][b]) && candLL[pi][b] > candMax[pi])
+        candMax[pi] = candLL[pi][b];
+    }
+  }
+
+  // 6. Compute marginal weights with global offset
+  double globalMax = state->logLik;
+  for (int pi = 0; pi < nPart; ++pi)
+    if (candMax[pi] > globalMax) globalMax = candMax[pi];
+  if (!R_FINITE(globalMax)) return false;
+
+  double wOrig = std::exp(beta * (state->logLik - globalMax));
+  std::vector<double> mCand(nPart);
+  std::vector<std::vector<double>> candW(nPart,
+                                          std::vector<double>(nBins));
+  double sumM = wOrig;
+  for (int pi = 0; pi < nPart; ++pi) {
+    mCand[pi] = 0.0;
+    for (int b = 0; b < nBins; ++b) {
+      candW[pi][b] = R_FINITE(candLL[pi][b]) ?
+                       std::exp(beta * (candLL[pi][b] - globalMax)) : 0.0;
+      mCand[pi] += candW[pi][b];
+    }
+    sumM += mCand[pi];
+  }
+  if (sumM <= 0.0) return false;
+
+  // 7. Sample: self-draw → no-op
+  double rnd = R::unif_rand() * sumM;
+  if (rnd < wOrig) return false;
+  rnd -= wOrig;
+  int chosen = nPart - 1;
+  for (int pi = 0; pi < nPart - 1; ++pi) {
+    if (rnd < mCand[pi]) { chosen = pi; break; }
+    rnd -= mCand[pi];
+  }
+  if (rowBs[chosen] < 0) return false;
+
+  // 8. Sample bin within chosen candidate
+  int chosenBin = nBins - 1;
+  {
+    double rndBin = R::unif_rand() * mCand[chosen];
+    double cum = 0.0;
+    for (int b = 0; b < nBins; ++b) {
+      cum += candW[chosen][b];
+      if (rndBin < cum) { chosenBin = b; break; }
+    }
+  }
+
+  // 9. Draw fraction from Beta centred on chosen bin's midpoint
+  const double conc = 2.0 * nBins;
+  const double chosenMid = bins.mids[chosenBin];
+  const double alphaNew = chosenMid * conc + 1.0;
+  const double betaNew  = (1.0 - chosenMid) * conc + 1.0;
+  double fNew = R::rbeta(alphaNew, betaNew);
+  if (fNew < 1e-8) fNew = 1e-8;
+  if (fNew > 1.0 - 1e-8) fNew = 1.0 - 1e-8;
+
+  // 10. Construct final proposed topology at fNew
+  const int rowB   = rowBs[chosen];
+  const double tot = totals[chosen];
+  IntegerVector np = clone(state->parent);
+  np[rowA] = state->parent[rowB];
+  np[rowB] = state->parent[rowA];
+  NumericVector na = clone(absLen);
+  na[rowA] = fNew * tot;
+  na[rowB] = (1.0 - fNew) * tot;
+
+  auto po = TreeTools::preorder_weighted_impl(np, state->child, na);
+  IntegerMatrix ordEdge = po.first;
+  NumericVector ordAbs  = po.second;
+  IntegerVector op = ordEdge(_, 0);
+  IntegerVector oc = ordEdge(_, 1);
+  double newLogLik = compute_full_loglik_at(*data, *state, op, oc, ordAbs);
+  if (!R_FINITE(newLogLik)) return false;
+
+  // 11. Hastings ratio
+  //     f_default = absLen[rowB] / tot (the default swap fraction)
+  const double fDefault = (tot > 0.0) ? absLen[rowB] / tot : 0.5;
+  int defaultBin = nBins - 1;
+  for (int b = 0; b < nBins; ++b) {
+    if (fDefault <= bins.breaks[b + 1]) { defaultBin = b; break; }
+  }
+  const double defaultMid  = bins.mids[defaultBin];
+  const double alphaOld    = defaultMid * conc + 1.0;
+  const double betaOld     = (1.0 - defaultMid) * conc + 1.0;
+
+  double logHR = std::log(std::max(wOrig, 1e-300))
+               + R::dbeta(fDefault, alphaOld, betaOld, 1)
+               - std::log(std::max(candW[chosen][chosenBin], 1e-300))
+               - R::dbeta(fNew, alphaNew, betaNew, 1);
+
+  // 12. Prior at proposed state
+  NumericVector propRelBr(nEdge);
+  for (int k = 0; k < nEdge; ++k)
+    propRelBr[k] = ordAbs[k] / state->treeLength;
+
+  double newLogPrior = cpp_log_prior(
+    *data, state->treeLength, propRelBr,
+    state->rateLoss, state->rateLogSd, state->rateNeo,
+    state->p, state->kPrime);
+  if (!R_FINITE(newLogPrior)) return false;
+
+  // 13. MH acceptance
+  double logAlpha = beta * (newLogLik - state->logLik)
+                  + (newLogPrior - state->logPrior) + logHR;
+  if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+    for (int k = 0; k < nEdge; ++k) {
+      state->parent[k]       = ordEdge(k, 0);
+      state->child[k]        = ordEdge(k, 1);
+      state->relBrLengths[k] = propRelBr[k];
+    }
+    state->logLik   = newLogLik;
+    state->logPrior = newLogPrior;
+    state->partLogLik.clear();
+    return true;
+  }
+  return false;
+}
+
+
+// ---------------------------------------------------------------------------
 // do_move_impl: internal propose/evaluate/accept (raw pointers, no SEXP).
 // do_move_cpp:  Rcpp-exported SEXP wrapper — calls do_move_impl.
 //
 // moveType: 0=scale_tl, 1=scale_rl, 2=scale_rls, 3=scale_rn,
 //           4=beta_simplex, 5=nni, 6=spr, 7=int_walk, 8=scale_p (legacy),
 //           9=gibbs_p, 10=gibbs_spr, 11=gibbs_subtree_swap,
-//           12=weighted_br_scale, 13=weighted_spr
+//           12=weighted_br_scale, 13=weighted_spr, 14=weighted_subtree_swap
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -1111,6 +1309,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     }
     case 13: { // weighted_spr — M-088
       return weighted_spr_impl(data, state, beta, 10);
+    }
+    case 14: { // weighted_subtree_swap — M-089
+      return weighted_subtree_swap_impl(data, state, beta, 10);
     }
     default:
       return false;

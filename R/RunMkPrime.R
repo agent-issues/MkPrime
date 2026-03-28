@@ -1245,7 +1245,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   rate_neo = 3L, branch_lengths = 4L,
   nni = 5L, spr = 6L, kPrime = 7L, p = 9L,
   weighted_branch_lengths = 12L,
-  weighted_spr = 13L
+  weighted_spr = 13L,
+  weighted_subtree_swap = 14L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)

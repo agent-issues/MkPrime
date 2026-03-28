@@ -58,7 +58,7 @@ All work on this phase happens in the `mkp-gibbs` worktree
 |----|----------|--------|-------------|
 | M-087 | P2 | DONE (B) | **WeightedBranchLengthScale.** Discretize the branch-fraction proposal space into B bins (default B = 10) using Beta(0.25, 0.25) quantiles as break points. For each bin midpoint, evaluate the posterior, weight by `exp(β × logLik) × proposal_density`. Sample a bin from the normalised weights (CDF inverse), then draw the actual branch fraction from a Beta centred on that bin's midpoint. Compute the piecewise Hastings ratio. Cost: O(B) likelihood evals. Depends on M-083. |
 | M-088 | P2 | DONE (B) | **WeightedSPR.** Gibbs SPR (M-085) extended to also integrate over branch fractions at each candidate position: for each candidate topology, marginalise over B branch-fraction bins, producing a marginal weight. Sample topology from marginal weights, then sample branch fraction from conditional distribution given chosen topology. Compute combined Hastings ratio. Cost: O(N × B) likelihood evals. Depends on M-083, M-085. |
-| M-089 | P3 | OPEN | **WeightedSubtreeSwap.** Same as M-088 but uses subtree-swap topology operation from M-084. Cost: O(N × B) evals. Depends on M-083, M-084, M-086, M-088 (reuse integration logic). |
+| M-089 | P3 | DONE (B) | **WeightedSubtreeSwap.** Same as M-088 but uses subtree-swap topology operation from M-084. Cost: O(N × B) evals. Depends on M-083, M-084, M-086, M-088 (reuse integration logic). |
 
 ### 9d: Integration, scheduling & validation
 
