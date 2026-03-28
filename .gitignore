@@ -26,3 +26,8 @@ Rplots.pdf
 test_output.txt
 test_run*.log
 tools/
+
+# Profiling artifacts
+.vtune-lib/
+vtune-gibbs-*/
+vtune-out/
