@@ -240,26 +240,24 @@ static double pruning_jc_acrv_flat(
       double* clPar   = buf + par * stride;
       double* clCh    = buf + ch  * stride;
 
+      // OPP-1: JC symmetry → O(k) product
+      double diff_coeff = p_same - p_diff;
       if (!initFlg[par]) {
         for (int c = 0; c < nChar; ++c) {
           int offset = c * kStates;
-          for (int i = 0; i < kStates; ++i) {
-            double sum = 0.0;
-            for (int j = 0; j < kStates; ++j)
-              sum += ((i == j) ? p_same : p_diff) * clCh[offset + j];
-            clPar[offset + i] = sum;
-          }
+          double sum_cl = 0.0;
+          for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+          for (int i = 0; i < kStates; ++i)
+            clPar[offset + i] = p_diff * sum_cl + diff_coeff * clCh[offset + i];
         }
         initFlg[par] = 1;
       } else {
         for (int c = 0; c < nChar; ++c) {
           int offset = c * kStates;
-          for (int i = 0; i < kStates; ++i) {
-            double sum = 0.0;
-            for (int j = 0; j < kStates; ++j)
-              sum += ((i == j) ? p_same : p_diff) * clCh[offset + j];
-            clPar[offset + i] *= sum;
-          }
+          double sum_cl = 0.0;
+          for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+          for (int i = 0; i < kStates; ++i)
+            clPar[offset + i] *= p_diff * sum_cl + diff_coeff * clCh[offset + i];
         }
       }
     }
@@ -626,28 +624,27 @@ static double pruning_f81_het_acrv_flat(
           double* clPar = buf + par * stride;
           double* clCh  = buf + ch  * stride;
 
+          // OPP-1 (F81): hoist Σ_j π_j·cl_j out of the i-loop → O(k) per char
           if (!initFlg[par]) {
             for (int c = 0; c < nChar; ++c) {
               int offset = c * kStates;
-              for (int i = 0; i < kStates; ++i) {
-                // P_ij = π_j * one_minus_d + (i==j ? d : 0)
-                // Σ_j P_ij × cl_j = one_minus_d × (Σ_j π_j × cl_j) + d × cl_i
-                double sum_pi_cl = 0.0;
-                for (int j = 0; j < kStates; ++j)
-                  sum_pi_cl += pi[j] * clCh[offset + j];
-                clPar[offset + i] = one_minus_d * sum_pi_cl + d * clCh[offset + i];
-              }
+              double sum_pi_cl = 0.0;
+              for (int j = 0; j < kStates; ++j)
+                sum_pi_cl += pi[j] * clCh[offset + j];
+              double base = one_minus_d * sum_pi_cl;
+              for (int i = 0; i < kStates; ++i)
+                clPar[offset + i] = base + d * clCh[offset + i];
             }
             initFlg[par] = 1;
           } else {
             for (int c = 0; c < nChar; ++c) {
               int offset = c * kStates;
-              for (int i = 0; i < kStates; ++i) {
-                double sum_pi_cl = 0.0;
-                for (int j = 0; j < kStates; ++j)
-                  sum_pi_cl += pi[j] * clCh[offset + j];
-                clPar[offset + i] *= one_minus_d * sum_pi_cl + d * clCh[offset + i];
-              }
+              double sum_pi_cl = 0.0;
+              for (int j = 0; j < kStates; ++j)
+                sum_pi_cl += pi[j] * clCh[offset + j];
+              double base = one_minus_d * sum_pi_cl;
+              for (int i = 0; i < kStates; ++i)
+                clPar[offset + i] *= base + d * clCh[offset + i];
             }
           }
         }
