@@ -32,15 +32,26 @@ cat('Installed:', as.character(packageVersion('MkPrime', lib.loc = '$LIB')), '\n
 "
 
 echo ""
+echo "=== Unpacking source for test files ==="
+SRC_DIR=$(mktemp -d)
+tar -xzf "$TARBALL" -C "$SRC_DIR"
+TEST_DIR="$SRC_DIR/MkPrime/tests/testthat"
+
+echo ""
 echo "=== Running testthat (MKPRIME_SLOW_TESTS=true) ==="
 Rscript -e "
 .libPaths(c('$LIB', .libPaths()))
 library(testthat)
 library(MkPrime, lib.loc = '$LIB')
 cat('MKPRIME_SLOW_TESTS =', Sys.getenv('MKPRIME_SLOW_TESTS'), '\n')
-results <- test_package('MkPrime', reporter = 'summary')
-q(status = any(as.data.frame(results)\$failed > 0))
+results <- test_dir('$TEST_DIR', package = 'MkPrime', reporter = 'summary', stop_on_failure = FALSE)
+df <- as.data.frame(results)
+cat(sprintf('\nTotal: %d passed, %d failed, %d skipped\n',
+            sum(df\$passed), sum(df\$failed), sum(df\$skipped)))
+q(status = as.integer(sum(df\$failed) > 0))
 "
+
+rm -rf "$SRC_DIR"
 
 echo ""
 echo "=== Done (exit $?) ==="
