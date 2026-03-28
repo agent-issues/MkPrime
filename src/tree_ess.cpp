@@ -5,16 +5,21 @@
 //   Paper:  Magee et al. (2021), arXiv:2109.07629
 //
 // The algorithm generalises univariate autocorrelation ESS to
-// non-Euclidean spaces via Fréchet variance.  This C++ version
-// replaces the R-level loop that repeatedly subsets the distance
-// matrix.  Instead of recomputing O((n-i)^2) submatrix sums at each
-// lag, it maintains running trailing and leading submatrix sums
-// via O(n)-per-step incremental updates.
+// non-Euclidean spaces via Fréchet variance.
 //
-// Complexity: O(n^2) initial sum + O(n * L) for L lags, versus
-// O(n^2 * L) in the naive implementation.
+// Optimisation strategy:
+//   1. Exploit matrix symmetry: read only the upper triangle, deriving
+//      lower-triangle column sums via M[r,c] = M[c,r].  This halves
+//      memory traffic (the n x n distance matrix is the largest object).
+//   2. Precompute column partial sums and super-diagonal sums in one
+//      fused O(n^2/2) pass with column-contiguous access.
+//   3. Main lag loop is O(1) per iteration (lookup only).
+//   Overall: O(n^2/2 + L).
 
 #include <Rcpp.h>
+#include <cmath>
+#include <algorithm>
+#include <vector>
 using namespace Rcpp;
 
 // [[Rcpp::export]]
@@ -24,65 +29,84 @@ double frechet_correlation_ess_cpp(const NumericMatrix& dmat_sq,
   const int max_lag = n - min_nsamples - 1;
   if (max_lag < 1) return NA_REAL;
 
-  // R matrices are column-major: dmat_sq(r, c) = data[c * n + r].
-  // Access with varying r (fixed c) is contiguous; varying c is stride-n.
-  // For a symmetric matrix, row_sum(r, a..b) = col_sum(a..b, r),
-  // so we prefer iterating over the column dimension.
+  const double* const d = REAL(dmat_sq);
 
-  // Total matrix sum: O(n^2), column-contiguous access.
-  double total_sum = 0.0;
+  // ── Upper-triangle precomputation: O(n²/2), column-contiguous ────
+  //
+  // For symmetric M, column c's lower triangle = column c's upper
+  // triangle transposed.  We read only rows 0..c of each column and
+  // accumulate the cross-contribution via lower_partial[r] += M[r,c]
+  // (which, by symmetry, equals M[c,r] = the missing lower element).
+
+  std::vector<double> upper_cs(n);             // sum(rows 0..c, col c)
+  std::vector<double> lower_partial(n, 0.0);   // sum(rows c+1..n-1, col c)
+
+  const int n_diags = std::min(max_lag + 1, n);
+  std::vector<double> diag_sums(n_diags, 0.0); // super-diagonal sums
+
   for (int c = 0; c < n; ++c) {
-    for (int r = 0; r < n; ++r) {
-      total_sum += dmat_sq(r, c);
+    const double* col = d + static_cast<std::size_t>(c) * n;
+    const int r_diag = std::max(0, c - n_diags + 1);
+
+    double ucs = 0.0;
+
+    // Region 1: rows where lag (c-r) >= n_diags — no diagonal contribution.
+    // Vectorisable: scalar reduction + element-wise accumulation.
+    for (int r = 0; r < r_diag; ++r) {
+      const double val = col[r];
+      ucs += val;
+      lower_partial[r] += val;
     }
+
+    // Region 2: rows where lag < n_diags — also accumulate diag_sums.
+    for (int r = r_diag; r < c; ++r) {
+      const double val = col[r];
+      ucs += val;
+      lower_partial[r] += val;
+      diag_sums[c - r] += val;
+    }
+
+    ucs += col[c];  // diagonal element
+    upper_cs[c] = ucs;
   }
 
-  // Running submatrix sums, updated incrementally at each lag.
-  //   trailing = T(i) = sum(dmat_sq[i..n-1, i..n-1])
-  //   leading  = S(m) = sum(dmat_sq[0..m-1, 0..m-1])  where m = n - i
-  double trailing = total_sum;  // T(0)
-  double leading  = total_sum;  // S(n)
+  // Derive lower_cs and total_sum from the upper-triangle accumulators.
+  //   lower_cs[c] = M[c,c] + lower_partial[c]
+  //   total_sum    = Σ (upper_cs[c] + lower_partial[c])
+  double total_sum = 0.0;
+  std::vector<double> lower_cs(n);
+  for (int c = 0; c < n; ++c) {
+    const double diag = d[static_cast<std::size_t>(c) * n + c];
+    lower_cs[c] = diag + lower_partial[c];
+    total_sum += upper_cs[c] + lower_partial[c];
+  }
+
+  // ── Main lag loop: O(1) per iteration ────────────────────────────
+
+  double trailing = total_sum;  // T(0) = full matrix sum
+  double leading  = total_sum;  // S(n) = full matrix sum
 
   std::vector<double> P;
-  P.reserve((max_lag + 1) / 2);
-  double prev_cor = 1.0;  // cors[0] = 1.0 by definition
+  P.reserve(static_cast<std::size_t>((max_lag + 1) / 2));
+  double prev_cor = 1.0;
 
   for (int i = 1; i <= max_lag; ++i) {
     const int m = n - i;
 
-    // T(i) = T(i-1) - 2 * row_sum(i-1, i-1..n-1) + dmat_sq(i-1, i-1)
-    // By symmetry, row_sum = col_sum(i-1..n-1, i-1): contiguous access.
-    {
-      double col_sum = 0.0;
-      for (int r = i - 1; r < n; ++r) {
-        col_sum += dmat_sq(r, i - 1);
-      }
-      trailing -= 2.0 * col_sum - dmat_sq(i - 1, i - 1);
-    }
+    // T(i) = T(i-1) - 2·lower_cs[i-1] + M(i-1,i-1)
+    trailing -= 2.0 * lower_cs[i - 1]
+              - d[static_cast<std::size_t>(i - 1) * n + (i - 1)];
 
-    // S(m) = S(m+1) - 2 * row_sum(m, 0..m) + dmat_sq(m, m)
-    // By symmetry, row_sum = col_sum(0..m, m): contiguous access.
-    {
-      double col_sum = 0.0;
-      for (int r = 0; r <= m; ++r) {
-        col_sum += dmat_sq(r, m);
-      }
-      leading -= 2.0 * col_sum - dmat_sq(m, m);
-    }
-
-    // Super-diagonal sum at lag i (stride-(n+1) access; unavoidable)
-    double d12_sum = 0.0;
-    for (int j = 0; j < m; ++j) {
-      d12_sum += dmat_sq(j, j + i);
-    }
+    // S(m) = S(m+1) - 2·upper_cs[m] + M(m,m)
+    leading -= 2.0 * upper_cs[m]
+             - d[static_cast<std::size_t>(m) * n + m];
 
     const double denom = 2.0 * m * (m - 1);
-    double var1 = trailing / denom;
-    double var2 = leading / denom;
-    double d12 = d12_sum / m;
+    const double var1 = trailing / denom;
+    const double var2 = leading / denom;
+    const double d12  = diag_sums[i] / m;
 
-    // Lower-bound covariance
-    double covar = (var1 + var2 - d12) / 2.0;
+    const double covar = (var1 + var2 - d12) / 2.0;
 
     double cor_i;
     if (var1 == 0.0 || var2 == 0.0) {
@@ -91,26 +115,22 @@ double frechet_correlation_ess_cpp(const NumericMatrix& dmat_sq,
       cor_i = covar / std::sqrt(var1 * var2);
     }
 
-    // Pair consecutive correlations: P_k = cors[2k-1] + cors[2k]
     if (i % 2 == 1) {
-      double p_val = cor_i + prev_cor;
-      if (p_val < 0.0) break;  // initial positive sequence truncation
+      const double p_val = cor_i + prev_cor;
+      if (p_val < 0.0) break;
       P.push_back(p_val);
     }
     prev_cor = cor_i;
   }
 
   if (P.empty()) {
-    return static_cast<double>(n);  // no autocorrelation detected
+    return static_cast<double>(n);
   }
 
-  // Monotone (smoothed) sequence: P'[k] = min(P[k], P[k-1])
-  for (size_t k = 1; k < P.size(); ++k) {
+  for (std::size_t k = 1; k < P.size(); ++k) {
     if (P[k] > P[k - 1]) P[k] = P[k - 1];
   }
 
-  // The last P may be negative (it's the one that triggered the break
-  // at the boundary).  If the final P is positive, include it.
   int K = static_cast<int>(P.size()) - 1;
   if (P.back() > 0.0) K = static_cast<int>(P.size());
 
@@ -118,7 +138,7 @@ double frechet_correlation_ess_cpp(const NumericMatrix& dmat_sq,
   for (int k = 0; k < K; ++k) {
     tau_hat += 2.0 * P[k];
   }
-  if (tau_hat < 1.0) tau_hat = 1.0;  // floor at 1
+  if (tau_hat < 1.0) tau_hat = 1.0;
 
   return static_cast<double>(n) / tau_hat;
 }
