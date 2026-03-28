@@ -18,6 +18,15 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 ---
 
+## Bug fixes / polish
+
+| ID | Priority | Status | Description |
+|----|----------|--------|-------------|
+| M-097 | P2 | OPEN | **Progress table prints repeatedly instead of overwriting.** `.PrintProgressTable()` appends a new table at each `checkEvery` interval instead of overwriting the previous one. Fix so that consecutive tables replace each other in the console (e.g. `\r` / ANSI cursor-up, or cli overwrite). Also: during warmup iterations, display `warmup N` instead of `iter N` in the status line. |
+| M-098 | P2 | OPEN | **Exclude kPrime from convergence diagnostics.** k'_i are discrete nuisance parameters being marginalized over, not quantities of inferential interest; including them in ESS/PSRF dilutes the signal and can block convergence on datasets with many characters. Remove kPrime from `.CheckConvergence()` criteria (ESS floor, PSRF ceiling) and from the default `ConvergenceDiagnostics()` summary. Keep them visible in a `verbose` or `detailed` view for debugging mixing problems. Update progress table to omit the `kPrime` row by default. Update docs. |
+
+---
+
 ## Phase 7d: Deferred extensions
 
 | ID | Priority | Status | Description |
