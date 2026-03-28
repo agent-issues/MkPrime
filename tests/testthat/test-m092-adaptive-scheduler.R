@@ -263,8 +263,8 @@ test_that(".AdaptMoveWeights applies floor", {
     pinnedWeights = NULL, warmupProgress = 1.0,
     wMin = 0.15  # generous floor for test clarity
   )
-  # Floor per move: 0.15 / 3 = 0.05
-  expect_gte(result[["c"]], 0.15 / n - 1e-10)
+  # Floor per move: wMin = 0.15
+  expect_gte(result[["c"]], 0.15 - 1e-10)
   expect_equal(sum(result), 1.0, tolerance = 1e-10)
 })
 
@@ -391,7 +391,8 @@ test_that("All move names in .kMoveTypes are valid moveWeights names", {
     "tree_length", "branch_lengths", "nni", "spr", "kPrime", "p",
     "rate_loss", "rate_log_sd", "rate_neo",
     "gibbs_spr", "gibbs_subtree_swap",
-    "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap"
+    "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
+    "block_gibbs_branch"
   )
   expect_true(all(names(MkPrime:::.kMoveTypes) %in% validInMcmc))
 })
