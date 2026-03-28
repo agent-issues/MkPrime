@@ -123,6 +123,19 @@ MkPrimeModel <- function(
         "{.arg betaScaleShape} and {.arg betaScaleRate} must be positive."
       )
     }
+    # M-100: het_singleton_site_prob() is a stub returning 0, so informative
+    # coding produces wrong ascertainment corrections under Het.
+    # Remove this guard when F81 singleton correction is implemented.
+    if (coding == "informative") {
+      cli::cli_abort(c(
+        "{.arg qHeterogeneity} cannot be combined with
+         {.code coding = \"informative\"} yet.",
+        i = "Singleton ascertainment correction under Q-heterogeneity
+             is not yet implemented.",
+        i = "Use {.code coding = \"variable\"} or disable
+             {.code qHeterogeneity}."
+      ))
+    }
   }
 
   # Derive treeLengthRate from expSteps if not provided

@@ -605,3 +605,24 @@ test_that("Het with nBetaCat = 1 produces finite likelihood", {
   ll <- eval_full_loglik_cpp(pts$dataPtr, pts$statePtr)
   expect_true(is.finite(ll))
 })
+
+
+# ===========================================================================
+# 14. M-100: Het + informative coding rejected at model construction time
+# ===========================================================================
+
+test_that("MkPrimeModel rejects qHeterogeneity + informative coding", {
+  expect_error(
+    MkPrimeModel(qHeterogeneity = TRUE, coding = "informative"),
+    "qHeterogeneity.*informative|informative.*qHeterogeneity"
+  )
+  # variable and none are fine with Het
+  expect_s3_class(
+    MkPrimeModel(qHeterogeneity = TRUE, coding = "variable"),
+    "MkPrimeModel"
+  )
+  expect_s3_class(
+    MkPrimeModel(qHeterogeneity = TRUE, coding = "none"),
+    "MkPrimeModel"
+  )
+})
