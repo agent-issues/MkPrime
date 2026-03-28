@@ -295,6 +295,71 @@ double get_state_log_lik(SEXP statePtr) {
 
 
 // ---------------------------------------------------------------------------
+// preorder_into  (M-109)
+//
+// Lightweight preorder traversal into pre-allocated output buffers.
+// Produces a valid (not necessarily canonical) preorder: parents before
+// children.  Iterating the output backwards gives a valid postorder for
+// Felsenstein pruning.  No Rcpp allocation — all output goes into caller-
+// owned int*/double* arrays.
+//
+// For committing a chosen topology to state (where canonical ordering
+// matters for subsequent in-place NNI), use TreeTools::preorder_weighted_impl
+// instead.
+// ---------------------------------------------------------------------------
+static int preorder_into(const IntegerVector& parent,
+                         const IntegerVector& child,
+                         const NumericVector& edgeLen,
+                         int nTip,
+                         int* outParent, int* outChild, double* outLen) {
+  const int nEdge = parent.size();
+  const int root = nTip + 1;
+  const int maxNode = 2 * nTip;
+
+  // Build child-edge linked list: head[node] → first edge, nxt[e] → next
+  std::vector<int> head(maxNode + 2, -1);
+  std::vector<int> nxt(nEdge, -1);
+  for (int e = nEdge - 1; e >= 0; --e) {
+    nxt[e] = head[parent[e]];
+    head[parent[e]] = e;
+  }
+
+  // DFS preorder from root
+  int pos = 0;
+  std::vector<int> stk;
+  stk.reserve(nEdge);
+
+  // Seed with root's children (reversed so first child is popped first)
+  int cnt = 0;
+  int rootEdges[4]; // root has ≤3 children (unrooted trifurcating)
+  for (int e = head[root]; e >= 0; e = nxt[e])
+    if (cnt < 4) rootEdges[cnt++] = e;
+  for (int i = cnt - 1; i >= 0; --i)
+    stk.push_back(rootEdges[i]);
+
+  while (!stk.empty()) {
+    int e = stk.back(); stk.pop_back();
+    outParent[pos] = parent[e];
+    outChild[pos]  = child[e];
+    outLen[pos]    = edgeLen[e];
+    ++pos;
+
+    int ch = child[e];
+    if (ch > nTip) {
+      // Internal node: push children in reverse linked-list order
+      int nc = 0;
+      int ce[3]; // binary tree: ≤2 children per internal node
+      for (int x = head[ch]; x >= 0; x = nxt[x])
+        if (nc < 3) ce[nc++] = x;
+      for (int i = nc - 1; i >= 0; --i)
+        stk.push_back(ce[i]);
+    }
+  }
+  return pos;
+}
+
+
+// ---------------------------------------------------------------------------
 // compute_full_loglik / compute_full_loglik_at  (M-083)
 //
 // Pure C++ helpers for evaluating the total log-likelihood from within
@@ -607,21 +672,19 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
     rnd -= ws[ci];
   }
 
-  // 10. Apply chosen SPR
+  // 10. Apply chosen SPR: modify state in-place, canonical reorder
   {
     const int rr      = cands[chosen];
     const double lReg = absLen[rr];
-    IntegerVector np  = clone(state->parent);
-    IntegerVector nc  = clone(state->child);
-    NumericVector na  = clone(absLen);
-    const int b = nc[rr];
+    const int b = state->child[rr];
 
-    nc[parentRow] = sibNode;  na[parentRow] = lMerge;
-    nc[rr]        = u;        na[rr]        = 0.5 * lReg;
-    np[sibRow]    = u;        nc[sibRow]    = b;
-    na[sibRow]    = 0.5 * lReg;
+    state->child[parentRow]  = sibNode;  absLen[parentRow] = lMerge;
+    state->child[rr]         = u;        absLen[rr]        = 0.5 * lReg;
+    state->parent[sibRow]    = u;        state->child[sibRow] = b;
+    absLen[sibRow]           = 0.5 * lReg;
 
-    auto po = TreeTools::preorder_weighted_impl(np, nc, na);
+    auto po = TreeTools::preorder_weighted_impl(
+        state->parent, state->child, absLen);
     IntegerMatrix ordEdge = po.first;
     NumericVector ordAbs  = po.second;
     for (int k = 0; k < nEdge; ++k) {
@@ -638,7 +701,7 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
 }
 
 
-// Old full-evaluation fallback (Q-het or validation)
+// Old full-evaluation fallback (Q-het or validation), M-109 in-place
 static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta) {
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
@@ -696,22 +759,41 @@ static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta) {
     absLen[i] = state->treeLength * state->relBrLengths[i];
   const double lMerge = absLen[parentRow] + absLen[sibRow];
 
+  // Working copies: cloned ONCE, reused for all candidates
+  IntegerVector workPar = clone(state->parent);
+  IntegerVector workCh  = clone(state->child);
+  // Save original values for the 3 modified rows
+  const int origPar_sibRow = workPar[sibRow];
+  const int origCh_parentRow = workCh[parentRow];
+  const int origCh_sibRow = workCh[sibRow];
+  const double origAbs_parentRow = absLen[parentRow];
+  const double origAbs_sibRow = absLen[sibRow];
+
+  // Pre-allocate output buffers for preorder_into
+  IntegerVector ordPar(nEdge), ordCh(nEdge);
+  NumericVector ordAbs(nEdge);
+
   std::vector<double> candLL(nCand);
   for (int ci = 0; ci < nCand; ++ci) {
     const int rr      = cands[ci];
     const double lReg = absLen[rr];
-    IntegerVector np = clone(state->parent);
-    IntegerVector nc = clone(state->child);
-    NumericVector na = clone(absLen);
-    const int b = nc[rr];
-    nc[parentRow] = sibNode;  na[parentRow] = lMerge;
-    nc[rr]        = u;        na[rr]        = 0.5 * lReg;
-    np[sibRow]    = u;        nc[sibRow]    = b;
-    na[sibRow]    = 0.5 * lReg;
-    auto po = TreeTools::preorder_weighted_impl(np, nc, na);
-    IntegerVector op = po.first(_, 0);
-    IntegerVector oc = po.first(_, 1);
-    candLL[ci] = compute_full_loglik_at(*data, *state, op, oc, po.second);
+    const int bNode   = workCh[rr];  // original child of regraft edge
+
+    // Apply SPR in-place
+    workCh[parentRow] = sibNode;   absLen[parentRow] = lMerge;
+    workCh[rr]        = u;         absLen[rr]        = 0.5 * lReg;
+    workPar[sibRow]   = u;         workCh[sibRow]    = bNode;
+    absLen[sibRow]    = 0.5 * lReg;
+
+    preorder_into(workPar, workCh, absLen, nTip,
+                  INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
+    candLL[ci] = compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs);
+
+    // Restore
+    workCh[parentRow] = origCh_parentRow;  absLen[parentRow] = origAbs_parentRow;
+    workCh[rr]        = bNode;             absLen[rr]        = lReg;
+    workPar[sibRow]   = origPar_sibRow;    workCh[sibRow]    = origCh_sibRow;
+    absLen[sibRow]    = origAbs_sibRow;
   }
 
   const double llOrig = state->logLik;
@@ -734,24 +816,25 @@ static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta) {
     rnd -= ws[ci];
   }
 
+  // Apply chosen SPR: modify state in-place, canonical reorder
   {
     const int rr      = cands[chosen];
-    const double lReg = absLen[rr];
-    IntegerVector np  = clone(state->parent);
-    IntegerVector nc  = clone(state->child);
-    NumericVector na  = clone(absLen);
-    const int b = nc[rr];
-    nc[parentRow] = sibNode;  na[parentRow] = lMerge;
-    nc[rr]        = u;        na[rr]        = 0.5 * lReg;
-    np[sibRow]    = u;        nc[sibRow]    = b;
-    na[sibRow]    = 0.5 * lReg;
-    auto po = TreeTools::preorder_weighted_impl(np, nc, na);
+    const double lReg = absLen[rr];  // absLen already restored to original
+    const int bNode   = state->child[rr];
+
+    state->child[parentRow]  = sibNode;  absLen[parentRow] = lMerge;
+    state->child[rr]         = u;        absLen[rr]        = 0.5 * lReg;
+    state->parent[sibRow]    = u;        state->child[sibRow] = bNode;
+    absLen[sibRow]           = 0.5 * lReg;
+
+    auto po = TreeTools::preorder_weighted_impl(
+        state->parent, state->child, absLen);
     IntegerMatrix ordEdge = po.first;
-    NumericVector ordAbs  = po.second;
+    NumericVector ordAbsFinal = po.second;
     for (int k = 0; k < nEdge; ++k) {
       state->parent[k]       = ordEdge(k, 0);
       state->child[k]        = ordEdge(k, 1);
-      state->relBrLengths[k] = ordAbs[k] / state->treeLength;
+      state->relBrLengths[k] = ordAbsFinal[k] / state->treeLength;
     }
   }
 
@@ -762,13 +845,25 @@ static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta) {
 
 
 // ---------------------------------------------------------------------------
-// gibbs_subtree_swap_impl  (M-086)
+// gibbs_subtree_swap_impl  (M-086, M-109 in-place)
 //
 // GibbsSubtreeSwap: enumerate all valid subtree-swap partners for a randomly
 // chosen node, weight by exp(β × logLik), sample proportionally, apply.
 // Same Gibbs semantics and design choices as gibbs_spr_impl.
 // Branch lengths swap with their subtrees (Jacobian = 1); see M-084.
+//
+// M-109: In-place topology modification with save/restore.  Per-candidate
+// evaluation uses preorder_into() into shared buffers — no per-candidate
+// clone() or preorder_weighted_impl allocation.
 // ---------------------------------------------------------------------------
+
+// Local helper: find edge row where child[i] == node
+static int find_child_row_gibbs(const IntegerVector& child, int node) {
+  for (int i = 0; i < child.size(); ++i)
+    if (child[i] == node) return i;
+  return -1;
+}
+
 static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
                                     double beta) {
   const int nEdge = state->parent.size();
@@ -785,26 +880,58 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
   if (partners.empty()) return false;
   const int nPart = (int)partners.size();
 
-  // 3. Compute logLik for each candidate swap
+  // 3. Find rowA once
+  const int rowA = find_child_row_gibbs(state->child, nodeA);
+  if (rowA < 0) return false;
+
+  // Working copy of parent (cloned ONCE, reused for all candidates).
+  // child is unchanged in a subtree swap.
+  IntegerVector workPar = clone(state->parent);
+
+  // Build absolute edge lengths once
+  NumericVector absLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    absLen[i] = state->treeLength * state->relBrLengths[i];
+
+  // Pre-allocate output buffers for preorder_into (reused across candidates)
+  IntegerVector ordPar(nEdge), ordCh(nEdge);
+  NumericVector ordAbs(nEdge);
+
+  // Save originals for rowA
+  const int origParA = workPar[rowA];
+  const double origAbsA = absLen[rowA];
+
+  // 4. Evaluate each candidate swap using in-place modify → preorder → restore
   std::vector<double> candLL(nPart);
   for (int pi = 0; pi < nPart; ++pi) {
-    List sw = swap_subtrees_impl(clone(state->parent), clone(state->child),
-                                 nTip, state->treeLength,
-                                 clone(state->relBrLengths),
-                                 nodeA, partners[pi]);
-    if (as<double>(sw["logHastings"]) == R_NegInf) {
+    int rowB = find_child_row_gibbs(state->child, partners[pi]);
+    if (rowB < 0 || rowA == rowB) {
       candLL[pi] = R_NegInf;
       continue;
     }
-    IntegerVector sp = sw["parent"];
-    IntegerVector sc = sw["child"];
-    NumericVector sr = sw["rel_br_lengths"];
-    NumericVector sa(nEdge);
-    for (int k = 0; k < nEdge; ++k) sa[k] = state->treeLength * sr[k];
-    candLL[pi] = compute_full_loglik_at(*data, *state, sp, sc, sa);
+
+    int origParB = workPar[rowB];
+    double origAbsB = absLen[rowB];
+
+    // Apply swap in-place
+    workPar[rowA] = origParB;
+    workPar[rowB] = origParA;
+    absLen[rowA]  = origAbsB;
+    absLen[rowB]  = origAbsA;
+
+    // Reorder into shared buffers and evaluate
+    preorder_into(workPar, state->child, absLen, nTip,
+                  INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
+    candLL[pi] = compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs);
+
+    // Restore
+    workPar[rowA] = origParA;
+    workPar[rowB] = origParB;
+    absLen[rowA]  = origAbsA;
+    absLen[rowB]  = origAbsB;
   }
 
-  // 4. Sampling weights: exp(β × logLik), current state included
+  // 5. Sampling weights: exp(β × logLik), current state included
   const double llOrig = state->logLik;
   double maxLL = llOrig;
   for (int pi = 0; pi < nPart; ++pi)
@@ -818,7 +945,7 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
     sumW  += ws[pi];
   }
 
-  // 5. Sample: self-draw → no-op
+  // 6. Sample: self-draw → no-op
   double rnd = R::unif_rand() * sumW;
   if (rnd < wOrig) return false;
   rnd -= wOrig;
@@ -829,14 +956,30 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
   }
   if (!R_FINITE(candLL[chosen])) return false;
 
-  // 6. Apply chosen swap
-  List sw = swap_subtrees_impl(clone(state->parent), clone(state->child),
-                               nTip, state->treeLength,
-                               clone(state->relBrLengths),
-                               nodeA, partners[chosen]);
-  state->parent       = as<IntegerVector>(sw["parent"]);
-  state->child        = as<IntegerVector>(sw["child"]);
-  state->relBrLengths = as<NumericVector>(sw["rel_br_lengths"]);
+  // 7. Apply chosen swap: modify in-place then canonical reorder for state
+  {
+    int rowB = find_child_row_gibbs(state->child, partners[chosen]);
+    int swapParA = state->parent[rowB];
+    int swapParB = state->parent[rowA];
+    state->parent[rowA] = swapParA;
+    state->parent[rowB] = swapParB;
+    absLen[rowA] = state->treeLength * state->relBrLengths[rowB];
+    absLen[rowB] = state->treeLength * state->relBrLengths[rowA];
+    double tmpRel = state->relBrLengths[rowA];
+    state->relBrLengths[rowA] = state->relBrLengths[rowB];
+    state->relBrLengths[rowB] = tmpRel;
+
+    // Canonical reorder (needed for NNI in-place invariant)
+    auto po = TreeTools::preorder_weighted_impl(
+        state->parent, state->child, absLen);
+    IntegerMatrix ordEdge = po.first;
+    NumericVector ordAbsFinal = po.second;
+    for (int k = 0; k < nEdge; ++k) {
+      state->parent[k]       = ordEdge(k, 0);
+      state->child[k]        = ordEdge(k, 1);
+      state->relBrLengths[k] = ordAbsFinal[k] / state->treeLength;
+    }
+  }
 
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
@@ -1233,41 +1376,56 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
     }
   }
 
-  // 8. Candidate marginals: for each candidate SPR, evaluate at each bin
-  //    midpoint varying the branch fraction at the regraft point.
-  //    candLL[ci][b] stores the log-likelihood.
+  // 8. Candidate marginals: in-place topology + preorder_into (M-109)
   std::vector<std::vector<double>> candLL(nCand,
                                            std::vector<double>(nBins));
   std::vector<double> candMax(nCand, R_NegInf);
 
+  // Working copies: cloned ONCE, reused for all candidates
+  IntegerVector workPar = clone(state->parent);
+  IntegerVector workCh  = clone(state->child);
+  IntegerVector ordPar(nEdge), ordCh(nEdge);
+  NumericVector ordAbs(nEdge);
+
+  const int origPar_sibRow = workPar[sibRow];
+  const int origCh_parentRow = workCh[parentRow];
+  const int origCh_sibRow = workCh[sibRow];
+  const double origAbs_parentRow = absLen[parentRow];
+  const double origAbs_sibRow = absLen[sibRow];
+
   for (int ci = 0; ci < nCand; ++ci) {
     const int rr      = cands[ci];
     const double lReg = absLen[rr];
+    const int bNode   = workCh[rr];
 
-    // Construct SPR topology once (same as GibbsSPR)
-    IntegerVector np = clone(state->parent);
-    IntegerVector nc = clone(state->child);
-    const int b_node = nc[rr];
-    nc[parentRow] = sibNode;
-    nc[rr]        = u;
-    np[sibRow]    = u;
-    nc[sibRow]    = b_node;
+    // Apply SPR topology in-place (once per candidate)
+    workCh[parentRow] = sibNode;
+    workCh[rr]        = u;
+    workPar[sibRow]   = u;
+    workCh[sibRow]    = bNode;
+    absLen[parentRow] = lMerge;
 
-    // Evaluate at each bin midpoint
+    // Evaluate at each bin midpoint (only absLen changes per bin)
     for (int b = 0; b < nBins; ++b) {
-      NumericVector na = clone(absLen);
-      na[parentRow] = lMerge;
-      na[rr]        = bins.mids[b] * lReg;
-      na[sibRow]    = (1.0 - bins.mids[b]) * lReg;
+      absLen[rr]     = bins.mids[b] * lReg;
+      absLen[sibRow] = (1.0 - bins.mids[b]) * lReg;
 
-      auto po = TreeTools::preorder_weighted_impl(np, nc, na);
-      IntegerVector op = po.first(_, 0);
-      IntegerVector oc = po.first(_, 1);
+      preorder_into(workPar, workCh, absLen, nTip,
+                    INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
       candLL[ci][b] = compute_full_loglik_at(*data, *state,
-                                              op, oc, po.second);
+                                              ordPar, ordCh, ordAbs);
       if (R_FINITE(candLL[ci][b]) && candLL[ci][b] > candMax[ci])
         candMax[ci] = candLL[ci][b];
     }
+
+    // Restore
+    workCh[parentRow] = origCh_parentRow;
+    workCh[rr]        = bNode;
+    workPar[sibRow]   = origPar_sibRow;
+    workCh[sibRow]    = origCh_sibRow;
+    absLen[parentRow] = origAbs_parentRow;
+    absLen[rr]        = lReg;
+    absLen[sibRow]    = origAbs_sibRow;
   }
 
   // 9. Compute marginal weights with a single global offset for stability
@@ -1331,25 +1489,24 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
   if (fNew < 1e-8) fNew = 1e-8;
   if (fNew > 1.0 - 1e-8) fNew = 1.0 - 1e-8;
 
-  // 13. Construct final proposed topology with fNew
+  // 13. Construct final proposed topology with fNew using working copies
+  //     (state untouched until acceptance confirmed)
   const int rr      = cands[chosen];
   const double lReg = absLen[rr];
-  IntegerVector np  = clone(state->parent);
-  IntegerVector nc  = clone(state->child);
-  NumericVector na  = clone(absLen);
-  const int b_node  = nc[rr];
-  nc[parentRow] = sibNode;  na[parentRow] = lMerge;
-  nc[rr]        = u;        na[rr]        = fNew * lReg;
-  np[sibRow]    = u;        nc[sibRow]    = b_node;
-  na[sibRow]    = (1.0 - fNew) * lReg;
+  const int bNode   = workCh[rr];
 
-  auto po = TreeTools::preorder_weighted_impl(np, nc, na);
+  workCh[parentRow]  = sibNode;  absLen[parentRow] = lMerge;
+  workCh[rr]         = u;        absLen[rr]        = fNew * lReg;
+  workPar[sibRow]    = u;        workCh[sibRow]    = bNode;
+  absLen[sibRow]     = (1.0 - fNew) * lReg;
+
+  auto po = TreeTools::preorder_weighted_impl(workPar, workCh, absLen);
   IntegerMatrix ordEdge = po.first;
-  NumericVector ordAbs  = po.second;
+  NumericVector ordAbsFinal = po.second;
 
   IntegerVector op = ordEdge(_, 0);
   IntegerVector oc = ordEdge(_, 1);
-  double newLogLik = compute_full_loglik_at(*data, *state, op, oc, ordAbs);
+  double newLogLik = compute_full_loglik_at(*data, *state, op, oc, ordAbsFinal);
   if (!R_FINITE(newLogLik)) return false;
 
   // 14. Hastings ratio (branch-fraction component only; topology cancels)
@@ -1369,7 +1526,7 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
   // 15. Prior at proposed state
   NumericVector propRelBr(nEdge);
   for (int k = 0; k < nEdge; ++k)
-    propRelBr[k] = ordAbs[k] / state->treeLength;
+    propRelBr[k] = ordAbsFinal[k] / state->treeLength;
 
   double newLogPrior = cpp_log_prior(
     *data, state->treeLength, propRelBr,
@@ -1408,12 +1565,7 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
 // Cost: O(N × B) likelihood evaluations.
 // ---------------------------------------------------------------------------
 
-// Local helper: find edge row where child[i] == node (mirrors tree_moves.cpp)
-static int find_child_row_local(const IntegerVector& child, int node) {
-  for (int i = 0; i < child.size(); ++i)
-    if (child[i] == node) return i;
-  return -1;
-}
+// (Uses find_child_row_gibbs defined above)
 
 static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
                                         double beta) {
@@ -1435,7 +1587,7 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
   const int nPart = (int)partners.size();
 
   // 3. Find rowA
-  const int rowA = find_child_row_local(state->child, nodeA);
+  const int rowA = find_child_row_gibbs(state->child, nodeA);
   if (rowA < 0) return false;
 
   // 4. Absolute edge lengths
@@ -1443,39 +1595,51 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
   for (int i = 0; i < nEdge; ++i)
     absLen[i] = state->treeLength * state->relBrLengths[i];
 
-  // 5. Candidate marginals: for each partner B_i, construct swapped
-  //    topology and evaluate at each bin midpoint
+  // 5. Candidate marginals: in-place topology + preorder_into (M-109)
   std::vector<std::vector<double>> candLL(nPart,
                                            std::vector<double>(nBins));
   std::vector<double> candMax(nPart, R_NegInf);
   std::vector<int> rowBs(nPart);       // edge row for each partner
   std::vector<double> totals(nPart);   // brA + brB_i
 
+  // Working copy of parent (cloned ONCE); child unchanged in subtree swap
+  IntegerVector workPar = clone(state->parent);
+  IntegerVector ordPar(nEdge), ordCh(nEdge);
+  NumericVector ordAbs(nEdge);
+
+  const int origParA = workPar[rowA];
+  const double origAbsA = absLen[rowA];
+
   for (int pi = 0; pi < nPart; ++pi) {
-    int rowB = find_child_row_local(state->child, partners[pi]);
+    int rowB = find_child_row_gibbs(state->child, partners[pi]);
     if (rowB < 0) { candMax[pi] = R_NegInf; rowBs[pi] = -1; continue; }
     rowBs[pi]  = rowB;
     totals[pi] = absLen[rowA] + absLen[rowB];
 
-    // Construct swapped topology: swap parent assignments
-    IntegerVector np = clone(state->parent);
-    np[rowA] = state->parent[rowB];
-    np[rowB] = state->parent[rowA];
-    // child vector unchanged
+    int origParB = workPar[rowB];
+    double origAbsB = absLen[rowB];
+
+    // Apply swap in-place
+    workPar[rowA] = origParB;
+    workPar[rowB] = origParA;
 
     for (int b = 0; b < nBins; ++b) {
-      NumericVector na = clone(absLen);
-      na[rowA] = bins.mids[b] * totals[pi];
-      na[rowB] = (1.0 - bins.mids[b]) * totals[pi];
+      absLen[rowA] = bins.mids[b] * totals[pi];
+      absLen[rowB] = (1.0 - bins.mids[b]) * totals[pi];
 
-      auto po = TreeTools::preorder_weighted_impl(np, state->child, na);
-      IntegerVector op = po.first(_, 0);
-      IntegerVector oc = po.first(_, 1);
+      preorder_into(workPar, state->child, absLen, nTip,
+                    INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
       candLL[pi][b] = compute_full_loglik_at(*data, *state,
-                                              op, oc, po.second);
+                                              ordPar, ordCh, ordAbs);
       if (R_FINITE(candLL[pi][b]) && candLL[pi][b] > candMax[pi])
         candMax[pi] = candLL[pi][b];
     }
+
+    // Restore
+    workPar[rowA] = origParA;
+    workPar[rowB] = origParB;
+    absLen[rowA]  = origAbsA;
+    absLen[rowB]  = origAbsB;
   }
 
   // 6. Compute marginal weights with global offset
@@ -1531,22 +1695,20 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
   if (fNew < 1e-8) fNew = 1e-8;
   if (fNew > 1.0 - 1e-8) fNew = 1.0 - 1e-8;
 
-  // 10. Construct final proposed topology at fNew
+  // 10. Construct final proposed topology at fNew (using working copy)
   const int rowB   = rowBs[chosen];
   const double tot = totals[chosen];
-  IntegerVector np = clone(state->parent);
-  np[rowA] = state->parent[rowB];
-  np[rowB] = state->parent[rowA];
-  NumericVector na = clone(absLen);
-  na[rowA] = fNew * tot;
-  na[rowB] = (1.0 - fNew) * tot;
+  workPar[rowA] = state->parent[rowB];
+  workPar[rowB] = state->parent[rowA];
+  absLen[rowA] = fNew * tot;
+  absLen[rowB] = (1.0 - fNew) * tot;
 
-  auto po = TreeTools::preorder_weighted_impl(np, state->child, na);
+  auto po = TreeTools::preorder_weighted_impl(workPar, state->child, absLen);
   IntegerMatrix ordEdge = po.first;
-  NumericVector ordAbs  = po.second;
+  NumericVector ordAbsFinal = po.second;
   IntegerVector op = ordEdge(_, 0);
   IntegerVector oc = ordEdge(_, 1);
-  double newLogLik = compute_full_loglik_at(*data, *state, op, oc, ordAbs);
+  double newLogLik = compute_full_loglik_at(*data, *state, op, oc, ordAbsFinal);
   if (!R_FINITE(newLogLik)) return false;
 
   // 11. Hastings ratio
@@ -1568,7 +1730,7 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
   // 12. Prior at proposed state
   NumericVector propRelBr(nEdge);
   for (int k = 0; k < nEdge; ++k)
-    propRelBr[k] = ordAbs[k] / state->treeLength;
+    propRelBr[k] = ordAbsFinal[k] / state->treeLength;
 
   double newLogPrior = cpp_log_prior(
     *data, state->treeLength, propRelBr,
