@@ -11,6 +11,7 @@
 #include "mcmc_state.h"
 #include <TreeTools/renumber_tree.h>
 #include <cmath>
+#include <chrono>
 
 using namespace Rcpp;
 
@@ -1501,6 +1502,8 @@ List run_mcmc_batch_cpp(
   // Accept/propose counters (nChains x nMoves)
   IntegerMatrix acceptCounts(nChains, nMoves);
   IntegerMatrix proposeCounts(nChains, nMoves);
+  // Per-move wall-time tracking for adaptive scheduler (M-092)
+  NumericMatrix moveTimeNs(nChains, nMoves);
   int nSwapPairs = std::max(0, nChains - 1);
   IntegerVector swapAccept(nSwapPairs, 0);
   IntegerVector swapPropose(nSwapPairs, 0);
@@ -1537,6 +1540,7 @@ List run_mcmc_batch_cpp(
         charIdx = transIdxCpp[r];
       }
 
+      auto t0 = std::chrono::steady_clock::now();
       bool accepted = do_move_impl(
         data, states[ch],
         moveType, charIdx,
@@ -1545,6 +1549,10 @@ List run_mcmc_batch_cpp(
         chainIntWalkWins[ch],
         betas[ch]
       );
+      auto t1 = std::chrono::steady_clock::now();
+      moveTimeNs(ch, moveIdx) +=
+        (double)std::chrono::duration_cast<std::chrono::nanoseconds>(
+          t1 - t0).count();
       if (accepted) acceptCounts(ch, moveIdx)++;
     }
 
@@ -1600,6 +1608,7 @@ List run_mcmc_batch_cpp(
   return List::create(
     _["accept_counts"]  = acceptCounts,
     _["propose_counts"] = proposeCounts,
+    _["move_time_ns"]   = moveTimeNs,
     _["swap_accept"]    = swapAccept,
     _["swap_propose"]   = swapPropose,
     _["scalar_samples"] = scalarMat,

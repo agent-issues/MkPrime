@@ -150,8 +150,18 @@ RunMkPrime <- function(data, tree,
   # Constant inputs for the C++ batch function
   batchSize   <- 200L
   moveWeights <- vapply(moves, `[[`, numeric(1), "weight")
+  moveWeights <- moveWeights / sum(moveWeights)  # normalize to probabilities
+  moveNames   <- vapply(moves, `[[`, character(1), "name")
+  names(moveWeights) <- moveNames
   moveTypeCodes <- vapply(moves, function(m) .kMoveTypes[[m$name]], integer(1L))
   transIdx0 <- if (nTrans > 0L) transIdx - 1L else integer(0L)
+
+  # Adaptive scheduler: resolve pinned weights (M-092)
+  pinnedWeights <- .ResolvePinnedWeights(mcmc$moveWeights, moveNames)
+  if (!is.null(pinnedWeights)) {
+    moveWeights <- .NormalizeMoveWeights(moveWeights, pinnedWeights)
+  }
+  weightsLogged <- FALSE
 
   # Initialize C++ data pointer (created once)
   mcmcData <- .InitMcmcData(mkd, model)
@@ -214,12 +224,14 @@ RunMkPrime <- function(data, tree,
       )
       if (run == 1L) r1Result <- result
 
-      # Accumulate accept/propose counts (cumulative for adaptation)
+      # Accumulate accept/propose counts and timing (cumulative for adaptation)
       for (ch in seq_len(mcmc$nChains)) {
         r$chain_accept[[ch]]  <- r$chain_accept[[ch]]  +
           as.integer(result$accept_counts[ch, ])
         r$chain_propose[[ch]] <- r$chain_propose[[ch]] +
           as.integer(result$propose_counts[ch, ])
+        r$chain_time_ns[[ch]] <- r$chain_time_ns[[ch]] +
+          as.numeric(result$move_time_ns[ch, ])
       }
       if (mcmc$nChains > 1L) {
         r$swap_accept  <- r$swap_accept  + result$swap_accept
@@ -270,7 +282,7 @@ RunMkPrime <- function(data, tree,
         }
       }
 
-      # Adapt tuning during warmup (at every batch boundary within warmup)
+      # Adapt tuning and move weights during warmup
       if (batchEnd <= mcmc$warmup) {
         for (ch in seq_len(mcmc$nChains)) {
           r$chain_tuning[[ch]] <- .AdaptTuning(
@@ -281,9 +293,27 @@ RunMkPrime <- function(data, tree,
         if (mcmc$nChains > 1L)
           r$betas <- .AdaptTemperatures(r$betas, r$swap_accept,
                                         r$swap_propose)
+        # Adaptive move weight scheduling (M-092): use run 1 cold chain
+        if (run == 1L) {
+          moveWeights <- .AdaptMoveWeights(
+            moveWeights, r$chain_accept[[1L]], r$chain_propose[[1L]],
+            r$chain_time_ns[[1L]], moveNames, pinnedWeights,
+            warmupProgress = batchEnd / mcmc$warmup
+          )
+        }
       }
 
       runs[[run]] <- r
+    }
+
+    # Log final adapted weights when warmup ends (M-092)
+    if (batchEnd > mcmc$warmup && !weightsLogged) {
+      if (isStreaming)
+        .LogMoveWeights(moveWeights, moveNames, logFilePaths)
+      cli::cli_alert_info(
+        "Move weights frozen: {(.FormatMoveWeights(moveWeights, moveNames))}"
+      )
+      weightsLogged <- TRUE
     }
 
     # Streaming: checkpoint immediately after any buffer flush so the
@@ -300,7 +330,8 @@ RunMkPrime <- function(data, tree,
           }
           runs[[run]]$flushed <- FALSE
         }
-        .SaveCheckpoint(runs, mcmc, batchEnd, paramNames, mcmc$checkpointFile)
+        .SaveCheckpoint(runs, mcmc, batchEnd, paramNames,
+                        mcmc$checkpointFile, moveWeights = moveWeights)
       }
     }
 
@@ -333,7 +364,8 @@ RunMkPrime <- function(data, tree,
     # Stopping rule: cancel file (checked every batch for responsiveness)
     if (!is.null(mcmc$cancelFile) && file.exists(mcmc$cancelFile)) {
       runs <- .FlushAndSaveCheckpoint(runs, nRuns, mcmc, batchEnd,
-                                      paramNames, isStreaming, logFilePaths)
+                                      paramNames, isStreaming, logFilePaths,
+                                      moveWeights = moveWeights)
       stopReason <- "cancelled"
       actualIter <- batchEnd
       break
@@ -345,7 +377,8 @@ RunMkPrime <- function(data, tree,
 
     if (doCheck) {
       runs <- .FlushAndSaveCheckpoint(runs, nRuns, mcmc, batchEnd,
-                                      paramNames, isStreaming, logFilePaths)
+                                      paramNames, isStreaming, logFilePaths,
+                                      moveWeights = moveWeights)
 
       if (nRuns >= 2L) {
         diagCheck <- .CheckConvergence(runs, paramNames, mcmc, isStreaming)
@@ -397,10 +430,13 @@ RunMkPrime <- function(data, tree,
 
   moveNames <- vapply(moves, `[[`, character(1), "name")
   chainAccept <- chainPropose <- chainTuning <- vector("list", nChains)
+  chainTimeNs <- vector("list", nChains)
   for (ch in seq_len(nChains)) {
     chainAccept[[ch]] <- integer(length(moves))
     chainPropose[[ch]] <- integer(length(moves))
     names(chainAccept[[ch]]) <- names(chainPropose[[ch]]) <- moveNames
+    chainTimeNs[[ch]] <- numeric(length(moves))
+    names(chainTimeNs[[ch]]) <- moveNames
     chainTuning[[ch]] <- mcmc$tuning
   }
 
@@ -415,6 +451,7 @@ RunMkPrime <- function(data, tree,
     betas = betas,
     chain_accept = chainAccept,
     chain_propose = chainPropose,
+    chain_time_ns = chainTimeNs,
     chain_tuning = chainTuning,
     swap_accept = swapAccept,
     swap_propose = swapPropose
@@ -628,7 +665,8 @@ RunMkPrime <- function(data, tree,
 #' log file.  The large flush_buf and conv_window matrices are excluded.
 #'
 #' @keywords internal
-.SaveCheckpoint <- function(runs, mcmc, iter, paramNames, file) {
+.SaveCheckpoint <- function(runs, mcmc, iter, paramNames, file,
+                            moveWeights = NULL) {
   isStreaming <- !is.null(mcmc$logFile)
 
   serialRuns <- lapply(runs, function(r) {
@@ -668,6 +706,7 @@ RunMkPrime <- function(data, tree,
     payload$logFilePaths <- .LogFilePaths(mcmc$logFile, length(runs))
     payload$paramNames   <- paramNames
   }
+  if (!is.null(moveWeights)) payload$moveWeights <- moveWeights
   saveRDS(payload, file)
 }
 
@@ -677,7 +716,8 @@ RunMkPrime <- function(data, tree,
 #
 # @keywords internal
 .FlushAndSaveCheckpoint <- function(runs, nRuns, mcmc, batchEnd,
-                                    paramNames, isStreaming, logFilePaths) {
+                                    paramNames, isStreaming, logFilePaths,
+                                    moveWeights = NULL) {
   if (!is.null(mcmc$checkpointFile)) {
     if (isStreaming) {
       for (run in seq_len(nRuns)) {
@@ -688,7 +728,8 @@ RunMkPrime <- function(data, tree,
         }
       }
     }
-    .SaveCheckpoint(runs, mcmc, batchEnd, paramNames, mcmc$checkpointFile)
+    .SaveCheckpoint(runs, mcmc, batchEnd, paramNames, mcmc$checkpointFile,
+                    moveWeights = moveWeights)
   }
   runs
 }
@@ -813,8 +854,24 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   startTime <- proc.time()["elapsed"]
   hasProgressFn <- !is.null(mcmc$progressFn) && !is.null(mcmc$plotEvery)
 
-  # Pre-compute move weight vector (constant across all iterations).
-  moveWeights <- vapply(moves, `[[`, numeric(1), "weight")
+  # Restore adapted move weights from checkpoint if available (M-092),
+  # otherwise start fresh from .BuildMoves() defaults.
+  moveNames <- vapply(moves, `[[`, character(1), "name")
+  if (!is.null(checkpoint$moveWeights) &&
+      length(checkpoint$moveWeights) == length(moves) &&
+      identical(names(checkpoint$moveWeights), moveNames)) {
+    moveWeights <- checkpoint$moveWeights
+  } else {
+    moveWeights <- vapply(moves, `[[`, numeric(1), "weight")
+    moveWeights <- moveWeights / sum(moveWeights)
+    names(moveWeights) <- moveNames
+    pinnedWeightsInit <- .ResolvePinnedWeights(mcmc$moveWeights, moveNames)
+    if (!is.null(pinnedWeightsInit)) {
+      moveWeights <- .NormalizeMoveWeights(moveWeights, pinnedWeightsInit)
+    }
+  }
+  pinnedWeights <- .ResolvePinnedWeights(mcmc$moveWeights, moveNames)
+  weightsLogged <- startIter > mcmc$warmup
   tipLabels <- tree$tip.label
   transIdx <- which(mkd$type == "transformational")
   mcmcData <- .InitMcmcData(mkd, model)
@@ -840,10 +897,18 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 
   # Populate per-partition log-likelihood cache (M-064) and pre-allocate
   # flat CL workspace (M-063) — must run after chainStates are rebuilt.
+  # Also ensure chain_time_ns exists (may be absent in older checkpoints).
   for (run in seq_len(nRuns)) {
     for (ch in seq_len(mcmc$nChains)) {
       fill_partition_cache(mcmcData, runs[[run]]$chainStates[[ch]])
       allocate_cl_workspace(mcmcData, runs[[run]]$chainStates[[ch]])
+    }
+    if (is.null(runs[[run]]$chain_time_ns)) {
+      runs[[run]]$chain_time_ns <- vector("list", mcmc$nChains)
+      for (ch in seq_len(mcmc$nChains)) {
+        runs[[run]]$chain_time_ns[[ch]] <- numeric(length(moves))
+        names(runs[[run]]$chain_time_ns[[ch]]) <- moveNames
+      }
     }
   }
 
@@ -897,11 +962,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
         hasNeo, nEdge
       )
 
+      # Accumulate accept/propose counts and timing (M-092)
       for (ch in seq_len(mcmc$nChains)) {
         r$chain_accept[[ch]]  <- r$chain_accept[[ch]]  +
           as.integer(result$accept_counts[ch, ])
         r$chain_propose[[ch]] <- r$chain_propose[[ch]] +
           as.integer(result$propose_counts[ch, ])
+        r$chain_time_ns[[ch]] <- r$chain_time_ns[[ch]] +
+          as.numeric(result$move_time_ns[ch, ])
       }
       if (mcmc$nChains > 1L) {
         r$swap_accept  <- r$swap_accept  + result$swap_accept
@@ -945,7 +1013,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
         }
       }
 
-      # Adapt tuning if still in warmup
+      # Adapt tuning and move weights during warmup
       if (batchEnd <= mcmc$warmup) {
         for (ch in seq_len(mcmc$nChains)) {
           r$chain_tuning[[ch]] <- .AdaptTuning(
@@ -956,9 +1024,27 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
         if (mcmc$nChains > 1L)
           r$betas <- .AdaptTemperatures(r$betas, r$swap_accept,
                                         r$swap_propose)
+        # Adaptive move weight scheduling (M-092): use run 1 cold chain
+        if (run == 1L) {
+          moveWeights <- .AdaptMoveWeights(
+            moveWeights, r$chain_accept[[1L]], r$chain_propose[[1L]],
+            r$chain_time_ns[[1L]], moveNames, pinnedWeights,
+            warmupProgress = batchEnd / mcmc$warmup
+          )
+        }
       }
 
       runs[[run]] <- r
+    }
+
+    # Log final adapted weights when warmup ends (M-092)
+    if (batchEnd > mcmc$warmup && !weightsLogged) {
+      if (isStreaming)
+        .LogMoveWeights(moveWeights, moveNames, logFilePaths)
+      cli::cli_alert_info(
+        "Move weights frozen: {(.FormatMoveWeights(moveWeights, moveNames))}"
+      )
+      weightsLogged <- TRUE
     }
 
     # Streaming: checkpoint immediately after any buffer flush
@@ -973,7 +1059,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
           }
           runs[[run]]$flushed <- FALSE
         }
-        .SaveCheckpoint(runs, mcmc, batchEnd, paramNames, mcmc$checkpointFile)
+        .SaveCheckpoint(runs, mcmc, batchEnd, paramNames,
+                        mcmc$checkpointFile, moveWeights = moveWeights)
       }
     }
 
@@ -999,7 +1086,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     # Stopping rule: cancel file (checked every batch for responsiveness)
     if (!is.null(mcmc$cancelFile) && file.exists(mcmc$cancelFile)) {
       runs <- .FlushAndSaveCheckpoint(runs, nRuns, mcmc, batchEnd,
-                                      paramNames, isStreaming, logFilePaths)
+                                      paramNames, isStreaming, logFilePaths,
+                                      moveWeights = moveWeights)
       stopReason <- "cancelled"
       actualIter <- batchEnd
       break
@@ -1010,7 +1098,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 
     if (doCheck) {
       runs <- .FlushAndSaveCheckpoint(runs, nRuns, mcmc, batchEnd,
-                                      paramNames, isStreaming, logFilePaths)
+                                      paramNames, isStreaming, logFilePaths,
+                                      moveWeights = moveWeights)
 
       if (nRuns >= 2L) {
         diagCheck <- .CheckConvergence(runs, paramNames, mcmc, isStreaming)
@@ -1572,6 +1661,177 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     ),
     class = "phylo"
   )
+}
+
+
+# --- Adaptive move weight scheduler (M-092) ---
+
+#' Resolve user-pinned weights for moves in the current pool.
+#'
+#' Returns a named numeric vector with entries only for moves present in
+#' the pool, or NULL if no pinned weights apply.
+#' @keywords internal
+.ResolvePinnedWeights <- function(userMoveWeights, moveNames) {
+  if (is.null(userMoveWeights)) return(NULL)
+  keep <- intersect(names(userMoveWeights), moveNames)
+  if (length(keep) == 0L) return(NULL)
+  dropped <- setdiff(names(userMoveWeights), moveNames)
+  if (length(dropped) > 0L) {
+    cli::cli_warn(
+      "Pinned move weight{?s} ignored (not in move pool): {.val {dropped}}."
+    )
+  }
+  userMoveWeights[keep]
+}
+
+
+#' Apply pinned weights and renormalize free moves.
+#' @keywords internal
+.NormalizeMoveWeights <- function(weights, pinnedWeights) {
+  moveNames <- names(weights)
+  pinnedIdx <- match(names(pinnedWeights), moveNames)
+  pinnedIdx <- pinnedIdx[!is.na(pinnedIdx)]
+  if (length(pinnedIdx) == 0L) return(weights / sum(weights))
+
+  budget <- 1.0 - sum(pinnedWeights)
+  freeIdx <- setdiff(seq_along(weights), pinnedIdx)
+  if (length(freeIdx) == 0L || budget < 1e-12) {
+    # All pinned: normalize pinned to sum to 1
+    weights[pinnedIdx] <- pinnedWeights / sum(pinnedWeights)
+    if (length(freeIdx) > 0L) weights[freeIdx] <- 0
+    return(weights)
+  }
+  freeSum <- sum(weights[freeIdx])
+  if (freeSum > 0) {
+    weights[freeIdx] <- weights[freeIdx] / freeSum * budget
+  } else {
+    weights[freeIdx] <- budget / length(freeIdx)
+  }
+  weights[pinnedIdx] <- pinnedWeights[names(weights)[pinnedIdx]]
+  weights
+}
+
+
+#' Adapt move weights based on per-move acceptance rates and wall-time.
+#'
+#' Uses softmax reweighting with temperature annealing. Pinned moves
+#' are excluded from adaptation. Moves with fewer than `minProposals`
+#' proposals keep their current weight.
+#'
+#' @param currentWeights Numeric vector (current move probabilities,
+#'   sums to 1).
+#' @param acceptCount Named integer vector (cold chain, cumulative).
+#' @param proposeCount Named integer vector (cold chain, cumulative).
+#' @param moveTimeNs Named numeric vector (cold chain, cumulative ns).
+#' @param moveNames Character vector of move names.
+#' @param pinnedWeights Named numeric vector or NULL.
+#' @param warmupProgress Fraction of warmup completed (0 to 1).
+#' @param tStart Starting softmax temperature (default 2.0).
+#' @param tEnd Ending softmax temperature (default 0.5).
+#' @param wMin Floor per free move as fraction of 1 (default 0.05).
+#' @param minProposals Minimum proposals before adapting (default 20).
+#'
+#' @return Updated weight vector (sums to 1).
+#' @keywords internal
+.AdaptMoveWeights <- function(currentWeights, acceptCount, proposeCount,
+                               moveTimeNs, moveNames, pinnedWeights,
+                               warmupProgress, tStart = 2.0, tEnd = 0.5,
+                               wMin = 0.05, minProposals = 20L) {
+  nMoves <- length(currentWeights)
+  stopifnot(length(acceptCount) == nMoves,
+            length(proposeCount) == nMoves,
+            length(moveTimeNs) == nMoves)
+
+  # Identify pinned and free moves
+  pinnedIdx <- integer(0)
+  if (!is.null(pinnedWeights)) {
+    pinnedIdx <- match(names(pinnedWeights), moveNames)
+    pinnedIdx <- pinnedIdx[!is.na(pinnedIdx)]
+  }
+  freeIdx <- setdiff(seq_len(nMoves), pinnedIdx)
+  if (length(freeIdx) == 0L) return(currentWeights)
+
+  budget <- if (length(pinnedIdx) > 0L) {
+    1.0 - sum(pinnedWeights)
+  } else {
+    1.0
+  }
+  if (budget < 1e-12) return(currentWeights)
+
+  # Identify scoreable free moves (enough proposals)
+  scoreableIdx <- freeIdx[proposeCount[freeIdx] >= minProposals]
+
+  if (length(scoreableIdx) == 0L) return(currentWeights)
+
+  # Compute scores: acceptances per second. Use log-scores directly to
+  # avoid overflow when accept_rate/cost_s spans many orders of magnitude.
+  acceptRate <- acceptCount[scoreableIdx] / proposeCount[scoreableIdx]
+  meanCostS <- moveTimeNs[scoreableIdx] /
+    (proposeCount[scoreableIdx] * 1e9)
+  meanCostS <- pmax(meanCostS, 1e-9)
+  logScores <- log(pmax(acceptRate, 1e-12)) - log(meanCostS)
+
+  # Softmax with annealed temperature
+  temp <- tStart + (tEnd - tStart) * min(1, warmupProgress)
+  scaledLogScores <- logScores / temp
+  # Overflow guard
+  scaledLogScores <- scaledLogScores - max(scaledLogScores)
+  rawWeights <- exp(scaledLogScores)
+
+  # Allocate budget: scoreable get softmax, non-scoreable keep current
+  nonScoreableIdx <- setdiff(freeIdx, scoreableIdx)
+  nonScoreableShare <- sum(currentWeights[nonScoreableIdx])
+
+  scoreableBudget <- budget - nonScoreableShare
+  if (scoreableBudget < 1e-12) return(currentWeights)
+
+  softmaxWeights <- rawWeights / sum(rawWeights) * scoreableBudget
+
+  # Apply floor with iterative enforcement
+  nFree <- length(freeIdx)
+  floorVal <- wMin / nFree
+  nScoreable <- length(scoreableIdx)
+  floored <- softmaxWeights < floorVal
+  if (any(floored) && !all(floored)) {
+    nFloored <- sum(floored)
+    floorTotal <- nFloored * floorVal
+    freeTotal <- scoreableBudget - floorTotal
+    if (freeTotal > 0) {
+      softmaxWeights[floored] <- floorVal
+      softmaxWeights[!floored] <- softmaxWeights[!floored] /
+        sum(softmaxWeights[!floored]) * freeTotal
+    }
+  }
+
+  newWeights <- currentWeights
+  newWeights[scoreableIdx] <- softmaxWeights
+  # Enforce pinned values
+  if (length(pinnedIdx) > 0L) {
+    for (nm in names(pinnedWeights)) {
+      idx <- match(nm, moveNames)
+      if (!is.na(idx)) newWeights[idx] <- pinnedWeights[nm]
+    }
+  }
+  newWeights
+}
+
+
+#' Format move weights as a compact string for display.
+#' @keywords internal
+.FormatMoveWeights <- function(weights, moveNames) {
+  pct <- sprintf("%.1f%%", weights * 100)
+  paste(paste0(moveNames, "=", pct), collapse = " ")
+}
+
+
+#' Write adapted move weights as a comment in the log file.
+#' @keywords internal
+.LogMoveWeights <- function(weights, moveNames, logFilePaths) {
+  line <- paste0("# Adapted move weights: ",
+                 .FormatMoveWeights(weights, moveNames))
+  for (p in logFilePaths) {
+    cat(line, "\n", file = p, append = TRUE, sep = "")
+  }
 }
 
 

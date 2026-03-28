@@ -81,6 +81,16 @@
 #'   and `weightedSubtreeSwap`. Ignored when all weighted moves are
 #'   disabled. Higher values increase accuracy of the Gibbs approximation
 #'   but cost more likelihood evaluations.
+#' @param moveWeights Named numeric vector of user-pinned move weights,
+#'   or `NULL` (default). When non-NULL, each named entry fixes the
+#'   probability of proposing that move type. Names must match valid move
+#'   names (e.g., `"nni"`, `"spr"`, `"gibbs_spr"`, `"tree_length"`, etc.).
+#'   Values must be positive and sum to at most 1. Remaining probability
+#'   is distributed among un-pinned moves by the adaptive scheduler during
+#'   warmup. Example: `moveWeights = c(nni = 0.3, spr = 0.2)` fixes NNI
+#'   at 30% and SPR at 20%, with the remaining 50% allocated adaptively
+#'   among other moves. To disable adaptive scheduling entirely, pin all
+#'   moves (sum to 1). See section **Adaptive move scheduling** below.
 #' @param tuning Named list of initial tuning parameters for each move
 #'   type. See Details.
 #'
@@ -115,6 +125,17 @@
 #' O(B) or O(N * B) likelihood evaluations. These are off by default
 #' and recommended only when standard + Gibbs moves show poor mixing.
 #'
+#' ## Adaptive move scheduling
+#'
+#' During warmup, the MCMC engine tracks per-move acceptance rates and
+#' wall-clock cost, then reweights the move pool every 200 iterations
+#' to favor moves with high "acceptances per second" (a proxy for
+#' ESS/wall-time efficiency). The reweighting uses softmax with a
+#' temperature that anneals from 2.0 (near-uniform) to 0.5 (more
+#' peaked) over warmup. At the end of warmup, weights are frozen to
+#' preserve detailed balance. Use `moveWeights` to pin specific move
+#' frequencies and exclude them from adaptation.
+#'
 #' @return An S3 object of class `MkPrimeMCMC`.
 #' @export
 MkPrimeMCMC <- function(
@@ -141,6 +162,7 @@ MkPrimeMCMC <- function(
     weightedSpr = FALSE,
     weightedSubtreeSwap = FALSE,
     nBranchBins = 10L,
+    moveWeights = NULL,
     tuning = list()
 ) {
   nIter <- if (is.infinite(nIter)) Inf else as.integer(nIter)
@@ -189,6 +211,36 @@ MkPrimeMCMC <- function(
     cli::cli_abort("{.arg nBranchBins} must be at least 2, got {nBranchBins}.")
   }
 
+  # Validate moveWeights (M-092: adaptive scheduler)
+  if (!is.null(moveWeights)) {
+    if (is.list(moveWeights)) moveWeights <- unlist(moveWeights)
+    if (!is.numeric(moveWeights) || is.null(names(moveWeights))) {
+      cli::cli_abort(
+        "{.arg moveWeights} must be a named numeric vector or NULL."
+      )
+    }
+    validNames <- c(
+      "tree_length", "branch_lengths", "nni", "spr", "kPrime", "p",
+      "rate_loss", "rate_log_sd", "rate_neo",
+      "gibbs_spr", "gibbs_subtree_swap",
+      "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap"
+    )
+    bad <- setdiff(names(moveWeights), validNames)
+    if (length(bad) > 0L) {
+      cli::cli_abort(
+        "{.arg moveWeights} contains unknown move name{?s}: {.val {bad}}."
+      )
+    }
+    if (any(moveWeights <= 0)) {
+      cli::cli_abort("All {.arg moveWeights} values must be positive.")
+    }
+    if (sum(moveWeights) > 1.0 + 1e-8) {
+      cli::cli_abort(
+        "{.arg moveWeights} sum to {sum(moveWeights)}, which exceeds 1.0."
+      )
+    }
+  }
+
   defaults <- list(
     scale_tree_length = 0.5,
     beta_simplex = 10,
@@ -226,6 +278,7 @@ MkPrimeMCMC <- function(
          weightedSpr = weightedSpr,
          weightedSubtreeSwap = weightedSubtreeSwap,
          nBranchBins = nBranchBins,
+         moveWeights = moveWeights,
          tuning = tuning),
     class = "MkPrimeMCMC"
   )
