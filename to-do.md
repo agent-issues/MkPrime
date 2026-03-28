@@ -20,6 +20,12 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 ---
 
+## Bugs
+
+| ID | Priority | Status | Description |
+|----|----------|--------|-------------|
+| M-099 | P2 | OPEN | **Investigate pre-existing segfault on hyoliths dataset (54 taxa, 225 chars).** Crash occurs during MCMC initialization in flat-buffer pruning workspace — likely a buffer overrun. Reproduces on both `main` and `feature/het-dirichlet-marginal` branches. The 20-taxon subset runs fine; the full dataset does not. |
+
 ## Misc / UI improvements
 
 | ID | Priority | Status | Description |
