@@ -665,7 +665,7 @@ RunMkPrime <- function(data, tree,
   }
   tickerPage <- paste(
     cli::col_silver(paste(phaseLabel, batchEnd)),
-    cli::col_silver("\u2502"), "done"
+    cli::col_silver("\u2502"), cli::col_green("done \u2714")
   )
   cli::cli_progress_done()
 
