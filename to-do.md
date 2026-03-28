@@ -29,7 +29,7 @@ All work on this phase happens in the `mkp-gibbs` worktree
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| M-091 | P3 | ASSIGNED (B) | **Mixing validation: Gibbs/Weighted vs standard moves.** On the Vinther hyoliths dataset, compare ESS/wall-time between: (a) baseline (NNI + SPR only), (b) + GibbsSPR + GibbsSubtreeSwap, (c) + WeightedSPR, (d) + blockGibbsBranch. Use `MkpWatchLog()` output and `ConvergenceDiagnostics()` to compare. Report topology ESS/hour and scalar-parameter ESS/hour. Document findings in a comment in `coordination.md`. Depends on M-090, M-092, M-054. |
+| M-091 | P3 | DONE (B) | **Mixing validation: Gibbs/Weighted vs standard moves.** On the Vinther hyoliths dataset, compare ESS/wall-time between: (a) baseline (NNI + SPR only), (b) + GibbsSPR + GibbsSubtreeSwap, (c) + WeightedSPR, (d) + blockGibbsBranch. Use `MkpWatchLog()` output and `ConvergenceDiagnostics()` to compare. Report topology ESS/hour and scalar-parameter ESS/hour. Document findings in a comment in `coordination.md`. Depends on M-090, M-092, M-054. |
 
 ---
 
