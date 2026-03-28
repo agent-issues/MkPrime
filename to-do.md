@@ -36,7 +36,7 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| M-053 | P3 | OPEN | TBR moves (if mixing diagnostics show SPR is insufficient). |
+| M-053 | P3 | DONE | TBR moves — merged. 5.9× ESS/s gain at 180 taxa; default off (`tbr = FALSE`). |
 
 ---
 
