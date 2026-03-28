@@ -2,6 +2,7 @@
 # M-037: Callback infrastructure
 # M-038: PlotDuringMCMC trace plots
 # M-039: PNG progress writer
+skip_slow_tests()
 
 # --- Helper: build a well-formed info list ---
 

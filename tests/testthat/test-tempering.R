@@ -1,4 +1,5 @@
 # Tests for parallel tempering (Phase 5: M-029, M-030)
+skip_slow_tests()
 
 # --- Temperature ladder ---
 
@@ -160,7 +161,7 @@ test_that("Heated .DoMove is more permissive than cold", {
   model <- MkPrimeModel()
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)
 
-  tree <- ape::reorder.phylo(tree, "postorder")
+  tree <- TreeTools::Preorder(tree)
   state <- MkPrime:::.InitState(tree, mkd, model)
 
   tuning <- list(
@@ -205,7 +206,7 @@ test_that(".DoMove with beta=1 is identical to unheated", {
   mkd <- MkPrimeData(pd)
   model <- MkPrimeModel()
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)
-  tree <- ape::reorder.phylo(tree, "postorder")
+  tree <- TreeTools::Preorder(tree)
   state <- MkPrime:::.InitState(tree, mkd, model)
   tuning <- MkPrimeMCMC()$tuning
 

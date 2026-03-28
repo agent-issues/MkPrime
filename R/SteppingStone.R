@@ -87,10 +87,10 @@ mkp_stepping_stone <- function(data, tree,
   # betas[1] = 0 (prior only), betas[nStones + 1] = 1 (full posterior)
 
   # --- Initialize MCMC state ---
-  # POSTORDER INVARIANT: .MkpLogLikelihood() (internal fast-path) requires
-  # edges in postorder. Reorder here so .InitState() and all subsequent
-  # topology proposals maintain the invariant.
-  tree <- TreeTools::Postorder(tree)
+  # PREORDER INVARIANT: .MkpLogLikelihood() (internal fast-path) requires
+  # edges in canonical preorder. Reorder here so .InitState() and all
+  # subsequent topology proposals maintain the invariant.
+  tree <- TreeTools::Preorder(tree)
   state <- .InitState(tree, mkd, model)
 
   nEdge <- nrow(tree$edge)

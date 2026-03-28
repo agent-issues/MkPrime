@@ -65,6 +65,14 @@ get_state_log_lik <- function(statePtr) {
     .Call(`_MkPrime_get_state_log_lik`, statePtr)
 }
 
+eval_full_loglik_cpp <- function(dataPtr, statePtr) {
+    .Call(`_MkPrime_eval_full_loglik_cpp`, dataPtr, statePtr)
+}
+
+eval_full_loglik_at_cpp <- function(dataPtr, statePtr, parent, child, edgeLen) {
+    .Call(`_MkPrime_eval_full_loglik_at_cpp`, dataPtr, statePtr, parent, child, edgeLen)
+}
+
 do_move_cpp <- function(dataPtr, statePtr, moveType, charIdx, scaleTuning, betaSimplexTuning, intWalkWindow, beta) {
     .Call(`_MkPrime_do_move_cpp`, dataPtr, statePtr, moveType, charIdx, scaleTuning, betaSimplexTuning, intWalkWindow, beta)
 }
@@ -79,6 +87,10 @@ debug_mcmc_data <- function(dataPtr) {
 
 prepare_mcmc_data <- function(partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC) {
     .Call(`_MkPrime_prepare_mcmc_data`, partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC)
+}
+
+set_branch_bins <- function(dataPtr, nBins) {
+    invisible(.Call(`_MkPrime_set_branch_bins`, dataPtr, nBins))
 }
 
 spr_proposal <- function(edge, nTip, treeLength, relBrLengths) {
@@ -103,6 +115,14 @@ mkn_stationary_freqs <- function(rate_loss) {
 
 frechet_correlation_ess_cpp <- function(dmat_sq, min_nsamples) {
     .Call(`_MkPrime_frechet_correlation_ess_cpp`, dmat_sq, min_nsamples)
+}
+
+swap_subtrees_cpp <- function(edge, nTip, treeLength, relBrLengths, nodeA, nodeB) {
+    .Call(`_MkPrime_swap_subtrees_cpp`, edge, nTip, treeLength, relBrLengths, nodeA, nodeB)
+}
+
+get_valid_swap_partners_cpp <- function(edge, nTip, pruneNode) {
+    .Call(`_MkPrime_get_valid_swap_partners_cpp`, edge, nTip, pruneNode)
 }
 
 nni_proposal <- function(edge, nTip, treeLength, relBrLengths) {

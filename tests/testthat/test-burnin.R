@@ -1,4 +1,5 @@
 # Tests for burnin selection (M-066)
+skip_slow_tests()
 
 # Helper: create a small test posterior
 .MakeTestPosterior <- function(nRuns = 1L, nIter = 200L, warmup = 50L,

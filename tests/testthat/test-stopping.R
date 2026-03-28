@@ -1,4 +1,5 @@
 # Tests for stopping rules (Phase 5: M-034)
+skip_slow_tests()
 
 test_that("RunMkPrime reports stop_reason = 'max_iter' by default", {
   library(ape)

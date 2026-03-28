@@ -24,6 +24,7 @@ All work on this phase happens in the `mkp-gibbs` worktree
 (`feature/gibbs-weighted-moves` branch). Plan file:
 `.positai/plans/2026-03-27-1100-gibbsweighted-tree-moves-for-unrooted-trees.md`.
 
+
 ### 9d: Integration, scheduling & validation
 
 | ID | Priority | Status | Description |

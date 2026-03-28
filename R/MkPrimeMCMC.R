@@ -63,6 +63,34 @@
 #'   `nRuns`, `nChains`, `runSamples`, `currentState`,
 #'   `recentAcceptance`, and `elapsed`. See [MkpTracePlot()] for
 #'   details.
+#' @param gibbsSpr Logical; include the Gibbs SPR move (default `TRUE`).
+#'   Cost: O(N) likelihood evaluations per proposal, where N is the number
+#'   of candidate reattachment edges.
+#' @param gibbsSubtreeSwap Logical; include the Gibbs subtree-swap move
+#'   (default `TRUE`). Cost: O(N) likelihood evaluations.
+#' @param weightedBranchScale Logical; include the weighted branch-length
+#'   scale move (default `FALSE`). Cost: O(B) likelihood evaluations, where
+#'   B = `nBranchBins`.
+#' @param weightedSpr Logical; include the weighted SPR move (default
+#'   `FALSE`). Cost: O(N * B) likelihood evaluations. Enable for improved
+#'   mixing on difficult tree spaces at the cost of slower iterations.
+#' @param weightedSubtreeSwap Logical; include the weighted subtree-swap
+#'   move (default `FALSE`). Cost: O(N * B) likelihood evaluations.
+#' @param nBranchBins Integer; number of branch-fraction bins for weighted
+#'   moves (default `10L`). Used by `weightedBranchScale`, `weightedSpr`,
+#'   and `weightedSubtreeSwap`. Ignored when all weighted moves are
+#'   disabled. Higher values increase accuracy of the Gibbs approximation
+#'   but cost more likelihood evaluations.
+#' @param moveWeights Named numeric vector of user-pinned move weights,
+#'   or `NULL` (default). When non-NULL, each named entry fixes the
+#'   probability of proposing that move type. Names must match valid move
+#'   names (e.g., `"nni"`, `"spr"`, `"gibbs_spr"`, `"tree_length"`, etc.).
+#'   Values must be positive and sum to at most 1. Remaining probability
+#'   is distributed among un-pinned moves by the adaptive scheduler during
+#'   warmup. Example: `moveWeights = c(nni = 0.3, spr = 0.2)` fixes NNI
+#'   at 30% and SPR at 20%, with the remaining 50% allocated adaptively
+#'   among other moves. To disable adaptive scheduling entirely, pin all
+#'   moves (sum to 1). See section **Adaptive move scheduling** below.
 #' @param parallel Logical. If `TRUE` and `nRuns > 1`, independent runs are
 #'   launched as non-blocking `future::future()` workers and the main process
 #'   polls for convergence. Requires the \pkg{future} package (in `Suggests`).
@@ -89,6 +117,32 @@
 #' flatten the likelihood surface, aiding exploration. Chain swap proposals
 #' (see M-030) exchange states between adjacent temperatures.
 #'
+#' ## Gibbs and weighted moves
+#'
+#' The Gibbs moves (`gibbsSpr`, `gibbsSubtreeSwap`) evaluate all candidate
+#' topologies and sample proportional to their posterior weight. They cost
+#' O(N) likelihood evaluations per proposal (where N is the number of
+#' candidates, roughly the number of edges) but often achieve much better
+#' mixing than standard NNI/SPR.
+#'
+#' The weighted moves (`weightedBranchScale`, `weightedSpr`,
+#' `weightedSubtreeSwap`) additionally marginalise over a discrete grid
+#' of branch-fraction placements. This produces proposals that are
+#' approximately independent of the current state but costs
+#' O(B) or O(N * B) likelihood evaluations. These are off by default
+#' and recommended only when standard + Gibbs moves show poor mixing.
+#'
+#' ## Adaptive move scheduling
+#'
+#' During warmup, the MCMC engine tracks per-move acceptance rates and
+#' wall-clock cost, then reweights the move pool every 200 iterations
+#' to favor moves with high "acceptances per second" (a proxy for
+#' ESS/wall-time efficiency). The reweighting uses softmax with a
+#' temperature that anneals from 2.0 (near-uniform) to 0.5 (more
+#' peaked) over warmup. At the end of warmup, weights are frozen to
+#' preserve detailed balance. Use `moveWeights` to pin specific move
+#' frequencies and exclude them from adaptation.
+#'
 #' @return An S3 object of class `MkPrimeMCMC`.
 #' @export
 MkPrimeMCMC <- function(
@@ -109,6 +163,13 @@ MkPrimeMCMC <- function(
     bufferSize = 500L,
     plotEvery = NULL,
     progressFn = NULL,
+    gibbsSpr = TRUE,
+    gibbsSubtreeSwap = TRUE,
+    weightedBranchScale = FALSE,
+    weightedSpr = FALSE,
+    weightedSubtreeSwap = FALSE,
+    nBranchBins = 10L,
+    moveWeights = NULL,
     tuning = list(),
     parallel = FALSE,
     pollInterval = 10L
@@ -146,6 +207,47 @@ MkPrimeMCMC <- function(
   bufferSize <- as.integer(bufferSize)
   if (bufferSize < 1L) {
     cli::cli_abort("{.arg bufferSize} must be a positive integer.")
+  }
+
+  # Validate move toggles
+  gibbsSpr <- as.logical(gibbsSpr)
+  gibbsSubtreeSwap <- as.logical(gibbsSubtreeSwap)
+  weightedBranchScale <- as.logical(weightedBranchScale)
+  weightedSpr <- as.logical(weightedSpr)
+  weightedSubtreeSwap <- as.logical(weightedSubtreeSwap)
+  nBranchBins <- as.integer(nBranchBins)
+  if (nBranchBins < 2L) {
+    cli::cli_abort("{.arg nBranchBins} must be at least 2, got {nBranchBins}.")
+  }
+
+  # Validate moveWeights (M-092: adaptive scheduler)
+  if (!is.null(moveWeights)) {
+    if (is.list(moveWeights)) moveWeights <- unlist(moveWeights)
+    if (!is.numeric(moveWeights) || is.null(names(moveWeights))) {
+      cli::cli_abort(
+        "{.arg moveWeights} must be a named numeric vector or NULL."
+      )
+    }
+    validNames <- c(
+      "tree_length", "branch_lengths", "nni", "spr", "kPrime", "p",
+      "rate_loss", "rate_log_sd", "rate_neo",
+      "gibbs_spr", "gibbs_subtree_swap",
+      "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap"
+    )
+    bad <- setdiff(names(moveWeights), validNames)
+    if (length(bad) > 0L) {
+      cli::cli_abort(
+        "{.arg moveWeights} contains unknown move name{?s}: {.val {bad}}."
+      )
+    }
+    if (any(moveWeights <= 0)) {
+      cli::cli_abort("All {.arg moveWeights} values must be positive.")
+    }
+    if (sum(moveWeights) > 1.0 + 1e-8) {
+      cli::cli_abort(
+        "{.arg moveWeights} sum to {sum(moveWeights)}, which exceeds 1.0."
+      )
+    }
   }
 
   defaults <- list(
@@ -187,7 +289,14 @@ MkPrimeMCMC <- function(
          checkEvery = checkEvery, cancelFile = cancelFile,
          checkpointFile = checkpointFile,
          treeFile = treeFile, logFile = logFile, bufferSize = bufferSize,
-         plotEvery = plotEvery, progressFn = progressFn, tuning = tuning,
+         plotEvery = plotEvery, progressFn = progressFn,
+         gibbsSpr = gibbsSpr, gibbsSubtreeSwap = gibbsSubtreeSwap,
+         weightedBranchScale = weightedBranchScale,
+         weightedSpr = weightedSpr,
+         weightedSubtreeSwap = weightedSubtreeSwap,
+         nBranchBins = nBranchBins,
+         moveWeights = moveWeights,
+         tuning = tuning,
          parallel = parallel, pollInterval = pollInterval),
     class = "MkPrimeMCMC"
   )

@@ -1,4 +1,5 @@
 # Tests for checkpointing (Phase 5: M-035)
+skip_slow_tests()
 
 test_that("Checkpoint file is written at check intervals", {
   library(ape)

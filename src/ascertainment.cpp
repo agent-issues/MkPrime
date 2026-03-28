@@ -62,7 +62,7 @@ double constant_site_prob_jc(Rcpp::IntegerVector parent,
       cl_init[tip] = 1;
     }
 
-    for (int e = 0; e < nEdge; ++e) {
+    for (int e = nEdge - 1; e >= 0; --e) {
       const int par = parent[e];
       const int ch  = child[e];
       const double t        = edge_length[e] * rate;
@@ -159,7 +159,7 @@ double singleton_site_prob_jc(Rcpp::IntegerVector parent,
       cl_init[tip] = 1;
     }
 
-    for (int e = 0; e < nEdge; ++e) {
+    for (int e = nEdge - 1; e >= 0; --e) {
       const int par = parent[e];
       const int ch  = child[e];
       const double t        = edge_length[e] * rate;
@@ -255,7 +255,7 @@ double constant_site_prob_mkn(Rcpp::IntegerVector parent,
       cl_init[tip] = 1;
     }
 
-    for (int e = 0; e < nEdge; ++e) {
+    for (int e = nEdge - 1; e >= 0; --e) {
       const int par = parent[e];
       const int ch  = child[e];
       const double t        = edge_length[e] * rate;
@@ -353,7 +353,7 @@ double singleton_site_prob_mkn(Rcpp::IntegerVector parent,
       cl_init[tip] = 1;
     }
 
-    for (int e = 0; e < nEdge; ++e) {
+    for (int e = nEdge - 1; e >= 0; --e) {
       const int par = parent[e];
       const int ch  = child[e];
       const double t        = edge_length[e] * rate;

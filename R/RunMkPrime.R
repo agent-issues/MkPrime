@@ -109,13 +109,35 @@ RunMkPrime <- function(data, tree,
     tree$edge.length[tree$edge.length <= 0] <- 1e-8
   }
 
+  # Tip labels must match data taxon names
+  treeTips <- tree$tip.label
+  dataTaxa <- rownames(mkd$matrix)
+  missing  <- setdiff(dataTaxa, treeTips)
+  extra    <- setdiff(treeTips, dataTaxa)
+  if (length(missing) > 0L || length(extra) > 0L) {
+    msgs <- character(0)
+    if (length(missing) > 0L) {
+      msgs <- c(msgs,
+        "x" = "{length(missing)} taxon{?/a} in data but not in tree: {.val {missing}}.")
+    }
+    if (length(extra) > 0L) {
+      msgs <- c(msgs,
+        "x" = "{length(extra)} tip{?s} in tree but not in data: {.val {extra}}.")
+    }
+    cli::cli_abort(c(
+      "Tip labels in {.arg tree} do not match taxa in {.arg data}.",
+      msgs,
+      "i" = "Every taxon in the data must appear as a tip label in the tree, and vice versa."
+    ))
+  }
+
   if (is.null(model)) model <- MkPrimeModel()
   # mcmc already defaulted above (before auto-resume check)
 
   model <- .FinalizeModel(model, tree, mkd)
 
-  # POSTORDER INVARIANT: all topology proposals maintain this ordering.
-  tree <- TreeTools::Postorder(tree)
+  # PREORDER INVARIANT: all topology proposals maintain canonical preorder.
+  tree <- TreeTools::Preorder(tree)
   nEdge <- nrow(tree$edge)
   tipLabels <- tree$tip.label
 
@@ -261,10 +283,13 @@ RunMkPrime <- function(data, tree,
 
   moveNames <- vapply(moves, `[[`, character(1), "name")
   chainAccept <- chainPropose <- chainTuning <- vector("list", nChains)
+  chainTimeNs <- vector("list", nChains)
   for (ch in seq_len(nChains)) {
     chainAccept[[ch]] <- integer(length(moves))
     chainPropose[[ch]] <- integer(length(moves))
     names(chainAccept[[ch]]) <- names(chainPropose[[ch]]) <- moveNames
+    chainTimeNs[[ch]] <- numeric(length(moves))
+    names(chainTimeNs[[ch]]) <- moveNames
     chainTuning[[ch]] <- mcmc$tuning
   }
 
@@ -279,6 +304,7 @@ RunMkPrime <- function(data, tree,
     betas         = betas,
     chain_accept  = chainAccept,
     chain_propose = chainPropose,
+    chain_time_ns = chainTimeNs,
     chain_tuning  = chainTuning,
     swap_accept   = swapAccept,
     swap_propose  = swapPropose
@@ -310,6 +336,7 @@ RunMkPrime <- function(data, tree,
 
   # --- Reconstruct C++ XPtrs from R-serializable chain lists ---
   mcmcData <- .InitMcmcData(mkd, model)
+  set_branch_bins(mcmcData, mcmc$nBranchBins)
   r <- initialState
   r$chainStates <- vector("list", nChains)
   for (ch in seq_len(nChains)) {
@@ -371,11 +398,32 @@ RunMkPrime <- function(data, tree,
 
   # --- Batch loop constants ---
   batchSize     <- 200L
+  moveNames     <- vapply(moves, `[[`, character(1), "name")
   moveWeights   <- vapply(moves, `[[`, numeric(1), "weight")
+  moveWeights   <- moveWeights / sum(moveWeights)
+  names(moveWeights) <- moveNames
+  moveDim       <- vapply(moves, function(m) m$dim %||% 1L, integer(1L))
+  names(moveDim) <- moveNames
   moveTypeCodes <- vapply(moves, function(m) .kMoveTypes[[m$name]], integer(1L))
   transIdx      <- which(mkd$type == "transformational")
   transIdx0     <- if (length(transIdx) > 0L) transIdx - 1L else integer(0L)
   hasNeo        <- any(mkd$type == "neomorphic")
+
+  # Adaptive scheduler: resolve pinned weights (M-092)
+  pinnedWeights <- .ResolvePinnedWeights(mcmc$moveWeights, moveNames)
+  if (!is.null(pinnedWeights)) {
+    moveWeights <- .NormalizeMoveWeights(moveWeights, pinnedWeights)
+  }
+  weightsLogged <- startIter > mcmc$warmup
+
+  # Ensure chain_time_ns exists (may be absent in older checkpoints)
+  if (is.null(r$chain_time_ns)) {
+    r$chain_time_ns <- vector("list", nChains)
+    for (ch in seq_len(nChains)) {
+      r$chain_time_ns[[ch]] <- numeric(length(moves))
+      names(r$chain_time_ns[[ch]]) <- moveNames
+    }
+  }
 
   startTime     <- proc.time()["elapsed"]
   hasProgressFn <- !is.null(mcmc$progressFn) && !is.null(mcmc$plotEvery)
@@ -423,12 +471,14 @@ RunMkPrime <- function(data, tree,
       hasNeo, nEdge
     )
 
-    # Accept/propose counts
+    # Accept/propose counts and timing (M-092)
     for (ch in seq_len(nChains)) {
       r$chain_accept[[ch]]  <- r$chain_accept[[ch]]  +
         as.integer(result$accept_counts[ch, ])
       r$chain_propose[[ch]] <- r$chain_propose[[ch]] +
         as.integer(result$propose_counts[ch, ])
+      r$chain_time_ns[[ch]] <- r$chain_time_ns[[ch]] +
+        as.numeric(result$move_time_ns[ch, ])
     }
     if (nChains > 1L) {
       r$swap_accept  <- r$swap_accept  + result$swap_accept
@@ -476,7 +526,7 @@ RunMkPrime <- function(data, tree,
       }
     }
 
-    # Adapt tuning during warmup
+    # Adapt tuning and move weights during warmup
     if (batchEnd <= mcmc$warmup) {
       for (ch in seq_len(nChains)) {
         r$chain_tuning[[ch]] <- .AdaptTuning(
@@ -486,6 +536,23 @@ RunMkPrime <- function(data, tree,
       }
       if (nChains > 1L)
         r$betas <- .AdaptTemperatures(r$betas, r$swap_accept, r$swap_propose)
+      # Adaptive move weight scheduling (M-092)
+      moveWeights <- .AdaptMoveWeights(
+        moveWeights, r$chain_accept[[1L]], r$chain_propose[[1L]],
+        r$chain_time_ns[[1L]], moveNames, moveDim = moveDim,
+        pinnedWeights = pinnedWeights,
+        warmupProgress = batchEnd / mcmc$warmup
+      )
+    }
+
+    # Log final adapted weights when warmup ends (M-092)
+    if (batchEnd > mcmc$warmup && !weightsLogged) {
+      if (isStreaming && !is.null(logFilePath))
+        .LogMoveWeights(moveWeights, moveNames, logFilePath)
+      cli::cli_alert_info(
+        "Move weights frozen: {(.FormatMoveWeights(moveWeights, moveNames))}"
+      )
+      weightsLogged <- TRUE
     }
 
     # Streaming checkpoint: fire when buffer was flushed this batch
@@ -495,7 +562,8 @@ RunMkPrime <- function(data, tree,
         r$flush_idx <- 0L
       }
       r$flushed <- FALSE
-      .SaveCheckpoint(list(r), mcmc, batchEnd, paramNames, checkpointFile)
+      .SaveCheckpoint(list(r), mcmc, batchEnd, paramNames, checkpointFile,
+                      moveWeights = moveWeights)
     }
 
     # Progress update
@@ -529,7 +597,8 @@ RunMkPrime <- function(data, tree,
           r$flush_idx <- 0L
           r$flushed   <- FALSE
         }
-        .SaveCheckpoint(list(r), mcmc, batchEnd, paramNames, checkpointFile)
+        .SaveCheckpoint(list(r), mcmc, batchEnd, paramNames, checkpointFile,
+                        moveWeights = moveWeights)
       }
       stopReason <- "cancelled"
       actualIter <- batchEnd
@@ -547,7 +616,8 @@ RunMkPrime <- function(data, tree,
           r$flush_idx <- 0L
           r$flushed   <- FALSE
         }
-        .SaveCheckpoint(list(r), mcmc, batchEnd, paramNames, checkpointFile)
+        .SaveCheckpoint(list(r), mcmc, batchEnd, paramNames, checkpointFile,
+                        moveWeights = moveWeights)
       }
 
       diagCheck <- .CheckConvergence(list(r), paramNames, mcmc, isStreaming)
@@ -649,10 +719,6 @@ RunMkPrime <- function(data, tree,
           startIter      = 1L,
           isStreaming    = TRUE,
           convWindowSize = convWindowSize,
-          # treeFile must be NULL for parallel workers: multiple processes
-          # appending to the same file path would corrupt Newick output.
-          # Tree samples are still stored in-memory and returned in the run
-          # state, then written by the caller if treeFile is set.
           treeFile       = NULL
         )
       },
@@ -983,7 +1049,8 @@ RunMkPrime <- function(data, tree,
 #' log file.  The large flush_buf and conv_window matrices are excluded.
 #'
 #' @keywords internal
-.SaveCheckpoint <- function(runs, mcmc, iter, paramNames, file) {
+.SaveCheckpoint <- function(runs, mcmc, iter, paramNames, file,
+                            moveWeights = NULL) {
   isStreaming <- !is.null(mcmc$logFile)
 
   serialRuns <- lapply(runs, function(r) {
@@ -1027,6 +1094,7 @@ RunMkPrime <- function(data, tree,
     payload$logFilePaths <- .LogFilePaths(mcmc$logFile, length(runs))
     payload$paramNames   <- paramNames
   }
+  if (!is.null(moveWeights)) payload$moveWeights <- moveWeights
   saveRDS(payload, file)
 }
 
@@ -1036,7 +1104,8 @@ RunMkPrime <- function(data, tree,
 #
 # @keywords internal
 .FlushAndSaveCheckpoint <- function(runs, nRuns, mcmc, batchEnd,
-                                    paramNames, isStreaming, logFilePaths) {
+                                    paramNames, isStreaming, logFilePaths,
+                                    moveWeights = NULL) {
   if (!is.null(mcmc$checkpointFile)) {
     if (isStreaming) {
       for (run in seq_len(nRuns)) {
@@ -1047,7 +1116,8 @@ RunMkPrime <- function(data, tree,
         }
       }
     }
-    .SaveCheckpoint(runs, mcmc, batchEnd, paramNames, mcmc$checkpointFile)
+    .SaveCheckpoint(runs, mcmc, batchEnd, paramNames, mcmc$checkpointFile,
+                    moveWeights = moveWeights)
   }
   runs
 }
@@ -1089,7 +1159,30 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   }
 
   if (is.null(model)) model <- MkPrimeModel()
-  tree <- TreeTools::Postorder(tree)
+  tree <- TreeTools::Preorder(tree)
+
+  # Tip labels must match data taxon names
+  treeTips <- tree$tip.label
+  dataTaxa <- rownames(mkd$matrix)
+  missing  <- setdiff(dataTaxa, treeTips)
+  extra    <- setdiff(treeTips, dataTaxa)
+  if (length(missing) > 0L || length(extra) > 0L) {
+    msgs <- character(0)
+    if (length(missing) > 0L) {
+      msgs <- c(msgs,
+        "x" = "{length(missing)} taxon{?/a} in data but not in tree: {.val {missing}}.")
+    }
+    if (length(extra) > 0L) {
+      msgs <- c(msgs,
+        "x" = "{length(extra)} tip{?s} in tree but not in data: {.val {extra}}.")
+    }
+    cli::cli_abort(c(
+      "Tip labels in {.arg tree} do not match taxa in {.arg data}.",
+      msgs,
+      "i" = "Every taxon in the data must appear as a tip label in the tree, and vice versa."
+    ))
+  }
+
   model <- .FinalizeModel(model, tree, mkd)
 
   runs <- checkpoint$runs
@@ -1244,7 +1337,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
         rate_loss   = tun$scale_rate_loss,
         rate_log_sd = tun$scale_rate_log_sd,
         rate_neo    = tun$scale_rate_neo %||% 0.5,
-        p           = tun$scale_p,
+        p           = 0.5,  # Gibbs move: scale ignored by C++; placeholder
         0.5
       )
     }
@@ -1292,7 +1385,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     state$rate_neo <- 1.0
   }
 
-  # Tree is already postorder (reordered at init); use internal fast-path
+  # Tree is already preorder (reordered at init); use internal fast-path
   state$log_lik <- .MkpLogLikelihood(
     tree, mkd,
     kPrime = state$kPrime,
@@ -1317,29 +1410,71 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
                         kPrimePrior = "geometric") {
   moves <- list(
     list(name = "tree_length", type = "scale", target = "tree_length",
-         weight = 1),
+         weight = 1, dim = 1L),
     list(name = "branch_lengths", type = "beta_simplex",
-         target = "rel_br_lengths", weight = max(1, nEdge / 3))
+         target = "rel_br_lengths", weight = max(1, nEdge / 3), dim = 1L)
   )
 
   if (!fixTopology && nEdge >= 5L) {
     moves <- c(moves, list(
       list(name = "nni", type = "nni", target = NULL,
-           weight = max(1, nEdge / 2)),
+           weight = max(1, nEdge / 2), dim = 1L),
       list(name = "spr", type = "spr", target = NULL,
-           weight = max(1, nEdge / 4))
+           weight = max(1, nEdge / 4), dim = 1L)
     ))
+    # Gibbs topology moves (M-090)
+    if (isTRUE(mcmc$gibbsSpr)) {
+      moves <- c(moves, list(
+        list(name = "gibbs_spr", type = "gibbs_spr", target = NULL,
+             weight = max(1, nEdge / 4), dim = 1L)
+      ))
+    }
+    if (isTRUE(mcmc$gibbsSubtreeSwap)) {
+      moves <- c(moves, list(
+        list(name = "gibbs_subtree_swap", type = "gibbs_subtree_swap",
+             target = NULL, weight = max(1, nEdge / 6), dim = 1L)
+      ))
+    }
+    # Weighted moves (M-090)
+    if (isTRUE(mcmc$weightedBranchScale)) {
+      moves <- c(moves, list(
+        list(name = "weighted_branch_lengths", type = "weighted_branch_scale",
+             target = "rel_br_lengths", weight = max(1, nEdge / 6), dim = 1L)
+      ))
+    }
+    if (isTRUE(mcmc$weightedSpr)) {
+      moves <- c(moves, list(
+        list(name = "weighted_spr", type = "weighted_spr", target = NULL,
+             weight = max(1, nEdge / 8), dim = 1L)
+      ))
+    }
+    if (isTRUE(mcmc$weightedSubtreeSwap)) {
+      moves <- c(moves, list(
+        list(name = "weighted_subtree_swap", type = "weighted_subtree_swap",
+             target = NULL, weight = max(1, nEdge / 8), dim = 1L)
+      ))
+    }
+    # Block Gibbs branch-length sweep (M-054 reframed)
+    if (isTRUE(mcmc$blockGibbsBranch)) {
+      moves <- c(moves, list(
+        list(name = "block_gibbs_branch", type = "block_gibbs_branch",
+             target = "rel_br_lengths", weight = max(1, nEdge / 4),
+             dim = as.integer(nEdge))
+      ))
+    }
   }
 
   if (nTrans > 0) {
     kPrimeMoves <- list(
       list(name = "kPrime", type = "int_walk", target = "kPrime",
-           weight = max(1, 2 * nTrans))
+           weight = max(1, 2 * nTrans), dim = 1L)
     )
     # p hyperparameter only exists for hierarchical geometric prior
     if (!identical(kPrimePrior, "logseries")) {
       kPrimeMoves <- c(kPrimeMoves, list(
-        list(name = "p", type = "scale", target = "p", weight = 1)
+        # Conjugate Gibbs draw: p | k' ~ Beta(a + nTrans, b + sum(k' - kObs))
+        list(name = "p", type = "gibbs_p", target = "p", weight = 1,
+             dim = 1L)
       ))
     }
     moves <- c(moves, kPrimeMoves)
@@ -1348,15 +1483,15 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   if (hasNeo) {
     moves <- c(moves, list(
       list(name = "rate_loss", type = "scale", target = "rate_loss",
-           weight = 1.5),
+           weight = 1.5, dim = 1L),
       list(name = "rate_neo", type = "scale", target = "rate_neo",
-           weight = 1)
+           weight = 1, dim = 1L)
     ))
   }
 
   moves <- c(moves, list(
     list(name = "rate_log_sd", type = "scale", target = "rate_log_sd",
-         weight = 1.5)
+         weight = 1.5, dim = 1L)
   ))
 
   moves
@@ -1365,11 +1500,19 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 
 # --- Move type integer codes (must match src/mcmc.cpp) ---
 # 0=scale_tl, 1=scale_rl, 2=scale_rls, 3=scale_rn,
-# 4=beta_simplex, 5=nni, 6=spr, 7=int_walk, 8=scale_p
+# 4=beta_simplex, 5=nni, 6=spr, 7=int_walk, 8=scale_p (legacy),
+# 9=gibbs_p, 10=gibbs_spr, 11=gibbs_subtree_swap,
+# 12=weighted_br_scale, 13=weighted_spr, 14=weighted_subtree_swap,
+# 15=block_gibbs_branch
 .kMoveTypes <- c(
   tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
   rate_neo = 3L, branch_lengths = 4L,
-  nni = 5L, spr = 6L, kPrime = 7L, p = 8L
+  nni = 5L, spr = 6L, kPrime = 7L, p = 9L,
+  gibbs_spr = 10L, gibbs_subtree_swap = 11L,
+  weighted_branch_lengths = 12L,
+  weighted_spr = 13L,
+  weighted_subtree_swap = 14L,
+  block_gibbs_branch = 15L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)
@@ -1435,8 +1578,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
       rate_loss   = tuning$scale_rate_loss,
       rate_log_sd = tuning$scale_rate_log_sd,
       rate_neo    = tuning$scale_rate_neo,
-      p           = tuning$scale_p,
-      0.5
+      0.5  # default; gibbs_p ignores scaleTun (returns before using it)
     )
     accepted <- do_move_cpp(
       mcmcData, stateOrPtr, moveCode, charIdx,
@@ -1489,6 +1631,16 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
       )
       proposed$kPrime[charI] <- prop$value
       logHastings <- prop$logHastings
+    },
+    gibbs_p = {
+      # Conjugate Beta draw; acceptance = 1, no MH step needed
+      transIdx <- which(mkd$type == "transformational")
+      sumU <- sum(state$kPrime[transIdx] - mkd$kObs[transIdx])
+      proposed$p <- rbeta(1L,
+        shape1 = model$kprimeHyperA + length(transIdx),
+        shape2 = model$kprimeHyperB + sumU)
+      proposed$log_prior <- LogPrior(proposed, model, mkd)
+      return(list(accept = TRUE, state = proposed))
     }
   )
 
@@ -1654,6 +1806,189 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 }
 
 
+# --- Adaptive move weight scheduler (M-092) ---
+
+#' Resolve user-pinned weights for moves in the current pool.
+#'
+#' Returns a named numeric vector with entries only for moves present in
+#' the pool, or NULL if no pinned weights apply.
+#' @keywords internal
+.ResolvePinnedWeights <- function(userMoveWeights, moveNames) {
+  if (is.null(userMoveWeights)) return(NULL)
+  keep <- intersect(names(userMoveWeights), moveNames)
+  if (length(keep) == 0L) return(NULL)
+  dropped <- setdiff(names(userMoveWeights), moveNames)
+  if (length(dropped) > 0L) {
+    cli::cli_warn(
+      "Pinned move weight{?s} ignored (not in move pool): {.val {dropped}}."
+    )
+  }
+  userMoveWeights[keep]
+}
+
+
+#' Apply pinned weights and renormalize free moves.
+#' @keywords internal
+.NormalizeMoveWeights <- function(weights, pinnedWeights) {
+  moveNames <- names(weights)
+  pinnedIdx <- match(names(pinnedWeights), moveNames)
+  pinnedIdx <- pinnedIdx[!is.na(pinnedIdx)]
+  if (length(pinnedIdx) == 0L) return(weights / sum(weights))
+
+  budget <- 1.0 - sum(pinnedWeights)
+  freeIdx <- setdiff(seq_along(weights), pinnedIdx)
+  if (length(freeIdx) == 0L || budget < 1e-12) {
+    # All pinned: normalize pinned to sum to 1
+    weights[pinnedIdx] <- pinnedWeights / sum(pinnedWeights)
+    if (length(freeIdx) > 0L) weights[freeIdx] <- 0
+    return(weights)
+  }
+  freeSum <- sum(weights[freeIdx])
+  if (freeSum > 0) {
+    weights[freeIdx] <- weights[freeIdx] / freeSum * budget
+  } else {
+    weights[freeIdx] <- budget / length(freeIdx)
+  }
+  weights[pinnedIdx] <- pinnedWeights[names(weights)[pinnedIdx]]
+  weights
+}
+
+
+#' Adapt move weights based on per-move acceptance rates and wall-time.
+#'
+#' Uses softmax reweighting with temperature annealing. Pinned moves
+#' are excluded from adaptation. Moves with fewer than `minProposals`
+#' proposals keep their current weight.
+#'
+#' The score formula accounts for multi-dimensional moves via the
+#' `moveDim` parameter: `score = accept_rate * dim / cost`. For
+#' single-parameter moves (`dim = 1`), this reduces to the original
+#' `accept_rate / cost`. Block moves (e.g. block Gibbs branch sweep)
+#' set `dim = nEdge` so the scheduler values them proportionally to
+#' the number of parameters they update per call.
+#'
+#' @param currentWeights Numeric vector (current move probabilities,
+#'   sums to 1).
+#' @param acceptCount Named integer vector (cold chain, cumulative).
+#' @param proposeCount Named integer vector (cold chain, cumulative).
+#' @param moveTimeNs Named numeric vector (cold chain, cumulative ns).
+#' @param moveNames Character vector of move names.
+#' @param moveDim Integer vector of per-move dimensionality (number of
+#'   parameters updated per call). Default: all 1s.
+#' @param pinnedWeights Named numeric vector or NULL.
+#' @param warmupProgress Fraction of warmup completed (0 to 1).
+#' @param tStart Starting softmax temperature (default 2.0).
+#' @param tEnd Ending softmax temperature (default 0.5).
+#' @param wMin Floor per free move as fraction of 1 (default 0.05).
+#' @param minProposals Minimum proposals before adapting (default 20).
+#'
+#' @return Updated weight vector (sums to 1).
+#' @keywords internal
+.AdaptMoveWeights <- function(currentWeights, acceptCount, proposeCount,
+                               moveTimeNs, moveNames,
+                               moveDim = rep(1L, length(currentWeights)),
+                               pinnedWeights,
+                               warmupProgress, tStart = 2.0, tEnd = 0.5,
+                               wMin = 0.05, minProposals = 20L) {
+  nMoves <- length(currentWeights)
+  stopifnot(length(acceptCount) == nMoves,
+            length(proposeCount) == nMoves,
+            length(moveTimeNs) == nMoves)
+
+  # Identify pinned and free moves
+  pinnedIdx <- integer(0)
+  if (!is.null(pinnedWeights)) {
+    pinnedIdx <- match(names(pinnedWeights), moveNames)
+    pinnedIdx <- pinnedIdx[!is.na(pinnedIdx)]
+  }
+  freeIdx <- setdiff(seq_len(nMoves), pinnedIdx)
+  if (length(freeIdx) == 0L) return(currentWeights)
+
+  budget <- if (length(pinnedIdx) > 0L) {
+    1.0 - sum(pinnedWeights)
+  } else {
+    1.0
+  }
+  if (budget < 1e-12) return(currentWeights)
+
+  # Identify scoreable free moves (enough proposals)
+  scoreableIdx <- freeIdx[proposeCount[freeIdx] >= minProposals]
+
+  if (length(scoreableIdx) == 0L) return(currentWeights)
+
+  # Compute scores: dim-adjusted acceptances per second. log-scores avoid
+  # overflow when accept_rate*dim/cost_s spans many orders of magnitude.
+  acceptRate <- acceptCount[scoreableIdx] / proposeCount[scoreableIdx]
+  dimAdj <- pmax(moveDim[scoreableIdx], 1L)
+  meanCostS <- moveTimeNs[scoreableIdx] /
+    (proposeCount[scoreableIdx] * 1e9)
+  meanCostS <- pmax(meanCostS, 1e-9)
+  logScores <- log(pmax(acceptRate, 1e-12)) + log(dimAdj) - log(meanCostS)
+
+  # Softmax with annealed temperature
+  temp <- tStart + (tEnd - tStart) * min(1, warmupProgress)
+  scaledLogScores <- logScores / temp
+  # Overflow guard
+  scaledLogScores <- scaledLogScores - max(scaledLogScores)
+  rawWeights <- exp(scaledLogScores)
+
+  # Allocate budget: scoreable get softmax, non-scoreable keep current
+  nonScoreableIdx <- setdiff(freeIdx, scoreableIdx)
+  nonScoreableShare <- sum(currentWeights[nonScoreableIdx])
+
+  scoreableBudget <- budget - nonScoreableShare
+  if (scoreableBudget < 1e-12) return(currentWeights)
+
+  softmaxWeights <- rawWeights / sum(rawWeights) * scoreableBudget
+
+  # Apply floor with iterative enforcement
+  nFree <- length(freeIdx)
+  floorVal <- wMin / nFree
+  nScoreable <- length(scoreableIdx)
+  floored <- softmaxWeights < floorVal
+  if (any(floored) && !all(floored)) {
+    nFloored <- sum(floored)
+    floorTotal <- nFloored * floorVal
+    freeTotal <- scoreableBudget - floorTotal
+    if (freeTotal > 0) {
+      softmaxWeights[floored] <- floorVal
+      softmaxWeights[!floored] <- softmaxWeights[!floored] /
+        sum(softmaxWeights[!floored]) * freeTotal
+    }
+  }
+
+  newWeights <- currentWeights
+  newWeights[scoreableIdx] <- softmaxWeights
+  # Enforce pinned values
+  if (length(pinnedIdx) > 0L) {
+    for (nm in names(pinnedWeights)) {
+      idx <- match(nm, moveNames)
+      if (!is.na(idx)) newWeights[idx] <- pinnedWeights[nm]
+    }
+  }
+  newWeights
+}
+
+
+#' Format move weights as a compact string for display.
+#' @keywords internal
+.FormatMoveWeights <- function(weights, moveNames) {
+  pct <- sprintf("%.1f%%", weights * 100)
+  paste(paste0(moveNames, "=", pct), collapse = " ")
+}
+
+
+#' Write adapted move weights as a comment in the log file.
+#' @keywords internal
+.LogMoveWeights <- function(weights, moveNames, logFilePaths) {
+  line <- paste0("# Adapted move weights: ",
+                 .FormatMoveWeights(weights, moveNames))
+  for (p in logFilePaths) {
+    cat(line, "\n", file = p, append = TRUE, sep = "")
+  }
+}
+
+
 #' Adapt tuning parameters based on acceptance rates
 #' @keywords internal
 .AdaptTuning <- function(tuning, acceptCount, proposeCount, moves) {
@@ -1662,7 +1997,12 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     nni = 0.23, spr = 0.10,
     kPrime = 0.35,
     p = 0.35, rate_loss = 0.35, rate_log_sd = 0.35,
-    rate_neo = 0.35
+    rate_neo = 0.35,
+    # Gibbs/weighted/block moves: no tuning to adapt
+    gibbs_spr = NA_real_, gibbs_subtree_swap = NA_real_,
+    weighted_branch_lengths = NA_real_,
+    weighted_spr = NA_real_, weighted_subtree_swap = NA_real_,
+    block_gibbs_branch = NA_real_
   )
 
   tuningKeys <- c(
@@ -1671,10 +2011,15 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     nni = NA_character_,
     spr = NA_character_,
     kPrime = "int_walk_window",
-    p = "scale_p",
+    p = NA_character_,       # Gibbs move: no tuning needed
     rate_loss = "scale_rate_loss",
     rate_log_sd = "scale_rate_log_sd",
-    rate_neo = "scale_rate_neo"
+    rate_neo = "scale_rate_neo",
+    # Gibbs/weighted/block moves: no tuning to adapt
+    gibbs_spr = NA_character_, gibbs_subtree_swap = NA_character_,
+    weighted_branch_lengths = NA_character_,
+    weighted_spr = NA_character_, weighted_subtree_swap = NA_character_,
+    block_gibbs_branch = NA_character_
   )
 
   for (move in moves) {
