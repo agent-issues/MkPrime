@@ -13,6 +13,7 @@
 
 #include "mcmc_state.h"
 #include <cmath>
+#include <cstring>
 #include <algorithm>
 #include <set>
 
@@ -209,26 +210,30 @@ static double pruning_jc_acrv_flat(
   double inv_k = 1.0 / kStates;
   double km1   = kStates - 1.0;
 
+  // OPP-CL: tips are constant across rate categories — init once, not per cat.
+  // Zero only tip regions, set observed states; internal nodes overwritten by
+  // the first-child '=' branch so their stale values are harmless.
+  std::memset(initFlg, 0, (maxNode + 1) * sizeof(uint8_t));
+  for (int tip = 1; tip <= nTip; ++tip) {
+    double* cl = buf + tip * stride;
+    std::fill(cl, cl + clCols, 0.0);
+    for (int c = 0; c < nChar; ++c) {
+      int state  = tip_states(tip - 1, c);
+      int offset = c * kStates;
+      if (state < 0) {
+        for (int s = 0; s < kStates; ++s) cl[offset + s] = 1.0;
+      } else {
+        cl[offset + state] = 1.0;
+      }
+    }
+    initFlg[tip] = 1;
+  }
+
   for (int cat = 0; cat < nCat; ++cat) {
     double rate = rate_multipliers[cat];
 
-    for (int n = 0; n <= maxNode; ++n) {
-      std::fill(buf + n * stride, buf + n * stride + clCols, 0.0);
-      initFlg[n] = 0;
-    }
-    for (int tip = 1; tip <= nTip; ++tip) {
-      double* cl = buf + tip * stride;
-      for (int c = 0; c < nChar; ++c) {
-        int state  = tip_states(tip - 1, c);
-        int offset = c * kStates;
-        if (state < 0) {
-          for (int s = 0; s < kStates; ++s) cl[offset + s] = 1.0;
-        } else {
-          cl[offset + state] = 1.0;
-        }
-      }
-      initFlg[tip] = 1;
-    }
+    // Reset only internal-node init flags (tips stay initialised).
+    for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
 
     for (int e = nEdge - 1; e >= 0; --e) {
       int par = parent[e];
@@ -391,26 +396,27 @@ static double pruning_mkn_acrv_flat(
   double inv_lam_01 = rate01 / lambda;
   double inv_lam_10 = rate10 / lambda;
 
+  // OPP-CL: init tips once (constant across rate categories)
+  std::memset(initFlg, 0, (maxNode + 1) * sizeof(uint8_t));
+  for (int tip = 1; tip <= nTip; ++tip) {
+    double* cl = buf + tip * stride;
+    std::fill(cl, cl + clCols, 0.0);
+    for (int c = 0; c < nChar; ++c) {
+      int state  = tip_states(tip - 1, c);
+      int offset = c * kStates;
+      if (state < 0) {
+        cl[offset] = 1.0; cl[offset + 1] = 1.0;
+      } else {
+        cl[offset + state] = 1.0;
+      }
+    }
+    initFlg[tip] = 1;
+  }
+
   for (int cat = 0; cat < nCat; ++cat) {
     double rate = rate_multipliers[cat];
 
-    for (int n = 0; n <= maxNode; ++n) {
-      std::fill(buf + n * stride, buf + n * stride + clCols, 0.0);
-      initFlg[n] = 0;
-    }
-    for (int tip = 1; tip <= nTip; ++tip) {
-      double* cl = buf + tip * stride;
-      for (int c = 0; c < nChar; ++c) {
-        int state  = tip_states(tip - 1, c);
-        int offset = c * kStates;
-        if (state < 0) {
-          cl[offset] = 1.0; cl[offset + 1] = 1.0;
-        } else {
-          cl[offset + state] = 1.0;
-        }
-      }
-      initFlg[tip] = 1;
-    }
+    for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
 
     for (int e = nEdge - 1; e >= 0; --e) {
       int par = parent[e];
@@ -558,6 +564,23 @@ static double pruning_f81_het_acrv_flat(
     gain_base = loss_base = 0.0;  // unused for k≥3
   }
 
+  // OPP-CL: init tips once (constant across all cat × bin × rot combos)
+  std::memset(initFlg, 0, (maxNode + 1) * sizeof(uint8_t));
+  for (int tip = 1; tip <= nTip; ++tip) {
+    double* cl = buf + tip * stride;
+    std::fill(cl, cl + clCols, 0.0);
+    for (int c = 0; c < nChar; ++c) {
+      int state  = tip_states(tip - 1, c);
+      int offset = c * kStates;
+      if (state < 0) {
+        for (int s = 0; s < kStates; ++s) cl[offset + s] = 1.0;
+      } else {
+        cl[offset + state] = 1.0;
+      }
+    }
+    initFlg[tip] = 1;
+  }
+
   for (int cat = 0; cat < nCat; ++cat) {
     double acrvRate = rate_multipliers[cat];
 
@@ -567,12 +590,7 @@ static double pruning_f81_het_acrv_flat(
       for (int rot = 0; rot < nRot; ++rot) {
 
         // --- Build frequency vector π^(bi,rot) ---
-        // For k=2 neomorphic: compose with rate_loss.
-        //   gain_b = gain_base × 2β, loss_b = loss_base × 2(1−β)
-        //   π₁ = gain_b/(gain_b + loss_b), π₀ = 1 − π₁
-        // For k=2 symmetric (baseRL=1): gain_b = β, loss_b = 1−β → π₁ = β
-        // For k≥3: π[rot] = β, others = (1−β)/(k−1)
-        double pi[16];  // max k we'd ever encounter in morphology
+        double pi[16];
         double sumPiSq = 0.0;
 
         if (kStates == 2) {
@@ -592,24 +610,8 @@ static double pruning_f81_het_acrv_flat(
 
         double mu = 1.0 / (1.0 - sumPiSq);
 
-        // --- Init workspace ---
-        for (int n = 0; n <= maxNode; ++n) {
-          std::fill(buf + n * stride, buf + n * stride + clCols, 0.0);
-          initFlg[n] = 0;
-        }
-        for (int tip = 1; tip <= nTip; ++tip) {
-          double* cl = buf + tip * stride;
-          for (int c = 0; c < nChar; ++c) {
-            int state  = tip_states(tip - 1, c);
-            int offset = c * kStates;
-            if (state < 0) {
-              for (int s = 0; s < kStates; ++s) cl[offset + s] = 1.0;
-            } else {
-              cl[offset + state] = 1.0;
-            }
-          }
-          initFlg[tip] = 1;
-        }
+        // Reset internal-node init flags only
+        for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
 
         // --- Tree traversal using F81 P(t) ---
         // P_ij(t) = π_j × (1 − d) + δ_ij × d
