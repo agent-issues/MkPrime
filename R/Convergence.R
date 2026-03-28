@@ -379,38 +379,49 @@ print.MkpDiagnostics <- function(x, ...) {
 }
 
 
-#' Build compact per-parameter ESS string for progress ticker
+#' Build the full ticker page sequence for the progress bar
 #'
-#' Produces a colour-coded abbreviated summary like
-#' `"lP:138 TL:5 p:139 rsd:42"` for display in the single-line
-#' rotating progress bar (M-097).  Colour matches the table
-#' conventions: red < 100, yellow 100--199, plain >= 200.
+#' Returns a character vector of page content strings (without the
+#' `logP:` prefix, which the caller prepends).  Summary pages
+#' (minESS/PSRF) are interleaved with detail pages that show 2
+#' parameters each with their full names and colour-coded ESS.
 #'
-#' @param ess Named numeric vector from `.CheckConvergence()`.
-#' @return Single string; `"?"` if no scalar ESS available.
+#' Colour matches the table conventions: red < 100, yellow 100--199,
+#' plain >= 200.  Non-finite ESS values (e.g. `rate_loss` when no
+#' neomorphic characters are present) are silently dropped.
+#'
+#' @param diagCheck Return value of [.CheckConvergence()].
+#' @return Character vector of page strings.
 #' @keywords internal
-.CompactEssStr <- function(ess) {
-  abbrevs <- c(
-    log_posterior = "lP", tree_length = "TL",
-    rate_loss = "rL", rate_log_sd = "rsd",
-    p = "p", rate_neo = "rN", beta_scale = "bS"
-  )
-  scalarNms <- names(ess)[names(ess) %in% names(abbrevs)]
-  # Drop parameters with non-finite ESS (e.g. rate_loss when no neomorphic
+.BuildTickerPages <- function(diagCheck) {
+  summary <- .TickerSummaryStr(diagCheck)
 
-  # characters — never proposed, zero variance, ESS is NA).
+  ess <- diagCheck$ess
+  scalarNms <- names(ess)[!grepl("^(kPrime_|br_|log_likelihood)", names(ess))]
   scalarNms <- scalarNms[vapply(ess[scalarNms], is.finite, logical(1))]
-  if (length(scalarNms) == 0L) return("?")
-  parts <- vapply(scalarNms, function(nm) {
-    ab <- abbrevs[nm]
-    rval <- round(ess[nm])
-    sval <- as.character(rval)
-    coloured <- if (rval < 100) cli::col_red(sval)
-                else if (rval < 200) cli::col_yellow(sval)
-                else sval
-    paste0(ab, ":", coloured)
-  }, character(1))
-  paste(parts, collapse = " ")
+
+  if (length(scalarNms) == 0L) return(summary)
+
+  # Detail pages: <= 2 params each, full names, coloured ESS
+  chunks <- split(scalarNms, ceiling(seq_along(scalarNms) / 2))
+  detailPages <- vapply(chunks, function(nms) {
+    parts <- vapply(nms, function(nm) {
+      rval <- round(ess[nm])
+      sval <- as.character(rval)
+      coloured <- if (rval < 100) cli::col_red(sval)
+                  else if (rval < 200) cli::col_yellow(sval)
+                  else sval
+      paste0(nm, ": ", coloured)
+    }, character(1))
+    paste0("ESS ", paste(parts, collapse = "  "))
+  }, character(1), USE.NAMES = FALSE)
+
+  # Interleave: [summary, detail1, summary, detail2, ...]
+  pages <- character(0)
+  for (dp in detailPages) {
+    pages <- c(pages, summary, dp)
+  }
+  pages
 }
 
 

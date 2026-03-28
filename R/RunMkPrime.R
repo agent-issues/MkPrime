@@ -442,13 +442,12 @@ RunMkPrime <- function(data, tree,
     if (startIter == 1L) mcmc$nIter else mcmc$nIter - startIter + 1L
   } else NA
 
-  # Ticker state: three pages rotate every ~2.1 s wall-clock time.
-  # Pages 0,2: logP + headline (minESS, maxPSRF).
-  # Page 1:    logP + per-parameter ESS detail.
+  # Ticker state: pages rotate every ~1.5 s wall-clock time.
+  # Summary (minESS/PSRF) interleaved with detail (2 params each).
   tickerStart <- proc.time()["elapsed"]
   tickerPage  <- ""
-  summaryStr  <- "minESS: ?"
-  detailStr   <- "?"
+  tickerPages <- "minESS: ?"
+  logPWidth   <- 5L
 
   cli::cli_progress_bar(
     progressLabel,
@@ -584,14 +583,14 @@ RunMkPrime <- function(data, tree,
     batchProp <- sum(result$propose_counts[1L, ])
     if (batchProp > 0L) recentAcc <- batchAcc / batchProp
 
-    logPStr <- format(round(coldLogpost, 1), nsmall = 1)
-    pageIdx <- floor((proc.time()["elapsed"] - tickerStart) / 2.1) %% 3L
-
-    tickerPage <- if (pageIdx == 1L) {
-      sprintf("logP: %s \u2502 %s", logPStr, detailStr)
-    } else {
-      sprintf("logP: %s \u2502 %s", logPStr, summaryStr)
-    }
+    # Fixed-width logP: ratchet width up as magnitude grows, never shrink
+    logPRaw   <- format(round(coldLogpost, 1), nsmall = 1)
+    logPWidth <- max(logPWidth, nchar(logPRaw))
+    logPStr   <- formatC(round(coldLogpost, 1), width = logPWidth,
+                         format = "f", digits = 1)
+    pageIdx   <- floor((proc.time()["elapsed"] - tickerStart) / 1.5) %%
+                   length(tickerPages)
+    tickerPage <- sprintf("logP:%s \u2502 %s", logPStr, tickerPages[pageIdx + 1L])
 
     cli::cli_progress_update(
       set = if (startIter == 1L) batchEnd else batchEnd - startIter + 1L
@@ -644,9 +643,8 @@ RunMkPrime <- function(data, tree,
 
       diagCheck <- .CheckConvergence(list(r), paramNames, mcmc, isStreaming)
       if (!is.null(diagCheck)) {
-        # Refresh ticker strings from latest diagnostics (M-097)
-        summaryStr <- .TickerSummaryStr(diagCheck)
-        detailStr  <- .CompactEssStr(diagCheck$ess)
+        # Refresh ticker pages from latest diagnostics (M-097)
+        tickerPages <- .BuildTickerPages(diagCheck)
         if (diagCheck$converged) {
           stopReason <- "converged"
           actualIter <- batchEnd
@@ -1103,7 +1101,8 @@ RunMkPrime <- function(data, tree,
           rate_neo       = s$rateNeo,
           p              = s$p,
           kPrime         = s$kPrime,
-          edge           = s$edge
+          edge           = s$edge,
+          beta_scale     = s$betaScale
         )
       })
       r$chainStates <- NULL

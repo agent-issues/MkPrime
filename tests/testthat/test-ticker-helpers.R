@@ -1,70 +1,105 @@
 # Tests for M-097 rotating ticker helpers
-# (.CompactEssStr, .TickerSummaryStr)
+# (.BuildTickerPages, .TickerSummaryStr)
 
-# --- .CompactEssStr ---
+# --- .BuildTickerPages ---
 
-test_that(".CompactEssStr produces abbreviated param:ESS string", {
-  ess <- c(log_posterior = 138, tree_length = 5, rate_log_sd = 42, p = 139)
-  result <- MkPrime:::.CompactEssStr(ess)
-  plain <- cli::ansi_strip(result)
-  expect_match(plain, "lP:138")
-  expect_match(plain, "TL:5")
-  expect_match(plain, "rsd:42")
-  expect_match(plain, "p:139")
+test_that(".BuildTickerPages returns summary-only when no scalar ESS", {
+  diag <- list(
+    ess = c(kPrime_1 = 300, kPrime_2 = 50),
+    minEss = 50, maxPsrf = NA_real_
+  )
+  pages <- MkPrime:::.BuildTickerPages(diag)
+  expect_length(pages, 1L)
+  expect_match(cli::ansi_strip(pages), "minESS")
 })
 
 
-test_that(".CompactEssStr skips kPrime and br_ columns", {
-  ess <- c(log_posterior = 100, kPrime_1 = 300, kPrime_2 = 50, br_1 = 80)
-  plain <- cli::ansi_strip(MkPrime:::.CompactEssStr(ess))
-  expect_match(plain, "lP:100")
-  expect_false(grepl("kPrime", plain))
-  expect_false(grepl("br_", plain))
+test_that(".BuildTickerPages interleaves summary and detail", {
+  diag <- list(
+    ess = c(log_posterior = 150, tree_length = 80, rate_log_sd = 250, p = 200),
+    minEss = 80, maxPsrf = NA_real_
+  )
+  pages <- MkPrime:::.BuildTickerPages(diag)
+  plain <- cli::ansi_strip(pages)
+  # 4 params → 2 detail pages → [S, D1, S, D2] = 4 pages
+  expect_length(pages, 4L)
+  # Odd-numbered pages are summaries
+  expect_match(plain[1], "minESS")
+  expect_match(plain[3], "minESS")
+  # Even-numbered pages are detail
+  expect_match(plain[2], "^ESS ")
+  expect_match(plain[4], "^ESS ")
 })
 
 
-test_that(".CompactEssStr returns '?' when no scalar params", {
-  ess <- c(kPrime_1 = 300, kPrime_2 = 50)
-  expect_equal(MkPrime:::.CompactEssStr(ess), "?")
+test_that(".BuildTickerPages uses full parameter names", {
+  diag <- list(
+    ess = c(log_posterior = 150, tree_length = 80),
+    minEss = 80, maxPsrf = NA_real_
+  )
+  pages <- MkPrime:::.BuildTickerPages(diag)
+  plain <- cli::ansi_strip(pages)
+  detail <- plain[grepl("^ESS", plain)]
+  expect_match(detail, "log_posterior")
+  expect_match(detail, "tree_length")
 })
 
 
-test_that(".CompactEssStr skips non-finite ESS values", {
-  ess <- c(log_posterior = NA_real_, tree_length = Inf, rate_log_sd = 42)
-  plain <- cli::ansi_strip(MkPrime:::.CompactEssStr(ess))
-  # Non-finite params dropped entirely (not shown as '?')
-  expect_false(grepl("lP", plain))
-  expect_false(grepl("TL", plain))
-  expect_match(plain, "rsd:42")
+test_that(".BuildTickerPages puts <= 2 params per detail page", {
+  diag <- list(
+    ess = c(log_posterior = 100, tree_length = 200, rate_log_sd = 300,
+            p = 400, rate_neo = 500),
+    minEss = 100, maxPsrf = NA_real_
+  )
+  pages <- MkPrime:::.BuildTickerPages(diag)
+  plain <- cli::ansi_strip(pages)
+  details <- plain[grepl("^ESS", plain)]
+  # 5 params → 3 detail pages
+  expect_length(details, 3L)
+  # Each detail page has at most 2 param names with ":"
+  for (d in details) {
+    colon_count <- length(gregexpr(":", d)[[1]])
+    expect_lte(colon_count, 2L)
+  }
 })
 
 
-test_that(".CompactEssStr returns '?' when all scalar ESS non-finite", {
-  ess <- c(log_posterior = NA_real_, tree_length = Inf)
-  expect_equal(MkPrime:::.CompactEssStr(ess), "?")
+test_that(".BuildTickerPages skips non-finite ESS params", {
+  diag <- list(
+    ess = c(log_posterior = 100, rate_loss = NA_real_, tree_length = 200),
+    minEss = 100, maxPsrf = NA_real_
+  )
+  pages <- MkPrime:::.BuildTickerPages(diag)
+  combined <- paste(cli::ansi_strip(pages), collapse = " ")
+  expect_false(grepl("rate_loss", combined))
+  expect_match(combined, "log_posterior")
+  expect_match(combined, "tree_length")
 })
 
 
-test_that(".CompactEssStr includes optional params when present", {
-  ess <- c(log_posterior = 100, tree_length = 50, rate_loss = 80,
-           rate_log_sd = 42, p = 139, rate_neo = 60, beta_scale = 70)
-  plain <- cli::ansi_strip(MkPrime:::.CompactEssStr(ess))
-  expect_match(plain, "rL:80")
-  expect_match(plain, "rN:60")
-  expect_match(plain, "bS:70")
-})
-
-
-test_that(".CompactEssStr colours ESS values (red < 100, yellow 100-199)", {
+test_that(".BuildTickerPages colours ESS values", {
   withr::local_options(cli.num_colors = 256L)
-  ess <- c(log_posterior = 50, tree_length = 150, rate_log_sd = 250)
-  result <- MkPrime:::.CompactEssStr(ess)
+  diag <- list(
+    ess = c(log_posterior = 50, tree_length = 150),
+    minEss = 50, maxPsrf = NA_real_
+  )
+  pages <- MkPrime:::.BuildTickerPages(diag)
+  detail <- pages[grepl("ESS", cli::ansi_strip(pages)) &
+                    !grepl("minESS", cli::ansi_strip(pages))]
+  # ESS 50 (red) and 150 (yellow) should produce ANSI codes
 
-  # Red for ESS < 100 — ANSI codes present around "50"
-  expect_true(cli::ansi_has_any(result))
-  # Value 250 should appear uncoloured
-  plain <- cli::ansi_strip(result)
-  expect_match(plain, "rsd:250")
+  expect_true(any(cli::ansi_has_any(detail)))
+})
+
+
+test_that(".BuildTickerPages handles single param", {
+  diag <- list(
+    ess = c(log_posterior = 200),
+    minEss = 200, maxPsrf = NA_real_
+  )
+  pages <- MkPrime:::.BuildTickerPages(diag)
+  # 1 param → 1 detail page → [S, D] = 2 pages
+  expect_length(pages, 2L)
 })
 
 
@@ -108,7 +143,6 @@ test_that(".TickerSummaryStr leaves minESS plain when >= 200", {
   withr::local_options(cli.num_colors = 256L)
   diag <- list(minEss = 300, maxPsrf = NA_real_)
   result <- MkPrime:::.TickerSummaryStr(diag)
-  # No ANSI codes when everything is fine
   expect_false(cli::ansi_has_any(result))
 })
 
