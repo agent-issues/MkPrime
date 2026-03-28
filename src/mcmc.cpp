@@ -1684,6 +1684,10 @@ List run_mcmc_batch_cpp(
 
   // Main iteration loop
   for (int i = 0; i < nBatch; ++i) {
+    // Check for user interrupt every 10 iterations (expensive moves can take
+    // seconds each, so we want to stay responsive to Ctrl-C / ESC).
+    if (i % 10 == 0) R_CheckUserInterrupt();
+
     int iter = startIter + i;
 
     // Advance each chain
