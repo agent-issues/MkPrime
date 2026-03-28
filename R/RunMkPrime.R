@@ -109,6 +109,28 @@ RunMkPrime <- function(data, tree,
     tree$edge.length[tree$edge.length <= 0] <- 1e-8
   }
 
+  # Tip labels must match data taxon names
+  treeTips <- tree$tip.label
+  dataTaxa <- rownames(mkd$matrix)
+  missing  <- setdiff(dataTaxa, treeTips)
+  extra    <- setdiff(treeTips, dataTaxa)
+  if (length(missing) > 0L || length(extra) > 0L) {
+    msgs <- character(0)
+    if (length(missing) > 0L) {
+      msgs <- c(msgs,
+        "x" = "{length(missing)} taxon{?/a} in data but not in tree: {.val {missing}}.")
+    }
+    if (length(extra) > 0L) {
+      msgs <- c(msgs,
+        "x" = "{length(extra)} tip{?s} in tree but not in data: {.val {extra}}.")
+    }
+    cli::cli_abort(c(
+      "Tip labels in {.arg tree} do not match taxa in {.arg data}.",
+      msgs,
+      "i" = "Every taxon in the data must appear as a tip label in the tree, and vice versa."
+    ))
+  }
+
   if (is.null(model)) model <- MkPrimeModel()
   # mcmc already defaulted above (before auto-resume check)
 
@@ -380,6 +402,8 @@ RunMkPrime <- function(data, tree,
   moveWeights   <- vapply(moves, `[[`, numeric(1), "weight")
   moveWeights   <- moveWeights / sum(moveWeights)
   names(moveWeights) <- moveNames
+  moveDim       <- vapply(moves, function(m) m$dim %||% 1L, integer(1L))
+  names(moveDim) <- moveNames
   moveTypeCodes <- vapply(moves, function(m) .kMoveTypes[[m$name]], integer(1L))
   transIdx      <- which(mkd$type == "transformational")
   transIdx0     <- if (length(transIdx) > 0L) transIdx - 1L else integer(0L)
@@ -515,7 +539,8 @@ RunMkPrime <- function(data, tree,
       # Adaptive move weight scheduling (M-092)
       moveWeights <- .AdaptMoveWeights(
         moveWeights, r$chain_accept[[1L]], r$chain_propose[[1L]],
-        r$chain_time_ns[[1L]], moveNames, pinnedWeights,
+        r$chain_time_ns[[1L]], moveNames, moveDim = moveDim,
+        pinnedWeights = pinnedWeights,
         warmupProgress = batchEnd / mcmc$warmup
       )
     }
@@ -1135,6 +1160,29 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 
   if (is.null(model)) model <- MkPrimeModel()
   tree <- TreeTools::Preorder(tree)
+
+  # Tip labels must match data taxon names
+  treeTips <- tree$tip.label
+  dataTaxa <- rownames(mkd$matrix)
+  missing  <- setdiff(dataTaxa, treeTips)
+  extra    <- setdiff(treeTips, dataTaxa)
+  if (length(missing) > 0L || length(extra) > 0L) {
+    msgs <- character(0)
+    if (length(missing) > 0L) {
+      msgs <- c(msgs,
+        "x" = "{length(missing)} taxon{?/a} in data but not in tree: {.val {missing}}.")
+    }
+    if (length(extra) > 0L) {
+      msgs <- c(msgs,
+        "x" = "{length(extra)} tip{?s} in tree but not in data: {.val {extra}}.")
+    }
+    cli::cli_abort(c(
+      "Tip labels in {.arg tree} do not match taxa in {.arg data}.",
+      msgs,
+      "i" = "Every taxon in the data must appear as a tip label in the tree, and vice versa."
+    ))
+  }
+
   model <- .FinalizeModel(model, tree, mkd)
 
   runs <- checkpoint$runs
@@ -1362,48 +1410,56 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
                         kPrimePrior = "geometric") {
   moves <- list(
     list(name = "tree_length", type = "scale", target = "tree_length",
-         weight = 1),
+         weight = 1, dim = 1L),
     list(name = "branch_lengths", type = "beta_simplex",
-         target = "rel_br_lengths", weight = max(1, nEdge / 3))
+         target = "rel_br_lengths", weight = max(1, nEdge / 3), dim = 1L)
   )
 
   if (!fixTopology && nEdge >= 5L) {
     moves <- c(moves, list(
       list(name = "nni", type = "nni", target = NULL,
-           weight = max(1, nEdge / 2)),
+           weight = max(1, nEdge / 2), dim = 1L),
       list(name = "spr", type = "spr", target = NULL,
-           weight = max(1, nEdge / 4))
+           weight = max(1, nEdge / 4), dim = 1L)
     ))
     # Gibbs topology moves (M-090)
     if (isTRUE(mcmc$gibbsSpr)) {
       moves <- c(moves, list(
         list(name = "gibbs_spr", type = "gibbs_spr", target = NULL,
-             weight = max(1, nEdge / 4))
+             weight = max(1, nEdge / 4), dim = 1L)
       ))
     }
     if (isTRUE(mcmc$gibbsSubtreeSwap)) {
       moves <- c(moves, list(
         list(name = "gibbs_subtree_swap", type = "gibbs_subtree_swap",
-             target = NULL, weight = max(1, nEdge / 6))
+             target = NULL, weight = max(1, nEdge / 6), dim = 1L)
       ))
     }
     # Weighted moves (M-090)
     if (isTRUE(mcmc$weightedBranchScale)) {
       moves <- c(moves, list(
         list(name = "weighted_branch_lengths", type = "weighted_branch_scale",
-             target = "rel_br_lengths", weight = max(1, nEdge / 6))
+             target = "rel_br_lengths", weight = max(1, nEdge / 6), dim = 1L)
       ))
     }
     if (isTRUE(mcmc$weightedSpr)) {
       moves <- c(moves, list(
         list(name = "weighted_spr", type = "weighted_spr", target = NULL,
-             weight = max(1, nEdge / 8))
+             weight = max(1, nEdge / 8), dim = 1L)
       ))
     }
     if (isTRUE(mcmc$weightedSubtreeSwap)) {
       moves <- c(moves, list(
         list(name = "weighted_subtree_swap", type = "weighted_subtree_swap",
-             target = NULL, weight = max(1, nEdge / 8))
+             target = NULL, weight = max(1, nEdge / 8), dim = 1L)
+      ))
+    }
+    # Block Gibbs branch-length sweep (M-054 reframed)
+    if (isTRUE(mcmc$blockGibbsBranch)) {
+      moves <- c(moves, list(
+        list(name = "block_gibbs_branch", type = "block_gibbs_branch",
+             target = "rel_br_lengths", weight = max(1, nEdge / 4),
+             dim = as.integer(nEdge))
       ))
     }
   }
@@ -1411,13 +1467,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   if (nTrans > 0) {
     kPrimeMoves <- list(
       list(name = "kPrime", type = "int_walk", target = "kPrime",
-           weight = max(1, 2 * nTrans))
+           weight = max(1, 2 * nTrans), dim = 1L)
     )
     # p hyperparameter only exists for hierarchical geometric prior
     if (!identical(kPrimePrior, "logseries")) {
       kPrimeMoves <- c(kPrimeMoves, list(
         # Conjugate Gibbs draw: p | k' ~ Beta(a + nTrans, b + sum(k' - kObs))
-        list(name = "p", type = "gibbs_p", target = "p", weight = 1)
+        list(name = "p", type = "gibbs_p", target = "p", weight = 1,
+             dim = 1L)
       ))
     }
     moves <- c(moves, kPrimeMoves)
@@ -1426,15 +1483,15 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   if (hasNeo) {
     moves <- c(moves, list(
       list(name = "rate_loss", type = "scale", target = "rate_loss",
-           weight = 1.5),
+           weight = 1.5, dim = 1L),
       list(name = "rate_neo", type = "scale", target = "rate_neo",
-           weight = 1)
+           weight = 1, dim = 1L)
     ))
   }
 
   moves <- c(moves, list(
     list(name = "rate_log_sd", type = "scale", target = "rate_log_sd",
-         weight = 1.5)
+         weight = 1.5, dim = 1L)
   ))
 
   moves
@@ -1445,7 +1502,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 # 0=scale_tl, 1=scale_rl, 2=scale_rls, 3=scale_rn,
 # 4=beta_simplex, 5=nni, 6=spr, 7=int_walk, 8=scale_p (legacy),
 # 9=gibbs_p, 10=gibbs_spr, 11=gibbs_subtree_swap,
-# 12=weighted_br_scale, 13=weighted_spr, 14=weighted_subtree_swap
+# 12=weighted_br_scale, 13=weighted_spr, 14=weighted_subtree_swap,
+# 15=block_gibbs_branch
 .kMoveTypes <- c(
   tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
   rate_neo = 3L, branch_lengths = 4L,
@@ -1453,7 +1511,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   gibbs_spr = 10L, gibbs_subtree_swap = 11L,
   weighted_branch_lengths = 12L,
   weighted_spr = 13L,
-  weighted_subtree_swap = 14L
+  weighted_subtree_swap = 14L,
+  block_gibbs_branch = 15L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)
@@ -1801,12 +1860,21 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 #' are excluded from adaptation. Moves with fewer than `minProposals`
 #' proposals keep their current weight.
 #'
+#' The score formula accounts for multi-dimensional moves via the
+#' `moveDim` parameter: `score = accept_rate * dim / cost`. For
+#' single-parameter moves (`dim = 1`), this reduces to the original
+#' `accept_rate / cost`. Block moves (e.g. block Gibbs branch sweep)
+#' set `dim = nEdge` so the scheduler values them proportionally to
+#' the number of parameters they update per call.
+#'
 #' @param currentWeights Numeric vector (current move probabilities,
 #'   sums to 1).
 #' @param acceptCount Named integer vector (cold chain, cumulative).
 #' @param proposeCount Named integer vector (cold chain, cumulative).
 #' @param moveTimeNs Named numeric vector (cold chain, cumulative ns).
 #' @param moveNames Character vector of move names.
+#' @param moveDim Integer vector of per-move dimensionality (number of
+#'   parameters updated per call). Default: all 1s.
 #' @param pinnedWeights Named numeric vector or NULL.
 #' @param warmupProgress Fraction of warmup completed (0 to 1).
 #' @param tStart Starting softmax temperature (default 2.0).
@@ -1817,7 +1885,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 #' @return Updated weight vector (sums to 1).
 #' @keywords internal
 .AdaptMoveWeights <- function(currentWeights, acceptCount, proposeCount,
-                               moveTimeNs, moveNames, pinnedWeights,
+                               moveTimeNs, moveNames,
+                               moveDim = rep(1L, length(currentWeights)),
+                               pinnedWeights,
                                warmupProgress, tStart = 2.0, tEnd = 0.5,
                                wMin = 0.05, minProposals = 20L) {
   nMoves <- length(currentWeights)
@@ -1846,13 +1916,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 
   if (length(scoreableIdx) == 0L) return(currentWeights)
 
-  # Compute scores: acceptances per second. Use log-scores directly to
-  # avoid overflow when accept_rate/cost_s spans many orders of magnitude.
+  # Compute scores: dim-adjusted acceptances per second. log-scores avoid
+  # overflow when accept_rate*dim/cost_s spans many orders of magnitude.
   acceptRate <- acceptCount[scoreableIdx] / proposeCount[scoreableIdx]
+  dimAdj <- pmax(moveDim[scoreableIdx], 1L)
   meanCostS <- moveTimeNs[scoreableIdx] /
     (proposeCount[scoreableIdx] * 1e9)
   meanCostS <- pmax(meanCostS, 1e-9)
-  logScores <- log(pmax(acceptRate, 1e-12)) - log(meanCostS)
+  logScores <- log(pmax(acceptRate, 1e-12)) + log(dimAdj) - log(meanCostS)
 
   # Softmax with annealed temperature
   temp <- tStart + (tEnd - tStart) * min(1, warmupProgress)
@@ -1927,10 +1998,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     kPrime = 0.35,
     p = 0.35, rate_loss = 0.35, rate_log_sd = 0.35,
     rate_neo = 0.35,
-    # Gibbs/weighted moves: no tuning to adapt
+    # Gibbs/weighted/block moves: no tuning to adapt
     gibbs_spr = NA_real_, gibbs_subtree_swap = NA_real_,
     weighted_branch_lengths = NA_real_,
-    weighted_spr = NA_real_, weighted_subtree_swap = NA_real_
+    weighted_spr = NA_real_, weighted_subtree_swap = NA_real_,
+    block_gibbs_branch = NA_real_
   )
 
   tuningKeys <- c(
@@ -1943,10 +2015,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     rate_loss = "scale_rate_loss",
     rate_log_sd = "scale_rate_log_sd",
     rate_neo = "scale_rate_neo",
-    # Gibbs/weighted moves: no tuning to adapt
+    # Gibbs/weighted/block moves: no tuning to adapt
     gibbs_spr = NA_character_, gibbs_subtree_swap = NA_character_,
     weighted_branch_lengths = NA_character_,
-    weighted_spr = NA_character_, weighted_subtree_swap = NA_character_
+    weighted_spr = NA_character_, weighted_subtree_swap = NA_character_,
+    block_gibbs_branch = NA_character_
   )
 
   for (move in moves) {

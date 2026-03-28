@@ -159,3 +159,26 @@ test_that("MkpLogLikelihood handles mixed partition types", {
   expect_true(is.finite(ll))
   expect_lt(ll, 0)
 })
+
+
+test_that("RunMkPrime aborts on tip label / data taxon mismatch", {
+  skip_if_not_installed("TreeSearch")
+  dat <- TreeSearch::inapplicable.phyData[["Vinther2008"]]
+
+  # Completely wrong labels
+  bad <- ape::rtree(length(dat), br = NULL)
+  bad$edge.length <- rep(0.1, nrow(bad$edge))
+  expect_error(
+    RunMkPrime(dat, bad, mcmc = MkPrimeMCMC(nIter = 100L)),
+    "do not match"
+  )
+
+  # One tip renamed
+  ok <- ape::rtree(length(dat), tip.label = names(dat), br = NULL)
+  ok$edge.length <- rep(0.1, nrow(ok$edge))
+  ok$tip.label[1] <- "BOGUS"
+  expect_error(
+    RunMkPrime(dat, ok, mcmc = MkPrimeMCMC(nIter = 100L)),
+    "do not match"
+  )
+})
