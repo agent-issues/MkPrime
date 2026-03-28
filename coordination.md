@@ -192,7 +192,7 @@ after warmup. User can pin specific weights via `moveWeights` in
 ---
 
 ### Phase 10: Run-level parallelism via `future`
-**Status:** PLANNED (2026-03-27). Work on `mkp-parallel` worktree (`feature/parallel-runs`).
+**Status:** COMPLETE (2026-03-27). All three sub-tasks done by Agent E on `feature/parallel-runs`. Branch ready for merge review.
 **Goal:** Parallelize independent MCMC runs across CPU cores and HPC
 nodes using the `future` package as a backend-agnostic parallelism
 layer. The user sets `future::plan()` before calling `RunMkPrime()`;
@@ -213,9 +213,10 @@ the package never sets a plan itself (CRAN policy).
 - Within-run chain parallelism (OpenMP etc.) is explicitly out of scope.
 
 **Sub-phases:**
-- **M-094 (P1):** Extract `RunMkPrimeSingleRun()` — refactor + dedup
-- **M-095 (P2):** Parallel orchestration (`.RunParallelRuns()`, `future`)
-- **M-096 (P2):** Tests + HPC documentation
+- **M-094 (P1):** ✓ Extract `.RunMkPrimeSingleRun()` — refactor + dedup. Fixed multi-run checkpoint regression.
+- **M-095 (P1):** ✓ Parallel orchestration (`.RunParallelRuns()`, `.CheckConvergenceFromLogs()`, `future` in Suggests).
+- **M-096 (P1):** ✓ Tests (`test-parallel.R`, sequential + multisession) + HPC usage section in `RunMkPrime()` roxygen.
+- **Note:** `man/` not regenerated (stale installed package); run `roxygen2::roxygenise()` after installing `feature/parallel-runs`.
 
 **Plan file:** `.positai/plans/2026-03-27-1307-plan.md`
 

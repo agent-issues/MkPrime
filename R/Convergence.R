@@ -7,13 +7,15 @@
 #' Calculates effective sample size (ESS) per parameter and, when
 #' `nRuns >= 2`, the potential scale reduction factor (PSRF, Gelman-Rubin
 #' diagnostic) across runs. Optionally computes topology ESS using the
-#' Robinson-Foulds distance via the **treess** and **TreeDist** packages.
+#' Robinson-Foulds distance via **TreeDist**.
 #'
 #' @param posterior An `MkPosterior` object.
-#' @param trees Logical. If `TRUE` (default) and **treess** and **TreeDist**
-#'   are installed, compute topology ESS (Fréchet correlation ESS and median
-#'   pseudo-ESS) from the sampled trees. Set to `FALSE` to skip. Each run is
-#'   subsampled to at most 1,000 trees before computation.
+#' @param trees Logical. If `TRUE` and **TreeDist** is installed, compute
+#'   topology ESS (Fréchet correlation ESS and median pseudo-ESS) from the
+#'   sampled trees. Defaults to `FALSE` because Robinson-Foulds distance
+#'   computation is O(n^2) and can be slow for large posteriors — reserve
+#'   for deliberate post-run calls once parameter ESS has been satisfied.
+#'   Each run is subsampled to at most 1,000 trees.
 #' @return An object of class `MkpDiagnostics`, a list with components:
 #'   - `ess`: Named numeric vector of ESS per parameter.
 #'   - `minEss`: Scalar minimum ESS across parameters.
@@ -23,7 +25,7 @@
 #'   - `treeEss`: Named numeric vector with `frechetCorrelationESS` and
 #'     `medianPseudoESS` (or `NULL` if not computed).
 #' @export
-ConvergenceDiagnostics <- function(posterior, trees = TRUE) {
+ConvergenceDiagnostics <- function(posterior, trees = FALSE) {
   if (!inherits(posterior, "MkPosterior")) {
     cli::cli_abort("{.arg posterior} must be an {.cls MkPosterior} object.")
   }
@@ -347,12 +349,17 @@ print.MkpDiagnostics <- function(x, ...) {
 }
 
 
-# Compute topology ESS from sampled trees using treess + TreeDist RF.
+# Compute topology ESS from sampled trees using internal .TreeESS + TreeDist RF.
 # Returns named numeric vector (frechetCorrelationESS, medianPseudoESS)
-# summed across runs, or NULL if skipped or failed.
+# as the minimum across runs (conservative), or NULL if skipped or failed.
+#
+# NOTE: tree ESS via RF distances is expensive (O(n^2) distance matrix) and
+# is intentionally excluded from print()/summary() and from the checkEvery
+# polling callback.  Call ConvergenceDiagnostics(posterior, trees = TRUE)
+# explicitly after a run has finished — or after parameter ESS has been
+# satisfied — to obtain topology ESS.
 .ComputeTreeEss <- function(pb, trees) {
   if (isFALSE(trees)) return(NULL)
-  if (!requireNamespace("treess",   quietly = TRUE)) return(NULL)
   if (!requireNamespace("TreeDist", quietly = TRUE)) return(NULL)
 
   # Build per-run tree lists (post-burnin)
@@ -361,10 +368,10 @@ print.MkpDiagnostics <- function(x, ...) {
   } else {
     list(pb$trees)
   }
-  perRunTrees <- Filter(function(x) length(x) >= 4L, perRunTrees)
+  perRunTrees <- Filter(function(x) length(x) >= 5L, perRunTrees)
   if (length(perRunTrees) == 0L) return(NULL)
 
-  # Subsample each run to at most 1000 trees (mirrors neotrans approach)
+  # Subsample each run to at most 1000 trees
   maxPerRun <- 1000L
   totalTrees <- sum(vapply(perRunTrees, length, integer(1L)))
   if (any(vapply(perRunTrees, length, integer(1L)) > maxPerRun)) {
@@ -383,12 +390,12 @@ print.MkpDiagnostics <- function(x, ...) {
   if (interactive()) cli::cli_progress_message("Computing tree ESS\u2026")
 
   tryCatch({
-    essMat <- do.call(
-      rbind,
-      treess::treess(perRunTrees, TreeDist::RobinsonFoulds,
-                     methods = treess::getESSMethods(TRUE))
-    )[, c("frechetCorrelationESS", "medianPseudoESS"), drop = FALSE]
-    colSums(essMat, na.rm = TRUE)
+    chainRows <- lapply(perRunTrees, function(chain) {
+      .TreeESS(chain, dist_fn = TreeDist::RobinsonFoulds)
+    })
+    essMat <- do.call(rbind, chainRows)
+    # Minimum across runs — conservative multi-chain estimate.
+    apply(essMat, 2, min, na.rm = TRUE)
   }, error = function(e) {
     cli::cli_warn("Tree ESS computation failed: {conditionMessage(e)}")
     NULL

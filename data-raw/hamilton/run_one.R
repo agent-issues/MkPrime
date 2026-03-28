@@ -86,6 +86,44 @@ dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 ckp_dir <- file.path(out_dir, tag)
 dir.create(ckp_dir, showWarnings = FALSE)
 
+# ---- Stale-checkpoint guard --------------------------------------------------
+# Lustre/GPFS write-buffer caching means saveRDS can return before the file is
+# fully flushed.  A cancelled SLURM job can therefore leave a checkpoint whose
+# bytes haven't reached stable storage; the first readRDS hits the kernel cache
+# and succeeds, but a subsequent read (inside ResumeMkPrime) hits the actual
+# truncated file and throws "error reading from connection".
+#
+# Fix: store the current SLURM_JOB_ID in a sentinel file inside ckp_dir.
+# On any new job submission (different ID) wipe the whole directory so
+# RunMkPrime always starts from scratch.  Within a single job, the sentinel
+# matches and existing checkpoints are preserved for intra-job recovery.
+.sentinel <- file.path(ckp_dir, ".slurm_job_id")
+.cur_job  <- Sys.getenv("SLURM_JOB_ID", "")
+.prev_job <- if (file.exists(.sentinel)) readLines(.sentinel, warn = FALSE)[1L] else ""
+
+if (.cur_job != "" && .cur_job != .prev_job) {
+  message("New SLURM job (", .cur_job, ") — purging stale outputs in ", ckp_dir)
+  invisible(lapply(list.files(ckp_dir, full.names = TRUE), unlink))
+  dir.create(ckp_dir, showWarnings = FALSE)
+  writeLines(.cur_job, .sentinel)
+} else if (.cur_job == "") {
+  # Not under SLURM (interactive/test) — fall back to content validation
+  for (.pfx in c("mk", "mkp")) {
+    .ckp <- file.path(ckp_dir, paste0(.pfx, "_checkpoint.rds"))
+    if (file.exists(.ckp)) {
+      .ok <- tryCatch({
+        ckp <- readRDS(.ckp)
+        is.list(ckp) && is.list(ckp$runs) && length(ckp$runs) > 0L &&
+          is.list(ckp$mcmc) && !is.null(ckp$iter)
+      }, error = function(e) FALSE)
+      if (!.ok) {
+        message("Removing stale/corrupt checkpoint (", .pfx, ")")
+        unlink(.ckp)
+      }
+    }
+  }
+}
+
 make_mcmc <- function(prefix) {
   if (test_mode) {
     MkPrimeMCMC(
@@ -120,24 +158,45 @@ make_mcmc <- function(prefix) {
   }
 }
 
+# Helper: run RunMkPrime and, if a checkpoint read error slips through the
+# sentinel guard (e.g. under non-SLURM environments), purge and retry once.
+.run_arm <- function(call_fn, label) {
+  tryCatch(call_fn(), error = function(e) {
+    if (grepl("reading from connection|checkpoint", conditionMessage(e),
+              ignore.case = TRUE)) {
+      message(label, " checkpoint error — purging and retrying fresh: ",
+              conditionMessage(e))
+      invisible(lapply(list.files(ckp_dir, full.names = TRUE), unlink))
+      dir.create(ckp_dir, showWarnings = FALSE)
+      call_fn()
+    } else {
+      stop(e)
+    }
+  })
+}
+
 # ---- Mk arm: fix k = kObs per character ------------------------------------
-mk_result  <- RunMkPrime(
-  pd,
-  start_tree,
-  knownStates = kObs_for_mk,
-  model = MkPrimeModel(coding = "variable"),
-  mcmc  = make_mcmc("mk")
-)
+mk_result <- .run_arm(function() {
+  RunMkPrime(
+    pd,
+    start_tree,
+    knownStates = kObs_for_mk,
+    model = MkPrimeModel(coding = "variable"),
+    mcmc  = make_mcmc("mk")
+  )
+}, "Mk")
 cat(sprintf("  Mk done: %d trees, stop=%s\n",
             length(mk_result$trees), mk_result$stop_reason))
 
 # ---- Mk' arm: infer k -------------------------------------------------------
-mkp_result <- RunMkPrime(
-  mkd_mkp,
-  start_tree,
-  model = MkPrimeModel(coding = "variable"),
-  mcmc  = make_mcmc("mkp")
-)
+mkp_result <- .run_arm(function() {
+  RunMkPrime(
+    mkd_mkp,
+    start_tree,
+    model = MkPrimeModel(coding = "variable"),
+    mcmc  = make_mcmc("mkp")
+  )
+}, "Mk'")
 cat(sprintf("  Mk' done: %d trees, stop=%s\n",
             length(mkp_result$trees), mkp_result$stop_reason))
 

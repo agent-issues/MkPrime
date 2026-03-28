@@ -113,6 +113,10 @@ mkn_stationary_freqs <- function(rate_loss) {
     .Call(`_MkPrime_mkn_stationary_freqs`, rate_loss)
 }
 
+frechet_correlation_ess_cpp <- function(dmat_sq, min_nsamples) {
+    .Call(`_MkPrime_frechet_correlation_ess_cpp`, dmat_sq, min_nsamples)
+}
+
 swap_subtrees_cpp <- function(edge, nTip, treeLength, relBrLengths, nodeA, nodeB) {
     .Call(`_MkPrime_swap_subtrees_cpp`, edge, nTip, treeLength, relBrLengths, nodeA, nodeB)
 }

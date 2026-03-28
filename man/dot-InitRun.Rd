@@ -7,6 +7,9 @@
 .InitRun(tree, mkd, model, mcmc, moves)
 }
 \description{
-Initialize state for a single run
+Returns a fully R-serializable run state: \code{chains} holds per-chain
+parameter lists in checkpoint-compatible format; no XPtrs are created here.
+XPtrs are built inside \code{\link[=.RunMkPrimeSingleRun]{.RunMkPrimeSingleRun()}} so the state can be sent
+to \code{future} workers without serialisation errors.
 }
 \keyword{internal}

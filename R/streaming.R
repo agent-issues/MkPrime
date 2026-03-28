@@ -167,7 +167,7 @@ ReadMkLog <- function(logFile) {
   }
 
   dat <- utils::read.table(logFile, header = TRUE, sep = "\t",
-                           check.names = FALSE, comment.char = "")
+                           check.names = FALSE, comment.char = "#")
 
   if (!"Sample" %in% names(dat)) {
     cli::cli_abort(

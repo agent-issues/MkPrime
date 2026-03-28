@@ -114,6 +114,34 @@ test_that("ACRV changes likelihood vs no rate variation", {
 })
 
 
+test_that("RunMkPrime warns and clamps non-positive branch lengths", {
+  # NJ trees can produce exactly zero-length (or negative) branches when taxa
+  # are very similar. Before this fix, zeros silently propagated to
+  # rel_br_lengths = 0, causing LogPrior to return -Inf on every iteration and
+  # the chain to freeze permanently with 0% acceptance.
+  library(ape)
+
+  tree <- read.tree(text = "((t1:0.1,t2:0.0):0.15,(t3:0.0,t4:0.3):0.2);")
+  mat <- matrix(c(0L, 1L, 0L, 1L,
+                  0L, 0L, 1L, 1L,
+                  1L, 0L, 1L, 0L), 4L, 3L,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  expect_warning(
+    result <- RunMkPrime(pd, tree,
+      mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 200L, thin = 10L, warmup = 50L)),
+    regexp = "non-positive"
+  )
+
+  expect_s3_class(result, "MkPosterior")
+  # Chain must have escaped -Inf: all log_posteriors finite
+  expect_true(all(is.finite(result$samples[, "log_posterior"])))
+  # At least one proposal type accepted something (chain moved)
+  expect_gt(max(result$acceptance), 0)
+})
+
+
 test_that("MkpLogLikelihood handles mixed partition types", {
   library(ape)
 

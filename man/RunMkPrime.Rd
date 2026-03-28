@@ -44,3 +44,37 @@ parameters, and per-character k' (for transformational characters).
 Supports parallel tempering with a geometric temperature ladder,
 multiple independent runs, convergence monitoring, and early stopping.
 }
+\section{Parallel independent runs (HPC usage)}{
+
+
+Set \code{parallel = TRUE} in \code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}} to run independent chains
+concurrently. The \pkg{future} package (in \code{Suggests}) provides the
+backend-agnostic parallelism. Call \code{future::plan()} \strong{before}
+\code{RunMkPrime()}:
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{# Workstation — use local cores
+future::plan("multisession", workers = 4)
+result <- RunMkPrime(data, tree,
+  mcmc = MkPrimeMCMC(nRuns = 4, parallel = TRUE))
+
+# HPC (SLURM) — requires the future.batchtools package
+future::plan(future.batchtools::batchtools_slurm(
+  resources = list(ncpus = 1, memory = "4gb", walltime = "24:00:00")
+))
+result <- RunMkPrime(data, tree,
+  mcmc = MkPrimeMCMC(nRuns = 4, parallel = TRUE,
+                      logFile  = "/scratch/myrun/run.log",
+                      pollInterval = 60L))
+}\if{html}{\out{</div>}}
+
+Notes for HPC:
+\itemize{
+\item Set \code{logFile} explicitly to a path on a shared filesystem (tempdir is
+node-local and workers on different nodes cannot read it).
+\item Use \code{pollInterval = 30} -- \code{60} seconds; job startup latency makes
+frequent polling wasteful.
+\item Set \code{checkpointFile} so runs can be resumed if the master job times out.
+\item Each \code{future} worker becomes a separate job submission on SLURM/PBS/LSF.
+}
+}
+

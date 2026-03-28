@@ -91,6 +91,13 @@
 #'   at 30% and SPR at 20%, with the remaining 50% allocated adaptively
 #'   among other moves. To disable adaptive scheduling entirely, pin all
 #'   moves (sum to 1). See section **Adaptive move scheduling** below.
+#' @param parallel Logical. If `TRUE` and `nRuns > 1`, independent runs are
+#'   launched as non-blocking `future::future()` workers and the main process
+#'   polls for convergence. Requires the \pkg{future} package (in `Suggests`).
+#'   Set a parallel plan before calling [RunMkPrime()]:
+#'   `future::plan("multisession", workers = nRuns)`. Default `FALSE` (sequential).
+#' @param pollInterval Integer. Seconds between convergence polls in parallel
+#'   mode. Ignored when `parallel = FALSE`. Default `10L`.
 #' @param tuning Named list of initial tuning parameters for each move
 #'   type. See Details.
 #'
@@ -163,7 +170,9 @@ MkPrimeMCMC <- function(
     weightedSubtreeSwap = FALSE,
     nBranchBins = 10L,
     moveWeights = NULL,
-    tuning = list()
+    tuning = list(),
+    parallel = FALSE,
+    pollInterval = 10L
 ) {
   nIter <- if (is.infinite(nIter)) Inf else as.integer(nIter)
   thin <- as.integer(thin)
@@ -255,6 +264,14 @@ MkPrimeMCMC <- function(
   if (!is.null(checkEvery)) checkEvery <- as.integer(checkEvery)
   if (!is.null(plotEvery)) plotEvery <- as.integer(plotEvery)
 
+  if (!is.logical(parallel) || length(parallel) != 1L || is.na(parallel)) {
+    cli::cli_abort("{.arg parallel} must be a length-1 logical (TRUE or FALSE).")
+  }
+  pollInterval <- as.integer(pollInterval)
+  if (pollInterval < 1L) {
+    cli::cli_abort("{.arg pollInterval} must be a positive integer.")
+  }
+
   # Resolve progressFn
   if (identical(progressFn, "default")) {
     progressFn <- MkpTracePlot
@@ -279,7 +296,8 @@ MkPrimeMCMC <- function(
          weightedSubtreeSwap = weightedSubtreeSwap,
          nBranchBins = nBranchBins,
          moveWeights = moveWeights,
-         tuning = tuning),
+         tuning = tuning,
+         parallel = parallel, pollInterval = pollInterval),
     class = "MkPrimeMCMC"
   )
 }
