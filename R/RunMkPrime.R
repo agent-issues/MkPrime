@@ -403,7 +403,12 @@ RunMkPrime <- function(data, tree,
   }
 
   # --- Batch loop constants ---
-  batchSize     <- 200L
+  # Adaptive batch size (M-106): fewer iterations per batch during warmup
+
+  # (for tuning adaptation responsiveness), larger batches during sampling
+  # to minimize R<->C++ round-trip overhead (90%+ of CPU at batchSize=200).
+  warmupBatch   <- 500L
+  samplingBatch <- 5000L
   moveNames     <- vapply(moves, `[[`, character(1), "name")
   moveWeights   <- vapply(moves, `[[`, numeric(1), "weight")
   moveWeights   <- moveWeights / sum(moveWeights)
@@ -432,7 +437,8 @@ RunMkPrime <- function(data, tree,
   }
 
   startTime     <- proc.time()["elapsed"]
-  hasProgressFn <- !is.null(mcmc$progressFn) && !is.null(mcmc$plotEvery)
+  hasProgressFn <- !is.null(mcmc$progressFn) && !is.null(mcmc$plotEvery) &&
+    mcmc$plotEvery > 0L
 
   # --- Progress bar (M-097 rotating ticker) ---
   coldLogpost    <- {s <- get_mcmc_state(r$chainStates[[1]]); s$logPost}
@@ -465,8 +471,13 @@ RunMkPrime <- function(data, tree,
   # --- Main batch loop ---
   batchStart <- startIter
   repeat {
-    batchEnd <- batchStart + batchSize - 1L
+    # M-106: adaptive batch size — small during warmup, large during sampling
+    batchSize <- if (batchStart <= mcmc$warmup) warmupBatch else samplingBatch
+    batchEnd  <- batchStart + batchSize - 1L
     if (is.finite(mcmc$nIter)) batchEnd <- min(batchEnd, mcmc$nIter)
+    # Don't straddle the warmup boundary: end at warmup so adaptation fires
+    if (batchStart <= mcmc$warmup && batchEnd > mcmc$warmup)
+      batchEnd <- mcmc$warmup
     nBatch   <- batchEnd - batchStart + 1L
 
     scaleTunings <- .BuildScaleTuningMatrix(r$chain_tuning, moves)
@@ -636,6 +647,7 @@ RunMkPrime <- function(data, tree,
 
     # Convergence check + checkpoint at checkEvery intervals
     doCheck <- batchEnd > mcmc$warmup && !is.null(mcmc$checkEvery) &&
+      mcmc$checkEvery > 0L &&
       (batchEnd %/% mcmc$checkEvery) > ((batchStart - 1L) %/% mcmc$checkEvery)
 
     if (doCheck) {
