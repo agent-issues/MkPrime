@@ -488,3 +488,120 @@ test_that("Het likelihood evaluation is deterministic", {
 
   expect_equal(ll1, ll2, tolerance = 1e-14)
 })
+
+
+# ===========================================================================
+# 10. Regression: checkpoint round-trip preserves beta_scale
+# ===========================================================================
+
+test_that("Checkpoint serialization includes beta_scale", {
+  tree <- .four_taxon_tree()
+  mat <- matrix(c(0, 1, 0, 1, 1, 0, 1, 0),
+                nrow = 4, ncol = 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- MatrixToPhyDat(mat)
+
+  model <- MkPrimeModel(qHeterogeneity = TRUE, nBetaCat = 4L,
+                         nCat = 1L, coding = "none")
+
+  pts <- .het_ptrs(tree, pd, model, beta_scale = 7.5)
+
+  # Simulate what .SaveCheckpoint does: get_mcmc_state → serialize → reconstruct
+  s <- get_mcmc_state(pts$statePtr)
+
+  # The serialized list now includes beta_scale
+  serialized <- list(
+    log_lik        = s$logLik,
+    log_prior      = s$logPrior,
+    log_post       = s$logPost,
+    tree_length    = s$treeLength,
+    rel_br_lengths = s$relBrLengths,
+    rate_loss      = s$rateLoss,
+    rate_log_sd    = s$rateLogSd,
+    rate_neo       = s$rateNeo,
+    p              = s$p,
+    kPrime         = s$kPrime,
+    edge           = s$edge,
+    beta_scale     = s$betaScale
+  )
+  expect_equal(serialized$beta_scale, 7.5)
+
+  # Reconstruct C++ state from serialized list (simulates resume path)
+  newPtr <- init_mcmc_state(
+    serialized$edge[, 1L], serialized$edge[, 2L],
+    serialized$rel_br_lengths, serialized$tree_length,
+    serialized$rate_loss, serialized$rate_log_sd,
+    serialized$rate_neo %||% 1.0, serialized$p %||% 0.5,
+    as.integer(serialized$kPrime),
+    serialized$log_lik, serialized$log_prior,
+    serialized$beta_scale %||% 1.0
+  )
+  s2 <- get_mcmc_state(newPtr)
+  expect_equal(s2$betaScale, 7.5)
+})
+
+
+# ===========================================================================
+# 11. Regression: nBetaCat validation prevents buffer overrun
+# ===========================================================================
+
+test_that("MkPrimeModel rejects nBetaCat > 16", {
+  expect_error(
+    MkPrimeModel(qHeterogeneity = TRUE, nBetaCat = 20L),
+    "nBetaCat"
+  )
+  expect_error(
+    MkPrimeModel(qHeterogeneity = TRUE, nBetaCat = 0L),
+    "nBetaCat"
+  )
+  # nBetaCat = 1 and 16 are valid
+  expect_s3_class(
+    MkPrimeModel(qHeterogeneity = TRUE, nBetaCat = 1L),
+    "MkPrimeModel"
+  )
+  expect_s3_class(
+    MkPrimeModel(qHeterogeneity = TRUE, nBetaCat = 16L),
+    "MkPrimeModel"
+  )
+})
+
+
+# ===========================================================================
+# 12. Regression: small alpha produces finite Het likelihood (no NaN bins)
+# ===========================================================================
+
+test_that("Het with very small beta_scale produces finite likelihood", {
+  tree <- .four_taxon_tree()
+  mat <- matrix(c(0, 1, 0, 1, 1, 0, 1, 0),
+                nrow = 4, ncol = 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- MatrixToPhyDat(mat)
+
+  model <- MkPrimeModel(qHeterogeneity = TRUE, nBetaCat = 4L,
+                         nCat = 1L, coding = "none")
+
+  # alpha = 0.01 previously caused NaN in compute_het_bins for the last bin
+  pts <- .het_ptrs(tree, pd, model, beta_scale = 0.01)
+  ll <- eval_full_loglik_cpp(pts$dataPtr, pts$statePtr)
+
+  expect_true(is.finite(ll),
+              label = "Small beta_scale should not produce NaN likelihood")
+})
+
+
+# ===========================================================================
+# 13. Het with nBetaCat = 1 (single bin, edge case)
+# ===========================================================================
+
+test_that("Het with nBetaCat = 1 produces finite likelihood", {
+  tree <- .four_taxon_tree()
+  mat <- matrix(c(0, 1, 0, 1), nrow = 4, ncol = 1,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- MatrixToPhyDat(mat)
+
+  model <- MkPrimeModel(qHeterogeneity = TRUE, nBetaCat = 1L,
+                         nCat = 1L, coding = "none")
+  pts <- .het_ptrs(tree, pd, model, beta_scale = 2.0)
+  ll <- eval_full_loglik_cpp(pts$dataPtr, pts$statePtr)
+  expect_true(is.finite(ll))
+})

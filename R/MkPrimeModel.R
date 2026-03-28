@@ -112,6 +112,19 @@ MkPrimeModel <- function(
     )
   }
 
+  # M-052: validate Het parameters
+  if (isTRUE(qHeterogeneity)) {
+    nBetaCat <- as.integer(nBetaCat)
+    if (nBetaCat < 1L || nBetaCat > 16L) {
+      cli::cli_abort("{.arg nBetaCat} must be between 1 and 16 (got {nBetaCat}).")
+    }
+    if (betaScaleShape <= 0 || betaScaleRate <= 0) {
+      cli::cli_abort(
+        "{.arg betaScaleShape} and {.arg betaScaleRate} must be positive."
+      )
+    }
+  }
+
   # Derive treeLengthRate from expSteps if not provided
   if (is.null(treeLengthRate) && !is.null(expSteps)) {
     treeLengthRate <- 2 / expSteps

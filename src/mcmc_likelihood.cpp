@@ -490,10 +490,20 @@ static void compute_het_bins(double alpha, int k, int nBins, double* bins) {
   for (int i = 0; i < nBins; ++i) {
     double lo = R::qbeta((double)i / nBins, a, b, 1, 0);
     double hi = R::qbeta((double)(i + 1) / nBins, a, b, 1, 0);
+    // Guard: degenerate bin (lo ≈ hi) at extreme alpha.
+    // Use midpoint as the bin representative; falls back to 1/k for large α.
+    if (hi - lo < 1e-15) {
+      bins[i] = 0.5 * (lo + hi);
+      continue;
+    }
     double p_lo = R::pbeta(lo, a + 1.0, b, 1, 0);
     double p_hi = R::pbeta(hi, a + 1.0, b, 1, 0);
     double denom = R::pbeta(hi, a, b, 1, 0) - R::pbeta(lo, a, b, 1, 0);
-    bins[i] = (a / (a + b)) * (p_hi - p_lo) / denom;
+    if (denom < 1e-300) {
+      bins[i] = 0.5 * (lo + hi);
+    } else {
+      bins[i] = (a / (a + b)) * (p_hi - p_lo) / denom;
+    }
   }
 }
 
