@@ -713,12 +713,19 @@ SEXP prepare_mcmc_data(List partitions_r,
     }
   }
 
+  // Initialize branchBins with the default so weighted/block-Gibbs moves
+  // work even if set_branch_bins() is never called (e.g. in unit tests).
+  d->branchBins.init(d->nBranchBins);
+
   return Rcpp::XPtr<McmcData>(d, true);
 }
 
 
-// M-090: setter for nBranchBins (avoids changing prepare_mcmc_data signature)
+// M-090: setter for nBranchBins (avoids changing prepare_mcmc_data signature).
+// Also precomputes the BranchBins breakpoints so no lazy init is needed later.
 // [[Rcpp::export]]
 void set_branch_bins(SEXP dataPtr, int nBins) {
-  Rcpp::XPtr<McmcData>(dataPtr)->nBranchBins = nBins;
+  McmcData* d = Rcpp::XPtr<McmcData>(dataPtr);
+  d->nBranchBins = nBins;
+  d->branchBins.init(nBins);
 }

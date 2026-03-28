@@ -558,33 +558,8 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
 }
 
 
-// ---------------------------------------------------------------------------
-// Bin structure for WeightedBranchLengthScale (M-087) — Beta(0.25, 0.25)
-// quantile breakpoints, lazily initialised on first call.
-// ---------------------------------------------------------------------------
-
-struct BranchBins {
-  int nBins = 0;
-  std::vector<double> breaks;  // size nBins+1: [0]=0, [nBins]=1
-  std::vector<double> mids;    // size nBins: midpoint of each bin
-};
-
-static BranchBins s_branchBins;
-
-static const BranchBins& get_branch_bins(int nBins) {
-  if (s_branchBins.nBins == nBins) return s_branchBins;
-  s_branchBins.nBins = nBins;
-  s_branchBins.breaks.resize(nBins + 1);
-  s_branchBins.mids.resize(nBins);
-  s_branchBins.breaks[0] = 0.0;
-  s_branchBins.breaks[nBins] = 1.0;
-  for (int b = 1; b < nBins; ++b)
-    s_branchBins.breaks[b] = R::qbeta((double)b / nBins, 0.25, 0.25, 1, 0);
-  for (int b = 0; b < nBins; ++b)
-    s_branchBins.mids[b] =
-      0.5 * (s_branchBins.breaks[b] + s_branchBins.breaks[b + 1]);
-  return s_branchBins;
-}
+// BranchBins struct now lives in mcmc_state.h and is precomputed by
+// set_branch_bins() at MCMC init — no static globals or lazy init.
 
 
 // ---------------------------------------------------------------------------
@@ -602,13 +577,14 @@ static const BranchBins& get_branch_bins(int nBins) {
 //             - log(w_chosenBin) - logBeta(f_new|a_new,b_new).
 // ---------------------------------------------------------------------------
 static bool weighted_branch_scale_impl(
-    McmcData* data, McmcState* state, double beta, int nBins,
+    McmcData* data, McmcState* state, double beta,
     double& logHastings) {
 
   const int nEdge = state->relBrLengths.size();
   if (nEdge < 2) return false;
 
-  const BranchBins& bins = get_branch_bins(nBins);
+  const BranchBins& bins = data->branchBins;
+  const int nBins = bins.nBins;
 
   // 1. Pick two branches (same scheme as beta_simplex_impl)
   int index = static_cast<int>(R::unif_rand() * nEdge);
@@ -668,8 +644,7 @@ static bool weighted_branch_scale_impl(
   }
 
   // 6. Draw fraction from Beta centred on chosen bin's midpoint.
-  //    Concentration = 2 * nBins gives moderate spread matching bin width.
-  const double conc = 2.0 * nBins;
+  const double conc = bins.concentration;
   const double chosenMid = bins.mids[chosenBin];
   const double alphaNew = chosenMid * conc + 1.0;
   const double betaNew  = (1.0 - chosenMid) * conc + 1.0;
@@ -718,13 +693,14 @@ static bool weighted_branch_scale_impl(
 // Cost: nEdge * (nBins + 1) full likelihood evaluations per sweep.
 // ---------------------------------------------------------------------------
 static bool block_gibbs_branch_sweep_impl(
-    McmcData* data, McmcState* state, double beta, int nBins) {
+    McmcData* data, McmcState* state, double beta) {
 
   const int nEdge = state->relBrLengths.size();
   if (nEdge < 2) return false;
 
-  const BranchBins& bins = get_branch_bins(nBins);
-  const double conc = 2.0 * nBins;
+  const BranchBins& bins = data->branchBins;
+  const int nBins = bins.nBins;
+  const double conc = bins.concentration;
 
   // Fisher-Yates shuffle for random permutation scan
   std::vector<int> perm(nEdge);
@@ -882,12 +858,13 @@ static bool block_gibbs_branch_sweep_impl(
 // Cost: O(N × B) likelihood evaluations + 1 for the final proposed state.
 // ---------------------------------------------------------------------------
 static bool weighted_spr_impl(McmcData* data, McmcState* state,
-                               double beta, int nBins) {
+                               double beta) {
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
   const int root  = nTip + 1;
 
-  const BranchBins& bins = get_branch_bins(nBins);
+  const BranchBins& bins = data->branchBins;
+  const int nBins = bins.nBins;
 
   // 1. Eligible prune edges (parent != root)
   std::vector<int> eligible;
@@ -1055,7 +1032,7 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
   }
 
   // 12. Draw fraction from Beta centred on chosen bin's midpoint
-  const double conc = 2.0 * nBins;
+  const double conc = bins.concentration;
   const double chosenMid = bins.mids[chosenBin];
   const double alphaNew = chosenMid * conc + 1.0;
   const double betaNew  = (1.0 - chosenMid) * conc + 1.0;
@@ -1148,11 +1125,12 @@ static int find_child_row_local(const IntegerVector& child, int node) {
 }
 
 static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
-                                        double beta, int nBins) {
+                                        double beta) {
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
 
-  const BranchBins& bins = get_branch_bins(nBins);
+  const BranchBins& bins = data->branchBins;
+  const int nBins = bins.nBins;
 
   // 1. Pick a random node (any edge child)
   int pickIdx = (int)(R::unif_rand() * (double)nEdge);
@@ -1254,7 +1232,7 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
   }
 
   // 9. Draw fraction from Beta centred on chosen bin's midpoint
-  const double conc = 2.0 * nBins;
+  const double conc = bins.concentration;
   const double chosenMid = bins.mids[chosenBin];
   const double alphaNew = chosenMid * conc + 1.0;
   const double betaNew  = (1.0 - chosenMid) * conc + 1.0;
@@ -1466,19 +1444,18 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     }
     case 12: { // weighted_branch_scale — M-087
       oldRelBr = clone(state->relBrLengths);
-      if (!weighted_branch_scale_impl(data, state, beta,
-                                       data->nBranchBins, logHastings))
+      if (!weighted_branch_scale_impl(data, state, beta, logHastings))
         return false;
       break;
     }
     case 13: { // weighted_spr — M-088
-      return weighted_spr_impl(data, state, beta, data->nBranchBins);
+      return weighted_spr_impl(data, state, beta);
     }
     case 14: { // weighted_subtree_swap — M-089
-      return weighted_subtree_swap_impl(data, state, beta, data->nBranchBins);
+      return weighted_subtree_swap_impl(data, state, beta);
     }
     case 15: { // block_gibbs_branch — M-054 reframed
-      return block_gibbs_branch_sweep_impl(data, state, beta, data->nBranchBins);
+      return block_gibbs_branch_sweep_impl(data, state, beta);
     }
     default:
       return false;
