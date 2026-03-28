@@ -226,6 +226,327 @@ std::vector<int> get_valid_swap_partners_impl(
 }
 
 
+// ---------------------------------------------------------------------------
+// TBR proposal (M-053)
+//
+// Tree Bisection and Reconnection: SPR + subtree re-rooting.
+//
+//   1. Prune edge (u → v), suppress u (same as SPR).
+//   2. If v is internal: re-root v's subtree at a random internal edge
+//      (x → y) by moving v from its current position to between x and y.
+//      This changes the rooted representation but preserves the unrooted
+//      topology of the pruned subtree.
+//   3. Regraft u on a random edge in the remaining tree (same as SPR).
+//
+// Hastings ratio:
+//   logHR = log(lRegraft/lMerge)          [SPR Jacobian]
+//         + log(lSubEdge/lMergeSub)       [subtree re-root Jacobian]
+//         + log(nRegraftReverse/nRegraftForward) [candidate count ratio]
+//
+// When v is a tip the re-rooting is skipped and TBR degenerates to SPR.
+// ---------------------------------------------------------------------------
+
+// Helper: find edge row where child[i] == node.
+static int tbr_find_child_row(const IntegerVector& child, int node) {
+  for (int i = 0; i < child.size(); ++i)
+    if (child[i] == node) return i;
+  return -1;
+}
+
+List tbr_proposal_impl(IntegerVector parent, IntegerVector child,
+                        int nTip, double treeLength,
+                        NumericVector relBrLengths) {
+  const int nEdge = parent.size();
+  const int root  = nTip + 1;
+
+  auto fail = [&]() {
+    return List::create(_["parent"] = parent,
+                        _["child"] = child,
+                        _["rel_br_lengths"] = relBrLengths,
+                        _["logHastings"] = R_NegInf);
+  };
+
+  // --- Phase A: Prune (same as SPR) ---
+
+  // Eligible prune edges: parent != root
+  std::vector<int> eligiblePrune;
+  eligiblePrune.reserve(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    if (parent[i] != root) eligiblePrune.push_back(i);
+  if (eligiblePrune.empty()) return fail();
+
+  int pickPrune = (int)(unif_rand() * (double)eligiblePrune.size());
+  if (pickPrune >= (int)eligiblePrune.size())
+    pickPrune = (int)eligiblePrune.size() - 1;
+  const int pruneRow = eligiblePrune[pickPrune];
+  const int u = parent[pruneRow];
+  const int v = child[pruneRow];
+
+  // Find parentRow (p → u) and sibRow (u → w)
+  int parentRow = -1, sibRow = -1, w = -1;
+  for (int i = 0; i < nEdge; ++i) {
+    if (child[i] == u) parentRow = i;
+    if (parent[i] == u && child[i] != v) { sibRow = i; w = child[i]; }
+  }
+  if (parentRow < 0 || sibRow < 0) return fail();
+
+  // BFS: mark all descendants of v, collect subtree edge rows
+  const int maxNode = 2 * nTip + 2;
+  std::vector<bool> isDesc(maxNode, false);
+  isDesc[v] = true;
+  std::vector<int> subEdgeRows;   // edges within v's subtree
+  if (v > nTip) {
+    std::vector<int> queue = {v};
+    while (!queue.empty()) {
+      int cur = queue.back(); queue.pop_back();
+      for (int i = 0; i < nEdge; ++i) {
+        if (parent[i] == cur && isDesc[parent[i]]) {
+          isDesc[child[i]] = true;
+          subEdgeRows.push_back(i);
+          if (child[i] > nTip) queue.push_back(child[i]);
+        }
+      }
+    }
+  }
+
+  // Absolute branch lengths
+  NumericVector absLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    absLen[i] = treeLength * relBrLengths[i];
+
+  const double lMerge = absLen[parentRow] + absLen[sibRow];
+
+  // --- Phase B: Re-root pruned subtree ---
+
+  double lSubEdge  = 0.0;
+  double lMergeSub = 0.0;
+  const int nSubEdge = (int)subEdgeRows.size();
+
+  // Clone vectors for modification
+  IntegerVector newParent = clone(parent);
+  IntegerVector newChild  = clone(child);
+  NumericVector newAbsLen = clone(absLen);
+
+  if (v > nTip && nSubEdge > 0) {
+    // Pick a random subtree edge
+    int pickSub = (int)(unif_rand() * (double)nSubEdge);
+    if (pickSub >= nSubEdge) pickSub = nSubEdge - 1;
+    const int subRow = subEdgeRows[pickSub];
+    const int x = parent[subRow];
+    lSubEdge = absLen[subRow];
+
+    // Identify v's two children
+    int vChildRow1 = -1, vChildRow2 = -1;
+    for (int i = 0; i < nEdge; ++i) {
+      if (parent[i] == v) {
+        if (vChildRow1 < 0) vChildRow1 = i;
+        else vChildRow2 = i;
+      }
+    }
+
+    lMergeSub = absLen[vChildRow1] + absLen[vChildRow2];
+
+    if (x != v) {
+      // General case: re-root subtree at edge (x → y).
+      // Find path from v to x by walking upward from x.
+      std::vector<int> pathNodes;  // x, aₘ, ..., a₁ (excludes v)
+      {
+        int cur = x;
+        while (cur != v) {
+          pathNodes.push_back(cur);
+          int row = tbr_find_child_row(child, cur);
+          if (row < 0) break;
+          cur = parent[row];
+        }
+      }
+      // pathNodes is [x, aₘ, ..., a₁] (bottom to top, excluding v)
+      // The top of the path (last element) is a₁, which is v's direct child.
+
+      if (pathNodes.empty()) {
+        // x == v after all (shouldn't happen, but guard)
+        lMergeSub = lSubEdge;
+      } else {
+        const int a1 = pathNodes.back();  // v's child on the path
+
+        // Determine which vChildRow corresponds to a₁
+        int vPathRow = -1, vOtherRow = -1;
+        if (child[vChildRow1] == a1) {
+          vPathRow = vChildRow1; vOtherRow = vChildRow2;
+        } else {
+          vPathRow = vChildRow2; vOtherRow = vChildRow1;
+        }
+
+        const double sigma = unif_rand();
+
+        // Transform 1: v → c_other becomes a₁ → c_other
+        //   parent changes v → a₁, length += L(v → a₁)
+        newParent[vOtherRow] = a1;
+        newAbsLen[vOtherRow] = absLen[vPathRow] + absLen[vOtherRow];
+
+        // Transform 2: v → a₁ becomes v → x
+        //   child changes a₁ → x, length = sigma × L(x → y)
+        newChild[vPathRow] = x;
+        newAbsLen[vPathRow] = sigma * lSubEdge;
+
+        // Transform 3: reverse each interior path edge aᵢ → aᵢ₊₁
+        // pathNodes = [x, aₘ, ..., a₂, a₁] (bottom to top)
+        // Interior edges connect consecutive pairs from a₁ down to aₘ→x.
+        // We reverse edges between pathNodes[k+1] → pathNodes[k] for
+        // k = 0..(len-2).
+        // pathNodes[len-1] = a₁, pathNodes[len-2] = a₂, ..., pathNodes[0] = x
+        for (int k = 0; k < (int)pathNodes.size() - 1; ++k) {
+          // Edge was pathNodes[k+1] → pathNodes[k], reverse it
+          int fromNode = pathNodes[k + 1];
+          int toNode   = pathNodes[k];
+          // Find the edge row: parent == fromNode, child == toNode
+          for (int i = 0; i < nEdge; ++i) {
+            if (newParent[i] == fromNode && newChild[i] == toNode) {
+              newParent[i] = toNode;
+              newChild[i]  = fromNode;
+              // length unchanged
+              break;
+            }
+          }
+        }
+
+        // Transform 5: x → y becomes v → y
+        //   parent changes x → v, length = (1 − sigma) × L(x → y)
+        newParent[subRow] = v;
+        newAbsLen[subRow] = (1.0 - sigma) * lSubEdge;
+      }
+    } else {
+      // x == v: chosen edge is directly below v.
+      // No topology change; just redistribute branch lengths with sigma.
+      // Draw sigma to consume a RNG call (matching the forward/reverse symmetry)
+      // but discard it — no topology or branch-length change when x == v.
+      (void)unif_rand();
+      // subRow is the chosen edge (v → y). The "other" child of v is the
+      // other edge. We redistribute lSubEdge between the chosen edge and
+      // combine with the other to define lMergeSub.
+      // Since x == v, no path reversal. The only change is:
+      // v → y gets length sigma × lSubEdge (already in subRow).
+      // This is actually a no-op for topology. But we still need the
+      // Jacobian to account for the sigma draw.
+      // Set lMergeSub = lSubEdge so the sub-Jacobian = 0 (cancels).
+      lMergeSub = lSubEdge;
+    }
+  } else {
+    // v is a tip or subtree has no edges: TBR degenerates to SPR.
+    lSubEdge  = 1.0;
+    lMergeSub = 1.0;  // ratio = 1, log = 0
+  }
+
+  // --- Phase C: Regraft (same as SPR) ---
+
+  // Candidate regraft edges: not in v's subtree, not adjacent to u
+  std::vector<int> candidates;
+  candidates.reserve(nEdge);
+  for (int i = 0; i < nEdge; ++i) {
+    if (isDesc[newChild[i]]) continue;
+    if (newParent[i] == u || newChild[i] == u) continue;
+    candidates.push_back(i);
+  }
+  if (candidates.empty()) return fail();
+  const int nRegraftForward = (int)candidates.size();
+
+  int pickRegraft = (int)(unif_rand() * (double)nRegraftForward);
+  if (pickRegraft >= nRegraftForward) pickRegraft = nRegraftForward - 1;
+  const int regraftRow = candidates[pickRegraft];
+  const int b = newChild[regraftRow];
+
+  const double tau = unif_rand();
+  const double lRegraft = newAbsLen[regraftRow];
+
+  // 1. Suppress u: (p -> u) becomes (p -> w)
+  newChild[parentRow]  = w;
+  newAbsLen[parentRow] = lMerge;
+
+  // 2. Insert u on regraft edge: (a -> b) becomes (a -> u)
+  newChild[regraftRow]  = u;
+  newAbsLen[regraftRow] = tau * lRegraft;
+
+  // 3. Reuse sibRow for (u -> b)
+  newParent[sibRow] = u;
+  newChild[sibRow]  = b;
+  newAbsLen[sibRow]  = (1.0 - tau) * lRegraft;
+
+  // Canonical preorder reordering
+  auto po = TreeTools::preorder_weighted_impl(newParent, newChild, newAbsLen);
+  IntegerMatrix ordEdge = po.first;
+  NumericVector ordAbs  = po.second;
+  IntegerVector ordParent(nEdge), ordChild(nEdge);
+  for (int i = 0; i < nEdge; ++i) {
+    ordParent[i] = ordEdge(i, 0);
+    ordChild[i]  = ordEdge(i, 1);
+  }
+  NumericVector ordRelBr = ordAbs / treeLength;
+
+  // --- Compute nRegraftReverse ---
+  // BFS on proposed topology to count reverse regraft candidates.
+  // In the reverse move, the prune edge is still u → v. After pruning u,
+  // the reverse regraft candidates are edges NOT in v's subtree (which may
+  // have different descendants after re-rooting) and NOT adjacent to u.
+  //
+  // v's descendants in the proposed topology:
+  std::vector<bool> isDescNew(maxNode, false);
+  isDescNew[v] = true;
+  if (v > nTip) {
+    std::vector<int> qNew = {v};
+    while (!qNew.empty()) {
+      int cur = qNew.back(); qNew.pop_back();
+      for (int i = 0; i < nEdge; ++i) {
+        if (ordParent[i] == cur) {
+          isDescNew[ordChild[i]] = true;
+          if (ordChild[i] > nTip) qNew.push_back(ordChild[i]);
+        }
+      }
+    }
+  }
+  int nRegraftReverse = 0;
+  for (int i = 0; i < nEdge; ++i) {
+    if (isDescNew[ordChild[i]]) continue;
+    if (ordParent[i] == u || ordChild[i] == u) continue;
+    ++nRegraftReverse;
+  }
+  if (nRegraftReverse <= 0) nRegraftReverse = 1;  // guard against log(0)
+
+  // --- Hastings ratio ---
+  const double logHastings =
+      std::log(lRegraft) - std::log(lMerge)
+    + std::log(lSubEdge) - std::log(lMergeSub)
+    + std::log((double)nRegraftReverse) - std::log((double)nRegraftForward);
+
+  return List::create(_["parent"]         = ordParent,
+                      _["child"]          = ordChild,
+                      _["rel_br_lengths"] = ordRelBr,
+                      _["logHastings"]    = logHastings);
+}
+
+
+// Rcpp-exported wrapper for TBR (R testing)
+// [[Rcpp::export]]
+List tbr_proposal(IntegerMatrix edge, int nTip, double treeLength,
+                  NumericVector relBrLengths) {
+  int nEdge = edge.nrow();
+  IntegerVector par(nEdge), ch(nEdge);
+  for (int i = 0; i < nEdge; ++i) {
+    par[i] = edge(i, 0);
+    ch[i]  = edge(i, 1);
+  }
+  List result = tbr_proposal_impl(par, ch, nTip, treeLength, relBrLengths);
+  IntegerVector rp = result["parent"];
+  IntegerVector rc = result["child"];
+  IntegerMatrix outEdge(nEdge, 2);
+  for (int i = 0; i < nEdge; ++i) {
+    outEdge(i, 0) = rp[i];
+    outEdge(i, 1) = rc[i];
+  }
+  return List::create(_["edge"]           = outEdge,
+                      _["rel_br_lengths"] = result["rel_br_lengths"],
+                      _["logHastings"]    = result["logHastings"]);
+}
+
+
 // Rcpp-exported wrapper: swap by node IDs (R testing / M-086/M-089 dispatch).
 // [[Rcpp::export]]
 List swap_subtrees_cpp(IntegerMatrix edge, int nTip, double treeLength,

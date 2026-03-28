@@ -76,6 +76,11 @@
 #'   mixing on difficult tree spaces at the cost of slower iterations.
 #' @param weightedSubtreeSwap Logical; include the weighted subtree-swap
 #'   move (default `FALSE`). Cost: O(N * B) likelihood evaluations.
+#' @param tbr Logical; include the TBR (Tree Bisection and Reconnection)
+#'   topology move (default `FALSE`). TBR is a superset of SPR: it additionally
+#'   re-roots the pruned subtree at a random internal edge before regrafting,
+#'   enabling larger jumps in tree space. Cost: O(nEdge) per proposal (same
+#'   as SPR). Recommended for datasets where SPR mixing is poor.
 #' @param blockGibbsBranch Logical; include the block Gibbs branch-length
 #'   sweep move (default `FALSE`). Each call sweeps over all edge pairs
 #'   in random-permutation order, sampling each from an approximate
@@ -183,6 +188,7 @@ MkPrimeMCMC <- function(
     progressFn = NULL,
     gibbsSpr = TRUE,
     gibbsSubtreeSwap = TRUE,
+    tbr = FALSE,
     weightedBranchScale = FALSE,
     weightedSpr = FALSE,
     weightedSubtreeSwap = FALSE,
@@ -229,6 +235,7 @@ MkPrimeMCMC <- function(
   }
 
   # Validate move toggles
+  tbr <- as.logical(tbr)
   gibbsSpr <- as.logical(gibbsSpr)
   gibbsSubtreeSwap <- as.logical(gibbsSubtreeSwap)
   weightedBranchScale <- as.logical(weightedBranchScale)
@@ -249,7 +256,7 @@ MkPrimeMCMC <- function(
       )
     }
     validNames <- c(
-      "tree_length", "branch_lengths", "nni", "spr", "kPrime", "p",
+      "tree_length", "branch_lengths", "nni", "spr", "tbr", "kPrime", "p",
       "rate_loss", "rate_log_sd", "rate_neo",
       "gibbs_spr", "gibbs_subtree_swap",
       "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
@@ -311,6 +318,7 @@ MkPrimeMCMC <- function(
          checkpointFile = checkpointFile,
          treeFile = treeFile, logFile = logFile, bufferSize = bufferSize,
          plotEvery = plotEvery, progressFn = progressFn,
+         tbr = tbr,
          gibbsSpr = gibbsSpr, gibbsSubtreeSwap = gibbsSubtreeSwap,
          weightedBranchScale = weightedBranchScale,
          weightedSpr = weightedSpr,

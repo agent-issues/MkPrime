@@ -1454,6 +1454,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
              target = NULL, weight = max(1, nEdge / 8), dim = 1L)
       ))
     }
+    # TBR topology move (M-053)
+    if (isTRUE(mcmc$tbr)) {
+      moves <- c(moves, list(
+        list(name = "tbr", type = "tbr", target = NULL,
+             weight = max(1, nEdge / 4), dim = 1L)
+      ))
+    }
     # Block Gibbs branch-length sweep (M-054 reframed)
     if (isTRUE(mcmc$blockGibbsBranch)) {
       moves <- c(moves, list(
@@ -1503,7 +1510,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 # 4=beta_simplex, 5=nni, 6=spr, 7=int_walk, 8=scale_p (legacy),
 # 9=gibbs_p, 10=gibbs_spr, 11=gibbs_subtree_swap,
 # 12=weighted_br_scale, 13=weighted_spr, 14=weighted_subtree_swap,
-# 15=block_gibbs_branch
+# 15=block_gibbs_branch, 16=tbr
 .kMoveTypes <- c(
   tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
   rate_neo = 3L, branch_lengths = 4L,
@@ -1512,7 +1519,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   weighted_branch_lengths = 12L,
   weighted_spr = 13L,
   weighted_subtree_swap = 14L,
-  block_gibbs_branch = 15L
+  block_gibbs_branch = 15L,
+  tbr = 16L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)
