@@ -76,11 +76,21 @@
 #'   mixing on difficult tree spaces at the cost of slower iterations.
 #' @param weightedSubtreeSwap Logical; include the weighted subtree-swap
 #'   move (default `FALSE`). Cost: O(N * B) likelihood evaluations.
+#' @param blockGibbsBranch Logical; include the block Gibbs branch-length
+#'   sweep move (default `FALSE`). Each call sweeps over all edge pairs
+#'   in random-permutation order, sampling each from an approximate
+#'   conditional via `nBranchBins` bin evaluations and independent MH
+#'   accept/reject. Cost: O(nEdge * B) likelihood evaluations per call.
+#'   Useful when single-edge moves (BetaSimplex, weighted branch scale)
+#'   mix slowly through the branch-length space. The adaptive scheduler
+#'   accounts for the multi-dimensional nature of this move via its `dim`
+#'   field.
 #' @param nBranchBins Integer; number of branch-fraction bins for weighted
-#'   moves (default `10L`). Used by `weightedBranchScale`, `weightedSpr`,
-#'   and `weightedSubtreeSwap`. Ignored when all weighted moves are
-#'   disabled. Higher values increase accuracy of the Gibbs approximation
-#'   but cost more likelihood evaluations.
+#'   and block Gibbs moves (default `10L`). Used by `weightedBranchScale`,
+#'   `weightedSpr`, `weightedSubtreeSwap`, and `blockGibbsBranch`.
+#'   Ignored when all bin-based moves are disabled. Higher values increase
+#'   accuracy of the Gibbs approximation but cost more likelihood
+#'   evaluations.
 #' @param moveWeights Named numeric vector of user-pinned move weights,
 #'   or `NULL` (default). When non-NULL, each named entry fixes the
 #'   probability of proposing that move type. Names must match valid move
@@ -132,6 +142,14 @@
 #' O(B) or O(N * B) likelihood evaluations. These are off by default
 #' and recommended only when standard + Gibbs moves show poor mixing.
 #'
+#' The block Gibbs branch-length sweep (`blockGibbsBranch`) updates all
+#' edge pairs in a single MCMC move via random-permutation-scan
+#' MH-within-Gibbs. Each edge pair is sampled from an approximate
+#' conditional (bin-based, same as `weightedBranchScale`) and
+#' accepted/rejected independently. Cost: O(nEdge * B). Off by default.
+#' The adaptive scheduler accounts for its multi-dimensional nature via
+#' a `dim` field (= nEdge) in the score formula.
+#'
 #' ## Adaptive move scheduling
 #'
 #' During warmup, the MCMC engine tracks per-move acceptance rates and
@@ -168,6 +186,7 @@ MkPrimeMCMC <- function(
     weightedBranchScale = FALSE,
     weightedSpr = FALSE,
     weightedSubtreeSwap = FALSE,
+    blockGibbsBranch = FALSE,
     nBranchBins = 10L,
     moveWeights = NULL,
     tuning = list(),
@@ -215,6 +234,7 @@ MkPrimeMCMC <- function(
   weightedBranchScale <- as.logical(weightedBranchScale)
   weightedSpr <- as.logical(weightedSpr)
   weightedSubtreeSwap <- as.logical(weightedSubtreeSwap)
+  blockGibbsBranch <- as.logical(blockGibbsBranch)
   nBranchBins <- as.integer(nBranchBins)
   if (nBranchBins < 2L) {
     cli::cli_abort("{.arg nBranchBins} must be at least 2, got {nBranchBins}.")
@@ -232,7 +252,8 @@ MkPrimeMCMC <- function(
       "tree_length", "branch_lengths", "nni", "spr", "kPrime", "p",
       "rate_loss", "rate_log_sd", "rate_neo",
       "gibbs_spr", "gibbs_subtree_swap",
-      "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap"
+      "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
+      "block_gibbs_branch"
     )
     bad <- setdiff(names(moveWeights), validNames)
     if (length(bad) > 0L) {
@@ -294,6 +315,7 @@ MkPrimeMCMC <- function(
          weightedBranchScale = weightedBranchScale,
          weightedSpr = weightedSpr,
          weightedSubtreeSwap = weightedSubtreeSwap,
+         blockGibbsBranch = blockGibbsBranch,
          nBranchBins = nBranchBins,
          moveWeights = moveWeights,
          tuning = tuning,

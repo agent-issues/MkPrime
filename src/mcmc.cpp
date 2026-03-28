@@ -700,6 +700,168 @@ static bool weighted_branch_scale_impl(
 
 
 // ---------------------------------------------------------------------------
+// block_gibbs_branch_sweep_impl  (M-054 reframed)
+//
+// Random-permutation-scan MH-within-Gibbs sweep over ALL edge pairs.
+// For each pair, uses the same bin-based approximate-conditional sampling
+// as weighted_branch_scale_impl (M-087): evaluate LL at B bin midpoints,
+// weight by exp(beta * LL), sample a bin, draw a fraction from a Beta
+// centred on the bin midpoint, and accept/reject via MH.
+//
+// Each pair is accepted/rejected independently (composition of valid MH
+// kernels).  The sweep returns true if at least one pair was accepted.
+//
+// The Dirichlet(1,...,1) prior on relBrLengths is constant w.r.t. branch
+// values (only requires positivity), so prior recomputation within the
+// sweep is unnecessary — only the likelihood changes.
+//
+// Cost: nEdge * (nBins + 1) full likelihood evaluations per sweep.
+// ---------------------------------------------------------------------------
+static bool block_gibbs_branch_sweep_impl(
+    McmcData* data, McmcState* state, double beta, int nBins) {
+
+  const int nEdge = state->relBrLengths.size();
+  if (nEdge < 2) return false;
+
+  const BranchBins& bins = get_branch_bins(nBins);
+  const double conc = 2.0 * nBins;
+
+  // Fisher-Yates shuffle for random permutation scan
+  std::vector<int> perm(nEdge);
+  for (int i = 0; i < nEdge; ++i) perm[i] = i;
+  for (int i = nEdge - 1; i > 0; --i) {
+    int j = static_cast<int>(R::unif_rand() * (i + 1));
+    if (j > i) j = i;
+    std::swap(perm[i], perm[j]);
+  }
+
+  // Working copy of absolute edge lengths (updated in-place across sweep)
+  NumericVector absLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    absLen[i] = state->treeLength * state->relBrLengths[i];
+
+  // Trial vector — shares memory with absLen except for two modified entries
+  NumericVector trialAbs = clone(absLen);
+
+  int nAccepted = 0;
+  double currentLL = state->logLik;
+
+  std::vector<double> midLL(nBins);
+  std::vector<double> weights(nBins);
+
+  for (int pi = 0; pi < nEdge; ++pi) {
+    int index = perm[pi];
+
+    // Pick a random partner edge
+    int other = static_cast<int>(R::unif_rand() * (nEdge - 1));
+    if (other >= index) ++other;
+    if (other >= nEdge) other = nEdge - 1;
+    if (other == index) other = (index + 1) % nEdge;
+
+    const double oldRelA = state->relBrLengths[index];
+    const double oldRelB = state->relBrLengths[other];
+    const double relTotal = oldRelA + oldRelB;
+    if (relTotal <= 0.0) continue;
+    const double oldF = oldRelA / relTotal;
+    const double absTotal = absLen[index] + absLen[other];
+    if (absTotal <= 0.0) continue;
+
+    // Evaluate LL at each bin midpoint
+    // Reset trial vector to current state for these two edges
+    for (int i = 0; i < nEdge; ++i) trialAbs[i] = absLen[i];
+
+    for (int b = 0; b < nBins; ++b) {
+      const double mid = bins.mids[b];
+      trialAbs[index] = mid * absTotal;
+      trialAbs[other] = (1.0 - mid) * absTotal;
+      midLL[b] = compute_full_loglik_at(*data, *state,
+                                         state->parent, state->child, trialAbs);
+    }
+
+    // Weight bins: exp(beta * (LL - maxLL))
+    double maxLL = midLL[0];
+    for (int b = 1; b < nBins; ++b)
+      if (R_FINITE(midLL[b]) && midLL[b] > maxLL) maxLL = midLL[b];
+    if (!R_FINITE(maxLL)) continue;
+
+    double sumW = 0.0;
+    for (int b = 0; b < nBins; ++b) {
+      weights[b] = R_FINITE(midLL[b]) ?
+                     std::exp(beta * (midLL[b] - maxLL)) : 0.0;
+      sumW += weights[b];
+    }
+    if (sumW <= 0.0) continue;
+
+    // Sample a bin
+    double rnd = R::unif_rand() * sumW;
+    int chosenBin = nBins - 1;
+    {
+      double cum = 0.0;
+      for (int b = 0; b < nBins; ++b) {
+        cum += weights[b];
+        if (rnd < cum) { chosenBin = b; break; }
+      }
+    }
+
+    // Draw fraction from Beta centred on chosen bin's midpoint
+    const double chosenMid = bins.mids[chosenBin];
+    const double alphaNew = chosenMid * conc + 1.0;
+    const double betaNew  = (1.0 - chosenMid) * conc + 1.0;
+    double newF = R::rbeta(alphaNew, betaNew);
+    if (newF < 1e-8) newF = 1e-8;
+    if (newF > 1.0 - 1e-8) newF = 1.0 - 1e-8;
+
+    // Hastings ratio: bin weights cancel; within-bin Beta densities remain
+    int oldBin = nBins - 1;
+    for (int b = 0; b < nBins; ++b) {
+      if (oldF <= bins.breaks[b + 1]) { oldBin = b; break; }
+    }
+    const double oldMid = bins.mids[oldBin];
+    const double alphaOld = oldMid * conc + 1.0;
+    const double betaOld  = (1.0 - oldMid) * conc + 1.0;
+
+    double logHastings = std::log(weights[oldBin])
+                       + R::dbeta(oldF, alphaOld, betaOld, 1)
+                       - std::log(weights[chosenBin])
+                       - R::dbeta(newF, alphaNew, betaNew, 1);
+
+    if (!R_FINITE(logHastings)) continue;
+
+    // Evaluate LL at proposed fraction
+    trialAbs[index] = newF * absTotal;
+    trialAbs[other] = (1.0 - newF) * absTotal;
+    double proposedLL = compute_full_loglik_at(
+      *data, *state, state->parent, state->child, trialAbs);
+    if (!R_FINITE(proposedLL)) continue;
+
+    // MH accept/reject (prior is constant for relBrLengths)
+    double logAlpha = beta * (proposedLL - currentLL) + logHastings;
+
+    if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+      state->relBrLengths[index] = newF * relTotal;
+      state->relBrLengths[other] = (1.0 - newF) * relTotal;
+      absLen[index] = trialAbs[index];
+      absLen[other] = trialAbs[other];
+      currentLL = proposedLL;
+      ++nAccepted;
+    } else {
+      // Restore trial vector for next iteration
+      trialAbs[index] = absLen[index];
+      trialAbs[other] = absLen[other];
+    }
+  }
+
+  // Update state with final likelihood
+  if (nAccepted > 0) {
+    state->logLik = currentLL;
+    // Invalidate partition cache (sweep touched multiple partitions)
+    state->partLogLik.clear();
+  }
+  return nAccepted > 0;
+}
+
+
+// ---------------------------------------------------------------------------
 // weighted_spr_impl  (M-088)
 //
 // WeightedSPR: Gibbs SPR extended to integrate over branch fractions at each
@@ -1314,6 +1476,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     }
     case 14: { // weighted_subtree_swap — M-089
       return weighted_subtree_swap_impl(data, state, beta, data->nBranchBins);
+    }
+    case 15: { // block_gibbs_branch — M-054 reframed
+      return block_gibbs_branch_sweep_impl(data, state, beta, data->nBranchBins);
     }
     default:
       return false;
