@@ -29,12 +29,19 @@ test_that(".CompactEssStr returns '?' when no scalar params", {
 })
 
 
-test_that(".CompactEssStr handles non-finite ESS with '?'", {
+test_that(".CompactEssStr skips non-finite ESS values", {
   ess <- c(log_posterior = NA_real_, tree_length = Inf, rate_log_sd = 42)
   plain <- cli::ansi_strip(MkPrime:::.CompactEssStr(ess))
-  expect_match(plain, "lP:\\?")
-  expect_match(plain, "TL:\\?")
+  # Non-finite params dropped entirely (not shown as '?')
+  expect_false(grepl("lP", plain))
+  expect_false(grepl("TL", plain))
   expect_match(plain, "rsd:42")
+})
+
+
+test_that(".CompactEssStr returns '?' when all scalar ESS non-finite", {
+  ess <- c(log_posterior = NA_real_, tree_length = Inf)
+  expect_equal(MkPrime:::.CompactEssStr(ess), "?")
 })
 
 

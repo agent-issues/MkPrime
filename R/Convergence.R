@@ -396,12 +396,14 @@ print.MkpDiagnostics <- function(x, ...) {
     p = "p", rate_neo = "rN", beta_scale = "bS"
   )
   scalarNms <- names(ess)[names(ess) %in% names(abbrevs)]
+  # Drop parameters with non-finite ESS (e.g. rate_loss when no neomorphic
+
+  # characters — never proposed, zero variance, ESS is NA).
+  scalarNms <- scalarNms[vapply(ess[scalarNms], is.finite, logical(1))]
   if (length(scalarNms) == 0L) return("?")
   parts <- vapply(scalarNms, function(nm) {
     ab <- abbrevs[nm]
-    val <- ess[nm]
-    if (!is.finite(val)) return(paste0(ab, ":?"))
-    rval <- round(val)
+    rval <- round(ess[nm])
     sval <- as.character(rval)
     coloured <- if (rval < 100) cli::col_red(sval)
                 else if (rval < 200) cli::col_yellow(sval)

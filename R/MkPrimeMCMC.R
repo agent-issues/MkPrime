@@ -278,6 +278,7 @@ MkPrimeMCMC <- function(
     scale_rate_log_sd = 0.5,
     scale_p = 0.5,
     scale_rate_neo = 0.5,
+    scale_beta_scale = 0.5,
     int_walk_window = 1L
   )
   tuning <- modifyList(defaults, tuning)
