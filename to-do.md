@@ -24,8 +24,17 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| M-099 | P2 | OPEN | **Investigate pre-existing segfault on hyoliths dataset (54 taxa, 225 chars).** Crash occurs during MCMC initialization in flat-buffer pruning workspace — likely a buffer overrun. Reproduces on both `main` and `feature/het-dirichlet-marginal` branches. The 20-taxon subset runs fine; the full dataset does not. |
 | M-100 | P2 | OPEN | **Reject `qHeterogeneity = TRUE` + `coding = "informative"` at model validation time.** `het_singleton_site_prob()` is a stub returning 0, so combining Het with informative coding silently produces wrong ascertainment corrections (and therefore wrong likelihoods). Add a validation check in `MkPrimeModel()` (or at the start of `RunMkPrime()`) that errors with a clear message. Remove the guard when Phase 7's F81 singleton correction is implemented. |
+
+## Optimization roadmap (Gibbs/weighted moves)
+
+| ID | Priority | Status | Description |
+|----|----------|--------|-------------|
+| M-102 | P1 | ASSIGNED (E) | **Production build comparison (-O2).** The 78× slowdown for block Gibbs includes debug overhead (-O0). Re-run the same Sun 2018 comparison (configs a/b/c/d) at -O2 to get realistic cost ratios before investing in algorithmic work. Low effort, high information value. |
+| M-103 | P1 | OPEN | **Profile the C++ hot path (S-PROF).** Use `bench::mark()` or VTune to identify whether time is dominated by Felsenstein pruning, `preorder_weighted_impl`, `clone()` allocations, or R distribution functions (`R::qbeta`, `R::rbeta`, `R::dbeta`). Determines which optimization yields the most. |
+| M-104 | P2 | OPEN | **Reduce `clone()` overhead in Gibbs SPR.** Each of the ~100 candidates in `gibbs_spr_impl` allocates 3 new Rcpp vectors (`clone(parent)`, `clone(child)`, `clone(absLen)`) = 300 heap allocations per call. A single reusable working buffer would eliminate this. Blocked on M-103 (profile first to confirm this is material). |
+| M-105 | P2 | OPEN | **Partial likelihood reuse for Gibbs/weighted SPR.** When pruning subtree v and evaluating regraft positions, the CLs for all nodes not on the regraft path are unchanged. Precomputing the "pruned tree" CL once and only updating the affected path per candidate could reduce per-candidate cost from O(N×C) to O(D×C) where D is the path depth (typically O(log N)). High effort, potentially large payoff. Blocked on M-103. |
+| M-106 | P3 | OPEN | **Adaptive batch sizing.** Currently fixed at 200 iterations per batch. For expensive move configurations (block Gibbs, weighted SPR), a smaller batch (e.g. 50) would improve UI responsiveness. Could auto-tune based on observed per-iteration wall time from the first batch. |
 
 ## Misc / UI improvements
 

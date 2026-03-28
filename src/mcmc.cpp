@@ -218,9 +218,12 @@ void allocate_cl_workspace(SEXP dataPtr, SEXP statePtr) {
   McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
   McmcState* state = Rcpp::XPtr<McmcState>(statePtr).get();
 
-  // nNode = max 1-indexed node in tree
-  int maxNode = 0;
-  for (int i = 0; i < state->parent.size(); ++i) {
+  // nNode = max 1-indexed node in tree.
+  // Flat pruning functions use maxNode = 2*nTip-1 (covers both rooted and
+  // unrooted topologies).  Ensure the workspace is at least that large so
+  // the fits() check succeeds and the workspace is actually used.
+  int maxNode = 2 * data->nTip - 1;
+  for (int i = 0; i < (int)state->parent.size(); ++i) {
     if (state->parent[i] > maxNode) maxNode = state->parent[i];
     if (state->child[i]  > maxNode) maxNode = state->child[i];
   }
