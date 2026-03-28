@@ -590,11 +590,12 @@ RunMkPrime <- function(data, tree,
                          format = "f", digits = 1)
     pageIdx   <- floor((proc.time()["elapsed"] - tickerStart) / 1.5) %%
                    length(tickerPages)
-    # Dim prefix for visual separation; coloured content follows
+    # Dim separators; iter prefix silver for visual separation
+    sep <- cli::col_silver("\u2502")
     tickerPage <- paste(
       cli::col_silver(paste(phaseLabel, batchEnd)),
-      "\u2502", sprintf("logP:%s", logPStr),
-      "\u2502", tickerPages[pageIdx + 1L]
+      sep, sprintf("logP:%s", logPStr),
+      sep, tickerPages[pageIdx + 1L]
     )
 
     cli::cli_progress_update(
@@ -663,7 +664,8 @@ RunMkPrime <- function(data, tree,
     if (is.finite(mcmc$nIter) && batchStart > mcmc$nIter) break
   }
   tickerPage <- paste(
-    cli::col_silver(paste(phaseLabel, batchEnd)), "\u2502 done"
+    cli::col_silver(paste(phaseLabel, batchEnd)),
+    cli::col_silver("\u2502"), "done"
   )
   cli::cli_progress_done()
 
