@@ -32,6 +32,7 @@ Suggests:
     callr,
     coda,
     processx,
+    ps,
     knitr,
     quarto,
     shiny (>= 1.7.0),

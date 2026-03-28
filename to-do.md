@@ -18,6 +18,20 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 ---
 
+## Phase 10: Run-level parallelism via `future`
+
+All work on this phase happens in the `mkp-parallel` worktree
+(`feature/parallel-runs` branch). Plan file:
+`.positai/plans/2026-03-27-1307-plan.md`.
+
+| ID | Priority | Status | Description |
+|----|----------|--------|-------------|
+| M-094 | P1 | OPEN | **Extract `RunMkPrimeSingleRun()`.** Refactor the per-run batch loop body (currently duplicated between `RunMkPrime()` and `ResumeMkPrime()`) into a new internal function `.RunMkPrimeSingleRun(mkd, model, mcmc, initialState, moves, tipLabels, runIdx, logFile, cancelFile, checkpointFile, ...)`. The function accepts only R-serializable inputs (no XPtrs), reconstructs `mcmcData` and `chainStates` internally, runs the full batch loop, and returns serialized chain states + samples. Have both `RunMkPrime()` and `ResumeMkPrime()` delegate to it. This is a pure refactor — all existing tests must pass unchanged. Blocker for M-095. |
+| M-095 | P2 | OPEN | **Parallel orchestration via `future`.** Add `parallel = FALSE` and `pollInterval = 10L` parameters to `MkPrimeMCMC()`. In `RunMkPrime()`, when `parallel = TRUE` and `nRuns > 1`, branch to `.RunParallelRuns()`: validate `future` is installed (abort with install hint if not); auto-assign `tempfile()` log paths if `logFile` is NULL (with `cli_alert_info`); generate per-run cancel files; launch `nRuns` non-blocking `future::future()` workers each calling `.RunMkPrimeSingleRun()`; enter a polling loop (`Sys.sleep(pollInterval)`, `ReadMkLog()`, `.CheckConvergence()`, cancel-file signaling on convergence or time limit, break when all `future::resolved()`); collect via `lapply(fList, future::value)`. Add `future` to `Suggests` in DESCRIPTION. Depends on M-094. |
+| M-096 | P2 | OPEN | **Tests and documentation for parallel mode.** (a) Re-run all existing tests after M-094 refactor. (b) Add `tests/testthat/test-parallel.R`: skip if `future` not installed; with `future::plan("multisession", workers = 2)`, run a tiny analysis (`nRuns = 2`, `nIter = 400`, `warmup = 200`) and verify a valid `MkPosterior` is returned. (c) Add `@section HPC usage` to `RunMkPrime()` roxygen docs showing `future::plan()` workflow for workstation and SLURM. (d) Update `coordination.md` Phase 10 entry. Depends on M-095. |
+
+---
+
 ## Phase 9: Advanced tree moves — Gibbs & Weighted proposals
 
 All work on this phase happens in the `mkp-gibbs` worktree
@@ -56,66 +70,6 @@ All work on this phase happens in the `mkp-gibbs` worktree
 
 ---
 
-## Phase 8: MCMC performance — C++ inner loop
-
-The MCMC inner loop currently runs entirely in R. Every iteration incurs
-R function-call overhead, list allocation/copy, GC pressure, and redundant
-computation. This phase ports the hot path to C++, using TreeTools C++
-headers where available.
-
-### 8b: Port proposals to C++
-
-| ID | Priority | Status | Description |
-|----|----------|--------|-------------|
-| M-058 | P2 | DONE (C) | **C++ NNI proposal.** Port `ProposeNni()` (proposals.R:124-177) to C++. Current R implementation does: find internal edges via `which()`, pick random internal edge, find children/siblings via `which()`, swap two edge endpoints, call `ape::reorder.phylo`. In C++: operate directly on integer parent/child vectors, use TreeTools `preorder_edges_and_nodes` header for reordering. Return new edge matrix + relative branch lengths + logHastings. Avoids R list allocation and `ape::reorder.phylo` overhead per NNI proposal. |
-| M-059 | P2 | DONE (C) | **C++ SPR proposal.** Port `ProposeSpr()` (proposals.R:202-289) to C++. The R version's `.Descendants()` BFS (lines 294-307) uses `c()` concatenation in a while loop — classic R antipattern. Use TreeTools `descendant_edges` C++ header or write a direct BFS on integer arrays. The rest of the SPR logic (prune node, suppress, regraft, reorder) is straightforward edge-index manipulation. Return new edge matrix + relative branch lengths + logHastings. |
-| M-060 | P2 | DONE (C) | **C++ BetaSimplex proposal.** Port `ProposeBetaSimplex()` (proposals.R:24-80) to C++. Currently allocates a new vector per call and computes two `dbeta()` evaluations. For branch-length simplex proposals on large trees (nEdge can be hundreds), this vector allocation is significant. C++ version modifies in-place and returns logHastings. |
-
-### 8c: C++ MCMC inner loop
-
-| ID | Priority | Status | Description |
-|----|----------|--------|-------------|
-| M-061 | P2 | DONE (C) | **C++ `.DoMove()` — propose/evaluate/accept cycle.** This is the single highest-impact change. Currently `.DoMove()` (RunMkPrime.R:754-829) is called millions of times and each call: (1) copies the full state list (`proposed <- state`), (2) dispatches through R `switch()`, (3) calls the proposal function in R, (4) calls `LogPrior()` in R, (5) constructs a temporary tree and calls `MkpLogLikelihood()`, (6) returns a new R list. On rejection (~70-80% of calls), all allocations are garbage. A C++ `do_move()` would hold state in a C++ struct, call C++ proposals directly, call the existing C++ pruning functions, and return only accept/reject + updated state — eliminating all per-iteration R overhead. Depends on M-058, M-059, M-060. Also requires porting `LogPrior()` to C++. |
-| M-062 | P2 | DONE (B) | **C++ outer iteration loop.** Once `.DoMove()` is in C++, port the per-chain/per-run/per-iteration triple loop (RunMkPrime.R:127-198) to C++. The C++ loop handles: move selection (weighted sampling), per-chain state updates, chain swap proposals, acceptance tracking. Call back to R only for: progress display (every N iterations), sample storage (every thin-th iteration post-warmup), adaptation (every 200 iterations during warmup), and checkpointing. This eliminates R interpreter overhead from the hot loop entirely. Depends on M-061. |
-| M-063 | P3 | DONE (B) | **C++ state struct with pre-allocated workspace.** |
-
-### 8d: Likelihood computation efficiency
-
-| ID | Priority | Status | Description |
-|----|----------|--------|-------------|
-| M-064 | P3 | DONE (C) | **Partial likelihood recalculation for parameter-only moves.** When only a scalar parameter changes (tree_length, rate_loss, rate_log_sd, rate_neo, p), the tree topology and tip states are unchanged. For `tree_length` and `rate_neo` moves, only branch lengths change — the transition probability matrices change but the tree structure doesn't. For `rate_log_sd` moves, only the ACRV rate categories change. For `kPrime` moves, only one partition sub-group changes. Currently `MkpLogLikelihood()` recomputes everything from scratch. Implement move-type-specific partial recomputation: cache partition likelihoods and only recompute the affected partition(s). |
-| M-065 | P3 | DONE (C) | **Avoid re-extracting parent/child/edgeLength from tree every likelihood call.** `MkpLogLikelihood()` extracts `tree$edge[,1]`, `tree$edge[,2]`, `tree$edge.length` as R vectors, then passes them to C++. In the C++ inner loop (M-061+), these would be held directly in the C++ state struct, eliminating this per-call overhead. This task is partly subsumed by M-063 but is listed separately for tracking. |
-
----
-
-## Progress display & UX
-
-| ID | Priority | Status | Description |
-|----|----------|--------|-------------|
-| M-076 | P2 | DONE (C) | **`MkpWatchLog()` — live trace plot from disk log files.** Polling watcher that reads one or more log files (from `logFile` in `MkPrimeMCMC`) and redraws trace plots each cycle. Ctrl+C stops cleanly and returns last data invisibly. `MkLogPaths()` helper expands base log name to per-run paths. Auto-selects key scalar params (excludes br_, log_likelihood). |
-| M-075 | P2 | DONE (C) | **Streaming log output (`logFile` / `bufferSize`).** Implement Tracer-compatible TSV output during MCMC. `logFile` writes scalar parameter samples to disk in batches (`bufferSize`), flushed at each buffer boundary. `ReadMkLog()` reads log files back into R. `nRuns > 1` creates per-run log files (`run_1.log`, `run_2.log`, …). Checkpoint includes streaming state for seamless resume. |
-| M-074 | P2 | DONE (C) | **Per-parameter progress table during MCMC.** At each `checkEvery` interval (post-warmup), print a convergence table showing ESS and PSRF (when `nRuns >= 2`) for each key parameter — mirroring the format of `print.MkpDiagnostics`. Extend `.CheckConvergence()` to return full per-parameter `ess` and `psrf` vectors (and work for `nRuns = 1`, ESS-only). Add `.PrintProgressTable()` helper in `Convergence.R`. Update `doCheck` blocks in both `RunMkPrime()` and `ResumeMkPrime()`. |
-| M-071 | P1 | DONE (C) | **Progress bar redesign.** Replace `{cli::pb_bar} current/total \| accept% ` with `iter \| ESS: N \| logP: N \| PSRF: N`. A bar is misleading because the run works toward a *convergence* condition, not a fixed iteration count. Make `nIter` default to `Inf` in `MkPrimeMCMC()` (rely on `minEss`/`maxPsrf`/`maxTime` stopping criteria). Update `ResumeMkPrime` progress display to match. Update vignette MCMC configs and docs. |
-| M-072 | P2 | DONE (C) | **hyoliths.qmd tree-summary-demo chunk fixes.** (a) Add `par(mar = rep(0, 4))` before `plot(consensus, ...)` — do this via a chunk `fig.par` option or an explicit `par()` call. (b) The plot title says "rogues excluded" even when no rogue detection has run; make the title conditional on whether rogues were actually identified and removed. |
-
-## Convergence diagnostics
-
-| ID | Priority | Status | Description |
-|----|----------|--------|-------------|
-| M-073 | P1 | DONE (C) | **Tree ESS in ConvergenceDiagnostics.** Add `trees = TRUE` argument. If `treess` and `TreeDist` installed and `!isFALSE(trees)`, compute topology ESS using `treess::treess(perRunTrees, TreeDist::RobinsonFoulds, methods = treess::getESSMethods(TRUE))`. Subsample each run to ≤1000 trees; if `interactive()` and total trees > threshold, emit a progress message. Extract `frechetCorrelationESS` and `medianPseudoESS`, sum across runs. `print.MkpDiagnostics` always shows a topology row (NA when not computed). Add `treess` and `TreeDist` to Suggests. |
-
----
-
-## Posterior & analysis improvements
-
-| ID | Priority | Status | Description |
-|----|----------|--------|-------------|
-| M-066 | P1 | DONE (C) | **Automatic burnin selection for MkPosterior.** The posterior object should support tunable burnin that maximizes ESS while minimizing PSRF. Add a `burnin` parameter (number of post-warmup samples to discard) with an automatic selection method that optimizes the ESS/PSRF trade-off. The `MkPosterior` accessors (samples, trees, summary, etc.) should default to returning only post-burnin samples from all runs combined. Provide a method to adjust burnin after the fact (e.g. `SetBurnin(posterior, n)` or a `burnin` argument to accessor functions). Currently, only warmup is discarded; additional burnin is common practice when chains take time to find the typical set even after warmup ends. |
-| M-067 | P2 | DONE (C) | **Vignette and package documentation references via inst/REFERENCES.bib + Rdpack.** Create `inst/REFERENCES.bib` with all cited references (Sun et al. 2018, Lewis 2001, Xie et al. 2011, etc.). Set up Rdpack for `\insertRef{}` in roxygen docs. Update `hyoliths.qmd` to use `bibliography: ../inst/REFERENCES.bib` (or copy to vignettes/). Check `../TreeTools/` for a working template of this setup. Add `Rdpack` to Imports in DESCRIPTION. |
-| M-068 | P2 | DONE (C) | **Rogue taxon suppression in hyoliths.qmd consensus tree.** In the tree summary section of `vignettes/hyoliths.qmd`, use `Rogue::QuickRogue()` to identify rogue taxa, then exclude them from the consensus tree. Display which taxa were identified as rogues and show the cleaned consensus. Add `Rogue` to Suggests in DESCRIPTION. |
-
----
-
 ## Phase 7d: Deferred extensions
 
 | ID | Priority | Status | Description |
@@ -123,14 +77,6 @@ headers where available.
 | M-052 | P3 | OPEN | Beta-distributed Q-matrix heterogeneity (siteMatrices). |
 | M-053 | P3 | OPEN | TBR moves (if mixing diagnostics show SPR is insufficient). |
 | M-054 | P3 | OPEN | HMC for branch lengths (if MH mixing insufficient). |
-
----
-
-## EasyMkPrime Shiny GUI
-
-| ID | Priority | Status | Description |
-|----|----------|--------|-------------|
-| M-077 | P2 | DONE (C) | **EasyMkPrime: auto-detect neomorphic characters from data.** `AutoDetectNeomorphic()` standalone helper (MkPrimeData.R); app.R wired to call it on data load, populate neomorphic text input, and show notification. Per-character override via text input; type breakdown shown in dataInfo. |
 
 ---
 
@@ -156,18 +102,11 @@ session. The design is:
    checks for this file at each progress interval and exits cleanly (saves
    checkpoint). This requires adding cancel-file checking to RunMkPrime (M-081).
 
-This replaces the `callr::r_bg(supervise = TRUE)` approach used in the current
-`app.R` (which dies with the session).
-
-Tasks are sequential: M-081 (cancel support) → M-078 (module) → M-079 (refactor
-app.R) → M-080 (TreeSearch hook).
+M-081 → M-078 → M-079 → M-082/M-093 all complete on main. Remaining: M-080
+(TreeSearch-a repo).
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| M-081 | P2 | DONE (C) | **Cancel-file support in RunMkPrime.** `cancelFile` param in `MkPrimeMCMC()`; checked every 200-iter batch in both RunMkPrime and ResumeMkPrime; flushes buffers + saves checkpoint + sets `stop_reason = "cancelled"`. `.FlushAndSaveCheckpoint()` helper eliminates doCheck duplication. `MkCancelPath(jobDir)` exported. 5 tests. |
-| M-082 | P2 | OPEN | **Checkpoint integration in EasyMkPrime (detached-process design).** In the new detached-process architecture (M-078/M-079), the MCMC script launched by `processx::process$new()` should write its checkpoint file into the same `logDir` as the TSV log files — no user file-system interaction needed. The job.rds (written by M-078) records the checkpoint path alongside `logFiles` and `cancelFile`, so the "Reconnect" button can resume a crashed/stopped run transparently. Specific tasks: (a) pass `checkpointFile = file.path(logDir, "checkpoint.rds")` when constructing the detached script; (b) "Reconnect" loads job.rds and checks for checkpoint existence before calling `RunMkPrime(overwrite=FALSE)`; (c) "Stop" flush + checkpoint are already guaranteed by M-081's cancel-file mechanism. If the checkpoint approach is not user-transparent, present the user with options (keep checkpoint vs. discard). *(From u.397.)* |
-| M-078 | P2 | DONE (E) | **`MkBayesianUi()` / `MkBayesianServer()` — Shiny module (detached-process design).** New `R/BayesianModule.R`. `MkBayesianUi(id)`: accordion with MCMC config inputs (nRuns, nChains, heat, warmup, minEss, maxTime), `logDir` path field, neomorphic-character text field (auto-populated from `AutoDetectNeomorphic()` when dataset changes), Run / Stop / Reconnect buttons, progress area (trace plot + ESS table, polled from log files). `MkBayesianServer(id, dataset, startTree = NULL)`: `dataset` is a reactive phyDat from the host. "Run" writes a script + launches detached `processx::process$new(supervise = FALSE)`; writes job.rds. "Reconnect" loads an existing job.rds to resume monitoring a running job. Progress polling: `invalidateLater(5000)` reads log files via `ReadMkLog()` and redraws traces. "Stop" calls `file.create(cancelFile)`. Returns `list(jobFile = reactive(path\|NULL), trees = reactive(multiPhylo\|NULL), status = reactive(chr))`. Requires `processx` in Suggests. `shiny::testServer` smoke test. |
-| M-079 | P2 | OPEN | **Refactor `inst/MkPrime/app.R` to use `MkBayesianServer`.** Replace the inline MCMC-launch / progress-poll / result-read logic in `app.R` with a call to `MkBayesianServer`. The standalone app retains its own data-loading and starting-tree sections. The `trees` reactive from the module feeds the existing Traces / Summary / Consensus tabs. Verifies the standalone app still works end-to-end with the new detached-process design. |
 | M-080 | P2 | OPEN | **TreeSearch `mod_bayesian.R` — "Bayesian (Mk')" tab in EasyTrees.** *(TreeSearch-a repo; tracked here for coordination.)* `Suggests: MkPrime` added to TreeSearch DESCRIPTION. New `inst/Parsimony/server/mod_bayesian.R`: `bayesian_ui(id)` wraps `MkPrime::MkBayesianUi(id)` with availability check; `bayesian_server(id, r, HaveData, UpdateAllTrees, ...)` calls `MkPrime::MkBayesianServer(id, dataset = reactive(r$dataset))`. On job completion (status == "done"), reads post-burnin trees from the log directory and inserts into `r$allTrees` (displayed as "N posterior trees (unscored)"). New "Bayesian (Mk')" nav tab in EasyTrees alongside the existing parsimony tabs. |
 
 ---
@@ -176,6 +115,6 @@ app.R) → M-080 (TreeSearch hook).
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| S-RED | dyn | OPEN | **Standing: Red-team review.** Review recent code changes for correctness bugs, edge cases, and safety issues. Focus areas: C++ MCMC hot path (likelihood, proposals, flat-buffer pruning, OPP-1–6 changes), MCMC acceptance logic (rollback correctness for each move type), R orchestration (convergence checking, streaming buffers, checkpoint/resume). File any bugs found as `u.nnn` issue files. When completed, record the focus area and outcome in the Notes column and reset to OPEN. Priority: ≥6 open tasks → P3, 3–5 → P2, <3 → P1. | Last run: — |
-| S-PROF | dyn | OPEN | **Standing: Performance profiling.** Profile the compiled MCMC hot path using VTune (see `r-package-profiling` skill) or `bench::mark()` microbenchmarks. Identify the current top hotspot after OPP-1–6. Check whether `pruning_jc_flat` / `pruning_jc_acrv_flat` show further vectorisation opportunities, whether chain-swap overhead is visible at scale, or whether R↔C++ boundary crossings dominate for small datasets. File any actionable findings as new `M-nnn` tasks. When completed, record the focus and key finding in Notes and reset to OPEN. Priority: same dynamic rule as S-RED. | Last run: — |
-| S-COORD | dyn | OPEN | **Standing: Coordination review.** Review `to-do.md` and `completed-tasks.md` for consistency: stale ASSIGNED statuses, tasks that are done but not archived, priorities that need adjusting. Check agent log files (`agent-*.md`) for blocked work or stale context. Scan `u.nnn` issue files and triage any that have accumulated. Verify the phase-8 OPP commit is clean and push if ready. When completed, record round number and actions taken in Notes and reset to OPEN. Priority: same dynamic rule as S-RED. | Last run: 2026-03-27 round 1 (this session). Actions: added standing-task rules + S-RED/S-PROF/S-COORD rows; triaged u.397 → M-082; fixed `completed-tasks.md` (removed `EOF 2>&1` artefact, merged duplicate M-071 rows); added `test_run*.log` / `test_output.txt` to `.gitignore`. 7 OPEN specific tasks (M-052/053/054/078/079/080/082) → standing tasks P3. |
+| S-RED | dyn | OPEN | **Standing: Red-team review.** Review recent code changes for correctness bugs, edge cases, and safety issues. Focus areas: C++ MCMC hot path (likelihood, proposals, flat-buffer pruning, OPP-1–6 changes), MCMC acceptance logic (rollback correctness for each move type), R orchestration (convergence checking, streaming buffers, checkpoint/resume). File any bugs found as `u.nnn` issue files. When completed, record the focus area and outcome in the Notes column and reset to OPEN. Priority: ≥6 open tasks → P3, 3–5 → P2, <3 → P1. \| Last run: 2026-03-27 (E). Focus: M-078/M-079 Shiny module. Found 3 bugs fixed inline (streaming empty samples in app.R, double-Run guard, non-atomic result.rds write) + 1 filed as u.398 (Reconnect-after-crash PID check). |
+| S-PROF | dyn | OPEN | **Standing: Performance profiling.** Profile the compiled MCMC hot path using VTune (see `r-package-profiling` skill) or `bench::mark()` microbenchmarks. Identify the current top hotspot after OPP-1–6. Check whether `pruning_jc_flat` / `pruning_jc_acrv_flat` show further vectorisation opportunities, whether chain-swap overhead is visible at scale, or whether R↔C++ boundary crossings dominate for small datasets. File any actionable findings as new `M-nnn` tasks. When completed, record the focus and key finding in Notes and reset to OPEN. Priority: same dynamic rule as S-RED. \| Last run: — |
+| S-COORD | dyn | OPEN | **Standing: Coordination review.** Review `to-do.md` and `completed-tasks.md` for consistency: stale ASSIGNED statuses, tasks that are done but not archived, priorities that need adjusting. Check agent log files (`agent-*.md`) for blocked work or stale context. Scan `u.nnn` issue files and triage any that have accumulated. When completed, record round number and actions taken in Notes and reset to OPEN. Priority: same dynamic rule as S-RED. \| Last run: 2026-03-27 round 2 (E). Actions: pruned all DONE rows + fully-completed sections (Phase 8, Progress/UX, Convergence diagnostics, Posterior improvements, EasyMkPrime GUI) from to-do.md; renamed M-093a/b/c → M-094/M-095/M-096 (collision with completed M-093); updated Phase 6b sequential note; added Phase 10 to coordination.md; noted agent-b.md is stale (current task was M-062, now long done). 17 OPEN specific tasks → standing tasks remain P3. |

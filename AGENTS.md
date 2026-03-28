@@ -17,6 +17,21 @@ The package is being built from scratch. Agents should:
 - Validate against known RevBayes likelihoods where possible (see
   `../mkprime/` for reference scripts and results).
 
+> **Worktree note:** If you are working in a feature worktree (e.g.
+> `mkp-parallel`, `mkp-gibbs`), **always read and write coordination
+> files from `../mkp/`**, not from your own worktree directory.
+> Each feature branch contains a stale copy of these files from when
+> the branch was cut. The `../mkp/` directory (the `main` worktree)
+> is the single source of truth for:
+> - `to-do.md` (task queue)
+> - `coordination.md` (phase tracking)
+> - `completed-tasks.md` (archive)
+> - `u.nnn` issue files
+> - `.positai/plans/` (plan files)
+>
+> Feature-branch code changes go in your own worktree as usual.
+> Coordination file changes go in `../mkp/` and are committed to `main`.
+
 ---
 
 ## Package overview
@@ -180,11 +195,15 @@ See `CONTRIBUTING.md` for the full rationale and worked examples.
 
 ## Key coordination files
 
-| File | Purpose |
-|------|---------|
-| `u.nnn` | User issue files (agents triage → `to-do.md`, then delete) |
-| `to-do.md` | Task queue (active/open tasks only) |
-| `completed-tasks.md` | Archive of completed tasks |
-| `coordination.md` | Strategic plan and phase tracking |
-| `agent-<letter>.md` | Agent progress log (local-only, gitignored) |
-| `AGENTS.md` | This file — package conventions and architecture |
+All coordination files live in the **`main` worktree (`../mkp/`)**.
+Feature worktrees contain stale copies — do not use them.
+
+| File | Worktree to use | Purpose |
+|------|-----------------|---------|
+| `u.nnn` | `../mkp/u.nnn` | User issue files (agents triage → `to-do.md`, then delete) |
+| `to-do.md` | `../mkp/to-do.md` | Task queue (active/open tasks only) |
+| `completed-tasks.md` | `../mkp/completed-tasks.md` | Archive of completed tasks |
+| `coordination.md` | `../mkp/coordination.md` | Strategic plan and phase tracking |
+| `agent-<letter>.md` | `./agent-<letter>.md` | Agent progress log (local-only, gitignored — one per worktree) |
+| `AGENTS.md` | `../mkp/AGENTS.md` | This file — package conventions and architecture |
+| `.positai/plans/` | `../mkp/.positai/plans/` | Plan files |
