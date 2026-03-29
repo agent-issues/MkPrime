@@ -27,6 +27,7 @@ The package is being built from scratch. Agents should:
 > - `coordination.md` (phase tracking)
 > - `completed-tasks.md` (archive)
 > - `u.nnn` issue files
+> - `remote-jobs.md` (pending async jobs)
 > - `.positai/plans/` (plan files)
 >
 > Feature-branch code changes go in your own worktree as usual.
@@ -202,6 +203,7 @@ Feature worktrees contain stale copies — do not use them.
 |------|-----------------|---------|
 | `u.nnn` | `../mkp/u.nnn` | User issue files (agents triage → `to-do.md`, then delete) |
 | `to-do.md` | `../mkp/to-do.md` | Task queue (active/open tasks only) |
+| `remote-jobs.md` | `../mkp/remote-jobs.md` | Pending async jobs (Hamilton SLURM, long GHA) — check at `/assign` |
 | `completed-tasks.md` | `../mkp/completed-tasks.md` | Archive of completed tasks |
 | `coordination.md` | `../mkp/coordination.md` | Strategic plan and phase tracking |
 | `agent-<letter>.md` | `./agent-<letter>.md` | Agent progress log (local-only, gitignored — one per worktree) |
