@@ -46,6 +46,34 @@ bool beta_simplex_impl(NumericVector& x, int index, double tuning,
 
 
 // ---------------------------------------------------------------------------
+// Bactrian perturbation kernel  (M-118, Yang & Rodríguez 2013)
+//
+// Bimodal mixture 0.5*N(-m, 1-m²) + 0.5*N(+m, 1-m²) with m = 0.95.
+// Replaces Uniform(-0.5, 0.5) in scale proposals.  The distribution is
+// symmetric about zero, so the Hastings ratio for scale moves is unchanged
+// (log(mult)).  Avoids near-zero perturbations, improving ESS/iter by
+// ~15-50% for scalar parameters at zero computational overhead.
+// ---------------------------------------------------------------------------
+static constexpr double BACTRIAN_M  = 0.95;
+static const     double BACTRIAN_SD = std::sqrt(1.0 - BACTRIAN_M * BACTRIAN_M);
+
+static inline double bactrian_perturbation() {
+  double z = R::rnorm(0.0, BACTRIAN_SD);
+  return (R::unif_rand() < 0.5) ? (BACTRIAN_M + z) : (-BACTRIAN_M + z);
+}
+
+
+// Exported for unit testing (test-bactrian.R)
+// [[Rcpp::export]]
+NumericVector bactrian_draws(int n) {
+  NumericVector out(n);
+  for (int i = 0; i < n; ++i)
+    out[i] = bactrian_perturbation();
+  return out;
+}
+
+
+// ---------------------------------------------------------------------------
 // McmcState: mutable per-chain state
 // ---------------------------------------------------------------------------
 
@@ -2167,26 +2195,26 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   NumericVector proposedRelBr;
 
   switch (moveType) {
-    case 0: { // scale tree_length
-      double mult = std::exp(scaleTuning * (R::unif_rand() - 0.5));
+    case 0: { // scale tree_length (Bactrian, M-118)
+      double mult = std::exp(scaleTuning * bactrian_perturbation());
       state->treeLength = oldTL * mult;
       logHastings = std::log(mult);
       break;
     }
-    case 1: { // scale rate_loss
-      double mult = std::exp(scaleTuning * (R::unif_rand() - 0.5));
+    case 1: { // scale rate_loss (Bactrian, M-118)
+      double mult = std::exp(scaleTuning * bactrian_perturbation());
       state->rateLoss = oldRL * mult;
       logHastings = std::log(mult);
       break;
     }
-    case 2: { // scale rate_log_sd
-      double mult = std::exp(scaleTuning * (R::unif_rand() - 0.5));
+    case 2: { // scale rate_log_sd (Bactrian, M-118)
+      double mult = std::exp(scaleTuning * bactrian_perturbation());
       state->rateLogSd = oldRLSD * mult;
       logHastings = std::log(mult);
       break;
     }
-    case 3: { // scale rate_neo
-      double mult = std::exp(scaleTuning * (R::unif_rand() - 0.5));
+    case 3: { // scale rate_neo (Bactrian, M-118)
+      double mult = std::exp(scaleTuning * bactrian_perturbation());
       state->rateNeo = oldRN * mult;
       logHastings = std::log(mult);
       break;
@@ -2317,7 +2345,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       break;
     }
     case 8: { // scale p (legacy MH — kept for backward compat, not used by default)
-      double mult = std::exp(scaleTuning * (R::unif_rand() - 0.5));
+      double mult = std::exp(scaleTuning * bactrian_perturbation());
       state->p = oldP * mult;
       logHastings = std::log(mult);
       break;
@@ -2364,14 +2392,14 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     case 15: { // block_gibbs_branch — M-054 reframed
       return block_gibbs_branch_sweep_impl(data, state, beta);
     }
-    case 16: { // M-052: scale beta_scale
-      double mult = std::exp(scaleTuning * (R::unif_rand() - 0.5));
+    case 16: { // M-052: scale beta_scale (Bactrian, M-118)
+      double mult = std::exp(scaleTuning * bactrian_perturbation());
       state->betaScale = oldBS * mult;
       logHastings = std::log(mult);
       break;
     }
-    case 18: { // neo_joint_scale — scale rate_loss and rate_neo together
-      double mult = std::exp(scaleTuning * (R::unif_rand() - 0.5));
+    case 18: { // neo_joint_scale (Bactrian, M-118)
+      double mult = std::exp(scaleTuning * bactrian_perturbation());
       state->rateLoss = oldRL * mult;
       state->rateNeo  = oldRN * mult;
       logHastings = 2.0 * std::log(mult);
