@@ -11,6 +11,7 @@
 #include "mcmc_state.h"
 #include "gibbs_partial_cl.h"
 #include "fitch.h"
+#include "node_cl_cache.h"
 #include <TreeTools/renumber_tree.h>
 #include <cmath>
 #include <cstring>
@@ -144,6 +145,8 @@ struct McmcState {
   ClWorkspace clWs;
   // M-052: Q-matrix heterogeneity — Dirichlet-marginal beta_scale parameter.
   double betaScale = 1.0;
+  // M-121: persistent node-level CL cache for partial evaluation
+  NodeCLCache nodeCL;
 };
 
 
@@ -3006,11 +3009,27 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   bool nniInPlace = false;
   int nniCRow = -1, nniWRow = -1;
   int nniSavedP_cRow = 0, nniSavedP_wRow = 0;
+  // M-121: NNI node identities for partial CL
+  int nniVNode = 0, nniUNode = 0, nniCNode = 0, nniWNode = 0;
 
   // OPP-6: proposed topology held separately for SPR/TBR; state->parent/child
   // not overwritten until acceptance → no pre-proposal clone, no rollback copy.
   IntegerVector proposedParent, proposedChild;
   NumericVector proposedRelBr;
+
+  // M-121: pre-proposal cache population for partial CL.
+  // Must happen BEFORE the proposal modifies state in-place.
+  if ((moveType == 5 || moveType == 4) && !data->qHeterogeneity &&
+      !state->nodeCL.valid) {
+    int nEdge = state->relBrLengths.size();
+    NumericVector absLen(nEdge);
+    for (int i = 0; i < nEdge; ++i)
+      absLen[i] = state->treeLength * state->relBrLengths[i];
+    populate_cache_full(state->nodeCL, *data,
+                        state->parent, state->child, absLen,
+                        state->kPrime, state->rateLoss,
+                        state->rateLogSd, state->rateNeo);
+  }
 
   switch (moveType) {
     case 0: { // scale tree_length (Bactrian, M-118)
@@ -3097,11 +3116,15 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         nniCRow = cRow; nniWRow = wRow;
         nniSavedP_cRow = state->parent[cRow];
         nniSavedP_wRow = state->parent[wRow];
+        // M-121: save node identities for partial CL dirty path
+        nniVNode = v; nniUNode = u;
+        nniCNode = state->child[cRow];
+        nniWNode = state->child[wRow];
         state->parent[cRow] = u;
         state->parent[wRow] = v;
         nniInPlace = true;
       } else {
-        // Unsafe: wRow <= edgeRow — v not yet introduced at wRow.
+        // Unsafe: wRow <= edgeRow -- v not yet introduced at wRow.
         // Apply the same NNI swap but canonicalise via reorder.
         IntegerVector newPar = clone(state->parent);
         newPar[cRow] = u;
@@ -3302,14 +3325,48 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   const IntegerVector& evalChild  = topologyChanged ? proposedChild  : state->child;
   const NumericVector& evalRelBr  = topologyChanged ? proposedRelBr  : state->relBrLengths;
 
-  // ---- Likelihood evaluation (M-064: partial, M-065: vectors) ----
+  // ---- Likelihood evaluation (M-064: partial, M-065: vectors, M-121: node CL) ----
   bool likChanges = (moveType != 8);
   bool hasPLC = !state->partLogLik.empty();
   double newLogLik;
   std::vector<double> newPC;
+  bool usedPartialCL = false;
 
   if (!likChanges) {
     newLogLik = state->logLik;
+  } else if (nniInPlace && state->nodeCL.valid) {
+    // M-121: NNI with valid node CL cache → partial evaluation
+    int nEdge = evalRelBr.size();
+    NumericVector propEdgeLen(nEdge);
+    for (int i = 0; i < nEdge; ++i)
+      propEdgeLen[i] = state->treeLength * evalRelBr[i];
+
+    // Update TreeNav topology for the NNI swap (before partial eval)
+    update_topo_nni(state->nodeCL.topo, nniVNode, nniUNode,
+                    nniCNode, nniWNode);
+
+    auto dirty = find_dirty_nni(state->nodeCL.topo, nniVNode, nniUNode);
+    newLogLik = partial_eval_dirty(state->nodeCL, *data,
+                                    evalParent, evalChild, propEdgeLen,
+                                    state->rateLoss, state->rateNeo,
+                                    state->rateLogSd, state->betaScale, dirty);
+    usedPartialCL = true;
+
+  } else if (moveType == 4 && state->nodeCL.valid) {
+    // M-121: beta_simplex with valid node CL cache → partial evaluation
+    int nEdge = evalRelBr.size();
+    NumericVector propEdgeLen(nEdge);
+    for (int i = 0; i < nEdge; ++i)
+      propEdgeLen[i] = state->treeLength * evalRelBr[i];
+
+    auto dirty = find_dirty_beta_simplex(state->nodeCL.topo,
+                                          evalParent, bsIdx1, bsIdx2);
+    newLogLik = partial_eval_dirty(state->nodeCL, *data,
+                                    evalParent, evalChild, propEdgeLen,
+                                    state->rateLoss, state->rateNeo,
+                                    state->rateLogSd, state->betaScale, dirty);
+    usedPartialCL = true;
+
   } else if (!hasPLC) {
     int nEdge = evalRelBr.size();
     NumericVector propEdgeLen(nEdge);
@@ -3387,6 +3444,20 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     // OPP-6b: in-place NNI — state->parent already modified in-place.
     // Partition cache handled by std::move(newPC) above (recomputed via
     // default branch of the partial-lik switch).
+
+    // M-121: cache management on acceptance.
+    // Partial CL moves keep the cache valid (already updated).
+    // All other moves that change CLs invalidate the cache.
+    if (!usedPartialCL) {
+      // Invalidate node CL cache for any accepted move that changes
+      // topology, branch lengths, or model parameters.
+      if (likChanges) state->nodeCL.valid = false;
+    }
+    // When partial CL was used, clear partition-level cache
+    // (it's not maintained by partial eval; will be rebuilt if needed)
+    if (usedPartialCL && !state->partLogLik.empty())
+      state->partLogLik.clear();
+
     return true;
   }
 
@@ -3404,6 +3475,17 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   if (moveType == 7 && kPrimeCharIdx >= 0) state->kPrime[kPrimeCharIdx] = oldKPrimeVal;
   // OPP-6b: in-place NNI rollback — restore 2 parent values
   if (nniInPlace) { state->parent[nniCRow] = nniSavedP_cRow; state->parent[nniWRow] = nniSavedP_wRow; }
+
+  // M-121: rollback node CL cache on rejection of partial-eval moves
+  if (usedPartialCL) {
+    restore_dirty_cls(state->nodeCL, state->nodeCL.dirtyNodes);
+    // Also rollback TreeNav for NNI (topology was updated before partial eval)
+    if (nniInPlace) {
+      update_topo_nni(state->nodeCL.topo, nniVNode, nniUNode,
+                      nniWNode, nniCNode);  // reverse swap
+    }
+  }
+
   return false;
 }
 
