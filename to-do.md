@@ -31,7 +31,6 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
 
-| M-120 | P3 | OPEN | **2D joint Bactrian proposals for correlated parameter pairs.** Lightweight alternative to full AVMVN: propose correlated updates for pairs like `tree_length` × `rate_log_sd` and `rate_loss` × `rate_neo` using a 2D Bactrian kernel with empirical covariance estimated during warmup. Monitor posterior correlations in early runs to confirm which pairs benefit. See `research-mcmc-optimizations.md` §3. |
 | M-121 | P3 | OPEN | **Node-level CL dirty flags for standard NNI/SPR.** Extend the partial CL framework (used by Gibbs moves, M-105/M-111) to standard NNI and SPR proposals. NNI invalidates CLs only along the path from modified nodes to root — O(depth) instead of O(n_nodes). Requires careful engineering of CL rollback on rejection. See `research-mcmc-optimizations.md` §4. |
 
 
