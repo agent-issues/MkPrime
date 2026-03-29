@@ -45,6 +45,10 @@ pruning_mkn <- function(parent, child, edge_length, tip_states, rate_loss, root_
     .Call(`_MkPrime_pruning_mkn`, parent, child, edge_length, tip_states, rate_loss, root_freqs)
 }
 
+bactrian_draws <- function(n) {
+    .Call(`_MkPrime_bactrian_draws`, n)
+}
+
 init_mcmc_state <- function(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale = 1.0) {
     .Call(`_MkPrime_init_mcmc_state`, parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale)
 }
