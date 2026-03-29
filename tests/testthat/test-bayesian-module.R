@@ -6,9 +6,10 @@ test_that("MkBayesianServer initialises with idle status", {
     MkBayesianServer,
     args = list(dataset = shiny::reactive(NULL)),
     expr = {
-      expect_equal(status(), "idle")
-      expect_null(jobFile())
-      expect_null(trees())
+      expect_equal(rv$status, "idle")
+      ret <- session$getReturned()
+      expect_null(ret$jobFile())
+      expect_null(ret$trees())
     }
   )
 })
@@ -23,7 +24,7 @@ test_that("MkBayesianServer: Run without data shows warning, stays idle", {
     args = list(dataset = shiny::reactive(NULL)),
     expr = {
       session$setInputs(run = 1L)
-      expect_equal(status(), "idle")
+      expect_equal(rv$status, "idle")
     }
   )
 })
@@ -38,7 +39,7 @@ test_that("MkBayesianServer: Reconnect with missing logDir shows error, stays id
     args = list(dataset = shiny::reactive(NULL)),
     expr = {
       session$setInputs(logDir = file.path(tempdir(), "no_such_dir_xyz"), reconnect = 1L)
-      expect_equal(status(), "idle")
+      expect_equal(rv$status, "idle")
     }
   )
 })
@@ -127,7 +128,7 @@ test_that("Reconnect: done signal → status 'done'", {
     args = list(dataset = shiny::reactive(NULL)),
     expr = {
       session$setInputs(logDir = d, reconnect = 1L)
-      expect_equal(status(), "done")
+      expect_equal(rv$status, "done")
     }
   )
 })
@@ -146,7 +147,7 @@ test_that("Reconnect: cancel signal + no checkpoint → status 'cancelled'", {
     args = list(dataset = shiny::reactive(NULL)),
     expr = {
       session$setInputs(logDir = d, reconnect = 1L)
-      expect_equal(status(), "cancelled")
+      expect_equal(rv$status, "cancelled")
     }
   )
 })
@@ -165,7 +166,7 @@ test_that("Reconnect: error file + no checkpoint → status 'error'", {
     args = list(dataset = shiny::reactive(NULL)),
     expr = {
       session$setInputs(logDir = d, reconnect = 1L)
-      expect_equal(status(), "error")
+      expect_equal(rv$status, "error")
     }
   )
 })
@@ -184,7 +185,7 @@ test_that("Reconnect: no signals + dead PID + no checkpoint → status 'error'",
     args = list(dataset = shiny::reactive(NULL)),
     expr = {
       session$setInputs(logDir = d, reconnect = 1L)
-      expect_equal(status(), "error")
+      expect_equal(rv$status, "error")
     }
   )
 })
