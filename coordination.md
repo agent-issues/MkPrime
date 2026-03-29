@@ -1,10 +1,10 @@
 # MkPrime — Strategic Coordination
 
-Last updated: 2026-03-29
+Last updated: 2026-03-29 (evening)
 
 ## Project State
 
-**Phase:** 9 complete; Phase 6b / 7d active. Phases 1–10 done. Phase 6b: M-080 (TreeSearch hook) assigned to C. Phase 7d deferred (M-052 done, M-053 done).
+**Phase:** All core phases (1-10) complete. Phase 6b active: M-080 (TreeSearch hook) assigned to C. Post-phase optimization: M-118/119/120/121 all done.
 
 MkPrime is a new R package for Bayesian phylogenetic inference under the
 Mk' model. The architecture follows StratoBayes (C++ hot loop via Rcpp,
@@ -110,7 +110,7 @@ M-075 disk logging and M-076 ReadMkLog. Tasks are sequential:
 - M-080: TreeSearch-side `mod_bayesian.R` + "Bayesian (Mk')" tab *(TreeSearch-a)*
 
 ### Phase 7: Extensions
-**Status:** Core complete (2026-03-26). Deferred items remain.
+**Status:** COMPLETE (2026-03-28). All items done including M-052 (Q-het) and M-053 (TBR).
 **Goal:** `"informative"` coding, partition rates, siteMatrices, model
 comparison, TBR, HMC.
 
@@ -119,9 +119,9 @@ comparison, TBR, HMC.
 - Partition rate scalar `rate_neo` (neomorphic-specific rate multiplier)
 - Stepping-stone marginal likelihood estimation (`mkp_stepping_stone()`)
 
-**Deferred:**
-- Beta-distributed Q-matrix heterogeneity (siteMatrices)
-- TBR moves (if SPR mixing insufficient)
+**Completed (later phases):**
+- ~~Beta-distributed Q-matrix heterogeneity (siteMatrices)~~ -> M-052 (done)
+- ~~TBR moves~~ -> M-053 (done)
 - ~~HMC for branch lengths~~ → replaced by M-054 block Gibbs branch sweep (done)
 
 ---
