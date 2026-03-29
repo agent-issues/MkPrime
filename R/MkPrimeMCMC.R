@@ -142,7 +142,10 @@
 #' topologies and sample proportional to their posterior weight. They cost
 #' O(N) likelihood evaluations per proposal (where N is the number of
 #' candidates, roughly the number of edges) but often achieve much better
-#' mixing than standard NNI/SPR.
+#' mixing than standard NNI/SPR. On larger trees (> ~20 tips), the
+#' per-invocation cost grows quadratically and may outweigh the mixing gain.
+#' Initial Gibbs weights are therefore capped to limit their time share;
+#' the adaptive scheduler refines further during warmup.
 #'
 #' The weighted moves (`weightedBranchScale`, `weightedSpr`,
 #' `weightedSubtreeSwap`) additionally marginalise over a discrete grid

@@ -110,6 +110,48 @@ test_that(".BuildMoves excludes all 5 new moves when all disabled", {
   expect_true("spr" %in% names)
 })
 
+# ── M-115: Gibbs weight cap for larger trees ──────────────────────────────
+
+test_that("Gibbs weights are capped on large trees (M-115)", {
+  mc <- MkPrimeMCMC(gibbsSpr = TRUE, gibbsSubtreeSwap = TRUE,
+                    blockGibbsBranch = TRUE)
+  # Large tree: nEdge = 200 → nEdge/4 = 50, nEdge/6 ≈ 33
+  moves <- MkPrime:::.BuildMoves(
+    nEdge = 200L, nTrans = 3L, hasNeo = TRUE, mcmc = mc,
+    fixTopology = FALSE, kPrimePrior = "geometric"
+  )
+  weights <- setNames(
+    vapply(moves, `[[`, numeric(1), "weight"),
+    vapply(moves, `[[`, character(1), "name")
+  )
+
+  expect_equal(weights[["gibbs_spr"]], 10)
+  expect_equal(weights[["gibbs_subtree_swap"]], 10)
+  expect_equal(weights[["block_gibbs_branch"]], 10)
+
+  # Standard SPR should NOT be capped (scales linearly)
+  expect_equal(weights[["spr"]], 50)
+})
+
+test_that("Gibbs weights are not capped on small trees (M-115)", {
+  mc <- MkPrimeMCMC(gibbsSpr = TRUE, gibbsSubtreeSwap = TRUE,
+                    blockGibbsBranch = TRUE)
+  # Small tree: nEdge = 12 → nEdge/4 = 3
+  moves <- MkPrime:::.BuildMoves(
+    nEdge = 12L, nTrans = 3L, hasNeo = TRUE, mcmc = mc,
+    fixTopology = FALSE, kPrimePrior = "geometric"
+  )
+  weights <- setNames(
+    vapply(moves, `[[`, numeric(1), "weight"),
+    vapply(moves, `[[`, character(1), "name")
+  )
+
+  # Below cap → uses nEdge / k directly
+  expect_equal(weights[["gibbs_spr"]], 3)
+  expect_equal(weights[["gibbs_subtree_swap"]], 2)
+  expect_equal(weights[["block_gibbs_branch"]], 3)
+})
+
 test_that(".BuildMoves excludes topology moves when fixTopology = TRUE", {
   mc <- MkPrimeMCMC(
     gibbsSpr = TRUE, gibbsSubtreeSwap = TRUE,
