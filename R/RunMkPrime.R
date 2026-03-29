@@ -431,10 +431,24 @@ RunMkPrime <- function(data, tree = NULL,
   transIdx0     <- if (length(transIdx) > 0L) transIdx - 1L else integer(0L)
   hasNeo        <- any(mkd$type == "neomorphic")
 
-  # Adaptive scheduler: resolve pinned weights (M-092)
-  pinnedWeights <- .ResolvePinnedWeights(mcmc$moveWeights, moveNames)
-  if (!is.null(pinnedWeights)) {
+  # Auto-pin always-accept moves (Gibbs, slice) at initial weights.
+  # The warmup scheduler's score (accept_rate × dim / cost) gives these
+  # astronomical scores because acceptance = 1.0 and cost ≈ 0; this inflates
+  # their weight and starves bottleneck MH moves.  One Gibbs draw or slice
+  # sample per cycle is already optimal, so freeze them.
+  alwaysAcceptTypes <- c("gibbs_p", "slice")
+  moveTypes <- vapply(moves, `[[`, character(1), "type")
+  autoPin <- moveWeights[moveTypes %in% alwaysAcceptTypes]
+
+  # Merge with user-specified pins (user takes precedence)
+  userPins <- .ResolvePinnedWeights(mcmc$moveWeights, moveNames)
+  if (length(autoPin) > 0L || !is.null(userPins)) {
+    allPins <- autoPin
+    if (!is.null(userPins)) allPins[names(userPins)] <- userPins
+    pinnedWeights <- allPins
     moveWeights <- .NormalizeMoveWeights(moveWeights, pinnedWeights)
+  } else {
+    pinnedWeights <- NULL
   }
 
   # Ensure chain_time_ns exists (may be absent in older checkpoints)

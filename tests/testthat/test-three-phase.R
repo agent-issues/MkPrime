@@ -225,3 +225,93 @@ test_that("MkPrimeMCMC autoTune = FALSE skips validation", {
   mcmc <- MkPrimeMCMC(nIter = 10000L, autoTune = FALSE, tuningBudget = 0L)
   expect_false(mcmc$autoTune)
 })
+
+
+# ==========================================================================
+# Auto-pin always-accept moves
+# ==========================================================================
+
+test_that("Auto-pin freezes gibbs_p and slice moves at initial weights", {
+  # Simulate a move pool with MH and always-accept moves
+  moves <- list(
+    list(name = "tree_length", type = "scale", target = "tree_length",
+         weight = 5, dim = 1L),
+    list(name = "branch_lengths", type = "block_gibbs_branch",
+         target = "branch_lengths", weight = 100, dim = 10L),
+    list(name = "p", type = "gibbs_p", target = "p",
+         weight = 1, dim = 1L),
+    list(name = "slice_rate_loss", type = "slice", target = "rate_loss",
+         weight = 1.5, dim = 1L, sliceParamIdx = 1L),
+    list(name = "rate_loss", type = "scale", target = "rate_loss",
+         weight = 1.5, dim = 1L)
+  )
+
+  moveNames   <- vapply(moves, `[[`, character(1), "name")
+  moveWeights <- vapply(moves, `[[`, numeric(1), "weight")
+  moveWeights <- moveWeights / sum(moveWeights)
+  names(moveWeights) <- moveNames
+
+  # Auto-pin logic (mirrors RunMkPrime.R)
+  alwaysAcceptTypes <- c("gibbs_p", "slice")
+  moveTypes <- vapply(moves, `[[`, character(1), "type")
+  autoPin <- moveWeights[moveTypes %in% alwaysAcceptTypes]
+
+  expect_named(autoPin, c("p", "slice_rate_loss"))
+  expect_equal(unname(autoPin["p"]), 1 / 109)
+  expect_equal(unname(autoPin["slice_rate_loss"]), 1.5 / 109)
+
+  # After normalization, pinned moves keep exact initial weights
+  pinnedWeights <- autoPin
+  result <- MkPrime:::.NormalizeMoveWeights(moveWeights, pinnedWeights)
+  expect_equal(result["p"], autoPin["p"])
+  expect_equal(result["slice_rate_loss"], autoPin["slice_rate_loss"])
+  expect_equal(sum(result), 1.0)
+})
+
+test_that("User-specified pins override auto-pins", {
+  moves <- list(
+    list(name = "tree_length", type = "scale", target = "tree_length",
+         weight = 5, dim = 1L),
+    list(name = "p", type = "gibbs_p", target = "p",
+         weight = 1, dim = 1L),
+    list(name = "slice_rate_loss", type = "slice", target = "rate_loss",
+         weight = 1.5, dim = 1L, sliceParamIdx = 1L)
+  )
+
+  moveNames   <- vapply(moves, `[[`, character(1), "name")
+  moveWeights <- vapply(moves, `[[`, numeric(1), "weight")
+  moveWeights <- moveWeights / sum(moveWeights)
+  names(moveWeights) <- moveNames
+
+  moveTypes <- vapply(moves, `[[`, character(1), "type")
+  autoPin <- moveWeights[moveTypes %in% c("gibbs_p", "slice")]
+
+  # User explicitly pins p at a different value
+  userPins <- c(p = 0.10)
+  allPins <- autoPin
+  allPins[names(userPins)] <- userPins
+
+  expect_equal(unname(allPins["p"]), 0.10)
+  # slice_rate_loss retains auto-pin
+  expect_equal(unname(allPins["slice_rate_loss"]),
+               unname(autoPin["slice_rate_loss"]))
+})
+
+test_that("Auto-pin does nothing when no always-accept moves exist", {
+  moves <- list(
+    list(name = "tree_length", type = "scale", target = "tree_length",
+         weight = 5, dim = 1L),
+    list(name = "rate_loss", type = "scale", target = "rate_loss",
+         weight = 1.5, dim = 1L)
+  )
+
+  moveNames   <- vapply(moves, `[[`, character(1), "name")
+  moveWeights <- vapply(moves, `[[`, numeric(1), "weight")
+  moveWeights <- moveWeights / sum(moveWeights)
+  names(moveWeights) <- moveNames
+
+  moveTypes <- vapply(moves, `[[`, character(1), "type")
+  autoPin <- moveWeights[moveTypes %in% c("gibbs_p", "slice")]
+
+  expect_length(autoPin, 0)
+})
