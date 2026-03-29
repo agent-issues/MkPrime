@@ -419,7 +419,10 @@ RunMkPrime <- function(data, tree = NULL,
     r$saved_idx <- savedIdx
   }
 
-  # M-120: Warmup sample buffer for rho estimation (2D joint Bactrian)
+  # M-126: Rho estimation buffer for 2D joint Bactrian moves.
+  # During warmup, C++ saves no samples (nSaved=0), so we accumulate
+
+  # cold-chain state snapshots after each batch instead.
   rhoSampleBuf <- NULL
 
   # --- Batch loop constants ---
@@ -649,6 +652,10 @@ RunMkPrime <- function(data, tree = NULL,
 
     # ===== PHASE-SPECIFIC LOGIC =====
 
+    # Cold-chain state (reused for rho estimation + progress bar)
+    s <- get_mcmc_state(r$chainStates[[1]])
+    coldLogpost <- s$logPost
+
     if (phase == "Warmup") {
       # --- Warmup: adapt tuning, temperatures, and move weights ---
       for (ch in seq_len(nChains)) {
@@ -667,23 +674,15 @@ RunMkPrime <- function(data, tree = NULL,
         warmupProgress = min(1, batchEnd / mcmc$warmup)
       )
 
-      # M-120: Accumulate batch samples and estimate rhos for joint 2D moves
-      if (nSaved > 0L) {
-        batchSamples <- result$scalar_samples[seq_len(nSaved), , drop = FALSE]
-        colnames(batchSamples) <- paramNames
-        rhoSampleBuf <- if (is.null(rhoSampleBuf)) {
-          batchSamples
-        } else {
-          rbind(rhoSampleBuf, batchSamples)
-        }
-        # Keep last 500 rows
-        if (nrow(rhoSampleBuf) > 500L) {
-          rhoSampleBuf <- rhoSampleBuf[(nrow(rhoSampleBuf) - 499L):nrow(rhoSampleBuf), ]
-        }
-        newRhos <- .EstimateJointRhos(rhoSampleBuf, hasNeo)
-        for (ch in seq_len(nChains)) {
-          r$chain_rhos[[ch]] <- newRhos
-        }
+      # M-126: Accumulate cold-chain state snapshots for rho estimation.
+      # C++ saves no samples during warmup, so we use the chain state
+      # after each batch (already queried for the progress bar above).
+      rhoSampleBuf <- .AccumulateRhoSnapshot(
+        rhoSampleBuf, s, hasNeo, paramNames
+      )
+      newRhos <- .EstimateJointRhos(rhoSampleBuf, hasNeo)
+      for (ch in seq_len(nChains)) {
+        r$chain_rhos[[ch]] <- newRhos
       }
 
       # Stabilisation detection
@@ -775,6 +774,15 @@ RunMkPrime <- function(data, tree = NULL,
       # --- Tuning: min-ESS/s perturbation bandit ---
       tuningIterUsed <- tuningIterUsed + nBatch
 
+      # M-126: Continue rho estimation from tuning buffer samples
+      if (tuningBufIdx >= 50L) {
+        newRhos <- .EstimateJointRhos(
+          tuningBuf[seq_len(tuningBufIdx), , drop = FALSE], hasNeo
+        )
+        for (ch in seq_len(nChains))
+          r$chain_rhos[[ch]] <- newRhos
+      }
+
       # Evaluate current weight vector after each tuning window
       if (tuningBufIdx >= 10L) {
         windowTime <- proc.time()["elapsed"] - tuningWindowStart
@@ -862,7 +870,6 @@ RunMkPrime <- function(data, tree = NULL,
     }
 
     # Progress update (M-097 rotating ticker)
-    coldLogpost <- {s <- get_mcmc_state(r$chainStates[[1]]); s$logPost}
     batchAcc  <- sum(result$accept_counts[1L, ])
     batchProp <- sum(result$propose_counts[1L, ])
     if (batchProp > 0L) recentAcc <- batchAcc / batchProp
@@ -1742,6 +1749,28 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     }
   }
   mat
+}
+
+
+#' Accumulate a cold-chain state snapshot into the rho sample buffer
+#'
+#' During warmup, C++ saves no thinned samples, so we extract scalar
+#' parameters from the chain state after each batch.  The buffer is
+#' capped at 500 rows (rolling window).
+#' @keywords internal
+.AccumulateRhoSnapshot <- function(buf, state, hasNeo, paramNames) {
+  row <- numeric(length(paramNames))
+  names(row) <- paramNames
+  row["tree_length"] <- state$treeLength
+  row["rate_log_sd"] <- state$rateLogSd
+  if (hasNeo) row["rate_loss"] <- state$rateLoss
+  buf <- if (is.null(buf)) {
+    matrix(row, nrow = 1, dimnames = list(NULL, paramNames))
+  } else {
+    rbind(buf, row)
+  }
+  if (nrow(buf) > 500L) buf <- buf[(nrow(buf) - 499L):nrow(buf), , drop = FALSE]
+  buf
 }
 
 
