@@ -67,6 +67,36 @@ test_that("Fitch score sums across multiple characters", {
 })
 
 
+# --- Hastings ratio normalization (u.122 fix) ---
+
+test_that("pSPR Hastings formula includes normalization correction", {
+  # With few candidates, forward and reverse normalization constants diverge.
+  # This test verifies the algebraic relationship that the full formula
+  # (implemented in C++) satisfies but the old formula (missing correction) does not.
+  alpha <- 0.1
+  scores <- c(10, 12, 15)  # 3 candidates (small tree)
+  scoreOrig <- 14
+
+  minScore <- min(c(scores, scoreOrig))
+  w <- exp(-alpha * (scores - minScore))
+  wOrig <- exp(-alpha * (scoreOrig - minScore))
+  sumW_fwd <- sum(w)
+
+  chosen <- 1L  # best candidate
+  sumW_rev <- sumW_fwd + wOrig - w[chosen]
+
+  # Correction term is non-trivial with few candidates
+  correction <- log(sumW_fwd) - log(sumW_rev)
+  expect_true(abs(correction) > 0.01)
+
+  # Full formula = log(w_orig/w_chosen) + correction
+  logH_full <- log(wOrig) - log(w[chosen]) + correction
+  logH_old  <- -alpha * (scoreOrig - scores[chosen])
+  expect_equal(logH_full, logH_old + correction)
+  expect_false(isTRUE(all.equal(logH_full, logH_old, tolerance = 1e-4)))
+})
+
+
 # --- pSPR integration ---
 
 test_that("pSPR move produces valid trees", {

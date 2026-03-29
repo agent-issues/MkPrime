@@ -2343,9 +2343,15 @@ static List pspr_proposal_impl(
   NumericVector orderedRelBr = ordAbs / treeLength;
 
   // 10. Hastings ratio: branch-length Jacobian + parsimony bias correction
-  // log(w_orig) - log(w_chosen) = -alpha * (scoreOrig - scores[chosen])
+  //
+  // Forward candidate set F excludes the original-position edge; reverse
+  // candidate set Rev excludes the chosen-position edge.  The normalization
+  // constants differ: sumW_fwd = sumW, sumW_rev = sumW + wOrig - w[chosen].
   double logH_brlen = std::log(lRegraft) - std::log(lMerge);
-  double logH_pars  = -PSPR_ALPHA * (double)(scoreOrig - scores[chosen]);
+  double wOrig   = std::exp(-PSPR_ALPHA * (double)(scoreOrig - minScore));
+  double sumWRev = sumW + wOrig - w[chosen];
+  double logH_pars = std::log(wOrig) - std::log(w[chosen])
+                   + std::log(sumW) - std::log(sumWRev);
   double logHastings = logH_brlen + logH_pars;
 
   return List::create(_["parent"] = ordParent,
