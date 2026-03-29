@@ -113,6 +113,13 @@
 #'   more often. Much cheaper than Gibbs SPR (no likelihood evaluation per
 #'   candidate), but better guided than uniform SPR.
 #'   See Yang & Rodríguez (2013); Ronquist et al. (2020).
+#' @param joint2d Logical; include 2D joint Bactrian proposals for
+#'   correlated parameter pairs (default `TRUE`). Proposes correlated
+#'   updates to tree_length × rate_log_sd (and tree_length × rate_loss
+#'   when neomorphic characters are present) using a bivariate Bactrian
+#'   kernel. The correlation is learned adaptively during warmup from
+#'   posterior sample correlations. No effect when parameters are
+#'   uncorrelated (degenerates to independent proposals).
 #' @param blockGibbsBranch Logical; include the block Gibbs branch-length
 #'   sweep move (default `FALSE`). Each call sweeps over all edge pairs
 #'   in random-permutation order, sampling each from an approximate
@@ -246,6 +253,7 @@ MkPrimeMCMC <- function(
     gibbsSubtreeSwap = TRUE,
     tbr = TRUE,
     pSpr = TRUE,
+    joint2d = TRUE,
     weightedBranchScale = FALSE,
     weightedSpr = FALSE,
     weightedSubtreeSwap = FALSE,
@@ -339,6 +347,7 @@ MkPrimeMCMC <- function(
   # Validate move toggles
   tbr <- as.logical(tbr)
   pSpr <- as.logical(pSpr)
+  joint2d <- as.logical(joint2d)
   gibbsSpr <- as.logical(gibbsSpr)
   gibbsSubtreeSwap <- as.logical(gibbsSubtreeSwap)
   weightedBranchScale <- as.logical(weightedBranchScale)
@@ -363,7 +372,8 @@ MkPrimeMCMC <- function(
       "rate_loss", "rate_log_sd", "rate_neo",
       "gibbs_spr", "gibbs_subtree_swap",
       "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
-      "block_gibbs_branch", "pspr"
+      "block_gibbs_branch", "pspr",
+      "joint_tl_rls", "joint_tl_rl"
     )
     bad <- setdiff(names(moveWeights), validNames)
     if (length(bad) > 0L) {
@@ -390,6 +400,8 @@ MkPrimeMCMC <- function(
     scale_rate_neo = 0.5,
     scale_neo_joint = 0.5,
     scale_beta_scale = 0.5,
+    scale_joint_tl_rls = 0.5,
+    scale_joint_tl_rl = 0.5,
     int_walk_window = 1L,
     slice_width_rate_loss = 1.0,
     slice_width_rate_neo = 1.0,
@@ -449,7 +461,7 @@ MkPrimeMCMC <- function(
          checkpointFile = checkpointFile,
          treeFile = treeFile, logFile = logFile, bufferSize = bufferSize,
          plotEvery = plotEvery, progressFn = progressFn,
-         tbr = tbr, pSpr = pSpr,
+         tbr = tbr, pSpr = pSpr, joint2d = joint2d,
          gibbsSpr = gibbsSpr, gibbsSubtreeSwap = gibbsSubtreeSwap,
          weightedBranchScale = weightedBranchScale,
          weightedSpr = weightedSpr,

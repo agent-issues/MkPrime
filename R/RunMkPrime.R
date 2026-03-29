@@ -154,7 +154,8 @@ RunMkPrime <- function(data, tree = NULL,
   moves <- .BuildMoves(nEdge, nTrans, hasNeo, mcmc,
                        fixTopology = fixTopology,
                        kPrimePrior = model$kPrimePrior %||% "geometric",
-                       qHeterogeneity = qHet)
+                       qHeterogeneity = qHet,
+                       joint2d = isTRUE(mcmc$joint2d))
 
   if (identical(mcmc$thin, "auto")) {
     mcmc$thin <- length(moves)
@@ -313,6 +314,12 @@ RunMkPrime <- function(data, tree = NULL,
     integer(0)
   }
 
+  # M-120: Per-chain rho estimates for 2D joint Bactrian (start at 0)
+  chainRhos <- vector("list", nChains)
+  for (ch in seq_len(nChains)) {
+    chainRhos[[ch]] <- list(rho_tl_rls = 0.0, rho_tl_rl = 0.0)
+  }
+
   list(
     chains        = chains,
     betas         = betas,
@@ -320,6 +327,7 @@ RunMkPrime <- function(data, tree = NULL,
     chain_propose = chainPropose,
     chain_time_ns = chainTimeNs,
     chain_tuning  = chainTuning,
+    chain_rhos    = chainRhos,
     swap_accept   = swapAccept,
     swap_propose  = swapPropose
   )
@@ -410,6 +418,9 @@ RunMkPrime <- function(data, tree = NULL,
     }
     r$saved_idx <- savedIdx
   }
+
+  # M-120: Warmup sample buffer for rho estimation (2D joint Bactrian)
+  rhoSampleBuf <- NULL
 
   # --- Batch loop constants ---
   # Adaptive batch size (M-106): fewer iterations per batch during warmup
@@ -549,6 +560,7 @@ RunMkPrime <- function(data, tree = NULL,
 
     scaleTunings <- .BuildScaleTuningMatrix(r$chain_tuning, moves)
     sliceWidths  <- .BuildSliceWidthMatrix(r$chain_tuning, moves)
+    jointRhos    <- .BuildJointRhoMatrix(r$chain_rhos, moves, nChains)
     bsTunings    <- vapply(r$chain_tuning,
                            function(t) t$beta_simplex, numeric(1L))
     iwWins       <- vapply(r$chain_tuning,
@@ -557,7 +569,7 @@ RunMkPrime <- function(data, tree = NULL,
     result <- run_mcmc_batch_cpp(
       mcmcData, r$chainStates, r$betas,
       moveTypeCodes, transIdx0, sliceParamCodes, moveWeights,
-      scaleTunings, bsTunings, iwWins, sliceWidths,
+      scaleTunings, bsTunings, iwWins, sliceWidths, jointRhos,
       nBatch, batchStart, cppWarmup, mcmc$thin,
       hasNeo, nEdge
     )
@@ -649,6 +661,25 @@ RunMkPrime <- function(data, tree = NULL,
         pinnedWeights = pinnedWeights,
         warmupProgress = min(1, batchEnd / mcmc$warmup)
       )
+
+      # M-120: Accumulate batch samples and estimate rhos for joint 2D moves
+      if (nSaved > 0L) {
+        batchSamples <- result$scalar_samples[seq_len(nSaved), , drop = FALSE]
+        colnames(batchSamples) <- paramNames
+        rhoSampleBuf <- if (is.null(rhoSampleBuf)) {
+          batchSamples
+        } else {
+          rbind(rhoSampleBuf, batchSamples)
+        }
+        # Keep last 500 rows
+        if (nrow(rhoSampleBuf) > 500L) {
+          rhoSampleBuf <- rhoSampleBuf[(nrow(rhoSampleBuf) - 499L):nrow(rhoSampleBuf), ]
+        }
+        newRhos <- .EstimateJointRhos(rhoSampleBuf, hasNeo)
+        for (ch in seq_len(nChains)) {
+          r$chain_rhos[[ch]] <- newRhos
+        }
+      }
 
       # Stabilisation detection
       logPostHistory <- c(logPostHistory, coldLogpost)
@@ -1515,7 +1546,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   qHet <- isTRUE(model$qHeterogeneity)
   moves <- .BuildMoves(nEdge, nTrans, hasNeo, mcmc, fixTopology = FALSE,
                        kPrimePrior = model$kPrimePrior %||% "geometric",
-                       qHeterogeneity = qHet)
+                       qHeterogeneity = qHet,
+                       joint2d = isTRUE(mcmc$joint2d))
 
   if (identical(mcmc$thin, "auto")) {
     mcmc$thin <- length(moves)
@@ -1646,6 +1678,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
         rate_neo    = tun$scale_rate_neo %||% 0.5,
         neo_joint   = tun$scale_neo_joint %||% tun$scale_rate_loss,
         beta_scale  = tun$scale_beta_scale %||% 0.5,
+        joint_tl_rls = tun$scale_joint_tl_rls %||% 0.5,
+        joint_tl_rl  = tun$scale_joint_tl_rl %||% 0.5,
         p           = 0.5,  # Gibbs move: scale ignored by C++; placeholder
         0.5
       )
@@ -1683,6 +1717,57 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 .BuildTemperatureLadder <- function(nChains, heat) {
   if (nChains == 1L) return(1.0)
   heat^(seq(0, 1, length.out = nChains))
+}
+
+
+#' Build joint-rho matrix (nChains × nMoves) for 2D joint Bactrian moves
+#' @keywords internal
+.BuildJointRhoMatrix <- function(chainRhos, moves, nChains) {
+  nMoves <- length(moves)
+  mat <- matrix(0.0, nChains, nMoves)
+  for (ch in seq_len(nChains)) {
+    rhos <- chainRhos[[ch]]
+    for (m in seq_along(moves)) {
+      mat[ch, m] <- switch(moves[[m]]$name,
+        joint_tl_rls = rhos$rho_tl_rls %||% 0.0,
+        joint_tl_rl  = rhos$rho_tl_rl  %||% 0.0,
+        0.0
+      )
+    }
+  }
+  mat
+}
+
+
+#' Estimate posterior correlations for 2D joint proposals from recent samples
+#' @keywords internal
+.EstimateJointRhos <- function(samples, hasNeo) {
+  rhos <- list(rho_tl_rls = 0.0, rho_tl_rl = 0.0)
+  if (is.null(samples) || nrow(samples) < 50) return(rhos)
+
+  # tree_length × rate_log_sd
+  if (all(c("tree_length", "rate_log_sd") %in% colnames(samples))) {
+    tl <- samples[, "tree_length"]
+    rls <- samples[, "rate_log_sd"]
+    ok <- tl > 0 & rls > 0
+    if (sum(ok) >= 30) {
+      rho <- cor(log(tl[ok]), log(rls[ok]))
+      rhos$rho_tl_rls <- max(-0.95, min(0.95, rho))
+    }
+  }
+
+  # tree_length × rate_loss
+  if (hasNeo && all(c("tree_length", "rate_loss") %in% colnames(samples))) {
+    tl <- samples[, "tree_length"]
+    rl <- samples[, "rate_loss"]
+    ok <- tl > 0 & rl > 0
+    if (sum(ok) >= 30) {
+      rho <- cor(log(tl[ok]), log(rl[ok]))
+      rhos$rho_tl_rl <- max(-0.95, min(0.95, rho))
+    }
+  }
+
+  rhos
 }
 
 
@@ -1745,7 +1830,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 .BuildMoves <- function(nEdge, nTrans, hasNeo, mcmc,
                         fixTopology = FALSE,
                         kPrimePrior = "geometric",
-                        qHeterogeneity = FALSE) {
+                        qHeterogeneity = FALSE,
+                        joint2d = TRUE) {
   moves <- list(
     list(name = "tree_length", type = "scale", target = "tree_length",
          weight = 1, dim = 1L),
@@ -1884,6 +1970,20 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     ))
   }
 
+  # --- M-120: 2D joint Bactrian proposals ---
+  if (isTRUE(joint2d)) {
+    moves <- c(moves, list(
+      list(name = "joint_tl_rls", type = "joint_2d",
+           target = "tree_length", weight = 1, dim = 2L)
+    ))
+    if (hasNeo) {
+      moves <- c(moves, list(
+        list(name = "joint_tl_rl", type = "joint_2d",
+             target = "tree_length", weight = 1, dim = 2L)
+      ))
+    }
+  }
+
   # --- Scalar weight floor ---
   # Scalar model-parameter moves (dim=1, non-topology) can be starved when
   # kPrime and branch_lengths dominate the weight budget. Guarantee each
@@ -1925,7 +2025,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   slice_rate_log_sd = 19L,
   slice_tree_length = 19L,
   slice_beta_scale = 19L,
-  pspr = 20L
+  pspr = 20L,
+  joint_tl_rls = 21L,
+  joint_tl_rl = 22L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)
@@ -2432,6 +2534,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     rate_neo = 0.35, neo_joint = 0.35,
     beta_scale = 0.35,
     pspr = 0.10,
+    joint_tl_rls = 0.25, joint_tl_rl = 0.25,
     # Gibbs/weighted/block/slice moves: no MH tuning to adapt
     gibbs_spr = NA_real_, gibbs_subtree_swap = NA_real_,
     weighted_branch_lengths = NA_real_,
@@ -2454,6 +2557,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     rate_neo = "scale_rate_neo",
     neo_joint = "scale_neo_joint",
     pspr = NA_character_,
+    joint_tl_rls = "scale_joint_tl_rls",
+    joint_tl_rl = "scale_joint_tl_rl",
     # Gibbs/weighted/block/slice moves: no tuning to adapt
     gibbs_spr = NA_character_, gibbs_subtree_swap = NA_character_,
     weighted_branch_lengths = NA_character_,

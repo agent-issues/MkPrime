@@ -6,7 +6,7 @@
 \usage{
 RunMkPrime(
   data,
-  tree,
+  tree = NULL,
   neomorphic = integer(0),
   knownStates = integer(0),
   model = NULL,
@@ -18,7 +18,8 @@ RunMkPrime(
 \arguments{
 \item{data}{A \code{phyDat} object or \code{MkPrimeData} object.}
 
-\item{tree}{A \code{phylo} object (starting topology).}
+\item{tree}{A \code{phylo} object (starting topology), or \code{NULL} (default)
+to start from a neighbour-joining tree built from the data.}
 
 \item{neomorphic, knownStates}{Passed to \code{\link[=MkPrimeData]{MkPrimeData()}} if \code{data} is
 a \code{phyDat} object.}

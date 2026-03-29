@@ -76,6 +76,42 @@ NumericVector bactrian_draws(int n) {
   return out;
 }
 
+
+// ---------------------------------------------------------------------------
+// M-120: 2D correlated Bactrian kernel for joint proposals.
+// Both components share the same mode (±M) with correlated Gaussian noise.
+// Correlation ρ is learned during warmup from posterior sample correlations.
+// ---------------------------------------------------------------------------
+static inline void bactrian_2d_perturbation(double rho,
+                                            double& z1, double& z2) {
+  // Correlated Gaussian noise
+  double n1 = R::rnorm(0.0, 1.0);
+  double n2 = R::rnorm(0.0, 1.0);
+  double e1 = BACTRIAN_SD * n1;
+  double e2 = BACTRIAN_SD * (rho * n1 + std::sqrt(1.0 - rho * rho) * n2);
+  // Mode coupling: p_same = (1+rho)/2 gives Cor(z1,z2) = rho exactly.
+  // Each marginal stays standard 1D Bactrian regardless of coupling.
+  double s1 = (R::unif_rand() < 0.5) ? BACTRIAN_M : -BACTRIAN_M;
+  double pSame = 0.5 * (1.0 + rho);
+  double s2 = (R::unif_rand() < pSame) ? s1 : -s1;
+  z1 = (s1 + e1) * BACTRIAN_SCALE;
+  z2 = (s2 + e2) * BACTRIAN_SCALE;
+}
+
+// Exported for unit testing (test-joint-2d.R)
+// [[Rcpp::export]]
+NumericMatrix bactrian_2d_draws(int n, double rho) {
+  NumericMatrix out(n, 2);
+  for (int i = 0; i < n; ++i) {
+    double z1, z2;
+    bactrian_2d_perturbation(rho, z1, z2);
+    out(i, 0) = z1;
+    out(i, 1) = z2;
+  }
+  return out;
+}
+
+
 // Exported for unit testing (test-pspr.R)
 // [[Rcpp::export]]
 int fitch_score_r(IntegerVector parent, IntegerVector child,
@@ -2936,7 +2972,8 @@ static List pspr_proposal_impl(
 //           9=gibbs_p, 10=gibbs_spr, 11=gibbs_subtree_swap,
 //           12=weighted_br_scale, 13=weighted_spr, 14=weighted_subtree_swap,
 //           15=block_gibbs_branch, 16=beta_scale, 17=tbr,
-//           18=neo_joint_scale, 19=slice_scalar, 20=pspr
+//           18=neo_joint_scale, 19=slice_scalar, 20=pspr,
+//           21=joint_tl_rls, 22=joint_tl_rl
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -2945,7 +2982,8 @@ static List pspr_proposal_impl(
 static bool do_move_impl(McmcData* data, McmcState* state,
                          int moveType, int charIdx,
                          double scaleTuning, double betaSimplexTuning,
-                         int intWalkWindow, double beta) {
+                         int intWalkWindow, double beta,
+                         double jointRho = 0.0) {
 
   // Snapshot scalar state for rollback
   double oldTL   = state->treeLength;
@@ -3197,6 +3235,26 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       topologyChanged = true;
       break;
     }
+    case 21: { // M-120: joint_tl_rls (tree_length × rate_log_sd)
+      double z1, z2;
+      bactrian_2d_perturbation(jointRho, z1, z2);
+      double mult1 = std::exp(scaleTuning * z1);
+      double mult2 = std::exp(scaleTuning * z2);
+      state->treeLength = oldTL * mult1;
+      state->rateLogSd  = oldRLSD * mult2;
+      logHastings = std::log(mult1) + std::log(mult2);
+      break;
+    }
+    case 22: { // M-120: joint_tl_rl (tree_length × rate_loss)
+      double z1, z2;
+      bactrian_2d_perturbation(jointRho, z1, z2);
+      double mult1 = std::exp(scaleTuning * z1);
+      double mult2 = std::exp(scaleTuning * z2);
+      state->treeLength = oldTL * mult1;
+      state->rateLoss   = oldRL * mult2;
+      logHastings = std::log(mult1) + std::log(mult2);
+      break;
+    }
     default:
       return false;
   }
@@ -3383,6 +3441,7 @@ List run_mcmc_batch_cpp(
     NumericVector chainBsmpTunings,
     IntegerVector chainIntWalkWins,
     NumericMatrix sliceWidths,
+    NumericMatrix jointRhos,
     int nBatch,
     int startIter,
     int warmup,
@@ -3473,7 +3532,8 @@ List run_mcmc_batch_cpp(
           chainScaleTunings(ch, moveIdx),
           chainBsmpTunings[ch],
           chainIntWalkWins[ch],
-          betas[ch]
+          betas[ch],
+          jointRhos(ch, moveIdx)
         );
       }
       auto t1 = std::chrono::steady_clock::now();

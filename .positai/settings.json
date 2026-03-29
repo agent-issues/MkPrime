@@ -10,7 +10,8 @@
     },
     "external_directory": {
       "C:/Users/pjjg18/.positai/skills/r-package-profiling/references/*": "allow",
-      "C:/Users/pjjg18/.positai/skills/r-package-profiling/*": "allow"
+      "C:/Users/pjjg18/.positai/skills/r-package-profiling/*": "allow",
+      "C:/Users/pjjg18/GitHub/revbayes-ms/.positai/expertise/*": "allow"
     },
     "skill": {
       "r-package-profiling": "allow"

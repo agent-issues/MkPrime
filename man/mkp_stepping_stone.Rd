@@ -6,7 +6,7 @@
 \usage{
 mkp_stepping_stone(
   data,
-  tree,
+  tree = NULL,
   neomorphic = integer(0),
   model = NULL,
   nStones = 50L,
@@ -20,7 +20,8 @@ mkp_stepping_stone(
 \arguments{
 \item{data}{A \code{phyDat} object or \code{MkPrimeData} object.}
 
-\item{tree}{A starting tree (\code{phylo} object).}
+\item{tree}{A starting tree (\code{phylo} object), or \code{NULL} (default) to use a
+neighbour-joining tree built from the data.}
 
 \item{neomorphic}{Integer vector of neomorphic character indices (if \code{data}
 is \code{phyDat}). Ignored if \code{data} is \code{MkPrimeData}.}

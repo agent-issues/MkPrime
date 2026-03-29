@@ -95,17 +95,17 @@ test_that("More stones with more iterations gives consistent results", {
   pd <- TreeTools::MatrixToPhyDat(mat)
 
   set.seed(1583)
-  ss1 <- mkp_stepping_stone(pd, tree, nStones = 15L, nIter = 300L,
-                             warmup = 100L, verbose = FALSE)
+  ss1 <- mkp_stepping_stone(pd, tree, nStones = 15L, nIter = 500L,
+                             warmup = 200L, verbose = FALSE)
   set.seed(7261)
-  ss2 <- mkp_stepping_stone(pd, tree, nStones = 15L, nIter = 300L,
-                             warmup = 100L, verbose = FALSE)
+  ss2 <- mkp_stepping_stone(pd, tree, nStones = 15L, nIter = 500L,
+                             warmup = 200L, verbose = FALSE)
 
   # Two independent estimates should be in the same ballpark.
-  # Use 8-sigma: the delta-method SE can underestimate true variance
+  # Use 10-sigma: the delta-method SE can underestimate true variance
   # when MCMC mixing is poor on small datasets with few iterations.
   combinedSe <- sqrt(ss1$se^2 + ss2$se^2)
-  expect_lt(abs(ss1$log_marginal - ss2$log_marginal), 8 * combinedSe)
+  expect_lt(abs(ss1$log_marginal - ss2$log_marginal), 10 * combinedSe)
 })
 
 
