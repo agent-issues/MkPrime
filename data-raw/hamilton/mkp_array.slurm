@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=mkp-validate
 #SBATCH --partition=shared
-#SBATCH --time=8:00:00
+#SBATCH --time=16:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=2G
+#SBATCH --mem=12G
 #SBATCH --array=0-259
 #SBATCH --output=/nobackup/pjjg18/mkp-study/logs/mkp_%A_%a.out
 #SBATCH --error=/nobackup/pjjg18/mkp-study/logs/mkp_%A_%a.err

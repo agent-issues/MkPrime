@@ -1,6 +1,6 @@
 # MkPrime — Strategic Coordination
 
-Last updated: 2026-03-28
+Last updated: 2026-03-29
 
 ## Project State
 
@@ -154,7 +154,7 @@ overhead. Use TreeTools C++ headers for tree manipulation.
   storage, checkpointing, adaptation logic, and result assembly.
 
 ### Phase 9: Advanced tree moves — Gibbs & Weighted proposals
-**Status:** COMPLETE (2026-03-28). Merged `feature/gibbs-weighted-moves` → main.
+**Status:** COMPLETE (2026-03-29). `feature/gibbs-weighted-moves` merged to main (M-105/M-109/M-111 optimization stack: 3.9× SPR, 1.9× swap, 2.1× combined Gibbs speedup).
 **Goal:** Add five new topology/branch-length moves from RevBayes's
 `mcmc_tree_moves` branch, adapted for MkPrime's unrooted representation
 and flat-buffer likelihood engine. Add an adaptive move scheduler that

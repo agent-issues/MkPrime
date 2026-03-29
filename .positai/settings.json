@@ -8,6 +8,10 @@
       "*.qmd": "allow",
       "*/DESCRIPTION": "allow"
     },
+    "external_directory": {
+      "C:/Users/pjjg18/.positai/skills/r-package-profiling/references/*": "allow",
+      "C:/Users/pjjg18/.positai/skills/r-package-profiling/*": "allow"
+    },
     "skill": {
       "r-package-profiling": "allow"
     }

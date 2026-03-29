@@ -87,41 +87,40 @@ ckp_dir <- file.path(out_dir, tag)
 dir.create(ckp_dir, showWarnings = FALSE)
 
 # ---- Stale-checkpoint guard --------------------------------------------------
-# Lustre/GPFS write-buffer caching means saveRDS can return before the file is
-# fully flushed.  A cancelled SLURM job can therefore leave a checkpoint whose
-# bytes haven't reached stable storage; the first readRDS hits the kernel cache
-# and succeeds, but a subsequent read (inside ResumeMkPrime) hits the actual
-# truncated file and throws "error reading from connection".
+# On Lustre/GPFS, saveRDS can return before data reaches stable storage.
+# A cancelled job may leave a truncated checkpoint that passes the first readRDS
+# (kernel cache hit) but fails a second read inside ResumeMkPrime.
 #
-# Fix: store the current SLURM_JOB_ID in a sentinel file inside ckp_dir.
-# On any new job submission (different ID) wipe the whole directory so
-# RunMkPrime always starts from scratch.  Within a single job, the sentinel
-# matches and existing checkpoints are preserved for intra-job recovery.
-.sentinel <- file.path(ckp_dir, ".slurm_job_id")
-.cur_job  <- Sys.getenv("SLURM_JOB_ID", "")
-.prev_job <- if (file.exists(.sentinel)) readLines(.sentinel, warn = FALSE)[1L] else ""
+# Strategy: on detecting a new SLURM_JOB_ID, VALIDATE existing checkpoints
+# rather than blindly purging.
+#   - CORRUPT checkpoint (readRDS fails): purge entire task directory.
+#   - VALID checkpoint (from a timed-out job): preserve for resumption.
+#   - No checkpoint: fresh start, nothing to do.
+.validate_ckp <- function(path) {
+  if (!file.exists(path)) return(TRUE)  # absent = OK (fresh start)
+  tryCatch({
+    ckp <- readRDS(path)
+    is.list(ckp) && is.list(ckp$runs) && length(ckp$runs) > 0L &&
+      is.list(ckp$mcmc) && !is.null(ckp$iter)
+  }, error = function(e) FALSE)
+}
 
-if (.cur_job != "" && .cur_job != .prev_job) {
-  message("New SLURM job (", .cur_job, ") — purging stale outputs in ", ckp_dir)
-  invisible(lapply(list.files(ckp_dir, full.names = TRUE), unlink))
-  dir.create(ckp_dir, showWarnings = FALSE)
-  writeLines(.cur_job, .sentinel)
-} else if (.cur_job == "") {
-  # Not under SLURM (interactive/test) — fall back to content validation
-  for (.pfx in c("mk", "mkp")) {
-    .ckp <- file.path(ckp_dir, paste0(.pfx, "_checkpoint.rds"))
-    if (file.exists(.ckp)) {
-      .ok <- tryCatch({
-        ckp <- readRDS(.ckp)
-        is.list(ckp) && is.list(ckp$runs) && length(ckp$runs) > 0L &&
-          is.list(ckp$mcmc) && !is.null(ckp$iter)
-      }, error = function(e) FALSE)
-      if (!.ok) {
-        message("Removing stale/corrupt checkpoint (", .pfx, ")")
-        unlink(.ckp)
-      }
-    }
+.sentinel  <- file.path(ckp_dir, ".slurm_job_id")
+.cur_job   <- Sys.getenv("SLURM_JOB_ID", "")
+.prev_job  <- if (file.exists(.sentinel)) readLines(.sentinel, warn = FALSE)[1L] else ""
+
+if (.cur_job != .prev_job) {
+  .ckp_paths <- file.path(ckp_dir, c("mk_checkpoint.rds", "mkp_checkpoint.rds"))
+  .corrupt   <- any(sapply(.ckp_paths, function(p) file.exists(p) && !.validate_ckp(p)))
+  if (.corrupt) {
+    message("Corrupt checkpoint from job ", .prev_job, " — purging ", ckp_dir)
+    invisible(lapply(list.files(ckp_dir, full.names = TRUE), unlink))
+    dir.create(ckp_dir, showWarnings = FALSE)
+  } else if (.cur_job != "" && file.exists(.ckp_paths[[1L]])) {
+    message("Resuming valid checkpoint (prev job ", .prev_job,
+            " -> new job ", .cur_job, ")")
   }
+  if (.cur_job != "") writeLines(.cur_job, .sentinel)
 }
 
 make_mcmc <- function(prefix) {

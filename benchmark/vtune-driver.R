@@ -28,13 +28,13 @@
 
 vtune_lib <- file.path(getwd(), ".vtune-lib")
 .libPaths(c(vtune_lib, .libPaths()))
-library(mkp)
+library(MkPrime)
 library(ape)
 
 # ---- Load hyoliths data (exercises all three partition types) ----------------
-nex_file <- file.path("vignettes", "hyoliths.nex")
-if (!file.exists(nex_file)) {
-  stop("Run from mkp/ root; vignettes/hyoliths.nex not found")
+nex_file <- system.file("datasets", "Sun2018.nex", package = "TreeSearch")
+if (!nzchar(nex_file)) {
+  stop("TreeSearch package must be installed (provides Sun2018.nex)")
 }
 
 pd  <- ape::read.nexus.data(nex_file)
