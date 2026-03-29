@@ -88,6 +88,11 @@ struct CLGroup {
   double rateLoss;  // only for isMkN
   double rateScale; // for neo: rateNeo; for others: 1.0
 
+  // M-114: F81 transitions for Q-heterogeneity
+  bool useF81 = false;
+  double f81Pi[16] = {};  // frequency vector (max kStates = 16)
+  double f81Mu = 0.0;     // 1 / (1 - Σπ²)
+
   IntegerMatrix tipData;  // nTip × nChar, 0-indexed states, -1 missing
 
   // Flat storage indexed as [(cat * (maxNode+1) + node) * stride + c*kStates+s]
@@ -134,6 +139,13 @@ struct CLGroup {
     from1.assign(total, 0.0);
     from2.assign(total, 0.0);
   }
+
+  // Apply transition matrix: dst = P(t) × src for all characters.
+  // Dispatches to F81, MkN, or JC based on model flags.
+  void transition(const double* src, double* dst, double t) const;
+
+  // Root-frequency-weighted site likelihood: Σ_s π_s × rootCL[c*k+s]
+  double rootSiteLik(const double* rootCL, int c) const;
 };
 
 
@@ -232,6 +244,60 @@ inline void mkn_transition(const double* cl, double* result,
   }
 }
 
+// F81 transition: (P × cl)_i = (1 - e^{-μt}) × dot(π, cl) + e^{-μt} × cl_i
+// M-114: used by Q-heterogeneity partial CL
+inline void f81_transition(const double* cl, double* result,
+                            int nChar, int kStates,
+                            const double* pi, double mu, double t) {
+  double exp_t = std::exp(-mu * t);
+  double one_minus_exp = 1.0 - exp_t;
+  for (int c = 0; c < nChar; ++c) {
+    int off = c * kStates;
+    double piDotCl = 0.0;
+    for (int s = 0; s < kStates; ++s)
+      piDotCl += pi[s] * cl[off + s];
+    double baseTerm = one_minus_exp * piDotCl;
+    for (int s = 0; s < kStates; ++s)
+      result[off + s] = baseTerm + exp_t * cl[off + s];
+  }
+}
+
+// --- CLGroup::transition / rootSiteLik implementations ---
+
+inline void CLGroup::transition(const double* src, double* dst, double t) const {
+  if (useF81) {
+    f81_transition(src, dst, nChar, kStates, f81Pi, f81Mu, t);
+  } else if (isMkN) {
+    double P00, P01, P10, P11;
+    mkn_trans_params(rateLoss, t, P00, P01, P10, P11);
+    mkn_transition(src, dst, nChar, P00, P01, P10, P11);
+  } else {
+    double p_diff, diff_coeff;
+    jc_trans_params(kStates, t, p_diff, diff_coeff);
+    jc_transition(src, dst, nChar, kStates, p_diff, diff_coeff);
+  }
+}
+
+inline double CLGroup::rootSiteLik(const double* rootCL, int c) const {
+  if (useF81) {
+    int off = c * kStates;
+    double sl = 0.0;
+    for (int s = 0; s < kStates; ++s) sl += f81Pi[s] * rootCL[off + s];
+    return sl;
+  } else if (isMkN) {
+    double rf0 = 1.0 / (1.0 + rateLoss);
+    double rf1 = rateLoss / (1.0 + rateLoss);
+    int off = c * 2;
+    return rf0 * rootCL[off] + rf1 * rootCL[off + 1];
+  } else {
+    double inv_k = 1.0 / kStates;
+    int off = c * kStates;
+    double sl = 0.0;
+    for (int s = 0; s < kStates; ++s) sl += inv_k * rootCL[off + s];
+    return sl;
+  }
+}
+
 
 // ---------------------------------------------------------------------------
 // Caching downpass: full postorder traversal, storing I, F0, F1 per node
@@ -281,15 +347,7 @@ static void caching_downpass(CLGroup& grp, const TreeNav& topo,
       double t = topo.edgeLen[e] * rate * grp.rateScale;
 
       // Compute transition: contrib = P(t) × I[ch_]
-      if (grp.isMkN) {
-        double P00, P01, P10, P11;
-        mkn_trans_params(grp.rateLoss, t, P00, P01, P10, P11);
-        mkn_transition(grp.I(cat, ch_), contrib.data(), nChar, P00, P01, P10, P11);
-      } else {
-        double p_diff, diff_coeff;
-        jc_trans_params(kStates, t, p_diff, diff_coeff);
-        jc_transition(grp.I(cat, ch_), contrib.data(), nChar, kStates, p_diff, diff_coeff);
-      }
+      grp.transition(grp.I(cat, ch_), contrib.data(), t);
 
       // Track how many children have been seen (0, 1, 2 for root's 3rd)
       if (nChildSeen[par] == 0) {
@@ -369,8 +427,6 @@ static void compute_residual_cl(
     int u, int sibNode, double lMerge)
 {
   int g = topo.parentNode[u];   // grandparent of pruned subtree
-  int kStates = grp.kStates;
-  int nChar   = grp.nChar;
   int stride  = grp.stride;
   int nCat    = grp.nCat;
 
@@ -395,15 +451,8 @@ static void compute_residual_cl(
     double rate = rates[cat];
 
     // At g: replace u's contribution with sibNode's contribution via lMerge
-    if (grp.isMkN) {
-      double P00, P01, P10, P11;
-      mkn_trans_params(grp.rateLoss, lMerge * rate * grp.rateScale, P00, P01, P10, P11);
-      mkn_transition(grp.I(cat, sibNode), contrib.data(), nChar, P00, P01, P10, P11);
-    } else {
-      double p_diff, diff_coeff;
-      jc_trans_params(kStates, lMerge * rate * grp.rateScale, p_diff, diff_coeff);
-      jc_transition(grp.I(cat, sibNode), contrib.data(), nChar, kStates, p_diff, diff_coeff);
-    }
+    grp.transition(grp.I(cat, sibNode), contrib.data(),
+                   lMerge * rate * grp.rateScale);
 
     // Store the replacement F at g
     std::memcpy(res.F(cat, 0), contrib.data(), stride * sizeof(double));
@@ -426,15 +475,7 @@ static void compute_residual_cl(
       // Contribution from prev (updated) through edge prev→node
       double t = topo.edgeLen[topo.edgeToPar[prev]] * rate * grp.rateScale;
       const double* prevI = res.I(cat, pi - 1);  // updated CL of prev
-      if (grp.isMkN) {
-        double P00, P01, P10, P11;
-        mkn_trans_params(grp.rateLoss, t, P00, P01, P10, P11);
-        mkn_transition(prevI, contrib.data(), nChar, P00, P01, P10, P11);
-      } else {
-        double p_diff, diff_coeff;
-        jc_trans_params(kStates, t, p_diff, diff_coeff);
-        jc_transition(prevI, contrib.data(), nChar, kStates, p_diff, diff_coeff);
-      }
+      grp.transition(prevI, contrib.data(), t);
 
       // Store the replacement F at this path node
       std::memcpy(res.F(cat, pi), contrib.data(), stride * sizeof(double));
@@ -462,6 +503,9 @@ static void compute_residual_cl(
 // is at the regraft point and the path skips from sibNode to g via lMerge.
 // We handle this by detecting parNode==u during propagation and jumping to g.
 // ---------------------------------------------------------------------------
+// If siteLikAccum is non-null (M-114 Q-het streaming mode): accumulate
+// per-site raw likelihoods into it (no log, no /nCat) and return 0.0.
+// If null (default): return the log-likelihood as before.
 static double evaluate_candidate(
     const CLGroup& grp, const TreeNav& topo,
     const ResidualCL& res,
@@ -471,9 +515,9 @@ static double evaluate_candidate(
     double lMerge,          // collapsed edge length sibNode→g
     int a, int b,           // regraft parent and child nodes
     double lHalfReg,        // lReg / 2 (half the regraft edge length)
-    double lPrune)          // prune edge length (u→v)
+    double lPrune,          // prune edge length (u→v)
+    double* siteLikAccum = nullptr)
 {
-  int kStates = grp.kStates;
   int nChar   = grp.nChar;
   int stride  = grp.stride;
   int nCat    = grp.nCat;
@@ -481,50 +525,36 @@ static double evaluate_candidate(
   int g       = topo.parentNode[u];
   int uSlot   = topo.childSlot(g, u);
 
-  // Root frequency: 1/k for JC, stationary for MkN
-  double rootF0 = 0.5, rootF1 = 0.5;  // MkN
-  double inv_k = 1.0 / kStates;       // JC
-  if (grp.isMkN) {
-    rootF0 = 1.0 / (1.0 + grp.rateLoss);
-    rootF1 = grp.rateLoss / (1.0 + grp.rateLoss);
+  // Per-site likelihood accumulator: external (Q-het streaming) or local
+  std::vector<double> localSiteLik;
+  double* accum;
+  if (siteLikAccum) {
+    accum = siteLikAccum;  // caller manages zeroing
+  } else {
+    localSiteLik.assign(nChar, 0.0);
+    accum = localSiteLik.data();
   }
-
-  // Per-site likelihood sum across ACRV categories
-  std::vector<double> siteLikSum(nChar, 0.0);
 
   // Buffers for per-character computations
   std::vector<double> from_v(stride), from_b(stride), Iu(stride), contrib(stride);
   std::vector<double> curI(stride);
 
-  // Helper: apply transition matrix to src, write to dst
-  auto applyTransition = [&](const double* src, double* dst, double t) {
-    if (grp.isMkN) {
-      double P00, P01, P10, P11;
-      mkn_trans_params(grp.rateLoss, t, P00, P01, P10, P11);
-      mkn_transition(src, dst, nChar, P00, P01, P10, P11);
-    } else {
-      double pd, dc;
-      jc_trans_params(kStates, t, pd, dc);
-      jc_transition(src, dst, nChar, kStates, pd, dc);
-    }
-  };
-
   for (int cat = 0; cat < nCat; ++cat) {
     double rate = rates[cat];
 
     // Contribution from v (pruned subtree) at u
-    applyTransition(grp.I(cat, v), from_v.data(), lPrune * rate * sc);
+    grp.transition(grp.I(cat, v), from_v.data(), lPrune * rate * sc);
 
     // Contribution from b at u (via half regraft edge)
     int bResIdx = res.pathIndex(b);
     const double* Ib = (bResIdx >= 0) ? res.I(cat, bResIdx) : grp.I(cat, b);
-    applyTransition(Ib, from_b.data(), lHalfReg * rate * sc);
+    grp.transition(Ib, from_b.data(), lHalfReg * rate * sc);
 
     // I at u = from_v × from_b
     for (int i = 0; i < stride; ++i) Iu[i] = from_v[i] * from_b[i];
 
     // from_u at a: transition through half regraft edge from u to a
-    applyTransition(Iu.data(), contrib.data(), lHalfReg * rate * sc);
+    grp.transition(Iu.data(), contrib.data(), lHalfReg * rate * sc);
 
     // Helper lambda: compute the product of all sibling contributions at node
     // 'par' EXCEPT the child in slot 'excludeSlot'.
@@ -554,8 +584,7 @@ static double evaluate_candidate(
         if (cnResIdx >= 0) {
           double t_sib = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
           const double* sibI = res.I(cat, cnResIdx);
-          // Use from_v as scratch buffer for the transition
-          applyTransition(sibI, from_v.data(), t_sib);
+          grp.transition(sibI, from_v.data(), t_sib);
           for (int i = 0; i < stride; ++i) out[i] *= from_v[i];
           continue;
         }
@@ -578,53 +607,35 @@ static double evaluate_candidate(
     int parNode = topo.parentNode[a];
     while (parNode >= 1) {
       if (parNode == u) {
-        // Skip u: in the new topology, curNode connects to g via lMerge
-        // (curNode must be sibNode or an ancestor of sibNode that leads to u)
-        applyTransition(curI.data(), contrib.data(), lMerge * rate * sc);
-
-        // At g: exclude u's slot (which doesn't exist in the new tree)
+        grp.transition(curI.data(), contrib.data(), lMerge * rate * sc);
         siblingProduct(g, uSlot, curI.data());
         for (int i = 0; i < stride; ++i) curI[i] *= contrib[i];
-
         curNode = g;
         parNode = topo.parentNode[g];
         continue;
       }
 
       int curSlot = topo.childSlot(parNode, curNode);
-
-      // Transition from curNode to parNode
       double t = topo.edgeLen[topo.edgeToPar[curNode]] * rate * sc;
-      applyTransition(curI.data(), contrib.data(), t);
-
-      // I_cand[parNode] = from_cur × product_of_siblings(parNode, exclude cur)
+      grp.transition(curI.data(), contrib.data(), t);
       siblingProduct(parNode, curSlot, curI.data());
       for (int i = 0; i < stride; ++i) curI[i] *= contrib[i];
-
       curNode = parNode;
       parNode = topo.parentNode[parNode];
     }
 
     // curI now holds I_cand[root].  Accumulate per-site likelihood.
-    for (int c = 0; c < nChar; ++c) {
-      double sl;
-      if (grp.isMkN) {
-        int off = c * 2;
-        sl = rootF0 * curI[off] + rootF1 * curI[off + 1];
-      } else {
-        int off = c * kStates;
-        sl = 0.0;
-        for (int s = 0; s < kStates; ++s) sl += inv_k * curI[off + s];
-      }
-      siteLikSum[c] += sl;
-    }
+    for (int c = 0; c < nChar; ++c)
+      accum[c] += grp.rootSiteLik(curI.data(), c);
   }
 
-  // Log-likelihood: sum_c log(siteLikSum[c] / nCat)
+  if (siteLikAccum) return 0.0;  // caller takes log after all components
+
+  // Standalone mode: log-likelihood = sum_c log(siteLikSum[c] / nCat)
   double logLik = 0.0;
   double inv_nCat = 1.0 / nCat;
   for (int c = 0; c < nChar; ++c) {
-    double avg = siteLikSum[c] * inv_nCat;
+    double avg = accum[c] * inv_nCat;
     if (avg <= 0.0) return R_NegInf;
     logLik += std::log(avg);
   }
@@ -668,15 +679,17 @@ static CLGroup create_const_pseudo_group(const CLGroup& src, int nTip, int maxNo
 // Evaluate P_const for a candidate regraft using partial CLs on pseudo-chars.
 // Same algorithm as evaluate_candidate but returns P(constant site) instead
 // of log-likelihood.
+// If constProbAccum is non-null (M-114 Q-het streaming), accumulate the raw
+// per-pseudo-character constant-site likelihoods and return 0.0.
 static double evaluate_const_prob(
     const CLGroup& pg,          // pseudo-character group
     const TreeNav& topo,
     const ResidualCL& res,
     const NumericVector& rates,
     int v, int u, int sibNode, double lMerge,
-    int a, int b, double lHalfReg, double lPrune)
+    int a, int b, double lHalfReg, double lPrune,
+    double* constProbAccum = nullptr)
 {
-  int kStates = pg.kStates;
   int nChar   = pg.nChar;  // = kStates
   int stride  = pg.stride;
   int nCat    = pg.nCat;
@@ -684,42 +697,23 @@ static double evaluate_const_prob(
   int g       = topo.parentNode[u];
   int uSlot   = topo.childSlot(g, u);
 
-  double inv_k = 1.0 / kStates;
-  double rootF0 = 0.5, rootF1 = 0.5;
-  if (pg.isMkN) {
-    rootF0 = 1.0 / (1.0 + pg.rateLoss);
-    rootF1 = pg.rateLoss / (1.0 + pg.rateLoss);
-  }
-
   std::vector<double> from_v(stride), from_b(stride), Iu(stride), contrib(stride);
   std::vector<double> curI(stride);
-
-  auto applyTransition = [&](const double* src, double* dst, double t) {
-    if (pg.isMkN) {
-      double P00, P01, P10, P11;
-      mkn_trans_params(pg.rateLoss, t, P00, P01, P10, P11);
-      mkn_transition(src, dst, nChar, P00, P01, P10, P11);
-    } else {
-      double pd, dc;
-      jc_trans_params(kStates, t, pd, dc);
-      jc_transition(src, dst, nChar, kStates, pd, dc);
-    }
-  };
 
   double totalConstProb = 0.0;
 
   for (int cat = 0; cat < nCat; ++cat) {
     double rate = rates[cat];
 
-    applyTransition(pg.I(cat, v), from_v.data(), lPrune * rate * sc);
+    pg.transition(pg.I(cat, v), from_v.data(), lPrune * rate * sc);
 
     int bResIdx = res.pathIndex(b);
     const double* Ib = (bResIdx >= 0) ? res.I(cat, bResIdx) : pg.I(cat, b);
-    applyTransition(Ib, from_b.data(), lHalfReg * rate * sc);
+    pg.transition(Ib, from_b.data(), lHalfReg * rate * sc);
 
     for (int i = 0; i < stride; ++i) Iu[i] = from_v[i] * from_b[i];
 
-    applyTransition(Iu.data(), contrib.data(), lHalfReg * rate * sc);
+    pg.transition(Iu.data(), contrib.data(), lHalfReg * rate * sc);
 
     // siblingProduct lambda (same as evaluate_candidate)
     auto siblingProduct = [&](int par, int excludeSlot, double* out) {
@@ -739,7 +733,7 @@ static double evaluate_const_prob(
         if (cnResIdx >= 0) {
           double t_sib = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
           const double* sibI = res.I(cat, cnResIdx);
-          applyTransition(sibI, from_v.data(), t_sib);
+          pg.transition(sibI, from_v.data(), t_sib);
           for (int i = 0; i < stride; ++i) out[i] *= from_v[i];
           continue;
         }
@@ -756,7 +750,7 @@ static double evaluate_const_prob(
     int parNode = topo.parentNode[a];
     while (parNode >= 1) {
       if (parNode == u) {
-        applyTransition(curI.data(), contrib.data(), lMerge * rate * sc);
+        pg.transition(curI.data(), contrib.data(), lMerge * rate * sc);
         siblingProduct(g, uSlot, curI.data());
         for (int i = 0; i < stride; ++i) curI[i] *= contrib[i];
         curNode = g;
@@ -765,29 +759,23 @@ static double evaluate_const_prob(
       }
       int curSlot = topo.childSlot(parNode, curNode);
       double t = topo.edgeLen[topo.edgeToPar[curNode]] * rate * sc;
-      applyTransition(curI.data(), contrib.data(), t);
+      pg.transition(curI.data(), contrib.data(), t);
       siblingProduct(parNode, curSlot, curI.data());
       for (int i = 0; i < stride; ++i) curI[i] *= contrib[i];
       curNode = parNode;
       parNode = topo.parentNode[parNode];
     }
 
-    // curI = CL at root for each pseudo-character (constant-state pattern)
-    // P_const_cat = sum_s π_s × CL_root(s, cat)
     for (int c = 0; c < nChar; ++c) {
-      double sl;
-      if (pg.isMkN) {
-        int off = c * 2;
-        sl = rootF0 * curI[off] + rootF1 * curI[off + 1];
-      } else {
-        int off = c * kStates;
-        sl = 0.0;
-        for (int s = 0; s < kStates; ++s) sl += inv_k * curI[off + s];
-      }
-      totalConstProb += sl;
+      double sl = pg.rootSiteLik(curI.data(), c);
+      if (constProbAccum)
+        constProbAccum[c] += sl;
+      else
+        totalConstProb += sl;
     }
   }
 
+  if (constProbAccum) return 0.0;
   return totalConstProb / nCat;
 }
 
@@ -816,6 +804,11 @@ static double evaluate_const_prob(
 // constProbMode: false → return log-likelihood
 //                true  → return P(constant site) for ascertainment
 // ---------------------------------------------------------------------------
+// M-114: added siteLikAccum / constProbAccum for Q-het streaming.
+// When siteLikAccum is non-null and !constProbMode, per-site raw likelihoods
+// are accumulated into siteLikAccum and return 0.0.
+// When constProbAccum is non-null and constProbMode, per-pseudo-char raw
+// const-prob likelihoods are accumulated and return 0.0.
 static double evaluate_swap_impl(
     const CLGroup& grp, const TreeNav& topo,
     const NumericVector& rates,
@@ -823,9 +816,10 @@ static double evaluate_swap_impl(
     int pA, int slotA, double lenA,
     const std::vector<int>& pathA,
     const std::vector<int>& pathAIdx,
-    bool constProbMode)
+    bool constProbMode,
+    double* siteLikAccum = nullptr,
+    double* constProbAccum = nullptr)
 {
-  int kStates = grp.kStates;
   int nChar   = grp.nChar;
   int stride  = grp.stride;
   int nCat    = grp.nCat;
@@ -834,14 +828,6 @@ static double evaluate_swap_impl(
   int pB    = topo.parentNode[nodeB];
   int slotB = topo.childSlot(pB, nodeB);
   double lenB = topo.edgeLen[topo.edgeToPar[nodeB]];
-
-  // Root frequencies
-  double inv_k = 1.0 / kStates;
-  double rootF0 = 0.5, rootF1 = 0.5;
-  if (grp.isMkN) {
-    rootF0 = 1.0 / (1.0 + grp.rateLoss);
-    rootF1 = grp.rateLoss / (1.0 + grp.rateLoss);
-  }
 
   // --- Find LCA: walk from pB upward until hitting a node on pathA ---
   std::vector<int> pathBbelow;
@@ -867,21 +853,18 @@ static double evaluate_swap_impl(
   std::vector<double> prevShared(stride);
 
   // Accumulators
-  std::vector<double> siteLikSum;
+  std::vector<double> localSiteLik;
   double totalConstProb = 0.0;
-  if (!constProbMode) siteLikSum.assign(nChar, 0.0);
-
-  auto applyTransition = [&](const double* src, double* dst, double t) {
-    if (grp.isMkN) {
-      double P00, P01, P10, P11;
-      mkn_trans_params(grp.rateLoss, t, P00, P01, P10, P11);
-      mkn_transition(src, dst, nChar, P00, P01, P10, P11);
-    } else {
-      double pd, dc;
-      jc_trans_params(kStates, t, pd, dc);
-      jc_transition(src, dst, nChar, kStates, pd, dc);
-    }
-  };
+  double* accum = nullptr;
+  if (constProbMode) {
+    // constProbAccum: accumulate raw const-prob per pseudo-char if streaming
+    // (otherwise accumulate into totalConstProb as before)
+  } else if (siteLikAccum) {
+    accum = siteLikAccum;
+  } else {
+    localSiteLik.assign(nChar, 0.0);
+    accum = localSiteLik.data();
+  }
 
   auto childAt = [&](int n, int sl) -> int {
     return (sl == 0) ? topo.ch0[n] : (sl == 1) ? topo.ch1[n] : topo.ch2[n];
@@ -901,12 +884,12 @@ static double evaluate_swap_impl(
 
         if (n == pA && sl == slotA) {
           // SWAP: nodeB replaces nodeA at pA
-          applyTransition(grp.I(cat, nodeB), contrib.data(),
+          grp.transition(grp.I(cat, nodeB), contrib.data(),
                           lenA * rate * sc);
         } else if (ai > 0 && cn == pathA[ai - 1]) {
           // Propagated from previous segA node
           double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
-          applyTransition(lastA.data(), contrib.data(), t);
+          grp.transition(lastA.data(), contrib.data(), t);
         } else {
           std::memcpy(contrib.data(), grp.Fslot(cat, n, sl),
                       stride * sizeof(double));
@@ -927,12 +910,12 @@ static double evaluate_swap_impl(
 
         if (n == pB && sl == slotB) {
           // SWAP: nodeA replaces nodeB at pB
-          applyTransition(grp.I(cat, nodeA), contrib.data(),
+          grp.transition(grp.I(cat, nodeA), contrib.data(),
                           lenB * rate * sc);
         } else if (bi > 0 && cn == pathBbelow[bi - 1]) {
           // Propagated from previous segB node
           double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
-          applyTransition(lastB.data(), contrib.data(), t);
+          grp.transition(lastB.data(), contrib.data(), t);
         } else {
           std::memcpy(contrib.data(), grp.Fslot(cat, n, sl),
                       stride * sizeof(double));
@@ -955,12 +938,12 @@ static double evaluate_swap_impl(
 
         // Swap conditions (fire at LCA when pA or pB IS the LCA)
         if (n == pA && sl == slotA) {
-          applyTransition(grp.I(cat, nodeB), contrib.data(),
+          grp.transition(grp.I(cat, nodeB), contrib.data(),
                           lenA * rate * sc);
           handled = true;
         }
         if (!handled && n == pB && sl == slotB) {
-          applyTransition(grp.I(cat, nodeA), contrib.data(),
+          grp.transition(grp.I(cat, nodeA), contrib.data(),
                           lenB * rate * sc);
           handled = true;
         }
@@ -969,20 +952,20 @@ static double evaluate_swap_impl(
         if (!handled && nSegA > 0 && ai == lcaIdxA &&
             cn == pathA[lcaIdxA - 1]) {
           double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
-          applyTransition(lastA.data(), contrib.data(), t);
+          grp.transition(lastA.data(), contrib.data(), t);
           handled = true;
         }
         if (!handled && nSegB > 0 && ai == lcaIdxA &&
             cn == pathBbelow.back()) {
           double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
-          applyTransition(lastB.data(), contrib.data(), t);
+          grp.transition(lastB.data(), contrib.data(), t);
           handled = true;
         }
 
         // Previous shared-segment node
         if (!handled && ai > lcaIdxA && cn == pathA[ai - 1]) {
           double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
-          applyTransition(prevShared.data(), contrib.data(), t);
+          grp.transition(prevShared.data(), contrib.data(), t);
           handled = true;
         }
 
@@ -998,38 +981,34 @@ static double evaluate_swap_impl(
     }
 
     // ============ Root CL → accumulate site likelihoods ============
-    // curI holds the root CL for this category
     for (int c = 0; c < nChar; ++c) {
-      double sl;
-      if (grp.isMkN) {
-        int off = c * 2;
-        sl = rootF0 * curI[off] + rootF1 * curI[off + 1];
-      } else {
-        int off = c * kStates;
-        sl = 0.0;
-        for (int s = 0; s < kStates; ++s) sl += inv_k * curI[off + s];
-      }
+      double sl = grp.rootSiteLik(curI.data(), c);
       if (constProbMode) {
-        totalConstProb += sl;
+        if (constProbAccum)
+          constProbAccum[c] += sl;
+        else
+          totalConstProb += sl;
       } else {
-        siteLikSum[c] += sl;
+        accum[c] += sl;
       }
     }
   }  // end category loop
 
   // ============ Return ============
   if (constProbMode) {
+    if (constProbAccum) return 0.0;
     return totalConstProb / nCat;
-  } else {
-    double logLik = 0.0;
-    double inv_nCat = 1.0 / nCat;
-    for (int c = 0; c < nChar; ++c) {
-      double avg = siteLikSum[c] * inv_nCat;
-      if (avg <= 0.0) return R_NegInf;
-      logLik += std::log(avg);
-    }
-    return logLik;
   }
+  if (siteLikAccum) return 0.0;  // caller takes log after all components
+
+  double logLik = 0.0;
+  double inv_nCat = 1.0 / nCat;
+  for (int c = 0; c < nChar; ++c) {
+    double avg = accum[c] * inv_nCat;
+    if (avg <= 0.0) return R_NegInf;
+    logLik += std::log(avg);
+  }
+  return logLik;
 }
 
 // Convenience wrappers
@@ -1055,6 +1034,86 @@ static inline double evaluate_swap_const_prob(
 {
   return evaluate_swap_impl(grp, topo, rates, nodeA, nodeB,
                             pA, slotA, lenA, pathA, pathAIdx, true);
+}
+
+
+// ---------------------------------------------------------------------------
+// M-114: Beta discretization for Q-heterogeneity
+//
+// Duplicated from mcmc_likelihood.cpp::compute_het_bins (which is file-local).
+// Discretizes Beta(α, (k-1)α) into nBins equal-probability bins, each
+// represented by its conditional mean.
+// ---------------------------------------------------------------------------
+static void gibbs_compute_het_bins(double alpha, int k, int nBins,
+                                    double* bins) {
+  double a = alpha;
+  double b = (k - 1.0) * alpha;
+  for (int i = 0; i < nBins; ++i) {
+    double lo = R::qbeta((double)i / nBins, a, b, 1, 0);
+    double hi = R::qbeta((double)(i + 1) / nBins, a, b, 1, 0);
+    if (hi - lo < 1e-15) {
+      bins[i] = 0.5 * (lo + hi);
+      continue;
+    }
+    double p_lo = R::pbeta(lo, a + 1.0, b, 1, 0);
+    double p_hi = R::pbeta(hi, a + 1.0, b, 1, 0);
+    double denom = R::pbeta(hi, a, b, 1, 0) - R::pbeta(lo, a, b, 1, 0);
+    if (denom < 1e-300) {
+      bins[i] = 0.5 * (lo + hi);
+    } else {
+      bins[i] = (a / (a + b)) * (p_hi - p_lo) / denom;
+    }
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// M-114: F81 component parameter construction for Q-heterogeneity
+//
+// Mirrors the π construction in pruning_f81_het_acrv_flat (mcmc_likelihood.cpp).
+// Sets grp.f81Pi[], grp.f81Mu, grp.useF81 = true.
+// ---------------------------------------------------------------------------
+static void set_f81_component(CLGroup& grp, double betaVal, int rot,
+                               double baseRL) {
+  int k = grp.kStates;
+  double sumPiSq = 0.0;
+
+  if (k == 2) {
+    // Neomorphic: asymmetric binary using rateLoss
+    double sum_rl = 1.0 + baseRL;
+    double gain_base = 1.0 / sum_rl;
+    double loss_base = baseRL / sum_rl;
+    double gain_b = gain_base * 2.0 * betaVal;
+    double loss_b = loss_base * 2.0 * (1.0 - betaVal);
+    double total_rate = gain_b + loss_b;
+    grp.f81Pi[1] = gain_b / total_rate;
+    grp.f81Pi[0] = 1.0 - grp.f81Pi[1];
+    sumPiSq = grp.f81Pi[0] * grp.f81Pi[0] + grp.f81Pi[1] * grp.f81Pi[1];
+  } else {
+    // Symmetric k≥3: one elevated frequency at position 'rot'
+    double r = (1.0 - betaVal) / (k - 1.0);
+    for (int s = 0; s < k; ++s) grp.f81Pi[s] = r;
+    grp.f81Pi[rot] = betaVal;
+    sumPiSq = betaVal * betaVal + (k - 1.0) * r * r;
+  }
+
+  grp.f81Mu  = 1.0 / (1.0 - sumPiSq);
+  grp.useF81 = true;
+}
+
+// Convert per-site raw likelihood accumulators to log-likelihood.
+// siteLikSum[c] was accumulated across totalComp components; divide by
+// totalComp and take log.  Returns -Inf if any site average is non-positive.
+static double siteLikAccum_to_logLik(const double* siteLikSum, int nChar,
+                                      int totalComp) {
+  double logLik = 0.0;
+  double inv_comp = 1.0 / totalComp;
+  for (int c = 0; c < nChar; ++c) {
+    double avg = siteLikSum[c] * inv_comp;
+    if (avg <= 0.0) return R_NegInf;
+    logLik += std::log(avg);
+  }
+  return logLik;
 }
 
 
