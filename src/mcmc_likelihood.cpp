@@ -108,9 +108,28 @@ static NumericVector mkn_stationary(double rateLoss) {
 // pass: every child CL is fully computed before its parent edge is visited.
 // Canonical preorder (children sorted by smallest descendant) is the
 // default, but in-place NNI (OPP-6b) may produce non-canonical preorder
-// — still valid because NNI only swaps parent assignments for edges that
-// remain after their new parent's position in the original ordering.
+// — still valid because NNI only modifies parent assignments when it is
+// safe to do so (wRow > edgeRow guard in mcmc.cpp case 5).
 // ---------------------------------------------------------------------------
+
+#ifndef NDEBUG
+// Debug-only check: verify edges are in valid preorder.
+static void assert_valid_preorder(const IntegerVector& parent,
+                                  const IntegerVector& child,
+                                  int nTip) {
+  const int nEdge = parent.size();
+  const int root = nTip + 1;
+  const int maxNode = 2 * nTip;
+  std::vector<bool> seen(maxNode + 1, false);
+  seen[root] = true;
+  for (int i = 0; i < nEdge; ++i) {
+    if (!seen[parent[i]])
+      Rcpp::stop("pruning: parent %d not introduced at edge %d "
+                 "(preorder invariant violated)", (int)parent[i], i);
+    seen[child[i]] = true;
+  }
+}
+#endif
 
 static double pruning_jc_flat(
     IntegerVector parent, IntegerVector child,
@@ -121,6 +140,10 @@ static double pruning_jc_flat(
   int nEdge = parent.size();
   int nTip  = tip_states.nrow();
   int nChar = tip_states.ncol();
+
+#ifndef NDEBUG
+  assert_valid_preorder(parent, child, nTip);
+#endif
 
   int maxNode = 2 * nTip - 1;  // OPP-2: +1 covers rooted trees (root = 2*nTip-1)
   int clCols = nChar * kStates;
@@ -204,6 +227,10 @@ static double pruning_jc_acrv_flat(
   int nTip  = tip_states.nrow();
   int nChar = tip_states.ncol();
   int nCat  = rate_multipliers.size();
+
+#ifndef NDEBUG
+  assert_valid_preorder(parent, child, nTip);
+#endif
 
   int maxNode = 2 * nTip - 1;  // OPP-2
   int root   = nTip + 1;
@@ -302,6 +329,10 @@ static double pruning_mkn_flat(
   int nChar = tip_states.ncol();
   const int kStates = 2;
 
+#ifndef NDEBUG
+  assert_valid_preorder(parent, child, nTip);
+#endif
+
   int maxNode = 2 * nTip - 1;  // OPP-2: +1 covers rooted trees (root = 2*nTip-1)
   int clCols = nChar * kStates;
 
@@ -386,6 +417,10 @@ static double pruning_mkn_acrv_flat(
   int nChar = tip_states.ncol();
   int nCat  = rate_multipliers.size();
   const int kStates = 2;
+
+#ifndef NDEBUG
+  assert_valid_preorder(parent, child, nTip);
+#endif
 
   int maxNode = 2 * nTip - 1;  // OPP-2
   int root   = nTip + 1;
@@ -544,6 +579,10 @@ static double pruning_f81_het_acrv_flat(
   int nTip  = tip_states.nrow();
   int nChar = tip_states.ncol();
   int nCat  = rate_multipliers.size();
+
+#ifndef NDEBUG
+  assert_valid_preorder(parent, child, nTip);
+#endif
 
   int maxNode = 2 * nTip - 1;
   int root    = nTip + 1;

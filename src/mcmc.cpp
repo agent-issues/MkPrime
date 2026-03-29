@@ -2054,11 +2054,15 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         return false;
       break;
     }
-    case 5: { // NNI — OPP-6b: in-place topology modification, O(1) rollback.
-      // NNI only swaps 2 parent assignments. The reversed edge ordering
-      // remains a valid postorder (children processed before parents) because
-      // the moved subtrees stay at positions that are after their new parent's
-      // edge in the original preorder. No reordering needed.
+    case 5: { // NNI — OPP-6b: in-place when safe, full reorder otherwise.
+      //
+      // NNI swaps 2 parent assignments: one child of v moves to u, one
+      // child of u (sibling w) moves to v.  The in-place modification
+      // preserves valid preorder ONLY when wRow > edgeRow (v is already
+      // introduced before wRow in the edge list).  When wRow <= edgeRow,
+      // the parent assignment at wRow references v which hasn't appeared
+      // as a child yet — breaking the preorder invariant that the
+      // reverse-iteration Felsenstein pruning depends on.
       const int nEdge = state->parent.size();
       const int nTip  = data->nTip;
 
@@ -2093,13 +2097,37 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       const int cRow = vCh[pV];
       const int wRow = uSib[pU];
 
-      // Save originals for O(1) rollback, then apply in-place
-      nniCRow = cRow; nniWRow = wRow;
-      nniSavedP_cRow = state->parent[cRow];
-      nniSavedP_wRow = state->parent[wRow];
-      state->parent[cRow] = u;
-      state->parent[wRow] = v;
-      nniInPlace = true;
+      if (wRow > edgeRow) {
+        // Safe: v is introduced at edgeRow, which is before wRow.
+        // In-place swap preserves valid preorder.
+        nniCRow = cRow; nniWRow = wRow;
+        nniSavedP_cRow = state->parent[cRow];
+        nniSavedP_wRow = state->parent[wRow];
+        state->parent[cRow] = u;
+        state->parent[wRow] = v;
+        nniInPlace = true;
+      } else {
+        // Unsafe: wRow <= edgeRow — v not yet introduced at wRow.
+        // Apply the same NNI swap but canonicalise via reorder.
+        IntegerVector newPar = clone(state->parent);
+        newPar[cRow] = u;
+        newPar[wRow] = v;
+        NumericVector absLen(nEdge);
+        for (int i = 0; i < nEdge; ++i)
+          absLen[i] = state->treeLength * state->relBrLengths[i];
+        auto po = TreeTools::preorder_weighted_impl(
+          newPar, state->child, absLen);
+        IntegerMatrix oe = po.first;
+        NumericVector oa = po.second;
+        proposedParent = IntegerVector(nEdge);
+        proposedChild  = IntegerVector(nEdge);
+        for (int i = 0; i < nEdge; ++i) {
+          proposedParent[i] = oe(i, 0);
+          proposedChild[i]  = oe(i, 1);
+        }
+        proposedRelBr = oa / state->treeLength;
+        topologyChanged = true;
+      }
       logHastings = 0.0;
       break;
     }
