@@ -2,18 +2,22 @@
 #
 # Phase 6: PlotDuringMCMC trace plots and PNG output.
 
-# --- Stateful ESS history for the ESS-over-time panel ---
+# --- Stateful history for live trace plots ---
 .tracePlotEnv <- new.env(parent = emptyenv())
 .tracePlotEnv$essHistory <- NULL   # list of named numeric vectors
 .tracePlotEnv$iterHistory <- NULL  # integer vector (iter at each snapshot)
 .tracePlotEnv$lastIter <- 0L
+.tracePlotEnv$warmupLogPost <- NULL  # list of numeric vectors (one per run)
+.tracePlotEnv$warmupIter    <- NULL  # integer vector of warmup iters
 
-#' Reset the ESS history used by [MkpTracePlot()]
+#' Reset the ESS and warmup history used by [MkpTracePlot()]
 #' @keywords internal
 .ResetEssHistory <- function() {
-  .tracePlotEnv$essHistory  <- list()
-  .tracePlotEnv$iterHistory <- integer(0)
-  .tracePlotEnv$lastIter    <- 0L
+  .tracePlotEnv$essHistory    <- list()
+  .tracePlotEnv$iterHistory   <- integer(0)
+  .tracePlotEnv$lastIter      <- 0L
+  .tracePlotEnv$warmupLogPost <- NULL
+  .tracePlotEnv$warmupIter    <- NULL
 }
 
 
@@ -112,9 +116,17 @@ MkpTracePlot <- function(info) {
     .ResetEssHistory()
   }
 
-  # Compute and store ESS snapshot
+  # Compute and store ESS snapshot.
+  # Cap input to last maxEssSamples rows to keep computation fast as
+  # the sample matrix grows into the tens of thousands.
+  maxEssSamples <- 5000L
   if (showEss) {
     combined <- do.call(rbind, info$runSamples)
+    nCombined <- nrow(combined)
+    if (nCombined > maxEssSamples) {
+      combined <- combined[(nCombined - maxEssSamples + 1L):nCombined, ,
+                           drop = FALSE]
+    }
     essSnap <- vapply(keyParams, function(p) {
       col <- combined[, p]
       s <- sd(col, na.rm = TRUE)
@@ -152,9 +164,10 @@ MkpTracePlot <- function(info) {
       .PlotTracePanel(param, info$runSamples, nRuns, traceCol,
                       info$warmup, info$nIter)
     } else {
+      # Accumulate warmup log-posterior for a proper trace
+      .AccumulateWarmupLogPost(info$currentState, nRuns, info$iter)
       wCol <- if (is.null(runColors)) paramColors[1] else runColors
-      .PlotWarmupPanel(info$currentState, nRuns, wCol,
-                       info$iter, info$nIter)
+      .PlotWarmupPanel(nRuns, wCol, info$iter, info$nIter)
     }
   }
 
@@ -179,9 +192,13 @@ MkpTracePlot <- function(info) {
 
 
 #' Plot a single trace panel from saved samples
+#'
+#' When the number of samples exceeds `maxPlotPoints`, the trace is
+#' thinned to keep rendering fast even with tens of thousands of samples.
 #' @keywords internal
 .PlotTracePanel <- function(param, runSamples, nRuns, colors,
-                             warmup, nIter) {
+                             warmup, nIter,
+                             maxPlotPoints = 2000L) {
   # Collect data from all runs for y-axis range
   allVals <- unlist(lapply(runSamples, function(s) {
     if (!is.null(s) && param %in% colnames(s)) s[, param]
@@ -204,6 +221,14 @@ MkpTracePlot <- function(info) {
     n <- length(vals)
     if (n == 0) next
     iters <- seq_len(n)
+
+    # Thin for plotting if too many points
+    if (n > maxPlotPoints) {
+      idx <- round(seq(1, n, length.out = maxPlotPoints))
+      iters <- iters[idx]
+      vals <- vals[idx]
+    }
+
     col <- if (nRuns > 1L) colors[run] else colors[1]
 
     if (first) {
@@ -218,16 +243,48 @@ MkpTracePlot <- function(info) {
 }
 
 
-#' Plot log-posterior during warmup (no saved samples yet)
+#' Accumulate warmup log-posterior snapshots for trace plotting
 #' @keywords internal
-.PlotWarmupPanel <- function(currentState, nRuns, colors, iter, nIter) {
+.AccumulateWarmupLogPost <- function(currentState, nRuns, iter) {
   logp <- vapply(currentState, function(s) {
     s$log_lik + s$log_prior
   }, numeric(1))
 
-  plot(seq_len(nRuns), logp, pch = 19, col = colors,
-       main = "log_posterior (current)", xlab = "run", ylab = "",
-       xlim = c(0.5, nRuns + 0.5), las = 1, cex.main = 0.95)
+  if (is.null(.tracePlotEnv$warmupLogPost)) {
+    .tracePlotEnv$warmupLogPost <- matrix(logp, nrow = 1)
+    .tracePlotEnv$warmupIter    <- iter
+  } else {
+    .tracePlotEnv$warmupLogPost <- rbind(.tracePlotEnv$warmupLogPost, logp)
+    .tracePlotEnv$warmupIter    <- c(.tracePlotEnv$warmupIter, iter)
+  }
+}
+
+
+#' Plot log-posterior trace during warmup
+#' @keywords internal
+.PlotWarmupPanel <- function(nRuns, colors, iter, nIter) {
+  iters <- .tracePlotEnv$warmupIter
+  logpMat <- .tracePlotEnv$warmupLogPost
+
+  if (is.null(iters) || length(iters) == 0L) {
+    plot.new()
+    title(main = "log_posterior", cex.main = 0.95)
+    return(invisible(NULL))
+  }
+
+  ylim <- range(logpMat, na.rm = TRUE)
+  if (diff(ylim) == 0) ylim <- ylim + c(-1, 1)
+
+  plot(iters, logpMat[, 1], type = "l", col = colors[1],
+       ylim = ylim, xlim = c(1, max(iter, nIter %||% iter)),
+       main = "log_posterior", xlab = "iter", ylab = "",
+       cex.main = 0.95, las = 1)
+
+  if (nRuns > 1L) {
+    for (run in 2:nRuns) {
+      lines(iters, logpMat[, run], col = colors[min(run, length(colors))])
+    }
+  }
 }
 
 
