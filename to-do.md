@@ -31,7 +31,7 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
 | M-109 | P1 | DONE | **Eliminate per-candidate clone() in Gibbs/weighted moves.** Added `preorder_into()` (lightweight DFS preorder into pre-allocated buffers). Refactored: `gibbs_subtree_swap_impl` (5→0 clones/cand), `gibbs_spr_impl_full` (3→0), `gibbs_spr_impl` step 10 (3→0), `weighted_spr_impl` (2+1/bin→0), `weighted_subtree_swap_impl` (1+1/bin→0). All use in-place save/restore + shared output buffers. |
-| M-111 | P2 | OPEN | **Partial CL reuse for Gibbs subtree swap.** Port M-105's `caching_downpass`/`evaluate_candidate` pattern from `gibbs_spr_impl` to `gibbs_subtree_swap_impl`. Swap still does full per-candidate evaluation via `compute_full_loglik_at` (M-109 eliminated the clone overhead but not the O(N×C) per-candidate cost). Benchmark (2026-03-28, Sun2018 3k iter): SPR-only with M-105 = 670 iter/s; swap-only = 367 iter/s; swap is now the dominant Gibbs bottleneck. |
+| M-111 | P2 | DONE | **Partial CL reuse for Gibbs subtree swap.** Ported caching_downpass/evaluate_swap_candidate pattern. Two-path propagation (segA/segB/shared) handles all ancestor/descendant cases uniformly. Benchmark (Sun2018 3k iter): swap-only 367→709 iter/s (1.9×); combined Gibbs ~194→411 iter/s (2.1×). Validated against full eval across 11,916 candidates (5 configs, max diff 4.5e-13). |
 | M-105 | P2 | DONE | **Partial likelihood reuse for Gibbs SPR.** Merged from `feature/gibbs-weighted-moves`. Benchmark confirms 3.9× speedup for Gibbs SPR (670 vs 180 iter/s). |
 
 
