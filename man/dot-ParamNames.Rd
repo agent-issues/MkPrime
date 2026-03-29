@@ -4,7 +4,7 @@
 \alias{.ParamNames}
 \title{Parameter names for the sample matrix}
 \usage{
-.ParamNames(mkd, nEdge)
+.ParamNames(mkd, nEdge, kPrimePrior = "geometric", qHeterogeneity = FALSE)
 }
 \description{
 Parameter names for the sample matrix

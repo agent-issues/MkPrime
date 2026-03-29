@@ -29,13 +29,14 @@ test_that("auto thin resolves to number of active moves", {
   tree <- TreeTools::NJTree(pd, edgeLengths = TRUE)
 
   # Default config: gibbsSpr = TRUE, gibbsSubtreeSwap = TRUE, tbr = TRUE
-  # Expected moves: tree_length, branch_lengths, nni, spr,
-  #   gibbs_spr, gibbs_subtree_swap, tbr, kPrime, p, rate_log_sd = 10
   mcmc_auto <- suppressWarnings(MkPrimeMCMC(
     nIter = 1500L, maxWarmup = 200L, minWarmup = 200L,
     autoTune = FALSE, nRuns = 1L
   ))
-  nMoves <- 10L
+  nEdge <- nrow(tree$edge)
+  nTrans <- attr(pd, "nr")
+  hasNeo <- FALSE
+  nMoves <- length(MkPrime:::.BuildMoves(nEdge, nTrans, hasNeo, mcmc_auto))
 
   # Explicit thin matching the expected auto resolution
   mcmc_explicit <- suppressWarnings(MkPrimeMCMC(

@@ -380,8 +380,14 @@ MkPrimeMCMC <- function(
     scale_rate_log_sd = 0.5,
     scale_p = 0.5,
     scale_rate_neo = 0.5,
+    scale_neo_joint = 0.5,
     scale_beta_scale = 0.5,
-    int_walk_window = 1L
+    int_walk_window = 1L,
+    slice_width_rate_loss = 1.0,
+    slice_width_rate_neo = 1.0,
+    slice_width_rate_log_sd = 1.0,
+    slice_width_tree_length = 1.0,
+    slice_width_beta_scale = 1.0
   )
   tuning <- modifyList(defaults, tuning)
 

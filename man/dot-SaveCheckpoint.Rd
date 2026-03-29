@@ -4,7 +4,15 @@
 \alias{.SaveCheckpoint}
 \title{Save MCMC checkpoint to RDS}
 \usage{
-.SaveCheckpoint(runs, mcmc, iter, paramNames, file)
+.SaveCheckpoint(
+  runs,
+  mcmc,
+  iter,
+  paramNames,
+  file,
+  moveWeights = NULL,
+  phase = NULL
+)
 }
 \description{
 Version 1 (in-memory mode): stores full run history (samples, trees).

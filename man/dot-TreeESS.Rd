@@ -4,7 +4,13 @@
 \alias{.TreeESS}
 \title{Compute tree-topology ESS for one MCMC chain}
 \usage{
-.TreeESS(trees, dist_fn = TreeDist::RobinsonFoulds, min_nsamples = 5L)
+.TreeESS(
+  trees,
+  dist_fn = TreeDist::RobinsonFoulds,
+  min_nsamples = 5L,
+  frechet = FALSE,
+  maxRows = 200L
+)
 }
 \arguments{
 \item{trees}{A \code{multiPhylo} list of trees from a single MCMC chain.}
@@ -14,14 +20,27 @@
 
 \item{min_nsamples}{Integer; minimum number of samples used when
 computing lag-k statistics (default 5).}
+
+\item{frechet}{Logical; if \code{TRUE}, also compute the Fréchet
+correlation ESS.  Default: \code{FALSE}.}
+
+\item{maxRows}{Maximum rows for median pseudo-ESS subsampling
+(default 200).}
 }
 \value{
 Named numeric vector with elements \code{frechetCorrelationESS}
-and \code{medianPseudoESS}.
+and \code{medianPseudoESS}.  \code{frechetCorrelationESS} is \code{NA} when
+\code{frechet = FALSE}.
 }
 \description{
-Computes the Fréchet correlation ESS and median pseudo-ESS for a
-sample of phylogenetic trees, using Robinson–Foulds distances.
+Computes tree-topology effective sample size for a sample of
+phylogenetic trees using Robinson–Foulds distances.
+}
+\details{
+By default only the median pseudo-ESS is returned.  Set
+\code{frechet = TRUE} to also compute the Fréchet correlation ESS
+(Magee et al. 2021); this adds negligible cost since the full
+distance matrix is computed either way.
 }
 \references{
 Magee AF, Karcher MD, Matsen IV FA, Minin VN (2021).

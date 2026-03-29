@@ -352,13 +352,15 @@ test_that("run_mcmc_batch_cpp returns move_time_ns matrix", {
   transIdx0 <- if (length(transIdx) > 0) transIdx - 1L else integer(0)
 
   scaleTunings <- matrix(0.5, 1, nMoves)
+  sliceParamCodes <- vapply(moves, function(m) m$sliceParamIdx %||% 0L, integer(1L))
+  sliceWidths <- matrix(1.0, 1, nMoves)
   bsTunings <- 10
   iwWins <- 1L
 
   result <- run_mcmc_batch_cpp(
     mcmcData, list(chainState), 1.0,
-    moveTypeCodes, transIdx0, moveWeights,
-    scaleTunings, bsTunings, iwWins,
+    moveTypeCodes, transIdx0, sliceParamCodes, moveWeights,
+    scaleTunings, bsTunings, iwWins, sliceWidths,
     50L, 1L, 100L, 10L,
     any(mkd$type == "neomorphic"), nEdge
   )
@@ -389,11 +391,13 @@ test_that(".BuildMoves produces weights that normalize to 1", {
 test_that("All move names in .kMoveTypes are valid moveWeights names", {
   validInMcmc <- c(
     "tree_length", "branch_lengths", "nni", "spr", "tbr", "kPrime", "p",
-    "rate_loss", "rate_log_sd", "rate_neo",
+    "rate_loss", "rate_log_sd", "rate_neo", "neo_joint",
     "gibbs_spr", "gibbs_subtree_swap",
     "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
     "block_gibbs_branch",
-    "beta_scale"
+    "beta_scale",
+    "slice_rate_loss", "slice_rate_neo", "slice_rate_log_sd",
+    "slice_tree_length", "slice_beta_scale"
   )
   expect_true(all(names(MkPrime:::.kMoveTypes) %in% validInMcmc))
 })

@@ -81,7 +81,8 @@ static double cpp_log_prior(
     double p, const IntegerVector& kPrime,
     double betaScale = 1.0) {
 
-  if (treeLength <= 0.0) return R_NegInf;
+  // Hard floor: prevents Mk_v singularity (corrected likelihood → +∞ at zero)
+  if (treeLength < 1e-6) return R_NegInf;
   if (rateLogSd < 0.0)   return R_NegInf;
   for (int i = 0; i < relBrLengths.size(); ++i) {
     if (relBrLengths[i] <= 0.0) return R_NegInf;
@@ -1973,6 +1974,152 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
 
 
 // ---------------------------------------------------------------------------
+// Slice sampler for scalar parameters.
+// paramIdx: 0=treeLength, 1=rateLoss, 2=rateLogSd, 3=rateNeo, 4=betaScale
+// ---------------------------------------------------------------------------
+
+static double get_scalar(const McmcState* state, int paramIdx) {
+  switch (paramIdx) {
+    case 0: return state->treeLength;
+    case 1: return state->rateLoss;
+    case 2: return state->rateLogSd;
+    case 3: return state->rateNeo;
+    case 4: return state->betaScale;
+    default: return 0.0;
+  }
+}
+
+static void set_scalar(McmcState* state, int paramIdx, double val) {
+  switch (paramIdx) {
+    case 0: state->treeLength = val; break;
+    case 1: state->rateLoss = val; break;
+    case 2: state->rateLogSd = val; break;
+    case 3: state->rateNeo = val; break;
+    case 4: state->betaScale = val; break;
+  }
+}
+
+// Evaluate beta * logLik + logPrior for current state, using partial cache
+// when the parameter only affects a subset of partitions.
+static double eval_slice_target(McmcData* data, McmcState* state,
+                                int paramIdx, double beta) {
+  double logPrior = cpp_log_prior(
+    *data, state->treeLength, state->relBrLengths,
+    state->rateLoss, state->rateLogSd, state->rateNeo,
+    state->p, state->kPrime, state->betaScale);
+  if (!R_FINITE(logPrior)) return R_NegInf;
+
+  double logLik;
+  int nEdge = state->parent.size();
+  NumericVector edgeLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    edgeLen[i] = state->treeLength * state->relBrLengths[i];
+
+  bool hasPLC = !state->partLogLik.empty();
+  ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
+
+  // rate_loss (1), rate_neo (3): only neomorphic partitions change
+  if (hasPLC && (paramIdx == 1 || paramIdx == 3)) {
+    logLik = state->logLik;
+    for (size_t ni = 0; ni < data->neoPartIndices.size(); ++ni) {
+      int pi = data->neoPartIndices[ni];
+      double oldPart = state->partLogLik[pi];
+      double newPart = cpp_partition_log_likelihood(
+        *data, pi, state->parent, state->child, edgeLen,
+        state->kPrime, state->rateLoss, state->rateLogSd,
+        state->rateNeo, state->betaScale, wsPtr);
+      logLik += (newPart - oldPart);
+    }
+  } else {
+    logLik = cpp_log_likelihood(
+      *data, state->parent, state->child, edgeLen,
+      state->kPrime, state->rateLoss, state->rateLogSd,
+      state->rateNeo, state->betaScale, wsPtr);
+  }
+  if (!R_FINITE(logLik)) return R_NegInf;
+  return beta * logLik + logPrior;
+}
+
+// Univariate stepping-out slice sampler.
+// Returns true on success (always, barring degenerate cases).
+// Updates state in place, including logLik, logPrior, and partLogLik cache.
+static bool slice_scalar_impl(McmcData* data, McmcState* state,
+                               int paramIdx, double width,
+                               double beta, int maxSteps = 10) {
+  double x0 = get_scalar(state, paramIdx);
+  double logY0 = beta * state->logLik + state->logPrior;
+
+  // Slice height
+  double logZ = logY0 + std::log(R::unif_rand());
+
+  // Stepping out
+  double L = x0 - width * R::unif_rand();
+  double R_bound = L + width;
+  if (L <= 0.0) L = 1e-12;
+
+  for (int j = 0; j < maxSteps; ++j) {
+    set_scalar(state, paramIdx, L);
+    if (eval_slice_target(data, state, paramIdx, beta) <= logZ) break;
+    L = std::max(L - width, 1e-12);
+  }
+  for (int j = 0; j < maxSteps; ++j) {
+    set_scalar(state, paramIdx, R_bound);
+    if (eval_slice_target(data, state, paramIdx, beta) <= logZ) break;
+    R_bound += width;
+  }
+
+  // Shrink in
+  for (int iter = 0; iter < 100; ++iter) {
+    double x1 = L + R::unif_rand() * (R_bound - L);
+    if (x1 <= 0.0) x1 = 1e-12;
+    set_scalar(state, paramIdx, x1);
+    double logTarget1 = eval_slice_target(data, state, paramIdx, beta);
+    if (logTarget1 >= logZ) {
+      // Accept — recompute and cache logLik / logPrior / partLogLik
+      state->logPrior = cpp_log_prior(
+        *data, state->treeLength, state->relBrLengths,
+        state->rateLoss, state->rateLogSd, state->rateNeo,
+        state->p, state->kPrime, state->betaScale);
+
+      int nEdge = state->parent.size();
+      NumericVector edgeLen(nEdge);
+      for (int i = 0; i < nEdge; ++i)
+        edgeLen[i] = state->treeLength * state->relBrLengths[i];
+      ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
+
+      bool hasPLC = !state->partLogLik.empty();
+      if (hasPLC && (paramIdx == 1 || paramIdx == 3)) {
+        // Update only neo partitions in cache
+        for (size_t ni = 0; ni < data->neoPartIndices.size(); ++ni) {
+          int pi = data->neoPartIndices[ni];
+          state->partLogLik[pi] = cpp_partition_log_likelihood(
+            *data, pi, state->parent, state->child, edgeLen,
+            state->kPrime, state->rateLoss, state->rateLogSd,
+            state->rateNeo, state->betaScale, wsPtr);
+        }
+        state->logLik = 0.0;
+        for (size_t pi = 0; pi < state->partLogLik.size(); ++pi)
+          state->logLik += state->partLogLik[pi];
+      } else {
+        state->logLik = cpp_log_likelihood(
+          *data, state->parent, state->child, edgeLen,
+          state->kPrime, state->rateLoss, state->rateLogSd,
+          state->rateNeo, state->betaScale, wsPtr);
+        // Invalidate partition cache (full recompute was done)
+        state->partLogLik.clear();
+      }
+      return true;
+    }
+    // Shrink bracket
+    if (x1 < x0) L = x1; else R_bound = x1;
+  }
+
+  // Fallback: restore original value
+  set_scalar(state, paramIdx, x0);
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // do_move_impl: internal propose/evaluate/accept (raw pointers, no SEXP).
 // do_move_cpp:  Rcpp-exported SEXP wrapper — calls do_move_impl.
 //
@@ -1980,7 +2127,8 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
 //           4=beta_simplex, 5=nni, 6=spr, 7=int_walk, 8=scale_p (legacy),
 //           9=gibbs_p, 10=gibbs_spr, 11=gibbs_subtree_swap,
 //           12=weighted_br_scale, 13=weighted_spr, 14=weighted_subtree_swap,
-//           15=block_gibbs_branch, 16=beta_scale, 17=tbr
+//           15=block_gibbs_branch, 16=beta_scale, 17=tbr,
+//           18=neo_joint_scale, 19=slice_scalar
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -2222,6 +2370,13 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       logHastings = std::log(mult);
       break;
     }
+    case 18: { // neo_joint_scale — scale rate_loss and rate_neo together
+      double mult = std::exp(scaleTuning * (R::unif_rand() - 0.5));
+      state->rateLoss = oldRL * mult;
+      state->rateNeo  = oldRN * mult;
+      logHastings = 2.0 * std::log(mult);
+      break;
+    }
     default:
       return false;
   }
@@ -2295,7 +2450,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     newPC = state->partLogLik;
     switch (moveType) {
       case 1:
-      case 3: {
+      case 3:
+      case 18: {
         ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
         newLogLik = state->logLik;
         for (size_t ni = 0; ni < data->neoPartIndices.size(); ++ni) {
@@ -2401,10 +2557,12 @@ List run_mcmc_batch_cpp(
     NumericVector betas,
     IntegerVector moveTypeCodes,
     IntegerVector transIdxCpp,
+    IntegerVector sliceParamCodes,
     NumericVector moveWeights,
     NumericMatrix chainScaleTunings,
     NumericVector chainBsmpTunings,
     IntegerVector chainIntWalkWins,
+    NumericMatrix sliceWidths,
     int nBatch,
     int startIter,
     int warmup,
@@ -2471,23 +2629,33 @@ List run_mcmc_batch_cpp(
 
       int moveType = moveTypeCodes[moveIdx];
 
-      // charIdx for int_walk (kPrime) move
+      // charIdx: for int_walk → random trans character; for slice → paramIdx
       int charIdx = 0;
       if (moveType == 7 && nTrans > 0) {
         int r = static_cast<int>(R::unif_rand() * nTrans);
         if (r >= nTrans) r = nTrans - 1;
         charIdx = transIdxCpp[r];
+      } else if (moveType == 19) {
+        charIdx = sliceParamCodes[moveIdx];
       }
 
       auto t0 = std::chrono::steady_clock::now();
-      bool accepted = do_move_impl(
-        data, states[ch],
-        moveType, charIdx,
-        chainScaleTunings(ch, moveIdx),
-        chainBsmpTunings[ch],
-        chainIntWalkWins[ch],
-        betas[ch]
-      );
+      bool accepted;
+      if (moveType == 19) {
+        // Slice sampling — self-contained, no MH accept/reject
+        accepted = slice_scalar_impl(
+          data, states[ch], charIdx,
+          sliceWidths(ch, moveIdx), betas[ch]);
+      } else {
+        accepted = do_move_impl(
+          data, states[ch],
+          moveType, charIdx,
+          chainScaleTunings(ch, moveIdx),
+          chainBsmpTunings[ch],
+          chainIntWalkWins[ch],
+          betas[ch]
+        );
+      }
       auto t1 = std::chrono::steady_clock::now();
       moveTimeNs(ch, moveIdx) +=
         (double)std::chrono::duration_cast<std::chrono::nanoseconds>(

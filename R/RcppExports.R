@@ -77,8 +77,8 @@ do_move_cpp <- function(dataPtr, statePtr, moveType, charIdx, scaleTuning, betaS
     .Call(`_MkPrime_do_move_cpp`, dataPtr, statePtr, moveType, charIdx, scaleTuning, betaSimplexTuning, intWalkWindow, beta)
 }
 
-run_mcmc_batch_cpp <- function(dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, nBatch, startIter, warmup, thin, hasNeo, nEdge) {
-    .Call(`_MkPrime_run_mcmc_batch_cpp`, dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, nBatch, startIter, warmup, thin, hasNeo, nEdge)
+run_mcmc_batch_cpp <- function(dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, sliceParamCodes, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, sliceWidths, nBatch, startIter, warmup, thin, hasNeo, nEdge) {
+    .Call(`_MkPrime_run_mcmc_batch_cpp`, dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, sliceParamCodes, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, sliceWidths, nBatch, startIter, warmup, thin, hasNeo, nEdge)
 }
 
 debug_mcmc_data <- function(dataPtr) {

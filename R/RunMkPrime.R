@@ -425,6 +425,8 @@ RunMkPrime <- function(data, tree = NULL,
   moveDim       <- vapply(moves, function(m) m$dim %||% 1L, integer(1L))
   names(moveDim) <- moveNames
   moveTypeCodes <- vapply(moves, function(m) .kMoveTypes[[m$name]], integer(1L))
+  # Slice param index: 0=treeLength, 1=rateLoss, 2=rateLogSd, 3=rateNeo, 4=betaScale
+  sliceParamCodes <- vapply(moves, function(m) m$sliceParamIdx %||% 0L, integer(1L))
   transIdx      <- which(mkd$type == "transformational")
   transIdx0     <- if (length(transIdx) > 0L) transIdx - 1L else integer(0L)
   hasNeo        <- any(mkd$type == "neomorphic")
@@ -532,6 +534,7 @@ RunMkPrime <- function(data, tree = NULL,
     nBatch   <- batchEnd - batchStart + 1L
 
     scaleTunings <- .BuildScaleTuningMatrix(r$chain_tuning, moves)
+    sliceWidths  <- .BuildSliceWidthMatrix(r$chain_tuning, moves)
     bsTunings    <- vapply(r$chain_tuning,
                            function(t) t$beta_simplex, numeric(1L))
     iwWins       <- vapply(r$chain_tuning,
@@ -539,8 +542,8 @@ RunMkPrime <- function(data, tree = NULL,
 
     result <- run_mcmc_batch_cpp(
       mcmcData, r$chainStates, r$betas,
-      moveTypeCodes, transIdx0, moveWeights,
-      scaleTunings, bsTunings, iwWins,
+      moveTypeCodes, transIdx0, sliceParamCodes, moveWeights,
+      scaleTunings, bsTunings, iwWins, sliceWidths,
       nBatch, batchStart, cppWarmup, mcmc$thin,
       hasNeo, nEdge
     )
@@ -667,11 +670,19 @@ RunMkPrime <- function(data, tree = NULL,
             r$phase    <- phase
             phaseLabel <- "Tuning"
             cppWarmup  <- 0L
-            # Cap tuning budget to leave room for sampling
+            # Scale tuning budget: ensure each candidate window has enough
+            # samples for meaningful ESS. 4 windows per round (current + 3
+            # perturbations), ~100 samples each.
+            nCandidates <- 4L
+            minSamplesPerWindow <- 100L
+            scaledBudget <- as.integer(
+              mcmc$thin * minSamplesPerWindow * nCandidates
+            )
+            baseBudget <- max(mcmc$tuningBudget, scaledBudget)
             effectiveTuningBudget <- if (is.finite(remainingIter)) {
-              min(mcmc$tuningBudget, as.integer(remainingIter / 2))
+              min(baseBudget, as.integer(remainingIter / 2))
             } else {
-              mcmc$tuningBudget
+              baseBudget
             }
             # Allocate tuning buffer
             tuningBufSize <- as.integer(effectiveTuningBudget / mcmc$thin) + 100L
@@ -1073,7 +1084,10 @@ RunMkPrime <- function(data, tree = NULL,
   # ESS on combined samples (works for any nRuns)
   combined <- do.call(rbind, perRunSamples)
   ess <- apply(combined, 2, function(col) {
-    s <- sd(col, na.rm = TRUE); if (is.na(s) || s == 0) return(NA_real_)
+    s <- sd(col, na.rm = TRUE)
+    # Treat near-constant columns (FP noise only) as NA to avoid ESS = 0
+    if (is.na(s) || s < sqrt(.Machine$double.eps) * (max(abs(col), na.rm = TRUE) + 1))
+      return(NA_real_)
     coda::effectiveSize(coda::mcmc(col))
   })
 
@@ -1137,7 +1151,8 @@ RunMkPrime <- function(data, tree = NULL,
   combined <- do.call(rbind, perRunSamples)
   ess <- apply(combined, 2, function(col) {
     s <- sd(col, na.rm = TRUE)
-    if (is.na(s) || s == 0) return(NA_real_)
+    if (is.na(s) || s < sqrt(.Machine$double.eps) * (max(abs(col), na.rm = TRUE) + 1))
+      return(NA_real_)
     coda::effectiveSize(coda::mcmc(col))
   })
 
@@ -1615,9 +1630,33 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
         rate_loss   = tun$scale_rate_loss,
         rate_log_sd = tun$scale_rate_log_sd,
         rate_neo    = tun$scale_rate_neo %||% 0.5,
+        neo_joint   = tun$scale_neo_joint %||% tun$scale_rate_loss,
         beta_scale  = tun$scale_beta_scale %||% 0.5,
         p           = 0.5,  # Gibbs move: scale ignored by C++; placeholder
         0.5
+      )
+    }
+  }
+  mat
+}
+
+
+#' Build slice width matrix for run_mcmc_batch_cpp (nChains × nMoves)
+#' @keywords internal
+.BuildSliceWidthMatrix <- function(chainTuning, moves) {
+  nChains <- length(chainTuning)
+  nMoves <- length(moves)
+  mat <- matrix(1.0, nChains, nMoves)  # Default width 1.0 (ignored for non-slice)
+  for (ch in seq_len(nChains)) {
+    tun <- chainTuning[[ch]]
+    for (m in seq_along(moves)) {
+      mat[ch, m] <- switch(moves[[m]]$name,
+        slice_rate_loss   = tun$slice_width_rate_loss %||% 1.0,
+        slice_rate_neo    = tun$slice_width_rate_neo %||% 1.0,
+        slice_rate_log_sd = tun$slice_width_rate_log_sd %||% 1.0,
+        slice_tree_length = tun$slice_width_tree_length %||% 1.0,
+        slice_beta_scale  = tun$slice_width_beta_scale %||% 1.0,
+        1.0
       )
     }
   }
@@ -1784,7 +1823,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
       list(name = "rate_loss", type = "scale", target = "rate_loss",
            weight = 1.5, dim = 1L),
       list(name = "rate_neo", type = "scale", target = "rate_neo",
-           weight = 1, dim = 1L)
+           weight = 1, dim = 1L),
+      list(name = "neo_joint", type = "neo_joint", target = "rate_loss",
+           weight = 1.5, dim = 2L)
     ))
   }
 
@@ -1799,6 +1840,41 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
       list(name = "beta_scale", type = "scale", target = "beta_scale",
            weight = 1, dim = 1L)
     ))
+  }
+
+  # --- Slice sampling moves for scalar parameters ---
+  # paramIdx: 0=treeLength, 1=rateLoss, 2=rateLogSd, 3=rateNeo, 4=betaScale
+  if (hasNeo) {
+    moves <- c(moves, list(
+      list(name = "slice_rate_loss", type = "slice", target = "rate_loss",
+           weight = 1.5, dim = 1L, sliceParamIdx = 1L),
+      list(name = "slice_rate_neo", type = "slice", target = "rate_neo",
+           weight = 1, dim = 1L, sliceParamIdx = 3L)
+    ))
+  }
+  moves <- c(moves, list(
+    list(name = "slice_rate_log_sd", type = "slice", target = "rate_log_sd",
+         weight = 1.5, dim = 1L, sliceParamIdx = 2L)
+  ))
+  if (isTRUE(qHeterogeneity)) {
+    moves <- c(moves, list(
+      list(name = "slice_beta_scale", type = "slice", target = "beta_scale",
+           weight = 1, dim = 1L, sliceParamIdx = 4L)
+    ))
+  }
+
+  # --- Scalar weight floor ---
+  # Scalar model-parameter moves (dim=1, non-topology) can be starved when
+  # kPrime and branch_lengths dominate the weight budget. Guarantee each
+  # scalar move gets at least 2% of the pre-floor total weight.
+  scalarTypes <- c("scale", "int_walk", "gibbs_p", "scale_p", "slice")
+  totalWeight <- sum(vapply(moves, `[[`, numeric(1), "weight"))
+  floorVal <- totalWeight * 0.02
+  for (i in seq_along(moves)) {
+    m <- moves[[i]]
+    if (m$dim == 1L && m$type %in% scalarTypes) {
+      moves[[i]]$weight <- max(m$weight, floorVal)
+    }
   }
 
   moves
@@ -1821,7 +1897,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   weighted_subtree_swap = 14L,
   block_gibbs_branch = 15L,
   beta_scale = 16L,
-  tbr = 17L
+  tbr = 17L,
+  neo_joint = 18L,
+  slice_rate_loss = 19L,
+  slice_rate_neo = 19L,
+  slice_rate_log_sd = 19L,
+  slice_tree_length = 19L,
+  slice_beta_scale = 19L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)
@@ -1892,6 +1974,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
       rate_loss   = tuning$scale_rate_loss,
       rate_log_sd = tuning$scale_rate_log_sd,
       rate_neo    = tuning$scale_rate_neo,
+      neo_joint   = tuning$scale_neo_joint %||% tuning$scale_rate_loss,
       beta_scale  = tuning$scale_beta_scale,
       0.5  # default; gibbs_p ignores scaleTun (returns before using it)
     )
@@ -2324,13 +2407,16 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     nni = 0.23, spr = 0.10,
     kPrime = 0.35,
     p = 0.35, rate_loss = 0.35, rate_log_sd = 0.35,
-    rate_neo = 0.35,
+    rate_neo = 0.35, neo_joint = 0.35,
     beta_scale = 0.35,
-    # Gibbs/weighted/block moves: no tuning to adapt
+    # Gibbs/weighted/block/slice moves: no MH tuning to adapt
     gibbs_spr = NA_real_, gibbs_subtree_swap = NA_real_,
     weighted_branch_lengths = NA_real_,
     weighted_spr = NA_real_, weighted_subtree_swap = NA_real_,
-    block_gibbs_branch = NA_real_
+    block_gibbs_branch = NA_real_,
+    slice_rate_loss = NA_real_, slice_rate_neo = NA_real_,
+    slice_rate_log_sd = NA_real_, slice_tree_length = NA_real_,
+    slice_beta_scale = NA_real_
   )
 
   tuningKeys <- c(
@@ -2343,12 +2429,16 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     rate_loss = "scale_rate_loss",
     rate_log_sd = "scale_rate_log_sd",
     rate_neo = "scale_rate_neo",
-    # Gibbs/weighted/block moves: no tuning to adapt
+    neo_joint = "scale_neo_joint",
+    # Gibbs/weighted/block/slice moves: no tuning to adapt
     gibbs_spr = NA_character_, gibbs_subtree_swap = NA_character_,
     weighted_branch_lengths = NA_character_,
     weighted_spr = NA_character_, weighted_subtree_swap = NA_character_,
     block_gibbs_branch = NA_character_,
-    beta_scale = "scale_beta_scale"
+    beta_scale = "scale_beta_scale",
+    slice_rate_loss = NA_character_, slice_rate_neo = NA_character_,
+    slice_rate_log_sd = NA_character_, slice_tree_length = NA_character_,
+    slice_beta_scale = NA_character_
   )
 
   for (move in moves) {

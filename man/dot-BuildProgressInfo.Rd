@@ -4,7 +4,15 @@
 \alias{.BuildProgressInfo}
 \title{Build the progress info list for callbacks}
 \usage{
-.BuildProgressInfo(runs, iter, mcmc, startTime, recentAcc, paramNames)
+.BuildProgressInfo(
+  runs,
+  iter,
+  mcmc,
+  startTime,
+  recentAcc,
+  paramNames,
+  phase = "Sample"
+)
 }
 \description{
 Build the progress info list for callbacks

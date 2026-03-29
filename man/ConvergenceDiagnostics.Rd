@@ -4,28 +4,37 @@
 \alias{ConvergenceDiagnostics}
 \title{Compute convergence diagnostics for an MkPosterior}
 \usage{
-ConvergenceDiagnostics(posterior, trees = TRUE)
+ConvergenceDiagnostics(posterior, trees = FALSE, frechetESS = FALSE)
 }
 \arguments{
 \item{posterior}{An \code{MkPosterior} object.}
 
 \item{trees}{Logical. If \code{TRUE} and \strong{TreeDist} is installed, compute
-topology ESS (Fréchet correlation ESS and median pseudo-ESS) from the
-sampled trees. Defaults to \code{FALSE} because Robinson-Foulds distance
-computation is O(n^2) and can be slow for large posteriors — reserve
-for deliberate post-run calls once parameter ESS has been satisfied.
+topology ESS (median pseudo-ESS) from the sampled trees.
+Defaults to \code{FALSE}.
 Each run is subsampled to at most 1,000 trees.}
+
+\item{frechetESS}{Logical. If \code{TRUE}, also compute the Fréchet
+correlation ESS (Magee et al. 2021).  This requires the full
+n x n pairwise distance matrix rather than the partial cross-distance
+matrix used for median pseudo-ESS, so is substantially slower.
+Implies \code{trees = TRUE}.}
 }
 \value{
 An object of class \code{MkpDiagnostics}, a list with components:
 \itemize{
-\item \code{ess}: Named numeric vector of ESS per parameter.
-\item \code{minEss}: Scalar minimum ESS across parameters.
+\item \code{ess}: Named numeric vector of ESS per parameter (including kPrime).
+\item \code{minEss}: Scalar minimum ESS across \strong{scalar} parameters.
+Individual kPrime values are discrete nuisance parameters that are
+marginalized over, so they are excluded from the summary minimum
+to avoid blocking convergence (see M-098).
 \item \code{psrf}: Named numeric vector of PSRF point estimates per parameter
 (only if \code{nRuns >= 2}; \code{NULL} otherwise).
-\item \code{maxPsrf}: Scalar maximum PSRF (or \code{NA} if single run).
+\item \code{maxPsrf}: Scalar maximum PSRF across scalar parameters (or \code{NA}
+if single run). kPrime excluded for the same reason as \code{minEss}.
 \item \code{treeEss}: Named numeric vector with \code{frechetCorrelationESS} and
 \code{medianPseudoESS} (or \code{NULL} if not computed).
+\code{frechetCorrelationESS} is \code{NA} unless \code{frechetESS = TRUE}.
 }
 }
 \description{

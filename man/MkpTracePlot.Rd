@@ -29,16 +29,20 @@ invisibly.
 }
 \description{
 A progress callback that draws multi-panel base-R trace plots showing
-log-posterior and key parameter values across iterations. Intended to be
-passed as \code{progressFn} to \code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}}, either directly or via the
-convenience string \code{"default"}.
+log-posterior and key parameter values across iterations, plus an
+ESS-over-time panel showing effective sample size trajectories.
+Intended to be passed as \code{progressFn} to \code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}}, either
+directly or via the convenience string \code{"default"}.
 }
 \details{
 During warmup (before post-warmup samples exist), a single-panel
 log-posterior trace is drawn from \code{currentState} values accumulated
 by the callback itself. After warmup, multi-panel traces show
-log-posterior plus key model parameters from the saved samples.
+log-posterior plus key model parameters from the saved samples, with
+each parameter in a distinct color. A final panel shows ESS over time
+for all tracked parameters, using matching colors.
 
-When \code{nRuns > 1}, each run is drawn in a distinct color using
-\code{\link[grDevices:palettes]{grDevices::hcl.colors()}} with the \code{"Set 2"} palette.
+When \code{nRuns > 1}, trace panels use per-run colors (from
+\code{\link[grDevices:palettes]{grDevices::hcl.colors()}} with the \code{"Set 2"} palette) while the
+ESS panel uses per-parameter colors with a legend.
 }

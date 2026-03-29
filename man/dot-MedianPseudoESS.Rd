@@ -4,21 +4,33 @@
 \alias{.MedianPseudoESS}
 \title{Median pseudo-ESS (Lanfear et al. 2016)}
 \usage{
-.MedianPseudoESS(dmat)
+.MedianPseudoESS(dmat, min_nsamples = 5L, maxRows = 200L)
 }
 \arguments{
 \item{dmat}{Numeric square distance matrix.}
+
+\item{min_nsamples}{Minimum samples for lag computation (default 5).}
+
+\item{maxRows}{Maximum rows to evaluate; 0 = all rows.  Default 200.}
 }
 \value{
 Scalar ESS estimate.
 }
 \description{
 Treats each row of the distance matrix as a univariate time series
-and returns the median of the per-row ESS estimates from
-\link[coda:effectiveSize]{coda::effectiveSize}.
+and returns the median of the per-row ESS estimates.
+}
+\details{
+Uses a C++ implementation of the Geyer (1992) initial-monotone-sequence
+estimator instead of \code{\link[coda:effectiveSize]{coda::effectiveSize()}} for performance.  For
+large matrices, a deterministic subsample of rows is used (the median
+stabilises well before all rows are evaluated).
 }
 \references{
 Lanfear R, Hua X, Warren DL (2016). \emph{Genome Biology
 and Evolution}, 8(8), 2319--2332.
+
+Geyer CJ (1992). "Practical Markov Chain Monte Carlo."
+\emph{Statistical Science}, 7(4), 473--483.
 }
 \keyword{internal}

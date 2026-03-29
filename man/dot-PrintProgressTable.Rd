@@ -4,7 +4,7 @@
 \alias{.PrintProgressTable}
 \title{Print a per-parameter ESS/PSRF progress table during MCMC}
 \usage{
-.PrintProgressTable(diagCheck, nRuns, iter, nSamples)
+.PrintProgressTable(diagCheck, nRuns, iter, nSamples, prevLines = 0L)
 }
 \arguments{
 \item{diagCheck}{Return value of \code{.CheckConvergence()}.}
@@ -14,10 +14,22 @@
 \item{iter}{Current iteration number.}
 
 \item{nSamples}{Total saved samples across all runs.}
+
+\item{prevLines}{Number of lines printed by the previous call (0 on first
+call). Used to overwrite the old table on dynamic terminals.}
+}
+\value{
+Number of lines printed (invisibly), for passing as \code{prevLines}
+to the next call.
 }
 \description{
 Called at each convergence-check interval to show a table of per-parameter
 ESS and PSRF (when available). Mirrors the format of
 \code{\link[=print.MkpDiagnostics]{print.MkpDiagnostics()}}.
+}
+\details{
+On dynamic terminals, consecutive tables overwrite each other using ANSI
+cursor-up codes. Pass \code{prevLines} (the return value of the previous call)
+to enable overwriting.
 }
 \keyword{internal}

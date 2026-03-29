@@ -15,7 +15,7 @@
   warmupProgress,
   tStart = 2,
   tEnd = 0.5,
-  wMin = 0.05,
+  wMin = 0.01,
   minProposals = 20L
 )
 }
@@ -42,7 +42,7 @@ parameters updated per call). Default: all 1s.}
 
 \item{tEnd}{Ending softmax temperature (default 0.5).}
 
-\item{wMin}{Floor per free move as fraction of 1 (default 0.05).}
+\item{wMin}{Floor per free move as fraction of 1 (default 0.01).}
 
 \item{minProposals}{Minimum proposals before adapting (default 20).}
 }

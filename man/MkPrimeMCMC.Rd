@@ -6,8 +6,13 @@
 \usage{
 MkPrimeMCMC(
   nIter = Inf,
-  thin = 10L,
+  thin = "auto",
   warmup = NULL,
+  minWarmup = 2000L,
+  maxWarmup = NULL,
+  autoTune = TRUE,
+  tuningBudget = 10000L,
+  tuningRounds = 5L,
   nRuns = 2L,
   nChains = 1L,
   heat = 0.2,
@@ -15,13 +20,25 @@ MkPrimeMCMC(
   minEss = NULL,
   maxPsrf = NULL,
   checkEvery = 1000L,
+  cancelFile = NULL,
   checkpointFile = NULL,
   treeFile = NULL,
   logFile = NULL,
   bufferSize = 500L,
   plotEvery = NULL,
   progressFn = NULL,
-  tuning = list()
+  gibbsSpr = TRUE,
+  gibbsSubtreeSwap = TRUE,
+  tbr = TRUE,
+  weightedBranchScale = FALSE,
+  weightedSpr = FALSE,
+  weightedSubtreeSwap = FALSE,
+  blockGibbsBranch = FALSE,
+  nBranchBins = 10L,
+  moveWeights = NULL,
+  tuning = list(),
+  parallel = FALSE,
+  pollInterval = 10L
 )
 }
 \arguments{
@@ -31,10 +48,37 @@ terminate the run. Pass a finite integer to cap the number of iterations
 regardless of convergence.}
 
 \item{thin}{Thinning interval (save every \code{thin}-th iteration).
-Default 10.}
+Default \code{"auto"}, which sets thin equal to the number of active
+move types so that each parameter has roughly one update opportunity
+per stored sample (analogous to one "full cycle" in RevBayes).
+Pass a positive integer to override.}
 
-\item{warmup}{Number of warmup (adaptation) iterations. Default
-\code{nIter / 2} for finite \code{nIter}, or 5,000 when \code{nIter = Inf}.}
+\item{warmup}{\strong{Deprecated.} If supplied, treated as \code{maxWarmup}.
+Use \code{minWarmup} / \code{maxWarmup} instead. Retained for backward
+compatibility; a deprecation message is emitted when non-NULL.}
+
+\item{minWarmup}{Minimum warmup iterations before the stabilisation
+detector can end warmup. Default 2000. Set lower for quick
+debugging runs.}
+
+\item{maxWarmup}{Maximum warmup iterations. Warmup ends when the
+chain stabilises OR this ceiling is reached (with a warning).
+Default 50 000 when \code{nIter = Inf}; \code{nIter / 2} when finite.}
+
+\item{autoTune}{Logical; enable the tuning phase after warmup
+(default \code{TRUE}). When \code{TRUE}, a short tuning phase optimises
+move weights by maximising min-ESS/s using a perturbation bandit.
+When \code{FALSE}, move weights are frozen at the end of warmup using
+the acceptance-rate heuristic (legacy behaviour). See section
+\strong{Three-phase MCMC} below.}
+
+\item{tuningBudget}{Maximum iterations in the tuning phase.
+Default 10 000. Only used when \code{autoTune = TRUE}.}
+
+\item{tuningRounds}{Number of perturbation-evaluation rounds in
+the tuning phase. Default 5. Each round evaluates the current
+weights plus \code{nPerturbations} candidates. Only used when
+\code{autoTune = TRUE}.}
 
 \item{nRuns}{Number of independent runs. Default 2. Each run has its
 own set of \code{nChains} chains. Convergence diagnostics (PSRF) require
@@ -61,6 +105,13 @@ disables PSRF-based stopping. Requires \code{nRuns >= 2}.}
 \item{checkEvery}{Check convergence every this many iterations
 (default 1000). Only used when stopping criteria are set.}
 
+\item{cancelFile}{Path to a cancel-signal file. \code{NULL} (default) disables
+cancel-file checking. When set, \code{\link[=RunMkPrime]{RunMkPrime()}} checks every 200
+iterations whether this file exists. If it does, the run flushes any
+buffered samples, saves a checkpoint (if \code{checkpointFile} is set), and
+exits with \code{stop_reason = "cancelled"}. Create the file to request a
+clean stop: \code{file.create(cancelFile)}. See also \code{\link[=MkCancelPath]{MkCancelPath()}}.}
+
 \item{checkpointFile}{Path to write checkpoint RDS files. \code{NULL}
 (default) disables checkpointing. Checkpoints are saved at each
 convergence check interval and on cancel.}
@@ -85,26 +136,19 @@ more I/O); larger values amortise write overhead at the cost of slightly
 higher peak memory.}
 
 \item{plotEvery}{Integer; invoke the progress callback every this many
-iterations. \code{NULL} (default) disables progress plotting (the \code{cli}
-progress bar still runs). Typical values: 100--500.}
+iterations. In interactive sessions, defaults to \code{checkEvery} so that
+live trace plots update alongside convergence checks. Set to \code{NULL}
+explicitly to disable. Typical values: 500--2000.}
 
 \item{progressFn}{Progress callback function, the string \code{"default"},
-or \code{NULL}. When \code{"default"}, uses \code{\link[=MkpTracePlot]{MkpTracePlot()}} for live
-base-R trace plots. A custom function must accept a single argument:
-a named list with fields \code{iter}, \code{nIter}, \code{warmup}, \code{inWarmup},
-\code{nRuns}, \code{nChains}, \code{runSamples}, \code{currentState},
-\code{recentAcceptance}, and \code{elapsed}. See \code{\link[=MkpTracePlot]{MkpTracePlot()}} for
-details.}
-
-\item{tuning}{Named list of initial tuning parameters for each move
-type. See Details.}
-
-\item{cancelFile}{Path to a cancel-signal file. \code{NULL} (default) disables
-cancel-file checking. When set, \code{\link[=RunMkPrime]{RunMkPrime()}} checks every 200
-iterations whether this file exists. If it does, the run flushes any
-buffered samples, saves a checkpoint (if \code{checkpointFile} is set), and
-exits with \code{stop_reason = "cancelled"}. Create the file to request a
-clean stop: \code{file.create(cancelFile)}. See also \code{\link[=MkCancelPath]{MkCancelPath()}}.}
+or \code{NULL}. In interactive sessions, defaults to \code{\link[=MkpTracePlot]{MkpTracePlot()}} for
+live base-R trace plots. In non-interactive sessions (e.g. \code{Rscript}),
+defaults to \code{NULL} (no plotting). Setting \code{plotEvery} without
+\code{progressFn} also implies \code{MkpTracePlot}. A custom function must
+accept a single argument: a named list with fields \code{iter}, \code{nIter},
+\code{warmup}, \code{inWarmup}, \code{nRuns}, \code{nChains}, \code{runSamples},
+\code{currentState}, \code{recentAcceptance}, and \code{elapsed}. See
+\code{\link[=MkpTracePlot]{MkpTracePlot()}} for details.}
 
 \item{gibbsSpr}{Logical; include the Gibbs SPR move (default \code{TRUE}).
 Cost: O(N) likelihood evaluations per proposal, where N is the number
@@ -112,6 +156,13 @@ of candidate reattachment edges.}
 
 \item{gibbsSubtreeSwap}{Logical; include the Gibbs subtree-swap move
 (default \code{TRUE}). Cost: O(N) likelihood evaluations.}
+
+\item{tbr}{Logical; include the TBR (Tree Bisection and Reconnection)
+topology move (default \code{TRUE}). TBR is a superset of SPR: it additionally
+re-roots the pruned subtree at a random internal edge before regrafting,
+enabling larger jumps in tree space. Cost: O(nEdge) per proposal (same
+as SPR). The adaptive scheduler will downweight TBR on small trees where
+SPR is sufficient.}
 
 \item{weightedBranchScale}{Logical; include the weighted branch-length
 scale move (default \code{FALSE}). Cost: O(B) likelihood evaluations, where
@@ -124,11 +175,22 @@ mixing on difficult tree spaces at the cost of slower iterations.}
 \item{weightedSubtreeSwap}{Logical; include the weighted subtree-swap
 move (default \code{FALSE}). Cost: O(N * B) likelihood evaluations.}
 
+\item{blockGibbsBranch}{Logical; include the block Gibbs branch-length
+sweep move (default \code{FALSE}). Each call sweeps over all edge pairs
+in random-permutation order, sampling each from an approximate
+conditional via \code{nBranchBins} bin evaluations and independent MH
+accept/reject. Cost: O(nEdge * B) likelihood evaluations per call.
+Useful when single-edge moves (BetaSimplex, weighted branch scale)
+mix slowly through the branch-length space. The adaptive scheduler
+accounts for the multi-dimensional nature of this move via its \code{dim}
+field.}
+
 \item{nBranchBins}{Integer; number of branch-fraction bins for weighted
-moves (default \code{10L}). Used by \code{weightedBranchScale}, \code{weightedSpr},
-and \code{weightedSubtreeSwap}. Ignored when all weighted moves are
-disabled. Higher values increase accuracy of the Gibbs approximation
-but cost more likelihood evaluations.}
+and block Gibbs moves (default \code{10L}). Used by \code{weightedBranchScale},
+\code{weightedSpr}, \code{weightedSubtreeSwap}, and \code{blockGibbsBranch}.
+Ignored when all bin-based moves are disabled. Higher values increase
+accuracy of the Gibbs approximation but cost more likelihood
+evaluations.}
 
 \item{moveWeights}{Named numeric vector of user-pinned move weights,
 or \code{NULL} (default). When non-NULL, each named entry fixes the
@@ -140,6 +202,9 @@ warmup. Example: \code{moveWeights = c(nni = 0.3, spr = 0.2)} fixes NNI
 at 30\% and SPR at 20\%, with the remaining 50\% allocated adaptively
 among other moves. To disable adaptive scheduling entirely, pin all
 moves (sum to 1). See section \strong{Adaptive move scheduling} below.}
+
+\item{tuning}{Named list of initial tuning parameters for each move
+type. See Details.}
 
 \item{parallel}{Logical. If \code{TRUE} and \code{nRuns > 1}, independent runs are
 launched as non-blocking \code{future::future()} workers and the main process
@@ -180,7 +245,10 @@ The Gibbs moves (\code{gibbsSpr}, \code{gibbsSubtreeSwap}) evaluate all candidat
 topologies and sample proportional to their posterior weight. They cost
 O(N) likelihood evaluations per proposal (where N is the number of
 candidates, roughly the number of edges) but often achieve much better
-mixing than standard NNI/SPR.
+mixing than standard NNI/SPR. On larger trees (> ~20 tips), the
+per-invocation cost grows quadratically and may outweigh the mixing gain.
+Initial Gibbs weights are therefore capped to limit their time share;
+the adaptive scheduler refines further during warmup.
 
 The weighted moves (\code{weightedBranchScale}, \code{weightedSpr},
 \code{weightedSubtreeSwap}) additionally marginalise over a discrete grid
@@ -188,17 +256,41 @@ of branch-fraction placements. This produces proposals that are
 approximately independent of the current state but costs
 O(B) or O(N * B) likelihood evaluations. These are off by default
 and recommended only when standard + Gibbs moves show poor mixing.
+
+The block Gibbs branch-length sweep (\code{blockGibbsBranch}) updates all
+edge pairs in a single MCMC move via random-permutation-scan
+MH-within-Gibbs. Each edge pair is sampled from an approximate
+conditional (bin-based, same as \code{weightedBranchScale}) and
+accepted/rejected independently. Cost: O(nEdge * B). Off by default.
+The adaptive scheduler accounts for its multi-dimensional nature via
+a \code{dim} field (= nEdge) in the score formula.
 }
 
-\subsection{Adaptive move scheduling}{
+\subsection{Three-phase MCMC: Warmup / Tuning / Sample}{
 
-During warmup, the MCMC engine tracks per-move acceptance rates and
-wall-clock cost, then reweights the move pool every 200 iterations
-to favor moves with high "acceptances per second" (a proxy for
-ESS/wall-time efficiency). The reweighting uses softmax with a
-temperature that anneals from 2.0 (near-uniform) to 0.5 (more
-peaked) over warmup. At the end of warmup, weights are frozen to
-preserve detailed balance. Use \code{moveWeights} to pin specific move
-frequencies and exclude them from adaptation.
+The MCMC engine runs in three phases, shown in the progress display:
+
+\strong{Warmup.} Tuning parameters (scale, window), move weights
+(acceptance-rate/cost heuristic), and temperatures (parallel
+tempering) all adapt. The phase ends automatically when the cold
+chain's log-posterior stabilises (Geweke z-score test), or when
+\code{maxWarmup} is reached. No samples are saved.
+
+\strong{Tuning.} The chain is approximately stationary. Move weights
+are optimised to maximise min-ESS/s (minimum effective sample
+size per second across parameters) using a perturbation bandit.
+Each round evaluates the current and perturbed weight vectors
+over short windows, adopting the best. Tuning samples are
+discarded. Step-size tuning is frozen. The phase runs for
+\code{tuningRounds} rounds or up to \code{tuningBudget} iterations.
+Set \code{autoTune = FALSE} to skip this phase.
+
+\strong{Sample.} Move weights are frozen and posterior samples are
+collected. Convergence is monitored at \code{checkEvery} intervals.
+The run terminates when \code{minEss}/\code{maxPsrf} criteria are met,
+\code{maxTime} is reached, or \code{nIter} iterations complete.
+
+Use \code{moveWeights} to pin specific move frequencies and exclude
+them from adaptation in all phases.
 }
 }
