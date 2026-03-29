@@ -12,7 +12,8 @@
 #' multiple independent runs, convergence monitoring, and early stopping.
 #'
 #' @param data A `phyDat` object or `MkPrimeData` object.
-#' @param tree A `phylo` object (starting topology).
+#' @param tree A `phylo` object (starting topology), or `NULL` (default)
+#'   to start from a neighbour-joining tree built from the data.
 #' @param neomorphic,knownStates Passed to [MkPrimeData()] if `data` is
 #'   a `phyDat` object.
 #' @param model An `MkPrimeModel` object, or `NULL` for defaults.
@@ -58,7 +59,7 @@
 #' - Each `future` worker becomes a separate job submission on SLURM/PBS/LSF.
 #'
 #' @export
-RunMkPrime <- function(data, tree,
+RunMkPrime <- function(data, tree = NULL,
                        neomorphic = integer(0),
                        knownStates = integer(0),
                        model = NULL,
@@ -89,14 +90,18 @@ RunMkPrime <- function(data, tree,
                        knownStates = knownStates)
   }
 
-  if (!inherits(tree, "phylo")) {
-    cli::cli_abort("{.arg tree} must be a {.cls phylo} object.")
+  if (is.null(tree)) {
+    njInput <- if (inherits(data, "phyDat")) data else mkd$phyDat
+    tree <- TreeTools::NJTree(njInput, edgeLengths = TRUE)
+    cli::cli_alert_info("No starting tree supplied; using neighbour-joining tree.")
+  } else if (!inherits(tree, "phylo")) {
+    cli::cli_abort("{.arg tree} must be a {.cls phylo} object, or {.val NULL} to use a neighbour-joining tree.")
   }
   if (is.null(tree$edge.length)) {
     cli::cli_abort(c(
       "{.arg tree} has no branch lengths.",
       "i" = "Supply a tree with edge lengths, e.g. \\
-             {.code TreeTools::NJTree(data, edgeLengths = TRUE)}."
+             {.code TreeTools::NJTree(data)}."
     ))
   }
   nNeg <- sum(tree$edge.length <= 0)

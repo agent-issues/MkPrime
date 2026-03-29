@@ -167,7 +167,8 @@ MkPrimeData <- function(data,
       type = type,
       kObs = kObs,
       known_k = knownK,
-      levels = levels
+      levels = levels,
+      phyDat = data
     ),
     class = "MkPrimeData"
   )
