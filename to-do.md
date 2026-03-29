@@ -32,7 +32,7 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 |----|----------|--------|-------------|
 
 
-| M-126 | P2 | OPEN | **M-120 warmup rho estimation gap.** Joint 2D moves run with rho=0 throughout warmup because C++ saves no samples during warmup batches. By the time rho is estimated (Tuning/Sample phase), warmup weight adaptation has already assigned sub-optimal weights. Benchmark on Sun2018 showed no net ESS/s benefit (TL sometimes +39%, but log_posterior consistently degraded due to budget reallocation). Fix: save diagnostic samples during warmup for rho estimation, or add a brief rho-estimation pass between warmup and tuning. Also: apply weight floor to joint_2d moves in .BuildMoves(). |
+
 
 
 
