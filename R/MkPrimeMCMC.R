@@ -7,9 +7,31 @@
 #'   terminate the run. Pass a finite integer to cap the number of iterations
 #'   regardless of convergence.
 #' @param thin Thinning interval (save every `thin`-th iteration).
-#'   Default 10.
-#' @param warmup Number of warmup (adaptation) iterations. Default
-#'   `nIter / 2` for finite `nIter`, or 5,000 when `nIter = Inf`.
+#'   Default `"auto"`, which sets thin equal to the number of active
+#'   move types so that each parameter has roughly one update opportunity
+#'   per stored sample (analogous to one "full cycle" in RevBayes).
+#'   Pass a positive integer to override.
+#' @param warmup **Deprecated.** If supplied, treated as `maxWarmup`.
+#'   Use `minWarmup` / `maxWarmup` instead. Retained for backward
+#'   compatibility; a deprecation message is emitted when non-NULL.
+#' @param minWarmup Minimum warmup iterations before the stabilisation
+#'   detector can end warmup. Default 2000. Set lower for quick
+#'   debugging runs.
+#' @param maxWarmup Maximum warmup iterations. Warmup ends when the
+#'   chain stabilises OR this ceiling is reached (with a warning).
+#'   Default 50 000 when `nIter = Inf`; `nIter / 2` when finite.
+#' @param autoTune Logical; enable the tuning phase after warmup
+#'   (default `TRUE`). When `TRUE`, a short tuning phase optimises
+#'   move weights by maximising min-ESS/s using a perturbation bandit.
+#'   When `FALSE`, move weights are frozen at the end of warmup using
+#'   the acceptance-rate heuristic (legacy behaviour). See section
+#'   **Three-phase MCMC** below.
+#' @param tuningBudget Maximum iterations in the tuning phase.
+#'   Default 10 000. Only used when `autoTune = TRUE`.
+#' @param tuningRounds Number of perturbation-evaluation rounds in
+#'   the tuning phase. Default 5. Each round evaluates the current
+#'   weights plus `nPerturbations` candidates. Only used when
+#'   `autoTune = TRUE`.
 #' @param nRuns Number of independent runs. Default 2. Each run has its
 #'   own set of `nChains` chains. Convergence diagnostics (PSRF) require
 #'   `nRuns >= 2`.
@@ -162,23 +184,44 @@
 #' The adaptive scheduler accounts for its multi-dimensional nature via
 #' a `dim` field (= nEdge) in the score formula.
 #'
-#' ## Adaptive move scheduling
+#' ## Three-phase MCMC: Warmup / Tuning / Sample
 #'
-#' During warmup, the MCMC engine tracks per-move acceptance rates and
-#' wall-clock cost, then reweights the move pool every 200 iterations
-#' to favor moves with high "acceptances per second" (a proxy for
-#' ESS/wall-time efficiency). The reweighting uses softmax with a
-#' temperature that anneals from 2.0 (near-uniform) to 0.5 (more
-#' peaked) over warmup. At the end of warmup, weights are frozen to
-#' preserve detailed balance. Use `moveWeights` to pin specific move
-#' frequencies and exclude them from adaptation.
+#' The MCMC engine runs in three phases, shown in the progress display:
+#'
+#' **Warmup.** Tuning parameters (scale, window), move weights
+#' (acceptance-rate/cost heuristic), and temperatures (parallel
+#' tempering) all adapt. The phase ends automatically when the cold
+#' chain's log-posterior stabilises (Geweke z-score test), or when
+#' `maxWarmup` is reached. No samples are saved.
+#'
+#' **Tuning.** The chain is approximately stationary. Move weights
+#' are optimised to maximise min-ESS/s (minimum effective sample
+#' size per second across parameters) using a perturbation bandit.
+#' Each round evaluates the current and perturbed weight vectors
+#' over short windows, adopting the best. Tuning samples are
+#' discarded. Step-size tuning is frozen. The phase runs for
+#' `tuningRounds` rounds or up to `tuningBudget` iterations.
+#' Set `autoTune = FALSE` to skip this phase.
+#'
+#' **Sample.** Move weights are frozen and posterior samples are
+#' collected. Convergence is monitored at `checkEvery` intervals.
+#' The run terminates when `minEss`/`maxPsrf` criteria are met,
+#' `maxTime` is reached, or `nIter` iterations complete.
+#'
+#' Use `moveWeights` to pin specific move frequencies and exclude
+#' them from adaptation in all phases.
 #'
 #' @return An S3 object of class `MkPrimeMCMC`.
 #' @export
 MkPrimeMCMC <- function(
     nIter = Inf,
-    thin = 10L,
+    thin = "auto",
     warmup = NULL,
+    minWarmup = 2000L,
+    maxWarmup = NULL,
+    autoTune = TRUE,
+    tuningBudget = 10000L,
+    tuningRounds = 5L,
     nRuns = 2L,
     nChains = 1L,
     heat = 0.2,
@@ -207,11 +250,56 @@ MkPrimeMCMC <- function(
     pollInterval = 10L
 ) {
   nIter <- if (is.infinite(nIter)) Inf else as.integer(nIter)
-  thin <- as.integer(thin)
-  if (is.null(warmup)) {
-    warmup <- if (is.finite(nIter)) as.integer(nIter / 2L) else 5000L
+  if (!identical(thin, "auto")) {
+    thin <- as.integer(thin)
+    if (is.na(thin) || thin < 1L) {
+      cli::cli_abort("{.arg thin} must be {.val auto} or a positive integer.")
+    }
   }
-  warmup <- as.integer(warmup)
+  # --- Three-phase warmup / tuning / sampling parameters ---
+  # Legacy `warmup` maps to `maxWarmup` with deprecation notice.
+  # When warmup is explicitly passed and autoTune was not, disable
+  # autoTune for backward compatibility (old two-phase behaviour).
+  autoTuneExplicit <- "autoTune" %in% names(match.call())
+
+  if (!is.null(warmup)) {
+    cli::cli_warn(c(
+      "{.arg warmup} is deprecated; use {.arg maxWarmup} instead.",
+      "i" = "Setting {.arg maxWarmup} = {warmup}."
+    ))
+    if (is.null(maxWarmup)) maxWarmup <- as.integer(warmup)
+    # Legacy compat: disable autoTune unless user explicitly asked for it
+    if (!autoTuneExplicit) autoTune <- FALSE
+  }
+  if (is.null(maxWarmup)) {
+    maxWarmup <- if (is.finite(nIter)) as.integer(nIter / 2L) else 50000L
+  }
+  maxWarmup  <- as.integer(maxWarmup)
+  minWarmup  <- as.integer(minWarmup)
+  autoTune   <- as.logical(autoTune)
+  tuningBudget <- as.integer(tuningBudget)
+  tuningRounds <- as.integer(tuningRounds)
+
+  if (minWarmup > maxWarmup) {
+    cli::cli_warn(c(
+      "{.arg minWarmup} ({minWarmup}) exceeds {.arg maxWarmup} ({maxWarmup}).",
+      "i" = "Setting {.arg minWarmup} = {.arg maxWarmup}."
+    ))
+    minWarmup <- maxWarmup
+  }
+  if (autoTune && tuningBudget < 1L) {
+    cli::cli_abort("{.arg tuningBudget} must be a positive integer.")
+  }
+  if (autoTune && tuningRounds < 1L) {
+    cli::cli_abort("{.arg tuningRounds} must be a positive integer.")
+  }
+
+  # Backward compat: store maxWarmup in the `warmup` slot so that
+
+  # existing code paths (.RunMkPrimeSingleRun) can use it as the
+  # hard ceiling. The state machine will handle auto-detection.
+  warmup <- maxWarmup
+
   nRuns <- as.integer(nRuns)
   nChains <- as.integer(nChains)
 
@@ -338,6 +426,9 @@ MkPrimeMCMC <- function(
 
   structure(
     list(nIter = nIter, thin = thin, warmup = warmup,
+         minWarmup = minWarmup, maxWarmup = maxWarmup,
+         autoTune = autoTune, tuningBudget = tuningBudget,
+         tuningRounds = tuningRounds,
          nRuns = nRuns, nChains = nChains, heat = heat,
          maxTime = maxTime, minEss = minEss, maxPsrf = maxPsrf,
          checkEvery = checkEvery, cancelFile = cancelFile,

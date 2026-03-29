@@ -151,6 +151,10 @@ RunMkPrime <- function(data, tree,
                        kPrimePrior = model$kPrimePrior %||% "geometric",
                        qHeterogeneity = qHet)
 
+  if (identical(mcmc$thin, "auto")) {
+    mcmc$thin <- length(moves)
+  }
+
   nRuns <- mcmc$nRuns
 
   # --- Initialize per-run state ---
@@ -404,10 +408,10 @@ RunMkPrime <- function(data, tree,
 
   # --- Batch loop constants ---
   # Adaptive batch size (M-106): fewer iterations per batch during warmup
-
   # (for tuning adaptation responsiveness), larger batches during sampling
   # to minimize R<->C++ round-trip overhead (90%+ of CPU at batchSize=200).
   warmupBatch   <- 500L
+  tuningBatch   <- 500L
   samplingBatch <- 5000L
   moveNames     <- vapply(moves, `[[`, character(1), "name")
   moveWeights   <- vapply(moves, `[[`, numeric(1), "weight")
@@ -425,7 +429,6 @@ RunMkPrime <- function(data, tree,
   if (!is.null(pinnedWeights)) {
     moveWeights <- .NormalizeMoveWeights(moveWeights, pinnedWeights)
   }
-  weightsLogged <- startIter > mcmc$warmup
 
   # Ensure chain_time_ns exists (may be absent in older checkpoints)
   if (is.null(r$chain_time_ns)) {
@@ -440,11 +443,46 @@ RunMkPrime <- function(data, tree,
   hasProgressFn <- !is.null(mcmc$progressFn) && !is.null(mcmc$plotEvery) &&
     mcmc$plotEvery > 0L
 
+  # --- Three-phase state machine ---
+  # Determine initial phase from checkpoint or fresh start.
+  # Phases: "Warmup" → "Tuning" → "Sample"
+  phase <- r$phase %||% (if (startIter <= mcmc$warmup) "Warmup" else "Sample")
+
+  # Stabilisation detector state (Warmup phase)
+  logPostHistory     <- r$logPostHistory %||% numeric(0)
+  nStableConsecutive <- r$nStableConsecutive %||% 0L
+
+  # samplePhaseStart: iteration at which sampling began (for iterNum in log files).
+  # For legacy checkpoints without this field, default to mcmc$warmup.
+  if (is.null(r$samplePhaseStart)) {
+    r$samplePhaseStart <- mcmc$warmup
+  }
+
+  # Tuning phase state
+  tuningIterUsed   <- r$tuningIterUsed %||% 0L
+  tuningRoundsDone <- r$tuningRoundsDone %||% 0L
+  tuningBuf        <- NULL
+  tuningBufIdx     <- 0L
+  tuningWindowStart <- NULL
+  bestMinEssPerSec <- -Inf
+  bestWeights      <- moveWeights
+  tuningCandidates <- list()
+  tuningCandIdx    <- 0L
+  effectiveTuningBudget <- mcmc$tuningBudget
+
+  # The C++ warmup parameter controls when samples are saved.
+  # During Warmup: set to Inf so no samples saved.
+  # During Tuning: set to 0 so all samples saved (collected into tuning buffer).
+  # During Sample: set to 0 so all samples saved (collected into main storage).
+  cppWarmup <- if (phase == "Warmup") mcmc$warmup else 0L
+
+  weightsLogged <- phase == "Sample"
+
   # --- Progress bar (M-097 rotating ticker) ---
   coldLogpost    <- {s <- get_mcmc_state(r$chainStates[[1]]); s$logPost}
   recentAcc      <- 0
   batchEnd       <- startIter - 1L
-  phaseLabel     <- if (startIter <= mcmc$warmup) "warmup" else "iter"
+  phaseLabel     <- phase
   progressLabel  <- if (startIter == 1L) "MCMC" else "Resuming MCMC"
   progressTotal  <- if (is.finite(mcmc$nIter)) {
     if (startIter == 1L) mcmc$nIter else mcmc$nIter - startIter + 1L
@@ -454,7 +492,11 @@ RunMkPrime <- function(data, tree,
   # Summary (minESS/PSRF) interleaved with detail (2 params each).
   tickerStart <- proc.time()["elapsed"]
   tickerPage  <- ""
-  tickerPages <- "minESS: ?"
+  tickerPages <- if (phase == "Tuning") {
+    "minESS/s: ?"
+  } else {
+    "minESS: ?"
+  }
   logPWidth   <- 5L
 
   cli::cli_progress_bar(
@@ -471,12 +513,16 @@ RunMkPrime <- function(data, tree,
   # --- Main batch loop ---
   batchStart <- startIter
   repeat {
-    # M-106: adaptive batch size — small during warmup, large during sampling
-    batchSize <- if (batchStart <= mcmc$warmup) warmupBatch else samplingBatch
-    batchEnd  <- batchStart + batchSize - 1L
+    # Batch size depends on phase
+    batchSize <- switch(phase,
+      Warmup  = warmupBatch,
+      Tuning  = tuningBatch,
+      Sample  = samplingBatch
+    )
+    batchEnd <- batchStart + batchSize - 1L
     if (is.finite(mcmc$nIter)) batchEnd <- min(batchEnd, mcmc$nIter)
-    # Don't straddle the warmup boundary: end at warmup so adaptation fires
-    if (batchStart <= mcmc$warmup && batchEnd > mcmc$warmup)
+    # Don't straddle the warmup boundary: end at maxWarmup so adaptation fires
+    if (phase == "Warmup" && batchEnd > mcmc$warmup)
       batchEnd <- mcmc$warmup
     nBatch   <- batchEnd - batchStart + 1L
 
@@ -490,7 +536,7 @@ RunMkPrime <- function(data, tree,
       mcmcData, r$chainStates, r$betas,
       moveTypeCodes, transIdx0, moveWeights,
       scaleTunings, bsTunings, iwWins,
-      nBatch, batchStart, mcmc$warmup, mcmc$thin,
+      nBatch, batchStart, cppWarmup, mcmc$thin,
       hasNeo, nEdge
     )
 
@@ -508,15 +554,16 @@ RunMkPrime <- function(data, tree,
       r$swap_propose <- r$swap_propose + result$swap_propose
     }
 
-    # Store samples and reconstruct trees
+    # --- Sample handling depends on phase ---
     nSaved <- result$n_saved
-    if (nSaved > 0L) {
+    if (phase == "Sample" && nSaved > 0L) {
+      # Save to main storage (posterior samples)
       for (i in seq_len(nSaved)) {
         r$saved_idx <- r$saved_idx + 1L
         row <- result$scalar_samples[i, ]
 
         if (isStreaming) {
-          iterNum <- mcmc$warmup + r$saved_idx * mcmc$thin
+          iterNum <- r$samplePhaseStart + r$saved_idx * mcmc$thin
           r <- .AddToStreamBuffer(r, row, iterNum, logFilePath,
                                   mcmc$bufferSize, convWindowSize)
           if (r$saved_idx > length(r$tree_samples)) {
@@ -547,10 +594,24 @@ RunMkPrime <- function(data, tree,
         if (!is.null(treeFile))
           cat(ape::write.tree(curTree), "\n", file = treeFile, append = TRUE)
       }
+    } else if (phase == "Tuning" && nSaved > 0L) {
+      # Collect into tuning buffer (discarded after tuning)
+      for (i in seq_len(nSaved)) {
+        tuningBufIdx <- tuningBufIdx + 1L
+        if (tuningBufIdx > nrow(tuningBuf)) {
+          extra <- matrix(NA_real_, nrow = nrow(tuningBuf),
+                          ncol = ncol(tuningBuf),
+                          dimnames = list(NULL, colnames(tuningBuf)))
+          tuningBuf <- rbind(tuningBuf, extra)
+        }
+        tuningBuf[tuningBufIdx, ] <- result$scalar_samples[i, ]
+      }
     }
 
-    # Adapt tuning and move weights during warmup
-    if (batchEnd <= mcmc$warmup) {
+    # ===== PHASE-SPECIFIC LOGIC =====
+
+    if (phase == "Warmup") {
+      # --- Warmup: adapt tuning, temperatures, and move weights ---
       for (ch in seq_len(nChains)) {
         r$chain_tuning[[ch]] <- .AdaptTuning(
           r$chain_tuning[[ch]], r$chain_accept[[ch]],
@@ -559,35 +620,179 @@ RunMkPrime <- function(data, tree,
       }
       if (nChains > 1L)
         r$betas <- .AdaptTemperatures(r$betas, r$swap_accept, r$swap_propose)
-      # Adaptive move weight scheduling (M-092)
+      # Adaptive move weight scheduling (M-092): acceptance-rate heuristic
       moveWeights <- .AdaptMoveWeights(
         moveWeights, r$chain_accept[[1L]], r$chain_propose[[1L]],
         r$chain_time_ns[[1L]], moveNames, moveDim = moveDim,
         pinnedWeights = pinnedWeights,
-        warmupProgress = batchEnd / mcmc$warmup
+        warmupProgress = min(1, batchEnd / mcmc$warmup)
       )
-    }
 
-    # Log final adapted weights when warmup ends (M-092)
-    if (batchEnd > mcmc$warmup && !weightsLogged) {
-      phaseLabel <- "iter"
-      if (isStreaming && !is.null(logFilePath))
-        .LogMoveWeights(moveWeights, moveNames, logFilePath)
-      cli::cli_alert_info(
-        "Move weights frozen: {(.FormatMoveWeights(moveWeights, moveNames))}"
-      )
-      weightsLogged <- TRUE
+      # Stabilisation detection
+      logPostHistory <- c(logPostHistory, coldLogpost)
+      if (batchEnd >= mcmc$minWarmup) {
+        stabResult <- .CheckStabilisation(
+          logPostHistory, nStableConsecutive
+        )
+        nStableConsecutive <- stabResult$nStableConsecutive
+
+        if (stabResult$stable || batchEnd >= mcmc$warmup) {
+          # Transition: Warmup → Tuning (or Sample if autoTune = FALSE)
+          if (batchEnd >= mcmc$warmup && !stabResult$stable) {
+            cli::cli_warn(
+              "Warmup reached {.arg maxWarmup} ({mcmc$warmup}) without stabilisation."
+            )
+          } else {
+            cli::cli_alert_success(
+              "Chain stabilised at iteration {batchEnd}."
+            )
+          }
+
+          # Check if there's enough remaining budget for tuning + sampling
+          remainingIter <- if (is.finite(mcmc$nIter)) {
+            mcmc$nIter - batchEnd
+          } else {
+            Inf
+          }
+          # Need at least tuningBatch * 2 for tuning + some for sampling
+          canTune <- mcmc$autoTune && remainingIter > tuningBatch * 4L
+
+          if (canTune) {
+            phase      <- "Tuning"
+            r$phase    <- phase
+            phaseLabel <- "Tuning"
+            cppWarmup  <- 0L
+            # Cap tuning budget to leave room for sampling
+            effectiveTuningBudget <- if (is.finite(remainingIter)) {
+              min(mcmc$tuningBudget, as.integer(remainingIter / 2))
+            } else {
+              mcmc$tuningBudget
+            }
+            # Allocate tuning buffer
+            tuningBufSize <- as.integer(effectiveTuningBudget / mcmc$thin) + 100L
+            tuningBuf <- matrix(NA_real_, nrow = tuningBufSize,
+                                ncol = length(paramNames),
+                                dimnames = list(NULL, paramNames))
+            tuningBufIdx     <- 0L
+            tuningWindowStart <- proc.time()["elapsed"]
+            # Reset acceptance/timing counters for clean tuning measurement
+            for (ch in seq_len(nChains)) {
+              r$chain_accept[[ch]][]  <- 0L
+              r$chain_propose[[ch]][] <- 0L
+              r$chain_time_ns[[ch]][] <- 0
+            }
+            bestMinEssPerSec <- -Inf
+            bestWeights      <- moveWeights
+            tuningCandidates <- .PerturbMoveWeights(
+              moveWeights, pinnedWeights, moveNames,
+              nPerturbations = 3L
+            )
+            tuningCandIdx    <- 0L
+            tickerPages      <- "minESS/s: ?"
+          } else {
+            # Skip tuning, go straight to Sample
+            phase      <- "Sample"
+            r$phase    <- phase
+            phaseLabel <- "Sample"
+            cppWarmup  <- 0L
+            r$samplePhaseStart <- batchEnd
+            if (isStreaming && !is.null(logFilePath))
+              .LogMoveWeights(moveWeights, moveNames, logFilePath)
+            cli::cli_alert_info(
+              "Move weights frozen: {(.FormatMoveWeights(moveWeights, moveNames))}"
+            )
+            weightsLogged <- TRUE
+          }
+        }
+      }
+    } else if (phase == "Tuning") {
+      # --- Tuning: min-ESS/s perturbation bandit ---
+      tuningIterUsed <- tuningIterUsed + nBatch
+
+      # Evaluate current weight vector after each tuning window
+      if (tuningBufIdx >= 10L) {
+        windowTime <- proc.time()["elapsed"] - tuningWindowStart
+        currentEssPerSec <- .MinEssPerSec(
+          tuningBuf[seq_len(tuningBufIdx), , drop = FALSE],
+          windowTime
+        )
+
+        if (!is.na(currentEssPerSec)) {
+          tickerPages <- sprintf("minESS/s: %.2f", currentEssPerSec)
+          if (currentEssPerSec > bestMinEssPerSec) {
+            bestMinEssPerSec <- currentEssPerSec
+            bestWeights      <- moveWeights
+          }
+        }
+
+        # Move to next candidate or next round
+        tuningCandIdx <- tuningCandIdx + 1L
+        if (tuningCandIdx <= length(tuningCandidates)) {
+          # Try next perturbation candidate
+          moveWeights <- tuningCandidates[[tuningCandIdx]]
+          tuningBufIdx      <- 0L
+          tuningWindowStart <- proc.time()["elapsed"]
+          # Reset counters for clean measurement
+          for (ch in seq_len(nChains)) {
+            r$chain_accept[[ch]][]  <- 0L
+            r$chain_propose[[ch]][] <- 0L
+            r$chain_time_ns[[ch]][] <- 0
+          }
+        } else {
+          # End of round: adopt best weights, start new round
+          tuningRoundsDone <- tuningRoundsDone + 1L
+          moveWeights <- bestWeights
+
+          if (tuningRoundsDone >= mcmc$tuningRounds ||
+              tuningIterUsed >= effectiveTuningBudget) {
+            # Transition: Tuning → Sample
+            phase      <- "Sample"
+            r$phase    <- phase
+            phaseLabel <- "Sample"
+            r$samplePhaseStart <- batchEnd
+            if (isStreaming && !is.null(logFilePath))
+              .LogMoveWeights(moveWeights, moveNames, logFilePath)
+            cli::cli_alert_info(
+              "Move weights frozen: {(.FormatMoveWeights(moveWeights, moveNames))}"
+            )
+            if (bestMinEssPerSec > 0) {
+              cli::cli_alert_info(
+                "Tuning complete ({tuningRoundsDone} round{?s}). Best minESS/s: {sprintf('%.2f', bestMinEssPerSec)}"
+              )
+            }
+            weightsLogged <- TRUE
+            tickerPages   <- "minESS: ?"
+          } else {
+            # Start new round with fresh perturbations
+            tuningCandidates <- .PerturbMoveWeights(
+              moveWeights, pinnedWeights, moveNames,
+              nPerturbations = 3L
+            )
+            tuningCandIdx     <- 0L
+            tuningBufIdx      <- 0L
+            tuningWindowStart <- proc.time()["elapsed"]
+            bestMinEssPerSec  <- -Inf
+            for (ch in seq_len(nChains)) {
+              r$chain_accept[[ch]][]  <- 0L
+              r$chain_propose[[ch]][] <- 0L
+              r$chain_time_ns[[ch]][] <- 0
+            }
+          }
+        }
+      }
     }
+    # Sample phase: no adaptation needed (weights frozen)
 
     # Streaming checkpoint: fire when buffer was flushed this batch
-    if (isStreaming && !is.null(checkpointFile) && isTRUE(r$flushed)) {
+    if (phase == "Sample" && isStreaming &&
+        !is.null(checkpointFile) && isTRUE(r$flushed)) {
       if (r$flush_idx > 0L) {
         .FlushBuffer(r$flush_buf, r$flush_idx, r$flush_iter, logFilePath)
         r$flush_idx <- 0L
       }
       r$flushed <- FALSE
       .SaveCheckpoint(list(r), mcmc, batchEnd, paramNames, checkpointFile,
-                      moveWeights = moveWeights)
+                      moveWeights = moveWeights, phase = phase)
     }
 
     # Progress update (M-097 rotating ticker)
@@ -603,7 +808,7 @@ RunMkPrime <- function(data, tree,
                          format = "f", digits = 1)
     pageIdx   <- floor((proc.time()["elapsed"] - tickerStart) / 1.5) %%
                    length(tickerPages)
-    # Dim separators; iter prefix silver for visual separation
+    # Dim separators; phase prefix silver for visual separation
     sep <- cli::col_silver("\u2502")
     tickerPage <- paste(
       cli::col_silver(paste(phaseLabel, batchEnd)),
@@ -617,7 +822,7 @@ RunMkPrime <- function(data, tree,
     if (hasProgressFn &&
         (batchEnd %/% mcmc$plotEvery) > ((batchStart - 1L) %/% mcmc$plotEvery)) {
       info <- .BuildProgressInfo(list(r), batchEnd, mcmc, startTime,
-                                 recentAcc, paramNames)
+                                 recentAcc, paramNames, phase = phase)
       mcmc$progressFn(info)
     }
 
@@ -638,15 +843,15 @@ RunMkPrime <- function(data, tree,
           r$flushed   <- FALSE
         }
         .SaveCheckpoint(list(r), mcmc, batchEnd, paramNames, checkpointFile,
-                        moveWeights = moveWeights)
+                        moveWeights = moveWeights, phase = phase)
       }
       stopReason <- "cancelled"
       actualIter <- batchEnd
       break
     }
 
-    # Convergence check + checkpoint at checkEvery intervals
-    doCheck <- batchEnd > mcmc$warmup && !is.null(mcmc$checkEvery) &&
+    # Convergence check + checkpoint at checkEvery intervals (Sample phase only)
+    doCheck <- phase == "Sample" && !is.null(mcmc$checkEvery) &&
       mcmc$checkEvery > 0L &&
       (batchEnd %/% mcmc$checkEvery) > ((batchStart - 1L) %/% mcmc$checkEvery)
 
@@ -658,7 +863,7 @@ RunMkPrime <- function(data, tree,
           r$flushed   <- FALSE
         }
         .SaveCheckpoint(list(r), mcmc, batchEnd, paramNames, checkpointFile,
-                        moveWeights = moveWeights)
+                        moveWeights = moveWeights, phase = phase)
       }
 
       diagCheck <- .CheckConvergence(list(r), paramNames, mcmc, isStreaming)
@@ -703,6 +908,7 @@ RunMkPrime <- function(data, tree,
   r$chainStates <- NULL
   r$stop_reason <- stopReason
   r$actual_iter <- actualIter
+  r$phase       <- phase
   r
 }
 
@@ -1104,7 +1310,7 @@ RunMkPrime <- function(data, tree,
 #'
 #' @keywords internal
 .SaveCheckpoint <- function(runs, mcmc, iter, paramNames, file,
-                            moveWeights = NULL) {
+                            moveWeights = NULL, phase = NULL) {
   isStreaming <- !is.null(mcmc$logFile)
 
   serialRuns <- lapply(runs, function(r) {
@@ -1150,6 +1356,7 @@ RunMkPrime <- function(data, tree,
     payload$paramNames   <- paramNames
   }
   if (!is.null(moveWeights)) payload$moveWeights <- moveWeights
+  if (!is.null(phase))       payload$phase       <- phase
   saveRDS(payload, file)
 }
 
@@ -1276,6 +1483,10 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
                        kPrimePrior = model$kPrimePrior %||% "geometric",
                        qHeterogeneity = qHet)
 
+  if (identical(mcmc$thin, "auto")) {
+    mcmc$thin <- length(moves)
+  }
+
   if (isStreaming) {
     # Rewind each log file to the checkpoint's saved_idx.  Any samples
     # flushed after the last checkpoint are discarded — the chain state
@@ -1345,7 +1556,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 #' Build the progress info list for callbacks
 #' @keywords internal
 .BuildProgressInfo <- function(runs, iter, mcmc, startTime,
-                               recentAcc, paramNames) {
+                               recentAcc, paramNames,
+                               phase = "Sample") {
   nRuns       <- length(runs)
   isStreaming <- !is.null(mcmc$logFile)
   runSamples <- lapply(runs, function(r) {
@@ -1371,7 +1583,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     iter = iter,
     nIter = mcmc$nIter,
     warmup = mcmc$warmup,
-    inWarmup = iter <= mcmc$warmup,
+    inWarmup = phase == "Warmup",
+    phase = phase,
     nRuns = nRuns,
     nChains = mcmc$nChains,
     runSamples = runSamples,
@@ -2155,4 +2368,162 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   }
 
   tuning
+}
+
+
+# --- Stabilisation detector ---
+
+#' Check whether the MCMC chain has reached stationarity.
+#'
+#' Uses a Geweke-style z-score comparing recent and previous windows of
+#' cold-chain log-posterior values. Returns `TRUE` when `|z| < zThreshold`
+#' for `nStableRequired` consecutive checks.
+#'
+#' @param logPostHistory Numeric vector of log-posterior snapshots
+#'   (one per warmup batch endpoint, chronological order).
+#' @param nStableConsecutive Integer counter of consecutive stable checks
+#'   so far (carried across calls).
+#' @param windowSize Number of snapshots per comparison window.
+#'   Default 10 (= 10 × 500 = 5000 iterations at default batch size).
+#' @param zThreshold Absolute z-score threshold for declaring stability.
+#'   Default 1.5.
+#' @param nStableRequired Number of consecutive stable checks required.
+#'   Default 3.
+#'
+#' @return A list with `stable` (logical) and `nStableConsecutive`
+#'   (updated counter).
+#' @keywords internal
+.CheckStabilisation <- function(logPostHistory, nStableConsecutive,
+                                 windowSize = 10L, zThreshold = 1.5,
+                                 nStableRequired = 3L) {
+  n <- length(logPostHistory)
+  # Need at least 2 full windows
+
+if (n < 2L * windowSize) {
+    return(list(stable = FALSE, nStableConsecutive = 0L))
+  }
+
+  recent <- logPostHistory[(n - windowSize + 1L):n]
+  prev   <- logPostHistory[(n - 2L * windowSize + 1L):(n - windowSize)]
+
+  meanR <- mean(recent)
+  meanP <- mean(prev)
+  varR  <- var(recent)
+  varP  <- var(prev)
+  nR    <- length(recent)
+  nP    <- length(prev)
+
+  denom <- sqrt(varR / nR + varP / nP)
+  # If both windows have zero variance, chain is flat → stable
+  if (denom < .Machine$double.eps) {
+    nStableConsecutive <- nStableConsecutive + 1L
+  } else {
+    z <- (meanR - meanP) / denom
+    if (abs(z) < zThreshold) {
+      nStableConsecutive <- nStableConsecutive + 1L
+    } else {
+      nStableConsecutive <- 0L
+    }
+  }
+
+  list(stable = nStableConsecutive >= nStableRequired,
+       nStableConsecutive = nStableConsecutive)
+}
+
+
+# --- Tuning-phase bandit (min-ESS/s optimisation) ---
+
+#' Compute min-ESS/s for a set of samples collected over a known wall-time.
+#'
+#' @param sampleMatrix Numeric matrix (rows = samples, columns = parameters).
+#' @param wallTimeSec Wall-clock seconds for the evaluation window.
+#' @param excludePattern Regex pattern for column names to exclude from
+#'   the min-ESS calculation (e.g. `"^kPrime_"`).
+#'
+#' @return Numeric scalar: min(ESS) / wallTimeSec, or `NA` if ESS
+#'   cannot be computed.
+#' @keywords internal
+.MinEssPerSec <- function(sampleMatrix, wallTimeSec,
+                           excludePattern = "^(kPrime_|br_|log_likelihood)") {
+  if (!requireNamespace("coda", quietly = TRUE)) return(NA_real_)
+  if (nrow(sampleMatrix) < 10L || wallTimeSec < 1e-6) return(NA_real_)
+
+  keyCols <- grep(excludePattern, colnames(sampleMatrix), invert = TRUE)
+  if (length(keyCols) == 0L) return(NA_real_)
+
+  ess <- apply(sampleMatrix[, keyCols, drop = FALSE], 2, function(col) {
+    s <- sd(col, na.rm = TRUE)
+    if (is.na(s) || s == 0) return(NA_real_)
+    as.numeric(coda::effectiveSize(coda::mcmc(col)))
+  })
+
+  minEss <- min(ess, na.rm = TRUE)
+  if (!is.finite(minEss)) return(NA_real_)
+  minEss / wallTimeSec
+}
+
+
+#' Generate perturbed move weight vectors.
+#'
+#' Produces `nPerturbations` candidate weight vectors by randomly
+#' shifting one free (unpinned) move's weight by a small delta and
+#' renormalising.
+#'
+#' @param currentWeights Named numeric vector (sums to 1).
+#' @param pinnedWeights Named numeric vector or `NULL`.
+#' @param moveNames Character vector of move names.
+#' @param nPerturbations Number of candidates to generate.
+#' @param deltaRange Numeric length-2 vector: range of absolute
+#'   perturbation magnitude. Default `c(0.02, 0.10)`.
+#' @param wMin Floor per free move. Default 0.01.
+#'
+#' @return A list of `nPerturbations` named numeric vectors.
+#' @keywords internal
+.PerturbMoveWeights <- function(currentWeights, pinnedWeights, moveNames,
+                                 nPerturbations = 3L,
+                                 deltaRange = c(0.02, 0.10),
+                                 wMin = 0.01) {
+  pinnedIdx <- integer(0)
+  if (!is.null(pinnedWeights)) {
+    pinnedIdx <- match(names(pinnedWeights), moveNames)
+    pinnedIdx <- pinnedIdx[!is.na(pinnedIdx)]
+  }
+  freeIdx <- setdiff(seq_along(currentWeights), pinnedIdx)
+  if (length(freeIdx) < 2L) {
+    # Can't meaningfully perturb with fewer than 2 free moves
+    return(list())
+  }
+
+  candidates <- vector("list", nPerturbations)
+  for (i in seq_len(nPerturbations)) {
+    w <- currentWeights
+    # Pick a random free move to perturb
+    target <- sample(freeIdx, 1L)
+    delta <- runif(1, deltaRange[1], deltaRange[2]) * sample(c(-1, 1), 1)
+    w[target] <- w[target] + delta
+
+    # Enforce floor on free moves
+    w[freeIdx] <- pmax(w[freeIdx], wMin)
+
+    # Renormalise free moves to their budget
+    budget <- if (length(pinnedIdx) > 0L) {
+      1.0 - sum(pinnedWeights)
+    } else {
+      1.0
+    }
+    freeSum <- sum(w[freeIdx])
+    if (freeSum > 0) {
+      w[freeIdx] <- w[freeIdx] / freeSum * budget
+    }
+    # Restore pinned
+    if (length(pinnedIdx) > 0L) {
+      for (nm in names(pinnedWeights)) {
+        idx <- match(nm, moveNames)
+        if (!is.na(idx)) w[idx] <- pinnedWeights[nm]
+      }
+    }
+    names(w) <- moveNames
+    candidates[[i]] <- w
+  }
+  candidates
 }

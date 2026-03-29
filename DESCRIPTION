@@ -26,6 +26,7 @@ Imports:
     Rdpack (>= 0.7),
     ape,
     cli,
+    coda,
     Rcpp,
     rlang,
     TreeTools
@@ -33,7 +34,6 @@ Suggests:
     Rogue,
     bslib (>= 0.5.0),
     callr,
-    coda,
     future,
     processx,
     ps,

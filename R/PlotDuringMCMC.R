@@ -103,8 +103,12 @@ MkpTracePlot <- function(info) {
   hasCoda <- requireNamespace("coda", quietly = TRUE)
   showEss <- hasSamples && hasCoda
 
-  # Reset ESS history if new run detected (iter went backwards or in warmup)
-  if (info$inWarmup || info$iter <= .tracePlotEnv$lastIter) {
+
+  # Reset ESS history if new run detected, in warmup, or in tuning
+  inNonSample <- info$inWarmup ||
+    identical(info$phase, "Warmup") ||
+    identical(info$phase, "Tuning")
+  if (inNonSample || info$iter <= .tracePlotEnv$lastIter) {
     .ResetEssHistory()
   }
 
@@ -320,11 +324,13 @@ MkpPngProgress <- function(dir, width = 800, height = 600) {
 #' @keywords internal
 .WriteProgressJson <- function(info, file) {
   nIterJson <- if (is.finite(info$nIter)) info$nIter else "null"
+  phaseStr <- info$phase %||% (if (info$inWarmup) "Warmup" else "Sample")
   json <- sprintf(
     paste0('{"iter":%d,"nIter":%s,"warmup":%d,"inWarmup":%s,',
-           '"elapsed":%.1f,"recentAcceptance":%.4f}'),
+           '"phase":"%s","elapsed":%.1f,"recentAcceptance":%.4f}'),
     info$iter, nIterJson, info$warmup,
     if (info$inWarmup) "true" else "false",
+    phaseStr,
     info$elapsed, info$recentAcceptance
   )
   writeLines(json, file)
