@@ -7,6 +7,9 @@
     "edit": {
       "*.qmd": "allow",
       "*/DESCRIPTION": "allow"
+    },
+    "skill": {
+      "r-package-profiling": "allow"
     }
   },
   "model": {

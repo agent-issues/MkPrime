@@ -795,4 +795,267 @@ static double evaluate_const_prob(
 // by create_const_pseudo_group + evaluate_const_prob above.)
 
 
+// ---------------------------------------------------------------------------
+// M-111: Partial CL evaluation for subtree swap
+//
+// A subtree swap (nodeA ↔ nodeB) changes CLs at two parent nodes
+// (pA, pB) and propagates changes up two paths that merge at their LCA.
+// Unlike SPR, no node is removed — both subtrees stay in the tree.
+// Branch lengths stay at their parent positions (swap only moves children).
+//
+// Algorithm:
+//   1. Cache all CLs via caching_downpass (shared across candidates)
+//   2. For each candidate nodeB:
+//      a. Find LCA of pA and pB via precomputed pathA flags
+//      b. Process three segments bottom-up:
+//         - segA (pA → LCA): swap nodeA→nodeB at pA, propagate
+//         - segB (pB → LCA): swap nodeB→nodeA at pB, propagate
+//         - shared (LCA → root): merge both changes, propagate
+//      c. Accumulate root CL into site likelihoods
+//
+// constProbMode: false → return log-likelihood
+//                true  → return P(constant site) for ascertainment
+// ---------------------------------------------------------------------------
+static double evaluate_swap_impl(
+    const CLGroup& grp, const TreeNav& topo,
+    const NumericVector& rates,
+    int nodeA, int nodeB,
+    int pA, int slotA, double lenA,
+    const std::vector<int>& pathA,
+    const std::vector<int>& pathAIdx,
+    bool constProbMode)
+{
+  int kStates = grp.kStates;
+  int nChar   = grp.nChar;
+  int stride  = grp.stride;
+  int nCat    = grp.nCat;
+  double sc   = grp.rateScale;
+
+  int pB    = topo.parentNode[nodeB];
+  int slotB = topo.childSlot(pB, nodeB);
+  double lenB = topo.edgeLen[topo.edgeToPar[nodeB]];
+
+  // Root frequencies
+  double inv_k = 1.0 / kStates;
+  double rootF0 = 0.5, rootF1 = 0.5;
+  if (grp.isMkN) {
+    rootF0 = 1.0 / (1.0 + grp.rateLoss);
+    rootF1 = grp.rateLoss / (1.0 + grp.rateLoss);
+  }
+
+  // --- Find LCA: walk from pB upward until hitting a node on pathA ---
+  std::vector<int> pathBbelow;
+  pathBbelow.reserve(16);
+  int lcaIdxA = -1;
+  for (int n = pB; n >= 1; n = topo.parentNode[n]) {
+    int ai = pathAIdx[n];
+    if (ai >= 0) {
+      lcaIdxA = ai;
+      break;
+    }
+    pathBbelow.push_back(n);
+  }
+
+  int nSegA = lcaIdxA;
+  int nSegB = (int)pathBbelow.size();
+
+  // --- Buffers ---
+  std::vector<double> curI(stride);
+  std::vector<double> contrib(stride);
+  std::vector<double> lastA(stride);
+  std::vector<double> lastB(stride);
+  std::vector<double> prevShared(stride);
+
+  // Accumulators
+  std::vector<double> siteLikSum;
+  double totalConstProb = 0.0;
+  if (!constProbMode) siteLikSum.assign(nChar, 0.0);
+
+  auto applyTransition = [&](const double* src, double* dst, double t) {
+    if (grp.isMkN) {
+      double P00, P01, P10, P11;
+      mkn_trans_params(grp.rateLoss, t, P00, P01, P10, P11);
+      mkn_transition(src, dst, nChar, P00, P01, P10, P11);
+    } else {
+      double pd, dc;
+      jc_trans_params(kStates, t, pd, dc);
+      jc_transition(src, dst, nChar, kStates, pd, dc);
+    }
+  };
+
+  auto childAt = [&](int n, int sl) -> int {
+    return (sl == 0) ? topo.ch0[n] : (sl == 1) ? topo.ch1[n] : topo.ch2[n];
+  };
+
+  for (int cat = 0; cat < nCat; ++cat) {
+    double rate = rates[cat];
+
+    // ============ Segment A: pathA[0 .. lcaIdxA-1] ============
+    for (int ai = 0; ai < nSegA; ++ai) {
+      int n = pathA[ai];
+      int nChild = (topo.ch2[n] >= 0) ? 3 : 2;
+      std::fill(curI.begin(), curI.end(), 1.0);
+
+      for (int sl = 0; sl < nChild; ++sl) {
+        int cn = childAt(n, sl);
+
+        if (n == pA && sl == slotA) {
+          // SWAP: nodeB replaces nodeA at pA
+          applyTransition(grp.I(cat, nodeB), contrib.data(),
+                          lenA * rate * sc);
+        } else if (ai > 0 && cn == pathA[ai - 1]) {
+          // Propagated from previous segA node
+          double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
+          applyTransition(lastA.data(), contrib.data(), t);
+        } else {
+          std::memcpy(contrib.data(), grp.Fslot(cat, n, sl),
+                      stride * sizeof(double));
+        }
+        for (int i = 0; i < stride; ++i) curI[i] *= contrib[i];
+      }
+      std::memcpy(lastA.data(), curI.data(), stride * sizeof(double));
+    }
+
+    // ============ Segment B: pathBbelow[0 .. nSegB-1] ============
+    for (int bi = 0; bi < nSegB; ++bi) {
+      int n = pathBbelow[bi];
+      int nChild = (topo.ch2[n] >= 0) ? 3 : 2;
+      std::fill(curI.begin(), curI.end(), 1.0);
+
+      for (int sl = 0; sl < nChild; ++sl) {
+        int cn = childAt(n, sl);
+
+        if (n == pB && sl == slotB) {
+          // SWAP: nodeA replaces nodeB at pB
+          applyTransition(grp.I(cat, nodeA), contrib.data(),
+                          lenB * rate * sc);
+        } else if (bi > 0 && cn == pathBbelow[bi - 1]) {
+          // Propagated from previous segB node
+          double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
+          applyTransition(lastB.data(), contrib.data(), t);
+        } else {
+          std::memcpy(contrib.data(), grp.Fslot(cat, n, sl),
+                      stride * sizeof(double));
+        }
+        for (int i = 0; i < stride; ++i) curI[i] *= contrib[i];
+      }
+      std::memcpy(lastB.data(), curI.data(), stride * sizeof(double));
+    }
+
+    // ============ Shared segment: pathA[lcaIdxA .. end] ============
+    int nPathA = (int)pathA.size();
+    for (int ai = lcaIdxA; ai < nPathA; ++ai) {
+      int n = pathA[ai];
+      int nChild = (topo.ch2[n] >= 0) ? 3 : 2;
+      std::fill(curI.begin(), curI.end(), 1.0);
+
+      for (int sl = 0; sl < nChild; ++sl) {
+        int cn = childAt(n, sl);
+        bool handled = false;
+
+        // Swap conditions (fire at LCA when pA or pB IS the LCA)
+        if (n == pA && sl == slotA) {
+          applyTransition(grp.I(cat, nodeB), contrib.data(),
+                          lenA * rate * sc);
+          handled = true;
+        }
+        if (!handled && n == pB && sl == slotB) {
+          applyTransition(grp.I(cat, nodeA), contrib.data(),
+                          lenB * rate * sc);
+          handled = true;
+        }
+
+        // Dirty children feeding into LCA from segments below
+        if (!handled && nSegA > 0 && ai == lcaIdxA &&
+            cn == pathA[lcaIdxA - 1]) {
+          double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
+          applyTransition(lastA.data(), contrib.data(), t);
+          handled = true;
+        }
+        if (!handled && nSegB > 0 && ai == lcaIdxA &&
+            cn == pathBbelow.back()) {
+          double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
+          applyTransition(lastB.data(), contrib.data(), t);
+          handled = true;
+        }
+
+        // Previous shared-segment node
+        if (!handled && ai > lcaIdxA && cn == pathA[ai - 1]) {
+          double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
+          applyTransition(prevShared.data(), contrib.data(), t);
+          handled = true;
+        }
+
+        if (!handled) {
+          std::memcpy(contrib.data(), grp.Fslot(cat, n, sl),
+                      stride * sizeof(double));
+        }
+
+        for (int i = 0; i < stride; ++i) curI[i] *= contrib[i];
+      }
+
+      std::memcpy(prevShared.data(), curI.data(), stride * sizeof(double));
+    }
+
+    // ============ Root CL → accumulate site likelihoods ============
+    // curI holds the root CL for this category
+    for (int c = 0; c < nChar; ++c) {
+      double sl;
+      if (grp.isMkN) {
+        int off = c * 2;
+        sl = rootF0 * curI[off] + rootF1 * curI[off + 1];
+      } else {
+        int off = c * kStates;
+        sl = 0.0;
+        for (int s = 0; s < kStates; ++s) sl += inv_k * curI[off + s];
+      }
+      if (constProbMode) {
+        totalConstProb += sl;
+      } else {
+        siteLikSum[c] += sl;
+      }
+    }
+  }  // end category loop
+
+  // ============ Return ============
+  if (constProbMode) {
+    return totalConstProb / nCat;
+  } else {
+    double logLik = 0.0;
+    double inv_nCat = 1.0 / nCat;
+    for (int c = 0; c < nChar; ++c) {
+      double avg = siteLikSum[c] * inv_nCat;
+      if (avg <= 0.0) return R_NegInf;
+      logLik += std::log(avg);
+    }
+    return logLik;
+  }
+}
+
+// Convenience wrappers
+static inline double evaluate_swap_candidate(
+    const CLGroup& grp, const TreeNav& topo,
+    const NumericVector& rates,
+    int nodeA, int nodeB,
+    int pA, int slotA, double lenA,
+    const std::vector<int>& pathA,
+    const std::vector<int>& pathAIdx)
+{
+  return evaluate_swap_impl(grp, topo, rates, nodeA, nodeB,
+                            pA, slotA, lenA, pathA, pathAIdx, false);
+}
+
+static inline double evaluate_swap_const_prob(
+    const CLGroup& grp, const TreeNav& topo,
+    const NumericVector& rates,
+    int nodeA, int nodeB,
+    int pA, int slotA, double lenA,
+    const std::vector<int>& pathA,
+    const std::vector<int>& pathAIdx)
+{
+  return evaluate_swap_impl(grp, topo, rates, nodeA, nodeB,
+                            pA, slotA, lenA, pathA, pathAIdx, true);
+}
+
+
 #endif // MKPRIME_GIBBS_PARTIAL_CL_H
