@@ -395,7 +395,7 @@ test_that("All move names in .kMoveTypes are valid moveWeights names", {
     "gibbs_spr", "gibbs_subtree_swap",
     "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
     "block_gibbs_branch",
-    "beta_scale",
+    "beta_scale", "pspr",
     "slice_rate_loss", "slice_rate_neo", "slice_rate_log_sd",
     "slice_tree_length", "slice_beta_scale"
   )

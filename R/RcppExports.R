@@ -49,6 +49,10 @@ bactrian_draws <- function(n) {
     .Call(`_MkPrime_bactrian_draws`, n)
 }
 
+fitch_score_r <- function(parent, child, tipStates, nTip, kStates) {
+    .Call(`_MkPrime_fitch_score_r`, parent, child, tipStates, nTip, kStates)
+}
+
 init_mcmc_state <- function(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale = 1.0) {
     .Call(`_MkPrime_init_mcmc_state`, parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale)
 }

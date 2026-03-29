@@ -10,6 +10,7 @@
 
 #include "mcmc_state.h"
 #include "gibbs_partial_cl.h"
+#include "fitch.h"
 #include <TreeTools/renumber_tree.h>
 #include <cmath>
 #include <cstring>
@@ -73,6 +74,15 @@ NumericVector bactrian_draws(int n) {
   for (int i = 0; i < n; ++i)
     out[i] = bactrian_perturbation();
   return out;
+}
+
+// Exported for unit testing (test-pspr.R)
+// [[Rcpp::export]]
+int fitch_score_r(IntegerVector parent, IntegerVector child,
+                  IntegerMatrix tipStates, int nTip, int kStates) {
+  std::vector<std::pair<IntegerMatrix, int>> parts = {{tipStates, kStates}};
+  return fitch_score_all(INTEGER(parent), INTEGER(child),
+                         parent.size(), nTip, parts);
 }
 
 
@@ -2151,6 +2161,201 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
 }
 
 // ---------------------------------------------------------------------------
+// Parsimony-guided SPR (pSPR) — M-119
+//
+// Like regular SPR but weights candidate regraft edges by their Fitch
+// parsimony score: w_i = exp(-alpha * (score_i - score_min)).
+// Better-scoring positions are proposed more often.
+//
+// The Hastings ratio correction for asymmetric proposal:
+//   log(H) = log(l_regraft) - log(l_merge)       [branch-length Jacobian]
+//          + alpha * (score_new - score_old)       [parsimony bias correction]
+//          - log(w_chosen / sum_w_forward)         [forward proposal]
+//          + log(w_reverse / sum_w_reverse)        [reverse proposal]
+//
+// Since the residual tree is the same for both directions, the candidate
+// set and parsimony scores are identical, simplifying to:
+//   log(H) = log(l_regraft) - log(l_merge) + log(w_orig) - log(w_chosen)
+//          = log(l_regraft) - log(l_merge) - alpha * (score_orig - score_chosen)
+// ---------------------------------------------------------------------------
+
+static constexpr double PSPR_ALPHA = 0.1;  // parsimony bias strength
+
+static List pspr_proposal_impl(
+    const IntegerVector& stateParent, const IntegerVector& stateChild,
+    int nTip, double treeLength,
+    const NumericVector& relBrLengths,
+    const McmcData* data)
+{
+  const int nEdge = stateParent.size();
+  const int root  = nTip + 1;
+
+  // Writable copies for in-place Fitch scoring
+  IntegerVector workParent = clone(stateParent);
+  IntegerVector workChild  = clone(stateChild);
+  int* wp = INTEGER(workParent);
+  int* wc = INTEGER(workChild);
+
+  // 1. Eligible prune edges (parent != root)
+  std::vector<int> eligible;
+  eligible.reserve(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    if (stateParent[i] != root) eligible.push_back(i);
+  if (eligible.empty())
+    return List::create(_["logHastings"] = R_NegInf);
+
+  int pick = (int)(R::unif_rand() * (double)eligible.size());
+  if (pick >= (int)eligible.size()) pick = (int)eligible.size() - 1;
+  const int pruneRow = eligible[pick];
+  const int u = stateParent[pruneRow];
+  const int v = stateChild[pruneRow];
+
+  // 2. Find parentRow (edge → u) and sibRow (u → sibling of v)
+  int parentRow = -1, sibRow = -1, sibNode = -1;
+  for (int i = 0; i < nEdge; ++i) {
+    if (stateChild[i] == u) parentRow = i;
+    if (stateParent[i] == u && stateChild[i] != v) {
+      sibRow = i; sibNode = stateChild[i];
+    }
+  }
+  if (parentRow < 0 || sibRow < 0)
+    return List::create(_["logHastings"] = R_NegInf);
+
+  // 3. BFS: mark descendants of v
+  std::vector<bool> isDesc(2 * nTip + 2, false);
+  isDesc[v] = true;
+  if (v > nTip) {
+    std::vector<int> queue = {v};
+    while (!queue.empty()) {
+      int cur = queue.back(); queue.pop_back();
+      for (int i = 0; i < nEdge; ++i) {
+        if (stateParent[i] == cur) {
+          int c = stateChild[i];
+          isDesc[c] = true;
+          if (c > nTip) queue.push_back(c);
+        }
+      }
+    }
+  }
+
+  // 4. Collect candidate regraft edges
+  std::vector<int> candidates;
+  candidates.reserve(nEdge);
+  for (int i = 0; i < nEdge; ++i) {
+    if (isDesc[stateChild[i]]) continue;
+    if (stateParent[i] == u || stateChild[i] == u) continue;
+    candidates.push_back(i);
+  }
+  if (candidates.empty())
+    return List::create(_["logHastings"] = R_NegInf);
+  const int nCand = (int)candidates.size();
+
+  // 5. Build partition list for Fitch scoring
+  std::vector<std::pair<IntegerMatrix, int>> fitchParts;
+  for (const auto& part : data->parts) {
+    int kEff = (part.type == 0) ? 2 :
+               (part.type == 2) ? part.k : 0;
+    if (kEff == 0) {
+      // Transformational: use max observed k across characters
+      int maxK = 2;
+      for (int c = 0; c < part.tipStates.ncol(); ++c) {
+        for (int t = 0; t < nTip; ++t) {
+          int s = part.tipStates(t, c);
+          if (s >= maxK) maxK = s + 1;
+        }
+      }
+      kEff = maxK;
+    }
+    fitchParts.push_back({part.tipStates, kEff});
+  }
+
+  // 6. Score all candidates using Fitch parsimony
+  std::vector<int> scores;
+  fitch_score_candidates(wp, wc, nEdge, nTip, fitchParts,
+                         pruneRow, parentRow, sibRow,
+                         u, v, sibNode, candidates, scores);
+
+  // Also score the original tree to get the "original position" score.
+  // The original position in the residual tree is the merged edge at
+  // parentRow. We identify it by checking which candidate, if regrafted,
+  // would reproduce a topology equivalent to the original.
+  // Actually: the original tree score = fitch_score_all of unmodified tree.
+  int scoreOrig = fitch_score_all(wp, wc, nEdge, nTip, fitchParts);
+
+  // 7. Compute weights: w_i = exp(-alpha * (score_i - score_min))
+  int minScore = scoreOrig;
+  for (int ci = 0; ci < nCand; ++ci)
+    if (scores[ci] < minScore) minScore = scores[ci];
+
+  std::vector<double> logW(nCand);
+  std::vector<double> w(nCand);
+  double sumW = 0.0;
+  for (int ci = 0; ci < nCand; ++ci) {
+    logW[ci] = -PSPR_ALPHA * (double)(scores[ci] - minScore);
+    w[ci] = std::exp(logW[ci]);
+    sumW += w[ci];
+  }
+
+  // 8. Sample from weighted distribution
+  double rnd = R::unif_rand() * sumW;
+  int chosen = nCand - 1;
+  for (int ci = 0; ci < nCand - 1; ++ci) {
+    if (rnd < w[ci]) { chosen = ci; break; }
+    rnd -= w[ci];
+  }
+
+  // 9. Apply the chosen SPR
+  const int regraftRow = candidates[chosen];
+  const int b = stateChild[regraftRow];
+  const double tau = R::unif_rand();
+
+  NumericVector absLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    absLen[i] = treeLength * relBrLengths[i];
+
+  const double lRegraft = absLen[regraftRow];
+  const double lMerge   = absLen[parentRow] + absLen[sibRow];
+
+  IntegerVector newParent = clone(stateParent);
+  IntegerVector newChild  = clone(stateChild);
+  NumericVector newAbsLen = clone(absLen);
+
+  // Suppress u
+  newChild[parentRow]  = sibNode;
+  newAbsLen[parentRow] = lMerge;
+  // Insert u on regraft edge
+  newChild[regraftRow]  = u;
+  newAbsLen[regraftRow] = tau * lRegraft;
+  // Reuse sibRow for u → b
+  newParent[sibRow] = u;
+  newChild[sibRow]  = b;
+  newAbsLen[sibRow] = (1.0 - tau) * lRegraft;
+
+  // Canonical preorder reordering
+  auto po = TreeTools::preorder_weighted_impl(newParent, newChild, newAbsLen);
+  IntegerMatrix ordEdge = po.first;
+  NumericVector ordAbs  = po.second;
+  IntegerVector ordParent(nEdge), ordChild(nEdge);
+  for (int i = 0; i < nEdge; ++i) {
+    ordParent[i] = ordEdge(i, 0);
+    ordChild[i]  = ordEdge(i, 1);
+  }
+  NumericVector orderedRelBr = ordAbs / treeLength;
+
+  // 10. Hastings ratio: branch-length Jacobian + parsimony bias correction
+  // log(w_orig) - log(w_chosen) = -alpha * (scoreOrig - scores[chosen])
+  double logH_brlen = std::log(lRegraft) - std::log(lMerge);
+  double logH_pars  = -PSPR_ALPHA * (double)(scoreOrig - scores[chosen]);
+  double logHastings = logH_brlen + logH_pars;
+
+  return List::create(_["parent"] = ordParent,
+                      _["child"] = ordChild,
+                      _["rel_br_lengths"] = orderedRelBr,
+                      _["logHastings"] = logHastings);
+}
+
+
+// ---------------------------------------------------------------------------
 // do_move_impl: internal propose/evaluate/accept (raw pointers, no SEXP).
 // do_move_cpp:  Rcpp-exported SEXP wrapper — calls do_move_impl.
 //
@@ -2159,7 +2364,7 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
 //           9=gibbs_p, 10=gibbs_spr, 11=gibbs_subtree_swap,
 //           12=weighted_br_scale, 13=weighted_spr, 14=weighted_subtree_swap,
 //           15=block_gibbs_branch, 16=beta_scale, 17=tbr,
-//           18=neo_joint_scale, 19=slice_scalar
+//           18=neo_joint_scale, 19=slice_scalar, 20=pspr
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -2406,6 +2611,18 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       state->rateLoss = oldRL * mult;
       state->rateNeo  = oldRN * mult;
       logHastings = 2.0 * std::log(mult);
+      break;
+    }
+    case 20: { // pSPR — M-119: parsimony-guided SPR
+      List prop = pspr_proposal_impl(state->parent, state->child,
+                                     data->nTip, state->treeLength,
+                                     state->relBrLengths, data);
+      logHastings = as<double>(prop["logHastings"]);
+      if (!R_FINITE(logHastings)) return false;
+      proposedParent  = as<IntegerVector>(prop["parent"]);
+      proposedChild   = as<IntegerVector>(prop["child"]);
+      proposedRelBr   = as<NumericVector>(prop["rel_br_lengths"]);
+      topologyChanged = true;
       break;
     }
     default:

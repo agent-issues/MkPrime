@@ -1805,6 +1805,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
              weight = max(1, nEdge / 4), dim = 1L)
       ))
     }
+    # Parsimony-guided SPR (M-119)
+    if (isTRUE(mcmc$pSpr)) {
+      moves <- c(moves, list(
+        list(name = "pspr", type = "pspr", target = NULL,
+             weight = max(1, nEdge / 4), dim = 1L)
+      ))
+    }
     # Block Gibbs branch-length sweep (M-054 reframed)
     if (isTRUE(mcmc$blockGibbsBranch)) {
       moves <- c(moves, list(
@@ -1917,7 +1924,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   slice_rate_neo = 19L,
   slice_rate_log_sd = 19L,
   slice_tree_length = 19L,
-  slice_beta_scale = 19L
+  slice_beta_scale = 19L,
+  pspr = 20L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)
@@ -2423,6 +2431,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     p = 0.35, rate_loss = 0.35, rate_log_sd = 0.35,
     rate_neo = 0.35, neo_joint = 0.35,
     beta_scale = 0.35,
+    pspr = 0.10,
     # Gibbs/weighted/block/slice moves: no MH tuning to adapt
     gibbs_spr = NA_real_, gibbs_subtree_swap = NA_real_,
     weighted_branch_lengths = NA_real_,
@@ -2444,6 +2453,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     rate_log_sd = "scale_rate_log_sd",
     rate_neo = "scale_rate_neo",
     neo_joint = "scale_neo_joint",
+    pspr = NA_character_,
     # Gibbs/weighted/block/slice moves: no tuning to adapt
     gibbs_spr = NA_character_, gibbs_subtree_swap = NA_character_,
     weighted_branch_lengths = NA_character_,

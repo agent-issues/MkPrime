@@ -107,6 +107,12 @@
 #'   enabling larger jumps in tree space. Cost: O(nEdge) per proposal (same
 #'   as SPR). The adaptive scheduler will downweight TBR on small trees where
 #'   SPR is sufficient.
+#' @param pSpr Logical; include the parsimony-guided SPR move (default
+#'   `TRUE`). Like standard SPR but weights candidate regraft positions by
+#'   Fitch parsimony score, so topologically better positions are proposed
+#'   more often. Much cheaper than Gibbs SPR (no likelihood evaluation per
+#'   candidate), but better guided than uniform SPR.
+#'   See Yang & Rodríguez (2013); Ronquist et al. (2020).
 #' @param blockGibbsBranch Logical; include the block Gibbs branch-length
 #'   sweep move (default `FALSE`). Each call sweeps over all edge pairs
 #'   in random-permutation order, sampling each from an approximate
@@ -239,6 +245,7 @@ MkPrimeMCMC <- function(
     gibbsSpr = TRUE,
     gibbsSubtreeSwap = TRUE,
     tbr = TRUE,
+    pSpr = TRUE,
     weightedBranchScale = FALSE,
     weightedSpr = FALSE,
     weightedSubtreeSwap = FALSE,
@@ -331,6 +338,7 @@ MkPrimeMCMC <- function(
 
   # Validate move toggles
   tbr <- as.logical(tbr)
+  pSpr <- as.logical(pSpr)
   gibbsSpr <- as.logical(gibbsSpr)
   gibbsSubtreeSwap <- as.logical(gibbsSubtreeSwap)
   weightedBranchScale <- as.logical(weightedBranchScale)
@@ -355,7 +363,7 @@ MkPrimeMCMC <- function(
       "rate_loss", "rate_log_sd", "rate_neo",
       "gibbs_spr", "gibbs_subtree_swap",
       "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
-      "block_gibbs_branch"
+      "block_gibbs_branch", "pspr"
     )
     bad <- setdiff(names(moveWeights), validNames)
     if (length(bad) > 0L) {
@@ -441,7 +449,7 @@ MkPrimeMCMC <- function(
          checkpointFile = checkpointFile,
          treeFile = treeFile, logFile = logFile, bufferSize = bufferSize,
          plotEvery = plotEvery, progressFn = progressFn,
-         tbr = tbr,
+         tbr = tbr, pSpr = pSpr,
          gibbsSpr = gibbsSpr, gibbsSubtreeSwap = gibbsSubtreeSwap,
          weightedBranchScale = weightedBranchScale,
          weightedSpr = weightedSpr,
