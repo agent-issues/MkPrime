@@ -31,3 +31,5 @@ tools/
 .vtune-lib/
 vtune-gibbs-*/
 vtune-out/
+tests/testthat/_problems/
+tests/testthat/testthat-problems.rds
