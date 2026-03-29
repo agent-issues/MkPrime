@@ -119,8 +119,11 @@ mkp_stepping_stone <- function(data, tree = NULL,
   nEdge <- nrow(tree$edge)
   nTrans <- sum(mkd$type == "transformational")
   hasNeo <- any(mkd$type == "neomorphic")
+  # joint2d = FALSE: stepping-stone doesn't adapt rho, so joint moves
+
+  # would always run with rho=0 (redundant with individual scale moves)
   moves <- .BuildMoves(nEdge, nTrans, hasNeo, NULL,
-                       fixTopology = fixTopology)
+                       fixTopology = fixTopology, joint2d = FALSE)
   moveWeights <- vapply(moves, `[[`, numeric(1), "weight")
 
   mcmcTuning <- MkPrimeMCMC(nIter = 100L)$tuning

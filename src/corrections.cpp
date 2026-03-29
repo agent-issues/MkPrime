@@ -60,8 +60,6 @@ Rcpp::NumericVector mk_prime_relabel_log_batch(
   int n = kPrime_vec.size();
   Rcpp::NumericVector result(n);
 
-  double log_denom_base = std::lgamma(1.0); // lgamma(0+1) for the kObs=kPrime case
-
   for (int i = 0; i < n; ++i) {
     int kp = kPrime_vec[i];
     if (kp < kObs) {

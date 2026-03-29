@@ -1751,8 +1751,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     rls <- samples[, "rate_log_sd"]
     ok <- tl > 0 & rls > 0
     if (sum(ok) >= 30) {
-      rho <- cor(log(tl[ok]), log(rls[ok]))
-      rhos$rho_tl_rls <- max(-0.95, min(0.95, rho))
+      # u.123: cor() returns NaN/NA for constant input; guard before clamping
+      rho <- suppressWarnings(cor(log(tl[ok]), log(rls[ok])))
+      if (is.finite(rho)) {
+        rhos$rho_tl_rls <- max(-0.95, min(0.95, rho))
+      }
     }
   }
 
@@ -1762,8 +1765,10 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     rl <- samples[, "rate_loss"]
     ok <- tl > 0 & rl > 0
     if (sum(ok) >= 30) {
-      rho <- cor(log(tl[ok]), log(rl[ok]))
-      rhos$rho_tl_rl <- max(-0.95, min(0.95, rho))
+      rho <- suppressWarnings(cor(log(tl[ok]), log(rl[ok])))
+      if (is.finite(rho)) {
+        rhos$rho_tl_rl <- max(-0.95, min(0.95, rho))
+      }
     }
   }
 

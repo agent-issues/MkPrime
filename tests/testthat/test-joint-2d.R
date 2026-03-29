@@ -83,6 +83,21 @@ test_that(".EstimateJointRhos returns zeros with too few samples", {
   expect_equal(rhos2$rho_tl_rls, 0.0)
 })
 
+test_that("u.123: .EstimateJointRhos returns 0 for constant input (NaN cor)", {
+  # If all values are identical, cor() returns NaN. The rho should stay at 0.
+  n <- 100
+  constant <- cbind(tree_length = rep(1.5, n), rate_log_sd = rep(0.3, n),
+                    rate_loss = rep(0.5, n))
+  rhos <- MkPrime:::.EstimateJointRhos(constant, hasNeo = TRUE)
+  expect_equal(rhos$rho_tl_rls, 0.0)
+  expect_equal(rhos$rho_tl_rl, 0.0)
+
+  # One column constant, other varies → cor is NaN
+  mixed <- cbind(tree_length = rep(2.0, n), rate_log_sd = rlnorm(n))
+  rhos2 <- MkPrime:::.EstimateJointRhos(mixed, hasNeo = FALSE)
+  expect_equal(rhos2$rho_tl_rls, 0.0)
+})
+
 test_that(".EstimateJointRhos recovers known correlation", {
   set.seed(9134)
   n <- 200
