@@ -8,6 +8,7 @@
 
 #include <Rcpp.h>
 #include <TreeTools/renumber_tree.h>
+#include <numeric>  // std::accumulate (used by dirichlet_simplex_impl)
 #include <vector>
 #include <cmath>
 
@@ -247,5 +248,114 @@ List beta_simplex_proposal(NumericVector x, int index, double tuning) {
   int dummy; double d1, d2;
   if (!beta_simplex_impl(xNew, index, tuning, logHastings, dummy, d1, d2))
     return List::create(_["value"] = x, _["logHastings"] = 0.0);
+  return List::create(_["value"] = xNew, _["logHastings"] = logHastings);
+}
+
+
+// ---------------------------------------------------------------------------
+// DirichletSimplex proposal (M-125) — update K elements simultaneously
+//
+// Selects K random elements, draws new fractions from a Dirichlet centered on
+// their current values, and rescales unselected elements to maintain the
+// simplex sum.  Follows RevBayes mvDirichletSimplex (Höhna et al. 2016).
+//
+//   x       — simplex vector (modified in-place)
+//   nCats   — number of elements to update (K). Clamped to [2, n].
+//   alpha   — concentration parameter (tuning). Higher = more conservative.
+//   logHastings — output: log Metropolis-Hastings ratio
+//   snapshot    — output: pre-move copy of x for rollback
+//
+// Returns false if proposal is degenerate; true otherwise.
+
+bool dirichlet_simplex_impl(NumericVector& x, int nCats, double alpha,
+                            double& logHastings, NumericVector& snapshot) {
+  const int n = x.size();
+  if (n < 2) { logHastings = 0.0; return true; }
+
+  // Clamp nCats
+  if (nCats < 2) nCats = 2;
+  if (nCats > n) nCats = n;
+
+  // Save snapshot for rollback
+  for (int i = 0; i < n; ++i) snapshot[i] = x[i];
+
+  // ---- Choose K random indices (Fisher-Yates partial shuffle) ----
+  std::vector<int> indices(n);
+  for (int i = 0; i < n; ++i) indices[i] = i;
+  for (int i = 0; i < nCats; ++i) {
+    int j = i + (int)(unif_rand() * (double)(n - i));
+    if (j >= n) j = n - 1;
+    std::swap(indices[i], indices[j]);
+  }
+
+  // ---- Build K-simplex from selected elements ----
+  double selSum = 0.0;
+  for (int i = 0; i < nCats; ++i) selSum += x[indices[i]];
+  if (selSum <= 0.0) { logHastings = 0.0; return false; }
+
+  std::vector<double> xK(nCats);
+  for (int i = 0; i < nCats; ++i) xK[i] = x[indices[i]] / selSum;
+
+  // ---- Forward Dirichlet parameters: alpha * xK_i ----
+  std::vector<double> alphaFwd(nCats);
+  for (int i = 0; i < nCats; ++i) {
+    alphaFwd[i] = xK[i] * alpha + 1.0;
+    if (alphaFwd[i] < 0.01) alphaFwd[i] = 0.01;
+  }
+
+  // ---- Draw zK ~ Dir(alphaFwd) via Gamma variates ----
+  std::vector<double> zK(nCats);
+  double gammaSum = 0.0;
+  for (int i = 0; i < nCats; ++i) {
+    zK[i] = R::rgamma(alphaFwd[i], 1.0);
+    if (zK[i] < 1e-300) zK[i] = 1e-300;
+    gammaSum += zK[i];
+  }
+  for (int i = 0; i < nCats; ++i) zK[i] /= gammaSum;
+
+  // ---- Apply: set selected elements to zK * selSum ----
+  // Unselected elements are unchanged; total sum is preserved.
+  for (int i = 0; i < nCats; ++i) {
+    x[indices[i]] = zK[i] * selSum;
+  }
+
+  // ---- Reverse Dirichlet parameters: alpha * zK_i ----
+  std::vector<double> alphaRev(nCats);
+  for (int i = 0; i < nCats; ++i) {
+    alphaRev[i] = zK[i] * alpha + 1.0;
+    if (alphaRev[i] < 0.01) alphaRev[i] = 0.01;
+  }
+
+  // ---- Log Hastings = log Dir(xK | alphaRev) - log Dir(zK | alphaFwd) ----
+  // No Jacobian needed: unselected elements unchanged, selected sum preserved.
+  double logFwd = 0.0, logRev = 0.0;
+  double sumAlphaFwd = 0.0, sumAlphaRev = 0.0;
+  for (int i = 0; i < nCats; ++i) {
+    sumAlphaFwd += alphaFwd[i];
+    sumAlphaRev += alphaRev[i];
+  }
+  logFwd += std::lgamma(sumAlphaFwd);
+  logRev += std::lgamma(sumAlphaRev);
+  for (int i = 0; i < nCats; ++i) {
+    logFwd -= std::lgamma(alphaFwd[i]);
+    logRev -= std::lgamma(alphaRev[i]);
+    logFwd += (alphaFwd[i] - 1.0) * std::log(std::max(zK[i], 1e-300));
+    logRev += (alphaRev[i] - 1.0) * std::log(std::max(xK[i], 1e-300));
+  }
+
+  logHastings = logRev - logFwd;
+  return true;
+}
+
+
+// Rcpp-exported wrapper for testing from R
+// [[Rcpp::export]]
+List dirichlet_simplex_proposal(NumericVector x, int nCats, double alpha) {
+  const int n = x.size();
+  NumericVector xNew = clone(x);
+  NumericVector snapshot(n);
+  double logHastings;
+  if (!dirichlet_simplex_impl(xNew, nCats, alpha, logHastings, snapshot))
+    return List::create(_["value"] = x, _["logHastings"] = R_NegInf);
   return List::create(_["value"] = xNew, _["logHastings"] = logHastings);
 }

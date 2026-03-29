@@ -46,6 +46,10 @@ bool beta_simplex_impl(NumericVector& x, int index, double tuning,
                        double& logHastings, int& outOther,
                        double& outOldIdx, double& outOldOther);  // OPP-5
 
+// M-125: block Dirichlet simplex proposal (defined in proposals.cpp)
+bool dirichlet_simplex_impl(NumericVector& x, int nCats, double alpha,
+                            double& logHastings, NumericVector& snapshot);
+
 
 // ---------------------------------------------------------------------------
 // Bactrian perturbation kernel  (M-118, Yang & Rodríguez 2013)
@@ -147,6 +151,8 @@ struct McmcState {
   double betaScale = 1.0;
   // M-121: persistent node-level CL cache for partial evaluation
   NodeCLCache nodeCL;
+  // M-125: snapshot for block Dirichlet branch-length rollback
+  NumericVector brSnapshot;
 };
 
 
@@ -262,6 +268,7 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
   s->logLik       = logLik;
   s->logPrior     = logPrior;
   s->betaScale    = betaScale;
+  s->brSnapshot   = NumericVector(relBrLengths.size());
   return Rcpp::XPtr<McmcState>(s, true);
 }
 
@@ -3278,6 +3285,17 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       logHastings = std::log(mult1) + std::log(mult2);
       break;
     }
+    case 23: { // M-125: dirichlet_branch (block Dirichlet on relBrLengths)
+      // nCats passed via intWalkWindow for this move type (repurposed)
+      int nCats = intWalkWindow;
+      if (nCats < 2) nCats = 2;
+      if (!dirichlet_simplex_impl(state->relBrLengths, nCats,
+                                  scaleTuning, logHastings,
+                                  state->brSnapshot)) {
+        return false;
+      }
+      break;
+    }
     default:
       return false;
   }
@@ -3291,6 +3309,10 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       state->relBrLengths[bsIdx2] = bsOldVal2;
     }
     if (moveType == 7 && kPrimeCharIdx >= 0) state->kPrime[kPrimeCharIdx] = oldKPrimeVal;
+    if (moveType == 23) {
+      const int nE = state->relBrLengths.size();
+      for (int i = 0; i < nE; ++i) state->relBrLengths[i] = state->brSnapshot[i];
+    }
     if (nniInPlace) { state->parent[nniCRow] = nniSavedP_cRow; state->parent[nniWRow] = nniSavedP_wRow; }
     return false;
   }
@@ -3315,6 +3337,10 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       state->relBrLengths[bsIdx2] = bsOldVal2;
     }
     if (moveType == 7 && kPrimeCharIdx >= 0) state->kPrime[kPrimeCharIdx] = oldKPrimeVal;
+    if (moveType == 23) {
+      const int nE = state->relBrLengths.size();
+      for (int i = 0; i < nE; ++i) state->relBrLengths[i] = state->brSnapshot[i];
+    }
     if (nniInPlace) { state->parent[nniCRow] = nniSavedP_cRow; state->parent[nniWRow] = nniSavedP_wRow; }
     return false;
   }
@@ -3473,6 +3499,11 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     state->relBrLengths[bsIdx2] = bsOldVal2;
   }
   if (moveType == 7 && kPrimeCharIdx >= 0) state->kPrime[kPrimeCharIdx] = oldKPrimeVal;
+  // M-125: Dirichlet simplex rollback — restore full vector from snapshot
+  if (moveType == 23) {
+    const int nE = state->relBrLengths.size();
+    for (int i = 0; i < nE; ++i) state->relBrLengths[i] = state->brSnapshot[i];
+  }
   // OPP-6b: in-place NNI rollback — restore 2 parent values
   if (nniInPlace) { state->parent[nniCRow] = nniSavedP_cRow; state->parent[nniWRow] = nniSavedP_wRow; }
 
@@ -3522,6 +3553,7 @@ List run_mcmc_batch_cpp(
     NumericMatrix chainScaleTunings,
     NumericVector chainBsmpTunings,
     IntegerVector chainIntWalkWins,
+    IntegerVector moveIntParams,
     NumericMatrix sliceWidths,
     NumericMatrix jointRhos,
     int nBatch,
@@ -3608,12 +3640,16 @@ List run_mcmc_batch_cpp(
           data, states[ch], charIdx,
           sliceWidths(ch, moveIdx), betas[ch]);
       } else {
+        // Per-move int param overrides chain-level intWalkWindow
+        int iww = moveIntParams[moveIdx] > 0
+                    ? moveIntParams[moveIdx]
+                    : chainIntWalkWins[ch];
         accepted = do_move_impl(
           data, states[ch],
           moveType, charIdx,
           chainScaleTunings(ch, moveIdx),
           chainBsmpTunings[ch],
-          chainIntWalkWins[ch],
+          iww,
           betas[ch],
           jointRhos(ch, moveIdx)
         );

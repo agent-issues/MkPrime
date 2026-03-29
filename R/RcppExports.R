@@ -89,8 +89,8 @@ do_move_cpp <- function(dataPtr, statePtr, moveType, charIdx, scaleTuning, betaS
     .Call(`_MkPrime_do_move_cpp`, dataPtr, statePtr, moveType, charIdx, scaleTuning, betaSimplexTuning, intWalkWindow, beta)
 }
 
-run_mcmc_batch_cpp <- function(dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, sliceParamCodes, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, sliceWidths, jointRhos, nBatch, startIter, warmup, thin, hasNeo, nEdge) {
-    .Call(`_MkPrime_run_mcmc_batch_cpp`, dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, sliceParamCodes, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, sliceWidths, jointRhos, nBatch, startIter, warmup, thin, hasNeo, nEdge)
+run_mcmc_batch_cpp <- function(dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, sliceParamCodes, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, moveIntParams, sliceWidths, jointRhos, nBatch, startIter, warmup, thin, hasNeo, nEdge) {
+    .Call(`_MkPrime_run_mcmc_batch_cpp`, dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, sliceParamCodes, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, moveIntParams, sliceWidths, jointRhos, nBatch, startIter, warmup, thin, hasNeo, nEdge)
 }
 
 debug_mcmc_data <- function(dataPtr) {
@@ -115,6 +115,10 @@ spr_proposal <- function(edge, nTip, treeLength, relBrLengths) {
 
 beta_simplex_proposal <- function(x, index, tuning) {
     .Call(`_MkPrime_beta_simplex_proposal`, x, index, tuning)
+}
+
+dirichlet_simplex_proposal <- function(x, nCats, alpha) {
+    .Call(`_MkPrime_dirichlet_simplex_proposal`, x, nCats, alpha)
 }
 
 jc_transition_probs <- function(k, t) {

@@ -357,11 +357,12 @@ test_that("run_mcmc_batch_cpp returns move_time_ns matrix", {
   jointRhos <- matrix(0.0, 1, nMoves)
   bsTunings <- 10
   iwWins <- 1L
+  moveIntPars <- integer(nMoves)
 
   result <- run_mcmc_batch_cpp(
     mcmcData, list(chainState), 1.0,
     moveTypeCodes, transIdx0, sliceParamCodes, moveWeights,
-    scaleTunings, bsTunings, iwWins, sliceWidths, jointRhos,
+    scaleTunings, bsTunings, iwWins, moveIntPars, sliceWidths, jointRhos,
     50L, 1L, 100L, 10L,
     any(mkd$type == "neomorphic"), nEdge
   )
@@ -395,7 +396,7 @@ test_that("All move names in .kMoveTypes are valid moveWeights names", {
     "rate_loss", "rate_log_sd", "rate_neo", "neo_joint",
     "gibbs_spr", "gibbs_subtree_swap",
     "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
-    "block_gibbs_branch",
+    "block_gibbs_branch", "dirichlet_branch",
     "beta_scale", "pspr",
     "joint_tl_rls", "joint_tl_rl",
     "slice_rate_loss", "slice_rate_neo", "slice_rate_log_sd",

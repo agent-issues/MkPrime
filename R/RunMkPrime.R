@@ -438,6 +438,10 @@ RunMkPrime <- function(data, tree = NULL,
   moveTypeCodes <- vapply(moves, function(m) .kMoveTypes[[m$name]], integer(1L))
   # Slice param index: 0=treeLength, 1=rateLoss, 2=rateLogSd, 3=rateNeo, 4=betaScale
   sliceParamCodes <- vapply(moves, function(m) m$sliceParamIdx %||% 0L, integer(1L))
+  # Per-move integer parameter (e.g. nCats for dirichlet_branch; 0 = use chain default)
+  moveIntParams <- vapply(moves, function(m) {
+    if (!is.null(m$nCats)) as.integer(m$nCats) else 0L
+  }, integer(1L))
   transIdx      <- which(mkd$type == "transformational")
   transIdx0     <- if (length(transIdx) > 0L) transIdx - 1L else integer(0L)
   hasNeo        <- any(mkd$type == "neomorphic")
@@ -569,7 +573,8 @@ RunMkPrime <- function(data, tree = NULL,
     result <- run_mcmc_batch_cpp(
       mcmcData, r$chainStates, r$betas,
       moveTypeCodes, transIdx0, sliceParamCodes, moveWeights,
-      scaleTunings, bsTunings, iwWins, sliceWidths, jointRhos,
+      scaleTunings, bsTunings, iwWins, moveIntParams,
+      sliceWidths, jointRhos,
       nBatch, batchStart, cppWarmup, mcmc$thin,
       hasNeo, nEdge
     )
@@ -1680,6 +1685,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
         beta_scale  = tun$scale_beta_scale %||% 0.5,
         joint_tl_rls = tun$scale_joint_tl_rls %||% 0.5,
         joint_tl_rl  = tun$scale_joint_tl_rl %||% 0.5,
+        dirichlet_branch = tun$dirichlet_alpha %||% 10,
         p           = 0.5,  # Gibbs move: scale ignored by C++; placeholder
         0.5
       )
@@ -1914,6 +1920,18 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     }
   }
 
+  # Block Dirichlet simplex branch-length move (M-125)
+  if (isTRUE(mcmc$dirichletBranch) && nEdge >= 4L) {
+    nCatsDirichlet <- as.integer(min(nEdge, 10L))
+    moves <- c(moves, list(
+      list(name = "dirichlet_branch", type = "dirichlet_simplex",
+           target = "rel_br_lengths",
+           weight = max(1L, nEdge %/% 4L),
+           dim = nCatsDirichlet,
+           nCats = nCatsDirichlet)
+    ))
+  }
+
   if (nTrans > 0) {
     kPrimeMoves <- list(
       list(name = "kPrime", type = "int_walk", target = "kPrime",
@@ -1993,12 +2011,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   # Scalar model-parameter moves (dim=1, non-topology) can be starved when
   # kPrime and branch_lengths dominate the weight budget. Guarantee each
   # scalar move gets at least 2% of the pre-floor total weight.
+  # Joint 2D moves also get the floor so they're comparable to individual
+  # scalar moves they complement.
   scalarTypes <- c("scale", "int_walk", "gibbs_p", "scale_p", "slice")
   totalWeight <- sum(vapply(moves, `[[`, numeric(1), "weight"))
   floorVal <- totalWeight * 0.02
   for (i in seq_along(moves)) {
     m <- moves[[i]]
-    if (m$dim == 1L && m$type %in% scalarTypes) {
+    if ((m$dim == 1L && m$type %in% scalarTypes) || m$type == "joint_2d") {
       moves[[i]]$weight <- max(m$weight, floorVal)
     }
   }
@@ -2032,7 +2052,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   slice_beta_scale = 19L,
   pspr = 20L,
   joint_tl_rls = 21L,
-  joint_tl_rl = 22L
+  joint_tl_rl = 22L,
+  dirichlet_branch = 23L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)
@@ -2105,11 +2126,15 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
       rate_neo    = tuning$scale_rate_neo,
       neo_joint   = tuning$scale_neo_joint %||% tuning$scale_rate_loss,
       beta_scale  = tuning$scale_beta_scale,
+      dirichlet_branch = tuning$dirichlet_alpha %||% 0.1,
       0.5  # default; gibbs_p ignores scaleTun (returns before using it)
     )
+    # For dirichlet_branch, intWalkWindow carries nCats
+    iww <- if (!is.null(move$nCats)) as.integer(move$nCats)
+           else tuning$int_walk_window
     accepted <- do_move_cpp(
       mcmcData, stateOrPtr, moveCode, charIdx,
-      scaleTun, tuning$beta_simplex, tuning$int_walk_window, beta
+      scaleTun, tuning$beta_simplex, iww, beta
     )
     return(list(accept = accepted, statePtr = stateOrPtr))
   }
@@ -2539,6 +2564,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     rate_neo = 0.35, neo_joint = 0.35,
     beta_scale = 0.35,
     pspr = 0.10,
+    dirichlet_branch = 0.234,
     joint_tl_rls = 0.25, joint_tl_rl = 0.25,
     # Gibbs/weighted/block/slice moves: no MH tuning to adapt
     gibbs_spr = NA_real_, gibbs_subtree_swap = NA_real_,
@@ -2564,6 +2590,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     pspr = NA_character_,
     joint_tl_rls = "scale_joint_tl_rls",
     joint_tl_rl = "scale_joint_tl_rl",
+    dirichlet_branch = "dirichlet_alpha",
     # Gibbs/weighted/block/slice moves: no tuning to adapt
     gibbs_spr = NA_character_, gibbs_subtree_swap = NA_character_,
     weighted_branch_lengths = NA_character_,
@@ -2589,6 +2616,10 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
       } else if (nm == "branch_lengths") {
         tuning[[tk]] <- tuning[[tk]] / adj
         tuning[[tk]] <- max(2, tuning[[tk]])
+      } else if (nm == "dirichlet_branch") {
+        # Inverted: higher alpha = tighter concentration = more conservative
+        tuning[[tk]] <- tuning[[tk]] / adj
+        tuning[[tk]] <- max(1.0, min(tuning[[tk]], 1000))
       } else {
         tuning[[tk]] <- tuning[[tk]] * adj
         tuning[[tk]] <- max(0.01, tuning[[tk]])

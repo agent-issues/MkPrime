@@ -182,9 +182,10 @@ test_that(".BuildMoves sets dim = 1 for all standard moves", {
   moves <- MkPrime:::.BuildMoves(nEdge, nTrans = 3L, hasNeo = TRUE, mcmc)
   dims  <- vapply(moves, function(m) m$dim %||% 1L, integer(1L))
   names(dims) <- vapply(moves, `[[`, character(1), "name")
-  # Joint moves have dim=2; all other non-block moves should be dim=1
-  joint_moves <- c("neo_joint", "joint_tl_rls", "joint_tl_rl")
-  expect_true(all(dims[!names(dims) %in% joint_moves] == 1L))
+  # Joint moves have dim=2; dirichlet_branch has dim=nCats; rest are dim=1
+  multi_dim_moves <- c("neo_joint", "joint_tl_rls", "joint_tl_rl",
+                        "dirichlet_branch")
+  expect_true(all(dims[!names(dims) %in% multi_dim_moves] == 1L))
 })
 
 

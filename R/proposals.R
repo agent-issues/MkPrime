@@ -47,6 +47,26 @@ ProposeBetaSimplex <- function(x, index = NULL, tuning = 10.0) {
 }
 
 
+#' Dirichlet simplex proposal for simplex vectors
+#'
+#' Selects K random elements, draws new fractions from a Dirichlet centred
+#' on their current values, and rescales unselected elements to maintain
+#' the simplex constraint. Follows RevBayes' `mvDirichletSimplex` design.
+#'
+#' @param x Current simplex vector (all positive, sums to a constant).
+#' @param nCats Number of elements to update (2 to `length(x)`).
+#' @param alpha Concentration parameter (higher = more conservative).
+#' @return `list(value, logHastings)`.
+#' @keywords internal
+ProposeDirichletSimplex <- function(x, nCats = min(length(x), 10L),
+                                    alpha = 10.0) {
+  n <- length(x)
+  if (n < 2L) return(list(value = x, logHastings = 0))
+  nCats <- as.integer(max(2L, min(nCats, n)))
+  dirichlet_simplex_proposal(x, nCats, alpha)
+}
+
+
 #' BoundedIntegerWalk proposal
 #'
 #' Proposes x' = x + delta where delta ~ Uniform(-window, ..., window).

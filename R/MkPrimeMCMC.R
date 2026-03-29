@@ -129,6 +129,11 @@
 #'   mix slowly through the branch-length space. The adaptive scheduler
 #'   accounts for the multi-dimensional nature of this move via its `dim`
 #'   field.
+#' @param dirichletBranch Logical; include the block Dirichlet simplex
+#'   branch-length move (default `TRUE`). Each proposal selects K random
+#'   edges, draws new fractions from a Dirichlet centered on current values,
+#'   and rescales the remaining edges to maintain the simplex. Cost: one
+#'   likelihood evaluation per proposal (same as BetaSimplex).
 #' @param nBranchBins Integer; number of branch-fraction bins for weighted
 #'   and block Gibbs moves (default `10L`). Used by `weightedBranchScale`,
 #'   `weightedSpr`, `weightedSubtreeSwap`, and `blockGibbsBranch`.
@@ -258,6 +263,7 @@ MkPrimeMCMC <- function(
     weightedSpr = FALSE,
     weightedSubtreeSwap = FALSE,
     blockGibbsBranch = FALSE,
+    dirichletBranch = TRUE,
     nBranchBins = 10L,
     moveWeights = NULL,
     tuning = list(),
@@ -354,6 +360,7 @@ MkPrimeMCMC <- function(
   weightedSpr <- as.logical(weightedSpr)
   weightedSubtreeSwap <- as.logical(weightedSubtreeSwap)
   blockGibbsBranch <- as.logical(blockGibbsBranch)
+  dirichletBranch <- as.logical(dirichletBranch)
   nBranchBins <- as.integer(nBranchBins)
   if (nBranchBins < 2L) {
     cli::cli_abort("{.arg nBranchBins} must be at least 2, got {nBranchBins}.")
@@ -372,7 +379,7 @@ MkPrimeMCMC <- function(
       "rate_loss", "rate_log_sd", "rate_neo",
       "gibbs_spr", "gibbs_subtree_swap",
       "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
-      "block_gibbs_branch", "pspr",
+      "block_gibbs_branch", "dirichlet_branch", "pspr",
       "joint_tl_rls", "joint_tl_rl"
     )
     bad <- setdiff(names(moveWeights), validNames)
@@ -402,6 +409,7 @@ MkPrimeMCMC <- function(
     scale_beta_scale = 0.5,
     scale_joint_tl_rls = 0.5,
     scale_joint_tl_rl = 0.5,
+    dirichlet_alpha = 0.1,
     int_walk_window = 1L,
     slice_width_rate_loss = 1.0,
     slice_width_rate_neo = 1.0,
@@ -467,6 +475,7 @@ MkPrimeMCMC <- function(
          weightedSpr = weightedSpr,
          weightedSubtreeSwap = weightedSubtreeSwap,
          blockGibbsBranch = blockGibbsBranch,
+         dirichletBranch = dirichletBranch,
          nBranchBins = nBranchBins,
          moveWeights = moveWeights,
          tuning = tuning,
