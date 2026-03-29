@@ -32,7 +32,7 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
 
-| M-121 | P3 | OPEN | **Node-level CL dirty flags for standard NNI/SPR.** Extend the partial CL framework (used by Gibbs moves, M-105/M-111) to standard NNI and SPR proposals. NNI invalidates CLs only along the path from modified nodes to root — O(depth) instead of O(n_nodes). Requires careful engineering of CL rollback on rejection. See `research-mcmc-optimizations.md` §4. |
+| M-121 | P3 | DONE | **Node-level CL dirty flags for standard NNI/SPR.** Extend the partial CL framework (used by Gibbs moves, M-105/M-111) to standard NNI and SPR proposals. NNI invalidates CLs only along the path from modified nodes to root — O(depth) instead of O(n_nodes). Requires careful engineering of CL rollback on rejection. See `research-mcmc-optimizations.md` §4. |
 | M-125 | P2 | OPEN | **Block branch-length proposal for better mixing.** The current one-at-a-time beta_simplex on individual relative branch lengths is the main mixing bottleneck (log_likelihood ESS ~15–20 on Vinther2008 fixed-topology). Consider a block Dirichlet or Hamiltonian-within-Gibbs proposal that updates multiple edges jointly. |
 
 
