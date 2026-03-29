@@ -845,16 +845,17 @@ static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta) {
 
 
 // ---------------------------------------------------------------------------
-// gibbs_subtree_swap_impl  (M-086, M-109 in-place)
+// gibbs_subtree_swap_impl  (M-086, M-109 in-place, M-111 partial CL)
 //
 // GibbsSubtreeSwap: enumerate all valid subtree-swap partners for a randomly
 // chosen node, weight by exp(β × logLik), sample proportionally, apply.
 // Same Gibbs semantics and design choices as gibbs_spr_impl.
 // Branch lengths swap with their subtrees (Jacobian = 1); see M-084.
 //
-// M-109: In-place topology modification with save/restore.  Per-candidate
-// evaluation uses preorder_into() into shared buffers — no per-candidate
-// clone() or preorder_weighted_impl allocation.
+// M-111: Partial CL reuse — cache per-node CLs from one downpass, then
+// evaluate each candidate by updating only the O(depth) affected path
+// (union of paths from pA and pB to root).  Falls back to full evaluation
+// when Q-heterogeneity is enabled.
 // ---------------------------------------------------------------------------
 
 // Local helper: find edge row where child[i] == node
@@ -864,8 +865,16 @@ static int find_child_row_gibbs(const IntegerVector& child, int node) {
   return -1;
 }
 
+// Full-evaluation fallback (Q-het or validation)
+static bool gibbs_subtree_swap_impl_full(McmcData* data, McmcState* state,
+                                         double beta);
+
 static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
                                     double beta) {
+  // Fallback: Q-heterogeneity not yet supported in partial CL
+  if (data->qHeterogeneity)
+    return gibbs_subtree_swap_impl_full(data, state, beta);
+
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
 
@@ -880,58 +889,156 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
   if (partners.empty()) return false;
   const int nPart = (int)partners.size();
 
-  // 3. Find rowA once
-  const int rowA = find_child_row_gibbs(state->child, nodeA);
-  if (rowA < 0) return false;
-
-  // Working copy of parent (cloned ONCE, reused for all candidates).
-  // child is unchanged in a subtree swap.
-  IntegerVector workPar = clone(state->parent);
-
-  // Build absolute edge lengths once
+  // 3. Build absolute edge lengths
   NumericVector absLen(nEdge);
   for (int i = 0; i < nEdge; ++i)
     absLen[i] = state->treeLength * state->relBrLengths[i];
 
-  // Pre-allocate output buffers for preorder_into (reused across candidates)
-  IntegerVector ordPar(nEdge), ordCh(nEdge);
-  NumericVector ordAbs(nEdge);
+  // ===== M-111: Partial CL cache setup =====
 
-  // Save originals for rowA
-  const int origParA = workPar[rowA];
-  const double origAbsA = absLen[rowA];
+  TreeNav topo;
+  topo.build(state->parent, state->child, absLen, nTip);
 
-  // 4. Evaluate each candidate swap using in-place modify → preorder → restore
-  std::vector<double> candLL(nPart);
-  for (int pi = 0; pi < nPart; ++pi) {
-    int rowB = find_child_row_gibbs(state->child, partners[pi]);
-    if (rowB < 0 || rowA == rowB) {
-      candLL[pi] = R_NegInf;
-      continue;
+  NumericVector rates = gibbs_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ);
+  bool useAcrv = (state->rateLogSd > 0.0);
+  int nCat = useAcrv ? data->nCat : 1;
+  if (!useAcrv) rates = NumericVector(1, 1.0);
+
+  int coding = data->codingType;
+  int maxNode = topo.maxNode;
+
+  // Build CLGroups: one per (partition, kStates) evaluation unit
+  std::vector<CLGroup> groups;
+  struct GroupMeta { int partIdx; int nCharInPart; };
+  std::vector<GroupMeta> groupMeta;
+
+  for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
+    const PartInfo& part = data->parts[pi];
+
+    if (part.type == 0) {
+      CLGroup g;
+      g.isMkN     = true;
+      g.rateLoss  = state->rateLoss;
+      g.rateScale = state->rateNeo;
+      g.tipData   = part.tipStates;
+      g.allocate(maxNode, nCat, part.tipStates.ncol(), 2);
+      groups.push_back(std::move(g));
+      groupMeta.push_back({pi, part.tipStates.ncol()});
+
+    } else if (part.type == 2) {
+      CLGroup g;
+      g.isMkN     = false;
+      g.rateLoss  = 1.0;
+      g.rateScale = 1.0;
+      g.tipData   = part.tipStates;
+      g.allocate(maxNode, nCat, part.tipStates.ncol(), part.k);
+      groups.push_back(std::move(g));
+      groupMeta.push_back({pi, part.tipStates.ncol()});
+
+    } else {
+      int nCharPart = part.tipStates.ncol();
+      IntegerVector kPrimePart(nCharPart);
+      for (int ci = 0; ci < nCharPart; ++ci)
+        kPrimePart[ci] = state->kPrime[part.globalCharIdx[ci]];
+      IntegerVector uniqKp = sort_unique(kPrimePart);
+
+      for (int ui = 0; ui < uniqKp.size(); ++ui) {
+        int kp = uniqKp[ui];
+        std::vector<int> cols;
+        for (int ci = 0; ci < nCharPart; ++ci)
+          if (kPrimePart[ci] == kp) cols.push_back(ci);
+        int nSub = (int)cols.size();
+
+        IntegerMatrix sub(nTip, nSub);
+        for (int c = 0; c < nSub; ++c)
+          for (int t = 0; t < nTip; ++t)
+            sub(t, c) = part.tipStates(t, cols[c]);
+
+        CLGroup g;
+        g.isMkN     = false;
+        g.rateLoss  = 1.0;
+        g.rateScale = 1.0;
+        g.tipData   = sub;
+        g.allocate(maxNode, nCat, nSub, kp);
+        groups.push_back(std::move(g));
+        groupMeta.push_back({pi, nCharPart});
+      }
     }
-
-    int origParB = workPar[rowB];
-    double origAbsB = absLen[rowB];
-
-    // Apply swap in-place
-    workPar[rowA] = origParB;
-    workPar[rowB] = origParA;
-    absLen[rowA]  = origAbsB;
-    absLen[rowB]  = origAbsA;
-
-    // Reorder into shared buffers and evaluate
-    preorder_into(workPar, state->child, absLen, nTip,
-                  INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
-    candLL[pi] = compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs);
-
-    // Restore
-    workPar[rowA] = origParA;
-    workPar[rowB] = origParB;
-    absLen[rowA]  = origAbsA;
-    absLen[rowB]  = origAbsB;
   }
 
-  // 5. Sampling weights: exp(β × logLik), current state included
+  // Run caching downpass for each group
+  for (auto& grp : groups)
+    caching_downpass(grp, topo, state->parent, state->child, rates);
+
+  // Ascertainment correction: pseudo-character groups
+  std::vector<CLGroup> pseudoGroups;
+  if (coding != 0) {
+    pseudoGroups.resize(groups.size());
+    for (size_t gi = 0; gi < groups.size(); ++gi) {
+      pseudoGroups[gi] = create_const_pseudo_group(
+        groups[gi], nTip, maxNode, nCat);
+      caching_downpass(pseudoGroups[gi], topo, state->parent, state->child,
+                       rates);
+    }
+  }
+
+  // Precompute nodeA-fixed data for evaluate_swap_impl
+  int pA    = topo.parentNode[nodeA];
+  int slotA = topo.childSlot(pA, nodeA);
+  double lenA = topo.edgeLen[topo.edgeToPar[nodeA]];
+
+  std::vector<int> pathA;
+  pathA.reserve(16);
+  for (int n = pA; n >= 1; n = topo.parentNode[n])
+    pathA.push_back(n);
+
+  std::vector<int> pathAIdx(maxNode + 1, -1);
+  for (int i = 0; i < (int)pathA.size(); ++i)
+    pathAIdx[pathA[i]] = i;
+
+  // ===== Evaluate candidates using partial CLs =====
+
+  std::vector<double> candLL(nPart);
+  for (int pi = 0; pi < nPart; ++pi) {
+    double totalLL = 0.0;
+
+    for (size_t gi = 0; gi < groups.size(); ++gi) {
+      double grpLL = evaluate_swap_candidate(
+        groups[gi], topo, rates, nodeA, partners[pi],
+        pA, slotA, lenA, pathA, pathAIdx);
+
+      // Ascertainment correction
+      if (coding != 0 && groups[gi].nChar > 0) {
+        double constP = evaluate_swap_const_prob(
+          pseudoGroups[gi], topo, rates, nodeA, partners[pi],
+          pA, slotA, lenA, pathA, pathAIdx);
+        if (constP < 1.0)
+          grpLL -= groups[gi].nChar * std::log(1.0 - constP);
+      }
+
+      totalLL += grpLL;
+    }
+
+    candLL[pi] = totalLL;
+  }
+
+  // Relabelling correction (topology-independent constant)
+  if (data->relabel) {
+    double relabelCorr = 0.0;
+    for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
+      const PartInfo& part = data->parts[pi];
+      if (part.type == 1) {
+        int nCharPart = part.tipStates.ncol();
+        for (int ci = 0; ci < nCharPart; ++ci)
+          relabelCorr += mk_prime_relabel_log(
+            state->kPrime[part.globalCharIdx[ci]], part.kObsLocal[ci]);
+      }
+    }
+    for (int ci = 0; ci < nPart; ++ci)
+      candLL[ci] += relabelCorr;
+  }
+
+  // 4. Sampling weights: exp(β × logLik), current state included
   const double llOrig = state->logLik;
   double maxLL = llOrig;
   for (int pi = 0; pi < nPart; ++pi)
@@ -945,7 +1052,7 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
     sumW  += ws[pi];
   }
 
-  // 6. Sample: self-draw → no-op
+  // 5. Sample: self-draw → no-op
   double rnd = R::unif_rand() * sumW;
   if (rnd < wOrig) return false;
   rnd -= wOrig;
@@ -956,7 +1063,117 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
   }
   if (!R_FINITE(candLL[chosen])) return false;
 
-  // 7. Apply chosen swap: modify in-place then canonical reorder for state
+  // 6. Apply chosen swap: modify in-place then canonical reorder for state
+  {
+    const int rowA = find_child_row_gibbs(state->child, nodeA);
+    const int rowB = find_child_row_gibbs(state->child, partners[chosen]);
+    int swapParA = state->parent[rowB];
+    int swapParB = state->parent[rowA];
+    state->parent[rowA] = swapParA;
+    state->parent[rowB] = swapParB;
+    absLen[rowA] = state->treeLength * state->relBrLengths[rowB];
+    absLen[rowB] = state->treeLength * state->relBrLengths[rowA];
+    double tmpRel = state->relBrLengths[rowA];
+    state->relBrLengths[rowA] = state->relBrLengths[rowB];
+    state->relBrLengths[rowB] = tmpRel;
+
+    // Canonical reorder (needed for NNI in-place invariant)
+    auto po = TreeTools::preorder_weighted_impl(
+        state->parent, state->child, absLen);
+    IntegerMatrix ordEdge = po.first;
+    NumericVector ordAbsFinal = po.second;
+    for (int k = 0; k < nEdge; ++k) {
+      state->parent[k]       = ordEdge(k, 0);
+      state->child[k]        = ordEdge(k, 1);
+      state->relBrLengths[k] = ordAbsFinal[k] / state->treeLength;
+    }
+  }
+
+  state->logLik = candLL[chosen];
+  state->partLogLik.clear();
+  return true;
+}
+
+
+// Full-evaluation fallback for Q-heterogeneity (M-109 in-place pattern)
+static bool gibbs_subtree_swap_impl_full(McmcData* data, McmcState* state,
+                                         double beta) {
+  const int nEdge = state->parent.size();
+  const int nTip  = data->nTip;
+
+  int pickIdx = (int)(R::unif_rand() * (double)nEdge);
+  if (pickIdx >= nEdge) pickIdx = nEdge - 1;
+  const int nodeA = state->child[pickIdx];
+
+  std::vector<int> partners = get_valid_swap_partners_impl(
+      state->parent, state->child, nTip, nodeA);
+  if (partners.empty()) return false;
+  const int nPart = (int)partners.size();
+
+  const int rowA = find_child_row_gibbs(state->child, nodeA);
+  if (rowA < 0) return false;
+
+  IntegerVector workPar = clone(state->parent);
+
+  NumericVector absLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    absLen[i] = state->treeLength * state->relBrLengths[i];
+
+  IntegerVector ordPar(nEdge), ordCh(nEdge);
+  NumericVector ordAbs(nEdge);
+
+  const int origParA = workPar[rowA];
+  const double origAbsA = absLen[rowA];
+
+  std::vector<double> candLL(nPart);
+  for (int pi = 0; pi < nPart; ++pi) {
+    int rowB = find_child_row_gibbs(state->child, partners[pi]);
+    if (rowB < 0 || rowA == rowB) {
+      candLL[pi] = R_NegInf;
+      continue;
+    }
+
+    int origParB = workPar[rowB];
+    double origAbsB = absLen[rowB];
+
+    workPar[rowA] = origParB;
+    workPar[rowB] = origParA;
+    absLen[rowA]  = origAbsB;
+    absLen[rowB]  = origAbsA;
+
+    preorder_into(workPar, state->child, absLen, nTip,
+                  INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
+    candLL[pi] = compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs);
+
+    workPar[rowA] = origParA;
+    workPar[rowB] = origParB;
+    absLen[rowA]  = origAbsA;
+    absLen[rowB]  = origAbsB;
+  }
+
+  const double llOrig = state->logLik;
+  double maxLL = llOrig;
+  for (int pi = 0; pi < nPart; ++pi)
+    if (R_FINITE(candLL[pi])) maxLL = std::max(maxLL, candLL[pi]);
+
+  double wOrig = std::exp(beta * (llOrig - maxLL));
+  std::vector<double> ws(nPart);
+  double sumW = wOrig;
+  for (int pi = 0; pi < nPart; ++pi) {
+    ws[pi] = R_FINITE(candLL[pi]) ? std::exp(beta * (candLL[pi] - maxLL)) : 0.0;
+    sumW  += ws[pi];
+  }
+
+  double rnd = R::unif_rand() * sumW;
+  if (rnd < wOrig) return false;
+  rnd -= wOrig;
+  int chosen = nPart - 1;
+  for (int pi = 0; pi < nPart - 1; ++pi) {
+    if (rnd < ws[pi]) { chosen = pi; break; }
+    rnd -= ws[pi];
+  }
+  if (!R_FINITE(candLL[chosen])) return false;
+
   {
     int rowB = find_child_row_gibbs(state->child, partners[chosen]);
     int swapParA = state->parent[rowB];
@@ -969,7 +1186,6 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
     state->relBrLengths[rowA] = state->relBrLengths[rowB];
     state->relBrLengths[rowB] = tmpRel;
 
-    // Canonical reorder (needed for NNI in-place invariant)
     auto po = TreeTools::preorder_weighted_impl(
         state->parent, state->child, absLen);
     IntegerMatrix ordEdge = po.first;
@@ -2326,6 +2542,185 @@ List debug_mcmc_data(SEXP dataPtr) {
     _["transIdxGlobal"]    = data->transIdxGlobal,
     _["kObs"]              = data->kObs,
     _["nCat"]              = data->nCat
+  );
+}
+
+
+// M-111: Validation — compare partial CL vs full evaluation for all swap
+// candidates of a given nodeA.  Returns a data.frame with columns:
+//   nodeA, nodeB, ll_partial, ll_full
+// [[Rcpp::export]]
+DataFrame validate_swap_partial_cl(SEXP dataPtr, SEXP statePtr, int nodeA) {
+  McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
+  McmcState* state = Rcpp::XPtr<McmcState>(statePtr).get();
+
+  const int nEdge = state->parent.size();
+  const int nTip  = data->nTip;
+
+  std::vector<int> partners = get_valid_swap_partners_impl(
+      state->parent, state->child, nTip, nodeA);
+  const int nPart = (int)partners.size();
+
+  // --- Full evaluation (same as gibbs_subtree_swap_impl_full) ---
+  const int rowA = find_child_row_gibbs(state->child, nodeA);
+  IntegerVector workPar = clone(state->parent);
+  NumericVector absLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    absLen[i] = state->treeLength * state->relBrLengths[i];
+
+  IntegerVector ordPar(nEdge), ordCh(nEdge);
+  NumericVector ordAbs(nEdge);
+  const int origParA = workPar[rowA];
+  const double origAbsA = absLen[rowA];
+
+  NumericVector llFull(nPart);
+  for (int pi = 0; pi < nPart; ++pi) {
+    int rowB = find_child_row_gibbs(state->child, partners[pi]);
+    if (rowB < 0 || rowA == rowB) { llFull[pi] = R_NegInf; continue; }
+
+    int origParB = workPar[rowB];
+    double origAbsB = absLen[rowB];
+
+    workPar[rowA] = origParB;  workPar[rowB] = origParA;
+    absLen[rowA]  = origAbsB;  absLen[rowB]  = origAbsA;
+
+    preorder_into(workPar, state->child, absLen, nTip,
+                  INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
+    llFull[pi] = compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs);
+
+    workPar[rowA] = origParA;  workPar[rowB] = origParB;
+    absLen[rowA]  = origAbsA;  absLen[rowB]  = origAbsB;
+  }
+
+  // --- Partial CL evaluation ---
+  // Rebuild absLen (may have been modified)
+  for (int i = 0; i < nEdge; ++i)
+    absLen[i] = state->treeLength * state->relBrLengths[i];
+
+  TreeNav topo;
+  topo.build(state->parent, state->child, absLen, nTip);
+
+  NumericVector rates = gibbs_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ);
+  bool useAcrv = (state->rateLogSd > 0.0);
+  int nCat = useAcrv ? data->nCat : 1;
+  if (!useAcrv) rates = NumericVector(1, 1.0);
+
+  int coding  = data->codingType;
+  int maxNode = topo.maxNode;
+
+  std::vector<CLGroup> groups;
+  struct GroupMeta { int partIdx; int nCharInPart; };
+  std::vector<GroupMeta> groupMeta;
+
+  for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
+    const PartInfo& part = data->parts[pi];
+    if (part.type == 0) {
+      CLGroup g;
+      g.isMkN = true; g.rateLoss = state->rateLoss; g.rateScale = state->rateNeo;
+      g.tipData = part.tipStates;
+      g.allocate(maxNode, nCat, part.tipStates.ncol(), 2);
+      groups.push_back(std::move(g));
+      groupMeta.push_back({pi, part.tipStates.ncol()});
+    } else if (part.type == 2) {
+      CLGroup g;
+      g.isMkN = false; g.rateLoss = 1.0; g.rateScale = 1.0;
+      g.tipData = part.tipStates;
+      g.allocate(maxNode, nCat, part.tipStates.ncol(), part.k);
+      groups.push_back(std::move(g));
+      groupMeta.push_back({pi, part.tipStates.ncol()});
+    } else {
+      int nCharPart = part.tipStates.ncol();
+      IntegerVector kPrimePart(nCharPart);
+      for (int ci = 0; ci < nCharPart; ++ci)
+        kPrimePart[ci] = state->kPrime[part.globalCharIdx[ci]];
+      IntegerVector uniqKp = sort_unique(kPrimePart);
+      for (int ui = 0; ui < uniqKp.size(); ++ui) {
+        int kp = uniqKp[ui];
+        std::vector<int> cols;
+        for (int ci = 0; ci < nCharPart; ++ci)
+          if (kPrimePart[ci] == kp) cols.push_back(ci);
+        int nSub = (int)cols.size();
+        IntegerMatrix sub(nTip, nSub);
+        for (int c = 0; c < nSub; ++c)
+          for (int t = 0; t < nTip; ++t)
+            sub(t, c) = part.tipStates(t, cols[c]);
+        CLGroup g;
+        g.isMkN = false; g.rateLoss = 1.0; g.rateScale = 1.0;
+        g.tipData = sub;
+        g.allocate(maxNode, nCat, nSub, kp);
+        groups.push_back(std::move(g));
+        groupMeta.push_back({pi, nCharPart});
+      }
+    }
+  }
+
+  for (auto& grp : groups)
+    caching_downpass(grp, topo, state->parent, state->child, rates);
+
+  std::vector<CLGroup> pseudoGroups;
+  if (coding != 0) {
+    pseudoGroups.resize(groups.size());
+    for (size_t gi = 0; gi < groups.size(); ++gi) {
+      pseudoGroups[gi] = create_const_pseudo_group(
+        groups[gi], nTip, maxNode, nCat);
+      caching_downpass(pseudoGroups[gi], topo, state->parent, state->child,
+                       rates);
+    }
+  }
+
+  int pA    = topo.parentNode[nodeA];
+  int slotA = topo.childSlot(pA, nodeA);
+  double lenA_val = topo.edgeLen[topo.edgeToPar[nodeA]];
+
+  std::vector<int> pathA;
+  pathA.reserve(16);
+  for (int n = pA; n >= 1; n = topo.parentNode[n])
+    pathA.push_back(n);
+  std::vector<int> pathAIdx(maxNode + 1, -1);
+  for (int i = 0; i < (int)pathA.size(); ++i)
+    pathAIdx[pathA[i]] = i;
+
+  NumericVector llPartial(nPart);
+  for (int pi = 0; pi < nPart; ++pi) {
+    double totalLL = 0.0;
+    for (size_t gi = 0; gi < groups.size(); ++gi) {
+      double grpLL = evaluate_swap_candidate(
+        groups[gi], topo, rates, nodeA, partners[pi],
+        pA, slotA, lenA_val, pathA, pathAIdx);
+      if (coding != 0 && groups[gi].nChar > 0) {
+        double constP = evaluate_swap_const_prob(
+          pseudoGroups[gi], topo, rates, nodeA, partners[pi],
+          pA, slotA, lenA_val, pathA, pathAIdx);
+        if (constP < 1.0)
+          grpLL -= groups[gi].nChar * std::log(1.0 - constP);
+      }
+      totalLL += grpLL;
+    }
+
+    if (data->relabel) {
+      for (int pii = 0; pii < (int)data->parts.size(); ++pii) {
+        const PartInfo& part = data->parts[pii];
+        if (part.type == 1) {
+          int nCharPart = part.tipStates.ncol();
+          for (int ci = 0; ci < nCharPart; ++ci)
+            totalLL += mk_prime_relabel_log(
+              state->kPrime[part.globalCharIdx[ci]], part.kObsLocal[ci]);
+        }
+      }
+    }
+
+    llPartial[pi] = totalLL;
+  }
+
+  IntegerVector nodeAVec(nPart, nodeA);
+  IntegerVector nodeBVec(nPart);
+  for (int pi = 0; pi < nPart; ++pi) nodeBVec[pi] = partners[pi];
+
+  return DataFrame::create(
+    _["nodeA"]      = nodeAVec,
+    _["nodeB"]      = nodeBVec,
+    _["ll_partial"] = llPartial,
+    _["ll_full"]    = llFull
   );
 }
 

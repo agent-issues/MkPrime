@@ -85,6 +85,10 @@ debug_mcmc_data <- function(dataPtr) {
     .Call(`_MkPrime_debug_mcmc_data`, dataPtr)
 }
 
+validate_swap_partial_cl <- function(dataPtr, statePtr, nodeA) {
+    .Call(`_MkPrime_validate_swap_partial_cl`, dataPtr, statePtr, nodeA)
+}
+
 prepare_mcmc_data <- function(partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, qHeterogeneity = FALSE, nBetaCat = 4L, betaScaleShape = 1.0, betaScaleRate = 1.0) {
     .Call(`_MkPrime_prepare_mcmc_data`, partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, qHeterogeneity, nBetaCat, betaScaleShape, betaScaleRate)
 }
