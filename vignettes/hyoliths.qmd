@@ -113,22 +113,6 @@ mkd <- MkPrimeData(pd, neomorphic = neomorphicChars)
 mkd
 ```
 
-## Starting tree
-
-MkPrime samples tree topology during MCMC but requires a starting topology.
-`TreeTools::NJTree()` builds a rooted neighbor-joining tree directly from a
-`phyDat` object using Hamming distances. We then unroot it: MkPrime uses
-unrooted trees because the model is time-reversible and the root placement
-does not affect the likelihood.
-
-```{r starting-tree}
-startTree <- TreeTools::NJTree(pd, edgeLengths = TRUE)
-startTree <- TreeTools::UnrootTree(startTree)
-# NJ can produce small negative branch lengths when taxa are very similar;
-# clamp these before passing to RunMkPrime (which will warn and clamp anyway).
-startTree$edge.length[startTree$edge.length < 0] <- 1e-8
-```
-
 ## Model specification
 
 `MkPrimeModel()` configures priors and the statistical model:
@@ -171,13 +155,23 @@ mathematical details.
 
 ## MCMC configuration
 
+MkPrime uses a three-phase MCMC architecture:
+
+1. **Warmup** — step sizes and move weights adapt; chain stabilisation is
+   detected automatically via a Geweke z-score test on the log-posterior.
+   No samples are saved.
+2. **Tuning** — move weights are optimised to maximise the minimum effective
+   sample size per second (min-ESS/s) using a perturbation bandit.
+   Samples are discarded.
+3. **Sampling** — move weights are frozen and posterior samples are collected
+   until convergence criteria are met.
+
 For a **production run** on this dataset we recommend:
 
 ```{r mcmc-production}
 mcmcProduction <- MkPrimeMCMC(
   # nIter = Inf (default): run until convergence criteria are met
-  thin           = 100L,
-  warmup         = 50000L,
+  # thin = "auto" (default): one sample per full move cycle
   nRuns          = 2L,       # 2 independent runs (required for PSRF)
   nChains        = 4L,       # parallel tempering chains
   heat           = 0.2,
@@ -188,15 +182,17 @@ mcmcProduction <- MkPrimeMCMC(
 )
 ```
 
-For this vignette we use a much shorter demo run:
+For this vignette we use a much shorter demo run, with auto-tuning disabled
+to keep wall time manageable:
 
 ```{r mcmc-demo}
 mcmcDemo <- MkPrimeMCMC(
-  nIter   = 5000L,
-  thin    = 10L,
-  warmup  = 2000L,
-  nRuns   = 2L,
-  nChains = 1L    # no parallel tempering in demo
+  nIter      = 5000L,
+  thin       = 10L,
+  maxWarmup  = 2000L,
+  autoTune   = FALSE,
+  nRuns      = 2L,
+  nChains    = 1L    # no parallel tempering in demo
 )
 ```
 
@@ -204,7 +200,9 @@ mcmcDemo <- MkPrimeMCMC(
 
 Pass the `phyDat` object directly to `RunMkPrime()` together with the
 neomorphic character indices. The function calls `MkPrimeData()` internally if
-you pass a `phyDat` rather than a pre-built `MkPrimeData` object:
+you pass a `phyDat` rather than a pre-built `MkPrimeData` object. A
+neighbour-joining starting tree is built automatically from the data;
+pass `tree =` explicitly if you prefer a different starting topology.
 
 Production run (not evaluated here — expected wall time: 1–4 hours):
 
@@ -213,7 +211,6 @@ Production run (not evaluated here — expected wall time: 1–4 hours):
 set.seed(8203)
 posterior <- RunMkPrime(
   data       = pd,
-  tree       = startTree,
   neomorphic = neomorphicChars,
   model      = model,
   mcmc       = mcmcProduction
@@ -228,7 +225,6 @@ Demo run:
 set.seed(8203)
 posteriorDemo <- RunMkPrime(
   data       = pd,
-  tree       = startTree,
   neomorphic = neomorphicChars,
   model      = model,
   mcmc       = mcmcDemo
@@ -356,8 +352,6 @@ To enable checkpoint files (which allow resuming after interruption):
 #| eval: false
 mcmcCheckpointed <- MkPrimeMCMC(
   nIter          = 200000L,
-  thin           = 100L,
-  warmup         = 50000L,
   nRuns          = 2L,
   nChains        = 4L,
   checkpointFile = "hyoliths_checkpoint.rds"
