@@ -24,7 +24,7 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| M-127 | P1 | ASSIGNED (A) | **`plot.window()` crash during warmup when `nIter = Inf`.** `.PlotWarmupPanel()` line 279 passes `xlim = c(1, max(iter, nIter %||% iter))` — when `nIter = Inf` (convergence-based stopping, the default), `%||%` doesn't substitute and `xlim` becomes `c(1, Inf)`. Fix: guard with `is.finite(nIter)`. Reported in u.340. |
+
 
 
 ## Optimization roadmap (Gibbs/weighted moves)
