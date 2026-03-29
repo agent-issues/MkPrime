@@ -1489,17 +1489,23 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
       list(name = "spr", type = "spr", target = NULL,
            weight = max(1, nEdge / 4), dim = 1L)
     ))
-    # Gibbs topology moves (M-090)
+    # Gibbs topology moves (M-090).
+    # Per-invocation cost is O(nEdge * depth * nChar) because Gibbs evaluates
+    # all candidate regraft/swap positions.  M-113 showed this outweighs the
+    # mixing gain on trees with > ~20 tips, so cap the initial weight (M-115).
+    # The adaptive scheduler refines from here during warmup.
+    gibbsCap <- 10L
     if (isTRUE(mcmc$gibbsSpr)) {
       moves <- c(moves, list(
         list(name = "gibbs_spr", type = "gibbs_spr", target = NULL,
-             weight = max(1, nEdge / 4), dim = 1L)
+             weight = max(1L, min(nEdge / 4, gibbsCap)), dim = 1L)
       ))
     }
     if (isTRUE(mcmc$gibbsSubtreeSwap)) {
       moves <- c(moves, list(
         list(name = "gibbs_subtree_swap", type = "gibbs_subtree_swap",
-             target = NULL, weight = max(1, nEdge / 6), dim = 1L)
+             target = NULL,
+             weight = max(1L, min(nEdge / 6, gibbsCap)), dim = 1L)
       ))
     }
     # Weighted moves (M-090)
@@ -1532,7 +1538,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     if (isTRUE(mcmc$blockGibbsBranch)) {
       moves <- c(moves, list(
         list(name = "block_gibbs_branch", type = "block_gibbs_branch",
-             target = "rel_br_lengths", weight = max(1, nEdge / 4),
+             target = "rel_br_lengths",
+             weight = max(1L, min(nEdge / 4, gibbsCap)),
              dim = as.integer(nEdge))
       ))
     }
