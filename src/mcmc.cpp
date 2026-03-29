@@ -56,12 +56,15 @@ bool beta_simplex_impl(NumericVector& x, int index, double tuning,
 // ---------------------------------------------------------------------------
 static constexpr double BACTRIAN_M  = 0.95;
 static const     double BACTRIAN_SD = std::sqrt(1.0 - BACTRIAN_M * BACTRIAN_M);
+// Scale so overall sd matches Uniform(-0.5, 0.5), i.e. 1/√12.
+// The benefit is bimodal *shape* (avoids near-zero), not larger variance.
+static const     double BACTRIAN_SCALE = 1.0 / std::sqrt(12.0);
 
 static inline double bactrian_perturbation() {
   double z = R::rnorm(0.0, BACTRIAN_SD);
-  return (R::unif_rand() < 0.5) ? (BACTRIAN_M + z) : (-BACTRIAN_M + z);
+  double raw = (R::unif_rand() < 0.5) ? (BACTRIAN_M + z) : (-BACTRIAN_M + z);
+  return raw * BACTRIAN_SCALE;
 }
-
 
 // Exported for unit testing (test-bactrian.R)
 // [[Rcpp::export]]
