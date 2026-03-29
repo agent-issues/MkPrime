@@ -126,7 +126,7 @@ mkp_stepping_stone <- function(data, tree = NULL,
                        fixTopology = fixTopology, joint2d = FALSE)
   moveWeights <- vapply(moves, `[[`, numeric(1), "weight")
 
-  mcmcTuning <- MkPrimeMCMC(nIter = 100L)$tuning
+  mcmcTuning <- MkPrimeMCMC(nIter = 100L, minWarmup = 50L)$tuning
 
   # Build C++ data struct and XPtr state (shared across all stones)
   mcmcData <- .InitMcmcData(mkd, model)

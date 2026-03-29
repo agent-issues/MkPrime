@@ -63,8 +63,8 @@ test_that("f81_transition matches analytical formula", {
 test_that("Q-het Gibbs SPR runs and produces reasonable results", {
   setup <- make_het_setup(nTip = 8L, nChar = 12L, seed = 3847L)
   mcmc <- MkPrimeMCMC(
-    nIter = 500L, warmup = 200L, thin = 5L,
-    gibbsSpr = TRUE, gibbsSubtreeSwap = FALSE,
+    nIter = 500L, maxWarmup = 200L, minWarmup = 200L, thin = 5L,
+    autoTune = FALSE, gibbsSpr = TRUE, gibbsSubtreeSwap = FALSE,
     nRuns = 1L
   )
   result <- RunMkPrime(data = setup$mkd, tree = setup$tree,
@@ -81,8 +81,8 @@ test_that("Q-het Gibbs SPR runs and produces reasonable results", {
 test_that("Q-het Gibbs subtree swap runs and produces reasonable results", {
   setup <- make_het_setup(nTip = 8L, nChar = 12L, seed = 6243L)
   mcmc <- MkPrimeMCMC(
-    nIter = 500L, warmup = 200L, thin = 5L,
-    gibbsSpr = FALSE, gibbsSubtreeSwap = TRUE,
+    nIter = 500L, maxWarmup = 200L, minWarmup = 200L, thin = 5L,
+    autoTune = FALSE, gibbsSpr = FALSE, gibbsSubtreeSwap = TRUE,
     nRuns = 1L
   )
   result <- RunMkPrime(data = setup$mkd, tree = setup$tree,
@@ -99,8 +99,8 @@ test_that("Q-het Gibbs subtree swap runs and produces reasonable results", {
 test_that("Q-het with both Gibbs moves produces valid MCMC", {
   setup <- make_het_setup(nTip = 8L, nChar = 12L, seed = 9102L)
   mcmc <- MkPrimeMCMC(
-    nIter = 600L, warmup = 200L, thin = 5L,
-    gibbsSpr = TRUE, gibbsSubtreeSwap = TRUE,
+    nIter = 600L, maxWarmup = 200L, minWarmup = 200L, thin = 5L,
+    autoTune = FALSE, gibbsSpr = TRUE, gibbsSubtreeSwap = TRUE,
     nRuns = 1L
   )
   result <- RunMkPrime(data = setup$mkd, tree = setup$tree,

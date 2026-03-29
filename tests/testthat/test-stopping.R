@@ -10,7 +10,7 @@ test_that("RunMkPrime reports stop_reason = 'max_iter' by default", {
 
   set.seed(5194)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L))
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE))
 
   expect_equal(result$stop_reason, "max_iter")
   expect_equal(result$actual_iter, 500L)
@@ -27,7 +27,7 @@ test_that("maxTime stops MCMC early", {
   set.seed(3382)
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 1000000L, thin = 5L,
-                        warmup = 100L, maxTime = 0.5))
+                        maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE, maxTime = 0.5))
 
   expect_equal(result$stop_reason, "max_time")
   expect_lt(result$actual_iter, 1000000L)
@@ -57,7 +57,7 @@ test_that("Convergence-based stopping works", {
   set.seed(9283)
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 50000L, thin = 5L,
-                        warmup = 200L, minEss = 5, maxPsrf = 5.0,
+                        maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE, minEss = 5, maxPsrf = 5.0,
                         checkEvery = 300L))
 
   # Should stop before max_iter due to generous criteria
@@ -212,7 +212,7 @@ test_that("nIter = Inf with maxTime stopping works", {
 
   set.seed(7241)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, thin = 5L, warmup = 200L, maxTime = 0.5))
+    mcmc = MkPrimeMCMC(nRuns = 1L, thin = 5L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE, maxTime = 0.5))
 
   expect_s3_class(result, "MkPosterior")
   expect_equal(result$stop_reason, "max_time")
@@ -249,7 +249,7 @@ test_that("cancelFile causes early exit with stop_reason 'cancelled'", {
   set.seed(6641)
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 1000000L, thin = 5L,
-                        warmup = 100L, cancelFile = cf))
+                        maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE, cancelFile = cf))
 
   expect_equal(result$stop_reason, "cancelled")
   expect_lt(result$actual_iter, 1000000L)
@@ -271,7 +271,7 @@ test_that("cancelFile + checkpointFile saves checkpoint on cancel", {
   set.seed(8823)
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 1000000L, thin = 5L,
-                        warmup = 100L, cancelFile = cf,
+                        maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE, cancelFile = cf,
                         checkpointFile = ckpt))
 
   expect_equal(result$stop_reason, "cancelled")
@@ -290,9 +290,9 @@ test_that("MkCancelPath returns path inside jobDir", {
 test_that("MkPrimeMCMC nIter = Inf default and warmup default", {
   m_inf <- MkPrimeMCMC()
   expect_true(is.infinite(m_inf$nIter))
-  expect_equal(m_inf$warmup, 5000L)
+  expect_equal(m_inf$warmup, 50000L)
 
-  m_finite <- MkPrimeMCMC(nIter = 1000L)
+  m_finite <- MkPrimeMCMC(nIter = 1000L, minWarmup = 500L)
   expect_equal(m_finite$nIter, 1000L)
   expect_equal(m_finite$warmup, 500L)  # nIter/2
 })
@@ -309,13 +309,14 @@ test_that("Early stopping produces fewer samples", {
   set.seed(1107)
   full <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 1000L, thin = 5L,
-                        warmup = 200L))
+                        maxWarmup = 200L, minWarmup = 200L,
+                        autoTune = FALSE))
 
   # Time-limited run
   set.seed(1107)
   limited <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 1000L, thin = 5L,
-                        warmup = 200L, maxTime = 0.01))
+                        maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE, maxTime = 0.01))
 
   # Limited should have fewer or equal samples
   expect_lte(nrow(limited$samples), nrow(full$samples))

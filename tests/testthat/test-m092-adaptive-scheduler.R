@@ -17,43 +17,43 @@ skip_slow_tests <- function() {
 # ==========================================================================
 
 test_that("MkPrimeMCMC() stores moveWeights = NULL by default", {
-  mcmc <- MkPrimeMCMC(nIter = 100L)
+  mcmc <- MkPrimeMCMC(nIter = 100L, minWarmup = 50L)
   expect_null(mcmc$moveWeights)
 })
 
 test_that("MkPrimeMCMC() stores valid moveWeights", {
-  mcmc <- MkPrimeMCMC(nIter = 100L, moveWeights = c(nni = 0.3, spr = 0.2))
+  mcmc <- MkPrimeMCMC(nIter = 100L, minWarmup = 50L, moveWeights = c(nni = 0.3, spr = 0.2))
   expect_equal(mcmc$moveWeights, c(nni = 0.3, spr = 0.2))
 })
 
 test_that("MkPrimeMCMC() accepts moveWeights as list", {
-  mcmc <- MkPrimeMCMC(nIter = 100L, moveWeights = list(nni = 0.3))
+  mcmc <- MkPrimeMCMC(nIter = 100L, minWarmup = 50L, moveWeights = list(nni = 0.3))
   expect_equal(mcmc$moveWeights, c(nni = 0.3))
 })
 
 test_that("MkPrimeMCMC() rejects unnamed moveWeights", {
-  expect_error(MkPrimeMCMC(nIter = 100L, moveWeights = c(0.3, 0.2)),
+  expect_error(MkPrimeMCMC(nIter = 100L, minWarmup = 50L, moveWeights = c(0.3, 0.2)),
                "named numeric")
 })
 
 test_that("MkPrimeMCMC() rejects unknown move names", {
-  expect_error(MkPrimeMCMC(nIter = 100L, moveWeights = c(bogus = 0.3)),
+  expect_error(MkPrimeMCMC(nIter = 100L, minWarmup = 50L, moveWeights = c(bogus = 0.3)),
                "unknown move name")
 })
 
 test_that("MkPrimeMCMC() rejects negative moveWeights", {
-  expect_error(MkPrimeMCMC(nIter = 100L, moveWeights = c(nni = -0.1)),
+  expect_error(MkPrimeMCMC(nIter = 100L, minWarmup = 50L, moveWeights = c(nni = -0.1)),
                "positive")
 })
 
 test_that("MkPrimeMCMC() rejects moveWeights summing > 1", {
-  expect_error(MkPrimeMCMC(nIter = 100L,
+  expect_error(MkPrimeMCMC(nIter = 100L, minWarmup = 50L,
                             moveWeights = c(nni = 0.6, spr = 0.6)),
                "exceeds 1")
 })
 
 test_that("MkPrimeMCMC() accepts moveWeights summing to exactly 1", {
-  mcmc <- MkPrimeMCMC(nIter = 100L,
+  mcmc <- MkPrimeMCMC(nIter = 100L, minWarmup = 50L,
                        moveWeights = c(nni = 0.5, spr = 0.5))
   expect_equal(sum(mcmc$moveWeights), 1.0)
 })
@@ -340,7 +340,7 @@ test_that("run_mcmc_batch_cpp returns move_time_ns matrix", {
   moves <- MkPrime:::.BuildMoves(
     nrow(tree$edge), sum(mkd$type == "transformational"),
     any(mkd$type == "neomorphic"),
-    MkPrimeMCMC(nIter = 100L, gibbsSpr = FALSE, gibbsSubtreeSwap = FALSE)
+    MkPrimeMCMC(nIter = 100L, minWarmup = 50L, gibbsSpr = FALSE, gibbsSubtreeSwap = FALSE)
   )
   moveWeights <- vapply(moves, `[[`, numeric(1), "weight")
   moveTypeCodes <- vapply(
@@ -383,7 +383,7 @@ test_that("run_mcmc_batch_cpp returns move_time_ns matrix", {
 # ==========================================================================
 
 test_that(".BuildMoves produces weights that normalize to 1", {
-  mcmc <- MkPrimeMCMC(nIter = 200L)
+  mcmc <- MkPrimeMCMC(nIter = 200L, minWarmup = 100L)
   moves <- MkPrime:::.BuildMoves(20, 5, TRUE, mcmc)
   w <- vapply(moves, `[[`, numeric(1), "weight")
   wNorm <- w / sum(w)
@@ -396,7 +396,7 @@ test_that("All move names in .kMoveTypes are valid moveWeights names", {
     "rate_loss", "rate_log_sd", "rate_neo", "neo_joint",
     "gibbs_spr", "gibbs_subtree_swap",
     "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
-    "block_gibbs_branch", "dirichlet_branch",
+    "block_gibbs_branch", "dirichlet_branch", "local_dirichlet",
     "beta_scale", "pspr",
     "joint_tl_rls", "joint_tl_rl",
     "slice_rate_loss", "slice_rate_neo", "slice_rate_log_sd",
@@ -420,8 +420,8 @@ test_that("Adaptive scheduler runs end-to-end (short MCMC)", {
   tree <- TreeTools::Preorder(tree)
 
   mcmc <- MkPrimeMCMC(
-    nIter = 600L, warmup = 400L, thin = 10L,
-    nRuns = 1L, nChains = 1L
+    nIter = 600L, maxWarmup = 400L, minWarmup = 400L, thin = 10L,
+    autoTune = FALSE, nRuns = 1L, nChains = 1L
   )
   result <- RunMkPrime(dat, tree, model = model, mcmc = mcmc)
   expect_s3_class(result, "MkPosterior")
@@ -438,8 +438,8 @@ test_that("User-pinned moveWeights preserved end-to-end", {
   tree <- TreeTools::Preorder(tree)
 
   mcmc <- MkPrimeMCMC(
-    nIter = 600L, warmup = 400L, thin = 10L,
-    nRuns = 1L, nChains = 1L,
+    nIter = 600L, maxWarmup = 400L, minWarmup = 400L, thin = 10L,
+    autoTune = FALSE, nRuns = 1L, nChains = 1L,
     moveWeights = c(nni = 0.3)
   )
   # Just verify it runs without error

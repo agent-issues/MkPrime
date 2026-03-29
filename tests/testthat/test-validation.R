@@ -130,7 +130,8 @@ test_that("RunMkPrime warns and clamps non-positive branch lengths", {
 
   expect_warning(
     result <- RunMkPrime(pd, tree,
-      mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 200L, thin = 10L, warmup = 50L)),
+      mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 200L, thin = 10L,
+                         maxWarmup = 50L, minWarmup = 50L, autoTune = FALSE)),
     regexp = "non-positive"
   )
 
@@ -169,7 +170,7 @@ test_that("RunMkPrime aborts on tip label / data taxon mismatch", {
   bad <- ape::rtree(length(dat), br = NULL)
   bad$edge.length <- rep(0.1, nrow(bad$edge))
   expect_error(
-    RunMkPrime(dat, bad, mcmc = MkPrimeMCMC(nIter = 100L)),
+    RunMkPrime(dat, bad, mcmc = MkPrimeMCMC(nIter = 100L, minWarmup = 50L)),
     "do not match"
   )
 
@@ -178,7 +179,7 @@ test_that("RunMkPrime aborts on tip label / data taxon mismatch", {
   ok$edge.length <- rep(0.1, nrow(ok$edge))
   ok$tip.label[1] <- "BOGUS"
   expect_error(
-    RunMkPrime(dat, ok, mcmc = MkPrimeMCMC(nIter = 100L)),
+    RunMkPrime(dat, ok, mcmc = MkPrimeMCMC(nIter = 100L, minWarmup = 50L)),
     "do not match"
   )
 })

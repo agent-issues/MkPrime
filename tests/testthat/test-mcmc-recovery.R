@@ -53,7 +53,7 @@ test_that("MCMC recovers tree_length from binary data (fixed topology)", {
     mkd, true_tree,
     model = MkPrimeModel(coding = "variable", relabel = TRUE,
                           expSteps = true_tl),
-    mcmc = MkPrimeMCMC(nIter = 15000L, thin = 10L, warmup = 7500L)
+    mcmc = MkPrimeMCMC(nIter = 15000L, thin = 10L, maxWarmup = 7500L, minWarmup = 7500L, autoTune = FALSE)
   )
 
   tl_samples <- result$samples[, "tree_length"]
@@ -111,7 +111,7 @@ test_that("MCMC recovers rate_log_sd = 0 (no ACRV)", {
   result <- RunMkPrime(
     pd, true_tree,
     model = MkPrimeModel(coding = "variable", expSteps = 10),
-    mcmc = MkPrimeMCMC(nIter = 10000L, thin = 10L, warmup = 5000L)
+    mcmc = MkPrimeMCMC(nIter = 10000L, thin = 10L, maxWarmup = 5000L, minWarmup = 5000L, autoTune = FALSE)
   )
 
   # rate_log_sd posterior should be concentrated near 0 (small values)
@@ -164,7 +164,7 @@ test_that("MCMC: k' stays near kObs for simple binary data", {
   result <- RunMkPrime(
     pd, true_tree,
     model = MkPrimeModel(coding = "variable", expSteps = 10),
-    mcmc = MkPrimeMCMC(nIter = 8000L, thin = 10L, warmup = 4000L)
+    mcmc = MkPrimeMCMC(nIter = 8000L, thin = 10L, maxWarmup = 4000L, minWarmup = 4000L, autoTune = FALSE)
   )
 
   # k' samples should be overwhelmingly 2 (true value)
@@ -235,7 +235,7 @@ test_that("MCMC with topology moves recovers true tree from simulated data", {
   result <- RunMkPrime(
     pd, start_tree,
     model = MkPrimeModel(coding = "variable"),
-    mcmc = MkPrimeMCMC(nIter = 20000L, thin = 20L, warmup = 10000L)
+    mcmc = MkPrimeMCMC(nIter = 20000L, thin = 20L, maxWarmup = 10000L, minWarmup = 10000L, autoTune = FALSE)
   )
 
   # Check: posterior trees should be close to the true tree.

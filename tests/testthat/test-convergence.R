@@ -10,7 +10,7 @@ test_that("ConvergenceDiagnostics works with single run", {
 
   set.seed(5194)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L))
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE))
 
   diag <- ConvergenceDiagnostics(result)
 
@@ -36,7 +36,7 @@ test_that("ConvergenceDiagnostics works with multiple runs", {
 
   set.seed(2204)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 1000L, thin = 5L, warmup = 500L))
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 1000L, thin = 5L, maxWarmup = 500L, minWarmup = 500L, autoTune = FALSE))
 
   diag <- ConvergenceDiagnostics(result)
 
@@ -62,7 +62,8 @@ test_that("ESS is reasonable for short chains", {
   set.seed(4487)
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L,
-                        warmup = 200L))
+                        maxWarmup = 200L, minWarmup = 200L,
+                        autoTune = FALSE))
 
   diag <- ConvergenceDiagnostics(result)
 
@@ -84,7 +85,8 @@ test_that("PSRF is near 1 for converged chains", {
   # parameters converge reliably within the budget for a unit test.
   result <- RunMkPrime(pd, tree, fixTopology = TRUE,
     mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 500L, thin = 5L,
-                        warmup = 200L))
+                        maxWarmup = 200L, minWarmup = 200L,
+                        autoTune = FALSE))
 
   diag <- ConvergenceDiagnostics(result)
 
@@ -124,7 +126,7 @@ test_that("ConvergenceDiagnostics trees=FALSE skips tree ESS", {
 
   set.seed(2871)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L))
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE))
 
   diag <- ConvergenceDiagnostics(result, trees = FALSE)
   expect_null(diag$treeEss)
@@ -153,7 +155,7 @@ test_that("ConvergenceDiagnostics tree ESS computed when treess available", {
 
   set.seed(9043)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 200L, thin = 5L, warmup = 100L))
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 200L, thin = 5L, maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE))
 
   diag <- ConvergenceDiagnostics(result, trees = TRUE)
   expect_true(!is.null(diag$treeEss))

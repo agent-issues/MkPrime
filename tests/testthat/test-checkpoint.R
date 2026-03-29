@@ -13,7 +13,7 @@ test_that("Checkpoint file is written at check intervals", {
 
   set.seed(8901)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 1000L, thin = 5L, warmup = 200L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 1000L, thin = 5L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
                         checkEvery = 300L, checkpointFile = cp_file))
 
   # Checkpoint should exist
@@ -41,7 +41,7 @@ test_that("Checkpoint contains valid run state", {
 
   set.seed(1450)
   RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 1000L, thin = 5L, warmup = 200L,
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 1000L, thin = 5L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
                         checkEvery = 300L, checkpointFile = cp_file))
 
   cp <- readRDS(cp_file)
@@ -69,7 +69,7 @@ test_that("ResumeMkPrime continues from checkpoint", {
   # Run with time limit to stop early and checkpoint
   set.seed(7766)
   result1 <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 5000L, thin = 5L, warmup = 200L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 5000L, thin = 5L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
                         checkEvery = 300L, checkpointFile = cp_file,
                         maxTime = 0.5))
 
@@ -98,7 +98,7 @@ test_that("RunMkPrime auto-resumes from existing checkpoint", {
   # Run with time limit to create a checkpoint
   set.seed(4821)
   mcmcConf <- MkPrimeMCMC(nRuns = 1L, nIter = 5000L, thin = 5L,
-                           warmup = 200L, checkEvery = 300L,
+                           maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE, checkEvery = 300L,
                            checkpointFile = cp_file, maxTime = 0.5)
   result1 <- RunMkPrime(pd, tree, mcmc = mcmcConf)
   expect_true(file.exists(cp_file))
@@ -124,7 +124,7 @@ test_that("RunMkPrime overwrite = TRUE ignores existing checkpoint", {
   # Create a checkpoint
   set.seed(3952)
   mcmcConf <- MkPrimeMCMC(nRuns = 1L, nIter = 1000L, thin = 5L,
-                           warmup = 200L, checkEvery = 300L,
+                           maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE, checkEvery = 300L,
                            checkpointFile = cp_file)
   RunMkPrime(pd, tree, mcmc = mcmcConf)
   expect_true(file.exists(cp_file))
@@ -147,7 +147,7 @@ test_that("Checkpoint without checkpointFile does nothing", {
   set.seed(6611)
   # No checkpointFile: should run normally
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
                         checkEvery = 100L))
 
   expect_s3_class(result, "MkPosterior")

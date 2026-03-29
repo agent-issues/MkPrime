@@ -30,7 +30,7 @@ test_that("MCMC with NNI + node CL cache produces valid log posteriors", {
 
   # NNI-heavy config: disable SPR/TBR to force NNI as primary topology move
   mcmc <- MkPrimeMCMC(
-    nIter = 300L, warmup = 100L, thin = 3L,
+    nIter = 300L, maxWarmup = 100L, minWarmup = 100L, thin = 3L, autoTune = FALSE,
     nRuns = 1L
   )
   result <- RunMkPrime(data = setup$mkd, tree = setup$tree,
@@ -48,7 +48,7 @@ test_that("MCMC with beta_simplex + node CL cache produces valid posteriors", {
   setup <- make_test_setup(nTip = 10L, nChar = 12L, seed = 5603L)
 
   mcmc <- MkPrimeMCMC(
-    nIter = 300L, warmup = 100L, thin = 3L,
+    nIter = 300L, maxWarmup = 100L, minWarmup = 100L, thin = 3L, autoTune = FALSE,
     nRuns = 1L
   )
   result <- RunMkPrime(data = setup$mkd, tree = setup$tree,
@@ -68,7 +68,7 @@ test_that("MCMC with ACRV and node CL cache produces valid posteriors", {
   model <- MkPrimeModel()
 
   mcmc <- MkPrimeMCMC(
-    nIter = 300L, warmup = 100L, thin = 3L,
+    nIter = 300L, maxWarmup = 100L, minWarmup = 100L, thin = 3L, autoTune = FALSE,
     nRuns = 1L
   )
   result <- RunMkPrime(data = setup$mkd, tree = setup$tree,
@@ -86,7 +86,7 @@ test_that("mixed NNI + SPR + beta_simplex with cache invalidation works", {
   setup <- make_test_setup(nTip = 12L, nChar = 15L, seed = 2190L)
 
   mcmc <- MkPrimeMCMC(
-    nIter = 500L, warmup = 200L, thin = 5L,
+    nIter = 500L, maxWarmup = 200L, minWarmup = 200L, thin = 5L, autoTune = FALSE,
     nRuns = 1L
   )
   result <- RunMkPrime(data = setup$mkd, tree = setup$tree,
@@ -116,7 +116,7 @@ test_that("Q-heterogeneity bypasses node CL cache without errors", {
   model <- MkPrimeModel(qHeterogeneity = TRUE)
 
   mcmc <- MkPrimeMCMC(
-    nIter = 200L, warmup = 80L, thin = 3L,
+    nIter = 200L, maxWarmup = 80L, minWarmup = 80L, thin = 3L, autoTune = FALSE,
     nRuns = 1L
   )
   result <- RunMkPrime(data = mkd, tree = tree,

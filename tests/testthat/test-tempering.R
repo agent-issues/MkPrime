@@ -243,7 +243,7 @@ test_that("RunMkPrime with nChains=1 matches Phase 4 behavior", {
 
   set.seed(5194)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
                         nChains = 1L))
 
   expect_s3_class(result, "MkPosterior")
@@ -264,7 +264,7 @@ test_that("RunMkPrime with nChains=4 runs successfully", {
 
   set.seed(6842)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
                         nChains = 4L, heat = 0.2))
 
   expect_s3_class(result, "MkPosterior")
@@ -296,7 +296,7 @@ test_that("RunMkPrime with nChains=2 and topology moves works", {
   pd <- TreeTools::MatrixToPhyDat(mat)
 
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 1000L, thin = 5L, warmup = 500L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 1000L, thin = 5L, maxWarmup = 500L, minWarmup = 500L, autoTune = FALSE,
                         nChains = 2L, heat = 0.3))
 
   expect_s3_class(result, "MkPosterior")
@@ -316,7 +316,7 @@ test_that("Cold chain samples have valid posteriors under tempering", {
 
   set.seed(3319)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 1000L, thin = 5L, warmup = 500L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 1000L, thin = 5L, maxWarmup = 500L, minWarmup = 500L, autoTune = FALSE,
                         nChains = 4L, heat = 0.1))
 
   # Cold chain samples should have log_post = log_lik + LogPrior
@@ -407,7 +407,7 @@ test_that("Adaptive temps integrated into MCMC warmup", {
 
   set.seed(5580)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 2000L, thin = 10L, warmup = 1000L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 2000L, thin = 10L, maxWarmup = 1000L, minWarmup = 1000L, autoTune = FALSE,
                         nChains = 4L, heat = 0.5))
 
   # Temperatures should have been adapted (may increase or decrease
@@ -435,7 +435,7 @@ test_that("RunMkPrime with nRuns=2 runs successfully", {
 
   set.seed(7218)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 500L, thin = 5L, warmup = 200L))
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 500L, thin = 5L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE))
 
   expect_s3_class(result, "MkPosterior")
   # Combined samples: 60 per run × 2 runs = 120
@@ -458,7 +458,7 @@ test_that("RunMkPrime with nRuns=1 has no per_run field", {
 
   set.seed(1498)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L))
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE))
 
   expect_null(result$nRuns)
   expect_null(result$per_run)
@@ -480,7 +480,7 @@ test_that("Independent runs start from different states", {
 
   set.seed(2891)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 500L, thin = 5L, warmup = 200L))
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 500L, thin = 5L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE))
 
   # Runs should have different starting log-posteriors (different start trees)
   # First sample of each run may differ
@@ -503,7 +503,7 @@ test_that("Multi-run with tempering works", {
   set.seed(8563)
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 2L, nChains = 2L, heat = 0.3,
-                        nIter = 500L, thin = 5L, warmup = 200L))
+                        nIter = 500L, thin = 5L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE))
 
   expect_equal(nrow(result$samples), 120L)
   expect_equal(result$nRuns, 2L)
@@ -546,7 +546,7 @@ test_that("Heated chains accept at higher rates", {
 
   set.seed(4410)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 2000L, thin = 10L, warmup = 1000L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 2000L, thin = 10L, maxWarmup = 1000L, minWarmup = 1000L, autoTune = FALSE,
                         nChains = 4L, heat = 0.1))
 
   # Hottest chain should have higher overall acceptance than cold chain

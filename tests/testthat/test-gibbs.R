@@ -130,7 +130,8 @@ test_that("RunMkPrime with gibbs_p produces valid posterior for transformational
   pd   <- .small_trans_pd()
 
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 600L, thin = 5L, warmup = 200L))
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 600L, thin = 5L,
+                       maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE))
 
   expect_s3_class(result, "MkPosterior")
   expect_true(all(is.finite(result$samples[, "log_posterior"])))

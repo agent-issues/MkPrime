@@ -239,7 +239,8 @@ test_that("RunMkPrime smoke test: logseries prior runs and produces correct colu
     expSteps = 5
   )
 
-  mcmc <- MkPrimeMCMC(nIter = 100L, warmup = 50L, thin = 5L)
+  mcmc <- MkPrimeMCMC(nIter = 100L, maxWarmup = 50L, minWarmup = 50L,
+                      thin = 5L, autoTune = FALSE)
 
   set.seed(4217)
   result <- RunMkPrime(mkd, tree = tree, model = model, mcmc = mcmc)

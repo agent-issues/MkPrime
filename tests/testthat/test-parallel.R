@@ -38,7 +38,7 @@ test_that("parallel = TRUE with nRuns = 1 falls back to sequential", {
   pd   <- TreeTools::MatrixToPhyDat(mat)
 
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 400L, warmup = 200L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 400L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
                         parallel = TRUE))
   expect_s3_class(result, "MkPosterior")
 })
@@ -61,7 +61,7 @@ test_that("parallel mode auto-assigns logFile when logFile = NULL", {
 
   # No logFile supplied — must be auto-assigned without crashing
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 400L, warmup = 200L,
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 400L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
                         parallel = TRUE, pollInterval = 1L))
 
   expect_s3_class(result, "MkPosterior")
@@ -95,7 +95,9 @@ test_that("parallel orchestration (sequential plan) returns valid MkPosterior", 
     mcmc = MkPrimeMCMC(
       nRuns       = 2L,
       nIter       = 400L,
-      warmup      = 200L,
+      maxWarmup   = 200L,
+      minWarmup   = 200L,
+      autoTune    = FALSE,
       logFile     = logFile,
       parallel    = TRUE,
       pollInterval = 1L
@@ -131,7 +133,7 @@ test_that("parallel mode saves checkpoint when checkpointFile is set", {
   on.exit(unlink(cp_file), add = TRUE)
 
   RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 400L, warmup = 200L,
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 400L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
                         parallel = TRUE, pollInterval = 1L,
                         checkpointFile = cp_file))
 
@@ -169,7 +171,9 @@ test_that("parallel orchestration (multisession, 2 workers) returns valid MkPost
     mcmc = MkPrimeMCMC(
       nRuns       = 2L,
       nIter       = 400L,
-      warmup      = 200L,
+      maxWarmup   = 200L,
+      minWarmup   = 200L,
+      autoTune    = FALSE,
       logFile     = logFile,
       parallel    = TRUE,
       pollInterval = 2L

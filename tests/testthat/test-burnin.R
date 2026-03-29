@@ -2,7 +2,7 @@
 skip_slow_tests()
 
 # Helper: create a small test posterior
-.MakeTestPosterior <- function(nRuns = 1L, nIter = 200L, warmup = 50L,
+.MakeTestPosterior <- function(nRuns = 1L, nIter = 200L, maxWarmup = 50L,
                                seed = 7042) {
   set.seed(seed)
   tree <- ape::read.tree(
@@ -17,8 +17,9 @@ skip_slow_tests()
 
   suppressMessages(RunMkPrime(
     pd, tree,
-    mcmc = MkPrimeMCMC(nIter = nIter, warmup = warmup,
-                       thin = 1L, nChains = 1L, nRuns = nRuns),
+    mcmc = MkPrimeMCMC(nIter = nIter, maxWarmup = maxWarmup,
+                       minWarmup = maxWarmup, thin = 1L, nChains = 1L,
+                       nRuns = nRuns, autoTune = FALSE),
     fixTopology = TRUE
   ))
 }
@@ -95,7 +96,7 @@ test_that("summary respects burnin", {
 
 test_that("AutoBurnin runs without error (multi-run)", {
   skip_if_not_installed("coda")
-  result <- .MakeTestPosterior(nRuns = 2L, nIter = 400L, warmup = 100L,
+  result <- .MakeTestPosterior(nRuns = 2L, nIter = 400L, maxWarmup = 100L,
                                seed = 6891)
 
   r_auto <- suppressMessages(AutoBurnin(result))
@@ -110,7 +111,7 @@ test_that("AutoBurnin runs without error (multi-run)", {
 
 test_that("AutoBurnin runs for single-run", {
   skip_if_not_installed("coda")
-  result <- .MakeTestPosterior(nRuns = 1L, nIter = 300L, warmup = 80L,
+  result <- .MakeTestPosterior(nRuns = 1L, nIter = 300L, maxWarmup = 80L,
                                seed = 3047)
 
   r_auto <- suppressMessages(AutoBurnin(result))
@@ -121,7 +122,7 @@ test_that("AutoBurnin runs for single-run", {
 
 test_that("ConvergenceDiagnostics respects burnin", {
   skip_if_not_installed("coda")
-  result <- .MakeTestPosterior(nRuns = 2L, nIter = 300L, warmup = 80L,
+  result <- .MakeTestPosterior(nRuns = 2L, nIter = 300L, maxWarmup = 80L,
                                seed = 1756)
 
   d_full <- ConvergenceDiagnostics(result)

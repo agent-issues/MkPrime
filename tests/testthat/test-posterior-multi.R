@@ -10,7 +10,7 @@ test_that("print.MkPosterior works for single run", {
 
   set.seed(5194)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L))
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE))
 
   expect_no_error(print(result))
   expect_no_error(summary(result))
@@ -27,7 +27,7 @@ test_that("print.MkPosterior works for multi-run", {
 
   set.seed(2204)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 1000L, thin = 5L, warmup = 500L))
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 1000L, thin = 5L, maxWarmup = 500L, minWarmup = 500L, autoTune = FALSE))
 
   expect_no_error(print(result))
   # Multi-run should have nRuns and per_run
@@ -46,7 +46,7 @@ test_that("print.MkPosterior shows tempering info", {
   set.seed(6842)
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 1L, nChains = 2L, heat = 0.3,
-                        nIter = 500L, thin = 5L, warmup = 200L))
+                        nIter = 500L, thin = 5L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE))
 
   # Swap rates should be present in result
   expect_true(!is.null(result$swap_rates))
@@ -63,7 +63,7 @@ test_that("summary.MkPosterior includes ESS and PSRF for multi-run", {
 
   set.seed(4487)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 1000L, thin = 5L, warmup = 500L))
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 1000L, thin = 5L, maxWarmup = 500L, minWarmup = 500L, autoTune = FALSE))
 
   s <- summary(result)
   expect_true(is.data.frame(s))
@@ -83,7 +83,7 @@ test_that("summary.MkPosterior works for single run (no PSRF)", {
 
   set.seed(1498)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 200L))
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE))
 
   s <- summary(result)
   expect_true("ESS" %in% names(s))
@@ -100,7 +100,7 @@ test_that("plot.MkPosterior shows multi-run traces", {
 
   set.seed(7218)
   result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 500L, thin = 5L, warmup = 200L))
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 500L, thin = 5L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE))
 
   expect_no_error(plot(result))
 })
@@ -116,7 +116,8 @@ test_that("Result includes stop_reason and actual_iter", {
   set.seed(3382)
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 100000L, thin = 5L,
-                        warmup = 100L, maxTime = 0.5))
+                        maxWarmup = 100L, minWarmup = 100L,
+                        autoTune = FALSE, maxTime = 0.5))
 
   expect_equal(result$stop_reason, "max_time")
   expect_lt(result$actual_iter, 100000L)

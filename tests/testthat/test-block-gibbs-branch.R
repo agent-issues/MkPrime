@@ -167,7 +167,7 @@ test_that(".BuildMoves sets dim = nEdge for block_gibbs_branch", {
   tree  <- ape::rtree(8L, rooted = FALSE)
   tree  <- TreeTools::Preorder(tree)
   nEdge <- nrow(tree$edge)
-  mcmc  <- MkPrimeMCMC(nIter = 100L, blockGibbsBranch = TRUE)
+  mcmc  <- MkPrimeMCMC(nIter = 100L, minWarmup = 50L, blockGibbsBranch = TRUE)
   moves <- MkPrime:::.BuildMoves(nEdge, nTrans = 3L, hasNeo = TRUE, mcmc)
   bgb   <- Filter(function(m) m$name == "block_gibbs_branch", moves)
   expect_length(bgb, 1L)
@@ -178,13 +178,13 @@ test_that(".BuildMoves sets dim = 1 for all standard moves", {
   tree  <- ape::rtree(6L, rooted = FALSE)
   tree  <- TreeTools::Preorder(tree)
   nEdge <- nrow(tree$edge)
-  mcmc  <- MkPrimeMCMC(nIter = 100L)
+  mcmc  <- MkPrimeMCMC(nIter = 100L, minWarmup = 50L)
   moves <- MkPrime:::.BuildMoves(nEdge, nTrans = 3L, hasNeo = TRUE, mcmc)
   dims  <- vapply(moves, function(m) m$dim %||% 1L, integer(1L))
   names(dims) <- vapply(moves, `[[`, character(1), "name")
   # Joint moves have dim=2; dirichlet_branch has dim=nCats; rest are dim=1
   multi_dim_moves <- c("neo_joint", "joint_tl_rls", "joint_tl_rl",
-                        "dirichlet_branch")
+                        "dirichlet_branch", "local_dirichlet")
   expect_true(all(dims[!names(dims) %in% multi_dim_moves] == 1L))
 })
 

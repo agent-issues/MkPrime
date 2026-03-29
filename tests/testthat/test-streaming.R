@@ -39,7 +39,7 @@ test_that("Log file is created with correct header in streaming mode", {
 
   set.seed(3714)
   RunMkPrime(f$pd, f$tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 300L, thin = 5L, warmup = 100L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 300L, thin = 5L, maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE,
                         logFile = log_file, bufferSize = 10L))
 
   expect_true(file.exists(log_file))
@@ -57,7 +57,7 @@ test_that("Sample column is strictly increasing", {
 
   set.seed(8821)
   RunMkPrime(f$pd, f$tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 300L, thin = 5L, warmup = 100L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 300L, thin = 5L, maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE,
                         logFile = log_file, bufferSize = 10L))
 
   dat <- utils::read.table(log_file, header = TRUE, sep = "\t")
@@ -72,7 +72,7 @@ test_that("Flush boundary: multiple flushes land correctly (small bufferSize)", 
   # bufferSize = 3, 15 thinned samples → 5 flushes of 3
   set.seed(2255)
   RunMkPrime(f$pd, f$tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 120L, thin = 5L, warmup = 45L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 120L, thin = 5L, maxWarmup = 45L, minWarmup = 45L, autoTune = FALSE,
                         logFile = log_file, bufferSize = 3L))
 
   dat <- utils::read.table(log_file, header = TRUE, sep = "\t")
@@ -90,7 +90,7 @@ test_that("Multi-run creates separate log files with _1/_2 suffix", {
 
   set.seed(6631)
   RunMkPrime(f$pd, f$tree,
-    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 200L, thin = 5L, warmup = 100L,
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 200L, thin = 5L, maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE,
                         logFile = log_file, bufferSize = 10L))
 
   expect_true(file.exists(log1))
@@ -112,7 +112,7 @@ test_that("Streaming result has logFile field and empty samples matrix", {
 
   set.seed(1947)
   result <- RunMkPrime(f$pd, f$tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 200L, thin = 5L, warmup = 100L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 200L, thin = 5L, maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE,
                         logFile = log_file, bufferSize = 20L))
 
   expect_s3_class(result, "MkPosterior")
@@ -129,7 +129,7 @@ test_that("Trees are still stored in memory in streaming mode", {
 
   set.seed(5512)
   result <- RunMkPrime(f$pd, f$tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 200L, thin = 5L, warmup = 100L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 200L, thin = 5L, maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE,
                         logFile = log_file, bufferSize = 20L))
 
   expect_equal(length(result$trees), 20L)
@@ -143,7 +143,7 @@ test_that("summary() errors helpfully for unloaded streaming result", {
 
   set.seed(7723)
   result <- RunMkPrime(f$pd, f$tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 200L, thin = 5L, warmup = 100L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 200L, thin = 5L, maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE,
                         logFile = log_file, bufferSize = 20L))
 
   expect_error(summary(result), "Samples are not in memory")
@@ -159,7 +159,7 @@ test_that("ReadMkLog returns matrix with correct dimensions and colnames", {
 
   set.seed(4481)
   RunMkPrime(f$pd, f$tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 300L, thin = 5L, warmup = 100L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 300L, thin = 5L, maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE,
                         logFile = log_file, bufferSize = 10L))
 
   mat <- ReadMkLog(log_file)
@@ -176,11 +176,11 @@ test_that("ReadMkLog round-trips with in-memory mode", {
 
   set.seed(9034)
   result_mem <- RunMkPrime(f$pd, f$tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 300L, thin = 5L, warmup = 100L))
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 300L, thin = 5L, maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE))
 
   set.seed(9034)
   RunMkPrime(f$pd, f$tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 300L, thin = 5L, warmup = 100L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 300L, thin = 5L, maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE,
                         logFile = log_file, bufferSize = 7L))
 
   loaded <- ReadMkLog(log_file)
@@ -202,7 +202,7 @@ test_that("ReadMkLog combines multiple files row-wise", {
 
   set.seed(1188)
   RunMkPrime(f$pd, f$tree,
-    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 200L, thin = 5L, warmup = 100L,
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 200L, thin = 5L, maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE,
                         logFile = log_file, bufferSize = 10L))
 
   combined <- ReadMkLog(c(log1, log2))
@@ -220,7 +220,7 @@ test_that("Streaming checkpoint is version 2 and state-only", {
 
   set.seed(3301)
   RunMkPrime(f$pd, f$tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 100L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE,
                         logFile = log_file, bufferSize = 20L,
                         checkEvery = 200L, checkpointFile = cp_file))
 
@@ -239,7 +239,7 @@ test_that("In-memory checkpoint is still version 1", {
 
   set.seed(7732)
   RunMkPrime(f$pd, f$tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, warmup = 100L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 500L, thin = 5L, maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE,
                         checkEvery = 200L, checkpointFile = cp_file))
 
   cp <- readRDS(cp_file)
@@ -355,7 +355,7 @@ test_that("In-memory mode is unchanged when logFile = NULL", {
 
   set.seed(2277)
   result <- RunMkPrime(f$pd, f$tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 300L, thin = 5L, warmup = 100L))
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 300L, thin = 5L, maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE))
 
   expect_null(result$logFile)
   expect_false(is.null(result$samples))
