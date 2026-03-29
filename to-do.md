@@ -31,7 +31,6 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
 | M-114 | P3 | OPEN | **Partial CL for Gibbs moves under Q-heterogeneity.** Both `gibbs_spr_impl` and `gibbs_subtree_swap_impl` currently fall back to full evaluation (`_full` variants) when `qHeterogeneity = TRUE` (siteMatrices). Port the partial CL pattern to handle per-site Q matrices. Lower priority since siteMatrices is a Phase 7d extension not yet commonly used. |
-| M-115 | P2 | OPEN | **Adaptive Gibbs move weight by tree size.** M-113 benchmark shows Gibbs moves improve ESS/s on small trees (≤20 tips, +61%) but hurt on medium trees (54 tips, −56%) because O(N²) per-invocation cost outweighs the mixing gain. Either: (a) reduce default Gibbs weight for larger trees (e.g., cap at `min(nEdge/4, 10)`), (b) let the adaptive scheduler learn this faster (it already tracks cost-weighted acceptance, but may need several warmup epochs to detect the penalty), or (c) add a user-facing guideline/threshold. Gibbs acceptance rates are excellent (~40% SPR, 24% swap) regardless of tree size — the issue is purely computational cost per invocation. |
 
 
 ## Misc / UI improvements
