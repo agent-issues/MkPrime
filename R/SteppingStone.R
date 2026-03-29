@@ -7,7 +7,8 @@
 #' estimate.
 #'
 #' @param data A `phyDat` object or `MkPrimeData` object.
-#' @param tree A starting tree (`phylo` object).
+#' @param tree A starting tree (`phylo` object), or `NULL` (default) to use a
+#'   neighbour-joining tree built from the data.
 #' @param neomorphic Integer vector of neomorphic character indices (if `data`
 #'   is `phyDat`). Ignored if `data` is `MkPrimeData`.
 #' @param model An `MkPrimeModel` object. Default: `MkPrimeModel()`.
@@ -56,7 +57,7 @@
 #' selection. *Systematic Biology*, 60(2), 150--160.
 #'
 #' @export
-mkp_stepping_stone <- function(data, tree,
+mkp_stepping_stone <- function(data, tree = NULL,
                               neomorphic = integer(0),
                               model = NULL,
                               nStones = 50L,
@@ -71,6 +72,28 @@ mkp_stepping_stone <- function(data, tree,
     mkd <- data
   } else {
     mkd <- MkPrimeData(data, neomorphic = neomorphic)
+  }
+
+  if (is.null(tree)) {
+    njInput <- if (inherits(data, "phyDat")) data else mkd$phyDat
+    tree <- TreeTools::NJTree(njInput, edgeLengths = TRUE)
+    if (verbose) {
+      cli::cli_alert_info("No starting tree supplied; using neighbour-joining tree.")
+    }
+  }
+  if (is.null(tree$edge.length)) {
+    cli::cli_abort(c(
+      "{.arg tree} has no branch lengths.",
+      "i" = "Supply a tree with edge lengths, e.g. {.code TreeTools::NJTree(data)}."
+    ))
+  }
+  nNeg <- sum(tree$edge.length <= 0)
+  if (nNeg > 0L) {
+    cli::cli_warn(c(
+      "{nNeg} non-positive branch length{?s} clamped to 1e-8.",
+      "i" = "Zero or negative lengths arise in NJ trees when taxa are very similar."
+    ))
+    tree$edge.length[tree$edge.length <= 0] <- 1e-8
   }
 
   if (is.null(model)) model <- MkPrimeModel()
