@@ -4,26 +4,30 @@
 // Mk' relabelling correction
 //
 // When the true number of states is k' but only kObs are observed in the
-// data, we need to account for the number of ways to assign the k' labels
-// to the kObs observed categories.
+// data, we need to account for the number of ways to assign the k' model-
+// state labels to the kObs observed categories.
 //
-// The correction (to be ADDED to the log-likelihood) is:
-//   log C(k', kObs) = log(kObs!) - log(k'!) + log((k' - kObs)!) + kObs * log(k')
+// Under JC(k'), all states are exchangeable, so every injective map from
+// {observed labels 0..kObs-1} → {model states 0..k'-1} gives the same
+// Felsenstein likelihood.  The number of such maps is the falling factorial:
 //
-// This is the log of:
-//   C(k', kObs) = kObs! / k'! * (k' - kObs)! * k'^kObs
-//               = k'^kObs / C(k', kObs)  [binomial coefficient]
+//   P(k', kObs) = k'! / (k' - kObs)!
 //
-// Derivation: There are C(k', kObs) ways to choose which kObs of the k'
-// states are observed. Given that choice, there are kObs! ways to assign
-// the observed state labels. So the total is:
-//   kObs! * C(k', kObs) * (1/k'^kObs)^{-1}
-// Wait — let's be precise. The correction comes from the Stirling number /
-// relabelling argument in Mk' (see mkprime-model.md).
+// The correction (ADDED to the Felsenstein log-likelihood) is therefore:
+//
+//   log P(k', kObs) = log(k'!) - log((k' - kObs)!)
+//
+// This INCREASES with k' (more states → more equivalent label assignments
+// → higher total probability).
+//
+// When k' = kObs the correction reduces to log(kObs!), a constant that
+// cancels in MH ratios but is included for correct absolute log-posteriors.
+//
+// Verified by direct brute-force enumeration on a star tree (see tests).
 //
 // Parameters:
 //   kPrime: true number of states (k' >= kObs)
-//   kObs: observed number of states (>= 2)
+//   kObs:   observed number of states (>= 1)
 //
 // Returns: log of the relabelling correction factor
 
@@ -36,19 +40,13 @@ double mk_prime_relabel_log(int kPrime, int kObs) {
     Rcpp::stop("kObs must be >= 1");
   }
 
-  // Use lgamma(n+1) = log(n!)
-  double log_correction =
-    std::lgamma(kObs + 1.0) -      // log(kObs!)
-    std::lgamma(kPrime + 1.0) +     // -log(k'!)
-    std::lgamma(kPrime - kObs + 1.0) + // log((k' - kObs)!)
-    kObs * std::log(static_cast<double>(kPrime));  // kObs * log(k')
-
-  return log_correction;
+  // log P(k', kObs) = lgamma(k'+1) - lgamma(k'-kObs+1)
+  return std::lgamma(kPrime + 1.0) - std::lgamma(kPrime - kObs + 1.0);
 }
 
 
 // Vectorized version: compute relabelling correction for multiple characters
-// with the same kObs but potentially different k' values.
+// with potentially different k' values (all sharing the same kObs).
 //
 // Parameters:
 //   kPrime_vec: integer vector of k' values (one per character)
@@ -62,18 +60,14 @@ Rcpp::NumericVector mk_prime_relabel_log_batch(
   int n = kPrime_vec.size();
   Rcpp::NumericVector result(n);
 
-  // Precompute the constant part: log(kObs!)
-  double log_kObs_fact = std::lgamma(kObs + 1.0);
+  double log_denom_base = std::lgamma(1.0); // lgamma(0+1) for the kObs=kPrime case
 
   for (int i = 0; i < n; ++i) {
     int kp = kPrime_vec[i];
     if (kp < kObs) {
       Rcpp::stop("kPrime[%d] = %d is less than kObs = %d", i + 1, kp, kObs);
     }
-    result[i] = log_kObs_fact -
-      std::lgamma(kp + 1.0) +
-      std::lgamma(kp - kObs + 1.0) +
-      kObs * std::log(static_cast<double>(kp));
+    result[i] = std::lgamma(kp + 1.0) - std::lgamma(kp - kObs + 1.0);
   }
 
   return result;
