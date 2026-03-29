@@ -276,7 +276,7 @@ MkpTracePlot <- function(info) {
   if (diff(ylim) == 0) ylim <- ylim + c(-1, 1)
 
   plot(iters, logpMat[, 1], type = "l", col = colors[1],
-       ylim = ylim, xlim = c(1, max(iter, nIter %||% iter)),
+       ylim = ylim, xlim = c(1, if (is.finite(nIter)) max(iter, nIter) else iter),
        main = "log_posterior", xlab = "iter", ylab = "",
        cex.main = 0.95, las = 1)
 
