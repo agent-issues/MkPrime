@@ -287,7 +287,7 @@ test_that("Full MCMC run with Gibbs moves produces valid MkPosterior", {
     nIter = 600L, warmup = 200L, thin = 10L, nRuns = 1L,
     gibbsSpr = TRUE, gibbsSubtreeSwap = TRUE
   )
-  result <- RunMkPrime(mkd, model, mcmc, tree = tree)
+  result <- RunMkPrime(data = mkd, tree = tree, model = model, mcmc = mcmc)
   expect_s3_class(result, "MkPosterior")
   expect_true(nrow(result$samples) > 0L)
 })
@@ -307,7 +307,7 @@ test_that("Full MCMC run with all moves produces valid MkPosterior", {
     weightedBranchScale = TRUE, weightedSpr = TRUE,
     weightedSubtreeSwap = TRUE, nBranchBins = 5L
   )
-  result <- RunMkPrime(mkd, model, mcmc, tree = tree)
+  result <- RunMkPrime(data = mkd, tree = tree, model = model, mcmc = mcmc)
   expect_s3_class(result, "MkPosterior")
   expect_true(nrow(result$samples) > 0L)
 })

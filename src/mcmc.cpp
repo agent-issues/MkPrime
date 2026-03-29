@@ -469,11 +469,13 @@ double eval_full_loglik_at_cpp(SEXP dataPtr, SEXP statePtr,
 
 // Old full-evaluation path (used as fallback and for validation)
 static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta);
+// M-114: partial CL path for Q-heterogeneity
+static bool gibbs_spr_impl_het(McmcData* data, McmcState* state, double beta);
 
 static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
-  // Fallback: Q-heterogeneity not yet supported in partial CL
+  // M-114: Q-heterogeneity uses streaming partial CL
   if (data->qHeterogeneity)
-    return gibbs_spr_impl_full(data, state, beta);
+    return gibbs_spr_impl_het(data, state, beta);
 
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
@@ -743,6 +745,312 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
 }
 
 
+// ---------------------------------------------------------------------------
+// M-114: Gibbs SPR with streaming partial CL for Q-heterogeneity.
+//
+// Same prune/candidate/sampling logic as gibbs_spr_impl, but evaluates
+// each CLGroup's likelihood under a mixture of F81 components by streaming
+// over (betaBin, rotation) and accumulating per-site raw likelihoods.
+// ---------------------------------------------------------------------------
+static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
+                                double beta) {
+  const int nEdge = state->parent.size();
+  const int nTip  = data->nTip;
+  const int root  = nTip + 1;
+
+  // 1. Eligible prune edges (parent != root)
+  std::vector<int> eligible;
+  eligible.reserve(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    if (state->parent[i] != root) eligible.push_back(i);
+  if (eligible.empty()) return false;
+
+  int pickIdx = (int)(R::unif_rand() * (double)eligible.size());
+  if (pickIdx >= (int)eligible.size()) pickIdx = (int)eligible.size() - 1;
+  const int pruneRow = eligible[pickIdx];
+  const int u = state->parent[pruneRow];
+  const int v = state->child[pruneRow];
+
+  int parentRow = -1, sibRow = -1, sibNode = -1;
+  for (int i = 0; i < nEdge; ++i) {
+    if (state->child[i] == u) parentRow = i;
+    if (state->parent[i] == u && state->child[i] != v) {
+      sibRow = i; sibNode = state->child[i];
+    }
+  }
+  if (parentRow < 0 || sibRow < 0) return false;
+
+  std::vector<bool> isDesc(2 * nTip + 2, false);
+  isDesc[v] = true;
+  if (v > nTip) {
+    std::vector<int> queue = {v};
+    while (!queue.empty()) {
+      int cur = queue.back(); queue.pop_back();
+      for (int i = 0; i < nEdge; ++i) {
+        if (state->parent[i] == cur) {
+          int c = state->child[i];
+          isDesc[c] = true;
+          if (c > nTip) queue.push_back(c);
+        }
+      }
+    }
+  }
+
+  std::vector<int> cands;
+  cands.reserve(nEdge);
+  for (int i = 0; i < nEdge; ++i) {
+    if (isDesc[state->child[i]]) continue;
+    if (state->parent[i] == u || state->child[i] == u) continue;
+    cands.push_back(i);
+  }
+  if (cands.empty()) return false;
+  const int nCand = (int)cands.size();
+
+  NumericVector absLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    absLen[i] = state->treeLength * state->relBrLengths[i];
+  const double lMerge = absLen[parentRow] + absLen[sibRow];
+  const double lPrune = absLen[pruneRow];
+
+  TreeNav topo;
+  topo.build(state->parent, state->child, absLen, nTip);
+
+  NumericVector rates = gibbs_acrv_rates(state->rateLogSd, data->nCat,
+                                          data->acrvZ);
+  bool useAcrv = (state->rateLogSd > 0.0);
+  int nCat = useAcrv ? data->nCat : 1;
+  if (!useAcrv) rates = NumericVector(1, 1.0);
+
+  int coding  = data->codingType;
+  int maxNode = topo.maxNode;
+  int nBC     = data->nBetaCat;
+
+  // Build CLGroups (same structure as non-het, but with useF81 flag)
+  std::vector<CLGroup> groups;
+  struct GroupMeta { int partIdx; int nCharInPart; };
+  std::vector<GroupMeta> groupMeta;
+
+  for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
+    const PartInfo& part = data->parts[pi];
+    if (part.type == 0) {
+      CLGroup g;
+      g.isMkN     = true;
+      g.rateLoss  = state->rateLoss;
+      g.rateScale = state->rateNeo;
+      g.tipData   = part.tipStates;
+      g.allocate(maxNode, nCat, part.tipStates.ncol(), 2);
+      groups.push_back(std::move(g));
+      groupMeta.push_back({pi, part.tipStates.ncol()});
+    } else if (part.type == 2) {
+      CLGroup g;
+      g.isMkN     = false;
+      g.rateLoss  = 1.0;
+      g.rateScale = 1.0;
+      g.tipData   = part.tipStates;
+      g.allocate(maxNode, nCat, part.tipStates.ncol(), part.k);
+      groups.push_back(std::move(g));
+      groupMeta.push_back({pi, part.tipStates.ncol()});
+    } else {
+      int nCharPart = part.tipStates.ncol();
+      IntegerVector kPrimePart(nCharPart);
+      for (int ci = 0; ci < nCharPart; ++ci)
+        kPrimePart[ci] = state->kPrime[part.globalCharIdx[ci]];
+      IntegerVector uniqKp = sort_unique(kPrimePart);
+      for (int ui = 0; ui < uniqKp.size(); ++ui) {
+        int kp = uniqKp[ui];
+        std::vector<int> cols;
+        for (int ci = 0; ci < nCharPart; ++ci)
+          if (kPrimePart[ci] == kp) cols.push_back(ci);
+        int nSub = (int)cols.size();
+        IntegerMatrix sub(nTip, nSub);
+        for (int c = 0; c < nSub; ++c)
+          for (int t = 0; t < nTip; ++t)
+            sub(t, c) = part.tipStates(t, cols[c]);
+        CLGroup g;
+        g.isMkN     = false;
+        g.rateLoss  = 1.0;
+        g.rateScale = 1.0;
+        g.tipData   = sub;
+        g.allocate(maxNode, nCat, nSub, kp);
+        groups.push_back(std::move(g));
+        groupMeta.push_back({pi, nCharPart});
+      }
+    }
+  }
+
+  // Pseudo-character groups for ascertainment correction
+  std::vector<CLGroup> pseudoGroups;
+  if (coding != 0) {
+    pseudoGroups.resize(groups.size());
+    for (size_t gi = 0; gi < groups.size(); ++gi)
+      pseudoGroups[gi] = create_const_pseudo_group(
+        groups[gi], nTip, maxNode, nCat);
+  }
+
+  // ===== M-114: Streaming evaluation over (betaBin, rotation) =====
+  //
+  // Per-group, per-candidate accumulators for raw site likelihoods
+  // siteLikAccums[gi][ci * nChar_gi .. (ci+1)*nChar_gi - 1]
+  std::vector<std::vector<double>> siteLikAccums(groups.size());
+  std::vector<std::vector<double>> constProbAccums(groups.size());
+  for (size_t gi = 0; gi < groups.size(); ++gi) {
+    siteLikAccums[gi].assign((size_t)nCand * groups[gi].nChar, 0.0);
+    if (coding != 0)
+      constProbAccums[gi].assign(
+        (size_t)nCand * pseudoGroups[gi].nChar, 0.0);
+  }
+
+  ResidualCL res;
+  ResidualCL pseudoRes;
+
+  // Process each group independently (different k → different bins/rotations)
+  for (size_t gi = 0; gi < groups.size(); ++gi) {
+    CLGroup& grp = groups[gi];
+    int k = grp.kStates;
+    double baseRL = grp.isMkN ? state->rateLoss : 1.0;
+    int nRot = (k == 2) ? 1 : k;
+
+    double hetBins[16];
+    gibbs_compute_het_bins(state->betaScale, k, nBC, hetBins);
+
+    for (int bi = 0; bi < nBC; ++bi) {
+      for (int rot = 0; rot < nRot; ++rot) {
+        // Set F81 parameters for this component
+        set_f81_component(grp, hetBins[bi], rot, baseRL);
+
+        // Caching downpass + residual
+        caching_downpass(grp, topo, state->parent, state->child, rates);
+        compute_residual_cl(res, grp, topo, rates, u, sibNode, lMerge);
+
+        // Same for pseudo-group (ascertainment)
+        if (coding != 0) {
+          set_f81_component(pseudoGroups[gi], hetBins[bi], rot, baseRL);
+          caching_downpass(pseudoGroups[gi], topo, state->parent,
+                           state->child, rates);
+          compute_residual_cl(pseudoRes, pseudoGroups[gi], topo, rates,
+                              u, sibNode, lMerge);
+        }
+
+        // Evaluate all candidates for this component
+        for (int ci = 0; ci < nCand; ++ci) {
+          const int rr = cands[ci];
+          const int a  = state->parent[rr];
+          const int b  = state->child[rr];
+          const double lHalf = 0.5 * absLen[rr];
+
+          evaluate_candidate(
+            grp, topo, res, rates,
+            v, u, sibNode, lMerge, a, b, lHalf, lPrune,
+            siteLikAccums[gi].data() + (size_t)ci * grp.nChar);
+
+          if (coding != 0) {
+            evaluate_const_prob(
+              pseudoGroups[gi], topo, pseudoRes, rates,
+              v, u, sibNode, lMerge, a, b, lHalf, lPrune,
+              constProbAccums[gi].data() +
+                (size_t)ci * pseudoGroups[gi].nChar);
+          }
+        }
+      }
+    }
+  }
+
+  // Convert accumulators to per-candidate log-likelihoods
+  std::vector<double> candLL(nCand, 0.0);
+  for (size_t gi = 0; gi < groups.size(); ++gi) {
+    const CLGroup& grp = groups[gi];
+    int k     = grp.kStates;
+    int nRot  = (k == 2) ? 1 : k;
+    int totalComp = nCat * nBC * nRot;
+    int nChar_gi  = grp.nChar;
+
+    for (int ci = 0; ci < nCand; ++ci) {
+      double grpLL = siteLikAccum_to_logLik(
+        siteLikAccums[gi].data() + (size_t)ci * nChar_gi,
+        nChar_gi, totalComp);
+
+      if (coding != 0 && nChar_gi > 0) {
+        int nPseudo = pseudoGroups[gi].nChar;  // = k
+        double constP = 0.0;
+        const double* cpa =
+          constProbAccums[gi].data() + (size_t)ci * nPseudo;
+        for (int c = 0; c < nPseudo; ++c) constP += cpa[c];
+        constP /= totalComp;
+        if (constP < 1.0)
+          grpLL -= nChar_gi * std::log(1.0 - constP);
+      }
+
+      candLL[ci] += grpLL;
+    }
+  }
+
+  // Relabelling correction
+  if (data->relabel) {
+    double relabelCorr = 0.0;
+    for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
+      const PartInfo& part = data->parts[pi];
+      if (part.type == 1) {
+        int nCharPart = part.tipStates.ncol();
+        for (int ci = 0; ci < nCharPart; ++ci)
+          relabelCorr += mk_prime_relabel_log(
+            state->kPrime[part.globalCharIdx[ci]], part.kObsLocal[ci]);
+      }
+    }
+    for (int ci = 0; ci < nCand; ++ci)
+      candLL[ci] += relabelCorr;
+  }
+
+  // Sampling and commit (identical to gibbs_spr_impl)
+  const double llOrig = state->logLik;
+  double maxLL = llOrig;
+  for (int ci = 0; ci < nCand; ++ci)
+    maxLL = std::max(maxLL, candLL[ci]);
+
+  double wOrig = std::exp(beta * (llOrig - maxLL));
+  std::vector<double> ws(nCand);
+  double sumW = wOrig;
+  for (int ci = 0; ci < nCand; ++ci) {
+    ws[ci] = std::exp(beta * (candLL[ci] - maxLL));
+    sumW  += ws[ci];
+  }
+
+  double rnd = R::unif_rand() * sumW;
+  if (rnd < wOrig) return false;
+  rnd -= wOrig;
+  int chosen = nCand - 1;
+  for (int ci = 0; ci < nCand - 1; ++ci) {
+    if (rnd < ws[ci]) { chosen = ci; break; }
+    rnd -= ws[ci];
+  }
+
+  // Apply chosen SPR
+  {
+    const int rr      = cands[chosen];
+    const double lReg = absLen[rr];
+    const int b = state->child[rr];
+
+    state->child[parentRow]  = sibNode;  absLen[parentRow] = lMerge;
+    state->child[rr]         = u;        absLen[rr]        = 0.5 * lReg;
+    state->parent[sibRow]    = u;        state->child[sibRow] = b;
+    absLen[sibRow]           = 0.5 * lReg;
+
+    auto po = TreeTools::preorder_weighted_impl(
+        state->parent, state->child, absLen);
+    IntegerMatrix ordEdge = po.first;
+    NumericVector ordAbs  = po.second;
+    for (int k = 0; k < nEdge; ++k) {
+      state->parent[k]       = ordEdge(k, 0);
+      state->child[k]        = ordEdge(k, 1);
+      state->relBrLengths[k] = ordAbs[k] / state->treeLength;
+    }
+  }
+
+  state->logLik = candLL[chosen];
+  state->partLogLik.clear();
+  return true;
+}
+
+
 // Old full-evaluation fallback (Q-het or validation), M-109 in-place
 static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta) {
   const int nEdge = state->parent.size();
@@ -910,12 +1218,15 @@ static int find_child_row_gibbs(const IntegerVector& child, int node) {
 // Full-evaluation fallback (Q-het or validation)
 static bool gibbs_subtree_swap_impl_full(McmcData* data, McmcState* state,
                                          double beta);
+// M-114: partial CL path for Q-heterogeneity
+static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
+                                         double beta);
 
 static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
                                     double beta) {
-  // Fallback: Q-heterogeneity not yet supported in partial CL
+  // M-114: Q-heterogeneity uses streaming partial CL
   if (data->qHeterogeneity)
-    return gibbs_subtree_swap_impl_full(data, state, beta);
+    return gibbs_subtree_swap_impl_het(data, state, beta);
 
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
@@ -1129,6 +1440,261 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
       state->child[k]        = ordEdge(k, 1);
       state->relBrLengths[k] = ordAbsFinal[k] / state->treeLength;
     }
+  }
+
+  state->logLik = candLL[chosen];
+  state->partLogLik.clear();
+  return true;
+}
+
+
+// ---------------------------------------------------------------------------
+// M-114: Gibbs subtree swap with streaming partial CL for Q-heterogeneity.
+// ---------------------------------------------------------------------------
+static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
+                                         double beta) {
+  const int nEdge = state->parent.size();
+  const int nTip  = data->nTip;
+
+  int pickIdx = (int)(R::unif_rand() * (double)nEdge);
+  if (pickIdx >= nEdge) pickIdx = nEdge - 1;
+  const int nodeA = state->child[pickIdx];
+
+  std::vector<int> partners = get_valid_swap_partners_impl(
+      state->parent, state->child, nTip, nodeA);
+  if (partners.empty()) return false;
+  const int nPart = (int)partners.size();
+
+  NumericVector absLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    absLen[i] = state->treeLength * state->relBrLengths[i];
+
+  TreeNav topo;
+  topo.build(state->parent, state->child, absLen, nTip);
+
+  NumericVector rates = gibbs_acrv_rates(state->rateLogSd, data->nCat,
+                                          data->acrvZ);
+  bool useAcrv = (state->rateLogSd > 0.0);
+  int nCat = useAcrv ? data->nCat : 1;
+  if (!useAcrv) rates = NumericVector(1, 1.0);
+
+  int coding  = data->codingType;
+  int maxNode = topo.maxNode;
+  int nBC     = data->nBetaCat;
+
+  // Build CLGroups (same as gibbs_spr_impl_het)
+  std::vector<CLGroup> groups;
+  struct GroupMeta { int partIdx; int nCharInPart; };
+  std::vector<GroupMeta> groupMeta;
+
+  for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
+    const PartInfo& part = data->parts[pi];
+    if (part.type == 0) {
+      CLGroup g;
+      g.isMkN     = true;
+      g.rateLoss  = state->rateLoss;
+      g.rateScale = state->rateNeo;
+      g.tipData   = part.tipStates;
+      g.allocate(maxNode, nCat, part.tipStates.ncol(), 2);
+      groups.push_back(std::move(g));
+      groupMeta.push_back({pi, part.tipStates.ncol()});
+    } else if (part.type == 2) {
+      CLGroup g;
+      g.isMkN     = false;
+      g.rateLoss  = 1.0;
+      g.rateScale = 1.0;
+      g.tipData   = part.tipStates;
+      g.allocate(maxNode, nCat, part.tipStates.ncol(), part.k);
+      groups.push_back(std::move(g));
+      groupMeta.push_back({pi, part.tipStates.ncol()});
+    } else {
+      int nCharPart = part.tipStates.ncol();
+      IntegerVector kPrimePart(nCharPart);
+      for (int ci = 0; ci < nCharPart; ++ci)
+        kPrimePart[ci] = state->kPrime[part.globalCharIdx[ci]];
+      IntegerVector uniqKp = sort_unique(kPrimePart);
+      for (int ui = 0; ui < uniqKp.size(); ++ui) {
+        int kp = uniqKp[ui];
+        std::vector<int> cols;
+        for (int ci = 0; ci < nCharPart; ++ci)
+          if (kPrimePart[ci] == kp) cols.push_back(ci);
+        int nSub = (int)cols.size();
+        IntegerMatrix sub(nTip, nSub);
+        for (int c = 0; c < nSub; ++c)
+          for (int t = 0; t < nTip; ++t)
+            sub(t, c) = part.tipStates(t, cols[c]);
+        CLGroup g;
+        g.isMkN     = false;
+        g.rateLoss  = 1.0;
+        g.rateScale = 1.0;
+        g.tipData   = sub;
+        g.allocate(maxNode, nCat, nSub, kp);
+        groups.push_back(std::move(g));
+        groupMeta.push_back({pi, nCharPart});
+      }
+    }
+  }
+
+  std::vector<CLGroup> pseudoGroups;
+  if (coding != 0) {
+    pseudoGroups.resize(groups.size());
+    for (size_t gi = 0; gi < groups.size(); ++gi)
+      pseudoGroups[gi] = create_const_pseudo_group(
+        groups[gi], nTip, maxNode, nCat);
+  }
+
+  // Precompute nodeA-fixed data
+  int pA    = topo.parentNode[nodeA];
+  int slotA = topo.childSlot(pA, nodeA);
+  double lenA = topo.edgeLen[topo.edgeToPar[nodeA]];
+
+  std::vector<int> pathA;
+  pathA.reserve(16);
+  for (int n = pA; n >= 1; n = topo.parentNode[n])
+    pathA.push_back(n);
+
+  std::vector<int> pathAIdx(maxNode + 1, -1);
+  for (int i = 0; i < (int)pathA.size(); ++i)
+    pathAIdx[pathA[i]] = i;
+
+  // Per-group, per-candidate accumulators
+  std::vector<std::vector<double>> siteLikAccums(groups.size());
+  std::vector<std::vector<double>> constProbAccums(groups.size());
+  for (size_t gi = 0; gi < groups.size(); ++gi) {
+    siteLikAccums[gi].assign((size_t)nPart * groups[gi].nChar, 0.0);
+    if (coding != 0)
+      constProbAccums[gi].assign(
+        (size_t)nPart * pseudoGroups[gi].nChar, 0.0);
+  }
+
+  // Stream over (betaBin, rotation) per group
+  for (size_t gi = 0; gi < groups.size(); ++gi) {
+    CLGroup& grp = groups[gi];
+    int k = grp.kStates;
+    double baseRL = grp.isMkN ? state->rateLoss : 1.0;
+    int nRot = (k == 2) ? 1 : k;
+
+    double hetBins[16];
+    gibbs_compute_het_bins(state->betaScale, k, nBC, hetBins);
+
+    for (int bi = 0; bi < nBC; ++bi) {
+      for (int rot = 0; rot < nRot; ++rot) {
+        set_f81_component(grp, hetBins[bi], rot, baseRL);
+        caching_downpass(grp, topo, state->parent, state->child, rates);
+
+        if (coding != 0) {
+          set_f81_component(pseudoGroups[gi], hetBins[bi], rot, baseRL);
+          caching_downpass(pseudoGroups[gi], topo, state->parent,
+                           state->child, rates);
+        }
+
+        for (int pi2 = 0; pi2 < nPart; ++pi2) {
+          evaluate_swap_impl(
+            grp, topo, rates, nodeA, partners[pi2],
+            pA, slotA, lenA, pathA, pathAIdx, false,
+            siteLikAccums[gi].data() + (size_t)pi2 * grp.nChar);
+
+          if (coding != 0) {
+            evaluate_swap_impl(
+              pseudoGroups[gi], topo, rates, nodeA, partners[pi2],
+              pA, slotA, lenA, pathA, pathAIdx, true,
+              nullptr,
+              constProbAccums[gi].data() +
+                (size_t)pi2 * pseudoGroups[gi].nChar);
+          }
+        }
+      }
+    }
+  }
+
+  // Convert accumulators to per-candidate log-likelihoods
+  std::vector<double> candLL(nPart, 0.0);
+  for (size_t gi = 0; gi < groups.size(); ++gi) {
+    const CLGroup& grp = groups[gi];
+    int k     = grp.kStates;
+    int nRot  = (k == 2) ? 1 : k;
+    int totalComp = nCat * nBC * nRot;
+    int nChar_gi  = grp.nChar;
+
+    for (int pi2 = 0; pi2 < nPart; ++pi2) {
+      double grpLL = siteLikAccum_to_logLik(
+        siteLikAccums[gi].data() + (size_t)pi2 * nChar_gi,
+        nChar_gi, totalComp);
+
+      if (coding != 0 && nChar_gi > 0) {
+        int nPseudo = pseudoGroups[gi].nChar;
+        double constP = 0.0;
+        const double* cpa =
+          constProbAccums[gi].data() + (size_t)pi2 * nPseudo;
+        for (int c = 0; c < nPseudo; ++c) constP += cpa[c];
+        constP /= totalComp;
+        if (constP < 1.0)
+          grpLL -= nChar_gi * std::log(1.0 - constP);
+      }
+
+      candLL[pi2] += grpLL;
+    }
+  }
+
+  // Relabelling correction
+  if (data->relabel) {
+    double relabelCorr = 0.0;
+    for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
+      const PartInfo& part = data->parts[pi];
+      if (part.type == 1) {
+        int nCharPart = part.tipStates.ncol();
+        for (int ci = 0; ci < nCharPart; ++ci)
+          relabelCorr += mk_prime_relabel_log(
+            state->kPrime[part.globalCharIdx[ci]], part.kObsLocal[ci]);
+      }
+    }
+    for (int pi2 = 0; pi2 < nPart; ++pi2)
+      candLL[pi2] += relabelCorr;
+  }
+
+  // Sampling (identical to gibbs_subtree_swap_impl)
+  const double llOrig = state->logLik;
+  double maxLL = llOrig;
+  for (int pi2 = 0; pi2 < nPart; ++pi2)
+    maxLL = std::max(maxLL, candLL[pi2]);
+
+  double wOrig = std::exp(beta * (llOrig - maxLL));
+  std::vector<double> ws(nPart);
+  double sumW = wOrig;
+  for (int pi2 = 0; pi2 < nPart; ++pi2) {
+    ws[pi2] = std::exp(beta * (candLL[pi2] - maxLL));
+    sumW += ws[pi2];
+  }
+
+  double rnd = R::unif_rand() * sumW;
+  if (rnd < wOrig) return false;
+  rnd -= wOrig;
+  int chosen = nPart - 1;
+  for (int pi2 = 0; pi2 < nPart - 1; ++pi2) {
+    if (rnd < ws[pi2]) { chosen = pi2; break; }
+    rnd -= ws[pi2];
+  }
+
+  // Apply swap (same as gibbs_subtree_swap_impl)
+  int nodeB = partners[chosen];
+  int rowA = -1, rowB = -1;
+  for (int i = 0; i < nEdge; ++i) {
+    if (state->child[i] == nodeA) rowA = i;
+    if (state->child[i] == nodeB) rowB = i;
+  }
+  state->child[rowA] = nodeB;
+  state->child[rowB] = nodeA;
+  absLen[rowA] = topo.edgeLen[topo.edgeToPar[nodeB]];
+  absLen[rowB] = topo.edgeLen[topo.edgeToPar[nodeA]];
+
+  auto po = TreeTools::preorder_weighted_impl(
+      state->parent, state->child, absLen);
+  IntegerMatrix ordEdge = po.first;
+  NumericVector ordAbs  = po.second;
+  for (int k2 = 0; k2 < nEdge; ++k2) {
+    state->parent[k2]       = ordEdge(k2, 0);
+    state->child[k2]        = ordEdge(k2, 1);
+    state->relBrLengths[k2] = ordAbs[k2] / state->treeLength;
   }
 
   state->logLik = candLL[chosen];
