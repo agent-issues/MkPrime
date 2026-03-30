@@ -1058,7 +1058,7 @@ RunMkPrime <- function(data, tree = NULL,
     }
     # Sample phase: no adaptation needed (weights frozen)
 
-    # Streaming checkpoint: fire when buffer was flushed this batch
+    # Streaming checkpoint: fire when buffer was flushed this batch (Sample)
     if (phase == "Sample" && isStreaming &&
         !is.null(checkpointFile) && isTRUE(r$flushed)) {
       if (r$flush_idx > 0L) {
@@ -1066,6 +1066,16 @@ RunMkPrime <- function(data, tree = NULL,
         r$flush_idx <- 0L
       }
       r$flushed <- FALSE
+      .SaveCheckpoint(list(r), mcmc, batchEnd, paramNames, checkpointFile,
+                      moveWeights = moveWeights, phase = phase)
+    }
+
+    # Warmup/tuning checkpoint at checkEvery intervals so long warmups
+    # are recoverable.  No samples to flush — just save chain state.
+    if (phase != "Sample" && !is.null(checkpointFile) &&
+        !is.null(mcmc$checkEvery) && mcmc$checkEvery > 0L &&
+        (batchEnd %/% mcmc$checkEvery) >
+          ((batchStart - 1L) %/% mcmc$checkEvery)) {
       .SaveCheckpoint(list(r), mcmc, batchEnd, paramNames, checkpointFile,
                       moveWeights = moveWeights, phase = phase)
     }
