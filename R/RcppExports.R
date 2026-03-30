@@ -73,6 +73,10 @@ get_mcmc_state <- function(statePtr) {
     .Call(`_MkPrime_get_mcmc_state`, statePtr)
 }
 
+compute_topo_hash <- function(parent) {
+    .Call(`_MkPrime_compute_topo_hash`, parent)
+}
+
 get_state_log_lik <- function(statePtr) {
     .Call(`_MkPrime_get_state_log_lik`, statePtr)
 }

@@ -386,6 +386,22 @@ List get_mcmc_state(SEXP statePtr) {
 }
 
 
+// FNV-1a topology hash of the parent vector.
+// Edges must be in canonical preorder (guaranteed by all tree moves).
+static double fnv_topo_hash(const IntegerVector& parent) {
+  uint64_t h = 0xcbf29ce484222325ULL;
+  for (int k = 0; k < parent.size(); ++k) {
+    h ^= static_cast<uint64_t>(parent[k]);
+    h *= 0x100000001b3ULL;
+  }
+  return static_cast<double>(h >> 11);  // 53 significant bits
+}
+
+// [[Rcpp::export]]
+double compute_topo_hash(IntegerVector parent) {
+  return fnv_topo_hash(parent);
+}
+
 // [[Rcpp::export]]
 double get_state_log_lik(SEXP statePtr) {
   return Rcpp::XPtr<McmcState>(statePtr).get()->logLik;
@@ -3757,14 +3773,8 @@ List run_mcmc_batch_cpp(
       // Diagnostic: cold-chain swaps since last sample
       row[col++] = static_cast<double>(coldSwapsSinceSample);
       coldSwapsSinceSample = 0;
-      // Diagnostic: topology hash (sum of parent[k] * 1000003 + child[k])
-      {
-        double h = 0.0;
-        for (int k = 0; k < nEdge; ++k)
-          h += static_cast<double>(s0->parent[k]) * 1000003.0 +
-               static_cast<double>(s0->child[k]);
-        row[col++] = h;
-      }
+      // Diagnostic: topology hash (FNV-1a of canonical-preorder parent vector)
+      row[col++] = fnv_topo_hash(s0->parent);
       for (int j = 0; j < nTrans; ++j)
         row[col++] = static_cast<double>(s0->kPrime[transIdxCpp[j]]);
       for (int k = 0; k < nEdge; ++k)

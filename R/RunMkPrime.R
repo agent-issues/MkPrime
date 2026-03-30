@@ -200,6 +200,17 @@ RunMkPrime <- function(data, tree = NULL,
   if (identical(mcmc$thin, "auto")) {
     mcmc$thin <- length(moves)
   }
+  # Resolve treeThin: NULL → same as thin; validate multiple-of-thin
+  if (is.null(mcmc$treeThin)) {
+    mcmc$treeThin <- mcmc$thin
+  }
+  if (mcmc$treeThin %% mcmc$thin != 0L) {
+    cli::cli_abort(
+      "{.arg treeThin} ({mcmc$treeThin}) must be a multiple of \\
+       {.arg thin} ({mcmc$thin})."
+    )
+  }
+  treeEvery <- as.integer(mcmc$treeThin / mcmc$thin)
 
   nRuns <- mcmc$nRuns
 
@@ -510,6 +521,7 @@ RunMkPrime <- function(data, tree = NULL,
                                   isStreaming = FALSE, convWindowSize = 0L,
                                   treeFile = NULL) {
   nChains <- mcmc$nChains
+  treeEvery <- as.integer(mcmc$treeThin / mcmc$thin)
 
   # --- Reconstruct C++ XPtrs from R-serializable chain lists ---
   mcmcData <- .InitMcmcData(mkd, model)
@@ -534,12 +546,14 @@ RunMkPrime <- function(data, tree = NULL,
   }
 
   # --- Sample storage ---
-  savedIdx <- r$saved_idx %||% 0L
+  savedIdx     <- r$saved_idx %||% 0L
+  treeSavedIdx <- r$tree_saved_idx %||% 0L
   nSavedPerRun <- if (is.finite(mcmc$nIter)) {
     as.integer((mcmc$nIter - mcmc$warmup) / mcmc$thin)
   } else {
     2000L
   }
+  nTreePerRun <- as.integer(ceiling(nSavedPerRun / treeEvery))
 
   if (isStreaming) {
     # Clear stale streaming fields before merging fresh buffers (resume path).
@@ -550,7 +564,8 @@ RunMkPrime <- function(data, tree = NULL,
     bufs <- .InitStreamBuffers(length(paramNames), paramNames,
                                mcmc$bufferSize, convWindowSize)
     r <- c(r, bufs)
-    r$saved_idx <- savedIdx
+    r$saved_idx      <- savedIdx
+    r$tree_saved_idx <- treeSavedIdx
     if (is.null(r$tree_samples)) r$tree_samples <- vector("list", 0L)
   } else {
     if (is.null(r$samples)) {
@@ -558,7 +573,7 @@ RunMkPrime <- function(data, tree = NULL,
       r$samples <- matrix(NA_real_, nrow = nSavedPerRun,
                           ncol = length(paramNames),
                           dimnames = list(NULL, paramNames))
-      r$tree_samples <- vector("list", nSavedPerRun)
+      r$tree_samples <- vector("list", nTreePerRun)
     } else if (is.finite(mcmc$nIter)) {
       # Resuming: extend matrix if needed
       currentRows <- nrow(r$samples)
@@ -567,11 +582,14 @@ RunMkPrime <- function(data, tree = NULL,
                         ncol = ncol(r$samples),
                         dimnames = list(NULL, colnames(r$samples)))
         r$samples <- rbind(r$samples, extra)
+      }
+      if (length(r$tree_samples) < nTreePerRun) {
         r$tree_samples <- c(r$tree_samples,
-                            vector("list", nSavedPerRun - length(r$tree_samples)))
+                            vector("list", nTreePerRun - length(r$tree_samples)))
       }
     }
-    r$saved_idx <- savedIdx
+    r$saved_idx      <- savedIdx
+    r$tree_saved_idx <- treeSavedIdx
   }
 
   # M-126: Rho estimation buffer for 2D joint Bactrian moves.
@@ -762,33 +780,36 @@ RunMkPrime <- function(data, tree = NULL,
           iterNum <- r$samplePhaseStart + r$saved_idx * mcmc$thin
           r <- .AddToStreamBuffer(r, row, iterNum, logFilePath,
                                   mcmc$bufferSize, convWindowSize)
-          if (r$saved_idx > length(r$tree_samples)) {
-            n <- max(length(r$tree_samples), 1L)
-            r$tree_samples <- c(r$tree_samples, vector("list", n))
-          }
         } else {
           if (r$saved_idx > nrow(r$samples)) {
             n <- nrow(r$samples)
             extra <- matrix(NA_real_, nrow = n, ncol = ncol(r$samples),
                             dimnames = list(NULL, colnames(r$samples)))
             r$samples <- rbind(r$samples, extra)
-            r$tree_samples <- c(r$tree_samples, vector("list", n))
           }
           r$samples[r$saved_idx, ] <- row
         }
 
-        tl    <- row[3L]
-        relBr <- row[brColStart:(brColStart + nEdge - 1L)]
-        curTree <- structure(
-          list(edge        = result$edge_samples[[i]],
-               edge.length = tl * relBr,
-               Nnode       = length(tipLabels) - 2L,
-               tip.label   = tipLabels),
-          class = "phylo"
-        )
-        r$tree_samples[[r$saved_idx]] <- curTree
-        if (!is.null(treeFile))
-          cat(ape::write.tree(curTree), "\n", file = treeFile, append = TRUE)
+        # Tree storage: only on treeThin boundary
+        if (r$saved_idx %% treeEvery == 0L) {
+          r$tree_saved_idx <- r$tree_saved_idx + 1L
+          if (r$tree_saved_idx > length(r$tree_samples)) {
+            n <- max(length(r$tree_samples), 1L)
+            r$tree_samples <- c(r$tree_samples, vector("list", n))
+          }
+          tl    <- row[3L]
+          relBr <- row[brColStart:(brColStart + nEdge - 1L)]
+          curTree <- structure(
+            list(edge        = result$edge_samples[[i]],
+                 edge.length = tl * relBr,
+                 Nnode       = length(tipLabels) - 2L,
+                 tip.label   = tipLabels),
+            class = "phylo"
+          )
+          r$tree_samples[[r$tree_saved_idx]] <- curTree
+          if (!is.null(treeFile))
+            cat(ape::write.tree(curTree), "\n", file = treeFile, append = TRUE)
+        }
       }
     } else if (phase == "Tuning" && nSaved > 0L) {
       # Collect into tuning buffer (discarded after tuning)
@@ -1479,7 +1500,8 @@ RunMkPrime <- function(data, tree = NULL,
       runs[[run]]$flush_idx <- 0L
     }
     idx <- runs[[run]]$saved_idx
-    runs[[run]]$tree_samples <- runs[[run]]$tree_samples[seq_len(max(idx, 0L))]
+    treeIdx <- runs[[run]]$tree_saved_idx %||% idx
+    runs[[run]]$tree_samples <- runs[[run]]$tree_samples[seq_len(max(treeIdx, 0L))]
     if (!isStreaming) {
       if (idx > 0L) {
         runs[[run]]$samples <- runs[[run]]$samples[seq_len(idx), , drop = FALSE]
@@ -1591,6 +1613,7 @@ RunMkPrime <- function(data, tree = NULL,
 
   result$stop_reason <- stopReason
   result$actual_iter <- actualIter
+  result$treeThin    <- mcmc$treeThin
   result
 }
 
@@ -1782,6 +1805,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   if (identical(mcmc$thin, "auto")) {
     mcmc$thin <- length(moves)
   }
+  if (is.null(mcmc$treeThin)) mcmc$treeThin <- mcmc$thin
+  treeEvery <- as.integer(mcmc$treeThin / mcmc$thin)
 
   if (isStreaming) {
     # Rewind each log file to the checkpoint's saved_idx.  Any samples
@@ -2611,9 +2636,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   transIdx <- which(mkd$type == "transformational")
   kp <- if (length(transIdx)) as.numeric(state$kPrime[transIdx]) else numeric(0)
 
-  # Compute topology hash matching C++ formula
-  topoHash <- sum(as.numeric(state$edge[, 1]) * 1000003 +
-                  as.numeric(state$edge[, 2]))
+
+  # Topology hash: FNV-1a of parent vector (shared C++ implementation)
+  topoHash <- compute_topo_hash(state$edge[, 1])
 
   c(state$logPost, state$logLik, state$treeLength,
     rateLossVal, state$rateLogSd, pVal,
@@ -2624,6 +2649,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
     kp,
     state$relBrLengths)
 }
+
 
 
 #' Reconstruct a phylo object from XPtr state
