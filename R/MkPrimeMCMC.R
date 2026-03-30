@@ -7,10 +7,13 @@
 #'   terminate the run. Pass a finite integer to cap the number of iterations
 #'   regardless of convergence.
 #' @param thin Thinning interval (save every `thin`-th iteration).
-#'   Default `"auto"`, which sets thin equal to the number of active
-#'   move types so that each parameter has roughly one update opportunity
-#'   per stored sample (analogous to one "full cycle" in RevBayes).
-#'   Pass a positive integer to override.
+#'   Default `"auto"`: initially set to the number of active move types
+#'   (one "full cycle" per stored sample), then adapted at the first
+#'   convergence check to `max(nMoves, round(maxACT * log(2)))` based on
+#'   the observed autocorrelation time of the worst-mixing scalar
+#'   parameter. This targets ~50\% correlation between consecutive
+#'   stored samples. Pass a positive integer to fix the thinning interval
+#'   and disable adaptation.
 #' @param treeThin Thinning interval for tree samples (iterations).
 #'   Default `NULL`, which stores a tree for every scalar sample
 #'   (equivalent to `treeThin = thin`). Pass a positive integer that is

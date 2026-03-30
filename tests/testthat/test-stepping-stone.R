@@ -155,10 +155,11 @@ test_that(".EssVector returns lower ESS for autocorrelated samples", {
 })
 
 test_that(".EssVector handles edge cases", {
-  expect_equal(MkPrime:::.EssVector(numeric(0)), 1)
-  expect_equal(MkPrime:::.EssVector(42), 1)
-  # Constant vector: ESS = n (no variance to reduce)
-  expect_equal(MkPrime:::.EssVector(rep(5, 100)), 100)
+  # Degenerate inputs: NA (not enough information to estimate ESS)
+  expect_true(is.na(MkPrime:::.EssVector(numeric(0))))
+  expect_true(is.na(MkPrime:::.EssVector(42)))
+  # Constant vector: zero variance → NA
+  expect_true(is.na(MkPrime:::.EssVector(rep(5, 100))))
 })
 
 

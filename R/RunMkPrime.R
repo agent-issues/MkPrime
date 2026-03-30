@@ -197,11 +197,13 @@ RunMkPrime <- function(data, tree = NULL,
                        qHeterogeneity = qHet,
                        joint2d = isTRUE(mcmc$joint2d))
 
-  if (identical(mcmc$thin, "auto")) {
+  mcmc$thinWasAuto <- identical(mcmc$thin, "auto")
+  if (mcmc$thinWasAuto) {
     mcmc$thin <- length(moves)
   }
   # Resolve treeThin: NULL → same as thin; validate multiple-of-thin
-  if (is.null(mcmc$treeThin)) {
+  mcmc$treeThinWasAuto <- is.null(mcmc$treeThin)
+  if (mcmc$treeThinWasAuto) {
     mcmc$treeThin <- mcmc$thin
   }
   if (mcmc$treeThin %% mcmc$thin != 0L) {
@@ -689,6 +691,7 @@ RunMkPrime <- function(data, tree = NULL,
   cppWarmup <- if (phase == "Warmup") mcmc$warmup else 0L
 
   weightsLogged <- phase == "Sample"
+  thinAdapted   <- FALSE
 
   # --- Progress bar (M-097 rotating ticker) ---
   coldLogpost    <- {s <- get_mcmc_state(r$chainStates[[1]]); s$logPost}
@@ -1127,6 +1130,39 @@ RunMkPrime <- function(data, tree = NULL,
           stopReason <- "converged"
           actualIter <- batchEnd
           break
+        }
+      }
+
+      # M-135: adapt thin from observed ACT (fires once, first check only)
+      if (!thinAdapted && isTRUE(mcmc$thinWasAuto)) {
+        thinAdapted <- TRUE
+        mat <- if (isStreaming) {
+          .ConvWindowRows(r, minRows = 50L)
+        } else if (r$saved_idx >= 50L) {
+          r$samples[seq_len(r$saved_idx), , drop = FALSE]
+        } else {
+          NULL
+        }
+        if (!is.null(mat) && nrow(mat) >= 50L) {
+          newThin <- .AdaptThinning(mat, mcmc$thin, length(moves))
+          if (newThin != mcmc$thin) {
+            oldThin <- mcmc$thin
+            mcmc$thin <- newThin
+            if (isTRUE(mcmc$treeThinWasAuto)) {
+              mcmc$treeThin <- newThin
+              treeEvery <- 1L
+            } else {
+              mcmc$treeThin <- max(mcmc$treeThin, newThin)
+              if (mcmc$treeThin %% newThin != 0L)
+                mcmc$treeThin <- newThin * ceiling(mcmc$treeThin / newThin)
+              treeEvery <- as.integer(mcmc$treeThin / newThin)
+            }
+            cli::cli_alert_info(
+              "Adapted thin: {oldThin} \\
+               \\u2192 {newThin} (max ACT \\
+               \\u2248 {round(newThin / log(2))} iter)"
+            )
+          }
         }
       }
     }
@@ -1784,6 +1820,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   if (identical(mcmc$thin, "auto")) {
     mcmc$thin <- length(moves)
   }
+  # On resume, don't re-adapt thin (checkpoint has the adapted value)
+  mcmc$thinWasAuto <- FALSE
+  mcmc$treeThinWasAuto <- FALSE
   if (is.null(mcmc$treeThin)) mcmc$treeThin <- mcmc$thin
   treeEvery <- as.integer(mcmc$treeThin / mcmc$thin)
 
@@ -3031,6 +3070,43 @@ if (n < 2L * windowSize) {
   minEss <- min(ess, na.rm = TRUE)
   if (!is.finite(minEss)) return(NA_real_)
   minEss / wallTimeSec
+}
+
+
+#' Estimate optimal thinning interval from observed autocorrelation
+#'
+#' Computes per-parameter integrated autocorrelation time (ACT) for key
+#' scalar parameters and returns `max(nMoves, round(maxACT * log(2)))`.
+#' The `log(2)` factor targets ~50% correlation between consecutive stored
+#' samples.
+#'
+#' @param sampleMatrix Matrix of posterior samples (rows = draws, cols =
+#'   parameters).
+#' @param currentThin Current thinning interval (iterations per stored
+#'   sample).
+#' @param nMoves Number of active MCMC moves (floor for thinning).
+#' @param excludePattern Regex for columns to exclude from ACT estimation.
+#' @return Integer thinning interval.
+#' @keywords internal
+.AdaptThinning <- function(sampleMatrix, currentThin, nMoves,
+                           excludePattern = "^(kPrime_|br_|log_likelihood)") {
+  n <- nrow(sampleMatrix)
+  if (n < 50L) return(currentThin)
+
+  keyCols <- grep(excludePattern, colnames(sampleMatrix), invert = TRUE)
+  if (length(keyCols) == 0L) return(currentThin)
+
+  ess <- .EssMatrix(sampleMatrix[, keyCols, drop = FALSE])
+  ess <- ess[is.finite(ess) & ess > 0]
+  if (length(ess) == 0L) return(currentThin)
+
+  # ACT in iterations for the worst-mixing parameter
+  maxAct <- max(n / ess) * currentThin
+  newThin <- as.integer(max(nMoves, round(maxAct * log(2))))
+
+  # Cap: never more than 50x the move count
+  newThin <- min(newThin, 50L * as.integer(nMoves))
+  newThin
 }
 
 
