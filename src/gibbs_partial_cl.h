@@ -285,8 +285,8 @@ inline double CLGroup::rootSiteLik(const double* rootCL, int c) const {
     for (int s = 0; s < kStates; ++s) sl += f81Pi[s] * rootCL[off + s];
     return sl;
   } else if (isMkN) {
-    double rf0 = 1.0 / (1.0 + rateLoss);
-    double rf1 = rateLoss / (1.0 + rateLoss);
+    double rf0 = rateLoss / (1.0 + rateLoss);  // π₀ = rl/(1+rl)
+    double rf1 = 1.0 / (1.0 + rateLoss);       // π₁ = 1/(1+rl)
     int off = c * 2;
     return rf0 * rootCL[off] + rf1 * rootCL[off + 1];
   } else {

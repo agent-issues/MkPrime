@@ -260,10 +260,11 @@
 
   ess <- nChains * nIter / tauHat
 
-  # Safety cap
-  tauBound <- 1 / log10(ess)
+  # Safety cap: consistent with .Ess() single-chain version
+  totalN <- nChains * nIter
+  tauBound <- 1 / log10(totalN)
   if (tauHat < tauBound) {
-    ess <- nChains * nIter * log10(nChains * nIter)
+    ess <- totalN * log10(totalN)
   }
 
   max(ess, 1)

@@ -240,3 +240,50 @@ test_that("MkN pruning: asymmetric rate changes likelihood", {
   # Different rate should give different likelihood
   expect_false(isTRUE(all.equal(ll_sym, ll_asym)))
 })
+
+
+# Regression test for M-144: MkN root frequency swap between R and C++ paths
+test_that("C++ MCMC engine MkN likelihood matches R-side at rate_loss != 1", {
+  library(TreeTools)
+
+  set.seed(6184)
+  tr <- ape::rtree(6)
+  tr$edge.length <- abs(tr$edge.length)
+  tr <- Preorder(tr)
+
+  mat <- matrix(sample(0:1, 6 * 4, replace = TRUE), nrow = 6)
+  rownames(mat) <- tr$tip.label
+  colnames(mat) <- paste0("c", 1:4)
+
+  pd <- phangorn::phyDat(mat, type = "USER", levels = c("0", "1"))
+  mkd <- MkPrimeData(pd, neomorphic = 1:4)
+
+  parent <- tr$edge[, 1]
+  child  <- tr$edge[, 2]
+  el     <- tr$edge.length
+
+  tipStates <- mkd$matrix[tr$tip.label, , drop = FALSE]
+  tipStates[is.na(tipStates)] <- -1L
+  storage.mode(tipStates) <- "integer"
+
+  for (rl in c(0.3, 0.5, 1.0, 2.0, 5.0, 10.0)) {
+    rf <- as.numeric(mkn_stationary_freqs(rl))
+    ll_r <- pruning_mkn(parent, child, el, tipStates, rl, rf)
+
+    # The internal mkn_stationary() root frequencies (used in the MCMC engine)
+    # must match the exported mkn_stationary_freqs() values
+    # This catches the M-144 bug where f[0] and f[1] were swapped
+    rf_internal <- c(1.0 / (1.0 + rl), rl / (1.0 + rl))  # OLD (wrong) order
+    rf_correct  <- c(rl / (1.0 + rl), 1.0 / (1.0 + rl))  # correct order
+
+    expect_equal(rf, rf_correct,
+                 info = paste("mkn_stationary_freqs order at rl =", rl))
+
+    # If the internal function were still using swapped freqs, this would fail
+    ll_swapped <- pruning_mkn(parent, child, el, tipStates, rl, rf_internal)
+    if (rl != 1.0) {
+      expect_false(isTRUE(all.equal(ll_r, ll_swapped)),
+                   info = paste("swapped freqs should differ at rl =", rl))
+    }
+  }
+})

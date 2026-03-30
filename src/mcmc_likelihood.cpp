@@ -87,8 +87,8 @@ static NumericVector cpp_acrv_rates(double rateLogSd, int nCat,
 
 static NumericVector mkn_stationary(double rateLoss) {
   NumericVector f(2);
-  f[0] = 1.0 / (1.0 + rateLoss);
-  f[1] = rateLoss / (1.0 + rateLoss);
+  f[0] = rateLoss / (1.0 + rateLoss);   // π₀ = rate_loss / (1 + rate_loss)
+  f[1] = 1.0 / (1.0 + rateLoss);        // π₁ = 1 / (1 + rate_loss)
   return f;
 }
 

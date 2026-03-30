@@ -394,8 +394,8 @@ static void build_cache_units(
       u.rateScale = 1.0;  // rateNeo applied via edge lengths externally
       u.tipStates = part.tipStates;
       u.doRelabel = false;
-      // MkN stationary frequencies: π0 = 1/(1+rl), π1 = rl/(1+rl)
-      u.rootFreqs = { 1.0 / (1.0 + rateLoss), rateLoss / (1.0 + rateLoss) };
+      // MkN stationary frequencies: π0 = rl/(1+rl), π1 = 1/(1+rl)
+      u.rootFreqs = { rateLoss / (1.0 + rateLoss), 1.0 / (1.0 + rateLoss) };
       cache.units.push_back(std::move(u));
 
     } else if (part.type == 2) {
@@ -603,8 +603,8 @@ static double cache_total_loglik(
         for (int i = 0; i < absEdgeLen.size(); ++i)
           neoEl[i] = absEdgeLen[i] * rateNeo;
         NumericVector rootFreqs(2);
-        rootFreqs[0] = 1.0 / (1.0 + rateLoss);
-        rootFreqs[1] = rateLoss / (1.0 + rateLoss);
+        rootFreqs[0] = rateLoss / (1.0 + rateLoss);
+        rootFreqs[1] = 1.0 / (1.0 + rateLoss);
         p = constant_site_prob_mkn(parent, child, neoEl, nTip,
                                     rateLoss, rootFreqs, rates);
       } else if (part.type == 2) {
