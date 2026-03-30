@@ -26,18 +26,20 @@ test_that(".FormatMoveWeightsPlain returns unstyled string", {
   expect_equal(result, "a=30.0% b=5.0% c=2.0%")
 })
 
-test_that("high-weight moves are bold, low-weight are silver", {
-  # 35% should be bold, 2% should be silver
-  w <- c(0.35, 0.02)
-  n <- c("big", "small")
+test_that("names are silver, values colour-coded by magnitude", {
+  # 35% value green, 7% value yellow, 2% value white; all names silver
+  w <- c(0.35, 0.07, 0.02)
+  n <- c("big", "mid", "small")
   result <- .FormatMoveWeights(w, n)
   # In non-interactive sessions cli may strip ANSI codes, so just
-
   # verify the function runs and includes expected content.
   expect_type(result, "character")
-  expect_true(grepl("big", result, fixed = TRUE))
-  expect_true(grepl("small", result, fixed = TRUE))
+  for (nm in n) {
+    expect_true(grepl(nm, result, fixed = TRUE),
+                info = paste("Missing:", nm))
+  }
   expect_true(grepl("35.0%", result, fixed = TRUE))
+  expect_true(grepl("7.0%", result, fixed = TRUE))
   expect_true(grepl("2.0%", result, fixed = TRUE))
 })
 

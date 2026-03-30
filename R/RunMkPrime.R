@@ -2868,14 +2868,16 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 .FormatMoveWeights <- function(weights, moveNames) {
   pct <- weights * 100
   parts <- vapply(seq_along(weights), function(i) {
-    label <- paste0(moveNames[i], "=", sprintf("%.1f%%", pct[i]))
-    if (pct[i] >= 10) {
-      cli::style_bold(label)
+    name <- cli::col_silver(paste0(moveNames[i], "="))
+    val  <- sprintf("%.1f%%", pct[i])
+    val  <- if (pct[i] >= 10) {
+      cli::col_green(val)
     } else if (pct[i] >= 5) {
-      label
+      cli::col_yellow(val)
     } else {
-      cli::col_silver(label)
+      cli::col_white(val)
     }
+    paste0(name, val)
   }, character(1))
   paste(parts, collapse = " ")
 }
