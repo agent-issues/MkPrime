@@ -119,17 +119,25 @@
 # @keywords internal
 .TruncateLogToN <- function(logFile, nDataRows) {
   lines <- readLines(logFile, warn = FALSE)
-  nExpected <- nDataRows + 1L  # header + data
-  if (length(lines) > nExpected) {
-    nDropped <- length(lines) - nExpected
+  # Separate header/comment lines from data rows.
+  # Move-weight log entries start with "#"; the header starts with "Sample".
+  isData <- !startsWith(lines, "#") & !startsWith(lines, "Sample\t")
+  dataIdx <- which(isData)
+  nData <- length(dataIdx)
+
+  if (nData > nDataRows) {
+    # Keep header + comments + first nDataRows data lines
+    keepIdx <- c(which(!isData), dataIdx[seq_len(nDataRows)])
+    keepIdx <- sort(keepIdx)
+    nDropped <- nData - nDataRows
     cli::cli_alert_info(
       "Rewinding {.file {logFile}}: discarding {nDropped} post-checkpoint sample{?s}."
     )
-    writeLines(lines[seq_len(nExpected)], logFile)
-  } else if (length(lines) < nExpected) {
+    writeLines(lines[keepIdx], logFile)
+  } else if (nData < nDataRows) {
     cli::cli_warn(c(
       "Log file {.file {logFile}} has fewer rows than expected.",
-      "i" = "Found {length(lines) - 1L} data row{?s}, checkpoint recorded {nDataRows}."
+      "i" = "Found {nData} data row{?s}, checkpoint recorded {nDataRows}."
     ))
   }
 }

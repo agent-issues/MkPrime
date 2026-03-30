@@ -46,8 +46,10 @@ test_that("Log file is created with correct header in streaming mode", {
   lines <- readLines(log_file)
   # Header must be first line, starting with "Sample"
   expect_true(startsWith(lines[1], "Sample\t"))
+  # Count data rows (exclude header and comment lines from move-weight log)
+  dataLines <- lines[!startsWith(lines, "Sample\t") & !startsWith(lines, "#")]
   # (300 - 100) / 5 = 40 thinned samples → 40 data rows
-  expect_equal(length(lines) - 1L, 40L)
+  expect_equal(length(dataLines), 40L)
 })
 
 test_that("Sample column is strictly increasing", {
@@ -136,7 +138,7 @@ test_that("Trees are still stored in memory in streaming mode", {
   expect_s3_class(result$trees[[1]], "phylo")
 })
 
-test_that("summary() errors helpfully for unloaded streaming result", {
+test_that("summary() auto-loads samples from log file for streaming result", {
   f <- .mkStreamFixture()
   log_file <- tempfile(fileext = ".log")
   on.exit(unlink(log_file), add = TRUE)
@@ -146,7 +148,10 @@ test_that("summary() errors helpfully for unloaded streaming result", {
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 200L, thin = 5L, maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE,
                         logFile = log_file, bufferSize = 20L))
 
-  expect_error(summary(result), "Samples are not in memory")
+  # Samples auto-loaded from log file via .PostBurninData
+  s <- summary(result)
+  expect_s3_class(s, "data.frame")
+  expect_true(nrow(s) > 0L)
 })
 
 
@@ -232,7 +237,7 @@ test_that("Streaming checkpoint is version 2 and state-only", {
   expect_false(is.null(cp$paramNames))
 })
 
-test_that("In-memory checkpoint is still version 1", {
+test_that("Checkpoint is always streaming (version 2) even without logFile", {
   f <- .mkStreamFixture()
   cp_file <- tempfile(fileext = ".rds")
   on.exit(unlink(cp_file), add = TRUE)
@@ -243,8 +248,13 @@ test_that("In-memory checkpoint is still version 1", {
                         checkEvery = 200L, checkpointFile = cp_file))
 
   cp <- readRDS(cp_file)
-  expect_equal(cp$version, 1L)
-  expect_false(is.null(cp$runs[[1]]$samples))
+  # Always streaming now (temp log), so version 2
+  expect_equal(cp$version, 2L)
+  # Samples live in log files, not in checkpoint
+  expect_null(cp$runs[[1]]$samples)
+  # But chain state is preserved
+  expect_true(is.list(cp$runs[[1]]$chains))
+  expect_true(is.finite(cp$runs[[1]]$chains[[1]]$log_lik))
 })
 
 test_that("Resume in streaming mode appends without gaps or duplicates", {
@@ -261,7 +271,10 @@ test_that("Resume in streaming mode appends without gaps or duplicates", {
                         maxTime = 0.5))
 
   expect_true(file.exists(cp_file))
-  n_before <- result1$nSamples
+  # Use checkpoint's saved_idx (not nSamples) — truncation on resume
+  # discards samples flushed after the last checkpoint.
+  cp <- readRDS(cp_file)
+  cp_saved <- cp$runs[[1]]$saved_idx
 
   result2 <- ResumeMkPrime(cp_file, f$pd, f$tree)
 
@@ -269,8 +282,8 @@ test_that("Resume in streaming mode appends without gaps or duplicates", {
   # Strictly increasing Sample values (stored as rownames by ReadMkLog)
   sampleNums <- as.integer(rownames(dat))
   expect_true(all(diff(sampleNums) > 0))
-  # Must have at least as many rows as before the resume
-  expect_gte(nrow(dat), n_before)
+  # Must have at least as many rows as checkpoint recorded
+  expect_gte(nrow(dat), cp_saved)
 })
 
 # --- .TruncateLogToN unit tests ---
