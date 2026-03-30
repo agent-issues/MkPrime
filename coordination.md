@@ -1,10 +1,17 @@
 # MkPrime — Strategic Coordination
 
-Last updated: 2026-03-30 (morning)
+Last updated: 2026-03-30 10:20
 
 ## Project State
 
-**Phase:** All core phases (1-10) complete. Phase 6b active: M-080 (TreeSearch hook) assigned to C. Post-phase optimization: M-118/119/120/121 all done.
+**Phase:** All core phases (1-10) complete. Phase 6b active: M-080 (TreeSearch hook) assigned to C.
+
+**Recent milestones (since 2026-03-29):**
+- Post-phase optimization complete: Bactrian proposals (M-118), pSPR (M-119), 2D joint Bactrian (M-120), node-level CL dirty flags (M-121), block Dirichlet branch proposal (M-125).
+- Streaming/UI polish: buffer flush guards (M-132), warmup trace fix (M-133), treeThin (M-134), ESS label cleanup (M-136), auto-derive treeFile (M-137), test warning suppression (M-138), ticker simplification (M-139).
+- **Dropped `coda` dependency**: native rank-normalized R-hat (Vehtari et al. 2021) and FFT-based ESS replace all `coda` calls. Convergence thresholds tightened (R-hat ≤ 1.01). 40 new unit tests.
+
+**Open tasks:** M-124, M-131, M-135 (3 specific) + M-080 assigned (C).
 
 MkPrime is a new R package for Bayesian phylogenetic inference under the
 Mk' model. The architecture follows StratoBayes (C++ hot loop via Rcpp,
@@ -76,14 +83,15 @@ monitoring, stopping rules, checkpointing.
 - State stores unheated logLik/logPrior. Heated posterior computed on the
   fly for MH acceptance.
 - Per-chain independent tuning: heated chains need different proposal widths.
-- Independent runs for PSRF: nRuns≥2 enables Gelman–Rubin convergence
-  diagnostics across cold chains from different runs.
+- Independent runs for R-hat: nRuns≥2 enables rank-normalized split-R-hat
+  (Vehtari et al. 2021) across cold chains from different runs. Replaces
+  classical PSRF (Gelman–Rubin) as of 2026-03-30.
 - Sequential execution of runs. Parallel execution implemented in Phase 10 (M-093).
 
 **Exit criteria:**
 - Parallel tempering improves mixing vs single chain (measured by ESS/iter)
 - Chain swap acceptance 23–30% between adjacent pairs
-- PSRF < 1.05 on simulated data with sufficient iterations
+- R-hat < 1.01 on simulated data with sufficient iterations
 - Checkpoint save/restore produces identical continuation
 - MkPosterior reports combined diagnostics across runs
 
