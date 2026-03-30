@@ -1168,9 +1168,7 @@ RunMkPrime <- function(data, tree = NULL,
               treeEvery <- as.integer(mcmc$treeThin / newThin)
             }
             cli::cli_alert_info(
-              "Adapted thin: {oldThin} \\
-               \\u2192 {newThin} (max ACT \\
-               \\u2248 {round(newThin / log(2))} iter)"
+              "Adapted thin: {oldThin} \u2192 {newThin} (max ACT \u2248 {round(newThin / log(2))} iter)"
             )
           }
         }
