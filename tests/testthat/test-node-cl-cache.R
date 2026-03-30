@@ -124,3 +124,46 @@ test_that("Q-heterogeneity bypasses node CL cache without errors", {
   expect_s3_class(result, "MkPosterior")
   expect_true(all(is.finite(result$samples[, "log_posterior"])))
 })
+
+
+# ---------------------------------------------------------------------------
+# Regression test: partial-CL ascertainment correction matches full eval.
+#
+# Previously, cache_total_loglik (used by partial-CL paths for NNI,
+# beta_simplex, Dirichlet) skipped the ascertainment correction for
+# transformational partitions (type 1) and also passed an empty rates
+# vector when ACRV was off.  This inflated the cached log-likelihood
+# relative to full-eval, causing all full-eval moves (tree_length,
+# rate_loss, rate_log_sd, kPrime) to be systematically rejected
+# ("wall pattern").
+# ---------------------------------------------------------------------------
+test_that("partial-CL path does not freeze tree_length (ascertainment fix)", {
+  # All-transformational dataset: no neomorphic characters
+  set.seed(3847)
+  tree <- ape::rtree(10L, rooted = FALSE)
+  tree <- Preorder(tree)
+  nChar <- 20L
+  mat <- matrix(sample(0:2, 10L * nChar, replace = TRUE),
+                nrow = 10L,
+                dimnames = list(tree$tip.label, paste0("c", seq_len(nChar))))
+  pd <- MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd)  # no neomorphic → all transformational
+
+  model <- MkPrimeModel()
+  mcmc <- MkPrimeMCMC(
+    nIter = 600L, maxWarmup = 150L, minWarmup = 150L, thin = 3L,
+    autoTune = FALSE, nRuns = 1L
+  )
+  result <- suppressWarnings(RunMkPrime(data = mkd, tree = tree,
+                                         model = model, mcmc = mcmc))
+
+  tl <- result$samples[, "tree_length"]
+  n_unique <- length(unique(tl))
+  # With the bug, tree_length would be nearly completely frozen
+  # (ascertainment gap ~8 LL units → acceptance rate ~0.03%).
+  # Expect at least 5 distinct values from normal mixing;
+  # the buggy code would typically produce 1-2.
+  expect_true(n_unique >= 5,
+              info = paste("tree_length has only", n_unique,
+                           "unique values; expected >= 5"))
+})

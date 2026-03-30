@@ -581,9 +581,15 @@ static double cache_total_loglik(
   }
 
   // Add ascertainment correction per partition (computed fully)
+  // Bug fix: always provide at least one rate category (1.0) so that
+  // constant_site_prob_* functions iterate their pruning loop.
+  // Previously, when ACRV was off, `rates` was empty (size 0), causing
+  // nCat=0 inside constant_site_prob → loop skipped → correction = 0.
   NumericVector rates;
   if (cache.useAcrv) {
     rates = ncl_acrv_rates(rateLogSd, data.nCat, data.acrvZ);
+  } else {
+    rates = NumericVector(1, 1.0);
   }
 
   for (int pi = 0; pi < nParts; ++pi) {
@@ -601,19 +607,29 @@ static double cache_total_loglik(
         rootFreqs[1] = rateLoss / (1.0 + rateLoss);
         p = constant_site_prob_mkn(parent, child, neoEl, nTip,
                                     rateLoss, rootFreqs, rates);
+      } else if (part.type == 2) {
+        // Known state space: single k for entire partition
+        int kStates = part.k;
+        NumericVector rootFreqs(kStates, 1.0 / kStates);
+        p = constant_site_prob_jc(parent, child, absEdgeLen, nTip,
+                                   kStates, rootFreqs, rates);
       } else {
-        // JC: determine kStates for this partition
-        // For known (type 2): part.k
-        // For transformational: use first unit's kStates as representative
-        //   (if heterogeneous kPrime, each sub-group has its own k —
-        //    but constant_site_prob_jc takes a single k.  We need per-unit
-        //    ascertainment.  For simplicity, compute per unit below.)
-        int kStates = (part.type == 2) ? part.k : 0;
-        if (kStates > 0) {
-          NumericVector rootFreqs(kStates, 1.0 / kStates);
-          p = constant_site_prob_jc(parent, child, absEdgeLen, nTip,
-                                     kStates, rootFreqs, rates);
+        // Transformational (type 1): per-unit ascertainment correction.
+        // Each CacheUnit may have a different kStates (from kPrime grouping),
+        // so we cannot use a single constant-site probability for the whole
+        // partition.  Apply the correction per unit directly.
+        for (int ui = 0; ui < (int)cache.units.size(); ++ui) {
+          const CacheUnit& unit = cache.units[ui];
+          if (unit.partIdx != pi) continue;
+          int k = unit.kStates;
+          if (k <= 0) continue;
+          NumericVector rootFreqs(k, 1.0 / k);
+          double pu = constant_site_prob_jc(parent, child, absEdgeLen,
+                                             nTip, k, rootFreqs, rates);
+          if (pu > 0.0 && pu < 1.0)
+            ll -= unit.nChar * std::log(1.0 - pu);
         }
+        // p stays 0.0 → final correction block below is a no-op for type 1
       }
       if (p > 0.0 && p < 1.0) {
         ll -= partNChar[pi] * std::log(1.0 - p);
