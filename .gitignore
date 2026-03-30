@@ -22,10 +22,25 @@ Thumbs.db
 .Rproj.user
 Rplots.pdf
 
+# Agent files (dot-prefixed variant)
+.agent-*.md
+
 # Test run artifacts
 test_output.txt
 test_run*.log
 tools/
+
+# MCMC run output (logs, trees, posteriors)
+/*.log
+/*.nwk
+/*.rds
+sun2018*
+test_autopin*
+test_fixedtopo*
+diag_tempered*
+hyoliths_prod*
+hyoliths_diag*
+hyoliths_posterior*
 
 # Profiling artifacts
 .vtune-lib/
@@ -33,4 +48,3 @@ vtune-gibbs-*/
 vtune-out/
 tests/testthat/_problems/
 tests/testthat/testthat-problems.rds
-sun2018.*
