@@ -10,12 +10,20 @@
 .tracePlotEnv$warmupLogPost <- NULL  # list of numeric vectors (one per run)
 .tracePlotEnv$warmupIter    <- NULL  # integer vector of warmup iters
 
-#' Reset the ESS and warmup history used by [MkpTracePlot()]
+#' Reset the ESS history used by [MkpTracePlot()]
+#'
+#' Clears ESS snapshots and iteration history. Does **not** reset warmup
+#' log-posterior accumulation — that is handled separately to avoid
+#' wiping warmup trace data on every non-sample callback.
 #' @keywords internal
 .ResetEssHistory <- function() {
   .tracePlotEnv$essHistory    <- list()
   .tracePlotEnv$iterHistory   <- integer(0)
-  .tracePlotEnv$lastIter      <- 0L
+}
+
+#' Reset warmup log-posterior trace data
+#' @keywords internal
+.ResetWarmupHistory <- function() {
   .tracePlotEnv$warmupLogPost <- NULL
   .tracePlotEnv$warmupIter    <- NULL
 }
@@ -108,12 +116,17 @@ MkpTracePlot <- function(info) {
   showEss <- hasSamples && hasCoda
 
 
-  # Reset ESS history if new run detected, in warmup, or in tuning
+  # Reset ESS history during non-sample phases or on new run
   inNonSample <- info$inWarmup ||
     identical(info$phase, "Warmup") ||
     identical(info$phase, "Tuning")
-  if (inNonSample || info$iter <= .tracePlotEnv$lastIter) {
+  newRunDetected <- info$iter <= .tracePlotEnv$lastIter
+  if (inNonSample || newRunDetected) {
     .ResetEssHistory()
+  }
+  # Warmup trace accumulates across callbacks; only reset on new run
+  if (newRunDetected) {
+    .ResetWarmupHistory()
   }
 
   # Compute and store ESS snapshot.
@@ -135,8 +148,9 @@ MkpTracePlot <- function(info) {
     }, numeric(1))
     .tracePlotEnv$essHistory  <- c(.tracePlotEnv$essHistory, list(essSnap))
     .tracePlotEnv$iterHistory <- c(.tracePlotEnv$iterHistory, info$iter)
-    .tracePlotEnv$lastIter    <- info$iter
   }
+  # Track last iteration for new-run detection (even outside showEss)
+  .tracePlotEnv$lastIter <- info$iter
 
   # Panel layout: trace panels + ESS panel (if applicable)
   nPanels <- length(keyParams) + if (showEss) 1L else 0L

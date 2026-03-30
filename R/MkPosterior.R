@@ -109,6 +109,15 @@ print.MkPosterior <- function(x, ...) {
 summary.MkPosterior <- function(object, ...) {
   pb <- .PostBurninData(object)
   s <- pb$samples
+  if (nrow(s) == 0L) {
+    cli::cli_abort(c(
+      "No posterior samples available to summarise.",
+      "i" = if (!is.null(object$logFile))
+        "The log file{?s} {.file {object$logFile}} may be empty (header only)."
+      else
+        "The run may have been interrupted before sampling began."
+    ))
+  }
   # Use scalar params only (not individual kPrime_ or branch lengths)
   keyCols <- .PlotParamCols(s)
   key <- s[, keyCols, drop = FALSE]
@@ -147,6 +156,15 @@ summary.MkPosterior <- function(object, ...) {
 plot.MkPosterior <- function(x, ...) {
   pb <- .PostBurninData(x)
   s <- pb$samples
+  if (nrow(s) == 0L) {
+    cli::cli_abort(c(
+      "No posterior samples available to plot.",
+      "i" = if (!is.null(x$logFile))
+        "The log file{?s} {.file {x$logFile}} may be empty (header only)."
+      else
+        "The run may have been interrupted before sampling began."
+    ))
+  }
   keyCols <- .PlotParamCols(s)
   nPanels <- length(keyCols)
   nCol <- min(3, nPanels)

@@ -1073,12 +1073,12 @@ RunMkPrime <- function(data, tree = NULL,
 
     # Stopping: cancel file
     if (!is.null(cancelFile) && file.exists(cancelFile)) {
+      if (isStreaming && r$flush_idx > 0L) {
+        .FlushBuffer(r$flush_buf, r$flush_idx, r$flush_iter, logFilePath)
+        r$flush_idx <- 0L
+        r$flushed   <- FALSE
+      }
       if (!is.null(checkpointFile)) {
-        if (isStreaming && r$flush_idx > 0L) {
-          .FlushBuffer(r$flush_buf, r$flush_idx, r$flush_iter, logFilePath)
-          r$flush_idx <- 0L
-          r$flushed   <- FALSE
-        }
         .SaveCheckpoint(list(r), mcmc, batchEnd, paramNames, checkpointFile,
                         moveWeights = moveWeights, phase = phase)
       }
@@ -1124,6 +1124,15 @@ RunMkPrime <- function(data, tree = NULL,
     cli::col_silver("\u2502"), cli::col_green("done \u2714")
   )
   cli::cli_progress_done()
+
+  # Flush any remaining streaming buffer (belt-and-suspenders; .BuildResult
+
+  # also flushes, but doing it here means the log file is up-to-date
+  # immediately on return)
+  if (isStreaming && r$flush_idx > 0L) {
+    .FlushBuffer(r$flush_buf, r$flush_idx, r$flush_iter, logFilePath)
+    r$flush_idx <- 0L
+  }
 
   # --- Serialize and return ---
   r$chains <- lapply(r$chainStates, function(ptr) {
