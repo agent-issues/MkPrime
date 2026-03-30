@@ -1,46 +1,70 @@
-# Tests for M-140 (move weight colour formatting) and M-141 (ETA estimation)
+# Tests for M-140/M-146 (move weight formatting) and M-141 (ETA estimation)
 
 # ---------------------------------------------------------------------------
-# M-140: .FormatMoveWeights colour coding
+# M-140/M-146: .FormatMoveWeights categorized colour-coded display
 # ---------------------------------------------------------------------------
 
-test_that(".FormatMoveWeights returns styled string with all move names", {
+test_that(".FormatMoveWeights returns one styled line per category", {
   weights <- c(0.30, 0.10, 0.05, 0.02, 0.53)
   names   <- c("kPrime", "spr", "nni", "tree_length", "branch_lengths")
   result  <- .FormatMoveWeights(weights, names)
-  # Should be a single string containing all move names
-
+  # Returns a character vector: one element per present category
   expect_type(result, "character")
-  expect_length(result, 1)
+  # Should have 3 categories: Topology, Branches, Characters
+  expect_length(result, 3)
   for (nm in names) {
-    expect_true(grepl(nm, result, fixed = TRUE),
+    expect_true(any(grepl(nm, result, fixed = TRUE)),
                 info = paste("Missing move name:", nm))
   }
 })
 
-test_that(".FormatMoveWeightsPlain returns unstyled string", {
-  weights <- c(0.30, 0.05, 0.02)
-  names   <- c("a", "b", "c")
+test_that(".FormatMoveWeightsPlain returns categorized unstyled lines", {
+  weights <- c(0.30, 0.10, 0.05)
+  names   <- c("nni", "tree_length", "kPrime")
   result  <- .FormatMoveWeightsPlain(weights, names)
   expect_type(result, "character")
-  expect_equal(result, "a=30.0% b=5.0% c=2.0%")
+  expect_length(result, 1)  # single string with \n separators
+  lines <- strsplit(result, "\n")[[1]]
+  expect_length(lines, 3)
+  expect_true(grepl("^Topology:", lines[1]))
+  expect_true(grepl("^Branches:", lines[2]))
+  expect_true(grepl("^Characters:", lines[3]))
 })
 
-test_that("names are silver, values colour-coded by magnitude", {
-  # 35% value green, 7% value yellow, 2% value white; all names silver
+test_that("moves sorted by weight within category (highest first)", {
+  w <- c(0.05, 0.20, 0.10)
+  n <- c("spr", "nni", "tbr")
+  result <- .FormatMoveWeightsPlain(w, n)
+  # Single Topology line, nni (20%) should appear before tbr (10%) before spr (5%)
+  expect_match(result, "nni=20\\.0%.*tbr=10\\.0%.*spr=5\\.0%")
+})
+
+test_that("absent categories are omitted", {
+  # Only branch moves — no Topology, Characters, or Rates lines
+  w <- c(0.60, 0.40)
+  n <- c("tree_length", "branch_lengths")
+  result <- .FormatMoveWeights(w, n)
+  expect_length(result, 1)
+  expect_true(grepl("Branches", result, fixed = TRUE))
+})
+
+test_that("unknown move names go to Other category", {
+  w <- c(0.50, 0.50)
+  n <- c("nni", "my_custom_move")
+  result <- .FormatMoveWeightsPlain(w, n)
+  expect_true(grepl("Other:", result, fixed = TRUE))
+})
+
+test_that("colour-coded values: green >=10%, yellow 5-10%, white <5%", {
   w <- c(0.35, 0.07, 0.02)
-  n <- c("big", "mid", "small")
+  n <- c("nni", "spr", "tbr")
   result <- .FormatMoveWeights(w, n)
   # In non-interactive sessions cli may strip ANSI codes, so just
   # verify the function runs and includes expected content.
-  expect_type(result, "character")
-  for (nm in n) {
-    expect_true(grepl(nm, result, fixed = TRUE),
-                info = paste("Missing:", nm))
-  }
-  expect_true(grepl("35.0%", result, fixed = TRUE))
-  expect_true(grepl("7.0%", result, fixed = TRUE))
-  expect_true(grepl("2.0%", result, fixed = TRUE))
+  collapsed <- paste(result, collapse = " ")
+  expect_true(grepl("35.0%", collapsed, fixed = TRUE))
+  expect_true(grepl("7.0%", collapsed, fixed = TRUE))
+  expect_true(grepl("2.0%", collapsed, fixed = TRUE))
 })
 
 

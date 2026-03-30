@@ -306,15 +306,17 @@ test_that(".FormatMoveWeights produces readable string", {
 # .LogMoveWeights() writes to file
 # ==========================================================================
 
-test_that(".LogMoveWeights writes comment line to log file", {
+test_that(".LogMoveWeights writes categorized comment lines to log file", {
   tmp <- tempfile(fileext = ".log")
   on.exit(unlink(tmp), add = TRUE)
   writeLines("Sample\ta\tb", tmp)
   MkPrime:::.LogMoveWeights(c(0.6, 0.4), c("nni", "spr"), tmp)
   lines <- readLines(tmp)
+  # Header line + one category line (Topology)
   expect_length(lines, 2L)
-  expect_match(lines[2], "^# Adapted move weights:")
+  expect_match(lines[2], "^# Topology:")
   expect_match(lines[2], "nni=60.0%")
+  expect_match(lines[2], "spr=40.0%")
 })
 
 

@@ -337,7 +337,17 @@ RunMkPrime <- function(data, tree = NULL,
         .SaveCheckpoint(runs, mcmc, actualIter, paramNames,
                         mcmc$checkpointFile)
       }
+    } else if (nRuns >= 2L && !is.null(mcmc$maxRhat)) {
+      # M-146: cross-run R-hat convergence orchestrator
+      serialResult <- .RunSerialRuns(mkd, model, mcmc, runs, moves,
+                                      tipLabels, paramNames, nEdge,
+                                      brColStart, logFilePaths,
+                                      convWindowSize, treeFile)
+      runs       <- serialResult$runs
+      stopReason <- serialResult$stopReason
+      actualIter <- serialResult$actualIter
     } else {
+      # Simple sequential path (1 run or no maxRhat)
       for (run in seq_len(nRuns)) {
         runs[[run]] <- .RunMkPrimeSingleRun(
           mkd, model, mcmc, runs[[run]], moves, tipLabels, run,
@@ -950,9 +960,7 @@ RunMkPrime <- function(data, tree = NULL,
             sampleWallStart <- proc.time()["elapsed"]
             if (isStreaming && !is.null(logFilePath))
               .LogMoveWeights(moveWeights, moveNames, logFilePath)
-            cli::cli_alert_info(
-              "Move weights frozen: {(.FormatMoveWeights(moveWeights, moveNames))}"
-            )
+            .PrintMoveWeights(moveWeights, moveNames)
             weightsLogged <- TRUE
           }
         }
@@ -1015,9 +1023,7 @@ RunMkPrime <- function(data, tree = NULL,
             sampleWallStart <- proc.time()["elapsed"]
             if (isStreaming && !is.null(logFilePath))
               .LogMoveWeights(moveWeights, moveNames, logFilePath)
-            cli::cli_alert_info(
-              "Move weights frozen: {(.FormatMoveWeights(moveWeights, moveNames))}"
-            )
+            .PrintMoveWeights(moveWeights, moveNames)
             if (bestMinEssPerSec > 0) {
               cli::cli_alert_info(
                 "Tuning complete ({tuningRoundsDone} round{?s}). Best minESS/s: {sprintf('%.2f', bestMinEssPerSec)}"
@@ -1216,6 +1222,137 @@ RunMkPrime <- function(data, tree = NULL,
   r$actual_iter <- actualIter
   r$phase       <- phase
   r
+}
+
+
+# --- Parallel run orchestration ---
+
+# --- Serial multi-run orchestration (M-146) ---
+
+#' Run multiple serial MCMC runs with cross-run R-hat convergence
+#'
+#' Called by [.RunWithRecovery()] when `parallel = FALSE`, `nRuns >= 2`, and
+#' `maxRhat` is set.  Phase 1 runs each run sequentially until per-run ESS
+#' convergence (or nIter / maxTime / cancel).  Phase 2 checks cross-run R-hat
+#' from log files; if not met and iteration headroom remains, resumes each run
+#' for one epoch (`checkEvery` iterations) and re-checks.
+#'
+#' @return Named list: `runs`, `stopReason`, `actualIter`.
+#' @keywords internal
+.RunSerialRuns <- function(mkd, model, mcmc, runs, moves, tipLabels,
+                            paramNames, nEdge, brColStart, logFilePaths,
+                            convWindowSize, treeFile, startIters = NULL) {
+  nRuns     <- length(runs)
+  epochSize <- max(mcmc$checkEvery %||% 1000L, 1000L)
+  startTime <- proc.time()["elapsed"]
+
+  if (is.null(startIters)) startIters <- rep(1L, nRuns)
+
+  # --- Phase 1: first pass (ESS-based stopping per run) ---
+  # Strip maxRhat so it doesn't block ESS-based stopping inside each run.
+  innerMcmc <- mcmc
+  innerMcmc$maxRhat <- NULL
+
+  for (run in seq_len(nRuns)) {
+    runs[[run]] <- .RunMkPrimeSingleRun(
+      mkd, model, innerMcmc, runs[[run]], moves, tipLabels, run,
+      paramNames, nEdge, brColStart,
+      logFilePath    = logFilePaths[run],
+      cancelFile     = mcmc$cancelFile,
+      checkpointFile = NULL,
+      startIter      = startIters[run],
+      isStreaming     = TRUE,
+      convWindowSize = convWindowSize,
+      treeFile       = treeFile
+    )
+    if (runs[[run]]$stop_reason == "cancelled") {
+      return(list(runs = runs,
+                  stopReason = "cancelled",
+                  actualIter = runs[[run]]$actual_iter))
+    }
+    startIters[run] <- runs[[run]]$actual_iter + 1L
+  }
+
+  # No cross-run convergence needed when nRuns < 2 or no maxRhat
+  # (defensive — caller should not route here in those cases).
+  if (nRuns < 2L || is.null(mcmc$maxRhat)) {
+    return(list(runs = runs,
+                stopReason = runs[[nRuns]]$stop_reason,
+                actualIter = runs[[nRuns]]$actual_iter))
+  }
+
+  # Checkpoint after first pass
+  if (!is.null(mcmc$checkpointFile)) {
+    maxActual <- max(vapply(runs, `[[`, 0, "actual_iter"))
+    .SaveCheckpoint(runs, mcmc, maxActual, paramNames, mcmc$checkpointFile)
+  }
+
+  # --- Phase 2: cross-run R-hat loop ---
+  repeat {
+    diagCheck <- .CheckConvergenceFromLogs(logFilePaths, paramNames, mcmc)
+    if (!is.null(diagCheck) && diagCheck$converged) {
+      return(list(runs = runs,
+                  stopReason = "converged",
+                  actualIter = max(vapply(runs, `[[`, 0, "actual_iter"))))
+    }
+
+    # Report R-hat status
+    if (!is.null(diagCheck) && !is.na(diagCheck$maxRhat)) {
+      cli::cli_alert_info(
+        "Cross-run max R-hat = {round(diagCheck$maxRhat, 3)} \\
+         (target: {mcmc$maxRhat}). Extending runs\u2026"
+      )
+    }
+
+    # Check hard limits before extending
+    maxActual <- max(vapply(runs, `[[`, 0, "actual_iter"))
+    if (is.finite(mcmc$nIter) && maxActual >= mcmc$nIter) {
+      return(list(runs = runs,
+                  stopReason = "max_iter",
+                  actualIter = maxActual))
+    }
+    elapsed <- proc.time()["elapsed"] - startTime
+    if (!is.null(mcmc$maxTime) && elapsed >= mcmc$maxTime) {
+      return(list(runs = runs,
+                  stopReason = "max_time",
+                  actualIter = maxActual))
+    }
+
+    # Resumption epoch: strip convergence criteria, use finite nIter cap.
+    epochMcmc <- mcmc
+    epochMcmc$maxRhat <- NULL
+    epochMcmc$minEss  <- NULL
+
+    for (run in seq_len(nRuns)) {
+      epochEnd <- startIters[run] + epochSize - 1L
+      if (is.finite(mcmc$nIter)) epochEnd <- min(epochEnd, mcmc$nIter)
+      epochMcmc$nIter <- epochEnd
+
+      runs[[run]] <- .RunMkPrimeSingleRun(
+        mkd, model, epochMcmc, runs[[run]], moves, tipLabels, run,
+        paramNames, nEdge, brColStart,
+        logFilePath    = logFilePaths[run],
+        cancelFile     = mcmc$cancelFile,
+        checkpointFile = NULL,
+        startIter      = startIters[run],
+        isStreaming     = TRUE,
+        convWindowSize = convWindowSize,
+        treeFile       = treeFile
+      )
+      if (runs[[run]]$stop_reason == "cancelled") {
+        return(list(runs = runs,
+                    stopReason = "cancelled",
+                    actualIter = runs[[run]]$actual_iter))
+      }
+      startIters[run] <- runs[[run]]$actual_iter + 1L
+    }
+
+    # Checkpoint after each epoch
+    if (!is.null(mcmc$checkpointFile)) {
+      maxActual <- max(vapply(runs, `[[`, 0, "actual_iter"))
+      .SaveCheckpoint(runs, mcmc, maxActual, paramNames, mcmc$checkpointFile)
+    }
+  }
 }
 
 
@@ -1473,6 +1610,16 @@ RunMkPrime <- function(data, tree = NULL,
   })
 
   if (any(vapply(perRunSamples, is.null, logical(1L)))) return(NULL)
+
+  # Equalise chain lengths — serial runs may produce different sample counts.
+  # Keep the most recent (tail) samples to avoid penalising early convergers.
+  nRows   <- vapply(perRunSamples, nrow, integer(1L))
+  minRows <- min(nRows)
+  if (any(nRows != minRows)) {
+    perRunSamples <- lapply(perRunSamples, function(s) {
+      tail(s, minRows)
+    })
+  }
 
   combined <- do.call(rbind, perRunSamples)
   ess <- .EssMatrix(combined)
@@ -1851,25 +1998,38 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
   pCols       <- if (isLogseries) 0L else 1L
   brColStart  <- 5L + pCols + (any(mkd$type == "neomorphic")) + qHet + nTrans + 1L
 
-  # --- Sequential per-run loop (same structure as RunMkPrime) ---
+  # --- Sequential per-run execution ---
   stopReason <- "max_iter"
   actualIter <- if (is.finite(mcmc$nIter)) mcmc$nIter else startIter - 1L
 
-  for (run in seq_len(nRuns)) {
-    runs[[run]] <- .RunMkPrimeSingleRun(
-      mkd, model, mcmc, runs[[run]], moves, tipLabels, run,
-      paramNames, nEdge, brColStart,
-      logFilePath    = if (isStreaming) logFilePaths[run] else NULL,
-      cancelFile     = mcmc$cancelFile,
-      checkpointFile = if (nRuns == 1L) mcmc$checkpointFile else NULL,
-      startIter      = startIter,
-      isStreaming    = isStreaming,
-      convWindowSize = convWindowSize,
-      treeFile       = NULL
-    )
-    stopReason <- runs[[run]]$stop_reason
-    actualIter <- runs[[run]]$actual_iter
-    if (stopReason == "cancelled") break
+  if (isStreaming && nRuns >= 2L && !is.null(mcmc$maxRhat)) {
+    # M-146: cross-run R-hat convergence orchestrator
+    startIters <- rep(startIter, nRuns)
+    serialResult <- .RunSerialRuns(mkd, model, mcmc, runs, moves,
+                                    tipLabels, paramNames, nEdge,
+                                    brColStart, logFilePaths,
+                                    convWindowSize, treeFile = NULL,
+                                    startIters = startIters)
+    runs       <- serialResult$runs
+    stopReason <- serialResult$stopReason
+    actualIter <- serialResult$actualIter
+  } else {
+    for (run in seq_len(nRuns)) {
+      runs[[run]] <- .RunMkPrimeSingleRun(
+        mkd, model, mcmc, runs[[run]], moves, tipLabels, run,
+        paramNames, nEdge, brColStart,
+        logFilePath    = if (isStreaming) logFilePaths[run] else NULL,
+        cancelFile     = mcmc$cancelFile,
+        checkpointFile = if (nRuns == 1L) mcmc$checkpointFile else NULL,
+        startIter      = startIter,
+        isStreaming    = isStreaming,
+        convWindowSize = convWindowSize,
+        treeFile       = NULL
+      )
+      stopReason <- runs[[run]]$stop_reason
+      actualIter <- runs[[run]]$actual_iter
+      if (stopReason == "cancelled") break
+    }
   }
 
   .BuildResult(runs, model, mkd, mcmc, paramNames, logFilePaths,
@@ -2865,38 +3025,100 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 #' Colour-coded via cli: high-weight moves are bright, low-weight moves
 #' are dim, and names/equals are silver (M-140).
 #' @keywords internal
+#' Category definitions for move types
+#' @keywords internal
+.moveCategoryMap <- c(
+  nni = "Topology", spr = "Topology", tbr = "Topology", pspr = "Topology",
+  gibbs_spr = "Topology", gibbs_subtree_swap = "Topology",
+  weighted_spr = "Topology", weighted_subtree_swap = "Topology",
+
+  tree_length = "Branches", branch_lengths = "Branches",
+  dirichlet_branch = "Branches", local_dirichlet = "Branches",
+  block_gibbs_branch = "Branches", weighted_branch_lengths = "Branches",
+
+  kPrime = "Characters", p = "Characters",
+
+  rate_loss = "Rates", rate_neo = "Rates", rate_log_sd = "Rates",
+  beta_scale = "Rates", neo_joint = "Rates",
+  slice_rate_loss = "Rates", slice_rate_neo = "Rates",
+  slice_rate_log_sd = "Rates", slice_beta_scale = "Rates",
+  joint_tl_rls = "Rates", joint_tl_rl = "Rates"
+)
+
+.moveCategoryOrder <- c("Topology", "Branches", "Characters", "Rates")
+
+#' Format move weights as styled, categorized lines
+#'
+#' Returns a character vector (one element per category line).
+#' Within each category, moves are sorted from highest to lowest weight.
+#' Names are silver; values are green (>=10%), yellow (5-10%), white (<5%).
+#' @keywords internal
 .FormatMoveWeights <- function(weights, moveNames) {
   pct <- weights * 100
-  parts <- vapply(seq_along(weights), function(i) {
-    name <- cli::col_silver(paste0(moveNames[i], "="))
-    val  <- sprintf("%.1f%%", pct[i])
-    val  <- if (pct[i] >= 10) {
-      cli::col_green(val)
-    } else if (pct[i] >= 5) {
-      cli::col_yellow(val)
-    } else {
-      cli::col_white(val)
-    }
-    paste0(name, val)
-  }, character(1))
-  paste(parts, collapse = " ")
+  cats <- .moveCategoryMap[moveNames]
+  cats[is.na(cats)] <- "Other"
+
+  presentCats <- intersect(.moveCategoryOrder, unique(cats))
+  if (any(cats == "Other")) presentCats <- c(presentCats, "Other")
+
+  vapply(presentCats, function(cat) {
+    idx <- which(cats == cat)
+    idx <- idx[order(pct[idx], decreasing = TRUE)]
+    parts <- vapply(idx, function(i) {
+      name <- cli::col_silver(paste0(moveNames[i], "="))
+      val  <- sprintf("%.1f%%", pct[i])
+      val  <- if (pct[i] >= 10) {
+        cli::col_green(val)
+      } else if (pct[i] >= 5) {
+        cli::col_yellow(val)
+      } else {
+        cli::col_white(val)
+      }
+      paste0(name, val)
+    }, character(1))
+    paste0(cli::col_silver(paste0(cat, ": ")), paste(parts, collapse = " "))
+  }, character(1), USE.NAMES = FALSE)
 }
 
 #' Format move weights as plain text (for log files).
+#'
+#' Categorized and sorted to match the styled version.
 #' @keywords internal
 .FormatMoveWeightsPlain <- function(weights, moveNames) {
-  pct <- sprintf("%.1f%%", weights * 100)
-  paste(paste0(moveNames, "=", pct), collapse = " ")
+  pct <- weights * 100
+  cats <- .moveCategoryMap[moveNames]
+  cats[is.na(cats)] <- "Other"
+
+  presentCats <- intersect(.moveCategoryOrder, unique(cats))
+  if (any(cats == "Other")) presentCats <- c(presentCats, "Other")
+
+  lines <- vapply(presentCats, function(cat) {
+    idx <- which(cats == cat)
+    idx <- idx[order(pct[idx], decreasing = TRUE)]
+    entries <- paste0(moveNames[idx], "=", sprintf("%.1f%%", pct[idx]))
+    paste0(cat, ": ", paste(entries, collapse = " "))
+  }, character(1), USE.NAMES = FALSE)
+  paste(lines, collapse = "\n")
+}
+
+#' Print styled move weights to console (multi-line)
+#' @keywords internal
+.PrintMoveWeights <- function(weights, moveNames) {
+  lines <- .FormatMoveWeights(weights, moveNames)
+  cli::cli_alert_info("Move weights frozen:")
+  for (line in lines) cli::cli_text("
+ {line}")
 }
 
 
 #' Write adapted move weights as a comment in the log file.
 #' @keywords internal
 .LogMoveWeights <- function(weights, moveNames, logFilePaths) {
-  line <- paste0("# Adapted move weights: ",
-                 .FormatMoveWeightsPlain(weights, moveNames))
+  plain <- .FormatMoveWeightsPlain(weights, moveNames)
+  lines <- paste0("# ", strsplit(plain, "\n", fixed = TRUE)[[1]])
+  block <- paste0(paste(lines, collapse = "\n"), "\n")
   for (p in logFilePaths) {
-    cat(line, "\n", file = p, append = TRUE, sep = "")
+    cat(block, file = p, append = TRUE, sep = "")
   }
 }
 

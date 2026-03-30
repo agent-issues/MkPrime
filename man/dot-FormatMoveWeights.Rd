@@ -2,11 +2,13 @@
 % Please edit documentation in R/RunMkPrime.R
 \name{.FormatMoveWeights}
 \alias{.FormatMoveWeights}
-\title{Format move weights as a compact string for display.}
+\title{Format move weights as styled, categorized lines}
 \usage{
 .FormatMoveWeights(weights, moveNames)
 }
 \description{
-Format move weights as a compact string for display.
+Returns a character vector (one element per category line).
+Within each category, moves are sorted from highest to lowest weight.
+Names are silver; values are green (>=10\%), yellow (5-10\%), white (<5\%).
 }
 \keyword{internal}
