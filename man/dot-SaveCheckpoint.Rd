@@ -12,7 +12,8 @@
   file,
   moveWeights = NULL,
   phase = NULL,
-  model = NULL
+  model = NULL,
+  serialPhase = NULL
 )
 }
 \description{

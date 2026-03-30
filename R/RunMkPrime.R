@@ -721,7 +721,7 @@ RunMkPrime <- function(data, tree = NULL,
   # astronomical scores because acceptance = 1.0 and cost ≈ 0; this inflates
   # their weight and starves bottleneck MH moves.  One Gibbs draw or slice
   # sample per cycle is already optimal, so freeze them.
-  alwaysAcceptTypes <- c("gibbs_p", "slice")
+  alwaysAcceptTypes <- c("gibbs_p", "slice", "gibbs_kprime_sweep")
   moveTypes <- vapply(moves, `[[`, character(1), "type")
   autoPin <- moveWeights[moveTypes %in% alwaysAcceptTypes]
 
@@ -772,6 +772,9 @@ RunMkPrime <- function(data, tree = NULL,
   tuningRoundsDone <- r$tuningRoundsDone %||% 0L
   tuningBuf        <- NULL
   tuningBufIdx     <- 0L
+  tuningTreeBuf    <- list()
+  tuneWithTreeEss  <- !is.null(mcmc$minTreeEss) &&
+    requireNamespace("TreeDist", quietly = TRUE)
   tuningWindowStart <- NULL
   bestMinEssPerSec <- -Inf
   bestWeights      <- moveWeights
@@ -935,6 +938,20 @@ RunMkPrime <- function(data, tree = NULL,
           tuningBuf <- rbind(tuningBuf, extra)
         }
         tuningBuf[tuningBufIdx, ] <- result$scalar_samples[i, ]
+
+        # Store trees during tuning for tree-ESS-aware bandit
+        if (tuneWithTreeEss) {
+          row <- result$scalar_samples[i, ]
+          tl    <- row[3L]
+          relBr <- row[brColStart:(brColStart + nEdge - 1L)]
+          tuningTreeBuf[[tuningBufIdx]] <- structure(
+            list(edge        = result$edge_samples[[i]],
+                 edge.length = tl * relBr,
+                 Nnode       = length(tipLabels) - 2L,
+                 tip.label   = tipLabels),
+            class = "phylo"
+          )
+        }
       }
     }
 
@@ -1034,6 +1051,7 @@ RunMkPrime <- function(data, tree = NULL,
                                 ncol = length(paramNames),
                                 dimnames = list(NULL, paramNames))
             tuningBufIdx     <- 0L
+            tuningTreeBuf    <- list()
             tuningWindowStart <- proc.time()["elapsed"]
             # Reset acceptance/timing counters for clean tuning measurement
             for (ch in seq_len(nChains)) {
@@ -1084,7 +1102,10 @@ RunMkPrime <- function(data, tree = NULL,
         windowTime <- proc.time()["elapsed"] - tuningWindowStart
         currentEssPerSec <- .MinEssPerSec(
           tuningBuf[seq_len(tuningBufIdx), , drop = FALSE],
-          windowTime
+          windowTime,
+          tuningTrees = if (tuneWithTreeEss && tuningBufIdx >= 20L) {
+            tuningTreeBuf[seq_len(tuningBufIdx)]
+          }
         )
 
         if (!is.na(currentEssPerSec)) {
@@ -1101,6 +1122,7 @@ RunMkPrime <- function(data, tree = NULL,
           # Try next perturbation candidate
           moveWeights <- tuningCandidates[[tuningCandIdx]]
           tuningBufIdx      <- 0L
+          tuningTreeBuf     <- list()
           tuningWindowStart <- proc.time()["elapsed"]
           # Reset counters for clean measurement
           for (ch in seq_len(nChains)) {
@@ -1141,6 +1163,7 @@ RunMkPrime <- function(data, tree = NULL,
             )
             tuningCandIdx     <- 0L
             tuningBufIdx      <- 0L
+            tuningTreeBuf     <- list()
             tuningWindowStart <- proc.time()["elapsed"]
             bestMinEssPerSec  <- -Inf
             for (ch in seq_len(nChains)) {
@@ -1273,11 +1296,23 @@ RunMkPrime <- function(data, tree = NULL,
 
       diagCheck <- .CheckConvergence(list(r), paramNames, mcmc, isStreaming)
       if (!is.null(diagCheck)) {
-        # M-141: ETA from minESS accumulation rate
-        etaStr <- .EstimateEta(
-          diagCheck$minEss, mcmc$minEss,
-          proc.time()["elapsed"] - sampleWallStart
-        )
+        # M-141: ETA from worst-case ESS accumulation rate.
+        # Use whichever criterion (scalar ESS or tree ESS) has the
+        # worst current/target ratio — that's the binding constraint.
+        elapsedSample <- proc.time()["elapsed"] - sampleWallStart
+        etaCurrent <- diagCheck$minEss
+        etaTarget  <- mcmc$minEss
+        if (!is.null(mcmc$minTreeEss) && !is.na(diagCheck$treeEss) &&
+            is.finite(diagCheck$treeEss) && !is.null(mcmc$minEss) &&
+            is.finite(diagCheck$minEss)) {
+          scalarRatio <- diagCheck$minEss / mcmc$minEss
+          treeRatio   <- diagCheck$treeEss / mcmc$minTreeEss
+          if (treeRatio < scalarRatio) {
+            etaCurrent <- diagCheck$treeEss
+            etaTarget  <- mcmc$minTreeEss
+          }
+        }
+        etaStr <- .EstimateEta(etaCurrent, etaTarget, elapsedSample)
         # Refresh ticker pages from latest diagnostics (M-097)
         tickerPages <- .BuildTickerPages(diagCheck, etaStr)
         if (diagCheck$converged) {
@@ -1735,14 +1770,53 @@ RunMkPrime <- function(data, tree = NULL,
                    na.rm = TRUE)
   }
 
+  # --- Adaptive tree ESS ---
+  # Three tiers: skip (scalars far off), coarse (500 trees), fine (1000 trees).
+  # Avoids expensive RF distance computation when it can't affect the stopping
+
+  # decision, and upgrades to full precision when tree ESS is the binding
+  # constraint.
+  treeEss <- NA_real_
+  treeEssPrecision <- "skip"
+  if (!is.null(mcmc$minTreeEss) &&
+      requireNamespace("TreeDist", quietly = TRUE)) {
+
+    scalarsFarOff <- !is.null(mcmc$minEss) && minEss < 0.5 * mcmc$minEss
+    scalarsConverged <-
+      (is.null(mcmc$minEss)  || minEss >= mcmc$minEss) &&
+      (is.null(mcmc$maxRhat) || (nRuns >= 2L && !is.na(maxRhat) &&
+                                  maxRhat <= mcmc$maxRhat))
+
+    treeEssPrecision <- if (scalarsFarOff) "skip"
+                        else if (scalarsConverged) "fine"
+                        else "coarse"
+
+    if (treeEssPrecision != "skip") {
+      maxPerRun <- if (treeEssPrecision == "fine") 1000L else 500L
+      treeEss <- .ComputeTreeEssInLoop(runs, maxPerRun, isStreaming)
+
+      # Upgrade coarse -> fine if estimate is close to threshold
+      if (treeEssPrecision == "coarse" && !is.na(treeEss) &&
+          treeEss >= 0.8 * mcmc$minTreeEss) {
+        treeEss <- .ComputeTreeEssInLoop(runs, 1000L, isStreaming)
+        treeEssPrecision <- "fine"
+      }
+    }
+  }
+
   # Converged only when at least one criterion is set AND all set criteria pass.
   # (Avoids spurious early stopping when no criteria are configured.)
-  hasCriteria <- !is.null(mcmc$minEss) || !is.null(mcmc$maxRhat)
+  hasCriteria <- !is.null(mcmc$minEss) || !is.null(mcmc$maxRhat) ||
+                 !is.null(mcmc$minTreeEss)
   converged   <- hasCriteria &&
-    (is.null(mcmc$minEss)  || minEss >= mcmc$minEss) &&
-    (is.null(mcmc$maxRhat) || (nRuns >= 2L && !is.na(maxRhat) && maxRhat <= mcmc$maxRhat))
+    (is.null(mcmc$minEss)     || minEss >= mcmc$minEss) &&
+    (is.null(mcmc$maxRhat)    || (nRuns >= 2L && !is.na(maxRhat) &&
+                                   maxRhat <= mcmc$maxRhat)) &&
+    (is.null(mcmc$minTreeEss) || (!is.na(treeEss) &&
+                                   treeEss >= mcmc$minTreeEss))
 
   list(converged = converged, minEss = minEss, maxRhat = maxRhat,
+       treeEss = treeEss, treeEssPrecision = treeEssPrecision,
        ess = ess, rhat = rhat)
 }
 
@@ -1798,6 +1872,8 @@ RunMkPrime <- function(data, tree = NULL,
                    na.rm = TRUE)
   }
 
+  # Tree ESS not available in log-based mode (scalar logs don't contain trees).
+  # minTreeEss is only enforced by .CheckConvergence() which has in-memory trees.
   hasCriteria <- !is.null(mcmc$minEss) || !is.null(mcmc$maxRhat)
   converged   <- hasCriteria &&
     (is.null(mcmc$minEss)  || minEss >= mcmc$minEss) &&
@@ -1805,7 +1881,60 @@ RunMkPrime <- function(data, tree = NULL,
                                 maxRhat <= mcmc$maxRhat))
 
   list(converged = converged, minEss = minEss, maxRhat = maxRhat,
+       treeEss = NA_real_, treeEssPrecision = "skip",
        ess = ess, rhat = rhat, perRunSamples = perRunSamples)
+}
+
+
+#' Compute tree ESS from in-memory MCMC runs
+#'
+#' Extracts tree samples from each run, subsamples to `maxPerRun`,
+#' and returns the **minimum** median pseudo-ESS across runs (conservative).
+#' Used during convergence checks when `minTreeEss` is set.
+#'
+#' @param runs List of run state objects (each with `$tree_samples` and
+#'   `$tree_saved_idx`).
+#' @param maxPerRun Maximum trees per run to use (controls coarse vs fine).
+#' @param isStreaming Logical; when `TRUE`, trees are in a flat list
+#'   (streaming mode stores all trees, no `saved_idx` subsetting needed).
+#' @return Scalar minimum median pseudo-ESS, or `NA_real_` on failure.
+#' @keywords internal
+.ComputeTreeEssInLoop <- function(runs, maxPerRun, isStreaming) {
+  perRunTrees <- lapply(runs, function(r) {
+    if (isStreaming) {
+      ts <- r$tree_samples
+      if (is.null(ts)) return(NULL)
+      # Filter out NULL slots (pre-allocated but unused)
+      ts <- Filter(Negate(is.null), ts)
+      n <- length(ts)
+      if (n < 5L) return(NULL)
+      ts
+    } else {
+      idx <- r$tree_saved_idx %||% 0L
+      if (idx < 5L) return(NULL)
+      r$tree_samples[seq_len(idx)]
+    }
+  })
+
+  perRunTrees <- Filter(Negate(is.null), perRunTrees)
+  if (length(perRunTrees) == 0L) return(NA_real_)
+
+  # Subsample and convert to multiPhylo
+  perRunTrees <- lapply(perRunTrees, function(ts) {
+    n <- length(ts)
+    if (n > maxPerRun) {
+      ts <- ts[round(seq(1, n, length.out = maxPerRun))]
+    }
+    structure(ts, class = "multiPhylo")
+  })
+
+  tryCatch({
+    essVals <- vapply(perRunTrees, function(chain) {
+      .TreeESS(chain, dist_fn = TreeDist::RobinsonFoulds,
+               frechet = FALSE)[["medianPseudoESS"]]
+    }, double(1))
+    min(essVals, na.rm = TRUE)
+  }, error = function(e) NA_real_)
 }
 
 
@@ -2605,8 +2734,15 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
   if (nTrans > 0) {
     kPrimeMoves <- list(
+      # Univariate integer walk (reduced weight — Gibbs sweep does heavy lifting)
       list(name = "kPrime", type = "int_walk", target = "kPrime",
-           weight = max(1, 2 * nTrans), dim = 1L)
+           weight = max(1, nTrans), dim = 1L),
+      # Gibbs kPrime sweep: sample all k'_i from full conditionals
+      list(name = "gibbs_kPrime", type = "gibbs_kprime_sweep",
+           target = "kPrime", weight = max(1, nTrans), dim = as.integer(nTrans)),
+      # Block kPrime shift: shift all trans chars by same delta
+      list(name = "block_kPrime", type = "block_kprime_shift",
+           target = "kPrime", weight = 2, dim = 1L)
     )
     # p hyperparameter only exists for hierarchical geometric prior
     if (!identical(kPrimePrior, "logseries")) {
@@ -2703,7 +2839,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 # 4=beta_simplex, 5=nni, 6=spr, 7=int_walk, 8=scale_p (legacy),
 # 9=gibbs_p, 10=gibbs_spr, 11=gibbs_subtree_swap,
 # 12=weighted_br_scale, 13=weighted_spr, 14=weighted_subtree_swap,
-# 15=block_gibbs_branch, 16=beta_scale (M-052), 17=tbr (M-053)
+# 15=block_gibbs_branch, 16=beta_scale (M-052), 17=tbr (M-053),
+# 25=gibbs_kprime_sweep, 26=block_kprime_shift
 .kMoveTypes <- c(
   tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
   rate_neo = 3L, branch_lengths = 4L,
@@ -2725,7 +2862,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   joint_tl_rls = 21L,
   joint_tl_rl = 22L,
   dirichlet_branch = 23L,
-  local_dirichlet = 24L
+  local_dirichlet = 24L,
+  gibbs_kPrime = 25L,
+  block_kPrime = 26L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)
@@ -3233,7 +3372,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   dirichlet_branch = "Branches", local_dirichlet = "Branches",
   block_gibbs_branch = "Branches", weighted_branch_lengths = "Branches",
 
-  kPrime = "Characters", p = "Characters",
+  kPrime = "Characters", gibbs_kPrime = "Characters",
+  block_kPrime = "Characters", p = "Characters",
 
   rate_loss = "Rates", rate_neo = "Rates", rate_log_sd = "Rates",
   beta_scale = "Rates", neo_joint = "Rates",
@@ -3334,7 +3474,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     dirichlet_branch = 0.234,
     local_dirichlet = 0.234,
     joint_tl_rls = 0.25, joint_tl_rl = 0.25,
-    # Gibbs/weighted/block/slice moves: no MH tuning to adapt
+    # Gibbs/weighted/block/kPrime/slice moves: no MH tuning to adapt
+    gibbs_kPrime = NA_real_, block_kPrime = 0.234,
     gibbs_spr = NA_real_, gibbs_subtree_swap = NA_real_,
     weighted_branch_lengths = NA_real_,
     weighted_spr = NA_real_, weighted_subtree_swap = NA_real_,
@@ -3360,7 +3501,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     joint_tl_rl = "scale_joint_tl_rl",
     dirichlet_branch = "dirichlet_alpha",
     local_dirichlet = "local_dirichlet_alpha",
-    # Gibbs/weighted/block/slice moves: no tuning to adapt
+    # Gibbs/weighted/block/kPrime/slice moves: no tuning to adapt
+    gibbs_kPrime = NA_character_,
+    block_kPrime = "int_walk_window",  # uses intWalkWindow for shift range
     gibbs_spr = NA_character_, gibbs_subtree_swap = NA_character_,
     weighted_branch_lengths = NA_character_,
     weighted_spr = NA_character_, weighted_subtree_swap = NA_character_,
@@ -3510,7 +3653,8 @@ if (n < 2L * windowSize) {
 #'   cannot be computed.
 #' @keywords internal
 .MinEssPerSec <- function(sampleMatrix, wallTimeSec,
-                           excludePattern = "^(kPrime_|br_|log_likelihood)") {
+                           excludePattern = "^(kPrime_|br_|log_likelihood)",
+                           tuningTrees = NULL) {
   if (nrow(sampleMatrix) < 10L || wallTimeSec < 1e-6) return(NA_real_)
 
   keyCols <- grep(excludePattern, colnames(sampleMatrix), invert = TRUE)
@@ -3520,6 +3664,22 @@ if (n < 2L * windowSize) {
 
   minEss <- min(ess, na.rm = TRUE)
   if (!is.finite(minEss)) return(NA_real_)
+
+  # Include tree ESS in the minimum when topology trees are available.
+  # This gives topology moves credit in the bandit, preventing the
+  # starvation that M-152 described.
+  if (!is.null(tuningTrees) && length(tuningTrees) >= 20L) {
+    trees <- structure(tuningTrees, class = "multiPhylo")
+    treeEss <- tryCatch(
+      .TreeESS(trees, dist_fn = TreeDist::RobinsonFoulds,
+               frechet = FALSE)[["medianPseudoESS"]],
+      error = function(e) NA_real_
+    )
+    if (!is.na(treeEss) && is.finite(treeEss)) {
+      minEss <- min(minEss, treeEss)
+    }
+  }
+
   minEss / wallTimeSec
 }
 

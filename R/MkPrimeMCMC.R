@@ -62,6 +62,14 @@
 #'   a pragmatic threshold for phylogenetics where mixing is slower.
 #'   Requires `nRuns >= 2`.
 #'   Replaces the classical PSRF (Gelman-Rubin) statistic.
+#' @param minTreeEss Minimum tree-topology ESS (median pseudo-ESS) for
+#'   early stopping.  `NULL` (default) disables tree-ESS-based stopping.
+#'   When set, tree ESS is computed adaptively during convergence checks:
+#'   skipped when scalar ESS is far from `minEss`, coarse (500-tree
+#'   subsample) when approaching, and fine (1000-tree subsample) when
+#'   tree ESS is the binding constraint.  Requires **TreeDist**.
+#'   Also used in the tuning-phase bandit: topology moves receive credit
+#'   for improving tree ESS, preventing underallocation.
 #' @param checkEvery Check convergence every this many iterations
 #'   (default 1000). Only used when stopping criteria are set.
 #' @param cancelFile Path to a cancel-signal file. `NULL` (default) disables
@@ -278,6 +286,7 @@ MkPrimeMCMC <- function(
     maxTime = NULL,
     minEss = NULL,
     maxRhat = NULL,
+    minTreeEss = NULL,
     checkEvery = 1000L,
     cancelFile = NULL,
     checkpointFile = NULL,
@@ -535,8 +544,8 @@ MkPrimeMCMC <- function(
          tuningRounds = tuningRounds,
          nRuns = nRuns, nChains = nChains, heat = heat,
          maxTime = maxTime, minEss = minEss, maxRhat = maxRhat,
-         checkEvery = checkEvery, cancelFile = cancelFile,
-         checkpointFile = checkpointFile,
+         minTreeEss = minTreeEss, checkEvery = checkEvery,
+         cancelFile = cancelFile, checkpointFile = checkpointFile,
          treeFile = treeFile, logFile = logFile, bufferSize = bufferSize,
          plotEvery = plotEvery, progressFn = progressFn,
          tbr = tbr, pSpr = pSpr, joint2d = joint2d,

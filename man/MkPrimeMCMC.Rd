@@ -20,6 +20,7 @@ MkPrimeMCMC(
   maxTime = NULL,
   minEss = NULL,
   maxRhat = NULL,
+  minTreeEss = NULL,
   checkEvery = 1000L,
   cancelFile = NULL,
   checkpointFile = NULL,
@@ -123,6 +124,15 @@ The modern recommendation is 1.01 for reliable inference; 1.05 is
 a pragmatic threshold for phylogenetics where mixing is slower.
 Requires \code{nRuns >= 2}.
 Replaces the classical PSRF (Gelman-Rubin) statistic.}
+
+\item{minTreeEss}{Minimum tree-topology ESS (median pseudo-ESS) for
+early stopping.  \code{NULL} (default) disables tree-ESS-based stopping.
+When set, tree ESS is computed adaptively during convergence checks:
+skipped when scalar ESS is far from \code{minEss}, coarse (500-tree
+subsample) when approaching, and fine (1000-tree subsample) when
+tree ESS is the binding constraint.  Requires \strong{TreeDist}.
+Also used in the tuning-phase bandit: topology moves receive credit
+for improving tree ESS, preventing underallocation.}
 
 \item{checkEvery}{Check convergence every this many iterations
 (default 1000). Only used when stopping criteria are set.}

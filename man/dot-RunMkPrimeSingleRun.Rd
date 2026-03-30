@@ -22,7 +22,8 @@
   isStreaming = FALSE,
   convWindowSize = 0L,
   treeFile = NULL,
-  shared = NULL
+  shared = NULL,
+  resumeMoveWeights = NULL
 )
 }
 \arguments{

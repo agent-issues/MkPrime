@@ -355,6 +355,22 @@ print.MkpDiagnostics <- function(x, ...) {
     }
   }
 
+  # Tree ESS row (when available from adaptive convergence check)
+  treeEss  <- diagCheck$treeEss %||% NA_real_
+  treePrec <- diagCheck$treeEssPrecision %||% "skip"
+  if (!is.na(treeEss) && is.finite(treeEss)) {
+    precLabel <- switch(treePrec,
+      coarse = cli::col_silver(" (coarse)"),
+      fine   = "",
+      ""
+    )
+    out <- c(out, sprintf("  %-20s  %s%s", "topology (pseudo)",
+                          .FmtEss(treeEss), precLabel))
+  } else if (treePrec == "skip" && !is.null(diagCheck$treeEss)) {
+    out <- c(out, sprintf("  %-20s  %s", "topology (pseudo)",
+                          cli::col_silver(formatC("skip", width = 6))))
+  }
+
   out <- c(out, "", paste0(
     "  ESS: ",
     cli::col_green("\u2265 200"), "  ",
@@ -435,6 +451,18 @@ print.MkpDiagnostics <- function(x, ...) {
                else if (maxRhat > 1.01) cli::col_yellow(rhatFmt)
                else cli::col_green(rhatFmt)
     s <- paste0(s, " \u2502 Rhat: ", rhatStr)
+  }
+
+  treeEss <- diagCheck$treeEss
+  if (!is.null(treeEss) && !is.na(treeEss) && is.finite(treeEss)) {
+    tval <- round(treeEss)
+    tstr <- as.character(tval)
+    tstr <- if (tval < 100) cli::col_red(tstr)
+            else if (tval < 200) cli::col_yellow(tstr)
+            else cli::col_green(tstr)
+    precSuffix <- if (identical(diagCheck$treeEssPrecision, "coarse")) "~"
+                  else ""
+    s <- paste0(s, " \u2502 treeESS: ", precSuffix, tstr)
   }
   s
 }

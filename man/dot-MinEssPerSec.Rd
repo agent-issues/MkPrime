@@ -7,7 +7,8 @@
 .MinEssPerSec(
   sampleMatrix,
   wallTimeSec,
-  excludePattern = "^(kPrime_|br_|log_likelihood)"
+  excludePattern = "^(kPrime_|br_|log_likelihood)",
+  tuningTrees = NULL
 )
 }
 \arguments{

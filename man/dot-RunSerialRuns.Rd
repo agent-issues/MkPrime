@@ -18,7 +18,8 @@
   convWindowSize,
   treeFile,
   startIters = NULL,
-  shared = NULL
+  shared = NULL,
+  startPhase = 1L
 )
 }
 \value{
