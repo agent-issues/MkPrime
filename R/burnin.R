@@ -153,6 +153,11 @@ AutoBurnin <- function(posterior,
   bi <- burnin %||% (posterior$burnin %||% 0L)
   nRuns <- posterior$nRuns %||% 1L
 
+  # Differential tree thinning: compute tree-side burnin
+  treeThin <- posterior$treeThin %||% posterior$mcmc$thin
+  treeEvery <- max(1L, as.integer(treeThin / posterior$mcmc$thin))
+  treeBi <- as.integer(floor(bi / treeEvery))
+
   if (bi == 0L) {
     return(list(
       samples = posterior$samples,
@@ -165,9 +170,11 @@ AutoBurnin <- function(posterior,
     filteredRuns <- lapply(posterior$per_run, function(r) {
       nSamp <- nrow(r$samples)
       keep <- seq(bi + 1L, nSamp)
+      nTree <- length(r$trees)
+      treeKeep <- if (treeBi < nTree) seq(treeBi + 1L, nTree) else integer(0)
       list(
         samples = r$samples[keep, , drop = FALSE],
-        trees = r$trees[keep],
+        trees = r$trees[treeKeep],
         acceptance = r$acceptance
       )
     })
@@ -183,9 +190,11 @@ AutoBurnin <- function(posterior,
   } else {
     nSamp <- nrow(posterior$samples)
     keep <- seq(bi + 1L, nSamp)
+    nTree <- length(posterior$trees)
+    treeKeep <- if (treeBi < nTree) seq(treeBi + 1L, nTree) else integer(0)
     list(
       samples = posterior$samples[keep, , drop = FALSE],
-      trees = posterior$trees[keep],
+      trees = posterior$trees[treeKeep],
       per_run = NULL
     )
   }

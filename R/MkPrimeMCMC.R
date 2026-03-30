@@ -11,6 +11,13 @@
 #'   move types so that each parameter has roughly one update opportunity
 #'   per stored sample (analogous to one "full cycle" in RevBayes).
 #'   Pass a positive integer to override.
+#' @param treeThin Thinning interval for tree samples (iterations).
+#'   Default `NULL`, which stores a tree for every scalar sample
+#'   (equivalent to `treeThin = thin`). Pass a positive integer that is
+#'   a **multiple of `thin`** to store trees less frequently than scalar
+#'   parameters. For example, `thin = 10, treeThin = 100` stores one tree
+#'   for every 10 scalar samples. The multiple-of-thin constraint is
+#'   validated at run time (after `thin = "auto"` is resolved).
 #' @param warmup **Deprecated.** If supplied, treated as `maxWarmup`.
 #'   Use `minWarmup` / `maxWarmup` instead. Retained for backward
 #'   compatibility; a deprecation message is emitted when non-NULL.
@@ -249,6 +256,7 @@
 MkPrimeMCMC <- function(
     nIter = Inf,
     thin = "auto",
+    treeThin = NULL,
     warmup = NULL,
     minWarmup = 2000L,
     maxWarmup = NULL,
@@ -293,6 +301,12 @@ MkPrimeMCMC <- function(
     thin <- as.integer(thin)
     if (is.na(thin) || thin < 1L) {
       cli::cli_abort("{.arg thin} must be {.val auto} or a positive integer.")
+    }
+  }
+  if (!is.null(treeThin)) {
+    treeThin <- as.integer(treeThin)
+    if (is.na(treeThin) || treeThin < 1L) {
+      cli::cli_abort("{.arg treeThin} must be a positive integer or NULL.")
     }
   }
   # --- Three-phase warmup / tuning / sampling parameters ---
@@ -501,7 +515,7 @@ MkPrimeMCMC <- function(
   }
 
   structure(
-    list(nIter = nIter, thin = thin, warmup = warmup,
+    list(nIter = nIter, thin = thin, treeThin = treeThin, warmup = warmup,
          minWarmup = minWarmup, maxWarmup = maxWarmup,
          autoTune = autoTune, tuningBudget = tuningBudget,
          tuningRounds = tuningRounds,

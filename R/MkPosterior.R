@@ -41,9 +41,14 @@ print.MkPosterior <- function(x, ...) {
   nRuns <- x$nRuns %||% 1L
   nChains <- x$mcmc$nChains
 
+  treeThin <- x$treeThin %||% x$mcmc$thin
   info <- c(
     "Iterations: {x$mcmc$nIter} ({x$warmup} warmup, thinned by {x$mcmc$thin})"
   )
+  if (treeThin > x$mcmc$thin) {
+    info <- c(info,
+      "Tree samples: {length(x$trees)} (thinned by {treeThin})")
+  }
 
   if (nRuns > 1L) {
     info <- c(info, "Runs: {nRuns} ({nrow(x$per_run[[1]]$samples)} samples each)")
