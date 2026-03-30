@@ -133,3 +133,4 @@
 | M-137 | Auto-derive treeFile from logFile | A | 2026-03-30 | `fc3c063`. No-extension logFile gets `.log` appended. treeFile auto-derived as `*_trees.nwk`. `treeFile = FALSE` disables. Docs updated. |
 | M-138 | Suppress test-suite warnings (45 → 0) | A | 2026-03-30 | `575dd90`. `suppressWarnings()` for expected warmup/invariant/clamp warnings across 12 test files. Nested `expect_warning()` where multiple warnings expected. |
 | M-139 | Simplify progress ticker | A | 2026-03-30 | `2b4eb78`. Remove rotating per-parameter ESS detail pages. Ticker shows minESS (+ PSRF) only; live trace plot provides per-parameter detail. |
+| M-134 | `treeThin`: differential thinning for tree samples | A | 2026-03-30 | `f7fc7cc`. New `MkPrimeMCMC(treeThin=)` parameter. R-only impl: C++ unchanged, R loop skips tree storage on non-treeThin boundaries. Separate `tree_saved_idx` counter. Burnin adjusted for differential indexing. 10 new tests. |
