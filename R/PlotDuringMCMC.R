@@ -156,7 +156,11 @@ MkpTracePlot <- function(info) {
   on.exit(par(oldpar))
 
   elapsedStr <- .FormatElapsed(info$elapsed)
-  accStr <- format(round(info$recentAcceptance, 3), nsmall = 3)
+  accStr <- if (is.na(info$recentAcceptance)) {
+    NULL
+  } else {
+    format(round(info$recentAcceptance, 3), nsmall = 3)
+  }
 
   for (param in keyParams) {
     if (hasSamples) {
@@ -184,7 +188,11 @@ MkpTracePlot <- function(info) {
   } else {
     sprintf("Iter %d", info$iter)
   }
-  titleText <- sprintf("%s  |  acc: %s  |  %s", iterStr, accStr, elapsedStr)
+  titleText <- if (!is.null(accStr)) {
+    sprintf("%s  |  acc: %s  |  %s", iterStr, accStr, elapsedStr)
+  } else {
+    sprintf("%s  |  %s", iterStr, elapsedStr)
+  }
   mtext(titleText, outer = TRUE, line = 0, cex = 0.9)
 
   invisible(info)
@@ -196,6 +204,8 @@ MkpTracePlot <- function(info) {
 #' When the number of samples exceeds `maxPlotPoints`, the trace is
 #' thinned to keep rendering fast even with tens of thousands of samples.
 #' @keywords internal
+.LogScaleParams <- c("rate_loss", "rate_neo")
+
 .PlotTracePanel <- function(param, runSamples, nRuns, colors,
                              warmup, nIter,
                              maxPlotPoints = 2000L) {
@@ -209,6 +219,9 @@ MkpTracePlot <- function(info) {
     title(main = param)
     return(invisible(NULL))
   }
+
+  useLog <- param %in% .LogScaleParams && all(allVals > 0, na.rm = TRUE)
+  logArg <- if (useLog) "y" else ""
 
   ylim <- range(allVals, na.rm = TRUE)
   if (diff(ylim) == 0) ylim <- ylim + c(-1, 1)
@@ -233,6 +246,7 @@ MkpTracePlot <- function(info) {
 
     if (first) {
       plot(iters, vals, type = "l", col = col, ylim = ylim,
+           log = logArg,
            main = param, xlab = "sample", ylab = "",
            cex.main = 0.95, las = 1)
       first <- FALSE

@@ -253,40 +253,30 @@ List beta_simplex_proposal(NumericVector x, int index, double tuning) {
 
 
 // ---------------------------------------------------------------------------
-// DirichletSimplex proposal (M-125) — update K elements simultaneously
+// ---------------------------------------------------------------------------
+// DirichletSimplex core (M-125, refactored M-127)
 //
-// Selects K random elements, draws new fractions from a Dirichlet centered on
-// their current values, and rescales unselected elements to maintain the
-// simplex sum.  Follows RevBayes mvDirichletSimplex (Höhna et al. 2016).
+// Given pre-selected edge indices, draw new fractions from a Dirichlet
+// centered on current values.  Index selection is separated so the same
+// core serves both random (case 23) and localized (case 24) proposals.
 //
-//   x       — simplex vector (modified in-place)
-//   nCats   — number of elements to update (K). Clamped to [2, n].
-//   alpha   — concentration parameter (tuning). Higher = more conservative.
+//   x        — simplex vector (modified in-place)
+//   indices  — which elements to modify (pre-selected, length K)
+//   alpha    — concentration parameter (tuning). Higher = more conservative.
 //   logHastings — output: log Metropolis-Hastings ratio
-//   snapshot    — output: pre-move copy of x for rollback
+//   snapshot — output: pre-move copy of x for rollback
 //
 // Returns false if proposal is degenerate; true otherwise.
-
-bool dirichlet_simplex_impl(NumericVector& x, int nCats, double alpha,
-                            double& logHastings, NumericVector& snapshot) {
+// ---------------------------------------------------------------------------
+static bool dirichlet_core(NumericVector& x,
+                           const std::vector<int>& indices,
+                           double alpha, double& logHastings,
+                           NumericVector& snapshot) {
   const int n = x.size();
-  if (n < 2) { logHastings = 0.0; return true; }
-
-  // Clamp nCats
-  if (nCats < 2) nCats = 2;
-  if (nCats > n) nCats = n;
+  const int nCats = (int)indices.size();
 
   // Save snapshot for rollback
   for (int i = 0; i < n; ++i) snapshot[i] = x[i];
-
-  // ---- Choose K random indices (Fisher-Yates partial shuffle) ----
-  std::vector<int> indices(n);
-  for (int i = 0; i < n; ++i) indices[i] = i;
-  for (int i = 0; i < nCats; ++i) {
-    int j = i + (int)(unif_rand() * (double)(n - i));
-    if (j >= n) j = n - 1;
-    std::swap(indices[i], indices[j]);
-  }
 
   // ---- Build K-simplex from selected elements ----
   double selSum = 0.0;
@@ -314,7 +304,6 @@ bool dirichlet_simplex_impl(NumericVector& x, int nCats, double alpha,
   for (int i = 0; i < nCats; ++i) zK[i] /= gammaSum;
 
   // ---- Apply: set selected elements to zK * selSum ----
-  // Unselected elements are unchanged; total sum is preserved.
   for (int i = 0; i < nCats; ++i) {
     x[indices[i]] = zK[i] * selSum;
   }
@@ -327,7 +316,6 @@ bool dirichlet_simplex_impl(NumericVector& x, int nCats, double alpha,
   }
 
   // ---- Log Hastings = log Dir(xK | alphaRev) - log Dir(zK | alphaFwd) ----
-  // No Jacobian needed: unselected elements unchanged, selected sum preserved.
   double logFwd = 0.0, logRev = 0.0;
   double sumAlphaFwd = 0.0, sumAlphaRev = 0.0;
   for (int i = 0; i < nCats; ++i) {
@@ -348,14 +336,145 @@ bool dirichlet_simplex_impl(NumericVector& x, int nCats, double alpha,
 }
 
 
+// ---------------------------------------------------------------------------
+// Random Dirichlet: Fisher-Yates selection + core (M-125)
+// ---------------------------------------------------------------------------
+bool dirichlet_simplex_impl(NumericVector& x, int nCats, double alpha,
+                            double& logHastings, NumericVector& snapshot,
+                            std::vector<int>& modifiedEdges) {
+  const int n = x.size();
+  if (n < 2) { logHastings = 0.0; return true; }
+
+  if (nCats < 2) nCats = 2;
+  if (nCats > n) nCats = n;
+
+  // Fisher-Yates partial shuffle to select K random indices
+  std::vector<int> pool(n);
+  for (int i = 0; i < n; ++i) pool[i] = i;
+  for (int i = 0; i < nCats; ++i) {
+    int j = i + (int)(unif_rand() * (double)(n - i));
+    if (j >= n) j = n - 1;
+    std::swap(pool[i], pool[j]);
+  }
+
+  modifiedEdges.assign(pool.begin(), pool.begin() + nCats);
+  return dirichlet_core(x, modifiedEdges, alpha, logHastings, snapshot);
+}
+
+
+// ---------------------------------------------------------------------------
+// select_neighborhood: BFS on edge-adjacency graph from a random starting
+// edge. Returns K connected edge indices. Used by local_dirichlet_impl.
+// ---------------------------------------------------------------------------
+static std::vector<int> select_neighborhood(
+    const IntegerVector& parent, const IntegerVector& child,
+    int nCats) {
+
+  const int nEdge = parent.size();
+  if (nCats >= nEdge) {
+    // Select all edges
+    std::vector<int> all(nEdge);
+    for (int i = 0; i < nEdge; ++i) all[i] = i;
+    return all;
+  }
+
+  // Build adjacency: for each node, list of incident edge indices
+  int maxNode = 0;
+  for (int e = 0; e < nEdge; ++e) {
+    if (parent[e] > maxNode) maxNode = parent[e];
+    if (child[e] > maxNode)  maxNode = child[e];
+  }
+  std::vector<std::vector<int>> nodeEdges(maxNode + 1);
+  for (int e = 0; e < nEdge; ++e) {
+    nodeEdges[parent[e]].push_back(e);
+    nodeEdges[child[e]].push_back(e);
+  }
+
+  // Pick a random starting edge
+  int startEdge = (int)(unif_rand() * (double)nEdge);
+  if (startEdge >= nEdge) startEdge = nEdge - 1;
+
+  // BFS on edge adjacency (vector-based queue)
+  std::vector<bool> selected(nEdge, false);
+  std::vector<int> result;
+  result.reserve(nCats);
+  std::vector<int> frontier;
+
+  selected[startEdge] = true;
+  result.push_back(startEdge);
+  frontier.push_back(startEdge);
+  int head = 0;
+
+  while ((int)result.size() < nCats && head < (int)frontier.size()) {
+    int e = frontier[head++];
+    // Expand through both endpoints of edge e
+    for (int endpt = 0; endpt < 2; ++endpt) {
+      int node = (endpt == 0) ? parent[e] : child[e];
+      for (int adj : nodeEdges[node]) {
+        if (!selected[adj]) {
+          selected[adj] = true;
+          result.push_back(adj);
+          frontier.push_back(adj);
+          if ((int)result.size() >= nCats) break;
+        }
+      }
+      if ((int)result.size() >= nCats) break;
+    }
+  }
+
+  return result;
+}
+
+
+// ---------------------------------------------------------------------------
+// Local Dirichlet: neighborhood selection + core (M-127)
+// ---------------------------------------------------------------------------
+bool local_dirichlet_impl(NumericVector& x,
+                          const IntegerVector& parent,
+                          const IntegerVector& child,
+                          int nCats, double alpha,
+                          double& logHastings, NumericVector& snapshot,
+                          std::vector<int>& modifiedEdges) {
+  const int n = x.size();
+  if (n < 2) { logHastings = 0.0; return true; }
+
+  if (nCats < 2) nCats = 2;
+  if (nCats > n) nCats = n;
+
+  modifiedEdges = select_neighborhood(parent, child, nCats);
+  return dirichlet_core(x, modifiedEdges, alpha, logHastings, snapshot);
+}
+
+
 // Rcpp-exported wrapper for testing from R
 // [[Rcpp::export]]
 List dirichlet_simplex_proposal(NumericVector x, int nCats, double alpha) {
   const int n = x.size();
   NumericVector xNew = clone(x);
   NumericVector snapshot(n);
+  std::vector<int> modEdges;
   double logHastings;
-  if (!dirichlet_simplex_impl(xNew, nCats, alpha, logHastings, snapshot))
+  if (!dirichlet_simplex_impl(xNew, nCats, alpha, logHastings, snapshot,
+                               modEdges))
     return List::create(_["value"] = x, _["logHastings"] = R_NegInf);
-  return List::create(_["value"] = xNew, _["logHastings"] = logHastings);
+  return List::create(_["value"] = xNew, _["logHastings"] = logHastings,
+                      _["modifiedEdges"] = wrap(modEdges));
+}
+
+
+// Rcpp-exported wrapper for local Dirichlet testing from R
+// [[Rcpp::export]]
+List local_dirichlet_proposal(NumericVector x,
+                               IntegerVector parent, IntegerVector child,
+                               int nCats, double alpha) {
+  const int n = x.size();
+  NumericVector xNew = clone(x);
+  NumericVector snapshot(n);
+  std::vector<int> modEdges;
+  double logHastings;
+  if (!local_dirichlet_impl(xNew, parent, child, nCats, alpha,
+                             logHastings, snapshot, modEdges))
+    return List::create(_["value"] = x, _["logHastings"] = R_NegInf);
+  return List::create(_["value"] = xNew, _["logHastings"] = logHastings,
+                      _["modifiedEdges"] = wrap(modEdges));
 }

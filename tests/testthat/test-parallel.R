@@ -59,14 +59,13 @@ test_that("parallel mode auto-assigns logFile when logFile = NULL", {
   on.exit(future::plan(old_plan), add = TRUE)
   future::plan("sequential")
 
-  # No logFile supplied — must be auto-assigned without crashing
+  # No logFile supplied — samples loaded into memory after temp-log cleanup
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 400L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
                         parallel = TRUE, pollInterval = 1L))
 
   expect_s3_class(result, "MkPosterior")
-  expect_true(!is.null(result$logFile))
-  expect_true(result$nSamples > 0L)
+  expect_true(nrow(result$samples) > 0L)
 })
 
 test_that("parallel orchestration (sequential plan) returns valid MkPosterior", {

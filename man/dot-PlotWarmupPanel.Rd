@@ -2,11 +2,11 @@
 % Please edit documentation in R/PlotDuringMCMC.R
 \name{.PlotWarmupPanel}
 \alias{.PlotWarmupPanel}
-\title{Plot log-posterior during warmup (no saved samples yet)}
+\title{Plot log-posterior trace during warmup}
 \usage{
-.PlotWarmupPanel(currentState, nRuns, colors, iter, nIter)
+.PlotWarmupPanel(nRuns, colors, iter, nIter)
 }
 \description{
-Plot log-posterior during warmup (no saved samples yet)
+Plot log-posterior trace during warmup
 }
 \keyword{internal}

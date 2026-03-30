@@ -2,11 +2,11 @@
 % Please edit documentation in R/PlotDuringMCMC.R
 \name{.ResetEssHistory}
 \alias{.ResetEssHistory}
-\title{Reset the ESS history used by \code{\link[=MkpTracePlot]{MkpTracePlot()}}}
+\title{Reset the ESS and warmup history used by \code{\link[=MkpTracePlot]{MkpTracePlot()}}}
 \usage{
 .ResetEssHistory()
 }
 \description{
-Reset the ESS history used by \code{\link[=MkpTracePlot]{MkpTracePlot()}}
+Reset the ESS and warmup history used by \code{\link[=MkpTracePlot]{MkpTracePlot()}}
 }
 \keyword{internal}

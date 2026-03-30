@@ -134,6 +134,18 @@
 #'   edges, draws new fractions from a Dirichlet centered on current values,
 #'   and rescales the remaining edges to maintain the simplex. Cost: one
 #'   likelihood evaluation per proposal (same as BetaSimplex).
+#' @param dirichletK Integer or `NULL`; number of edges to update per
+#'   Dirichlet branch proposal. Default `NULL` uses `min(nEdge, 5)`.
+#'   Smaller values give higher acceptance but smaller moves; larger
+#'   values give bolder moves at the cost of lower acceptance.
+#' @param localDirichlet Logical; include a localized Dirichlet branch
+#'   proposal that selects K *connected* edges via BFS from a random
+#'   starting edge (default `TRUE`). The connected selection produces
+#'   compact dirty sets for efficient partial CL evaluation, and targets
+#'   correlated local branch lengths.
+#' @param localDirichletK Integer or `NULL`; number of connected edges
+#'   for the localized Dirichlet proposal. Default `NULL` uses
+#'   `min(nEdge, 6)`.
 #' @param nBranchBins Integer; number of branch-fraction bins for weighted
 #'   and block Gibbs moves (default `10L`). Used by `weightedBranchScale`,
 #'   `weightedSpr`, `weightedSubtreeSwap`, and `blockGibbsBranch`.
@@ -264,6 +276,9 @@ MkPrimeMCMC <- function(
     weightedSubtreeSwap = FALSE,
     blockGibbsBranch = FALSE,
     dirichletBranch = TRUE,
+    dirichletK = NULL,
+    localDirichlet = TRUE,
+    localDirichletK = NULL,
     nBranchBins = 10L,
     moveWeights = NULL,
     tuning = list(),
@@ -361,6 +376,19 @@ MkPrimeMCMC <- function(
   weightedSubtreeSwap <- as.logical(weightedSubtreeSwap)
   blockGibbsBranch <- as.logical(blockGibbsBranch)
   dirichletBranch <- as.logical(dirichletBranch)
+  if (!is.null(dirichletK)) {
+    dirichletK <- as.integer(dirichletK)
+    if (is.na(dirichletK) || dirichletK < 2L) {
+      cli::cli_abort("{.arg dirichletK} must be at least 2, got {dirichletK}.")
+    }
+  }
+  localDirichlet <- as.logical(localDirichlet)
+  if (!is.null(localDirichletK)) {
+    localDirichletK <- as.integer(localDirichletK)
+    if (is.na(localDirichletK) || localDirichletK < 2L) {
+      cli::cli_abort("{.arg localDirichletK} must be at least 2, got {localDirichletK}.")
+    }
+  }
   nBranchBins <- as.integer(nBranchBins)
   if (nBranchBins < 2L) {
     cli::cli_abort("{.arg nBranchBins} must be at least 2, got {nBranchBins}.")
@@ -379,7 +407,7 @@ MkPrimeMCMC <- function(
       "rate_loss", "rate_log_sd", "rate_neo",
       "gibbs_spr", "gibbs_subtree_swap",
       "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
-      "block_gibbs_branch", "dirichlet_branch", "pspr",
+      "block_gibbs_branch", "dirichlet_branch", "local_dirichlet", "pspr",
       "joint_tl_rls", "joint_tl_rl"
     )
     bad <- setdiff(names(moveWeights), validNames)
@@ -410,6 +438,7 @@ MkPrimeMCMC <- function(
     scale_joint_tl_rls = 0.5,
     scale_joint_tl_rl = 0.5,
     dirichlet_alpha = 0.1,
+    local_dirichlet_alpha = 0.1,
     int_walk_window = 1L,
     slice_width_rate_loss = 1.0,
     slice_width_rate_neo = 1.0,
@@ -476,6 +505,9 @@ MkPrimeMCMC <- function(
          weightedSubtreeSwap = weightedSubtreeSwap,
          blockGibbsBranch = blockGibbsBranch,
          dirichletBranch = dirichletBranch,
+         dirichletK = dirichletK,
+         localDirichlet = localDirichlet,
+         localDirichletK = localDirichletK,
          nBranchBins = nBranchBins,
          moveWeights = moveWeights,
          tuning = tuning,

@@ -11,7 +11,8 @@
   mcmc,
   fixTopology = FALSE,
   kPrimePrior = "geometric",
-  qHeterogeneity = FALSE
+  qHeterogeneity = FALSE,
+  joint2d = TRUE
 )
 }
 \description{

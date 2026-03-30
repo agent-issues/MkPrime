@@ -182,20 +182,6 @@ mcmcProduction <- MkPrimeMCMC(
 )
 ```
 
-For this vignette we use a much shorter demo run, with auto-tuning disabled
-to keep wall time manageable:
-
-```{r mcmc-demo}
-mcmcDemo <- MkPrimeMCMC(
-  nIter      = 5000L,
-  thin       = 10L,
-  maxWarmup  = 2000L,
-  autoTune   = FALSE,
-  nRuns      = 2L,
-  nChains    = 1L    # no parallel tempering in demo
-)
-```
-
 ## Running the analysis
 
 Pass the `phyDat` object directly to `RunMkPrime()` together with the
@@ -203,6 +189,10 @@ neomorphic character indices. The function calls `MkPrimeData()` internally if
 you pass a `phyDat` rather than a pre-built `MkPrimeData` object. A
 neighbour-joining starting tree is built automatically from the data;
 pass `tree =` explicitly if you prefer a different starting topology.
+
+MCMC options can be passed inline or via a pre-built `MkPrimeMCMC` object.
+For the production run we use the object defined above; for the demo run we
+pass the settings directly.
 
 Production run (not evaluated here — expected wall time: 1–4 hours):
 
@@ -227,7 +217,12 @@ posteriorDemo <- RunMkPrime(
   data       = pd,
   neomorphic = neomorphicChars,
   model      = model,
-  mcmc       = mcmcDemo
+  nIter      = 5000L,
+  thin       = 10L,
+  maxWarmup  = 2000L,
+  autoTune   = FALSE,
+  nRuns      = 2L,
+  nChains    = 1L
 )
 ```
 
@@ -238,7 +233,7 @@ Before interpreting results, confirm that the chains have converged.
 potential scale reduction factor (PSRF; @GelmanRubin1992) across runs:
 
 ```{r convergence}
-diag <- ConvergenceDiagnostics(posteriorDemo)
+diag <- ConvergenceDiagnostics(posterior)
 print(diag)
 ```
 

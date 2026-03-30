@@ -145,6 +145,11 @@ AutoBurnin <- function(posterior,
 # @param burnin Override burnin (used by AutoBurnin grid search)
 # @return List with $samples, $trees, $per_run (filtered)
 .PostBurninData <- function(posterior, burnin = NULL) {
+  # Auto-load samples from log file when they haven't been loaded yet
+  if (nrow(posterior$samples) == 0L && !is.null(posterior$logFile)) {
+    posterior$samples <- ReadMkLog(posterior$logFile)
+  }
+
   bi <- burnin %||% (posterior$burnin %||% 0L)
   nRuns <- posterior$nRuns %||% 1L
 

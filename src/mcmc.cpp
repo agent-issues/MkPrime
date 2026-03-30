@@ -48,7 +48,15 @@ bool beta_simplex_impl(NumericVector& x, int index, double tuning,
 
 // M-125: block Dirichlet simplex proposal (defined in proposals.cpp)
 bool dirichlet_simplex_impl(NumericVector& x, int nCats, double alpha,
-                            double& logHastings, NumericVector& snapshot);
+                            double& logHastings, NumericVector& snapshot,
+                            std::vector<int>& modifiedEdges);
+// M-127: localized Dirichlet simplex (neighborhood selection)
+bool local_dirichlet_impl(NumericVector& x,
+                          const IntegerVector& parent,
+                          const IntegerVector& child,
+                          int nCats, double alpha,
+                          double& logHastings, NumericVector& snapshot,
+                          std::vector<int>& modifiedEdges);
 
 
 // ---------------------------------------------------------------------------
@@ -153,6 +161,8 @@ struct McmcState {
   NodeCLCache nodeCL;
   // M-125: snapshot for block Dirichlet branch-length rollback
   NumericVector brSnapshot;
+  // M-127: which edges the Dirichlet proposal modified (for partial CL eval)
+  std::vector<int> dirEdges;
 };
 
 
@@ -2698,35 +2708,44 @@ static double eval_slice_target(McmcData* data, McmcState* state,
 // Updates state in place, including logLik, logPrior, and partLogLik cache.
 static bool slice_scalar_impl(McmcData* data, McmcState* state,
                                int paramIdx, double width,
-                               double beta, int maxSteps = 10) {
+                               double beta, int maxSteps = 10,
+                               int* nExpansionsOut = nullptr) {
   double x0 = get_scalar(state, paramIdx);
-  double logY0 = beta * state->logLik + state->logPrior;
+
+  // Work on log scale: u = log(x).
+  // Target includes Jacobian: log f(u) = beta*logLik + logPrior + u.
+  double u0 = std::log(x0);
+  double logY0 = beta * state->logLik + state->logPrior + u0;
 
   // Slice height
   double logZ = logY0 + std::log(R::unif_rand());
 
-  // Stepping out
-  double L = x0 - width * R::unif_rand();
+  // Stepping out on log scale (count expansions for width adaptation)
+  int nExp = 0;
+  double L = u0 - width * R::unif_rand();
   double R_bound = L + width;
-  if (L <= 0.0) L = 1e-12;
 
   for (int j = 0; j < maxSteps; ++j) {
-    set_scalar(state, paramIdx, L);
-    if (eval_slice_target(data, state, paramIdx, beta) <= logZ) break;
-    L = std::max(L - width, 1e-12);
+    set_scalar(state, paramIdx, std::exp(L));
+    if (eval_slice_target(data, state, paramIdx, beta) + L <= logZ) break;
+    L -= width;
+    ++nExp;
   }
   for (int j = 0; j < maxSteps; ++j) {
-    set_scalar(state, paramIdx, R_bound);
-    if (eval_slice_target(data, state, paramIdx, beta) <= logZ) break;
+    set_scalar(state, paramIdx, std::exp(R_bound));
+    if (eval_slice_target(data, state, paramIdx, beta) + R_bound <= logZ)
+      break;
     R_bound += width;
+    ++nExp;
   }
+  if (nExpansionsOut) *nExpansionsOut = nExp;
 
-  // Shrink in
+  // Shrink in on log scale
   for (int iter = 0; iter < 100; ++iter) {
-    double x1 = L + R::unif_rand() * (R_bound - L);
-    if (x1 <= 0.0) x1 = 1e-12;
+    double u1 = L + R::unif_rand() * (R_bound - L);
+    double x1 = std::exp(u1);
     set_scalar(state, paramIdx, x1);
-    double logTarget1 = eval_slice_target(data, state, paramIdx, beta);
+    double logTarget1 = eval_slice_target(data, state, paramIdx, beta) + u1;
     if (logTarget1 >= logZ) {
       // Accept — recompute and cache logLik / logPrior / partLogLik
       state->logPrior = cpp_log_prior(
@@ -2763,8 +2782,8 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
       }
       return true;
     }
-    // Shrink bracket
-    if (x1 < x0) L = x1; else R_bound = x1;
+    // Shrink bracket on log scale
+    if (u1 < u0) L = u1; else R_bound = u1;
   }
 
   // Fallback: restore original value
@@ -3291,7 +3310,20 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       if (nCats < 2) nCats = 2;
       if (!dirichlet_simplex_impl(state->relBrLengths, nCats,
                                   scaleTuning, logHastings,
-                                  state->brSnapshot)) {
+                                  state->brSnapshot,
+                                  state->dirEdges)) {
+        return false;
+      }
+      break;
+    }
+    case 24: { // M-127: local_dirichlet (neighborhood Dirichlet on relBrLengths)
+      int nCats = intWalkWindow;
+      if (nCats < 2) nCats = 2;
+      if (!local_dirichlet_impl(state->relBrLengths,
+                                state->parent, state->child,
+                                nCats, scaleTuning, logHastings,
+                                state->brSnapshot,
+                                state->dirEdges)) {
         return false;
       }
       break;
@@ -3309,7 +3341,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       state->relBrLengths[bsIdx2] = bsOldVal2;
     }
     if (moveType == 7 && kPrimeCharIdx >= 0) state->kPrime[kPrimeCharIdx] = oldKPrimeVal;
-    if (moveType == 23) {
+    if (moveType == 23 || moveType == 24) {
       const int nE = state->relBrLengths.size();
       for (int i = 0; i < nE; ++i) state->relBrLengths[i] = state->brSnapshot[i];
     }
@@ -3337,7 +3369,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       state->relBrLengths[bsIdx2] = bsOldVal2;
     }
     if (moveType == 7 && kPrimeCharIdx >= 0) state->kPrime[kPrimeCharIdx] = oldKPrimeVal;
-    if (moveType == 23) {
+    if (moveType == 23 || moveType == 24) {
       const int nE = state->relBrLengths.size();
       for (int i = 0; i < nE; ++i) state->relBrLengths[i] = state->brSnapshot[i];
     }
@@ -3392,6 +3424,30 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                                     state->rateLoss, state->rateNeo,
                                     state->rateLogSd, state->betaScale, dirty);
     usedPartialCL = true;
+
+  } else if ((moveType == 23 || moveType == 24) && state->nodeCL.valid) {
+    // M-127: Dirichlet (random or local) with valid node CL cache → partial eval
+    int nEdge = evalRelBr.size();
+    NumericVector propEdgeLen(nEdge);
+    for (int i = 0; i < nEdge; ++i)
+      propEdgeLen[i] = state->treeLength * evalRelBr[i];
+
+    auto dirty = find_dirty_dirichlet(state->nodeCL.topo,
+                                       evalParent, state->dirEdges);
+    // Heuristic: if dirty set covers most of the tree, fall back to full eval
+    int nInternal = nEdge + 1 - data->nTip;
+    if ((int)dirty.size() > (int)(0.8 * (nInternal + data->nTip))) {
+      newLogLik = cpp_log_likelihood(*data, evalParent, evalChild,
+        propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
+        state->rateNeo, state->betaScale,
+        state->clWs.ready() ? &state->clWs : nullptr);
+    } else {
+      newLogLik = partial_eval_dirty(state->nodeCL, *data,
+                                      evalParent, evalChild, propEdgeLen,
+                                      state->rateLoss, state->rateNeo,
+                                      state->rateLogSd, state->betaScale, dirty);
+      usedPartialCL = true;
+    }
 
   } else if (!hasPLC) {
     int nEdge = evalRelBr.size();
@@ -3499,8 +3555,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     state->relBrLengths[bsIdx2] = bsOldVal2;
   }
   if (moveType == 7 && kPrimeCharIdx >= 0) state->kPrime[kPrimeCharIdx] = oldKPrimeVal;
-  // M-125: Dirichlet simplex rollback — restore full vector from snapshot
-  if (moveType == 23) {
+  // M-125/M-127: Dirichlet simplex rollback — restore full vector from snapshot
+  if (moveType == 23 || moveType == 24) {
     const int nE = state->relBrLengths.size();
     for (int i = 0; i < nE; ++i) state->relBrLengths[i] = state->brSnapshot[i];
   }
@@ -3586,6 +3642,8 @@ List run_mcmc_batch_cpp(
   IntegerMatrix proposeCounts(nChains, nMoves);
   // Per-move wall-time tracking for adaptive scheduler (M-092)
   NumericMatrix moveTimeNs(nChains, nMoves);
+  // Slice sampler stepping-out expansion counts (for width adaptation)
+  IntegerMatrix sliceExpansions(nChains, nMoves);
   int nSwapPairs = std::max(0, nChains - 1);
   IntegerVector swapAccept(nSwapPairs, 0);
   IntegerVector swapPropose(nSwapPairs, 0);
@@ -3596,12 +3654,17 @@ List run_mcmc_batch_cpp(
   bool includeBS = data->qHeterogeneity;  // M-052: beta_scale column
   // Base columns: log_post, log_lik, tree_length, rate_log_sd (4).
   // rate_loss included only when hasNeo (like rate_neo, p, beta_scale).
+  // +2 diagnostic columns: swap_cold (cold-chain swaps since last sample),
+  // topo_hash (topology fingerprint for change detection).
   int nScalarCols = 4 + (hasNeo ? 2 : 0) + (includeP ? 1 : 0) +
-                    (includeBS ? 1 : 0) + nTrans + nEdge;
+                    (includeBS ? 1 : 0) + 2 + nTrans + nEdge;
   int maxSaved    = nBatch / thin + 2;
   std::vector<std::vector<double>> scalarRows;
   scalarRows.reserve(maxSaved);
   List edgeSamples;
+
+  // Diagnostic: count accepted swaps involving the cold chain (index 0)
+  int coldSwapsSinceSample = 0;
 
   // Main iteration loop
   for (int i = 0; i < nBatch; ++i) {
@@ -3636,9 +3699,11 @@ List run_mcmc_batch_cpp(
       bool accepted;
       if (moveType == 19) {
         // Slice sampling — self-contained, no MH accept/reject
+        int nExp = 0;
         accepted = slice_scalar_impl(
           data, states[ch], charIdx,
-          sliceWidths(ch, moveIdx), betas[ch]);
+          sliceWidths(ch, moveIdx), betas[ch], 10, &nExp);
+        sliceExpansions(ch, moveIdx) += nExp;
       } else {
         // Per-move int param overrides chain-level intWalkWindow
         int iww = moveIntParams[moveIdx] > 0
@@ -3672,6 +3737,7 @@ List run_mcmc_batch_cpp(
       if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
         std::swap(*states[iPair], *states[jPair]);
         swapAccept[iPair]++;
+        if (iPair == 0) coldSwapsSinceSample++;
       }
     }
 
@@ -3688,6 +3754,17 @@ List run_mcmc_batch_cpp(
       if (includeP) row[col++] = s0->p;
       if (hasNeo) row[col++] = s0->rateNeo;
       if (includeBS) row[col++] = s0->betaScale;  // M-052
+      // Diagnostic: cold-chain swaps since last sample
+      row[col++] = static_cast<double>(coldSwapsSinceSample);
+      coldSwapsSinceSample = 0;
+      // Diagnostic: topology hash (sum of parent[k] * 1000003 + child[k])
+      {
+        double h = 0.0;
+        for (int k = 0; k < nEdge; ++k)
+          h += static_cast<double>(s0->parent[k]) * 1000003.0 +
+               static_cast<double>(s0->child[k]);
+        row[col++] = h;
+      }
       for (int j = 0; j < nTrans; ++j)
         row[col++] = static_cast<double>(s0->kPrime[transIdxCpp[j]]);
       for (int k = 0; k < nEdge; ++k)
@@ -3712,14 +3789,15 @@ List run_mcmc_batch_cpp(
       scalarMat(i, j) = scalarRows[i][j];
 
   return List::create(
-    _["accept_counts"]  = acceptCounts,
-    _["propose_counts"] = proposeCounts,
-    _["move_time_ns"]   = moveTimeNs,
-    _["swap_accept"]    = swapAccept,
-    _["swap_propose"]   = swapPropose,
-    _["scalar_samples"] = scalarMat,
-    _["edge_samples"]   = edgeSamples,
-    _["n_saved"]        = nSaved
+    _["accept_counts"]    = acceptCounts,
+    _["propose_counts"]   = proposeCounts,
+    _["move_time_ns"]     = moveTimeNs,
+    _["slice_expansions"] = sliceExpansions,
+    _["swap_accept"]      = swapAccept,
+    _["swap_propose"]     = swapPropose,
+    _["scalar_samples"]   = scalarMat,
+    _["edge_samples"]     = edgeSamples,
+    _["n_saved"]          = nSaved
   );
 }
 

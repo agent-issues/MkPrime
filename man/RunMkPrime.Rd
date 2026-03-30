@@ -26,7 +26,10 @@ a \code{phyDat} object.}
 
 \item{model}{An \code{MkPrimeModel} object, or \code{NULL} for defaults.}
 
-\item{mcmc}{An \code{MkPrimeMCMC} object, or \code{NULL} for defaults.}
+\item{mcmc}{An \code{MkPrimeMCMC} object, or \code{NULL} for defaults.
+When \code{NULL}, any additional arguments in \code{...} are forwarded to
+\code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}}, so MCMC options can be passed inline without
+constructing a separate object.}
 
 \item{fixTopology}{Logical. If \code{TRUE}, tree topology is fixed (Phase 3
 behaviour). Default \code{FALSE} enables NNI and SPR topology proposals.}
@@ -35,6 +38,11 @@ behaviour). Default \code{FALSE} enables NNI and SPR topology proposals.}
 \code{mcmc$checkpointFile} points to an existing file, the run is
 automatically resumed from that checkpoint.
 Set to \code{TRUE} to discard the existing checkpoint and start fresh.}
+
+\item{...}{Additional arguments forwarded to \code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}}. Allows
+passing MCMC configuration inline (e.g. \code{nIter}, \code{logFile}, \code{nChains})
+without constructing a separate object. Cannot be combined with an
+explicit \code{mcmc} argument.}
 }
 \value{
 An \code{MkPosterior} object.
@@ -45,6 +53,21 @@ parameters, and per-character k' (for transformational characters).
 Supports parallel tempering with a geometric temperature ladder,
 multiple independent runs, convergence monitoring, and early stopping.
 }
+\section{Inline MCMC options}{
+
+
+For quick runs, pass MCMC options directly:
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{result <- RunMkPrime(data, nIter = 10000, nRuns = 1L)
+}\if{html}{\out{</div>}}
+
+For complex configurations, construct the object explicitly:
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{mcmc <- MkPrimeMCMC(nRuns = 2, nChains = 4, minEss = 200)
+result <- RunMkPrime(data, mcmc = mcmc)
+}\if{html}{\out{</div>}}
+}
+
 \section{Parallel independent runs (HPC usage)}{
 
 

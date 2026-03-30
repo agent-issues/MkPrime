@@ -107,12 +107,6 @@ print.MkPosterior <- function(x, ...) {
 
 #' @export
 summary.MkPosterior <- function(object, ...) {
-  if (!is.null(object$logFile) && nrow(object$samples) == 0L) {
-    cli::cli_abort(c(
-      "Samples are not in memory (streaming mode).",
-      "i" = "Load them first: {.code object$samples <- ReadMkLog(object$logFile)}"
-    ))
-  }
   pb <- .PostBurninData(object)
   s <- pb$samples
   # Use scalar params only (not individual kPrime_ or branch lengths)
@@ -151,12 +145,6 @@ summary.MkPosterior <- function(object, ...) {
 
 #' @export
 plot.MkPosterior <- function(x, ...) {
-  if (!is.null(x$logFile) && nrow(x$samples) == 0L) {
-    cli::cli_abort(c(
-      "Samples are not in memory (streaming mode).",
-      "i" = "Load them first: {.code x$samples <- ReadMkLog(x$logFile)}"
-    ))
-  }
   pb <- .PostBurninData(x)
   s <- pb$samples
   keyCols <- .PlotParamCols(s)
@@ -174,7 +162,10 @@ plot.MkPosterior <- function(x, ...) {
 
     for (colIdx in keyCols) {
       colName <- colnames(s)[colIdx]
-      ylim <- range(s[, colIdx], na.rm = TRUE)
+      vals <- s[, colIdx]
+      ylim <- range(vals, na.rm = TRUE)
+      useLog <- colName %in% .LogScaleParams && all(vals > 0, na.rm = TRUE)
+      logArg <- if (useLog) "y" else ""
 
       first <- TRUE
       for (run in seq_len(nRuns)) {
@@ -182,7 +173,8 @@ plot.MkPosterior <- function(x, ...) {
         iters <- seq_along(runData)
         if (first) {
           plot(iters, runData, type = "l", main = colName,
-               xlab = "", ylab = "", col = colors[run], ylim = ylim)
+               xlab = "", ylab = "", col = colors[run], ylim = ylim,
+               log = logArg)
           first <- FALSE
         } else {
           lines(iters, runData, col = colors[run])
@@ -192,8 +184,12 @@ plot.MkPosterior <- function(x, ...) {
   } else {
     iters <- seq_len(nrow(s))
     for (colIdx in keyCols) {
-      plot(iters, s[, colIdx], type = "l", main = colnames(s)[colIdx],
-           xlab = "", ylab = "", col = "steelblue")
+      colName <- colnames(s)[colIdx]
+      vals <- s[, colIdx]
+      useLog <- colName %in% .LogScaleParams && all(vals > 0, na.rm = TRUE)
+      logArg <- if (useLog) "y" else ""
+      plot(iters, vals, type = "l", main = colName,
+           xlab = "", ylab = "", col = "steelblue", log = logArg)
     }
   }
 }

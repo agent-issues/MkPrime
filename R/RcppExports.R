@@ -121,6 +121,10 @@ dirichlet_simplex_proposal <- function(x, nCats, alpha) {
     .Call(`_MkPrime_dirichlet_simplex_proposal`, x, nCats, alpha)
 }
 
+local_dirichlet_proposal <- function(x, parent, child, nCats, alpha) {
+    .Call(`_MkPrime_local_dirichlet_proposal`, x, parent, child, nCats, alpha)
+}
+
 jc_transition_probs <- function(k, t) {
     .Call(`_MkPrime_jc_transition_probs`, k, t)
 }

@@ -62,8 +62,8 @@ test_that(".BuildMoves includes dirichlet_branch when enabled", {
   names <- vapply(moves, `[[`, character(1), "name")
   expect_true("dirichlet_branch" %in% names)
   db <- moves[[which(names == "dirichlet_branch")]]
-  expect_equal(db$nCats, 10L)  # min(12, 10)
-  expect_equal(db$dim, 10L)
+  expect_equal(db$nCats, 5L)  # min(12, 5) — M-127: K=5 default
+  expect_equal(db$dim, 5L)
   expect_equal(db$target, "rel_br_lengths")
 })
 
@@ -73,7 +73,7 @@ test_that(".BuildMoves nCats capped at nEdge for small trees", {
   names <- vapply(moves, `[[`, character(1), "name")
   expect_true("dirichlet_branch" %in% names)
   db <- moves[[which(names == "dirichlet_branch")]]
-  expect_equal(db$nCats, 6L)  # min(6, 10) = 6
+  expect_equal(db$nCats, 5L)  # min(6, 5) = 5 — M-127: K=5 default
 })
 
 test_that(".BuildMoves excludes dirichlet_branch for very small trees", {
@@ -82,6 +82,15 @@ test_that(".BuildMoves excludes dirichlet_branch for very small trees", {
   moves <- MkPrime:::.BuildMoves(3L, 0L, FALSE, mc, FALSE, "geometric")
   names <- vapply(moves, `[[`, character(1), "name")
   expect_false("dirichlet_branch" %in% names)
+})
+
+test_that("dirichletK overrides default K in .BuildMoves", {
+  mc <- MkPrimeMCMC(dirichletBranch = TRUE, dirichletK = 8L)
+  moves <- MkPrime:::.BuildMoves(20L, 0L, FALSE, mc, FALSE, "geometric")
+  names <- vapply(moves, `[[`, character(1), "name")
+  db <- moves[[which(names == "dirichlet_branch")]]
+  expect_equal(db$nCats, 8L)
+  expect_equal(db$dim, 8L)
 })
 
 test_that(".BuildMoves excludes dirichlet_branch when disabled", {

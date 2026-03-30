@@ -30,10 +30,16 @@ MkPrimeMCMC(
   gibbsSpr = TRUE,
   gibbsSubtreeSwap = TRUE,
   tbr = TRUE,
+  pSpr = TRUE,
+  joint2d = TRUE,
   weightedBranchScale = FALSE,
   weightedSpr = FALSE,
   weightedSubtreeSwap = FALSE,
   blockGibbsBranch = FALSE,
+  dirichletBranch = TRUE,
+  dirichletK = NULL,
+  localDirichlet = TRUE,
+  localDirichletK = NULL,
   nBranchBins = 10L,
   moveWeights = NULL,
   tuning = list(),
@@ -164,6 +170,21 @@ enabling larger jumps in tree space. Cost: O(nEdge) per proposal (same
 as SPR). The adaptive scheduler will downweight TBR on small trees where
 SPR is sufficient.}
 
+\item{pSpr}{Logical; include the parsimony-guided SPR move (default
+\code{TRUE}). Like standard SPR but weights candidate regraft positions by
+Fitch parsimony score, so topologically better positions are proposed
+more often. Much cheaper than Gibbs SPR (no likelihood evaluation per
+candidate), but better guided than uniform SPR.
+See Yang & Rodríguez (2013); Ronquist et al. (2020).}
+
+\item{joint2d}{Logical; include 2D joint Bactrian proposals for
+correlated parameter pairs (default \code{TRUE}). Proposes correlated
+updates to tree_length × rate_log_sd (and tree_length × rate_loss
+when neomorphic characters are present) using a bivariate Bactrian
+kernel. The correlation is learned adaptively during warmup from
+posterior sample correlations. No effect when parameters are
+uncorrelated (degenerates to independent proposals).}
+
 \item{weightedBranchScale}{Logical; include the weighted branch-length
 scale move (default \code{FALSE}). Cost: O(B) likelihood evaluations, where
 B = \code{nBranchBins}.}
@@ -184,6 +205,27 @@ Useful when single-edge moves (BetaSimplex, weighted branch scale)
 mix slowly through the branch-length space. The adaptive scheduler
 accounts for the multi-dimensional nature of this move via its \code{dim}
 field.}
+
+\item{dirichletBranch}{Logical; include the block Dirichlet simplex
+branch-length move (default \code{TRUE}). Each proposal selects K random
+edges, draws new fractions from a Dirichlet centered on current values,
+and rescales the remaining edges to maintain the simplex. Cost: one
+likelihood evaluation per proposal (same as BetaSimplex).}
+
+\item{dirichletK}{Integer or \code{NULL}; number of edges to update per
+Dirichlet branch proposal. Default \code{NULL} uses \code{min(nEdge, 5)}.
+Smaller values give higher acceptance but smaller moves; larger
+values give bolder moves at the cost of lower acceptance.}
+
+\item{localDirichlet}{Logical; include a localized Dirichlet branch
+proposal that selects K \emph{connected} edges via BFS from a random
+starting edge (default \code{TRUE}). The connected selection produces
+compact dirty sets for efficient partial CL evaluation, and targets
+correlated local branch lengths.}
+
+\item{localDirichletK}{Integer or \code{NULL}; number of connected edges
+for the localized Dirichlet proposal. Default \code{NULL} uses
+\code{min(nEdge, 6)}.}
 
 \item{nBranchBins}{Integer; number of branch-fraction bins for weighted
 and block Gibbs moves (default \code{10L}). Used by \code{weightedBranchScale},

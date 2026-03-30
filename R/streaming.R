@@ -135,6 +135,91 @@
 }
 
 
+#' Recover partial results from an interrupted run
+#'
+#' When [RunMkPrime()] is interrupted (e.g. by pressing Escape or Ctrl-C),
+#' samples already flushed to disk are preserved in a temporary log file.
+#' Call `MkPrimeRecover()` to load those samples into an `MkPosterior`
+#' object.
+#'
+#' Recovery is only available within the same R session as the interrupted
+#' run.  Starting a new [RunMkPrime()] call discards the temporary files.
+#'
+#' @return An [MkPosterior] object containing the partial samples, or
+#'   `NULL` (with a message) if no interrupted run is available.
+#'
+#' @seealso [RunMkPrime()], [ReadMkLog()]
+#' @export
+MkPrimeRecover <- function() {
+  rec <- .mkp_env$recovery
+  if (is.null(rec)) {
+    cli::cli_alert_info("No interrupted run to recover.")
+    return(invisible(NULL))
+  }
+
+  # Check that the temp log files still exist
+  nFiles <- length(rec$logFiles)
+  missing <- !file.exists(rec$logFiles)
+  if (all(missing)) {
+    cli::cli_alert_danger(
+      "Temporary log {cli::qty(nFiles)}file{?s} no longer exist{?s/}. \\
+       Cannot recover."
+    )
+    .mkp_env$recovery <- NULL
+    return(invisible(NULL))
+  }
+
+  if (any(missing)) {
+    cli::cli_alert_warning(
+      "Some log files are missing; recovering from {sum(!missing)} of \\
+       {nFiles} run{?s}."
+    )
+    rec$logFiles <- rec$logFiles[!missing]
+  }
+
+  # Read samples
+  samples <- tryCatch(
+    ReadMkLog(rec$logFiles),
+    error = function(e) {
+      cli::cli_alert_danger("Failed to read log file{?s}: {conditionMessage(e)}")
+      return(NULL)
+    }
+  )
+
+  if (is.null(samples) || nrow(samples) == 0L) {
+    cli::cli_alert_warning(
+      "Log {cli::qty(length(rec$logFiles))}file{?s} contain{?s/} no samples \\
+       (run may have been interrupted before any were flushed)."
+    )
+    .CleanupTempLogs(rec$logFiles)
+    return(invisible(NULL))
+  }
+
+  # Build a minimal MkPosterior
+  result <- MkPosterior(
+    samples    = samples,
+    trees      = list(),
+    acceptance = numeric(0),
+    model      = rec$model,
+    data       = rec$data,
+    mcmc       = rec$mcmc,
+    warmup     = rec$mcmc$warmup,
+    tuning     = NULL
+  )
+  result$partial    <- TRUE
+  result$nSamples   <- nrow(samples)
+  result$stop_reason <- "interrupted"
+
+  # Clean up
+  .CleanupTempLogs(rec$logFiles)
+
+  cli::cli_alert_success(
+    "Recovered {nrow(samples)} sample{?s} from interrupted run."
+  )
+  result
+}
+
+
 #' Read a MkPrime streaming log file
 #'
 #' Loads the tab-separated parameter log written by [RunMkPrime()] when

@@ -704,6 +704,43 @@ static std::vector<int> find_dirty_beta_simplex(
 
 
 // ---------------------------------------------------------------------------
+// find_dirty_dirichlet: identify dirty nodes after a K-element Dirichlet
+// simplex proposal that modified edge lengths at arbitrary edge indices.
+// Generalizes find_dirty_beta_simplex from 2 paths to K paths.
+// ---------------------------------------------------------------------------
+static std::vector<int> find_dirty_dirichlet(
+    const TreeNav& topo,
+    const IntegerVector& parent,
+    const std::vector<int>& edgeIndices) {
+
+  // Mark all nodes that lie on any path from a modified edge's parent to root
+  std::vector<bool> onPath(topo.maxNode + 1, false);
+  for (int idx : edgeIndices) {
+    for (int n = parent[idx]; n >= 0; n = topo.parentNode[n])
+      onPath[n] = true;
+  }
+
+  // Collect marked nodes with their depth for postorder sorting
+  std::vector<std::pair<int,int>> depthNode;
+  for (int n = 1; n <= topo.maxNode; ++n) {
+    if (!onPath[n]) continue;
+    int d = 0;
+    for (int x = n; x >= 0; x = topo.parentNode[x]) ++d;
+    depthNode.push_back({d, n});
+  }
+
+  // Sort by decreasing depth = postorder (children before parents)
+  std::sort(depthNode.begin(), depthNode.end(),
+            [](const auto& a, const auto& b) { return a.first > b.first; });
+
+  std::vector<int> dirty;
+  dirty.reserve(depthNode.size());
+  for (auto& dn : depthNode) dirty.push_back(dn.second);
+  return dirty;
+}
+
+
+// ---------------------------------------------------------------------------
 // save_dirty_cls: save CLs at dirty nodes for rollback.
 // Saves all units, all categories for each dirty node.
 // ---------------------------------------------------------------------------
