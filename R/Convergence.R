@@ -400,34 +400,10 @@ print.MkpDiagnostics <- function(x, ...) {
 #' @return Character vector of page strings.
 #' @keywords internal
 .BuildTickerPages <- function(diagCheck) {
-  summary <- .TickerSummaryStr(diagCheck)
-
-  ess <- diagCheck$ess
-  scalarNms <- names(ess)[!grepl("^(kPrime_|br_|log_likelihood)", names(ess))]
-  scalarNms <- scalarNms[vapply(ess[scalarNms], is.finite, logical(1))]
-
-  if (length(scalarNms) == 0L) return(summary)
-
-  # Detail pages: <= 2 params each, full names, coloured ESS
-  chunks <- split(scalarNms, ceiling(seq_along(scalarNms) / 2))
-  detailPages <- vapply(chunks, function(nms) {
-    parts <- vapply(nms, function(nm) {
-      rval <- round(ess[nm])
-      sval <- as.character(rval)
-      coloured <- if (rval < 100) cli::col_red(sval)
-                  else if (rval < 200) cli::col_yellow(sval)
-                  else cli::col_green(sval)
-      paste0(nm, ": ", coloured)
-    }, character(1))
-    paste0("ESS ", paste(parts, collapse = "  "))
-  }, character(1), USE.NAMES = FALSE)
-
-  # Interleave: [summary, detail1, summary, detail2, ...]
-  pages <- character(0)
-  for (dp in detailPages) {
-    pages <- c(pages, summary, dp)
-  }
-  pages
+  # Single page: minESS (+ PSRF when multi-run).
+  # Per-parameter detail removed (M-139): live trace + ESS panel
+  # in the plot callback provides richer information.
+  .TickerSummaryStr(diagCheck)
 }
 
 

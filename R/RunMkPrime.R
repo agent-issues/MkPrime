@@ -682,9 +682,6 @@ RunMkPrime <- function(data, tree = NULL,
     if (startIter == 1L) mcmc$nIter else mcmc$nIter - startIter + 1L
   } else NA
 
-  # Ticker state: pages rotate every ~1.5 s wall-clock time.
-  # Summary (minESS/PSRF) interleaved with detail (2 params each).
-  tickerStart <- proc.time()["elapsed"]
   tickerPage  <- ""
   tickerPages <- if (phase == "Tuning") {
     "minESS/s: ?"
@@ -1043,14 +1040,12 @@ RunMkPrime <- function(data, tree = NULL,
     logPWidth <- max(logPWidth, nchar(logPRaw))
     logPStr   <- formatC(round(coldLogpost, 1), width = logPWidth,
                          format = "f", digits = 1)
-    pageIdx   <- floor((proc.time()["elapsed"] - tickerStart) / 1.5) %%
-                   length(tickerPages)
     # Dim separators; phase prefix silver for visual separation
     sep <- cli::col_silver("\u2502")
     tickerPage <- paste(
       cli::col_silver(paste(phaseLabel, batchEnd)),
       sep, sprintf("logP:%s", logPStr),
-      sep, tickerPages[pageIdx + 1L]
+      sep, tickerPages
     )
 
     cli::cli_progress_update(
