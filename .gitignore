@@ -36,6 +36,8 @@ u.[0-9]*
 
 # MCMC run output (logs, trees, posteriors)
 /*.log
+/*.ckp
+/*.trees
 /*.nwk
 /*.rds
 sun2018*
