@@ -813,6 +813,7 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
   // 11. Commit
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
+  state->nodeCL.valid = false;  // M-143: topology/branches changed
   return true;
 }
 
@@ -1119,6 +1120,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
 
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
+  state->nodeCL.valid = false;  // M-143: topology/branches changed
   return true;
 }
 
@@ -1262,6 +1264,7 @@ static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta) {
 
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
+  state->nodeCL.valid = false;  // M-143: topology/branches changed
   return true;
 }
 
@@ -1516,6 +1519,7 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
 
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
+  state->nodeCL.valid = false;  // M-143: topology/branches changed
   return true;
 }
 
@@ -1771,6 +1775,7 @@ static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
 
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
+  state->nodeCL.valid = false;  // M-143: topology/branches changed
   return true;
 }
 
@@ -1879,6 +1884,7 @@ static bool gibbs_subtree_swap_impl_full(McmcData* data, McmcState* state,
 
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
+  state->nodeCL.valid = false;  // M-143: topology/branches changed
   return true;
 }
 
@@ -2162,6 +2168,7 @@ static bool block_gibbs_branch_sweep_impl(
     state->logLik = currentLL;
     // Invalidate partition cache (sweep touched multiple partitions)
     state->partLogLik.clear();
+    state->nodeCL.valid = false;  // M-143: branch lengths changed
   }
   return nAccepted > 0;
 }
@@ -2442,6 +2449,7 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
     state->logLik   = newLogLik;
     state->logPrior = newLogPrior;
     state->partLogLik.clear();
+    state->nodeCL.valid = false;  // M-143: topology/branches changed
     return true;
   }
   return false;
@@ -2646,6 +2654,7 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
     state->logLik   = newLogLik;
     state->logPrior = newLogPrior;
     state->partLogLik.clear();
+    state->nodeCL.valid = false;  // M-143: topology/branches changed
     return true;
   }
   return false;
@@ -3463,6 +3472,22 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                                       state->rateLoss, state->rateNeo,
                                       state->rateLogSd, state->betaScale, dirty);
       usedPartialCL = true;
+
+      // DIAG: compare partial-CL result with full eval
+      double fullLL = cpp_log_likelihood(*data, evalParent, evalChild,
+        propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
+        state->rateNeo, state->betaScale,
+        state->clWs.ready() ? &state->clWs : nullptr);
+      double diff = std::abs(newLogLik - fullLL);
+      if (diff > 1e-6) {
+        Rcpp::Rcerr << "[DIAG] moveType=" << moveType
+                    << " partial=" << newLogLik
+                    << " full=" << fullLL
+                    << " diff=" << diff
+                    << " dirty=" << dirty.size()
+                    << " nEdge=" << nEdge
+                    << "\n";
+      }
     }
 
   } else if (!hasPLC) {
