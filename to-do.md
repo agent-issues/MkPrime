@@ -23,7 +23,7 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
 | M-131 | P2 | OPEN | **Warmup stabilisation detector: adaptive `windowSize` + validation study.** `.CheckStabilisation()` uses hardcoded `windowSize=10` (Geweke comparison windows), giving a minimum 11,500-iteration warmup floor regardless of tree size. Propose scaling `windowSize` with `nEdge` (`max(5, min(20, nEdge %/% 10))`). Requires empirical validation: run 8 benchmark datasets (20–88 tips) × 4 seeds on Hamilton with warmup disabled (200k iter), then replay the detector offline with a grid of `windowSize` and `nStableRequired` values to verify no false positives. **Briefing:** `.positai/plans/2026-03-29-m131-warmup-stabilisation-validation.md` |
-| M-135 | P3 | ASSIGNED (B) | **`thin = "auto"`: adapt thinning to observed autocorrelation.** Estimate ACT from early samples and set `thin ≈ ACT * log(2)`. Benefits from M-134 being done first so tree and scalar thinning can be tuned independently. *(from u.002)* |
+
 
 ## Misc / UI improvements
 
