@@ -11,7 +11,7 @@ Last updated: 2026-03-30 10:20
 - Streaming/UI polish: buffer flush guards (M-132), warmup trace fix (M-133), treeThin (M-134), ESS label cleanup (M-136), auto-derive treeFile (M-137), test warning suppression (M-138), ticker simplification (M-139).
 - **Dropped `coda` dependency**: native rank-normalized R-hat (Vehtari et al. 2021) and FFT-based ESS replace all `coda` calls. Convergence thresholds tightened (R-hat ≤ 1.01). 40 new unit tests.
 
-**Open tasks:** M-124, M-131, M-135 (3 specific) + M-080 assigned (C).
+**Open tasks:** M-131 (1 specific) + M-080 assigned (C). M-124 completed 2026-03-30 (PR draft).
 
 MkPrime is a new R package for Bayesian phylogenetic inference under the
 Mk' model. The architecture follows StratoBayes (C++ hot loop via Rcpp,

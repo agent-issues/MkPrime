@@ -25,12 +25,6 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 | M-131 | P2 | OPEN | **Warmup stabilisation detector: adaptive `windowSize` + validation study.** `.CheckStabilisation()` uses hardcoded `windowSize=10` (Geweke comparison windows), giving a minimum 11,500-iteration warmup floor regardless of tree size. Propose scaling `windowSize` with `nEdge` (`max(5, min(20, nEdge %/% 10))`). Requires empirical validation: run 8 benchmark datasets (20–88 tips) × 4 seeds on Hamilton with warmup disabled (200k iter), then replay the detector offline with a grid of `windowSize` and `nStableRequired` values to verify no false positives. **Briefing:** `.positai/plans/2026-03-29-m131-warmup-stabilisation-validation.md` |
 
 
-## Misc / UI improvements
-
-| ID | Priority | Status | Description |
-|----|----------|--------|-------------|
-| M-124 | P2 | OPEN | **Submit RevBayes relabelling correction patch.** The same inverted relabelling formula exists in `PhyloCTMCSiteHomogeneousMkPrime.h`. Proof and patch instructions in `relabelling-correction-proof.md`. |
-
 ## Phase 6b: TreeSearch GUI integration
 
 The goal is a **"Bayesian (Mk')"** mode inside EasyTrees (TreeSearch's Shiny GUI).
