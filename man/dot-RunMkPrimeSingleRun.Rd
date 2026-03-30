@@ -21,7 +21,8 @@
   startIter = 1L,
   isStreaming = FALSE,
   convWindowSize = 0L,
-  treeFile = NULL
+  treeFile = NULL,
+  shared = NULL
 )
 }
 \arguments{

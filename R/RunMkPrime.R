@@ -593,7 +593,8 @@ RunMkPrime <- function(data, tree = NULL,
                                   brColStart, logFilePath, cancelFile,
                                   checkpointFile, startIter = 1L,
                                   isStreaming = FALSE, convWindowSize = 0L,
-                                  treeFile = NULL, shared = NULL) {
+                                  treeFile = NULL, shared = NULL,
+                                  resumeMoveWeights = NULL) {
   nChains <- mcmc$nChains
   treeEvery <- as.integer(mcmc$treeThin / mcmc$thin)
 
@@ -683,6 +684,16 @@ RunMkPrime <- function(data, tree = NULL,
   moveWeights   <- vapply(moves, `[[`, numeric(1), "weight")
   moveWeights   <- moveWeights / sum(moveWeights)
   names(moveWeights) <- moveNames
+
+  # M-149 #2: restore adapted weights from checkpoint / previous run
+  if (!is.null(resumeMoveWeights)) {
+    common <- intersect(names(resumeMoveWeights), moveNames)
+    if (length(common) > 0L) {
+      moveWeights[common] <- resumeMoveWeights[common]
+      moveWeights <- moveWeights / sum(moveWeights)
+    }
+  }
+
   moveDim       <- vapply(moves, function(m) m$dim %||% 1L, integer(1L))
   names(moveDim) <- moveNames
   moveTypeCodes <- vapply(moves, function(m) .kMoveTypes[[m$name]], integer(1L))
@@ -1159,6 +1170,9 @@ RunMkPrime <- function(data, tree = NULL,
                       model = model)
     }
 
+    # Persist move weights in run state so checkpoints capture them (M-149 #2).
+    r$moveWeights <- moveWeights
+
     # Update shared state for interrupt-safe checkpointing (M-149).
     # The interrupt handler in .RunWithRecovery() reads from this env.
     if (!is.null(shared)) {
@@ -1332,10 +1346,11 @@ RunMkPrime <- function(data, tree = NULL,
       edge           = s$edge
     )
   })
-  r$chainStates <- NULL
-  r$stop_reason <- stopReason
-  r$actual_iter <- actualIter
-  r$phase       <- phase
+  r$chainStates  <- NULL
+  r$stop_reason  <- stopReason
+  r$actual_iter  <- actualIter
+  r$phase        <- phase
+  r$moveWeights  <- moveWeights   # M-149 #2: persist for resume / Phase 2
   r
 }
 
@@ -1357,7 +1372,7 @@ RunMkPrime <- function(data, tree = NULL,
 .RunSerialRuns <- function(mkd, model, mcmc, runs, moves, tipLabels,
                             paramNames, nEdge, brColStart, logFilePaths,
                             convWindowSize, treeFile, startIters = NULL,
-                            shared = NULL) {
+                            shared = NULL, startPhase = 1L) {
   nRuns     <- length(runs)
   epochSize <- max(mcmc$checkEvery %||% 1000L, 1000L)
   startTime <- proc.time()["elapsed"]
@@ -1365,44 +1380,48 @@ RunMkPrime <- function(data, tree = NULL,
   if (is.null(startIters)) startIters <- rep(1L, nRuns)
 
   # --- Phase 1: first pass (ESS-based stopping per run) ---
-  # Strip maxRhat so it doesn't block ESS-based stopping inside each run.
-  innerMcmc <- mcmc
-  innerMcmc$maxRhat <- NULL
+  if (startPhase <= 1L) {
+    # Strip maxRhat so it doesn't block ESS-based stopping inside each run.
+    innerMcmc <- mcmc
+    innerMcmc$maxRhat <- NULL
 
-  for (run in seq_len(nRuns)) {
-    runs[[run]] <- .RunMkPrimeSingleRun(
-      mkd, model, innerMcmc, runs[[run]], moves, tipLabels, run,
-      paramNames, nEdge, brColStart,
-      logFilePath    = logFilePaths[run],
-      cancelFile     = mcmc$cancelFile,
-      checkpointFile = NULL,
-      startIter      = startIters[run],
-      isStreaming     = TRUE,
-      convWindowSize = convWindowSize,
-      treeFile       = treeFile,
-      shared         = shared
-    )
-    if (runs[[run]]$stop_reason == "cancelled") {
-      return(list(runs = runs,
-                  stopReason = "cancelled",
-                  actualIter = runs[[run]]$actual_iter))
+    for (run in seq_len(nRuns)) {
+      runs[[run]] <- .RunMkPrimeSingleRun(
+        mkd, model, innerMcmc, runs[[run]], moves, tipLabels, run,
+        paramNames, nEdge, brColStart,
+        logFilePath    = logFilePaths[run],
+        cancelFile     = mcmc$cancelFile,
+        checkpointFile = NULL,
+        startIter      = startIters[run],
+        isStreaming     = TRUE,
+        convWindowSize = convWindowSize,
+        treeFile       = treeFile,
+        shared         = shared,
+        resumeMoveWeights = runs[[run]]$moveWeights
+      )
+      if (runs[[run]]$stop_reason == "cancelled") {
+        return(list(runs = runs,
+                    stopReason = "cancelled",
+                    actualIter = runs[[run]]$actual_iter))
+      }
+      startIters[run] <- runs[[run]]$actual_iter + 1L
     }
-    startIters[run] <- runs[[run]]$actual_iter + 1L
-  }
 
-  # No cross-run convergence needed when nRuns < 2 or no maxRhat
-  # (defensive — caller should not route here in those cases).
-  if (nRuns < 2L || is.null(mcmc$maxRhat)) {
-    return(list(runs = runs,
-                stopReason = runs[[nRuns]]$stop_reason,
-                actualIter = runs[[nRuns]]$actual_iter))
-  }
+    # No cross-run convergence needed when nRuns < 2 or no maxRhat
+    # (defensive — caller should not route here in those cases).
+    if (nRuns < 2L || is.null(mcmc$maxRhat)) {
+      return(list(runs = runs,
+                  stopReason = runs[[nRuns]]$stop_reason,
+                  actualIter = runs[[nRuns]]$actual_iter))
+    }
 
-  # Checkpoint after first pass
-  if (!is.null(mcmc$checkpointFile)) {
-    maxActual <- max(vapply(runs, `[[`, 0, "actual_iter"))
-    .SaveCheckpoint(runs, mcmc, maxActual, paramNames, mcmc$checkpointFile,
-                    model = model)
+    # Checkpoint after first pass (M-149 #6: record serialPhase)
+    if (!is.null(mcmc$checkpointFile)) {
+      maxActual <- max(vapply(runs, `[[`, 0, "actual_iter"))
+      .SaveCheckpoint(runs, mcmc, maxActual, paramNames, mcmc$checkpointFile,
+                      moveWeights = runs[[nRuns]]$moveWeights,
+                      model = model, serialPhase = 2L)
+    }
   }
 
   # --- Phase 2: cross-run R-hat loop ---
@@ -1434,7 +1453,9 @@ RunMkPrime <- function(data, tree = NULL,
       # M-150: save checkpoint before returning
       if (!is.null(mcmc$checkpointFile)) {
         .SaveCheckpoint(runs, mcmc, maxActual, paramNames,
-                        mcmc$checkpointFile, model = model)
+                        mcmc$checkpointFile,
+                        moveWeights = runs[[nRuns]]$moveWeights,
+                        model = model, serialPhase = 2L)
       }
       return(list(runs = runs,
                   stopReason = "max_time",
@@ -1461,7 +1482,8 @@ RunMkPrime <- function(data, tree = NULL,
         isStreaming     = TRUE,
         convWindowSize = convWindowSize,
         treeFile       = treeFile,
-        shared         = shared
+        shared         = shared,
+        resumeMoveWeights = runs[[run]]$moveWeights
       )
       if (runs[[run]]$stop_reason == "cancelled") {
         return(list(runs = runs,
@@ -1471,11 +1493,12 @@ RunMkPrime <- function(data, tree = NULL,
       startIters[run] <- runs[[run]]$actual_iter + 1L
     }
 
-    # Checkpoint after each epoch
+    # Checkpoint after each epoch (M-149 #6: record serialPhase = 2)
     if (!is.null(mcmc$checkpointFile)) {
       maxActual <- max(vapply(runs, `[[`, 0, "actual_iter"))
       .SaveCheckpoint(runs, mcmc, maxActual, paramNames, mcmc$checkpointFile,
-                      model = model)
+                      moveWeights = runs[[nRuns]]$moveWeights,
+                      model = model, serialPhase = 2L)
     }
   }
 }
@@ -1926,7 +1949,7 @@ RunMkPrime <- function(data, tree = NULL,
 #' @keywords internal
 .SaveCheckpoint <- function(runs, mcmc, iter, paramNames, file,
                             moveWeights = NULL, phase = NULL,
-                            model = NULL) {
+                            model = NULL, serialPhase = NULL) {
   isStreaming <- !is.null(mcmc$logFile)
 
   serialRuns <- lapply(runs, function(r) {
@@ -1971,9 +1994,10 @@ RunMkPrime <- function(data, tree = NULL,
     payload$logFilePaths <- .LogFilePaths(mcmc$logFile, length(runs))
     payload$paramNames   <- paramNames
   }
-  if (!is.null(moveWeights)) payload$moveWeights <- moveWeights
-  if (!is.null(phase))       payload$phase       <- phase
-  if (!is.null(model))       payload$model       <- model
+  if (!is.null(moveWeights))  payload$moveWeights  <- moveWeights
+  if (!is.null(phase))        payload$phase        <- phase
+  if (!is.null(model))        payload$model        <- model
+  if (!is.null(serialPhase))  payload$serialPhase  <- serialPhase
   saveRDS(payload, file)
 }
 
@@ -2157,14 +2181,22 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   stopReason <- "max_iter"
   actualIter <- if (is.finite(mcmc$nIter)) mcmc$nIter else startIter - 1L
 
+  # M-149 #7: per-run startIters from individual actual_iter
+  perRunStarts <- vapply(
+    runs,
+    function(r) as.integer((r$actual_iter %||% (startIter - 1L)) + 1L),
+    integer(1L)
+  )
+
   if (isStreaming && nRuns >= 2L && !is.null(mcmc$maxRhat)) {
     # M-146: cross-run R-hat convergence orchestrator
-    startIters <- rep(startIter, nRuns)
+    # M-149 #6: skip Phase 1 if checkpoint was during Phase 2
     serialResult <- .RunSerialRuns(mkd, model, mcmc, runs, moves,
                                     tipLabels, paramNames, nEdge,
                                     brColStart, logFilePaths,
                                     convWindowSize, treeFile = NULL,
-                                    startIters = startIters)
+                                    startIters = perRunStarts,
+                                    startPhase = checkpoint$serialPhase %||% 1L)
     runs       <- serialResult$runs
     stopReason <- serialResult$stopReason
     actualIter <- serialResult$actualIter
@@ -2176,10 +2208,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         logFilePath    = if (isStreaming) logFilePaths[run] else NULL,
         cancelFile     = mcmc$cancelFile,
         checkpointFile = if (nRuns == 1L) mcmc$checkpointFile else NULL,
-        startIter      = startIter,
+        startIter      = perRunStarts[run],
         isStreaming    = isStreaming,
         convWindowSize = convWindowSize,
-        treeFile       = NULL
+        treeFile       = NULL,
+        resumeMoveWeights = runs[[run]]$moveWeights %||% checkpoint$moveWeights
       )
       stopReason <- runs[[run]]$stop_reason
       actualIter <- runs[[run]]$actual_iter

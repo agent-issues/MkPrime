@@ -7,7 +7,7 @@
 ResumeMkPrime(
   checkpointFile,
   data,
-  tree,
+  tree = NULL,
   neomorphic = integer(0),
   knownStates = integer(0),
   model = NULL
@@ -18,12 +18,16 @@ ResumeMkPrime(
 
 \item{data}{A \code{phyDat} or \code{MkPrimeData} object (must match original).}
 
-\item{tree}{A \code{phylo} object (used only for model finalization).}
+\item{tree}{A \code{phylo} object (used only for model finalization via
+Fitch parsimony).  Can be \code{NULL} when the checkpoint already contains
+a finalized model (all checkpoints since M-149).}
 
 \item{neomorphic, knownStates}{Passed to \code{\link[=MkPrimeData]{MkPrimeData()}} if \code{data}
 is a \code{phyDat} object.}
 
-\item{model}{An \code{MkPrimeModel} object (must match original).}
+\item{model}{An \code{MkPrimeModel} object.  If \code{NULL} (the default),
+the model stored in the checkpoint is used; otherwise it is finalized
+using \code{tree} or re-derived from data.}
 }
 \value{
 An \code{MkPosterior} object with combined samples.

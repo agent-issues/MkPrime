@@ -17,7 +17,8 @@
   logFilePaths,
   convWindowSize,
   treeFile,
-  startIters = NULL
+  startIters = NULL,
+  shared = NULL
 )
 }
 \value{

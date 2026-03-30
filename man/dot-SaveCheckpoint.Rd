@@ -11,7 +11,8 @@
   paramNames,
   file,
   moveWeights = NULL,
-  phase = NULL
+  phase = NULL,
+  model = NULL
 )
 }
 \description{

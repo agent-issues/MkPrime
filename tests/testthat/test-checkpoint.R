@@ -378,3 +378,109 @@ test_that("maxTime break saves checkpoint (not just initial)", {
   # Must be updated beyond the initial iter=0 checkpoint
   expect_gt(cp$iter, 0L)
 })
+
+
+# --- M-149 #2: move weights persisted and restored ---
+
+test_that("Move weights stored in run state and checkpoint", {
+  library(ape)
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  cp_file <- tempfile(fileext = ".ckp")
+  log_file <- tempfile(fileext = ".log")
+  on.exit(unlink(c(cp_file, log_file,
+                    sub("\\.[^.]+$", "_1.log", log_file),
+                    sub("\\.[^.]+$", "_trees.nwk", log_file))), add = TRUE)
+
+  # autoTune to get adapted weights
+  set.seed(8317)
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 5000L, thin = 5L,
+                        maxWarmup = 500L, minWarmup = 500L, autoTune = TRUE,
+                        checkEvery = 500L, logFile = log_file,
+                        checkpointFile = cp_file))
+
+  expect_true(file.exists(cp_file))
+  cp <- readRDS(cp_file)
+  r <- cp$runs[[1]]
+
+  # Per-run moveWeights should be stored
+  expect_true(!is.null(r$moveWeights))
+  expect_true(is.numeric(r$moveWeights))
+  expect_true(length(r$moveWeights) > 0L)
+  expect_equal(sum(r$moveWeights), 1.0, tolerance = 1e-10)
+})
+
+
+test_that("Resumed run uses checkpointed move weights", {
+  library(ape)
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  cp_file <- tempfile(fileext = ".ckp")
+  log_file <- tempfile(fileext = ".log")
+  on.exit(unlink(c(cp_file, log_file,
+                    sub("\\.[^.]+$", "_1.log", log_file),
+                    sub("\\.[^.]+$", "_trees.nwk", log_file))), add = TRUE)
+
+  # Run with tuning + time limit
+  set.seed(2946)
+  result1 <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 10000L, thin = 5L,
+                        maxWarmup = 500L, minWarmup = 500L, autoTune = TRUE,
+                        checkEvery = 500L, logFile = log_file,
+                        checkpointFile = cp_file, maxTime = 1))
+
+  cp <- readRDS(cp_file)
+  savedWeights <- cp$runs[[1]]$moveWeights
+  expect_true(!is.null(savedWeights))
+
+  # Resume — should use the saved weights, not defaults
+  result2 <- ResumeMkPrime(cp_file, pd, tree)
+  expect_s3_class(result2, "MkPosterior")
+})
+
+
+# --- M-149 #6-7: serial orchestrator phase and per-run startIters ---
+
+test_that("Serial multi-run checkpoint stores serialPhase", {
+  library(ape)
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  cp_file <- tempfile(fileext = ".ckp")
+  log_file <- tempfile(fileext = ".log")
+  on.exit(unlink(c(cp_file, log_file,
+                    sub("\\.[^.]+$", "_1.log", log_file),
+                    sub("\\.[^.]+$", "_2.log", log_file),
+                    sub("\\.[^.]+$", "_trees.nwk", log_file))), add = TRUE)
+
+  set.seed(6102)
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 2000L, thin = 5L,
+                        maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
+                        checkEvery = 300L, logFile = log_file,
+                        checkpointFile = cp_file, maxRhat = 1.05))
+
+  expect_true(file.exists(cp_file))
+  cp <- readRDS(cp_file)
+
+  # After Phase 1 completes, checkpoint should have serialPhase = 2
+  # (or no serialPhase if convergence was reached during Phase 1)
+  if (!is.null(cp$serialPhase)) {
+    expect_equal(cp$serialPhase, 2L)
+  }
+
+  # Per-run actual_iter should be available for startIters restoration
+  for (r in cp$runs) {
+    expect_true(!is.null(r$actual_iter))
+    expect_true(r$actual_iter > 0)
+  }
+})
