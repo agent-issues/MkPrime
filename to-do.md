@@ -24,6 +24,8 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
+| M-132 | P1 | OPEN | **Streaming mode: log file exists but is empty; `posterior$trees` and `plot(posterior)` fail.** The named `.log` file is created (header written by `.OpenLogFiles()`) but no sample rows are flushed to it. Consequently `posterior$trees` returns NULL and `plot()` errors with "Samples are not in memory". Two sub-issues: (a) investigate why `.FlushBuffer()` never fires (buffer never fills? early exit before flush?), (b) even when the log file has data, `posterior$trees` and `plot()` should auto-load from disk as `ConvergenceDiagnostics()` already does. *(from u.015, u.546.cpp)* |
+| M-133 | P1 | OPEN | **`log_posterior` trace panel blank during warmup.** The live MCMC trace plot for `log_posterior` renders an empty panel throughout the warmup phase. *(from u.943)* |
 
 
 
@@ -37,10 +39,22 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 
 
+## MCMC infrastructure
+
+| ID | Priority | Status | Description |
+|----|----------|--------|-------------|
+| M-134 | P2 | OPEN | **`treeThin`: differential thinning for tree samples.** New `MkPrimeMCMC(treeThin=)` parameter to store tree topology samples less frequently than scalar parameters. Must be a multiple of `thin`. Motivation: tree samples are ~10× more expensive to store and have higher autocorrelation; 500–1000 posterior trees suffice for CID comparison. *(from u.001)* |
+| M-135 | P3 | OPEN | **`thin = "auto"`: adapt thinning to observed autocorrelation.** Estimate ACT from early samples and set `thin ≈ ACT * log(2)`. Benefits from M-134 being done first so tree and scalar thinning can be tuned independently. *(from u.002)* |
+| M-131 | P2 | OPEN | **Warmup stabilisation detector: adaptive `windowSize` + validation study.** `.CheckStabilisation()` uses hardcoded `windowSize=10` (Geweke comparison windows), giving a minimum 11,500-iteration warmup floor regardless of tree size. Propose scaling `windowSize` with `nEdge` (`max(5, min(20, nEdge %/% 10))`). Requires empirical validation: run 8 benchmark datasets (20–88 tips) × 4 seeds on Hamilton with warmup disabled (200k iter), then replay the detector offline with a grid of `windowSize` and `nStableRequired` values to verify no false positives. **Briefing:** `.positai/plans/2026-03-29-m131-warmup-stabilisation-validation.md` |
+
 ## Misc / UI improvements
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
+| M-136 | P2 | OPEN | **ESS panel legend covers entire plot.** In live MCMC trace plots, the legend in the ESS panel is too large. Remove the legend; use right-aligned coloured text at the end of each plotted line instead. *(from u.465)* |
+| M-137 | P2 | OPEN | **Auto-derive `treeFile` from `logFile`; add `.log` extension.** If `logFile` has no extension, append `.log`. If `treeFile` is not specified, derive it from `logFile` (replace `.log` with `.trees`, or append `.trees`). *(from u.827)* |
+| M-138 | P3 | OPEN | **Suppress test-suite warnings and plot output.** (a) Wrap expected warnings with `expect_warning` so `devtools::test()` runs clean. (b) Suppress plot device output (avoid `Rplots.pdf`); consider `vdiffr::expect_doppelganger` for important plot tests. *(from u.057, u.154)* |
+| M-139 | P3 | OPEN | **Simplify progress ticker.** The ticker is unhelpful with infrequent updates now that we have ESS trace plots. Replace with a simpler minESS / PSRF display. *(from u.814)* |
 | M-124 | P2 | OPEN | **Submit RevBayes relabelling correction patch.** The same inverted relabelling formula exists in `PhyloCTMCSiteHomogeneousMkPrime.h`. Proof and patch instructions in `relabelling-correction-proof.md`. |
 
 ## Phase 7d: Deferred extensions
