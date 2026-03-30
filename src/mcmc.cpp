@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstring>
 #include <chrono>
+#include <cstdio>
 
 using namespace Rcpp;
 
@@ -163,6 +164,17 @@ struct McmcState {
   NumericVector brSnapshot;
   // M-127: which edges the Dirichlet proposal modified (for partial CL eval)
   std::vector<int> dirEdges;
+  // DIAG counters
+  int diagDirPartialCount = 0;
+  int diagDirMismatchCount = 0;
+  int diagDirFullbackCount = 0;
+  int diagNniPartialCount = 0;
+  int diagNniMismatchCount = 0;
+  int diagBsPartialCount = 0;
+  int diagBsMismatchCount = 0;
+  int diagDriftCount = 0;
+  int diagCachePopCount = 0;
+  double diagMaxDiff = 0.0;
 };
 
 
@@ -381,7 +393,14 @@ List get_mcmc_state(SEXP statePtr) {
     _["logLik"]        = s->logLik,
     _["logPrior"]      = s->logPrior,
     _["logPost"]       = s->logLik + s->logPrior,
-    _["betaScale"]     = s->betaScale
+    _["betaScale"]     = s->betaScale,
+    _["diagDirPartial"] = s->diagDirPartialCount,
+    _["diagDirMismatch"] = s->diagDirMismatchCount,
+    _["diagDirFullback"] = s->diagDirFullbackCount,
+    _["diagNniPartial"] = s->diagNniPartialCount,
+    _["diagBsPartial"]  = s->diagBsPartialCount,
+    _["diagDriftCount"] = s->diagDriftCount,
+    _["diagMaxDiff"]    = s->diagMaxDiff
   );
 }
 
@@ -2805,6 +2824,9 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
         // Invalidate partition cache (full recompute was done)
         state->partLogLik.clear();
       }
+      // M-145: Invalidate node CL cache — slice changed a model parameter
+      // (rateLogSd, rateLoss, rateNeo, or betaScale) that affects cached CLs.
+      state->nodeCL.valid = false;
       return true;
     }
     // Shrink bracket on log scale
@@ -3039,6 +3061,42 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                          int intWalkWindow, double beta,
                          double jointRho = 0.0) {
 
+  // DIAG: write to file every 500 iterations as proof-of-life
+  {
+    static int diagFileCount = 0;
+    if (++diagFileCount == 1 || diagFileCount % 500 == 0) {
+      FILE* f = std::fopen("C:/Users/pjjg18/GitHub/mkp/pcl_diag.txt", "a");
+      if (f) {
+        std::fprintf(f, "iter=%d mt=%d cachePop=%d dirPCL=%d cacheValid=%d\n",
+                diagFileCount, moveType, state->diagCachePopCount,
+                state->diagDirPartialCount, (int)state->nodeCL.valid);
+        std::fclose(f);
+      } else {
+        // If fopen fails, try REprintf as last resort
+        REprintf("[DIAG] fopen failed iter=%d\n", diagFileCount);
+      }
+    }
+  }
+
+  // DIAG: pre-proposal LL consistency check (every 100 iterations)
+  {
+    static int preCheckCount = 0;
+    if (++preCheckCount % 100 == 0) {
+      int nE = state->relBrLengths.size();
+      NumericVector curEl(nE);
+      for (int i = 0; i < nE; ++i)
+        curEl[i] = state->treeLength * state->relBrLengths[i];
+      double freshLL = cpp_log_likelihood(*data, state->parent, state->child,
+        curEl, state->kPrime, state->rateLoss, state->rateLogSd,
+        state->rateNeo, state->betaScale,
+        state->clWs.ready() ? &state->clWs : nullptr);
+      double drift = std::abs(state->logLik - freshLL);
+      if (drift > 1e-4) {
+        state->diagDriftCount++;
+      }
+    }
+  }
+
   // Snapshot scalar state for rollback
   double oldTL   = state->treeLength;
   double oldRL   = state->rateLoss;
@@ -3070,8 +3128,10 @@ static bool do_move_impl(McmcData* data, McmcState* state,
 
   // M-121: pre-proposal cache population for partial CL.
   // Must happen BEFORE the proposal modifies state in-place.
-  if ((moveType == 5 || moveType == 4) && !data->qHeterogeneity &&
-      !state->nodeCL.valid) {
+  // Populate for NNI (5), beta_simplex (4), and Dirichlet (23, 24).
+  if ((moveType == 5 || moveType == 4 || moveType == 23 || moveType == 24) &&
+      !data->qHeterogeneity && !state->nodeCL.valid) {
+    state->diagCachePopCount++;
     int nEdge = state->relBrLengths.size();
     NumericVector absLen(nEdge);
     for (int i = 0; i < nEdge; ++i)
@@ -3434,6 +3494,16 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                                     state->rateLoss, state->rateNeo,
                                     state->rateLogSd, state->betaScale, dirty);
     usedPartialCL = true;
+    // DIAG: compare NNI partial-CL with full eval
+    { double fullLL = cpp_log_likelihood(*data, evalParent, evalChild,
+        propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
+        state->rateNeo, state->betaScale,
+        state->clWs.ready() ? &state->clWs : nullptr);
+      double diff = std::abs(newLogLik - fullLL);
+      state->diagNniPartialCount++;
+      if (diff > state->diagMaxDiff) state->diagMaxDiff = diff;
+      if (diff > 1e-6) state->diagNniMismatchCount++;
+    }
 
   } else if (moveType == 4 && state->nodeCL.valid) {
     // M-121: beta_simplex with valid node CL cache → partial evaluation
@@ -3449,6 +3519,16 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                                     state->rateLoss, state->rateNeo,
                                     state->rateLogSd, state->betaScale, dirty);
     usedPartialCL = true;
+    // DIAG: compare BS partial-CL with full eval
+    { double fullLL = cpp_log_likelihood(*data, evalParent, evalChild,
+        propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
+        state->rateNeo, state->betaScale,
+        state->clWs.ready() ? &state->clWs : nullptr);
+      double diff = std::abs(newLogLik - fullLL);
+      state->diagBsPartialCount++;
+      if (diff > state->diagMaxDiff) state->diagMaxDiff = diff;
+      if (diff > 1e-6) state->diagBsMismatchCount++;
+    }
 
   } else if ((moveType == 23 || moveType == 24) && state->nodeCL.valid) {
     // M-127: Dirichlet (random or local) with valid node CL cache → partial eval
@@ -3462,6 +3542,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     // Heuristic: if dirty set covers most of the tree, fall back to full eval
     int nInternal = nEdge + 1 - data->nTip;
     if ((int)dirty.size() > (int)(0.8 * (nInternal + data->nTip))) {
+      state->diagDirFullbackCount++;
       newLogLik = cpp_log_likelihood(*data, evalParent, evalChild,
         propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
         state->rateNeo, state->betaScale,
@@ -3473,20 +3554,26 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                                       state->rateLogSd, state->betaScale, dirty);
       usedPartialCL = true;
 
-      // DIAG: compare partial-CL result with full eval
-      double fullLL = cpp_log_likelihood(*data, evalParent, evalChild,
-        propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
-        state->rateNeo, state->betaScale,
-        state->clWs.ready() ? &state->clWs : nullptr);
-      double diff = std::abs(newLogLik - fullLL);
-      if (diff > 1e-6) {
-        Rcpp::Rcerr << "[DIAG] moveType=" << moveType
-                    << " partial=" << newLogLik
-                    << " full=" << fullLL
-                    << " diff=" << diff
-                    << " dirty=" << dirty.size()
-                    << " nEdge=" << nEdge
-                    << "\n";
+      // DIAG: compare Dirichlet partial-CL with full eval
+      { double fullLL = cpp_log_likelihood(*data, evalParent, evalChild,
+          propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
+          state->rateNeo, state->betaScale,
+          state->clWs.ready() ? &state->clWs : nullptr);
+        double diff = std::abs(newLogLik - fullLL);
+        state->diagDirPartialCount++;
+        if (diff > state->diagMaxDiff) state->diagMaxDiff = diff;
+        if (diff > 1e-6) {
+          state->diagDirMismatchCount++;
+          if (state->diagDirMismatchCount <= 5) {
+            FILE* f2 = std::fopen("C:/Users/pjjg18/GitHub/mkp/pcl_diag.txt", "a");
+            if (f2) {
+              std::fprintf(f2, "  DIR_MM #%d: partial=%.6f full=%.6f diff=%.6f dirty=%d nEdges=%d mt=%d\n",
+                      state->diagDirMismatchCount, newLogLik, fullLL, diff,
+                      (int)dirty.size(), nEdge, moveType);
+              std::fclose(f2);
+            }
+          }
+        }
       }
     }
 
@@ -3823,6 +3910,30 @@ List run_mcmc_batch_cpp(
     for (int j = 0; j < nScalarCols; ++j)
       scalarMat(i, j) = scalarRows[i][j];
 
+  // DIAG: aggregate counters from cold chain (index 0)
+  IntegerVector diagCounters = IntegerVector::create(
+    _["dir_partial"] = states[0]->diagDirPartialCount,
+    _["dir_mismatch"] = states[0]->diagDirMismatchCount,
+    _["dir_fullback"] = states[0]->diagDirFullbackCount,
+    _["nni_partial"] = states[0]->diagNniPartialCount,
+    _["bs_partial"] = states[0]->diagBsPartialCount,
+    _["drift"] = states[0]->diagDriftCount
+  );
+  // DIAG: write summary to file (Rprintf is swallowed in RStudio batch loops)
+  {
+    FILE* f = std::fopen("pcl_diag.txt", "a");
+    if (f) {
+      std::fprintf(f, "cachePop=%d nni=%d(mm=%d) bs=%d(mm=%d) dir=%d(mm=%d,fb=%d) drift=%d maxD=%.2e\n",
+              states[0]->diagCachePopCount,
+              states[0]->diagNniPartialCount, states[0]->diagNniMismatchCount,
+              states[0]->diagBsPartialCount, states[0]->diagBsMismatchCount,
+              states[0]->diagDirPartialCount, states[0]->diagDirMismatchCount,
+              states[0]->diagDirFullbackCount, states[0]->diagDriftCount,
+              states[0]->diagMaxDiff);
+      std::fclose(f);
+    }
+  }
+
   return List::create(
     _["accept_counts"]    = acceptCounts,
     _["propose_counts"]   = proposeCounts,
@@ -3832,7 +3943,9 @@ List run_mcmc_batch_cpp(
     _["swap_propose"]     = swapPropose,
     _["scalar_samples"]   = scalarMat,
     _["edge_samples"]     = edgeSamples,
-    _["n_saved"]          = nSaved
+    _["n_saved"]          = nSaved,
+    _["diag_counters"]    = diagCounters,
+    _["diag_max_diff"]    = states[0]->diagMaxDiff
   );
 }
 

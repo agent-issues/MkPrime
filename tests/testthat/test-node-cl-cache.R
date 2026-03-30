@@ -167,3 +167,66 @@ test_that("partial-CL path does not freeze tree_length (ascertainment fix)", {
               info = paste("tree_length has only", n_unique,
                            "unique values; expected >= 5"))
 })
+
+
+# ---------------------------------------------------------------------------
+# Regression test M-145: slice sampler must invalidate node CL cache.
+#
+# Before the fix, slice_scalar_impl accepted without setting
+# nodeCL.valid = false.  A subsequent NNI using partial-CL evaluation
+# would read stale CLs (computed with the old parameter value), producing
+# incorrect log-likelihoods.  The diagnostic drift counter catches this:
+# every 100 iterations, do_move_impl compares state->logLik against a
+# fresh full evaluation and increments diagDriftCount on mismatch.
+# ---------------------------------------------------------------------------
+test_that("slice sampler invalidates CL cache (M-145 regression)", {
+  skip_if_not_installed("TreeSearch")
+  dat <- TreeSearch::inapplicable.phyData[["Vinther2008"]]
+  mkd <- suppressWarnings(MkPrimeData(dat))
+  model <- MkPrimeModel()
+  tree <- ape::rtree(length(dat), tip.label = names(dat))
+  tree <- TreeTools::Preorder(tree)
+  model <- MkPrime:::.FinalizeModel(model, tree, mkd)
+
+  mcmcData <- MkPrime:::.InitMcmcData(mkd, model)
+  state <- MkPrime:::.InitState(tree, mkd, model)
+  chainState <- MkPrime:::.InitMcmcChain(state)
+  fill_partition_cache(mcmcData, chainState)
+  allocate_cl_workspace(mcmcData, chainState)
+
+  hasNeo <- any(mkd$type == "neomorphic")
+  nEdge <- nrow(tree$edge)
+  mcmcCfg <- MkPrimeMCMC(
+    nIter = 100L, minWarmup = 50L,
+    gibbsSpr = FALSE, gibbsSubtreeSwap = FALSE
+  )
+  moves <- MkPrime:::.BuildMoves(nEdge, sum(mkd$type == "transformational"),
+                                  hasNeo, mcmcCfg)
+  moveTypeCodes <- vapply(
+    moves, function(m) MkPrime:::.kMoveTypes[[m$name]], integer(1L)
+  )
+  moveWeights <- vapply(moves, `[[`, numeric(1), "weight")
+  nMoves <- length(moves)
+  transIdx <- which(mkd$type == "transformational")
+  transIdx0 <- if (length(transIdx)) transIdx - 1L else integer(0)
+
+  scaleTunings <- matrix(0.5, 1, nMoves)
+  sliceParamCodes <- vapply(moves, function(m) m$sliceParamIdx %||% 0L,
+                            integer(1L))
+  sliceWidths <- matrix(1.0, 1, nMoves)
+  jointRhos <- matrix(0.0, 1, nMoves)
+  moveIntPars <- integer(nMoves)
+
+  # Run enough iterations for the 100-iter drift check to fire multiple times
+  result <- run_mcmc_batch_cpp(
+    mcmcData, list(chainState), 1.0,
+    moveTypeCodes, transIdx0, sliceParamCodes, moveWeights,
+    scaleTunings, 10, 1L, moveIntPars, sliceWidths, jointRhos,
+    500L, 1L, 500L, 10L,
+    hasNeo, nEdge
+  )
+
+  # Before M-145 fix, drift > 0 because slice sampler left stale CL cache.
+  expect_equal(result$diag_counters[["drift"]], 0L,
+               info = "slice sampler should invalidate nodeCL after accepting")
+})
