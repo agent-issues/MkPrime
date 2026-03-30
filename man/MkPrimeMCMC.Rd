@@ -55,10 +55,13 @@ terminate the run. Pass a finite integer to cap the number of iterations
 regardless of convergence.}
 
 \item{thin}{Thinning interval (save every \code{thin}-th iteration).
-Default \code{"auto"}, which sets thin equal to the number of active
-move types so that each parameter has roughly one update opportunity
-per stored sample (analogous to one "full cycle" in RevBayes).
-Pass a positive integer to override.}
+Default \code{"auto"}: initially set to the number of active move types
+(one "full cycle" per stored sample), then adapted at the first
+convergence check to \code{max(nMoves, round(maxACT * log(2)))} based on
+the observed autocorrelation time of the worst-mixing scalar
+parameter. This targets ~50\\% correlation between consecutive
+stored samples. Pass a positive integer to fix the thinning interval
+and disable adaptation.}
 
 \item{treeThin}{Thinning interval for tree samples (iterations).
 Default \code{NULL}, which stores a tree for every scalar sample
@@ -132,7 +135,9 @@ exits with \code{stop_reason = "cancelled"}. Create the file to request a
 clean stop: \code{file.create(cancelFile)}. See also \code{\link[=MkCancelPath]{MkCancelPath()}}.}
 
 \item{checkpointFile}{Path to write checkpoint RDS files. \code{NULL}
-(default) disables checkpointing. Checkpoints are saved at each
+(default) auto-derives from \code{logFile} when set
+(e.g. \code{"run.log"} \u2192 \code{"run.ckp"}). Set to \code{FALSE} to
+disable checkpointing. Checkpoints are saved at each
 convergence check interval and on cancel.}
 
 \item{treeFile}{Path to write sampled trees in Newick format.

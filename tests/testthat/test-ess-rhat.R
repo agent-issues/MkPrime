@@ -235,3 +235,45 @@ test_that(".EssVector is comparable to coda for correlated data", {
   expect_true(our_ess < 200)
   expect_true(their_ess < 200)
 })
+
+
+# --- M-146: unequal chain length handling ---
+
+test_that(".CheckConvergenceFromLogs handles unequal sample counts", {
+  paramNames <- c("log_posterior", "log_likelihood", "tree_length",
+                   "rate_log_sd", "p")
+  header <- paste(c("Sample", paramNames), collapse = "\t")
+
+  set.seed(5283)
+
+  # Run 1: 100 samples
+  n1 <- 100L
+  mat1 <- matrix(rnorm(n1 * length(paramNames)), n1, length(paramNames))
+  lines1 <- c(header, vapply(seq_len(n1), function(i) {
+    paste(c(i * 10, mat1[i, ]), collapse = "\t")
+  }, character(1)))
+
+  # Run 2: 60 samples (fewer — e.g. ESS converged earlier)
+  n2 <- 60L
+  mat2 <- matrix(rnorm(n2 * length(paramNames)), n2, length(paramNames))
+  lines2 <- c(header, vapply(seq_len(n2), function(i) {
+    paste(c(i * 10, mat2[i, ]), collapse = "\t")
+  }, character(1)))
+
+  f1 <- tempfile(fileext = ".log")
+  f2 <- tempfile(fileext = ".log")
+  writeLines(lines1, f1)
+  writeLines(lines2, f2)
+  on.exit({ unlink(f1); unlink(f2) })
+
+  mcmc <- MkPrimeMCMC(minEss = 5, maxRhat = 5.0)
+
+  # Should not error or warn about recycling
+  result <- expect_no_warning(
+    MkPrime:::.CheckConvergenceFromLogs(c(f1, f2), paramNames, mcmc)
+  )
+  expect_false(is.null(result))
+  expect_true(is.numeric(result$maxRhat))
+  expect_false(is.na(result$maxRhat))
+  expect_true(is.numeric(result$minEss))
+})

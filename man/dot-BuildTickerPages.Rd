@@ -4,7 +4,7 @@
 \alias{.BuildTickerPages}
 \title{Build the full ticker page sequence for the progress bar}
 \usage{
-.BuildTickerPages(diagCheck)
+.BuildTickerPages(diagCheck, etaStr = NULL)
 }
 \arguments{
 \item{diagCheck}{Return value of \code{\link[=.CheckConvergence]{.CheckConvergence()}}.}

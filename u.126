@@ -1,0 +1,38 @@
+
+Documentation completed
+
+==> Rcmd.exe INSTALL --preclean --no-multiarch --with-keep.source mkp
+
+* installing to library 'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/_build'
+* installing *source* package 'MkPrime' ...
+** this is package 'MkPrime' version '0.0.0.9000'
+** using staged installation
+** libs
+using C++ compiler: 'g++.exe (GCC) 14.2.0'
+C:/rtools45/ucrt64/bin/ccache g++ -I"C:/PROGRA~1/R/R-devel/include" -DNDEBUG  -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/Rcpp/include' -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/TreeTools/include'   -I"C:/rtools45/x86_64-w64-mingw32.static.posix/include"      -O2 -Wall  -mfpmath=sse -msse2 -mstackrealign    -c RcppExports.cpp -o RcppExports.o
+C:/rtools45/ucrt64/bin/ccache g++ -I"C:/PROGRA~1/R/R-devel/include" -DNDEBUG  -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/Rcpp/include' -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/TreeTools/include'   -I"C:/rtools45/x86_64-w64-mingw32.static.posix/include"      -O2 -Wall  -mfpmath=sse -msse2 -mstackrealign    -c acrv.cpp -o acrv.o
+C:/rtools45/ucrt64/bin/ccache g++ -I"C:/PROGRA~1/R/R-devel/include" -DNDEBUG  -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/Rcpp/include' -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/TreeTools/include'   -I"C:/rtools45/x86_64-w64-mingw32.static.posix/include"      -O2 -Wall  -mfpmath=sse -msse2 -mstackrealign    -c ascertainment.cpp -o ascertainment.o
+C:/rtools45/ucrt64/bin/ccache g++ -I"C:/PROGRA~1/R/R-devel/include" -DNDEBUG  -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/Rcpp/include' -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/TreeTools/include'   -I"C:/rtools45/x86_64-w64-mingw32.static.posix/include"      -O2 -Wall  -mfpmath=sse -msse2 -mstackrealign    -c corrections.cpp -o corrections.o
+C:/rtools45/ucrt64/bin/ccache g++ -I"C:/PROGRA~1/R/R-devel/include" -DNDEBUG  -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/Rcpp/include' -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/TreeTools/include'   -I"C:/rtools45/x86_64-w64-mingw32.static.posix/include"      -O2 -Wall  -mfpmath=sse -msse2 -mstackrealign    -c init.cpp -o init.o
+C:/rtools45/ucrt64/bin/ccache g++ -I"C:/PROGRA~1/R/R-devel/include" -DNDEBUG  -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/Rcpp/include' -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/TreeTools/include'   -I"C:/rtools45/x86_64-w64-mingw32.static.posix/include"      -O2 -Wall  -mfpmath=sse -msse2 -mstackrealign    -c likelihood.cpp -o likelihood.o
+C:/rtools45/ucrt64/bin/ccache g++ -I"C:/PROGRA~1/R/R-devel/include" -DNDEBUG  -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/Rcpp/include' -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/TreeTools/include'   -I"C:/rtools45/x86_64-w64-mingw32.static.posix/include"      -O2 -Wall  -mfpmath=sse -msse2 -mstackrealign    -c mcmc.cpp -o mcmc.o
+mcmc.cpp:1803:13: warning: 'bool gibbs_subtree_swap_impl_full(McmcData*, McmcState*, double)' defined but not used [-Wunused-function]
+ 1803 | static bool gibbs_subtree_swap_impl_full(McmcData* data, McmcState* state,
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+mcmc.cpp:1148:13: warning: 'bool gibbs_spr_impl_full(McmcData*, McmcState*, double)' defined but not used [-Wunused-function]
+ 1148 | static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta) {
+      |             ^~~~~~~~~~~~~~~~~~~
+In file included from mcmc.cpp:14:
+node_cl_cache.h:926:13: warning: 'bool can_use_partial_cl(const NodeCLCache&, const McmcData&)' defined but not used [-Wunused-function]
+  926 | static bool can_use_partial_cl(
+      |             ^~~~~~~~~~~~~~~~~~
+C:/rtools45/ucrt64/bin/ccache g++ -I"C:/PROGRA~1/R/R-devel/include" -DNDEBUG  -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/Rcpp/include' -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/TreeTools/include'   -I"C:/rtools45/x86_64-w64-mingw32.static.posix/include"      -O2 -Wall  -mfpmath=sse -msse2 -mstackrealign    -c mcmc_likelihood.cpp -o mcmc_likelihood.o
+C:/rtools45/ucrt64/bin/ccache g++ -I"C:/PROGRA~1/R/R-devel/include" -DNDEBUG  -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/Rcpp/include' -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/TreeTools/include'   -I"C:/rtools45/x86_64-w64-mingw32.static.posix/include"      -O2 -Wall  -mfpmath=sse -msse2 -mstackrealign    -c proposals.cpp -o proposals.o
+C:/rtools45/ucrt64/bin/ccache g++ -I"C:/PROGRA~1/R/R-devel/include" -DNDEBUG  -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/Rcpp/include' -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/TreeTools/include'   -I"C:/rtools45/x86_64-w64-mingw32.static.posix/include"      -O2 -Wall  -mfpmath=sse -msse2 -mstackrealign    -c rate_matrix.cpp -o rate_matrix.o
+C:/rtools45/ucrt64/bin/ccache g++ -I"C:/PROGRA~1/R/R-devel/include" -DNDEBUG  -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/Rcpp/include' -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/TreeTools/include'   -I"C:/rtools45/x86_64-w64-mingw32.static.posix/include"      -O2 -Wall  -mfpmath=sse -msse2 -mstackrealign    -c tree_ess.cpp -o tree_ess.o
+C:/rtools45/ucrt64/bin/ccache g++ -I"C:/PROGRA~1/R/R-devel/include" -DNDEBUG  -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/Rcpp/include' -I'C:/Users/pjjg18/AppData/Local/R/win-library/4.6/TreeTools/include'   -I"C:/rtools45/x86_64-w64-mingw32.static.posix/include"      -O2 -Wall  -mfpmath=sse -msse2 -mstackrealign    -c tree_moves.cpp -o tree_moves.o
+C:/rtools45/ucrt64/bin/ccache g++ -shared -s -static-libgcc -o MkPrime.dll tmp.def RcppExports.o acrv.o ascertainment.o corrections.o init.o likelihood.o mcmc.o mcmc_likelihood.o proposals.o rate_matrix.o tree_ess.o tree_moves.o -LC:/rtools45/x86_64-w64-mingw32.static.posix/lib/x64 -LC:/rtools45/x86_64-w64-mingw32.static.posix/lib -LC:/PROGRA~1/R/R-devel/bin/x64 -lR
+installing
+
+
+>> Please fix the compilation warnings <<

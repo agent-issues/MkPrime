@@ -321,3 +321,76 @@ test_that("Early stopping produces fewer samples", {
   # Limited should have fewer or equal samples
   expect_lte(nrow(limited$samples), nrow(full$samples))
 })
+
+
+# --- M-146: serial mode R-hat convergence ---
+
+test_that("serial nRuns=2 + maxRhat converges via .RunSerialRuns", {
+  library(ape)
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  set.seed(4817)
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 50000L, thin = 5L,
+                        maxWarmup = 200L, minWarmup = 200L,
+                        autoTune = FALSE,
+                        minEss = 5, maxRhat = 5.0,
+                        checkEvery = 300L))
+
+  expect_s3_class(result, "MkPosterior")
+  expect_gt(nrow(result$samples), 0)
+  # Generous criteria — should converge before nIter
+  if (result$stop_reason == "converged") {
+    expect_lt(result$actual_iter, 50000L)
+  }
+})
+
+
+test_that("serial nRuns=2 + maxRhat + nIter=Inf stops via maxTime", {
+  library(ape)
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  # nIter=Inf + maxRhat: without maxTime this would run forever before M-146.
+  # maxTime provides a hard ceiling.
+  set.seed(2093)
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 2L, thin = 5L,
+                        maxWarmup = 200L, minWarmup = 200L,
+                        autoTune = FALSE,
+                        maxRhat = 1.05, checkEvery = 300L,
+                        maxTime = 3))
+
+  expect_s3_class(result, "MkPosterior")
+  expect_true(result$stop_reason %in% c("converged", "max_time"))
+  expect_gt(nrow(result$samples), 0)
+})
+
+
+test_that("serial nRuns=2 + maxRhat does not block minEss stopping", {
+  # Regression test for M-146 conjunction bug:
+  # Before the fix, setting maxRhat blocked ESS-based convergence
+  # even within individual runs because the conjunction was always FALSE.
+  library(ape)
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  set.seed(6529)
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 100000L, thin = 5L,
+                        maxWarmup = 200L, minWarmup = 200L,
+                        autoTune = FALSE,
+                        minEss = 5, maxRhat = 5.0,
+                        checkEvery = 300L))
+
+  # With minEss=5 and maxRhat=5.0, convergence should trigger well before nIter
+  expect_equal(result$stop_reason, "converged")
+  expect_lt(result$actual_iter, 100000L)
+})

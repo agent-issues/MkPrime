@@ -178,7 +178,7 @@ mcmcProduction <- MkPrimeMCMC(
   minEss         = 200L,     # stop when min ESS > 200
   maxRhat        = 1.01,     # stop when max R-hat < 1.01
   checkEvery     = 5000L,
-  treeFile       = "hyoliths_trees.nwk"
+  logFile        = "hyoliths.log"
 )
 ```
 

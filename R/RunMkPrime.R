@@ -1196,9 +1196,19 @@ RunMkPrime <- function(data, tree = NULL,
       mcmc$progressFn(info)
     }
 
-    # Stopping: max wall-clock time
+    # Stopping: max wall-clock time (M-150: flush + checkpoint before break)
     if (!is.null(mcmc$maxTime) &&
         proc.time()["elapsed"] - startTime >= mcmc$maxTime) {
+      if (isStreaming && r$flush_idx > 0L) {
+        .FlushBuffer(r$flush_buf, r$flush_idx, r$flush_iter, logFilePath)
+        r$flush_idx <- 0L
+        r$flushed   <- FALSE
+      }
+      if (!is.null(checkpointFile)) {
+        .SaveCheckpoint(list(r), mcmc, batchEnd, paramNames, checkpointFile,
+                        moveWeights = moveWeights, phase = phase,
+                        model = model)
+      }
       stopReason <- "max_time"
       actualIter <- batchEnd
       break
@@ -1421,6 +1431,11 @@ RunMkPrime <- function(data, tree = NULL,
     }
     elapsed <- proc.time()["elapsed"] - startTime
     if (!is.null(mcmc$maxTime) && elapsed >= mcmc$maxTime) {
+      # M-150: save checkpoint before returning
+      if (!is.null(mcmc$checkpointFile)) {
+        .SaveCheckpoint(runs, mcmc, maxActual, paramNames,
+                        mcmc$checkpointFile, model = model)
+      }
       return(list(runs = runs,
                   stopReason = "max_time",
                   actualIter = maxActual))

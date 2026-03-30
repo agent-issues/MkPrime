@@ -2,11 +2,11 @@
 % Please edit documentation in R/RunMkPrime.R
 \name{.CleanupTempLogs}
 \alias{.CleanupTempLogs}
-\title{Delete temporary log files}
+\title{Delete temporary files (logs + checkpoint)}
 \usage{
-.CleanupTempLogs(logFilePaths)
+.CleanupTempLogs(tempFiles)
 }
 \description{
-Delete temporary log files
+Delete temporary files (logs + checkpoint)
 }
 \keyword{internal}

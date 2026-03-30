@@ -342,3 +342,39 @@ test_that("Shared env update fires at batch boundaries (multi-run)", {
     expect_true(is.finite(r$chains[[1]]$log_lik))
   }
 })
+
+
+# --- M-150: maxTime break saves checkpoint ---
+
+test_that("maxTime break saves checkpoint (not just initial)", {
+  library(ape)
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  cp_file <- tempfile(fileext = ".ckp")
+  log_file <- tempfile(fileext = ".log")
+  on.exit(unlink(c(cp_file, log_file,
+                    sub("\\.[^.]+$", "_1.log", log_file),
+                    sub("\\.[^.]+$", "_trees.nwk", log_file))), add = TRUE)
+
+  # Large checkEvery + bufferSize so no periodic or streaming-flush checkpoint
+  # fires.  The only checkpoint updates come from the initial (iter=0) and the
+
+  # maxTime break path (M-150 fix).
+  set.seed(5491)
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = Inf, thin = 5L,
+                        maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
+                        checkEvery = 1000000L, bufferSize = 100000L,
+                        logFile = log_file, checkpointFile = cp_file,
+                        maxTime = 0.5))
+
+  expect_equal(result$stop_reason, "max_time")
+  expect_true(file.exists(cp_file))
+
+  cp <- readRDS(cp_file)
+  # Must be updated beyond the initial iter=0 checkpoint
+  expect_gt(cp$iter, 0L)
+})

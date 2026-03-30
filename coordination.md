@@ -1,6 +1,6 @@
 # MkPrime — Strategic Coordination
 
-Last updated: 2026-03-30 10:20
+Last updated: 2026-03-30 12:45
 
 ## Project State
 
@@ -8,10 +8,11 @@ Last updated: 2026-03-30 10:20
 
 **Recent milestones (since 2026-03-29):**
 - Post-phase optimization complete: Bactrian proposals (M-118), pSPR (M-119), 2D joint Bactrian (M-120), node-level CL dirty flags (M-121), block Dirichlet branch proposal (M-125).
-- Streaming/UI polish: buffer flush guards (M-132), warmup trace fix (M-133), treeThin (M-134), ESS label cleanup (M-136), auto-derive treeFile (M-137), test warning suppression (M-138), ticker simplification (M-139).
+- Streaming/UI polish: buffer flush guards (M-132), warmup trace fix (M-133), treeThin (M-134), adaptive thin from ACT (M-135), ESS label cleanup (M-136), auto-derive treeFile (M-137), test warning suppression (M-138), ticker simplification (M-139), colour-coded move weights (M-140), sampling ETA (M-141).
 - **Dropped `coda` dependency**: native rank-normalized R-hat (Vehtari et al. 2021) and FFT-based ESS replace all `coda` calls. Convergence thresholds tightened (R-hat ≤ 1.01). 40 new unit tests.
+- **Partial-CL cache bug fix series (M-142–M-145):** S-RED rounds 8–10 found and fixed four cache-staleness bugs. (1) M-142: ascertainment correction skipped when ACRV off or for transformational partitions. (2) M-143: nine Gibbs/weighted move functions missing cache invalidation. (3) M-144: MkN root frequency swap (π₀↔π₁) in all four C++ paths. (4) M-145: slice sampler missing cache invalidation. All four fixed and committed.
 
-**Open tasks:** M-131 (1 specific) + M-080 assigned (C). M-124 completed 2026-03-30 (PR draft).
+**Open tasks:** M-131 (1 specific OPEN) + M-080 (ASSIGNED to C). Standing tasks at P1 (<3 OPEN specific).
 
 MkPrime is a new R package for Bayesian phylogenetic inference under the
 Mk' model. The architecture follows StratoBayes (C++ hot loop via Rcpp,
