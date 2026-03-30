@@ -60,10 +60,13 @@
 #'   (default) disables checkpointing. Checkpoints are saved at each
 #'   convergence check interval and on cancel.
 #' @param treeFile Path to write sampled trees in Newick format.
-#'   `NULL` (default) disables file logging. Trees are always stored
+#'   `NULL` (default) auto-derives from `logFile` when set
+#'   (e.g. `"run.log"` → `"run_trees.nwk"`). Set to `FALSE` to
+#'   disable tree file logging entirely. Trees are always stored
 #'   in the returned `MkPosterior` object regardless.
 #' @param logFile Path to write a tab-separated scalar parameter log
 #'   (Tracer-compatible). `NULL` (default) keeps all samples in memory only.
+#'   If the path has no file extension, `.log` is appended automatically.
 #'   When set, samples are flushed to disk in batches of `bufferSize`, so the
 #'   file can be opened in Tracer during the run.
 #'   For multiple runs (`nRuns > 1`), separate files are created automatically
@@ -359,7 +362,17 @@ MkPrimeMCMC <- function(
     if (!is.character(logFile) || length(logFile) != 1L) {
       cli::cli_abort("{.arg logFile} must be a length-1 character string or NULL.")
     }
+    # Append .log if no extension
+    if (!grepl("\\.", basename(logFile))) {
+      logFile <- paste0(logFile, ".log")
+    }
+    # Auto-derive treeFile from logFile when not specified
+    if (is.null(treeFile)) {
+      treeFile <- sub("\\.[^.]+$", "_trees.nwk", logFile)
+    }
   }
+  # treeFile = FALSE → disable (convert to NULL for downstream code)
+  if (identical(treeFile, FALSE)) treeFile <- NULL
   bufferSize <- as.integer(bufferSize)
   if (bufferSize < 1L) {
     cli::cli_abort("{.arg bufferSize} must be a positive integer.")

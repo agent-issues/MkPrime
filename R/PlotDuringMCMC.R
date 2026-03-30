@@ -341,6 +341,10 @@ MkpTracePlot <- function(info) {
   }
   ylim <- c(0, max(finiteEss) * 1.15)
 
+  # Extra right margin for inline labels
+  oldMar <- par("mar")
+  par(mar = c(oldMar[1:3], max(oldMar[4], 5)))
+
   plot(iters, essMat[, 1], type = "n", ylim = ylim,
        main = "ESS", xlab = "iter", ylab = "",
        cex.main = 0.95, las = 1)
@@ -350,12 +354,14 @@ MkpTracePlot <- function(info) {
     ok <- is.finite(vals)
     if (any(ok)) {
       lines(iters[ok], vals[ok], col = paramColors[p], lwd = 1.5)
+      # Inline label at rightmost point
+      lastIdx <- max(which(ok))
+      mtext(p, side = 4, at = vals[lastIdx], col = paramColors[p],
+            cex = 0.6, las = 1, line = 0.3, adj = 0)
     }
   }
 
-  # Compact legend
-  legend("topleft", legend = params, col = paramColors[params],
-         lwd = 1.5, cex = 0.65, bg = "white", seg.len = 1.2)
+  par(mar = oldMar)
 }
 
 
