@@ -156,7 +156,7 @@ test_that("RunMkPrime without logFile produces in-memory samples", {
                        maxWarmup = 100L, minWarmup = 100L,
                        autoTune = FALSE, nRuns = 1L, nChains = 1L)
   set.seed(7723)
-  res <- RunMkPrime(d$pd, d$tree, mcmc = mcmc)
+  res <- suppressWarnings(RunMkPrime(d$pd, d$tree, mcmc = mcmc))
   expect_s3_class(res, "MkPosterior")
   expect_true(nrow(res$samples) > 0)
   expect_null(res$logFile)
@@ -171,7 +171,7 @@ test_that("RunMkPrime with explicit logFile streams to disk", {
                        autoTune = FALSE, nRuns = 1L, nChains = 1L,
                        logFile = logPath)
   set.seed(7723)
-  res <- RunMkPrime(d$pd, d$tree, mcmc = mcmc)
+  res <- suppressWarnings(RunMkPrime(d$pd, d$tree, mcmc = mcmc))
   expect_s3_class(res, "MkPosterior")
   expect_true(file.exists(logPath))
   expect_equal(res$logFile, logPath)
@@ -191,7 +191,7 @@ test_that("starting a new RunMkPrime cleans up stale temp logs", {
                        maxWarmup = 100L, minWarmup = 100L,
                        autoTune = FALSE, nRuns = 1L, nChains = 1L)
   set.seed(3491)
-  res <- RunMkPrime(d$pd, d$tree, mcmc = mcmc)
+  res <- suppressWarnings(RunMkPrime(d$pd, d$tree, mcmc = mcmc))
 
   # Stale file should be gone
   expect_false(file.exists(stale))

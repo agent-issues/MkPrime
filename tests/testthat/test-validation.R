@@ -128,12 +128,12 @@ test_that("RunMkPrime warns and clamps non-positive branch lengths", {
                 dimnames = list(paste0("t", 1:4), NULL))
   pd <- TreeTools::MatrixToPhyDat(mat)
 
-  expect_warning(
+  expect_warning(expect_warning(
     result <- RunMkPrime(pd, tree,
       mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 200L, thin = 10L,
                          maxWarmup = 50L, minWarmup = 50L, autoTune = FALSE)),
     regexp = "non-positive"
-  )
+  ), regexp = "maxWarmup")
 
   expect_s3_class(result, "MkPosterior")
   # Chain must have escaped -Inf: all log_posteriors finite
@@ -169,17 +169,15 @@ test_that("RunMkPrime aborts on tip label / data taxon mismatch", {
   # Completely wrong labels
   bad <- ape::rtree(length(dat), br = NULL)
   bad$edge.length <- rep(0.1, nrow(bad$edge))
-  expect_error(
-    RunMkPrime(dat, bad, mcmc = MkPrimeMCMC(nIter = 100L, minWarmup = 50L)),
-    "do not match"
-  )
+  expect_error(suppressWarnings(
+    RunMkPrime(dat, bad, mcmc = MkPrimeMCMC(nIter = 100L, minWarmup = 50L))
+  ), "do not match")
 
   # One tip renamed
   ok <- ape::rtree(length(dat), tip.label = names(dat), br = NULL)
   ok$edge.length <- rep(0.1, nrow(ok$edge))
   ok$tip.label[1] <- "BOGUS"
-  expect_error(
-    RunMkPrime(dat, ok, mcmc = MkPrimeMCMC(nIter = 100L, minWarmup = 50L)),
-    "do not match"
-  )
+  expect_error(suppressWarnings(
+    RunMkPrime(dat, ok, mcmc = MkPrimeMCMC(nIter = 100L, minWarmup = 50L))
+  ), "do not match")
 })

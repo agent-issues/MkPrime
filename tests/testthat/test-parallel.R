@@ -37,9 +37,9 @@ test_that("parallel = TRUE with nRuns = 1 falls back to sequential", {
                  dimnames = list(paste0("t", 1:4), NULL))
   pd   <- TreeTools::MatrixToPhyDat(mat)
 
-  result <- RunMkPrime(pd, tree,
+  result <- suppressWarnings(RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 400L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
-                        parallel = TRUE))
+                        parallel = TRUE)))
   expect_s3_class(result, "MkPosterior")
 })
 
@@ -60,9 +60,9 @@ test_that("parallel mode auto-assigns logFile when logFile = NULL", {
   future::plan("sequential")
 
   # No logFile supplied — samples loaded into memory after temp-log cleanup
-  result <- RunMkPrime(pd, tree,
+  result <- suppressWarnings(RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 400L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
-                        parallel = TRUE, pollInterval = 1L))
+                        parallel = TRUE, pollInterval = 1L)))
 
   expect_s3_class(result, "MkPosterior")
   expect_true(nrow(result$samples) > 0L)
@@ -90,7 +90,7 @@ test_that("parallel orchestration (sequential plan) returns valid MkPosterior", 
                    sub("\\.log$", "_1.log", logFile),
                    sub("\\.log$", "_2.log", logFile))), add = TRUE)
 
-  result <- RunMkPrime(pd, tree,
+  result <- suppressWarnings(RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(
       nRuns       = 2L,
       nIter       = 400L,
@@ -100,7 +100,7 @@ test_that("parallel orchestration (sequential plan) returns valid MkPosterior", 
       logFile     = logFile,
       parallel    = TRUE,
       pollInterval = 1L
-    ))
+    )))
 
   expect_s3_class(result, "MkPosterior")
   expect_true(!is.null(result$logFile))
@@ -131,10 +131,10 @@ test_that("parallel mode saves checkpoint when checkpointFile is set", {
   cp_file <- tempfile(fileext = ".rds")
   on.exit(unlink(cp_file), add = TRUE)
 
-  RunMkPrime(pd, tree,
+  suppressWarnings(RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 400L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
                         parallel = TRUE, pollInterval = 1L,
-                        checkpointFile = cp_file))
+                        checkpointFile = cp_file)))
 
   expect_true(file.exists(cp_file))
   cp <- readRDS(cp_file)

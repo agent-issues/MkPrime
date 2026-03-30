@@ -68,10 +68,10 @@ test_that(".ResolvePinnedWeights returns NULL for NULL input", {
 })
 
 test_that(".ResolvePinnedWeights filters to pool moves", {
-  result <- MkPrime:::.ResolvePinnedWeights(
+  result <- suppressWarnings(MkPrime:::.ResolvePinnedWeights(
     c(nni = 0.3, spr = 0.2, bogus = 0.1),
     c("nni", "spr", "tree_length")
-  )
+  ))
   expect_equal(result, c(nni = 0.3, spr = 0.2))
 })
 
@@ -325,7 +325,7 @@ test_that(".LogMoveWeights writes comment line to log file", {
 test_that("run_mcmc_batch_cpp returns move_time_ns matrix", {
   skip_if_not_installed("TreeSearch")
   dat <- TreeSearch::inapplicable.phyData[["Vinther2008"]]
-  mkd <- MkPrimeData(dat)
+  mkd <- suppressWarnings(MkPrimeData(dat))
   model <- MkPrimeModel()
   tree <- ape::rtree(length(dat), tip.label = names(dat))
   tree <- TreeTools::Preorder(tree)

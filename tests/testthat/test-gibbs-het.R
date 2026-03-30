@@ -67,8 +67,8 @@ test_that("Q-het Gibbs SPR runs and produces reasonable results", {
     autoTune = FALSE, gibbsSpr = TRUE, gibbsSubtreeSwap = FALSE,
     nRuns = 1L
   )
-  result <- RunMkPrime(data = setup$mkd, tree = setup$tree,
-                       model = setup$model, mcmc = mcmc)
+  result <- suppressWarnings(RunMkPrime(data = setup$mkd, tree = setup$tree,
+                                        model = setup$model, mcmc = mcmc))
   expect_s3_class(result, "MkPosterior")
   expect_true(nrow(result$samples) > 0)
   expect_true(all(is.finite(result$samples[, "log_posterior"])))
@@ -85,8 +85,8 @@ test_that("Q-het Gibbs subtree swap runs and produces reasonable results", {
     autoTune = FALSE, gibbsSpr = FALSE, gibbsSubtreeSwap = TRUE,
     nRuns = 1L
   )
-  result <- RunMkPrime(data = setup$mkd, tree = setup$tree,
-                       model = setup$model, mcmc = mcmc)
+  result <- suppressWarnings(RunMkPrime(data = setup$mkd, tree = setup$tree,
+                                        model = setup$model, mcmc = mcmc))
   expect_s3_class(result, "MkPosterior")
   expect_true(nrow(result$samples) > 0)
   expect_true(all(is.finite(result$samples[, "log_posterior"])))
@@ -103,8 +103,8 @@ test_that("Q-het with both Gibbs moves produces valid MCMC", {
     autoTune = FALSE, gibbsSpr = TRUE, gibbsSubtreeSwap = TRUE,
     nRuns = 1L
   )
-  result <- RunMkPrime(data = setup$mkd, tree = setup$tree,
-                       model = setup$model, mcmc = mcmc)
+  result <- suppressWarnings(RunMkPrime(data = setup$mkd, tree = setup$tree,
+                                        model = setup$model, mcmc = mcmc))
   expect_s3_class(result, "MkPosterior")
 
   # Both Gibbs moves should have been proposed

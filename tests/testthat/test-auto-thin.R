@@ -44,8 +44,8 @@ test_that("auto thin resolves to number of active moves", {
     autoTune = FALSE, nRuns = 1L, thin = nMoves
   ))
 
-  res_auto     <- RunMkPrime(pd, tree, mcmc = mcmc_auto)
-  res_explicit <- RunMkPrime(pd, tree, mcmc = mcmc_explicit)
+  res_auto     <- suppressWarnings(RunMkPrime(pd, tree, mcmc = mcmc_auto))
+  res_explicit <- suppressWarnings(RunMkPrime(pd, tree, mcmc = mcmc_explicit))
 
   expect_equal(nrow(res_auto$samples), nrow(res_explicit$samples))
   expect_gt(nrow(res_auto$samples), 0L)
@@ -80,8 +80,8 @@ test_that("auto thin changes with move configuration", {
     gibbsSpr = TRUE, gibbsSubtreeSwap = TRUE, tbr = TRUE
   ))
 
-  res_min <- RunMkPrime(pd, tree, mcmc = mcmc_min)
-  res_max <- RunMkPrime(pd, tree, mcmc = mcmc_max)
+  res_min <- suppressWarnings(RunMkPrime(pd, tree, mcmc = mcmc_min))
+  res_max <- suppressWarnings(RunMkPrime(pd, tree, mcmc = mcmc_max))
 
   # Fewer moves = thinner thinning = more samples per iteration
   expect_gt(nrow(res_min$samples), nrow(res_max$samples))

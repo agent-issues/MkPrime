@@ -204,7 +204,7 @@ test_that("set_branch_bins sets nBranchBins on McmcData", {
   mat <- matrix(sample(0:2, 6L * 5L, replace = TRUE), nrow = 6L,
                 dimnames = list(tree$tip.label, NULL))
   pd    <- MatrixToPhyDat(mat)
-  mkd   <- MkPrimeData(pd)
+  mkd   <- suppressWarnings(MkPrimeData(pd))
   model <- MkPrimeModel()
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)
   dataPtr <- MkPrime:::.InitMcmcData(mkd, model)

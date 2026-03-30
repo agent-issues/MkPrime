@@ -33,8 +33,8 @@ test_that("MCMC with NNI + node CL cache produces valid log posteriors", {
     nIter = 300L, maxWarmup = 100L, minWarmup = 100L, thin = 3L, autoTune = FALSE,
     nRuns = 1L
   )
-  result <- RunMkPrime(data = setup$mkd, tree = setup$tree,
-                       model = setup$model, mcmc = mcmc)
+  result <- suppressWarnings(RunMkPrime(data = setup$mkd, tree = setup$tree,
+                       model = setup$model, mcmc = mcmc))
   expect_s3_class(result, "MkPosterior")
   expect_true(nrow(result$samples) > 0)
   expect_true(all(is.finite(result$samples[, "log_posterior"])))
@@ -51,8 +51,8 @@ test_that("MCMC with beta_simplex + node CL cache produces valid posteriors", {
     nIter = 300L, maxWarmup = 100L, minWarmup = 100L, thin = 3L, autoTune = FALSE,
     nRuns = 1L
   )
-  result <- RunMkPrime(data = setup$mkd, tree = setup$tree,
-                       model = setup$model, mcmc = mcmc)
+  result <- suppressWarnings(RunMkPrime(data = setup$mkd, tree = setup$tree,
+                       model = setup$model, mcmc = mcmc))
   expect_s3_class(result, "MkPosterior")
   expect_true(nrow(result$samples) > 0)
   expect_true(all(is.finite(result$samples[, "log_posterior"])))
@@ -71,8 +71,8 @@ test_that("MCMC with ACRV and node CL cache produces valid posteriors", {
     nIter = 300L, maxWarmup = 100L, minWarmup = 100L, thin = 3L, autoTune = FALSE,
     nRuns = 1L
   )
-  result <- RunMkPrime(data = setup$mkd, tree = setup$tree,
-                       model = model, mcmc = mcmc)
+  result <- suppressWarnings(RunMkPrime(data = setup$mkd, tree = setup$tree,
+                       model = model, mcmc = mcmc))
   expect_s3_class(result, "MkPosterior")
   expect_true(all(is.finite(result$samples[, "log_posterior"])))
 })
@@ -89,8 +89,8 @@ test_that("mixed NNI + SPR + beta_simplex with cache invalidation works", {
     nIter = 500L, maxWarmup = 200L, minWarmup = 200L, thin = 5L, autoTune = FALSE,
     nRuns = 1L
   )
-  result <- RunMkPrime(data = setup$mkd, tree = setup$tree,
-                       model = setup$model, mcmc = mcmc)
+  result <- suppressWarnings(RunMkPrime(data = setup$mkd, tree = setup$tree,
+                       model = setup$model, mcmc = mcmc))
   expect_s3_class(result, "MkPosterior")
   expect_true(nrow(result$samples) > 0)
   expect_true(all(is.finite(result$samples[, "log_posterior"])))
@@ -119,8 +119,8 @@ test_that("Q-heterogeneity bypasses node CL cache without errors", {
     nIter = 200L, maxWarmup = 80L, minWarmup = 80L, thin = 3L, autoTune = FALSE,
     nRuns = 1L
   )
-  result <- RunMkPrime(data = mkd, tree = tree,
-                       model = model, mcmc = mcmc)
+  result <- suppressWarnings(RunMkPrime(data = mkd, tree = tree,
+                       model = model, mcmc = mcmc))
   expect_s3_class(result, "MkPosterior")
   expect_true(all(is.finite(result$samples[, "log_posterior"])))
 })
