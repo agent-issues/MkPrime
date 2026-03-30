@@ -29,7 +29,7 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| M-148 | P2 | OPEN | **Serial multi-run mode ignores `maxRhat` stopping criterion.** *Likely resolved:* `.RunSerialRuns()` two-phase orchestrator now dispatches at line 345 of `RunMkPrime.R` when `nRuns >= 2 && maxRhat` is set. Needs formal verification: confirm tests cover cross-run R-hat convergence, then archive to completed-tasks.md. |
+
 
 | M-131 | P2 | OPEN | **Warmup stabilisation detector: adaptive `windowSize` + validation study.** `.CheckStabilisation()` uses hardcoded `windowSize=10` (Geweke comparison windows), giving a minimum 11,500-iteration warmup floor regardless of tree size. Propose scaling `windowSize` with `nEdge` (`max(5, min(20, nEdge %/% 10))`). Requires empirical validation: run 8 benchmark datasets (20–88 tips) × 4 seeds on Hamilton with warmup disabled (200k iter), then replay the detector offline with a grid of `windowSize` and `nStableRequired` values to verify no false positives. **Briefing:** `.positai/plans/2026-03-29-m131-warmup-stabilisation-validation.md` |
 
