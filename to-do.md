@@ -22,7 +22,7 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| M-151 | P2 | OPEN | **`plot()` and `print()` broken for streaming multi-run results.** S-RED round 14 finds: **(a) `plot()` crashes:** `plot.MkPosterior()` line 190 accesses `pb$per_run[[run]]$samples[, colIdx]`, but streaming per-run `samples` is NULL (line 1800 of RunMkPrime.R). Crashes with subscript error on any `plot(result)` call for streaming + nRuns > 1. Fix: fall back to combined samples for multi-run overlay, or auto-load per-run from log files. **(b) `print()` displays empty per-run count:** `nrow(x$per_run[[1]]$samples)` → `nrow(NULL)` → NULL → "Runs: 2 ( samples each)". Fix: use `x$per_run[[1]]$saved_idx` for streaming. **(c) `.PostBurninData()` crashes for streaming multi-run with burnin > 0:** `nrow(r$samples)` at burnin.R:169 where `r$samples` is NULL. Low impact (requires explicit `result$burnin <- N`). |
+
 
 
 ## MCMC infrastructure
