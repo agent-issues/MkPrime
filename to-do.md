@@ -23,7 +23,7 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
 | M-146 | P3 | OPEN | **Move weights display: silver names, colour-coded values only.** Follow-up to M-140. Current scheme colour-codes entire entries; instead, all parameter names should be silver and only the percentage values should be coloured: green (>10%), orange (5–10%), yellow/white (<5%). In `.FormatMoveWeights()` (`R/RunMkPrime.R`). |
-| M-147 | P3 | OPEN | **Fix Unicode escapes in adapted-thin cli message.** `cli::cli_alert_info("... \\u2192 ...")` renders as literal `\u2192` instead of `→`. Same for `\\u2248` (`≈`). In `.AdaptThinning()` around line 1170 of `R/RunMkPrime.R`. Fix: use raw Unicode characters directly or `\u2192` (single backslash) outside the glue string. |
+
 
 ## MCMC infrastructure
 
