@@ -24,8 +24,7 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| M-132 | P1 | OPEN | **Streaming mode: log file exists but is empty; `posterior$trees` and `plot(posterior)` fail.** The named `.log` file is created (header written by `.OpenLogFiles()`) but no sample rows are flushed to it. Consequently `posterior$trees` returns NULL and `plot()` errors with "Samples are not in memory". Two sub-issues: (a) investigate why `.FlushBuffer()` never fires (buffer never fills? early exit before flush?), (b) even when the log file has data, `posterior$trees` and `plot()` should auto-load from disk as `ConvergenceDiagnostics()` already does. *(from u.015, u.546.cpp)* |
-| M-133 | P1 | OPEN | **`log_posterior` trace panel blank during warmup.** The live MCMC trace plot for `log_posterior` renders an empty panel throughout the warmup phase. *(from u.943)* |
+
 
 
 
