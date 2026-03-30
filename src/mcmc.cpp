@@ -3040,6 +3040,265 @@ static List pspr_proposal_impl(
 
 
 // ---------------------------------------------------------------------------
+// Gibbs kPrime sweep (moveType 25)
+//
+// Samples each k'_i from its full conditional in a single random-order scan
+// of all transformational characters. Always accepts (Gibbs update).
+// ---------------------------------------------------------------------------
+
+static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
+                                     double beta) {
+  int nTrans = (int)data->transIdxGlobal.size();
+  if (nTrans == 0) return false;
+
+  // Pre-compute absolute edge lengths
+  int nEdge = state->relBrLengths.size();
+  NumericVector edgeLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    edgeLen[i] = state->treeLength * state->relBrLengths[i];
+
+  // Pre-compute ACRV rates
+  bool useAcrv = (state->rateLogSd > 0.0);
+  NumericVector acrvRates = useAcrv
+    ? cpp_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ)
+    : NumericVector(1, 1.0);
+
+  // Build global-char-index → local-column-index map
+  std::vector<int> charToLocalIdx(data->nChar, -1);
+  for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
+    const PartInfo& part = data->parts[pi];
+    int nCols = part.tipStates.ncol();
+    for (int ci = 0; ci < nCols; ++ci)
+      charToLocalIdx[part.globalCharIdx[ci]] = ci;
+  }
+
+  // Cache for constant-site probability by kStates (shared across characters)
+  std::vector<double> cspCache;       // indexed by kStates
+  int cspCacheSize = 0;
+  auto getCSP = [&](int kStates) -> double {
+    if (data->codingType == 0) return 0.0;
+    if (kStates >= cspCacheSize) {
+      int newSize = kStates + 20;  // headroom
+      cspCache.resize(newSize, -1.0);
+      cspCacheSize = newSize;
+    }
+    if (cspCache[kStates] < 0.0) {
+      cspCache[kStates] = const_site_prob_for_k(
+        *data, state->parent, state->child, edgeLen,
+        kStates, state->betaScale, acrvRates);
+    }
+    return cspCache[kStates];
+  };
+
+  // Prior components (fixed during sweep)
+  bool isGeometric = !data->kPriorLogseries;
+  double logP = 0.0, log1mP = 0.0;
+  double lsLogC = 0.0, lsLogNorm = 0.0;
+  if (isGeometric) {
+    logP   = std::log(state->p);
+    log1mP = std::log1p(-state->p);
+  } else {
+    double c = data->kprimeLogseriesC;
+    lsLogC    = std::log(c);
+    lsLogNorm = std::log(-std::log1p(-c));
+  }
+
+  // Random permutation of transformational character indices
+  std::vector<int> perm(nTrans);
+  for (int i = 0; i < nTrans; ++i) perm[i] = i;
+  for (int i = nTrans - 1; i > 0; --i) {
+    int j = static_cast<int>(R::unif_rand() * (i + 1));
+    if (j > i) j = i;
+    std::swap(perm[i], perm[j]);
+  }
+
+  static const int K_MAX_CAND = 50;
+  static const double LOG_CUTOFF = -57.5;  // ~25 orders of magnitude
+
+  // Sweep over all transformational characters
+  for (int si = 0; si < nTrans; ++si) {
+    int ti = perm[si];
+    int gi = data->transIdxGlobal[ti];
+    int kObs_i  = data->kObs[gi];
+    int partIdx = data->charToPartition[gi];
+    int locIdx  = charToLocalIdx[gi];
+    if (partIdx < 0 || locIdx < 0) continue;
+
+    const PartInfo& part = data->parts[partIdx];
+    const int* tipCol = &part.tipStates(0, locIdx);
+
+    // Enumerate candidate k' values and compute log-weights
+    double logW[K_MAX_CAND];
+    int nCand = 0;
+    double maxLogW = R_NegInf;
+
+    for (int k = kObs_i; k < kObs_i + K_MAX_CAND; ++k) {
+      double csp = getCSP(k);
+
+      double logLik_k = single_char_loglik_jc(
+        *data, state->parent, state->child, edgeLen,
+        tipCol, k, kObs_i, state->betaScale, acrvRates, csp);
+
+      double logPrior_k;
+      if (isGeometric) {
+        logPrior_k = logP + (k - kObs_i) * log1mP;
+      } else {
+        logPrior_k = k * lsLogC
+                   - std::log(static_cast<double>(k)) - lsLogNorm;
+      }
+
+      double w = beta * logLik_k + logPrior_k;
+      logW[nCand++] = w;
+      if (w > maxLogW) maxLogW = w;
+
+      // Early termination when weight drops enough below peak
+      if (w < maxLogW + LOG_CUTOFF) break;
+    }
+
+    if (nCand == 0) continue;
+
+    // Sample from categorical (log-sum-exp)
+    double sumExp = 0.0;
+    for (int c = 0; c < nCand; ++c)
+      sumExp += std::exp(logW[c] - maxLogW);
+
+    double u = R::unif_rand() * sumExp;
+    double cum = 0.0;
+    int chosen = nCand - 1;
+    for (int c = 0; c < nCand; ++c) {
+      cum += std::exp(logW[c] - maxLogW);
+      if (cum >= u) { chosen = c; break; }
+    }
+
+    state->kPrime[gi] = kObs_i + chosen;
+  }
+
+  // Rebuild logLik, logPrior, and partition cache after sweep
+  ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
+  int nParts = (int)data->parts.size();
+  std::vector<double> newPLC(nParts);
+  double newLL = 0.0;
+  for (int pi = 0; pi < nParts; ++pi) {
+    newPLC[pi] = cpp_partition_log_likelihood(
+      *data, pi, state->parent, state->child, edgeLen,
+      state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
+      state->betaScale, wsPtr);
+    newLL += newPLC[pi];
+  }
+  state->logLik = newLL;
+  state->partLogLik = std::move(newPLC);
+
+  state->logPrior = cpp_log_prior(
+    *data, state->treeLength, state->relBrLengths,
+    state->rateLoss, state->rateLogSd, state->rateNeo,
+    state->p, state->kPrime, state->betaScale);
+
+  state->nodeCL.valid = false;
+
+  return true;  // Gibbs: always accept
+}
+
+
+// ---------------------------------------------------------------------------
+// Block kPrime shift (moveType 26)
+//
+// Proposes shifting ALL transformational characters by the same integer delta.
+// Standard MH acceptance with symmetric proposal.
+// ---------------------------------------------------------------------------
+
+static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
+                                     int intWalkWindow, double beta) {
+  int nTrans = (int)data->transIdxGlobal.size();
+  if (nTrans == 0) return false;
+
+  // Propose delta ~ Uniform({-W, ..., W})
+  int range = 2 * intWalkWindow + 1;
+  int delta = static_cast<int>(R::unif_rand() * range) - intWalkWindow;
+  if (delta == 0) return false;
+
+  // Feasibility: all k'_i + delta >= kObs_i
+  for (int i = 0; i < nTrans; ++i) {
+    int gi = data->transIdxGlobal[i];
+    if (state->kPrime[gi] + delta < data->kObs[gi]) return false;
+  }
+
+  // Save old values and apply shift
+  std::vector<int> oldKPrime(nTrans);
+  for (int i = 0; i < nTrans; ++i) {
+    int gi = data->transIdxGlobal[i];
+    oldKPrime[i] = state->kPrime[gi];
+    state->kPrime[gi] += delta;
+  }
+
+  // Recompute log-prior
+  double newLogPrior = cpp_log_prior(
+    *data, state->treeLength, state->relBrLengths,
+    state->rateLoss, state->rateLogSd, state->rateNeo,
+    state->p, state->kPrime, state->betaScale);
+
+  if (!R_FINITE(newLogPrior)) {
+    for (int i = 0; i < nTrans; ++i)
+      state->kPrime[data->transIdxGlobal[i]] = oldKPrime[i];
+    return false;
+  }
+
+  // Recompute log-likelihood (only transformational partitions affected)
+  int nEdge = state->relBrLengths.size();
+  NumericVector edgeLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    edgeLen[i] = state->treeLength * state->relBrLengths[i];
+
+  ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
+  bool hasPLC = !state->partLogLik.empty();
+  int nParts = (int)data->parts.size();
+  std::vector<double> newPC;
+  double newLogLik;
+
+  if (hasPLC) {
+    newPC = state->partLogLik;
+    newLogLik = state->logLik;
+    for (int pi = 0; pi < nParts; ++pi) {
+      if (data->parts[pi].type == 1) {  // transformational only
+        double v = cpp_partition_log_likelihood(
+          *data, pi, state->parent, state->child, edgeLen,
+          state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
+          state->betaScale, wsPtr);
+        newLogLik += (v - newPC[pi]);
+        newPC[pi] = v;
+      }
+    }
+  } else {
+    newPC.resize(nParts);
+    newLogLik = 0.0;
+    for (int pi = 0; pi < nParts; ++pi) {
+      newPC[pi] = cpp_partition_log_likelihood(
+        *data, pi, state->parent, state->child, edgeLen,
+        state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
+        state->betaScale, wsPtr);
+      newLogLik += newPC[pi];
+    }
+  }
+
+  // MH acceptance (symmetric proposal, logHastings = 0)
+  double logAlpha = beta * (newLogLik - state->logLik) +
+                    (newLogPrior - state->logPrior);
+
+  if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+    state->logLik = newLogLik;
+    state->logPrior = newLogPrior;
+    state->partLogLik = std::move(newPC);
+    state->nodeCL.valid = false;
+    return true;
+  }
+
+  // Rollback
+  for (int i = 0; i < nTrans; ++i)
+    state->kPrime[data->transIdxGlobal[i]] = oldKPrime[i];
+  return false;
+}
+
+
+// ---------------------------------------------------------------------------
 // do_move_impl: internal propose/evaluate/accept (raw pointers, no SEXP).
 // do_move_cpp:  Rcpp-exported SEXP wrapper — calls do_move_impl.
 //
@@ -3049,7 +3308,9 @@ static List pspr_proposal_impl(
 //           12=weighted_br_scale, 13=weighted_spr, 14=weighted_subtree_swap,
 //           15=block_gibbs_branch, 16=beta_scale, 17=tbr,
 //           18=neo_joint_scale, 19=slice_scalar, 20=pspr,
-//           21=joint_tl_rls, 22=joint_tl_rl
+//           21=joint_tl_rls, 22=joint_tl_rl,
+//           23=dirichlet_branch, 24=local_dirichlet,
+//           25=gibbs_kprime_sweep, 26=block_kprime_shift
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -3412,6 +3673,12 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         return false;
       }
       break;
+    }
+    case 25: { // gibbs_kprime_sweep — Gibbs update of all k'_i
+      return gibbs_kprime_sweep_impl(data, state, beta);
+    }
+    case 26: { // block_kprime_shift — shift all k'_i by same delta
+      return block_kprime_shift_impl(data, state, intWalkWindow, beta);
     }
     default:
       return false;

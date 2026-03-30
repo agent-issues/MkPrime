@@ -920,7 +920,7 @@ RunMkPrime <- function(data, tree = NULL,
                  edge.length = tl * relBr,
                  Nnode       = length(tipLabels) - 2L,
                  tip.label   = tipLabels),
-            class = "phylo"
+            class = "phylo", order = "cladewise"
           )
           r$tree_samples[[r$tree_saved_idx]] <- curTree
           if (!is.null(treeFile))
@@ -949,7 +949,7 @@ RunMkPrime <- function(data, tree = NULL,
                  edge.length = tl * relBr,
                  Nnode       = length(tipLabels) - 2L,
                  tip.label   = tipLabels),
-            class = "phylo"
+            class = "phylo", order = "cladewise"
           )
         }
       }
@@ -3187,7 +3187,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       Nnode = length(tipLabels) - 2L,
       tip.label = tipLabels
     ),
-    class = "phylo"
+    class = "phylo", order = "cladewise"
   )
 }
 

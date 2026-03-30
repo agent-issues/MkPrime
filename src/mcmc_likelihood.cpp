@@ -71,8 +71,8 @@ double mk_prime_relabel_log(int kPrime, int kObs);
 
 // OPP-3: acrvZ = precomputed qnorm((i+0.5)/nCat) stored in McmcData — no
 // transcendental calls per iteration; only exp() + scaling remain.
-static NumericVector cpp_acrv_rates(double rateLogSd, int nCat,
-                                    const std::vector<double>& acrvZ) {
+NumericVector cpp_acrv_rates(double rateLogSd, int nCat,
+                             const std::vector<double>& acrvZ) {
   if (rateLogSd <= 0.0) return NumericVector(nCat, 1.0);
   double mu = -rateLogSd * rateLogSd / 2.0;
   NumericVector rates(nCat);
@@ -803,6 +803,172 @@ static double het_singleton_site_prob(
   // matters. Singleton correction ("informative") is Phase 7.
   // Return 0 for now — safe because informative coding is not yet supported.
   return 0.0;
+}
+
+
+// ---------------------------------------------------------------------------
+// Single-character JC likelihood helpers (for Gibbs kPrime sweep)
+// ---------------------------------------------------------------------------
+
+// Inline JC pruning for one character with ACRV.
+// Returns raw (not log) site likelihood averaged over rate categories.
+// tipCol: pointer to nTip ints (0-indexed states, -1 = missing).
+static double jc1_acrv(
+    const IntegerVector& parent, const IntegerVector& child,
+    const NumericVector& edgeLen,
+    const int* tipCol, int nTip, int kStates,
+    const NumericVector& rates, int nCat) {
+
+  int nEdge = parent.size();
+  int maxNode = 2 * nTip - 1;
+  int root = nTip + 1;
+
+  std::vector<double> cl((maxNode + 1) * kStates);
+  std::vector<uint8_t> flg(maxNode + 1);
+
+  // Init tips once (constant across rate categories)
+  std::memset(cl.data(), 0, cl.size() * sizeof(double));
+  std::memset(flg.data(), 0, flg.size() * sizeof(uint8_t));
+  for (int t = 1; t <= nTip; ++t) {
+    double* p = cl.data() + t * kStates;
+    int st = tipCol[t - 1];
+    if (st < 0) {
+      for (int s = 0; s < kStates; ++s) p[s] = 1.0;
+    } else {
+      p[st] = 1.0;
+    }
+    flg[t] = 1;
+  }
+
+  double inv_k = 1.0 / kStates;
+  double km1 = kStates - 1.0;
+  double siteLikSum = 0.0;
+
+  for (int cat = 0; cat < nCat; ++cat) {
+    double rate = rates[cat];
+
+    // Reset internal node init flags (tips stay init'd)
+    for (int n = nTip + 1; n <= maxNode; ++n) flg[n] = 0;
+
+    for (int e = nEdge - 1; e >= 0; --e) {
+      int par = parent[e], ch = child[e];
+      double t = edgeLen[e] * rate;
+      double ex = std::exp(-kStates * t / km1);
+      double ps = inv_k + (1.0 - inv_k) * ex;
+      double pd = inv_k - inv_k * ex;
+      double dc = ps - pd;
+
+      double* cp = cl.data() + par * kStates;
+      double* cc = cl.data() + ch * kStates;
+
+      double sum = 0.0;
+      for (int j = 0; j < kStates; ++j) sum += cc[j];
+
+      if (!flg[par]) {
+        for (int i = 0; i < kStates; ++i)
+          cp[i] = pd * sum + dc * cc[i];
+        flg[par] = 1;
+      } else {
+        for (int i = 0; i < kStates; ++i)
+          cp[i] *= pd * sum + dc * cc[i];
+      }
+    }
+
+    double* clR = cl.data() + root * kStates;
+    double sl = 0.0;
+    for (int s = 0; s < kStates; ++s) sl += inv_k * clR[s];
+    siteLikSum += sl;
+  }
+
+  return siteLikSum / nCat;
+}
+
+
+// Constant-site probability for a given kStates, handling JC and Het paths.
+double const_site_prob_for_k(
+    const McmcData& data,
+    const IntegerVector& parent, const IntegerVector& child,
+    const NumericVector& edgeLen,
+    int kStates, double betaScale,
+    const NumericVector& acrvRates) {
+
+  if (data.codingType == 0) return 0.0;
+
+  if (data.qHeterogeneity) {
+    double hetBins[16];
+    compute_het_bins(betaScale, kStates, data.nBetaCat, hetBins);
+    NumericVector rates = acrvRates;
+    if (rates.size() == 0) rates = NumericVector(1, 1.0);
+    double p = het_constant_site_prob(
+      parent, child, edgeLen, data.nTip,
+      kStates, 1.0, hetBins, data.nBetaCat, rates);
+    // Phase 7: add het_singleton_site_prob when coding == 2
+    return p;
+  } else {
+    NumericVector rootFreqs(kStates, 1.0 / kStates);
+    double p = constant_site_prob_jc(parent, child, edgeLen, data.nTip,
+                                      kStates, rootFreqs, acrvRates);
+    // Phase 7: add singleton_site_prob_jc when coding == 2
+    return p;
+  }
+}
+
+
+// Full log-likelihood for one transformational character under JC(kStates).
+// Handles JC, ACRV, Het/F81, ascertainment correction, and relabeling.
+double single_char_loglik_jc(
+    const McmcData& data,
+    const IntegerVector& parent, const IntegerVector& child,
+    const NumericVector& edgeLen,
+    const int* tipCol,
+    int kStates, int kObs,
+    double betaScale,
+    const NumericVector& acrvRates,
+    double constSiteProb) {
+
+  double ll;
+
+  if (data.qHeterogeneity) {
+    // F81 Het path: create 1-column matrix and use existing pruning function
+    IntegerMatrix sub(data.nTip, 1);
+    for (int t = 0; t < data.nTip; ++t) sub(t, 0) = tipCol[t];
+
+    double hetBins[16];
+    compute_het_bins(betaScale, kStates, data.nBetaCat, hetBins);
+
+    int maxNode = 2 * data.nTip - 1;
+    int tmpStride = kStates;  // 1 character x kStates states
+    std::vector<double> tmpBuf((maxNode + 1) * tmpStride, 0.0);
+    std::vector<uint8_t> tmpInit(maxNode + 1, 0);
+
+    NumericVector rates = acrvRates;
+    if (rates.size() == 0) rates = NumericVector(1, 1.0);
+
+    ll = pruning_f81_het_acrv_flat(
+      parent, child, edgeLen, sub,
+      kStates, 1.0, hetBins, data.nBetaCat, rates,
+      tmpBuf.data(), tmpInit.data(), tmpStride);
+  } else {
+    // JC path: inline single-character pruning
+    double rawLik = jc1_acrv(parent, child, edgeLen, tipCol,
+                              data.nTip, kStates, acrvRates,
+                              acrvRates.size());
+    if (rawLik <= 0.0) return R_NegInf;
+    ll = std::log(rawLik);
+  }
+
+  // Ascertainment correction
+  if (data.codingType != 0) {
+    if (constSiteProb >= 1.0) return R_NegInf;
+    ll -= std::log(1.0 - constSiteProb);
+  }
+
+  // Relabeling correction
+  if (data.relabel) {
+    ll += mk_prime_relabel_log(kStates, kObs);
+  }
+
+  return ll;
 }
 
 

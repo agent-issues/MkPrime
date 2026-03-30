@@ -148,4 +148,32 @@ double cpp_partition_log_likelihood(
     double rateLoss, double rateLogSd, double rateNeo,
     double betaScale = 1.0,
     ClWorkspace* ws = nullptr);
+
+// ACRV rate computation (exposed for Gibbs kPrime sweep).
+Rcpp::NumericVector cpp_acrv_rates(double rateLogSd, int nCat,
+                                    const std::vector<double>& acrvZ);
+
+// Single-character JC log-likelihood for Gibbs kPrime sweep.
+// Handles JC + ACRV + Het + ascertainment correction + relabeling.
+// constSiteProb should be pre-computed via const_site_prob_for_k().
+double single_char_loglik_jc(
+    const McmcData& data,
+    const Rcpp::IntegerVector& parent,
+    const Rcpp::IntegerVector& child,
+    const Rcpp::NumericVector& edgeLen,
+    const int* tipCol,
+    int kStates, int kObs,
+    double betaScale,
+    const Rcpp::NumericVector& acrvRates,
+    double constSiteProb);
+
+// Constant-site probability for a given kStates (cache helper for Gibbs sweep).
+double const_site_prob_for_k(
+    const McmcData& data,
+    const Rcpp::IntegerVector& parent,
+    const Rcpp::IntegerVector& child,
+    const Rcpp::NumericVector& edgeLen,
+    int kStates, double betaScale,
+    const Rcpp::NumericVector& acrvRates);
+
 #endif  // MKPRIME_MCMC_STATE_H
