@@ -21,7 +21,9 @@ SetBurnin <- function(posterior, burnin) {
 
   nRuns <- posterior$nRuns %||% 1L
   if (nRuns > 1L && !is.null(posterior$per_run)) {
-    nPerRun <- nrow(posterior$per_run[[1]]$samples)
+    nPerRun <- nrow(posterior$per_run[[1]]$samples) %||%
+               posterior$per_run[[1]]$saved_idx %||%
+               (posterior$nSamples %/% nRuns)
   } else {
     nPerRun <- nrow(posterior$samples)
   }
@@ -71,7 +73,9 @@ AutoBurnin <- function(posterior,
   hasRhat <- nRuns >= 2L && !is.null(posterior$per_run)
 
   if (hasRhat) {
-    nPerRun <- nrow(posterior$per_run[[1]]$samples)
+    nPerRun <- nrow(posterior$per_run[[1]]$samples) %||%
+               posterior$per_run[[1]]$saved_idx %||%
+               (posterior$nSamples %/% nRuns)
   } else {
     nPerRun <- nrow(posterior$samples)
   }
@@ -148,8 +152,20 @@ AutoBurnin <- function(posterior,
     posterior$samples <- ReadMkLog(posterior$logFile)
   }
 
-  bi <- burnin %||% (posterior$burnin %||% 0L)
+  # Auto-load per-run samples from individual log files when NULL (streaming)
   nRuns <- posterior$nRuns %||% 1L
+  if (nRuns > 1L && !is.null(posterior$per_run) &&
+      !is.null(posterior$logFile)) {
+    for (i in seq_along(posterior$per_run)) {
+      if (is.null(posterior$per_run[[i]]$samples) &&
+          i <= length(posterior$logFile) &&
+          file.exists(posterior$logFile[i])) {
+        posterior$per_run[[i]]$samples <- ReadMkLog(posterior$logFile[i])
+      }
+    }
+  }
+
+  bi <- burnin %||% (posterior$burnin %||% 0L)
 
   # Differential tree thinning: compute tree-side burnin
   treeThin <- posterior$treeThin %||% posterior$mcmc$thin

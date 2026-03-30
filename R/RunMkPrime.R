@@ -301,6 +301,15 @@ RunMkPrime <- function(data, tree = NULL,
   # self-contained (temp files will be deleted by on.exit).
   if (isTempLog && result$nSamples > 0L) {
     result$samples <- ReadMkLog(logFilePaths)
+    # Load per-run samples too (streaming sets them to NULL)
+    if (!is.null(result$per_run)) {
+      for (i in seq_along(result$per_run)) {
+        if (is.null(result$per_run[[i]]$samples) &&
+            i <= length(logFilePaths)) {
+          result$per_run[[i]]$samples <- ReadMkLog(logFilePaths[i])
+        }
+      }
+    }
     result$logFile <- NULL
   }
 

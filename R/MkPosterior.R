@@ -51,7 +51,10 @@ print.MkPosterior <- function(x, ...) {
   }
 
   if (nRuns > 1L) {
-    info <- c(info, "Runs: {nRuns} ({nrow(x$per_run[[1]]$samples)} samples each)")
+    perRunN <- nrow(x$per_run[[1]]$samples) %||%
+               x$per_run[[1]]$saved_idx %||%
+               (x$nSamples %/% nRuns)
+    info <- c(info, "Runs: {nRuns} ({perRunN} samples each)")
   }
   if (nChains > 1L) {
     info <- c(info, "Chains per run: {nChains} (cold + {nChains - 1L} heated)")
@@ -175,7 +178,10 @@ plot.MkPosterior <- function(x, ...) {
   oldpar <- par(mfrow = c(nRow, nCol), mar = c(3, 3, 2, 1))
   on.exit(par(oldpar))
 
-  if (nRuns > 1L && !is.null(pb$per_run)) {
+  hasPerRunSamples <- nRuns > 1L && !is.null(pb$per_run) &&
+    !is.null(pb$per_run[[1]]$samples)
+
+  if (hasPerRunSamples) {
     colors <- grDevices::hcl.colors(nRuns, palette = "Set 2")
 
     for (colIdx in keyCols) {
