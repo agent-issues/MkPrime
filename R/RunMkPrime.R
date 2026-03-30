@@ -229,7 +229,6 @@ RunMkPrime <- function(data, tree = NULL,
 
   # --- Log file setup ---
   # Always stream to a log file for interrupt recovery.  When the user
-
   # didn't supply logFile, write to a temp file and load samples into
   # memory on clean completion.
   userLogFile <- mcmc$logFile
@@ -237,17 +236,23 @@ RunMkPrime <- function(data, tree = NULL,
   if (isTempLog) {
     mcmc$logFile <- tempfile("mkp_run_", fileext = ".log")
   }
+  # Always checkpoint — derive from log path if not already set
+  if (is.null(mcmc$checkpointFile)) {
+    mcmc$checkpointFile <- sub("\\.[^.]+$", ".ckp", mcmc$logFile)
+  }
   isStreaming     <- TRUE
   convWindowSize  <- .ComputeConvWindowSize(mcmc)
   logFilePaths    <- .OpenLogFiles(mcmc$logFile, paramNames, nRuns)
 
-  # Register temp logs so cleanup can find them (crash, new run, etc.)
-  .mkp_env$active_temp_logs <- if (isTempLog) logFilePaths else NULL
+  # Register temp files so cleanup can find them (crash, new run, etc.)
+  isTempCkp <- isTempLog  # temp checkpoint lives beside temp log
+  tempFiles <- if (isTempLog) c(logFilePaths, mcmc$checkpointFile) else NULL
+  .mkp_env$active_temp_logs <- tempFiles
 
   # Clean up temp files on normal exit or error — but NOT on interrupt,
   # where we want MkPrimeRecover() to find them.
   if (isTempLog) {
-    on.exit(.CleanupTempLogs(logFilePaths), add = TRUE)
+    on.exit(.CleanupTempLogs(tempFiles), add = TRUE)
   }
 
   treeFile <- mcmc$treeFile
@@ -411,10 +416,10 @@ RunMkPrime <- function(data, tree = NULL,
 }
 
 
-#' Delete temporary log files
+#' Delete temporary files (logs + checkpoint)
 #' @keywords internal
-.CleanupTempLogs <- function(logFilePaths) {
-  for (f in logFilePaths) {
+.CleanupTempLogs <- function(tempFiles) {
+  for (f in tempFiles) {
     tryCatch(unlink(f), error = function(e) NULL)
   }
   .mkp_env$active_temp_logs <- NULL

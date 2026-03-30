@@ -71,7 +71,9 @@
 #'   exits with `stop_reason = "cancelled"`. Create the file to request a
 #'   clean stop: `file.create(cancelFile)`. See also [MkCancelPath()].
 #' @param checkpointFile Path to write checkpoint RDS files. `NULL`
-#'   (default) disables checkpointing. Checkpoints are saved at each
+#'   (default) auto-derives from `logFile` when set
+#'   (e.g. `"run.log"` \u2192 `"run.ckp"`). Set to `FALSE` to
+#'   disable checkpointing. Checkpoints are saved at each
 #'   convergence check interval and on cancel.
 #' @param treeFile Path to write sampled trees in Newick format.
 #'   `NULL` (default) auto-derives from `logFile` when set
@@ -391,9 +393,14 @@ MkPrimeMCMC <- function(
     if (is.null(treeFile)) {
       treeFile <- sub("\\.[^.]+$", "_trees.nwk", logFile)
     }
+    # Auto-derive checkpointFile from logFile when not specified
+    if (is.null(checkpointFile)) {
+      checkpointFile <- sub("\\.[^.]+$", ".ckp", logFile)
+    }
   }
-  # treeFile = FALSE → disable (convert to NULL for downstream code)
+  # FALSE → disable (convert to NULL for downstream code)
   if (identical(treeFile, FALSE)) treeFile <- NULL
+  if (identical(checkpointFile, FALSE)) checkpointFile <- NULL
   bufferSize <- as.integer(bufferSize)
   if (bufferSize < 1L) {
     cli::cli_abort("{.arg bufferSize} must be a positive integer.")
