@@ -22,7 +22,6 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| M-146 | P3 | OPEN | **Move weights display: silver names, colour-coded values only.** Follow-up to M-140. Current scheme colour-codes entire entries; instead, all parameter names should be silver and only the percentage values should be coloured: green (>10%), orange (5–10%), yellow/white (<5%). In `.FormatMoveWeights()` (`R/RunMkPrime.R`). |
 
 
 ## MCMC infrastructure
