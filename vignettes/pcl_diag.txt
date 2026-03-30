@@ -1,2 +1,0 @@
-cachePop=77 nni=43(mm=0) bs=32(mm=0) dir=60(mm=0,fb=0) drift=0 maxD=4.55e-13
-cachePop=155 nni=69(mm=0) bs=86(mm=0) dir=166(mm=0,fb=0) drift=0 maxD=9.09e-13

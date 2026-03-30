@@ -29,6 +29,10 @@ Rplots.pdf
 test_output.txt
 test_run*.log
 tools/
+pcl_diag.txt
+
+# User issue files (triaged then deleted; should not be committed)
+u.[0-9]*
 
 # MCMC run output (logs, trees, posteriors)
 /*.log
@@ -41,6 +45,9 @@ diag_tempered*
 hyoliths_prod*
 hyoliths_diag*
 hyoliths_posterior*
+vignettes/*.log
+vignettes/*.trees
+vignettes/hyoliths_posterior.rds
 
 # Profiling artifacts
 .vtune-lib/
