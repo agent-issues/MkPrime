@@ -15,7 +15,8 @@
 \code{x} invisibly.
 }
 \description{
-Displays a colour-coded table of ESS and PSRF values for each parameter.
-ESS < 100 is shown in red, 100--199 in yellow, and ≥ 200 in plain text.
-Individual k' parameters are summarised as a single min–median–max row.
+Displays a colour-coded table of ESS and R-hat values for each parameter.
+ESS < 100 is shown in red, 100--199 in yellow, and \eqn{\ge}{>=} 200 in
+plain text. Individual k' parameters are summarised as a single
+min--median--max row.
 }

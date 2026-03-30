@@ -3,7 +3,7 @@
 # M-066: The posterior object stores a per-run sample count `burnin`.
 # All accessors (summary, print, plot, ConvergenceDiagnostics) respect
 # this value. AutoBurnin() searches for the optimal burnin that
-# maximizes ESS while maintaining low PSRF.
+# maximizes ESS while maintaining low R-hat.
 
 #' Set burnin for a posterior object
 #'
@@ -46,33 +46,31 @@ SetBurnin <- function(posterior, burnin) {
 #' Automatically select optimal burnin
 #'
 #' Searches over candidate burnin fractions (0% to 50% of samples) and
-#' selects the smallest burnin where PSRF is acceptable (max < 1.05),
-#' or the burnin that minimizes max(PSRF) if convergence is not achieved.
+#' selects the smallest burnin where R-hat is acceptable
+#' (max < `rhatThreshold`), or the burnin that minimizes max(R-hat) if
+#' convergence is not achieved.
 #'
-#' For single-run posteriors (no PSRF available), selects the burnin
+#' For single-run posteriors (no R-hat available), selects the burnin
 #' that maximizes min(ESS) across key parameters.
 #'
 #' @param posterior An `MkPosterior` object (typically with `nRuns >= 2`).
-#' @param psrfThreshold Maximum acceptable PSRF. Default 1.05.
+#' @param rhatThreshold Maximum acceptable R-hat. Default 1.05.
 #' @param fractions Candidate burnin fractions to evaluate. Default
 #'   `seq(0, 0.5, by = 0.05)`.
 #'
 #' @return A new `MkPosterior` with the selected burnin set.
 #' @export
 AutoBurnin <- function(posterior,
-                       psrfThreshold = 1.05,
+                       rhatThreshold = 1.05,
                        fractions = seq(0, 0.5, by = 0.05)) {
   if (!inherits(posterior, "MkPosterior")) {
     cli::cli_abort("{.arg posterior} must be an {.cls MkPosterior} object.")
   }
-  if (!requireNamespace("coda", quietly = TRUE)) {
-    cli::cli_abort("Package {.pkg coda} is required for {.fn AutoBurnin}.")
-  }
 
   nRuns <- posterior$nRuns %||% 1L
-  hasPsrf <- nRuns >= 2L && !is.null(posterior$per_run)
+  hasRhat <- nRuns >= 2L && !is.null(posterior$per_run)
 
-  if (hasPsrf) {
+  if (hasRhat) {
     nPerRun <- nrow(posterior$per_run[[1]]$samples)
   } else {
     nPerRun <- nrow(posterior$samples)
@@ -82,7 +80,7 @@ AutoBurnin <- function(posterior,
     fraction = fractions,
     burnin = as.integer(floor(fractions * nPerRun)),
     minEss = NA_real_,
-    maxPsrf = NA_real_,
+    maxRhat = NA_real_,
     stringsAsFactors = FALSE
   )
 
@@ -99,27 +97,27 @@ AutoBurnin <- function(posterior,
     ess <- .ComputeEss(pb$samples[, keyCols, drop = FALSE])
     results$minEss[i] <- min(ess, na.rm = TRUE)
 
-    if (hasPsrf && length(pb$per_run) >= 2L) {
-      psrf <- .ComputePsrf(pb$per_run, keyCols)
-      if (!is.null(psrf) && length(psrf) > 0L) {
-        results$maxPsrf[i] <- max(psrf, na.rm = TRUE)
+    if (hasRhat && length(pb$per_run) >= 2L) {
+      rhat <- .ComputeRhat(pb$per_run, keyCols)
+      if (!is.null(rhat) && length(rhat) > 0L) {
+        results$maxRhat[i] <- max(rhat, na.rm = TRUE)
       }
     }
   }
 
-  if (hasPsrf) {
-    # Strategy: smallest burnin where max(PSRF) <= threshold
-    converged <- results[!is.na(results$maxPsrf) &
-                         results$maxPsrf <= psrfThreshold, , drop = FALSE]
+  if (hasRhat) {
+    # Strategy: smallest burnin where max(R-hat) <= threshold
+    converged <- results[!is.na(results$maxRhat) &
+                         results$maxRhat <= rhatThreshold, , drop = FALSE]
     if (nrow(converged) > 0L) {
       # Among converged, pick smallest burnin (preserves most samples / ESS)
       best <- converged[which.min(converged$burnin), ]
     } else {
-      # No burnin achieves target PSRF; pick the one with lowest max(PSRF)
-      best <- results[which.min(results$maxPsrf), ]
+      # No burnin achieves target R-hat; pick the one with lowest max(R-hat)
+      best <- results[which.min(results$maxRhat), ]
       cli::cli_warn(c(
-        "No burnin fraction achieves max(PSRF) <= {psrfThreshold}.",
-        "i" = "Selected burnin = {best$burnin} (max PSRF = {round(best$maxPsrf, 3)}).",
+        "No burnin fraction achieves max(Rhat) <= {rhatThreshold}.",
+        "i" = "Selected burnin = {best$burnin} (max Rhat = {round(best$maxRhat, 3)}).",
         "i" = "Consider running the chain longer."
       ))
     }
@@ -130,7 +128,7 @@ AutoBurnin <- function(posterior,
 
   cli::cli_inform(c(
     "v" = "Auto burnin: {best$burnin} samples ({round(best$fraction * 100)}% of {nPerRun})",
-    "i" = "min(ESS) = {round(best$minEss, 1)}{if (hasPsrf) paste0(', max(PSRF) = ', round(best$maxPsrf, 3)) else ''}"
+    "i" = "min(ESS) = {round(best$minEss, 1)}{if (hasRhat) paste0(', max(Rhat) = ', round(best$maxRhat, 3)) else ''}"
   ))
 
   posterior$burnin <- best$burnin

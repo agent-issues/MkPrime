@@ -3,9 +3,9 @@
 test_that(".PrintProgressTable returns line count", {
   diagCheck <- list(
     ess     = c(log_posterior = 150, tree_length = 80, rate_log_sd = 250, p = 200),
-    psrf    = NULL,
+    rhat = NULL,
     minEss  = 80,
-    maxPsrf = NA_real_
+    maxRhat = NA_real_
   )
 
   nLines <- capture.output(
@@ -18,12 +18,12 @@ test_that(".PrintProgressTable returns line count", {
 })
 
 
-test_that(".PrintProgressTable returns correct count with PSRF", {
+test_that(".PrintProgressTable returns correct count with R-hat", {
   diagCheck <- list(
     ess     = c(log_posterior = 150, tree_length = 80, rate_log_sd = 250),
-    psrf    = c(log_posterior = 1.01, tree_length = 1.08, rate_log_sd = 1.00),
+    rhat = c(log_posterior = 1.01, tree_length = 1.08, rate_log_sd = 1.00),
     minEss  = 80,
-    maxPsrf = 1.08
+    maxRhat = 1.08
   )
 
   nLines <- capture.output(
@@ -32,15 +32,15 @@ test_that(".PrintProgressTable returns correct count with PSRF", {
     )
   )
   expect_equal(result, length(nLines))
-  # PSRF legend adds one line
-  expect_true(any(grepl("PSRF", nLines)))
+  # R-hat legend adds one line
+  expect_true(any(grepl("Rhat", nLines)))
 })
 
 
 test_that(".PrintProgressTable includes kPrime summary row", {
   ess <- c(log_posterior = 150, tree_length = 80, p = 200,
            kPrime_1 = 300, kPrime_2 = 100, kPrime_3 = 50)
-  diagCheck <- list(ess = ess, psrf = NULL, minEss = 50, maxPsrf = NA_real_)
+  diagCheck <- list(ess = ess, rhat = NULL, minEss = 50, maxRhat = NA_real_)
 
   out <- capture.output(
     result <- MkPrime:::.PrintProgressTable(
@@ -55,9 +55,9 @@ test_that(".PrintProgressTable includes kPrime summary row", {
 test_that(".PrintProgressTable prevLines=0 does not emit ANSI codes", {
   diagCheck <- list(
     ess     = c(log_posterior = 150, tree_length = 80),
-    psrf    = NULL,
+    rhat = NULL,
     minEss  = 80,
-    maxPsrf = NA_real_
+    maxRhat = NA_real_
   )
 
   # No ANSI cursor-up on first call (prevLines = 0)
@@ -75,9 +75,9 @@ test_that(".PrintProgressTable line count is stable across calls", {
   diagCheck <- list(
     ess     = c(log_posterior = 150, tree_length = 80, rate_log_sd = 250,
                 p = 200, kPrime_1 = 300, kPrime_2 = 100),
-    psrf    = NULL,
+    rhat = NULL,
     minEss  = 80,
-    maxPsrf = NA_real_
+    maxRhat = NA_real_
   )
 
   out1 <- capture.output(

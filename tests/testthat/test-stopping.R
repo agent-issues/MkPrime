@@ -37,11 +37,11 @@ test_that("maxTime stops MCMC early", {
 
 
 test_that("MkPrimeMCMC stores stopping parameters", {
-  cfg <- MkPrimeMCMC(maxTime = 60, minEss = 200, maxPsrf = 1.05,
+  cfg <- MkPrimeMCMC(maxTime = 60, minEss = 200, maxRhat = 1.05,
                       checkEvery = 500L)
   expect_equal(cfg$maxTime, 60)
   expect_equal(cfg$minEss, 200)
-  expect_equal(cfg$maxPsrf, 1.05)
+  expect_equal(cfg$maxRhat, 1.05)
   expect_equal(cfg$checkEvery, 500L)
 })
 
@@ -57,7 +57,7 @@ test_that("Convergence-based stopping works", {
   set.seed(9283)
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 50000L, thin = 5L,
-                        maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE, minEss = 5, maxPsrf = 5.0,
+                        maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE, minEss = 5, maxRhat = 5.0,
                         checkEvery = 300L))
 
   # Should stop before max_iter due to generous criteria
@@ -84,13 +84,13 @@ test_that(".CheckConvergence returns NULL for insufficient samples", {
                           dimnames = list(NULL, paramNames)))
   )
 
-  mcmc <- MkPrimeMCMC(minEss = 100, maxPsrf = 1.05)
+  mcmc <- MkPrimeMCMC(minEss = 100, maxRhat = 1.05)
   result <- MkPrime:::.CheckConvergence(runs, paramNames, mcmc)
   expect_null(result)
 })
 
 
-test_that(".CheckConvergence returns per-parameter ess and psrf for multi-run", {
+test_that(".CheckConvergence returns per-parameter ess and rhat for multi-run", {
   set.seed(6142)
   paramNames <- c("log_posterior", "log_likelihood", "tree_length",
                    "rate_loss", "rate_log_sd", "p")
@@ -101,7 +101,7 @@ test_that(".CheckConvergence returns per-parameter ess and psrf for multi-run", 
                        dimnames = list(NULL, paramNames))
   )
   runs <- list(makeRun(), makeRun())
-  mcmc <- MkPrimeMCMC(minEss = 100, maxPsrf = 1.05)
+  mcmc <- MkPrimeMCMC(minEss = 100, maxRhat = 1.05)
 
   result <- MkPrime:::.CheckConvergence(runs, paramNames, mcmc)
   expect_false(is.null(result))
@@ -112,20 +112,20 @@ test_that(".CheckConvergence returns per-parameter ess and psrf for multi-run", 
   expect_named(result$ess, paramNames[keyCols], ignore.order = FALSE)
   expect_true(all(result$ess > 0, na.rm = TRUE))
 
-  # Per-parameter PSRF vector present (multi-run)
-  expect_true(!is.null(result$psrf))
-  expect_named(result$psrf, paramNames[keyCols], ignore.order = FALSE)
-  expect_true(all(result$psrf > 0, na.rm = TRUE))
+  # Per-parameter R-hat vector present (multi-run)
+  expect_true(!is.null(result$rhat))
+  expect_named(result$rhat, paramNames[keyCols], ignore.order = FALSE)
+  expect_true(all(result$rhat > 0, na.rm = TRUE))
 
   # Scalar summaries still present
   expect_true(is.numeric(result$minEss))
-  expect_true(is.numeric(result$maxPsrf))
+  expect_true(is.numeric(result$maxRhat))
   expect_equal(result$minEss, min(result$ess, na.rm = TRUE))
-  expect_equal(result$maxPsrf, max(result$psrf, na.rm = TRUE))
+  expect_equal(result$maxRhat, max(result$rhat, na.rm = TRUE))
 })
 
 
-test_that(".CheckConvergence works for single run (ESS only, psrf = NULL)", {
+test_that(".CheckConvergence works for single run (ESS only, rhat = NULL)", {
   set.seed(3871)
   paramNames <- c("log_posterior", "log_likelihood", "tree_length",
                    "rate_loss", "rate_log_sd", "p")
@@ -143,9 +143,9 @@ test_that(".CheckConvergence works for single run (ESS only, psrf = NULL)", {
   expect_true(!is.null(result$ess))
   expect_true(all(result$ess > 0, na.rm = TRUE))
 
-  # No PSRF for single run
-  expect_null(result$psrf)
-  expect_true(is.na(result$maxPsrf))
+  # No R-hat for single run
+  expect_null(result$rhat)
+  expect_true(is.na(result$maxRhat))
 
   # Cannot converge on minEss alone when criterion not met
   expect_false(result$converged)
@@ -162,9 +162,9 @@ test_that(".PrintProgressTable prints without error", {
   # Simulate a diagCheck return value
   diagCheck <- list(
     ess     = setNames(runif(length(keyNames), 50, 300), keyNames),
-    psrf    = setNames(runif(length(keyNames), 1, 1.05), keyNames),
+    rhat    = setNames(runif(length(keyNames), 1, 1.05), keyNames),
     minEss  = 50,
-    maxPsrf = 1.05
+    maxRhat = 1.05
   )
 
   out <- capture.output(
@@ -175,11 +175,11 @@ test_that(".PrintProgressTable prints without error", {
   expect_true(any(grepl("log_posterior", out)))
   expect_true(any(grepl("tree_length",   out)))
   expect_true(any(grepl("ESS",           out)))
-  expect_true(any(grepl("PSRF",          out)))
+  expect_true(any(grepl("Rhat",          out)))
 })
 
 
-test_that(".PrintProgressTable single-run omits PSRF column", {
+test_that(".PrintProgressTable single-run omits R-hat column", {
   set.seed(7318)
   paramNames <- c("log_posterior", "log_likelihood", "tree_length",
                    "rate_loss", "rate_log_sd", "p")
@@ -188,9 +188,9 @@ test_that(".PrintProgressTable single-run omits PSRF column", {
 
   diagCheck <- list(
     ess     = setNames(runif(length(keyNames), 100, 300), keyNames),
-    psrf    = NULL,
+    rhat    = NULL,
     minEss  = 100,
-    maxPsrf = NA_real_
+    maxRhat = NA_real_
   )
 
   out <- capture.output(
@@ -198,8 +198,8 @@ test_that(".PrintProgressTable single-run omits PSRF column", {
                                    nSamples = 200L)
   )
   expect_true(any(grepl("ESS", out)))
-  # PSRF column header should not appear
-  expect_false(any(grepl("PSRF", out)))
+  # R-hat column header should not appear
+  expect_false(any(grepl("Rhat", out)))
 })
 
 

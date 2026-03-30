@@ -95,7 +95,6 @@ test_that("summary respects burnin", {
 
 
 test_that("AutoBurnin runs without error (multi-run)", {
-  skip_if_not_installed("coda")
   result <- .MakeTestPosterior(nRuns = 2L, nIter = 400L, maxWarmup = 100L,
                                seed = 6891)
 
@@ -110,7 +109,6 @@ test_that("AutoBurnin runs without error (multi-run)", {
 
 
 test_that("AutoBurnin runs for single-run", {
-  skip_if_not_installed("coda")
   result <- .MakeTestPosterior(nRuns = 1L, nIter = 300L, maxWarmup = 80L,
                                seed = 3047)
 
@@ -121,7 +119,6 @@ test_that("AutoBurnin runs for single-run", {
 
 
 test_that("ConvergenceDiagnostics respects burnin", {
-  skip_if_not_installed("coda")
   result <- .MakeTestPosterior(nRuns = 2L, nIter = 300L, maxWarmup = 80L,
                                seed = 1756)
 

@@ -7,6 +7,7 @@
 MkPrimeMCMC(
   nIter = Inf,
   thin = "auto",
+  treeThin = NULL,
   warmup = NULL,
   minWarmup = 2000L,
   maxWarmup = NULL,
@@ -18,7 +19,7 @@ MkPrimeMCMC(
   heat = 0.2,
   maxTime = NULL,
   minEss = NULL,
-  maxPsrf = NULL,
+  maxRhat = NULL,
   checkEvery = 1000L,
   cancelFile = NULL,
   checkpointFile = NULL,
@@ -49,7 +50,7 @@ MkPrimeMCMC(
 }
 \arguments{
 \item{nIter}{Total iterations (including warmup). Default \code{Inf}, which
-relies on stopping criteria (\code{minEss}, \code{maxPsrf}, \code{maxTime}) to
+relies on stopping criteria (\code{minEss}, \code{maxRhat}, \code{maxTime}) to
 terminate the run. Pass a finite integer to cap the number of iterations
 regardless of convergence.}
 
@@ -58,6 +59,14 @@ Default \code{"auto"}, which sets thin equal to the number of active
 move types so that each parameter has roughly one update opportunity
 per stored sample (analogous to one "full cycle" in RevBayes).
 Pass a positive integer to override.}
+
+\item{treeThin}{Thinning interval for tree samples (iterations).
+Default \code{NULL}, which stores a tree for every scalar sample
+(equivalent to \code{treeThin = thin}). Pass a positive integer that is
+a \strong{multiple of \code{thin}} to store trees less frequently than scalar
+parameters. For example, \verb{thin = 10, treeThin = 100} stores one tree
+for every 10 scalar samples. The multiple-of-thin constraint is
+validated at run time (after \code{thin = "auto"} is resolved).}
 
 \item{warmup}{\strong{Deprecated.} If supplied, treated as \code{maxWarmup}.
 Use \code{minWarmup} / \code{maxWarmup} instead. Retained for backward
@@ -87,7 +96,7 @@ weights plus \code{nPerturbations} candidates. Only used when
 \code{autoTune = TRUE}.}
 
 \item{nRuns}{Number of independent runs. Default 2. Each run has its
-own set of \code{nChains} chains. Convergence diagnostics (PSRF) require
+own set of \code{nChains} chains. Convergence diagnostics (R-hat) require
 \code{nRuns >= 2}.}
 
 \item{nChains}{Number of chains in the temperature ladder (parallel
@@ -105,8 +114,12 @@ means no time limit.}
 \item{minEss}{Minimum effective sample size for early stopping.
 \code{NULL} (default) disables ESS-based stopping.}
 
-\item{maxPsrf}{Maximum PSRF for early stopping. \code{NULL} (default)
-disables PSRF-based stopping. Requires \code{nRuns >= 2}.}
+\item{maxRhat}{Maximum R-hat (rank-normalized; Vehtari et al. 2021)
+for early stopping. \code{NULL} (default) disables R-hat-based stopping.
+The modern recommendation is 1.01 for reliable inference; 1.05 is
+a pragmatic threshold for phylogenetics where mixing is slower.
+Requires \code{nRuns >= 2}.
+Replaces the classical PSRF (Gelman-Rubin) statistic.}
 
 \item{checkEvery}{Check convergence every this many iterations
 (default 1000). Only used when stopping criteria are set.}
@@ -123,11 +136,14 @@ clean stop: \code{file.create(cancelFile)}. See also \code{\link[=MkCancelPath]{
 convergence check interval and on cancel.}
 
 \item{treeFile}{Path to write sampled trees in Newick format.
-\code{NULL} (default) disables file logging. Trees are always stored
+\code{NULL} (default) auto-derives from \code{logFile} when set
+(e.g. \code{"run.log"} → \code{"run_trees.nwk"}). Set to \code{FALSE} to
+disable tree file logging entirely. Trees are always stored
 in the returned \code{MkPosterior} object regardless.}
 
 \item{logFile}{Path to write a tab-separated scalar parameter log
 (Tracer-compatible). \code{NULL} (default) keeps all samples in memory only.
+If the path has no file extension, \code{.log} is appended automatically.
 When set, samples are flushed to disk in batches of \code{bufferSize}, so the
 file can be opened in Tracer during the run.
 For multiple runs (\code{nRuns > 1}), separate files are created automatically
@@ -329,7 +345,7 @@ Set \code{autoTune = FALSE} to skip this phase.
 
 \strong{Sample.} Move weights are frozen and posterior samples are
 collected. Convergence is monitored at \code{checkEvery} intervals.
-The run terminates when \code{minEss}/\code{maxPsrf} criteria are met,
+The run terminates when \code{minEss}/\code{maxRhat} criteria are met,
 \code{maxTime} is reached, or \code{nIter} iterations complete.
 
 Use \code{moveWeights} to pin specific move frequencies and exclude

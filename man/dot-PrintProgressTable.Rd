@@ -2,7 +2,7 @@
 % Please edit documentation in R/Convergence.R
 \name{.PrintProgressTable}
 \alias{.PrintProgressTable}
-\title{Print a per-parameter ESS/PSRF progress table during MCMC}
+\title{Print a per-parameter ESS/R-hat progress table during MCMC}
 \usage{
 .PrintProgressTable(diagCheck, nRuns, iter, nSamples, prevLines = 0L)
 }
@@ -24,7 +24,7 @@ to the next call.
 }
 \description{
 Called at each convergence-check interval to show a table of per-parameter
-ESS and PSRF (when available). Mirrors the format of
+ESS and R-hat (when available). Mirrors the format of
 \code{\link[=print.MkpDiagnostics]{print.MkpDiagnostics()}}.
 }
 \details{

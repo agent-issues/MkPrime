@@ -21,9 +21,9 @@ test_that("ConvergenceDiagnostics works with single run", {
   expect_true(all(diag$ess > 0, na.rm = TRUE))
   expect_equal(diag$minEss, min(diag$ess))
 
-  # No PSRF for single run
-  expect_null(diag$psrf)
-  expect_true(is.na(diag$maxPsrf))
+  # No R-hat for single run
+  expect_null(diag$rhat)
+  expect_true(is.na(diag$maxRhat))
 })
 
 
@@ -43,12 +43,12 @@ test_that("ConvergenceDiagnostics works with multiple runs", {
   expect_true(is.numeric(diag$ess))
   expect_true(all(diag$ess > 0, na.rm = TRUE))
 
-  # PSRF should be present
-  expect_true(!is.null(diag$psrf))
-  expect_true(is.numeric(diag$psrf))
-  expect_true(all(diag$psrf > 0, na.rm = TRUE))
-  expect_true(is.numeric(diag$maxPsrf))
-  expect_false(is.na(diag$maxPsrf))
+  # R-hat should be present
+  expect_true(!is.null(diag$rhat))
+  expect_true(is.numeric(diag$rhat))
+  expect_true(all(diag$rhat > 0, na.rm = TRUE))
+  expect_true(is.numeric(diag$maxRhat))
+  expect_false(is.na(diag$maxRhat))
 })
 
 
@@ -73,7 +73,7 @@ test_that("ESS is reasonable for short chains", {
 })
 
 
-test_that("PSRF is near 1 for converged chains", {
+test_that("R-hat is near 1 for converged chains", {
   library(ape)
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
@@ -90,11 +90,11 @@ test_that("PSRF is near 1 for converged chains", {
 
   diag <- ConvergenceDiagnostics(result)
 
-  # PSRF should be finite and positive; exact convergence is not guaranteed
-  # in a short unit test — the purpose here is that PSRF is computed correctly.
-  expect_true(is.numeric(diag$psrf))
-  expect_true(all(is.finite(diag$psrf) | is.na(diag$psrf)))
-  expect_true(all(diag$psrf > 0, na.rm = TRUE))
+  # R-hat should be finite and positive; exact convergence is not guaranteed
+  # in a short unit test — the purpose here is that R-hat is computed correctly.
+  expect_true(is.numeric(diag$rhat))
+  expect_true(all(is.finite(diag$rhat) | is.na(diag$rhat)))
+  expect_true(all(diag$rhat > 0, na.rm = TRUE))
 })
 
 

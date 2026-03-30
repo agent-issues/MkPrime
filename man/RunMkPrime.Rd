@@ -12,7 +12,8 @@ RunMkPrime(
   model = NULL,
   mcmc = NULL,
   fixTopology = FALSE,
-  overwrite = FALSE
+  overwrite = FALSE,
+  ...
 )
 }
 \arguments{

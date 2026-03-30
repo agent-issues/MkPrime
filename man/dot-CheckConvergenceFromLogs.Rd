@@ -8,7 +8,7 @@
 }
 \description{
 Reads each run's log file via \code{\link[=ReadMkLog]{ReadMkLog()}}, extracts key parameters,
-and computes ESS (all runs combined) and PSRF (when \code{nRuns >= 2}).
+and computes ESS (all runs combined) and R-hat (when \code{nRuns >= 2}).
 Returns \code{NULL} if any log is missing or has fewer than 10 rows.
 }
 \keyword{internal}

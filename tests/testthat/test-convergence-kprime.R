@@ -16,7 +16,6 @@ test_that("kPrime ESS does not affect minEss in convergence filter", {
 
 
 test_that("ConvergenceDiagnostics minEss ignores kPrime", {
-  skip_if_not_installed("coda")
 
   # Build a mock MkPosterior with fake samples (avoids running MCMC)
   set.seed(4821)
@@ -59,10 +58,9 @@ test_that("ConvergenceDiagnostics minEss ignores kPrime", {
 })
 
 
-test_that("ConvergenceDiagnostics maxPsrf ignores kPrime", {
-  skip_if_not_installed("coda")
+test_that("ConvergenceDiagnostics maxRhat ignores kPrime", {
 
-  # Two-run mock with kPrime that has high PSRF
+  # Two-run mock with kPrime that has high R-hat
   set.seed(6193)
   n <- 100L
   make_run <- function(offset) {
@@ -72,7 +70,7 @@ test_that("ConvergenceDiagnostics maxPsrf ignores kPrime", {
       tree_length    = rlnorm(n, 1 + offset * 0.01, 0.3),
       rate_log_sd    = rlnorm(n, 0, 0.2),
       p              = rbeta(n, 5, 5),
-      # kPrime deliberately different across runs → high PSRF
+      # kPrime deliberately different across runs → high R-hat
       kPrime_1       = sample(2:4, n, replace = TRUE, prob = c(0.1, 0.1, 0.8) +
                                 offset * c(0.3, -0.05, -0.25))
     )
@@ -99,11 +97,11 @@ test_that("ConvergenceDiagnostics maxPsrf ignores kPrime", {
 
   diag <- ConvergenceDiagnostics(posterior)
 
-  # maxPsrf should reflect only scalar parameters, not kPrime
-  if (!is.null(diag$psrf)) {
-    scalarPsrf <- diag$psrf[!grepl("^kPrime_", names(diag$psrf)) &
-                             names(diag$psrf) != "log_likelihood"]
-    expect_equal(diag$maxPsrf, max(scalarPsrf, na.rm = TRUE))
+  # maxRhat should reflect only scalar parameters, not kPrime
+  if (!is.null(diag$rhat)) {
+    scalarRhat <- diag$rhat[!grepl("^kPrime_", names(diag$rhat)) &
+                             names(diag$rhat) != "log_likelihood"]
+    expect_equal(diag$maxRhat, max(scalarRhat, na.rm = TRUE))
   }
 })
 
@@ -111,7 +109,7 @@ test_that("ConvergenceDiagnostics maxPsrf ignores kPrime", {
 test_that(".PrintProgressTable still displays kPrime row", {
   ess <- c(log_posterior = 250, tree_length = 180, rate_log_sd = 300,
            p = 200, kPrime_1 = 10, kPrime_2 = 15, kPrime_3 = 8)
-  diagCheck <- list(ess = ess, psrf = NULL, minEss = 180, maxPsrf = NA_real_)
+  diagCheck <- list(ess = ess, rhat = NULL, minEss = 180, maxRhat = NA_real_)
 
   out <- capture.output(
     MkPrime:::.PrintProgressTable(

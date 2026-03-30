@@ -14,7 +14,7 @@ Single string.
 }
 \description{
 Produces \code{"minESS: 42"} (single run) or
-\code{"minESS: 42 | PSRF: 1.03"} (multi-run) with colour matching
+\code{"minESS: 42 | Rhat: 1.003"} (multi-run) with colour matching
 the table conventions.  Used on the dominant ticker page (M-097).
 }
 \keyword{internal}

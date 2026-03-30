@@ -172,11 +172,11 @@ For a **production run** on this dataset we recommend:
 mcmcProduction <- MkPrimeMCMC(
   # nIter = Inf (default): run until convergence criteria are met
   # thin = "auto" (default): one sample per full move cycle
-  nRuns          = 2L,       # 2 independent runs (required for PSRF)
+  nRuns          = 2L,       # 2 independent runs (required for R-hat)
   nChains        = 4L,       # parallel tempering chains
   heat           = 0.2,
   minEss         = 200L,     # stop when min ESS > 200
-  maxPsrf        = 1.05,     # stop when max PSRF < 1.05
+  maxRhat        = 1.01,     # stop when max R-hat < 1.01
   checkEvery     = 5000L,
   treeFile       = "hyoliths_trees.nwk"
 )
@@ -228,16 +228,17 @@ posteriorDemo <- RunMkPrime(
 
 ## Convergence diagnostics
 
-Before interpreting results, confirm that the chains have converged.
 `ConvergenceDiagnostics()` computes the effective sample size (ESS) and
-potential scale reduction factor (PSRF; @GelmanRubin1992) across runs:
+rank-normalized split-R-hat (Vehtari et al. 2021) across runs.
+R-hat supersedes the classical PSRF (Gelman--Rubin), which assumes
+approximate normality:
 
 ```{r convergence}
 diag <- ConvergenceDiagnostics(posterior)
 print(diag)
 ```
 
-A well-converged run should show ESS ≥ 200 and PSRF ≤ 1.05 for all scalar
+A well-converged run should show ESS ≥ 200 and R-hat ≤ 1.01 for all scalar
 parameters. The demo run is far too short to meet these criteria.
 
 Trace plots give a visual check on stationarity and mixing:
@@ -251,7 +252,7 @@ plot(posteriorDemo)
 ## Summarizing the posterior
 
 `summary()` reports posterior mean, median, 95% credible interval, ESS, and
-PSRF for each scalar parameter:
+R-hat for each scalar parameter:
 
 ```{r summary}
 summary(posteriorDemo)

@@ -26,11 +26,12 @@ Imports:
     Rdpack (>= 0.7),
     ape,
     cli,
-    coda,
     Rcpp,
     rlang,
     TreeTools
 Suggests:
+    coda,
+    posterior,
     Rogue,
     bslib (>= 0.5.0),
     callr,

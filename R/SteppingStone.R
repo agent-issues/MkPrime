@@ -250,41 +250,4 @@ mkp_stepping_stone <- function(data, tree = NULL,
 }
 
 
-#' Compute effective sample size for a numeric vector
-#'
-#' Uses \code{coda::effectiveSize} if available, otherwise falls back to an
-#' initial positive sequence estimator based on the sample autocorrelation.
-#'
-#' @param x Numeric vector of MCMC samples.
-#' @return Scalar ESS (at least 1).
-#' @keywords internal
-.EssVector <- function(x) {
-  n <- length(x)
-  if (n < 2L) return(1)
-
-  s <- sd(x)
-  # is.na() does not catch NaN (NaN is not NA in R); use !is.finite() instead
-  if (!is.finite(s) || s == 0) return(as.numeric(n))
-
-  if (requireNamespace("coda", quietly = TRUE)) {
-    ess <- as.numeric(coda::effectiveSize(coda::mcmc(x)))
-    # effectiveSize can return 0 or NA/NaN for degenerate inputs
-    if (!is.finite(ess) || ess < 1) return(1)
-    return(ess)
-  }
-
-  # Fallback: initial positive sequence estimator (Geyer 1992)
-  maxLag <- min(n - 1L, floor(10 * log10(n)))
-  acfVals <- acf(x, lag.max = maxLag, plot = FALSE)$acf[, , 1]
-  # Sum consecutive pairs of autocorrelations; stop when a pair sum
-  # is negative (ensures the estimator of tau is monotone)
-  tau <- 1
-  k <- 2L # acfVals[1] is lag 0 = 1, so start at lag 1
-  while (k + 1L <= length(acfVals)) {
-    pairSum <- acfVals[k] + acfVals[k + 1L]
-    if (pairSum <= 0) break
-    tau <- tau + 2 * pairSum
-    k <- k + 2L
-  }
-  max(n / tau, 1)
-}
+# .EssVector() is now defined in R/ess.R (native Geyer 1992 + Vehtari 2021).

@@ -4,12 +4,12 @@
 \alias{AutoBurnin}
 \title{Automatically select optimal burnin}
 \usage{
-AutoBurnin(posterior, psrfThreshold = 1.05, fractions = seq(0, 0.5, by = 0.05))
+AutoBurnin(posterior, rhatThreshold = 1.05, fractions = seq(0, 0.5, by = 0.05))
 }
 \arguments{
 \item{posterior}{An \code{MkPosterior} object (typically with \code{nRuns >= 2}).}
 
-\item{psrfThreshold}{Maximum acceptable PSRF. Default 1.05.}
+\item{rhatThreshold}{Maximum acceptable R-hat. Default 1.05.}
 
 \item{fractions}{Candidate burnin fractions to evaluate. Default
 \code{seq(0, 0.5, by = 0.05)}.}
@@ -19,10 +19,11 @@ A new \code{MkPosterior} with the selected burnin set.
 }
 \description{
 Searches over candidate burnin fractions (0\% to 50\% of samples) and
-selects the smallest burnin where PSRF is acceptable (max < 1.05),
-or the burnin that minimizes max(PSRF) if convergence is not achieved.
+selects the smallest burnin where R-hat is acceptable
+(max < \code{rhatThreshold}), or the burnin that minimizes max(R-hat) if
+convergence is not achieved.
 }
 \details{
-For single-run posteriors (no PSRF available), selects the burnin
+For single-run posteriors (no R-hat available), selects the burnin
 that maximizes min(ESS) across key parameters.
 }

@@ -28,9 +28,9 @@ An object of class \code{MkpDiagnostics}, a list with components:
 Individual kPrime values are discrete nuisance parameters that are
 marginalized over, so they are excluded from the summary minimum
 to avoid blocking convergence (see M-098).
-\item \code{psrf}: Named numeric vector of PSRF point estimates per parameter
+\item \code{rhat}: Named numeric vector of R-hat values per parameter
 (only if \code{nRuns >= 2}; \code{NULL} otherwise).
-\item \code{maxPsrf}: Scalar maximum PSRF across scalar parameters (or \code{NA}
+\item \code{maxRhat}: Scalar maximum R-hat across scalar parameters (or \code{NA}
 if single run). kPrime excluded for the same reason as \code{minEss}.
 \item \code{treeEss}: Named numeric vector with \code{frechetCorrelationESS} and
 \code{medianPseudoESS} (or \code{NULL} if not computed).
@@ -39,7 +39,12 @@ if single run). kPrime excluded for the same reason as \code{minEss}.
 }
 \description{
 Calculates effective sample size (ESS) per parameter and, when
-\code{nRuns >= 2}, the potential scale reduction factor (PSRF, Gelman-Rubin
-diagnostic) across runs. Optionally computes topology ESS using the
-Robinson-Foulds distance via \strong{TreeDist}.
+\code{nRuns >= 2}, the rank-normalized split-chain R-hat
+(Vehtari et al. 2021) across runs.  R-hat supersedes the classical
+PSRF (Gelman-Rubin): it is robust to skewed and multimodal
+posteriors, and also checks tail convergence.
+}
+\details{
+Optionally computes topology ESS using the Robinson-Foulds distance
+via \strong{TreeDist}.
 }

@@ -3,7 +3,7 @@
 # These functions implement the flush-buffer design: scalar MCMC samples
 # accumulate in a small in-memory buffer; when the buffer is full it is
 # appended to a Tracer-compatible tab-separated log file.  A separate
-# circular convergence window keeps recent samples available for PSRF/ESS
+# circular convergence window keeps recent samples available for R-hat/ESS
 # checks without re-reading the file.
 #
 # None of these functions are exported.  See ReadMkLog() for the

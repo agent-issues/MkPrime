@@ -12,7 +12,8 @@
   paramNames,
   logFilePaths,
   actualIter,
-  stopReason
+  stopReason,
+  isTempLog = FALSE
 )
 }
 \description{

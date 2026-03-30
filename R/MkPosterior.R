@@ -136,20 +136,15 @@ summary.MkPosterior <- function(object, ...) {
     row.names = NULL
   )
 
-  if (requireNamespace("coda", quietly = TRUE)) {
-    out$ESS <- apply(key, 2, function(col) {
-      s <- sd(col, na.rm = TRUE); if (is.na(s) || s == 0) return(NA_real_)
-      coda::effectiveSize(coda::mcmc(col))
-    })
-  }
+  out$ESS <- .EssMatrix(key)[colnames(key)]
 
   nRuns <- object$nRuns %||% 1L
   if (nRuns >= 2L && !is.null(object$per_run)) {
     # trees = FALSE: topology ESS is expensive; omit from summary().
     diag <- tryCatch(ConvergenceDiagnostics(object, trees = FALSE),
                      error = function(e) NULL)
-    if (!is.null(diag) && !is.null(diag$psrf)) {
-      out$PSRF <- diag$psrf[out$parameter]
+    if (!is.null(diag) && !is.null(diag$rhat)) {
+      out$Rhat <- diag$rhat[out$parameter]
     }
   }
 

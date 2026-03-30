@@ -2,11 +2,13 @@
 % Please edit documentation in R/PlotDuringMCMC.R
 \name{.ResetEssHistory}
 \alias{.ResetEssHistory}
-\title{Reset the ESS and warmup history used by \code{\link[=MkpTracePlot]{MkpTracePlot()}}}
+\title{Reset the ESS history used by \code{\link[=MkpTracePlot]{MkpTracePlot()}}}
 \usage{
 .ResetEssHistory()
 }
 \description{
-Reset the ESS and warmup history used by \code{\link[=MkpTracePlot]{MkpTracePlot()}}
+Clears ESS snapshots and iteration history. Does \strong{not} reset warmup
+log-posterior accumulation — that is handled separately to avoid
+wiping warmup trace data on every non-sample callback.
 }
 \keyword{internal}

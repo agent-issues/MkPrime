@@ -54,7 +54,7 @@ test_that("print.MkPosterior shows tempering info", {
 })
 
 
-test_that("summary.MkPosterior includes ESS and PSRF for multi-run", {
+test_that("summary.MkPosterior includes ESS and R-hat for multi-run", {
   library(ape)
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
@@ -68,13 +68,13 @@ test_that("summary.MkPosterior includes ESS and PSRF for multi-run", {
   s <- summary(result)
   expect_true(is.data.frame(s))
   expect_true("ESS" %in% names(s))
-  expect_true("PSRF" %in% names(s))
+  expect_true("Rhat" %in% names(s))
   # ESS should be positive (or NA for constant params)
   expect_true(all(is.na(s$ESS) | s$ESS > 0))
 })
 
 
-test_that("summary.MkPosterior works for single run (no PSRF)", {
+test_that("summary.MkPosterior works for single run (no R-hat)", {
   library(ape)
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
@@ -87,7 +87,7 @@ test_that("summary.MkPosterior works for single run (no PSRF)", {
 
   s <- summary(result)
   expect_true("ESS" %in% names(s))
-  expect_false("PSRF" %in% names(s))
+  expect_false("Rhat" %in% names(s))
 })
 
 

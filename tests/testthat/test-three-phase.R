@@ -99,7 +99,6 @@ test_that("MinEssPerSec returns NA with too few samples", {
 })
 
 test_that("MinEssPerSec returns finite value for valid input", {
-  skip_if_not_installed("coda")
   set.seed(5192)
   n <- 200
   mat <- matrix(rnorm(n * 3), nrow = n, ncol = 3)
@@ -110,7 +109,6 @@ test_that("MinEssPerSec returns finite value for valid input", {
 })
 
 test_that("MinEssPerSec excludes kPrime columns", {
-  skip_if_not_installed("coda")
   set.seed(8173)
   n <- 200
   mat <- matrix(rnorm(n * 4), nrow = n, ncol = 4)

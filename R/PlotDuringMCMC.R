@@ -112,8 +112,8 @@ MkpTracePlot <- function(info) {
   }
 
   paramColors <- .ParamColors(keyParams)
-  hasCoda <- requireNamespace("coda", quietly = TRUE)
-  showEss <- hasSamples && hasCoda
+
+  showEss <- hasSamples
 
 
   # Reset ESS history during non-sample phases or on new run
@@ -144,7 +144,7 @@ MkpTracePlot <- function(info) {
       col <- combined[, p]
       s <- sd(col, na.rm = TRUE)
       if (is.na(s) || s == 0) return(NA_real_)
-      as.numeric(coda::effectiveSize(coda::mcmc(col)))
+      .EssVector(col)
     }, numeric(1))
     .tracePlotEnv$essHistory  <- c(.tracePlotEnv$essHistory, list(essSnap))
     .tracePlotEnv$iterHistory <- c(.tracePlotEnv$iterHistory, info$iter)

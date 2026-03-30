@@ -1283,10 +1283,10 @@ RunMkPrime <- function(data, tree = NULL,
       pollStatus <- paste0(
         elStr, " | min ESS = ", essStr,
         if (!is.null(mcmc$minEss)) paste0(" / ", mcmc$minEss) else "",
-        if (!is.na(diagCheck$maxPsrf))
-          paste0(" | max PSRF = ", round(diagCheck$maxPsrf, 3),
-                 if (!is.null(mcmc$maxPsrf))
-                   paste0(" / ", mcmc$maxPsrf))
+        if (!is.na(diagCheck$maxRhat))
+          paste0(" | max Rhat = ", round(diagCheck$maxRhat, 3),
+                 if (!is.null(mcmc$maxRhat))
+                   paste0(" / ", mcmc$maxRhat))
         else ""
       )
       cli::cli_progress_update()
@@ -1348,12 +1348,10 @@ RunMkPrime <- function(data, tree = NULL,
 #' Check convergence criteria (called during the loop)
 #'
 #' Works for any number of runs. ESS is always computed on combined samples;
-#' PSRF is computed only when `nRuns >= 2`. Returns full per-parameter `ess`
-#' and `psrf` vectors so the caller can display a progress table.
+#' R-hat is computed only when `nRuns >= 2`. Returns full per-parameter `ess`
+#' and `rhat` vectors so the caller can display a progress table.
 #' @keywords internal
 .CheckConvergence <- function(runs, paramNames, mcmc, isStreaming = FALSE) {
-  if (!requireNamespace("coda", quietly = TRUE)) return(NULL)
-
   nRuns <- length(runs)
   keyCols <- .KeyParamCols(
     matrix(0, 1, length(paramNames), dimnames = list(NULL, paramNames))
@@ -1376,57 +1374,46 @@ RunMkPrime <- function(data, tree = NULL,
 
   # ESS on combined samples (works for any nRuns)
   combined <- do.call(rbind, perRunSamples)
-  ess <- apply(combined, 2, function(col) {
-    s <- sd(col, na.rm = TRUE)
-    # Treat near-constant columns (FP noise only) as NA to avoid ESS = 0
-    if (is.na(s) || s < sqrt(.Machine$double.eps) * (max(abs(col), na.rm = TRUE) + 1))
-      return(NA_real_)
-    coda::effectiveSize(coda::mcmc(col))
-  })
+  ess <- .EssMatrix(combined)
 
   # kPrime are discrete nuisance parameters — exclude from convergence criteria
   # (M-098). They remain in the `ess` vector for display in .PrintProgressTable.
   isConvParam <- !grepl("^kPrime_", names(ess)) & names(ess) != "log_likelihood"
   minEss <- min(ess[isConvParam], na.rm = TRUE)
 
-  # PSRF (requires >= 2 runs)
-  psrf    <- NULL
-  maxPsrf <- NA_real_
+  # R-hat (requires >= 2 runs)
+  rhat    <- NULL
+  maxRhat <- NA_real_
   if (nRuns >= 2L) {
-    chainList <- lapply(perRunSamples, function(s) coda::mcmc(s))
-    mcmcList  <- coda::mcmc.list(chainList)
-    gd <- tryCatch(
-      coda::gelman.diag(mcmcList, multivariate = FALSE),
-      error = function(e) NULL
-    )
-    if (!is.null(gd)) {
-      psrf    <- gd$psrf[, 1]
-      maxPsrf <- max(psrf[isConvParam[names(psrf) %in% names(ess)]],
-                     na.rm = TRUE)
-    }
+    paramNms <- colnames(perRunSamples[[1]])
+    rhat <- vapply(seq_along(paramNms), function(j) {
+      chainMat <- do.call(cbind, lapply(perRunSamples, function(s) s[, j]))
+      .Rhat(chainMat)
+    }, numeric(1))
+    names(rhat) <- paramNms
+    maxRhat <- max(rhat[isConvParam[names(rhat) %in% names(ess)]],
+                   na.rm = TRUE)
   }
 
   # Converged only when at least one criterion is set AND all set criteria pass.
   # (Avoids spurious early stopping when no criteria are configured.)
-  hasCriteria <- !is.null(mcmc$minEss) || !is.null(mcmc$maxPsrf)
+  hasCriteria <- !is.null(mcmc$minEss) || !is.null(mcmc$maxRhat)
   converged   <- hasCriteria &&
     (is.null(mcmc$minEss)  || minEss >= mcmc$minEss) &&
-    (is.null(mcmc$maxPsrf) || (nRuns >= 2L && !is.na(maxPsrf) && maxPsrf <= mcmc$maxPsrf))
+    (is.null(mcmc$maxRhat) || (nRuns >= 2L && !is.na(maxRhat) && maxRhat <= mcmc$maxRhat))
 
-  list(converged = converged, minEss = minEss, maxPsrf = maxPsrf,
-       ess = ess, psrf = psrf)
+  list(converged = converged, minEss = minEss, maxRhat = maxRhat,
+       ess = ess, rhat = rhat)
 }
 
 
 #' Check convergence by reading log files from disk (parallel mode)
 #'
 #' Reads each run's log file via [ReadMkLog()], extracts key parameters,
-#' and computes ESS (all runs combined) and PSRF (when `nRuns >= 2`).
+#' and computes ESS (all runs combined) and R-hat (when `nRuns >= 2`).
 #' Returns `NULL` if any log is missing or has fewer than 10 rows.
 #' @keywords internal
 .CheckConvergenceFromLogs <- function(logFilePaths, paramNames, mcmc) {
-  if (!requireNamespace("coda", quietly = TRUE)) return(NULL)
-
   nRuns   <- length(logFilePaths)
   keyCols <- .KeyParamCols(
     matrix(0, 1, length(paramNames), dimnames = list(NULL, paramNames))
@@ -1442,41 +1429,33 @@ RunMkPrime <- function(data, tree = NULL,
   if (any(vapply(perRunSamples, is.null, logical(1L)))) return(NULL)
 
   combined <- do.call(rbind, perRunSamples)
-  ess <- apply(combined, 2, function(col) {
-    s <- sd(col, na.rm = TRUE)
-    if (is.na(s) || s < sqrt(.Machine$double.eps) * (max(abs(col), na.rm = TRUE) + 1))
-      return(NA_real_)
-    coda::effectiveSize(coda::mcmc(col))
-  })
+  ess <- .EssMatrix(combined)
 
   # Exclude kPrime nuisance parameters from convergence criteria (M-098)
   isConvParam <- !grepl("^kPrime_", names(ess)) & names(ess) != "log_likelihood"
   minEss <- min(ess[isConvParam], na.rm = TRUE)
 
-  psrf    <- NULL
-  maxPsrf <- NA_real_
+  rhat    <- NULL
+  maxRhat <- NA_real_
   if (nRuns >= 2L) {
-    chainList <- lapply(perRunSamples, function(s) coda::mcmc(s))
-    mcmcList  <- coda::mcmc.list(chainList)
-    gd <- tryCatch(
-      coda::gelman.diag(mcmcList, multivariate = FALSE),
-      error = function(e) NULL
-    )
-    if (!is.null(gd)) {
-      psrf    <- gd$psrf[, 1]
-      maxPsrf <- max(psrf[isConvParam[names(psrf) %in% names(ess)]],
-                     na.rm = TRUE)
-    }
+    paramNms <- colnames(perRunSamples[[1]])
+    rhat <- vapply(seq_along(paramNms), function(j) {
+      chainMat <- do.call(cbind, lapply(perRunSamples, function(s) s[, j]))
+      .Rhat(chainMat)
+    }, numeric(1))
+    names(rhat) <- paramNms
+    maxRhat <- max(rhat[isConvParam[names(rhat) %in% names(ess)]],
+                   na.rm = TRUE)
   }
 
-  hasCriteria <- !is.null(mcmc$minEss) || !is.null(mcmc$maxPsrf)
+  hasCriteria <- !is.null(mcmc$minEss) || !is.null(mcmc$maxRhat)
   converged   <- hasCriteria &&
     (is.null(mcmc$minEss)  || minEss >= mcmc$minEss) &&
-    (is.null(mcmc$maxPsrf) || (nRuns >= 2L && !is.na(maxPsrf) &&
-                                maxPsrf <= mcmc$maxPsrf))
+    (is.null(mcmc$maxRhat) || (nRuns >= 2L && !is.na(maxRhat) &&
+                                maxRhat <= mcmc$maxRhat))
 
-  list(converged = converged, minEss = minEss, maxPsrf = maxPsrf,
-       ess = ess, psrf = psrf, perRunSamples = perRunSamples)
+  list(converged = converged, minEss = minEss, maxRhat = maxRhat,
+       ess = ess, rhat = rhat, perRunSamples = perRunSamples)
 }
 
 
@@ -3042,17 +3021,12 @@ if (n < 2L * windowSize) {
 #' @keywords internal
 .MinEssPerSec <- function(sampleMatrix, wallTimeSec,
                            excludePattern = "^(kPrime_|br_|log_likelihood)") {
-  if (!requireNamespace("coda", quietly = TRUE)) return(NA_real_)
   if (nrow(sampleMatrix) < 10L || wallTimeSec < 1e-6) return(NA_real_)
 
   keyCols <- grep(excludePattern, colnames(sampleMatrix), invert = TRUE)
   if (length(keyCols) == 0L) return(NA_real_)
 
-  ess <- apply(sampleMatrix[, keyCols, drop = FALSE], 2, function(col) {
-    s <- sd(col, na.rm = TRUE)
-    if (is.na(s) || s == 0) return(NA_real_)
-    as.numeric(coda::effectiveSize(coda::mcmc(col)))
-  })
+  ess <- .EssMatrix(sampleMatrix[, keyCols, drop = FALSE])
 
   minEss <- min(ess, na.rm = TRUE)
   if (!is.finite(minEss)) return(NA_real_)

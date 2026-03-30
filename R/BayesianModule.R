@@ -622,11 +622,7 @@ MkBayesianServer <- function(id, dataset, startTree = NULL) {
       keep <- !grepl("^(Sample|br_)", colnames(samp))
       mat  <- samp[, keep, drop = FALSE]
 
-      ess <- if (requireNamespace("coda", quietly = TRUE)) {
-        round(coda::effectiveSize(mat))
-      } else {
-        rep(NA_real_, ncol(mat))
-      }
+      ess <- round(.EssMatrix(mat))
 
       data.frame(
         Parameter = colnames(mat),

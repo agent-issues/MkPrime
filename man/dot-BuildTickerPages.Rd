@@ -15,7 +15,7 @@ Character vector of page strings.
 \description{
 Returns a character vector of page content strings (without the
 \verb{logP:} prefix, which the caller prepends).  Summary pages
-(minESS/PSRF) are interleaved with detail pages that show 2
+(minESS/R-hat) are interleaved with detail pages that show 2
 parameters each with their full names and colour-coded ESS.
 }
 \details{

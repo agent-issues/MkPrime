@@ -3,7 +3,7 @@
 #' Configure MCMC settings
 #'
 #' @param nIter Total iterations (including warmup). Default `Inf`, which
-#'   relies on stopping criteria (`minEss`, `maxPsrf`, `maxTime`) to
+#'   relies on stopping criteria (`minEss`, `maxRhat`, `maxTime`) to
 #'   terminate the run. Pass a finite integer to cap the number of iterations
 #'   regardless of convergence.
 #' @param thin Thinning interval (save every `thin`-th iteration).
@@ -40,7 +40,7 @@
 #'   weights plus `nPerturbations` candidates. Only used when
 #'   `autoTune = TRUE`.
 #' @param nRuns Number of independent runs. Default 2. Each run has its
-#'   own set of `nChains` chains. Convergence diagnostics (PSRF) require
+#'   own set of `nChains` chains. Convergence diagnostics (R-hat) require
 #'   `nRuns >= 2`.
 #' @param nChains Number of chains in the temperature ladder (parallel
 #'   tempering). Default 1 (no tempering). Set to 4 for typical analyses.
@@ -53,8 +53,12 @@
 #'   means no time limit.
 #' @param minEss Minimum effective sample size for early stopping.
 #'   `NULL` (default) disables ESS-based stopping.
-#' @param maxPsrf Maximum PSRF for early stopping. `NULL` (default)
-#'   disables PSRF-based stopping. Requires `nRuns >= 2`.
+#' @param maxRhat Maximum R-hat (rank-normalized; Vehtari et al. 2021)
+#'   for early stopping. `NULL` (default) disables R-hat-based stopping.
+#'   The modern recommendation is 1.01 for reliable inference; 1.05 is
+#'   a pragmatic threshold for phylogenetics where mixing is slower.
+#'   Requires `nRuns >= 2`.
+#'   Replaces the classical PSRF (Gelman-Rubin) statistic.
 #' @param checkEvery Check convergence every this many iterations
 #'   (default 1000). Only used when stopping criteria are set.
 #' @param cancelFile Path to a cancel-signal file. `NULL` (default) disables
@@ -245,7 +249,7 @@
 #'
 #' **Sample.** Move weights are frozen and posterior samples are
 #' collected. Convergence is monitored at `checkEvery` intervals.
-#' The run terminates when `minEss`/`maxPsrf` criteria are met,
+#' The run terminates when `minEss`/`maxRhat` criteria are met,
 #' `maxTime` is reached, or `nIter` iterations complete.
 #'
 #' Use `moveWeights` to pin specific move frequencies and exclude
@@ -268,7 +272,7 @@ MkPrimeMCMC <- function(
     heat = 0.2,
     maxTime = NULL,
     minEss = NULL,
-    maxPsrf = NULL,
+    maxRhat = NULL,
     checkEvery = 1000L,
     cancelFile = NULL,
     checkpointFile = NULL,
@@ -520,7 +524,7 @@ MkPrimeMCMC <- function(
          autoTune = autoTune, tuningBudget = tuningBudget,
          tuningRounds = tuningRounds,
          nRuns = nRuns, nChains = nChains, heat = heat,
-         maxTime = maxTime, minEss = minEss, maxPsrf = maxPsrf,
+         maxTime = maxTime, minEss = minEss, maxRhat = maxRhat,
          checkEvery = checkEvery, cancelFile = cancelFile,
          checkpointFile = checkpointFile,
          treeFile = treeFile, logFile = logFile, bufferSize = bufferSize,

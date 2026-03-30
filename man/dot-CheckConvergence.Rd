@@ -8,7 +8,7 @@
 }
 \description{
 Works for any number of runs. ESS is always computed on combined samples;
-PSRF is computed only when \code{nRuns >= 2}. Returns full per-parameter \code{ess}
-and \code{psrf} vectors so the caller can display a progress table.
+R-hat is computed only when \code{nRuns >= 2}. Returns full per-parameter \code{ess}
+and \code{rhat} vectors so the caller can display a progress table.
 }
 \keyword{internal}
