@@ -50,10 +50,7 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| M-136 | P2 | OPEN | **ESS panel legend covers entire plot.** In live MCMC trace plots, the legend in the ESS panel is too large. Remove the legend; use right-aligned coloured text at the end of each plotted line instead. *(from u.465)* |
-| M-137 | P2 | OPEN | **Auto-derive `treeFile` from `logFile`; add `.log` extension.** If `logFile` has no extension, append `.log`. If `treeFile` is not specified, derive it from `logFile` (replace `.log` with `.trees`, or append `.trees`). *(from u.827)* |
-| M-138 | P3 | OPEN | **Suppress test-suite warnings and plot output.** (a) Wrap expected warnings with `expect_warning` so `devtools::test()` runs clean. (b) Suppress plot device output (avoid `Rplots.pdf`); consider `vdiffr::expect_doppelganger` for important plot tests. *(from u.057, u.154)* |
-| M-139 | P3 | OPEN | **Simplify progress ticker.** The ticker is unhelpful with infrequent updates now that we have ESS trace plots. Replace with a simpler minESS / PSRF display. *(from u.814)* |
+
 | M-124 | P2 | OPEN | **Submit RevBayes relabelling correction patch.** The same inverted relabelling formula exists in `PhyloCTMCSiteHomogeneousMkPrime.h`. Proof and patch instructions in `relabelling-correction-proof.md`. |
 
 ## Phase 7d: Deferred extensions
