@@ -661,6 +661,9 @@ RunMkPrime <- function(data, tree = NULL,
   # Determine initial phase from checkpoint or fresh start.
   # Phases: "Warmup" → "Tuning" → "Sample"
   phase <- r$phase %||% (if (startIter <= mcmc$warmup) "Warmup" else "Sample")
+  # M-141: wall-clock start of sample phase (for ETA estimation)
+  sampleWallStart <- if (phase == "Sample") startTime else NA_real_
+  etaStr          <- NULL
 
   # Stabilisation detector state (Warmup phase)
   logPostHistory     <- r$logPostHistory %||% numeric(0)
@@ -944,6 +947,7 @@ RunMkPrime <- function(data, tree = NULL,
             phaseLabel <- "Sample"
             cppWarmup  <- 0L
             r$samplePhaseStart <- batchEnd
+            sampleWallStart <- proc.time()["elapsed"]
             if (isStreaming && !is.null(logFilePath))
               .LogMoveWeights(moveWeights, moveNames, logFilePath)
             cli::cli_alert_info(
@@ -1008,6 +1012,7 @@ RunMkPrime <- function(data, tree = NULL,
             r$phase    <- phase
             phaseLabel <- "Sample"
             r$samplePhaseStart <- batchEnd
+            sampleWallStart <- proc.time()["elapsed"]
             if (isStreaming && !is.null(logFilePath))
               .LogMoveWeights(moveWeights, moveNames, logFilePath)
             cli::cli_alert_info(
@@ -1124,8 +1129,13 @@ RunMkPrime <- function(data, tree = NULL,
 
       diagCheck <- .CheckConvergence(list(r), paramNames, mcmc, isStreaming)
       if (!is.null(diagCheck)) {
+        # M-141: ETA from minESS accumulation rate
+        etaStr <- .EstimateEta(
+          diagCheck$minEss, mcmc$minEss,
+          proc.time()["elapsed"] - sampleWallStart
+        )
         # Refresh ticker pages from latest diagnostics (M-097)
-        tickerPages <- .BuildTickerPages(diagCheck)
+        tickerPages <- .BuildTickerPages(diagCheck, etaStr)
         if (diagCheck$converged) {
           stopReason <- "converged"
           actualIter <- batchEnd
@@ -1316,6 +1326,7 @@ RunMkPrime <- function(data, tree = NULL,
     if (!is.null(diagCheck)) {
       elStr  <- .FormatElapsed(elapsed)
       essStr <- round(diagCheck$minEss)
+      etaStr <- .EstimateEta(diagCheck$minEss, mcmc$minEss, elapsed)
       pollStatus <- paste0(
         elStr, " | min ESS = ", essStr,
         if (!is.null(mcmc$minEss)) paste0(" / ", mcmc$minEss) else "",
@@ -1323,7 +1334,8 @@ RunMkPrime <- function(data, tree = NULL,
           paste0(" | max Rhat = ", round(diagCheck$maxRhat, 3),
                  if (!is.null(mcmc$maxRhat))
                    paste0(" / ", mcmc$maxRhat))
-        else ""
+        else "",
+        if (!is.null(etaStr)) paste0(" | ETA: ", etaStr) else ""
       )
       cli::cli_progress_update()
 
@@ -2851,8 +2863,28 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 
 
 #' Format move weights as a compact string for display.
+#'
+#' Colour-coded via cli: high-weight moves are bright, low-weight moves
+#' are dim, and names/equals are silver (M-140).
 #' @keywords internal
 .FormatMoveWeights <- function(weights, moveNames) {
+  pct <- weights * 100
+  parts <- vapply(seq_along(weights), function(i) {
+    label <- paste0(moveNames[i], "=", sprintf("%.1f%%", pct[i]))
+    if (pct[i] >= 10) {
+      cli::style_bold(label)
+    } else if (pct[i] >= 5) {
+      label
+    } else {
+      cli::col_silver(label)
+    }
+  }, character(1))
+  paste(parts, collapse = " ")
+}
+
+#' Format move weights as plain text (for log files).
+#' @keywords internal
+.FormatMoveWeightsPlain <- function(weights, moveNames) {
   pct <- sprintf("%.1f%%", weights * 100)
   paste(paste0(moveNames, "=", pct), collapse = " ")
 }
@@ -2862,7 +2894,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree,
 #' @keywords internal
 .LogMoveWeights <- function(weights, moveNames, logFilePaths) {
   line <- paste0("# Adapted move weights: ",
-                 .FormatMoveWeights(weights, moveNames))
+                 .FormatMoveWeightsPlain(weights, moveNames))
   for (p in logFilePaths) {
     cat(line, "\n", file = p, append = TRUE, sep = "")
   }

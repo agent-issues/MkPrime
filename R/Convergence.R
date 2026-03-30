@@ -394,11 +394,15 @@ print.MkpDiagnostics <- function(x, ...) {
 #' @param diagCheck Return value of [.CheckConvergence()].
 #' @return Character vector of page strings.
 #' @keywords internal
-.BuildTickerPages <- function(diagCheck) {
-  # Single page: minESS (+ R-hat when multi-run).
+.BuildTickerPages <- function(diagCheck, etaStr = NULL) {
+  # Single page: minESS (+ R-hat when multi-run) + ETA if available.
   # Per-parameter detail removed (M-139): live trace + ESS panel
   # in the plot callback provides richer information.
-  .TickerSummaryStr(diagCheck)
+  s <- .TickerSummaryStr(diagCheck)
+  if (!is.null(etaStr)) {
+    s <- paste0(s, " \u2502 ETA: ", cli::col_silver(etaStr))
+  }
+  s
 }
 
 
@@ -433,6 +437,41 @@ print.MkpDiagnostics <- function(x, ...) {
     s <- paste0(s, " \u2502 Rhat: ", rhatStr)
   }
   s
+}
+
+
+#' Estimate remaining wall-clock time to reach target minESS (M-141).
+#'
+#' Uses a conservative linear extrapolation: ESS grows roughly linearly with
+#' samples, so `remainingTime = elapsed * (target / current - 1) * safetyFactor`.
+#' Returns a human-readable string, or `NULL` if estimation is not possible.
+#'
+#' @param currentMinEss Current minimum ESS across scalar parameters.
+#' @param targetMinEss Target minimum ESS for convergence.
+#' @param elapsedSampleSec Wall-clock seconds since the start of the sample
+#'   phase.
+#' @param safetyFactor Multiplier for conservative estimate (default 1.5).
+#' @return Character string like `"~12min"`, or `NULL`.
+#' @keywords internal
+.EstimateEta <- function(currentMinEss, targetMinEss, elapsedSampleSec,
+                         safetyFactor = 1.5) {
+  if (!is.finite(currentMinEss) || currentMinEss <= 0 ||
+      is.null(targetMinEss) || !is.finite(targetMinEss) ||
+      targetMinEss <= 0 || !is.finite(elapsedSampleSec) ||
+      elapsedSampleSec <= 0) {
+    return(NULL)
+  }
+  if (currentMinEss >= targetMinEss) return("now")
+  ratio <- targetMinEss / currentMinEss - 1
+  remainSec <- elapsedSampleSec * ratio * safetyFactor
+  # Format as human-readable
+  if (remainSec < 60) {
+    paste0("~", round(remainSec), "s")
+  } else if (remainSec < 3600) {
+    paste0("~", round(remainSec / 60, 1), "min")
+  } else {
+    paste0("~", round(remainSec / 3600, 1), "h")
+  }
 }
 
 
