@@ -91,8 +91,8 @@ struct CLGroup {
 
   // M-114: F81 transitions for Q-heterogeneity
   bool useF81 = false;
-  double f81Pi[16] = {};  // frequency vector (max kStates = 16)
-  double f81Mu = 0.0;     // 1 / (1 - Σπ²)
+  std::vector<double> f81Pi;  // frequency vector, sized to kStates
+  double f81Mu = 0.0;         // 1 / (1 - Σπ²)
 
   IntegerMatrix tipData;  // nTip × nChar, 0-indexed states, -1 missing
 
@@ -139,6 +139,7 @@ struct CLGroup {
     from0.assign(total, 0.0);
     from1.assign(total, 0.0);
     from2.assign(total, 0.0);
+    f81Pi.assign(kStates, 0.0);
   }
 
   // Apply transition matrix: dst = P(t) × src for all characters.
@@ -267,7 +268,7 @@ inline void f81_transition(const double* cl, double* result,
 
 inline void CLGroup::transition(const double* src, double* dst, double t) const {
   if (useF81) {
-    f81_transition(src, dst, nChar, kStates, f81Pi, f81Mu, t);
+    f81_transition(src, dst, nChar, kStates, f81Pi.data(), f81Mu, t);
   } else if (isMkN) {
     double P00, P01, P10, P11;
     mkn_trans_params(rateLoss, t, P00, P01, P10, P11);
