@@ -915,13 +915,13 @@ RunMkPrime <- function(data, tree = NULL,
           }
           tl    <- row[3L]
           relBr <- row[brColStart:(brColStart + nEdge - 1L)]
-          curTree <- structure(
+          curTree <- TreeTools::Preorder(structure(
             list(edge        = result$edge_samples[[i]],
                  edge.length = tl * relBr,
-                 Nnode       = length(tipLabels) - 2L,
+                 Nnode       = length(tipLabels) - 1L,
                  tip.label   = tipLabels),
-            class = "phylo", order = "cladewise"
-          )
+            class = "phylo"
+          ))
           r$tree_samples[[r$tree_saved_idx]] <- curTree
           if (!is.null(treeFile))
             cat(ape::write.tree(curTree), "\n", file = treeFile, append = TRUE)
@@ -944,13 +944,13 @@ RunMkPrime <- function(data, tree = NULL,
           row <- result$scalar_samples[i, ]
           tl    <- row[3L]
           relBr <- row[brColStart:(brColStart + nEdge - 1L)]
-          tuningTreeBuf[[tuningBufIdx]] <- structure(
+          tuningTreeBuf[[tuningBufIdx]] <- TreeTools::Preorder(structure(
             list(edge        = result$edge_samples[[i]],
                  edge.length = tl * relBr,
-                 Nnode       = length(tipLabels) - 2L,
+                 Nnode       = length(tipLabels) - 1L,
                  tip.label   = tipLabels),
-            class = "phylo", order = "cladewise"
-          )
+            class = "phylo"
+          ))
         }
       }
     }
@@ -3180,15 +3180,15 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' @keywords internal
 .StateToTree <- function(statePtr, tipLabels) {
   state <- get_mcmc_state(statePtr)
-  structure(
+  TreeTools::Preorder(structure(
     list(
       edge = state$edge,
       edge.length = state$treeLength * state$relBrLengths,
-      Nnode = length(tipLabels) - 2L,
+      Nnode = length(tipLabels) - 1L,
       tip.label = tipLabels
     ),
-    class = "phylo", order = "cladewise"
-  )
+    class = "phylo"
+  ))
 }
 
 

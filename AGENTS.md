@@ -151,6 +151,50 @@ are for targeted iteration only (build + run 1–2 specific test files).
 
 ---
 
+## Running `RunMkPrime()` in subprocesses — REQUIRED PROTOCOL
+
+`RunMkPrime()` with convergence criteria can run for hundreds of thousands
+of iterations. On Windows, when the bash tool timeout fires, the child
+Rscript process is **not killed** — it becomes an orphan consuming CPU.
+Repeated retries accumulate orphan processes that must be killed manually
+via Task Manager.
+
+**Triple-guard every subprocess `RunMkPrime()` call:**
+
+1. **`maxTime`** — always set in the `RunMkPrime()` call (e.g. `maxTime = 120`).
+   This is the application-level stop; the MCMC will finish the current
+   batch and exit cleanly.
+2. **`setTimeLimit()`** — wrap the R code in `setTimeLimit(elapsed = 150)` as a
+   backup in case `maxTime` isn't checked frequently enough.
+3. **Tool timeout** — set the bash tool `timeout` parameter to ~180s (above
+   the R-level limits so they fire first).
+
+**Before starting a new subprocess**, kill any stale Rscript processes:
+
+```bash
+taskkill //F //IM Rscript.exe 2>/dev/null; sleep 1
+```
+
+**Template:**
+
+```bash
+taskkill //F //IM Rscript.exe 2>/dev/null; sleep 1
+Rscript -e '
+  setTimeLimit(elapsed = 150)
+  pkgbuild::compile_dll(debug = FALSE); devtools::load_all()
+  # ... setup ...
+  posterior <- RunMkPrime(..., maxTime = 120, ...)
+  # ... diagnostics ...
+' 2>&1
+echo "EXIT: $?"
+```
+
+**Never** run `RunMkPrime()` with convergence criteria (`minEss`, `minTreeEss`,
+`maxRhat`) without also setting `maxTime`. The `nIter` cap alone is not
+sufficient — warmup can consume most of the iteration budget.
+
+---
+
 ## Build failure recovery
 
 | Symptom | Cause | Fix |
@@ -158,6 +202,53 @@ are for targeted iteration only (build + run 1–2 specific test files).
 | Debug `.o` contamination | `roxygen2::roxygenise()` default uses `debug=TRUE` | `rm -f src/*.o src/*.dll`, rebuild |
 | "Access is denied" | Another R process has DLL loaded | Kill the process or wait |
 | Namespace errors after rename | `RcppExports.cpp` stale | `Rscript -e "Rcpp::compileAttributes()"` |
+| Orphan Rscript processes | Subprocess timeout didn't kill child | `taskkill //F //IM Rscript.exe` |
+
+---
+
+## Known bugs and fixes in progress
+
+### Tree construction bugs in `RunMkPrime.R` (M-153 follow-up) — FIXED
+
+Three tree-construction sites in `RunMkPrime.R` had two bugs:
+
+1. **Wrong `Nnode`:** `length(tipLabels) - 2L` should be `- 1L`. An unrooted
+   binary tree with n tips has n−1 internal nodes (ape stores as rooted with
+   implicit root). The off-by-one caused `TreeDist::RobinsonFoulds()` to
+   read past allocated arrays → segfault (exit code 139).
+
+2. **Missing order attribute:** Trees were stamped `order = "cladewise"` but
+   not actually validated. The C++ engine returns canonical preorder edges, but
+   downstream code (TreeDist) relies on the attribute being trustworthy.
+
+**Fix:** Wrap all three sites in `TreeTools::Preorder()` (validates, normalises,
+stamps canonical `"preorder"` order) and correct Nnode to `length(tipLabels) - 1L`.
+`Preorder()` is O(n_edge) and a no-op for already-canonical edges.
+
+**Status:** Fixed and validated on project3832 (10 taxa, 27 chars). Convergence
+checks with tree ESS run cleanly; no segfaults. All tests pass.
+
+**Sites:** RunMkPrime.R lines ~918 (sampling), ~947 (tuning), ~3183 (`.StateToTree`).
+
+---
+
+## Validation datasets
+
+Small annotated datasets in `../neotrans/inst/matrices/` with Excel
+metadata files that classify characters as Neomorphic/Transformational:
+
+| Project | Taxa | Chars | Neo | Trans | Taxon |
+|---------|------|-------|-----|-------|-------|
+| 3832 | 10 | 27 | 12 | 15 | Canthyloscledidae |
+| 950 | 12 | 9 | ? | ? | Hexacorallia |
+| 4789 | 13 | 12 | ? | ? | Agelacrinitinae |
+| 1271 | 25 | 33 | ? | ? | Amaltheidae |
+| 3408 | 19 | 30 | ? | ? | Galericini |
+
+Excel files: `Project{N}_{author}.xlsx`, column `"Character Pattern"`
+contains `"Neomorphic"` / `"Transformational"`.
+
+Copy into `mkp/` for use (neotrans paths are outside the workspace).
 
 ---
 
