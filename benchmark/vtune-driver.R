@@ -1,6 +1,6 @@
-# VTune driver script for S-PROF round 4
+# VTune driver script for M-166 (S-PROF round 5)
 # Exercises the MCMC hot path on Sun2018 (54 taxa, 225 chars)
-# Target: ~30s of CPU time in the C++ inner loop
+# Target: ~60-90s of CPU time in the C++ inner loop
 
 library(MkPrime, lib.loc = ".vtune-lib")
 
@@ -17,17 +17,19 @@ tree <- TreeTools::NJTree(phyDat, edgeLengths = TRUE)
 tree$edge.length[tree$edge.length <= 0] <- 1e-8
 
 # Run MCMC: fixed nIter, no convergence criteria, no tempering overhead.
-# 15000 iterations at ~2ms/iter ≈ 30s of hot-path CPU time.
+# Short warmup, no tuning, straight to sampling for clean VTune profile.
 set.seed(4619)
 posterior <- RunMkPrime(
   mkd, tree,
-  nIter    = 15000L,
-  warmup   = 1000L,
-  nRuns    = 1L,
-  nChains  = 1L,
-  thin     = 50L,
-  maxTime  = 60,
-  plotEvery = 0L
+  nIter      = 5000L,
+  maxWarmup  = 500L,
+  minWarmup  = 200L,
+  autoTune   = FALSE,
+  nRuns      = 1L,
+  nChains    = 1L,
+  thin       = 50L,
+  maxTime    = 180,
+  plotEvery  = 0L
 )
 
 cat("Completed", posterior$nIter, "iterations,", posterior$nSamples, "samples\n")
