@@ -196,6 +196,14 @@
 #'   `future::plan("multisession", workers = nRuns)`. Default `FALSE` (sequential).
 #' @param pollInterval Integer. Seconds between convergence polls in parallel
 #'   mode. Ignored when `parallel = FALSE`. Default `10L`.
+#' @param cacheBonus Numeric; multiplier applied to partial-CL-eligible
+#'   move weights (NNI, beta_simplex, Dirichlet, local_dirichlet) when the
+#'   node CL cache is valid. Default 5. A value of 1 disables the boost.
+#'   Higher values preferentially select fast partial-CL moves after
+#'   another partial-CL move succeeds, exploiting the ~15\eqn{\times}
+#'   speedup. Statistically valid: each component kernel individually
+#'   satisfies detailed balance; only selection frequency changes.
+#'   Ignored when Q-heterogeneity is enabled (partial CL not supported).
 #' @param tuning Named list of initial tuning parameters for each move
 #'   type. See Details.
 #'
@@ -310,6 +318,7 @@ MkPrimeMCMC <- function(
     localDirichletK = NULL,
     nBranchBins = 10L,
     moveWeights = NULL,
+    cacheBonus = 5,
     tuning = list(),
     parallel = FALSE,
     pollInterval = 10L
@@ -510,6 +519,10 @@ MkPrimeMCMC <- function(
   if (pollInterval < 1L) {
     cli::cli_abort("{.arg pollInterval} must be a positive integer.")
   }
+  cacheBonus <- as.numeric(cacheBonus)
+  if (is.na(cacheBonus) || cacheBonus < 1) {
+    cli::cli_abort("{.arg cacheBonus} must be >= 1, got {cacheBonus}.")
+  }
 
   # Resolve progressFn / plotEvery defaults
   # Use match.call() to distinguish "user passed NULL" from "user omitted arg"
@@ -562,6 +575,7 @@ MkPrimeMCMC <- function(
          localDirichletK = localDirichletK,
          nBranchBins = nBranchBins,
          moveWeights = moveWeights,
+         cacheBonus = cacheBonus,
          tuning = tuning,
          parallel = parallel, pollInterval = pollInterval),
     class = "MkPrimeMCMC"

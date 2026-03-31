@@ -865,7 +865,8 @@ RunMkPrime <- function(data, tree = NULL,
       scaleTunings, bsTunings, iwWins, moveIntParams,
       sliceWidths, jointRhos,
       nBatch, batchStart, cppWarmup, mcmc$thin,
-      hasNeo, nEdge
+      hasNeo, nEdge,
+      mcmc$cacheBonus
     )
 
     # Accept/propose counts, timing (M-092), and slice expansion counts
@@ -2449,8 +2450,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         rate_neo    = tun$scale_rate_neo %||% 0.5,
         neo_joint   = tun$scale_neo_joint %||% tun$scale_rate_loss,
         beta_scale  = tun$scale_beta_scale %||% 0.5,
-        kprime_alpha = tun$scale_kprime_alpha %||% 0.5,
-        kprime_beta  = tun$scale_kprime_beta %||% 0.5,
+        kprime_alpha = tun$scale_kprime_alpha %||% 0.05,
+        kprime_beta  = tun$scale_kprime_beta %||% 0.05,
         joint_tl_rls = tun$scale_joint_tl_rls %||% 0.5,
         joint_tl_rl  = tun$scale_joint_tl_rl %||% 0.5,
         dirichlet_branch = tun$dirichlet_alpha %||% 10,
@@ -2756,9 +2757,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       # Scale proposals for shared (α, β) hyperparameters
       kPrimeMoves <- c(kPrimeMoves, list(
         list(name = "kprime_alpha", type = "kprime_alpha",
-             target = "kprime_alpha", weight = 1, dim = 1L),
+             target = "kprime_alpha", weight = 0.05, dim = 1L),
         list(name = "kprime_beta", type = "kprime_beta",
-             target = "kprime_beta", weight = 1, dim = 1L)
+             target = "kprime_beta", weight = 0.05, dim = 1L)
       ))
     } else if (!identical(kPrimePrior, "logseries")) {
       # Conjugate Gibbs draw: p | k' ~ Beta(a + nTrans, b + sum(k' - kObs))
@@ -2959,8 +2960,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       rate_neo    = tuning$scale_rate_neo,
       neo_joint   = tuning$scale_neo_joint %||% tuning$scale_rate_loss,
       beta_scale  = tuning$scale_beta_scale,
-      kprime_alpha = tuning$scale_kprime_alpha %||% 0.5,
-      kprime_beta  = tuning$scale_kprime_beta %||% 0.5,
+      kprime_alpha = tuning$scale_kprime_alpha %||% 0.05,
+      kprime_beta  = tuning$scale_kprime_beta %||% 0.05,
       dirichlet_branch = tuning$dirichlet_alpha %||% 0.1,
       local_dirichlet = tuning$local_dirichlet_alpha %||% 0.1,
       0.5  # default; gibbs_p ignores scaleTun (returns before using it)

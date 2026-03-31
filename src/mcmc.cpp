@@ -4256,7 +4256,8 @@ List run_mcmc_batch_cpp(
     int warmup,
     int thin,
     bool hasNeo,
-    int nEdge
+    int nEdge,
+    double cacheBonus = 1.0
 ) {
   McmcData* data = Rcpp::XPtr<McmcData>(dataPtr).get();
   int nChains    = stateXPtrs.size();
@@ -4269,12 +4270,31 @@ List run_mcmc_batch_cpp(
     states[ch] = Rcpp::XPtr<McmcState>(stateXPtrs[ch]).get();
 
   // Cumulative move weights for O(nMoves) weighted sampling
+  // Base weights (used when node CL cache is invalid)
   std::vector<double> cumWeights(nMoves);
   double totalWeight = 0.0;
   for (int m = 0; m < nMoves; ++m) {
     totalWeight += moveWeights[m];
     cumWeights[m] = totalWeight;
   }
+
+  // M-159: Cache-boosted weights (used when nodeCL.valid && !qHeterogeneity).
+  // Partial-CL-eligible moves {4=beta_simplex, 5=NNI, 23=dirichlet,
+  // 24=local_dirichlet} get cacheBonus multiplier.
+  bool haveCacheBoost = cacheBonus > 1.0 && !data->qHeterogeneity;
+  std::vector<double> cumWeightsCached(nMoves);
+  double totalWeightCached = 0.0;
+  if (haveCacheBoost) {
+    for (int m = 0; m < nMoves; ++m) {
+      int mt = moveTypeCodes[m];
+      double w = moveWeights[m];
+      if (mt == 4 || mt == 5 || mt == 23 || mt == 24)
+        w *= cacheBonus;
+      totalWeightCached += w;
+      cumWeightsCached[m] = totalWeightCached;
+    }
+  }
+  int cacheHits = 0, cacheMisses = 0;
 
   // Accept/propose counters (nChains x nMoves)
   IntegerMatrix acceptCounts(nChains, nMoves);
@@ -4320,10 +4340,16 @@ List run_mcmc_batch_cpp(
 
     // Advance each chain
     for (int ch = 0; ch < nChains; ++ch) {
-      // Weighted move selection
-      double u = R::unif_rand() * totalWeight;
+      // M-159: Cache-aware weighted move selection.
+      // When the node CL cache is valid, boost partial-CL-eligible moves.
+      bool useBoost = haveCacheBoost && states[ch]->nodeCL.valid;
+      double tw = useBoost ? totalWeightCached : totalWeight;
+      const auto& cw = useBoost ? cumWeightsCached : cumWeights;
+      if (useBoost) ++cacheHits; else ++cacheMisses;
+
+      double u = R::unif_rand() * tw;
       int moveIdx = 0;
-      while (moveIdx < nMoves - 1 && u > cumWeights[moveIdx]) ++moveIdx;
+      while (moveIdx < nMoves - 1 && u > cw[moveIdx]) ++moveIdx;
 
       proposeCounts(ch, moveIdx)++;
 
@@ -4466,7 +4492,9 @@ List run_mcmc_batch_cpp(
     _["edge_samples"]     = edgeSamples,
     _["n_saved"]          = nSaved,
     _["diag_counters"]    = diagCounters,
-    _["diag_max_diff"]    = states[0]->diagMaxDiff
+    _["diag_max_diff"]    = states[0]->diagMaxDiff,
+    _["cache_hits"]       = cacheHits,
+    _["cache_misses"]     = cacheMisses
   );
 }
 
