@@ -304,9 +304,9 @@ static void full_downpass(
         int ch = children[ci];
         if (ch < 0) continue;
 
-        double edgeLen = topo.edgeLen[topo.edgeToPar[ch]];
+        double el = topo.nodeEdgeLen[ch];  // M-158: node-indexed
         const double* childCL = unit.CL(cat, ch);
-        apply_transition(unit, childCL, contrib.data(), edgeLen, rateLoss, rate);
+        apply_transition(unit, childCL, contrib.data(), el, rateLoss, rate);
 
         if (first) {
           std::memcpy(clNode, contrib.data(), unit.stride * sizeof(double));
@@ -807,10 +807,10 @@ static void restore_dirty_cls(
 // ---------------------------------------------------------------------------
 // recompute_dirty_nodes: update CLs at dirty nodes using cached children.
 // dirtyNodes must be in postorder (children before parents).
+// M-158: uses nodeEdgeLen (decoupled from edge array ordering).
 // ---------------------------------------------------------------------------
 static void recompute_dirty_nodes(
     NodeCLCache& cache,
-    const NumericVector& absEdgeLen,
     double rateLoss,
     const std::vector<int>& dirtyNodes) {
 
@@ -840,10 +840,10 @@ static void recompute_dirty_nodes(
           int ch = children[ci];
           if (ch < 0) continue;
 
-          double edgeLen = absEdgeLen[cache.topo.edgeToPar[ch]];
+          double el = cache.topo.nodeEdgeLen[ch];  // M-158
           const double* childCL = unit.CL(cat, ch);
           apply_transition(unit, childCL, contrib.data(),
-                           edgeLen, rateLoss, rate);
+                           el, rateLoss, rate);
 
           if (first) {
             std::memcpy(clNode, contrib.data(),
@@ -875,8 +875,8 @@ static double partial_eval_dirty(
   // 1. Save CLs at dirty nodes for rollback
   save_dirty_cls(cache, dirtyNodes);
 
-  // 2. Recompute dirty nodes
-  recompute_dirty_nodes(cache, absEdgeLen, rateLoss, dirtyNodes);
+  // 2. Recompute dirty nodes (uses nodeEdgeLen, M-158)
+  recompute_dirty_nodes(cache, rateLoss, dirtyNodes);
 
   // 3. Compute total log-likelihood from (partially updated) cache
   return cache_total_loglik(cache, data, parent, child, absEdgeLen,
@@ -929,6 +929,271 @@ static bool can_use_partial_cl(
   if (!cache.valid) return false;
   if (data.qHeterogeneity) return false;
   return true;
+}
+
+
+// ===========================================================================
+// M-158: Partial CL evaluation for SPR moves
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// SprMeta: metadata from an SPR proposal on TreeNav.
+// ---------------------------------------------------------------------------
+struct SprMeta {
+  int u, v, p, w, a, b;   // node identities (see diagram below)
+  double tau;              // split fraction for regraft edge
+  double logHastings;      // log(lRegraft) - log(lMerge)
+  bool valid;              // false if proposal failed (no eligible edges)
+
+  // Saved edge lengths for reversal
+  double oldLen_u;  // old nodeEdgeLen[u] = edge from u to old parent p
+  double oldLen_w;  // old nodeEdgeLen[w] = edge from w to old parent u
+  double oldLen_b;  // old nodeEdgeLen[b] = edge from b to old parent a
+
+  // Saved child slots for reversal
+  int oldSlot_p_u;   // which slot of p held u (-1 = ch0, etc.)
+  int oldSlot_a_b;   // which slot of a held b
+  int oldSlot_u_w;   // which slot of u held w
+};
+
+// ---------------------------------------------------------------------------
+// Helper: replace child `old` with `rep` in node p's child slots.
+// ---------------------------------------------------------------------------
+static void replace_child(TreeNav& topo, int p, int oldChild, int newChild) {
+  if      (topo.ch0[p] == oldChild) topo.ch0[p] = newChild;
+  else if (topo.ch1[p] == oldChild) topo.ch1[p] = newChild;
+  else if (topo.ch2[p] == oldChild) topo.ch2[p] = newChild;
+}
+
+// ---------------------------------------------------------------------------
+// Helper: check if `target` is a descendant of `anc` in TreeNav.
+// Uses parent-pointer upward walk (O(depth)).
+// ---------------------------------------------------------------------------
+static bool is_descendant_of(const TreeNav& topo, int target, int anc) {
+  int cur = target;
+  while (cur >= 0) {
+    if (cur == anc) return true;
+    cur = topo.parentNode[cur];
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// propose_spr_treenav: select a random SPR move using TreeNav navigation.
+//
+// Diagram:
+//   Before: ..→p→u→{v, w}   ..→a→{b, ..}
+//   After:  ..→p→{w, ..}    ..→a→u→{v, b}
+//
+// u = node being re-grafted (parent of subtree v)
+// v = root of pruned subtree (stays as child of u)
+// p = old parent of u (gains w, loses u)
+// w = sibling of v under u (promoted to p's child)
+// a = parent end of regraft edge
+// b = child end of regraft edge (becomes u's new child)
+// ---------------------------------------------------------------------------
+static SprMeta propose_spr_treenav(const TreeNav& topo) {
+  SprMeta m;
+  m.valid = false;
+  m.logHastings = R_NegInf;
+
+  int nTip = topo.nTip;
+  int root = topo.root;
+
+  // 1. Select random prune node v: any node whose parent u ≠ root
+  //    (i.e. u has a parent p)
+  std::vector<int> eligible;
+  eligible.reserve(topo.nEdge);
+  for (int node = 1; node <= topo.maxNode; ++node) {
+    int par = topo.parentNode[node];
+    if (par < 0) continue;       // root or unused
+    if (par == root) continue;    // parent is root → can't prune
+    eligible.push_back(node);
+  }
+  if (eligible.empty()) return m;
+
+  int pick = (int)(R::unif_rand() * (double)eligible.size());
+  if (pick >= (int)eligible.size()) pick = eligible.size() - 1;
+  m.v = eligible[pick];
+  m.u = topo.parentNode[m.v];
+  m.p = topo.parentNode[m.u];
+
+  // Find sibling w of v under u
+  int ch[3] = { topo.ch0[m.u], topo.ch1[m.u], topo.ch2[m.u] };
+  m.w = -1;
+  for (int ci = 0; ci < 3; ++ci) {
+    if (ch[ci] >= 0 && ch[ci] != m.v) { m.w = ch[ci]; break; }
+  }
+  if (m.w < 0) return m;  // shouldn't happen for valid binary tree
+
+  // 2. Enumerate candidate regraft edges.
+  //    Valid: node b where parentNode[b] = a, b is not in v's subtree,
+  //    and b is not u and a is not u (not adjacent to u).
+  std::vector<int> candidates;
+  candidates.reserve(topo.nEdge);
+  for (int node = 1; node <= topo.maxNode; ++node) {
+    if (topo.parentNode[node] < 0) continue;  // root
+    if (node == m.u) continue;                  // adjacent to u
+    if (topo.parentNode[node] == m.u) continue; // adjacent to u (sibling of v or w)
+    if (is_descendant_of(topo, node, m.v)) continue; // in v's subtree
+    candidates.push_back(node);
+  }
+  if (candidates.empty()) return m;
+
+  int pickR = (int)(R::unif_rand() * (double)candidates.size());
+  if (pickR >= (int)candidates.size()) pickR = candidates.size() - 1;
+  m.b = candidates[pickR];
+  m.a = topo.parentNode[m.b];
+
+  m.tau = R::unif_rand();
+
+  // Hastings ratio: log(lRegraft) - log(lMerge)
+  double lRegraft = topo.nodeEdgeLen[m.b];  // length of edge a→b
+  double lMerge   = topo.nodeEdgeLen[m.u] + topo.nodeEdgeLen[m.w]; // p→u + u→w
+  if (lRegraft <= 0.0 || lMerge <= 0.0) return m;
+  m.logHastings = std::log(lRegraft) - std::log(lMerge);
+
+  m.valid = true;
+  return m;
+}
+
+
+// ---------------------------------------------------------------------------
+// update_topo_spr: apply SPR topology change to TreeNav.
+// Saves old state in SprMeta for reversal.
+// ---------------------------------------------------------------------------
+static void update_topo_spr(TreeNav& topo, SprMeta& m) {
+  // Save old edge lengths
+  m.oldLen_u = topo.nodeEdgeLen[m.u];
+  m.oldLen_w = topo.nodeEdgeLen[m.w];
+  m.oldLen_b = topo.nodeEdgeLen[m.b];
+
+  double lRegraft = m.oldLen_b;
+
+  // 1. Detach u from p: replace u with w in p's children
+  replace_child(topo, m.p, m.u, m.w);
+  topo.parentNode[m.w] = m.p;
+  topo.nodeEdgeLen[m.w] = m.oldLen_u + m.oldLen_w;  // merged edge
+
+  // 2. Insert u on regraft edge: replace b with u in a's children
+  replace_child(topo, m.a, m.b, m.u);
+  topo.parentNode[m.u] = m.a;
+  topo.nodeEdgeLen[m.u] = m.tau * lRegraft;  // a→u
+
+  // 3. b becomes child of u (replacing w)
+  replace_child(topo, m.u, m.w, m.b);
+  topo.parentNode[m.b] = m.u;
+  topo.nodeEdgeLen[m.b] = (1.0 - m.tau) * lRegraft;  // u→b
+}
+
+
+// ---------------------------------------------------------------------------
+// reverse_topo_spr: undo SPR topology change on rejection.
+// ---------------------------------------------------------------------------
+static void reverse_topo_spr(TreeNav& topo, const SprMeta& m) {
+  // Reverse step 3: replace b with w in u's children
+  replace_child(topo, m.u, m.b, m.w);
+  topo.parentNode[m.b] = m.a;   // b's parent back to a
+  topo.nodeEdgeLen[m.b] = m.oldLen_b;
+
+  // Reverse step 2: replace u with b in a's children
+  replace_child(topo, m.a, m.u, m.b);
+  topo.parentNode[m.u] = m.p;   // u's parent back to p
+  topo.nodeEdgeLen[m.u] = m.oldLen_u;
+
+  // Reverse step 1: replace w with u in p's children
+  replace_child(topo, m.p, m.w, m.u);
+  topo.parentNode[m.w] = m.u;   // w's parent back to u
+  topo.nodeEdgeLen[m.w] = m.oldLen_w;
+}
+
+
+// ---------------------------------------------------------------------------
+// find_dirty_spr: identify dirty nodes after SPR.
+// Dirty set = union of:
+//   - node u (children changed)
+//   - path from p (old parent) to root
+//   - path from a (new parent) to root
+// Returned in postorder (deepest first).
+// ---------------------------------------------------------------------------
+static std::vector<int> find_dirty_spr(
+    const TreeNav& topo, int u, int p, int a) {
+
+  // Mark all nodes on both paths to root + u itself
+  std::vector<bool> onPath(topo.maxNode + 1, false);
+  onPath[u] = true;
+  for (int n = p; n >= 0; n = topo.parentNode[n]) onPath[n] = true;
+  for (int n = a; n >= 0; n = topo.parentNode[n]) onPath[n] = true;
+
+  // Collect with depth for postorder sorting
+  std::vector<std::pair<int,int>> depthNode;
+  for (int n = 1; n <= topo.maxNode; ++n) {
+    if (!onPath[n]) continue;
+    int d = 0;
+    for (int x = n; x >= 0; x = topo.parentNode[x]) ++d;
+    depthNode.push_back({d, n});
+  }
+
+  // Sort by decreasing depth = postorder (children before parents)
+  std::sort(depthNode.begin(), depthNode.end(),
+            [](const auto& a, const auto& b) { return a.first > b.first; });
+
+  std::vector<int> dirty;
+  dirty.reserve(depthNode.size());
+  for (auto& dn : depthNode) dirty.push_back(dn.second);
+  return dirty;
+}
+
+
+// ---------------------------------------------------------------------------
+// treenav_to_preorder: reconstruct canonical parent/child/relBr arrays from
+// TreeNav. Uses DFS preorder traversal.
+//
+// Returns false if reconstruction fails (shouldn't happen with valid TreeNav).
+// Updates topo.edgeToPar and topo.edgeLen to match the new array ordering.
+// ---------------------------------------------------------------------------
+static bool treenav_to_preorder(
+    TreeNav& topo, double treeLength,
+    IntegerVector& outParent, IntegerVector& outChild,
+    NumericVector& outRelBr) {
+
+  int nEdge = topo.nEdge;
+  outParent = IntegerVector(nEdge);
+  outChild  = IntegerVector(nEdge);
+  outRelBr  = NumericVector(nEdge);
+
+  // DFS preorder: push root's children, visit in preorder
+  std::vector<std::pair<int,int>> stack;  // (parent, child)
+  // Push root's children in reverse order for correct preorder
+  int rootCh[3] = { topo.ch2[topo.root], topo.ch1[topo.root], topo.ch0[topo.root] };
+  for (int ci = 0; ci < 3; ++ci) {
+    if (rootCh[ci] >= 0) stack.push_back({topo.root, rootCh[ci]});
+  }
+
+  int idx = 0;
+  while (!stack.empty()) {
+    auto [par, ch] = stack.back();
+    stack.pop_back();
+
+    if (idx >= nEdge) return false;  // shouldn't happen
+
+    outParent[idx] = par;
+    outChild[idx]  = ch;
+    outRelBr[idx]  = topo.nodeEdgeLen[ch] / treeLength;
+
+    // Update TreeNav edge mapping to match new array ordering
+    topo.edgeToPar[ch] = idx;
+    topo.edgeLen[idx]  = topo.nodeEdgeLen[ch];
+
+    // Push children in reverse order (so first child is visited first)
+    int childCh[3] = { topo.ch2[ch], topo.ch1[ch], topo.ch0[ch] };
+    for (int ci = 0; ci < 3; ++ci) {
+      if (childCh[ci] >= 0) stack.push_back({ch, childCh[ci]});
+    }
+    ++idx;
+  }
+
+  return (idx == nEdge);
 }
 
 

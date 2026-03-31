@@ -35,6 +35,10 @@ struct TreeNav {
   std::vector<int> parentNode;    // parent node (-1 for root)
   std::vector<int> edgeToPar;     // edge index connecting node to its parent
   std::vector<double> edgeLen;    // absolute edge length for each edge
+  // M-158: node-indexed edge lengths (decoupled from edge array ordering).
+  // nodeEdgeLen[c] = absolute edge length from node c to parentNode[c].
+  // Enables partial CL recomputation without requiring edge array indices.
+  std::vector<double> nodeEdgeLen;
 
   void build(const IntegerVector& parent, const IntegerVector& child,
              const NumericVector& absEdgeLen, int nTip_ = 0) {
@@ -55,6 +59,7 @@ struct TreeNav {
     parentNode.assign(maxNode + 1, -1);
     edgeToPar.assign(maxNode + 1, -1);
     edgeLen.assign(nEdge, 0.0);
+    nodeEdgeLen.assign(maxNode + 1, 0.0);
 
     for (int e = 0; e < nEdge; ++e) edgeLen[e] = absEdgeLen[e];
 
@@ -64,6 +69,7 @@ struct TreeNav {
       int p = parent[e], c = child[e];
       parentNode[c] = p;
       edgeToPar[c]  = e;
+      nodeEdgeLen[c] = absEdgeLen[e];  // M-158
       if      (ch0[p] < 0) ch0[p] = c;
       else if (ch1[p] < 0) ch1[p] = c;
       else                  ch2[p] = c;  // root's 3rd child

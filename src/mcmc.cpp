@@ -179,6 +179,7 @@ struct McmcState {
   int diagDriftCount = 0;
   int diagCachePopCount = 0;
   double diagMaxDiff = 0.0;
+
 };
 
 
@@ -1048,6 +1049,8 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
       constProbAccums[gi].assign(
         (size_t)nCand * pseudoGroups[gi].nChar, 0.0);
   }
+
+
 
   ResidualCL res;
   ResidualCL pseudoRes;
@@ -3730,6 +3733,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   // O(1) relBr rollback for cases 4 and 12 (save 2 modified elements)
   int bsIdx1 = -1, bsIdx2 = -1;
   double bsOldVal1 = 0.0, bsOldVal2 = 0.0;
+  // M-158: nodeEdgeLen rollback for beta_simplex (2 values)
+  double bsOldNodeEdgeLen1 = 0.0, bsOldNodeEdgeLen2 = 0.0;
 
   // OPP-6b: in-place NNI rollback (2 parent values)
   bool nniInPlace = false;
@@ -3742,11 +3747,16 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   // not overwritten until acceptance → no pre-proposal clone, no rollback copy.
   IntegerVector proposedParent, proposedChild;
   NumericVector proposedRelBr;
+  // M-158: SPR partial CL metadata
+  SprMeta sprMeta;
+  sprMeta.valid = false;
+  bool sprPartialCL = false;  // true if SPR used partial CL path
 
-  // M-121: pre-proposal cache population for partial CL.
+  // M-121/M-158: pre-proposal cache population for partial CL.
   // Must happen BEFORE the proposal modifies state in-place.
-  // Populate for NNI (5), beta_simplex (4), and Dirichlet (23, 24).
-  if ((moveType == 5 || moveType == 4 || moveType == 23 || moveType == 24) &&
+  // Populate for NNI (5), beta_simplex (4), Dirichlet (23, 24), SPR (6).
+  if ((moveType == 5 || moveType == 4 || moveType == 23 || moveType == 24
+       || moveType == 6) &&
       !data->qHeterogeneity && !state->nodeCL.valid) {
     state->diagCachePopCount++;
     int nEdge = state->relBrLengths.size();
@@ -3876,16 +3886,26 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       logHastings = 0.0;
       break;
     }
-    case 6: { // SPR — OPP-6: no pre-proposal clone; defer state update to accept
-      List prop = spr_proposal_impl(state->parent, state->child,
-                                    data->nTip, state->treeLength,
-                                    state->relBrLengths);
-      logHastings = as<double>(prop["logHastings"]);
-      if (!R_FINITE(logHastings)) return false;
-      proposedParent  = as<IntegerVector>(prop["parent"]);
-      proposedChild   = as<IntegerVector>(prop["child"]);
-      proposedRelBr   = as<NumericVector>(prop["rel_br_lengths"]);
-      topologyChanged = true;
+    case 6: { // SPR — M-158: partial CL when cache valid, else OPP-6 full eval
+      if (state->nodeCL.valid && !data->qHeterogeneity) {
+        // M-158: TreeNav-based SPR with partial CL evaluation
+        sprMeta = propose_spr_treenav(state->nodeCL.topo);
+        if (!sprMeta.valid || !R_FINITE(sprMeta.logHastings)) return false;
+        logHastings = sprMeta.logHastings;
+        sprPartialCL = true;
+        // TreeNav is updated + partial eval happens in the evaluation section
+      } else {
+        // Fallback: full eval path (original OPP-6 pattern)
+        List prop = spr_proposal_impl(state->parent, state->child,
+                                      data->nTip, state->treeLength,
+                                      state->relBrLengths);
+        logHastings = as<double>(prop["logHastings"]);
+        if (!R_FINITE(logHastings)) return false;
+        proposedParent  = as<IntegerVector>(prop["parent"]);
+        proposedChild   = as<IntegerVector>(prop["child"]);
+        proposedRelBr   = as<NumericVector>(prop["rel_br_lengths"]);
+        topologyChanged = true;
+      }
       break;
     }
     case 17: { // TBR — M-053: OPP-6 pattern (defer topology commit)
@@ -4174,6 +4194,12 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     for (int i = 0; i < nEdge; ++i)
       propEdgeLen[i] = state->treeLength * evalRelBr[i];
 
+    // M-158: sync nodeEdgeLen for the two modified edges (save for rollback)
+    bsOldNodeEdgeLen1 = state->nodeCL.topo.nodeEdgeLen[evalChild[bsIdx1]];
+    bsOldNodeEdgeLen2 = state->nodeCL.topo.nodeEdgeLen[evalChild[bsIdx2]];
+    state->nodeCL.topo.nodeEdgeLen[evalChild[bsIdx1]] = propEdgeLen[bsIdx1];
+    state->nodeCL.topo.nodeEdgeLen[evalChild[bsIdx2]] = propEdgeLen[bsIdx2];
+
     auto dirty = find_dirty_beta_simplex(state->nodeCL.topo,
                                           evalParent, bsIdx1, bsIdx2);
     newLogLik = partial_eval_dirty(state->nodeCL, *data,
@@ -4198,6 +4224,10 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     NumericVector propEdgeLen(nEdge);
     for (int i = 0; i < nEdge; ++i)
       propEdgeLen[i] = state->treeLength * evalRelBr[i];
+
+    // M-158: sync nodeEdgeLen for all modified Dirichlet edges
+    for (int idx : state->dirEdges)
+      state->nodeCL.topo.nodeEdgeLen[evalChild[idx]] = propEdgeLen[idx];
 
     auto dirty = find_dirty_dirichlet(state->nodeCL.topo,
                                        evalParent, state->dirEdges);
@@ -4237,6 +4267,43 @@ static bool do_move_impl(McmcData* data, McmcState* state,
           }
         }
       }
+    }
+
+  } else if (sprPartialCL) {
+    // M-158: SPR with partial CL evaluation via TreeNav
+    // 1. Apply SPR to TreeNav (updates topology + nodeEdgeLen)
+    update_topo_spr(state->nodeCL.topo, sprMeta);
+
+    // 2. Build proposed parent/child/relBr from updated TreeNav
+    treenav_to_preorder(state->nodeCL.topo, state->treeLength,
+                        proposedParent, proposedChild, proposedRelBr);
+    topologyChanged = true;
+    const IntegerVector& sprParent = proposedParent;
+    const IntegerVector& sprChild  = proposedChild;
+
+    int nEdge = proposedRelBr.size();
+    NumericVector propEdgeLen(nEdge);
+    for (int i = 0; i < nEdge; ++i)
+      propEdgeLen[i] = state->treeLength * proposedRelBr[i];
+
+    // 3. Find dirty set and check if partial eval is worthwhile
+    auto dirty = find_dirty_spr(state->nodeCL.topo,
+                                 sprMeta.u, sprMeta.p, sprMeta.a);
+    int nInternal = nEdge + 1 - data->nTip;
+    if ((int)dirty.size() > (int)(0.8 * (nInternal + data->nTip))) {
+      // Dirty set too large — fall back to full eval
+      // (TreeNav already updated; will be reversed on rejection)
+      newLogLik = cpp_log_likelihood(*data, sprParent, sprChild,
+        propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
+        state->rateNeo, state->betaScale,
+        state->clWs.ready() ? &state->clWs : nullptr);
+    } else {
+      // 4. Partial CL evaluation
+      newLogLik = partial_eval_dirty(state->nodeCL, *data,
+                                      sprParent, sprChild, propEdgeLen,
+                                      state->rateLoss, state->rateNeo,
+                                      state->rateLogSd, state->betaScale, dirty);
+      usedPartialCL = true;
     }
 
   } else if (!hasPLC) {
@@ -4363,6 +4430,24 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       update_topo_nni(state->nodeCL.topo, nniVNode, nniUNode,
                       nniWNode, nniCNode);  // reverse swap
     }
+    // M-158: rollback nodeEdgeLen for beta_simplex
+    if (moveType == 4 && bsIdx1 >= 0) {
+      state->nodeCL.topo.nodeEdgeLen[state->child[bsIdx1]] = bsOldNodeEdgeLen1;
+      state->nodeCL.topo.nodeEdgeLen[state->child[bsIdx2]] = bsOldNodeEdgeLen2;
+    }
+    // M-158: rollback nodeEdgeLen for Dirichlet (recompute from restored brSnapshot)
+    if (moveType == 23 || moveType == 24) {
+      for (int idx : state->dirEdges)
+        state->nodeCL.topo.nodeEdgeLen[state->child[idx]] =
+          state->treeLength * state->relBrLengths[idx];
+    }
+  }
+  // M-158: rollback SPR TreeNav on rejection (whether or not partial CL was used)
+  if (sprPartialCL) {
+    reverse_topo_spr(state->nodeCL.topo, sprMeta);
+    if (usedPartialCL) {
+      restore_dirty_cls(state->nodeCL, state->nodeCL.dirtyNodes);
+    }
   }
 
   return false;
@@ -4432,7 +4517,7 @@ List run_mcmc_batch_cpp(
   }
 
   // M-159: Cache-boosted weights (used when nodeCL.valid && !qHeterogeneity).
-  // Partial-CL-eligible moves {4=beta_simplex, 5=NNI, 23=dirichlet,
+  // Partial-CL-eligible moves {4=beta_simplex, 5=NNI, 6=SPR, 23=dirichlet,
   // 24=local_dirichlet} get cacheBonus multiplier.
   bool haveCacheBoost = cacheBonus > 1.0 && !data->qHeterogeneity;
   std::vector<double> cumWeightsCached(nMoves);
@@ -4441,7 +4526,7 @@ List run_mcmc_batch_cpp(
     for (int m = 0; m < nMoves; ++m) {
       int mt = moveTypeCodes[m];
       double w = moveWeights[m];
-      if (mt == 4 || mt == 5 || mt == 23 || mt == 24)
+      if (mt == 4 || mt == 5 || mt == 6 || mt == 23 || mt == 24)
         w *= cacheBonus;
       totalWeightCached += w;
       cumWeightsCached[m] = totalWeightCached;
