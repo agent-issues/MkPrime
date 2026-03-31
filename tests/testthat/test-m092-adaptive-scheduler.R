@@ -41,6 +41,27 @@ test_that("MkPrimeMCMC() rejects unknown move names", {
                "unknown move name")
 })
 
+test_that("moveWeights validNames covers all .BuildMoves() move names (M-167)", {
+  # Every move name that .BuildMoves() can produce must be accepted
+  allMoveNames <- c(
+    "tree_length", "branch_lengths", "nni", "spr", "tbr", "pspr",
+    "gibbs_spr", "gibbs_subtree_swap",
+    "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
+    "block_gibbs_branch", "dirichlet_branch", "local_dirichlet",
+    "kPrime", "gibbs_kPrime", "block_kPrime", "p",
+    "kprime_alpha", "kprime_beta",
+    "slice_kprime_alpha", "slice_kprime_beta",
+    "rate_loss", "rate_neo", "neo_joint", "rate_log_sd", "beta_scale",
+    "slice_rate_loss", "slice_rate_neo", "slice_rate_log_sd",
+    "slice_beta_scale",
+    "joint_tl_rls", "joint_tl_rl"
+  )
+  for (nm in allMoveNames) {
+    w <- setNames(0.01, nm)
+    expect_no_error(MkPrimeMCMC(moveWeights = w))
+  }
+})
+
 test_that("MkPrimeMCMC() rejects negative moveWeights", {
   expect_error(MkPrimeMCMC(nIter = 100L, minWarmup = 50L, moveWeights = c(nni = -0.1)),
                "positive")

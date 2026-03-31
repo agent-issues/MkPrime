@@ -462,11 +462,23 @@ MkPrimeMCMC <- function(
       )
     }
     validNames <- c(
-      "tree_length", "branch_lengths", "nni", "spr", "tbr", "kPrime", "p",
-      "rate_loss", "rate_log_sd", "rate_neo",
+      # Continuous parameter moves
+      "tree_length", "branch_lengths", "rate_loss", "rate_log_sd", "rate_neo",
+      "beta_scale", "neo_joint",
+      # Topology moves
+      "nni", "spr", "tbr", "pspr",
       "gibbs_spr", "gibbs_subtree_swap",
       "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
-      "block_gibbs_branch", "dirichlet_branch", "local_dirichlet", "pspr",
+      "block_gibbs_branch", "dirichlet_branch", "local_dirichlet",
+      # k' moves
+      "kPrime", "p", "gibbs_kPrime", "block_kPrime",
+      # BG hyperparameter moves
+      "kprime_alpha", "kprime_beta",
+      "slice_kprime_alpha", "slice_kprime_beta",
+      # Slice samplers
+      "slice_rate_loss", "slice_rate_neo", "slice_rate_log_sd",
+      "slice_beta_scale",
+      # Joint 2D moves
       "joint_tl_rls", "joint_tl_rl"
     )
     bad <- setdiff(names(moveWeights), validNames)
