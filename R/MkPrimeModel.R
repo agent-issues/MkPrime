@@ -20,10 +20,19 @@
 #'   on `rate_log_sd` (ACRV dispersion). Defaults: shape = 1, rate = 1.
 #' @param kPrimePrior Prior distribution for the true number of character states
 #'   (`k'`) for transformational characters. One of `"geometric"` (default,
-#'   hierarchical geometric with Beta hyperprior on `p`) or `"logseries"`
-#'   (logarithmic series with fixed parameter `c`; matches the RevBayes default).
+#'   hierarchical geometric with Beta hyperprior on `p`),
+#'   `"beta_geometric"` (per-character Beta-Geometric with shared
+#'   hyperparameters `alpha`, `beta`), or `"logseries"` (logarithmic series
+#'   with fixed parameter `c`; matches the RevBayes default).
+#'   The `"beta_geometric"` option avoids over-shrinkage of `k'` toward
+#'   `kObs` that occurs when many characters share a single `p`.
 #' @param kprimeHyperA,kprimeHyperB Parameters for the Beta hyperprior on `p`
 #'   when `kPrimePrior = "geometric"`. Defaults: a = 1, b = 1 (uniform).
+#' @param kprimeAlpha,kprimeBeta Starting values for the shared
+#'   hyperparameters of the Beta-Geometric prior
+#'   (`kPrimePrior = "beta_geometric"`). Both must be positive.
+#'   Defaults: alpha = 1, beta = 1. These are estimated during MCMC with
+#'   Exponential(1) hyperpriors.
 #' @param kprimeLogseriesC The `c` parameter of the log-series prior on `k'`
 #'   when `kPrimePrior = "logseries"`. Must be in (0, 1). Default 0.7, matching
 #'   the RevBayes `dnMkPrime` default.
@@ -94,6 +103,8 @@ MkPrimeModel <- function(
     kPrimePrior = "geometric",
     kprimeHyperA = 1,
     kprimeHyperB = 1,
+    kprimeAlpha = 1,
+    kprimeBeta = 1,
     kprimeLogseriesC = 0.7,
     rateNeoMeanlog = 0,
     rateNeoSdlog = 2,
@@ -103,13 +114,24 @@ MkPrimeModel <- function(
     betaScaleRate = 1
 ) {
   coding <- match.arg(coding, c("variable", "informative", "none"))
-  kPrimePrior <- match.arg(kPrimePrior, c("geometric", "logseries"))
+  kPrimePrior <- match.arg(kPrimePrior,
+                           c("geometric", "beta_geometric", "logseries"))
 
   # Warn if logseries-specific param is supplied for geometric prior
-  if (kPrimePrior == "geometric" && !missing(kprimeLogseriesC)) {
+  if (kPrimePrior != "logseries" && !missing(kprimeLogseriesC)) {
     cli::cli_warn(
-      "{.arg kprimeLogseriesC} is ignored when {.arg kPrimePrior = \"geometric\"}."
+      "{.arg kprimeLogseriesC} is ignored when
+       {.arg kPrimePrior = \"{kPrimePrior}\"}."
     )
+  }
+
+  # Validate beta_geometric hyperparameters
+  if (kPrimePrior == "beta_geometric") {
+    if (kprimeAlpha <= 0 || kprimeBeta <= 0) {
+      cli::cli_abort(
+        "{.arg kprimeAlpha} and {.arg kprimeBeta} must be positive."
+      )
+    }
   }
 
   # M-052: validate Het parameters
@@ -158,6 +180,8 @@ MkPrimeModel <- function(
       kPrimePrior = kPrimePrior,
       kprimeHyperA = kprimeHyperA,
       kprimeHyperB = kprimeHyperB,
+      kprimeAlpha = kprimeAlpha,
+      kprimeBeta = kprimeBeta,
       kprimeLogseriesC = kprimeLogseriesC,
       rateNeoMeanlog = rateNeoMeanlog,
       rateNeoSdlog = rateNeoSdlog,
@@ -271,6 +295,8 @@ LogPrior <- function(state, model, mkd) {
 
     if (identical(model$kPrimePrior, "geometric")) {
       if (state$p <= 0 || state$p >= 1) return(-Inf)
+    } else if (identical(model$kPrimePrior, "beta_geometric")) {
+      if (state$kprime_alpha <= 0 || state$kprime_beta <= 0) return(-Inf)
     } else {
       # logseries: validate c
       c_ls <- model$kprimeLogseriesC
@@ -332,6 +358,17 @@ LogPrior <- function(state, model, mkd) {
                        shape1 = model$kprimeHyperA,
                        shape2 = model$kprimeHyperB,
                        log = TRUE)
+    } else if (identical(model$kPrimePrior, "beta_geometric")) {
+      # Per-character p_i marginalized → Beta-Geometric(α, β)
+      # log P(k'_i = kObs_i + u | α, β) = lbeta(α+1, β+u) - lbeta(α, β)
+      alpha <- state$kprime_alpha
+      beta_ <- state$kprime_beta
+      u <- state$kPrime[transIdx] - mkd$kObs[transIdx]
+      lp <- lp + sum(lbeta(alpha + 1, beta_ + u) - lbeta(alpha, beta_))
+
+      # Hyperprior on (α, β): Exponential(1)
+      lp <- lp + dexp(alpha, rate = 1, log = TRUE)
+      lp <- lp + dexp(beta_, rate = 1, log = TRUE)
     } else {
       # k'_i: Logseries(c)
       # log P(k; c) = k*log(c) - log(k) - log(-log(1-c))
@@ -364,6 +401,8 @@ print.MkPrimeModel <- function(x, ...) {
 
   k_prior_str <- if (identical(x$kPrimePrior, "logseries")) {
     "Logseries (c = {x$kprimeLogseriesC})"
+  } else if (identical(x$kPrimePrior, "beta_geometric")) {
+    "Beta-Geometric (alpha = {x$kprimeAlpha}, beta = {x$kprimeBeta})"
   } else {
     "Geometric (Beta hyperprior: a = {x$kprimeHyperA}, b = {x$kprimeHyperB})"
   }

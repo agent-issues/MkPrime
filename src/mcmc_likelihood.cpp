@@ -1549,6 +1549,7 @@ SEXP prepare_mcmc_data(List partitions_r,
                        double rateNeoMeanlog,  double rateNeoSdlog,
                        double kprimeHyperA,    double kprimeHyperB,
                        bool   kPriorLogseries, double kprimeLogseriesC,
+                       bool   kPriorBetaGeometric = false,
                        bool   qHeterogeneity = false,
                        int    nBetaCat = 4,
                        double betaScaleShape = 1.0,
@@ -1573,8 +1574,9 @@ SEXP prepare_mcmc_data(List partitions_r,
   d->rateNeoSdlog    = rateNeoSdlog;
   d->kprimeHyperA    = kprimeHyperA;
   d->kprimeHyperB    = kprimeHyperB;
-  d->kPriorLogseries  = kPriorLogseries;
-  d->kprimeLogseriesC = kprimeLogseriesC;
+  d->kPriorLogseries     = kPriorLogseries;
+  d->kPriorBetaGeometric = kPriorBetaGeometric;
+  d->kprimeLogseriesC    = kprimeLogseriesC;
   d->kObs = kObs_r;
   d->nChar = kObs_r.size();
   d->nTip = 0;

@@ -2449,6 +2449,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         rate_neo    = tun$scale_rate_neo %||% 0.5,
         neo_joint   = tun$scale_neo_joint %||% tun$scale_rate_loss,
         beta_scale  = tun$scale_beta_scale %||% 0.5,
+        kprime_alpha = tun$scale_kprime_alpha %||% 0.5,
+        kprime_beta  = tun$scale_kprime_beta %||% 0.5,
         joint_tl_rls = tun$scale_joint_tl_rls %||% 0.5,
         joint_tl_rl  = tun$scale_joint_tl_rl %||% 0.5,
         dirichlet_branch = tun$dirichlet_alpha %||% 10,
@@ -2592,8 +2594,12 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     kPrime = as.integer(kPrime)
   )
 
-  # p hyperparameter only exists for the hierarchical geometric prior
-  if (!identical(model$kPrimePrior, "logseries")) {
+  # kPrime hyperparameters depend on prior choice
+  if (identical(model$kPrimePrior, "beta_geometric")) {
+    state$kprime_alpha <- model$kprimeAlpha
+    state$kprime_beta  <- model$kprimeBeta
+  } else if (!identical(model$kPrimePrior, "logseries")) {
+    # Hierarchical geometric: shared p
     state$p <- 0.5
   }
 
@@ -2746,10 +2752,17 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       list(name = "block_kPrime", type = "block_kprime_shift",
            target = "kPrime", weight = 2, dim = 1L)
     )
-    # p hyperparameter only exists for hierarchical geometric prior
-    if (!identical(kPrimePrior, "logseries")) {
+    if (identical(kPrimePrior, "beta_geometric")) {
+      # Scale proposals for shared (α, β) hyperparameters
       kPrimeMoves <- c(kPrimeMoves, list(
-        # Conjugate Gibbs draw: p | k' ~ Beta(a + nTrans, b + sum(k' - kObs))
+        list(name = "kprime_alpha", type = "kprime_alpha",
+             target = "kprime_alpha", weight = 1, dim = 1L),
+        list(name = "kprime_beta", type = "kprime_beta",
+             target = "kprime_beta", weight = 1, dim = 1L)
+      ))
+    } else if (!identical(kPrimePrior, "logseries")) {
+      # Conjugate Gibbs draw: p | k' ~ Beta(a + nTrans, b + sum(k' - kObs))
+      kPrimeMoves <- c(kPrimeMoves, list(
         list(name = "p", type = "gibbs_p", target = "p", weight = 1,
              dim = 1L)
       ))
@@ -2822,7 +2835,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   # scalar move gets at least 2% of the pre-floor total weight.
   # Joint 2D moves also get the floor so they're comparable to individual
   # scalar moves they complement.
-  scalarTypes <- c("scale", "int_walk", "gibbs_p", "scale_p", "slice")
+  scalarTypes <- c("scale", "int_walk", "gibbs_p", "scale_p", "slice",
+                    "kprime_alpha", "kprime_beta")
   totalWeight <- sum(vapply(moves, `[[`, numeric(1), "weight"))
   floorVal <- totalWeight * 0.02
   for (i in seq_along(moves)) {
@@ -2842,7 +2856,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 # 9=gibbs_p, 10=gibbs_spr, 11=gibbs_subtree_swap,
 # 12=weighted_br_scale, 13=weighted_spr, 14=weighted_subtree_swap,
 # 15=block_gibbs_branch, 16=beta_scale (M-052), 17=tbr (M-053),
-# 25=gibbs_kprime_sweep, 26=block_kprime_shift
+# 25=gibbs_kprime_sweep, 26=block_kprime_shift,
+# 27=scale_kprime_alpha, 28=scale_kprime_beta
 .kMoveTypes <- c(
   tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
   rate_neo = 3L, branch_lengths = 4L,
@@ -2866,7 +2881,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   dirichlet_branch = 23L,
   local_dirichlet = 24L,
   gibbs_kPrime = 25L,
-  block_kPrime = 26L
+  block_kPrime = 26L,
+  kprime_alpha = 27L,
+  kprime_beta = 28L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)
@@ -2893,6 +2910,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     model$kprimeHyperA, model$kprimeHyperB,
     identical(model$kPrimePrior, "logseries"),
     model$kprimeLogseriesC %||% 0.7,
+    identical(model$kPrimePrior, "beta_geometric"),
     isTRUE(model$qHeterogeneity),
     model$nBetaCat %||% 4L,
     model$betaScaleShape %||% 1.0,
@@ -2910,7 +2928,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     state$rate_neo %||% 1.0, state$p %||% 0.5,
     as.integer(state$kPrime),
     state$log_lik, state$log_prior,
-    state$beta_scale %||% 1.0
+    state$beta_scale %||% 1.0,
+    state$kprime_alpha %||% 1.0,
+    state$kprime_beta %||% 1.0
   )
 }
 
@@ -2939,6 +2959,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       rate_neo    = tuning$scale_rate_neo,
       neo_joint   = tuning$scale_neo_joint %||% tuning$scale_rate_loss,
       beta_scale  = tuning$scale_beta_scale,
+      kprime_alpha = tuning$scale_kprime_alpha %||% 0.5,
+      kprime_beta  = tuning$scale_kprime_beta %||% 0.5,
       dirichlet_branch = tuning$dirichlet_alpha %||% 0.1,
       local_dirichlet = tuning$local_dirichlet_alpha %||% 0.1,
       0.5  # default; gibbs_p ignores scaleTun (returns before using it)
@@ -3111,8 +3133,10 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   if (hasNeo) nms <- c(nms, "rate_loss")
   nms <- c(nms, "rate_log_sd")
 
-  # p hyperparameter column only exists for hierarchical geometric prior
-  if (!identical(kPrimePrior, "logseries")) {
+  # kPrime hyperparameter columns depend on prior choice
+  if (identical(kPrimePrior, "beta_geometric")) {
+    nms <- c(nms, "kprime_alpha", "kprime_beta")
+  } else if (!identical(kPrimePrior, "logseries")) {
     nms <- c(nms, "p")
   }
 
@@ -3153,8 +3177,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   rateLossVal <- if (hasNeo) state$rateLoss else numeric(0)
   rateNeoVal  <- if (hasNeo) state$rateNeo else numeric(0)
 
-  # p only included in row when using hierarchical geometric prior
-  pVal <- if (!identical(kPrimePrior, "logseries")) state$p else numeric(0)
+  # kPrime hyperparameter columns depend on prior choice
+  kpHyperVal <- if (identical(kPrimePrior, "beta_geometric")) {
+    c(state$kprimeAlpha, state$kprimeBeta)
+  } else if (!identical(kPrimePrior, "logseries")) {
+    state$p
+  } else {
+    numeric(0)
+  }
 
   # M-052: beta_scale
   bsVal <- if (isTRUE(qHeterogeneity)) state$betaScale else numeric(0)
@@ -3167,7 +3197,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   topoHash <- compute_topo_hash(state$edge[, 1])
 
   c(state$logPost, state$logLik, state$treeLength,
-    rateLossVal, state$rateLogSd, pVal,
+    rateLossVal, state$rateLogSd, kpHyperVal,
     rateNeoVal,
     bsVal,
     0,          # swap_cold: not applicable for R-side row extraction
@@ -3511,6 +3541,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     weighted_spr = NA_character_, weighted_subtree_swap = NA_character_,
     block_gibbs_branch = NA_character_,
     beta_scale = "scale_beta_scale",
+    kprime_alpha = "scale_kprime_alpha",
+    kprime_beta = "scale_kprime_beta",
     slice_rate_loss = NA_character_, slice_rate_neo = NA_character_,
     slice_rate_log_sd = NA_character_, slice_tree_length = NA_character_,
     slice_beta_scale = NA_character_

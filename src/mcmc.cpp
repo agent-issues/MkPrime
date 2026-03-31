@@ -149,6 +149,8 @@ struct McmcState {
   double rateLogSd;
   double rateNeo;
   double p;
+  double kprimeAlpha;   // Beta-Geometric hyperparameter α
+  double kprimeBeta;    // Beta-Geometric hyperparameter β
   IntegerVector kPrime;
   double logLik;
   double logPrior;
@@ -189,7 +191,8 @@ static double cpp_log_prior(
     double treeLength, const NumericVector& relBrLengths,
     double rateLoss, double rateLogSd, double rateNeo,
     double p, const IntegerVector& kPrime,
-    double betaScale = 1.0) {
+    double betaScale = 1.0,
+    double kprimeAlpha = 1.0, double kprimeBeta = 1.0) {
 
   // Hard floor: prevents Mk_v singularity (corrected likelihood → +∞ at zero)
   if (treeLength < 1e-6) return R_NegInf;
@@ -205,7 +208,11 @@ static double cpp_log_prior(
   bool hasTrans = (data.transIdxGlobal.size() > 0);
   if (hasTrans) {
     // p boundary check only applies to hierarchical geometric
-    if (!data.kPriorLogseries && (p <= 0.0 || p >= 1.0)) return R_NegInf;
+    if (!data.kPriorLogseries && !data.kPriorBetaGeometric &&
+        (p <= 0.0 || p >= 1.0)) return R_NegInf;
+    // kprimeAlpha, kprimeBeta must be positive for beta_geometric
+    if (data.kPriorBetaGeometric &&
+        (kprimeAlpha <= 0.0 || kprimeBeta <= 0.0)) return R_NegInf;
     for (int i = 0; i < data.transIdxGlobal.size(); ++i) {
       int gi = data.transIdxGlobal[i];
       if (kPrime[gi] < data.kObs[gi]) return R_NegInf;
@@ -245,6 +252,19 @@ static double cpp_log_prior(
         lp += kp * logC - std::log(static_cast<double>(kp)) - logNorm;
       }
       // No p / Beta term
+    } else if (data.kPriorBetaGeometric) {
+      // Per-character Beta-Geometric: P(u | α, β) = B(α+1, β+u) / B(α, β)
+      double a = kprimeAlpha;
+      double b = kprimeBeta;
+      double lbAB = R::lbeta(a, b);
+      for (int i = 0; i < nTrans; ++i) {
+        int gi = data.transIdxGlobal[i];
+        int u = kPrime[gi] - data.kObs[gi];
+        lp += R::lbeta(a + 1.0, b + static_cast<double>(u)) - lbAB;
+      }
+      // Hyperprior: Exp(1) on α and β
+      lp += R::dexp(a, 1.0, 1);
+      lp += R::dexp(b, 1.0, 1);
     } else {
       // Hierarchical geometric: P(k'_i = kObs_i + u) = p*(1-p)^u
       double sumU = 0.0;
@@ -278,7 +298,9 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
                      double rateLoss, double rateLogSd, double rateNeo,
                      double p, IntegerVector kPrime,
                      double logLik, double logPrior,
-                     double betaScale = 1.0) {
+                     double betaScale = 1.0,
+                     double kprimeAlpha = 1.0,
+                     double kprimeBeta = 1.0) {
   McmcState* s = new McmcState();
   s->parent       = clone(parent);
   s->child        = clone(child);
@@ -288,6 +310,8 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
   s->rateLogSd    = rateLogSd;
   s->rateNeo      = rateNeo;
   s->p            = p;
+  s->kprimeAlpha  = kprimeAlpha;
+  s->kprimeBeta   = kprimeBeta;
   s->kPrime       = clone(kPrime);
   s->logLik       = logLik;
   s->logPrior     = logPrior;
@@ -391,6 +415,8 @@ List get_mcmc_state(SEXP statePtr) {
     _["rateLogSd"]     = s->rateLogSd,
     _["rateNeo"]       = s->rateNeo,
     _["p"]             = s->p,
+    _["kprimeAlpha"]   = s->kprimeAlpha,
+    _["kprimeBeta"]    = s->kprimeBeta,
     _["kPrime"]        = s->kPrime,
     _["logLik"]        = s->logLik,
     _["logPrior"]      = s->logPrior,
@@ -2455,7 +2481,8 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
   double newLogPrior = cpp_log_prior(
     *data, state->treeLength, propRelBr,
     state->rateLoss, state->rateLogSd, state->rateNeo,
-    state->p, state->kPrime, state->betaScale);
+    state->p, state->kPrime, state->betaScale,
+    state->kprimeAlpha, state->kprimeBeta);
   if (!R_FINITE(newLogPrior)) return false;
 
   // 16. MH acceptance
@@ -2660,7 +2687,8 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
   double newLogPrior = cpp_log_prior(
     *data, state->treeLength, propRelBr,
     state->rateLoss, state->rateLogSd, state->rateNeo,
-    state->p, state->kPrime, state->betaScale);
+    state->p, state->kPrime, state->betaScale,
+    state->kprimeAlpha, state->kprimeBeta);
   if (!R_FINITE(newLogPrior)) return false;
 
   // 13. MH acceptance
@@ -2715,7 +2743,8 @@ static double eval_slice_target(McmcData* data, McmcState* state,
   double logPrior = cpp_log_prior(
     *data, state->treeLength, state->relBrLengths,
     state->rateLoss, state->rateLogSd, state->rateNeo,
-    state->p, state->kPrime, state->betaScale);
+    state->p, state->kPrime, state->betaScale,
+    state->kprimeAlpha, state->kprimeBeta);
   if (!R_FINITE(logPrior)) return R_NegInf;
 
   double logLik;
@@ -2797,7 +2826,8 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
       state->logPrior = cpp_log_prior(
         *data, state->treeLength, state->relBrLengths,
         state->rateLoss, state->rateLogSd, state->rateNeo,
-        state->p, state->kPrime, state->betaScale);
+        state->p, state->kPrime, state->betaScale,
+    state->kprimeAlpha, state->kprimeBeta);
 
       int nEdge = state->parent.size();
       NumericVector edgeLen(nEdge);
@@ -3084,13 +3114,14 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   };
 
   // Prior components (fixed during sweep)
-  bool isGeometric = !data->kPriorLogseries;
+  bool isBetaGeometric = data->kPriorBetaGeometric;
+  bool isGeometric = !data->kPriorLogseries && !isBetaGeometric;
   double logP = 0.0, log1mP = 0.0;
   double lsLogC = 0.0, lsLogNorm = 0.0;
   if (isGeometric) {
     logP   = std::log(state->p);
     log1mP = std::log1p(-state->p);
-  } else {
+  } else if (!isBetaGeometric) {
     double c = data->kprimeLogseriesC;
     lsLogC    = std::log(c);
     lsLogNorm = std::log(-std::log1p(-c));
@@ -3106,6 +3137,22 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
 
   static const int K_MAX_CAND = 50;   // absolute cap (fallback path)
   static const double LOG_CUTOFF = -57.5;
+
+  // Beta-Geometric: precompute incremental log-prior for ko = 0..K_MAX_CAND-1
+  // logPrior(u=0) = log(α) - log(α+β)
+  // logPrior(u=k) = logPrior(u=k-1) + log(β+k-1) - log(α+β+k)
+  std::vector<double> bgLogPrior;
+  if (isBetaGeometric) {
+    double a = state->kprimeAlpha;
+    double b = state->kprimeBeta;
+    bgLogPrior.resize(K_MAX_CAND);
+    bgLogPrior[0] = std::log(a) - std::log(a + b);
+    for (int ko = 1; ko < K_MAX_CAND; ++ko) {
+      bgLogPrior[ko] = bgLogPrior[ko - 1]
+                      + std::log(b + ko - 1)
+                      - std::log(a + b + ko);
+    }
+  }
 
   // Build globalCharIdx → transIdx map (position in transIdxGlobal)
   std::vector<int> globalToTransIdx(data->nChar, -1);
@@ -3256,7 +3303,9 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
           ll += mk_prime_relabel_log(k, tp.kObs);
 
         double logPrior_k;
-        if (isGeometric) {
+        if (isBetaGeometric) {
+          logPrior_k = bgLogPrior[ko];
+        } else if (isGeometric) {
           logPrior_k = logP + ko * log1mP;
         } else {
           logPrior_k = k * lsLogC
@@ -3340,7 +3389,8 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   state->logPrior = cpp_log_prior(
     *data, state->treeLength, state->relBrLengths,
     state->rateLoss, state->rateLogSd, state->rateNeo,
-    state->p, state->kPrime, state->betaScale);
+    state->p, state->kPrime, state->betaScale,
+    state->kprimeAlpha, state->kprimeBeta);
 
   state->nodeCL.valid = false;
 
@@ -3383,7 +3433,8 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
   double newLogPrior = cpp_log_prior(
     *data, state->treeLength, state->relBrLengths,
     state->rateLoss, state->rateLogSd, state->rateNeo,
-    state->p, state->kPrime, state->betaScale);
+    state->p, state->kPrime, state->betaScale,
+    state->kprimeAlpha, state->kprimeBeta);
 
   if (!R_FINITE(newLogPrior)) {
     for (int i = 0; i < nTrans; ++i)
@@ -3459,7 +3510,8 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
 //           18=neo_joint_scale, 19=slice_scalar, 20=pspr,
 //           21=joint_tl_rls, 22=joint_tl_rl,
 //           23=dirichlet_branch, 24=local_dirichlet,
-//           25=gibbs_kprime_sweep, 26=block_kprime_shift
+//           25=gibbs_kprime_sweep, 26=block_kprime_shift,
+//           27=scale_kprime_alpha, 28=scale_kprime_beta
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -3514,6 +3566,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   double oldRN   = state->rateNeo;
   double oldP    = state->p;
   double oldBS   = state->betaScale;  // M-052
+  double oldKpA  = state->kprimeAlpha;
+  double oldKpB  = state->kprimeBeta;
 
   double logHastings  = 0.0;
   bool topologyChanged = false;
@@ -3729,7 +3783,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       state->logPrior = cpp_log_prior(
         *data, state->treeLength, state->relBrLengths,
         state->rateLoss, state->rateLogSd, state->rateNeo,
-        state->p, state->kPrime, state->betaScale);
+        state->p, state->kPrime, state->betaScale,
+    state->kprimeAlpha, state->kprimeBeta);
       state->logLik = state->logLik;  // unchanged
       return true;  // Gibbs: always accept
     }
@@ -3829,6 +3884,43 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     case 26: { // block_kprime_shift — shift all k'_i by same delta
       return block_kprime_shift_impl(data, state, intWalkWindow, beta);
     }
+    case 27: { // scale_kprime_alpha — Bactrian scale for Beta-Geometric α
+      double mult = std::exp(scaleTuning * bactrian_perturbation());
+      state->kprimeAlpha = oldKpA * mult;
+      if (state->kprimeAlpha <= 0.0) return false;
+      // Prior-only: likelihood is unchanged, compute prior ratio directly
+      double newLP = cpp_log_prior(
+        *data, state->treeLength, state->relBrLengths,
+        state->rateLoss, state->rateLogSd, state->rateNeo,
+        state->p, state->kPrime, state->betaScale,
+        state->kprimeAlpha, state->kprimeBeta);
+      if (!R_FINITE(newLP)) { state->kprimeAlpha = oldKpA; return false; }
+      double logAlpha = (newLP - state->logPrior) + std::log(mult);
+      if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+        state->logPrior = newLP;
+        return true;
+      }
+      state->kprimeAlpha = oldKpA;
+      return false;
+    }
+    case 28: { // scale_kprime_beta — Bactrian scale for Beta-Geometric β
+      double mult = std::exp(scaleTuning * bactrian_perturbation());
+      state->kprimeBeta = oldKpB * mult;
+      if (state->kprimeBeta <= 0.0) return false;
+      double newLP = cpp_log_prior(
+        *data, state->treeLength, state->relBrLengths,
+        state->rateLoss, state->rateLogSd, state->rateNeo,
+        state->p, state->kPrime, state->betaScale,
+        state->kprimeAlpha, state->kprimeBeta);
+      if (!R_FINITE(newLP)) { state->kprimeBeta = oldKpB; return false; }
+      double logAlpha = (newLP - state->logPrior) + std::log(mult);
+      if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+        state->logPrior = newLP;
+        return true;
+      }
+      state->kprimeBeta = oldKpB;
+      return false;
+    }
     default:
       return false;
   }
@@ -3836,7 +3928,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   if (!R_FINITE(logHastings)) {
     state->treeLength = oldTL; state->rateLoss = oldRL;
     state->rateLogSd = oldRLSD; state->rateNeo = oldRN; state->p = oldP;
-    state->betaScale = oldBS;
+    state->betaScale = oldBS; state->kprimeAlpha = oldKpA; state->kprimeBeta = oldKpB;
     if (bsIdx1 >= 0) {
       state->relBrLengths[bsIdx1] = bsOldVal1;
       state->relBrLengths[bsIdx2] = bsOldVal2;
@@ -3858,13 +3950,14 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     newLogPrior = cpp_log_prior(
       *data, state->treeLength, state->relBrLengths,
       state->rateLoss, state->rateLogSd, state->rateNeo,
-      state->p, state->kPrime, state->betaScale);
+      state->p, state->kPrime, state->betaScale,
+    state->kprimeAlpha, state->kprimeBeta);
   }
 
   if (!R_FINITE(newLogPrior)) {
     state->treeLength = oldTL; state->rateLoss = oldRL;
     state->rateLogSd = oldRLSD; state->rateNeo = oldRN; state->p = oldP;
-    state->betaScale = oldBS;
+    state->betaScale = oldBS; state->kprimeAlpha = oldKpA; state->kprimeBeta = oldKpB;
     if (bsIdx1 >= 0) {
       state->relBrLengths[bsIdx1] = bsOldVal1;
       state->relBrLengths[bsIdx2] = bsOldVal2;
@@ -4088,12 +4181,14 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   }
 
   // Reject: rollback
-  state->treeLength = oldTL;
-  state->rateLoss   = oldRL;
-  state->rateLogSd  = oldRLSD;
-  state->rateNeo    = oldRN;
-  state->p          = oldP;
-  state->betaScale  = oldBS;
+  state->treeLength   = oldTL;
+  state->rateLoss     = oldRL;
+  state->rateLogSd    = oldRLSD;
+  state->rateNeo      = oldRN;
+  state->p            = oldP;
+  state->betaScale    = oldBS;
+  state->kprimeAlpha  = oldKpA;
+  state->kprimeBeta   = oldKpB;
   if (bsIdx1 >= 0) {
     state->relBrLengths[bsIdx1] = bsOldVal1;
     state->relBrLengths[bsIdx2] = bsOldVal2;
@@ -4193,14 +4288,19 @@ List run_mcmc_batch_cpp(
   IntegerVector swapPropose(nSwapPairs, 0);
 
   // Sample storage
-  // p column is omitted when using the log-series prior (no hyperparameter)
-  bool includeP  = !data->kPriorLogseries;
+  // Hyperparameter columns depend on kPrime prior:
+  //   geometric: "p" (1 col)
+  //   beta_geometric: "kprime_alpha", "kprime_beta" (2 cols)
+  //   logseries: none (0 cols)
+  bool includeBG = data->kPriorBetaGeometric;
+  bool includeP  = !data->kPriorLogseries && !includeBG;
+  int nKpHyperCols = includeBG ? 2 : (includeP ? 1 : 0);
   bool includeBS = data->qHeterogeneity;  // M-052: beta_scale column
   // Base columns: log_post, log_lik, tree_length, rate_log_sd (4).
   // rate_loss included only when hasNeo (like rate_neo, p, beta_scale).
   // +2 diagnostic columns: swap_cold (cold-chain swaps since last sample),
   // topo_hash (topology fingerprint for change detection).
-  int nScalarCols = 4 + (hasNeo ? 2 : 0) + (includeP ? 1 : 0) +
+  int nScalarCols = 4 + (hasNeo ? 2 : 0) + nKpHyperCols +
                     (includeBS ? 1 : 0) + 2 + nTrans + nEdge;
   int maxSaved    = nBatch / thin + 2;
   std::vector<std::vector<double>> scalarRows;
@@ -4295,7 +4395,12 @@ List run_mcmc_batch_cpp(
       row[col++] = s0->treeLength;
       if (hasNeo) row[col++] = s0->rateLoss;
       row[col++] = s0->rateLogSd;
-      if (includeP) row[col++] = s0->p;
+      if (includeBG) {
+        row[col++] = s0->kprimeAlpha;
+        row[col++] = s0->kprimeBeta;
+      } else if (includeP) {
+        row[col++] = s0->p;
+      }
       if (hasNeo) row[col++] = s0->rateNeo;
       if (includeBS) row[col++] = s0->betaScale;  // M-052
       // Diagnostic: cold-chain swaps since last sample
@@ -4369,8 +4474,9 @@ List run_mcmc_batch_cpp(
 List debug_mcmc_data(SEXP dataPtr) {
   McmcData* data = Rcpp::XPtr<McmcData>(dataPtr).get();
   return List::create(
-    _["kPriorLogseries"]   = data->kPriorLogseries,
-    _["kprimeLogseriesC"]  = data->kprimeLogseriesC,
+    _["kPriorLogseries"]      = data->kPriorLogseries,
+    _["kPriorBetaGeometric"]  = data->kPriorBetaGeometric,
+    _["kprimeLogseriesC"]     = data->kprimeLogseriesC,
     _["kprimeHyperA"]      = data->kprimeHyperA,
     _["kprimeHyperB"]      = data->kprimeHyperB,
     _["treeLengthShape"]   = data->treeLengthShape,

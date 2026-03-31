@@ -68,9 +68,11 @@ struct McmcData {
   double rateNeoMeanlog,   rateNeoSdlog;
   double kprimeHyperA,     kprimeHyperB;
 
-  // Logseries prior for k' (opt-in alternative to hierarchical geometric)
-  bool   kPriorLogseries;   // true = log-series; false = hierarchical geometric
-  double kprimeLogseriesC;  // c parameter (only used when kPriorLogseries = true)
+  // kPrime prior selection (exactly one of these is true)
+  bool   kPriorLogseries;      // log-series with fixed c
+  bool   kPriorBetaGeometric;  // per-character Beta-Geometric with shared (α, β)
+  // (when both false: hierarchical geometric with shared p)
+  double kprimeLogseriesC;     // c parameter (only used when kPriorLogseries)
 
   // Weighted-move configuration (M-090)
   int nBranchBins = 10;     // number of branch-fraction bins for weighted moves
