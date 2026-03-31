@@ -130,6 +130,7 @@ test_that("RunMkPrime with gibbs_p produces valid posterior for transformational
   pd   <- .small_trans_pd()
 
   result <- suppressWarnings(RunMkPrime(pd, tree,
+    model = MkPrimeModel(kPrimePrior = "geometric"),
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 600L, thin = 5L,
                        maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE)))
 

@@ -3511,6 +3511,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     dirichlet_branch = 0.234,
     local_dirichlet = 0.234,
     joint_tl_rls = 0.25, joint_tl_rl = 0.25,
+    kprime_alpha = 0.35, kprime_beta = 0.35,
     # Gibbs/weighted/block/kPrime/slice moves: no MH tuning to adapt
     gibbs_kPrime = NA_real_, block_kPrime = 0.234,
     gibbs_spr = NA_real_, gibbs_subtree_swap = NA_real_,
@@ -3519,7 +3520,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     block_gibbs_branch = NA_real_,
     slice_rate_loss = NA_real_, slice_rate_neo = NA_real_,
     slice_rate_log_sd = NA_real_, slice_tree_length = NA_real_,
-    slice_beta_scale = NA_real_
+    slice_beta_scale = NA_real_,
+    slice_kprime_alpha = NA_real_, slice_kprime_beta = NA_real_
   )
 
   tuningKeys <- c(

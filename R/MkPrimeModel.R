@@ -296,7 +296,9 @@ LogPrior <- function(state, model, mkd) {
     if (identical(model$kPrimePrior, "geometric")) {
       if (state$p <= 0 || state$p >= 1) return(-Inf)
     } else if (identical(model$kPrimePrior, "beta_geometric")) {
-      if (state$kprime_alpha <= 0 || state$kprime_beta <= 0) return(-Inf)
+      ka <- state$kprime_alpha %||% 1.0
+      kb <- state$kprime_beta %||% 1.0
+      if (ka <= 0 || kb <= 0) return(-Inf)
     } else {
       # logseries: validate c
       c_ls <- model$kprimeLogseriesC
@@ -361,8 +363,8 @@ LogPrior <- function(state, model, mkd) {
     } else if (identical(model$kPrimePrior, "beta_geometric")) {
       # Per-character p_i marginalized → Beta-Geometric(α, β)
       # log P(k'_i = kObs_i + u | α, β) = lbeta(α+1, β+u) - lbeta(α, β)
-      alpha <- state$kprime_alpha
-      beta_ <- state$kprime_beta
+      alpha <- state$kprime_alpha %||% 1.0
+      beta_ <- state$kprime_beta %||% 1.0
       u <- state$kPrime[transIdx] - mkd$kObs[transIdx]
       lp <- lp + sum(lbeta(alpha + 1, beta_ + u) - lbeta(alpha, beta_))
 
