@@ -33,7 +33,7 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 
 | M-161 | P2 | OPEN | **Per-partition CL cache validity.** `nodeCL.valid = false` invalidates all CacheUnits on any parameter change, even when only one partition is affected (e.g. `rate_loss` only affects neomorphic partitions). Maintain per-CacheUnit validity flags so NNI proposals can reuse cached CLs for unaffected partitions after a parameter-only move. Benefit scales with partition diversity. |
-| M-167 | P3 | OPEN | **Add BG hyperparameter moves to `moveWeights` validation.** `MkPrimeMCMC()` `validNames` list (line ~464) doesn't include `kprime_alpha`, `kprime_beta`, `slice_kprime_alpha`, `slice_kprime_beta`, or `block_kPrime`, `neo_joint`, `gibbs_kPrime`, `beta_scale`, `slice_rate_loss`, `slice_rate_neo`, `slice_rate_log_sd`, `slice_tree_length`, `slice_beta_scale`. Users can't override their weights. Audit the full move list in `.BuildMoves()` and sync `validNames` to match. Quick fix. |
+
 | M-166 | P3 | OPEN | **VTune: verify M-164 pre-filter reduced Gibbs sweep CPU share.** Re-profile after M-163 (slice sampler) + M-164 (prior-ceiling pre-filter + LOG_CUTOFF tightening) to check whether the Gibbs kPrime sweep (`pruning_jc_acrv_persite` at 59.1%) CPU share decreased. Same config as S-PROF round 4: Sun2018, 54 taxa, 225 all-trans chars, nCat=6, 15k iterations. Compare against saved VTune baseline in `vtune-out/`. If Gibbs share dropped meaningfully, the next bottleneck may shift to ascertainment (`constant_site_prob_jc` at 6.6%) or exp() calls (11.7%). |
 
 
