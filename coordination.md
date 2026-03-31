@@ -1,6 +1,6 @@
 # MkPrime — Strategic Coordination
 
-Last updated: 2026-03-31 14:30
+Last updated: 2026-03-31 15:10
 
 ## Project State
 
@@ -21,7 +21,9 @@ Last updated: 2026-03-31 14:30
 - **M-159 cache-aware scheduling (2026-03-31):** Boost partial-CL-eligible move weights when cache is valid. State-dependent mixture kernel.
 - **M-163 BG hyperparameter slice sampler (2026-03-31):** Prior-only slice sampler for kprimeAlpha/kprimeBeta. moveType 29.
 - **M-164 Gibbs kPrime pre-filter (2026-03-31):** LOG_CUTOFF tightened to -25; prior-ceiling pre-filter skips expensive traversals.
-- **M-165 (in progress):** BG hyperparameter adaptation + mixing fix. Three root causes identified (adaptation threshold, default scale, moveWeights validation).
+- **M-165 BG hyperparameter tuning (2026-03-31):** Scale defaults, slice widths, move weights, and adaptation threshold fixed. ESS ratio improved from 0.27 to 0.99.
+- **M-160 reverted (2026-03-31):** DR-NNI fallback violated detailed balance (u.169, S-RED round 18). Clean revert at `89e1b32`. NNI→NNI DR remains viable future approach.
+- **M-167 moveWeights validation (2026-03-31):** Added 12 missing move names to validNames list.
 
 MkPrime is a new R package for Bayesian phylogenetic inference under the
 Mk' model. The architecture follows StratoBayes (C++ hot loop via Rcpp,
