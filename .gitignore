@@ -58,3 +58,11 @@ vtune-out/
 tests/testthat/_problems/
 tests/testthat/testthat-problems.rds
 .positai
+
+# Validation/benchmarking scripts (agent-generated, not part of package)
+validation_*.R
+validation_*.txt
+bench_*.R
+test_gibbs_*.R
+project3832*
+EOF 2>&1

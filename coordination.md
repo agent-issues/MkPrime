@@ -1,6 +1,6 @@
 # MkPrime — Strategic Coordination
 
-Last updated: 2026-03-30 14:30
+Last updated: 2026-03-31 06:50
 
 ## Project State
 
@@ -14,6 +14,7 @@ Last updated: 2026-03-30 14:30
 
 **Open tasks:** M-148 (verification needed), M-151 (display bugs), M-131 (warmup validation) + M-080 (ASSIGNED to C). Standing tasks at P1.
 - **Checkpoint series complete:** M-149 (interrupt-safe checkpointing, 7 sub-bugs), M-150 (maxTime checkpoint). All checkpoint/resume paths now covered.
+- **M-153 tree construction bug fix (2026-03-31):** Nnode off-by-one (`n-2` → `n-1`) + `TreeTools::Preorder()` wrapping at 3 sites in `RunMkPrime.R`. Fixed segfault in `TreeDist::RobinsonFoulds()` during convergence checks. Validated on project3832 (10 taxa, 27 chars).
 
 MkPrime is a new R package for Bayesian phylogenetic inference under the
 Mk' model. The architecture follows StratoBayes (C++ hot loop via Rcpp,
