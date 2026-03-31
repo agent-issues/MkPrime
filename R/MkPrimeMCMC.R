@@ -505,7 +505,9 @@ MkPrimeMCMC <- function(
     slice_width_rate_neo = 1.0,
     slice_width_rate_log_sd = 1.0,
     slice_width_tree_length = 1.0,
-    slice_width_beta_scale = 1.0
+    slice_width_beta_scale = 1.0,
+    slice_width_kprime_alpha = 1.0,
+    slice_width_kprime_beta = 1.0
   )
   tuning <- modifyList(defaults, tuning)
 

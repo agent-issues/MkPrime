@@ -2900,6 +2900,86 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
 }
 
 // ---------------------------------------------------------------------------
+// Prior-only slice sampler for Beta-Geometric hyperparameters (M-163)
+//
+// Samples kprimeAlpha (paramCode=0) or kprimeBeta (paramCode=1) using a
+// univariate slice sampler on the log scale.  Target = logPrior + log(x)
+// (the log(x) Jacobian arises from sampling u = log(x) and transforming).
+// No likelihood evaluation needed — α/β only affect the prior.
+// ---------------------------------------------------------------------------
+static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
+                                     int paramCode, double width,
+                                     int maxSteps = 10,
+                                     int* nExpansionsOut = nullptr) {
+  double x0 = (paramCode == 0) ? state->kprimeAlpha : state->kprimeBeta;
+  if (x0 <= 0.0) return false;
+
+  // Work on log scale: u = log(x)
+  double u0 = std::log(x0);
+
+  // Target: logPrior(current) + u (Jacobian)
+  double logY0 = state->logPrior + u0;
+  double logZ = logY0 + std::log(R::unif_rand());
+
+  // Helper lambda to evaluate target at a candidate u
+  auto evalTarget = [&](double u) -> double {
+    double xCand = std::exp(u);
+    if (xCand <= 0.0 || !R_FINITE(xCand)) return R_NegInf;
+    double oldVal = (paramCode == 0) ? state->kprimeAlpha : state->kprimeBeta;
+    if (paramCode == 0) state->kprimeAlpha = xCand;
+    else                state->kprimeBeta  = xCand;
+    double lp = cpp_log_prior(
+      *data, state->treeLength, state->relBrLengths,
+      state->rateLoss, state->rateLogSd, state->rateNeo,
+      state->p, state->kPrime, state->betaScale,
+      state->kprimeAlpha, state->kprimeBeta);
+    // Restore
+    if (paramCode == 0) state->kprimeAlpha = oldVal;
+    else                state->kprimeBeta  = oldVal;
+    return lp + u;  // logPrior + Jacobian
+  };
+
+  // Stepping out
+  int nExp = 0;
+  double L = u0 - width * R::unif_rand();
+  double R_bound = L + width;
+  for (int j = 0; j < maxSteps; ++j) {
+    if (evalTarget(L) <= logZ) break;
+    L -= width;
+    ++nExp;
+  }
+  for (int j = 0; j < maxSteps; ++j) {
+    if (evalTarget(R_bound) <= logZ) break;
+    R_bound += width;
+    ++nExp;
+  }
+  if (nExpansionsOut) *nExpansionsOut = nExp;
+
+  // Shrink in
+  for (int iter = 0; iter < 100; ++iter) {
+    double u1 = L + R::unif_rand() * (R_bound - L);
+    double logTarget1 = evalTarget(u1);
+    if (logTarget1 >= logZ) {
+      // Accept
+      double x1 = std::exp(u1);
+      if (paramCode == 0) state->kprimeAlpha = x1;
+      else                state->kprimeBeta  = x1;
+      // Recompute and cache logPrior
+      state->logPrior = cpp_log_prior(
+        *data, state->treeLength, state->relBrLengths,
+        state->rateLoss, state->rateLogSd, state->rateNeo,
+        state->p, state->kPrime, state->betaScale,
+        state->kprimeAlpha, state->kprimeBeta);
+      return true;
+    }
+    if (u1 < u0) L = u1; else R_bound = u1;
+  }
+
+  // Fallback: no change
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Parsimony-guided SPR (pSPR) — M-119
 //
 // Like regular SPR but weights candidate regraft edges by their Fitch
@@ -3165,7 +3245,10 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   // ---------------------------------------------------------------
 
   static const int K_MAX_CAND = 50;   // absolute cap (fallback path)
-  static const double LOG_CUTOFF = -57.5;
+  // M-164: tightened from -57.5 to -25.0.  exp(-25) ≈ 1.4e-11 relative
+  // probability; even 50 such candidates contribute ~7e-10 total mass,
+  // far below double-precision RNG resolution (~2.2e-16).
+  static const double LOG_CUTOFF = -25.0;
 
   // Beta-Geometric: precompute incremental log-prior for ko = 0..K_MAX_CAND-1
   // logPrior(u=0) = log(α) - log(α+β)
@@ -3227,6 +3310,8 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   // Per-character sampling state
   // logW stores weights for each candidate; nCand tracks how many
   std::vector<double> charMaxLogW(nTrans, R_NegInf);
+  // M-164: track best corrected log-likelihood per character for pre-filter
+  std::vector<double> charMaxLL(nTrans, R_NegInf);
   // Flat: logW[ti * K_MAX_CAND + ko]
   std::vector<double> charLogW(nTrans * K_MAX_CAND, R_NegInf);
   std::vector<int> charNCand(nTrans, 0);
@@ -3269,6 +3354,41 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
       if (coding != 0 && csp >= 1.0) logAscCorr = R_NegInf;
 
       const PartInfo& part = data->parts[tp.partIdx];
+
+      // M-164: prior-ceiling pre-filter for ko ≥ 2.
+      // Before expensive tree traversal, check if beta * bestLL + logPrior_k
+      // is already below the cutoff for each character.  If so, prune it
+      // without computing the actual likelihood (safe because likelihood
+      // tends to decrease with higher k).
+      if (ko >= 2) {
+        std::vector<int> surviveCols, surviveTransIdx;
+        for (int ai = 0; ai < nAct; ++ai) {
+          int ti = pa.activeTransIdx[ai];
+          double logPrior_k;
+          if (isBetaGeometric) {
+            logPrior_k = bgLogPrior[ko];
+          } else if (isGeometric) {
+            logPrior_k = logP + ko * log1mP;
+          } else {
+            int k2 = tp.kObs + ko;
+            logPrior_k = k2 * lsLogC
+                       - std::log(static_cast<double>(k2)) - lsLogNorm;
+          }
+          double optimisticW = beta * charMaxLL[ti] + logPrior_k;
+          if (optimisticW < charMaxLogW[ti] + LOG_CUTOFF) {
+            // Pre-terminate: even the best possible LL can't beat the cutoff
+            terminated[ti] = true;
+            nActive--;
+          } else {
+            surviveCols.push_back(pa.activeCols[ai]);
+            surviveTransIdx.push_back(ti);
+          }
+        }
+        pa.activeCols = std::move(surviveCols);
+        pa.activeTransIdx = std::move(surviveTransIdx);
+        nAct = (int)pa.activeCols.size();
+        if (nAct == 0) continue;
+      }
 
       // For ko=0 and ko=1, use full partition tipStates (all chars active
       // or nearly so). For ko≥2, build sub-matrix of active columns only.
@@ -3330,6 +3450,9 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
           ll = R_NegInf;
         if (data->relabel && R_FINITE(ll))
           ll += mk_prime_relabel_log(k, tp.kObs);
+
+        // M-164: track best corrected LL for pre-filter
+        if (R_FINITE(ll) && ll > charMaxLL[ti]) charMaxLL[ti] = ll;
 
         double logPrior_k;
         if (isBetaGeometric) {
@@ -3540,7 +3663,8 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
 //           21=joint_tl_rls, 22=joint_tl_rl,
 //           23=dirichlet_branch, 24=local_dirichlet,
 //           25=gibbs_kprime_sweep, 26=block_kprime_shift,
-//           27=scale_kprime_alpha, 28=scale_kprime_beta
+//           27=scale_kprime_alpha, 28=scale_kprime_beta,
+//           29=slice_kprime_hyper
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -4402,6 +4526,13 @@ List run_mcmc_batch_cpp(
         accepted = slice_scalar_impl(
           data, states[ch], charIdx,
           sliceWidths(ch, moveIdx), betas[ch], 10, &nExp);
+        sliceExpansions(ch, moveIdx) += nExp;
+      } else if (moveType == 29) {
+        // Prior-only slice sampler for BG hyperparameters (M-163)
+        int nExp = 0;
+        accepted = slice_kprime_hyper_impl(
+          data, states[ch], sliceParamCodes[moveIdx],
+          sliceWidths(ch, moveIdx), 10, &nExp);
         sliceExpansions(ch, moveIdx) += nExp;
       } else {
         // Per-move int param overrides chain-level intWalkWindow

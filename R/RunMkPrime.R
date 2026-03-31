@@ -725,7 +725,8 @@ RunMkPrime <- function(data, tree = NULL,
 
   # their score gets inflated relative to expensive topology moves.
   alwaysAcceptTypes <- c("gibbs_p", "slice", "gibbs_kprime_sweep",
-                         "kprime_alpha", "kprime_beta")
+                         "kprime_alpha", "kprime_beta",
+                         "slice_kprime_hyper")
   moveTypes <- vapply(moves, `[[`, character(1), "type")
   autoPin <- moveWeights[moveTypes %in% alwaysAcceptTypes]
 
@@ -2895,7 +2896,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   gibbs_kPrime = 25L,
   block_kPrime = 26L,
   kprime_alpha = 27L,
-  kprime_beta = 28L
+  kprime_beta = 28L,
+  slice_kprime_alpha = 29L,
+  slice_kprime_beta = 29L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)
@@ -3606,11 +3609,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 .AdaptSliceWidths <- function(tuning, proposeCount, sliceExpCount,
                                moves, target = 3.0) {
   sliceKeys <- c(
-    slice_rate_loss   = "slice_width_rate_loss",
-    slice_rate_neo    = "slice_width_rate_neo",
-    slice_rate_log_sd = "slice_width_rate_log_sd",
-    slice_tree_length = "slice_width_tree_length",
-    slice_beta_scale  = "slice_width_beta_scale"
+    slice_rate_loss    = "slice_width_rate_loss",
+    slice_rate_neo     = "slice_width_rate_neo",
+    slice_rate_log_sd  = "slice_width_rate_log_sd",
+    slice_tree_length  = "slice_width_tree_length",
+    slice_beta_scale   = "slice_width_beta_scale",
+    slice_kprime_alpha = "slice_width_kprime_alpha",
+    slice_kprime_beta  = "slice_width_kprime_beta"
   )
   for (move in moves) {
     nm <- move$name
