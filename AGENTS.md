@@ -7,13 +7,14 @@
 
 ## Current phase: post-core, optimization & GUI integration
 
-All core phases (1–10) are complete. 155+ tasks delivered. Current work:
+All core phases (1–10) complete. 155+ tasks delivered. Current work:
 
 - **Phase 6b** (TreeSearch GUI integration): M-080 assigned to Agent C.
 - **M-155** (P1): Gibbs kPrime sweep batch-by-k' optimization — **DONE**
   (`224bda8`). Batched partition-level pruning + progressive early
   termination. 3.6× speedup on full Sun2018 (see "Performance notes").
 - **M-131** (P2): Warmup stabilisation validation study (Hamilton HPC).
+  BLOCKED on M-155.
 - Standing tasks (S-RED, S-PROF, S-COORD) at P1.
 
 Agents should:
@@ -257,6 +258,21 @@ sufficient — warmup can consume most of the iteration budget.
 
 ---
 
+## VTune profiling
+
+VTune is installed at `C:/Program Files/Intel/oneAPI/vtune/latest/bin64/`.
+This PC is Intel i7-10700 (10th gen); hardware sampling works.
+
+**When profiling, use the `r-package-profiling` skill** to locate VTune
+and follow the full workflow (build with symbols, driver script,
+collection, report). Key points:
+
+- Override `DLLFLAGS` via `MAKEFLAGS` env var (not `src/Makevars.win`)
+- Add `-g -fno-omit-frame-pointer` to `PKG_CXXFLAGS` in `src/Makevars.win`
+- Remove profiling flags after collection
+
+---
+
 ## Performance notes
 
 ### Gibbs kPrime sweep (S-PROF round 3, 2026-03-31)
@@ -289,6 +305,24 @@ characters (better amortization of batched traversals).
 
 C++ Felsenstein pruning is ~90% of wall time. OPP-1–6 optimizations achieved
 1.80× cumulative speedup. Diminishing returns on further pruning optimization.
+
+---
+
+## Known low-priority issues
+
+### ETA estimation with tree-ESS-only convergence
+
+When only `minTreeEss` is set (no `minEss`), the ETA estimation in the
+progress ticker doesn't work. The ETA code defaults `etaTarget` to
+`mcmc$minEss` which is NULL, causing `.EstimateEta()` to return NULL.
+Low priority — unusual configuration.
+
+### Tree ESS not enforced in log-based convergence
+
+`.CheckConvergenceFromLogs()` (used by parallel runs and serial Phase 2
+cross-run R-hat loop) cannot enforce `minTreeEss` because trees are not
+stored in log files. Tree ESS is enforced per-run by `.CheckConvergence()`
+in Phase 1. This is by design but creates an asymmetry.
 
 ---
 
