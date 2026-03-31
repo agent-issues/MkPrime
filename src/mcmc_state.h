@@ -153,6 +153,25 @@ double cpp_partition_log_likelihood(
 Rcpp::NumericVector cpp_acrv_rates(double rateLogSd, int nCat,
                                     const std::vector<double>& acrvZ);
 
+// Per-site batched pruning for Gibbs kPrime sweep (M-155).
+// Fill siteLL[0..nChar-1] with per-character log(avg_lik).
+void pruning_jc_acrv_persite(
+    Rcpp::IntegerVector parent, Rcpp::IntegerVector child,
+    Rcpp::NumericVector edge_length, Rcpp::IntegerMatrix tip_states,
+    int kStates,
+    Rcpp::NumericVector rate_multipliers,
+    double* buf, uint8_t* initFlg, int stride,
+    double* siteLL);
+
+void pruning_f81_het_acrv_persite(
+    Rcpp::IntegerVector parent, Rcpp::IntegerVector child,
+    Rcpp::NumericVector edge_length, Rcpp::IntegerMatrix tip_states,
+    int kStates, double baseRL,
+    const double* betaBins, int nBetaCat,
+    Rcpp::NumericVector rate_multipliers,
+    double* buf, uint8_t* initFlg, int stride,
+    double* siteLL);
+
 // Single-character JC log-likelihood for Gibbs kPrime sweep.
 // Handles JC + ACRV + Het + ascertainment correction + relabeling.
 // constSiteProb should be pre-computed via const_site_prob_for_k().

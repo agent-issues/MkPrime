@@ -318,6 +318,100 @@ static double pruning_jc_acrv_flat(
 }
 
 
+// Per-site variant of pruning_jc_acrv_flat: fills siteLL[0..nChar-1] with
+// per-character log(avg_lik) instead of returning the sum.
+// Used by Gibbs kPrime sweep (M-155) to precompute likelihoods for all
+// characters at each candidate k in a single batched traversal.
+void pruning_jc_acrv_persite(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    int kStates,
+    NumericVector rate_multipliers,
+    double* buf, uint8_t* initFlg, int stride,
+    double* siteLL) {
+
+  int nEdge = parent.size();
+  int nTip  = tip_states.nrow();
+  int nChar = tip_states.ncol();
+  int nCat  = rate_multipliers.size();
+
+  int maxNode = 2 * nTip - 1;
+  int root   = nTip + 1;
+  int clCols = nChar * kStates;
+
+  std::vector<double> site_lik_sum(nChar, 0.0);
+  double inv_k = 1.0 / kStates;
+  double km1   = kStates - 1.0;
+
+  std::memset(initFlg, 0, (maxNode + 1) * sizeof(uint8_t));
+  for (int tip = 1; tip <= nTip; ++tip) {
+    double* cl = buf + tip * stride;
+    std::fill(cl, cl + clCols, 0.0);
+    for (int c = 0; c < nChar; ++c) {
+      int state  = tip_states(tip - 1, c);
+      int offset = c * kStates;
+      if (state < 0) {
+        for (int s = 0; s < kStates; ++s) cl[offset + s] = 1.0;
+      } else {
+        cl[offset + state] = 1.0;
+      }
+    }
+    initFlg[tip] = 1;
+  }
+
+  for (int cat = 0; cat < nCat; ++cat) {
+    double rate = rate_multipliers[cat];
+    for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
+
+    for (int e = nEdge - 1; e >= 0; --e) {
+      int par = parent[e];
+      int ch  = child[e];
+      double t        = edge_length[e] * rate;
+      double exp_term = std::exp(-kStates * t / km1);
+      double p_same   = inv_k + (1.0 - inv_k) * exp_term;
+      double p_diff   = inv_k - inv_k * exp_term;
+      double* clPar   = buf + par * stride;
+      double* clCh    = buf + ch  * stride;
+      double diff_coeff = p_same - p_diff;
+
+      if (!initFlg[par]) {
+        for (int c = 0; c < nChar; ++c) {
+          int offset = c * kStates;
+          double sum_cl = 0.0;
+          for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+          for (int i = 0; i < kStates; ++i)
+            clPar[offset + i] = p_diff * sum_cl + diff_coeff * clCh[offset + i];
+        }
+        initFlg[par] = 1;
+      } else {
+        for (int c = 0; c < nChar; ++c) {
+          int offset = c * kStates;
+          double sum_cl = 0.0;
+          for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+          for (int i = 0; i < kStates; ++i)
+            clPar[offset + i] *= p_diff * sum_cl + diff_coeff * clCh[offset + i];
+        }
+      }
+    }
+
+    double* clRoot = buf + root * stride;
+    for (int c = 0; c < nChar; ++c) {
+      int offset = c * kStates;
+      double sl = 0.0;
+      for (int s = 0; s < kStates; ++s)
+        sl += inv_k * clRoot[offset + s];
+      site_lik_sum[c] += sl;
+    }
+  }
+
+  double inv_nCat = 1.0 / nCat;
+  for (int c = 0; c < nChar; ++c) {
+    double avg = site_lik_sum[c] * inv_nCat;
+    siteLL[c] = (avg > 0.0) ? std::log(avg) : R_NegInf;
+  }
+}
+
+
 static double pruning_mkn_flat(
     IntegerVector parent, IntegerVector child,
     NumericVector edge_length, IntegerMatrix tip_states,
@@ -716,6 +810,141 @@ static double pruning_f81_het_acrv_flat(
     logLik += std::log(avg);
   }
   return logLik;
+}
+
+
+// Per-site variant of pruning_f81_het_acrv_flat: fills siteLL[0..nChar-1]
+// with per-character log(avg_lik) instead of returning the sum.
+// Used by Gibbs kPrime sweep (M-155).
+void pruning_f81_het_acrv_persite(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    int kStates, double baseRL,
+    const double* betaBins, int nBetaCat,
+    NumericVector rate_multipliers,
+    double* buf, uint8_t* initFlg, int stride,
+    double* siteLL) {
+
+  int nEdge = parent.size();
+  int nTip  = tip_states.nrow();
+  int nChar = tip_states.ncol();
+  int nCat  = rate_multipliers.size();
+
+  int maxNode = 2 * nTip - 1;
+  int root    = nTip + 1;
+  int clCols  = nChar * kStates;
+
+  int nRot = (kStates == 2) ? 1 : kStates;
+  int totalComp = nCat * nBetaCat * nRot;
+  std::vector<double> site_lik_sum(nChar, 0.0);
+
+  double gain_base, loss_base;
+  if (kStates == 2) {
+    double sum_rl = 1.0 + baseRL;
+    gain_base = 1.0 / sum_rl;
+    loss_base = baseRL / sum_rl;
+  } else {
+    gain_base = loss_base = 0.0;
+  }
+
+  std::memset(initFlg, 0, (maxNode + 1) * sizeof(uint8_t));
+  for (int tip = 1; tip <= nTip; ++tip) {
+    double* cl = buf + tip * stride;
+    std::fill(cl, cl + clCols, 0.0);
+    for (int c = 0; c < nChar; ++c) {
+      int state  = tip_states(tip - 1, c);
+      int offset = c * kStates;
+      if (state < 0) {
+        for (int s = 0; s < kStates; ++s) cl[offset + s] = 1.0;
+      } else {
+        cl[offset + state] = 1.0;
+      }
+    }
+    initFlg[tip] = 1;
+  }
+
+  for (int cat = 0; cat < nCat; ++cat) {
+    double acrvRate = rate_multipliers[cat];
+
+    for (int bi = 0; bi < nBetaCat; ++bi) {
+      double beta_val = betaBins[bi];
+
+      for (int rot = 0; rot < nRot; ++rot) {
+
+        double pi[16];
+        double sumPiSq = 0.0;
+
+        if (kStates == 2) {
+          double gain_b = gain_base * 2.0 * beta_val;
+          double loss_b = loss_base * 2.0 * (1.0 - beta_val);
+          double total_rate = gain_b + loss_b;
+          pi[1] = gain_b / total_rate;
+          pi[0] = 1.0 - pi[1];
+          sumPiSq = pi[0] * pi[0] + pi[1] * pi[1];
+        } else {
+          double r = (1.0 - beta_val) / (kStates - 1.0);
+          for (int s = 0; s < kStates; ++s) pi[s] = r;
+          pi[rot] = beta_val;
+          sumPiSq = beta_val * beta_val +
+                    (kStates - 1.0) * r * r;
+        }
+
+        double mu = 1.0 / (1.0 - sumPiSq);
+
+        for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
+
+        for (int e = nEdge - 1; e >= 0; --e) {
+          int par = parent[e];
+          int ch  = child[e];
+          double t = edge_length[e] * acrvRate;
+          double d = std::exp(-mu * t);
+          double one_minus_d = 1.0 - d;
+
+          double* clPar = buf + par * stride;
+          double* clCh  = buf + ch  * stride;
+
+          if (!initFlg[par]) {
+            for (int c = 0; c < nChar; ++c) {
+              int offset = c * kStates;
+              double sum_pi_cl = 0.0;
+              for (int j = 0; j < kStates; ++j)
+                sum_pi_cl += pi[j] * clCh[offset + j];
+              double base = one_minus_d * sum_pi_cl;
+              for (int i = 0; i < kStates; ++i)
+                clPar[offset + i] = base + d * clCh[offset + i];
+            }
+            initFlg[par] = 1;
+          } else {
+            for (int c = 0; c < nChar; ++c) {
+              int offset = c * kStates;
+              double sum_pi_cl = 0.0;
+              for (int j = 0; j < kStates; ++j)
+                sum_pi_cl += pi[j] * clCh[offset + j];
+              double base = one_minus_d * sum_pi_cl;
+              for (int i = 0; i < kStates; ++i)
+                clPar[offset + i] *= base + d * clCh[offset + i];
+            }
+          }
+        }
+
+        double* clRoot = buf + root * stride;
+        for (int c = 0; c < nChar; ++c) {
+          int offset = c * kStates;
+          double sl = 0.0;
+          for (int s = 0; s < kStates; ++s)
+            sl += pi[s] * clRoot[offset + s];
+          site_lik_sum[c] += sl;
+        }
+
+      }  // rot
+    }  // bi
+  }  // cat
+
+  double inv_comp = 1.0 / totalComp;
+  for (int c = 0; c < nChar; ++c) {
+    double avg = site_lik_sum[c] * inv_comp;
+    siteLL[c] = (avg > 0.0) ? std::log(avg) : R_NegInf;
+  }
 }
 
 

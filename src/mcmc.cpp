@@ -158,6 +158,8 @@ struct McmcState {
   ClWorkspace clWs;
   // M-052: Q-matrix heterogeneity — Dirichlet-marginal beta_scale parameter.
   double betaScale = 1.0;
+  // M-155: dedicated workspace for Gibbs kPrime batched pruning
+  ClWorkspace gibbsWs;
   // M-121: persistent node-level CL cache for partial evaluation
   NodeCLCache nodeCL;
   // M-125: snapshot for block Dirichlet branch-length rollback
@@ -3063,22 +3065,13 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
     ? cpp_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ)
     : NumericVector(1, 1.0);
 
-  // Build global-char-index → local-column-index map
-  std::vector<int> charToLocalIdx(data->nChar, -1);
-  for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
-    const PartInfo& part = data->parts[pi];
-    int nCols = part.tipStates.ncol();
-    for (int ci = 0; ci < nCols; ++ci)
-      charToLocalIdx[part.globalCharIdx[ci]] = ci;
-  }
-
   // Cache for constant-site probability by kStates (shared across characters)
-  std::vector<double> cspCache;       // indexed by kStates
+  std::vector<double> cspCache;
   int cspCacheSize = 0;
   auto getCSP = [&](int kStates) -> double {
     if (data->codingType == 0) return 0.0;
     if (kStates >= cspCacheSize) {
-      int newSize = kStates + 20;  // headroom
+      int newSize = kStates + 20;
       cspCache.resize(newSize, -1.0);
       cspCacheSize = newSize;
     }
@@ -3103,6 +3096,197 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
     lsLogNorm = std::log(-std::log1p(-c));
   }
 
+  // ---------------------------------------------------------------
+  // M-155: Batched precomputation of per-site likelihoods
+  //
+  // Instead of calling single_char_loglik_jc() ~300 times (one per
+  // character per candidate k'), batch all characters sharing the same
+  // candidate k into a single partition-level pruning call.
+  // ---------------------------------------------------------------
+
+  static const int K_MAX_CAND = 50;   // absolute cap (fallback path)
+  static const double LOG_CUTOFF = -57.5;
+
+  // Build globalCharIdx → transIdx map (position in transIdxGlobal)
+  std::vector<int> globalToTransIdx(data->nChar, -1);
+  for (int ti = 0; ti < nTrans; ++ti)
+    globalToTransIdx[data->transIdxGlobal[ti]] = ti;
+
+  // Identify transformational partitions and determine k range
+  struct TransPartInfo {
+    int partIdx;
+    int kObs;
+    int nChar;
+  };
+  std::vector<TransPartInfo> transParts;
+  int maxNCharPart = 0;
+  for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
+    const PartInfo& p = data->parts[pi];
+    if (p.type != 1) continue;
+    int kObs_p = data->kObs[p.globalCharIdx[0]];
+    int nCh = p.tipStates.ncol();
+    transParts.push_back({pi, kObs_p, nCh});
+    if (nCh > maxNCharPart) maxNCharPart = nCh;
+  }
+
+  // Ensure Gibbs workspace is large enough for the worst-case stride.
+  // At ko=0 with all chars active: stride = nChar × kObs.
+  // At high ko with few chars: stride = nActive × (kObs + ko).
+  // The bound nChar × (kObs + K_MAX_CAND) covers both cases.
+  int maxNode = 2 * data->nTip - 1;
+  int gibbsMaxStride = 0;
+  for (auto& tp : transParts) {
+    int s = tp.nChar * (tp.kObs + K_MAX_CAND);
+    if (s > gibbsMaxStride) gibbsMaxStride = s;
+  }
+  if (!state->gibbsWs.fits(maxNode, gibbsMaxStride))
+    state->gibbsWs.allocate(maxNode, gibbsMaxStride);
+
+  bool useHet = data->qHeterogeneity;
+  int nBC = data->nBetaCat;
+  int coding = data->codingType;
+  double hetBins[16];
+  int nTip = data->nTip;
+
+  // Per-character sampling state
+  // logW stores weights for each candidate; nCand tracks how many
+  std::vector<double> charMaxLogW(nTrans, R_NegInf);
+  // Flat: logW[ti * K_MAX_CAND + ko]
+  std::vector<double> charLogW(nTrans * K_MAX_CAND, R_NegInf);
+  std::vector<int> charNCand(nTrans, 0);
+  std::vector<bool> terminated(nTrans, false);
+  int nActive = nTrans;
+
+  // Temporary per-site output buffer
+  std::vector<double> siteLL(maxNCharPart);
+
+  // Per-partition active column tracking
+  struct PartActive {
+    std::vector<int> activeCols;   // local column indices still active
+    std::vector<int> activeTransIdx;  // corresponding transIdx
+  };
+  std::vector<PartActive> partAct(transParts.size());
+  for (int pi = 0; pi < (int)transParts.size(); ++pi) {
+    const PartInfo& part = data->parts[transParts[pi].partIdx];
+    int nCh = transParts[pi].nChar;
+    partAct[pi].activeCols.resize(nCh);
+    partAct[pi].activeTransIdx.resize(nCh);
+    for (int c = 0; c < nCh; ++c) {
+      partAct[pi].activeCols[c] = c;
+      partAct[pi].activeTransIdx[c] = globalToTransIdx[part.globalCharIdx[c]];
+    }
+  }
+
+  // Progressive batched precomputation with early termination
+  for (int ko = 0; ko < K_MAX_CAND && nActive > 0; ++ko) {
+
+    for (int pi = 0; pi < (int)transParts.size(); ++pi) {
+      auto& tp = transParts[pi];
+      auto& pa = partAct[pi];
+      int nAct = (int)pa.activeCols.size();
+      if (nAct == 0) continue;
+
+      int k = tp.kObs + ko;
+      double csp = getCSP(k);
+      double logAscCorr = (coding != 0 && csp < 1.0)
+        ? -std::log(1.0 - csp) : 0.0;
+      if (coding != 0 && csp >= 1.0) logAscCorr = R_NegInf;
+
+      const PartInfo& part = data->parts[tp.partIdx];
+
+      // For ko=0 and ko=1, use full partition tipStates (all chars active
+      // or nearly so). For ko≥2, build sub-matrix of active columns only.
+      if (nAct == tp.nChar) {
+        // All chars active — use partition tipStates directly
+        int neededStride = nAct * k;
+        if (useHet) {
+          gibbs_compute_het_bins(state->betaScale, k, nBC, hetBins);
+          NumericVector rates = acrvRates;
+          if (rates.size() == 0) rates = NumericVector(1, 1.0);
+          pruning_f81_het_acrv_persite(
+            state->parent, state->child, edgeLen, part.tipStates,
+            k, 1.0, hetBins, nBC, rates,
+            state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
+            neededStride, siteLL.data());
+        } else {
+          pruning_jc_acrv_persite(
+            state->parent, state->child, edgeLen, part.tipStates,
+            k, acrvRates,
+            state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
+            neededStride, siteLL.data());
+        }
+      } else {
+        // Build sub-matrix of active columns
+        IntegerMatrix sub(nTip, nAct);
+        for (int ai = 0; ai < nAct; ++ai)
+          for (int t = 0; t < nTip; ++t)
+            sub(t, ai) = part.tipStates(t, pa.activeCols[ai]);
+
+        int neededStride = nAct * k;
+        if (useHet) {
+          gibbs_compute_het_bins(state->betaScale, k, nBC, hetBins);
+          NumericVector rates = acrvRates;
+          if (rates.size() == 0) rates = NumericVector(1, 1.0);
+          pruning_f81_het_acrv_persite(
+            state->parent, state->child, edgeLen, sub,
+            k, 1.0, hetBins, nBC, rates,
+            state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
+            neededStride, siteLL.data());
+        } else {
+          pruning_jc_acrv_persite(
+            state->parent, state->child, edgeLen, sub,
+            k, acrvRates,
+            state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
+            neededStride, siteLL.data());
+        }
+      }
+
+      // Compute log-weights and check termination
+      std::vector<int> stillActive;
+      std::vector<int> stillActiveTransIdx;
+
+      for (int ai = 0; ai < nAct; ++ai) {
+        int ti = pa.activeTransIdx[ai];
+        double ll = siteLL[ai];
+        if (R_FINITE(ll) && R_FINITE(logAscCorr))
+          ll += logAscCorr;
+        else if (!R_FINITE(logAscCorr))
+          ll = R_NegInf;
+        if (data->relabel && R_FINITE(ll))
+          ll += mk_prime_relabel_log(k, tp.kObs);
+
+        double logPrior_k;
+        if (isGeometric) {
+          logPrior_k = logP + ko * log1mP;
+        } else {
+          logPrior_k = k * lsLogC
+                     - std::log(static_cast<double>(k)) - lsLogNorm;
+        }
+
+        double w = beta * ll + logPrior_k;
+        charLogW[ti * K_MAX_CAND + ko] = w;
+        charNCand[ti]++;
+        if (w > charMaxLogW[ti]) charMaxLogW[ti] = w;
+
+        if (!R_FINITE(ll) || w < charMaxLogW[ti] + LOG_CUTOFF) {
+          terminated[ti] = true;
+          nActive--;
+        } else {
+          stillActive.push_back(pa.activeCols[ai]);
+          stillActiveTransIdx.push_back(ti);
+        }
+      }
+
+      pa.activeCols = std::move(stillActive);
+      pa.activeTransIdx = std::move(stillActiveTransIdx);
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // Sampling phase: for each character, sample k' from the
+  // precomputed log-weights in charLogW[].
+  // ---------------------------------------------------------------
+
   // Random permutation of transformational character indices
   std::vector<int> perm(nTrans);
   for (int i = 0; i < nTrans; ++i) perm[i] = i;
@@ -3112,61 +3296,26 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
     std::swap(perm[i], perm[j]);
   }
 
-  static const int K_MAX_CAND = 50;
-  static const double LOG_CUTOFF = -57.5;  // ~25 orders of magnitude
-
-  // Sweep over all transformational characters
   for (int si = 0; si < nTrans; ++si) {
     int ti = perm[si];
     int gi = data->transIdxGlobal[ti];
-    int kObs_i  = data->kObs[gi];
-    int partIdx = data->charToPartition[gi];
-    int locIdx  = charToLocalIdx[gi];
-    if (partIdx < 0 || locIdx < 0) continue;
-
-    const PartInfo& part = data->parts[partIdx];
-    const int* tipCol = &part.tipStates(0, locIdx);
-
-    // Enumerate candidate k' values and compute log-weights
-    double logW[K_MAX_CAND];
-    int nCand = 0;
-    double maxLogW = R_NegInf;
-
-    for (int k = kObs_i; k < kObs_i + K_MAX_CAND; ++k) {
-      double csp = getCSP(k);
-
-      double logLik_k = single_char_loglik_jc(
-        *data, state->parent, state->child, edgeLen,
-        tipCol, k, kObs_i, state->betaScale, acrvRates, csp);
-
-      double logPrior_k;
-      if (isGeometric) {
-        logPrior_k = logP + (k - kObs_i) * log1mP;
-      } else {
-        logPrior_k = k * lsLogC
-                   - std::log(static_cast<double>(k)) - lsLogNorm;
-      }
-
-      double w = beta * logLik_k + logPrior_k;
-      logW[nCand++] = w;
-      if (w > maxLogW) maxLogW = w;
-
-      // Early termination when weight drops enough below peak
-      if (w < maxLogW + LOG_CUTOFF) break;
-    }
-
+    int kObs_i = data->kObs[gi];
+    int nCand = charNCand[ti];
     if (nCand == 0) continue;
+
+    double maxW = charMaxLogW[ti];
+    double* logW = &charLogW[ti * K_MAX_CAND];
 
     // Sample from categorical (log-sum-exp)
     double sumExp = 0.0;
     for (int c = 0; c < nCand; ++c)
-      sumExp += std::exp(logW[c] - maxLogW);
+      sumExp += std::exp(logW[c] - maxW);
 
     double u = R::unif_rand() * sumExp;
     double cum = 0.0;
     int chosen = nCand - 1;
     for (int c = 0; c < nCand; ++c) {
-      cum += std::exp(logW[c] - maxLogW);
+      cum += std::exp(logW[c] - maxW);
       if (cum >= u) { chosen = c; break; }
     }
 
