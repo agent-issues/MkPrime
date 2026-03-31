@@ -34,7 +34,7 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 | M-160 | P2 | OPEN | **Delayed rejection for topology moves.** When an SPR proposal is rejected, immediately try a cheaper NNI at the regraft edge as a fallback before discarding the iteration. Delayed-rejection MH preserves detailed balance with a modified acceptance ratio (Green & Mira 2001). The full likelihood from the rejected SPR can be partially recycled for the NNI evaluation. Potential for significant tree-mixing improvement at modest cost. |
 | M-161 | P2 | OPEN | **Per-partition CL cache validity.** `nodeCL.valid = false` invalidates all CacheUnits on any parameter change, even when only one partition is affected (e.g. `rate_loss` only affects neomorphic partitions). Maintain per-CacheUnit validity flags so NNI proposals can reuse cached CLs for unaffected partitions after a parameter-only move. Benefit scales with partition diversity. |
 | M-162 | P2 | OPEN | **Hot-path micro-optimizations: pre-allocate scratch vectors.** Part A (raw pointers, 1.1% CPU) DONE in `717818c`. Part B remaining: pre-allocate scratch `std::vector` buffers (`site_lik_sum`, ascertainment buffers) in McmcState/McmcData instead of per-call heap allocation (~1.5% CPU savings). Mechanical change, low risk. |
-| M-163 | P2 | OPEN | **BG hyperparameter slice sampler infrastructure.** `test-bg-hyperparameter-moves.R` has 13 failures: `slice_kprime_alpha`/`slice_kprime_beta` moves expected but not wired through `.BuildMoves` / `.kMoveTypes` / C++ dispatch. Needs: add slice moveType codes, add moves in `.BuildMoves` for BG prior, implement C++ slice sampler for kprime_alpha/kprime_beta, wire `.AdaptSliceWidths`. |
+
 
 
 ## MCMC infrastructure
