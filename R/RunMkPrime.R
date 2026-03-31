@@ -824,6 +824,8 @@ RunMkPrime <- function(data, tree = NULL,
   tickerPage  <- ""
   tickerPages <- if (phase == "Tuning") {
     "minESS/s: ?"
+  } else if (phase == "Warmup") {
+    sprintf("warmup: ~%d iter", mcmc$warmup)
   } else {
     "minESS: ?"
   }
@@ -997,6 +999,7 @@ RunMkPrime <- function(data, tree = NULL,
         pinnedWeights = pinnedWeights,
         warmupProgress = min(1, batchEnd / warmupHorizon)
       )
+      tickerPages <- sprintf("warmup: ~%d iter", warmupHorizon)
 
       # M-126: Accumulate cold-chain state snapshots for rho estimation.
       # C++ saves no samples during warmup, so we use the chain state
@@ -1095,6 +1098,7 @@ RunMkPrime <- function(data, tree = NULL,
               .LogMoveWeights(moveWeights, moveNames, logFilePath)
             .PrintMoveWeights(moveWeights, moveNames)
             weightsLogged <- TRUE
+            tickerPages   <- "minESS: ?"
           }
         }
       }
@@ -2018,7 +2022,8 @@ RunMkPrime <- function(data, tree = NULL,
       trees   = allTrees,
       acceptance = avgAcceptance,
       model = model, data = mkd, mcmc = mcmc,
-      warmup = mcmc$warmup, tuning = runs[[1]]$chain_tuning[[1]]
+      warmup = mcmc$warmup, tuning = runs[[1]]$chain_tuning[[1]],
+      warmup_trace = lapply(runs, `[[`, "logPostHistory")
     )
     result$logFile  <- logFilePaths
     result$nSamples <- totalSaved
@@ -2050,7 +2055,8 @@ RunMkPrime <- function(data, tree = NULL,
         samples = r$samples, trees = r$trees,
         acceptance = r$acceptance,
         model = model, data = mkd, mcmc = mcmc,
-        warmup = mcmc$warmup, tuning = runs[[1]]$chain_tuning[[1]]
+        warmup = mcmc$warmup, tuning = runs[[1]]$chain_tuning[[1]],
+        warmup_trace = list(runs[[1]]$logPostHistory)
       )
       if (!is.null(r$betas)) {
         result$betas <- r$betas
@@ -2070,7 +2076,8 @@ RunMkPrime <- function(data, tree = NULL,
         samples = allSamples, trees = allTrees,
         acceptance = avgAcceptance,
         model = model, data = mkd, mcmc = mcmc,
-        warmup = mcmc$warmup, tuning = runs[[1]]$chain_tuning[[1]]
+        warmup = mcmc$warmup, tuning = runs[[1]]$chain_tuning[[1]],
+        warmup_trace = lapply(runs, `[[`, "logPostHistory")
       )
       result$nRuns   <- nRuns
       result$per_run <- perRunSummaries
