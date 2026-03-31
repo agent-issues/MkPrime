@@ -12,9 +12,9 @@ Last updated: 2026-03-31 06:50
 - **Dropped `coda` dependency**: native rank-normalized R-hat (Vehtari et al. 2021) and FFT-based ESS replace all `coda` calls. Convergence thresholds tightened (R-hat ≤ 1.01). 40 new unit tests.
 - **Partial-CL cache bug fix series (M-142–M-145):** S-RED rounds 8–10 found and fixed four cache-staleness bugs. (1) M-142: ascertainment correction skipped when ACRV off or for transformational partitions. (2) M-143: nine Gibbs/weighted move functions missing cache invalidation. (3) M-144: MkN root frequency swap (π₀↔π₁) in all four C++ paths. (4) M-145: slice sampler missing cache invalidation. All four fixed and committed.
 
-**Open tasks:** M-148 (verification needed), M-151 (display bugs), M-131 (warmup validation) + M-080 (ASSIGNED to C). Standing tasks at P1.
 - **Checkpoint series complete:** M-149 (interrupt-safe checkpointing, 7 sub-bugs), M-150 (maxTime checkpoint). All checkpoint/resume paths now covered.
 - **M-153 tree construction bug fix (2026-03-31):** Nnode off-by-one (`n-2` → `n-1`) + `TreeTools::Preorder()` wrapping at 3 sites in `RunMkPrime.R`. Fixed segfault in `TreeDist::RobinsonFoulds()` during convergence checks. Validated on project3832 (10 taxa, 27 chars).
+- **M-154 Gibbs kPrime sweep + block shift (2026-03-31):** Two new C++ moves for transformational k' inference. S-RED round 15 found no bugs; S-PROF round 3 identified 10× overhead vs int_walk → filed M-155.
 
 MkPrime is a new R package for Bayesian phylogenetic inference under the
 Mk' model. The architecture follows StratoBayes (C++ hot loop via Rcpp,
