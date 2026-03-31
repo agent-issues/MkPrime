@@ -10,10 +10,9 @@
 All core phases (1–10) are complete. 155+ tasks delivered. Current work:
 
 - **Phase 6b** (TreeSearch GUI integration): M-080 assigned to Agent C.
-- **M-155** (P1): Gibbs kPrime sweep batch-by-k' optimization. S-PROF
-  round 3 found the sweep is 10× slower than equivalent int_walk coverage
-  due to per-character individual tree traversals (see "Performance notes"
-  below).
+- **M-155** (P1): Gibbs kPrime sweep batch-by-k' optimization — **DONE**
+  (`224bda8`). Batched partition-level pruning + progressive early
+  termination. 3.6× speedup on full Sun2018 (see "Performance notes").
 - **M-131** (P2): Warmup stabilisation validation study (Hamilton HPC).
 - Standing tasks (S-RED, S-PROF, S-COORD) at P1.
 
@@ -260,9 +259,9 @@ sufficient — warmup can consume most of the iteration budget.
 
 ## Performance notes
 
-### Gibbs kPrime sweep (M-154 / S-PROF round 3, 2026-03-31)
+### Gibbs kPrime sweep (S-PROF round 3, 2026-03-31)
 
-Benchmarked on Sun2018 (54 taxa, 99 trans, 126 neo, nCat=6):
+**Pre-optimization** (per-character individual traversals):
 
 | Move | Cost | Coverage |
 |------|------|----------|
@@ -270,17 +269,21 @@ Benchmarked on Sun2018 (54 taxa, 99 trans, 126 neo, nCat=6):
 | 99 × int_walk kPrime (moveType 7) | 33 ms | All 99 trans chars |
 | Block kPrime shift (moveType 26) | 0.66 ms | All 99 trans chars (collective mode) |
 
-**Root cause of 10× overhead:** `single_char_loglik_jc()` does per-character,
+Root cause of 10× overhead: `single_char_loglik_jc()` did per-character,
 per-candidate-k' individual tree traversals with per-call heap allocation.
-The partition-level flat-buffer pruning used by int_walk batches all characters
-in one traversal (0.007–0.07 ms/char amortized vs ~3.4 ms/char standalone).
 
-**nCat scaling:** Linear (70 ms at nCat=1, 340 ms at nCat=6).
+**Post-optimization (M-155, `224bda8`):** Batched partition-level pruning
+with progressive early termination.
 
-**Final rebuild:** Negligible (1.8 ms, 0.5% of sweep).
+| Config | Chars | nCat | Old (est.) | New | Speedup |
+|--------|-------|------|------------|-----|---------|
+| all-trans | 225 | 1 | ~70 ms | 35.7 ms | ~2× |
+| all-trans | 225 | 6 | ~770 ms | 214 ms | ~3.6× |
+| with-neo | 31 | 1 | ~70 ms | 13.0 ms | ~5.4× |
+| with-neo | 31 | 6 | ~107 ms | 71 ms | ~1.5× |
 
-**M-155 filed (P1):** Restructure inner loop to batch characters by candidate
-k' value using flat-buffer partition pruning. Expected 50–100× speedup.
+nCat scaling remains roughly linear. Speedup is larger with more
+characters (better amortization of batched traversals).
 
 ### Overall MCMC bottleneck (S-PROF round 2, 2026-03-28)
 
