@@ -43,7 +43,7 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| M-168 | P3 | OPEN | **Segfault in Q-het + both Gibbs topology moves.** `test-gibbs-het.R` test 4 crashes (exit code 139) when `qHeterogeneity = TRUE`, `gibbsSpr = TRUE`, and `gibbsSubtreeSwap = TRUE` simultaneously (8-tip, 12-char dataset, seed 9102). Tests 1–3 pass (F81 unit, Q-het + single Gibbs move). Pre-existing: confirmed at `bc1e2ee~1`. Likely buffer overrun or stale CL cache access in dual-Gibbs Q-het path. Filed from u.165 (S-RED round 17). |
+| M-168 | P3 | ASSIGNED (D) | **Segfault in Q-het + both Gibbs topology moves.** `test-gibbs-het.R` test 4 crashes (exit code 139) when `qHeterogeneity = TRUE`, `gibbsSpr = TRUE`, and `gibbsSubtreeSwap = TRUE` simultaneously (8-tip, 12-char dataset, seed 9102). Tests 1–3 pass (F81 unit, Q-het + single Gibbs move). Pre-existing: confirmed at `bc1e2ee~1`. Likely buffer overrun or stale CL cache access in dual-Gibbs Q-het path. Filed from u.165 (S-RED round 17). |
 
 
 ## MCMC infrastructure
