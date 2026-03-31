@@ -136,7 +136,8 @@ static double pruning_jc_flat(
     IntegerVector parent, IntegerVector child,
     NumericVector edge_length, IntegerMatrix tip_states,
     int kStates, NumericVector root_freqs,
-    double* buf, uint8_t* initFlg, int stride) {
+    double* buf, uint8_t* initFlg, int stride,
+    double* outConstProb = nullptr) {
 
   int nEdge = parent.size();
   int nTip  = tip_states.nrow();
@@ -165,6 +166,18 @@ static double pruning_jc_flat(
       }
     }
     initFlg[tip] = 1;
+  }
+
+  // M-157: fused constant-site probability (JC symmetry: 1 pseudo-char)
+  std::vector<double> ascBuf;
+  std::vector<uint8_t> ascInit;
+  if (outConstProb) {
+    ascBuf.assign((maxNode + 1) * kStates, 0.0);
+    ascInit.assign(maxNode + 1, 0);
+    for (int tip = 1; tip <= nTip; ++tip) {
+      ascBuf[tip * kStates] = 1.0;
+      ascInit[tip] = 1;
+    }
   }
 
   double inv_k = 1.0 / kStates;
@@ -200,6 +213,22 @@ static double pruning_jc_flat(
           clPar[offset + i] *= p_diff * sum_cl + diff_coeff * clCh[offset + i];
       }
     }
+
+    // M-157: fused ascertainment pseudo-char propagation
+    if (outConstProb) {
+      double* aPar = ascBuf.data() + par * kStates;
+      double* aCh  = ascBuf.data() + ch  * kStates;
+      double asc_sum = 0.0;
+      for (int j = 0; j < kStates; ++j) asc_sum += aCh[j];
+      if (!ascInit[par]) {
+        for (int i = 0; i < kStates; ++i)
+          aPar[i] = p_diff * asc_sum + diff_coeff * aCh[i];
+        ascInit[par] = 1;
+      } else {
+        for (int i = 0; i < kStates; ++i)
+          aPar[i] *= p_diff * asc_sum + diff_coeff * aCh[i];
+      }
+    }
   }
 
   int root = nTip + 1;
@@ -213,6 +242,15 @@ static double pruning_jc_flat(
     if (sl <= 0.0) return R_NegInf;
     logLik += std::log(sl);
   }
+
+  // M-157: extract fused constant-site probability
+  if (outConstProb) {
+    double* ascRoot = ascBuf.data() + root * kStates;
+    double sl = 0.0;
+    for (int s = 0; s < kStates; ++s) sl += ascRoot[s];
+    *outConstProb = sl;  // sum_i cl[i] = k × P(const-in-state-0) = P(const)
+  }
+
   return logLik;
 }
 
@@ -222,7 +260,8 @@ static double pruning_jc_acrv_flat(
     NumericVector edge_length, IntegerMatrix tip_states,
     int kStates, NumericVector root_freqs,
     NumericVector rate_multipliers,
-    double* buf, uint8_t* initFlg, int stride) {
+    double* buf, uint8_t* initFlg, int stride,
+    double* outConstProb = nullptr) {
 
   int nEdge = parent.size();
   int nTip  = tip_states.nrow();
@@ -260,11 +299,29 @@ static double pruning_jc_acrv_flat(
     initFlg[tip] = 1;
   }
 
+  // M-157: fused constant-site probability side buffer.
+  // JC symmetry: 1 pseudo-char (all tips in state 0) suffices;
+  // P(const) = k × P(all-in-state-0) because all constant-state patterns
+  // have equal probability under JC.  Final sum_i(clRoot[i]) = k × P(0|cat).
+  std::vector<double> ascBuf;
+  std::vector<uint8_t> ascInit;
+  double constProbCatSum = 0.0;
+  if (outConstProb) {
+    ascBuf.assign((maxNode + 1) * kStates, 0.0);
+    ascInit.assign(maxNode + 1, 0);
+    for (int tip = 1; tip <= nTip; ++tip) {
+      ascBuf[tip * kStates] = 1.0;  // state 0
+      ascInit[tip] = 1;
+    }
+  }
+
   for (int cat = 0; cat < nCat; ++cat) {
     double rate = rate_multipliers[cat];
 
     // Reset only internal-node init flags (tips stay initialised).
     for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
+    if (outConstProb)
+      for (int n = nTip + 1; n <= maxNode; ++n) ascInit[n] = 0;
 
     for (int e = nEdge - 1; e >= 0; --e) {
       int par = parent[e];
@@ -296,6 +353,22 @@ static double pruning_jc_acrv_flat(
             clPar[offset + i] *= p_diff * sum_cl + diff_coeff * clCh[offset + i];
         }
       }
+
+      // M-157: fused ascertainment pseudo-char propagation (same exp_term)
+      if (outConstProb) {
+        double* aPar = ascBuf.data() + par * kStates;
+        double* aCh  = ascBuf.data() + ch  * kStates;
+        double asc_sum = 0.0;
+        for (int j = 0; j < kStates; ++j) asc_sum += aCh[j];
+        if (!ascInit[par]) {
+          for (int i = 0; i < kStates; ++i)
+            aPar[i] = p_diff * asc_sum + diff_coeff * aCh[i];
+          ascInit[par] = 1;
+        } else {
+          for (int i = 0; i < kStates; ++i)
+            aPar[i] *= p_diff * asc_sum + diff_coeff * aCh[i];
+        }
+      }
     }
 
     double* clRoot = buf + root * stride;
@@ -306,6 +379,14 @@ static double pruning_jc_acrv_flat(
         sl += root_freqs[s] * clRoot[offset + s];
       site_lik_sum[c] += sl;
     }
+
+    // M-157: accumulate constant-site prob for this rate category
+    if (outConstProb) {
+      double* ascRoot = ascBuf.data() + root * kStates;
+      double sl = 0.0;
+      for (int s = 0; s < kStates; ++s) sl += ascRoot[s];
+      constProbCatSum += sl;
+    }
   }
 
   double logLik   = 0.0;
@@ -315,6 +396,10 @@ static double pruning_jc_acrv_flat(
     if (avg <= 0.0) return R_NegInf;
     logLik += std::log(avg);
   }
+
+  if (outConstProb)
+    *outConstProb = constProbCatSum / nCat;
+
   return logLik;
 }
 
@@ -368,7 +453,7 @@ void pruning_jc_acrv_persite(
       int par = parent[e];
       int ch  = child[e];
       double t        = edge_length[e] * rate;
-      double exp_term = std::exp(-kStates * t / km1);
+      double exp_term = MKP_EXP(-kStates * t / km1);
       double p_same   = inv_k + (1.0 - inv_k) * exp_term;
       double p_diff   = inv_k - inv_k * exp_term;
       double* clPar   = buf + par * stride;
@@ -417,7 +502,8 @@ static double pruning_mkn_flat(
     IntegerVector parent, IntegerVector child,
     NumericVector edge_length, IntegerMatrix tip_states,
     double rate_loss, NumericVector root_freqs,
-    double* buf, uint8_t* initFlg, int stride) {
+    double* buf, uint8_t* initFlg, int stride,
+    double* outConstProb = nullptr) {
 
   int nEdge = parent.size();
   int nTip  = tip_states.nrow();
@@ -448,6 +534,22 @@ static double pruning_mkn_flat(
       }
     }
     initFlg[tip] = 1;
+  }
+
+  // M-157: fused constant-site probability (MkN: 2 pseudo-chars, asymmetric)
+  // Pseudo-char 0: all tips in state 0.  Pseudo-char 1: all tips in state 1.
+  const int ascStride = 2 * kStates;  // 2 pseudo-chars × 2 states = 4
+  std::vector<double> ascBuf;
+  std::vector<uint8_t> ascInit;
+  if (outConstProb) {
+    ascBuf.assign((maxNode + 1) * ascStride, 0.0);
+    ascInit.assign(maxNode + 1, 0);
+    for (int tip = 1; tip <= nTip; ++tip) {
+      double* a = ascBuf.data() + tip * ascStride;
+      a[0] = 1.0;              // pseudo-char 0: state 0
+      a[kStates + 1] = 1.0;   // pseudo-char 1: state 1
+      ascInit[tip] = 1;
+    }
   }
 
   double sum_rl     = 1.0 + rate_loss;
@@ -485,6 +587,24 @@ static double pruning_mkn_flat(
         clPar[offset + 1] *= P10 * cl0 + P11 * cl1;
       }
     }
+
+    // M-157: fused ascertainment (2 pseudo-chars, same P matrix)
+    if (outConstProb) {
+      double* aPar = ascBuf.data() + par * ascStride;
+      double* aCh  = ascBuf.data() + ch  * ascStride;
+      for (int c = 0; c < 2; ++c) {
+        int off = c * kStates;
+        double a0 = aCh[off], a1 = aCh[off + 1];
+        if (!ascInit[par]) {
+          aPar[off]     = P00 * a0 + P01 * a1;
+          aPar[off + 1] = P10 * a0 + P11 * a1;
+        } else {
+          aPar[off]     *= P00 * a0 + P01 * a1;
+          aPar[off + 1] *= P10 * a0 + P11 * a1;
+        }
+      }
+      if (!ascInit[par]) ascInit[par] = 1;
+    }
   }
 
   int root = nTip + 1;
@@ -496,6 +616,18 @@ static double pruning_mkn_flat(
     if (sl <= 0.0) return R_NegInf;
     logLik += std::log(sl);
   }
+
+  // M-157: extract fused constant-site probability
+  if (outConstProb) {
+    double* ascRoot = ascBuf.data() + root * ascStride;
+    double total = 0.0;
+    for (int c = 0; c < 2; ++c) {
+      int off = c * kStates;
+      total += root_freqs[0] * ascRoot[off] + root_freqs[1] * ascRoot[off + 1];
+    }
+    *outConstProb = total;
+  }
+
   return logLik;
 }
 
@@ -505,7 +637,8 @@ static double pruning_mkn_acrv_flat(
     NumericVector edge_length, IntegerMatrix tip_states,
     double rate_loss, NumericVector root_freqs,
     NumericVector rate_multipliers,
-    double* buf, uint8_t* initFlg, int stride) {
+    double* buf, uint8_t* initFlg, int stride,
+    double* outConstProb = nullptr) {
 
   int nEdge = parent.size();
   int nTip  = tip_states.nrow();
@@ -546,10 +679,28 @@ static double pruning_mkn_acrv_flat(
     initFlg[tip] = 1;
   }
 
+  // M-157: fused constant-site probability (MkN: 2 pseudo-chars)
+  const int ascStride = 2 * kStates;  // 4
+  std::vector<double> ascBuf;
+  std::vector<uint8_t> ascInit;
+  double constProbCatSum = 0.0;
+  if (outConstProb) {
+    ascBuf.assign((maxNode + 1) * ascStride, 0.0);
+    ascInit.assign(maxNode + 1, 0);
+    for (int tip = 1; tip <= nTip; ++tip) {
+      double* a = ascBuf.data() + tip * ascStride;
+      a[0] = 1.0;              // pseudo-char 0: state 0
+      a[kStates + 1] = 1.0;   // pseudo-char 1: state 1
+      ascInit[tip] = 1;
+    }
+  }
+
   for (int cat = 0; cat < nCat; ++cat) {
     double rate = rate_multipliers[cat];
 
     for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
+    if (outConstProb)
+      for (int n = nTip + 1; n <= maxNode; ++n) ascInit[n] = 0;
 
     for (int e = nEdge - 1; e >= 0; --e) {
       int par = parent[e];
@@ -579,6 +730,24 @@ static double pruning_mkn_acrv_flat(
           clPar[offset + 1] *= P10 * cl0 + P11 * cl1;
         }
       }
+
+      // M-157: fused ascertainment (2 pseudo-chars, same P matrix)
+      if (outConstProb) {
+        double* aPar = ascBuf.data() + par * ascStride;
+        double* aCh  = ascBuf.data() + ch  * ascStride;
+        for (int c = 0; c < 2; ++c) {
+          int off = c * kStates;
+          double a0 = aCh[off], a1 = aCh[off + 1];
+          if (!ascInit[par]) {
+            aPar[off]     = P00 * a0 + P01 * a1;
+            aPar[off + 1] = P10 * a0 + P11 * a1;
+          } else {
+            aPar[off]     *= P00 * a0 + P01 * a1;
+            aPar[off + 1] *= P10 * a0 + P11 * a1;
+          }
+        }
+        if (!ascInit[par]) ascInit[par] = 1;
+      }
     }
 
     double* clRoot = buf + root * stride;
@@ -586,6 +755,17 @@ static double pruning_mkn_acrv_flat(
       int offset = c * kStates;
       double sl = root_freqs[0] * clRoot[offset] + root_freqs[1] * clRoot[offset + 1];
       site_lik_sum[c] += sl;
+    }
+
+    // M-157: accumulate constant-site prob for this rate category
+    if (outConstProb) {
+      double* ascRoot = ascBuf.data() + root * ascStride;
+      double total = 0.0;
+      for (int c = 0; c < 2; ++c) {
+        int off = c * kStates;
+        total += root_freqs[0] * ascRoot[off] + root_freqs[1] * ascRoot[off + 1];
+      }
+      constProbCatSum += total;
     }
   }
 
@@ -596,6 +776,10 @@ static double pruning_mkn_acrv_flat(
     if (avg <= 0.0) return R_NegInf;
     logLik += std::log(avg);
   }
+
+  if (outConstProb)
+    *outConstProb = constProbCatSum / nCat;
+
   return logLik;
 }
 
@@ -662,13 +846,18 @@ static void compute_het_bins(double alpha, int k, int nBins, double* bins) {
 // For k≥3: k rotations per bin; effective components = nCat × nBetaCat × k.
 //
 // Returns raw log-likelihood (no ascertainment correction).
+// M-157: outConstProb (optional) receives P(constant site) via fused
+// Felsenstein pruning of k pseudo-characters alongside the real data.
+// This replaces the separate het_constant_site_prob() call and fixes
+// its incorrect per-edge-product shortcut.
 static double pruning_f81_het_acrv_flat(
     IntegerVector parent, IntegerVector child,
     NumericVector edge_length, IntegerMatrix tip_states,
     int kStates, double baseRL,
     const double* betaBins, int nBetaCat,
     NumericVector rate_multipliers,
-    double* buf, uint8_t* initFlg, int stride) {
+    double* buf, uint8_t* initFlg, int stride,
+    double* outConstProb = nullptr) {
 
   int nEdge = parent.size();
   int nTip  = tip_states.nrow();
@@ -718,6 +907,25 @@ static double pruning_f81_het_acrv_flat(
     initFlg[tip] = 1;
   }
 
+  // M-157: fused constant-site probability (k pseudo-chars, k states each).
+  // Under F81, constant-state patterns have different probabilities because
+  // the frequency vector is non-uniform; we need all k pseudo-chars.
+  int ascStride = kStates * kStates;
+  std::vector<double> ascBuf;
+  std::vector<uint8_t> ascInit;
+  double constProbCompSum = 0.0;
+  if (outConstProb) {
+    ascBuf.assign((maxNode + 1) * ascStride, 0.0);
+    ascInit.assign(maxNode + 1, 0);
+    for (int tip = 1; tip <= nTip; ++tip) {
+      double* a = ascBuf.data() + tip * ascStride;
+      // Pseudo-char s has CL = e_s (identity pattern: constant state s)
+      for (int s = 0; s < kStates; ++s)
+        a[s * kStates + s] = 1.0;
+      ascInit[tip] = 1;
+    }
+  }
+
   for (int cat = 0; cat < nCat; ++cat) {
     double acrvRate = rate_multipliers[cat];
 
@@ -749,6 +957,8 @@ static double pruning_f81_het_acrv_flat(
 
         // Reset internal-node init flags only
         for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
+        if (outConstProb)
+          for (int n = nTip + 1; n <= maxNode; ++n) ascInit[n] = 0;
 
         // --- Tree traversal using F81 P(t) ---
         // P_ij(t) = π_j × (1 − d) + δ_ij × d
@@ -786,6 +996,27 @@ static double pruning_f81_het_acrv_flat(
                 clPar[offset + i] *= base + d * clCh[offset + i];
             }
           }
+
+          // M-157: fused ascertainment (k pseudo-chars, F81 transition)
+          if (outConstProb) {
+            double* aPar = ascBuf.data() + par * ascStride;
+            double* aCh  = ascBuf.data() + ch  * ascStride;
+            for (int c = 0; c < kStates; ++c) {
+              int off = c * kStates;
+              double sum_pi_a = 0.0;
+              for (int j = 0; j < kStates; ++j)
+                sum_pi_a += pi[j] * aCh[off + j];
+              double aBase = one_minus_d * sum_pi_a;
+              if (!ascInit[par]) {
+                for (int i = 0; i < kStates; ++i)
+                  aPar[off + i] = aBase + d * aCh[off + i];
+              } else {
+                for (int i = 0; i < kStates; ++i)
+                  aPar[off + i] *= aBase + d * aCh[off + i];
+              }
+            }
+            if (!ascInit[par]) ascInit[par] = 1;
+          }
         }
 
         // --- Accumulate site likelihoods (root weighted by π) ---
@@ -796,6 +1027,17 @@ static double pruning_f81_het_acrv_flat(
           for (int s = 0; s < kStates; ++s)
             sl += pi[s] * clRoot[offset + s];
           site_lik_sum[c] += sl;
+        }
+
+        // M-157: accumulate constant-site prob for this component
+        if (outConstProb) {
+          double* ascRoot = ascBuf.data() + root * ascStride;
+          for (int c = 0; c < kStates; ++c) {
+            int off = c * kStates;
+            double sl = 0.0;
+            for (int s = 0; s < kStates; ++s) sl += pi[s] * ascRoot[off + s];
+            constProbCompSum += sl;
+          }
         }
 
       }  // rot
@@ -810,6 +1052,10 @@ static double pruning_f81_het_acrv_flat(
     if (avg <= 0.0) return R_NegInf;
     logLik += std::log(avg);
   }
+
+  if (outConstProb)
+    *outConstProb = constProbCompSum / totalComp;
+
   return logLik;
 }
 
@@ -898,7 +1144,7 @@ void pruning_f81_het_acrv_persite(
           int par = parent[e];
           int ch  = child[e];
           double t = edge_length[e] * acrvRate;
-          double d = std::exp(-mu * t);
+          double d = MKP_EXP(-mu * t);
           double one_minus_d = 1.0 - d;
 
           double* clPar = buf + par * stride;
@@ -1083,7 +1329,7 @@ static double jc1_acrv(
     for (int e = nEdge - 1; e >= 0; --e) {
       int par = parent[e], ch = child[e];
       double t = edgeLen[e] * rate;
-      double ex = std::exp(-kStates * t / km1);
+      double ex = MKP_EXP(-kStates * t / km1);
       double ps = inv_k + (1.0 - inv_k) * ex;
       double pd = inv_k - inv_k * ex;
       double dc = ps - pd;
@@ -1248,6 +1494,10 @@ double cpp_partition_log_likelihood(
     NumericVector neoEl(edgeLen.size());
     for (int i = 0; i < edgeLen.size(); ++i) neoEl[i] = edgeLen[i] * rateNeo;
 
+    // M-157: fused ascertainment — constProb computed alongside pruning
+    double neoConstProb = 0.0;
+    double* neoCPtr = (coding != 0) ? &neoConstProb : nullptr;
+
     if (useHet) {
       // M-052: Het path — F81 mixture with rate_loss composition.
       compute_het_bins(betaScale, 2, nBC, hetBins);
@@ -1256,9 +1506,8 @@ double cpp_partition_log_likelihood(
         ll = pruning_f81_het_acrv_flat(
           parent, child, neoEl, part.tipStates,
           2, rateLoss, hetBins, nBC, rates,
-          ws->buf.data(), ws->init.data(), ws->strideMax);
+          ws->buf.data(), ws->init.data(), ws->strideMax, neoCPtr);
       } else {
-        // Fallback: allocate temporary workspace
         int nNode = maxNode;
         int tmpStride = neededStride;
         std::vector<double> tmpBuf((nNode + 1) * tmpStride, 0.0);
@@ -1266,11 +1515,10 @@ double cpp_partition_log_likelihood(
         ll = pruning_f81_het_acrv_flat(
           parent, child, neoEl, part.tipStates,
           2, rateLoss, hetBins, nBC, rates,
-          tmpBuf.data(), tmpInit.data(), tmpStride);
+          tmpBuf.data(), tmpInit.data(), tmpStride, neoCPtr);
       }
       if (coding != 0) {
-        double p = het_constant_site_prob(
-          parent, child, neoEl, nTip, 2, rateLoss, hetBins, nBC, rates);
+        double p = neoConstProb;
         if (coding == 2) p += het_singleton_site_prob(
           parent, child, neoEl, nTip, 2, rateLoss, hetBins, nBC, rates);
         ll -= part.tipStates.ncol() * std::log(1.0 - p);
@@ -1282,19 +1530,24 @@ double cpp_partition_log_likelihood(
         ll = useAcrv
           ? pruning_mkn_acrv_flat(parent, child, neoEl, part.tipStates,
                                    rateLoss, rootFreqs, rates,
-                                   ws->buf.data(), ws->init.data(), ws->strideMax)
+                                   ws->buf.data(), ws->init.data(), ws->strideMax,
+                                   neoCPtr)
           : pruning_mkn_flat(parent, child, neoEl, part.tipStates,
                               rateLoss, rootFreqs,
-                              ws->buf.data(), ws->init.data(), ws->strideMax);
+                              ws->buf.data(), ws->init.data(), ws->strideMax,
+                              neoCPtr);
       } else {
         ll = useAcrv ? pruning_mkn_acrv(parent, child, neoEl, part.tipStates,
                                          rateLoss, rootFreqs, rates)
                      : pruning_mkn(parent, child, neoEl, part.tipStates,
                                     rateLoss, rootFreqs);
+        // M-157: non-flat fallback — compute ascertainment separately
+        if (coding != 0)
+          neoConstProb = constant_site_prob_mkn(parent, child, neoEl, nTip,
+                                                 rateLoss, rootFreqs, rates);
       }
       if (coding != 0) {
-        double p = constant_site_prob_mkn(parent, child, neoEl, nTip,
-                                          rateLoss, rootFreqs, rates);
+        double p = neoConstProb;
         if (coding == 2) p += singleton_site_prob_mkn(parent, child, neoEl, nTip,
                                                        rateLoss, rootFreqs, rates);
         ll -= part.tipStates.ncol() * std::log(1.0 - p);
@@ -1306,6 +1559,10 @@ double cpp_partition_log_likelihood(
     int neededStride = part.tipStates.ncol() * kStates;
     bool useWs = ws && ws->fits(maxNode, neededStride);
 
+    // M-157: fused ascertainment
+    double knownConstProb = 0.0;
+    double* knownCPtr = (coding != 0) ? &knownConstProb : nullptr;
+
     if (useHet) {
       // M-052: Het path for known-k partition (any k).
       compute_het_bins(betaScale, kStates, nBC, hetBins);
@@ -1314,7 +1571,7 @@ double cpp_partition_log_likelihood(
         ll = pruning_f81_het_acrv_flat(
           parent, child, edgeLen, part.tipStates,
           kStates, 1.0, hetBins, nBC, rates,
-          ws->buf.data(), ws->init.data(), ws->strideMax);
+          ws->buf.data(), ws->init.data(), ws->strideMax, knownCPtr);
       } else {
         int nNode = maxNode;
         std::vector<double> tmpBuf((nNode + 1) * neededStride, 0.0);
@@ -1322,11 +1579,10 @@ double cpp_partition_log_likelihood(
         ll = pruning_f81_het_acrv_flat(
           parent, child, edgeLen, part.tipStates,
           kStates, 1.0, hetBins, nBC, rates,
-          tmpBuf.data(), tmpInit.data(), neededStride);
+          tmpBuf.data(), tmpInit.data(), neededStride, knownCPtr);
       }
       if (coding != 0) {
-        double p = het_constant_site_prob(
-          parent, child, edgeLen, nTip, kStates, 1.0, hetBins, nBC, rates);
+        double p = knownConstProb;
         if (coding == 2) p += het_singleton_site_prob(
           parent, child, edgeLen, nTip, kStates, 1.0, hetBins, nBC, rates);
         ll -= part.tipStates.ncol() * std::log(1.0 - p);
@@ -1338,19 +1594,23 @@ double cpp_partition_log_likelihood(
         ll = useAcrv
           ? pruning_jc_acrv_flat(parent, child, edgeLen, part.tipStates,
                                   kStates, rootFreqs, rates,
-                                  ws->buf.data(), ws->init.data(), ws->strideMax)
+                                  ws->buf.data(), ws->init.data(), ws->strideMax,
+                                  knownCPtr)
           : pruning_jc_flat(parent, child, edgeLen, part.tipStates,
                              kStates, rootFreqs,
-                             ws->buf.data(), ws->init.data(), ws->strideMax);
+                             ws->buf.data(), ws->init.data(), ws->strideMax,
+                             knownCPtr);
       } else {
         ll = useAcrv ? pruning_jc_acrv(parent, child, edgeLen, part.tipStates,
                                         kStates, rootFreqs, rates)
                      : pruning_jc(parent, child, edgeLen, part.tipStates,
                                    kStates, rootFreqs);
+        if (coding != 0)
+          knownConstProb = constant_site_prob_jc(parent, child, edgeLen, nTip,
+                                                  kStates, rootFreqs, rates);
       }
       if (coding != 0) {
-        double p = constant_site_prob_jc(parent, child, edgeLen, nTip,
-                                         kStates, rootFreqs, rates);
+        double p = knownConstProb;
         if (coding == 2) p += singleton_site_prob_jc(parent, child, edgeLen, nTip,
                                                       kStates, rootFreqs, rates);
         ll -= part.tipStates.ncol() * std::log(1.0 - p);
@@ -1372,6 +1632,10 @@ double cpp_partition_log_likelihood(
     if (allSame) {
       // All characters share the same k' — use full partition tipStates directly.
       bool wsOk = ws && ws->fits(maxNode, nCharPart * kp0);
+      // M-157: fused ascertainment
+      double transConstProb = 0.0;
+      double* transCPtr = (coding != 0) ? &transConstProb : nullptr;
+
       if (useHet) {
         double hetBinsSub[16];
         compute_het_bins(betaScale, kp0, nBC, hetBinsSub);
@@ -1380,7 +1644,7 @@ double cpp_partition_log_likelihood(
           ll += pruning_f81_het_acrv_flat(
             parent, child, edgeLen, part.tipStates,
             kp0, 1.0, hetBinsSub, nBC, rates,
-            ws->buf.data(), ws->init.data(), ws->strideMax);
+            ws->buf.data(), ws->init.data(), ws->strideMax, transCPtr);
         } else {
           int tmpStride = nCharPart * kp0;
           std::vector<double> tmpBuf((maxNode + 1) * tmpStride, 0.0);
@@ -1388,11 +1652,10 @@ double cpp_partition_log_likelihood(
           ll += pruning_f81_het_acrv_flat(
             parent, child, edgeLen, part.tipStates,
             kp0, 1.0, hetBinsSub, nBC, rates,
-            tmpBuf.data(), tmpInit.data(), tmpStride);
+            tmpBuf.data(), tmpInit.data(), tmpStride, transCPtr);
         }
         if (coding != 0) {
-          double p = het_constant_site_prob(
-            parent, child, edgeLen, nTip, kp0, 1.0, hetBinsSub, nBC, rates);
+          double p = transConstProb;
           if (coding == 2) p += het_singleton_site_prob(
             parent, child, edgeLen, nTip, kp0, 1.0, hetBinsSub, nBC, rates);
           ll -= nCharPart * std::log(1.0 - p);
@@ -1403,19 +1666,23 @@ double cpp_partition_log_likelihood(
           ll += useAcrv
             ? pruning_jc_acrv_flat(parent, child, edgeLen, part.tipStates,
                                     kp0, rootFreqs, rates,
-                                    ws->buf.data(), ws->init.data(), ws->strideMax)
+                                    ws->buf.data(), ws->init.data(), ws->strideMax,
+                                    transCPtr)
             : pruning_jc_flat(parent, child, edgeLen, part.tipStates,
                                kp0, rootFreqs,
-                               ws->buf.data(), ws->init.data(), ws->strideMax);
+                               ws->buf.data(), ws->init.data(), ws->strideMax,
+                               transCPtr);
         } else {
           ll += useAcrv ? pruning_jc_acrv(parent, child, edgeLen, part.tipStates,
                                            kp0, rootFreqs, rates)
                         : pruning_jc(parent, child, edgeLen, part.tipStates,
                                       kp0, rootFreqs);
+          if (coding != 0)
+            transConstProb = constant_site_prob_jc(parent, child, edgeLen, nTip,
+                                                    kp0, rootFreqs, rates);
         }
         if (coding != 0) {
-          double p = constant_site_prob_jc(parent, child, edgeLen, nTip,
-                                           kp0, rootFreqs, rates);
+          double p = transConstProb;
           if (coding == 2) p += singleton_site_prob_jc(parent, child, edgeLen, nTip,
                                                         kp0, rootFreqs, rates);
           ll -= nCharPart * std::log(1.0 - p);
@@ -1445,7 +1712,11 @@ double cpp_partition_log_likelihood(
         for (int c = 0; c < nSub; ++c)
           for (int t = 0; t < nTip; ++t) sub(t, c) = part.tipStates(t, cols[c]);
 
+        // M-157: fused ascertainment per k' sub-group
+        double subConstProb = 0.0;
+        double* subCPtr = (coding != 0) ? &subConstProb : nullptr;
         double subLl;
+
         if (useHet) {
           double hetBinsSub[16];
           compute_het_bins(betaScale, kp, nBC, hetBinsSub);
@@ -1454,7 +1725,7 @@ double cpp_partition_log_likelihood(
             subLl = pruning_f81_het_acrv_flat(
               parent, child, edgeLen, sub,
               kp, 1.0, hetBinsSub, nBC, rates,
-              ws->buf.data(), ws->init.data(), ws->strideMax);
+              ws->buf.data(), ws->init.data(), ws->strideMax, subCPtr);
           } else {
             int tmpStride = nSub * kp;
             std::vector<double> tmpBuf((maxNode + 1) * tmpStride, 0.0);
@@ -1462,11 +1733,10 @@ double cpp_partition_log_likelihood(
             subLl = pruning_f81_het_acrv_flat(
               parent, child, edgeLen, sub,
               kp, 1.0, hetBinsSub, nBC, rates,
-              tmpBuf.data(), tmpInit.data(), tmpStride);
+              tmpBuf.data(), tmpInit.data(), tmpStride, subCPtr);
           }
           if (coding != 0) {
-            double p = het_constant_site_prob(
-              parent, child, edgeLen, nTip, kp, 1.0, hetBinsSub, nBC, rates);
+            double p = subConstProb;
             if (coding == 2) p += het_singleton_site_prob(
               parent, child, edgeLen, nTip, kp, 1.0, hetBinsSub, nBC, rates);
             subLl -= nSub * std::log(1.0 - p);
@@ -1477,19 +1747,23 @@ double cpp_partition_log_likelihood(
             subLl = useAcrv
               ? pruning_jc_acrv_flat(parent, child, edgeLen, sub,
                                       kp, rootFreqs, rates,
-                                      ws->buf.data(), ws->init.data(), ws->strideMax)
+                                      ws->buf.data(), ws->init.data(), ws->strideMax,
+                                      subCPtr)
               : pruning_jc_flat(parent, child, edgeLen, sub,
                                  kp, rootFreqs,
-                                 ws->buf.data(), ws->init.data(), ws->strideMax);
+                                 ws->buf.data(), ws->init.data(), ws->strideMax,
+                                 subCPtr);
           } else {
             subLl = useAcrv ? pruning_jc_acrv(parent, child, edgeLen, sub,
                                                kp, rootFreqs, rates)
                             : pruning_jc(parent, child, edgeLen, sub,
                                           kp, rootFreqs);
+            if (coding != 0)
+              subConstProb = constant_site_prob_jc(parent, child, edgeLen, nTip,
+                                                    kp, rootFreqs, rates);
           }
           if (coding != 0) {
-            double p = constant_site_prob_jc(parent, child, edgeLen, nTip,
-                                             kp, rootFreqs, rates);
+            double p = subConstProb;
             if (coding == 2) p += singleton_site_prob_jc(parent, child, edgeLen, nTip,
                                                           kp, rootFreqs, rates);
             subLl -= nSub * std::log(1.0 - p);
