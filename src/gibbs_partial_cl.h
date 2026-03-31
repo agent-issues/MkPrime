@@ -18,6 +18,7 @@
 #include <cstring>
 #include <array>
 #include <cmath>
+#include "fast_exp.h"
 
 using namespace Rcpp;
 
@@ -197,7 +198,7 @@ inline NumericVector gibbs_acrv_rates(double rateLogSd, int nCat,
 inline void jc_trans_params(int k, double t,
                             double& p_diff, double& diff_coeff) {
   double inv_k = 1.0 / k;
-  double exp_term = std::exp(-k * t / (k - 1.0));
+  double exp_term = MKP_EXP(-k * t / (k - 1.0));
   p_diff     = inv_k - inv_k * exp_term;     // = (1/k)(1 - exp)
   diff_coeff = exp_term;                       // = p_same - p_diff
 }
@@ -224,7 +225,7 @@ inline void mkn_trans_params(double rateLoss, double t,
   double rate01 = 2.0 / sum_rl;
   double rate10 = 2.0 * rateLoss / sum_rl;
   double lambda = rate01 + rate10;
-  double exp_t  = std::exp(-lambda * t);
+  double exp_t  = MKP_EXP(-lambda * t);
   double i01    = rate01 / lambda;
   double i10    = rate10 / lambda;
   P00 = i10 + i01 * exp_t;
@@ -249,7 +250,7 @@ inline void mkn_transition(const double* cl, double* result,
 inline void f81_transition(const double* cl, double* result,
                             int nChar, int kStates,
                             const double* pi, double mu, double t) {
-  double exp_t = std::exp(-mu * t);
+  double exp_t = MKP_EXP(-mu * t);
   double one_minus_exp = 1.0 - exp_t;
   for (int c = 0; c < nChar; ++c) {
     int off = c * kStates;
