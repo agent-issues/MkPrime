@@ -981,12 +981,21 @@ RunMkPrime <- function(data, tree = NULL,
       }
       if (nChains > 1L)
         r$betas <- .AdaptTemperatures(r$betas, r$swap_accept, r$swap_propose)
-      # Adaptive move weight scheduling (M-092): acceptance-rate heuristic
+      # Adaptive move weight scheduling (M-092): acceptance-rate heuristic.
+      # Anneal softmax temperature relative to an adaptive warmup horizon:
+      # the projected total warmup length based on remaining stabilisation
+      # checks.  Monotonic: as iterations grow and stability accumulates,
+      # warmupProgress only increases.
+      nStableRequired <- 3L
+      remainStable <- max(0L, nStableRequired - nStableConsecutive)
+      warmupHorizon <- max(mcmc$minWarmup,
+                           batchEnd + remainStable * mcmc$checkEvery)
+      warmupHorizon <- min(warmupHorizon, mcmc$warmup)  # cap at maxWarmup
       moveWeights <- .AdaptMoveWeights(
         moveWeights, r$chain_accept[[1L]], r$chain_propose[[1L]],
         r$chain_time_ns[[1L]], moveNames, moveDim = moveDim,
         pinnedWeights = pinnedWeights,
-        warmupProgress = min(1, batchEnd / mcmc$warmup)
+        warmupProgress = min(1, batchEnd / warmupHorizon)
       )
 
       # M-126: Accumulate cold-chain state snapshots for rho estimation.
