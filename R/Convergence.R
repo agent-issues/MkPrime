@@ -548,7 +548,10 @@ print.MkpDiagnostics <- function(x, ...) {
     })
     essMat <- do.call(rbind, chainRows)
     # Minimum across runs — conservative multi-chain estimate.
-    apply(essMat, 2, min, na.rm = TRUE)
+    # Replace non-finite values (from all-NA columns) with NA.
+    result <- apply(essMat, 2, min, na.rm = TRUE)
+    result[!is.finite(result)] <- NA_real_
+    result
   }, error = function(e) {
     cli::cli_warn("Tree ESS computation failed: {conditionMessage(e)}")
     NULL

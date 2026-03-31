@@ -1933,7 +1933,9 @@ RunMkPrime <- function(data, tree = NULL,
       .TreeESS(chain, dist_fn = TreeDist::RobinsonFoulds,
                frechet = FALSE)[["medianPseudoESS"]]
     }, double(1))
-    min(essVals, na.rm = TRUE)
+    essVals <- essVals[is.finite(essVals)]
+    if (length(essVals) == 0L) return(NA_real_)
+    min(essVals)
   }, error = function(e) NA_real_)
 }
 

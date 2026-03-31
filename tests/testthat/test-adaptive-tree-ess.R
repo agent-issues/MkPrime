@@ -51,6 +51,19 @@ test_that(".ComputeTreeEssInLoop subsamples to maxPerRun", {
 })
 
 
+test_that(".ComputeTreeEssInLoop returns NA (not Inf) with borderline tree count", {
+  # 6 trees pass the n >= 5L guard but median_pseudo_ess_cpp needs n >= 7
+  # (min_nsamples + 2). Without the finite guard, min(NA, na.rm=TRUE) = Inf
+  # would falsely satisfy any minTreeEss threshold.
+  skip_if_not_installed("TreeDist")
+  set.seed(8174)
+  trees <- replicate(6, ape::rtree(8, rooted = FALSE), simplify = FALSE)
+  run <- list(tree_saved_idx = 6L, tree_samples = trees)
+  result <- MkPrime:::.ComputeTreeEssInLoop(list(run), 500L, FALSE)
+  expect_true(is.na(result))
+})
+
+
 test_that(".ComputeTreeEssInLoop handles streaming mode with NULL slots", {
   skip_if_not_installed("TreeDist")
   set.seed(3384)
