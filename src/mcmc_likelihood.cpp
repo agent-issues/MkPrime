@@ -1345,6 +1345,11 @@ void pruning_f81_het_acrv_persite(
 // Het-aware ascertainment correction helpers.
 // Compute P(constant site) and P(singleton site) averaged over the
 // Het × ACRV mixture, for use in variable/informative coding correction.
+//
+// M-169: Rewritten to use proper Felsenstein pruning of k pseudo-characters
+// over the tree topology.  The previous implementation used a per-edge-product
+// formula π_s × Π_e P_ss(t_e) that ignored topology (parent/child unused),
+// equivalent to a star tree.  Now matches the M-157 fused ascertainment logic.
 static double het_constant_site_prob(
     IntegerVector parent, IntegerVector child,
     NumericVector edge_length, int nTip,
@@ -1357,9 +1362,26 @@ static double het_constant_site_prob(
   int nRot = (kStates == 2) ? 1 : kStates;
   int totalComp = nCat * nBetaCat * nRot;
 
-  // M-162: raw pointers
+  const int* parPtr = INTEGER(parent);
+  const int* chPtr  = INTEGER(child);
   const double* elPtr = REAL(edge_length);
   const double* rmPtr = REAL(rate_multipliers);
+
+  int maxNode = 2 * nTip - 1;
+  int root    = nTip + 1;
+  // k pseudo-characters × k states each
+  int ascStride = kStates * kStates;
+
+  std::vector<double>  ascBuf((maxNode + 1) * ascStride, 0.0);
+  std::vector<uint8_t> ascInit(maxNode + 1, 0);
+
+  // Init tips: pseudo-char s has CL = e_s (constant-state-s pattern)
+  for (int tip = 1; tip <= nTip; ++tip) {
+    double* a = ascBuf.data() + tip * ascStride;
+    for (int s = 0; s < kStates; ++s)
+      a[s * kStates + s] = 1.0;
+    ascInit[tip] = 1;
+  }
 
   double gain_base = 0.0, loss_base = 0.0;
   if (kStates == 2) {
@@ -1390,20 +1412,53 @@ static double het_constant_site_prob(
         }
         double mu = 1.0 / (1.0 - sumPiSq);
 
-        // P(constant site in state s) = π_s × Π_edges P_ss(t)
-        // P_ss(t) = π_s + (1 − π_s) exp(−μt)
-        // Sum over all states s.
-        double compP = 0.0;
-        for (int s = 0; s < kStates; ++s) {
-          double prod = pi[s];  // root frequency
-          for (int e = 0; e < nEdge; ++e) {
-            double t = elPtr[e] * acrvRate;
-            double Pss = pi[s] + (1.0 - pi[s]) * MKP_EXP(-mu * t);
-            prod *= Pss;
+        // Reset internal-node init flags (tips stay initialized)
+        for (int n = nTip + 1; n <= maxNode; ++n) ascInit[n] = 0;
+
+        // Felsenstein pruning over tree with F81 P(t)
+        for (int e = nEdge - 1; e >= 0; --e) {
+          int par = parPtr[e];
+          int ch  = chPtr[e];
+          double t = elPtr[e] * acrvRate;
+          double d = MKP_EXP(-mu * t);
+          double one_minus_d = 1.0 - d;
+
+          double* aPar = ascBuf.data() + par * ascStride;
+          double* aCh  = ascBuf.data() + ch  * ascStride;
+
+          // OPP-1: hoist Σ_j π_j·cl_j for O(k) per pseudo-char per edge
+          if (!ascInit[par]) {
+            for (int c = 0; c < kStates; ++c) {
+              int off = c * kStates;
+              double sum_pi_a = 0.0;
+              for (int j = 0; j < kStates; ++j)
+                sum_pi_a += pi[j] * aCh[off + j];
+              double aBase = one_minus_d * sum_pi_a;
+              for (int i = 0; i < kStates; ++i)
+                aPar[off + i] = aBase + d * aCh[off + i];
+            }
+            ascInit[par] = 1;
+          } else {
+            for (int c = 0; c < kStates; ++c) {
+              int off = c * kStates;
+              double sum_pi_a = 0.0;
+              for (int j = 0; j < kStates; ++j)
+                sum_pi_a += pi[j] * aCh[off + j];
+              double aBase = one_minus_d * sum_pi_a;
+              for (int i = 0; i < kStates; ++i)
+                aPar[off + i] *= aBase + d * aCh[off + i];
+            }
           }
-          compP += prod;
         }
-        totalP += compP;
+
+        // Accumulate: sum over pseudo-chars of π-weighted root CL
+        double* ascRoot = ascBuf.data() + root * ascStride;
+        for (int c = 0; c < kStates; ++c) {
+          int off = c * kStates;
+          double sl = 0.0;
+          for (int s = 0; s < kStates; ++s) sl += pi[s] * ascRoot[off + s];
+          totalP += sl;
+        }
       }
     }
   }
