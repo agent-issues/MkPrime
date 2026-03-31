@@ -2763,7 +2763,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         list(name = "kprime_alpha", type = "kprime_alpha",
              target = "kprime_alpha", weight = 0.05, dim = 1L),
         list(name = "kprime_beta", type = "kprime_beta",
-             target = "kprime_beta", weight = 0.05, dim = 1L)
+             target = "kprime_beta", weight = 0.05, dim = 1L),
+        # Prior-only slice samplers — robust, tuning-free exploration
+        list(name = "slice_kprime_alpha", type = "slice_kprime_hyper",
+             target = "kprime_alpha", weight = 1, dim = 1L,
+             sliceParamIdx = 0L),
+        list(name = "slice_kprime_beta", type = "slice_kprime_hyper",
+             target = "kprime_beta", weight = 1, dim = 1L,
+             sliceParamIdx = 1L)
       ))
     } else if (!identical(kPrimePrior, "logseries")) {
       # Conjugate Gibbs draw: p | k' ~ Beta(a + nTrans, b + sum(k' - kObs))
