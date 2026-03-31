@@ -1,4 +1,5 @@
 #include <Rcpp.h>
+#include "fast_exp.h"
 #include <cmath>
 #include <vector>
 #include <algorithm>
@@ -80,7 +81,7 @@ double pruning_jc(Rcpp::IntegerVector parent,
 
     // Compute JC transition probabilities for this branch
     double inv_k = 1.0 / kStates;
-    double exp_term = std::exp(-kStates * t / (kStates - 1.0));
+    double exp_term = MKP_EXP(-kStates * t / (kStates - 1.0));
     double p_same = inv_k + (1.0 - inv_k) * exp_term;
     double p_diff = inv_k - inv_k * exp_term;
 
@@ -182,7 +183,7 @@ double pruning_mkn(Rcpp::IntegerVector parent,
     int ch = child[e];
     double t = edge_length[e];
 
-    double exp_term = std::exp(-lambda * t);
+    double exp_term = MKP_EXP(-lambda * t);
     double inv_lam_01 = rate01 / lambda;
     double inv_lam_10 = rate10 / lambda;
 

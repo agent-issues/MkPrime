@@ -1,4 +1,5 @@
 #include <Rcpp.h>
+#include "fast_exp.h"
 #include <cmath>
 #include <vector>
 #include <algorithm>
@@ -83,7 +84,7 @@ double pruning_jc_acrv(Rcpp::IntegerVector parent,
       int ch = child[e];
       double t = edge_length[e] * rate;
 
-      double exp_term = std::exp(-kStates * t / km1);
+      double exp_term = MKP_EXP(-kStates * t / km1);
       double p_same = inv_k + (1.0 - inv_k) * exp_term;
       double p_diff = inv_k - inv_k * exp_term;
 
@@ -195,7 +196,7 @@ double pruning_mkn_acrv(Rcpp::IntegerVector parent,
       int par = parent[e];
       int ch = child[e];
       double t = edge_length[e] * rate;
-      double exp_term = std::exp(-lambda * t);
+      double exp_term = MKP_EXP(-lambda * t);
       double inv_lam_01 = rate01 / lambda;
       double inv_lam_10 = rate10 / lambda;
 

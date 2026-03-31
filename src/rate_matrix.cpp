@@ -1,4 +1,5 @@
 #include <Rcpp.h>
+#include "fast_exp.h"
 #include <cmath>
 #include <vector>
 
@@ -28,7 +29,7 @@ Rcpp::NumericMatrix jc_transition_probs(int k, double t) {
 
   Rcpp::NumericMatrix P(k, k);
   double inv_k = 1.0 / k;
-  double exp_term = std::exp(-k * t / (k - 1.0));
+  double exp_term = MKP_EXP(-k * t / (k - 1.0));
   double diag = inv_k + (1.0 - inv_k) * exp_term;
   double off_diag = inv_k - inv_k * exp_term;
 
@@ -74,7 +75,7 @@ Rcpp::NumericMatrix mkn_transition_probs(double rate_loss, double t) {
   double rate01 = 2.0 / sum_rl;      // gain
   double rate10 = 2.0 * rate_loss / sum_rl;  // loss
   double lambda = rate01 + rate10;    // = 2.0 always (by construction)
-  double exp_term = std::exp(-lambda * t);
+  double exp_term = MKP_EXP(-lambda * t);
 
   double inv_lambda_01 = rate01 / lambda;
   double inv_lambda_10 = rate10 / lambda;

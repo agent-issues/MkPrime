@@ -1,4 +1,5 @@
 #include <Rcpp.h>
+#include "fast_exp.h"
 #include <cmath>
 #include <vector>
 
@@ -65,7 +66,7 @@ double constant_site_prob_jc(Rcpp::IntegerVector parent,
       const int par = parent[e];
       const int ch  = child[e];
       const double t        = edge_length[e] * rate;
-      const double exp_term = std::exp(-kStates * t / km1);
+      const double exp_term = MKP_EXP(-kStates * t / km1);
       const double p_same   = inv_k + (1.0 - inv_k) * exp_term;
       const double p_diff   = inv_k - inv_k * exp_term;
       const double diff_coeff = p_same - p_diff;  // OPP-1
@@ -162,7 +163,7 @@ double singleton_site_prob_jc(Rcpp::IntegerVector parent,
       const int par = parent[e];
       const int ch  = child[e];
       const double t        = edge_length[e] * rate;
-      const double exp_term = std::exp(-kStates * t / km1);
+      const double exp_term = MKP_EXP(-kStates * t / km1);
       const double p_same   = inv_k + (1.0 - inv_k) * exp_term;
       const double p_diff   = inv_k - inv_k * exp_term;
       const double diff_coeff = p_same - p_diff;  // OPP-1
@@ -258,7 +259,7 @@ double constant_site_prob_mkn(Rcpp::IntegerVector parent,
       const int par = parent[e];
       const int ch  = child[e];
       const double t        = edge_length[e] * rate;
-      const double exp_term = std::exp(-lambda * t);
+      const double exp_term = MKP_EXP(-lambda * t);
       const double P00 = inv_lam_10 + inv_lam_01 * exp_term;
       const double P01 = inv_lam_01 - inv_lam_01 * exp_term;
       const double P10 = inv_lam_10 - inv_lam_10 * exp_term;
@@ -356,7 +357,7 @@ double singleton_site_prob_mkn(Rcpp::IntegerVector parent,
       const int par = parent[e];
       const int ch  = child[e];
       const double t        = edge_length[e] * rate;
-      const double exp_term = std::exp(-lambda * t);
+      const double exp_term = MKP_EXP(-lambda * t);
       const double P00 = inv_lam_10 + inv_lam_01 * exp_term;
       const double P01 = inv_lam_01 - inv_lam_01 * exp_term;
       const double P10 = inv_lam_10 - inv_lam_10 * exp_term;

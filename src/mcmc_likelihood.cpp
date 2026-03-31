@@ -12,6 +12,7 @@
 // avoiding edge matrix construction/decomposition round-trips.
 
 #include "mcmc_state.h"
+#include "fast_exp.h"
 #include <cmath>
 #include <cstring>
 #include <algorithm>
@@ -173,7 +174,7 @@ static double pruning_jc_flat(
     int par = parent[e];
     int ch  = child[e];
     double t        = edge_length[e];
-    double exp_term = std::exp(-kStates * t / km1);
+    double exp_term = MKP_EXP(-kStates * t / km1);
     double p_same   = inv_k + (1.0 - inv_k) * exp_term;
     double p_diff   = inv_k - inv_k * exp_term;
     double* clPar   = buf + par * stride;
@@ -269,7 +270,7 @@ static double pruning_jc_acrv_flat(
       int par = parent[e];
       int ch  = child[e];
       double t        = edge_length[e] * rate;
-      double exp_term = std::exp(-kStates * t / km1);
+      double exp_term = MKP_EXP(-kStates * t / km1);
       double p_same   = inv_k + (1.0 - inv_k) * exp_term;
       double p_diff   = inv_k - inv_k * exp_term;
       double* clPar   = buf + par * stride;
@@ -460,7 +461,7 @@ static double pruning_mkn_flat(
     int par = parent[e];
     int ch  = child[e];
     double t        = edge_length[e];
-    double exp_term = std::exp(-lambda * t);
+    double exp_term = MKP_EXP(-lambda * t);
     double P00 = inv_lam_10 + inv_lam_01 * exp_term;
     double P01 = inv_lam_01 - inv_lam_01 * exp_term;
     double P10 = inv_lam_10 - inv_lam_10 * exp_term;
@@ -554,7 +555,7 @@ static double pruning_mkn_acrv_flat(
       int par = parent[e];
       int ch  = child[e];
       double t        = edge_length[e] * rate;
-      double exp_term = std::exp(-lambda * t);
+      double exp_term = MKP_EXP(-lambda * t);
       double P00 = inv_lam_10 + inv_lam_01 * exp_term;
       double P01 = inv_lam_01 - inv_lam_01 * exp_term;
       double P10 = inv_lam_10 - inv_lam_10 * exp_term;
@@ -756,7 +757,7 @@ static double pruning_f81_het_acrv_flat(
           int par = parent[e];
           int ch  = child[e];
           double t = edge_length[e] * acrvRate;
-          double d = std::exp(-mu * t);
+          double d = MKP_EXP(-mu * t);
           double one_minus_d = 1.0 - d;
 
           double* clPar = buf + par * stride;
@@ -999,7 +1000,7 @@ static double het_constant_site_prob(
           double prod = pi[s];  // root frequency
           for (int e = 0; e < parent.size(); ++e) {
             double t = edge_length[e] * acrvRate;
-            double Pss = pi[s] + (1.0 - pi[s]) * std::exp(-mu * t);
+            double Pss = pi[s] + (1.0 - pi[s]) * MKP_EXP(-mu * t);
             prod *= Pss;
           }
           compP += prod;

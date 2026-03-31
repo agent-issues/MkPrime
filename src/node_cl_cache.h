@@ -15,6 +15,7 @@
 
 #include "mcmc_state.h"
 #include "gibbs_partial_cl.h"  // TreeNav
+#include "fast_exp.h"
 #include <cstring>
 #include <cmath>
 #include <algorithm>
@@ -159,7 +160,7 @@ static inline void jc_transition(
     const double* src, double* out, int kStates, double t) {
   double inv_k = 1.0 / kStates;
   double km1   = kStates - 1.0;
-  double exp_term = std::exp(-kStates * t / km1);
+  double exp_term = MKP_EXP(-kStates * t / km1);
   double p_diff   = inv_k - inv_k * exp_term;
   double diff_coeff = (inv_k + (1.0 - inv_k) * exp_term) - p_diff;
 
@@ -182,7 +183,7 @@ static inline void mkn_transition(
   double rate01 = 2.0 / sum_rl;
   double rate10 = 2.0 * rateLoss / sum_rl;
   double lambda = rate01 + rate10;
-  double exp_term = std::exp(-lambda * t);
+  double exp_term = MKP_EXP(-lambda * t);
   double P00 = rate10 / lambda + rate01 / lambda * exp_term;
   double P01 = rate01 / lambda - rate01 / lambda * exp_term;
   double P10 = rate10 / lambda - rate10 / lambda * exp_term;
