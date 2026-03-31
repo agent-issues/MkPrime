@@ -1,58 +1,34 @@
-# VTune hotspot driver for MkPrime
-#
-# Exercises the C++ MCMC hot path for ~30 seconds of CPU time.
-# Run via:
-#
-#   vtune -collect hotspots -result-dir vtune-out -- Rscript benchmark/vtune-driver.R
-#
-# Or for software sampling (no driver needed):
-#
-#   vtune -collect hotspots -knob sampling-mode=sw -result-dir vtune-out -- Rscript benchmark/vtune-driver.R
-#
-# Filter to package DLL:
-#   vtune -report hotspots -result-dir vtune-out -filter "module=mkp.dll"
-#
-# Build for profiling first (see PROFILING.md):
-#   1. Add -g -fno-omit-frame-pointer to src/Makevars.win PKG_CXXFLAGS
-#   2. Run the install block below with MAKEFLAGS override
-#   3. Remove src/Makevars.win after profiling
+# VTune driver script for S-PROF round 4
+# Exercises the MCMC hot path on Sun2018 (54 taxa, 225 chars)
+# Target: ~30s of CPU time in the C++ inner loop
 
-# ---- Install profiling build (run once, separately) -------------------------
-# vtune_lib <- file.path(getwd(), ".vtune-lib")
-# old_mf <- Sys.getenv("MAKEFLAGS")
-# Sys.setenv(MAKEFLAGS = "DLLFLAGS=-static-libgcc")
-# install.packages(".", lib = vtune_lib, repos = NULL, type = "source",
-#                  INSTALL_opts = "--no-multiarch")
-# Sys.setenv(MAKEFLAGS = old_mf)
-# -----------------------------------------------------------------------------
+library(MkPrime, lib.loc = ".vtune-lib")
 
-vtune_lib <- file.path(getwd(), ".vtune-lib")
-.libPaths(c(vtune_lib, .libPaths()))
-library(MkPrime)
-library(ape)
+# Load Sun2018 dataset from TreeSearch's bundled nexus file
+nexFile <- system.file("datasets/Sun2018.nex", package = "TreeSearch")
+phyDat <- TreeTools::ReadAsPhyDat(nexFile)
+mkd <- MkPrimeData(phyDat)
 
-# ---- Load hyoliths data (exercises all three partition types) ----------------
-nex_file <- system.file("datasets", "Sun2018.nex", package = "TreeSearch")
-if (!nzchar(nex_file)) {
-  stop("TreeSearch package must be installed (provides Sun2018.nex)")
-}
+cat("Dataset:", nrow(mkd$matrix), "taxa,", ncol(mkd$matrix), "characters\n")
+cat("Types:", table(mkd$type), "\n")
 
-pd  <- ape::read.nexus.data(nex_file)
-mkd <- MkPrimeData(pd, outgroup = "Triplicatella_dentifera")
-mdl <- MkPrimeModel(mkd, rateLogSd = 0.5)
-cfg <- MkPrimeMCMC(nIter = 1L, batchSize = 50000L, nChains = 1L,
-                   warmup = 0L, thin = 500L)
+# Use a fixed NJ starting tree for reproducibility
+tree <- TreeTools::NJTree(phyDat, edgeLengths = TRUE)
+tree$edge.length[tree$edge.length <= 0] <- 1e-8
 
-# Use a fixed start tree
-start_tree <- ape::rtree(length(mkd$tip_labels), tip.label = mkd$tip_labels,
-                         rooted = FALSE)
+# Run MCMC: fixed nIter, no convergence criteria, no tempering overhead.
+# 15000 iterations at ~2ms/iter ≈ 30s of hot-path CPU time.
+set.seed(4619)
+posterior <- RunMkPrime(
+  mkd, tree,
+  nIter    = 15000L,
+  warmup   = 1000L,
+  nRuns    = 1L,
+  nChains  = 1L,
+  thin     = 50L,
+  maxTime  = 60,
+  plotEvery = 0L
+)
 
-cat("Warming up...\n")
-post <- RunMkPrime(mkd, mdl, cfg, startTree = start_tree)
-
-cat("Profiling hot path (50 000 iterations)...\n")
-# Re-run with fresh state so VTune captures steady-state behaviour
-cfg2 <- MkPrimeMCMC(nIter = 1L, batchSize = 200000L, nChains = 1L,
-                    warmup = 0L, thin = 1000L)
-post2 <- RunMkPrime(mkd, mdl, cfg2, startTree = start_tree)
-cat("Done.\n")
+cat("Completed", posterior$nIter, "iterations,", posterior$nSamples, "samples\n")
+cat("Stop reason:", posterior$stopReason, "\n")

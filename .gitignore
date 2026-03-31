@@ -66,3 +66,4 @@ bench_*.R
 test_gibbs_*.R
 project3832*
 EOF 2>&1
+benchmarks/
