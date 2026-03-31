@@ -1066,6 +1066,7 @@ static double pruning_f81_het_acrv_flat(
     }
   }
 
+  std::vector<double> pi(kStates);
   for (int cat = 0; cat < nCat; ++cat) {
     double acrvRate = rmPtr[cat];
 
@@ -1075,7 +1076,6 @@ static double pruning_f81_het_acrv_flat(
       for (int rot = 0; rot < nRot; ++rot) {
 
         // --- Build frequency vector π^(bi,rot) ---
-        double pi[16];
         double sumPiSq = 0.0;
 
         if (kStates == 2) {
@@ -1257,6 +1257,7 @@ void pruning_f81_het_acrv_persite(
     initFlg[tip] = 1;
   }
 
+  std::vector<double> pi(kStates);
   for (int cat = 0; cat < nCat; ++cat) {
     double acrvRate = rmPtr[cat];
 
@@ -1265,7 +1266,6 @@ void pruning_f81_het_acrv_persite(
 
       for (int rot = 0; rot < nRot; ++rot) {
 
-        double pi[16];
         double sumPiSq = 0.0;
 
         if (kStates == 2) {
@@ -1368,13 +1368,13 @@ static double het_constant_site_prob(
     loss_base = baseRL / sum_rl;
   }
 
+  std::vector<double> pi(kStates);
   double totalP = 0.0;
   for (int cat = 0; cat < nCat; ++cat) {
     double acrvRate = rmPtr[cat];
     for (int bi = 0; bi < nBetaCat; ++bi) {
       double beta_val = betaBins[bi];
       for (int rot = 0; rot < nRot; ++rot) {
-        double pi[16];
         double sumPiSq = 0.0;
         if (kStates == 2) {
           double g = gain_base * 2.0 * beta_val;
