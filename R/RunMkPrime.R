@@ -2455,8 +2455,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         rate_neo    = tun$scale_rate_neo %||% 0.5,
         neo_joint   = tun$scale_neo_joint %||% tun$scale_rate_loss,
         beta_scale  = tun$scale_beta_scale %||% 0.5,
-        kprime_alpha = tun$scale_kprime_alpha %||% 0.05,
-        kprime_beta  = tun$scale_kprime_beta %||% 0.05,
+        kprime_alpha = tun$scale_kprime_alpha %||% 0.3,
+        kprime_beta  = tun$scale_kprime_beta %||% 0.5,
         joint_tl_rls = tun$scale_joint_tl_rls %||% 0.5,
         joint_tl_rl  = tun$scale_joint_tl_rl %||% 0.5,
         dirichlet_branch = tun$dirichlet_alpha %||% 10,
@@ -2759,18 +2759,20 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
            target = "kPrime", weight = 2, dim = 1L)
     )
     if (identical(kPrimePrior, "beta_geometric")) {
-      # Scale proposals for shared (α, β) hyperparameters
+      # Scale proposals for shared (α, β) hyperparameters.
+      # Weights must be large enough for adaptation to fire (≥10 proposals
+      # per ~1000-iteration tuning round, so ≥1% share of total weight).
       kPrimeMoves <- c(kPrimeMoves, list(
         list(name = "kprime_alpha", type = "kprime_alpha",
-             target = "kprime_alpha", weight = 0.05, dim = 1L),
+             target = "kprime_alpha", weight = 0.5, dim = 1L),
         list(name = "kprime_beta", type = "kprime_beta",
-             target = "kprime_beta", weight = 0.05, dim = 1L),
+             target = "kprime_beta", weight = 0.5, dim = 1L),
         # Prior-only slice samplers — robust, tuning-free exploration
         list(name = "slice_kprime_alpha", type = "slice_kprime_hyper",
-             target = "kprime_alpha", weight = 1, dim = 1L,
+             target = "kprime_alpha", weight = 2, dim = 1L,
              sliceParamIdx = 0L),
         list(name = "slice_kprime_beta", type = "slice_kprime_hyper",
-             target = "kprime_beta", weight = 1, dim = 1L,
+             target = "kprime_beta", weight = 2, dim = 1L,
              sliceParamIdx = 1L)
       ))
     } else if (!identical(kPrimePrior, "logseries")) {
@@ -2974,8 +2976,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       rate_neo    = tuning$scale_rate_neo,
       neo_joint   = tuning$scale_neo_joint %||% tuning$scale_rate_loss,
       beta_scale  = tuning$scale_beta_scale,
-      kprime_alpha = tuning$scale_kprime_alpha %||% 0.05,
-      kprime_beta  = tuning$scale_kprime_beta %||% 0.05,
+      kprime_alpha = tuning$scale_kprime_alpha %||% 0.3,
+      kprime_beta  = tuning$scale_kprime_beta %||% 0.5,
       dirichlet_branch = tuning$dirichlet_alpha %||% 0.1,
       local_dirichlet = tuning$local_dirichlet_alpha %||% 0.1,
       0.5  # default; gibbs_p ignores scaleTun (returns before using it)
@@ -3567,7 +3569,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
   for (move in moves) {
     nm <- move$name
-    if (proposeCount[nm] < 20) next
+    if (proposeCount[nm] < 10) next
     rate <- acceptCount[nm] / proposeCount[nm]
     target <- targets[nm]
     tk <- tuningKeys[nm]

@@ -65,10 +65,11 @@ test_that(".AdaptTuning shrinks kprime scales when acceptance too low", {
   expect_lt(result$scale_kprime_alpha, tuning$scale_kprime_alpha)
 })
 
-test_that("MkPrimeMCMC default scale_kprime_alpha/beta is 0.05", {
+test_that("MkPrimeMCMC default scale_kprime_alpha/beta matches tuned defaults", {
   mcmc <- suppressWarnings(MkPrimeMCMC(nIter = 100))
-  expect_equal(mcmc$tuning$scale_kprime_alpha, 0.05)
-  expect_equal(mcmc$tuning$scale_kprime_beta, 0.05)
+  # M-165: increased from 0.05 to better match posterior concentration
+  expect_equal(mcmc$tuning$scale_kprime_alpha, 0.3)
+  expect_equal(mcmc$tuning$scale_kprime_beta, 0.5)
 })
 
 # --- Slice sampler move construction ------------------------------------------
