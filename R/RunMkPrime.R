@@ -3405,8 +3405,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
 #' Format move weights as a compact string for display.
 #'
-#' Colour-coded via cli: high-weight moves are bright, low-weight moves
-#' are dim, and names/equals are silver (M-140).
+#' Colour-coded via cli (tidyverse-style): headings white, move names
+#' blue, values green/yellow/silver by weight (u.124).
 #' @keywords internal
 #' Category definitions for move types
 #' @keywords internal
@@ -3435,7 +3435,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #'
 #' Returns a character vector (one element per category line).
 #' Within each category, moves are sorted from highest to lowest weight.
-#' Names are silver; values are green (>=10%), yellow (5-10%), white (<5%).
+#' Headings white, names blue, values green (>=10%), yellow (5-10%), silver (<5%).
 #' @keywords internal
 .FormatMoveWeights <- function(weights, moveNames) {
   pct <- weights * 100
@@ -3449,18 +3449,18 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     idx <- which(cats == cat)
     idx <- idx[order(pct[idx], decreasing = TRUE)]
     parts <- vapply(idx, function(i) {
-      name <- cli::col_silver(paste0(moveNames[i], "="))
+      name <- cli::col_blue(paste0(moveNames[i], ":"))
       val  <- sprintf("%.1f%%", pct[i])
       val  <- if (pct[i] >= 10) {
         cli::col_green(val)
       } else if (pct[i] >= 5) {
         cli::col_yellow(val)
       } else {
-        cli::col_white(val)
+        cli::col_silver(val)
       }
       paste0(name, val)
     }, character(1))
-    paste0(cli::col_silver(paste0(cat, ": ")), paste(parts, collapse = " "))
+    paste0(cli::col_white(paste0(cat, ": ")), paste(parts, collapse = " "))
   }, character(1), USE.NAMES = FALSE)
 }
 
@@ -3479,7 +3479,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   lines <- vapply(presentCats, function(cat) {
     idx <- which(cats == cat)
     idx <- idx[order(pct[idx], decreasing = TRUE)]
-    entries <- paste0(moveNames[idx], "=", sprintf("%.1f%%", pct[idx]))
+    entries <- paste0(moveNames[idx], ":", sprintf("%.1f%%", pct[idx]))
     paste0(cat, ": ", paste(entries, collapse = " "))
   }, character(1), USE.NAMES = FALSE)
   paste(lines, collapse = "\n")
