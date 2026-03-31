@@ -5,17 +5,23 @@
 
 # MkPrime — Agent Development Notes
 
-## Current phase: greenfield development (Phase 1–3)
+## Current phase: post-core, optimization & GUI integration
 
-The package is being built from scratch. Agents should:
+All core phases (1–10) are complete. 155+ tasks delivered. Current work:
 
-- Follow the phased plan in `coordination.md`. Phases are sequential;
-  do not jump ahead unless the current phase is complete.
+- **Phase 6b** (TreeSearch GUI integration): M-080 assigned to Agent C.
+- **M-155** (P1): Gibbs kPrime sweep batch-by-k' optimization. S-PROF
+  round 3 found the sweep is 10× slower than equivalent int_walk coverage
+  due to per-character individual tree traversals (see "Performance notes"
+  below).
+- **M-131** (P2): Warmup stabilisation validation study (Hamilton HPC).
+- Standing tasks (S-RED, S-PROF, S-COORD) at P1.
+
+Agents should:
+
 - Monitor `to-do.md` for task selection.
-- Keep code clean and well-tested from the start — this is the foundation
-  everything else builds on.
-- Validate against known RevBayes likelihoods where possible (see
-  `../mkprime/` for reference scripts and results).
+- Check `coordination.md` for strategic context.
+- Keep code clean and well-tested.
 
 > **Worktree note:** If you are working in a feature worktree (e.g.
 > `mkp-parallel`, `mkp-gibbs`), **always read and write coordination
@@ -72,8 +78,11 @@ Full design rationale: `../.positai/plans/mkprime-r.md`.
 | Type | Packages |
 |------|----------|
 | **Imports** | Rcpp, ape, TreeTools, cli |
-| **Suggests** | coda (ESS/PSRF), treess (tree-space ESS), TreeSearch (dataset + GUI), testthat |
+| **Suggests** | treess (tree-space ESS), TreeSearch (dataset + GUI), testthat |
 | **LinkingTo** | Rcpp |
+
+Note: `coda` dependency was dropped — native rank-normalized R-hat
+(Vehtari et al. 2021) and FFT-based ESS replace all `coda` calls.
 
 ---
 
@@ -87,36 +96,93 @@ mkp/
 │   ├── MkPrimeData.R        # phyDat input, character classification, partitioning
 │   ├── MkPrimeModel.R       # Model specification: priors, ACRV options
 │   ├── MkPrimeMCMC.R        # MCMC configuration object (nIter, thin, tuning)
-│   ├── RunMkPrime.R         # Main entry point: single-chain MH engine
-│   ├── proposals.R          # Scale, BetaSimplex, BoundedIntegerWalk proposals
+│   ├── RunMkPrime.R         # Main entry: MCMC engine, move dispatch, adaptation
 │   ├── MkPosterior.R        # Results object (samples, print/summary/plot)
-│   ├── Tempering.R          # (Phase 5) Parallel tempering
-│   ├── Convergence.R        # (Phase 5) ESS, PSRF monitoring, stopping rules
-│   ├── PlotDuringMCMC.R     # (Phase 6) Live progress plots
-│   └── utils.R              # Helpers
+│   ├── Convergence.R        # ESS, R-hat monitoring, stopping rules
+│   ├── proposals.R          # Scale, BetaSimplex, BoundedIntegerWalk proposals
+│   ├── SteppingStone.R      # Stepping-stone marginal likelihood estimation
+│   ├── BayesianModule.R     # Shiny module for TreeSearch GUI integration
+│   ├── EasyMkPrime.R        # Simplified entry point for GUI
+│   ├── PlotDuringMCMC.R     # Live progress plots during MCMC
+│   ├── streaming.R          # Streaming log output (Tracer-compatible TSV)
+│   ├── burnin.R             # Burnin detection and removal
+│   ├── ess.R                # Native ESS computation (FFT-based)
+│   ├── treeESS.R            # Tree-topology ESS via pseudo-ESS
+│   ├── likelihood.R         # R-side likelihood wrappers
+│   ├── partition.R          # Partition management
+│   ├── acrv.R               # R-side ACRV helpers
+│   └── RcppExports.R        # Auto-generated
 ├── src/
-│   ├── likelihood.cpp       # Felsenstein pruning, per-partition likelihood
+│   ├── mcmc.cpp             # Hot loop: propose → evaluate → accept/reject, batch runner
+│   ├── mcmc_likelihood.cpp  # Felsenstein pruning, per-partition likelihood, Gibbs helpers
+│   ├── mcmc_state.h         # McmcData / McmcState structs, function declarations
+│   ├── node_cl_cache.h      # Partial conditional likelihood cache (dirty-flag invalidation)
+│   ├── gibbs_partial_cl.h   # Gibbs topology move CL helpers
+│   ├── likelihood.cpp       # R-callable likelihood functions
 │   ├── rate_matrix.cpp      # JC(k') construction, analytical P(t) = exp(Qt)
-│   ├── tree_moves.cpp       # SPR, NNI proposals in C++
-│   ├── branch_moves.cpp     # Branch length proposals
-│   ├── mcmc_engine.cpp      # Hot loop: propose → evaluate → accept/reject
-│   ├── acrv.cpp             # Among-character rate variation
+│   ├── tree_moves.cpp       # SPR, NNI, TBR, pSPR proposals in C++
+│   ├── proposals.cpp        # Scalar/branch proposals (scale, Dirichlet, etc.)
+│   ├── acrv.cpp             # Among-character rate variation (lognormal)
+│   ├── ascertainment.cpp    # Constant-site / singleton-site corrections
+│   ├── corrections.cpp      # Relabelling correction for Mk'
+│   ├── tree_ess.cpp         # Tree-distance ESS computation
+│   ├── init.cpp             # Package init (registration)
+│   ├── fitch.h              # Fitch parsimony (for starting tree score)
 │   └── RcppExports.cpp      # Auto-generated
 ├── inst/
 │   └── REFERENCES.bib
-├── tests/testthat/
+├── tests/testthat/          # ~4000 tests
 ├── man/
 └── vignettes/
+    └── hyoliths.qmd         # Full worked example (Sun2018, 54 taxa)
 ```
+
+---
+
+## Stale process cleanup — REQUIRED PROTOCOL
+
+On Windows, when a bash tool timeout fires or a conversation is
+interrupted, child `Rscript.exe` processes are **not killed** — they
+become orphans consuming CPU. These accumulate silently.
+
+### When to kill stale processes
+
+**At conversation start**, before doing any work:
+
+```bash
+taskkill //F //IM Rscript.exe 2>/dev/null
+```
+
+**Before every subprocess launch** (already in subprocess template below):
+
+```bash
+taskkill //F //IM Rscript.exe 2>/dev/null; sleep 1
+```
+
+This is safe because agent work never depends on a previously-launched
+Rscript surviving across tool calls. If the user has their own Rscript
+processes running, the `2>/dev/null` suppresses "not found" errors, and
+the user can restart them. In practice the user's R work runs inside
+the RStudio session (rsession.exe), not via Rscript.
+
+### S-COORD check
+
+S-COORD rounds should check for orphan Rscript processes as a standard
+step:
+
+```bash
+tasklist //FI "IMAGENAME eq Rscript.exe" 2>/dev/null
+```
+
+If any are found, kill them and note it in the S-COORD log.
 
 ---
 
 ## Build workflows
 
-### Single-agent phase (Phases 1–3)
+### Single-agent phase (current)
 
-During early development with one agent, use standard devtools workflows
-in a subprocess:
+Standard devtools workflows in a subprocess:
 
 ```bash
 # Compile + load (always in subprocess, never RStudio session)
@@ -126,23 +192,15 @@ Rscript -e "pkgbuild::compile_dll(debug = FALSE); devtools::load_all()"
 # Run targeted tests
 Rscript -e "pkgbuild::compile_dll(debug = FALSE); devtools::load_all(); testthat::test_file('tests/testthat/test-foo.R')"
 
-# Regenerate docs
-Rscript -e "roxygen2::roxygenise()"
-```
-
-Once C++ code exists, switch to:
-
-```bash
+# Regenerate docs (use load_installed to avoid debug .o contamination)
 Rscript -e "roxygen2::roxygenise(load_code = roxygen2::load_installed)"
 ```
 
-to avoid debug `.o` contamination.
-
-### Multi-agent phase (Phase 4+)
+### Multi-agent phase
 
 When multiple agents are active, switch to the renamed-package build
 system (`build-agent.sh` / `test-agent.sh`) following the parent
-`AGENTS.md` protocol. Add MkPrime support to those scripts at that time.
+`AGENTS.md` protocol.
 
 ### Validation
 
@@ -168,12 +226,6 @@ via Task Manager.
    backup in case `maxTime` isn't checked frequently enough.
 3. **Tool timeout** — set the bash tool `timeout` parameter to ~180s (above
    the R-level limits so they fire first).
-
-**Before starting a new subprocess**, kill any stale Rscript processes:
-
-```bash
-taskkill //F //IM Rscript.exe 2>/dev/null; sleep 1
-```
 
 **Template:**
 
@@ -206,29 +258,34 @@ sufficient — warmup can consume most of the iteration budget.
 
 ---
 
-## Known bugs and fixes in progress
+## Performance notes
 
-### Tree construction bugs in `RunMkPrime.R` (M-153 follow-up) — FIXED
+### Gibbs kPrime sweep (M-154 / S-PROF round 3, 2026-03-31)
 
-Three tree-construction sites in `RunMkPrime.R` had two bugs:
+Benchmarked on Sun2018 (54 taxa, 99 trans, 126 neo, nCat=6):
 
-1. **Wrong `Nnode`:** `length(tipLabels) - 2L` should be `- 1L`. An unrooted
-   binary tree with n tips has n−1 internal nodes (ape stores as rooted with
-   implicit root). The off-by-one caused `TreeDist::RobinsonFoulds()` to
-   read past allocated arrays → segfault (exit code 139).
+| Move | Cost | Coverage |
+|------|------|----------|
+| Gibbs kPrime sweep (moveType 25) | 340 ms | All 99 trans chars |
+| 99 × int_walk kPrime (moveType 7) | 33 ms | All 99 trans chars |
+| Block kPrime shift (moveType 26) | 0.66 ms | All 99 trans chars (collective mode) |
 
-2. **Missing order attribute:** Trees were stamped `order = "cladewise"` but
-   not actually validated. The C++ engine returns canonical preorder edges, but
-   downstream code (TreeDist) relies on the attribute being trustworthy.
+**Root cause of 10× overhead:** `single_char_loglik_jc()` does per-character,
+per-candidate-k' individual tree traversals with per-call heap allocation.
+The partition-level flat-buffer pruning used by int_walk batches all characters
+in one traversal (0.007–0.07 ms/char amortized vs ~3.4 ms/char standalone).
 
-**Fix:** Wrap all three sites in `TreeTools::Preorder()` (validates, normalises,
-stamps canonical `"preorder"` order) and correct Nnode to `length(tipLabels) - 1L`.
-`Preorder()` is O(n_edge) and a no-op for already-canonical edges.
+**nCat scaling:** Linear (70 ms at nCat=1, 340 ms at nCat=6).
 
-**Status:** Fixed and validated on project3832 (10 taxa, 27 chars). Convergence
-checks with tree ESS run cleanly; no segfaults. All tests pass.
+**Final rebuild:** Negligible (1.8 ms, 0.5% of sweep).
 
-**Sites:** RunMkPrime.R lines ~918 (sampling), ~947 (tuning), ~3183 (`.StateToTree`).
+**M-155 filed (P1):** Restructure inner loop to batch characters by candidate
+k' value using flat-buffer partition pruning. Expected 50–100× speedup.
+
+### Overall MCMC bottleneck (S-PROF round 2, 2026-03-28)
+
+C++ Felsenstein pruning is ~90% of wall time. OPP-1–6 optimizations achieved
+1.80× cumulative speedup. Diminishing returns on further pruning optimization.
 
 ---
 
@@ -248,7 +305,7 @@ metadata files that classify characters as Neomorphic/Transformational:
 Excel files: `Project{N}_{author}.xlsx`, column `"Character Pattern"`
 contains `"Neomorphic"` / `"Transformational"`.
 
-Copy into `mkp/` for use (neotrans paths are outside the workspace).
+Primary benchmark: **Sun2018** (54 taxa, 225 chars) via TreeSearch package.
 
 ---
 
