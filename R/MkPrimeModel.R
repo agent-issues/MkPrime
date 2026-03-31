@@ -19,11 +19,11 @@
 #' @param rateLogSdShape,rateLogSdRate Shape and rate for the Gamma prior
 #'   on `rate_log_sd` (ACRV dispersion). Defaults: shape = 1, rate = 1.
 #' @param kPrimePrior Prior distribution for the true number of character states
-#'   (`k'`) for transformational characters. One of `"geometric"` (default,
-#'   hierarchical geometric with Beta hyperprior on `p`),
-#'   `"beta_geometric"` (per-character Beta-Geometric with shared
-#'   hyperparameters `alpha`, `beta`), or `"logseries"` (logarithmic series
-#'   with fixed parameter `c`; matches the RevBayes default).
+#'   (`k'`) for transformational characters. One of `"beta_geometric"` (default,
+#'   per-character Beta-Geometric with shared hyperparameters `alpha`, `beta`),
+#'   `"geometric"` (hierarchical geometric with Beta hyperprior on `p`),
+#'   or `"logseries"` (logarithmic series with fixed parameter `c`; matches
+#'   the RevBayes default).
 #'   The `"beta_geometric"` option avoids over-shrinkage of `k'` toward
 #'   `kObs` that occurs when many characters share a single `p`.
 #' @param kprimeHyperA,kprimeHyperB Parameters for the Beta hyperprior on `p`
@@ -100,7 +100,7 @@ MkPrimeModel <- function(
     rateLossSdlog = 2,
     rateLogSdShape = 1,
     rateLogSdRate = 1,
-    kPrimePrior = "geometric",
+    kPrimePrior = "beta_geometric",
     kprimeHyperA = 1,
     kprimeHyperB = 1,
     kprimeAlpha = 1,
