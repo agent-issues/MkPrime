@@ -63,6 +63,7 @@ struct CacheUnit {
   int stride;        // nChar * kStates
   bool isMkN;        // true → asymmetric binary (neomorphic)
   double rateScale;  // rateNeo for neomorphic, 1.0 otherwise
+  bool clValid = false;  // M-161: per-unit CL validity
 
   // Per-unit root frequencies (length kStates)
   std::vector<double> rootFreqs;
@@ -114,14 +115,47 @@ struct NodeCLCache {
   // Ascertainment coding type (from data)
   int coding = 0;
 
-  // Validity flag
-  bool valid = false;
+  // M-161: two-level validity
+  // Level 1: global topology + unit structure
+  bool topoValid = false;       // TreeNav matches current topology + edge lengths
+  bool structureValid = false;  // unit structure matches current kPrime grouping
+  // Level 2: per-unit CLs (CacheUnit::clValid)
+
   int maxNode = 0;
 
   // Rollback scratch (reused across iterations to avoid allocation)
   std::vector<double> savedCL;
   std::vector<int>    dirtyNodes;
   double savedLogLik = 0.0;  // total log-lik before partial update
+
+  // M-161: diagnostic counter for selective repopulation
+  int diagSelectivePopCount = 0;
+
+  // M-161: helpers
+  bool ready() const {
+    if (!topoValid || !structureValid) return false;
+    for (const auto& u : units)
+      if (!u.clValid) return false;
+    return true;
+  }
+
+  void invalidate_all() {
+    topoValid = false;
+  }
+
+  void invalidate_structure() {
+    structureValid = false;
+  }
+
+  void invalidate_neo_cls() {
+    for (auto& u : units)
+      if (u.isMkN) u.clValid = false;
+  }
+
+  void invalidate_all_cls() {
+    for (auto& u : units)
+      u.clValid = false;
+  }
 };
 
 
@@ -542,9 +576,63 @@ static void populate_cache_full(
     }
 
     full_downpass(unit, cache.topo, cache.rates, rateLoss);
+    unit.clValid = true;
   }
 
-  cache.valid = true;
+  cache.topoValid = true;
+  cache.structureValid = true;
+}
+
+
+// ---------------------------------------------------------------------------
+// populate_cache: smart wrapper that uses selective repopulation when
+// topology and unit structure are still valid.  Falls back to full rebuild
+// when either global flag is stale.  (M-161)
+// ---------------------------------------------------------------------------
+static void populate_cache(
+    NodeCLCache& cache, const McmcData& data,
+    const IntegerVector& parent, const IntegerVector& child,
+    const NumericVector& absEdgeLen, const IntegerVector& kPrime,
+    double rateLoss, double rateLogSd, double rateNeo) {
+
+  // Fast path: full rebuild when topology or unit structure is stale
+  if (!cache.topoValid || !cache.structureValid) {
+    populate_cache_full(cache, data, parent, child, absEdgeLen,
+                        kPrime, rateLoss, rateLogSd, rateNeo);
+    return;
+  }
+
+  // --- Selective repopulation: topo + structure valid, some units stale ---
+  cache.diagSelectivePopCount++;
+
+  // Update ACRV rates if rateLogSd changed
+  if (cache.cachedRateLogSd != rateLogSd) {
+    cache.useAcrv = (rateLogSd > 0.0);
+    if (cache.useAcrv) {
+      NumericVector rv = ncl_acrv_rates(rateLogSd, data.nCat, data.acrvZ);
+      cache.rates.assign(rv.begin(), rv.end());
+    } else {
+      cache.rates = {1.0};
+    }
+    cache.cachedRateLogSd = rateLogSd;
+  }
+
+  // Repopulate only invalid units
+  for (auto& unit : cache.units) {
+    if (unit.clValid) continue;
+
+    // Update unit-specific parameters that may have changed
+    if (unit.isMkN) {
+      unit.rootFreqs = { rateLoss / (1.0 + rateLoss),
+                         1.0 / (1.0 + rateLoss) };
+      unit.rateScale = rateNeo;
+    }
+
+    // Rerun full downpass — tip CLs are still valid (character data never
+    // changes), so only internal-node CLs are recomputed.
+    full_downpass(unit, cache.topo, cache.rates, rateLoss);
+    unit.clValid = true;
+  }
 }
 
 
@@ -926,7 +1014,7 @@ static void update_topo_nni(
 // ---------------------------------------------------------------------------
 static bool can_use_partial_cl(
     const NodeCLCache& cache, const McmcData& data) {
-  if (!cache.valid) return false;
+  if (!cache.ready()) return false;
   if (data.qHeterogeneity) return false;
   return true;
 }

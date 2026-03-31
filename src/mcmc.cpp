@@ -458,7 +458,8 @@ List get_mcmc_state(SEXP statePtr) {
     _["diagNniPartial"] = s->diagNniPartialCount,
     _["diagBsPartial"]  = s->diagBsPartialCount,
     _["diagDriftCount"] = s->diagDriftCount,
-    _["diagMaxDiff"]    = s->diagMaxDiff
+    _["diagMaxDiff"]    = s->diagMaxDiff,
+    _["diagSelectivePop"] = s->nodeCL.diagSelectivePopCount
   );
 }
 
@@ -890,7 +891,7 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
   // 11. Commit
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
-  state->nodeCL.valid = false;  // M-143: topology/branches changed
+  state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
   return true;
 }
 
@@ -1199,7 +1200,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
 
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
-  state->nodeCL.valid = false;  // M-143: topology/branches changed
+  state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
   return true;
 }
 
@@ -1343,7 +1344,7 @@ static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta) {
 
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
-  state->nodeCL.valid = false;  // M-143: topology/branches changed
+  state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
   return true;
 }
 
@@ -1598,7 +1599,7 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
 
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
-  state->nodeCL.valid = false;  // M-143: topology/branches changed
+  state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
   return true;
 }
 
@@ -1854,7 +1855,7 @@ static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
 
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
-  state->nodeCL.valid = false;  // M-143: topology/branches changed
+  state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
   return true;
 }
 
@@ -1963,7 +1964,7 @@ static bool gibbs_subtree_swap_impl_full(McmcData* data, McmcState* state,
 
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
-  state->nodeCL.valid = false;  // M-143: topology/branches changed
+  state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
   return true;
 }
 
@@ -2247,7 +2248,7 @@ static bool block_gibbs_branch_sweep_impl(
     state->logLik = currentLL;
     // Invalidate partition cache (sweep touched multiple partitions)
     state->partLogLik.clear();
-    state->nodeCL.valid = false;  // M-143: branch lengths changed
+    state->nodeCL.invalidate_all();  // M-143/M-161: branch lengths changed
   }
   return nAccepted > 0;
 }
@@ -2529,7 +2530,7 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
     state->logLik   = newLogLik;
     state->logPrior = newLogPrior;
     state->partLogLik.clear();
-    state->nodeCL.valid = false;  // M-143: topology/branches changed
+    state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
     return true;
   }
   return false;
@@ -2735,7 +2736,7 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
     state->logLik   = newLogLik;
     state->logPrior = newLogPrior;
     state->partLogLik.clear();
-    state->nodeCL.valid = false;  // M-143: topology/branches changed
+    state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
     return true;
   }
   return false;
@@ -2888,9 +2889,19 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
         // Invalidate partition cache (full recompute was done)
         state->partLogLik.clear();
       }
-      // M-145: Invalidate node CL cache — slice changed a model parameter
-      // (rateLogSd, rateLoss, rateNeo, or betaScale) that affects cached CLs.
-      state->nodeCL.valid = false;
+      // M-145/M-161: Invalidate node CL cache — slice changed a model
+      // parameter.  Granular: only invalidate affected units.
+      switch (paramIdx) {
+        case 1: case 3:  // rate_loss, rate_neo: only neomorphic units
+          state->nodeCL.invalidate_neo_cls();
+          break;
+        case 2:  // rateLogSd: ACRV rates change, all units
+          state->nodeCL.invalidate_all_cls();
+          break;
+        default:  // tree_length (0), beta_scale (4)
+          state->nodeCL.invalidate_all();
+          break;
+      }
       return true;
     }
     // Shrink bracket on log scale
@@ -3547,7 +3558,7 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
     state->p, state->kPrime, state->betaScale,
     state->kprimeAlpha, state->kprimeBeta);
 
-  state->nodeCL.valid = false;
+  state->nodeCL.invalidate_structure();  // M-161: kPrime changed, unit structure may differ
 
   return true;  // Gibbs: always accept
 }
@@ -3642,7 +3653,7 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
     state->logLik = newLogLik;
     state->logPrior = newLogPrior;
     state->partLogLik = std::move(newPC);
-    state->nodeCL.valid = false;
+    state->nodeCL.invalidate_structure();  // M-161: kPrime changed
     return true;
   }
 
@@ -3687,7 +3698,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       if (f) {
         std::fprintf(f, "iter=%d mt=%d cachePop=%d dirPCL=%d cacheValid=%d\n",
                 diagFileCount, moveType, state->diagCachePopCount,
-                state->diagDirPartialCount, (int)state->nodeCL.valid);
+                state->diagDirPartialCount, (int)state->nodeCL.ready());
         std::fclose(f);
       } else {
         // If fopen fails, try REprintf as last resort
@@ -3757,13 +3768,13 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   // Populate for NNI (5), beta_simplex (4), Dirichlet (23, 24), SPR (6).
   if ((moveType == 5 || moveType == 4 || moveType == 23 || moveType == 24
        || moveType == 6) &&
-      !data->qHeterogeneity && !state->nodeCL.valid) {
+      !data->qHeterogeneity && !state->nodeCL.ready()) {
     state->diagCachePopCount++;
     int nEdge = state->relBrLengths.size();
     NumericVector absLen(nEdge);
     for (int i = 0; i < nEdge; ++i)
       absLen[i] = state->treeLength * state->relBrLengths[i];
-    populate_cache_full(state->nodeCL, *data,
+    populate_cache(state->nodeCL, *data,
                         state->parent, state->child, absLen,
                         state->kPrime, state->rateLoss,
                         state->rateLogSd, state->rateNeo);
@@ -3887,7 +3898,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       break;
     }
     case 6: { // SPR — M-158: partial CL when cache valid, else OPP-6 full eval
-      if (state->nodeCL.valid && !data->qHeterogeneity) {
+      if (state->nodeCL.ready() && !data->qHeterogeneity) {
         // M-158: TreeNav-based SPR with partial CL evaluation
         sprMeta = propose_spr_treenav(state->nodeCL.topo);
         if (!sprMeta.valid || !R_FINITE(sprMeta.logHastings)) return false;
@@ -4159,7 +4170,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
 
   if (!likChanges) {
     newLogLik = state->logLik;
-  } else if (nniInPlace && state->nodeCL.valid) {
+  } else if (nniInPlace && state->nodeCL.ready()) {
     // M-121: NNI with valid node CL cache → partial evaluation
     int nEdge = evalRelBr.size();
     NumericVector propEdgeLen(nEdge);
@@ -4187,7 +4198,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       if (diff > 1e-6) state->diagNniMismatchCount++;
     }
 
-  } else if (moveType == 4 && state->nodeCL.valid) {
+  } else if (moveType == 4 && state->nodeCL.ready()) {
     // M-121: beta_simplex with valid node CL cache → partial evaluation
     int nEdge = evalRelBr.size();
     NumericVector propEdgeLen(nEdge);
@@ -4218,7 +4229,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       if (diff > 1e-6) state->diagBsMismatchCount++;
     }
 
-  } else if ((moveType == 23 || moveType == 24) && state->nodeCL.valid) {
+  } else if ((moveType == 23 || moveType == 24) && state->nodeCL.ready()) {
     // M-127: Dirichlet (random or local) with valid node CL cache → partial eval
     int nEdge = evalRelBr.size();
     NumericVector propEdgeLen(nEdge);
@@ -4384,13 +4395,32 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     // Partition cache handled by std::move(newPC) above (recomputed via
     // default branch of the partial-lik switch).
 
-    // M-121: cache management on acceptance.
+    // M-121/M-161: cache management on acceptance.
     // Partial CL moves keep the cache valid (already updated).
-    // All other moves that change CLs invalidate the cache.
-    if (!usedPartialCL) {
-      // Invalidate node CL cache for any accepted move that changes
-      // topology, branch lengths, or model parameters.
-      if (likChanges) state->nodeCL.valid = false;
+    // Other moves: granular invalidation by move type.
+    if (!usedPartialCL && likChanges) {
+      switch (moveType) {
+        case 1: case 3: case 18:
+          // rate_loss, rate_neo, neo_joint: only neomorphic units affected
+          state->nodeCL.invalidate_neo_cls();
+          break;
+        case 2:
+          // rateLogSd: ACRV rates change, all units stale
+          state->nodeCL.invalidate_all_cls();
+          break;
+        case 7:
+          // kPrime int_walk: unit structure may change
+          state->nodeCL.invalidate_structure();
+          break;
+        case 16:
+          // beta_scale: Q-het parameter, all units stale
+          state->nodeCL.invalidate_all_cls();
+          break;
+        default:
+          // tree_length (0), topology, etc.: full invalidation
+          state->nodeCL.invalidate_all();
+          break;
+      }
     }
     // When partial CL was used, clear partition-level cache
     // (it's not maintained by partial eval; will be rebuilt if needed)
@@ -4516,7 +4546,7 @@ List run_mcmc_batch_cpp(
     cumWeights[m] = totalWeight;
   }
 
-  // M-159: Cache-boosted weights (used when nodeCL.valid && !qHeterogeneity).
+  // M-159: Cache-boosted weights (used when nodeCL.ready() && !qHeterogeneity).
   // Partial-CL-eligible moves {4=beta_simplex, 5=NNI, 6=SPR, 23=dirichlet,
   // 24=local_dirichlet} get cacheBonus multiplier.
   bool haveCacheBoost = cacheBonus > 1.0 && !data->qHeterogeneity;
@@ -4580,7 +4610,7 @@ List run_mcmc_batch_cpp(
     for (int ch = 0; ch < nChains; ++ch) {
       // M-159: Cache-aware weighted move selection.
       // When the node CL cache is valid, boost partial-CL-eligible moves.
-      bool useBoost = haveCacheBoost && states[ch]->nodeCL.valid;
+      bool useBoost = haveCacheBoost && states[ch]->nodeCL.ready();
       double tw = useBoost ? totalWeightCached : totalWeight;
       const auto& cw = useBoost ? cumWeightsCached : cumWeights;
       if (useBoost) ++cacheHits; else ++cacheMisses;
