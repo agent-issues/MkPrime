@@ -17,6 +17,7 @@ produce results an agent needs to retrieve later.
 
 | Submitted | Type | Job ID | Branch | Description | Retrieve how | Owner |
 |-----------|------|--------|--------|-------------|-------------|-------|
+| 2026-03-31 | SLURM | 16632292 | main | M-131: Warmup stabilisation validation (8 datasets × 4 seeds, 200k iter each). Results in `/nobackup/pjjg18/m131/results/`. | `ssh::scp_download(session, "/nobackup/pjjg18/m131/results/", "inst/hamilton/")` | B |
 
 <!-- Example row:
 | 2026-03-29 | SLURM | 16622483 | main | Benchmark: Mk' vs RevBayes on Sun2018 (5 seeds) | `scp hamilton:scratch/mkp_bench/*.csv benchmark/` | E |
