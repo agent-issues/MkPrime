@@ -179,10 +179,6 @@ struct McmcState {
   int diagDriftCount = 0;
   int diagCachePopCount = 0;
   double diagMaxDiff = 0.0;
-  // M-160: Delayed rejection diagnostic counters
-  int diagDrAttempts = 0;   // DR-NNI attempts (SPR rejected + eligible)
-  int diagDrAccepts = 0;    // DR-NNI acceptances
-  int diagDrOverlap = 0;    // DR skipped due to node overlap
 };
 
 
@@ -461,10 +457,7 @@ List get_mcmc_state(SEXP statePtr) {
     _["diagNniPartial"] = s->diagNniPartialCount,
     _["diagBsPartial"]  = s->diagBsPartialCount,
     _["diagDriftCount"] = s->diagDriftCount,
-    _["diagMaxDiff"]    = s->diagMaxDiff,
-    _["diagDrAttempts"] = s->diagDrAttempts,
-    _["diagDrAccepts"]  = s->diagDrAccepts,
-    _["diagDrOverlap"]  = s->diagDrOverlap
+    _["diagMaxDiff"]    = s->diagMaxDiff
   );
 }
 
@@ -3677,67 +3670,6 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
 // ---------------------------------------------------------------------------
 
-
-// M-160: Stable computation of log(1 - exp(a)) for a < 0.
-// Returns -Inf when a >= 0 (i.e. alpha = 1).
-static inline double dr_log1mexp(double a) {
-  if (a >= 0.0) return R_NegInf;
-  if (a < -M_LN2) return std::log1p(-std::exp(a));
-  return std::log(-std::expm1(a));
-}
-
-
-// M-160: Propose a random in-place NNI on the current tree.
-// Returns true if a valid in-place NNI was found.
-// On success, fills output parameters with the NNI details.
-// Does NOT modify state — caller must apply the swap.
-static bool propose_nni_inplace(
-    const IntegerVector& parent, const IntegerVector& child,
-    int nTip,
-    // output parameters
-    int& edgeRow, int& cRow, int& wRow,
-    int& uNode, int& vNode, int& cNode, int& wNode) {
-
-  const int nEdge = parent.size();
-
-  // Find internal edges (both endpoints > nTip)
-  std::vector<int> intRows;
-  intRows.reserve(nEdge / 2);
-  for (int i = 0; i < nEdge; ++i)
-    if (parent[i] > nTip && child[i] > nTip)
-      intRows.push_back(i);
-  if (intRows.empty()) return false;
-
-  int pick = (int)(R::unif_rand() * (double)intRows.size());
-  if (pick >= (int)intRows.size()) pick = intRows.size() - 1;
-  edgeRow = intRows[pick];
-  uNode = parent[edgeRow];
-  vNode = child[edgeRow];
-
-  // Find v's children and u's other children (not v)
-  std::vector<int> vCh, uSib;
-  for (int i = 0; i < nEdge; ++i) {
-    if (parent[i] == vNode) vCh.push_back(i);
-    else if (parent[i] == uNode && child[i] != vNode) uSib.push_back(i);
-  }
-  if (vCh.empty() || uSib.empty()) return false;
-
-  int pV = (int)(R::unif_rand() * (double)vCh.size());
-  if (pV >= (int)vCh.size()) pV = vCh.size() - 1;
-  int pU = (int)(R::unif_rand() * (double)uSib.size());
-  if (pU >= (int)uSib.size()) pU = uSib.size() - 1;
-  cRow = vCh[pV];
-  wRow = uSib[pU];
-
-  // Only accept in-place safe NNIs (wRow > edgeRow)
-  if (wRow <= edgeRow) return false;
-
-  cNode = child[cRow];
-  wNode = child[wRow];
-  return true;
-}
-
-
 static bool do_move_impl(McmcData* data, McmcState* state,
                          int moveType, int charIdx,
                          double scaleTuning, double betaSimplexTuning,
@@ -3810,10 +3742,6 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   // not overwritten until acceptance → no pre-proposal clone, no rollback copy.
   IntegerVector proposedParent, proposedChild;
   NumericVector proposedRelBr;
-
-  // M-160: SPR metadata for delayed rejection NNI fallback
-  int sprU = -1, sprV = -1, sprA = -1, sprB = -1, sprP = -1;
-  double sprLogHR = 0.0;
 
   // M-121: pre-proposal cache population for partial CL.
   // Must happen BEFORE the proposal modifies state in-place.
@@ -3958,13 +3886,6 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       proposedChild   = as<IntegerVector>(prop["child"]);
       proposedRelBr   = as<NumericVector>(prop["rel_br_lengths"]);
       topologyChanged = true;
-      // M-160: save SPR metadata for DR-NNI fallback
-      sprU = as<int>(prop["pruneParent"]);
-      sprV = as<int>(prop["pruneChild"]);
-      sprA = as<int>(prop["regraftParent"]);
-      sprB = as<int>(prop["regraftChild"]);
-      sprP = as<int>(prop["parentOfPruneParent"]);
-      sprLogHR = logHastings;
       break;
     }
     case 17: { // TBR — M-053: OPP-6 pattern (defer topology commit)
@@ -4442,95 +4363,6 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       update_topo_nni(state->nodeCL.topo, nniVNode, nniUNode,
                       nniWNode, nniCNode);  // reverse swap
     }
-  }
-
-  // -----------------------------------------------------------------------
-  // M-160: Delayed Rejection — NNI fallback after SPR rejection.
-  //
-  // State is fully rolled back. Attempt a random in-place NNI using
-  // the node CL cache for cheap O(depth) evaluation. The DR acceptance
-  // ratio recycles logLik(y) from the rejected SPR evaluation.
-  // -----------------------------------------------------------------------
-  if (moveType == 6 && sprU >= 0 && R_FINITE(logAlpha) &&
-      state->nodeCL.valid && !data->qHeterogeneity) {
-
-    state->diagDrAttempts++;
-
-    // 1. Propose random in-place NNI
-    int drEdgeRow, drCRow, drWRow;
-    int drU, drV, drC, drW;
-    if (!propose_nni_inplace(state->parent, state->child, data->nTip,
-                             drEdgeRow, drCRow, drWRow,
-                             drU, drV, drC, drW)) {
-      return false;  // no valid NNI; standard rejection
-    }
-
-    // 2. Non-overlap check: NNI nodes must be disjoint from SPR key nodes
-    if (drU == sprU || drU == sprV || drU == sprA || drU == sprB || drU == sprP ||
-        drV == sprU || drV == sprV || drV == sprA || drV == sprB || drV == sprP ||
-        drC == sprU || drC == sprV || drC == sprA || drC == sprB || drC == sprP ||
-        drW == sprU || drW == sprV || drW == sprA || drW == sprB || drW == sprP) {
-      state->diagDrOverlap++;
-      return false;
-    }
-
-    // 3. Apply NNI in-place and save for rollback
-    int drSavedP_cRow = state->parent[drCRow];
-    int drSavedP_wRow = state->parent[drWRow];
-    state->parent[drCRow] = drU;
-    state->parent[drWRow] = drV;
-
-    // 4. Update node CL cache and compute logLik(z) via partial eval
-    int nEdgeDR = state->relBrLengths.size();
-    NumericVector drEdgeLen(nEdgeDR);
-    for (int i = 0; i < nEdgeDR; ++i)
-      drEdgeLen[i] = state->treeLength * state->relBrLengths[i];
-
-    update_topo_nni(state->nodeCL.topo, drV, drU, drC, drW);
-    auto drDirty = find_dirty_nni(state->nodeCL.topo, drV, drU);
-    double logLik_z = partial_eval_dirty(state->nodeCL, *data,
-                                          state->parent, state->child, drEdgeLen,
-                                          state->rateLoss, state->rateNeo,
-                                          state->rateLogSd, state->betaScale,
-                                          drDirty);
-
-    // 5. Compute DR acceptance ratio.
-    //    logLik_y = newLogLik (recycled from SPR eval)
-    //    logLik_x = state->logLik (current)
-    //    Prior is constant for topology moves → cancels.
-    //    q_SPR ratio = 1 for non-overlapping NNI → cancels.
-    //    NNI is symmetric → q_NNI cancels.
-    double logLik_y = newLogLik;  // recycled from rejected SPR
-    double logLik_x = state->logLik;
-
-    // α₁(x,y): SPR MH ratio from x (already computed, was rejected)
-    double logAlpha1_xy = beta * (logLik_y - logLik_x) + sprLogHR;
-
-    // α₁(z,y): hypothetical SPR MH ratio from z to y
-    double logAlpha1_zy = beta * (logLik_y - logLik_z) + sprLogHR;
-
-    // DR ratio: logα₂ = β(logLik_z - logLik_x) + log(1-α₁(z,y)) - log(1-α₁(x,y))
-    double log1m_a1xy = dr_log1mexp(std::min(0.0, logAlpha1_xy));
-    double log1m_a1zy = dr_log1mexp(std::min(0.0, logAlpha1_zy));
-
-    double logAlpha2 = beta * (logLik_z - logLik_x) +
-                       log1m_a1zy - log1m_a1xy;
-
-    if (R_FINITE(logAlpha2) && std::log(R::unif_rand()) < logAlpha2) {
-      // Accept DR-NNI
-      state->logLik = logLik_z;
-      // Prior unchanged for NNI (topology-only)
-      // Partition cache is stale after partial eval
-      state->partLogLik.clear();
-      state->diagDrAccepts++;
-      return true;
-    }
-
-    // Reject DR-NNI: rollback NNI + node CL cache
-    state->parent[drCRow] = drSavedP_cRow;
-    state->parent[drWRow] = drSavedP_wRow;
-    restore_dirty_cls(state->nodeCL, state->nodeCL.dirtyNodes);
-    update_topo_nni(state->nodeCL.topo, drV, drU, drW, drC);  // reverse swap
   }
 
   return false;

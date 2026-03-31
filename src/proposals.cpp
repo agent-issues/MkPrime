@@ -160,19 +160,10 @@ List spr_proposal_impl(IntegerVector parent, IntegerVector child,
 
   const double logHastings = std::log(lRegraft) - std::log(lMerge);
 
-  const int a = parent[regraftRow];
-  const int p = parent[parentRow];  // parent of u (grandparent at prune point)
-
   return List::create(_["parent"] = ordParent,
                       _["child"] = ordChild,
                       _["rel_br_lengths"] = orderedRelBr,
-                      _["logHastings"] = logHastings,
-                      // M-160: SPR metadata for delayed rejection
-                      _["pruneParent"] = u,
-                      _["pruneChild"] = v,
-                      _["regraftParent"] = a,
-                      _["regraftChild"] = b,
-                      _["parentOfPruneParent"] = p);
+                      _["logHastings"] = logHastings);
 }
 
 
