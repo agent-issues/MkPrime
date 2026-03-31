@@ -260,7 +260,7 @@ sufficient — warmup can consume most of the iteration budget.
 
 ## VTune profiling
 
-VTune is installed at `C:/Program Files/Intel/oneAPI/vtune/latest/bin64/`.
+VTune is installed at `C:/Program Files (x86)/Intel/oneAPI/vtune/latest/bin64/`.
 This PC is Intel i7-10700 (10th gen); hardware sampling works.
 
 **When profiling, use the `r-package-profiling` skill** to locate VTune
@@ -300,6 +300,34 @@ with progressive early termination.
 
 nCat scaling remains roughly linear. Speedup is larger with more
 characters (better amortization of batched traversals).
+
+### VTune hotspot profile (S-PROF round 4, 2026-03-31)
+
+Sun2018 (54 taxa, 225 chars, all transformational, nCat=6 ACRV).
+15k iterations, ~90s CPU time. VTune 2025.10, user-mode sampling.
+
+| Function | Source | CPU Time | % |
+|----------|--------|----------|---|
+| `pruning_jc_acrv_persite` | mcmc_likelihood.cpp | 53.0s | 59.1% |
+| `_expl_internal` (exp) | compiler runtime | 10.5s | 11.7% |
+| `constant_site_prob_jc` | ascertainment.cpp | 5.9s | 6.6% |
+| `pruning_jc_acrv_flat` | mcmc_likelihood.cpp | 3.5s | 3.9% |
+| `jc_transition` | gibbs_partial_cl.h | 1.3s | 1.4% |
+| `std::vector` copies | stl_vector.h | ~1.3s | ~1.5% |
+| Rcpp bounds checks | traits.h | ~1.0s | ~1.1% |
+| Everything else | | ~13s | ~14.5% |
+
+Key findings:
+1. **Gibbs kPrime sweep** (`persite` + ascertainment) dominates at ~65-70%
+   of MkPrime CPU. Regular MH proposals (`flat`) are only 3.9%.
+2. **`exp()` calls at 11.7%** — one per edge × rate category per traversal
+   (line 370). Already amortized across characters; cannot factor across
+   candidate k' values (eigenvalue depends on k). Fast approx exp could
+   save ~5-8% of total.
+3. **Ascertainment at 6.6%** — `constant_site_prob_jc` does separate tree
+   traversals. Could batch like the main pruning.
+4. **Vector copies at 1.5%** — heap allocation in hot path.
+5. **Rcpp bounds checks at 1.1%** — `check_index` calls on operator[].
 
 ### Overall MCMC bottleneck (S-PROF round 2, 2026-03-28)
 
