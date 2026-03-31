@@ -17,7 +17,7 @@ NULL
 #' @return An S3 object of class `MkPosterior`.
 #' @keywords internal
 MkPosterior <- function(samples, trees, acceptance, model, data, mcmc,
-                        warmup, tuning) {
+                        warmup, tuning, warmup_trace = NULL) {
   structure(
     list(
       samples = samples,
@@ -27,7 +27,8 @@ MkPosterior <- function(samples, trees, acceptance, model, data, mcmc,
       data = data,
       mcmc = mcmc,
       warmup = warmup,
-      tuning = tuning
+      tuning = tuning,
+      warmup_trace = warmup_trace
     ),
     class = "MkPosterior"
   )

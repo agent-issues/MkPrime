@@ -10,3 +10,11 @@
 ^LICENSE\.md$
 ^\.positai$
 ^\.claude$
+^vtune-out
+^benchmark
+^benchmarks
+^\.vtune-lib$
+^remote-jobs\.md$
+^CONTRIBUTING\.md$
+^_pkgdown\.yml$
+^data-raw$
