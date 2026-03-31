@@ -147,6 +147,13 @@ static double pruning_jc_flat(
   assert_valid_preorder(parent, child, nTip);
 #endif
 
+  // M-162: raw pointers to eliminate Rcpp bounds checks in inner loops
+  const int* parPtr = INTEGER(parent);
+  const int* chPtr  = INTEGER(child);
+  const double* elPtr = REAL(edge_length);
+  const int* tsPtr = INTEGER(tip_states);
+  const double* rfPtr = REAL(root_freqs);
+
   int maxNode = 2 * nTip - 1;  // OPP-2: +1 covers rooted trees (root = 2*nTip-1)
   int clCols = nChar * kStates;
 
@@ -157,7 +164,7 @@ static double pruning_jc_flat(
   for (int tip = 1; tip <= nTip; ++tip) {
     double* cl = buf + tip * stride;
     for (int c = 0; c < nChar; ++c) {
-      int state  = tip_states(tip - 1, c);
+      int state  = tsPtr[(tip - 1) + c * nTip]; // column-major
       int offset = c * kStates;
       if (state < 0) {
         for (int s = 0; s < kStates; ++s) cl[offset + s] = 1.0;
@@ -184,9 +191,9 @@ static double pruning_jc_flat(
   double km1   = kStates - 1.0;
 
   for (int e = nEdge - 1; e >= 0; --e) {
-    int par = parent[e];
-    int ch  = child[e];
-    double t        = edge_length[e];
+    int par = parPtr[e];
+    int ch  = chPtr[e];
+    double t        = elPtr[e];
     double exp_term = MKP_EXP(-kStates * t / km1);
     double p_same   = inv_k + (1.0 - inv_k) * exp_term;
     double p_diff   = inv_k - inv_k * exp_term;
@@ -238,7 +245,7 @@ static double pruning_jc_flat(
     int offset = c * kStates;
     double sl = 0.0;
     for (int s = 0; s < kStates; ++s)
-      sl += root_freqs[s] * clRoot[offset + s];
+      sl += rfPtr[s] * clRoot[offset + s];
     if (sl <= 0.0) return R_NegInf;
     logLik += std::log(sl);
   }
@@ -272,6 +279,14 @@ static double pruning_jc_acrv_flat(
   assert_valid_preorder(parent, child, nTip);
 #endif
 
+  // M-162: raw pointers to eliminate Rcpp bounds checks in inner loops
+  const int* parPtr = INTEGER(parent);
+  const int* chPtr  = INTEGER(child);
+  const double* elPtr = REAL(edge_length);
+  const int* tsPtr = INTEGER(tip_states);
+  const double* rfPtr = REAL(root_freqs);
+  const double* rmPtr = REAL(rate_multipliers);
+
   int maxNode = 2 * nTip - 1;  // OPP-2
   int root   = nTip + 1;
   int clCols = nChar * kStates;
@@ -288,7 +303,7 @@ static double pruning_jc_acrv_flat(
     double* cl = buf + tip * stride;
     std::fill(cl, cl + clCols, 0.0);
     for (int c = 0; c < nChar; ++c) {
-      int state  = tip_states(tip - 1, c);
+      int state  = tsPtr[(tip - 1) + c * nTip]; // column-major
       int offset = c * kStates;
       if (state < 0) {
         for (int s = 0; s < kStates; ++s) cl[offset + s] = 1.0;
@@ -316,7 +331,7 @@ static double pruning_jc_acrv_flat(
   }
 
   for (int cat = 0; cat < nCat; ++cat) {
-    double rate = rate_multipliers[cat];
+    double rate = rmPtr[cat];
 
     // Reset only internal-node init flags (tips stay initialised).
     for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
@@ -324,9 +339,9 @@ static double pruning_jc_acrv_flat(
       for (int n = nTip + 1; n <= maxNode; ++n) ascInit[n] = 0;
 
     for (int e = nEdge - 1; e >= 0; --e) {
-      int par = parent[e];
-      int ch  = child[e];
-      double t        = edge_length[e] * rate;
+      int par = parPtr[e];
+      int ch  = chPtr[e];
+      double t        = elPtr[e] * rate;
       double exp_term = MKP_EXP(-kStates * t / km1);
       double p_same   = inv_k + (1.0 - inv_k) * exp_term;
       double p_diff   = inv_k - inv_k * exp_term;
@@ -376,7 +391,7 @@ static double pruning_jc_acrv_flat(
       int offset = c * kStates;
       double sl = 0.0;
       for (int s = 0; s < kStates; ++s)
-        sl += root_freqs[s] * clRoot[offset + s];
+        sl += rfPtr[s] * clRoot[offset + s];
       site_lik_sum[c] += sl;
     }
 
@@ -421,6 +436,13 @@ void pruning_jc_acrv_persite(
   int nChar = tip_states.ncol();
   int nCat  = rate_multipliers.size();
 
+  // M-162: raw pointers
+  const int* parPtr = INTEGER(parent);
+  const int* chPtr  = INTEGER(child);
+  const double* elPtr = REAL(edge_length);
+  const int* tsPtr = INTEGER(tip_states);
+  const double* rmPtr = REAL(rate_multipliers);
+
   int maxNode = 2 * nTip - 1;
   int root   = nTip + 1;
   int clCols = nChar * kStates;
@@ -434,7 +456,7 @@ void pruning_jc_acrv_persite(
     double* cl = buf + tip * stride;
     std::fill(cl, cl + clCols, 0.0);
     for (int c = 0; c < nChar; ++c) {
-      int state  = tip_states(tip - 1, c);
+      int state  = tsPtr[(tip - 1) + c * nTip];
       int offset = c * kStates;
       if (state < 0) {
         for (int s = 0; s < kStates; ++s) cl[offset + s] = 1.0;
@@ -446,13 +468,13 @@ void pruning_jc_acrv_persite(
   }
 
   for (int cat = 0; cat < nCat; ++cat) {
-    double rate = rate_multipliers[cat];
+    double rate = rmPtr[cat];
     for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
 
     for (int e = nEdge - 1; e >= 0; --e) {
-      int par = parent[e];
-      int ch  = child[e];
-      double t        = edge_length[e] * rate;
+      int par = parPtr[e];
+      int ch  = chPtr[e];
+      double t        = elPtr[e] * rate;
       double exp_term = MKP_EXP(-kStates * t / km1);
       double p_same   = inv_k + (1.0 - inv_k) * exp_term;
       double p_diff   = inv_k - inv_k * exp_term;
@@ -514,6 +536,13 @@ static double pruning_mkn_flat(
   assert_valid_preorder(parent, child, nTip);
 #endif
 
+  // M-162: raw pointers to eliminate Rcpp bounds checks in inner loops
+  const int* parPtr = INTEGER(parent);
+  const int* chPtr  = INTEGER(child);
+  const double* elPtr = REAL(edge_length);
+  const int* tsPtr = INTEGER(tip_states);
+  const double* rfPtr = REAL(root_freqs);
+
   int maxNode = 2 * nTip - 1;  // OPP-2: +1 covers rooted trees (root = 2*nTip-1)
   int clCols = nChar * kStates;
 
@@ -524,7 +553,7 @@ static double pruning_mkn_flat(
   for (int tip = 1; tip <= nTip; ++tip) {
     double* cl = buf + tip * stride;
     for (int c = 0; c < nChar; ++c) {
-      int state  = tip_states(tip - 1, c);
+      int state  = tsPtr[(tip - 1) + c * nTip]; // column-major
       int offset = c * kStates;
       if (state < 0) {
         cl[offset + 0] = 1.0;
@@ -560,9 +589,9 @@ static double pruning_mkn_flat(
   double inv_lam_10 = rate10 / lambda;
 
   for (int e = nEdge - 1; e >= 0; --e) {
-    int par = parent[e];
-    int ch  = child[e];
-    double t        = edge_length[e];
+    int par = parPtr[e];
+    int ch  = chPtr[e];
+    double t        = elPtr[e];
     double exp_term = MKP_EXP(-lambda * t);
     double P00 = inv_lam_10 + inv_lam_01 * exp_term;
     double P01 = inv_lam_01 - inv_lam_01 * exp_term;
@@ -612,7 +641,7 @@ static double pruning_mkn_flat(
   double logLik  = 0.0;
   for (int c = 0; c < nChar; ++c) {
     int offset = c * kStates;
-    double sl = root_freqs[0] * clRoot[offset] + root_freqs[1] * clRoot[offset + 1];
+    double sl = rfPtr[0] * clRoot[offset] + rfPtr[1] * clRoot[offset + 1];
     if (sl <= 0.0) return R_NegInf;
     logLik += std::log(sl);
   }
@@ -623,7 +652,7 @@ static double pruning_mkn_flat(
     double total = 0.0;
     for (int c = 0; c < 2; ++c) {
       int off = c * kStates;
-      total += root_freqs[0] * ascRoot[off] + root_freqs[1] * ascRoot[off + 1];
+      total += rfPtr[0] * ascRoot[off] + rfPtr[1] * ascRoot[off + 1];
     }
     *outConstProb = total;
   }
@@ -650,6 +679,14 @@ static double pruning_mkn_acrv_flat(
   assert_valid_preorder(parent, child, nTip);
 #endif
 
+  // M-162: raw pointers to eliminate Rcpp bounds checks in inner loops
+  const int* parPtr = INTEGER(parent);
+  const int* chPtr  = INTEGER(child);
+  const double* elPtr = REAL(edge_length);
+  const int* tsPtr = INTEGER(tip_states);
+  const double* rfPtr = REAL(root_freqs);
+  const double* rmPtr = REAL(rate_multipliers);
+
   int maxNode = 2 * nTip - 1;  // OPP-2
   int root   = nTip + 1;
   int clCols = nChar * kStates;
@@ -668,7 +705,7 @@ static double pruning_mkn_acrv_flat(
     double* cl = buf + tip * stride;
     std::fill(cl, cl + clCols, 0.0);
     for (int c = 0; c < nChar; ++c) {
-      int state  = tip_states(tip - 1, c);
+      int state  = tsPtr[(tip - 1) + c * nTip]; // column-major
       int offset = c * kStates;
       if (state < 0) {
         cl[offset] = 1.0; cl[offset + 1] = 1.0;
@@ -696,16 +733,16 @@ static double pruning_mkn_acrv_flat(
   }
 
   for (int cat = 0; cat < nCat; ++cat) {
-    double rate = rate_multipliers[cat];
+    double rate = rmPtr[cat];
 
     for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
     if (outConstProb)
       for (int n = nTip + 1; n <= maxNode; ++n) ascInit[n] = 0;
 
     for (int e = nEdge - 1; e >= 0; --e) {
-      int par = parent[e];
-      int ch  = child[e];
-      double t        = edge_length[e] * rate;
+      int par = parPtr[e];
+      int ch  = chPtr[e];
+      double t        = elPtr[e] * rate;
       double exp_term = MKP_EXP(-lambda * t);
       double P00 = inv_lam_10 + inv_lam_01 * exp_term;
       double P01 = inv_lam_01 - inv_lam_01 * exp_term;
@@ -753,7 +790,7 @@ static double pruning_mkn_acrv_flat(
     double* clRoot = buf + root * stride;
     for (int c = 0; c < nChar; ++c) {
       int offset = c * kStates;
-      double sl = root_freqs[0] * clRoot[offset] + root_freqs[1] * clRoot[offset + 1];
+      double sl = rfPtr[0] * clRoot[offset] + rfPtr[1] * clRoot[offset + 1];
       site_lik_sum[c] += sl;
     }
 
@@ -763,7 +800,7 @@ static double pruning_mkn_acrv_flat(
       double total = 0.0;
       for (int c = 0; c < 2; ++c) {
         int off = c * kStates;
-        total += root_freqs[0] * ascRoot[off] + root_freqs[1] * ascRoot[off + 1];
+        total += rfPtr[0] * ascRoot[off] + rfPtr[1] * ascRoot[off + 1];
       }
       constProbCatSum += total;
     }
@@ -868,6 +905,13 @@ static double pruning_f81_het_acrv_flat(
   assert_valid_preorder(parent, child, nTip);
 #endif
 
+  // M-162: raw pointers to eliminate Rcpp bounds checks in inner loops
+  const int* parPtr = INTEGER(parent);
+  const int* chPtr  = INTEGER(child);
+  const double* elPtr = REAL(edge_length);
+  const int* tsPtr = INTEGER(tip_states);
+  const double* rmPtr = REAL(rate_multipliers);
+
   int maxNode = 2 * nTip - 1;
   int root    = nTip + 1;
   int clCols  = nChar * kStates;
@@ -896,7 +940,7 @@ static double pruning_f81_het_acrv_flat(
     double* cl = buf + tip * stride;
     std::fill(cl, cl + clCols, 0.0);
     for (int c = 0; c < nChar; ++c) {
-      int state  = tip_states(tip - 1, c);
+      int state  = tsPtr[(tip - 1) + c * nTip]; // column-major
       int offset = c * kStates;
       if (state < 0) {
         for (int s = 0; s < kStates; ++s) cl[offset + s] = 1.0;
@@ -927,7 +971,7 @@ static double pruning_f81_het_acrv_flat(
   }
 
   for (int cat = 0; cat < nCat; ++cat) {
-    double acrvRate = rate_multipliers[cat];
+    double acrvRate = rmPtr[cat];
 
     for (int bi = 0; bi < nBetaCat; ++bi) {
       double beta_val = betaBins[bi];
@@ -964,9 +1008,9 @@ static double pruning_f81_het_acrv_flat(
         // P_ij(t) = π_j × (1 − d) + δ_ij × d
         // where d = exp(−μ × acrvRate × t)
         for (int e = nEdge - 1; e >= 0; --e) {
-          int par = parent[e];
-          int ch  = child[e];
-          double t = edge_length[e] * acrvRate;
+          int par = parPtr[e];
+          int ch  = chPtr[e];
+          double t = elPtr[e] * acrvRate;
           double d = MKP_EXP(-mu * t);
           double one_minus_d = 1.0 - d;
 
@@ -1077,6 +1121,13 @@ void pruning_f81_het_acrv_persite(
   int nChar = tip_states.ncol();
   int nCat  = rate_multipliers.size();
 
+  // M-162: raw pointers
+  const int* parPtr = INTEGER(parent);
+  const int* chPtr  = INTEGER(child);
+  const double* elPtr = REAL(edge_length);
+  const int* tsPtr = INTEGER(tip_states);
+  const double* rmPtr = REAL(rate_multipliers);
+
   int maxNode = 2 * nTip - 1;
   int root    = nTip + 1;
   int clCols  = nChar * kStates;
@@ -1099,7 +1150,7 @@ void pruning_f81_het_acrv_persite(
     double* cl = buf + tip * stride;
     std::fill(cl, cl + clCols, 0.0);
     for (int c = 0; c < nChar; ++c) {
-      int state  = tip_states(tip - 1, c);
+      int state  = tsPtr[(tip - 1) + c * nTip];
       int offset = c * kStates;
       if (state < 0) {
         for (int s = 0; s < kStates; ++s) cl[offset + s] = 1.0;
@@ -1111,7 +1162,7 @@ void pruning_f81_het_acrv_persite(
   }
 
   for (int cat = 0; cat < nCat; ++cat) {
-    double acrvRate = rate_multipliers[cat];
+    double acrvRate = rmPtr[cat];
 
     for (int bi = 0; bi < nBetaCat; ++bi) {
       double beta_val = betaBins[bi];
@@ -1141,9 +1192,9 @@ void pruning_f81_het_acrv_persite(
         for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
 
         for (int e = nEdge - 1; e >= 0; --e) {
-          int par = parent[e];
-          int ch  = child[e];
-          double t = edge_length[e] * acrvRate;
+          int par = parPtr[e];
+          int ch  = chPtr[e];
+          double t = elPtr[e] * acrvRate;
           double d = MKP_EXP(-mu * t);
           double one_minus_d = 1.0 - d;
 
@@ -1205,9 +1256,14 @@ static double het_constant_site_prob(
     const double* betaBins, int nBetaCat,
     NumericVector rate_multipliers) {
 
+  int nEdge = parent.size();
   int nCat = rate_multipliers.size();
   int nRot = (kStates == 2) ? 1 : kStates;
   int totalComp = nCat * nBetaCat * nRot;
+
+  // M-162: raw pointers
+  const double* elPtr = REAL(edge_length);
+  const double* rmPtr = REAL(rate_multipliers);
 
   double gain_base = 0.0, loss_base = 0.0;
   if (kStates == 2) {
@@ -1218,7 +1274,7 @@ static double het_constant_site_prob(
 
   double totalP = 0.0;
   for (int cat = 0; cat < nCat; ++cat) {
-    double acrvRate = rate_multipliers[cat];
+    double acrvRate = rmPtr[cat];
     for (int bi = 0; bi < nBetaCat; ++bi) {
       double beta_val = betaBins[bi];
       for (int rot = 0; rot < nRot; ++rot) {
@@ -1244,8 +1300,8 @@ static double het_constant_site_prob(
         double compP = 0.0;
         for (int s = 0; s < kStates; ++s) {
           double prod = pi[s];  // root frequency
-          for (int e = 0; e < parent.size(); ++e) {
-            double t = edge_length[e] * acrvRate;
+          for (int e = 0; e < nEdge; ++e) {
+            double t = elPtr[e] * acrvRate;
             double Pss = pi[s] + (1.0 - pi[s]) * MKP_EXP(-mu * t);
             prod *= Pss;
           }
@@ -1299,6 +1355,12 @@ static double jc1_acrv(
   int maxNode = 2 * nTip - 1;
   int root = nTip + 1;
 
+  // M-162: raw pointers
+  const int* parPtr = INTEGER(parent);
+  const int* chPtr  = INTEGER(child);
+  const double* elP  = REAL(edgeLen);
+  const double* rtP  = REAL(rates);
+
   std::vector<double> cl((maxNode + 1) * kStates);
   std::vector<uint8_t> flg(maxNode + 1);
 
@@ -1321,14 +1383,14 @@ static double jc1_acrv(
   double siteLikSum = 0.0;
 
   for (int cat = 0; cat < nCat; ++cat) {
-    double rate = rates[cat];
+    double rate = rtP[cat];
 
     // Reset internal node init flags (tips stay init'd)
     for (int n = nTip + 1; n <= maxNode; ++n) flg[n] = 0;
 
     for (int e = nEdge - 1; e >= 0; --e) {
-      int par = parent[e], ch = child[e];
-      double t = edgeLen[e] * rate;
+      int par = parPtr[e], ch = chPtr[e];
+      double t = elP[e] * rate;
       double ex = MKP_EXP(-kStates * t / km1);
       double ps = inv_k + (1.0 - inv_k) * ex;
       double pd = inv_k - inv_k * ex;

@@ -721,7 +721,11 @@ RunMkPrime <- function(data, tree = NULL,
   # astronomical scores because acceptance = 1.0 and cost ≈ 0; this inflates
   # their weight and starves bottleneck MH moves.  One Gibbs draw or slice
   # sample per cycle is already optimal, so freeze them.
-  alwaysAcceptTypes <- c("gibbs_p", "slice", "gibbs_kprime_sweep")
+  # Also pin hyperparameter moves (kprime_alpha/beta): they are cheap but
+
+  # their score gets inflated relative to expensive topology moves.
+  alwaysAcceptTypes <- c("gibbs_p", "slice", "gibbs_kprime_sweep",
+                         "kprime_alpha", "kprime_beta")
   moveTypes <- vapply(moves, `[[`, character(1), "type")
   autoPin <- moveWeights[moveTypes %in% alwaysAcceptTypes]
 
