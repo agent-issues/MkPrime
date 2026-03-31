@@ -1,4 +1,4 @@
-library(TreeTools)
+library("TreeTools")
 
 test_that("Partitions group transformational characters by kObs", {
   # 3 chars: kObs = 3, 3, 2

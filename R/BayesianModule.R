@@ -102,7 +102,7 @@
 .MkLaunchScript <- function(logDir) {
   c(
     sprintf('.libPaths(%s)', deparse(.libPaths())),
-    'suppressPackageStartupMessages(library(MkPrime))',
+    'suppressPackageStartupMessages(library("MkPrime"))',
     sprintf('.d <- %s', deparse(logDir)),
     'data <- readRDS(file.path(.d, "input_data.rds"))',
     'tree <- readRDS(file.path(.d, "input_tree.rds"))',

@@ -2,8 +2,8 @@
 # Verifies that the batched precomputation + sampling produces the same
 # logLik as full recomputation, across various partition configurations.
 
-library(ape)
-library(TreeTools)
+library("ape")
+library("TreeTools")
 
 # ---------------------------------------------------------------------------
 # Helpers

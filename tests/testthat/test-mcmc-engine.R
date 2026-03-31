@@ -2,7 +2,7 @@
 skip_slow_tests()
 
 test_that("RunMkPrime runs on simple transformational data", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -20,7 +20,7 @@ test_that("RunMkPrime runs on simple transformational data", {
 
 
 test_that("RunMkPrime handles neomorphic characters", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -39,7 +39,7 @@ test_that("RunMkPrime handles neomorphic characters", {
 
 
 test_that("RunMkPrime handles known state-space characters", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1), 4, 1,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -56,7 +56,7 @@ test_that("RunMkPrime handles known state-space characters", {
 
 
 test_that("RunMkPrime handles mixed character types", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1,
                   0, 1, 2, 0,
@@ -76,7 +76,7 @@ test_that("RunMkPrime handles mixed character types", {
 
 
 test_that("MkPosterior print, summary, plot methods work", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat <- matrix(c(0, 1, 0), 3, 1,
                 dimnames = list(c("t1", "t2", "t3"), NULL))
@@ -101,7 +101,7 @@ test_that("MkPosterior print, summary, plot methods work", {
 
 
 test_that("Acceptance rates are non-degenerate (fixed topology)", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -130,7 +130,7 @@ test_that("Acceptance rates are non-degenerate (fixed topology)", {
 
 
 test_that("MCMC with topology moves runs on 8-tip tree", {
-  library(ape)
+  library("ape")
   set.seed(4523)
   tree <- rtree(8)
   tree <- unroot(tree)
@@ -161,7 +161,7 @@ test_that("MCMC with topology moves runs on 8-tip tree", {
 
 
 test_that("Tree file logging writes Newick trees", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -188,7 +188,7 @@ test_that("Tree file logging writes Newick trees", {
 
 
 test_that("Topology moves explore different topologies", {
-  library(ape)
+  library("ape")
   set.seed(9317)
   tree <- rtree(8)
   tree <- unroot(tree)

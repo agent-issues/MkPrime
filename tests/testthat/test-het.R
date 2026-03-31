@@ -7,8 +7,8 @@
 #   4. Binary backward compatibility: Het with k=2 matches expected behaviour
 #   5. beta_scale prior density correctness
 
-library(ape)
-library(TreeTools)
+library("ape")
+library("TreeTools")
 
 # ---------------------------------------------------------------------------
 # Helpers

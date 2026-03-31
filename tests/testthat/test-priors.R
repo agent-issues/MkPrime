@@ -26,7 +26,7 @@ test_that("MkPrimeModel accepts custom parameters", {
 
 
 test_that(".FinalizeModel computes defaults", {
-  library(ape)
+  library("ape")
   model <- MkPrimeModel()
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
 
@@ -44,7 +44,7 @@ test_that(".FinalizeModel computes defaults", {
 
 
 test_that("LogPrior matches manual density calculations", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1), 4, 1,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -77,7 +77,7 @@ test_that("LogPrior matches manual density calculations", {
 
 
 test_that("LogPrior includes rate_loss for neomorphic chars", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1), 4, 1,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -112,7 +112,7 @@ test_that("LogPrior includes rate_loss for neomorphic chars", {
 
 
 test_that("LogPrior returns -Inf for invalid parameter values", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat <- matrix(c(0, 1, 0), 3, 1,
                 dimnames = list(c("t1", "t2", "t3"), NULL))
@@ -142,7 +142,7 @@ test_that("LogPrior returns -Inf for invalid parameter values", {
 
 
 test_that("LogPrior: k' prior favors kObs when p is high", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat <- matrix(c(0, 1, 0), 3, 1,
                 dimnames = list(c("t1", "t2", "t3"), NULL))
@@ -170,7 +170,7 @@ test_that("LogPrior: k' prior favors kObs when p is high", {
 
 
 test_that("Fitch parsimony matches hand calculation", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   # Char 1: (0,0,1,1) -> 1 change; Char 2: (0,1,0,1) -> 2 changes
   mat <- matrix(c(0, 0, 1, 1, 0, 1, 0, 1), 4, 2,
@@ -183,7 +183,7 @@ test_that("Fitch parsimony matches hand calculation", {
 
 
 test_that("Fitch score used for expSteps default", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 0, 1, 1, 0, 1, 0, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))

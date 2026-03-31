@@ -1,8 +1,8 @@
 # tests/testthat/test-node-cl-cache.R
 # M-121: Validate node-level CL cache for NNI and beta_simplex
 
-library(MkPrime)
-library(TreeTools)
+library("MkPrime")
+library("TreeTools")
 
 # ---------------------------------------------------------------------------
 # Helper: small dataset for testing

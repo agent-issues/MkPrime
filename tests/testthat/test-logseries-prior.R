@@ -26,7 +26,7 @@ test_that("MkPrimeModel rejects invalid kPrimePrior", {
 # 2. LogPrior logseries: matches manual density
 # ---------------------------------------------------------------------------
 test_that("LogPrior logseries matches manual density calculation", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1), 4, 1,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -68,7 +68,7 @@ test_that("LogPrior logseries matches manual density calculation", {
 # 3. LogPrior logseries: higher k' has lower prior density (for c < 1)
 # ---------------------------------------------------------------------------
 test_that("LogPrior logseries: higher k' has lower prior density", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat  <- matrix(c(0, 1, 0), 3, 1,
                  dimnames = list(c("t1", "t2", "t3"), NULL))
@@ -100,7 +100,7 @@ test_that("LogPrior logseries: higher k' has lower prior density", {
 # 4. LogPrior logseries: c out of bounds returns -Inf
 # ---------------------------------------------------------------------------
 test_that("LogPrior logseries: c out of bounds returns -Inf", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat  <- matrix(c(0, 1, 0), 3, 1,
                  dimnames = list(c("t1", "t2", "t3"), NULL))
@@ -129,7 +129,7 @@ test_that("LogPrior logseries: c out of bounds returns -Inf", {
 # 5. LogPrior logseries: k' < kObs returns -Inf
 # ---------------------------------------------------------------------------
 test_that("LogPrior logseries: k' < kObs returns -Inf", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat  <- matrix(c(0, 1, 0), 3, 1,
                  dimnames = list(c("t1", "t2", "t3"), NULL))
@@ -154,7 +154,7 @@ test_that("LogPrior logseries: k' < kObs returns -Inf", {
 # 6. LogPrior logseries: works when state has no p field
 # ---------------------------------------------------------------------------
 test_that("LogPrior logseries: works correctly with no p in state", {
-  library(ape)
+  library("ape")
   tree  <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat   <- matrix(c(0, 1, 0), 3, 1,
                   dimnames = list(c("t1", "t2", "t3"), NULL))
@@ -202,7 +202,7 @@ test_that("print.MkPrimeModel runs without error for default model", {
 # 8. .ParamNames omits p for logseries
 # ---------------------------------------------------------------------------
 test_that(".ParamNames omits p column for logseries prior", {
-  library(ape)
+  library("ape")
   mat <- matrix(c(0, 1, 0, 1), 4, 1,
                 dimnames = list(paste0("t", 1:4), NULL))
   pd  <- TreeTools::MatrixToPhyDat(mat)
@@ -224,7 +224,7 @@ test_that(".ParamNames omits p column for logseries prior", {
 # ---------------------------------------------------------------------------
 test_that("RunMkPrime smoke test: logseries prior runs and produces correct columns", {
   skip_on_cran()
-  library(ape)
+  library("ape")
 
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0, 1, 0, 1,

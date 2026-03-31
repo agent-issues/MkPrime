@@ -6,7 +6,7 @@
 # likelihoods because a node's CL was propagated before all children
 # contributed.
 
-library(testthat)
+library("testthat")
 
 test_that("NNI moves always produce valid preorder", {
   skip_if_not_installed("TreeTools")

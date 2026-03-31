@@ -3,8 +3,8 @@
 # M-082: Gibbs update for p
 # M-084: Gibbs update for k'_i (added here when implemented)
 
-library(ape)
-library(TreeTools)
+library("ape")
+library("TreeTools")
 
 # ---------------------------------------------------------------------------
 # Helpers

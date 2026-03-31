@@ -8,8 +8,8 @@
 # 4. No-logFile runs produce in-memory samples (temp log transparent to user)
 # 5. Explicit-logFile runs behave as before
 
-library(ape)
-library(TreeTools)
+library("ape")
+library("TreeTools")
 
 # Minimal test data
 .mkTestData <- function() {

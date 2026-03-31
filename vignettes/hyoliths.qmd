@@ -8,11 +8,6 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
-```{r setup}
-#| include: false
-library(MkPrime)
-```
-
 ## Overview
 
 This vignette walks through a complete Bayesian phylogenetic analysis using
@@ -34,7 +29,7 @@ All steps below use packages already listed in MkPrime's dependencies:
 
 ```{r packages}
 #| message: false
-library(MkPrime)
+library("MkPrime")
 ```
 
 ## Loading morphological data

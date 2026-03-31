@@ -1,6 +1,6 @@
 test_that("Stepping-stone returns finite marginal likelihood", {
-  library(ape)
-  library(TreeTools)
+  library("ape")
+  library("TreeTools")
 
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   mat <- matrix(c(0L, 1L, 0L, 1L,
@@ -24,8 +24,8 @@ test_that("Stepping-stone returns finite marginal likelihood", {
 
 
 test_that("Beta schedule is monotonically increasing", {
-  library(ape)
-  library(TreeTools)
+  library("ape")
+  library("TreeTools")
 
   tree <- read.tree(text = "((t1:0.1,t2:0.1):0.1,t3:0.1);")
   mat <- matrix(c(0L, 1L, 0L), nrow = 3,
@@ -41,8 +41,8 @@ test_that("Beta schedule is monotonically increasing", {
 
 
 test_that("Stepping-stone works with neomorphic characters", {
-  library(ape)
-  library(TreeTools)
+  library("ape")
+  library("TreeTools")
 
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   mat <- matrix(c(0L, 1L, 0L, 1L,
@@ -62,8 +62,8 @@ test_that("Stepping-stone works with neomorphic characters", {
 
 
 test_that("Stepping-stone works with fixed topology", {
-  library(ape)
-  library(TreeTools)
+  library("ape")
+  library("TreeTools")
 
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   mat <- matrix(c(0L, 1L, 0L, 1L,
@@ -83,8 +83,8 @@ test_that("Stepping-stone works with fixed topology", {
 
 
 test_that("More stones with more iterations gives consistent results", {
-  library(ape)
-  library(TreeTools)
+  library("ape")
+  library("TreeTools")
 
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   mat <- matrix(c(0L, 1L, 0L, 1L,
@@ -110,8 +110,8 @@ test_that("More stones with more iterations gives consistent results", {
 
 
 test_that("Stepping-stone accepts MkPrimeData input", {
-  library(ape)
-  library(TreeTools)
+  library("ape")
+  library("TreeTools")
 
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   mat <- matrix(c(0L, 1L, 0L, 1L), nrow = 4,
@@ -164,8 +164,8 @@ test_that(".EssVector handles edge cases", {
 
 
 test_that("SE is positive and smaller with more iterations", {
-  library(ape)
-  library(TreeTools)
+  library("ape")
+  library("TreeTools")
 
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   mat <- matrix(c(0L, 1L, 0L, 1L,

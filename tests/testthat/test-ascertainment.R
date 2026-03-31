@@ -1,5 +1,5 @@
 test_that("Constant site prob is in [0, 1]", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.1):0.1,t3:0.2);")
   tree <- TreeTools::Preorder(tree)
 
@@ -15,7 +15,7 @@ test_that("Constant site prob is in [0, 1]", {
 
 
 test_that("Constant site prob → 1 with zero-length branches", {
-  library(ape)
+  library("ape")
   # Near-zero branch lengths: tips are nearly identical to root
   tree <- read.tree(text = "((t1:1e-10,t2:1e-10):1e-10,t3:1e-10);")
   tree <- TreeTools::Preorder(tree)
@@ -32,7 +32,7 @@ test_that("Constant site prob → 1 with zero-length branches", {
 
 
 test_that("Constant site prob → 1/k with very long branches", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:100,t2:100):100,t3:100);")
   tree <- TreeTools::Preorder(tree)
 
@@ -51,7 +51,7 @@ test_that("Constant site prob → 1/k with very long branches", {
 
 
 test_that("Ascertainment correction makes likelihood more negative", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   tree <- TreeTools::Preorder(tree)
   root_freqs <- rep(1 / 3, 3)
@@ -77,7 +77,7 @@ test_that("Ascertainment correction makes likelihood more negative", {
 
 
 test_that("MkN constant site prob with rate_loss=1 matches JC(2)", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   tree <- TreeTools::Preorder(tree)
   root_freqs <- c(0.5, 0.5)
@@ -100,7 +100,7 @@ test_that("MkN constant site prob with rate_loss=1 matches JC(2)", {
 # --- Singleton (autapomorphy) probability tests ---
 
 test_that("Singleton site prob JC is in (0, 1)", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.1):0.1,t3:0.2);")
   tree <- TreeTools::Preorder(tree)
 
@@ -116,7 +116,7 @@ test_that("Singleton site prob JC is in (0, 1)", {
 
 
 test_that("Singleton prob → 0 with zero-length branches", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:1e-10,t2:1e-10):1e-10,t3:1e-10);")
   tree <- TreeTools::Preorder(tree)
 
@@ -131,7 +131,7 @@ test_that("Singleton prob → 0 with zero-length branches", {
 
 
 test_that("P(constant) + P(singleton) < 1", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   tree <- TreeTools::Preorder(tree)
 
@@ -153,7 +153,7 @@ test_that("P(constant) + P(singleton) < 1", {
 
 
 test_that("MkN singleton prob with rate_loss=1 matches JC(2)", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   tree <- TreeTools::Preorder(tree)
   root_freqs <- c(0.5, 0.5)
@@ -173,7 +173,7 @@ test_that("MkN singleton prob with rate_loss=1 matches JC(2)", {
 
 
 test_that("MkN singleton prob varies with rate_loss", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   tree <- TreeTools::Preorder(tree)
 
@@ -193,7 +193,7 @@ test_that("MkN singleton prob varies with rate_loss", {
 
 
 test_that("Singleton prob works with ACRV", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   tree <- TreeTools::Preorder(tree)
   rf <- rep(1 / 3, 3)
@@ -215,7 +215,7 @@ test_that("Singleton prob works with ACRV", {
 
 
 test_that("P(uninf) → 1 with very short branches", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.001,t2:0.001):0.001,(t3:0.001,t4:0.001):0.001);")
   tree <- TreeTools::Preorder(tree)
 
@@ -238,8 +238,8 @@ test_that("P(uninf) → 1 with very short branches", {
 # --- coding = "informative" through MkpLogLikelihood ---
 
 test_that("MkpLogLikelihood accepts coding='informative'", {
-  library(ape)
-  library(TreeTools)
+  library("ape")
+  library("TreeTools")
 
   set.seed(4281)
   tree <- rtree(6, br = runif)
@@ -264,8 +264,8 @@ test_that("MkpLogLikelihood accepts coding='informative'", {
 
 
 test_that("Informative correction matches manual calculation", {
-  library(ape)
-  library(TreeTools)
+  library("ape")
+  library("TreeTools")
 
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
 
@@ -291,8 +291,8 @@ test_that("Informative correction matches manual calculation", {
 
 
 test_that("Informative correction works with neomorphic chars", {
-  library(ape)
-  library(TreeTools)
+  library("ape")
+  library("TreeTools")
 
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
 
@@ -319,7 +319,7 @@ test_that("MkPrimeModel accepts coding='informative'", {
 
 
 test_that("Constant site prob works with ACRV", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   tree <- TreeTools::Preorder(tree)
   root_freqs <- rep(1 / 3, 3)

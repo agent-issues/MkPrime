@@ -60,7 +60,7 @@ test_that("MkN transition probs with fast_exp match analytical formulas", {
 
 test_that("full likelihood with fast_exp matches reference to 1e-10", {
   skip_if_not_installed("ape")
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.3,t2:0.5):0.1,(t3:0.2,t4:0.4):0.2,t5:0.6);")
   tree <- TreeTools::Preorder(tree)
 

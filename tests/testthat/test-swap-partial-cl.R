@@ -4,8 +4,8 @@
 # (partial CL, O(depth×C)) against compute_full_loglik_at() (full pruning,
 # O(N×C)) for every valid swap partner of every node.
 
-library(ape)
-library(TreeTools)
+library("ape")
+library("TreeTools")
 
 # Shared fixture
 .swap_fixture <- function(seed, nTip, nChar, maxState,

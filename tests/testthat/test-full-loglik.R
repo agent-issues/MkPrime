@@ -4,8 +4,8 @@
 # eval_full_loglik_at_cpp(dataPtr, statePtr,     — arbitrary-topology path
 #                         parent, child, edgeLen)
 
-library(ape)
-library(TreeTools)
+library("ape")
+library("TreeTools")
 
 # ---------------------------------------------------------------------------
 # Shared fixture helpers

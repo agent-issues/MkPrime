@@ -1,4 +1,4 @@
-library(TreeTools)
+library("TreeTools")
 
 test_that("MkPrimeData classifies all characters as transformational by default", {
   mat <- matrix(c(0, 1, 0, 1, 2,

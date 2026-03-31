@@ -19,7 +19,7 @@ test_that("MkPrimeMCMC() rejects invalid thin values", {
 
 test_that("auto thin resolves to number of active moves", {
   skip_if_not_installed("TreeTools")
-  library(TreeTools)
+  library("TreeTools")
   set.seed(4271)
   nTip <- 8L
   nChar <- 10L
@@ -53,7 +53,7 @@ test_that("auto thin resolves to number of active moves", {
 
 test_that("auto thin changes with move configuration", {
   skip_if_not_installed("TreeTools")
-  library(TreeTools)
+  library("TreeTools")
   set.seed(6183)
   nTip <- 8L
   nChar <- 10L

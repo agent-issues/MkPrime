@@ -1,8 +1,8 @@
 # tests/testthat/test-gibbs-het.R
 # M-114: Validate partial CL for Gibbs moves under Q-heterogeneity
 
-library(MkPrime)
-library(TreeTools)
+library("MkPrime")
+library("TreeTools")
 
 # ---------------------------------------------------------------------------
 # Helper: create a small dataset + model with qHeterogeneity

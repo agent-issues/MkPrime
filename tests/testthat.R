@@ -1,4 +1,4 @@
-library(testthat)
-library(MkPrime)
+library("testthat")
+library("MkPrime")
 
 test_check("MkPrime")

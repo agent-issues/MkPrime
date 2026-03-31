@@ -3,8 +3,8 @@
 # swap_subtrees_cpp(edge, nTip, treeLength, relBrLengths, nodeA, nodeB)
 # get_valid_swap_partners_cpp(edge, nTip, pruneNode)
 
-library(ape)
-library(TreeTools)
+library("ape")
+library("TreeTools")
 
 # ---------------------------------------------------------------------------
 # Fixture helpers

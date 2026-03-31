@@ -2,7 +2,7 @@
 skip_slow_tests()
 
 test_that("ConvergenceDiagnostics works with single run", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -28,7 +28,7 @@ test_that("ConvergenceDiagnostics works with single run", {
 
 
 test_that("ConvergenceDiagnostics works with multiple runs", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -53,7 +53,7 @@ test_that("ConvergenceDiagnostics works with multiple runs", {
 
 
 test_that("ESS is reasonable for short chains", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -74,7 +74,7 @@ test_that("ESS is reasonable for short chains", {
 
 
 test_that("R-hat is near 1 for converged chains", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -118,7 +118,7 @@ test_that("ConvergenceDiagnostics rejects non-MkPosterior", {
 
 
 test_that("ConvergenceDiagnostics trees=FALSE skips tree ESS", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -147,7 +147,7 @@ test_that("ConvergenceDiagnostics tree ESS computed when treess available", {
     "tree ESS tests skipped by default; set MKP_TREE_ESS_TESTS=1 to enable"
   )
 
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))

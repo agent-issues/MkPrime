@@ -31,7 +31,7 @@ test_that("MkPrimeMCMC() validates parallel and pollInterval", {
 
 test_that("parallel = TRUE with nRuns = 1 falls back to sequential", {
   skip_if_not_installed("future")
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
                  dimnames = list(paste0("t", 1:4), NULL))
@@ -47,8 +47,8 @@ test_that("parallel mode auto-assigns logFile when logFile = NULL", {
   # Regression: .BuildResult() was using mcmc$logFile (NULL) not logFilePaths
   # to determine streaming mode, causing a crash on r$samples subscript.
   skip_if_not_installed("future")
-  library(ape)
-  library(future)
+  library("ape")
+  library("future")
 
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
@@ -70,8 +70,8 @@ test_that("parallel mode auto-assigns logFile when logFile = NULL", {
 
 test_that("parallel orchestration (sequential plan) returns valid MkPosterior", {
   skip_if_not_installed("future")
-  library(ape)
-  library(future)
+  library("ape")
+  library("future")
 
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
@@ -116,8 +116,8 @@ test_that("parallel mode saves checkpoint when checkpointFile is set", {
   # Regression: checkpoint save was inside sequential else-branch only;
   # parallel = TRUE + checkpointFile silently wrote nothing.
   skip_if_not_installed("future")
-  library(ape)
-  library(future)
+  library("ape")
+  library("future")
 
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
@@ -149,8 +149,8 @@ test_that("parallel orchestration (multisession, 2 workers) returns valid MkPost
   skip_if_not_installed("future")
   skip_if(!.is_mkprime_installed(),
           "MkPrime not installed — multisession workers need installed package")
-  library(ape)
-  library(future)
+  library("ape")
+  library("future")
 
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,

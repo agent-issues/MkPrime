@@ -2,7 +2,7 @@
 skip_slow_tests()
 
 test_that("Checkpoint file is written at check intervals", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -30,7 +30,7 @@ test_that("Checkpoint file is written at check intervals", {
 
 
 test_that("Checkpoint contains valid run state", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -57,7 +57,7 @@ test_that("Checkpoint contains valid run state", {
 
 
 test_that("ResumeMkPrime continues from checkpoint", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -89,7 +89,7 @@ test_that("ResumeMkPrime continues from checkpoint", {
 
 
 test_that("RunMkPrime auto-resumes from existing checkpoint", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -119,7 +119,7 @@ test_that("RunMkPrime auto-resumes from existing checkpoint", {
 
 
 test_that("RunMkPrime overwrite = TRUE ignores existing checkpoint", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -145,7 +145,7 @@ test_that("RunMkPrime overwrite = TRUE ignores existing checkpoint", {
 
 
 test_that("Checkpoint without checkpointFile does nothing", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -165,7 +165,7 @@ test_that("Checkpoint without checkpointFile does nothing", {
 # --- M-149: Interrupt-safe checkpointing tests ---
 
 test_that("Initial checkpoint is written before first batch", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -194,7 +194,7 @@ test_that("Initial checkpoint is written before first batch", {
 
 
 test_that("Checkpoint model is used on auto-resume (tree = NULL)", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -223,7 +223,7 @@ test_that("Checkpoint model is used on auto-resume (tree = NULL)", {
 
 
 test_that("Warmup state (logPostHistory, nStableConsecutive) persisted in checkpoint", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -255,7 +255,7 @@ test_that("Warmup state (logPostHistory, nStableConsecutive) persisted in checkp
 
 
 test_that("Tuning state persisted and tuningBuf re-allocated on resume", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -309,7 +309,7 @@ test_that("Tuning state persisted and tuningBuf re-allocated on resume", {
 
 
 test_that("Shared env update fires at batch boundaries (multi-run)", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -347,7 +347,7 @@ test_that("Shared env update fires at batch boundaries (multi-run)", {
 # --- M-150: maxTime break saves checkpoint ---
 
 test_that("maxTime break saves checkpoint (not just initial)", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -383,7 +383,7 @@ test_that("maxTime break saves checkpoint (not just initial)", {
 # --- M-149 #2: move weights persisted and restored ---
 
 test_that("Move weights stored in run state and checkpoint", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -416,7 +416,7 @@ test_that("Move weights stored in run state and checkpoint", {
 
 
 test_that("Resumed run uses checkpointed move weights", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -449,7 +449,7 @@ test_that("Resumed run uses checkpointed move weights", {
 # --- M-149 #6-7: serial orchestrator phase and per-run startIters ---
 
 test_that("Serial multi-run checkpoint stores serialPhase", {
-  library(ape)
+  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))

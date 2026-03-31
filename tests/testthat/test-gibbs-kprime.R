@@ -1,7 +1,7 @@
 # Tests for Gibbs kPrime sweep (moveType 25) and block kPrime shift (moveType 26)
 
-library(ape)
-library(TreeTools)
+library("ape")
+library("TreeTools")
 
 # ---------------------------------------------------------------------------
 # Helpers

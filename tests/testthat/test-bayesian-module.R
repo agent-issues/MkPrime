@@ -62,7 +62,7 @@ test_that(".MkLaunchScript produces a runnable-looking script", {
 
   lines <- .MkLaunchScript(logDir)
   expect_type(lines, "character")
-  expect_true(any(grepl("library(MkPrime)", lines, fixed = TRUE)))
+  expect_true(any(grepl('library("MkPrime")', lines, fixed = TRUE)))
   expect_true(any(grepl("RunMkPrime", lines, fixed = TRUE)))
   expect_true(any(grepl("mkp_done.signal", lines, fixed = TRUE)))
   expect_true(any(grepl(".libPaths", lines, fixed = TRUE)))
