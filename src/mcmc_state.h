@@ -104,6 +104,13 @@ struct ClWorkspace {
   int nNodeMax  = 0;
   int strideMax = 0;
 
+  // M-162B: pre-allocated scratch buffers to avoid per-call heap allocation
+  std::vector<double>  ascBuf;      // fused ascertainment pseudo-CL
+  std::vector<uint8_t> ascInit;     // fused ascertainment init flags
+  int ascStrideMax = 0;             // max pseudo-char stride
+  std::vector<double>  siteLikSum;  // per-character site likelihood accumulator
+  int siteLikMax = 0;
+
   bool ready() const { return !buf.empty(); }
 
   // True iff workspace can serve a call needing nNode nodes and stride cols.
@@ -111,11 +118,34 @@ struct ClWorkspace {
     return ready() && nNode <= nNodeMax && stride <= strideMax;
   }
 
+  // True iff ascertainment scratch fits (nNode nodes, ascStride per node).
+  bool ascFits(int nNode, int ascStride) const {
+    return !ascBuf.empty() && nNode <= nNodeMax && ascStride <= ascStrideMax;
+  }
+
+  // True iff siteLikSum fits nChar entries.
+  bool siteLikFits(int nChar) const {
+    return !siteLikSum.empty() && nChar <= siteLikMax;
+  }
+
   void allocate(int nNode, int stride) {
     nNodeMax  = nNode;
     strideMax = stride;
     buf.assign(static_cast<size_t>(nNode + 1) * stride, 0.0);
     init.assign(nNode + 1, 0u);
+  }
+
+  // M-162B: allocate scratch buffers for fused ascertainment + site_lik_sum.
+  void allocateScratch(int nNode, int ascStride, int nSiteLik) {
+    if (ascStride > 0) {
+      ascStrideMax = ascStride;
+      ascBuf.assign(static_cast<size_t>(nNode + 1) * ascStride, 0.0);
+      ascInit.assign(nNode + 1, 0u);
+    }
+    if (nSiteLik > 0) {
+      siteLikMax = nSiteLik;
+      siteLikSum.assign(nSiteLik, 0.0);
+    }
   }
 };
 

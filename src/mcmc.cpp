@@ -392,6 +392,35 @@ void allocate_cl_workspace(SEXP dataPtr, SEXP statePtr) {
   if (maxStride < 2) maxStride = 2;
 
   state->clWs.allocate(maxNode, maxStride);
+
+  // M-162B: pre-allocate scratch buffers for fused ascertainment + site_lik_sum.
+  // ascStride: max pseudo-character stride across all partitions.
+  //   JC/known: kMax (1 pseudo-char × kMax states, JC symmetry)
+  //   MkN:      4   (2 pseudo-chars × 2 states)
+  //   F81 het:  kMax² (k pseudo-chars × k states)
+  // siteLikMax: max nChar across all partitions.
+  int ascStride = 0;
+  int maxNChar  = 0;
+  bool useHet   = data->qHeterogeneity;
+  for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
+    const PartInfo& pinfo = data->parts[pi];
+    int nCharPart = pinfo.tipStates.ncol();
+    if (nCharPart > maxNChar) maxNChar = nCharPart;
+
+    int kMax = (pinfo.type == 0) ? 2 :
+               (pinfo.type == 2) ? pinfo.k : kPrimeWithHeadroom;
+    int partAsc;
+    if (useHet) {
+      partAsc = kMax * kMax;  // F81: k pseudo-chars × k states
+    } else if (pinfo.type == 0) {
+      partAsc = 4;  // MkN: 2 pseudo-chars × 2 states
+    } else {
+      partAsc = kMax;  // JC: 1 pseudo-char × k states (symmetry)
+    }
+    if (partAsc > ascStride) ascStride = partAsc;
+  }
+
+  state->clWs.allocateScratch(maxNode, ascStride, maxNChar);
 }
 
 
