@@ -29,7 +29,7 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| M-158 | P2 | OPEN | **Partial CL evaluation for SPR moves.** SPR currently invalidates the entire CL cache, forcing O(nEdge) full rebuild. Extend the dirty-flag CL system (`node_cl_cache.h`) to handle SPR: incrementally update TreeNav at prune + regraft points, identify dirty set (two paths to root + detachment/reattachment nodes), partial recompute. For 54-tip tree: dirty set ~15–20 nodes vs 105 edges → 5–7× speedup for the most heavily weighted topology move. High engineering effort; validate carefully against full-eval path. |
+
 
 
 | M-161 | P2 | OPEN | **Per-partition CL cache validity.** `nodeCL.valid = false` invalidates all CacheUnits on any parameter change, even when only one partition is affected (e.g. `rate_loss` only affects neomorphic partitions). Maintain per-CacheUnit validity flags so NNI proposals can reuse cached CLs for unaffected partitions after a parameter-only move. Benefit scales with partition diversity. |
