@@ -32,7 +32,7 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 
 
-| M-161 | P2 | OPEN | **Per-partition CL cache validity.** `nodeCL.valid = false` invalidates all CacheUnits on any parameter change, even when only one partition is affected (e.g. `rate_loss` only affects neomorphic partitions). Maintain per-CacheUnit validity flags so NNI proposals can reuse cached CLs for unaffected partitions after a parameter-only move. Benefit scales with partition diversity. |
+
 
 
 
