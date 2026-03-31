@@ -1,6 +1,6 @@
 # MkPrime — Strategic Coordination
 
-Last updated: 2026-03-31 06:50
+Last updated: 2026-03-31 14:30
 
 ## Project State
 
@@ -15,6 +15,13 @@ Last updated: 2026-03-31 06:50
 - **Checkpoint series complete:** M-149 (interrupt-safe checkpointing, 7 sub-bugs), M-150 (maxTime checkpoint). All checkpoint/resume paths now covered.
 - **M-153 tree construction bug fix (2026-03-31):** Nnode off-by-one (`n-2` → `n-1`) + `TreeTools::Preorder()` wrapping at 3 sites in `RunMkPrime.R`. Fixed segfault in `TreeDist::RobinsonFoulds()` during convergence checks. Validated on project3832 (10 taxa, 27 chars).
 - **M-154 Gibbs kPrime sweep + block shift (2026-03-31):** Two new C++ moves for transformational k' inference. S-RED round 15 found no bugs; S-PROF round 3 identified 10× overhead vs int_walk → filed M-155.
+- **M-155 Gibbs kPrime batch optimization (2026-03-31):** Batched partition-level pruning with progressive early termination. 3.6× speedup on Sun2018 (nCat=6).
+- **M-156 fast_exp (2026-03-31):** Degree-11 Taylor polynomial ~4× faster than std::exp, ~8-9% wall-time savings. 23 call sites.
+- **M-157 fused ascertainment (2026-03-31):** Folded constant-site prob into flat pruning, eliminating 6.6% CPU separate traversals.
+- **M-159 cache-aware scheduling (2026-03-31):** Boost partial-CL-eligible move weights when cache is valid. State-dependent mixture kernel.
+- **M-163 BG hyperparameter slice sampler (2026-03-31):** Prior-only slice sampler for kprimeAlpha/kprimeBeta. moveType 29.
+- **M-164 Gibbs kPrime pre-filter (2026-03-31):** LOG_CUTOFF tightened to -25; prior-ceiling pre-filter skips expensive traversals.
+- **M-165 (in progress):** BG hyperparameter adaptation + mixing fix. Three root causes identified (adaptation threshold, default scale, moveWeights validation).
 
 MkPrime is a new R package for Bayesian phylogenetic inference under the
 Mk' model. The architecture follows StratoBayes (C++ hot loop via Rcpp,
