@@ -21,7 +21,11 @@
 // constant_site_prob_jc
 //
 // P(constant site) for JC(k): sum over k constant patterns.
-// Uses k pseudo-characters, one per constant state.
+//
+// M-170: JC symmetry — P(all tips = s) is identical for all s, so only
+// one pseudo-character is needed (all tips in state 0).  Multiply result
+// by kStates to recover the full sum.  This replaces the prior k pseudo-
+// character traversals with a single traversal, giving a k× speedup.
 // ---------------------------------------------------------------------------
 
 // [[Rcpp::export]]
@@ -32,12 +36,12 @@ double constant_site_prob_jc(Rcpp::IntegerVector parent,
                              int kStates,
                              Rcpp::NumericVector root_freqs,
                              Rcpp::NumericVector rate_multipliers) {
-  const int nEdge = parent.size();
-  const int nCat  = rate_multipliers.size();
+  const int nEdge   = parent.size();
+  const int nCat    = rate_multipliers.size();
   const int maxNode = 2 * nTip - 1;  // OPP-2
   const int root    = nTip + 1;
-  const int nChar   = kStates;        // one pseudo-char per constant state
-  const int stride  = nChar * kStates;
+  // M-170: single pseudo-character (all tips in state 0); stride = kStates
+  const int stride  = kStates;
 
   const double inv_k = 1.0 / kStates;
   const double km1   = kStates - 1.0;
@@ -46,11 +50,9 @@ double constant_site_prob_jc(Rcpp::IntegerVector parent,
   std::vector<double>  cl_flat((maxNode + 1) * stride, 0.0);
   std::vector<uint8_t> cl_init(maxNode + 1, 0u);
 
-  // Tip-init hoist: tips are identical across rate categories — init once.
+  // Tip-init hoist: all tips in state 0 (CL[0] = 1, rest 0 from init).
   for (int tip = 1; tip <= nTip; ++tip) {
-    double* cl = cl_flat.data() + tip * stride;
-    for (int s = 0; s < kStates; ++s)
-      cl[s * kStates + s] = 1.0;
+    cl_flat[tip * stride] = 1.0;
     cl_init[tip] = 1;
   }
 
@@ -65,45 +67,37 @@ double constant_site_prob_jc(Rcpp::IntegerVector parent,
     for (int e = nEdge - 1; e >= 0; --e) {
       const int par = parent[e];
       const int ch  = child[e];
-      const double t        = edge_length[e] * rate;
-      const double exp_term = MKP_EXP(-kStates * t / km1);
-      const double p_same   = inv_k + (1.0 - inv_k) * exp_term;
-      const double p_diff   = inv_k - inv_k * exp_term;
+      const double t          = edge_length[e] * rate;
+      const double exp_term   = MKP_EXP(-kStates * t / km1);
+      const double p_same     = inv_k + (1.0 - inv_k) * exp_term;
+      const double p_diff     = inv_k - inv_k * exp_term;
       const double diff_coeff = p_same - p_diff;  // OPP-1
       double* clPar = cl_flat.data() + par * stride;
       double* clCh  = cl_flat.data() + ch  * stride;
 
+      double sum_cl = 0.0;
+      for (int j = 0; j < kStates; ++j) sum_cl += clCh[j];
+
       if (!cl_init[par]) {
-        for (int c = 0; c < nChar; ++c) {
-          const int offset = c * kStates;
-          double sum_cl = 0.0;
-          for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
-          for (int i = 0; i < kStates; ++i)
-            clPar[offset + i] = p_diff * sum_cl + diff_coeff * clCh[offset + i];
-        }
+        for (int i = 0; i < kStates; ++i)
+          clPar[i] = p_diff * sum_cl + diff_coeff * clCh[i];
         cl_init[par] = 1;
       } else {
-        for (int c = 0; c < nChar; ++c) {
-          const int offset = c * kStates;
-          double sum_cl = 0.0;
-          for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
-          for (int i = 0; i < kStates; ++i)
-            clPar[offset + i] *= p_diff * sum_cl + diff_coeff * clCh[offset + i];
-        }
+        for (int i = 0; i < kStates; ++i)
+          clPar[i] *= p_diff * sum_cl + diff_coeff * clCh[i];
       }
     }
 
+    // Root: accumulate site likelihood for the single pseudo-character.
     const double* clRoot = cl_flat.data() + root * stride;
-    for (int s = 0; s < kStates; ++s) {
-      const int offset = s * kStates;
-      double site_lik = 0.0;
-      for (int i = 0; i < kStates; ++i)
-        site_lik += root_freqs[i] * clRoot[offset + i];
-      total_const_prob += site_lik;
-    }
+    double site_lik = 0.0;
+    for (int i = 0; i < kStates; ++i)
+      site_lik += inv_k * clRoot[i];  // root_freqs[i] = inv_k
+    total_const_prob += site_lik;
   }
 
-  return total_const_prob / nCat;
+  // Multiply by kStates: compensates for using 1 pseudo-char instead of k.
+  return total_const_prob * kStates / nCat;
 }
 
 
