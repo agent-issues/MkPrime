@@ -210,9 +210,31 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
     model <- ckp$model
     mcmc  <- ckp$mcmc
 
+    # Try to load trees from the Newick file.  Derive the path from the
+    # log file location (not mcmc$treeFile, which stores a path relative
+    # to the working directory at run time, which may have changed).
+    treeFile <- sub("\\.[^.]+$", "_trees.nwk", logFile)
+    trees <- list()
+    if (file.exists(treeFile)) {
+      treeLines <- readLines(treeFile, warn = FALSE)
+      treeLines <- treeLines[nzchar(trimws(treeLines))]
+      if (length(treeLines) > 0L) {
+        trees <- tryCatch(
+          lapply(treeLines, function(x) ape::read.tree(text = x)),
+          error = function(e) {
+            cli::cli_alert_warning(
+              "Could not parse tree file {.file {treeFile}}: \\
+               {conditionMessage(e)}"
+            )
+            list()
+          }
+        )
+      }
+    }
+
     result <- MkPosterior(
       samples    = samples,
-      trees      = list(),
+      trees      = trees,
       acceptance = numeric(0),
       model      = model,
       data       = NULL,
@@ -226,14 +248,20 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
     result$logFile     <- logPaths
 
     if (length(logPaths) > 1L) {
-      result$nRuns   <- length(logPaths)
-      result$per_run <- lapply(logPaths, function(f) {
+      perRun <- lapply(logPaths, function(f) {
         s <- tryCatch(ReadMkLog(f), error = function(e) {
           matrix(numeric(0), nrow = 0, ncol = ncol(samples))
         })
         list(samples = s, trees = list(), acceptance = numeric(0),
              saved_idx = nrow(s))
       })
+      # Drop runs with no samples (e.g. stale log from a prior attempt)
+      hasData <- vapply(perRun, function(r) nrow(r$samples) > 0L, logical(1))
+      perRun <- perRun[hasData]
+      if (length(perRun) > 1L) {
+        result$nRuns   <- length(perRun)
+        result$per_run <- perRun
+      }
     }
 
     cli::cli_alert_success(

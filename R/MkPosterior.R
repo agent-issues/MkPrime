@@ -210,6 +210,7 @@ plot.MkPosterior <- function(x, ...) {
 
       first <- TRUE
       for (run in seq_len(nRuns)) {
+        if (nrow(pb$per_run[[run]]$samples) == 0L) next
         runData <- pb$per_run[[run]]$samples[, colIdx]
         iters <- seq_along(runData)
         if (first) {

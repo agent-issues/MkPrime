@@ -203,6 +203,38 @@ posterior <- RunMkPrime(
 saveRDS(posterior, "hyoliths_posterior.rds")
 ```
 
+### Recovering an interrupted run
+
+Long MCMC runs may be interrupted — by pressing Escape, an R session
+crash, or a timeout.
+`RunMkPrime()` streams samples to disk as it runs, so partial results are
+never lost.
+If you supplied a `logFile` in `MkPrimeMCMC()`, recover with:
+
+```{r recover}
+#| eval: false
+posterior <- MkPrimeRecover(logFile = "hyoliths.log")
+posterior
+```
+
+`MkPrimeRecover()` discovers the per-run log files (`hyoliths_1.log`,
+`hyoliths_2.log`, …) automatically. If a checkpoint file (`.ckp`) exists
+alongside the logs, model and MCMC metadata are restored as well.
+
+To **resume** a run from where it left off instead of just loading the
+partial samples, re-run the same `RunMkPrime()` call without
+`overwrite = TRUE` — the checkpoint is detected and the chain continues:
+
+```{r resume}
+#| eval: false
+posterior <- RunMkPrime(
+  data       = pd,
+  neomorphic = neomorphicChars,
+  model      = model,
+  mcmc       = mcmcProduction
+)
+```
+
 Demo run:
 
 ```{r run-demo}
