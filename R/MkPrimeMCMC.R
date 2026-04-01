@@ -321,7 +321,8 @@ MkPrimeMCMC <- function(
     cacheBonus = 5,
     tuning = list(),
     parallel = FALSE,
-    pollInterval = 10L
+    pollInterval = 10L,
+    gibbsWarmupFactor = 1/3
 ) {
   nIter <- if (is.infinite(nIter)) Inf else as.integer(nIter)
   if (!identical(thin, "auto")) {
@@ -591,7 +592,8 @@ MkPrimeMCMC <- function(
          moveWeights = moveWeights,
          cacheBonus = cacheBonus,
          tuning = tuning,
-         parallel = parallel, pollInterval = pollInterval),
+         parallel = parallel, pollInterval = pollInterval,
+         gibbsWarmupFactor = gibbsWarmupFactor),
     class = "MkPrimeMCMC"
   )
 }

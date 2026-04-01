@@ -705,6 +705,8 @@ RunMkPrime <- function(data, tree = NULL,
 
   moveDim       <- vapply(moves, function(m) m$dim %||% 1L, integer(1L))
   names(moveDim) <- moveNames
+  # M-171: index for warmup-phase sweep frequency reduction (NA = no trans chars)
+  gibbsKpIdx <- match("gibbs_kPrime", moveNames)
   moveTypeCodes <- vapply(moves, function(m) .kMoveTypes[[m$name]], integer(1L))
   # Slice param index: 0=treeLength, 1=rateLoss, 2=rateLogSd, 3=rateNeo, 4=betaScale
   sliceParamCodes <- vapply(moves, function(m) m$sliceParamIdx %||% 0L, integer(1L))
@@ -999,6 +1001,15 @@ RunMkPrime <- function(data, tree = NULL,
         pinnedWeights = pinnedWeights,
         warmupProgress = min(1, batchEnd / warmupHorizon)
       )
+
+      # M-171: Reduce Gibbs kPrime sweep frequency during warmup.
+      # The sweep costs ~200 ms/call and pinned at weight ∝ nTrans; calling
+      # it at 1/3 weight cuts warmup sweep overhead ~3× while int_walk and
+      # block_shift moves maintain k' exploration between sweeps. Full weight
+      # is restored at the Warmup→Tuning/Sample transition below.
+      moveWeights <- .WarmupGibbsCap(moveWeights, pinnedWeights, gibbsKpIdx,
+                                      factor = mcmc$gibbsWarmupFactor %||% (1/3))
+
       tickerPages <- sprintf("warmup: ~%d iter", warmupHorizon)
 
       # M-126: Accumulate cold-chain state snapshots for rho estimation.
@@ -1023,6 +1034,9 @@ RunMkPrime <- function(data, tree = NULL,
         r$nStableConsecutive <- nStableConsecutive
 
         if (stabResult$stable || batchEnd >= mcmc$warmup) {
+          # M-171: Restore gibbs_kPrime to full pinned weight before Tuning/Sample.
+          moveWeights <- .RestoreGibbsCap(moveWeights, pinnedWeights, gibbsKpIdx)
+
           # Transition: Warmup → Tuning (or Sample if autoTune = FALSE)
           if (batchEnd >= mcmc$warmup && !stabResult$stable) {
             cli::cli_warn(
@@ -3418,6 +3432,64 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     }
   }
   newWeights
+}
+
+
+# --- M-171: Warmup Gibbs kPrime sweep frequency reduction ---
+
+#' Cap gibbs_kPrime weight during warmup.
+#'
+#' Reduces the `gibbs_kPrime` move weight to `factor` times its pinned value,
+#' redistributing the freed weight proportionally to non-pinned moves.
+#' No-op if `factor >= 1`, no transformational characters, or `pinnedWeights`
+#' is NULL.
+#'
+#' @param factor Numeric scalar in (0, 1]. Default `1/3`.
+#' @keywords internal
+.WarmupGibbsCap <- function(weights, pinnedWeights, gibbsKpIdx, factor = 1/3) {
+  if (is.na(gibbsKpIdx) || is.null(pinnedWeights) || factor >= 1) return(weights)
+  gibbsPin <- pinnedWeights[["gibbs_kPrime"]]
+  if (is.null(gibbsPin)) return(weights)
+
+  gibbsTarget <- gibbsPin * factor
+  delta <- weights[[gibbsKpIdx]] - gibbsTarget
+  if (delta < 1e-12) return(weights)
+
+  # Redistribute to free (non-pinned) moves
+  pinnedIdx <- match(names(pinnedWeights), names(weights))
+  pinnedIdx <- pinnedIdx[!is.na(pinnedIdx)]
+  freeIdx   <- setdiff(seq_along(weights), pinnedIdx)
+  freeSum   <- sum(weights[freeIdx])
+
+  weights[[gibbsKpIdx]] <- gibbsTarget
+  if (length(freeIdx) > 0L && freeSum > 1e-12)
+    weights[freeIdx] <- weights[freeIdx] + delta * weights[freeIdx] / freeSum
+  weights
+}
+
+#' Restore gibbs_kPrime to its pinned weight at the Warmup→Tuning/Sample transition.
+#'
+#' Undoes the reduction applied by `.WarmupGibbsCap()`. Excess weight is reclaimed
+#' proportionally from non-pinned moves.
+#'
+#' @keywords internal
+.RestoreGibbsCap <- function(weights, pinnedWeights, gibbsKpIdx) {
+  if (is.na(gibbsKpIdx) || is.null(pinnedWeights)) return(weights)
+  gibbsPin <- pinnedWeights[["gibbs_kPrime"]]
+  if (is.null(gibbsPin)) return(weights)
+
+  delta <- gibbsPin - weights[[gibbsKpIdx]]
+  if (delta < 1e-12) return(weights)
+
+  pinnedIdx <- match(names(pinnedWeights), names(weights))
+  pinnedIdx <- pinnedIdx[!is.na(pinnedIdx)]
+  freeIdx   <- setdiff(seq_along(weights), pinnedIdx)
+  freeSum   <- sum(weights[freeIdx])
+
+  weights[[gibbsKpIdx]] <- gibbsPin
+  if (length(freeIdx) > 0L && freeSum > delta)
+    weights[freeIdx] <- weights[freeIdx] * (freeSum - delta) / freeSum
+  weights
 }
 
 
