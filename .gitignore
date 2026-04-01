@@ -67,3 +67,5 @@ test_gibbs_*.R
 project3832*
 EOF 2>&1
 benchmarks/
+/vtune*
+MkPrime_*.gz
