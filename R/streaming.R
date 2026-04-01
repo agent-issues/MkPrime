@@ -146,22 +146,110 @@
 #' Recover partial results from an interrupted run
 #'
 #' When [RunMkPrime()] is interrupted (e.g. by pressing Escape or Ctrl-C),
-#' samples already flushed to disk are preserved in a temporary log file.
+#' samples already flushed to disk are preserved in a log file.
 #' Call `MkPrimeRecover()` to load those samples into an `MkPosterior`
 #' object.
 #'
-#' Recovery is only available within the same R session as the interrupted
-#' run.  Starting a new [RunMkPrime()] call discards the temporary files.
+#' With no arguments, `MkPrimeRecover()` looks for temporary log files
+#' from the most recent interrupted run in the current session.  Pass
+#' `logFile` to recover from named log files (e.g. after restarting R).
+#'
+#' @param logFile Character.  Base path of the log file(s) written by
+#'   [RunMkPrime()].  For multi-run analyses, pass the base name
+#'   (e.g. `"hyoliths.log"`); the per-run files `hyoliths_1.log`,
+#'   `hyoliths_2.log`, etc. are discovered automatically.  A single
+#'   file path is also accepted.
+#' @param checkpointFile Character.  Path to the `.ckp` checkpoint file.
+#'   If `NULL` (default), derived from `logFile` by replacing the
+#'   extension with `.ckp`.  The checkpoint supplies `model` and `mcmc`
+#'   metadata; recovery still works without it, but the returned object
+#'   will have less metadata.
 #'
 #' @return An [MkPosterior] object containing the partial samples, or
-#'   `NULL` (with a message) if no interrupted run is available.
+#'   `NULL` (with a message) if no data is available.
 #'
 #' @seealso [RunMkPrime()], [ReadMkLog()]
 #' @export
-MkPrimeRecover <- function() {
+MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
+
+  # --- Path 1: recover from named log file(s) on disk ---
+  if (!is.null(logFile)) {
+    logPaths <- .DiscoverLogFiles(logFile)
+    if (is.null(logPaths)) {
+      cli::cli_alert_danger("No log files found for {.file {logFile}}.")
+      return(invisible(NULL))
+    }
+
+    samples <- tryCatch(
+      ReadMkLog(logPaths),
+      error = function(e) {
+        cli::cli_alert_danger(
+          "Failed to read log file{?s}: {conditionMessage(e)}"
+        )
+        return(NULL)
+      }
+    )
+
+    if (is.null(samples) || nrow(samples) == 0L) {
+      nLP <- length(logPaths)
+      cli::cli_alert_warning(
+        "Log {cli::qty(nLP)}file{?s} contain{?s/} no samples \\
+         (run may have been interrupted before any were flushed)."
+      )
+      return(invisible(NULL))
+    }
+
+    # Try to load metadata from checkpoint
+    ckpFile <- checkpointFile %||%
+      sub("(_\\d+)?\\.[^.]+$", ".ckp", logPaths[1])
+    ckp <- NULL
+    if (file.exists(ckpFile)) {
+      ckp <- tryCatch(readRDS(ckpFile), error = function(e) NULL)
+    }
+
+    model <- ckp$model
+    mcmc  <- ckp$mcmc
+
+    result <- MkPosterior(
+      samples    = samples,
+      trees      = list(),
+      acceptance = numeric(0),
+      model      = model,
+      data       = NULL,
+      mcmc       = mcmc,
+      warmup     = mcmc$warmup %||% 0L,
+      tuning     = NULL
+    )
+    result$partial     <- TRUE
+    result$nSamples    <- nrow(samples)
+    result$stop_reason <- "recovered"
+    result$logFile     <- logPaths
+
+    if (length(logPaths) > 1L) {
+      result$nRuns   <- length(logPaths)
+      result$per_run <- lapply(logPaths, function(f) {
+        s <- tryCatch(ReadMkLog(f), error = function(e) {
+          matrix(numeric(0), nrow = 0, ncol = ncol(samples))
+        })
+        list(samples = s, trees = list(), acceptance = numeric(0),
+             saved_idx = nrow(s))
+      })
+    }
+
+    cli::cli_alert_success(
+      "Recovered {nrow(samples)} sample{?s} from \\
+       {length(logPaths)} log file{?s}."
+    )
+    return(result)
+  }
+
+  # --- Path 2: recover from session-local temp logs (existing behaviour) ---
   rec <- .mkp_env$recovery
   if (is.null(rec)) {
-    cli::cli_alert_info("No interrupted run to recover.")
+    cli::cli_alert_info(
+      "No interrupted run to recover.
+       {.emph Tip: pass {.arg logFile} to recover from a named log file.}"
+    )
     return(invisible(NULL))
   }
 
@@ -189,7 +277,9 @@ MkPrimeRecover <- function() {
   samples <- tryCatch(
     ReadMkLog(rec$logFiles),
     error = function(e) {
-      cli::cli_alert_danger("Failed to read log file{?s}: {conditionMessage(e)}")
+      cli::cli_alert_danger(
+        "Failed to read log file{?s}: {conditionMessage(e)}"
+      )
       return(NULL)
     }
   )
@@ -225,6 +315,40 @@ MkPrimeRecover <- function() {
     "Recovered {nrow(samples)} sample{?s} from interrupted run."
   )
   result
+}
+
+
+#' Discover per-run log files from a base log path
+#'
+#' Tries the `_N.log` multi-run naming convention first, then falls back
+#' to the exact path.  Returns `NULL` if no files are found.
+#' @keywords internal
+.DiscoverLogFiles <- function(logFile) {
+  # Try multi-run pattern: base_1.ext, base_2.ext, ...
+  ext  <- tools::file_ext(logFile)
+  base <- tools::file_path_sans_ext(logFile)
+  first <- if (nzchar(ext)) paste0(base, "_1.", ext) else paste0(base, "_1")
+
+  if (file.exists(first)) {
+    paths <- first
+    n <- 2L
+    repeat {
+      nxt <- if (nzchar(ext)) {
+        paste0(base, "_", n, ".", ext)
+      } else {
+        paste0(base, "_", n)
+      }
+      if (!file.exists(nxt)) break
+      paths <- c(paths, nxt)
+      n <- n + 1L
+    }
+    return(paths)
+  }
+
+  # Fall back to exact file
+ if (file.exists(logFile)) return(logFile)
+
+  NULL
 }
 
 

@@ -39,16 +39,21 @@ MkPosterior <- function(samples, trees, acceptance, model, data, mcmc,
 print.MkPosterior <- function(x, ...) {
   cli::cli_h1("MkPrime Posterior")
 
-  nRuns <- x$nRuns %||% 1L
-  nChains <- x$mcmc$nChains
+  nRuns   <- x$nRuns %||% 1L
+  nChains <- x$mcmc$nChains %||% 1L
+  thin    <- x$mcmc$thin %||% 1L
 
-  treeThin <- x$treeThin %||% x$mcmc$thin
-  info <- c(
-    "Iterations: {x$mcmc$nIter} ({x$warmup} warmup, thinned by {x$mcmc$thin})"
-  )
-  if (treeThin > x$mcmc$thin) {
-    info <- c(info,
-      "Tree samples: {length(x$trees)} (thinned by {treeThin})")
+  treeThin <- x$treeThin %||% thin
+  if (!is.null(x$mcmc)) {
+    info <- c(
+      "Iterations: {x$mcmc$nIter} ({x$warmup} warmup, thinned by {thin})"
+    )
+    if (treeThin > thin) {
+      info <- c(info,
+        "Tree samples: {length(x$trees)} (thinned by {treeThin})")
+    }
+  } else {
+    info <- character(0)
   }
 
   if (nRuns > 1L) {
@@ -64,33 +69,44 @@ print.MkPosterior <- function(x, ...) {
   if (!is.null(x$logFile)) {
     info <- c(info,
       "Total samples: {x$nSamples} (streamed to disk)",
-      "Parameters: {ncol(x$samples)}",
-      "Characters: {x$data$nChar} ({sum(x$data$type == 'transformational')} transformational, {sum(x$data$type == 'neomorphic')} neomorphic, {sum(x$data$type == 'known')} known)"
+      "Parameters: {ncol(x$samples)}"
     )
   } else {
     info <- c(info,
       "Total samples: {(.PostBurninSampleCount(x))}",
-      "Parameters: {ncol(x$samples)}",
+      "Parameters: {ncol(x$samples)}"
+    )
+  }
+
+  if (!is.null(x$data)) {
+    info <- c(info,
       "Characters: {x$data$nChar} ({sum(x$data$type == 'transformational')} transformational, {sum(x$data$type == 'neomorphic')} neomorphic, {sum(x$data$type == 'known')} known)"
     )
   }
 
   if (!is.null(x$stop_reason)) {
-    info <- c(info, "Stopped: {x$stop_reason} (iter {x$actual_iter})")
+    reason <- x$stop_reason
+    if (!is.null(x$actual_iter)) {
+      info <- c(info, "Stopped: {reason} (iter {x$actual_iter})")
+    } else {
+      info <- c(info, "Stopped: {reason}")
+    }
   }
 
   cli::cli_ul(info)
 
-  if (!is.null(x$logFile)) {
+  if (!is.null(x$logFile) && nrow(x$samples) == 0L) {
     cli::cli_alert_info(c(
       "Streaming mode: samples are on disk, not in memory.",
       "i" = "Load with: {.code result$samples <- ReadMkLog(result$logFile)}"
     ))
   }
 
-  cli::cli_h2("Acceptance rates (cold chain)")
-  for (nm in names(x$acceptance)) {
-    cli::cli_li("{nm}: {format(round(x$acceptance[nm], 3), nsmall = 3)}")
+  if (length(x$acceptance) > 0L) {
+    cli::cli_h2("Acceptance rates (cold chain)")
+    for (nm in names(x$acceptance)) {
+      cli::cli_li("{nm}: {format(round(x$acceptance[nm], 3), nsmall = 3)}")
+    }
   }
 
   if (!is.null(x$swap_rates)) {

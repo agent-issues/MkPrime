@@ -128,7 +128,7 @@ test_that(".TreeESS default returns median only (cross-distance fast path)", {
   skip_if_not_installed("TreeDist")
   skip_if_not_installed("ape")
 
-  library(ape)
+  library("ape")
   tr1 <- read.tree(text = "((a,b),(c,(d,e)));")
   tr2 <- read.tree(text = "(((a,b),c),(d,e));")
   tr3 <- read.tree(text = "((a,(b,c)),(d,e));")
@@ -145,7 +145,7 @@ test_that(".TreeESS with frechet = TRUE computes both methods", {
   skip_if_not_installed("TreeDist")
   skip_if_not_installed("ape")
 
-  library(ape)
+  library("ape")
   tr1 <- read.tree(text = "((a,b),(c,(d,e)));")
   tr2 <- read.tree(text = "(((a,b),c),(d,e));")
   tr3 <- read.tree(text = "((a,(b,c)),(d,e));")
@@ -161,7 +161,7 @@ test_that("median pseudo-ESS agrees between fast path and full matrix", {
   skip_if_not_installed("TreeDist")
   skip_if_not_installed("ape")
 
-  library(ape)
+  library("ape")
   tr1 <- read.tree(text = "((a,b),(c,(d,e)));")
   tr2 <- read.tree(text = "(((a,b),c),(d,e));")
   tr3 <- read.tree(text = "((a,(b,c)),(d,e));")

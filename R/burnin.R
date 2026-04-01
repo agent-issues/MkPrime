@@ -168,8 +168,9 @@ AutoBurnin <- function(posterior,
   bi <- burnin %||% (posterior$burnin %||% 0L)
 
   # Differential tree thinning: compute tree-side burnin
-  treeThin <- posterior$treeThin %||% posterior$mcmc$thin
-  treeEvery <- max(1L, as.integer(treeThin / posterior$mcmc$thin))
+  thin     <- posterior$mcmc$thin %||% 1L
+  treeThin <- posterior$treeThin %||% thin
+  treeEvery <- max(1L, as.integer(treeThin / thin))
   treeBi <- as.integer(floor(bi / treeEvery))
 
   if (bi == 0L) {

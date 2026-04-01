@@ -44,6 +44,7 @@ MkPrimeMCMC(
   localDirichletK = NULL,
   nBranchBins = 10L,
   moveWeights = NULL,
+  cacheBonus = 5,
   tuning = list(),
   parallel = FALSE,
   pollInterval = 10L
@@ -275,6 +276,15 @@ warmup. Example: \code{moveWeights = c(nni = 0.3, spr = 0.2)} fixes NNI
 at 30\% and SPR at 20\%, with the remaining 50\% allocated adaptively
 among other moves. To disable adaptive scheduling entirely, pin all
 moves (sum to 1). See section \strong{Adaptive move scheduling} below.}
+
+\item{cacheBonus}{Numeric; multiplier applied to partial-CL-eligible
+move weights (NNI, beta_simplex, Dirichlet, local_dirichlet) when the
+node CL cache is valid. Default 5. A value of 1 disables the boost.
+Higher values preferentially select fast partial-CL moves after
+another partial-CL move succeeds, exploiting the ~15\eqn{\times}
+speedup. Statistically valid: each component kernel individually
+satisfies detailed balance; only selection frequency changes.
+Ignored when Q-heterogeneity is enabled (partial CL not supported).}
 
 \item{tuning}{Named list of initial tuning parameters for each move
 type. See Details.}

@@ -48,7 +48,7 @@ counting distinct non-ambiguous states across all taxa.
 }
 \examples{
 \dontrun{
-library(TreeTools)
+library("TreeTools")
 data(Lobo.phy)  # example morphological dataset
 mkd <- MkPrimeData(Lobo.phy)
 summary(mkd)

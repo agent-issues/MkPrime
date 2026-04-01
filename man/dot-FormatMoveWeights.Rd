@@ -9,6 +9,6 @@
 \description{
 Returns a character vector (one element per category line).
 Within each category, moves are sorted from highest to lowest weight.
-Names are silver; values are green (>=10\%), yellow (5-10\%), white (<5\%).
+Headings white, names blue, values green (>=10\%), yellow (5-10\%), silver (<5\%).
 }
 \keyword{internal}

@@ -5,14 +5,14 @@
 \alias{.moveCategoryMap}
 \title{Format move weights as a compact string for display.}
 \format{
-An object of class \code{character} of length 27.
+An object of class \code{character} of length 29.
 }
 \usage{
 .moveCategoryMap
 }
 \description{
-Colour-coded via cli: high-weight moves are bright, low-weight moves
-are dim, and names/equals are silver (M-140).
+Colour-coded via cli (tidyverse-style): headings white, move names
+blue, values green/yellow/silver by weight (u.124).
 }
 \keyword{Category}
 \keyword{definitions}

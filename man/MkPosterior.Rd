@@ -4,7 +4,17 @@
 \alias{MkPosterior}
 \title{Create an MkPosterior result object}
 \usage{
-MkPosterior(samples, trees, acceptance, model, data, mcmc, warmup, tuning)
+MkPosterior(
+  samples,
+  trees,
+  acceptance,
+  model,
+  data,
+  mcmc,
+  warmup,
+  tuning,
+  warmup_trace = NULL
+)
 }
 \arguments{
 \item{samples}{Matrix of posterior samples (nSaved x nParams).}

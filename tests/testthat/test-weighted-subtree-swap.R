@@ -13,8 +13,8 @@
 #   - Acceptance: non-trivial acceptance rate
 #   - Rejection: state unchanged on rejection
 
-library(ape)
-library(TreeTools)
+library("ape")
+library("TreeTools")
 
 # ---------------------------------------------------------------------------
 # Shared fixture

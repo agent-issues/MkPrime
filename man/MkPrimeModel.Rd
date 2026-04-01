@@ -15,9 +15,11 @@ MkPrimeModel(
   rateLossSdlog = 2,
   rateLogSdShape = 1,
   rateLogSdRate = 1,
-  kPrimePrior = "geometric",
+  kPrimePrior = "beta_geometric",
   kprimeHyperA = 1,
   kprimeHyperB = 1,
+  kprimeAlpha = 1,
+  kprimeBeta = 1,
   kprimeLogseriesC = 0.7,
   rateNeoMeanlog = 0,
   rateNeoSdlog = 2,
@@ -50,12 +52,22 @@ on \code{rate_loss} (neomorphic asymmetry). Defaults: meanlog = 0, sdlog = 2.}
 on \code{rate_log_sd} (ACRV dispersion). Defaults: shape = 1, rate = 1.}
 
 \item{kPrimePrior}{Prior distribution for the true number of character states
-(\verb{k'}) for transformational characters. One of \code{"geometric"} (default,
-hierarchical geometric with Beta hyperprior on \code{p}) or \code{"logseries"}
-(logarithmic series with fixed parameter \code{c}; matches the RevBayes default).}
+(\verb{k'}) for transformational characters. One of \code{"beta_geometric"} (default,
+per-character Beta-Geometric with shared hyperparameters \code{alpha}, \code{beta}),
+\code{"geometric"} (hierarchical geometric with Beta hyperprior on \code{p}),
+or \code{"logseries"} (logarithmic series with fixed parameter \code{c}; matches
+the RevBayes default).
+The \code{"beta_geometric"} option avoids over-shrinkage of \verb{k'} toward
+\code{kObs} that occurs when many characters share a single \code{p}.}
 
 \item{kprimeHyperA, kprimeHyperB}{Parameters for the Beta hyperprior on \code{p}
 when \code{kPrimePrior = "geometric"}. Defaults: a = 1, b = 1 (uniform).}
+
+\item{kprimeAlpha, kprimeBeta}{Starting values for the shared
+hyperparameters of the Beta-Geometric prior
+(\code{kPrimePrior = "beta_geometric"}). Both must be positive.
+Defaults: alpha = 1, beta = 1. These are estimated during MCMC with
+Exponential(1) hyperpriors.}
 
 \item{kprimeLogseriesC}{The \code{c} parameter of the log-series prior on \verb{k'}
 when \code{kPrimePrior = "logseries"}. Must be in (0, 1). Default 0.7, matching
