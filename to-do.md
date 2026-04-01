@@ -39,6 +39,7 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 
 
+
 ## Bugs
 
 | ID | Priority | Status | Description |
