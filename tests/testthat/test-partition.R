@@ -101,6 +101,80 @@ test_that("Partition tip_states match original matrix subset", {
 })
 
 
+# ---------------------------------------------------------------------------
+# M-172: unique_tip_states and pattern_index
+# ---------------------------------------------------------------------------
+
+test_that("pattern_index and unique_tip_states are correct for all-unique columns", {
+  mat <- matrix(c(0, 1, 0, 1, 2,
+                  0, 0, 1, 1, 2,
+                  1, 1, 0, 0, 1),
+                nrow = 5, ncol = 3,
+                dimnames = list(paste0("t", 1:5), NULL))
+  pd  <- MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd)
+
+  for (part in mkd$partitions) {
+    # When all columns are distinct, nUnique == nChar
+    expect_equal(ncol(part$unique_tip_states), part$nChar)
+    expect_equal(length(part$pattern_index), part$nChar)
+    expect_true(all(part$pattern_index >= 0L))
+    expect_true(all(part$pattern_index < part$nChar))
+    # unique_tip_states columns are a subset of tip_states columns
+    expect_equal(
+      part$unique_tip_states,
+      part$tip_states[, part$pattern_index + 1L, drop = FALSE]
+    )
+  }
+})
+
+test_that("pattern_index deduplicates identical columns", {
+  # Columns 1 and 3 are identical; column 2 is distinct
+  mat <- matrix(c(0, 1, 0, 1, 0,   # col 1
+                  0, 0, 1, 1, 0,   # col 2
+                  0, 1, 0, 1, 0),  # col 3 == col 1
+                nrow = 5, ncol = 3,
+                dimnames = list(paste0("t", 1:5), NULL))
+  pd  <- MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd)
+
+  # All three are binary transformational → one partition
+  part <- mkd$partitions[[1]]
+  expect_equal(part$nChar, 3L)
+  expect_equal(ncol(part$unique_tip_states), 2L)  # 2 unique patterns
+  # Columns 1 and 3 share the same pattern index; col 2 is different
+  expect_equal(part$pattern_index[1], part$pattern_index[3])
+  expect_false(part$pattern_index[1] == part$pattern_index[2])
+})
+
+test_that("pattern_index treats different NA placement as distinct patterns", {
+  mat <- matrix(c("0", "1", "?", "1", "0",
+                  "0", "1", "1", "?", "0"),
+                nrow = 5, ncol = 2,
+                dimnames = list(paste0("t", 1:5), NULL))
+  pd  <- MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd)
+
+  part <- mkd$partitions[[1]]
+  # NA is in different positions → distinct patterns
+  expect_equal(ncol(part$unique_tip_states), 2L)
+  expect_false(part$pattern_index[1] == part$pattern_index[2])
+})
+
+test_that("unique_tip_states reconstruction matches tip_states via pattern_index", {
+  set.seed(4419)
+  mat <- matrix(sample(0:2, 10 * 8, replace = TRUE), 10, 8,
+                dimnames = list(paste0("t", 1:10), NULL))
+  pd  <- TreeTools::MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd)
+
+  for (part in mkd$partitions) {
+    # Expanding unique_tip_states via pattern_index must recover tip_states
+    reconstructed <- part$unique_tip_states[, part$pattern_index + 1L, drop = FALSE]
+    expect_equal(reconstructed, part$tip_states)
+  }
+})
+
 test_that("Partition tip_states preserve NA for ambiguous data", {
   mat <- matrix(c("0", "1", "?", "1", "2",
                   "0", "0", "1", "?", "2"),

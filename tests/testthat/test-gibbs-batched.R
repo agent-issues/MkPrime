@@ -150,6 +150,96 @@ test_that("batched Gibbs sweep works with single trans char", {
 
 
 # ---------------------------------------------------------------------------
+# M-172: pattern deduplication in Gibbs sweep
+# ---------------------------------------------------------------------------
+
+test_that("Gibbs sweep logLik matches recomputation with fully duplicated patterns", {
+  # All transformational characters share one of two patterns — maximises dedup
+  set.seed(3861)
+  nTip <- 10
+  labs <- paste0("t", seq_len(nTip))
+  pat1 <- sample(0:1, nTip, replace = TRUE)
+  pat2 <- sample(0:1, nTip, replace = TRUE)
+  # 8 characters: alternating pat1 / pat2
+  m <- matrix(rep(c(pat1, pat2), 4)[seq_len(nTip * 8)],
+              nrow = nTip, ncol = 8)
+  for (j in seq_len(8)) m[, j] <- if (j %% 2 == 1) pat1 else pat2
+  dimnames(m) <- list(labs, NULL)
+  pd <- MatrixToPhyDat(m)
+
+  tree <- rtree(nTip, rooted = FALSE)
+  tree$edge.length <- tree$edge.length * 3
+  tree <- Preorder(tree)
+  setup <- .setup_cpp(tree, pd)
+
+  # Confirm partition has deduplication
+  mkd <- setup$mkd
+  part <- mkd$partitions[[1]]
+  expect_lt(ncol(part$unique_tip_states), part$nChar)
+
+  for (i in seq_len(40L))
+    do_move_cpp(setup$dataPtr, setup$statePtr, 25L, 0L, 0.5, 0.5, 1L, 1.0)
+
+  st <- get_mcmc_state(setup$statePtr)
+  fresh_ll <- eval_full_loglik_cpp(setup$dataPtr, setup$statePtr)
+  expect_equal(st$logLik, fresh_ll, tolerance = 1e-10)
+  expect_true(all(st$kPrime >= setup$mkd$kObs))
+})
+
+test_that("Gibbs sweep logLik correct with dedup + ACRV nCat=6", {
+  set.seed(7752)
+  nTip <- 8
+  labs <- paste0("t", seq_len(nTip))
+  base_pat <- sample(0:2, nTip, replace = TRUE)
+  # 6 characters: first 3 identical, last 3 distinct
+  m <- cbind(
+    matrix(rep(base_pat, 3), nTip, 3),
+    matrix(sample(0:2, nTip * 3, replace = TRUE), nTip, 3)
+  )
+  dimnames(m) <- list(labs, NULL)
+  pd <- MatrixToPhyDat(m)
+
+  tree <- rtree(nTip, rooted = FALSE)
+  tree$edge.length <- tree$edge.length * 2
+  tree <- Preorder(tree)
+  model <- MkPrimeModel(nCat = 6L)
+  setup <- .setup_cpp(tree, pd, model)
+
+  for (i in seq_len(50L))
+    do_move_cpp(setup$dataPtr, setup$statePtr, 25L, 0L, 0.5, 0.5, 1L, 1.0)
+
+  st <- get_mcmc_state(setup$statePtr)
+  fresh_ll <- eval_full_loglik_cpp(setup$dataPtr, setup$statePtr)
+  expect_equal(st$logLik, fresh_ll, tolerance = 1e-10)
+})
+
+test_that("Gibbs sweep with dedup + ascertainment correction is correct", {
+  set.seed(6103)
+  nTip <- 10
+  labs <- paste0("t", seq_len(nTip))
+  pat  <- sample(0:1, nTip, replace = TRUE)
+  # 6 identical binary patterns + 2 unique
+  m <- cbind(
+    matrix(rep(pat, 6), nTip, 6),
+    matrix(sample(0:1, nTip * 2, replace = TRUE), nTip, 2)
+  )
+  dimnames(m) <- list(labs, NULL)
+  pd <- MatrixToPhyDat(m)
+
+  tree <- rtree(nTip, rooted = FALSE)
+  tree <- Preorder(tree)
+  model <- MkPrimeModel(coding = "variable")
+  setup <- .setup_cpp(tree, pd, model)
+
+  for (i in seq_len(30L))
+    do_move_cpp(setup$dataPtr, setup$statePtr, 25L, 0L, 0.5, 0.5, 1L, 1.0)
+
+  st <- get_mcmc_state(setup$statePtr)
+  fresh_ll <- eval_full_loglik_cpp(setup$dataPtr, setup$statePtr)
+  expect_equal(st$logLik, fresh_ll, tolerance = 1e-10)
+})
+
+# ---------------------------------------------------------------------------
 # Larger dataset (Sun2018 subset) if available
 # ---------------------------------------------------------------------------
 

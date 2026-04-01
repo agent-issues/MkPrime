@@ -16,6 +16,15 @@ struct PartInfo {
   Rcpp::IntegerMatrix tipStates; // nTip x nChar (0-indexed, -1 = missing)
   Rcpp::IntegerVector kObsLocal; // kObs per character in partition (for relabelling)
   Rcpp::IntegerVector globalCharIdx; // 0-based map: local char → global kPrime index
+
+  // M-172: pattern-compressed tip states for Gibbs sweep deduplication.
+  // uniqueTipStates holds one column per unique tip-pattern; patternIndex[c]
+  // is the 0-based index into uniqueTipStates for the c-th local character.
+  // All characters sharing a pattern have identical likelihoods under any
+  // (k, tree, params) under the symmetric JC model.
+  Rcpp::IntegerMatrix uniqueTipStates; // nTip x nUniquePatterns
+  Rcpp::IntegerVector patternIndex;    // length nChar, 0-based
+  int nUniquePatterns = 0;
 };
 
 // Bin breakpoints for weighted branch-length moves (M-087/088/089/054).

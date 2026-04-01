@@ -3286,30 +3286,31 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
     globalToTransIdx[data->transIdxGlobal[ti]] = ti;
 
   // Identify transformational partitions and determine k range
+  // M-172: also track nUniq (unique tip-patterns per partition)
   struct TransPartInfo {
     int partIdx;
     int kObs;
     int nChar;
+    int nUniq;  // number of unique tip-state patterns
   };
   std::vector<TransPartInfo> transParts;
-  int maxNCharPart = 0;
+  int maxNUniqPart = 0;
   for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
     const PartInfo& p = data->parts[pi];
     if (p.type != 1) continue;
     int kObs_p = data->kObs[p.globalCharIdx[0]];
-    int nCh = p.tipStates.ncol();
-    transParts.push_back({pi, kObs_p, nCh});
-    if (nCh > maxNCharPart) maxNCharPart = nCh;
+    int nCh    = p.tipStates.ncol();
+    int nUniq  = p.nUniquePatterns;
+    transParts.push_back({pi, kObs_p, nCh, nUniq});
+    if (nUniq > maxNUniqPart) maxNUniqPart = nUniq;
   }
 
   // Ensure Gibbs workspace is large enough for the worst-case stride.
-  // At ko=0 with all chars active: stride = nChar × kObs.
-  // At high ko with few chars: stride = nActive × (kObs + ko).
-  // The bound nChar × (kObs + K_MAX_CAND) covers both cases.
+  // M-172: stride is nUniq × k (not nChar × k) — savings proportional to redundancy.
   int maxNode = 2 * data->nTip - 1;
   int gibbsMaxStride = 0;
   for (auto& tp : transParts) {
-    int s = tp.nChar * (tp.kObs + K_MAX_CAND);
+    int s = tp.nUniq * (tp.kObs + K_MAX_CAND);
     if (s > gibbsMaxStride) gibbsMaxStride = s;
   }
   if (!state->gibbsWs.fits(maxNode, gibbsMaxStride))
@@ -3332,33 +3333,43 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   std::vector<bool> terminated(nTrans, false);
   int nActive = nTrans;
 
-  // Temporary per-site output buffer
-  std::vector<double> siteLL(maxNCharPart);
+  // M-172: per-site output buffer sized for unique patterns (≤ nChar)
+  std::vector<double> siteLL(maxNUniqPart);
 
-  // Per-partition active column tracking
+  // M-172: Per-partition active unique-pattern tracking.
+  // patTrans[localPatIdx] lists all trans indices (ti) sharing that pattern.
+  // Characters with the same tip-state column have identical likelihoods under
+  // any (k, tree, params) for the symmetric JC model — evaluate once, replicate.
   struct PartActive {
-    std::vector<int> activeCols;   // local column indices still active
-    std::vector<int> activeTransIdx;  // corresponding transIdx
+    std::vector<int> activePatterns;         // local unique-pattern indices still active
+    std::vector<std::vector<int>> patTrans;  // patTrans[localPat] = trans indices
   };
   std::vector<PartActive> partAct(transParts.size());
   for (int pi = 0; pi < (int)transParts.size(); ++pi) {
     const PartInfo& part = data->parts[transParts[pi].partIdx];
-    int nCh = transParts[pi].nChar;
-    partAct[pi].activeCols.resize(nCh);
-    partAct[pi].activeTransIdx.resize(nCh);
+    int nCh   = transParts[pi].nChar;
+    int nUniq = transParts[pi].nUniq;
+    partAct[pi].patTrans.resize(nUniq);
     for (int c = 0; c < nCh; ++c) {
-      partAct[pi].activeCols[c] = c;
-      partAct[pi].activeTransIdx[c] = globalToTransIdx[part.globalCharIdx[c]];
+      int ti       = globalToTransIdx[part.globalCharIdx[c]];
+      int localPat = part.patternIndex[c];
+      partAct[pi].patTrans[localPat].push_back(ti);
     }
+    partAct[pi].activePatterns.resize(nUniq);
+    for (int j = 0; j < nUniq; ++j) partAct[pi].activePatterns[j] = j;
   }
 
-  // Progressive batched precomputation with early termination
+  // Progressive batched precomputation with early termination (M-155 + M-172)
+  //
+  // M-172: operates on unique tip-state patterns within each partition.
+  // siteLL[ai] is the likelihood for the ai-th active unique pattern; results
+  // are scattered to all characters sharing that pattern after each call.
   for (int ko = 0; ko < K_MAX_CAND && nActive > 0; ++ko) {
 
     for (int pi = 0; pi < (int)transParts.size(); ++pi) {
       auto& tp = transParts[pi];
       auto& pa = partAct[pi];
-      int nAct = (int)pa.activeCols.size();
+      int nAct = (int)pa.activePatterns.size();
       if (nAct == 0) continue;
 
       int k = tp.kObs + ko;
@@ -3370,14 +3381,13 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
       const PartInfo& part = data->parts[tp.partIdx];
 
       // M-164: prior-ceiling pre-filter for ko ≥ 2.
-      // Before expensive tree traversal, check if beta * bestLL + logPrior_k
-      // is already below the cutoff for each character.  If so, prune it
-      // without computing the actual likelihood (safe because likelihood
-      // tends to decrease with higher k).
+      // Use representative (first) trans index per pattern — all sharing a
+      // pattern have identical weights so terminate together.
       if (ko >= 2) {
-        std::vector<int> surviveCols, surviveTransIdx;
+        std::vector<int> survivePatterns;
         for (int ai = 0; ai < nAct; ++ai) {
-          int ti = pa.activeTransIdx[ai];
+          int localPat = pa.activePatterns[ai];
+          int ti0 = pa.patTrans[localPat][0];
           double logPrior_k;
           if (isBetaGeometric) {
             logPrior_k = bgLogPrior[ko];
@@ -3388,51 +3398,49 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
             logPrior_k = k2 * lsLogC
                        - std::log(static_cast<double>(k2)) - lsLogNorm;
           }
-          double optimisticW = beta * charMaxLL[ti] + logPrior_k;
-          if (optimisticW < charMaxLogW[ti] + LOG_CUTOFF) {
-            // Pre-terminate: even the best possible LL can't beat the cutoff
-            terminated[ti] = true;
-            nActive--;
+          double optimisticW = beta * charMaxLL[ti0] + logPrior_k;
+          if (optimisticW < charMaxLogW[ti0] + LOG_CUTOFF) {
+            for (int ti : pa.patTrans[localPat]) {
+              if (!terminated[ti]) { terminated[ti] = true; nActive--; }
+            }
           } else {
-            surviveCols.push_back(pa.activeCols[ai]);
-            surviveTransIdx.push_back(ti);
+            survivePatterns.push_back(localPat);
           }
         }
-        pa.activeCols = std::move(surviveCols);
-        pa.activeTransIdx = std::move(surviveTransIdx);
-        nAct = (int)pa.activeCols.size();
+        pa.activePatterns = std::move(survivePatterns);
+        nAct = (int)pa.activePatterns.size();
         if (nAct == 0) continue;
       }
 
-      // For ko=0 and ko=1, use full partition tipStates (all chars active
-      // or nearly so). For ko≥2, build sub-matrix of active columns only.
-      if (nAct == tp.nChar) {
-        // All chars active — use partition tipStates directly
-        int neededStride = nAct * k;
+      // M-172: call pruning on unique-pattern matrix (nAct ≤ nUniq ≤ nChar).
+      // When all unique patterns are still active, use uniqueTipStates directly;
+      // otherwise build a sub-matrix of the still-active unique patterns.
+      int neededStride = nAct * k;
+      if (nAct == tp.nUniq) {
+        // All unique patterns active — use uniqueTipStates directly
         if (useHet) {
           gibbs_compute_het_bins(state->betaScale, k, nBC, hetBins);
           NumericVector rates = acrvRates;
           if (rates.size() == 0) rates = NumericVector(1, 1.0);
           pruning_f81_het_acrv_persite(
-            state->parent, state->child, edgeLen, part.tipStates,
+            state->parent, state->child, edgeLen, part.uniqueTipStates,
             k, 1.0, hetBins, nBC, rates,
             state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
             neededStride, siteLL.data());
         } else {
           pruning_jc_acrv_persite(
-            state->parent, state->child, edgeLen, part.tipStates,
+            state->parent, state->child, edgeLen, part.uniqueTipStates,
             k, acrvRates,
             state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
             neededStride, siteLL.data());
         }
       } else {
-        // Build sub-matrix of active columns
+        // Build sub-matrix of active unique patterns
         IntegerMatrix sub(nTip, nAct);
         for (int ai = 0; ai < nAct; ++ai)
           for (int t = 0; t < nTip; ++t)
-            sub(t, ai) = part.tipStates(t, pa.activeCols[ai]);
+            sub(t, ai) = part.uniqueTipStates(t, pa.activePatterns[ai]);
 
-        int neededStride = nAct * k;
         if (useHet) {
           gibbs_compute_het_bins(state->betaScale, k, nBC, hetBins);
           NumericVector rates = acrvRates;
@@ -3451,12 +3459,23 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
         }
       }
 
-      // Compute log-weights and check termination
-      std::vector<int> stillActive;
-      std::vector<int> stillActiveTransIdx;
+      // M-172: scatter siteLL[ai] to all characters sharing the active pattern.
+      // logAscCorr and relabelling depend only on (k, kObs) — same for all
+      // characters sharing a pattern — so corrected LL is identical across the
+      // group and termination can be decided from one representative.
+      double logPrior_k;
+      if (isBetaGeometric) {
+        logPrior_k = bgLogPrior[ko];
+      } else if (isGeometric) {
+        logPrior_k = logP + ko * log1mP;
+      } else {
+        logPrior_k = k * lsLogC
+                   - std::log(static_cast<double>(k)) - lsLogNorm;
+      }
 
+      std::vector<int> stillActive;
       for (int ai = 0; ai < nAct; ++ai) {
-        int ti = pa.activeTransIdx[ai];
+        int localPat = pa.activePatterns[ai];
         double ll = siteLL[ai];
         if (R_FINITE(ll) && R_FINITE(logAscCorr))
           ll += logAscCorr;
@@ -3465,35 +3484,29 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
         if (data->relabel && R_FINITE(ll))
           ll += mk_prime_relabel_log(k, tp.kObs);
 
-        // M-164: track best corrected LL for pre-filter
-        if (R_FINITE(ll) && ll > charMaxLL[ti]) charMaxLL[ti] = ll;
+        double w = beta * ll + logPrior_k;
 
-        double logPrior_k;
-        if (isBetaGeometric) {
-          logPrior_k = bgLogPrior[ko];
-        } else if (isGeometric) {
-          logPrior_k = logP + ko * log1mP;
-        } else {
-          logPrior_k = k * lsLogC
-                     - std::log(static_cast<double>(k)) - lsLogNorm;
+        // Update per-character tracking for every character sharing this pattern
+        for (int ti : pa.patTrans[localPat]) {
+          if (R_FINITE(ll) && ll > charMaxLL[ti]) charMaxLL[ti] = ll;
+          charLogW[ti * K_MAX_CAND + ko] = w;
+          charNCand[ti]++;
+          if (w > charMaxLogW[ti]) charMaxLogW[ti] = w;
         }
 
-        double w = beta * ll + logPrior_k;
-        charLogW[ti * K_MAX_CAND + ko] = w;
-        charNCand[ti]++;
-        if (w > charMaxLogW[ti]) charMaxLogW[ti] = w;
-
-        if (!R_FINITE(ll) || w < charMaxLogW[ti] + LOG_CUTOFF) {
-          terminated[ti] = true;
-          nActive--;
+        // Termination check: representative ti0 holds the same charMaxLogW as all
+        // others in the group (identical weights throughout), so one check suffices.
+        int ti0 = pa.patTrans[localPat][0];
+        if (!R_FINITE(ll) || w < charMaxLogW[ti0] + LOG_CUTOFF) {
+          for (int ti : pa.patTrans[localPat]) {
+            if (!terminated[ti]) { terminated[ti] = true; nActive--; }
+          }
         } else {
-          stillActive.push_back(pa.activeCols[ai]);
-          stillActiveTransIdx.push_back(ti);
+          stillActive.push_back(localPat);
         }
       }
 
-      pa.activeCols = std::move(stillActive);
-      pa.activeTransIdx = std::move(stillActiveTransIdx);
+      pa.activePatterns = std::move(stillActive);
     }
   }
 
