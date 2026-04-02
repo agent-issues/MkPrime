@@ -47,7 +47,8 @@ MkPrimeMCMC(
   cacheBonus = 5,
   tuning = list(),
   parallel = FALSE,
-  pollInterval = 10L
+  pollInterval = 10L,
+  gibbsWarmupFactor = 1/3
 )
 }
 \arguments{

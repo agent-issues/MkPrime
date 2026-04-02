@@ -4,7 +4,7 @@
 #' neomorphic (asymmetric binary), transformational (Mk' with inferred k'),
 #' or known state space (standard Mk with user-specified k).
 #'
-#' @param data A `phyDat` object (from ape or TreeTools).
+#' @param data A `phyDat` object (from \pkg{ape} or \pkg{TreeTools}).
 #' @param neomorphic Integer vector of character indices to treat as neomorphic
 #'   (asymmetric binary, 0 = absent, 1 = present). Default: none.
 #' @param knownStates Named integer vector specifying the known true number of

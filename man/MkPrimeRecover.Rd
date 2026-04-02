@@ -4,21 +4,35 @@
 \alias{MkPrimeRecover}
 \title{Recover partial results from an interrupted run}
 \usage{
-MkPrimeRecover()
+MkPrimeRecover(logFile = NULL, checkpointFile = NULL)
+}
+\arguments{
+\item{logFile}{Character.  Base path of the log file(s) written by
+\code{\link[=RunMkPrime]{RunMkPrime()}}.  For multi-run analyses, pass the base name
+(e.g. \code{"hyoliths.log"}); the per-run files \code{hyoliths_1.log},
+\code{hyoliths_2.log}, etc. are discovered automatically.  A single
+file path is also accepted.}
+
+\item{checkpointFile}{Character.  Path to the \code{.ckp} checkpoint file.
+If \code{NULL} (default), derived from \code{logFile} by replacing the
+extension with \code{.ckp}.  The checkpoint supplies \code{model} and \code{mcmc}
+metadata; recovery still works without it, but the returned object
+will have less metadata.}
 }
 \value{
 An \link{MkPosterior} object containing the partial samples, or
-\code{NULL} (with a message) if no interrupted run is available.
+\code{NULL} (with a message) if no data is available.
 }
 \description{
 When \code{\link[=RunMkPrime]{RunMkPrime()}} is interrupted (e.g. by pressing Escape or Ctrl-C),
-samples already flushed to disk are preserved in a temporary log file.
+samples already flushed to disk are preserved in a log file.
 Call \code{MkPrimeRecover()} to load those samples into an \code{MkPosterior}
 object.
 }
 \details{
-Recovery is only available within the same R session as the interrupted
-run.  Starting a new \code{\link[=RunMkPrime]{RunMkPrime()}} call discards the temporary files.
+With no arguments, \code{MkPrimeRecover()} looks for temporary log files
+from the most recent interrupted run in the current session.  Pass
+\code{logFile} to recover from named log files (e.g. after restarting R).
 }
 \seealso{
 \code{\link[=RunMkPrime]{RunMkPrime()}}, \code{\link[=ReadMkLog]{ReadMkLog()}}

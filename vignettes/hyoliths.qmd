@@ -206,7 +206,7 @@ saveRDS(posterior, "hyoliths_posterior.rds")
 ### Recovering an interrupted run
 
 Long MCMC runs may be interrupted — by pressing Escape, an R session
-crash, or a timeout.
+termination, or a timeout.
 `RunMkPrime()` streams samples to disk as it runs, so partial results are
 never lost.
 If you supplied a `logFile` in `MkPrimeMCMC()`, recover with:
@@ -342,7 +342,7 @@ plot(TreeTools::SortTree(TreeTools::RootTree(consensus, outgroup)),
 ```{r tree-summary-demo}
 #| eval: true
 # Majority-rule consensus from a demo run
-allTrees <- posteriorDemo$trees[-(1:100)]
+allTrees <- posteriorDemo$trees
 
 
 # Identify rogue taxa
@@ -365,19 +365,6 @@ plot(consensus, cex = 0.6, main = consTitle)
 
 ```{r save-load}
 #| eval: false
-saveRDS(posterior, "hyoliths_posterior.rds")
-posterior <- readRDS("hyoliths_posterior.rds")
+saveRDS(posterior, "hyoliths_posterior.rds") # Save results to file
+posterior <- readRDS("hyoliths_posterior.rds") # Load results from file
 ```
-
-To enable checkpoint files (which allow resuming after interruption):
-
-```{r checkpoint}
-#| eval: false
-mcmcCheckpointed <- MkPrimeMCMC(
-  nIter          = 200000L,
-  nRuns          = 2L,
-  nChains        = 4L,
-  checkpointFile = "hyoliths_checkpoint.rds"
-)
-```
-
