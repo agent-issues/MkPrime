@@ -407,6 +407,226 @@ test_that("PruningJcEcology matches reference with ACRV (nCat = 4)", {
 })
 
 
+# ===== PruningMknEcology: neomorphic ecology mixture =====
+
+
+# Reference implementation for the binary asymmetric ecology mixture.
+.EcologyMknLogLik_R <- function(parent, child, edgeLen, tipStates,
+                                 rateLoss, rootFreqs, rateMultipliers,
+                                 wEdge, zMat, phi, mode) {
+  nTip  <- nrow(tipStates)
+  nChar <- ncol(tipStates)
+  nCat  <- length(rateMultipliers)
+  kEco  <- ncol(wEdge)
+  maxNode <- 2L * nTip - 1L
+  root <- nTip + 1L
+
+  r01_base <- 2 / (1 + rateLoss)
+  r10_base <- 2 * rateLoss / (1 + rateLoss)
+
+  ratesForState <- function(z, s) {
+    if (z == 0L) return(c(r01_base, r10_base))
+    p <- if (mode == 0L) phi[1] else phi[s + 1L]
+    if (z == 1L) c(r01_base * p, r10_base / p)
+    else         c(r01_base / p, r10_base * p)
+  }
+
+  siteLik <- numeric(nChar)
+  for (cat_idx in seq_len(nCat)) {
+    rate <- rateMultipliers[cat_idx]
+    cl <- array(0, dim = c(maxNode, nChar, 2))
+    init <- rep(FALSE, maxNode)
+
+    for (i in seq_len(nTip)) {
+      for (c in seq_len(nChar)) {
+        st <- tipStates[i, c]
+        if (st < 0) cl[i, c, ] <- 1
+        else        cl[i, c, st + 1L] <- 1
+      }
+      init[i] <- TRUE
+    }
+
+    for (e in rev(seq_along(parent))) {
+      pa <- parent[e]; ch <- child[e]
+      t <- edgeLen[e] * rate
+      for (c in seq_len(nChar)) {
+        Pmix <- matrix(0, 2, 2)
+        for (s in seq_len(kEco) - 1L) {
+          r <- ratesForState(zMat[c, s + 1L], s)
+          r01 <- r[1]; r10 <- r[2]
+          lam <- r01 + r10
+          pi0 <- r10 / lam; pi1 <- r01 / lam
+          ex  <- exp(-lam * t)
+          Ps <- matrix(c(pi0 + pi1 * ex, pi1 - pi1 * ex,
+                         pi0 - pi0 * ex, pi1 + pi0 * ex),
+                        nrow = 2, byrow = TRUE)
+          Pmix <- Pmix + wEdge[e, s + 1L] * Ps
+        }
+        msg <- Pmix %*% cl[ch, c, ]
+        if (!init[pa]) cl[pa, c, ] <- as.vector(msg)
+        else            cl[pa, c, ] <- cl[pa, c, ] * as.vector(msg)
+      }
+      init[pa] <- TRUE
+    }
+
+    for (c in seq_len(nChar))
+      siteLik[c] <- siteLik[c] + sum(rootFreqs * cl[root, c, ])
+  }
+
+  total <- 0
+  for (c in seq_len(nChar)) {
+    avg <- siteLik[c] / nCat
+    if (avg <= 0) return(-Inf)
+    total <- total + log(avg)
+  }
+  total
+}
+
+
+.MakeMknEcoSetup <- function(nChar, kEco, rateLoss = 1.0,
+                              ecoTipStates = c(0L, 0L, 1L, 1L)) {
+  parent <- c(5L, 6L, 7L, 7L, 6L, 5L)
+  child  <- c(6L, 7L, 1L, 2L, 3L, 4L)
+  edgeLen <- c(0.4, 0.5, 0.6, 0.3, 0.7, 0.2)
+  marg <- MkPrime:::.EcologyNodeMarginals(parent, child, edgeLen,
+                                          ecoTipStates, kEco)
+  wEdge <- MkPrime:::.EcologyEdgeWeights(marg, parent, child)
+  pi0 <- rateLoss / (1 + rateLoss)
+  pi1 <- 1 / (1 + rateLoss)
+  list(parent = parent, child = child, edgeLen = edgeLen,
+       wEdge = wEdge, kEco = kEco,
+       rateLoss = rateLoss,
+       rootFreqs = c(pi0, pi1))
+}
+
+
+test_that("PruningMknEcology with z = 0 and phi = 1 matches reference R", {
+  s <- .MakeMknEcoSetup(nChar = 3L, kEco = 2L)
+  tipStates <- matrix(c(0L, 1L, 0L, 1L,
+                        1L, 0L, 1L, 0L,
+                        0L, 0L, 1L, 1L), nrow = 4, byrow = FALSE)
+  zMat <- matrix(0L, nrow = 3, ncol = s$kEco)
+  ll_cpp <- MkPrime:::.PruningMknEcology(
+    s$parent, s$child, s$edgeLen, tipStates,
+    s$rateLoss, s$rootFreqs, 1,
+    s$wEdge, zMat, phi = 1, mode = 0L)
+  ll_r <- .EcologyMknLogLik_R(
+    s$parent, s$child, s$edgeLen, tipStates,
+    s$rateLoss, s$rootFreqs, 1,
+    s$wEdge, zMat, phi = 1, mode = 0L)
+  expect_equal(ll_cpp, ll_r, tolerance = 1e-10)
+})
+
+
+test_that("PruningMknEcology: z = 0 implies result independent of phi", {
+  s <- .MakeMknEcoSetup(nChar = 2L, kEco = 2L, rateLoss = 0.8)
+  tipStates <- matrix(c(0L, 1L, 0L, 1L,
+                        1L, 1L, 0L, 0L), nrow = 4, byrow = FALSE)
+  zMat <- matrix(0L, nrow = 2, ncol = s$kEco)
+  ll1 <- MkPrime:::.PruningMknEcology(
+    s$parent, s$child, s$edgeLen, tipStates,
+    s$rateLoss, s$rootFreqs, 1,
+    s$wEdge, zMat, phi = 1, mode = 0L)
+  ll2 <- MkPrime:::.PruningMknEcology(
+    s$parent, s$child, s$edgeLen, tipStates,
+    s$rateLoss, s$rootFreqs, 1,
+    s$wEdge, zMat, phi = 2.7, mode = 0L)
+  expect_equal(ll1, ll2, tolerance = 1e-12)
+})
+
+
+test_that("PruningMknEcology matches reference for mixed z and phi != 1", {
+  s <- .MakeMknEcoSetup(nChar = 4L, kEco = 2L, rateLoss = 1.5)
+  set.seed(13)
+  tipStates <- matrix(sample(0:1, 4 * 4, replace = TRUE), nrow = 4, ncol = 4)
+  tipStates <- matrix(as.integer(tipStates), nrow = 4, ncol = 4)
+  zMat <- rbind(c(0L, 1L),
+                c(1L, 2L),
+                c(2L, 0L),
+                c(1L, 1L))
+  ll_cpp <- MkPrime:::.PruningMknEcology(
+    s$parent, s$child, s$edgeLen, tipStates,
+    s$rateLoss, s$rootFreqs, 1,
+    s$wEdge, zMat, phi = 2.5, mode = 0L)
+  ll_r <- .EcologyMknLogLik_R(
+    s$parent, s$child, s$edgeLen, tipStates,
+    s$rateLoss, s$rootFreqs, 1,
+    s$wEdge, zMat, phi = 2.5, mode = 0L)
+  expect_equal(ll_cpp, ll_r, tolerance = 1e-10)
+})
+
+
+test_that("PruningMknEcology matches reference with per_ecology phi", {
+  s <- .MakeMknEcoSetup(nChar = 3L, kEco = 3L, rateLoss = 0.5,
+                        ecoTipStates = c(0L, 1L, 2L, 0L))
+  set.seed(101)
+  tipStates <- matrix(sample(0:1, 4 * 3, replace = TRUE), nrow = 4, ncol = 3)
+  tipStates <- matrix(as.integer(tipStates), nrow = 4, ncol = 3)
+  zMat <- rbind(c(0L, 1L, 2L),
+                c(1L, 2L, 0L),
+                c(2L, 0L, 1L))
+  phi <- c(1.2, 2.5, 0.6)
+  ll_cpp <- MkPrime:::.PruningMknEcology(
+    s$parent, s$child, s$edgeLen, tipStates,
+    s$rateLoss, s$rootFreqs, 1,
+    s$wEdge, zMat, phi = phi, mode = 1L)
+  ll_r <- .EcologyMknLogLik_R(
+    s$parent, s$child, s$edgeLen, tipStates,
+    s$rateLoss, s$rootFreqs, 1,
+    s$wEdge, zMat, phi = phi, mode = 1L)
+  expect_equal(ll_cpp, ll_r, tolerance = 1e-10)
+})
+
+
+test_that("PruningMknEcology matches reference with ACRV (nCat = 4)", {
+  s <- .MakeMknEcoSetup(nChar = 5L, kEco = 2L, rateLoss = 1.2)
+  set.seed(77)
+  tipStates <- matrix(sample(0:1, 4 * 5, replace = TRUE), nrow = 4, ncol = 5)
+  tipStates <- matrix(as.integer(tipStates), nrow = 4, ncol = 5)
+  zMat <- matrix(as.integer(sample(0:2, 5 * 2, replace = TRUE)),
+                  nrow = 5, ncol = 2L)
+  rateMults <- c(0.4, 0.9, 1.1, 1.6)
+  ll_cpp <- MkPrime:::.PruningMknEcology(
+    s$parent, s$child, s$edgeLen, tipStates,
+    s$rateLoss, s$rootFreqs, rateMults,
+    s$wEdge, zMat, phi = 1.7, mode = 0L)
+  ll_r <- .EcologyMknLogLik_R(
+    s$parent, s$child, s$edgeLen, tipStates,
+    s$rateLoss, s$rootFreqs, rateMults,
+    s$wEdge, zMat, phi = 1.7, mode = 0L)
+  expect_equal(ll_cpp, ll_r, tolerance = 1e-10)
+})
+
+
+test_that("PruningMknEcology validates argument shapes", {
+  s <- .MakeMknEcoSetup(nChar = 2L, kEco = 2L)
+  tipStates <- matrix(c(0L, 1L, 0L, 1L,
+                        1L, 0L, 1L, 0L), nrow = 4, ncol = 2)
+  zMat <- matrix(0L, nrow = 2, ncol = 2)
+  expect_error(
+    MkPrime:::.PruningMknEcology(
+      s$parent, s$child, s$edgeLen, tipStates,
+      s$rateLoss, s$rootFreqs, 1, s$wEdge, zMat,
+      phi = c(1, 1), mode = 0L),
+    "global mode requires"
+  )
+  expect_error(
+    MkPrime:::.PruningMknEcology(
+      s$parent, s$child, s$edgeLen, tipStates,
+      s$rateLoss, c(0.5, 0.5), 1, s$wEdge, zMat,
+      phi = 1, mode = 1L),
+    "per_ecology mode requires"
+  )
+  expect_error(
+    MkPrime:::.PruningMknEcology(
+      s$parent, s$child, s$edgeLen, tipStates,
+      -1, s$rootFreqs, 1, s$wEdge, zMat,
+      phi = 1, mode = 0L),
+    "rateLoss must be positive"
+  )
+})
+
+
 test_that("PruningJcEcology validates argument shapes", {
   s <- .MakeJcEcoSetup(kStates = 2L, nChar = 2L, kEco = 2L)
   tipStates <- matrix(c(0L, 0L, 1L, 1L, 1L, 0L, 0L, 1L),

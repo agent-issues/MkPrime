@@ -434,6 +434,27 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// PruningMknEcology
+double PruningMknEcology(IntegerVector parent, IntegerVector child, NumericVector edgeLen, IntegerMatrix tipStates, double rateLoss, NumericVector rootFreqs, NumericVector rateMultipliers, NumericMatrix wEdge, IntegerMatrix zMat, NumericVector phi, int mode);
+RcppExport SEXP _MkPrime_PruningMknEcology(SEXP parentSEXP, SEXP childSEXP, SEXP edgeLenSEXP, SEXP tipStatesSEXP, SEXP rateLossSEXP, SEXP rootFreqsSEXP, SEXP rateMultipliersSEXP, SEXP wEdgeSEXP, SEXP zMatSEXP, SEXP phiSEXP, SEXP modeSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< IntegerVector >::type parent(parentSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type child(childSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type edgeLen(edgeLenSEXP);
+    Rcpp::traits::input_parameter< IntegerMatrix >::type tipStates(tipStatesSEXP);
+    Rcpp::traits::input_parameter< double >::type rateLoss(rateLossSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type rootFreqs(rootFreqsSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type rateMultipliers(rateMultipliersSEXP);
+    Rcpp::traits::input_parameter< NumericMatrix >::type wEdge(wEdgeSEXP);
+    Rcpp::traits::input_parameter< IntegerMatrix >::type zMat(zMatSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type phi(phiSEXP);
+    Rcpp::traits::input_parameter< int >::type mode(modeSEXP);
+    rcpp_result_gen = Rcpp::wrap(PruningMknEcology(parent, child, edgeLen, tipStates, rateLoss, rootFreqs, rateMultipliers, wEdge, zMat, phi, mode));
+    return rcpp_result_gen;
+END_RCPP
+}
 // PruningJcEcology
 double PruningJcEcology(IntegerVector parent, IntegerVector child, NumericVector edgeLen, IntegerMatrix tipStates, int kStates, NumericVector rootFreqs, NumericVector rateMultipliers, NumericMatrix wEdge, IntegerMatrix zMat, NumericVector phi, int mode);
 RcppExport SEXP _MkPrime_PruningJcEcology(SEXP parentSEXP, SEXP childSEXP, SEXP edgeLenSEXP, SEXP tipStatesSEXP, SEXP kStatesSEXP, SEXP rootFreqsSEXP, SEXP rateMultipliersSEXP, SEXP wEdgeSEXP, SEXP zMatSEXP, SEXP phiSEXP, SEXP modeSEXP) {
@@ -709,6 +730,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_validate_swap_partial_cl", (DL_FUNC) &_MkPrime_validate_swap_partial_cl, 3},
     {"_MkPrime_EcologyNodeMarginals", (DL_FUNC) &_MkPrime_EcologyNodeMarginals, 5},
     {"_MkPrime_EcologyEdgeWeights", (DL_FUNC) &_MkPrime_EcologyEdgeWeights, 3},
+    {"_MkPrime_PruningMknEcology", (DL_FUNC) &_MkPrime_PruningMknEcology, 11},
     {"_MkPrime_PruningJcEcology", (DL_FUNC) &_MkPrime_PruningJcEcology, 11},
     {"_MkPrime_prepare_mcmc_data", (DL_FUNC) &_MkPrime_prepare_mcmc_data, 30},
     {"_MkPrime_set_branch_bins", (DL_FUNC) &_MkPrime_set_branch_bins, 2},

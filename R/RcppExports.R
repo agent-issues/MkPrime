@@ -117,6 +117,10 @@ validate_swap_partial_cl <- function(dataPtr, statePtr, nodeA) {
     .Call(`_MkPrime_EcologyEdgeWeights`, nodeMarginals, parent, child)
 }
 
+.PruningMknEcology <- function(parent, child, edgeLen, tipStates, rateLoss, rootFreqs, rateMultipliers, wEdge, zMat, phi, mode) {
+    .Call(`_MkPrime_PruningMknEcology`, parent, child, edgeLen, tipStates, rateLoss, rootFreqs, rateMultipliers, wEdge, zMat, phi, mode)
+}
+
 .PruningJcEcology <- function(parent, child, edgeLen, tipStates, kStates, rootFreqs, rateMultipliers, wEdge, zMat, phi, mode) {
     .Call(`_MkPrime_PruningJcEcology`, parent, child, edgeLen, tipStates, kStates, rootFreqs, rateMultipliers, wEdge, zMat, phi, mode)
 }
