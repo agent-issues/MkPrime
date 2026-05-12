@@ -1,5 +1,24 @@
 # MkPrime (development version)
 
+* Ecology-aware substitution model.  `MkPrimeModel(ecologyAware = TRUE)`
+  enables per-character, per-ecology rate modification via a
+  spike-and-slab latent `z` and global magnitude `phi`.  Tip ecology
+  is passed via `MkPrimeData(..., ecology = <integer vector>)`.
+  Designed to reduce the influence of convergent character-state
+  similarity in ecologically similar but phylogenetically unrelated
+  lineages.
+
+  The v2 (current) parameterisation uses a **reference ecology**
+  (auto-selected as the most frequent), **gamma-normalised** rate
+  factors so the prior-expected per-cell rate is 1 (analogous to ACRV
+  mean-rate normalisation), and an **asymmetric slab prior**
+  controlled by per-ecology `theta_e ~ Beta(thetaAlpha, thetaBeta)`
+  (defaults `(2, 2)`).  Together these close the rate-time
+  identifiability ridge, eliminate the K-vs-K-1 redundancy in z, and
+  remove the assumption that the prior expects equal numbers of
+  encouraged vs depressed characters.  See `vignette("ecology-details")`
+  for the math and `vignette("rodent-ecology")` for an empirical
+  case study identifying per-character ecology associations.
 * New `kPrimePrior = "empirical_geometric"` prior (now the default).  Decomposes
   `k' = N_obs + N_unobs`, with `N_obs` drawn from an empirical pmf tabulated
   from real morphological matrices (`empiricalNObs`) and `N_unobs` from a

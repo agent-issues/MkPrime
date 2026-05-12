@@ -33,18 +33,26 @@ struct PartInfo {
 struct EcologyInfo {
   int kEcology = 0;                      // number of ecology states (0 = disabled)
   Rcpp::IntegerVector tipStates;         // length nTip, 0-indexed
+  int refEcology = -1;                   // v2: 0-indexed; -1 if disabled
+  Rcpp::NumericVector ecoEdgeMass;       // v2: length kEcology, edge mass per ecology
   bool active() const { return kEcology >= 2 && tipStates.size() > 0; }
 };
 
 // Per-iteration state of the ecology-aware extension.
 // phi:     magnitude factor. Length 1 (global) or kEcology (per_ecology).
 // pi0:     spike-and-slab sparsity (prob of z == none).
-// zMatrix: nChar x kEcology, values in {0=none, 1=encouraged, 2=discouraged}.
+// theta:   v2: slab balance per non-reference ecology; length kEcology - 1.
+//          P(z = enc) = (1-pi0) * theta_e; P(z = disc) = (1-pi0) * (1 - theta_e).
+// zMatrix: v2: nChar x (kEcology - 1), one column per non-reference ecology in
+//          ascending ecology-state order (skipping refEcology); values in
+//          {0=none, 1=encouraged, 2=discouraged}.
 // wEdge:   nEdge x kEcology cache of edge-ecology marginal weights, recomputed
-//          once per likelihood evaluation in Phase 2.
+//          once per likelihood evaluation.  Reference column carries weight as
+//          usual; rate factor on reference-ecology edges is fixed at 1.
 struct EcologyState {
   Rcpp::NumericVector phi;
   double pi0 = 0.0;
+  Rcpp::NumericVector theta;   // v2: length kEcology - 1
   Rcpp::IntegerMatrix zMatrix;
   Rcpp::NumericMatrix wEdge;
 };
@@ -146,6 +154,10 @@ struct McmcData {
   double rho0Beta  = 3.0;
   double sigmaPhi  = 0.5;
   int    gibbsZEvery = 50;
+  // v2: Beta hyperprior on theta_e (slab balance). Default (2, 2) is
+  // weakly symmetric -- prior favours equal enc/disc but allows asymmetry.
+  double thetaAlpha = 2.0;
+  double thetaBeta  = 2.0;
 };
 
 // Pre-allocated flat CL workspace (M-063): eliminates per-call heap

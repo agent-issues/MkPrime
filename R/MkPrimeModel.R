@@ -78,6 +78,11 @@
 #'   `pi_0`, the prior probability that a (character, ecology) pair has
 #'   no ecology effect. Defaults: 7, 3 (so `E[pi_0] = 0.7`). Ignored when
 #'   `ecologyAware = FALSE`.
+#' @param thetaAlpha,thetaBeta Shape parameters for the Beta hyperprior on
+#'   `theta_e`, the slab balance for non-reference ecology `e`. Given a
+#'   non-none `z`, `P(z = encouraged | non-none) = theta_e`. Defaults: 2, 2
+#'   (weakly symmetric -- prior favours equal enc/disc but allows asymmetry).
+#'   Ignored when `ecologyAware = FALSE`.
 #' @param sigmaPhi Standard deviation of the LogNormal prior on `phi` (or
 #'   on each `phi_e`). Default 0.5. Ignored when `ecologyAware = FALSE`.
 #' @param gibbsZEvery Integer. Number of MCMC generations between Gibbs
@@ -165,6 +170,8 @@ MkPrimeModel <- function(
     magnitudeMode = "global",
     rho0Alpha = 7,
     rho0Beta = 3,
+    thetaAlpha = 2,
+    thetaBeta = 2,
     sigmaPhi = 0.5,
     gibbsZEvery = 50L
 ) {
@@ -249,6 +256,11 @@ MkPrimeModel <- function(
         "{.arg rho0Alpha} and {.arg rho0Beta} must be positive."
       )
     }
+    if (thetaAlpha <= 0 || thetaBeta <= 0) {
+      cli::cli_abort(
+        "{.arg thetaAlpha} and {.arg thetaBeta} must be positive."
+      )
+    }
     if (sigmaPhi <= 0) {
       cli::cli_abort("{.arg sigmaPhi} must be positive.")
     }
@@ -292,6 +304,8 @@ MkPrimeModel <- function(
       magnitudeMode = magnitudeMode,
       rho0Alpha = rho0Alpha,
       rho0Beta = rho0Beta,
+      thetaAlpha = thetaAlpha,
+      thetaBeta = thetaBeta,
       sigmaPhi = sigmaPhi,
       gibbsZEvery = as.integer(gibbsZEvery)
     ),
@@ -614,24 +628,47 @@ LogPrior <- function(state, model, mkd) {
                        log = TRUE)
   }
 
-  # Ecology-aware NT model: phi, pi0, z priors
+  # Ecology-aware NT model (v2): phi, pi0, theta, z priors
+  # - z has nChar x (kEco - 1) columns (one per non-reference ecology).
+  # - theta_e is the slab balance: P(z=enc | non-none) = theta_e.
+  # - Reference ecology has no z column and contributes nothing here.
   if (isTRUE(model$ecologyAware)) {
     phi <- state$phi
     pi0 <- state$pi0
+    theta <- state$theta
     z <- state$z
     if (is.null(phi) || any(phi <= 0)) return(-Inf)
     if (is.null(pi0) || pi0 <= 0 || pi0 >= 1) return(-Inf)
     if (is.null(z) || any(!z %in% 0:2)) return(-Inf)
+    if (is.null(theta) || any(theta <= 0) || any(theta >= 1)) return(-Inf)
 
     lp <- lp + sum(dlnorm(phi, meanlog = 0, sdlog = model$sigmaPhi,
                           log = TRUE))
     lp <- lp + dbeta(pi0, shape1 = model$rho0Alpha,
                      shape2 = model$rho0Beta, log = TRUE)
-    # Spike (none) vs slab (encouraged or discouraged), split evenly.
-    nNone <- sum(z == 0L)
-    nSlab <- length(z) - nNone
-    lp <- lp + nNone * log(pi0) +
-               nSlab * (log1p(-pi0) - log(2))
+
+    # zMatrix: nChar x (kEco - 1). For each non-reference ecology column j:
+    #   P(z = none) = pi0
+    #   P(z = enc)  = (1 - pi0) * theta[j]
+    #   P(z = disc) = (1 - pi0) * (1 - theta[j])
+    # theta_e ~ Beta(thetaAlpha, thetaBeta).
+    if (is.matrix(z) && ncol(z) > 0L) {
+      nNoneCol <- colSums(z == 0L)
+      nEncCol  <- colSums(z == 1L)
+      nDiscCol <- colSums(z == 2L)
+      lp <- lp + sum(
+        nNoneCol * log(pi0) +
+          (nEncCol + nDiscCol) * log1p(-pi0) +
+          nEncCol  * log(theta) +
+          nDiscCol * log1p(-theta)
+      )
+      # Beta hyperprior on theta_e (unnormalised: constant cancels in MH ratios
+      # but include the kernel for correct absolute log-posterior reporting).
+      lp <- lp + sum(
+        (model$thetaAlpha - 1) * log(theta) +
+          (model$thetaBeta  - 1) * log1p(-theta)
+      )
+    }
   }
 
   lp
@@ -666,6 +703,7 @@ print.MkPrimeModel <- function(x, ...) {
       "ON (magnitudeMode = ", x$magnitudeMode,
       ", phi ~ LogNormal(0, ", x$sigmaPhi,
       "), pi0 ~ Beta(", x$rho0Alpha, ", ", x$rho0Beta,
+      "), theta ~ Beta(", x$thetaAlpha, ", ", x$thetaBeta,
       "), Gibbs every ", x$gibbsZEvery, " gens)"
     )
   } else {
