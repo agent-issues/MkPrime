@@ -24,8 +24,20 @@
 #include "fast_exp.h"
 #include <cmath>
 #include <vector>
+#include <map>
 
 using namespace Rcpp;
+
+// Forward declarations from mcmc_likelihood.cpp.
+double mk_prime_relabel_log(int kPrime, int kObs);
+NumericVector cpp_acrv_rates(double rateLogSd, int nCat,
+                              const std::vector<double>& acrvZ);
+static NumericVector mkn_stationary_local(double rateLoss) {
+  NumericVector f(2);
+  f[0] = rateLoss / (1.0 + rateLoss);
+  f[1] = 1.0 / (1.0 + rateLoss);
+  return f;
+}
 
 
 // Fill `marg` with per-node posterior marginals under JC-K.
@@ -729,4 +741,161 @@ double PruningJcEcology(
     wEdge, zMat, phi, mode,
     buf.data(), initFlg.data(), stride
   );
+}
+
+
+// ---------------------------------------------------------------------------
+// cpp_log_likelihood_ecology: full-data orchestrator under the ecology mixture
+// ---------------------------------------------------------------------------
+//
+// Mirrors the R-side .MkpEcologyLogLikelihood (R/likelihood.R): recompute
+// ecology marginals + edge weights from the current tree, then iterate
+// partitions invoking the ecology-aware pruning variants.
+//
+// No ascertainment correction yet — corresponds to coding = "none". A
+// mixture-aware constant-/singleton-site pseudo-character path is the next
+// addition (Phase 3h).
+
+double cpp_log_likelihood_ecology(
+    const McmcData& data,
+    IntegerVector parent, IntegerVector child,
+    NumericVector edgeLen,
+    const IntegerVector& kPrime,
+    double rateLoss, double rateLogSd, double rateNeo,
+    NumericVector phi,
+    IntegerMatrix zMatrix) {
+
+  int nTip = data.nTip;
+  int nEdge = parent.size();
+  int maxNode = 2 * nTip - 1;
+  int kEco = data.ecology.kEcology;
+  int mode = data.magnitudeMode;
+  bool useAcrv = (rateLogSd > 0.0);
+  NumericVector rates = useAcrv
+    ? cpp_acrv_rates(rateLogSd, data.nCat, data.acrvZ)
+    : NumericVector(1, 1.0);
+
+  // Compute ecology marginals + per-edge weights once for this call.
+  std::vector<double> margFlat;
+  compute_ecology_node_marginals(
+    INTEGER(parent), INTEGER(child), nEdge,
+    REAL(edgeLen),
+    INTEGER(data.ecology.tipStates), nTip,
+    kEco, 1.0,
+    margFlat
+  );
+  NumericMatrix wEdge(nEdge, kEco);
+  for (int e = 0; e < nEdge; ++e) {
+    int par = parent[e], ch = child[e];
+    for (int s = 0; s < kEco; ++s) {
+      wEdge(e, s) = 0.5 * (margFlat[par * kEco + s] + margFlat[ch * kEco + s]);
+    }
+  }
+
+  double totalLoglik = 0.0;
+
+  for (int pi = 0; pi < (int)data.parts.size(); ++pi) {
+    const PartInfo& part = data.parts[pi];
+    int nCharPart = part.tipStates.ncol();
+
+    // Subset zMatrix to this partition's characters (global → local indices).
+    IntegerMatrix zPart(nCharPart, kEco);
+    for (int c = 0; c < nCharPart; ++c) {
+      int gi = part.globalCharIdx[c];
+      for (int s = 0; s < kEco; ++s) zPart(c, s) = zMatrix(gi, s);
+    }
+
+    double ll = 0.0;
+
+    if (part.type == 0) {
+      // Neomorphic
+      NumericVector neoEl(nEdge);
+      for (int i = 0; i < nEdge; ++i) neoEl[i] = edgeLen[i] * rateNeo;
+      NumericVector rootFreqs = mkn_stationary_local(rateLoss);
+      int stride = nCharPart * 2;
+      std::vector<double>  buf((maxNode + 1) * stride, 0.0);
+      std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+      ll = pruning_mkn_acrv_flat_ecology(
+        parent, child, neoEl, part.tipStates,
+        rateLoss, rootFreqs, rates,
+        wEdge, zPart, phi, mode,
+        buf.data(), initFlg.data(), stride);
+    } else if (part.type == 2) {
+      // Known state space
+      int kStates = part.k;
+      NumericVector rootFreqs(kStates, 1.0 / kStates);
+      int stride = nCharPart * kStates;
+      std::vector<double>  buf((maxNode + 1) * stride, 0.0);
+      std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+      ll = pruning_jc_acrv_flat_ecology(
+        parent, child, edgeLen, part.tipStates,
+        kStates, rootFreqs, rates,
+        wEdge, zPart, phi, mode,
+        buf.data(), initFlg.data(), stride);
+    } else {
+      // Transformational: subgroup by kPrime (per-character)
+      std::map<int, std::vector<int>> byKp;
+      for (int c = 0; c < nCharPart; ++c) {
+        int gi = part.globalCharIdx[c];
+        byKp[kPrime[gi]].push_back(c);
+      }
+      for (auto& kv : byKp) {
+        int kp = kv.first;
+        const std::vector<int>& cols = kv.second;
+        int nSub = static_cast<int>(cols.size());
+
+        IntegerMatrix subStates(nTip, nSub);
+        IntegerMatrix subZ(nSub, kEco);
+        for (int c = 0; c < nSub; ++c) {
+          for (int t = 0; t < nTip; ++t)
+            subStates(t, c) = part.tipStates(t, cols[c]);
+          for (int s = 0; s < kEco; ++s)
+            subZ(c, s) = zPart(cols[c], s);
+        }
+        NumericVector rootFreqs(kp, 1.0 / kp);
+        int stride = nSub * kp;
+        std::vector<double>  buf((maxNode + 1) * stride, 0.0);
+        std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+
+        double subLl = pruning_jc_acrv_flat_ecology(
+          parent, child, edgeLen, subStates,
+          kp, rootFreqs, rates,
+          wEdge, subZ, phi, mode,
+          buf.data(), initFlg.data(), stride);
+
+        if (data.relabel) {
+          for (int c = 0; c < nSub; ++c) {
+            int gi = part.globalCharIdx[cols[c]];
+            subLl += mk_prime_relabel_log(kp, data.kObs[gi]);
+          }
+        }
+        ll += subLl;
+      }
+    }
+
+    totalLoglik += ll;
+  }
+
+  return totalLoglik;
+}
+
+
+// R-callable wrapper for cpp_log_likelihood_ecology, used for tests that
+// compare C++ to the R-level .MkpEcologyLogLikelihood orchestrator.
+//
+// [[Rcpp::export(.CppLogLikelihoodEcology)]]
+double CppLogLikelihoodEcology(
+    SEXP dataPtr,
+    IntegerVector parent, IntegerVector child,
+    NumericVector edgeLen,
+    IntegerVector kPrime,
+    double rateLoss, double rateLogSd, double rateNeo,
+    NumericVector phi,
+    IntegerMatrix zMatrix
+) {
+  const McmcData& data = *Rcpp::XPtr<McmcData>(dataPtr).get();
+  if (!data.ecologyAware) stop("McmcData was not built with ecologyAware = TRUE");
+  return cpp_log_likelihood_ecology(
+    data, parent, child, edgeLen, kPrime,
+    rateLoss, rateLogSd, rateNeo, phi, zMatrix);
 }
