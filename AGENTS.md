@@ -30,21 +30,14 @@ before starting work in that area:
 
 ## Worktree note
 
-If you are working in a feature worktree (e.g. `mkp-parallel`, `mkp-gibbs`),
-**always read and write coordination files from `../mkp/`**, not from your
-own worktree directory. Each feature branch contains a stale copy of these
-files from when the branch was cut. The `../mkp/` directory (the `main`
-worktree) is the single source of truth for:
+No active worktrees. Active feature branches: `feature/het-dirichlet-marginal`,
+`feature/parallel-runs`. Create worktrees as needed per
+`../AGENTS.md` → **Worktree discipline**.
 
-- `to-do.md`, `coordination.md`, `completed-tasks.md`
-- `u.nnn` issue files
-- `remote-jobs.md`
-- `dev/plans/`
-
-Feature-branch code changes go in your own worktree as usual. Coordination
-file changes go in `../mkp/` and are committed to `main`.
-
-See `../AGENTS.md` → **Worktree discipline** for the full set of rules.
+When working in a worktree, always read/write coordination files
+(`to-do.md`, `completed-tasks.md`, `coordination.md`, `u.nnn`,
+`remote-jobs.md`, `dev/plans/`) from `../mkp/` (the `main` worktree),
+not from the feature worktree.
 
 ---
 
@@ -149,22 +142,6 @@ mkp/
 
 ---
 
-## Branch / worktree mapping (MkPrime)
-
-See `../AGENTS.md` → **Current worktree mapping (MkPrime)** for the live
-table. As of this writing:
-
-| Directory | Branch |
-|-----------|--------|
-| `mkp`           | `main` |
-| `mkp-gibbs`     | `feature/gibbs-weighted-moves` |
-| `mkp-logseries` | `logseries-kprime-prior` |
-| `mkp-parallel`  | `feature/parallel-runs` |
-| `mkp-het`       | `feature/het-dirichlet-marginal` |
-| `mkp-tbr`       | `feature/tbr-moves` |
-
----
-
 ## Build workflow (MkPrime-specific notes)
 
 The parent `AGENTS.md` covers the canonical workflow (`build-agent.sh` /
@@ -190,35 +167,17 @@ parking, PR workflow), see parent `AGENTS.md`.
 
 ## VTune profiling
 
-VTune is at `C:/Program Files (x86)/Intel/oneAPI/vtune/latest/bin64/`. This PC
-is Intel i7-10700 (10th gen); hardware sampling works. Use the
-`r-package-profiling` skill (`Skill r-package-profiling`) to locate VTune and
-follow the full workflow. Key points specific to MkPrime:
+VTune: `C:/Program Files (x86)/Intel/oneAPI/vtune/latest/bin64/`.
+Intel i7-10700 (10th gen); hardware sampling works.
 
-- Override `DLLFLAGS` via `MAKEFLAGS` env var (not `src/Makevars.win`).
+> **Note:** The `r-package-profiling` skill needs porting to `~/.claude/skills/`.
+> Until then, follow the workflow in `.AGENTS/memory/performance.md` directly.
+
+MkPrime-specific flags:
 - Add `-g -fno-omit-frame-pointer` to `PKG_CXXFLAGS` in `src/Makevars.win`.
-- **Remove profiling flags after collection.** `src/Makevars.win` must never
-  be committed (see `.gitignore`).
+- **Remove profiling flags after collection** — `src/Makevars.win` must never be committed.
 
-Hot-path data lives in `.AGENTS/memory/performance.md`.
-
----
-
-## Known low-priority issues
-
-### ETA estimation with tree-ESS-only convergence
-
-When only `minTreeEss` is set (no `minEss`), the ETA estimation in the
-progress ticker doesn't work. The ETA code defaults `etaTarget` to
-`mcmc$minEss` which is NULL, causing `.EstimateEta()` to return NULL.
-Low priority — unusual configuration.
-
-### Tree ESS not enforced in log-based convergence
-
-`.CheckConvergenceFromLogs()` (used by parallel runs and serial Phase 2
-cross-run R-hat loop) cannot enforce `minTreeEss` because trees are not
-stored in log files. Tree ESS is enforced per-run by `.CheckConvergence()`
-in Phase 1. By design — but an asymmetry.
+Hot-path data: `.AGENTS/memory/performance.md`.
 
 ---
 
@@ -226,7 +185,6 @@ in Phase 1. By design — but an asymmetry.
 
 | Resource | Location | Content |
 |----------|----------|---------|
-| Design plan | `../.positai/plans/mkprime-r.md` | Full model spec, architecture, phases |
 | Mk' model math | `../revbayes-ms/.positai/expertise/mkprime-model.md` | Mathematical specification |
 | RevBayes scripts | `../mkprime/` | Reference Mk' inference (RevBayes) |
 | RevBayes C++ impl | `../revbayes-ms/` | Native `dnMkPrime` distribution |
@@ -238,37 +196,8 @@ in Phase 1. By design — but an asymmetry.
 
 ## Naming conventions
 
-| Scope | Convention | Examples |
-|-------|------------|---------|
-| Exported functions | **PascalCase** | `RunMkPrime`, `MkPrimeData`, `ConvergenceDiagnostics` |
-| Internal functions (dot-prefixed) | **`.PascalCase`** | `.InitState`, `.BuildMoves`, `.FinalizeModel` |
-| Non-exported helpers (no dot) | **PascalCase** | `ProposeScale`, `LogPrior`, `DiscreteLognormalRates` |
-| Function parameters | **camelCase** | `knownStates`, `fixTopology`, `treeLengthShape`, `checkEvery` |
-| Local variables | **camelCase** | `nEdge`, `transIdx`, `charMatrix`, `startTree` |
-| Model parameter names (MCMC state, column names) | **snake_case** | `tree_length`, `rate_loss`, `rate_log_sd`, `log_posterior` |
-| S3 class names | **PascalCase** | `MkPrimeData`, `MkPrimeModel`, `MkPosterior` |
-
-**Model parameter names** (`rate_loss`, `tree_length`, `rate_log_sd`, `kPrime`,
-`rel_br_lengths`, etc.) are intentionally kept in snake_case because they are
-domain terminology that appears in output column names, documentation, and
+See the `r-conventions` skill. MkPrime addition: MCMC state and log-column
+names use **snake_case** (`tree_length`, `rate_loss`, `rate_log_sd`, `k_prime`,
+`rel_br_lengths`) — domain terminology that appears in output columns and
 RevBayes cross-references.
 
-See `CONTRIBUTING.md` for the full rationale and worked examples.
-
----
-
-## Key coordination files
-
-All coordination files live in the **`main` worktree (`../mkp/`)**. Feature
-worktrees contain stale copies — do not use them.
-
-| File | Worktree to use | Purpose |
-|------|-----------------|---------|
-| `u.nnn`              | `../mkp/u.nnn`              | User issue files (agents triage → `to-do.md`, then delete) |
-| `to-do.md`           | `../mkp/to-do.md`           | Task queue |
-| `remote-jobs.md`     | `../mkp/remote-jobs.md`     | Pending async jobs |
-| `completed-tasks.md` | `../mkp/completed-tasks.md` | Archive of completed tasks |
-| `coordination.md`    | `../mkp/coordination.md`    | Strategic plan and phase tracking |
-| `agent-<letter>.md`  | `./agent-<letter>.md`       | Agent progress log (local-only, gitignored) |
-| `AGENTS.md`          | `../mkp/AGENTS.md`          | This file |
-| `dev/plans/`         | `../mkp/dev/plans/`         | Plan files |

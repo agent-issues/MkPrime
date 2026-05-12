@@ -44,7 +44,8 @@ completed, reset it to OPEN. Their effective priority is dynamic:
 
 | ID | Priority | Status | Description |
 |----|----------|--------|-------------|
-| | | | *(empty — no open bugs)* |
+| M-173 | P3 | OPEN | **ETA unavailable with tree-ESS-only convergence.** When only `minTreeEss` is set (no `minEss`), `.EstimateEta()` defaults `etaTarget` to `mcmc$minEss` (NULL) and returns NULL, so the progress ticker shows no ETA. Unusual config; low priority. File: `Convergence.R`. |
+| M-174 | P3 | OPEN | **Tree ESS not enforced in log-based convergence path.** `.CheckConvergenceFromLogs()` (parallel runs and serial Phase 2) cannot check `minTreeEss` — trees aren't in log files. Tree ESS is only enforced per-run via `.CheckConvergence()` in Phase 1. By design, but worth documenting as a known asymmetry. |
 
 
 ## MCMC infrastructure
