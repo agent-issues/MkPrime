@@ -742,6 +742,95 @@ test_that(".MkpEcologyLogLikelihood: phi > 1 with non-zero z changes likelihood"
 })
 
 
+test_that(".MkpEcologyLogLikelihood with z = 0 + coding=variable matches standard", {
+  set.seed(8211)
+  tips <- paste0("t", 1:6)
+  mat <- matrix(c(
+    0, 1, 2, 0, 1, 2,
+    1, 0, 1, 2, 2, 0,
+    2, 1, 0, 1, 0, 2,
+    0, 1, 0, 1, 0, 1,
+    1, 0, 1, 0, 1, 0,
+    0, 0, 1, 1, 2, 2
+  ), nrow = 6, ncol = 6, byrow = FALSE, dimnames = list(tips, NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd, neomorphic = c(4L, 5L), ecology = 6L)
+  tree <- TreeTools::Preorder(ape::rtree(6, tip.label = tips))
+
+  ll_baseline <- MkPrime:::.MkpLogLikelihood(
+    tree, mkd, kPrime = mkd$kObs,
+    rate_loss = 1.0, rate_log_sd = 0, nCat = 1L,
+    coding = "variable", rate_neo = 1.0, relabel = TRUE
+  )
+
+  zMat <- matrix(0L, nrow = mkd$nChar, ncol = mkd$kEcology)
+  ll_eco <- MkPrime:::.MkpEcologyLogLikelihood(
+    tree, mkd, kPrime = mkd$kObs,
+    rate_loss = 1.0, rate_log_sd = 0, nCat = 1L,
+    rate_neo = 1.0, relabel = TRUE,
+    phi = 2.5, zMat = zMat, magnitudeMode = "global",
+    coding = "variable"
+  )
+  expect_equal(ll_eco, ll_baseline, tolerance = 1e-10)
+})
+
+
+test_that(".MkpEcologyLogLikelihood with ACRV + coding=variable + z = 0 matches standard", {
+  set.seed(91)
+  tips <- paste0("t", 1:6)
+  mat <- matrix(c(
+    0, 1, 2, 0, 1, 2,
+    1, 0, 1, 2, 2, 0,
+    0, 1, 0, 1, 0, 1,
+    1, 0, 1, 0, 1, 0,
+    0, 0, 1, 1, 2, 2
+  ), nrow = 6, ncol = 5, byrow = FALSE, dimnames = list(tips, NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd, neomorphic = c(3L, 4L), ecology = 5L)
+  tree <- TreeTools::Preorder(ape::rtree(6, tip.label = tips))
+
+  ll_baseline <- MkPrime:::.MkpLogLikelihood(
+    tree, mkd, kPrime = mkd$kObs,
+    rate_loss = 1.0, rate_log_sd = 0.4, nCat = 4L,
+    coding = "variable", rate_neo = 1.0, relabel = TRUE
+  )
+  zMat <- matrix(0L, nrow = mkd$nChar, ncol = mkd$kEcology)
+  ll_eco <- MkPrime:::.MkpEcologyLogLikelihood(
+    tree, mkd, kPrime = mkd$kObs,
+    rate_loss = 1.0, rate_log_sd = 0.4, nCat = 4L,
+    rate_neo = 1.0, relabel = TRUE,
+    phi = 1.0, zMat = zMat, magnitudeMode = "global",
+    coding = "variable"
+  )
+  expect_equal(ll_eco, ll_baseline, tolerance = 1e-10)
+})
+
+
+test_that(".MkpEcologyLogLikelihood errors on unsupported coding (informative)", {
+  set.seed(771)
+  tips <- paste0("t", 1:5)
+  mat <- matrix(c(0, 1, 0, 1, 2,
+                  1, 0, 1, 2, 0,
+                  0, 1, 1, 2, 2),
+                nrow = 5, ncol = 3,
+                dimnames = list(tips, NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd, ecology = 3L)
+  tree <- TreeTools::Preorder(ape::rtree(5, tip.label = tips))
+  zMat <- matrix(0L, nrow = mkd$nChar, ncol = mkd$kEcology)
+  expect_error(
+    MkPrime:::.MkpEcologyLogLikelihood(
+      tree, mkd, kPrime = mkd$kObs,
+      rate_loss = 1.0, rate_log_sd = 0, nCat = 1L,
+      rate_neo = 1.0, relabel = TRUE,
+      phi = 1.0, zMat = zMat, magnitudeMode = "global",
+      coding = "informative"
+    ),
+    "should be one of"
+  )
+})
+
+
 test_that(".MkpEcologyLogLikelihood errors when mkd has no ecology", {
   tips <- paste0("t", 1:5)
   mat <- matrix(c(0, 1, 0, 1, 2,

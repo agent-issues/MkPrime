@@ -64,7 +64,8 @@ test_that(".InitState log_lik uses ecology-aware orchestrator when ecologyAware"
     rate_neo = state_eco$rate_neo %||% 1.0,
     relabel = model$relabel,
     phi = state_eco$phi, zMat = state_eco$z,
-    magnitudeMode = model$magnitudeMode
+    magnitudeMode = model$magnitudeMode,
+    coding = model$coding
   )
   expect_equal(state_eco$log_lik, ll_ref, tolerance = 1e-12)
 })
@@ -273,6 +274,76 @@ test_that("cpp_log_likelihood_ecology matches R orchestrator with per_ecology ph
     rate_neo = 1.0, relabel = model$relabel,
     phi = phi, zMat = zMat, magnitudeMode = "per_ecology")
   expect_equal(ll_cpp, ll_r, tolerance = 1e-10)
+})
+
+
+test_that("cpp_log_likelihood_ecology with variable coding matches R orchestrator", {
+  f <- .MakeEcologyFixture()
+  model <- MkPrimeModel(ecologyAware = TRUE, expSteps = 10,
+                        kPrimePrior = "geometric", coding = "variable")
+  dataPtr <- .MakeEcoDataPtr(f$mkd, model)
+  set.seed(401)
+  zMat <- matrix(as.integer(sample(0:2, f$mkd$nChar * f$mkd$kEcology,
+                                    replace = TRUE)),
+                 nrow = f$mkd$nChar, ncol = f$mkd$kEcology)
+
+  parent <- f$tree$edge[, 1]
+  child  <- f$tree$edge[, 2]
+  edgeLen <- f$tree$edge.length
+
+  ll_cpp <- MkPrime:::.CppLogLikelihoodEcology(
+    dataPtr, parent, child, edgeLen,
+    kPrime = as.integer(f$mkd$kObs),
+    rateLoss = 1.0, rateLogSd = 0, rateNeo = 1.0,
+    phi = 1.8, zMatrix = zMat)
+  ll_r <- MkPrime:::.MkpEcologyLogLikelihood(
+    f$tree, f$mkd, kPrime = as.integer(f$mkd$kObs),
+    rate_loss = 1.0, rate_log_sd = 0, nCat = model$nCat,
+    rate_neo = 1.0, relabel = model$relabel,
+    phi = 1.8, zMat = zMat, magnitudeMode = "global",
+    coding = "variable")
+  expect_equal(ll_cpp, ll_r, tolerance = 1e-10)
+})
+
+
+test_that("cpp_log_likelihood_ecology variable coding + z = 0 matches standard", {
+  f <- .MakeEcologyFixture()
+  model <- MkPrimeModel(ecologyAware = TRUE, expSteps = 10,
+                        kPrimePrior = "geometric", coding = "variable")
+  dataPtr <- .MakeEcoDataPtr(f$mkd, model)
+  zMat <- matrix(0L, nrow = f$mkd$nChar, ncol = f$mkd$kEcology)
+
+  parent <- f$tree$edge[, 1]
+  child  <- f$tree$edge[, 2]
+  edgeLen <- f$tree$edge.length
+
+  ll_cpp <- MkPrime:::.CppLogLikelihoodEcology(
+    dataPtr, parent, child, edgeLen,
+    kPrime = as.integer(f$mkd$kObs),
+    rateLoss = 1.0, rateLogSd = 0, rateNeo = 1.0,
+    phi = 2.0, zMatrix = zMat)
+  ll_baseline <- MkPrime:::.MkpLogLikelihood(
+    f$tree, f$mkd, kPrime = as.integer(f$mkd$kObs),
+    rate_loss = 1.0, rate_log_sd = 0, nCat = model$nCat,
+    coding = "variable", rate_neo = 1.0, relabel = model$relabel)
+  expect_equal(ll_cpp, ll_baseline, tolerance = 1e-10)
+})
+
+
+test_that("cpp_log_likelihood_ecology errors on informative coding", {
+  f <- .MakeEcologyFixture()
+  model <- MkPrimeModel(ecologyAware = TRUE, expSteps = 10,
+                        kPrimePrior = "geometric", coding = "informative")
+  dataPtr <- .MakeEcoDataPtr(f$mkd, model)
+  zMat <- matrix(0L, nrow = f$mkd$nChar, ncol = f$mkd$kEcology)
+  expect_error(
+    MkPrime:::.CppLogLikelihoodEcology(
+      dataPtr,
+      f$tree$edge[, 1], f$tree$edge[, 2], f$tree$edge.length,
+      as.integer(f$mkd$kObs),
+      1.0, 0, 1.0, 1.0, zMat),
+    "informative.*not yet"
+  )
 })
 
 

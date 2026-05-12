@@ -745,6 +745,84 @@ double PruningJcEcology(
 
 
 // ---------------------------------------------------------------------------
+// Ascertainment under the ecology mixture (variable coding)
+// ---------------------------------------------------------------------------
+//
+// Per-character constant-site probabilities. Each character has its own
+// z[c, :] vector and therefore its own mixture transition matrix, so the
+// constant-site probability is computed per character via a single
+// pseudo-character pruning pass.
+
+static double const_site_prob_jc_eco_single(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edgeLen, int nTip, int kStates,
+    NumericVector rates,
+    NumericMatrix wEdge, const IntegerVector& zVec,
+    NumericVector phi, int mode) {
+
+  IntegerMatrix tipStates(nTip, 1);  // all zeros (default-constructed)
+  IntegerMatrix zMat(1, zVec.size());
+  for (int s = 0; s < zVec.size(); ++s) zMat(0, s) = zVec[s];
+  NumericVector rootFreqs(kStates, 1.0 / kStates);
+
+  int maxNode = 2 * nTip - 1;
+  int stride  = kStates;
+  std::vector<double>  buf((maxNode + 1) * stride, 0.0);
+  std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+
+  double ll = pruning_jc_acrv_flat_ecology(
+    parent, child, edgeLen, tipStates,
+    kStates, rootFreqs, rates,
+    wEdge, zMat, phi, mode,
+    buf.data(), initFlg.data(), stride);
+  // JC symmetry: P(constant in any state) = kStates * P(all-tips-0).
+  return kStates * std::exp(ll);
+}
+
+
+static double const_site_prob_mkn_eco_single(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edgeLen, int nTip,
+    double rateLoss, NumericVector rates,
+    NumericMatrix wEdge, const IntegerVector& zVec,
+    NumericVector phi, int mode) {
+
+  IntegerMatrix zMat(1, zVec.size());
+  for (int s = 0; s < zVec.size(); ++s) zMat(0, s) = zVec[s];
+  NumericVector rootFreqs(2);
+  rootFreqs[0] = rateLoss / (1.0 + rateLoss);
+  rootFreqs[1] = 1.0 / (1.0 + rateLoss);
+
+  int maxNode = 2 * nTip - 1;
+  int stride  = 2;
+  std::vector<double>  buf((maxNode + 1) * stride, 0.0);
+  std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+
+  // Pseudo-char "all 0"
+  IntegerMatrix tipStates0(nTip, 1);  // zeros
+  double ll0 = pruning_mkn_acrv_flat_ecology(
+    parent, child, edgeLen, tipStates0,
+    rateLoss, rootFreqs, rates,
+    wEdge, zMat, phi, mode,
+    buf.data(), initFlg.data(), stride);
+
+  // Pseudo-char "all 1"
+  IntegerMatrix tipStates1(nTip, 1);
+  for (int t = 0; t < nTip; ++t) tipStates1(t, 0) = 1;
+  // Re-zero buffers for the second pass
+  std::fill(buf.begin(), buf.end(), 0.0);
+  std::fill(initFlg.begin(), initFlg.end(), 0u);
+  double ll1 = pruning_mkn_acrv_flat_ecology(
+    parent, child, edgeLen, tipStates1,
+    rateLoss, rootFreqs, rates,
+    wEdge, zMat, phi, mode,
+    buf.data(), initFlg.data(), stride);
+
+  return std::exp(ll0) + std::exp(ll1);
+}
+
+
+// ---------------------------------------------------------------------------
 // cpp_log_likelihood_ecology: full-data orchestrator under the ecology mixture
 // ---------------------------------------------------------------------------
 //
@@ -820,6 +898,16 @@ double cpp_log_likelihood_ecology(
         rateLoss, rootFreqs, rates,
         wEdge, zPart, phi, mode,
         buf.data(), initFlg.data(), stride);
+      if (data.codingType == 1) {  // variable
+        for (int c = 0; c < nCharPart; ++c) {
+          IntegerVector zVec(kEco);
+          for (int s = 0; s < kEco; ++s) zVec[s] = zPart(c, s);
+          double pConst = const_site_prob_mkn_eco_single(
+            parent, child, neoEl, nTip,
+            rateLoss, rates, wEdge, zVec, phi, mode);
+          ll -= std::log(1.0 - pConst);
+        }
+      }
     } else if (part.type == 2) {
       // Known state space
       int kStates = part.k;
@@ -832,6 +920,16 @@ double cpp_log_likelihood_ecology(
         kStates, rootFreqs, rates,
         wEdge, zPart, phi, mode,
         buf.data(), initFlg.data(), stride);
+      if (data.codingType == 1) {
+        for (int c = 0; c < nCharPart; ++c) {
+          IntegerVector zVec(kEco);
+          for (int s = 0; s < kEco; ++s) zVec[s] = zPart(c, s);
+          double pConst = const_site_prob_jc_eco_single(
+            parent, child, edgeLen, nTip, kStates,
+            rates, wEdge, zVec, phi, mode);
+          ll -= std::log(1.0 - pConst);
+        }
+      }
     } else {
       // Transformational: subgroup by kPrime (per-character)
       std::map<int, std::vector<int>> byKp;
@@ -863,6 +961,17 @@ double cpp_log_likelihood_ecology(
           wEdge, subZ, phi, mode,
           buf.data(), initFlg.data(), stride);
 
+        if (data.codingType == 1) {
+          for (int c = 0; c < nSub; ++c) {
+            IntegerVector zVec(kEco);
+            for (int s = 0; s < kEco; ++s) zVec[s] = subZ(c, s);
+            double pConst = const_site_prob_jc_eco_single(
+              parent, child, edgeLen, nTip, kp,
+              rates, wEdge, zVec, phi, mode);
+            subLl -= std::log(1.0 - pConst);
+          }
+        }
+
         if (data.relabel) {
           for (int c = 0; c < nSub; ++c) {
             int gi = part.globalCharIdx[cols[c]];
@@ -871,6 +980,10 @@ double cpp_log_likelihood_ecology(
         }
         ll += subLl;
       }
+    }
+
+    if (data.codingType == 2) {
+      stop("informative coding is not yet supported under ecologyAware");
     }
 
     totalLoglik += ll;

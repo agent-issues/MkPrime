@@ -2673,7 +2673,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       relabel = model$relabel,
       phi = state$phi,
       zMat = state$z,
-      magnitudeMode = model$magnitudeMode
+      magnitudeMode = model$magnitudeMode,
+      coding = model$coding
     )
   } else {
     state$log_lik <- .MkpLogLikelihood(

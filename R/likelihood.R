@@ -82,16 +82,57 @@ MkpLogLikelihood <- function(tree, mkd,
 # dispatch between them is the caller's responsibility (typically based on
 # model$ecologyAware).
 #
-# Ascertainment correction is not yet implemented for the ecology path —
-# pass `coding = "none"` at the caller; the mixture-aware constant- and
-# singleton-site probability functions are a follow-up.
+# Ascertainment: "variable" coding is supported via per-character mixture-
+# aware constant-site probability (one pseudo-character pruning per char).
+# "informative" coding (singleton-site exclusion) is a follow-up.
 #
 # phi: length 1 (magnitudeMode == "global") or kEcology ("per_ecology").
 # zMat: nChar x kEcology integer matrix, entries in {0, 1, 2}.
+# Per-character constant-site probability under the JC-K ecology mixture.
+# zVec is length kEco for one character. Returns scalar P(constant) under
+# the mixture induced by zVec, phi, wEdge.
+# By JC symmetry the off-diagonal entry of the mixed transition matrix is
+# state-independent, so P(constant) = kStates * P(all tips in state 0).
+.ConstSiteProbJcEcology <- function(parent, child, edgeLen, nTip, kStates,
+                                     rateMultipliers, wEdge,
+                                     zVec, phi, mode) {
+  zMat1 <- matrix(as.integer(zVec), nrow = 1, byrow = FALSE)
+  states0 <- matrix(0L, nrow = nTip, ncol = 1)
+  rootFreqs <- rep(1 / kStates, kStates)
+  ll0 <- .PruningJcEcology(parent, child, edgeLen, states0,
+                            as.integer(kStates), rootFreqs,
+                            rateMultipliers,
+                            wEdge, zMat1, phi, as.integer(mode))
+  kStates * exp(ll0)
+}
+
+
+# Per-character constant-site probability under the MkN ecology mixture.
+# The MkN P matrix is asymmetric, so P(all 0) != P(all 1); sum both.
+.ConstSiteProbMknEcology <- function(parent, child, edgeLen, nTip,
+                                      rateLoss, rateMultipliers, wEdge,
+                                      zVec, phi, mode) {
+  zMat1 <- matrix(as.integer(zVec), nrow = 1, byrow = FALSE)
+  rootFreqs <- c(rateLoss / (1 + rateLoss), 1 / (1 + rateLoss))
+  states0 <- matrix(0L, nrow = nTip, ncol = 1)
+  states1 <- matrix(1L, nrow = nTip, ncol = 1)
+  ll0 <- .PruningMknEcology(parent, child, edgeLen, states0,
+                             rateLoss, rootFreqs, rateMultipliers,
+                             wEdge, zMat1, phi, as.integer(mode))
+  ll1 <- .PruningMknEcology(parent, child, edgeLen, states1,
+                             rateLoss, rootFreqs, rateMultipliers,
+                             wEdge, zMat1, phi, as.integer(mode))
+  exp(ll0) + exp(ll1)
+}
+
+
 .MkpEcologyLogLikelihood <- function(tree, mkd, kPrime,
                                        rate_loss, rate_log_sd,
                                        nCat, rate_neo, relabel,
-                                       phi, zMat, magnitudeMode = "global") {
+                                       phi, zMat, magnitudeMode = "global",
+                                       coding = "none") {
+  coding <- match.arg(coding, c("none", "variable"))
+  # "informative" coding (singleton-site exclusion) is a follow-up.
   if (is.null(mkd$ecology) || is.null(mkd$kEcology)) {
     cli::cli_abort(
       ".MkpEcologyLogLikelihood requires {.arg mkd} with ecology data"
@@ -126,12 +167,31 @@ MkpLogLikelihood <- function(tree, mkd,
       ll <- .PruningMknEcology(parent, child, neoEl, tipStates,
                                 rate_loss, rootFreqs, rates,
                                 wEdge, zPart, phi, modeInt)
+      if (coding == "variable") {
+        for (c in seq_len(part$nChar)) {
+          P_const <- .ConstSiteProbMknEcology(
+            parent, child, neoEl, nTip,
+            rate_loss, rates, wEdge,
+            zPart[c, ], phi, modeInt
+          )
+          ll <- ll - log(1 - P_const)
+        }
+      }
     } else if (part$type == "known") {
       kStates <- part$k
       rootFreqs <- rep(1.0 / kStates, kStates)
       ll <- .PruningJcEcology(parent, child, edgeLength, tipStates,
                                kStates, rootFreqs, rates,
                                wEdge, zPart, phi, modeInt)
+      if (coding == "variable") {
+        for (c in seq_len(part$nChar)) {
+          P_const <- .ConstSiteProbJcEcology(
+            parent, child, edgeLength, nTip, kStates,
+            rates, wEdge, zPart[c, ], phi, modeInt
+          )
+          ll <- ll - log(1 - P_const)
+        }
+      }
     } else {  # transformational: subgroup by kPrime
       kPrimePart <- kPrime[part$char_indices]
       ll <- 0.0
@@ -144,6 +204,15 @@ MkpLogLikelihood <- function(tree, mkd,
         subLl <- .PruningJcEcology(parent, child, edgeLength, subStates,
                                     kp, rootFreqs, rates,
                                     wEdge, zSub, phi, modeInt)
+        if (coding == "variable") {
+          for (c in seq_along(cols)) {
+            P_const <- .ConstSiteProbJcEcology(
+              parent, child, edgeLength, nTip, kp,
+              rates, wEdge, zSub[c, ], phi, modeInt
+            )
+            subLl <- subLl - log(1 - P_const)
+          }
+        }
         ll <- ll + subLl
       }
       if (relabel) {
