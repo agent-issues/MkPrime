@@ -2111,7 +2111,15 @@ SEXP prepare_mcmc_data(List partitions_r,
                        int    empBodyLastK = 1,
                        int    empTailStartK = 0,
                        double empTailDecay = 0.0,
-                       double empLogTailStartP = -1e308) {
+                       double empLogTailStartP = -1e308,
+                       bool   ecologyAware = false,
+                       Rcpp::IntegerVector ecologyTipStates = Rcpp::IntegerVector(),
+                       int    kEcology = 0,
+                       std::string magnitudeModeStr = "global",
+                       double rho0Alpha = 7.0,
+                       double rho0Beta  = 3.0,
+                       double sigmaPhi  = 0.5,
+                       int    gibbsZEvery = 50) {
   McmcData* d = new McmcData();
   d->hasNeo = hasNeo;
   d->nCat = nCat;
@@ -2201,6 +2209,19 @@ SEXP prepare_mcmc_data(List partitions_r,
   d->nBetaCat       = nBetaCat;
   d->betaScaleShape = betaScaleShape;
   d->betaScaleRate  = betaScaleRate;
+
+  // Ecology-aware NT model: populate static ecology info on McmcData.
+  // Per-iteration phi / pi0 / z live on McmcState (init_mcmc_state).
+  d->ecologyAware = ecologyAware;
+  if (ecologyAware) {
+    d->magnitudeMode = (magnitudeModeStr == "per_ecology") ? 1 : 0;
+    d->rho0Alpha   = rho0Alpha;
+    d->rho0Beta    = rho0Beta;
+    d->sigmaPhi    = sigmaPhi;
+    d->gibbsZEvery = gibbsZEvery;
+    d->ecology.kEcology  = kEcology;
+    d->ecology.tipStates = ecologyTipStates;
+  }
 
   // Collect distinct k values across all partitions for bin precomputation.
   if (qHeterogeneity) {

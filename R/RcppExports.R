@@ -57,8 +57,8 @@ fitch_score_r <- function(parent, child, tipStates, nTip, kStates) {
     .Call(`_MkPrime_fitch_score_r`, parent, child, tipStates, nTip, kStates)
 }
 
-init_mcmc_state <- function(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale = 1.0, kprimeAlpha = 1.0, kprimeBeta = 1.0) {
-    .Call(`_MkPrime_init_mcmc_state`, parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta)
+init_mcmc_state <- function(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale = 1.0, kprimeAlpha = 1.0, kprimeBeta = 1.0, phi = numericVector(), pi0 = 0.0, zMatrix = matrix(0, 0)) {
+    .Call(`_MkPrime_init_mcmc_state`, parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta, phi, pi0, zMatrix)
 }
 
 fill_partition_cache <- function(dataPtr, statePtr) {
@@ -125,8 +125,8 @@ validate_swap_partial_cl <- function(dataPtr, statePtr, nodeA) {
     .Call(`_MkPrime_PruningJcEcology`, parent, child, edgeLen, tipStates, kStates, rootFreqs, rateMultipliers, wEdge, zMat, phi, mode)
 }
 
-prepare_mcmc_data <- function(partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, kPriorBetaGeometric = FALSE, qHeterogeneity = FALSE, nBetaCat = 4L, betaScaleShape = 1.0, betaScaleRate = 1.0, kPriorEmpiricalGeometric = FALSE, empLogBody = numericVector(), empBodyLastK = 1L, empTailStartK = 0L, empTailDecay = 0.0, empLogTailStartP = -1e308) {
-    .Call(`_MkPrime_prepare_mcmc_data`, partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, kPriorBetaGeometric, qHeterogeneity, nBetaCat, betaScaleShape, betaScaleRate, kPriorEmpiricalGeometric, empLogBody, empBodyLastK, empTailStartK, empTailDecay, empLogTailStartP)
+prepare_mcmc_data <- function(partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, kPriorBetaGeometric = FALSE, qHeterogeneity = FALSE, nBetaCat = 4L, betaScaleShape = 1.0, betaScaleRate = 1.0, kPriorEmpiricalGeometric = FALSE, empLogBody = numericVector(), empBodyLastK = 1L, empTailStartK = 0L, empTailDecay = 0.0, empLogTailStartP = -1e308, ecologyAware = FALSE, ecologyTipStates = integerVector(), kEcology = 0L, magnitudeModeStr = "global", rho0Alpha = 7.0, rho0Beta = 3.0, sigmaPhi = 0.5, gibbsZEvery = 50L) {
+    .Call(`_MkPrime_prepare_mcmc_data`, partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, kPriorBetaGeometric, qHeterogeneity, nBetaCat, betaScaleShape, betaScaleRate, kPriorEmpiricalGeometric, empLogBody, empBodyLastK, empTailStartK, empTailDecay, empLogTailStartP, ecologyAware, ecologyTipStates, kEcology, magnitudeModeStr, rho0Alpha, rho0Beta, sigmaPhi, gibbsZEvery)
 }
 
 set_branch_bins <- function(dataPtr, nBins) {

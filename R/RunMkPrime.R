@@ -2650,17 +2650,43 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     state$beta_scale <- 1.0
   }
 
+  # Ecology-aware NT model state.
+  # phi: 1 scalar in global mode, kEcology entries in per_ecology mode.
+  # pi0: prior mean Beta(rho0Alpha, rho0Beta).
+  # z: nChar x kEcology integer matrix, initialised at 0 (no influence).
+  if (isTRUE(model$ecologyAware)) {
+    state$phi <- if (identical(model$magnitudeMode, "per_ecology"))
+                   rep(1.0, mkd$kEcology) else 1.0
+    state$pi0 <- model$rho0Alpha / (model$rho0Alpha + model$rho0Beta)
+    state$z   <- matrix(0L, nrow = mkd$nChar, ncol = mkd$kEcology)
+  }
+
   # Tree is already preorder (reordered at init); use internal fast-path
-  state$log_lik <- .MkpLogLikelihood(
-    tree, mkd,
-    kPrime = state$kPrime,
-    rate_loss = state$rate_loss,
-    rate_log_sd = state$rate_log_sd,
-    nCat = model$nCat,
-    coding = model$coding,
-    rate_neo = state$rate_neo %||% 1.0,
-    relabel = model$relabel
-  )
+  if (isTRUE(model$ecologyAware)) {
+    state$log_lik <- .MkpEcologyLogLikelihood(
+      tree, mkd,
+      kPrime = state$kPrime,
+      rate_loss = state$rate_loss,
+      rate_log_sd = state$rate_log_sd,
+      nCat = model$nCat,
+      rate_neo = state$rate_neo %||% 1.0,
+      relabel = model$relabel,
+      phi = state$phi,
+      zMat = state$z,
+      magnitudeMode = model$magnitudeMode
+    )
+  } else {
+    state$log_lik <- .MkpLogLikelihood(
+      tree, mkd,
+      kPrime = state$kPrime,
+      rate_loss = state$rate_loss,
+      rate_log_sd = state$rate_log_sd,
+      nCat = model$nCat,
+      coding = model$coding,
+      rate_neo = state$rate_neo %||% 1.0,
+      relabel = model$relabel
+    )
+  }
   state$log_prior <- LogPrior(state, model, mkd)
   state$log_post <- state$log_lik + state$log_prior
 
@@ -2970,6 +2996,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     empTailDecay <- as.numeric(emp$tail_decay)
     empLogTailStartP <- if (emp$tail_start_p > 0) log(emp$tail_start_p) else -Inf
   }
+  ecologyAware <- isTRUE(model$ecologyAware) && !is.null(mkd$ecology)
+  ecologyTip <- if (ecologyAware) {
+    eco <- as.integer(mkd$ecology)
+    eco[is.na(eco)] <- -1L
+    eco
+  } else integer(0)
+  kEcology <- if (ecologyAware) as.integer(mkd$kEcology) else 0L
+  magMode  <- if (ecologyAware) model$magnitudeMode else "global"
   prepare_mcmc_data(
     parts, as.integer(mkd$kObs), mkd$type,
     any(mkd$type == "neomorphic"),
@@ -2991,13 +3025,25 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     empBodyLastK,
     empTailStartK,
     empTailDecay,
-    empLogTailStartP
+    empLogTailStartP,
+    ecologyAware,
+    ecologyTip,
+    kEcology,
+    magMode,
+    model$rho0Alpha %||% 7.0,
+    model$rho0Beta %||% 3.0,
+    model$sigmaPhi %||% 0.5,
+    as.integer(model$gibbsZEvery %||% 50L)
   )
 }
 
 #' Convert an R state to a C++ XPtr<McmcState>
 #' @keywords internal
 .InitMcmcChain <- function(state) {
+  phi <- state$phi %||% numeric(0)
+  pi0 <- state$pi0 %||% 0
+  zMat <- state$z %||% matrix(integer(0), 0, 0)
+  storage.mode(zMat) <- "integer"
   init_mcmc_state(
     state$tree$edge[, 1], state$tree$edge[, 2],
     state$rel_br_lengths, state$tree_length,
@@ -3007,7 +3053,10 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     state$log_lik, state$log_prior,
     state$beta_scale %||% 1.0,
     state$kprime_alpha %||% 1.0,
-    state$kprime_beta %||% 1.0
+    state$kprime_beta %||% 1.0,
+    phi = as.numeric(phi),
+    pi0 = as.numeric(pi0),
+    zMatrix = zMat
   )
 }
 

@@ -160,6 +160,14 @@ struct McmcState {
   ClWorkspace clWs;
   // M-052: Q-matrix heterogeneity — Dirichlet-marginal beta_scale parameter.
   double betaScale = 1.0;
+
+  // Ecology-aware NT model state. Only meaningful when
+  // McmcData::ecologyAware is true; default values are inert.
+  NumericVector phi;           // length 1 (global) or kEcology (per_ecology)
+  double        pi0 = 0.0;
+  IntegerMatrix zMatrix;       // nChar x kEcology, entries in {0, 1, 2}
+  NumericMatrix wEdge;         // nEdge x kEcology, cached per-likelihood
+  bool          wEdgeDirty = true;  // recompute wEdge on next likelihood call
   // M-155: dedicated workspace for Gibbs kPrime batched pruning
   ClWorkspace gibbsWs;
   // M-121: persistent node-level CL cache for partial evaluation
@@ -348,7 +356,10 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
                      double logLik, double logPrior,
                      double betaScale = 1.0,
                      double kprimeAlpha = 1.0,
-                     double kprimeBeta = 1.0) {
+                     double kprimeBeta = 1.0,
+                     Rcpp::NumericVector phi = Rcpp::NumericVector(),
+                     double pi0 = 0.0,
+                     Rcpp::IntegerMatrix zMatrix = Rcpp::IntegerMatrix(0, 0)) {
   McmcState* s = new McmcState();
   s->parent       = clone(parent);
   s->child        = clone(child);
@@ -365,6 +376,12 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
   s->logPrior     = logPrior;
   s->betaScale    = betaScale;
   s->brSnapshot   = NumericVector(relBrLengths.size());
+  if (phi.size() > 0) {
+    s->phi        = clone(phi);
+    s->pi0        = pi0;
+    s->zMatrix    = clone(zMatrix);
+    s->wEdgeDirty = true;
+  }
   return Rcpp::XPtr<McmcState>(s, true);
 }
 
@@ -506,7 +523,10 @@ List get_mcmc_state(SEXP statePtr) {
     _["diagBsPartial"]  = s->diagBsPartialCount,
     _["diagDriftCount"] = s->diagDriftCount,
     _["diagMaxDiff"]    = s->diagMaxDiff,
-    _["diagSelectivePop"] = s->nodeCL.diagSelectivePopCount
+    _["diagSelectivePop"] = s->nodeCL.diagSelectivePopCount,
+    _["phi"]            = s->phi,
+    _["pi0"]            = s->pi0,
+    _["zMatrix"]        = s->zMatrix
   );
 }
 
