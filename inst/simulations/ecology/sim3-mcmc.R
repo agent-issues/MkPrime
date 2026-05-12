@@ -88,13 +88,13 @@ modelAware <- MkPrimeModel(
   expSteps      = 10
 )
 mcmc <- MkPrimeMCMC(
-  nIter          = 100000L,
+  nIter          = 50000L,
   nChains        = 1L,
   nRuns          = 1L,
-  thin           = 200L,
-  treeThin       = 200L,
-  minWarmup      = 3000L,
-  maxWarmup      = 25000L,
+  thin           = 100L,
+  treeThin       = 100L,
+  minWarmup      = 2000L,
+  maxWarmup      = 15000L,
   logFile        = NULL,
   checkpointFile = NULL
 )
