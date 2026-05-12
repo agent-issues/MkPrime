@@ -74,6 +74,93 @@ MkpLogLikelihood <- function(tree, mkd,
                     nCat, coding, rate_neo, relabel)
 }
 
+# Ecology-aware log-likelihood orchestrator.
+#
+# Per likelihood call: recompute ecology marginals + edge weights from the
+# current tree, then dispatch each partition to the ecology-aware pruning
+# variant. The non-ecology fast path remains .MkpLogLikelihood below;
+# dispatch between them is the caller's responsibility (typically based on
+# model$ecologyAware).
+#
+# Ascertainment correction is not yet implemented for the ecology path —
+# pass `coding = "none"` at the caller; the mixture-aware constant- and
+# singleton-site probability functions are a follow-up.
+#
+# phi: length 1 (magnitudeMode == "global") or kEcology ("per_ecology").
+# zMat: nChar x kEcology integer matrix, entries in {0, 1, 2}.
+.MkpEcologyLogLikelihood <- function(tree, mkd, kPrime,
+                                       rate_loss, rate_log_sd,
+                                       nCat, rate_neo, relabel,
+                                       phi, zMat, magnitudeMode = "global") {
+  if (is.null(mkd$ecology) || is.null(mkd$kEcology)) {
+    cli::cli_abort(
+      ".MkpEcologyLogLikelihood requires {.arg mkd} with ecology data"
+    )
+  }
+  parent <- tree$edge[, 1]
+  child  <- tree$edge[, 2]
+  edgeLength <- tree$edge.length
+  nTip <- length(tree$tip.label)
+
+  ecologyTip <- as.integer(mkd$ecology)
+  ecologyTip[is.na(ecologyTip)] <- -1L
+  margMat <- .EcologyNodeMarginals(parent, child, edgeLength,
+                                    ecologyTip, mkd$kEcology)
+  wEdge <- .EcologyEdgeWeights(margMat, parent, child)
+
+  rates    <- DiscreteLognormalRates(rate_log_sd, nCat)
+  modeInt  <- if (identical(magnitudeMode, "global")) 0L else 1L
+  totalLoglik <- 0.0
+
+  for (part in mkd$partitions) {
+    tipStates <- part$tip_states
+    tipStates[is.na(tipStates)] <- -1L
+    storage.mode(tipStates) <- "integer"
+
+    zPart <- zMat[part$char_indices, , drop = FALSE]
+    storage.mode(zPart) <- "integer"
+
+    if (part$type == "neomorphic") {
+      neoEl <- edgeLength * rate_neo
+      rootFreqs <- as.numeric(mkn_stationary_freqs(rate_loss))
+      ll <- .PruningMknEcology(parent, child, neoEl, tipStates,
+                                rate_loss, rootFreqs, rates,
+                                wEdge, zPart, phi, modeInt)
+    } else if (part$type == "known") {
+      kStates <- part$k
+      rootFreqs <- rep(1.0 / kStates, kStates)
+      ll <- .PruningJcEcology(parent, child, edgeLength, tipStates,
+                               kStates, rootFreqs, rates,
+                               wEdge, zPart, phi, modeInt)
+    } else {  # transformational: subgroup by kPrime
+      kPrimePart <- kPrime[part$char_indices]
+      ll <- 0.0
+      for (kp in sort(unique(kPrimePart))) {
+        cols <- which(kPrimePart == kp)
+        subStates <- tipStates[, cols, drop = FALSE]
+        rootFreqs <- rep(1.0 / kp, kp)
+        zSub <- zPart[cols, , drop = FALSE]
+        storage.mode(zSub) <- "integer"
+        subLl <- .PruningJcEcology(parent, child, edgeLength, subStates,
+                                    kp, rootFreqs, rates,
+                                    wEdge, zSub, phi, modeInt)
+        ll <- ll + subLl
+      }
+      if (relabel) {
+        relabelCorr <- mk_prime_relabel_log_batch(
+          as.integer(kPrimePart), part$kObs
+        )
+        ll <- ll + sum(relabelCorr)
+      }
+    }
+
+    totalLoglik <- totalLoglik + ll
+  }
+
+  totalLoglik
+}
+
+
 # Internal fast-path likelihood — no validation, no reorder.
 # INVARIANT: tree$edge must already be in canonical preorder. Guaranteed by
 # .InitState() and all topology proposals (C++ preorder_weighted_impl).

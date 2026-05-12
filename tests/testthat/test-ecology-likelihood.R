@@ -627,6 +627,142 @@ test_that("PruningMknEcology validates argument shapes", {
 })
 
 
+# ===== .MkpEcologyLogLikelihood: full orchestrator integration =====
+
+
+test_that(".MkpEcologyLogLikelihood with z = 0 matches non-ecology likelihood", {
+  # Construct a small MkPrimeData with one ecology column.
+  # Tree: 6-tip random; chars: 4 transformational + 2 neomorphic + 1 ecology.
+  set.seed(1234)
+  tips <- paste0("t", 1:6)
+  mat <- matrix(c(
+    # transformational chars (3 states each)
+    0, 1, 2, 0, 1, 2,
+    1, 0, 1, 2, 2, 0,
+    2, 1, 0, 1, 0, 2,
+    0, 0, 1, 1, 2, 2,
+    # neomorphic chars (binary)
+    0, 1, 0, 1, 0, 1,
+    1, 0, 1, 0, 1, 0,
+    # ecology (3 states)
+    0, 0, 1, 1, 2, 2
+  ), nrow = 6, ncol = 7, byrow = FALSE,
+     dimnames = list(tips, NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd, neomorphic = c(5L, 6L), ecology = 7L)
+
+  tree <- TreeTools::Preorder(ape::rtree(6, tip.label = tips))
+
+  # Ecology-blind likelihood (coding = "none" to match the eco path)
+  ll_baseline <- MkPrime:::.MkpLogLikelihood(
+    tree, mkd,
+    kPrime = mkd$kObs,
+    rate_loss = 1.0, rate_log_sd = 0, nCat = 1L,
+    coding = "none", rate_neo = 1.0, relabel = TRUE
+  )
+
+  # Ecology-aware with z = 0 everywhere: rate factors all 1, result identical.
+  zMat <- matrix(0L, nrow = mkd$nChar, ncol = mkd$kEcology)
+  ll_eco <- MkPrime:::.MkpEcologyLogLikelihood(
+    tree, mkd, kPrime = mkd$kObs,
+    rate_loss = 1.0, rate_log_sd = 0, nCat = 1L,
+    rate_neo = 1.0, relabel = TRUE,
+    phi = 1.5, zMat = zMat, magnitudeMode = "global"
+  )
+
+  expect_equal(ll_eco, ll_baseline, tolerance = 1e-10)
+})
+
+
+test_that(".MkpEcologyLogLikelihood: z = 0 invariant to phi value", {
+  set.seed(5678)
+  tips <- paste0("t", 1:5)
+  mat <- matrix(c(
+    0, 1, 0, 1, 2,
+    1, 0, 1, 2, 0,
+    0, 0, 1, 1, 1,    # neomorphic
+    0, 1, 1, 2, 2     # ecology
+  ), nrow = 5, ncol = 4, byrow = FALSE,
+     dimnames = list(tips, NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd, neomorphic = 3L, ecology = 4L)
+  tree <- TreeTools::Preorder(ape::rtree(5, tip.label = tips))
+
+  zMat <- matrix(0L, nrow = mkd$nChar, ncol = mkd$kEcology)
+  ll1 <- MkPrime:::.MkpEcologyLogLikelihood(
+    tree, mkd, kPrime = mkd$kObs,
+    rate_loss = 0.8, rate_log_sd = 0, nCat = 1L,
+    rate_neo = 1.2, relabel = TRUE,
+    phi = 1, zMat = zMat, magnitudeMode = "global"
+  )
+  ll2 <- MkPrime:::.MkpEcologyLogLikelihood(
+    tree, mkd, kPrime = mkd$kObs,
+    rate_loss = 0.8, rate_log_sd = 0, nCat = 1L,
+    rate_neo = 1.2, relabel = TRUE,
+    phi = 4.5, zMat = zMat, magnitudeMode = "global"
+  )
+  expect_equal(ll1, ll2, tolerance = 1e-12)
+})
+
+
+test_that(".MkpEcologyLogLikelihood: phi > 1 with non-zero z changes likelihood", {
+  set.seed(91011)
+  tips <- paste0("t", 1:5)
+  mat <- matrix(c(
+    0, 1, 1, 0, 1,
+    1, 0, 0, 1, 0,
+    0, 0, 1, 1, 1,
+    0, 1, 1, 2, 2
+  ), nrow = 5, ncol = 4, byrow = FALSE,
+     dimnames = list(tips, NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd, neomorphic = 3L, ecology = 4L)
+  tree <- TreeTools::Preorder(ape::rtree(5, tip.label = tips))
+
+  # mkd$kEcology is 3 here (ecology col has states {0, 1, 2}).
+  zMat <- matrix(c(0L, 1L, 2L,
+                   1L, 2L, 0L,
+                   2L, 0L, 1L), nrow = 3, ncol = 3, byrow = TRUE)
+  ll1 <- MkPrime:::.MkpEcologyLogLikelihood(
+    tree, mkd, kPrime = mkd$kObs,
+    rate_loss = 1.0, rate_log_sd = 0, nCat = 1L,
+    rate_neo = 1.0, relabel = TRUE,
+    phi = 1, zMat = zMat, magnitudeMode = "global"
+  )
+  ll2 <- MkPrime:::.MkpEcologyLogLikelihood(
+    tree, mkd, kPrime = mkd$kObs,
+    rate_loss = 1.0, rate_log_sd = 0, nCat = 1L,
+    rate_neo = 1.0, relabel = TRUE,
+    phi = 2.5, zMat = zMat, magnitudeMode = "global"
+  )
+  # With non-zero z and phi != 1, the likelihood should change.
+  expect_false(isTRUE(all.equal(ll1, ll2, tolerance = 1e-6)))
+  expect_true(is.finite(ll1))
+  expect_true(is.finite(ll2))
+})
+
+
+test_that(".MkpEcologyLogLikelihood errors when mkd has no ecology", {
+  tips <- paste0("t", 1:5)
+  mat <- matrix(c(0, 1, 0, 1, 2,
+                  1, 0, 1, 2, 0), nrow = 5, ncol = 2,
+                dimnames = list(tips, NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd)  # no ecology
+  tree <- TreeTools::Preorder(ape::rtree(5, tip.label = tips))
+  zMat <- matrix(0L, nrow = mkd$nChar, ncol = 2)
+  expect_error(
+    MkPrime:::.MkpEcologyLogLikelihood(
+      tree, mkd, kPrime = mkd$kObs,
+      rate_loss = 1.0, rate_log_sd = 0, nCat = 1L,
+      rate_neo = 1.0, relabel = TRUE,
+      phi = 1, zMat = zMat, magnitudeMode = "global"
+    ),
+    "requires.*ecology"
+  )
+})
+
+
 test_that("PruningJcEcology validates argument shapes", {
   s <- .MakeJcEcoSetup(kStates = 2L, nChar = 2L, kEco = 2L)
   tipStates <- matrix(c(0L, 0L, 1L, 1L, 1L, 0L, 0L, 1L),
