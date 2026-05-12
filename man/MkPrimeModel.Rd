@@ -27,7 +27,13 @@ MkPrimeModel(
   qHeterogeneity = FALSE,
   nBetaCat = 4L,
   betaScaleShape = 1,
-  betaScaleRate = 1
+  betaScaleRate = 1,
+  ecologyAware = FALSE,
+  magnitudeMode = "global",
+  rho0Alpha = 7,
+  rho0Beta = 3,
+  sigmaPhi = 0.5,
+  gibbsZEvery = 50L
 )
 }
 \arguments{
@@ -107,6 +113,28 @@ Ignored when \code{qHeterogeneity = FALSE}.}
 \item{betaScaleShape, betaScaleRate}{Shape and rate for the Gamma prior
 on \code{beta_scale} (the symmetric Dirichlet concentration parameter).
 Defaults: shape = 1, rate = 1. Ignored when \code{qHeterogeneity = FALSE}.}
+
+\item{ecologyAware}{Logical. Enable the ecology-aware NT model? Default
+\code{FALSE}. When \code{TRUE}, the supplied \link{MkPrimeData} must carry an \code{ecology}
+component (see \code{\link[=MkPrimeData]{MkPrimeData()}}). Per-character substitution rates then
+depend on the ecology assigned to each edge through a marginal-mixture
+over edge ecology probabilities. See \code{vignette("ecology-details", package = "MkPrime")} for the mathematical specification.}
+
+\item{magnitudeMode}{How the rate-modifier magnitude is shared across
+ecologies: \code{"global"} (default; single \code{phi}) or \code{"per_ecology"} (one
+\code{phi_e} per ecology state). Ignored when \code{ecologyAware = FALSE}.}
+
+\item{rho0Alpha, rho0Beta}{Shape parameters for the Beta hyperprior on
+\code{pi_0}, the prior probability that a (character, ecology) pair has
+no ecology effect. Defaults: 7, 3 (so \code{E[pi_0] = 0.7}). Ignored when
+\code{ecologyAware = FALSE}.}
+
+\item{sigmaPhi}{Standard deviation of the LogNormal prior on \code{phi} (or
+on each \code{phi_e}). Default 0.5. Ignored when \code{ecologyAware = FALSE}.}
+
+\item{gibbsZEvery}{Integer. Number of MCMC generations between Gibbs
+sweeps over the per-(character, ecology) influence categories \code{z}.
+Default 50. Ignored when \code{ecologyAware = FALSE}.}
 }
 \value{
 An S3 object of class \code{MkPrimeModel}.
@@ -114,6 +142,26 @@ An S3 object of class \code{MkPrimeModel}.
 \description{
 Specify an MkPrime model
 }
+\section{Ecology-aware NT model}{
+
+
+When \code{ecologyAware = TRUE}, the model adds a per-edge, per-character rate
+modifier whose value depends on the inferred ecology of each edge. Edge
+ecology is reconstructed as a marginal under a standard Mk(K) process on
+the same tree, and the per-edge mixture weight \verb{w_\{e\}(s)} for ecology
+state \code{s} is taken from this marginal at the parent node.
+
+For each pair \verb{(c, e)} of (character, ecology state) a latent influence
+category \verb{z_\{c,e\}} is sampled with three values:
+\describe{
+\item{\code{none}}{character \code{c}'s rate is unchanged in ecology \code{e}}
+\item{\code{encouraged}}{rate scaled by \code{phi} (asymmetric for neomorphic)}
+\item{\code{discouraged}}{rate scaled by \code{1 / phi} (asymmetric for neomorphic)}
+}
+The prior on \code{z} is sparse: \code{P(z = none) = pi_0}, with \code{pi_0 ~ Beta(7, 3)}
+by default so most characters are \emph{a priori} unaffected by ecology.
+}
+
 \section{Q-matrix heterogeneity}{
 
 

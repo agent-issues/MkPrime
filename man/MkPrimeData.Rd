@@ -4,7 +4,13 @@
 \alias{MkPrimeData}
 \title{Prepare morphological data for Mk' analysis}
 \usage{
-MkPrimeData(data, neomorphic = integer(0), knownStates = integer(0))
+MkPrimeData(
+  data,
+  neomorphic = integer(0),
+  knownStates = integer(0),
+  ecology = NULL,
+  kEcology = NULL
+)
 }
 \arguments{
 \item{data}{A \code{phyDat} object (from \pkg{ape} or \pkg{TreeTools}).}
@@ -16,6 +22,20 @@ MkPrimeData(data, neomorphic = integer(0), knownStates = integer(0))
 states for specific characters. Names are character indices (as strings),
 values are the true k. Characters listed here use standard Mk(k) with no
 k' inference.}
+
+\item{ecology}{Optional ecology coding for the ecology-aware NT model.
+Either (a) a single integer giving the column index of an ecology
+character within \code{data} (that column is extracted and removed from the
+character matrix); or (b) an integer or factor vector of length \code{nTip},
+with names matching the taxon labels in \code{data}, giving the ecology state
+of each tip. States may be \code{NA} for unknown ecology. Default \code{NULL}
+(no ecology layer).}
+
+\item{kEcology}{Optional integer giving the number of ecology states.
+Defaults to the number of distinct non-\code{NA} states observed in
+\code{ecology}. Override only when ecology states present in the data are
+not contiguously coded from 0, or when you want to allow for ecology
+states unobserved at tips.}
 }
 \value{
 An object of class \code{"MkPrimeData"}, a list with components:
@@ -31,6 +51,10 @@ An object of class \code{"MkPrimeData"}, a list with components:
 \item{known_k}{Integer vector: known k per character (\code{NA} for
 non-"known" characters).}
 \item{levels}{Character state levels from the original phyDat.}
+\item{ecology}{Integer vector of length \code{nTip} with 0-indexed ecology
+states (\code{NA} for unknown). \code{NULL} when no ecology supplied.}
+\item{kEcology}{Integer scalar: number of ecology states. \code{NULL} when
+no ecology supplied.}
 }
 }
 \description{
@@ -45,6 +69,12 @@ the Mk' model.
 
 For each character, the number of observed states (kObs) is computed by
 counting distinct non-ambiguous states across all taxa.
+
+When \code{ecology} is supplied, the resulting \code{MkPrimeData} object carries an
+\code{ecology} component (integer vector of 0-indexed states, length \code{nTip},
+\code{NA} for unknown) and a \code{kEcology} component (the number of ecology
+states). Activating ecology-aware inference additionally requires
+\code{MkPrimeModel(ecologyAware = TRUE)}.
 }
 \examples{
 \dontrun{

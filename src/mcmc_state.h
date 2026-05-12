@@ -27,6 +27,28 @@ struct PartInfo {
   int nUniquePatterns = 0;
 };
 
+// Ecology partition for the ecology-aware NT model.
+// Tip ecologies are integer-coded, contiguous in [0, kEcology).
+// Phase 1: declarations only — likelihood/proposal wiring lands in Phase 2/3.
+struct EcologyInfo {
+  int kEcology = 0;                      // number of ecology states (0 = disabled)
+  Rcpp::IntegerVector tipStates;         // length nTip, 0-indexed
+  bool active() const { return kEcology >= 2 && tipStates.size() > 0; }
+};
+
+// Per-iteration state of the ecology-aware extension.
+// phi:     magnitude factor. Length 1 (global) or kEcology (per_ecology).
+// pi0:     spike-and-slab sparsity (prob of z == none).
+// zMatrix: nChar x kEcology, values in {0=none, 1=encouraged, 2=discouraged}.
+// wEdge:   nEdge x kEcology cache of edge-ecology marginal weights, recomputed
+//          once per likelihood evaluation in Phase 2.
+struct EcologyState {
+  Rcpp::NumericVector phi;
+  double pi0 = 0.0;
+  Rcpp::IntegerMatrix zMatrix;
+  Rcpp::NumericMatrix wEdge;
+};
+
 // Bin breakpoints for weighted branch-length moves (M-087/088/089/054).
 // Uses Beta(alpha, beta) quantile breakpoints to tile [0,1].
 struct BranchBins {
@@ -111,6 +133,19 @@ struct McmcData {
   // Distinct k values present in the dataset (populated at init).
   // Used to precompute per-k bins when beta_scale changes.
   std::vector<int> hetKValues;  // e.g., {2, 3, 5}
+
+  // Ecology-aware NT model (Phase 1: scaffolding only).
+  // ecologyAware mirrors model$ecologyAware; ecology holds the per-tip
+  // ecology codes and kEcology. magnitudeMode: 0 = global, 1 = per_ecology.
+  // rho0Alpha/Beta parameterise the Beta prior on pi0; sigmaPhi is the
+  // LogNormal sdlog for phi. gibbsZEvery is the sweep period over z.
+  bool ecologyAware = false;
+  EcologyInfo ecology;
+  int    magnitudeMode = 0;
+  double rho0Alpha = 7.0;
+  double rho0Beta  = 3.0;
+  double sigmaPhi  = 0.5;
+  int    gibbsZEvery = 50;
 };
 
 // Pre-allocated flat CL workspace (M-063): eliminates per-call heap

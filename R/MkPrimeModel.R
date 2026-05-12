@@ -65,6 +65,42 @@
 #' @param betaScaleShape,betaScaleRate Shape and rate for the Gamma prior
 #'   on `beta_scale` (the symmetric Dirichlet concentration parameter).
 #'   Defaults: shape = 1, rate = 1. Ignored when `qHeterogeneity = FALSE`.
+#' @param ecologyAware Logical. Enable the ecology-aware NT model? Default
+#'   `FALSE`. When `TRUE`, the supplied [MkPrimeData] must carry an `ecology`
+#'   component (see [MkPrimeData()]). Per-character substitution rates then
+#'   depend on the ecology assigned to each edge through a marginal-mixture
+#'   over edge ecology probabilities. See `vignette("ecology-details",
+#'   package = "MkPrime")` for the mathematical specification.
+#' @param magnitudeMode How the rate-modifier magnitude is shared across
+#'   ecologies: `"global"` (default; single `phi`) or `"per_ecology"` (one
+#'   `phi_e` per ecology state). Ignored when `ecologyAware = FALSE`.
+#' @param rho0Alpha,rho0Beta Shape parameters for the Beta hyperprior on
+#'   `pi_0`, the prior probability that a (character, ecology) pair has
+#'   no ecology effect. Defaults: 7, 3 (so `E[pi_0] = 0.7`). Ignored when
+#'   `ecologyAware = FALSE`.
+#' @param sigmaPhi Standard deviation of the LogNormal prior on `phi` (or
+#'   on each `phi_e`). Default 0.5. Ignored when `ecologyAware = FALSE`.
+#' @param gibbsZEvery Integer. Number of MCMC generations between Gibbs
+#'   sweeps over the per-(character, ecology) influence categories `z`.
+#'   Default 50. Ignored when `ecologyAware = FALSE`.
+#'
+#' @section Ecology-aware NT model:
+#'
+#' When `ecologyAware = TRUE`, the model adds a per-edge, per-character rate
+#' modifier whose value depends on the inferred ecology of each edge. Edge
+#' ecology is reconstructed as a marginal under a standard Mk(K) process on
+#' the same tree, and the per-edge mixture weight `w_{e}(s)` for ecology
+#' state `s` is taken from this marginal at the parent node.
+#'
+#' For each pair `(c, e)` of (character, ecology state) a latent influence
+#' category `z_{c,e}` is sampled with three values:
+#' \describe{
+#'   \item{`none`}{character `c`'s rate is unchanged in ecology `e`}
+#'   \item{`encouraged`}{rate scaled by `phi` (asymmetric for neomorphic)}
+#'   \item{`discouraged`}{rate scaled by `1 / phi` (asymmetric for neomorphic)}
+#' }
+#' The prior on `z` is sparse: `P(z = none) = pi_0`, with `pi_0 ~ Beta(7, 3)`
+#' by default so most characters are *a priori* unaffected by ecology.
 #'
 #' @section Q-matrix heterogeneity:
 #'
@@ -124,9 +160,16 @@ MkPrimeModel <- function(
     qHeterogeneity = FALSE,
     nBetaCat = 4L,
     betaScaleShape = 1,
-    betaScaleRate = 1
+    betaScaleRate = 1,
+    ecologyAware = FALSE,
+    magnitudeMode = "global",
+    rho0Alpha = 7,
+    rho0Beta = 3,
+    sigmaPhi = 0.5,
+    gibbsZEvery = 50L
 ) {
   coding <- match.arg(coding, c("variable", "informative", "none"))
+  magnitudeMode <- match.arg(magnitudeMode, c("global", "per_ecology"))
   kPrimePrior <- match.arg(
     kPrimePrior,
     c("empirical_geometric", "geometric", "beta_geometric", "logseries")
@@ -191,6 +234,22 @@ MkPrimeModel <- function(
     }
   }
 
+  # Validate ecology-aware hyperparameters
+  if (isTRUE(ecologyAware)) {
+    if (rho0Alpha <= 0 || rho0Beta <= 0) {
+      cli::cli_abort(
+        "{.arg rho0Alpha} and {.arg rho0Beta} must be positive."
+      )
+    }
+    if (sigmaPhi <= 0) {
+      cli::cli_abort("{.arg sigmaPhi} must be positive.")
+    }
+    gibbsZEvery <- as.integer(gibbsZEvery)
+    if (is.na(gibbsZEvery) || gibbsZEvery < 1L) {
+      cli::cli_abort("{.arg gibbsZEvery} must be a positive integer.")
+    }
+  }
+
   # Derive treeLengthRate from expSteps if not provided
   if (is.null(treeLengthRate) && !is.null(expSteps)) {
     treeLengthRate <- 2 / expSteps
@@ -220,7 +279,13 @@ MkPrimeModel <- function(
       qHeterogeneity = qHeterogeneity,
       nBetaCat = as.integer(nBetaCat),
       betaScaleShape = betaScaleShape,
-      betaScaleRate = betaScaleRate
+      betaScaleRate = betaScaleRate,
+      ecologyAware = isTRUE(ecologyAware),
+      magnitudeMode = magnitudeMode,
+      rho0Alpha = rho0Alpha,
+      rho0Beta = rho0Beta,
+      sigmaPhi = sigmaPhi,
+      gibbsZEvery = as.integer(gibbsZEvery)
     ),
     class = "MkPrimeModel"
   )
@@ -251,6 +316,15 @@ MkPrimeModel <- function(
     e <- new.env(parent = emptyenv())
     utils::data("empiricalNObs", package = "MkPrime", envir = e)
     model$empiricalNObs <- e$empiricalNObs
+  }
+  if (isTRUE(model$ecologyAware)) {
+    if (is.null(mkd$ecology) || is.null(mkd$kEcology)) {
+      cli::cli_abort(c(
+        "{.code ecologyAware = TRUE} requires ecology data.",
+        i = "Supply {.arg ecology} (and optionally {.arg kEcology}) to
+             {.fn MkPrimeData}."
+      ))
+    }
   }
   model
 }
@@ -384,6 +458,10 @@ MkPrimeModel <- function(
 #'   `kPrime` (integer vector). For `kPrimePrior = "geometric"`, also
 #'   `p` (hyperprior). For `kPrimePrior = "logseries"`, `p` is absent.
 #'   When `qHeterogeneity = TRUE`, also `beta_scale` (positive scalar).
+#'   When `ecologyAware = TRUE`, also `phi` (positive scalar or vector of
+#'   length `kEcology`), `pi0` (scalar in (0, 1)), and `z` (integer matrix
+#'   `nChar x kEcology` with values 0 = none, 1 = encouraged,
+#'   2 = discouraged).
 #' @param model An `MkPrimeModel` object (finalized).
 #' @param mkd An `MkPrimeData` object (for kObs and character types).
 #' @return Scalar log-prior density.
@@ -528,6 +606,26 @@ LogPrior <- function(state, model, mkd) {
                        log = TRUE)
   }
 
+  # Ecology-aware NT model: phi, pi0, z priors
+  if (isTRUE(model$ecologyAware)) {
+    phi <- state$phi
+    pi0 <- state$pi0
+    z <- state$z
+    if (is.null(phi) || any(phi <= 0)) return(-Inf)
+    if (is.null(pi0) || pi0 <= 0 || pi0 >= 1) return(-Inf)
+    if (is.null(z) || any(!z %in% 0:2)) return(-Inf)
+
+    lp <- lp + sum(dlnorm(phi, meanlog = 0, sdlog = model$sigmaPhi,
+                          log = TRUE))
+    lp <- lp + dbeta(pi0, shape1 = model$rho0Alpha,
+                     shape2 = model$rho0Beta, log = TRUE)
+    # Spike (none) vs slab (encouraged or discouraged), split evenly.
+    nNone <- sum(z == 0L)
+    nSlab <- length(z) - nNone
+    lp <- lp + nNone * log(pi0) +
+               nSlab * (log1p(-pi0) - log(2))
+  }
+
   lp
 }
 
@@ -555,6 +653,17 @@ print.MkPrimeModel <- function(x, ...) {
     "OFF"
   }
 
+  eco_str <- if (isTRUE(x$ecologyAware)) {
+    paste0(
+      "ON (magnitudeMode = ", x$magnitudeMode,
+      ", phi ~ LogNormal(0, ", x$sigmaPhi,
+      "), pi0 ~ Beta(", x$rho0Alpha, ", ", x$rho0Beta,
+      "), Gibbs every ", x$gibbsZEvery, " gens)"
+    )
+  } else {
+    "OFF"
+  }
+
   cli::cli_ul(c(
     "Coding: {x$coding}",
     "ACRV categories: {x$nCat}",
@@ -564,7 +673,8 @@ print.MkPrimeModel <- function(x, ...) {
     "rate_log_sd prior: Gamma({x$rateLogSdShape}, {x$rateLogSdRate})",
     paste0("k' prior: ", k_prior_str),
     "rate_neo prior: LogNormal({x$rateNeoMeanlog}, {x$rateNeoSdlog})",
-    paste0("Q-matrix heterogeneity: ", het_str)
+    paste0("Q-matrix heterogeneity: ", het_str),
+    paste0("Ecology-aware NT: ", eco_str)
   ))
   invisible(x)
 }

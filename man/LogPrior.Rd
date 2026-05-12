@@ -11,7 +11,11 @@ LogPrior(state, model, mkd)
 \code{tree_length}, \code{rel_br_lengths}, \code{rate_loss}, \code{rate_log_sd},
 \code{kPrime} (integer vector). For \code{kPrimePrior = "geometric"}, also
 \code{p} (hyperprior). For \code{kPrimePrior = "logseries"}, \code{p} is absent.
-When \code{qHeterogeneity = TRUE}, also \code{beta_scale} (positive scalar).}
+When \code{qHeterogeneity = TRUE}, also \code{beta_scale} (positive scalar).
+When \code{ecologyAware = TRUE}, also \code{phi} (positive scalar or vector of
+length \code{kEcology}), \code{pi0} (scalar in (0, 1)), and \code{z} (integer matrix
+\verb{nChar x kEcology} with values 0 = none, 1 = encouraged,
+2 = discouraged).}
 
 \item{model}{An \code{MkPrimeModel} object (finalized).}
 

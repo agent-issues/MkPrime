@@ -11,6 +11,18 @@
 #'   states for specific characters. Names are character indices (as strings),
 #'   values are the true k. Characters listed here use standard Mk(k) with no
 #'   k' inference.
+#' @param ecology Optional ecology coding for the ecology-aware NT model.
+#'   Either (a) a single integer giving the column index of an ecology
+#'   character within `data` (that column is extracted and removed from the
+#'   character matrix); or (b) an integer or factor vector of length `nTip`,
+#'   with names matching the taxon labels in `data`, giving the ecology state
+#'   of each tip. States may be `NA` for unknown ecology. Default `NULL`
+#'   (no ecology layer).
+#' @param kEcology Optional integer giving the number of ecology states.
+#'   Defaults to the number of distinct non-`NA` states observed in
+#'   `ecology`. Override only when ecology states present in the data are
+#'   not contiguously coded from 0, or when you want to allow for ecology
+#'   states unobserved at tips.
 #'
 #' @details
 #' Characters not listed in `neomorphic` or `knownStates` are classified as
@@ -19,6 +31,12 @@
 #'
 #' For each character, the number of observed states (kObs) is computed by
 #' counting distinct non-ambiguous states across all taxa.
+#'
+#' When `ecology` is supplied, the resulting `MkPrimeData` object carries an
+#' `ecology` component (integer vector of 0-indexed states, length `nTip`,
+#' `NA` for unknown) and a `kEcology` component (the number of ecology
+#' states). Activating ecology-aware inference additionally requires
+#' `MkPrimeModel(ecologyAware = TRUE)`.
 #'
 #' @return An object of class `"MkPrimeData"`, a list with components:
 #' \describe{
@@ -33,6 +51,10 @@
 #'   \item{known_k}{Integer vector: known k per character (`NA` for
 #'     non-"known" characters).}
 #'   \item{levels}{Character state levels from the original phyDat.}
+#'   \item{ecology}{Integer vector of length `nTip` with 0-indexed ecology
+#'     states (`NA` for unknown). `NULL` when no ecology supplied.}
+#'   \item{kEcology}{Integer scalar: number of ecology states. `NULL` when
+#'     no ecology supplied.}
 #' }
 #'
 #' @examples
@@ -46,7 +68,9 @@
 #' @export
 MkPrimeData <- function(data,
                          neomorphic = integer(0),
-                         knownStates = integer(0)) {
+                         knownStates = integer(0),
+                         ecology = NULL,
+                         kEcology = NULL) {
   if (!inherits(data, "phyDat")) {
     cli::cli_abort("{.arg data} must be a {.cls phyDat} object.")
   }
@@ -56,6 +80,46 @@ MkPrimeData <- function(data,
   nChar <- ncol(charMatrix)
   taxonNames <- rownames(charMatrix)
   levels <- attr(data, "levels")
+
+  # Extract ecology (if supplied) and drop the ecology column from the
+  # character matrix when supplied as a column index. Done before
+  # invariant-dropping so the column index refers to the user's original
+  # numbering.
+  ecoState <- .ExtractEcology(ecology, charMatrix, taxonNames)
+  if (!is.null(ecoState)) {
+    if (!is.null(ecoState$dropCol)) {
+      dropCol <- ecoState$dropCol
+      if (any(as.integer(neomorphic) == dropCol)) {
+        cli::cli_abort(
+          "Column {dropCol} is the ecology column and cannot also appear
+           in {.arg neomorphic}."
+        )
+      }
+      if (length(knownStates) &&
+          any(as.integer(names(knownStates)) == dropCol)) {
+        cli::cli_abort(
+          "Column {dropCol} is the ecology column and cannot also appear
+           in {.arg knownStates}."
+        )
+      }
+      keepCol <- setdiff(seq_len(nChar), dropCol)
+      charMatrix <- charMatrix[, keepCol, drop = FALSE]
+      shift <- function(idx) {
+        idx <- as.integer(idx)
+        ifelse(idx < dropCol, idx, idx - 1L)
+      }
+      neomorphic <- shift(neomorphic)
+      if (length(knownStates)) {
+        names(knownStates) <- as.character(shift(as.integer(names(knownStates))))
+      }
+      nChar <- ncol(charMatrix)
+    }
+    ecology <- ecoState$states
+    kEco <- .ResolveKEcology(ecology, kEcology)
+  } else {
+    ecology <- NULL
+    kEco <- NULL
+  }
 
   # Validate neomorphic indices
   neomorphic <- as.integer(neomorphic)
@@ -168,7 +232,9 @@ MkPrimeData <- function(data,
       kObs = kObs,
       known_k = knownK,
       levels = levels,
-      phyDat = data
+      phyDat = data,
+      ecology = ecology,
+      kEcology = kEco
     ),
     class = "MkPrimeData"
   )
@@ -193,6 +259,13 @@ print.MkPrimeData <- function(x, ...) {
   cli::cli_bullets(c(
     "i" = "kObs range: {kObsRange[1]}\u2013{kObsRange[2]}"
   ))
+  if (!is.null(x$ecology)) {
+    nMissing <- sum(is.na(x$ecology))
+    cli::cli_bullets(c(
+      "i" = "Ecology: {x$kEcology} state{?s},
+             {nMissing}/{x$nTip} tip{?s} missing"
+    ))
+  }
   invisible(x)
 }
 
@@ -239,6 +312,109 @@ AutoDetectNeomorphic <- function(data) {
     }
   }
   neo
+}
+
+
+# Validate `ecology` and produce a taxon-aligned 0-indexed integer vector.
+#
+# Returns NULL when no ecology supplied. Otherwise returns a list with
+# components `states` (integer vector of length nTip) and `dropCol`
+# (the column index removed from charMatrix, or NULL when ecology was
+# supplied as a vector rather than a column index).
+.ExtractEcology <- function(ecology, charMatrix, taxonNames) {
+  if (is.null(ecology)) {
+    # Return:
+    return(NULL)
+  }
+  nTip <- nrow(charMatrix)
+  nChar <- ncol(charMatrix)
+
+  if (length(ecology) == 1L && is.numeric(ecology) && is.null(names(ecology))) {
+    col <- as.integer(ecology)
+    if (is.na(col) || col < 1L || col > nChar) {
+      cli::cli_abort(
+        "{.arg ecology} as a column index must be between 1 and {nChar}
+         (got {ecology})."
+      )
+    }
+    states <- as.integer(charMatrix[, col])
+    states <- .ContiguousiseEcology(states)
+    # Return:
+    return(list(states = states, dropCol = col))
+  }
+
+  if (length(ecology) != nTip) {
+    cli::cli_abort(
+      "{.arg ecology} must have length {.val {nTip}} (one entry per taxon)
+       when supplied as a vector; got length {length(ecology)}."
+    )
+  }
+  if (is.factor(ecology)) {
+    states <- as.integer(ecology) - 1L
+  } else if (is.numeric(ecology)) {
+    states <- as.integer(ecology)
+  } else if (is.character(ecology)) {
+    states <- as.integer(as.factor(ecology)) - 1L
+  } else {
+    cli::cli_abort(
+      "{.arg ecology} must be numeric, factor, or character (got
+       {.cls {class(ecology)}})."
+    )
+  }
+  if (!is.null(names(ecology))) {
+    if (!setequal(names(ecology), taxonNames)) {
+      cli::cli_abort(
+        "{.arg ecology} names must match the taxon names in {.arg data}."
+      )
+    }
+    states <- states[match(taxonNames, names(ecology))]
+  }
+  states <- .ContiguousiseEcology(states)
+  # Return:
+  list(states = states, dropCol = NULL)
+}
+
+
+# Remap ecology states to contiguous 0-based integers (NA preserved).
+.ContiguousiseEcology <- function(states) {
+  notNa <- !is.na(states)
+  observed <- sort(unique(states[notNa]))
+  if (!length(observed)) {
+    cli::cli_abort("{.arg ecology} has no observed (non-NA) states.")
+  }
+  if (identical(observed, seq(0L, length(observed) - 1L))) {
+    # Return:
+    return(states)
+  }
+  out <- states
+  out[notNa] <- match(states[notNa], observed) - 1L
+  # Return:
+  out
+}
+
+
+# Validate / resolve kEcology against the observed states.
+.ResolveKEcology <- function(ecology, kEcology) {
+  observed <- length(unique(ecology[!is.na(ecology)]))
+  if (observed < 2L) {
+    cli::cli_abort(
+      "{.arg ecology} must vary across taxa (need {.ge 2} observed states;
+       got {observed})."
+    )
+  }
+  if (is.null(kEcology)) {
+    # Return:
+    return(observed)
+  }
+  kEcology <- as.integer(kEcology)
+  if (is.na(kEcology) || kEcology < observed) {
+    cli::cli_abort(
+      "{.arg kEcology} must be at least the number of observed ecology
+       states ({observed}); got {kEcology}."
+    )
+  }
+  # Return:
+  kEcology
 }
 
 
