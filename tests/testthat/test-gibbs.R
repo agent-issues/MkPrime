@@ -150,7 +150,10 @@ test_that("gibbs_p updates logPrior correctly in C++ engine", {
 
   pd   <- .small_trans_pd()
   mkd  <- MkPrimeData(pd)
-  model <- MkPrimeModel()
+  # `gibbs_p` is only valid under priors where p has a Beta full conditional
+  # (geometric, beta_geometric).  Under `empirical_geometric` (the default)
+  # the C++ engine refuses the move and `mh_logit_p` is used instead.
+  model <- MkPrimeModel(kPrimePrior = "geometric")
   tree <- .small_trans_tree()
 
   # Initialize C++ state

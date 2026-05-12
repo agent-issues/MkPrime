@@ -44,6 +44,11 @@ sun2018*
 test_autopin*
 test_fixedtopo*
 diag_tempered*
+data-raw/diag_eg.log
+data-raw/smoke_eg.log
+data-raw/slow_recovery.log
+data-raw/full_test.log
+data-raw/diagnose_eg_res.rds
 hyoliths_prod*
 hyoliths_diag*
 hyoliths_posterior*

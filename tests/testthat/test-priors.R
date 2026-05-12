@@ -50,7 +50,11 @@ test_that("LogPrior matches manual density calculations", {
                 dimnames = list(paste0("t", 1:4), NULL))
   pd <- TreeTools::MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
-  model <- MkPrimeModel(expSteps = 10)
+  # Explicit `geometric` prior because the manual calculation below assumes
+  # the unconvoluted geometric density on k'.  The default
+  # (`empirical_geometric`) uses a convolution and would give a different
+  # value.
+  model <- MkPrimeModel(expSteps = 10, kPrimePrior = "geometric")
 
   state <- list(
     tree_length = 0.5,
