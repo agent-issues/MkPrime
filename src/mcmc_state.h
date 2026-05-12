@@ -158,6 +158,11 @@ struct McmcData {
   // weakly symmetric -- prior favours equal enc/disc but allows asymmetry.
   double thetaAlpha = 2.0;
   double thetaBeta  = 2.0;
+  // v2: mapping from ecology state s -> column j in zMatrix/theta.
+  // Length kEcology; -1 at the reference slot, ascending non-ref index
+  // otherwise. Populated by prepare_mcmc_data (and refined by
+  // edge-mass refEcology selection in mcmc_ecology).
+  std::vector<int> ecologyToZCol;
 };
 
 // Pre-allocated flat CL workspace (M-063): eliminates per-call heap

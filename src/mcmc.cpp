@@ -198,7 +198,11 @@ struct McmcState {
   // McmcData::ecologyAware is true; default values are inert.
   NumericVector phi;           // length 1 (global) or kEcology (per_ecology)
   double        pi0 = 0.0;
-  IntegerMatrix zMatrix;       // nChar x kEcology, entries in {0, 1, 2}
+  // v2: theta has length (kEcology - 1); one entry per non-reference ecology
+  // in ascending ecology-state order (i.e. ecology states < refEcology come
+  // first, then ecology states > refEcology). zMatrix matches columnwise.
+  NumericVector theta;
+  IntegerMatrix zMatrix;       // nChar x (kEcology - 1), entries in {0, 1, 2}
   NumericMatrix wEdge;         // nEdge x kEcology, cached per-likelihood
   bool          wEdgeDirty = true;  // recompute wEdge on next likelihood call
   // M-155: dedicated workspace for Gibbs kPrime batched pruning
@@ -424,7 +428,8 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
                      double kprimeBeta = 1.0,
                      Rcpp::Nullable<Rcpp::NumericVector> phi = R_NilValue,
                      double pi0 = 0.0,
-                     Rcpp::Nullable<Rcpp::IntegerMatrix> zMatrix = R_NilValue) {
+                     Rcpp::Nullable<Rcpp::IntegerMatrix> zMatrix = R_NilValue,
+                     Rcpp::Nullable<Rcpp::NumericVector> theta = R_NilValue) {
   McmcState* s = new McmcState();
   s->parent       = clone(parent);
   s->child        = clone(child);
@@ -448,6 +453,9 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
       s->pi0      = pi0;
       if (zMatrix.isNotNull()) {
         s->zMatrix = clone(Rcpp::IntegerMatrix(zMatrix));
+      }
+      if (theta.isNotNull()) {
+        s->theta = clone(Rcpp::NumericVector(theta));
       }
       s->wEdgeDirty = true;
     }
@@ -603,6 +611,7 @@ List get_mcmc_state(SEXP statePtr) {
     // mutations.
     _["phi"]            = clone(s->phi),
     _["pi0"]            = s->pi0,
+    _["theta"]          = clone(s->theta),
     _["zMatrix"]        = clone(s->zMatrix)
   );
 }

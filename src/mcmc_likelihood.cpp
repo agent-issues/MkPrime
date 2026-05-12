@@ -2119,7 +2119,9 @@ SEXP prepare_mcmc_data(List partitions_r,
                        double rho0Alpha = 7.0,
                        double rho0Beta  = 3.0,
                        double sigmaPhi  = 0.5,
-                       int    gibbsZEvery = 50) {
+                       int    gibbsZEvery = 50,
+                       double thetaAlpha = 2.0,
+                       double thetaBeta  = 2.0) {
   McmcData* d = new McmcData();
   d->hasNeo = hasNeo;
   d->nCat = nCat;
@@ -2219,8 +2221,34 @@ SEXP prepare_mcmc_data(List partitions_r,
     d->rho0Beta    = rho0Beta;
     d->sigmaPhi    = sigmaPhi;
     d->gibbsZEvery = gibbsZEvery;
+    d->thetaAlpha  = thetaAlpha;
+    d->thetaBeta   = thetaBeta;
     d->ecology.kEcology  = kEcology;
     d->ecology.tipStates = ecologyTipStates;
+    // v2: tip-frequency reference ecology (refinement by edge-mass weighting
+    // happens after first wEdge recompute, currently TODO in Step D).
+    if (kEcology >= 2) {
+      std::vector<int> counts(kEcology, 0);
+      for (int i = 0; i < ecologyTipStates.size(); ++i) {
+        int s = ecologyTipStates[i];
+        if (s >= 0 && s < kEcology) counts[s]++;
+      }
+      int refE = 0, best = counts[0];
+      for (int s = 1; s < kEcology; ++s) {
+        if (counts[s] > best) { best = counts[s]; refE = s; }
+      }
+      d->ecology.refEcology = refE;
+      // ecologyToZCol: -1 at ref, else ascending column index among non-ref.
+      d->ecologyToZCol.assign(kEcology, -1);
+      int col = 0;
+      for (int s = 0; s < kEcology; ++s) {
+        if (s == refE) d->ecologyToZCol[s] = -1;
+        else d->ecologyToZCol[s] = col++;
+      }
+    } else {
+      d->ecology.refEcology = -1;
+      d->ecologyToZCol.clear();
+    }
   }
 
   // Collect distinct k values across all partitions for bin precomputation.

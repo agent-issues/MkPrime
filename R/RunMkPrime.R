@@ -2700,15 +2700,22 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     state$beta_scale <- 1.0
   }
 
-  # Ecology-aware NT model state.
-  # phi: 1 scalar in global mode, kEcology entries in per_ecology mode.
-  # pi0: prior mean Beta(rho0Alpha, rho0Beta).
-  # z: nChar x kEcology integer matrix, initialised at 0 (no influence).
+  # Ecology-aware NT model state (v2).
+  # phi:   1 scalar in global mode; kEcology entries in per_ecology mode.
+  #        phi[refEcology] is inert (always 1).
+  # pi0:   prior mean Beta(rho0Alpha, rho0Beta).
+  # theta: length (kEcology - 1); slab balance per non-reference ecology.
+  #        Prior mean Beta(thetaAlpha, thetaBeta).
+  # z:     nChar x (kEcology - 1) integer matrix; one column per non-reference
+  #        ecology in ascending ecology-state order. Initialised at 0.
   if (isTRUE(model$ecologyAware)) {
     state$phi <- if (identical(model$magnitudeMode, "per_ecology"))
                    rep(1.0, mkd$kEcology) else 1.0
     state$pi0 <- model$rho0Alpha / (model$rho0Alpha + model$rho0Beta)
-    state$z   <- matrix(0L, nrow = mkd$nChar, ncol = mkd$kEcology)
+    nNonRef <- max(0L, as.integer(mkd$kEcology) - 1L)
+    state$theta <- rep(model$thetaAlpha / (model$thetaAlpha + model$thetaBeta),
+                       nNonRef)
+    state$z   <- matrix(0L, nrow = mkd$nChar, ncol = nNonRef)
   }
 
   # Tree is already preorder (reordered at init); use internal fast-path
@@ -3109,7 +3116,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     model$rho0Alpha %||% 7.0,
     model$rho0Beta %||% 3.0,
     model$sigmaPhi %||% 0.5,
-    as.integer(model$gibbsZEvery %||% 50L)
+    as.integer(model$gibbsZEvery %||% 50L),
+    model$thetaAlpha %||% 2.0,
+    model$thetaBeta  %||% 2.0
   )
 }
 
@@ -3120,6 +3129,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   pi0 <- state$pi0 %||% 0
   zMat <- state$z %||% matrix(integer(0), 0, 0)
   storage.mode(zMat) <- "integer"
+  theta <- state$theta %||% numeric(0)
   init_mcmc_state(
     state$tree$edge[, 1], state$tree$edge[, 2],
     state$rel_br_lengths, state$tree_length,
@@ -3132,7 +3142,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     state$kprime_beta %||% 1.0,
     phi = as.numeric(phi),
     pi0 = as.numeric(pi0),
-    zMatrix = zMat
+    zMatrix = zMat,
+    theta = as.numeric(theta)
   )
 }
 
