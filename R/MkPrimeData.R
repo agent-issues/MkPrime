@@ -116,9 +116,18 @@ MkPrimeData <- function(data,
     }
     ecology <- ecoState$states
     kEco <- .ResolveKEcology(ecology, kEcology)
+    # v2: identify reference ecology as the most common tip ecology.
+    # Edge-mass-weighted refEcology is computed in RunMkPrime at chain init
+    # once wEdge is available; this tip-frequency proxy is used otherwise.
+    ecoTipFraction <- table(factor(ecology, levels = 0:(kEco - 1L))) /
+                      sum(!is.na(ecology))
+    ecoTipFraction <- as.numeric(ecoTipFraction)
+    refEcology <- as.integer(which.max(ecoTipFraction)) - 1L
   } else {
     ecology <- NULL
     kEco <- NULL
+    ecoTipFraction <- NULL
+    refEcology <- NULL
   }
 
   # Validate neomorphic indices
@@ -234,7 +243,9 @@ MkPrimeData <- function(data,
       levels = levels,
       phyDat = data,
       ecology = ecology,
-      kEcology = kEco
+      kEcology = kEco,
+      refEcology = refEcology,
+      ecoTipFraction = ecoTipFraction
     ),
     class = "MkPrimeData"
   )
