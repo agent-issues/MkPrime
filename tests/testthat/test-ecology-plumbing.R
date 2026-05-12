@@ -544,3 +544,114 @@ test_that("MkPrimeModel rejects ecologyAware + qHeterogeneity", {
     "ecologyAware.*qHeterogeneity"
   )
 })
+
+
+# ===== Phase 3-pi0: logit-Bactrian on pi0 =====
+
+
+# Run a single pi0 logit-Bactrian move (moveType = 31) on a chain with at
+# least one non-zero z cell, so the prior actually depends on pi0.
+.Pi0StateAfterMove <- function(f, model, zInit, seed = 7L,
+                               scaleTuning = 0.5, beta = 1.0) {
+  dataPtr  <- .MakeEcoDataPtr(f$mkd, model)
+  state    <- MkPrime:::.InitState(f$tree, f$mkd, model)
+  state$z  <- zInit
+  storage.mode(state$z) <- "integer"
+  state$log_prior <- MkPrime:::LogPrior(state, model, f$mkd)
+  statePtr <- MkPrime:::.InitMcmcChain(state)
+  pre <- get_mcmc_state(statePtr)
+  set.seed(seed)
+  accepted <- do_move_cpp(dataPtr, statePtr,
+                          moveType = 31L, charIdx = 0L,
+                          scaleTuning = scaleTuning,
+                          betaSimplexTuning = 1.0,
+                          intWalkWindow = 1L, beta = beta)
+  post <- get_mcmc_state(statePtr)
+  list(pre = pre, post = post, accepted = accepted,
+       dataPtr = dataPtr, statePtr = statePtr)
+}
+
+
+test_that("scale_pi0 move stays in (0, 1) and leaves logLik untouched", {
+  f <- .MakeEcologyFixture()
+  model <- MkPrimeModel(ecologyAware = TRUE, expSteps = 10,
+                        kPrimePrior = "geometric", coding = "none")
+  zInit <- matrix(0L, f$mkd$nChar, f$mkd$kEcology)
+  zInit[1, 1] <- 1L  # one slab cell so pi0 matters in the prior
+  zInit[2, 2] <- 2L
+  res <- .Pi0StateAfterMove(f, model, zInit, seed = 17L, scaleTuning = 0.5)
+
+  expect_true(res$post$pi0 > 0 && res$post$pi0 < 1)
+  expect_equal(res$post$logLik, res$pre$logLik)        # prior-only move
+  if (res$accepted) {
+    expect_false(isTRUE(all.equal(res$post$pi0, res$pre$pi0)))
+  } else {
+    expect_equal(res$post$pi0, res$pre$pi0)
+    expect_equal(res$post$logPrior, res$pre$logPrior)
+  }
+})
+
+
+test_that("scale_pi0 prior delta matches dbeta + spike-and-slab contribution", {
+  f <- .MakeEcologyFixture()
+  model <- MkPrimeModel(ecologyAware = TRUE, expSteps = 10,
+                        kPrimePrior = "geometric", coding = "none")
+  zInit <- matrix(0L, f$mkd$nChar, f$mkd$kEcology)
+  zInit[1, 1] <- 1L
+  zInit[3, 2] <- 2L
+  zInit[4, 3] <- 1L
+  res <- .Pi0StateAfterMove(f, model, zInit, seed = 22L, scaleTuning = 0.5)
+  if (!res$accepted) skip("Pi0 move rejected at this seed; rerun with another.")
+
+  nNone <- sum(zInit == 0L)
+  nSlab <- length(zInit) - nNone
+
+  # Analytical prior delta: dbeta(pi0_new) - dbeta(pi0_old)
+  # plus the spike-and-slab change: nNone * (log(p_new) - log(p_old))
+  #                                + nSlab * (log(1 - p_new) - log(1 - p_old))
+  # The slab includes a -log(2) per cell, which cancels in the delta.
+  pOld <- res$pre$pi0
+  pNew <- res$post$pi0
+  d_beta  <- dbeta(pNew, model$rho0Alpha, model$rho0Beta, log = TRUE) -
+             dbeta(pOld, model$rho0Alpha, model$rho0Beta, log = TRUE)
+  d_spike <- nNone * (log(pNew) - log(pOld)) +
+             nSlab * (log1p(-pNew) - log1p(-pOld))
+  expect_equal(res$post$logPrior - res$pre$logPrior,
+               d_beta + d_spike, tolerance = 1e-10)
+})
+
+
+test_that("scale_pi0 declines outside ecology mode", {
+  f <- .MakeEcologyFixture()
+  model <- MkPrimeModel(kPrimePrior = "geometric", expSteps = 10)
+  state    <- MkPrime:::.InitState(f$tree, f$mkd, model)
+  statePtr <- MkPrime:::.InitMcmcChain(state)
+  parts <- lapply(f$mkd$partitions, function(p) {
+    list(type = p$type, k = p$k, kObs = p$kObs,
+         char_indices = p$char_indices,
+         tip_states = p$tip_states,
+         unique_tip_states = p$unique_tip_states,
+         pattern_index = p$pattern_index)
+  })
+  dataPtr <- prepare_mcmc_data(
+    parts, as.integer(f$mkd$kObs), f$mkd$type,
+    any(f$mkd$type == "neomorphic"),
+    model$nCat, model$coding, model$relabel,
+    model$treeLengthShape, model$treeLengthRate,
+    model$rateLossMeanlog, model$rateLossSdlog,
+    model$rateLogSdShape, model$rateLogSdRate,
+    model$rateNeoMeanlog, model$rateNeoSdlog,
+    model$kprimeHyperA, model$kprimeHyperB,
+    identical(model$kPrimePrior, "logseries"),
+    model$kprimeLogseriesC %||% 0.7,
+    FALSE, FALSE, 4L, 1.0, 1.0,
+    FALSE, numeric(0), 1L, 0L, 0, -1e308,
+    FALSE, integer(0), 0L, "global", 7.0, 3.0, 0.5, 50L
+  )
+  accepted <- do_move_cpp(dataPtr, statePtr,
+                          moveType = 31L, charIdx = 0L,
+                          scaleTuning = 0.5,
+                          betaSimplexTuning = 1.0,
+                          intWalkWindow = 1L, beta = 1.0)
+  expect_false(accepted)
+})

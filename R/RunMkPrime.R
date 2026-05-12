@@ -2508,6 +2508,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         p           = 0.5,  # Gibbs move: scale ignored by C++; placeholder
         mh_p        = tun$scale_p %||% 0.5,
         scale_phi   = tun$scale_phi %||% 0.5,
+        scale_pi0   = tun$scale_pi0 %||% 0.5,
         0.5
       )
     }
@@ -2919,7 +2920,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   if (isTRUE(ecologyAware) && nPhi >= 1L) {
     moves <- c(moves, list(
       list(name = "scale_phi", type = "scale_phi", target = "phi",
-           weight = max(1, as.numeric(nPhi)), dim = 1L)
+           weight = max(1, as.numeric(nPhi)), dim = 1L),
+      list(name = "scale_pi0", type = "scale_pi0", target = "pi0",
+           weight = 1, dim = 1L)
     ))
   }
 
@@ -2944,7 +2947,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   # Joint 2D moves also get the floor so they're comparable to individual
   # scalar moves they complement.
   scalarTypes <- c("scale", "int_walk", "gibbs_p", "scale_p", "slice",
-                    "kprime_alpha", "kprime_beta", "scale_phi")
+                    "kprime_alpha", "kprime_beta",
+                    "scale_phi", "scale_pi0")
   totalWeight <- sum(vapply(moves, `[[`, numeric(1), "weight"))
   floorVal <- totalWeight * 0.02
   for (i in seq_along(moves)) {
@@ -2994,7 +2998,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   kprime_beta = 28L,
   slice_kprime_alpha = 29L,
   slice_kprime_beta = 29L,
-  scale_phi = 30L
+  scale_phi = 30L,
+  scale_pi0 = 31L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)
@@ -3730,7 +3735,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     slice_rate_log_sd = NA_real_, slice_tree_length = NA_real_,
     slice_beta_scale = NA_real_,
     slice_kprime_alpha = NA_real_, slice_kprime_beta = NA_real_,
-    scale_phi = 0.35
+    scale_phi = 0.35,
+    scale_pi0 = 0.35
   )
 
   tuningKeys <- c(
@@ -3763,7 +3769,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     slice_rate_loss = NA_character_, slice_rate_neo = NA_character_,
     slice_rate_log_sd = NA_character_, slice_tree_length = NA_character_,
     slice_beta_scale = NA_character_,
-    scale_phi = "scale_phi"
+    scale_phi = "scale_phi",
+    scale_pi0 = "scale_pi0"
   )
 
   for (move in moves) {

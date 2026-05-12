@@ -3891,7 +3891,8 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
 //           23=dirichlet_branch, 24=local_dirichlet,
 //           25=gibbs_kprime_sweep, 26=block_kprime_shift,
 //           27=scale_kprime_alpha, 28=scale_kprime_beta,
-//           29=slice_kprime_hyper, 30=scale_phi (ecology)
+//           29=slice_kprime_hyper, 30=scale_phi (ecology),
+//           31=scale_pi0 (ecology, logit-Bactrian)
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -4340,6 +4341,42 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       state->phi[phiOldIdx] = phiOldVal * mult;
       logHastings = std::log(mult);
       break;
+    }
+    case 31: { // logit-Bactrian on pi0 (ecology) — prior-only move
+      if (!data->ecologyAware) return false;
+      double pi0Old = state->pi0;
+      if (pi0Old <= 0.0 || pi0Old >= 1.0) return false;
+      double logitOld = std::log(pi0Old / (1.0 - pi0Old));
+      double logitNew = logitOld + scaleTuning * bactrian_perturbation();
+      double pi0New;
+      if (logitNew >= 0.0) {
+        double e = std::exp(-logitNew);
+        pi0New = 1.0 / (1.0 + e);
+      } else {
+        double e = std::exp(logitNew);
+        pi0New = e / (1.0 + e);
+      }
+      // Guard against floating-point boundary hits (sigmoid never returns
+      // exact 0 or 1 in IEEE doubles for finite input, but keep the guard).
+      if (!(pi0New > 0.0 && pi0New < 1.0)) return false;
+      state->pi0 = pi0New;
+      // Jacobian of the inverse-logit transform: d pi0 / d logit = pi0(1-pi0).
+      double logHast = std::log(pi0New * (1.0 - pi0New)) -
+                       std::log(pi0Old * (1.0 - pi0Old));
+      double newLP = cpp_log_prior(
+        *data, state->treeLength, state->relBrLengths,
+        state->rateLoss, state->rateLogSd, state->rateNeo,
+        state->p, state->kPrime, state->betaScale,
+        state->kprimeAlpha, state->kprimeBeta,
+        &state->phi, state->pi0, &state->zMatrix);
+      if (!R_FINITE(newLP)) { state->pi0 = pi0Old; return false; }
+      double logAlpha = (newLP - state->logPrior) + logHast;
+      if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+        state->logPrior = newLP;
+        return true;
+      }
+      state->pi0 = pi0Old;
+      return false;
     }
     default:
       return false;
