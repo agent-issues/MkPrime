@@ -5012,16 +5012,22 @@ List run_mcmc_batch_cpp(
   bool includeP  = !data->kPriorLogseries && !includeBG;
   int nKpHyperCols = includeBG ? 2 : (includeP ? 1 : 0);
   bool includeBS = data->qHeterogeneity;  // M-052: beta_scale column
+  bool includeEco = data->ecologyAware;
+  int nPhiCols = includeEco ? (int)states[0]->phi.size() : 0;
+  int nPi0Cols = includeEco ? 1 : 0;
   // Base columns: log_post, log_lik, tree_length, rate_log_sd (4).
   // rate_loss included only when hasNeo (like rate_neo, p, beta_scale).
   // +2 diagnostic columns: swap_cold (cold-chain swaps since last sample),
   // topo_hash (topology fingerprint for change detection).
+  // +ecology: phi (nPhiCols) and pi0 (1) when ecologyAware.
   int nScalarCols = 4 + (hasNeo ? 2 : 0) + nKpHyperCols +
-                    (includeBS ? 1 : 0) + 2 + nTrans + nEdge;
+                    (includeBS ? 1 : 0) + nPhiCols + nPi0Cols +
+                    2 + nTrans + nEdge;
   int maxSaved    = nBatch / thin + 2;
   std::vector<std::vector<double>> scalarRows;
   scalarRows.reserve(maxSaved);
   List edgeSamples;
+  List zSamples;  // nChar x kEco IntegerMatrix snapshots when ecologyAware
 
   // Diagnostic: count accepted swaps involving the cold chain (index 0)
   int coldSwapsSinceSample = 0;
@@ -5132,6 +5138,10 @@ List run_mcmc_batch_cpp(
       }
       if (hasNeo) row[col++] = s0->rateNeo;
       if (includeBS) row[col++] = s0->betaScale;  // M-052
+      if (includeEco) {
+        for (int e = 0; e < nPhiCols; ++e) row[col++] = s0->phi[e];
+        row[col++] = s0->pi0;
+      }
       // Diagnostic: cold-chain swaps since last sample
       row[col++] = static_cast<double>(coldSwapsSinceSample);
       coldSwapsSinceSample = 0;
@@ -5150,6 +5160,11 @@ List run_mcmc_batch_cpp(
         edgeMat(k, 1) = s0->child[k];
       }
       edgeSamples.push_back(edgeMat);
+
+      // Ecology z snapshot for the per-(c, s) posterior.
+      if (includeEco) {
+        zSamples.push_back(clone(s0->zMatrix));
+      }
     }
   }
 
@@ -5193,6 +5208,7 @@ List run_mcmc_batch_cpp(
     _["swap_propose"]     = swapPropose,
     _["scalar_samples"]   = scalarMat,
     _["edge_samples"]     = edgeSamples,
+    _["z_samples"]        = zSamples,
     _["n_saved"]          = nSaved,
     _["diag_counters"]    = diagCounters,
     _["diag_max_diff"]    = states[0]->diagMaxDiff,

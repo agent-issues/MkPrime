@@ -232,7 +232,9 @@ RunMkPrime <- function(data, tree = NULL,
 
   paramNames  <- .ParamNames(mkd, nEdge,
                              kPrimePrior = model$kPrimePrior %||% "geometric",
-                             qHeterogeneity = qHet)
+                             qHeterogeneity = qHet,
+                             ecologyAware = ecoOn,
+                             nPhi = nPhiMove)
 
   # --- Log file setup ---
   # Always stream to a log file for interrupt recovery.  When the user
@@ -946,6 +948,15 @@ RunMkPrime <- function(data, tree = NULL,
           if (!is.null(treeFile))
             cat(ape::write.tree(curTree), "\n", file = treeFile, append = TRUE)
         }
+        # Ecology z snapshot storage: aligned with the sample boundary
+        # so that ecology summaries are computable post-hoc.
+        if (length(result$z_samples) >= i) {
+          zSnap <- result$z_samples[[i]]
+          if (!is.null(zSnap)) {
+            if (is.null(r$z_samples)) r$z_samples <- list()
+            r$z_samples[[length(r$z_samples) + 1L]] <- zSnap
+          }
+        }
       }
     } else if (phase == "Tuning" && nSaved > 0L) {
       # Collect into tuning buffer (discarded after tuning)
@@ -1430,7 +1441,11 @@ RunMkPrime <- function(data, tree = NULL,
       rate_neo       = s$rateNeo,
       p              = s$p,
       kPrime         = s$kPrime,
-      edge           = s$edge
+      edge           = s$edge,
+      # Ecology-aware NT model state (length 0 / NULL when ecology disabled)
+      phi            = if (length(s$phi) > 0L) s$phi else NULL,
+      pi0            = if (length(s$phi) > 0L) s$pi0 else NULL,
+      z              = if (length(s$zMatrix) > 0L) s$zMatrix else NULL
     )
   })
   r$chainStates  <- NULL
@@ -2020,6 +2035,7 @@ RunMkPrime <- function(data, tree = NULL,
     result <- list(
       samples    = if (isStreaming) NULL else r$samples,
       trees      = r$tree_samples,
+      z_samples  = r$z_samples,
       acceptance = coldAcc,
       saved_idx  = r$saved_idx
     )
@@ -2049,6 +2065,9 @@ RunMkPrime <- function(data, tree = NULL,
       warmup = mcmc$warmup, tuning = runs[[1]]$chain_tuning[[1]],
       warmup_trace = lapply(runs, `[[`, "logPostHistory")
     )
+    if (isTRUE(model$ecologyAware)) {
+      result$z_samples <- do.call(c, lapply(perRunSummaries, `[[`, "z_samples"))
+    }
     result$logFile  <- logFilePaths
     result$nSamples <- totalSaved
 
@@ -2082,6 +2101,9 @@ RunMkPrime <- function(data, tree = NULL,
         warmup = mcmc$warmup, tuning = runs[[1]]$chain_tuning[[1]],
         warmup_trace = list(runs[[1]]$logPostHistory)
       )
+      if (isTRUE(model$ecologyAware)) {
+        result$z_samples <- r$z_samples
+      }
       if (!is.null(r$betas)) {
         result$betas <- r$betas
         result$swap_rates <- r$swap_rates
@@ -2157,7 +2179,11 @@ RunMkPrime <- function(data, tree = NULL,
           p              = s$p,
           kPrime         = s$kPrime,
           edge           = s$edge,
-          beta_scale     = s$betaScale
+          beta_scale     = s$betaScale,
+          # Ecology-aware NT model state — NULL when ecology disabled.
+          phi            = if (length(s$phi) > 0L) s$phi else NULL,
+          pi0            = if (length(s$phi) > 0L) s$pi0 else NULL,
+          z              = if (length(s$zMatrix) > 0L) s$zMatrix else NULL
         )
       })
       r$chainStates <- NULL
@@ -3299,7 +3325,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' Parameter names for the sample matrix
 #' @keywords internal
 .ParamNames <- function(mkd, nEdge, kPrimePrior = "geometric",
-                        qHeterogeneity = FALSE) {
+                        qHeterogeneity = FALSE,
+                        ecologyAware = FALSE,
+                        nPhi = 0L) {
   hasNeo <- any(mkd$type == "neomorphic")
 
   nms <- c("log_posterior", "log_likelihood", "tree_length")
@@ -3322,6 +3350,16 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     nms <- c(nms, "beta_scale")
   }
 
+  # Ecology magnitude factor(s) and spike weight
+  if (isTRUE(ecologyAware) && nPhi >= 1L) {
+    if (nPhi == 1L) {
+      nms <- c(nms, "phi")
+    } else {
+      nms <- c(nms, paste0("phi_", seq_len(nPhi)))
+    }
+    nms <- c(nms, "pi0")
+  }
+
   # Diagnostic columns (always present from C++ batch)
   nms <- c(nms, "swap_cold", "topo_hash")
 
@@ -3341,7 +3379,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' @keywords internal
 .StateToRow <- function(statePtr, mkd, nEdge, tipLabels = NULL,
                         kPrimePrior = "geometric",
-                        qHeterogeneity = FALSE) {
+                        qHeterogeneity = FALSE,
+                        ecologyAware = FALSE) {
   state <- get_mcmc_state(statePtr)
 
   hasNeo <- any(mkd$type == "neomorphic")
@@ -3360,6 +3399,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   # M-052: beta_scale
   bsVal <- if (isTRUE(qHeterogeneity)) state$betaScale else numeric(0)
 
+  # Ecology magnitude factor(s) and spike weight
+  ecoVal <- if (isTRUE(ecologyAware) && length(state$phi) > 0L) {
+    c(as.numeric(state$phi), state$pi0)
+  } else {
+    numeric(0)
+  }
+
   transIdx <- which(mkd$type == "transformational")
   kp <- if (length(transIdx)) as.numeric(state$kPrime[transIdx]) else numeric(0)
 
@@ -3371,6 +3417,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     rateLossVal, state$rateLogSd, kpHyperVal,
     rateNeoVal,
     bsVal,
+    ecoVal,
     0,          # swap_cold: not applicable for R-side row extraction
     topoHash,
     kp,
