@@ -2493,6 +2493,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         local_dirichlet  = tun$local_dirichlet_alpha %||% 10,
         p           = 0.5,  # Gibbs move: scale ignored by C++; placeholder
         mh_p        = tun$scale_p %||% 0.5,
+        mh_logit_p  = tun$scale_logit_p %||% 1.0,
         0.5
       )
     }
@@ -2807,12 +2808,18 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
              sliceParamIdx = 1L)
       ))
     } else if (identical(kPrimePrior, "empirical_geometric")) {
-      # Convolution prior breaks p's Beta conjugacy; use MH on log(p) instead.
-      # Move reuses the legacy moveType 8 ("scale_p") which is a Bactrian
-      # multiplicative perturbation of p.
+      # Convolution prior breaks p's Beta conjugacy.  A Bactrian
+      # multiplicative MH on p in (0,1) is unusable here: under the
+      # empirical_geometric prior the posterior on p concentrates near 1,
+      # so any positive perturbation pushes p above 1 and is rejected; the
+      # adaptive scheduler then crushes the move to its weight floor and p
+      # stays stuck.  Instead, propose on the unbounded logit scale (case 30,
+      # `mh_logit_p`); the Jacobian appears as the Hastings ratio.  Give it
+      # a higher weight than the legacy `mh_p` move so that even if it
+      # mixes a little less efficiently than gibbs_kPrime it still moves p.
       kPrimeMoves <- c(kPrimeMoves, list(
-        list(name = "mh_p", type = "scale_p", target = "p", weight = 1,
-             dim = 1L)
+        list(name = "mh_logit_p", type = "logit_scale_p", target = "p",
+             weight = 3, dim = 1L)
       ))
     } else if (!identical(kPrimePrior, "logseries")) {
       # Conjugate Gibbs draw: p | k' ~ Beta(a + nTrans, b + sum(k' - kObs))
@@ -2889,8 +2896,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   # scalar move gets at least 2% of the pre-floor total weight.
   # Joint 2D moves also get the floor so they're comparable to individual
   # scalar moves they complement.
-  scalarTypes <- c("scale", "int_walk", "gibbs_p", "scale_p", "slice",
-                    "kprime_alpha", "kprime_beta")
+  scalarTypes <- c("scale", "int_walk", "gibbs_p", "scale_p", "logit_scale_p",
+                    "slice", "kprime_alpha", "kprime_beta")
   totalWeight <- sum(vapply(moves, `[[`, numeric(1), "weight"))
   floorVal <- totalWeight * 0.02
   for (i in seq_along(moves)) {
@@ -2911,11 +2918,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 # 12=weighted_br_scale, 13=weighted_spr, 14=weighted_subtree_swap,
 # 15=block_gibbs_branch, 16=beta_scale (M-052), 17=tbr (M-053),
 # 25=gibbs_kprime_sweep, 26=block_kprime_shift,
-# 27=scale_kprime_alpha, 28=scale_kprime_beta
+# 27=scale_kprime_alpha, 28=scale_kprime_beta,
+# 30=mh_logit_p (logit-scale MH on p, for empirical_geometric)
 .kMoveTypes <- c(
   tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
   rate_neo = 3L, branch_lengths = 4L,
   nni = 5L, spr = 6L, kPrime = 7L, p = 9L, mh_p = 8L,
+  mh_logit_p = 30L,
   gibbs_spr = 10L, gibbs_subtree_swap = 11L,
   weighted_branch_lengths = 12L,
   weighted_spr = 13L,
@@ -3038,6 +3047,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       dirichlet_branch = tuning$dirichlet_alpha %||% 0.1,
       local_dirichlet = tuning$local_dirichlet_alpha %||% 0.1,
       mh_p        = tuning$scale_p %||% 0.5,
+      mh_logit_p  = tuning$scale_logit_p %||% 1.0,
       0.5  # default; gibbs_p ignores scaleTun (returns before using it)
     )
     # For dirichlet_branch / local_dirichlet, intWalkWindow carries nCats
@@ -3110,6 +3120,19 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       prop <- ProposeScale(state$p, tuning = tuning$scale_p %||% 0.5)
       proposed$p <- prop$value
       logHastings <- prop$logHastings
+    },
+    logit_scale_p = {
+      # Logit-scale MH on p with Jacobian — robust near the boundary.
+      # This R fallback uses a normal step on the logit scale; the C++ path
+      # uses a Bactrian perturbation but the proposal kernel is symmetric in
+      # both cases so the Hastings ratio reduces to the Jacobian alone.
+      sigma <- tuning$scale_logit_p %||% 1.0
+      logitP <- qlogis(state$p)
+      logitPnew <- logitP + sigma * (runif(1) - 0.5)
+      newP <- plogis(logitPnew)
+      proposed$p <- newP
+      logHastings <- log(newP) + log1p(-newP) -
+                     log(state$p) - log1p(-state$p)
     }
   )
 
@@ -3541,6 +3564,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
   kPrime = "Characters", gibbs_kPrime = "Characters",
   block_kPrime = "Characters", p = "Characters", mh_p = "Characters",
+  mh_logit_p = "Characters",
 
   rate_loss = "Rates", rate_neo = "Rates", rate_log_sd = "Rates",
   beta_scale = "Rates", neo_joint = "Rates",
@@ -3634,7 +3658,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     tree_length = 0.35, branch_lengths = 0.23,
     nni = 0.23, spr = 0.10,
     kPrime = 0.35,
-    p = 0.35, rate_loss = 0.35, rate_log_sd = 0.35,
+    p = 0.35, mh_p = 0.35, mh_logit_p = 0.35,
+    rate_loss = 0.35, rate_log_sd = 0.35,
     rate_neo = 0.35, neo_joint = 0.35,
     beta_scale = 0.35,
     pspr = 0.10,
@@ -3662,6 +3687,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     kPrime = "int_walk_window",
     p = NA_character_,       # Gibbs move: no tuning needed
     mh_p = "scale_p",        # MH move: tune the log-scale step
+    mh_logit_p = "scale_logit_p",  # MH move: tune the logit-scale step
     rate_loss = "scale_rate_loss",
     rate_log_sd = "scale_rate_log_sd",
     rate_neo = "scale_rate_neo",

@@ -199,6 +199,14 @@ test_that("empirical_geometric prior runs short MCMC end-to-end", {
   expect_true("p" %in% colnames(res$samples))
   p_samples <- res$samples[, "p"]
   expect_true(all(p_samples > 0 & p_samples < 1))
+  # Empirical_geometric must schedule `mh_logit_p` (the logit-scale MH on p)
+  # rather than the broken multiplicative `mh_p` move.
+  expect_true("mh_logit_p" %in% names(res$acceptance))
+  expect_false("mh_p" %in% names(res$acceptance))
+  # Acceptance should be non-trivial even on this tiny dataset.  We don't
+  # assert a tight lower bound because the chain is only 200 iters, but a
+  # totally stuck move would show ~0%.
+  expect_gt(res$acceptance[["mh_logit_p"]], 0.01)
 })
 
 

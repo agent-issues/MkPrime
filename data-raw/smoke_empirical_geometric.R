@@ -77,6 +77,26 @@ runArm <- function(label, prior, seed) {
   cat(sprintf("  Wall time: %s\n",
               format(Sys.time() - t0, digits = 3)))
 
+  # Per-move acceptance — catches the failure mode where a sampler is
+  # crushed to its weight floor because its acceptance rate is too low to
+  # contribute to ESS.  Under the empirical_geometric prior we expect
+  # `mh_logit_p` to accept ~20–40%; anything below 5% indicates the move
+  # is broken (e.g. multiplicative MH overshooting p = 1).
+  if (!is.null(res$acceptance)) {
+    cat("  Per-move acceptance:\n")
+    print(round(res$acceptance, 3))
+    if ("mh_logit_p" %in% names(res$acceptance)) {
+      mhlpRate <- res$acceptance[["mh_logit_p"]]
+      cat(sprintf("  mh_logit_p acceptance: %.3f\n", mhlpRate))
+      if (is.finite(mhlpRate) && mhlpRate < 0.05) {
+        warning("mh_logit_p acceptance below 5% — sampler likely broken.")
+      }
+    } else if ("mh_p" %in% names(res$acceptance)) {
+      mhpRate <- res$acceptance[["mh_p"]]
+      cat(sprintf("  mh_p acceptance: %.3f\n", mhpRate))
+    }
+  }
+
   # Posterior u per character
   kpCols <- grep("^kPrime_", colnames(res$samples), value = TRUE)
   if (length(kpCols) == 0L) {

@@ -3806,7 +3806,8 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
 //           23=dirichlet_branch, 24=local_dirichlet,
 //           25=gibbs_kprime_sweep, 26=block_kprime_shift,
 //           27=scale_kprime_alpha, 28=scale_kprime_beta,
-//           29=slice_kprime_hyper
+//           29=slice_kprime_hyper,
+//           30=mh_logit_p (logit-scale MH on p for empirical_geometric prior)
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -4237,6 +4238,27 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       state->kprimeBeta = oldKpB;
       return false;
     }
+    case 30: { // mh_logit_p — logit-scale MH on p (for empirical_geometric)
+      // Multiplicative MH on p ∈ (0,1) overshoots when p is close to 1, which
+      // is the typical posterior region under the empirical_geometric prior.
+      // Propose on the unbounded logit scale instead, so no rejections from
+      // boundary violations. Jacobian is |dp/dlogit(p)| = p (1 − p).
+      if (oldP <= 0.0 || oldP >= 1.0) return false;
+      double logitP = std::log(oldP / (1.0 - oldP));
+      double logitPnew = logitP + scaleTuning * bactrian_perturbation();
+      double newP;
+      if (logitPnew >= 0.0) {
+        newP = 1.0 / (1.0 + std::exp(-logitPnew));
+      } else {
+        double e = std::exp(logitPnew);
+        newP = e / (1.0 + e);
+      }
+      if (newP <= 0.0 || newP >= 1.0) return false;
+      state->p = newP;
+      logHastings = std::log(newP) + std::log1p(-newP)
+                  - std::log(oldP) - std::log1p(-oldP);
+      break;
+    }
     default:
       return false;
   }
@@ -4294,7 +4316,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   const NumericVector& evalRelBr  = topologyChanged ? proposedRelBr  : state->relBrLengths;
 
   // ---- Likelihood evaluation (M-064: partial, M-065: vectors, M-121: node CL) ----
-  bool likChanges = (moveType != 8);
+  // Moves that only touch `p` (case 8 legacy multiplicative, case 30 logit MH)
+  // leave the likelihood untouched.
+  bool likChanges = (moveType != 8 && moveType != 30);
   bool hasPLC = !state->partLogLik.empty();
   double newLogLik;
   std::vector<double> newPC;
