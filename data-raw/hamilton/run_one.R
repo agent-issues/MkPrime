@@ -167,7 +167,7 @@ make_mcmc <- function(prefix) {
                         # swings of +-50 between adjacent reports.
                         # Lower heat -> hotter hottest chain -> better
                         # discovery of distant modes.
-    maxTime    = 6 * 3600,
+    maxTime    = 10 * 3600,
     minEss     = 200L,
     maxRhat    = 1.1,
     checkEvery = 500L,
