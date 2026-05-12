@@ -216,3 +216,216 @@ test_that("EcologyEdgeWeights rows are proper probability distributions", {
   expect_true(all(w >= 0))
   expect_true(all(w <= 1))
 })
+
+
+# ===== PruningJcEcology: transformational ecology mixture =====
+
+
+# Reference implementation: explicit matrix-mult mixture pruning.
+# Same algorithm as the C++ but written with no JC shortcuts, so a shared
+# bug between C++ and R is unlikely.
+.EcologyJcLogLik_R <- function(parent, child, edgeLen, tipStates,
+                                kStates, rootFreqs, rateMultipliers,
+                                wEdge, zMat, phi, mode) {
+  nTip  <- nrow(tipStates)
+  nChar <- ncol(tipStates)
+  nCat  <- length(rateMultipliers)
+  kEco  <- ncol(wEdge)
+  maxNode <- 2L * nTip - 1L
+  root <- nTip + 1L
+
+  rateFactor <- function(z, s) {
+    if (z == 0L) return(1)
+    p <- if (mode == 0L) phi[1] else phi[s + 1L]
+    if (z == 1L) p else 1 / p
+  }
+
+  siteLik <- numeric(nChar)
+  for (cat_idx in seq_len(nCat)) {
+    rate <- rateMultipliers[cat_idx]
+    cl <- array(0, dim = c(maxNode, nChar, kStates))
+    init <- rep(FALSE, maxNode)
+
+    for (i in seq_len(nTip)) {
+      for (c in seq_len(nChar)) {
+        st <- tipStates[i, c]
+        if (st < 0) cl[i, c, ] <- 1
+        else        cl[i, c, st + 1L] <- 1
+      }
+      init[i] <- TRUE
+    }
+
+    for (e in rev(seq_along(parent))) {
+      pa <- parent[e]; ch <- child[e]
+      t_base <- edgeLen[e] * rate
+      for (c in seq_len(nChar)) {
+        Pmix <- matrix(0, kStates, kStates)
+        for (s in seq_len(kEco) - 1L) {
+          lambda <- rateFactor(zMat[c, s + 1L], s)
+          t_eff <- t_base * lambda
+          e_term <- exp(-kStates * t_eff / (kStates - 1))
+          ps <- 1 / kStates + (1 - 1 / kStates) * e_term
+          pd <- 1 / kStates - 1 / kStates * e_term
+          Ps <- matrix(pd, kStates, kStates)
+          diag(Ps) <- ps
+          Pmix <- Pmix + wEdge[e, s + 1L] * Ps
+        }
+        msg <- Pmix %*% cl[ch, c, ]
+        if (!init[pa]) cl[pa, c, ] <- as.vector(msg)
+        else            cl[pa, c, ] <- cl[pa, c, ] * as.vector(msg)
+      }
+      init[pa] <- TRUE
+    }
+
+    for (c in seq_len(nChar))
+      siteLik[c] <- siteLik[c] + sum(rootFreqs * cl[root, c, ])
+  }
+
+  total <- 0
+  for (c in seq_len(nChar)) {
+    avg <- siteLik[c] / nCat
+    if (avg <= 0) return(-Inf)
+    total <- total + log(avg)
+  }
+  total
+}
+
+
+# Build a small test setup (4-tip tree, 1 ecology, varying chars/states).
+.MakeJcEcoSetup <- function(kStates, nChar, kEco,
+                             ecoTipStates = c(0L, 0L, 1L, 1L)) {
+  parent <- c(5L, 6L, 7L, 7L, 6L, 5L)
+  child  <- c(6L, 7L, 1L, 2L, 3L, 4L)
+  edgeLen <- c(0.4, 0.5, 0.6, 0.3, 0.7, 0.2)
+  marg <- MkPrime:::.EcologyNodeMarginals(parent, child, edgeLen,
+                                          ecoTipStates, kEco)
+  wEdge <- MkPrime:::.EcologyEdgeWeights(marg, parent, child)
+  list(parent = parent, child = child, edgeLen = edgeLen,
+       wEdge = wEdge, kEco = kEco, kStates = kStates,
+       rootFreqs = rep(1 / kStates, kStates))
+}
+
+
+test_that("PruningJcEcology with z = 0 and phi = 1 matches reference R", {
+  s <- .MakeJcEcoSetup(kStates = 3L, nChar = 2L, kEco = 2L)
+  set.seed(7)
+  tipStates <- matrix(sample.int(s$kStates, 4 * 2, replace = TRUE) - 1L,
+                      nrow = 4, ncol = 2)
+  zMat <- matrix(0L, nrow = 2, ncol = s$kEco)
+  ll_cpp <- MkPrime:::.PruningJcEcology(
+    s$parent, s$child, s$edgeLen, tipStates,
+    s$kStates, s$rootFreqs, rateMultipliers = 1,
+    s$wEdge, zMat, phi = 1, mode = 0L
+  )
+  ll_r <- .EcologyJcLogLik_R(
+    s$parent, s$child, s$edgeLen, tipStates,
+    s$kStates, s$rootFreqs, 1,
+    s$wEdge, zMat, phi = 1, mode = 0L
+  )
+  expect_equal(ll_cpp, ll_r, tolerance = 1e-10)
+})
+
+
+test_that("PruningJcEcology: z = 0 implies result is independent of phi", {
+  s <- .MakeJcEcoSetup(kStates = 2L, nChar = 3L, kEco = 2L)
+  set.seed(11)
+  tipStates <- matrix(sample.int(s$kStates, 4 * 3, replace = TRUE) - 1L,
+                      nrow = 4, ncol = 3)
+  zMat <- matrix(0L, nrow = 3, ncol = s$kEco)
+  ll1 <- MkPrime:::.PruningJcEcology(
+    s$parent, s$child, s$edgeLen, tipStates,
+    s$kStates, s$rootFreqs, 1,
+    s$wEdge, zMat, phi = 1, mode = 0L)
+  ll2 <- MkPrime:::.PruningJcEcology(
+    s$parent, s$child, s$edgeLen, tipStates,
+    s$kStates, s$rootFreqs, 1,
+    s$wEdge, zMat, phi = 3.7, mode = 0L)
+  expect_equal(ll1, ll2, tolerance = 1e-12)
+})
+
+
+test_that("PruningJcEcology matches reference for mixed z and phi != 1", {
+  s <- .MakeJcEcoSetup(kStates = 3L, nChar = 4L, kEco = 2L)
+  set.seed(31)
+  tipStates <- matrix(sample.int(s$kStates, 4 * 4, replace = TRUE) - 1L,
+                      nrow = 4, ncol = 4)
+  zMat <- rbind(c(0L, 1L),
+                c(1L, 0L),
+                c(2L, 2L),
+                c(0L, 2L))
+  ll_cpp <- MkPrime:::.PruningJcEcology(
+    s$parent, s$child, s$edgeLen, tipStates,
+    s$kStates, s$rootFreqs, 1,
+    s$wEdge, zMat, phi = 2.0, mode = 0L)
+  ll_r <- .EcologyJcLogLik_R(
+    s$parent, s$child, s$edgeLen, tipStates,
+    s$kStates, s$rootFreqs, 1,
+    s$wEdge, zMat, phi = 2.0, mode = 0L)
+  expect_equal(ll_cpp, ll_r, tolerance = 1e-10)
+})
+
+
+test_that("PruningJcEcology matches reference with per_ecology phi", {
+  s <- .MakeJcEcoSetup(kStates = 2L, nChar = 3L, kEco = 3L,
+                       ecoTipStates = c(0L, 1L, 2L, 0L))
+  set.seed(42)
+  tipStates <- matrix(sample.int(s$kStates, 4 * 3, replace = TRUE) - 1L,
+                      nrow = 4, ncol = 3)
+  zMat <- rbind(c(0L, 1L, 2L),
+                c(1L, 2L, 0L),
+                c(2L, 0L, 1L))
+  phi <- c(1.5, 2.0, 0.7)
+  ll_cpp <- MkPrime:::.PruningJcEcology(
+    s$parent, s$child, s$edgeLen, tipStates,
+    s$kStates, s$rootFreqs, 1,
+    s$wEdge, zMat, phi = phi, mode = 1L)
+  ll_r <- .EcologyJcLogLik_R(
+    s$parent, s$child, s$edgeLen, tipStates,
+    s$kStates, s$rootFreqs, 1,
+    s$wEdge, zMat, phi = phi, mode = 1L)
+  expect_equal(ll_cpp, ll_r, tolerance = 1e-10)
+})
+
+
+test_that("PruningJcEcology matches reference with ACRV (nCat = 4)", {
+  s <- .MakeJcEcoSetup(kStates = 3L, nChar = 5L, kEco = 2L)
+  set.seed(99)
+  tipStates <- matrix(sample.int(s$kStates, 4 * 5, replace = TRUE) - 1L,
+                      nrow = 4, ncol = 5)
+  zMat <- matrix(sample(0:2, 5 * 2, replace = TRUE), nrow = 5, ncol = 2L)
+  zMat <- matrix(as.integer(zMat), nrow = 5, ncol = 2L)
+  rateMults <- c(0.5, 0.8, 1.2, 1.5)
+  ll_cpp <- MkPrime:::.PruningJcEcology(
+    s$parent, s$child, s$edgeLen, tipStates,
+    s$kStates, s$rootFreqs, rateMults,
+    s$wEdge, zMat, phi = 1.8, mode = 0L)
+  ll_r <- .EcologyJcLogLik_R(
+    s$parent, s$child, s$edgeLen, tipStates,
+    s$kStates, s$rootFreqs, rateMults,
+    s$wEdge, zMat, phi = 1.8, mode = 0L)
+  expect_equal(ll_cpp, ll_r, tolerance = 1e-10)
+})
+
+
+test_that("PruningJcEcology validates argument shapes", {
+  s <- .MakeJcEcoSetup(kStates = 2L, nChar = 2L, kEco = 2L)
+  tipStates <- matrix(c(0L, 0L, 1L, 1L, 1L, 0L, 0L, 1L),
+                      nrow = 4, ncol = 2)
+  zMat <- matrix(0L, nrow = 2, ncol = 2)
+  # mode = 0 requires phi length 1
+  expect_error(
+    MkPrime:::.PruningJcEcology(
+      s$parent, s$child, s$edgeLen, tipStates,
+      s$kStates, s$rootFreqs, 1, s$wEdge, zMat,
+      phi = c(1, 1), mode = 0L),
+    "global mode requires"
+  )
+  # mode = 1 requires phi length kEco
+  expect_error(
+    MkPrime:::.PruningJcEcology(
+      s$parent, s$child, s$edgeLen, tipStates,
+      s$kStates, s$rootFreqs, 1, s$wEdge, zMat,
+      phi = 1, mode = 1L),
+    "per_ecology mode requires"
+  )
+})

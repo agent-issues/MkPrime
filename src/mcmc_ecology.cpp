@@ -228,3 +228,256 @@ NumericMatrix EcologyEdgeWeights(
   }
   return out;
 }
+
+
+// Resolve the rate factor for a transformational character with influence
+// category z under magnitude mode `mode` (0 = global, 1 = per_ecology).
+// phi has length 1 in global mode and kEco in per_ecology mode.
+//   z == 0 (none):        factor = 1
+//   z == 1 (encouraged):  factor = phi[mode == 0 ? 0 : ecoState]
+//   z == 2 (discouraged): factor = 1 / phi[mode == 0 ? 0 : ecoState]
+static inline double trans_rate_factor(int z, int ecoState,
+                                       const double* phi, int mode) {
+  if (z == 0) return 1.0;
+  double p = (mode == 0) ? phi[0] : phi[ecoState];
+  return (z == 1) ? p : 1.0 / p;
+}
+
+
+// Transformational ecology-aware pruning: JC-K with per-(edge, character)
+// mixture transition matrix. The mixture preserves JC symmetry — the off-
+// diagonal entry is state-independent — so the per-character propagation
+// remains O(k) using mixed (p_same, p_diff) values.
+//
+// nCat = rate_multipliers.size() (ACRV categories).
+// wEdge: nEdge x kEco, edge-ecology weights.
+// zMat:  nChar x kEco, integer entries in {0, 1, 2}.
+// phi:   length 1 (mode == 0) or kEco (mode == 1).
+//
+// Buffers buf / initFlg / stride follow the convention used by
+// pruning_jc_acrv_flat: buf[node * stride + c * kStates + s] (1-indexed).
+//
+// Returns total log-likelihood across characters, or R_NegInf if any per-
+// character average likelihood is non-positive.
+static double pruning_jc_acrv_flat_ecology(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    int kStates, NumericVector root_freqs,
+    NumericVector rate_multipliers,
+    NumericMatrix wEdge,
+    IntegerMatrix zMat,
+    NumericVector phi, int mode,
+    double* buf, uint8_t* initFlg, int stride) {
+
+  int nEdge = parent.size();
+  int nTip  = tip_states.nrow();
+  int nChar = tip_states.ncol();
+  int nCat  = rate_multipliers.size();
+  int kEco  = wEdge.ncol();
+
+  const int* parPtr = INTEGER(parent);
+  const int* chPtr  = INTEGER(child);
+  const double* elPtr = REAL(edge_length);
+  const int* tsPtr   = INTEGER(tip_states);
+  const double* rfPtr = REAL(root_freqs);
+  const double* rmPtr = REAL(rate_multipliers);
+  const double* wPtr  = REAL(wEdge);          // column-major: wPtr[e + s * nEdge]
+  const int* zPtr     = INTEGER(zMat);         // column-major: zPtr[c + s * nChar]
+  const double* phiPtr = REAL(phi);
+
+  int maxNode = 2 * nTip - 1;
+  int root    = nTip + 1;
+  int clCols  = nChar * kStates;
+  double inv_k = 1.0 / kStates;
+  double km1   = static_cast<double>(kStates) - 1.0;
+
+  std::vector<double> siteLik(nChar, 0.0);
+
+  // Initialise tips (constant across rate categories).
+  std::memset(initFlg, 0, (maxNode + 1) * sizeof(uint8_t));
+  for (int tip = 1; tip <= nTip; ++tip) {
+    double* cl = buf + tip * stride;
+    std::fill(cl, cl + clCols, 0.0);
+    for (int c = 0; c < nChar; ++c) {
+      int state = tsPtr[(tip - 1) + c * nTip];
+      int offset = c * kStates;
+      if (state < 0) {
+        for (int s = 0; s < kStates; ++s) cl[offset + s] = 1.0;
+      } else {
+        cl[offset + state] = 1.0;
+      }
+    }
+    initFlg[tip] = 1u;
+  }
+
+  // Per-(edge, ecology) base (p_same, p_diff) for the three rate factors
+  // {none, encouraged, discouraged}. Stored as small stack buffers re-used
+  // each (cat, edge) iteration.
+  // ps[3 * kEco + s], indexed by (factor_idx, eco_state):
+  //   factor_idx 0 = none (rate factor 1.0, ecology state irrelevant)
+  //   factor_idx 1 = encouraged
+  //   factor_idx 2 = discouraged
+  std::vector<double> psFactor(3 * kEco), pdFactor(3 * kEco);
+
+  for (int cat = 0; cat < nCat; ++cat) {
+    double rate = rmPtr[cat];
+
+    // Reset internal-node init flags (tips stay initialised).
+    for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
+
+    for (int e = nEdge - 1; e >= 0; --e) {
+      int par = parPtr[e];
+      int ch  = chPtr[e];
+      double tBase = elPtr[e] * rate;
+
+      // Precompute (ps, pd) for each (z-factor, ecology state) at this edge.
+      // factor 0 (none): identical across ecology states — compute once and
+      // duplicate. factor 1 (encouraged) / 2 (discouraged): depend on phi
+      // which varies with mode.
+      {
+        double exp0 = MKP_EXP(-kStates * tBase / km1);
+        double ps0  = inv_k + (1.0 - inv_k) * exp0;
+        double pd0  = inv_k - inv_k * exp0;
+        for (int s = 0; s < kEco; ++s) {
+          psFactor[0 * kEco + s] = ps0;
+          pdFactor[0 * kEco + s] = pd0;
+        }
+        if (mode == 0) {
+          // Global phi: same encouraged/discouraged values for every ecology.
+          double p = phiPtr[0];
+          double tE = tBase * p;
+          double tD = tBase / p;
+          double expE = MKP_EXP(-kStates * tE / km1);
+          double expD = MKP_EXP(-kStates * tD / km1);
+          double psE = inv_k + (1.0 - inv_k) * expE;
+          double pdE = inv_k - inv_k * expE;
+          double psD = inv_k + (1.0 - inv_k) * expD;
+          double pdD = inv_k - inv_k * expD;
+          for (int s = 0; s < kEco; ++s) {
+            psFactor[1 * kEco + s] = psE;
+            pdFactor[1 * kEco + s] = pdE;
+            psFactor[2 * kEco + s] = psD;
+            pdFactor[2 * kEco + s] = pdD;
+          }
+        } else {
+          // Per-ecology phi.
+          for (int s = 0; s < kEco; ++s) {
+            double p = phiPtr[s];
+            double tE = tBase * p;
+            double tD = tBase / p;
+            double expE = MKP_EXP(-kStates * tE / km1);
+            double expD = MKP_EXP(-kStates * tD / km1);
+            psFactor[1 * kEco + s] = inv_k + (1.0 - inv_k) * expE;
+            pdFactor[1 * kEco + s] = inv_k - inv_k * expE;
+            psFactor[2 * kEco + s] = inv_k + (1.0 - inv_k) * expD;
+            pdFactor[2 * kEco + s] = inv_k - inv_k * expD;
+          }
+        }
+      }
+
+      double* clPar = buf + par * stride;
+      double* clCh  = buf + ch  * stride;
+
+      // Per-character propagation with the mixture (p_same, p_diff).
+      if (!initFlg[par]) {
+        for (int c = 0; c < nChar; ++c) {
+          double psMix = 0.0, pdMix = 0.0;
+          for (int s = 0; s < kEco; ++s) {
+            int z   = zPtr[c + s * nChar];
+            double w = wPtr[e + s * nEdge];
+            psMix += w * psFactor[z * kEco + s];
+            pdMix += w * pdFactor[z * kEco + s];
+          }
+          double diff_coeff = psMix - pdMix;
+          int offset = c * kStates;
+          double sum_cl = 0.0;
+          for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+          for (int i = 0; i < kStates; ++i)
+            clPar[offset + i] = pdMix * sum_cl + diff_coeff * clCh[offset + i];
+        }
+        initFlg[par] = 1u;
+      } else {
+        for (int c = 0; c < nChar; ++c) {
+          double psMix = 0.0, pdMix = 0.0;
+          for (int s = 0; s < kEco; ++s) {
+            int z   = zPtr[c + s * nChar];
+            double w = wPtr[e + s * nEdge];
+            psMix += w * psFactor[z * kEco + s];
+            pdMix += w * pdFactor[z * kEco + s];
+          }
+          double diff_coeff = psMix - pdMix;
+          int offset = c * kStates;
+          double sum_cl = 0.0;
+          for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+          for (int i = 0; i < kStates; ++i)
+            clPar[offset + i] *= pdMix * sum_cl + diff_coeff * clCh[offset + i];
+        }
+      }
+    }
+
+    double* clRoot = buf + root * stride;
+    for (int c = 0; c < nChar; ++c) {
+      int offset = c * kStates;
+      double sl = 0.0;
+      for (int s = 0; s < kStates; ++s)
+        sl += rfPtr[s] * clRoot[offset + s];
+      siteLik[c] += sl;
+    }
+  }
+
+  double logLik   = 0.0;
+  double inv_nCat = 1.0 / nCat;
+  for (int c = 0; c < nChar; ++c) {
+    double avg = siteLik[c] * inv_nCat;
+    if (avg <= 0.0) return R_NegInf;
+    logLik += std::log(avg);
+  }
+  return logLik;
+}
+
+
+// R-callable wrapper around pruning_jc_acrv_flat_ecology for testing.
+// Allocates buffers locally; not for hot-path use.
+//
+// [[Rcpp::export(.PruningJcEcology)]]
+double PruningJcEcology(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edgeLen, IntegerMatrix tipStates,
+    int kStates, NumericVector rootFreqs,
+    NumericVector rateMultipliers,
+    NumericMatrix wEdge,
+    IntegerMatrix zMat,
+    NumericVector phi, int mode
+) {
+  int nTip    = tipStates.nrow();
+  int nChar   = tipStates.ncol();
+  int maxNode = 2 * nTip - 1;
+  int stride  = nChar * kStates;
+
+  if (kStates < 2)
+    stop("kStates must be >= 2");
+  if (rootFreqs.size() != kStates)
+    stop("rootFreqs length must equal kStates");
+  if (wEdge.nrow() != parent.size())
+    stop("wEdge nrow must equal nEdge");
+  if (zMat.nrow() != nChar)
+    stop("zMat nrow must equal nChar");
+  if (zMat.ncol() != wEdge.ncol())
+    stop("zMat ncol must equal kEco (wEdge ncol)");
+  if (mode != 0 && mode != 1)
+    stop("mode must be 0 (global) or 1 (per_ecology)");
+  if (mode == 0 && phi.size() != 1)
+    stop("global mode requires phi length 1");
+  if (mode == 1 && phi.size() != wEdge.ncol())
+    stop("per_ecology mode requires phi length kEco");
+
+  std::vector<double>  buf((maxNode + 1) * stride, 0.0);
+  std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+
+  return pruning_jc_acrv_flat_ecology(
+    parent, child, edgeLen, tipStates,
+    kStates, rootFreqs, rateMultipliers,
+    wEdge, zMat, phi, mode,
+    buf.data(), initFlg.data(), stride
+  );
+}

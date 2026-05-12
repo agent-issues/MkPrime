@@ -434,6 +434,27 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// PruningJcEcology
+double PruningJcEcology(IntegerVector parent, IntegerVector child, NumericVector edgeLen, IntegerMatrix tipStates, int kStates, NumericVector rootFreqs, NumericVector rateMultipliers, NumericMatrix wEdge, IntegerMatrix zMat, NumericVector phi, int mode);
+RcppExport SEXP _MkPrime_PruningJcEcology(SEXP parentSEXP, SEXP childSEXP, SEXP edgeLenSEXP, SEXP tipStatesSEXP, SEXP kStatesSEXP, SEXP rootFreqsSEXP, SEXP rateMultipliersSEXP, SEXP wEdgeSEXP, SEXP zMatSEXP, SEXP phiSEXP, SEXP modeSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< IntegerVector >::type parent(parentSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type child(childSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type edgeLen(edgeLenSEXP);
+    Rcpp::traits::input_parameter< IntegerMatrix >::type tipStates(tipStatesSEXP);
+    Rcpp::traits::input_parameter< int >::type kStates(kStatesSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type rootFreqs(rootFreqsSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type rateMultipliers(rateMultipliersSEXP);
+    Rcpp::traits::input_parameter< NumericMatrix >::type wEdge(wEdgeSEXP);
+    Rcpp::traits::input_parameter< IntegerMatrix >::type zMat(zMatSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type phi(phiSEXP);
+    Rcpp::traits::input_parameter< int >::type mode(modeSEXP);
+    rcpp_result_gen = Rcpp::wrap(PruningJcEcology(parent, child, edgeLen, tipStates, kStates, rootFreqs, rateMultipliers, wEdge, zMat, phi, mode));
+    return rcpp_result_gen;
+END_RCPP
+}
 // prepare_mcmc_data
 SEXP prepare_mcmc_data(List partitions_r, IntegerVector kObs_r, CharacterVector charTypes_r, bool hasNeo, int nCat, std::string codingStr, bool relabelFlag, double treeLengthShape, double treeLengthRate, double rateLossMeanlog, double rateLossSdlog, double rateLogSdShape, double rateLogSdRate, double rateNeoMeanlog, double rateNeoSdlog, double kprimeHyperA, double kprimeHyperB, bool kPriorLogseries, double kprimeLogseriesC, bool kPriorBetaGeometric, bool qHeterogeneity, int nBetaCat, double betaScaleShape, double betaScaleRate, bool kPriorEmpiricalGeometric, Rcpp::NumericVector empLogBody, int empBodyLastK, int empTailStartK, double empTailDecay, double empLogTailStartP);
 RcppExport SEXP _MkPrime_prepare_mcmc_data(SEXP partitions_rSEXP, SEXP kObs_rSEXP, SEXP charTypes_rSEXP, SEXP hasNeoSEXP, SEXP nCatSEXP, SEXP codingStrSEXP, SEXP relabelFlagSEXP, SEXP treeLengthShapeSEXP, SEXP treeLengthRateSEXP, SEXP rateLossMeanlogSEXP, SEXP rateLossSdlogSEXP, SEXP rateLogSdShapeSEXP, SEXP rateLogSdRateSEXP, SEXP rateNeoMeanlogSEXP, SEXP rateNeoSdlogSEXP, SEXP kprimeHyperASEXP, SEXP kprimeHyperBSEXP, SEXP kPriorLogseriesSEXP, SEXP kprimeLogseriesCSEXP, SEXP kPriorBetaGeometricSEXP, SEXP qHeterogeneitySEXP, SEXP nBetaCatSEXP, SEXP betaScaleShapeSEXP, SEXP betaScaleRateSEXP, SEXP kPriorEmpiricalGeometricSEXP, SEXP empLogBodySEXP, SEXP empBodyLastKSEXP, SEXP empTailStartKSEXP, SEXP empTailDecaySEXP, SEXP empLogTailStartPSEXP) {
@@ -688,6 +709,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_validate_swap_partial_cl", (DL_FUNC) &_MkPrime_validate_swap_partial_cl, 3},
     {"_MkPrime_EcologyNodeMarginals", (DL_FUNC) &_MkPrime_EcologyNodeMarginals, 5},
     {"_MkPrime_EcologyEdgeWeights", (DL_FUNC) &_MkPrime_EcologyEdgeWeights, 3},
+    {"_MkPrime_PruningJcEcology", (DL_FUNC) &_MkPrime_PruningJcEcology, 11},
     {"_MkPrime_prepare_mcmc_data", (DL_FUNC) &_MkPrime_prepare_mcmc_data, 30},
     {"_MkPrime_set_branch_bins", (DL_FUNC) &_MkPrime_set_branch_bins, 2},
     {"_MkPrime_spr_proposal", (DL_FUNC) &_MkPrime_spr_proposal, 4},
