@@ -109,6 +109,14 @@ validate_swap_partial_cl <- function(dataPtr, statePtr, nodeA) {
     .Call(`_MkPrime_validate_swap_partial_cl`, dataPtr, statePtr, nodeA)
 }
 
+.EcologyNodeMarginals <- function(parent, child, edgeLen, tipStates, kStates) {
+    .Call(`_MkPrime_EcologyNodeMarginals`, parent, child, edgeLen, tipStates, kStates)
+}
+
+.EcologyEdgeWeights <- function(nodeMarginals, parent, child) {
+    .Call(`_MkPrime_EcologyEdgeWeights`, nodeMarginals, parent, child)
+}
+
 prepare_mcmc_data <- function(partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, kPriorBetaGeometric = FALSE, qHeterogeneity = FALSE, nBetaCat = 4L, betaScaleShape = 1.0, betaScaleRate = 1.0, kPriorEmpiricalGeometric = FALSE, empLogBody = numericVector(), empBodyLastK = 1L, empTailStartK = 0L, empTailDecay = 0.0, empLogTailStartP = -1e308) {
     .Call(`_MkPrime_prepare_mcmc_data`, partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, kPriorBetaGeometric, qHeterogeneity, nBetaCat, betaScaleShape, betaScaleRate, kPriorEmpiricalGeometric, empLogBody, empBodyLastK, empTailStartK, empTailDecay, empLogTailStartP)
 }
