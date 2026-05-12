@@ -2949,14 +2949,16 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   if (isTRUE(ecologyAware) && nPhi >= 1L) {
     moves <- c(moves, list(
       list(name = "scale_phi", type = "scale_phi", target = "phi",
-           weight = max(1, as.numeric(nPhi)), dim = 1L),
+           weight = max(2, 2 * as.numeric(nPhi)), dim = 1L),
       list(name = "scale_pi0", type = "scale_pi0", target = "pi0",
-           weight = 1, dim = 1L),
-      # Gibbs sweep cost grows with nChar × kEco, but the per-cell cost
-      # is one per-character pruning.  Run sparingly (weight 1) since
-      # one sweep is many Gibbs updates.
+           weight = 2, dim = 1L),
+      # gibbs_z performs a full sweep over all (c, s) cells in one call,
+      # so once-per-100-iterations is plenty for mixing.  In larger
+      # problems (high nChar) the dominant kPrime moves push raw-weight
+      # totals into the hundreds; weight 10 keeps gibbs_z near ~1% of
+      # proposals regardless of nChar.
       list(name = "gibbs_z", type = "gibbs_z", target = "z",
-           weight = 1, dim = 1L)
+           weight = 10, dim = 1L)
     ))
   }
 
@@ -3685,10 +3687,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   beta_scale = "Rates", neo_joint = "Rates",
   slice_rate_loss = "Rates", slice_rate_neo = "Rates",
   slice_rate_log_sd = "Rates", slice_beta_scale = "Rates",
-  joint_tl_rls = "Rates", joint_tl_rl = "Rates"
+  joint_tl_rls = "Rates", joint_tl_rl = "Rates",
+
+  scale_phi = "Ecology", scale_pi0 = "Ecology", gibbs_z = "Ecology"
 )
 
-.moveCategoryOrder <- c("Topology", "Branches", "Characters", "Rates")
+.moveCategoryOrder <- c("Topology", "Branches", "Characters", "Rates",
+                        "Ecology")
 
 #' Format move weights as styled, categorized lines
 #'
