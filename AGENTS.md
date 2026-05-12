@@ -1,23 +1,6 @@
-> **Before starting work in this directory, read [`../AGENTS.md`](../AGENTS.md)**
-> for multi-agent coordination rules, build/test infrastructure, GHA workflows,
-> subprocess timeout discipline, worktree rules, and standing-task protocol.
-> That file is the authoritative reference for all cross-package agent operations.
->
-> This file (`mkp/AGENTS.md`) only documents what is **specific to MkPrime**.
-
 # MkPrime — Agent Development Notes
 
-## Current phase: post-core, optimization & GUI integration
-
-All core phases (1–10) complete. 155+ tasks delivered. Current work:
-
-- **Phase 6b** (TreeSearch GUI integration): M-080.
-- **M-131** (P2): Warmup stabilisation validation study (Hamilton HPC).
-- Standing tasks (S-RED, S-PROF, S-COORD) at P1.
-
-See `to-do.md` for the live task queue and `coordination.md` for strategic context.
-
----
+You MUST read the `r-conventions` skill before writing any code.
 
 ## Dispatcher
 
@@ -77,9 +60,8 @@ three character models in a single analysis:
 | Transformational | Mk' (infer true k per character) | Per-character k'_i from shared hyperprior |
 | Known state space | Mk(k) | User-specified k, no k' inference |
 
-Architecture follows StratoBayes: C++ hot loop (Rcpp) for likelihood
-evaluation and the MCMC inner loop; R for setup, adaptation, tempering,
-convergence monitoring, and I/O.
+Architecture: C++ hot loop (Rcpp) for likelihood evaluation and the MCMC inner loop;
+R for setup, adaptation, tempering, convergence monitoring, and I/O.
 
 ### Key design decisions
 
@@ -91,9 +73,8 @@ convergence monitoring, and I/O.
    relabelling correction naturally constrain k'.
 4. **Per-character k'_i from shared hyperprior.** Pools information
    across characters.
-5. **`coding = "variable"` first.** `"informative"` deferred to Phase 7.
+5. **`coding = "variable"` first.** `"informative"` deferred.
 
-Full design rationale: `../.positai/plans/mkprime-r.md` (parent-level plan).
 
 ---
 
@@ -108,9 +89,6 @@ Full design rationale: `../.positai/plans/mkprime-r.md` (parent-level plan).
 `coda` is **not** a dependency — native rank-normalized R-hat
 (Vehtari et al. 2021) and FFT-based ESS replace all `coda` calls.
 
-Per parent `AGENTS.md`: prefer `TreeTools::Cladewise()` over
-`ape::reorder(tree, "cladewise")` etc. — see the **Prefer TreeTools over ape**
-section there.
 
 ---
 
@@ -184,9 +162,6 @@ table. As of this writing:
 | `mkp-parallel`  | `feature/parallel-runs` |
 | `mkp-het`       | `feature/het-dirichlet-marginal` |
 | `mkp-tbr`       | `feature/tbr-moves` |
-
-Integration branch: **`main`** (mkp does not use a separate `cpp-search`-style
-branch; feature PRs target `main` directly).
 
 ---
 
