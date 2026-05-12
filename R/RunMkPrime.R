@@ -2492,6 +2492,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         dirichlet_branch = tun$dirichlet_alpha %||% 10,
         local_dirichlet  = tun$local_dirichlet_alpha %||% 10,
         p           = 0.5,  # Gibbs move: scale ignored by C++; placeholder
+        mh_p        = tun$scale_p %||% 0.5,
         0.5
       )
     }
@@ -2805,6 +2806,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
              target = "kprime_beta", weight = 2, dim = 1L,
              sliceParamIdx = 1L)
       ))
+    } else if (identical(kPrimePrior, "empirical_geometric")) {
+      # Convolution prior breaks p's Beta conjugacy; use MH on log(p) instead.
+      # Move reuses the legacy moveType 8 ("scale_p") which is a Bactrian
+      # multiplicative perturbation of p.
+      kPrimeMoves <- c(kPrimeMoves, list(
+        list(name = "mh_p", type = "scale_p", target = "p", weight = 1,
+             dim = 1L)
+      ))
     } else if (!identical(kPrimePrior, "logseries")) {
       # Conjugate Gibbs draw: p | k' ~ Beta(a + nTrans, b + sum(k' - kObs))
       kPrimeMoves <- c(kPrimeMoves, list(
@@ -2906,7 +2915,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 .kMoveTypes <- c(
   tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
   rate_neo = 3L, branch_lengths = 4L,
-  nni = 5L, spr = 6L, kPrime = 7L, p = 9L,
+  nni = 5L, spr = 6L, kPrime = 7L, p = 9L, mh_p = 8L,
   gibbs_spr = 10L, gibbs_subtree_swap = 11L,
   weighted_branch_lengths = 12L,
   weighted_spr = 13L,
@@ -2946,6 +2955,21 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     if (is.na(p$k)) p$k <- 0L
     p
   })
+  isEmpGeom <- identical(model$kPrimePrior, "empirical_geometric")
+  emp <- model$empiricalNObs
+  empLogBody <- numeric(0)
+  empBodyLastK <- 1L
+  empTailStartK <- 0L
+  empTailDecay <- 0.0
+  empLogTailStartP <- -Inf
+  if (isEmpGeom && !is.null(emp)) {
+    body <- as.numeric(emp$body)
+    empLogBody <- ifelse(body > 0, log(body), -Inf)
+    empBodyLastK <- 1L + length(body)
+    empTailStartK <- as.integer(emp$tail_start_k)
+    empTailDecay <- as.numeric(emp$tail_decay)
+    empLogTailStartP <- if (emp$tail_start_p > 0) log(emp$tail_start_p) else -Inf
+  }
   prepare_mcmc_data(
     parts, as.integer(mkd$kObs), mkd$type,
     any(mkd$type == "neomorphic"),
@@ -2961,7 +2985,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     isTRUE(model$qHeterogeneity),
     model$nBetaCat %||% 4L,
     model$betaScaleShape %||% 1.0,
-    model$betaScaleRate %||% 1.0
+    model$betaScaleRate %||% 1.0,
+    isEmpGeom,
+    empLogBody,
+    empBodyLastK,
+    empTailStartK,
+    empTailDecay,
+    empLogTailStartP
   )
 }
 
@@ -2985,9 +3015,6 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #'
 #' @return list(accept, statePtr) where statePtr is the (possibly updated) XPtr.
 #' @keywords internal
-#' Execute a move via C++ XPtr engine (or R fallback for tests)
-#'
-#' @keywords internal
 .DoMove <- function(move, stateOrPtr, mkdOrData = NULL, modelOrTuning = NULL,
                     tuning = NULL, beta = 1.0,
                     transIdx = integer(0), mcmcData = NULL) {
@@ -3010,6 +3037,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       kprime_beta  = tuning$scale_kprime_beta %||% 0.5,
       dirichlet_branch = tuning$dirichlet_alpha %||% 0.1,
       local_dirichlet = tuning$local_dirichlet_alpha %||% 0.1,
+      mh_p        = tuning$scale_p %||% 0.5,
       0.5  # default; gibbs_p ignores scaleTun (returns before using it)
     )
     # For dirichlet_branch / local_dirichlet, intWalkWindow carries nCats
@@ -3076,6 +3104,12 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         shape2 = model$kprimeHyperB + sumU)
       proposed$log_prior <- LogPrior(proposed, model, mkd)
       return(list(accept = TRUE, state = proposed))
+    },
+    scale_p = {
+      # Bactrian multiplicative MH on p; standard accept/reject via prior.
+      prop <- ProposeScale(state$p, tuning = tuning$scale_p %||% 0.5)
+      proposed$p <- prop$value
+      logHastings <- prop$logHastings
     }
   )
 
@@ -3211,8 +3245,6 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
 
 #' Extract state values to a row vector for storage
-#' @keywords internal
-#' Extract state row for sample storage
 #' @param statePtr XPtr<McmcState> or R list (for backward compat)
 #' @keywords internal
 .StateToRow <- function(statePtr, mkd, nEdge, tipLabels = NULL,
@@ -3498,8 +3530,6 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' Colour-coded via cli (tidyverse-style): headings white, move names
 #' blue, values green/yellow/silver by weight (u.124).
 #' @keywords internal
-#' Category definitions for move types
-#' @keywords internal
 .moveCategoryMap <- c(
   nni = "Topology", spr = "Topology", tbr = "Topology", pspr = "Topology",
   gibbs_spr = "Topology", gibbs_subtree_swap = "Topology",
@@ -3510,7 +3540,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   block_gibbs_branch = "Branches", weighted_branch_lengths = "Branches",
 
   kPrime = "Characters", gibbs_kPrime = "Characters",
-  block_kPrime = "Characters", p = "Characters",
+  block_kPrime = "Characters", p = "Characters", mh_p = "Characters",
 
   rate_loss = "Rates", rate_neo = "Rates", rate_log_sd = "Rates",
   beta_scale = "Rates", neo_joint = "Rates",
@@ -3631,6 +3661,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     spr = NA_character_,
     kPrime = "int_walk_window",
     p = NA_character_,       # Gibbs move: no tuning needed
+    mh_p = "scale_p",        # MH move: tune the log-scale step
     rate_loss = "scale_rate_loss",
     rate_log_sd = "scale_rate_log_sd",
     rate_neo = "scale_rate_neo",

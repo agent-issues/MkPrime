@@ -7,7 +7,7 @@
 MkPrimeData(data, neomorphic = integer(0), knownStates = integer(0))
 }
 \arguments{
-\item{data}{A \code{phyDat} object (from ape or TreeTools).}
+\item{data}{A \code{phyDat} object (from \pkg{ape} or \pkg{TreeTools}).}
 
 \item{neomorphic}{Integer vector of character indices to treat as neomorphic
 (asymmetric binary, 0 = absent, 1 = present). Default: none.}

@@ -19,13 +19,25 @@
 #' @param rateLogSdShape,rateLogSdRate Shape and rate for the Gamma prior
 #'   on `rate_log_sd` (ACRV dispersion). Defaults: shape = 1, rate = 1.
 #' @param kPrimePrior Prior distribution for the true number of character states
-#'   (`k'`) for transformational characters. One of `"beta_geometric"` (default,
-#'   per-character Beta-Geometric with shared hyperparameters `alpha`, `beta`),
+#'   (`k'`) for transformational characters. One of `"empirical_geometric"`
+#'   (default; convolution of an empirical pmf on the number of observed
+#'   states with a `Geometric(p)` prior on the number of unobserved states,
+#'   so `k' = N_obs + N_unobs`),
+#'   `"beta_geometric"` (per-character Beta-Geometric with shared
+#'   hyperparameters `alpha`, `beta`),
 #'   `"geometric"` (hierarchical geometric with Beta hyperprior on `p`),
 #'   or `"logseries"` (logarithmic series with fixed parameter `c`; matches
 #'   the RevBayes default).
-#'   The `"beta_geometric"` option avoids over-shrinkage of `k'` toward
-#'   `kObs` that occurs when many characters share a single `p`.
+#'   The `"empirical_geometric"` option counters the tendency of inference
+#'   to collapse to zero unobserved states by anchoring the observed-state
+#'   component to a real-data empirical distribution; the `"beta_geometric"`
+#'   option avoids the same over-shrinkage in a different way, by allowing
+#'   per-character `p`.
+#' @param empiricalNObs An object of class `"MkPrimeEmpiricalPrior"` (see
+#'   [MkPrimeEmpiricalPrior()]) giving the empirical pmf on `N_obs` used by
+#'   the `"empirical_geometric"` prior. Defaults to the package dataset
+#'   [empiricalNObs] tabulated from the `neotrans` corpus. Ignored for other
+#'   prior options.
 #' @param kprimeHyperA,kprimeHyperB Parameters for the Beta hyperprior on `p`
 #'   when `kPrimePrior = "geometric"`. Defaults: a = 1, b = 1 (uniform).
 #' @param kprimeAlpha,kprimeBeta Starting values for the shared
@@ -100,7 +112,8 @@ MkPrimeModel <- function(
     rateLossSdlog = 2,
     rateLogSdShape = 1,
     rateLogSdRate = 1,
-    kPrimePrior = "beta_geometric",
+    kPrimePrior = "empirical_geometric",
+    empiricalNObs = NULL,
     kprimeHyperA = 1,
     kprimeHyperB = 1,
     kprimeAlpha = 1,
@@ -114,8 +127,26 @@ MkPrimeModel <- function(
     betaScaleRate = 1
 ) {
   coding <- match.arg(coding, c("variable", "informative", "none"))
-  kPrimePrior <- match.arg(kPrimePrior,
-                           c("geometric", "beta_geometric", "logseries"))
+  kPrimePrior <- match.arg(
+    kPrimePrior,
+    c("empirical_geometric", "geometric", "beta_geometric", "logseries")
+  )
+
+  # empiricalNObs is only relevant under the empirical_geometric prior; warn
+  # if supplied for other priors so the user knows it will be ignored.
+  if (kPrimePrior != "empirical_geometric" && !is.null(empiricalNObs)) {
+    cli::cli_warn(
+      "{.arg empiricalNObs} is ignored when
+       {.arg kPrimePrior = \"{kPrimePrior}\"}."
+    )
+  }
+  if (kPrimePrior == "empirical_geometric" && !is.null(empiricalNObs) &&
+      !inherits(empiricalNObs, "MkPrimeEmpiricalPrior")) {
+    cli::cli_abort(
+      "{.arg empiricalNObs} must be an {.cls MkPrimeEmpiricalPrior} object;
+       build one with {.fn MkPrimeEmpiricalPrior}."
+    )
+  }
 
   # Warn if logseries-specific param is supplied for geometric prior
   if (kPrimePrior != "logseries" && !missing(kprimeLogseriesC)) {
@@ -178,6 +209,7 @@ MkPrimeModel <- function(
       rateLogSdShape = rateLogSdShape,
       rateLogSdRate = rateLogSdRate,
       kPrimePrior = kPrimePrior,
+      empiricalNObs = empiricalNObs,
       kprimeHyperA = kprimeHyperA,
       kprimeHyperB = kprimeHyperB,
       kprimeAlpha = kprimeAlpha,
@@ -211,6 +243,14 @@ MkPrimeModel <- function(
   }
   if (is.null(model$treeLengthRate)) {
     model$treeLengthRate <- 2 / model$expSteps
+  }
+  if (identical(model$kPrimePrior, "empirical_geometric") &&
+      is.null(model$empiricalNObs)) {
+    # Lazy-load package data; copy to model so MCMC code can consume it
+    # without referencing the package namespace.
+    e <- new.env(parent = emptyenv())
+    utils::data("empiricalNObs", package = "MkPrime", envir = e)
+    model$empiricalNObs <- e$empiricalNObs
   }
   model
 }
@@ -265,6 +305,78 @@ MkPrimeModel <- function(
 }
 
 
+#' Log P_emp(k) for k = 2, ..., kMax under an `MkPrimeEmpiricalPrior`
+#'
+#' Returns a numeric vector of length `kMax - 1`; entry `i` is
+#' `log P(N_obs = i + 1)`.
+#' @param kMax Integer; largest `k` required.
+#' @param emp `MkPrimeEmpiricalPrior` object.
+#' @return Numeric vector. Entries with zero mass are `-Inf`.
+#' @keywords internal
+.LogPemp <- function(kMax, emp) {
+  bodyLen <- length(emp$body)
+  result <- rep_len(-Inf, max(kMax - 1L, 0L))
+  bodyEnd <- min(bodyLen, kMax - 1L)
+  if (bodyEnd >= 1L) {
+    bp <- emp$body[seq_len(bodyEnd)]
+    result[seq_len(bodyEnd)] <- ifelse(bp > 0, log(bp), -Inf)
+  }
+  tailStartK <- emp$tail_start_k
+  if (kMax >= tailStartK && emp$tail_start_p > 0 && emp$tail_decay > 0) {
+    kk <- seq.int(tailStartK, kMax)
+    result[kk - 1L] <- log(emp$tail_start_p) +
+                       (kk - tailStartK) * log(emp$tail_decay)
+  }
+  # Return:
+  result
+}
+
+
+#' Log convolution prior on `k'` for the `"empirical_geometric"` option
+#'
+#' Computes `sum_i log P(k'_i)` where
+#' `P(k' = m) = sum_{j=2..m} P_emp(j) * p * (1 - p)^(m - j)`.
+#'
+#' @param kPrime Integer vector of proposed `k'` values (one per
+#'   transformational character).
+#' @param emp `MkPrimeEmpiricalPrior` object.
+#' @param p Scalar success probability of the geometric on `N_unobs`,
+#'   `0 < p < 1`.
+#' @return Scalar log density `sum_i log P(k'_i)`. Returns `-Inf` if any
+#'   `k'_i < 2`.
+#' @keywords internal
+.LogPriorEmpiricalGeometric <- function(kPrime, emp, p) {
+  if (p <= 0 || p >= 1) {
+    # Return:
+    return(-Inf)
+  }
+  if (any(kPrime < 2L)) {
+    # Return:
+    return(-Inf)
+  }
+  logP <- log(p)
+  log1mP <- log1p(-p)
+
+  kMaxOverall <- max(kPrime)
+  logEmp <- .LogPemp(kMaxOverall, emp)
+
+  total <- 0.0
+  for (m in kPrime) {
+    iVals <- seq.int(2L, m)
+    logTerms <- logEmp[iVals - 1L] + logP + (m - iVals) * log1mP
+    finite <- is.finite(logTerms)
+    if (!any(finite)) {
+      # Return:
+      return(-Inf)
+    }
+    mx <- max(logTerms[finite])
+    total <- total + mx + log(sum(exp(logTerms[finite] - mx)))
+  }
+  # Return:
+  total
+}
+
+
 #' Compute total log-prior density
 #'
 #' @param state A list with current parameter values:
@@ -293,7 +405,8 @@ LogPrior <- function(state, model, mkd) {
   if (hasTrans) {
     if (any(state$kPrime[transIdx] < mkd$kObs[transIdx])) return(-Inf)
 
-    if (identical(model$kPrimePrior, "geometric")) {
+    if (identical(model$kPrimePrior, "geometric") ||
+        identical(model$kPrimePrior, "empirical_geometric")) {
       if (state$p <= 0 || state$p >= 1) return(-Inf)
     } else if (identical(model$kPrimePrior, "beta_geometric")) {
       ka <- state$kprime_alpha %||% 1.0
@@ -360,6 +473,28 @@ LogPrior <- function(state, model, mkd) {
                        shape1 = model$kprimeHyperA,
                        shape2 = model$kprimeHyperB,
                        log = TRUE)
+    } else if (identical(model$kPrimePrior, "empirical_geometric")) {
+      # k'_i = N_obs_i + N_unobs_i, N_obs ~ empirical, N_unobs ~ Geometric(p)
+      # Prior on k' is the convolution; truncation k'_i >= kObs_i already
+      # enforced above.  N_obs and N_unobs are latent components that sum to
+      # k'; we marginalise over their split.
+      emp <- model$empiricalNObs
+      if (is.null(emp)) {
+        # Allow LogPrior to be called on a non-finalised model (e.g. from
+        # tests).  Fall back to the package empirical distribution.
+        e <- new.env(parent = emptyenv())
+        utils::data("empiricalNObs", package = "MkPrime", envir = e)
+        emp <- e$empiricalNObs
+      }
+      lp <- lp + .LogPriorEmpiricalGeometric(
+        state$kPrime[transIdx], emp, state$p
+      )
+
+      # p: Beta hyperprior
+      lp <- lp + dbeta(state$p,
+                       shape1 = model$kprimeHyperA,
+                       shape2 = model$kprimeHyperB,
+                       log = TRUE)
     } else if (identical(model$kPrimePrior, "beta_geometric")) {
       # Per-character p_i marginalized → Beta-Geometric(α, β)
       # log P(k'_i = kObs_i + u | α, β) = lbeta(α+1, β+u) - lbeta(α, β)
@@ -405,6 +540,11 @@ print.MkPrimeModel <- function(x, ...) {
     "Logseries (c = {x$kprimeLogseriesC})"
   } else if (identical(x$kPrimePrior, "beta_geometric")) {
     "Beta-Geometric (alpha = {x$kprimeAlpha}, beta = {x$kprimeBeta})"
+  } else if (identical(x$kPrimePrior, "empirical_geometric")) {
+    paste0(
+      "Empirical (N_obs) + Geometric (N_unobs); ",
+      "Beta hyperprior on p: a = {x$kprimeHyperA}, b = {x$kprimeHyperB}"
+    )
   } else {
     "Geometric (Beta hyperprior: a = {x$kprimeHyperA}, b = {x$kprimeHyperB})"
   }

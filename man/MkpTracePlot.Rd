@@ -43,6 +43,6 @@ each parameter in a distinct color. A final panel shows ESS over time
 for all tracked parameters, using matching colors.
 
 When \code{nRuns > 1}, trace panels use per-run colors (from
-\code{\link[grDevices:palettes]{grDevices::hcl.colors()}} with the \code{"Set 2"} palette) while the
+\code{\link[grDevices:hcl.colors]{grDevices::hcl.colors()}} with the \code{"Set 2"} palette) while the
 ESS panel uses per-parameter colors with a legend.
 }

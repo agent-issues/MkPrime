@@ -16,7 +16,7 @@
 \item{trees}{A \code{multiPhylo} list of trees from a single MCMC chain.}
 
 \item{dist_fn}{Distance function applied to \code{trees}; must return a
-\code{dist} object.  Default: \link[TreeDist:Robinson-Foulds]{TreeDist::RobinsonFoulds}.}
+\code{dist} object.  Default: \link[TreeDist:RobinsonFoulds]{TreeDist::RobinsonFoulds}.}
 
 \item{min_nsamples}{Integer; minimum number of samples used when
 computing lag-k statistics (default 5).}

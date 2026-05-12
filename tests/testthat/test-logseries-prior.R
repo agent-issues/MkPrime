@@ -11,9 +11,9 @@ test_that("MkPrimeModel stores logseries prior settings", {
 })
 
 
-test_that("MkPrimeModel kPrimePrior defaults to beta_geometric", {
+test_that("MkPrimeModel kPrimePrior defaults to empirical_geometric", {
   model <- MkPrimeModel()
-  expect_equal(model$kPrimePrior, "beta_geometric")
+  expect_equal(model$kPrimePrior, "empirical_geometric")
 })
 
 
@@ -194,7 +194,7 @@ test_that("print.MkPrimeModel runs without error for logseries model", {
 test_that("print.MkPrimeModel runs without error for default model", {
   model <- MkPrimeModel()
   expect_invisible(print(model))
-  expect_equal(model$kPrimePrior, "beta_geometric")
+  expect_equal(model$kPrimePrior, "empirical_geometric")
 })
 
 

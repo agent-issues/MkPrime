@@ -208,7 +208,7 @@ static double cpp_log_prior(
 
   bool hasTrans = (data.transIdxGlobal.size() > 0);
   if (hasTrans) {
-    // p boundary check only applies to hierarchical geometric
+    // p boundary check applies to hierarchical geometric and empirical-geometric
     if (!data.kPriorLogseries && !data.kPriorBetaGeometric &&
         (p <= 0.0 || p >= 1.0)) return R_NegInf;
     // kprimeAlpha, kprimeBeta must be positive for beta_geometric
@@ -266,6 +266,53 @@ static double cpp_log_prior(
       // Hyperprior: Exp(1) on α and β
       lp += R::dexp(a, 1.0, 1);
       lp += R::dexp(b, 1.0, 1);
+    } else if (data.kPriorEmpiricalGeometric) {
+      // Convolution prior: k' = N_obs + N_unobs, with N_obs ~ empirical pmf
+      // and N_unobs ~ Geometric(p).  For each character,
+      //   log P(k'_i = m) = logSumExp_{j=2..m} [ log P_emp(j) + log p
+      //                                          + (m - j) * log(1 - p) ]
+      // Body of P_emp has explicit log values in data.empLogBody[];
+      // beyond data.empBodyLastK the pmf decays geometrically with
+      // log-mass `empLogTailStartP + (k - empTailStartK) * log(empTailDecay)`.
+      double logP    = std::log(p);
+      double log1mP  = std::log1p(-p);
+      double logQ    = (data.empTailDecay > 0.0) ? std::log(data.empTailDecay)
+                                                 : R_NegInf;
+      int    bodyLen = static_cast<int>(data.empLogBody.size());
+      // Scratch buffer for logSumExp (reused per character)
+      std::vector<double> terms;
+      terms.reserve(64);
+      for (int i = 0; i < nTrans; ++i) {
+        int gi = data.transIdxGlobal[i];
+        int m = kPrime[gi];
+        if (m < 2) return R_NegInf;
+        terms.clear();
+        double mx = R_NegInf;
+        for (int j = 2; j <= m; ++j) {
+          double logPemp;
+          int bodyIdx = j - 2;
+          if (bodyIdx < bodyLen) {
+            logPemp = data.empLogBody[bodyIdx];
+          } else if (data.empTailStartK > 0 && j >= data.empTailStartK &&
+                     std::isfinite(data.empLogTailStartP) &&
+                     std::isfinite(logQ)) {
+            logPemp = data.empLogTailStartP +
+                      (j - data.empTailStartK) * logQ;
+          } else {
+            continue;  // no mass at this j
+          }
+          if (!std::isfinite(logPemp)) continue;
+          double term = logPemp + logP + (m - j) * log1mP;
+          terms.push_back(term);
+          if (term > mx) mx = term;
+        }
+        if (terms.empty() || !std::isfinite(mx)) return R_NegInf;
+        double sumExp = 0.0;
+        for (double t : terms) sumExp += std::exp(t - mx);
+        lp += mx + std::log(sumExp);
+      }
+      // p: Beta hyperprior (same as plain geometric)
+      lp += R::dbeta(p, data.kprimeHyperA, data.kprimeHyperB, 1);
     } else {
       // Hierarchical geometric: P(k'_i = kObs_i + u) = p*(1-p)^u
       double sumU = 0.0;
@@ -483,6 +530,19 @@ double compute_topo_hash(IntegerVector parent) {
 // [[Rcpp::export]]
 double get_state_log_lik(SEXP statePtr) {
   return Rcpp::XPtr<McmcState>(statePtr).get()->logLik;
+}
+
+
+// Recompute log prior for the current state (test helper for R↔C++ cross-check).
+// [[Rcpp::export]]
+double eval_log_prior_cpp(SEXP dataPtr, SEXP statePtr) {
+  McmcData* d = Rcpp::XPtr<McmcData>(dataPtr);
+  McmcState* s = Rcpp::XPtr<McmcState>(statePtr);
+  return cpp_log_prior(
+    *d, s->treeLength, s->relBrLengths,
+    s->rateLoss, s->rateLogSd, s->rateNeo,
+    s->p, s->kPrime, s->betaScale,
+    s->kprimeAlpha, s->kprimeBeta);
 }
 
 
@@ -3238,10 +3298,11 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
 
   // Prior components (fixed during sweep)
   bool isBetaGeometric = data->kPriorBetaGeometric;
-  bool isGeometric = !data->kPriorLogseries && !isBetaGeometric;
+  bool isEmpGeom       = data->kPriorEmpiricalGeometric;
+  bool isGeometric = !data->kPriorLogseries && !isBetaGeometric && !isEmpGeom;
   double logP = 0.0, log1mP = 0.0;
   double lsLogC = 0.0, lsLogNorm = 0.0;
-  if (isGeometric) {
+  if (isGeometric || isEmpGeom) {
     logP   = std::log(state->p);
     log1mP = std::log1p(-state->p);
   } else if (!isBetaGeometric) {
@@ -3280,6 +3341,9 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
     }
   }
 
+  // Empirical-geometric: declared here, populated after transParts is built.
+  std::vector<double> egLogPriorByK;
+
   // Build globalCharIdx → transIdx map (position in transIdxGlobal)
   std::vector<int> globalToTransIdx(data->nChar, -1);
   for (int ti = 0; ti < nTrans; ++ti)
@@ -3315,6 +3379,50 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   }
   if (!state->gibbsWs.fits(maxNode, gibbsMaxStride))
     state->gibbsWs.allocate(maxNode, gibbsMaxStride);
+
+  // Empirical-geometric: precompute log P(k' = m) for all m in the candidate
+  // range across all partitions.  The convolution depends only on k', not on
+  // kObs, so tabulate once and look up by k'.
+  if (isEmpGeom) {
+    int maxKAll = 0;
+    for (auto& tp_ : transParts) {
+      int hi = tp_.kObs + K_MAX_CAND - 1;
+      if (hi > maxKAll) maxKAll = hi;
+    }
+    egLogPriorByK.assign(maxKAll + 2, R_NegInf);
+    double logQ = (data->empTailDecay > 0.0)
+                  ? std::log(data->empTailDecay) : R_NegInf;
+    int bodyLen = (int)data->empLogBody.size();
+    std::vector<double> terms;
+    terms.reserve(64);
+    for (int m = 2; m <= maxKAll + 1; ++m) {
+      terms.clear();
+      double mx = R_NegInf;
+      for (int j = 2; j <= m; ++j) {
+        double logPemp;
+        int bodyIdx = j - 2;
+        if (bodyIdx < bodyLen) {
+          logPemp = data->empLogBody[bodyIdx];
+        } else if (data->empTailStartK > 0 && j >= data->empTailStartK &&
+                   std::isfinite(data->empLogTailStartP) &&
+                   std::isfinite(logQ)) {
+          logPemp = data->empLogTailStartP +
+                    (j - data->empTailStartK) * logQ;
+        } else {
+          continue;
+        }
+        if (!std::isfinite(logPemp)) continue;
+        double term = logPemp + logP + (m - j) * log1mP;
+        terms.push_back(term);
+        if (term > mx) mx = term;
+      }
+      if (!terms.empty() && std::isfinite(mx)) {
+        double s = 0.0;
+        for (double t : terms) s += std::exp(t - mx);
+        egLogPriorByK[m] = mx + std::log(s);
+      }
+    }
+  }
 
   bool useHet = data->qHeterogeneity;
   int nBC = data->nBetaCat;
@@ -3393,6 +3501,10 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
             logPrior_k = bgLogPrior[ko];
           } else if (isGeometric) {
             logPrior_k = logP + ko * log1mP;
+          } else if (isEmpGeom) {
+            int k2 = tp.kObs + ko;
+            logPrior_k = (k2 >= 0 && k2 < (int)egLogPriorByK.size())
+                         ? egLogPriorByK[k2] : R_NegInf;
           } else {
             int k2 = tp.kObs + ko;
             logPrior_k = k2 * lsLogC
@@ -3468,6 +3580,9 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
         logPrior_k = bgLogPrior[ko];
       } else if (isGeometric) {
         logPrior_k = logP + ko * log1mP;
+      } else if (isEmpGeom) {
+        logPrior_k = (k >= 0 && k < (int)egLogPriorByK.size())
+                     ? egLogPriorByK[k] : R_NegInf;
       } else {
         logPrior_k = k * lsLogC
                    - std::log(static_cast<double>(k)) - lsLogNorm;
@@ -3966,6 +4081,10 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     case 9: { // gibbs_p — conjugate Beta draw, acceptance = 1
       // Full conditional: p | k' ~ Beta(a + nTrans, b + sum(k'_i - kObs_i))
       // p does not enter the likelihood, only the prior on k' and p itself.
+      // Empirical-geometric breaks conjugacy: p enters the prior via the
+      // convolution, so the full conditional is no longer Beta.  Reject
+      // any misrouted call rather than silently producing wrong samples.
+      if (data->kPriorEmpiricalGeometric) return false;
       int nTrans = (int)data->transIdxGlobal.size();
       if (nTrans == 0) return false;  // no transformational chars: skip
       double sumU = 0.0;

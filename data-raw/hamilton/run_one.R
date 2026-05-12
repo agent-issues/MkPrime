@@ -9,7 +9,7 @@
 #   rep_idx    integer 1-10 (rep_MM in tree_NN/)
 #   data_root  /nobackup/pjjg18/mkprime-files/tree-inference
 #   out_dir    /nobackup/pjjg18/mkp-study/results
-#   arm        "mk", "mkp", or "combine"
+#   arm        "mk", "mkp", "mkp_eg" (empirical_geometric prior), or "combine"
 
 .libPaths(c("/nobackup/pjjg18/mkp-study/lib", .libPaths()))
 suppressPackageStartupMessages({
@@ -23,7 +23,7 @@ tree_idx  <- as.integer(args[1])
 rep_idx   <- as.integer(args[2])
 data_root <- args[3]
 out_dir   <- args[4]
-arm       <- match.arg(args[5], c("mk", "mkp", "combine"))
+arm       <- match.arg(args[5], c("mk", "mkp", "mkp_eg", "combine"))
 
 cat(sprintf("tree=%d rep=%d arm=%s\n", tree_idx, rep_idx, arm))
 tag <- sprintf("t%02d_r%02d", tree_idx, rep_idx)
@@ -64,13 +64,15 @@ if (.cur_job != .prev_job && arm != "combine") {
 if (arm == "combine") {
   suppressPackageStartupMessages(library(TreeDist))
 
-  mk_file  <- file.path(out_dir, sprintf("mk_%s.rds", tag))
-  mkp_file <- file.path(out_dir, sprintf("mkp_%s.rds", tag))
+  mk_file    <- file.path(out_dir, sprintf("mk_%s.rds", tag))
+  mkp_file   <- file.path(out_dir, sprintf("mkp_%s.rds", tag))
+  mkp_eg_file <- file.path(out_dir, sprintf("mkp_eg_%s.rds", tag))
   if (!file.exists(mk_file))  stop("Missing Mk result: ", mk_file)
   if (!file.exists(mkp_file)) stop("Missing Mk' result: ", mkp_file)
 
   mk_res  <- readRDS(mk_file)
   mkp_res <- readRDS(mkp_file)
+  mkp_eg_res <- if (file.exists(mkp_eg_file)) readRDS(mkp_eg_file) else NULL
 
   # True tree
   tree_file <- file.path(data_root, sprintf("tree_%02d/tree.nwk", tree_idx))
@@ -90,21 +92,29 @@ if (arm == "combine") {
   cid_mkp <- as.numeric(
     ClusteringInfoDistance(reorder_multiPhylo(mkp_res$trees), true_tree,
                           normalize = TRUE))
+  cid_mkp_eg <- if (!is.null(mkp_eg_res)) as.numeric(
+    ClusteringInfoDistance(reorder_multiPhylo(mkp_eg_res$trees), true_tree,
+                          normalize = TRUE)) else NA_real_
 
   result <- list(
-    tree_idx        = tree_idx,
-    rep_idx         = rep_idx,
-    n_char          = mkp_res$n_char,
-    kObs            = mkp_res$kObs,
-    cid_mk          = cid_mk,
-    cid_mkp         = cid_mkp,
-    n_samples_mk    = length(mk_res$trees),
-    n_samples_mkp   = length(mkp_res$trees),
-    u_post_means    = mkp_res$u_post_means,
-    stop_reason_mk  = mk_res$stop_reason,
-    stop_reason_mkp = mkp_res$stop_reason,
-    acceptance_mk   = mk_res$acceptance,
-    acceptance_mkp  = mkp_res$acceptance
+    tree_idx           = tree_idx,
+    rep_idx            = rep_idx,
+    n_char             = mkp_res$n_char,
+    kObs               = mkp_res$kObs,
+    cid_mk             = cid_mk,
+    cid_mkp            = cid_mkp,
+    cid_mkp_eg         = cid_mkp_eg,
+    n_samples_mk       = length(mk_res$trees),
+    n_samples_mkp      = length(mkp_res$trees),
+    n_samples_mkp_eg   = if (!is.null(mkp_eg_res)) length(mkp_eg_res$trees) else 0L,
+    u_post_means       = mkp_res$u_post_means,
+    u_post_means_eg    = if (!is.null(mkp_eg_res)) mkp_eg_res$u_post_means else NULL,
+    stop_reason_mk     = mk_res$stop_reason,
+    stop_reason_mkp    = mkp_res$stop_reason,
+    stop_reason_mkp_eg = if (!is.null(mkp_eg_res)) mkp_eg_res$stop_reason else NA_character_,
+    acceptance_mk      = mk_res$acceptance,
+    acceptance_mkp     = mkp_res$acceptance,
+    acceptance_mkp_eg  = if (!is.null(mkp_eg_res)) mkp_eg_res$acceptance else NULL
   )
 
   out_file <- file.path(out_dir, sprintf("result_%s.rds", tag))
@@ -246,6 +256,47 @@ if (arm == "mk") {
     u_post_means = u_post_means
   )
   saveRDS(partial, file.path(out_dir, sprintf("mkp_%s.rds", tag)))
+
+} else if (arm == "mkp_eg") {
+  # Mk' with empirical_geometric prior on k' (convolution of empirical N_obs
+  # pmf with Geometric(p) prior on N_unobs).  Same likelihood as "mkp", just
+  # a different prior on k'.
+  mkd_mkp <- MkPrimeData(pd)
+
+  res <- .run_arm(function() {
+    RunMkPrime(
+      mkd_mkp,
+      start_tree,
+      model = MkPrimeModel(coding = "variable",
+                            kPrimePrior = "empirical_geometric"),
+      mcmc  = make_mcmc("mkp_eg")
+    )
+  }, "mkp_eg")
+
+  cat(sprintf("  Mk' (empirical_geometric) done: %d trees, stop=%s\n",
+              length(res$trees), res$stop_reason))
+
+  if (is.null(res$samples) || nrow(res$samples) == 0L) {
+    res$samples <- ReadMkLog(res$logFile)
+  }
+  kp_cols <- grep("^kPrime_", colnames(res$samples), value = TRUE)
+  kObs <- mkd_mkp$kObs
+  if (length(kp_cols) > 0) {
+    k_post_means <- colMeans(res$samples[, kp_cols, drop = FALSE])
+    u_post_means <- k_post_means - kObs
+  } else {
+    u_post_means <- rep(NA_real_, mkd_mkp$nChar)
+  }
+
+  partial <- list(
+    trees        = res$trees,
+    stop_reason  = res$stop_reason,
+    acceptance   = res$acceptance,
+    n_char       = mkd_mkp$nChar,
+    kObs         = as.integer(kObs),
+    u_post_means = u_post_means
+  )
+  saveRDS(partial, file.path(out_dir, sprintf("mkp_eg_%s.rds", tag)))
 }
 
 cat("  Done.\n")

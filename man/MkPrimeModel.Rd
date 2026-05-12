@@ -15,7 +15,8 @@ MkPrimeModel(
   rateLossSdlog = 2,
   rateLogSdShape = 1,
   rateLogSdRate = 1,
-  kPrimePrior = "beta_geometric",
+  kPrimePrior = "empirical_geometric",
+  empiricalNObs = NULL,
   kprimeHyperA = 1,
   kprimeHyperB = 1,
   kprimeAlpha = 1,
@@ -52,13 +53,26 @@ on \code{rate_loss} (neomorphic asymmetry). Defaults: meanlog = 0, sdlog = 2.}
 on \code{rate_log_sd} (ACRV dispersion). Defaults: shape = 1, rate = 1.}
 
 \item{kPrimePrior}{Prior distribution for the true number of character states
-(\verb{k'}) for transformational characters. One of \code{"beta_geometric"} (default,
-per-character Beta-Geometric with shared hyperparameters \code{alpha}, \code{beta}),
+(\verb{k'}) for transformational characters. One of \code{"empirical_geometric"}
+(default; convolution of an empirical pmf on the number of observed
+states with a \code{Geometric(p)} prior on the number of unobserved states,
+so \verb{k' = N_obs + N_unobs}),
+\code{"beta_geometric"} (per-character Beta-Geometric with shared
+hyperparameters \code{alpha}, \code{beta}),
 \code{"geometric"} (hierarchical geometric with Beta hyperprior on \code{p}),
 or \code{"logseries"} (logarithmic series with fixed parameter \code{c}; matches
 the RevBayes default).
-The \code{"beta_geometric"} option avoids over-shrinkage of \verb{k'} toward
-\code{kObs} that occurs when many characters share a single \code{p}.}
+The \code{"empirical_geometric"} option counters the tendency of inference
+to collapse to zero unobserved states by anchoring the observed-state
+component to a real-data empirical distribution; the \code{"beta_geometric"}
+option avoids the same over-shrinkage in a different way, by allowing
+per-character \code{p}.}
+
+\item{empiricalNObs}{An object of class \code{"MkPrimeEmpiricalPrior"} (see
+\code{\link[=MkPrimeEmpiricalPrior]{MkPrimeEmpiricalPrior()}}) giving the empirical pmf on \code{N_obs} used by
+the \code{"empirical_geometric"} prior. Defaults to the package dataset
+\link{empiricalNObs} tabulated from the \code{neotrans} corpus. Ignored for other
+prior options.}
 
 \item{kprimeHyperA, kprimeHyperB}{Parameters for the Beta hyperprior on \code{p}
 when \code{kPrimePrior = "geometric"}. Defaults: a = 1, b = 1 (uniform).}

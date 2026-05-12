@@ -77,11 +77,22 @@ struct McmcData {
   double rateNeoMeanlog,   rateNeoSdlog;
   double kprimeHyperA,     kprimeHyperB;
 
-  // kPrime prior selection (exactly one of these is true)
-  bool   kPriorLogseries;      // log-series with fixed c
-  bool   kPriorBetaGeometric;  // per-character Beta-Geometric with shared (α, β)
-  // (when both false: hierarchical geometric with shared p)
-  double kprimeLogseriesC;     // c parameter (only used when kPriorLogseries)
+  // kPrime prior selection (exactly one of these is true; when all false:
+  // hierarchical geometric with shared p)
+  bool   kPriorLogseries;          // log-series with fixed c
+  bool   kPriorBetaGeometric;      // per-character Beta-Geometric (α, β)
+  bool   kPriorEmpiricalGeometric; // convolution of empirical(N_obs) and Geom(p)
+  double kprimeLogseriesC;         // c parameter (only used when kPriorLogseries)
+
+  // Empirical prior parameters (only used when kPriorEmpiricalGeometric).
+  // Pre-computed log P_emp(k) for k = 2, ..., empBodyLastK; entry idx = k - 2.
+  // The tail extends k >= empTailStartK with log mass
+  //   empLogTailStartP + (k - empTailStartK) * log(empTailDecay).
+  std::vector<double> empLogBody;  // length empBodyLastK - 1
+  int    empBodyLastK = 1;         // largest k with explicit body mass
+  int    empTailStartK = 0;        // smallest k in geometric tail (0 = no tail)
+  double empTailDecay = 0.0;       // q in (0, 1); 0 means no tail
+  double empLogTailStartP = R_NegInf;  // log mass at empTailStartK
 
   // Weighted-move configuration (M-090)
   int nBranchBins = 10;     // number of branch-fraction bins for weighted moves

@@ -2105,7 +2105,13 @@ SEXP prepare_mcmc_data(List partitions_r,
                        bool   qHeterogeneity = false,
                        int    nBetaCat = 4,
                        double betaScaleShape = 1.0,
-                       double betaScaleRate = 1.0) {
+                       double betaScaleRate = 1.0,
+                       bool   kPriorEmpiricalGeometric = false,
+                       Rcpp::NumericVector empLogBody = Rcpp::NumericVector(),
+                       int    empBodyLastK = 1,
+                       int    empTailStartK = 0,
+                       double empTailDecay = 0.0,
+                       double empLogTailStartP = -1e308) {
   McmcData* d = new McmcData();
   d->hasNeo = hasNeo;
   d->nCat = nCat;
@@ -2126,9 +2132,18 @@ SEXP prepare_mcmc_data(List partitions_r,
   d->rateNeoSdlog    = rateNeoSdlog;
   d->kprimeHyperA    = kprimeHyperA;
   d->kprimeHyperB    = kprimeHyperB;
-  d->kPriorLogseries     = kPriorLogseries;
-  d->kPriorBetaGeometric = kPriorBetaGeometric;
-  d->kprimeLogseriesC    = kprimeLogseriesC;
+  d->kPriorLogseries          = kPriorLogseries;
+  d->kPriorBetaGeometric      = kPriorBetaGeometric;
+  d->kPriorEmpiricalGeometric = kPriorEmpiricalGeometric;
+  d->kprimeLogseriesC         = kprimeLogseriesC;
+
+  // Empirical prior body + tail (pre-computed log P_emp(k))
+  d->empLogBody.assign(empLogBody.begin(), empLogBody.end());
+  d->empBodyLastK      = empBodyLastK;
+  d->empTailStartK     = empTailStartK;
+  d->empTailDecay      = empTailDecay;
+  d->empLogTailStartP  = (empLogTailStartP <= -1e300) ? R_NegInf
+                                                       : empLogTailStartP;
   d->kObs = kObs_r;
   d->nChar = kObs_r.size();
   d->nTip = 0;

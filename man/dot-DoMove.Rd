@@ -21,16 +21,4 @@ list(accept, statePtr) where statePtr is the (possibly updated) XPtr.
 \description{
 Execute a move via C++ XPtr engine
 }
-\keyword{(or}
-\keyword{C++}
-\keyword{Execute}
-\keyword{R}
-\keyword{XPtr}
-\keyword{a}
-\keyword{engine}
-\keyword{fallback}
-\keyword{for}
 \keyword{internal}
-\keyword{move}
-\keyword{tests)}
-\keyword{via}

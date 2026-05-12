@@ -19,10 +19,4 @@
 \description{
 Extract state values to a row vector for storage
 }
-\keyword{Extract}
-\keyword{for}
 \keyword{internal}
-\keyword{row}
-\keyword{sample}
-\keyword{state}
-\keyword{storage}

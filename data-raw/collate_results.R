@@ -108,16 +108,22 @@ summary_rows <- lapply(results, function(r) {
     total_tree_length = tp$total_tree_length,
     n_samples_mk      = r$n_samples_mk,
     n_samples_mkp     = r$n_samples_mkp,
+    n_samples_mkp_eg  = r$n_samples_mkp_eg %||% NA_integer_,
     stop_reason_mk    = r$stop_reason_mk,
     stop_reason_mkp   = r$stop_reason_mkp,
+    stop_reason_mkp_eg = r$stop_reason_mkp_eg %||% NA_character_,
     mean_cid_mk       = mean(r$cid_mk,  na.rm = TRUE),
     mean_cid_mkp      = mean(r$cid_mkp, na.rm = TRUE),
+    mean_cid_mkp_eg   = if (!is.null(r$cid_mkp_eg)) mean(r$cid_mkp_eg, na.rm = TRUE) else NA_real_,
     median_cid_mk     = median(r$cid_mk,  na.rm = TRUE),
     median_cid_mkp    = median(r$cid_mkp, na.rm = TRUE),
+    median_cid_mkp_eg = if (!is.null(r$cid_mkp_eg)) median(r$cid_mkp_eg, na.rm = TRUE) else NA_real_,
     mean_delta_cid    = mean(r$cid_mkp, na.rm = TRUE) -
                           mean(r$cid_mk, na.rm = TRUE),
     mean_kObs         = mean(r$kObs,         na.rm = TRUE),
     mean_u_post       = mean(r$u_post_means, na.rm = TRUE),
+    mean_u_post_eg    = if (!is.null(r$u_post_means_eg))
+                          mean(r$u_post_means_eg, na.rm = TRUE) else NA_real_,
     stringsAsFactors  = FALSE
   )
 })
@@ -129,12 +135,15 @@ rownames(summary_df) <- NULL
 # ---- Build per-character u-estimates -----------------------------------------
 u_rows <- lapply(results, function(r) {
   n <- length(r$kObs)
+  u_eg <- if (!is.null(r$u_post_means_eg)) unname(r$u_post_means_eg)
+          else rep(NA_real_, n)
   data.frame(
-    tree_idx    = r$tree_idx,
-    rep_idx     = r$rep_idx,
-    char_idx    = seq_len(n),
-    kObs        = r$kObs,
-    u_post_mean = unname(r$u_post_means),
+    tree_idx       = r$tree_idx,
+    rep_idx        = r$rep_idx,
+    char_idx       = seq_len(n),
+    kObs           = r$kObs,
+    u_post_mean    = unname(r$u_post_means),
+    u_post_mean_eg = u_eg,
     stringsAsFactors = FALSE
   )
 })
