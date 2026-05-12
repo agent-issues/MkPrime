@@ -162,7 +162,11 @@ make_mcmc <- function(prefix) {
     maxWarmup  = 5000L,
     nRuns      = 2L,
     nChains    = 4L,
-    heat       = 0.2,
+    heat       = 0.1,  # widened from 0.2 to help mode-jumping under the
+                        # empirical_geometric prior, which produces logP
+                        # swings of +-50 between adjacent reports.
+                        # Lower heat -> hotter hottest chain -> better
+                        # discovery of distant modes.
     maxTime    = 6 * 3600,
     minEss     = 200L,
     maxRhat    = 1.1,
