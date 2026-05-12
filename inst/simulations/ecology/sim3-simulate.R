@@ -89,6 +89,27 @@
 }
 
 
+# Identifiability note (for the methods write-up / vignette) -----------------
+#
+# Under `relabel = TRUE` for neomorphic characters (Mk' relabel correction),
+# the per-cell direction of the z latent is NOT marginally identifiable:
+# z = 1 in ecology e gives transition rates (rate01 * phi, rate10 / phi);
+# under the relabeled orientation that becomes (rate01 / phi, rate10 * phi),
+# which is identical to z = 2 under the original orientation.  The Mk'
+# correction sums over both label orientations, so the likelihood is
+# invariant to swapping z = 1 ↔ z = 2 averaged over labels.
+#
+# Practical consequence: the MAGNITUDE of the ecology effect is recovered
+# (pi0 posterior << prior when ecology really matters), but the SIGN per
+# cell isn't — and phi posterior is therefore pulled toward 1 by the
+# LogNormal prior whenever the data don't break symmetry locally.  For
+# tree inference (the Sim 3 question) only the magnitude matters: the
+# ecology layer can correctly DOWNWEIGHT a convergence-driving character
+# without needing to identify whether the effect is "encouraged" or
+# "discouraged".
+# ---------------------------------------------------------------------------
+
+
 #' Forward-simulate characters with ecology-modulated rates.
 #'
 #' Per-character substitution dispatches on `type`:

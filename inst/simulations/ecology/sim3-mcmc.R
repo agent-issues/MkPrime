@@ -57,10 +57,22 @@ cat("Blind nChar:", mkdBlind$nChar,
     " | Aware nChar:", mkdAware$nChar,
     " | kEcology:", mkdAware$kEcology, "\n")
 
-# Random starting tree.
+# Parsimony starting tree (much closer to posterior modes than random;
+# a random rtree leaves the chain wandering through tree space for many
+# tens of thousands of iterations before locating the high-likelihood
+# region).
 set.seed(1)
-startTree <- Preorder(ape::rtree(mkdBlind$nTip,
+randTree  <- Preorder(ape::rtree(mkdBlind$nTip,
                                  tip.label = mkdBlind$taxon_names))
+# Use TreeSearch::MaximizeParsimony instead of phangorn::optim.parsimony:
+# the latter triggers a reorderRcpp type-mismatch crash with the installed
+# phangorn 2.12.1 + ape 5.8.1 combination on Windows.
+psTrees   <- TreeSearch::MaximizeParsimony(pdSim, tree = randTree,
+                                           verbosity = 0)
+startTree <- Preorder(psTrees[[1]])
+# MaximizeParsimony returns trees without branch lengths; RunMkPrime requires
+# them.  Initialise to a small uniform value -- MCMC will quickly relax.
+startTree$edge.length <- rep(0.1, nrow(startTree$edge))
 
 modelBlind <- MkPrimeModel(
   ecologyAware = FALSE,
@@ -76,13 +88,13 @@ modelAware <- MkPrimeModel(
   expSteps      = 10
 )
 mcmc <- MkPrimeMCMC(
-  nIter          = 20000L,
+  nIter          = 100000L,
   nChains        = 1L,
   nRuns          = 1L,
-  thin           = 100L,
-  treeThin       = 100L,
-  minWarmup      = 1000L,
-  maxWarmup      = 5000L,
+  thin           = 200L,
+  treeThin       = 200L,
+  minWarmup      = 3000L,
+  maxWarmup      = 25000L,
   logFile        = NULL,
   checkpointFile = NULL
 )
