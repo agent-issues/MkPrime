@@ -1012,3 +1012,197 @@ double CppLogLikelihoodEcology(
     data, parent, child, edgeLen, kPrime,
     rateLoss, rateLogSd, rateNeo, phi, zMatrix);
 }
+
+
+// ---------------------------------------------------------------------------
+// per_char_log_lik_ecology: per-character ecology mixture log-likelihood.
+//
+// Used by the z Gibbs sweep (Phase 3f) to evaluate the conditional for a
+// single (character, z_{c,s}) cell without re-running the full data
+// orchestrator.  All "expensive" intermediates — ACRV rates, per-edge
+// ecology weights — are taken as inputs so the caller can hoist them out
+// of the per-cell loop.
+//
+// Returns the SAME contribution that cpp_log_likelihood_ecology adds for
+// this character: the pruning log-likelihood, plus the variable-coding
+// correction when codingType == 1, plus the Mk' relabel correction when
+// the character is transformational and data.relabel is on.  The sum
+// across all characters equals cpp_log_likelihood_ecology(...).
+//
+// `globalCharIdx` is 0-based.
+// ---------------------------------------------------------------------------
+
+double per_char_log_lik_ecology(
+    const McmcData& data,
+    int globalCharIdx,
+    IntegerVector parent, IntegerVector child,
+    NumericVector edgeLen,
+    int kp,
+    double rateLoss, double rateNeo,
+    const NumericVector& rates,
+    NumericVector phi,
+    IntegerVector zRow,        // length kEco
+    const NumericMatrix& wEdge // nEdge x kEco
+) {
+  int nTip   = data.nTip;
+  int nEdge  = parent.size();
+  int maxNode = 2 * nTip - 1;
+  int kEco   = data.ecology.kEcology;
+  int mode   = data.magnitudeMode;
+  int pi     = data.charToPartition[globalCharIdx];
+  if (pi < 0) return 0.0;
+  const PartInfo& part = data.parts[pi];
+
+  // Find the local column index for this global char.
+  int localCol = -1;
+  for (int c = 0; c < part.globalCharIdx.size(); ++c) {
+    if (part.globalCharIdx[c] == globalCharIdx) { localCol = c; break; }
+  }
+  if (localCol < 0) return 0.0;
+
+  // Single-column tipStates and single-row zPart.
+  IntegerMatrix tipStates(nTip, 1);
+  for (int t = 0; t < nTip; ++t) tipStates(t, 0) = part.tipStates(t, localCol);
+  IntegerMatrix zPart(1, kEco);
+  for (int s = 0; s < kEco; ++s) zPart(0, s) = zRow[s];
+
+  double ll;
+
+  if (part.type == 0) {
+    // Neomorphic (MkN)
+    NumericVector neoEl(nEdge);
+    for (int i = 0; i < nEdge; ++i) neoEl[i] = edgeLen[i] * rateNeo;
+    NumericVector rootFreqs = mkn_stationary_local(rateLoss);
+    int stride = 1 * 2;
+    std::vector<double>  buf((maxNode + 1) * stride, 0.0);
+    std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+    ll = pruning_mkn_acrv_flat_ecology(
+      parent, child, neoEl, tipStates,
+      rateLoss, rootFreqs, rates,
+      wEdge, zPart, phi, mode,
+      buf.data(), initFlg.data(), stride);
+    if (data.codingType == 1) {
+      double pConst = const_site_prob_mkn_eco_single(
+        parent, child, neoEl, nTip,
+        rateLoss, rates, wEdge, zRow, phi, mode);
+      ll -= std::log(1.0 - pConst);
+    }
+  } else if (part.type == 2) {
+    // Known state space
+    int kStates = part.k;
+    NumericVector rootFreqs(kStates, 1.0 / kStates);
+    int stride = 1 * kStates;
+    std::vector<double>  buf((maxNode + 1) * stride, 0.0);
+    std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+    ll = pruning_jc_acrv_flat_ecology(
+      parent, child, edgeLen, tipStates,
+      kStates, rootFreqs, rates,
+      wEdge, zPart, phi, mode,
+      buf.data(), initFlg.data(), stride);
+    if (data.codingType == 1) {
+      double pConst = const_site_prob_jc_eco_single(
+        parent, child, edgeLen, nTip, kStates,
+        rates, wEdge, zRow, phi, mode);
+      ll -= std::log(1.0 - pConst);
+    }
+  } else {
+    // Transformational: kp drives the state count.
+    NumericVector rootFreqs(kp, 1.0 / kp);
+    int stride = 1 * kp;
+    std::vector<double>  buf((maxNode + 1) * stride, 0.0);
+    std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+    ll = pruning_jc_acrv_flat_ecology(
+      parent, child, edgeLen, tipStates,
+      kp, rootFreqs, rates,
+      wEdge, zPart, phi, mode,
+      buf.data(), initFlg.data(), stride);
+    if (data.codingType == 1) {
+      double pConst = const_site_prob_jc_eco_single(
+        parent, child, edgeLen, nTip, kp,
+        rates, wEdge, zRow, phi, mode);
+      ll -= std::log(1.0 - pConst);
+    }
+    if (data.relabel) {
+      ll += mk_prime_relabel_log(kp, data.kObs[globalCharIdx]);
+    }
+  }
+
+  return ll;
+}
+
+
+// Recompute the nEdge x kEco mean-of-marginals weight matrix from the
+// current tree + ecology tip states.  Exposed so the Gibbs sweep can
+// hoist it out of the per-cell loop.
+void recompute_w_edge(
+    const McmcData& data,
+    IntegerVector parent, IntegerVector child,
+    NumericVector edgeLen,
+    NumericMatrix& wEdgeOut
+) {
+  int nTip = data.nTip;
+  int nEdge = parent.size();
+  int kEco = data.ecology.kEcology;
+  std::vector<double> margFlat;
+  compute_ecology_node_marginals(
+    INTEGER(parent), INTEGER(child), nEdge,
+    REAL(edgeLen),
+    INTEGER(data.ecology.tipStates), nTip,
+    kEco, 1.0,
+    margFlat
+  );
+  if (wEdgeOut.nrow() != nEdge || wEdgeOut.ncol() != kEco) {
+    wEdgeOut = NumericMatrix(nEdge, kEco);
+  }
+  for (int e = 0; e < nEdge; ++e) {
+    int par = parent[e], ch = child[e];
+    for (int s = 0; s < kEco; ++s) {
+      wEdgeOut(e, s) = 0.5 * (margFlat[par * kEco + s] +
+                              margFlat[ch * kEco + s]);
+    }
+  }
+}
+
+
+// R-callable: per-character ecology log-likelihoods.  Invariant tested
+// by the Gibbs scaffolding: sum equals cpp_log_likelihood_ecology(...).
+//
+// [[Rcpp::export(.CppLogLikelihoodEcologyPerChar)]]
+NumericVector CppLogLikelihoodEcologyPerChar(
+    SEXP dataPtr,
+    IntegerVector parent, IntegerVector child,
+    NumericVector edgeLen,
+    IntegerVector kPrime,
+    double rateLoss, double rateLogSd, double rateNeo,
+    NumericVector phi,
+    IntegerMatrix zMatrix
+) {
+  const McmcData& data = *Rcpp::XPtr<McmcData>(dataPtr).get();
+  if (!data.ecologyAware) stop("McmcData was not built with ecologyAware = TRUE");
+  if (data.codingType == 2) {
+    stop("informative coding is not yet supported under ecologyAware");
+  }
+
+  int nChar = data.nChar;
+  int kEco  = data.ecology.kEcology;
+  NumericVector out(nChar);
+
+  NumericMatrix wEdge(parent.size(), kEco);
+  recompute_w_edge(data, parent, child, edgeLen, wEdge);
+
+  NumericVector rates = (rateLogSd > 0.0)
+    ? cpp_acrv_rates(rateLogSd, data.nCat, data.acrvZ)
+    : NumericVector(1, 1.0);
+
+  IntegerVector zRow(kEco);
+  for (int c = 0; c < nChar; ++c) {
+    for (int s = 0; s < kEco; ++s) zRow[s] = zMatrix(c, s);
+    int kp = (data.charToPartition[c] >= 0 &&
+              data.parts[data.charToPartition[c]].type == 1)
+              ? kPrime[c] : 2;
+    out[c] = per_char_log_lik_ecology(
+      data, c, parent, child, edgeLen,
+      kp, rateLoss, rateNeo, rates, phi, zRow, wEdge);
+  }
+  return out;
+}

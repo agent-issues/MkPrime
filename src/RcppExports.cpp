@@ -499,6 +499,26 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// CppLogLikelihoodEcologyPerChar
+NumericVector CppLogLikelihoodEcologyPerChar(SEXP dataPtr, IntegerVector parent, IntegerVector child, NumericVector edgeLen, IntegerVector kPrime, double rateLoss, double rateLogSd, double rateNeo, NumericVector phi, IntegerMatrix zMatrix);
+RcppExport SEXP _MkPrime_CppLogLikelihoodEcologyPerChar(SEXP dataPtrSEXP, SEXP parentSEXP, SEXP childSEXP, SEXP edgeLenSEXP, SEXP kPrimeSEXP, SEXP rateLossSEXP, SEXP rateLogSdSEXP, SEXP rateNeoSEXP, SEXP phiSEXP, SEXP zMatrixSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type dataPtr(dataPtrSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type parent(parentSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type child(childSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type edgeLen(edgeLenSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type kPrime(kPrimeSEXP);
+    Rcpp::traits::input_parameter< double >::type rateLoss(rateLossSEXP);
+    Rcpp::traits::input_parameter< double >::type rateLogSd(rateLogSdSEXP);
+    Rcpp::traits::input_parameter< double >::type rateNeo(rateNeoSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type phi(phiSEXP);
+    Rcpp::traits::input_parameter< IntegerMatrix >::type zMatrix(zMatrixSEXP);
+    rcpp_result_gen = Rcpp::wrap(CppLogLikelihoodEcologyPerChar(dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, phi, zMatrix));
+    return rcpp_result_gen;
+END_RCPP
+}
 // prepare_mcmc_data
 SEXP prepare_mcmc_data(List partitions_r, IntegerVector kObs_r, CharacterVector charTypes_r, bool hasNeo, int nCat, std::string codingStr, bool relabelFlag, double treeLengthShape, double treeLengthRate, double rateLossMeanlog, double rateLossSdlog, double rateLogSdShape, double rateLogSdRate, double rateNeoMeanlog, double rateNeoSdlog, double kprimeHyperA, double kprimeHyperB, bool kPriorLogseries, double kprimeLogseriesC, bool kPriorBetaGeometric, bool qHeterogeneity, int nBetaCat, double betaScaleShape, double betaScaleRate, bool kPriorEmpiricalGeometric, Rcpp::NumericVector empLogBody, int empBodyLastK, int empTailStartK, double empTailDecay, double empLogTailStartP, bool ecologyAware, Rcpp::IntegerVector ecologyTipStates, int kEcology, std::string magnitudeModeStr, double rho0Alpha, double rho0Beta, double sigmaPhi, int gibbsZEvery);
 RcppExport SEXP _MkPrime_prepare_mcmc_data(SEXP partitions_rSEXP, SEXP kObs_rSEXP, SEXP charTypes_rSEXP, SEXP hasNeoSEXP, SEXP nCatSEXP, SEXP codingStrSEXP, SEXP relabelFlagSEXP, SEXP treeLengthShapeSEXP, SEXP treeLengthRateSEXP, SEXP rateLossMeanlogSEXP, SEXP rateLossSdlogSEXP, SEXP rateLogSdShapeSEXP, SEXP rateLogSdRateSEXP, SEXP rateNeoMeanlogSEXP, SEXP rateNeoSdlogSEXP, SEXP kprimeHyperASEXP, SEXP kprimeHyperBSEXP, SEXP kPriorLogseriesSEXP, SEXP kprimeLogseriesCSEXP, SEXP kPriorBetaGeometricSEXP, SEXP qHeterogeneitySEXP, SEXP nBetaCatSEXP, SEXP betaScaleShapeSEXP, SEXP betaScaleRateSEXP, SEXP kPriorEmpiricalGeometricSEXP, SEXP empLogBodySEXP, SEXP empBodyLastKSEXP, SEXP empTailStartKSEXP, SEXP empTailDecaySEXP, SEXP empLogTailStartPSEXP, SEXP ecologyAwareSEXP, SEXP ecologyTipStatesSEXP, SEXP kEcologySEXP, SEXP magnitudeModeStrSEXP, SEXP rho0AlphaSEXP, SEXP rho0BetaSEXP, SEXP sigmaPhiSEXP, SEXP gibbsZEverySEXP) {
@@ -764,6 +784,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_PruningMknEcology", (DL_FUNC) &_MkPrime_PruningMknEcology, 11},
     {"_MkPrime_PruningJcEcology", (DL_FUNC) &_MkPrime_PruningJcEcology, 11},
     {"_MkPrime_CppLogLikelihoodEcology", (DL_FUNC) &_MkPrime_CppLogLikelihoodEcology, 10},
+    {"_MkPrime_CppLogLikelihoodEcologyPerChar", (DL_FUNC) &_MkPrime_CppLogLikelihoodEcologyPerChar, 10},
     {"_MkPrime_prepare_mcmc_data", (DL_FUNC) &_MkPrime_prepare_mcmc_data, 38},
     {"_MkPrime_set_branch_bins", (DL_FUNC) &_MkPrime_set_branch_bins, 2},
     {"_MkPrime_spr_proposal", (DL_FUNC) &_MkPrime_spr_proposal, 4},

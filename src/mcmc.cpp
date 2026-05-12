@@ -33,6 +33,29 @@ double cpp_log_likelihood_ecology(
     NumericVector phi,
     IntegerMatrix zMatrix);
 
+// Forward declarations for Phase 3f Gibbs sweep helpers (mcmc_ecology.cpp).
+double per_char_log_lik_ecology(
+    const McmcData& data,
+    int globalCharIdx,
+    IntegerVector parent, IntegerVector child,
+    NumericVector edgeLen,
+    int kp,
+    double rateLoss, double rateNeo,
+    const NumericVector& rates,
+    NumericVector phi,
+    IntegerVector zRow,
+    const NumericMatrix& wEdge);
+
+void recompute_w_edge(
+    const McmcData& data,
+    IntegerVector parent, IntegerVector child,
+    NumericVector edgeLen,
+    NumericMatrix& wEdgeOut);
+
+// cpp_acrv_rates lives in mcmc_likelihood.cpp.
+NumericVector cpp_acrv_rates(double rateLogSd, int nCat,
+                              const std::vector<double>& acrvZ);
+
 // Forward declarations for proposals in other TUs
 // M-065: vector-based _impl versions (no edge matrix)
 List nni_proposal_impl(IntegerVector parent, IntegerVector child,
@@ -3878,6 +3901,114 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
 
 
 // ---------------------------------------------------------------------------
+// gibbs_z_sweep_impl (Phase 3f) — cell-by-cell Gibbs sweep over the
+// per-(character, ecology) latent z_{c, s} ∈ {0=none, 1=encouraged,
+// 2=discouraged} under the spike-and-slab prior P(z = 0) = pi0,
+// P(z = 1) = P(z = 2) = (1 - pi0) / 2.
+//
+// For each cell:
+//   1. Enumerate the three candidate values.
+//   2. Evaluate the per-character log-likelihood under each
+//      (everything else fixed), tempered by the chain's beta.
+//   3. Sample from the resulting categorical (softmax of
+//      lp_v + beta * ll_v).
+//
+// wEdge and ACRV rates are hoisted out of the per-cell loop.  After the
+// sweep, recompute the full logLik / logPrior in one shot to avoid drift
+// from any small numerical mismatch between the per-character helper and
+// the orchestrator (advisor recommendation).
+// ---------------------------------------------------------------------------
+
+static bool gibbs_z_sweep_impl(McmcData* data, McmcState* state, double beta) {
+  if (!data->ecologyAware) return false;
+  if (state->zMatrix.nrow() == 0 || state->zMatrix.ncol() == 0) return false;
+  if (data->codingType == 2) return false;  // informative not supported
+
+  int nChar = data->nChar;
+  int kEco  = data->ecology.kEcology;
+  int nEdge = state->relBrLengths.size();
+
+  // Absolute edge lengths (relBr × treeLength)
+  NumericVector edgeLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    edgeLen[i] = state->treeLength * state->relBrLengths[i];
+
+  // Hoisted: per-edge ecology weights, ACRV rate categories.
+  NumericMatrix wEdge(nEdge, kEco);
+  recompute_w_edge(*data, state->parent, state->child, edgeLen, wEdge);
+
+  NumericVector rates = (state->rateLogSd > 0.0)
+    ? cpp_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ)
+    : NumericVector(1, 1.0);
+
+  IntegerVector zRow(kEco);
+  double log_pi0   = std::log(state->pi0);
+  double log_slab  = std::log1p(-state->pi0) - std::log(2.0);
+
+  for (int c = 0; c < nChar; ++c) {
+    int pi = data->charToPartition[c];
+    if (pi < 0) continue;
+    int kp = (data->parts[pi].type == 1) ? state->kPrime[c] : 2;
+
+    for (int s = 0; s < kEco; ++s) zRow[s] = state->zMatrix(c, s);
+
+    for (int s = 0; s < kEco; ++s) {
+      double ll[3];
+      for (int v = 0; v < 3; ++v) {
+        zRow[s] = v;
+        ll[v] = per_char_log_lik_ecology(
+          *data, c, state->parent, state->child, edgeLen,
+          kp, state->rateLoss, state->rateNeo,
+          rates, state->phi, zRow, wEdge);
+      }
+      double lp[3] = { log_pi0, log_slab, log_slab };
+
+      // Sample categorical from softmax(lp_v + beta * ll_v).
+      double logits[3];
+      double mx = R_NegInf;
+      for (int v = 0; v < 3; ++v) {
+        logits[v] = lp[v] + beta * ll[v];
+        if (logits[v] > mx) mx = logits[v];
+      }
+      if (!std::isfinite(mx)) {
+        // All candidate values are -Inf — leave the cell unchanged.
+        zRow[s] = state->zMatrix(c, s);
+        continue;
+      }
+      double sumExp = 0.0;
+      double pCum[3];
+      for (int v = 0; v < 3; ++v) {
+        pCum[v] = std::exp(logits[v] - mx);
+        sumExp += pCum[v];
+      }
+      double u = R::unif_rand() * sumExp;
+      int chosen = 2;
+      double acc = 0.0;
+      for (int v = 0; v < 3; ++v) {
+        acc += pCum[v];
+        if (u < acc) { chosen = v; break; }
+      }
+      zRow[s] = chosen;
+      state->zMatrix(c, s) = chosen;
+    }
+  }
+
+  // Recompute logLik / logPrior fresh to avoid drift.
+  state->logLik = cpp_log_likelihood_ecology(
+    *data, state->parent, state->child, edgeLen,
+    state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
+    state->phi, state->zMatrix);
+  state->logPrior = cpp_log_prior(
+    *data, state->treeLength, state->relBrLengths,
+    state->rateLoss, state->rateLogSd, state->rateNeo,
+    state->p, state->kPrime, state->betaScale,
+    state->kprimeAlpha, state->kprimeBeta,
+    &state->phi, state->pi0, &state->zMatrix);
+  return true;
+}
+
+
+// ---------------------------------------------------------------------------
 // do_move_impl: internal propose/evaluate/accept (raw pointers, no SEXP).
 // do_move_cpp:  Rcpp-exported SEXP wrapper — calls do_move_impl.
 //
@@ -3892,7 +4023,8 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
 //           25=gibbs_kprime_sweep, 26=block_kprime_shift,
 //           27=scale_kprime_alpha, 28=scale_kprime_beta,
 //           29=slice_kprime_hyper, 30=scale_phi (ecology),
-//           31=scale_pi0 (ecology, logit-Bactrian)
+//           31=scale_pi0 (ecology, logit-Bactrian),
+//           32=gibbs_z_sweep (ecology)
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -4341,6 +4473,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       state->phi[phiOldIdx] = phiOldVal * mult;
       logHastings = std::log(mult);
       break;
+    }
+    case 32: { // gibbs_z_sweep (ecology) — Gibbs over z_{c, s}
+      return gibbs_z_sweep_impl(data, state, beta);
     }
     case 31: { // logit-Bactrian on pi0 (ecology) — prior-only move
       if (!data->ecologyAware) return false;

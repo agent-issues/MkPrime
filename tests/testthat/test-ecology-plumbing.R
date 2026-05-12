@@ -621,6 +621,197 @@ test_that("scale_pi0 prior delta matches dbeta + spike-and-slab contribution", {
 })
 
 
+# ===== Phase 3f scaffolding: per-character ecology log-likelihoods =====
+
+
+# Invariant: sum of .CppLogLikelihoodEcologyPerChar equals
+# .CppLogLikelihoodEcology under all combinations of z, ACRV, phi mode,
+# and coding.  This guards the per-character helper that the z Gibbs
+# sweep is built on.
+.PerCharCases <- list(
+  list(name = "z = 0, coding = none, phi global",
+       coding = "none", magMode = "global", rateLogSd = 0,
+       z = function(nC, kE) matrix(0L, nC, kE),
+       phi = function(kE, mode)
+         if (mode == "per_ecology") rep(1.0, kE) else 1.0),
+  list(name = "z mixed, coding = variable, phi global",
+       coding = "variable", magMode = "global", rateLogSd = 0,
+       z = function(nC, kE) {
+         set.seed(101)
+         matrix(as.integer(sample(0:2, nC * kE, replace = TRUE)),
+                nrow = nC, ncol = kE)
+       },
+       phi = function(kE, mode)
+         if (mode == "per_ecology") rep(1.0, kE) else 1.6),
+  list(name = "z mixed, ACRV, phi per_ecology, coding = none",
+       coding = "none", magMode = "per_ecology", rateLogSd = 0.5,
+       z = function(nC, kE) {
+         set.seed(202)
+         matrix(as.integer(sample(0:2, nC * kE, replace = TRUE)),
+                nrow = nC, ncol = kE)
+       },
+       phi = function(kE, mode) {
+         set.seed(303)
+         exp(rnorm(kE, 0, 0.4))
+       }),
+  list(name = "z mixed, ACRV, variable coding, per_ecology phi",
+       coding = "variable", magMode = "per_ecology", rateLogSd = 0.5,
+       z = function(nC, kE) {
+         set.seed(404)
+         matrix(as.integer(sample(0:2, nC * kE, replace = TRUE)),
+                nrow = nC, ncol = kE)
+       },
+       phi = function(kE, mode) {
+         set.seed(505)
+         exp(rnorm(kE, 0, 0.3))
+       })
+)
+
+for (case in .PerCharCases) {
+  local({
+    cs <- case
+    test_that(paste0("per-char ecology log-liks sum to total (", cs$name, ")"), {
+      f <- .MakeEcologyFixture()
+      model <- MkPrimeModel(ecologyAware = TRUE, expSteps = 10,
+                            kPrimePrior = "geometric",
+                            coding = cs$coding,
+                            magnitudeMode = cs$magMode)
+      dataPtr <- .MakeEcoDataPtr(f$mkd, model)
+      zMat <- cs$z(f$mkd$nChar, f$mkd$kEcology)
+      phi  <- cs$phi(f$mkd$kEcology, cs$magMode)
+
+      parent <- f$tree$edge[, 1]
+      child  <- f$tree$edge[, 2]
+      edgeLen <- f$tree$edge.length
+      kPrime <- as.integer(f$mkd$kObs)
+
+      ll_total <- MkPrime:::.CppLogLikelihoodEcology(
+        dataPtr, parent, child, edgeLen, kPrime,
+        rateLoss = 1.0, rateLogSd = cs$rateLogSd, rateNeo = 1.0,
+        phi = phi, zMatrix = zMat)
+      ll_per <- MkPrime:::.CppLogLikelihoodEcologyPerChar(
+        dataPtr, parent, child, edgeLen, kPrime,
+        rateLoss = 1.0, rateLogSd = cs$rateLogSd, rateNeo = 1.0,
+        phi = phi, zMatrix = zMat)
+      expect_length(ll_per, f$mkd$nChar)
+      expect_equal(sum(ll_per), ll_total, tolerance = 1e-10)
+    })
+  })
+}
+
+
+# ===== Phase 3f: z Gibbs sweep =====
+
+
+test_that("gibbs_z sweep updates z and syncs logLik/logPrior to fresh eval", {
+  f <- .MakeEcologyFixture()
+  model <- MkPrimeModel(ecologyAware = TRUE, expSteps = 10,
+                        kPrimePrior = "geometric", coding = "none")
+  dataPtr <- .MakeEcoDataPtr(f$mkd, model)
+  state    <- MkPrime:::.InitState(f$tree, f$mkd, model)
+  state$z[1, 1] <- 1L
+  state$z[2, 2] <- 2L
+  storage.mode(state$z) <- "integer"
+  state$log_prior <- MkPrime:::LogPrior(state, model, f$mkd)
+  statePtr <- MkPrime:::.InitMcmcChain(state)
+  pre <- get_mcmc_state(statePtr)
+
+  set.seed(7L)
+  accepted <- do_move_cpp(dataPtr, statePtr,
+                          moveType = 32L, charIdx = 0L,
+                          scaleTuning = 0.5,
+                          betaSimplexTuning = 1.0,
+                          intWalkWindow = 1L, beta = 1.0)
+  expect_true(accepted)
+  post <- get_mcmc_state(statePtr)
+
+  # All z entries are valid spike-and-slab values.
+  expect_true(all(post$zMatrix %in% 0:2))
+
+  # logLik / logPrior match a fresh evaluation at the post-sweep state.
+  ll_fresh <- MkPrime:::.CppLogLikelihoodEcology(
+    dataPtr,
+    f$tree$edge[, 1], f$tree$edge[, 2], f$tree$edge.length,
+    as.integer(post$kPrime),
+    rateLoss = post$rateLoss, rateLogSd = post$rateLogSd,
+    rateNeo = post$rateNeo,
+    phi = post$phi, zMatrix = post$zMatrix)
+  expect_equal(post$logLik, ll_fresh, tolerance = 1e-10)
+
+  # Some cells likely changed (sanity — not strictly required, but the
+  # sweep should not leave z untouched given the spike-and-slab prior
+  # and finite data on the small fixture).
+  expect_true(!identical(post$zMatrix, pre$zMatrix))
+})
+
+
+test_that("gibbs_z sweep collapses z to the spike at large pi0 + no data weight", {
+  # Test: with pi0 ~ 1 and beta = 0 (so the likelihood is ignored), the
+  # Gibbs full conditional is dominated by the spike and almost every
+  # cell should land in z = 0.  This isolates the prior-side logic.
+  f <- .MakeEcologyFixture()
+  model <- MkPrimeModel(ecologyAware = TRUE, expSteps = 10,
+                        kPrimePrior = "geometric", coding = "none")
+  dataPtr <- .MakeEcoDataPtr(f$mkd, model)
+  state    <- MkPrime:::.InitState(f$tree, f$mkd, model)
+  state$pi0 <- 0.999  # spike dominates
+  state$z[] <- 1L     # everything starts in encouraged
+  storage.mode(state$z) <- "integer"
+  state$log_prior <- MkPrime:::LogPrior(state, model, f$mkd)
+  statePtr <- MkPrime:::.InitMcmcChain(state)
+
+  set.seed(123L)
+  accepted <- do_move_cpp(dataPtr, statePtr,
+                          moveType = 32L, charIdx = 0L,
+                          scaleTuning = 0.5,
+                          betaSimplexTuning = 1.0,
+                          intWalkWindow = 1L, beta = 0.0)
+  expect_true(accepted)
+  post <- get_mcmc_state(statePtr)
+
+  # With beta = 0, P(z = 0) = pi0 = 0.999.  Out of nChar*kEco = 18 cells,
+  # essentially all should be 0; allow at most 2 slabs (≈ 2% tail).
+  nSlab <- sum(post$zMatrix != 0L)
+  expect_lt(nSlab, 3L)
+})
+
+
+test_that("gibbs_z declines outside ecology mode", {
+  f <- .MakeEcologyFixture()
+  model <- MkPrimeModel(kPrimePrior = "geometric", expSteps = 10)
+  state    <- MkPrime:::.InitState(f$tree, f$mkd, model)
+  statePtr <- MkPrime:::.InitMcmcChain(state)
+  parts <- lapply(f$mkd$partitions, function(p) {
+    list(type = p$type, k = p$k, kObs = p$kObs,
+         char_indices = p$char_indices,
+         tip_states = p$tip_states,
+         unique_tip_states = p$unique_tip_states,
+         pattern_index = p$pattern_index)
+  })
+  dataPtr <- prepare_mcmc_data(
+    parts, as.integer(f$mkd$kObs), f$mkd$type,
+    any(f$mkd$type == "neomorphic"),
+    model$nCat, model$coding, model$relabel,
+    model$treeLengthShape, model$treeLengthRate,
+    model$rateLossMeanlog, model$rateLossSdlog,
+    model$rateLogSdShape, model$rateLogSdRate,
+    model$rateNeoMeanlog, model$rateNeoSdlog,
+    model$kprimeHyperA, model$kprimeHyperB,
+    identical(model$kPrimePrior, "logseries"),
+    model$kprimeLogseriesC %||% 0.7,
+    FALSE, FALSE, 4L, 1.0, 1.0,
+    FALSE, numeric(0), 1L, 0L, 0, -1e308,
+    FALSE, integer(0), 0L, "global", 7.0, 3.0, 0.5, 50L
+  )
+  accepted <- do_move_cpp(dataPtr, statePtr,
+                          moveType = 32L, charIdx = 0L,
+                          scaleTuning = 0.5,
+                          betaSimplexTuning = 1.0,
+                          intWalkWindow = 1L, beta = 1.0)
+  expect_false(accepted)
+})
+
+
 test_that("scale_pi0 declines outside ecology mode", {
   f <- .MakeEcologyFixture()
   model <- MkPrimeModel(kPrimePrior = "geometric", expSteps = 10)

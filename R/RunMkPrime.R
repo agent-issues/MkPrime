@@ -2922,6 +2922,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       list(name = "scale_phi", type = "scale_phi", target = "phi",
            weight = max(1, as.numeric(nPhi)), dim = 1L),
       list(name = "scale_pi0", type = "scale_pi0", target = "pi0",
+           weight = 1, dim = 1L),
+      # Gibbs sweep cost grows with nChar × kEco, but the per-cell cost
+      # is one per-character pruning.  Run sparingly (weight 1) since
+      # one sweep is many Gibbs updates.
+      list(name = "gibbs_z", type = "gibbs_z", target = "z",
            weight = 1, dim = 1L)
     ))
   }
@@ -2999,7 +3004,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   slice_kprime_alpha = 29L,
   slice_kprime_beta = 29L,
   scale_phi = 30L,
-  scale_pi0 = 31L
+  scale_pi0 = 31L,
+  gibbs_z = 32L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)
@@ -3736,7 +3742,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     slice_beta_scale = NA_real_,
     slice_kprime_alpha = NA_real_, slice_kprime_beta = NA_real_,
     scale_phi = 0.35,
-    scale_pi0 = 0.35
+    scale_pi0 = 0.35,
+    gibbs_z = NA_real_
   )
 
   tuningKeys <- c(
@@ -3770,7 +3777,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     slice_rate_log_sd = NA_character_, slice_tree_length = NA_character_,
     slice_beta_scale = NA_character_,
     scale_phi = "scale_phi",
-    scale_pi0 = "scale_pi0"
+    scale_pi0 = "scale_pi0",
+    gibbs_z = NA_character_
   )
 
   for (move in moves) {
