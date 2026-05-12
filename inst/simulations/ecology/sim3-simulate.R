@@ -89,30 +89,48 @@
 }
 
 
-#' Forward-simulate transformational characters with ecology-modulated rates.
+#' Forward-simulate characters with ecology-modulated rates.
 #'
-#' Uses a continuous-time k-state Mk (Jukes–Cantor-style) substitution
-#' model on each edge with rate
+#' Per-character substitution dispatches on `type`:
 #'
-#'   r(c, e) = baseRate * mu(z_{c, e}, phi)
+#' * **transformational** — symmetric k-state Mk (JC-style):
+#'     `r(c, e) = baseRate * mu(z_{c, e}, phi)`
+#'     where `mu(0, phi) = 1`, `mu(1, phi) = phi`, `mu(2, phi) = 1/phi`.
+#'     Off-diagonal `(1 - exp(-k·r·t/(k-1)))/k`.
 #'
-#' where `mu(0, phi) = 1`, `mu(1, phi) = phi`, `mu(2, phi) = 1/phi`.
-#' On an edge of length `t` the off-diagonal transition probability
-#' is `(1 - exp(-k * r * t / (k - 1))) / k`.
+#' * **neomorphic** — two-state asymmetric CTMC (gain/loss model from
+#'   the M2-NT family of [neotrans]).  Base rates from a single ratio
+#'   `rateLoss` (loss/gain):
+#'     `rate01 = 2 / (1 + rateLoss)`        — gain
+#'     `rate10 = 2 * rateLoss / (1 + rateLoss)` — loss
+#'   Under `z_{c, e}`:
+#'     * `z = 1` (encouraged): `(rate01 * phi, rate10 / phi)`
+#'     * `z = 2` (discouraged): `(rate01 / phi, rate10 * phi)`
+#'   Root drawn from edge-stationary distribution under the rates at
+#'   the root edge.  This is the asymmetric mechanism that produces
+#'   genuine state-level convergence between unrelated ecology-1 clades.
 #'
 #' @param tree Phylo object (Preorder).
 #' @param edgeEcology Output of [.AssignEdgeEcology()].
 #' @param z Integer matrix nChar x kEco with values in `{0L, 1L, 2L}`.
 #' @param phi Positive scalar.
-#' @param baseRate Positive scalar; per-character per-edge baseline rate.
-#' @param kStates Integer vector length nChar; states per character.
+#' @param baseRate Positive scalar; per-character per-edge baseline
+#'   rate (transformational characters only).
+#' @param kStates Integer vector length nChar; states per character
+#'   (transformational only).  Ignored for neomorphic (always 2).
+#' @param type Character vector length nChar; `"transformational"` or
+#'   `"neomorphic"`.  Recycled to nChar if length 1.
+#' @param rateLoss Positive scalar; loss/gain ratio for neomorphic
+#'   characters.  `rateLoss = 1` gives symmetric gain/loss.
 #' @return A character matrix nTip x nChar; rownames = tip labels;
 #'   states encoded as "0".."(k-1)".
 #'
 #' @importFrom TreeTools NTip
 .SimulateMkPrimeEcology <- function(tree, edgeEcology, z, phi,
-                                    baseRate = 1, kStates = 2L) {
-  stopifnot(phi > 0, baseRate > 0)
+                                    baseRate = 1, kStates = 2L,
+                                    type = "transformational",
+                                    rateLoss = 1) {
+  stopifnot(phi > 0, baseRate > 0, rateLoss > 0)
   edge   <- tree$edge
   brLen  <- tree$edge.length
   nEdge  <- nrow(edge)
@@ -121,14 +139,28 @@
   nAll   <- nTip + nNode
   nChar  <- nrow(z)
   if (length(kStates) == 1L) kStates <- rep(as.integer(kStates), nChar)
+  if (length(type) == 1L) type <- rep(type, nChar)
   stopifnot(length(kStates) == nChar)
+  stopifnot(length(type) == nChar)
+  stopifnot(all(type %in% c("transformational", "neomorphic")))
   stopifnot(length(edgeEcology) == nEdge)
   mult <- c(1, phi, 1 / phi)  # indexed by z + 1L
-  # Root state per character drawn from uniform over k.
+  # Asymmetric Q for neomorphic, parametrised as in the M2-NT model.
+  rate01Base <- 2 / (1 + rateLoss)
+  rate10Base <- 2 * rateLoss / (1 + rateLoss)
+
+  # Root state per character. Transformational: uniform.  Neomorphic:
+  # stationary under the root-edge rate pair (ignores z; for sim-3 the
+  # root edge has eco 0, so z = 0 and base rates apply).
   rootIdx <- edge[1L, 1L]
   stateMat <- matrix(NA_integer_, nrow = nAll, ncol = nChar)
+  pi1Root <- rate01Base / (rate01Base + rate10Base)
   for (c in seq_len(nChar)) {
-    stateMat[rootIdx, c] <- sample.int(kStates[c], 1L) - 1L
+    if (type[c] == "neomorphic") {
+      stateMat[rootIdx, c] <- as.integer(stats::runif(1) < pi1Root)
+    } else {
+      stateMat[rootIdx, c] <- sample.int(kStates[c], 1L) - 1L
+    }
   }
   # Preorder walk.
   for (i in seq_len(nEdge)) {
@@ -138,24 +170,44 @@
     e      <- edgeEcology[i] + 1L  # 1-based for indexing
     for (c in seq_len(nChar)) {
       zce <- z[c, e]
-      k   <- kStates[c]
-      r   <- baseRate * mult[zce + 1L]
-      if (k < 2L) {
-        stateMat[child, c] <- stateMat[parent, c]
-        next
-      }
-      # JC-like off-diagonal probability.
-      pOff <- (1 - exp(-k * r * t / (k - 1))) / k
-      pSame <- 1 - (k - 1) * pOff
-      if (stats::runif(1) < pSame) {
-        stateMat[child, c] <- stateMat[parent, c]
+      parentSt <- stateMat[parent, c]
+      if (type[c] == "neomorphic") {
+        # Asymmetric two-state CTMC with per-edge (rate01, rate10).
+        if (zce == 0L) {
+          a <- rate01Base; b <- rate10Base
+        } else if (zce == 1L) {
+          a <- rate01Base * phi; b <- rate10Base / phi
+        } else {
+          a <- rate01Base / phi; b <- rate10Base * phi
+        }
+        denom <- a + b
+        pi1 <- a / denom
+        pi0 <- b / denom
+        ee  <- exp(-denom * t)
+        if (parentSt == 0L) {
+          pTo1 <- pi1 * (1 - ee)
+          stateMat[child, c] <- as.integer(stats::runif(1) < pTo1)
+        } else {
+          pTo0 <- pi0 * (1 - ee)
+          stateMat[child, c] <- 1L - as.integer(stats::runif(1) < pTo0)
+        }
       } else {
-        # Pick uniformly among other states.
-        cur <- stateMat[parent, c]
-        choices <- setdiff(0:(k - 1L), cur)
-        stateMat[child, c] <- as.integer(
-          choices[sample.int(length(choices), 1L)]
-        )
+        k <- kStates[c]
+        if (k < 2L) {
+          stateMat[child, c] <- parentSt
+          next
+        }
+        r <- baseRate * mult[zce + 1L]
+        pOff  <- (1 - exp(-k * r * t / (k - 1))) / k
+        pSame <- 1 - (k - 1) * pOff
+        if (stats::runif(1) < pSame) {
+          stateMat[child, c] <- parentSt
+        } else {
+          choices <- setdiff(0:(k - 1L), parentSt)
+          stateMat[child, c] <- as.integer(
+            choices[sample.int(length(choices), 1L)]
+          )
+        }
       }
     }
   }
