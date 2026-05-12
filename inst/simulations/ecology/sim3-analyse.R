@@ -22,10 +22,21 @@ scoreTrees <- function(trees, label) {
   if (length(trees) == 0L) {
     cat(label, ": no trees\n"); return(invisible())
   }
-  rfTrue  <- vapply(trees, function(tr) phangorn::RF.dist(tr, trueTree),
-                    numeric(1))
-  rfWrong <- vapply(trees, function(tr) phangorn::RF.dist(tr, wrongTree),
-                    numeric(1))
+  # Use TreeTools-based RF (TreeDist::RobinsonFouldsInfo / TreeTools::Subsplit).
+  # phangorn::RF.dist hits internal type errors on lists of phylo with
+  # mixed binary/non-binary trees out of MkPrime.
+  rfFor <- function(refTree) {
+    refSplits <- TreeTools::as.Splits(refTree)
+    vapply(trees, function(tr) {
+      sp <- TreeTools::as.Splits(tr, tipLabels = refTree$tip.label)
+      # RF = #non-trivial splits in either tree not in the other
+      sharedRef  <- sum(refSplits %in% sp)
+      sharedThis <- sum(sp %in% refSplits)
+      length(refSplits) + length(sp) - sharedRef - sharedThis
+    }, numeric(1))
+  }
+  rfTrue  <- rfFor(trueTree)
+  rfWrong <- rfFor(wrongTree)
   closer <- ifelse(rfTrue < rfWrong, "truth",
             ifelse(rfTrue > rfWrong, "wrong", "tied"))
   cat(sprintf("\n== %s (n = %d) ==\n", label, length(trees)))
