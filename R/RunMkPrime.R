@@ -545,7 +545,11 @@ RunMkPrime <- function(data, tree = NULL,
       kPrime         = as.integer(s$kPrime),
       log_lik        = s$log_lik,
       log_prior      = s$log_prior,
-      log_post       = s$log_post
+      log_post       = s$log_post,
+      # Ecology-aware state (NULL when model$ecologyAware = FALSE)
+      phi            = s$phi,
+      pi0            = s$pi0,
+      z              = s$z
     )
   }
 
@@ -621,15 +625,14 @@ RunMkPrime <- function(data, tree = NULL,
   r$chainStates <- vector("list", nChains)
   for (ch in seq_len(nChains)) {
     ch_r <- r$chains[[ch]]
-    r$chainStates[[ch]] <- init_mcmc_state(
-      ch_r$edge[, 1L], ch_r$edge[, 2L],
-      ch_r$rel_br_lengths, ch_r$tree_length,
-      ch_r$rate_loss, ch_r$rate_log_sd,
-      ch_r$rate_neo %||% 1.0, ch_r$p %||% 0.5,
-      as.integer(ch_r$kPrime),
-      ch_r$log_lik, ch_r$log_prior,
-      ch_r$beta_scale %||% 1.0
-    )
+    # Reconstruct via the shared .InitMcmcChain helper so the ecology
+    # fields (phi, pi0, zMatrix) flow through when they exist on the
+    # chain state.  Map old field names (rel_br_lengths, tree_length,
+    # log_lik etc.) onto the shape .InitMcmcChain expects — they already
+    # match for chains that came out of .InitState.
+    chState <- ch_r
+    chState$tree <- list(edge = ch_r$edge)
+    r$chainStates[[ch]] <- .InitMcmcChain(chState)
   }
   for (ch in seq_len(nChains)) {
     fill_partition_cache(mcmcData, r$chainStates[[ch]])
@@ -735,7 +738,7 @@ RunMkPrime <- function(data, tree = NULL,
   # their score gets inflated relative to expensive topology moves.
   alwaysAcceptTypes <- c("gibbs_p", "slice", "gibbs_kprime_sweep",
                          "kprime_alpha", "kprime_beta",
-                         "slice_kprime_hyper")
+                         "slice_kprime_hyper", "gibbs_z")
   moveTypes <- vapply(moves, `[[`, character(1), "type")
   autoPin <- moveWeights[moveTypes %in% alwaysAcceptTypes]
 

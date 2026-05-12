@@ -460,6 +460,10 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
 void fill_partition_cache(SEXP dataPtr, SEXP statePtr) {
   McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
   McmcState* state = Rcpp::XPtr<McmcState>(statePtr).get();
+  // Ecology mode does not use the partition cache; the dispatcher routes
+  // every move through cpp_log_likelihood_ecology.  Leave partLogLik empty
+  // and trust the R-computed initial logLik (already the ecology value).
+  if (data->ecologyAware) return;
   int nParts = (int)data->parts.size();
   int nEdge  = state->relBrLengths.size();
   NumericVector edgeLen(nEdge);
