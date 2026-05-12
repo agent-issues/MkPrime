@@ -397,3 +397,150 @@ test_that("init_mcmc_state allows empty phi (non-ecology mode)", {
   cppState <- get_mcmc_state(statePtr)
   expect_length(cppState$phi, 0L)
 })
+
+
+# ===== Phase 3-phi: Bactrian on log(phi) =====
+
+
+# Run a single phi Bactrian move (moveType = 30) and return the post-move
+# C++ state plus the proposal seed details.  Used by the tests below.
+.PhiStateAfterMove <- function(f, model, seed = 7L,
+                               scaleTuning = 0.5, beta = 1.0) {
+  dataPtr  <- .MakeEcoDataPtr(f$mkd, model)
+  state    <- MkPrime:::.InitState(f$tree, f$mkd, model)
+  statePtr <- MkPrime:::.InitMcmcChain(state)
+  pre      <- get_mcmc_state(statePtr)
+  set.seed(seed)
+  accepted <- do_move_cpp(dataPtr, statePtr,
+                          moveType = 30L, charIdx = 0L,
+                          scaleTuning = scaleTuning,
+                          betaSimplexTuning = 1.0,
+                          intWalkWindow = 1L, beta = beta)
+  post <- get_mcmc_state(statePtr)
+  list(pre = pre, post = post, accepted = accepted,
+       dataPtr = dataPtr, statePtr = statePtr, refState = state)
+}
+
+
+test_that("scale_phi move keeps logLik in sync with ecology likelihood (global)", {
+  f <- .MakeEcologyFixture()
+  model <- MkPrimeModel(ecologyAware = TRUE, expSteps = 10,
+                        kPrimePrior = "geometric", coding = "none")
+  res <- .PhiStateAfterMove(f, model, seed = 13L, scaleTuning = 0.4)
+
+  expect_length(res$post$phi, 1L)
+  # Bactrian draws are non-zero, so phi must move when accepted.
+  if (res$accepted) {
+    expect_false(isTRUE(all.equal(res$post$phi, res$pre$phi)))
+  } else {
+    expect_equal(res$post$phi, res$pre$phi)
+    expect_equal(res$post$logLik, res$pre$logLik)
+    expect_equal(res$post$logPrior, res$pre$logPrior)
+  }
+
+  # state->logLik must match a fresh ecology evaluation at the post-move phi.
+  ll_fresh <- MkPrime:::.CppLogLikelihoodEcology(
+    res$dataPtr,
+    f$tree$edge[, 1], f$tree$edge[, 2], f$tree$edge.length,
+    as.integer(f$mkd$kObs),
+    rateLoss = res$post$rateLoss,
+    rateLogSd = res$post$rateLogSd,
+    rateNeo = res$post$rateNeo,
+    phi = res$post$phi,
+    zMatrix = res$post$zMatrix)
+  expect_equal(res$post$logLik, ll_fresh, tolerance = 1e-10)
+})
+
+
+test_that("scale_phi prior delta equals dlnorm difference (only phi moves)", {
+  f <- .MakeEcologyFixture()
+  model <- MkPrimeModel(ecologyAware = TRUE, expSteps = 10,
+                        kPrimePrior = "geometric", coding = "none")
+  res <- .PhiStateAfterMove(f, model, seed = 9L, scaleTuning = 0.4)
+  if (!res$accepted) skip("Phi move was rejected at this seed; rerun with another.")
+
+  # All other params unchanged.
+  expect_equal(res$post$treeLength, res$pre$treeLength)
+  expect_equal(res$post$rateLoss, res$pre$rateLoss)
+  expect_equal(res$post$zMatrix, res$pre$zMatrix)
+  expect_equal(res$post$pi0, res$pre$pi0)
+
+  # Prior delta should be entirely the LogNormal(0, sigmaPhi) contribution.
+  d_lp_phi <- dlnorm(res$post$phi, 0, model$sigmaPhi, log = TRUE) -
+              dlnorm(res$pre$phi,  0, model$sigmaPhi, log = TRUE)
+  expect_equal(res$post$logPrior - res$pre$logPrior, d_lp_phi,
+               tolerance = 1e-10)
+})
+
+
+test_that("scale_phi in per_ecology mode mutates exactly one phi entry", {
+  f <- .MakeEcologyFixture()
+  model <- MkPrimeModel(ecologyAware = TRUE, magnitudeMode = "per_ecology",
+                        expSteps = 10, kPrimePrior = "geometric",
+                        coding = "none")
+  res <- .PhiStateAfterMove(f, model, seed = 31L, scaleTuning = 0.4)
+  expect_length(res$post$phi, f$mkd$kEcology)
+
+  if (res$accepted) {
+    nChanged <- sum(abs(res$post$phi - res$pre$phi) > 1e-12)
+    expect_equal(nChanged, 1L)
+    ll_fresh <- MkPrime:::.CppLogLikelihoodEcology(
+      res$dataPtr,
+      f$tree$edge[, 1], f$tree$edge[, 2], f$tree$edge.length,
+      as.integer(f$mkd$kObs),
+      rateLoss = res$post$rateLoss,
+      rateLogSd = res$post$rateLogSd,
+      rateNeo = res$post$rateNeo,
+      phi = res$post$phi,
+      zMatrix = res$post$zMatrix)
+    expect_equal(res$post$logLik, ll_fresh, tolerance = 1e-10)
+  } else {
+    expect_equal(res$post$phi, res$pre$phi)
+  }
+})
+
+
+test_that("scale_phi declines outside ecology mode", {
+  f <- .MakeEcologyFixture()
+  model <- MkPrimeModel(kPrimePrior = "geometric", expSteps = 10)
+  state    <- MkPrime:::.InitState(f$tree, f$mkd, model)
+  statePtr <- MkPrime:::.InitMcmcChain(state)
+  # Non-ecology data pointer.
+  parts <- lapply(f$mkd$partitions, function(p) {
+    list(type = p$type, k = p$k, kObs = p$kObs,
+         char_indices = p$char_indices,
+         tip_states = p$tip_states,
+         unique_tip_states = p$unique_tip_states,
+         pattern_index = p$pattern_index)
+  })
+  dataPtr <- prepare_mcmc_data(
+    parts, as.integer(f$mkd$kObs), f$mkd$type,
+    any(f$mkd$type == "neomorphic"),
+    model$nCat, model$coding, model$relabel,
+    model$treeLengthShape, model$treeLengthRate,
+    model$rateLossMeanlog, model$rateLossSdlog,
+    model$rateLogSdShape, model$rateLogSdRate,
+    model$rateNeoMeanlog, model$rateNeoSdlog,
+    model$kprimeHyperA, model$kprimeHyperB,
+    identical(model$kPrimePrior, "logseries"),
+    model$kprimeLogseriesC %||% 0.7,
+    FALSE, FALSE, 4L, 1.0, 1.0,
+    FALSE, numeric(0), 1L, 0L, 0, -1e308,
+    FALSE, integer(0), 0L, "global", 7.0, 3.0, 0.5, 50L
+  )
+  accepted <- do_move_cpp(dataPtr, statePtr,
+                          moveType = 30L, charIdx = 0L,
+                          scaleTuning = 0.5,
+                          betaSimplexTuning = 1.0,
+                          intWalkWindow = 1L, beta = 1.0)
+  expect_false(accepted)
+})
+
+
+test_that("MkPrimeModel rejects ecologyAware + qHeterogeneity", {
+  expect_error(
+    MkPrimeModel(ecologyAware = TRUE, qHeterogeneity = TRUE,
+                 expSteps = 10, kPrimePrior = "geometric"),
+    "ecologyAware.*qHeterogeneity"
+  )
+})

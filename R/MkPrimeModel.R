@@ -236,6 +236,14 @@ MkPrimeModel <- function(
 
   # Validate ecology-aware hyperparameters
   if (isTRUE(ecologyAware)) {
+    if (isTRUE(qHeterogeneity)) {
+      cli::cli_abort(c(
+        "{.arg ecologyAware} cannot be combined with
+         {.arg qHeterogeneity} yet.",
+        i = "The ecology likelihood does not yet thread
+             {.code beta_scale} through the mixture transition."
+      ))
+    }
     if (rho0Alpha <= 0 || rho0Beta <= 0) {
       cli::cli_abort(
         "{.arg rho0Alpha} and {.arg rho0Beta} must be positive."

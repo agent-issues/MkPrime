@@ -57,7 +57,7 @@ fitch_score_r <- function(parent, child, tipStates, nTip, kStates) {
     .Call(`_MkPrime_fitch_score_r`, parent, child, tipStates, nTip, kStates)
 }
 
-init_mcmc_state <- function(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale = 1.0, kprimeAlpha = 1.0, kprimeBeta = 1.0, phi = numericVector(), pi0 = 0.0, zMatrix = matrix(0, 0)) {
+init_mcmc_state <- function(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale = 1.0, kprimeAlpha = 1.0, kprimeBeta = 1.0, phi = NULL, pi0 = 0.0, zMatrix = NULL) {
     .Call(`_MkPrime_init_mcmc_state`, parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta, phi, pi0, zMatrix)
 }
 

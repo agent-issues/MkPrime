@@ -217,7 +217,7 @@ BEGIN_RCPP
 END_RCPP
 }
 // init_mcmc_state
-SEXP init_mcmc_state(IntegerVector parent, IntegerVector child, NumericVector relBrLengths, double treeLength, double rateLoss, double rateLogSd, double rateNeo, double p, IntegerVector kPrime, double logLik, double logPrior, double betaScale, double kprimeAlpha, double kprimeBeta, Rcpp::NumericVector phi, double pi0, Rcpp::IntegerMatrix zMatrix);
+SEXP init_mcmc_state(IntegerVector parent, IntegerVector child, NumericVector relBrLengths, double treeLength, double rateLoss, double rateLogSd, double rateNeo, double p, IntegerVector kPrime, double logLik, double logPrior, double betaScale, double kprimeAlpha, double kprimeBeta, Rcpp::Nullable<Rcpp::NumericVector> phi, double pi0, Rcpp::Nullable<Rcpp::IntegerMatrix> zMatrix);
 RcppExport SEXP _MkPrime_init_mcmc_state(SEXP parentSEXP, SEXP childSEXP, SEXP relBrLengthsSEXP, SEXP treeLengthSEXP, SEXP rateLossSEXP, SEXP rateLogSdSEXP, SEXP rateNeoSEXP, SEXP pSEXP, SEXP kPrimeSEXP, SEXP logLikSEXP, SEXP logPriorSEXP, SEXP betaScaleSEXP, SEXP kprimeAlphaSEXP, SEXP kprimeBetaSEXP, SEXP phiSEXP, SEXP pi0SEXP, SEXP zMatrixSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
@@ -236,9 +236,9 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< double >::type betaScale(betaScaleSEXP);
     Rcpp::traits::input_parameter< double >::type kprimeAlpha(kprimeAlphaSEXP);
     Rcpp::traits::input_parameter< double >::type kprimeBeta(kprimeBetaSEXP);
-    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type phi(phiSEXP);
+    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::NumericVector> >::type phi(phiSEXP);
     Rcpp::traits::input_parameter< double >::type pi0(pi0SEXP);
-    Rcpp::traits::input_parameter< Rcpp::IntegerMatrix >::type zMatrix(zMatrixSEXP);
+    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::IntegerMatrix> >::type zMatrix(zMatrixSEXP);
     rcpp_result_gen = Rcpp::wrap(init_mcmc_state(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta, phi, pi0, zMatrix));
     return rcpp_result_gen;
 END_RCPP

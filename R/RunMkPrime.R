@@ -191,10 +191,17 @@ RunMkPrime <- function(data, tree = NULL,
   nTrans <- length(transIdx)
 
   qHet <- isTRUE(model$qHeterogeneity)
+  ecoOn <- isTRUE(model$ecologyAware) && !is.null(mkd$ecology)
+  nPhiMove <- if (ecoOn) {
+    if (identical(model$magnitudeMode, "per_ecology"))
+      as.integer(mkd$kEcology) else 1L
+  } else 0L
   moves <- .BuildMoves(nEdge, nTrans, hasNeo, mcmc,
                        fixTopology = fixTopology,
                        kPrimePrior = model$kPrimePrior %||% "geometric",
                        qHeterogeneity = qHet,
+                       ecologyAware = ecoOn,
+                       nPhi = nPhiMove,
                        joint2d = isTRUE(mcmc$joint2d))
 
   mcmc$thinWasAuto <- identical(mcmc$thin, "auto")
@@ -2324,9 +2331,16 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   nTrans <- sum(mkd$type == "transformational")
 
   qHet <- isTRUE(model$qHeterogeneity)
+  ecoOn <- isTRUE(model$ecologyAware) && !is.null(mkd$ecology)
+  nPhiMove <- if (ecoOn) {
+    if (identical(model$magnitudeMode, "per_ecology"))
+      as.integer(mkd$kEcology) else 1L
+  } else 0L
   moves <- .BuildMoves(nEdge, nTrans, hasNeo, mcmc, fixTopology = FALSE,
                        kPrimePrior = model$kPrimePrior %||% "geometric",
                        qHeterogeneity = qHet,
+                       ecologyAware = ecoOn,
+                       nPhi = nPhiMove,
                        joint2d = isTRUE(mcmc$joint2d))
 
   if (identical(mcmc$thin, "auto")) {
@@ -2493,6 +2507,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         local_dirichlet  = tun$local_dirichlet_alpha %||% 10,
         p           = 0.5,  # Gibbs move: scale ignored by C++; placeholder
         mh_p        = tun$scale_p %||% 0.5,
+        scale_phi   = tun$scale_phi %||% 0.5,
         0.5
       )
     }
@@ -2701,6 +2716,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                         fixTopology = FALSE,
                         kPrimePrior = "geometric",
                         qHeterogeneity = FALSE,
+                        ecologyAware = FALSE,
+                        nPhi = 0L,
                         joint2d = TRUE) {
   moves <- list(
     list(name = "tree_length", type = "scale", target = "tree_length",
@@ -2896,6 +2913,16 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     ))
   }
 
+  # Ecology-aware NT model: Bactrian on log(phi).
+  # Weight scales with nPhi so per-entry visit rate stays roughly constant
+  # across magnitudeMode = "global" (nPhi = 1) and "per_ecology" (nPhi = K).
+  if (isTRUE(ecologyAware) && nPhi >= 1L) {
+    moves <- c(moves, list(
+      list(name = "scale_phi", type = "scale_phi", target = "phi",
+           weight = max(1, as.numeric(nPhi)), dim = 1L)
+    ))
+  }
+
   # --- M-120: 2D joint Bactrian proposals ---
   if (isTRUE(joint2d)) {
     moves <- c(moves, list(
@@ -2917,7 +2944,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   # Joint 2D moves also get the floor so they're comparable to individual
   # scalar moves they complement.
   scalarTypes <- c("scale", "int_walk", "gibbs_p", "scale_p", "slice",
-                    "kprime_alpha", "kprime_beta")
+                    "kprime_alpha", "kprime_beta", "scale_phi")
   totalWeight <- sum(vapply(moves, `[[`, numeric(1), "weight"))
   floorVal <- totalWeight * 0.02
   for (i in seq_along(moves)) {
@@ -2966,7 +2993,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   kprime_alpha = 27L,
   kprime_beta = 28L,
   slice_kprime_alpha = 29L,
-  slice_kprime_beta = 29L
+  slice_kprime_beta = 29L,
+  scale_phi = 30L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)
@@ -3701,7 +3729,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     slice_rate_loss = NA_real_, slice_rate_neo = NA_real_,
     slice_rate_log_sd = NA_real_, slice_tree_length = NA_real_,
     slice_beta_scale = NA_real_,
-    slice_kprime_alpha = NA_real_, slice_kprime_beta = NA_real_
+    slice_kprime_alpha = NA_real_, slice_kprime_beta = NA_real_,
+    scale_phi = 0.35
   )
 
   tuningKeys <- c(
@@ -3733,7 +3762,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     kprime_beta = "scale_kprime_beta",
     slice_rate_loss = NA_character_, slice_rate_neo = NA_character_,
     slice_rate_log_sd = NA_character_, slice_tree_length = NA_character_,
-    slice_beta_scale = NA_character_
+    slice_beta_scale = NA_character_,
+    scale_phi = "scale_phi"
   )
 
   for (move in moves) {

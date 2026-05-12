@@ -23,6 +23,16 @@ using namespace Rcpp;
 // Forward declaration for relabelling correction (corrections.cpp)
 double mk_prime_relabel_log(int kPrime, int kObs);
 
+// Forward declaration for ecology orchestrator (mcmc_ecology.cpp)
+double cpp_log_likelihood_ecology(
+    const McmcData& data,
+    IntegerVector parent, IntegerVector child,
+    NumericVector edgeLen,
+    const IntegerVector& kPrime,
+    double rateLoss, double rateLogSd, double rateNeo,
+    NumericVector phi,
+    IntegerMatrix zMatrix);
+
 // Forward declarations for proposals in other TUs
 // M-065: vector-based _impl versions (no edge matrix)
 List nni_proposal_impl(IntegerVector parent, IntegerVector child,
@@ -201,7 +211,10 @@ static double cpp_log_prior(
     double rateLoss, double rateLogSd, double rateNeo,
     double p, const IntegerVector& kPrime,
     double betaScale = 1.0,
-    double kprimeAlpha = 1.0, double kprimeBeta = 1.0) {
+    double kprimeAlpha = 1.0, double kprimeBeta = 1.0,
+    const NumericVector* phiPtr   = nullptr,
+    double pi0                    = 0.0,
+    const IntegerMatrix* zMatPtr  = nullptr) {
 
   // Hard floor: prevents Mk_v singularity (corrected likelihood → +∞ at zero)
   if (treeLength < 1e-6) return R_NegInf;
@@ -340,6 +353,35 @@ static double cpp_log_prior(
                      1.0 / data.betaScaleRate, 1);
   }
 
+  // Ecology-aware NT model: phi, pi0, z priors (mirrors LogPrior in R).
+  if (data.ecologyAware) {
+    if (phiPtr == nullptr || zMatPtr == nullptr) return R_NegInf;
+    const NumericVector& phi = *phiPtr;
+    const IntegerMatrix& zMat = *zMatPtr;
+    for (int i = 0; i < phi.size(); ++i) {
+      if (phi[i] <= 0.0) return R_NegInf;
+    }
+    if (pi0 <= 0.0 || pi0 >= 1.0) return R_NegInf;
+    int nCharZ = zMat.nrow();
+    int kEcoZ  = zMat.ncol();
+    long nNone = 0, nSlab = 0;
+    for (int c = 0; c < nCharZ; ++c) {
+      for (int s = 0; s < kEcoZ; ++s) {
+        int zv = zMat(c, s);
+        if (zv == 0) ++nNone;
+        else if (zv == 1 || zv == 2) ++nSlab;
+        else return R_NegInf;
+      }
+    }
+    for (int i = 0; i < phi.size(); ++i) {
+      lp += R::dlnorm(phi[i], 0.0, data.sigmaPhi, 1);
+    }
+    lp += R::dbeta(pi0, data.rho0Alpha, data.rho0Beta, 1);
+    if (nNone > 0) lp += static_cast<double>(nNone) * std::log(pi0);
+    if (nSlab > 0) lp += static_cast<double>(nSlab) *
+                          (std::log1p(-pi0) - std::log(2.0));
+  }
+
   return lp;
 }
 
@@ -357,9 +399,9 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
                      double betaScale = 1.0,
                      double kprimeAlpha = 1.0,
                      double kprimeBeta = 1.0,
-                     Rcpp::NumericVector phi = Rcpp::NumericVector(),
+                     Rcpp::Nullable<Rcpp::NumericVector> phi = R_NilValue,
                      double pi0 = 0.0,
-                     Rcpp::IntegerMatrix zMatrix = Rcpp::IntegerMatrix(0, 0)) {
+                     Rcpp::Nullable<Rcpp::IntegerMatrix> zMatrix = R_NilValue) {
   McmcState* s = new McmcState();
   s->parent       = clone(parent);
   s->child        = clone(child);
@@ -376,11 +418,16 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
   s->logPrior     = logPrior;
   s->betaScale    = betaScale;
   s->brSnapshot   = NumericVector(relBrLengths.size());
-  if (phi.size() > 0) {
-    s->phi        = clone(phi);
-    s->pi0        = pi0;
-    s->zMatrix    = clone(zMatrix);
-    s->wEdgeDirty = true;
+  if (phi.isNotNull()) {
+    Rcpp::NumericVector phiVec(phi);
+    if (phiVec.size() > 0) {
+      s->phi      = clone(phiVec);
+      s->pi0      = pi0;
+      if (zMatrix.isNotNull()) {
+        s->zMatrix = clone(Rcpp::IntegerMatrix(zMatrix));
+      }
+      s->wEdgeDirty = true;
+    }
   }
   return Rcpp::XPtr<McmcState>(s, true);
 }
@@ -524,9 +571,12 @@ List get_mcmc_state(SEXP statePtr) {
     _["diagDriftCount"] = s->diagDriftCount,
     _["diagMaxDiff"]    = s->diagMaxDiff,
     _["diagSelectivePop"] = s->nodeCL.diagSelectivePopCount,
-    _["phi"]            = s->phi,
+    // Clone mutable ecology vectors so that R-side snapshots taken before a
+    // move don't alias the underlying storage and silently reflect post-move
+    // mutations.
+    _["phi"]            = clone(s->phi),
     _["pi0"]            = s->pi0,
-    _["zMatrix"]        = s->zMatrix
+    _["zMatrix"]        = clone(s->zMatrix)
   );
 }
 
@@ -562,7 +612,8 @@ double eval_log_prior_cpp(SEXP dataPtr, SEXP statePtr) {
     *d, s->treeLength, s->relBrLengths,
     s->rateLoss, s->rateLogSd, s->rateNeo,
     s->p, s->kPrime, s->betaScale,
-    s->kprimeAlpha, s->kprimeBeta);
+    s->kprimeAlpha, s->kprimeBeta,
+    &s->phi, s->pi0, &s->zMatrix);
 }
 
 
@@ -651,6 +702,12 @@ static double compute_full_loglik_at(
     const IntegerVector& parent,
     const IntegerVector& child,
     const NumericVector& edgeLen) {
+  if (data.ecologyAware) {
+    return cpp_log_likelihood_ecology(
+      data, parent, child, edgeLen, state.kPrime,
+      state.rateLoss, state.rateLogSd, state.rateNeo,
+      state.phi, state.zMatrix);
+  }
   return cpp_log_likelihood(
     data, parent, child, edgeLen,
     state.kPrime, state.rateLoss, state.rateLogSd, state.rateNeo,
@@ -2595,7 +2652,8 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
     *data, state->treeLength, propRelBr,
     state->rateLoss, state->rateLogSd, state->rateNeo,
     state->p, state->kPrime, state->betaScale,
-    state->kprimeAlpha, state->kprimeBeta);
+    state->kprimeAlpha, state->kprimeBeta,
+    &state->phi, state->pi0, &state->zMatrix);
   if (!R_FINITE(newLogPrior)) return false;
 
   // 16. MH acceptance
@@ -2801,7 +2859,8 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
     *data, state->treeLength, propRelBr,
     state->rateLoss, state->rateLogSd, state->rateNeo,
     state->p, state->kPrime, state->betaScale,
-    state->kprimeAlpha, state->kprimeBeta);
+    state->kprimeAlpha, state->kprimeBeta,
+    &state->phi, state->pi0, &state->zMatrix);
   if (!R_FINITE(newLogPrior)) return false;
 
   // 13. MH acceptance
@@ -2857,7 +2916,8 @@ static double eval_slice_target(McmcData* data, McmcState* state,
     *data, state->treeLength, state->relBrLengths,
     state->rateLoss, state->rateLogSd, state->rateNeo,
     state->p, state->kPrime, state->betaScale,
-    state->kprimeAlpha, state->kprimeBeta);
+    state->kprimeAlpha, state->kprimeBeta,
+    &state->phi, state->pi0, &state->zMatrix);
   if (!R_FINITE(logPrior)) return R_NegInf;
 
   double logLik;
@@ -2940,7 +3000,8 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
         *data, state->treeLength, state->relBrLengths,
         state->rateLoss, state->rateLogSd, state->rateNeo,
         state->p, state->kPrime, state->betaScale,
-    state->kprimeAlpha, state->kprimeBeta);
+    state->kprimeAlpha, state->kprimeBeta,
+    &state->phi, state->pi0, &state->zMatrix);
 
       int nEdge = state->parent.size();
       NumericVector edgeLen(nEdge);
@@ -3026,7 +3087,8 @@ static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
       *data, state->treeLength, state->relBrLengths,
       state->rateLoss, state->rateLogSd, state->rateNeo,
       state->p, state->kPrime, state->betaScale,
-      state->kprimeAlpha, state->kprimeBeta);
+      state->kprimeAlpha, state->kprimeBeta,
+    &state->phi, state->pi0, &state->zMatrix);
     // Restore
     if (paramCode == 0) state->kprimeAlpha = oldVal;
     else                state->kprimeBeta  = oldVal;
@@ -3063,7 +3125,8 @@ static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
         *data, state->treeLength, state->relBrLengths,
         state->rateLoss, state->rateLogSd, state->rateNeo,
         state->p, state->kPrime, state->betaScale,
-        state->kprimeAlpha, state->kprimeBeta);
+        state->kprimeAlpha, state->kprimeBeta,
+    &state->phi, state->pi0, &state->zMatrix);
       return true;
     }
     if (u1 < u0) L = u1; else R_bound = u1;
@@ -3704,7 +3767,8 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
     *data, state->treeLength, state->relBrLengths,
     state->rateLoss, state->rateLogSd, state->rateNeo,
     state->p, state->kPrime, state->betaScale,
-    state->kprimeAlpha, state->kprimeBeta);
+    state->kprimeAlpha, state->kprimeBeta,
+    &state->phi, state->pi0, &state->zMatrix);
 
   state->nodeCL.invalidate_structure();  // M-161: kPrime changed, unit structure may differ
 
@@ -3748,7 +3812,8 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
     *data, state->treeLength, state->relBrLengths,
     state->rateLoss, state->rateLogSd, state->rateNeo,
     state->p, state->kPrime, state->betaScale,
-    state->kprimeAlpha, state->kprimeBeta);
+    state->kprimeAlpha, state->kprimeBeta,
+    &state->phi, state->pi0, &state->zMatrix);
 
   if (!R_FINITE(newLogPrior)) {
     for (int i = 0; i < nTrans; ++i)
@@ -3826,7 +3891,7 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
 //           23=dirichlet_branch, 24=local_dirichlet,
 //           25=gibbs_kprime_sweep, 26=block_kprime_shift,
 //           27=scale_kprime_alpha, 28=scale_kprime_beta,
-//           29=slice_kprime_hyper
+//           29=slice_kprime_hyper, 30=scale_phi (ecology)
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -3895,6 +3960,10 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   // M-158: nodeEdgeLen rollback for beta_simplex (2 values)
   double bsOldNodeEdgeLen1 = 0.0, bsOldNodeEdgeLen2 = 0.0;
 
+  // Ecology phi rollback (case 30): single element modified.
+  int phiOldIdx = -1;
+  double phiOldVal = 0.0;
+
   // OPP-6b: in-place NNI rollback (2 parent values)
   bool nniInPlace = false;
   int nniCRow = -1, nniWRow = -1;
@@ -3916,7 +3985,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   // Populate for NNI (5), beta_simplex (4), Dirichlet (23, 24), SPR (6).
   if ((moveType == 5 || moveType == 4 || moveType == 23 || moveType == 24
        || moveType == 6) &&
-      !data->qHeterogeneity && !state->nodeCL.ready()) {
+      !data->qHeterogeneity && !data->ecologyAware && !state->nodeCL.ready()) {
     state->diagCachePopCount++;
     int nEdge = state->relBrLengths.size();
     NumericVector absLen(nEdge);
@@ -4046,7 +4115,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       break;
     }
     case 6: { // SPR — M-158: partial CL when cache valid, else OPP-6 full eval
-      if (state->nodeCL.ready() && !data->qHeterogeneity) {
+      if (state->nodeCL.ready() && !data->qHeterogeneity && !data->ecologyAware) {
         // M-158: TreeNav-based SPR with partial CL evaluation
         sprMeta = propose_spr_treenav(state->nodeCL.topo);
         if (!sprMeta.valid || !R_FINITE(sprMeta.logHastings)) return false;
@@ -4120,7 +4189,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         *data, state->treeLength, state->relBrLengths,
         state->rateLoss, state->rateLogSd, state->rateNeo,
         state->p, state->kPrime, state->betaScale,
-    state->kprimeAlpha, state->kprimeBeta);
+    state->kprimeAlpha, state->kprimeBeta,
+    &state->phi, state->pi0, &state->zMatrix);
       state->logLik = state->logLik;  // unchanged
       return true;  // Gibbs: always accept
     }
@@ -4229,7 +4299,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         *data, state->treeLength, state->relBrLengths,
         state->rateLoss, state->rateLogSd, state->rateNeo,
         state->p, state->kPrime, state->betaScale,
-        state->kprimeAlpha, state->kprimeBeta);
+        state->kprimeAlpha, state->kprimeBeta,
+    &state->phi, state->pi0, &state->zMatrix);
       if (!R_FINITE(newLP)) { state->kprimeAlpha = oldKpA; return false; }
       double logAlpha = (newLP - state->logPrior) + std::log(mult);
       if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
@@ -4247,7 +4318,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         *data, state->treeLength, state->relBrLengths,
         state->rateLoss, state->rateLogSd, state->rateNeo,
         state->p, state->kPrime, state->betaScale,
-        state->kprimeAlpha, state->kprimeBeta);
+        state->kprimeAlpha, state->kprimeBeta,
+    &state->phi, state->pi0, &state->zMatrix);
       if (!R_FINITE(newLP)) { state->kprimeBeta = oldKpB; return false; }
       double logAlpha = (newLP - state->logPrior) + std::log(mult);
       if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
@@ -4256,6 +4328,18 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       }
       state->kprimeBeta = oldKpB;
       return false;
+    }
+    case 30: { // scale phi (Bactrian) — ecology-aware NT
+      if (!data->ecologyAware || state->phi.size() == 0) return false;
+      int nPhi = state->phi.size();
+      phiOldIdx = (nPhi == 1) ? 0
+                : static_cast<int>(R::unif_rand() * nPhi);
+      if (phiOldIdx >= nPhi) phiOldIdx = nPhi - 1;
+      phiOldVal = state->phi[phiOldIdx];
+      double mult = std::exp(scaleTuning * bactrian_perturbation());
+      state->phi[phiOldIdx] = phiOldVal * mult;
+      logHastings = std::log(mult);
+      break;
     }
     default:
       return false;
@@ -4275,6 +4359,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       for (int i = 0; i < nE; ++i) state->relBrLengths[i] = state->brSnapshot[i];
     }
     if (nniInPlace) { state->parent[nniCRow] = nniSavedP_cRow; state->parent[nniWRow] = nniSavedP_wRow; }
+    if (phiOldIdx >= 0) state->phi[phiOldIdx] = phiOldVal;
     return false;
   }
 
@@ -4287,7 +4372,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       *data, state->treeLength, state->relBrLengths,
       state->rateLoss, state->rateLogSd, state->rateNeo,
       state->p, state->kPrime, state->betaScale,
-    state->kprimeAlpha, state->kprimeBeta);
+    state->kprimeAlpha, state->kprimeBeta,
+    &state->phi, state->pi0, &state->zMatrix);
   }
 
   if (!R_FINITE(newLogPrior)) {
@@ -4304,6 +4390,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       for (int i = 0; i < nE; ++i) state->relBrLengths[i] = state->brSnapshot[i];
     }
     if (nniInPlace) { state->parent[nniCRow] = nniSavedP_cRow; state->parent[nniWRow] = nniSavedP_wRow; }
+    if (phiOldIdx >= 0) state->phi[phiOldIdx] = phiOldVal;
     return false;
   }
 
@@ -4315,14 +4402,17 @@ static bool do_move_impl(McmcData* data, McmcState* state,
 
   // ---- Likelihood evaluation (M-064: partial, M-065: vectors, M-121: node CL) ----
   bool likChanges = (moveType != 8);
-  bool hasPLC = !state->partLogLik.empty();
+  // Ecology mode disables partition cache + partial CL; full eval routes
+  // through cpp_log_likelihood_ecology.
+  const bool eco = data->ecologyAware;
+  bool hasPLC = !eco && !state->partLogLik.empty();
   double newLogLik;
   std::vector<double> newPC;
   bool usedPartialCL = false;
 
   if (!likChanges) {
     newLogLik = state->logLik;
-  } else if (nniInPlace && state->nodeCL.ready()) {
+  } else if (!eco && nniInPlace && state->nodeCL.ready()) {
     // M-121: NNI with valid node CL cache → partial evaluation
     int nEdge = evalRelBr.size();
     NumericVector propEdgeLen(nEdge);
@@ -4350,7 +4440,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       if (diff > 1e-6) state->diagNniMismatchCount++;
     }
 
-  } else if (moveType == 4 && state->nodeCL.ready()) {
+  } else if (!eco && moveType == 4 && state->nodeCL.ready()) {
     // M-121: beta_simplex with valid node CL cache → partial evaluation
     int nEdge = evalRelBr.size();
     NumericVector propEdgeLen(nEdge);
@@ -4381,7 +4471,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       if (diff > 1e-6) state->diagBsMismatchCount++;
     }
 
-  } else if ((moveType == 23 || moveType == 24) && state->nodeCL.ready()) {
+  } else if (!eco && (moveType == 23 || moveType == 24) && state->nodeCL.ready()) {
     // M-127: Dirichlet (random or local) with valid node CL cache → partial eval
     int nEdge = evalRelBr.size();
     NumericVector propEdgeLen(nEdge);
@@ -4474,10 +4564,17 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     NumericVector propEdgeLen(nEdge);
     for (int i = 0; i < nEdge; ++i)
       propEdgeLen[i] = state->treeLength * evalRelBr[i];
-    newLogLik = cpp_log_likelihood(*data, evalParent, evalChild,
-      propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
-      state->rateNeo, state->betaScale,
-      state->clWs.ready() ? &state->clWs : nullptr);
+    if (eco) {
+      newLogLik = cpp_log_likelihood_ecology(*data, evalParent, evalChild,
+        propEdgeLen, state->kPrime,
+        state->rateLoss, state->rateLogSd, state->rateNeo,
+        state->phi, state->zMatrix);
+    } else {
+      newLogLik = cpp_log_likelihood(*data, evalParent, evalChild,
+        propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
+        state->rateNeo, state->betaScale,
+        state->clWs.ready() ? &state->clWs : nullptr);
+    }
   } else {
     int nParts = (int)data->parts.size();
     int nEdge  = evalRelBr.size();
@@ -4603,6 +4700,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   }
   // OPP-6b: in-place NNI rollback — restore 2 parent values
   if (nniInPlace) { state->parent[nniCRow] = nniSavedP_cRow; state->parent[nniWRow] = nniSavedP_wRow; }
+  // Ecology phi rollback
+  if (phiOldIdx >= 0) state->phi[phiOldIdx] = phiOldVal;
 
   // M-121: rollback node CL cache on rejection of partial-eval moves
   if (usedPartialCL) {
@@ -4701,7 +4800,8 @@ List run_mcmc_batch_cpp(
   // M-159: Cache-boosted weights (used when nodeCL.ready() && !qHeterogeneity).
   // Partial-CL-eligible moves {4=beta_simplex, 5=NNI, 6=SPR, 23=dirichlet,
   // 24=local_dirichlet} get cacheBonus multiplier.
-  bool haveCacheBoost = cacheBonus > 1.0 && !data->qHeterogeneity;
+  bool haveCacheBoost = cacheBonus > 1.0 && !data->qHeterogeneity &&
+                        !data->ecologyAware;
   std::vector<double> cumWeightsCached(nMoves);
   double totalWeightCached = 0.0;
   if (haveCacheBoost) {
