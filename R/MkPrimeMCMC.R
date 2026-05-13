@@ -94,7 +94,7 @@
 #'   When set, samples are flushed to disk in batches of `bufferSize`, so the
 #'   file can be opened in Tracer during the run.
 #'   For multiple runs (`nRuns > 1`), separate files are created automatically
-#'   by appending `_1`, `_2`, … before the file extension
+#'   by appending `_1`, `_2`, \dots before the file extension
 #'   (e.g. `"run.log"` → `"run_1.log"`, `"run_2.log"`).
 #'   See [ReadMkLog()] to load the log back into R after the run.
 #' @param bufferSize Integer. Number of thinned samples to accumulate per run
