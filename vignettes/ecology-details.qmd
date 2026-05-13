@@ -272,15 +272,19 @@ ridge that v2's $\gamma$-normalisation was designed to remove.
 A random 16-tip tree with random binary tip ecology, with half of the
 transformational characters simulated under $z = \text{encouraged}$ in
 ecology 1 (and $z = 0$ in ecology 0) and $\varphi = 3$. The result
-on $\pi_0$ is clean ($\pi_0$ posterior $\approx 0.5$, well below the
-prior mean $0.7$, correctly detecting that $\approx$ 50% of cells
-carry a non-zero effect). The result on $\varphi$ in this regime is
-the rate-vs-ecology degeneracy described above: with edge ecology
-heavily skewed toward ecology 1 (the random tip ecology happened to
-yield $26/30$ edges in ecology 1), the model absorbs the effect into
-baseline rates and the $\varphi$ posterior remains near $1$. This is
-a sim-design issue, not a model bug; it documents the regime in which
-$\varphi$ is hard to identify even when $\pi_0$ is.
+on $\pi_0$ is detectable but weaker than in Sim 3 ($\pi_0$ posterior
+mean $\approx 0.65$, prior mean $0.7$; v2 weakens the posterior
+slightly relative to v1's $0.53$ because $\gamma$-normalisation
+reduces the effective rate factor the model needs to explain the
+data). The result on $\varphi$ in this regime is the rate-vs-ecology
+degeneracy described above: with edge ecology heavily skewed toward
+ecology 1 (the random tip ecology happened to yield $26/30$ edges in
+ecology 1), the model absorbs the effect into baseline rates and the
+$\varphi$ posterior remains near $1$. This is a sim-design issue, not
+a model bug; it documents the regime in which $\varphi$ is hard to
+identify even when $\pi_0$ is. Aware-chain log-likelihood under v2 is
+~24 nats higher than the v1 run on the same data ($-739$ vs $-763$),
+again consistent with v2's closure of the rate--time ridge.
 
 ### Sim 3 -- convergent ecology
 
