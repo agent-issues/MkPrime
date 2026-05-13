@@ -259,10 +259,13 @@ model.
 A random 16-tip tree with random binary tip ecology, 120 characters
 simulated with $z = 0$ everywhere. Both hyperparameters land where
 the model says they should under $H_0$: $\pi_0$ posterior mean
-$\approx 0.68$ (CI $[0.51, 0.84]$, prior mean $0.7$); $\varphi$
-posterior mean $\approx 1.04$ (CI $[0.16, 1.69]$, centred at $1$).
+$\approx 0.66$ (CI $[0.25, 0.91]$, prior mean $0.7$); $\varphi$
+posterior mean $\approx 1.02$ (CI $[0.40, 2.15]$, centred at $1$).
 The ecology layer does not introduce spurious signal when ecology is
-irrelevant.
+irrelevant. Aware-chain log-likelihood under v2 is ~20 nats higher
+than the corresponding v1 run on the same simulator data ($-684$ vs
+$-704$), consistent with the closure of the rate--time identifiability
+ridge that v2's $\gamma$-normalisation was designed to remove.
 
 ### Sim 2 -- recovery
 
