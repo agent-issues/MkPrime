@@ -16,19 +16,34 @@ library("MkPrime")
 ## Dataset
 
 Empirical demonstration of the ecology-aware MkPrime model on the
-rodent + lagomorph dataset of @Asher2019, mirrored on MorphoBank as
-matrix [X24848](https://www.morphobank.org/project/2769/matrices)
-(102 taxa, 219 morphological characters from the original analysis).
-Two extra characters are appended for this study: an ecology
-annotation at column 220 with four states (terrestrial, arboreal,
-semiaquatic, fossorial) coded primarily from @Samuels2008 and
-@Hedrick2020 plus auxiliary sources, and an extant/extinct flag at
-column 221. The analysis here uses only the 60 extant taxa, dropping
-the extant/extinct column from the character matrix entirely; this
-keeps the topology comparable to a neontological tree and lets the
-MCMC converge faster than on the full mixed-fossil set. The fossil
-subset is the subject of a separate analysis once the v2 model is
-validated on neontological data.
+rodent + lagomorph dataset of Asher et al. (2019, *R. Soc. Open Sci.*
+6:190387), mirrored on MorphoBank as matrix
+[X24848](https://www.morphobank.org/project/2769/matrices) (102 taxa,
+219 morphological characters from the original analysis). Two extra
+characters are appended for this study: an ecology annotation at
+column 220 with four states (terrestrial, arboreal, semiaquatic,
+fossorial) coded primarily from Samuels & Van Valkenburgh
+(2008, *J. Morphol.* 269:1387) and Hedrick et al. (2020, *Sci. Rep.*
+10:717) plus auxiliary sources, and an extant/extinct flag at column
+221. The analysis here uses only the 60 extant taxa, dropping the
+extant/extinct column from the character matrix entirely; this keeps
+the topology comparable to a neontological tree and lets the MCMC
+converge faster than on the full mixed-fossil set. The fossil subset
+is the subject of a separate analysis once the v2 model is validated
+on neontological data.
+
+Polymorphic ecology codings (a small number of taxa coded as
+`(01)` or `(03)`) are recoded to the first listed state for this
+analysis; this is conservative relative to alternative treatments
+that would average over states.
+
+After filtering: 60 extant tips, 217 variable characters (after
+dropping 2 invariants), 4 ecology states with tip-frequency
+distribution $(0.60, 0.20, 0.083, 0.117)$ across states
+$0, 1, 2, 3$. The most-frequent state (terrestrial, 60 % of tips) is
+auto-selected as the reference ecology; the model then asks "which
+characters change at different rates under arboreal, semiaquatic,
+fossorial versus terrestrial?"
 
 ```{r data, eval=FALSE}
 raw <- ape::read.nexus.data("mbank_X24848.nex")
