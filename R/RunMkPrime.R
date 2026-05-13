@@ -738,14 +738,14 @@ RunMkPrime <- function(data, tree = NULL,
   # Also pin hyperparameter moves (kprime_alpha/beta): they are cheap but
 
   # their score gets inflated relative to expensive topology moves.
-  # scale_pi0 is MH (not always-accept) but is a prior-only move: pi0
-  # affects the spike-and-slab prior on z, not the likelihood, so per-
-  # proposal cost is trivial.  The cost-adjusted weight adapter would
-  # otherwise inflate its share to >50% and starve topology / branch
-  # moves; pin it alongside the always-accept Gibbs/slice moves.
+  # v2: scale_pi0 NO LONGER prior-only — pi0 enters gamma_e and so the
+  # likelihood. It must be a full MH move (already implemented C++-side,
+  # case 31) and not in alwaysAcceptTypes. Similarly for scale_phi
+  # (case 30) and the new scale_theta (case 33). gibbs_z still
+  # always-accept (exact Gibbs sampler).
   alwaysAcceptTypes <- c("gibbs_p", "slice", "gibbs_kprime_sweep",
                          "kprime_alpha", "kprime_beta",
-                         "slice_kprime_hyper", "gibbs_z", "scale_pi0")
+                         "slice_kprime_hyper", "gibbs_z")
   moveTypes <- vapply(moves, `[[`, character(1), "type")
   autoPin <- moveWeights[moveTypes %in% alwaysAcceptTypes]
 
