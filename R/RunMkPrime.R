@@ -2379,40 +2379,77 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     integer(1L)
   )
 
-  if (isStreaming && nRuns >= 2L && !is.null(mcmc$maxRhat)) {
-    # M-146: cross-run R-hat convergence orchestrator
-    # M-149 #6: skip Phase 1 if checkpoint was during Phase 2
-    serialResult <- .RunSerialRuns(mkd, model, mcmc, runs, moves,
-                                    tipLabels, paramNames, nEdge,
-                                    brColStart, logFilePaths,
-                                    convWindowSize, treeFile = NULL,
-                                    startIters = perRunStarts,
-                                    startPhase = checkpoint$serialPhase %||% 1L)
-    runs       <- serialResult$runs
-    stopReason <- serialResult$stopReason
-    actualIter <- serialResult$actualIter
-  } else {
-    for (run in seq_len(nRuns)) {
-      runs[[run]] <- .RunMkPrimeSingleRun(
-        mkd, model, mcmc, runs[[run]], moves, tipLabels, run,
-        paramNames, nEdge, brColStart,
-        logFilePath    = if (isStreaming) logFilePaths[run] else NULL,
-        cancelFile     = mcmc$cancelFile,
-        checkpointFile = if (nRuns == 1L) mcmc$checkpointFile else NULL,
-        startIter      = perRunStarts[run],
-        isStreaming    = isStreaming,
-        convWindowSize = convWindowSize,
-        treeFile       = NULL,
-        resumeMoveWeights = runs[[run]]$moveWeights %||% checkpoint$moveWeights
-      )
-      stopReason <- runs[[run]]$stop_reason
-      actualIter <- runs[[run]]$actual_iter
-      if (stopReason == "cancelled") break
+  tryCatch({
+    if (isStreaming && nRuns >= 2L && !is.null(mcmc$maxRhat)) {
+      # M-146: cross-run R-hat convergence orchestrator
+      # M-149 #6: skip Phase 1 if checkpoint was during Phase 2
+      serialResult <- .RunSerialRuns(mkd, model, mcmc, runs, moves,
+                                      tipLabels, paramNames, nEdge,
+                                      brColStart, logFilePaths,
+                                      convWindowSize, treeFile = NULL,
+                                      startIters = perRunStarts,
+                                      startPhase = checkpoint$serialPhase %||% 1L)
+      runs       <- serialResult$runs
+      stopReason <- serialResult$stopReason
+      actualIter <- serialResult$actualIter
+    } else {
+      for (run in seq_len(nRuns)) {
+        runs[[run]] <- .RunMkPrimeSingleRun(
+          mkd, model, mcmc, runs[[run]], moves, tipLabels, run,
+          paramNames, nEdge, brColStart,
+          logFilePath    = if (isStreaming) logFilePaths[run] else NULL,
+          cancelFile     = mcmc$cancelFile,
+          checkpointFile = if (nRuns == 1L) mcmc$checkpointFile else NULL,
+          startIter      = perRunStarts[run],
+          isStreaming    = isStreaming,
+          convWindowSize = convWindowSize,
+          treeFile       = NULL,
+          resumeMoveWeights = runs[[run]]$moveWeights %||% checkpoint$moveWeights
+        )
+        stopReason <- runs[[run]]$stop_reason
+        actualIter <- runs[[run]]$actual_iter
+        if (stopReason == "cancelled") break
+      }
     }
-  }
-
-  .BuildResult(runs, model, mkd, mcmc, paramNames, logFilePaths,
-               actualIter, stopReason)
+    .BuildResult(runs, model, mkd, mcmc, paramNames, logFilePaths,
+                 actualIter, stopReason)
+  },
+  interrupt = function(cond) {
+    # M-175: interrupt handler missing from resume path — mirror .RunWithRecovery.
+    # `runs` here reflects the last successfully completed batch state.
+    bestIter <- max(c(0L, vapply(runs,
+                                  function(r) r$actual_iter %||% 0L,
+                                  integer(1L))))
+    ckpSaved <- FALSE
+    if (!is.null(mcmc$checkpointFile) && bestIter > 0L) {
+      tryCatch({
+        .SaveCheckpoint(runs, mcmc, bestIter, paramNames,
+                        mcmc$checkpointFile, model = model)
+        ckpSaved <- TRUE
+      }, error = function(e) NULL)
+    }
+    if (!is.null(logFilePaths)) {
+      for (i in seq_along(logFilePaths)) {
+        tryCatch({
+          r <- runs[[i]]
+          if (!is.null(r$flush_idx) && r$flush_idx > 0L) {
+            .FlushBuffer(r$flush_buf, r$flush_idx, r$flush_iter, logFilePaths[i])
+          }
+        }, error = function(e) NULL)
+      }
+    }
+    if (ckpSaved) {
+      cli::cli_alert_warning(c(
+        "Run interrupted at iteration {bestIter}.",
+        "i" = "Checkpoint saved to {.file {mcmc$checkpointFile}}.",
+        "i" = "Re-run the same {.fn RunMkPrime} call to resume."
+      ))
+    } else {
+      cli::cli_alert_warning("Run interrupted.")
+    }
+    .BuildResult(runs, model, mkd, mcmc, paramNames, logFilePaths,
+                 max(bestIter, 0L), "interrupted")
+  })
 }
 
 
