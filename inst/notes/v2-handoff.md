@@ -89,22 +89,53 @@ Diagnostic so far:
 
 ## Suggested next-session debugging plan
 
-1. Read `R/RunMkPrime.R` move table (~lines 2953-2966) — register
-   `scale_theta` with raw weight 2. Remove `scale_pi0` from
-   `alwaysAcceptTypes` if present.
-2. Read `src/mcmc.cpp::gibbs_z_sweep_impl` (line ~3939) carefully.
-   Verify the zCol → ecology-state mapping inside the inner loop and
-   that the `log_enc / log_disc` terms use `state->theta[j]` not
-   `state->theta[s]`.
-3. Add a temporary `Rcpp::Rcout` print at the top of each ecology
-   move case (30, 31, 32, 33) and at the top of the move dispatcher
-   so we can see which move the chain enters on iteration 1 before
-   the hang.
-4. Re-run the inline smoke at `inst/notes/v2-handoff-smoke.R` (TBD —
-   minimum reproducer captured below).
-5. Once the chain runs, immediately re-run Sim 1 (12 min) and check
+The hang is somewhere in the C++ MCMC inner loop. Fixed so far in this
+session:
+- `R/MkPrimeMCMC.R`: ecology move names registered for validation
+- `R/RunMkPrime.R`: `scale_pi0` removed from `alwaysAcceptTypes`
+  (v1-isms; under v2 it's a full MH move)
+
+Still to do — DEBUGGING:
+
+1. **First, add Rcpp::Rcout printfs** to each ecology move case
+   (30, 31, 32, 33) and the move dispatcher in `src/mcmc.cpp`.
+   Rebuild. Re-run the minimum reproducer. The last printf before
+   silence pinpoints the move that hangs.
+2. **Likely culprits** (priority order):
+   - `gibbs_z_sweep_impl` calls `per_char_log_lik_ecology` with the
+     z vector but does NOT recompute wEdge between cells (correct —
+     wEdge doesn't depend on z). However, per_char_log_lik_ecology
+     might be calling pruning_*_ecology with an inconsistent
+     state. Verify the kp argument is correct for neomorphic chars.
+   - `scale_phi` (case 30) recomputes likelihood via the generic
+     flow at ~line 4670 onwards. Verify that flow uses the
+     ecology-aware code path: `cpp_log_likelihood_ecology` not the
+     blind `cpp_log_likelihood`. There's a `bool eco = data->ecologyAware`
+     check that should route correctly — verify by inspection.
+   - `scale_pi0` (case 31) and `scale_theta` (case 33) — these are
+     full MH with explicit `cpp_log_likelihood_ecology` calls.
+     The internal state (theta, pi0) is rolled back on rejection;
+     verify rollback logic for both.
+3. **Register scale_theta in R move table** (Step F partial):
+   `R/RunMkPrime.R` lines ~2953-2975 has the move list. Add:
+   ```r
+   list(name = "scale_theta", type = "scale_theta", target = "theta",
+        weight = 2)
+   ```
+   And in the move ID map at ~3052-3054: `scale_theta = 33L`.
+4. Once the chain runs, immediately re-run Sim 1 (12 min) and check
    that under v2 the aware logL ≥ blind logL on the same data —
    this is the key v2-vs-v1 sanity check.
+
+Other partial work that may interact with the hang:
+- `gibbs_z_sweep_impl` re-saves logLik/logPrior after the sweep
+  (lines ~4032-4040); this recompute is full ecology likelihood.
+  Should be fine but verify it's not entering a NaN loop.
+- The advisor noted γ_e *cancels* in the Gibbs categorical
+  ratio for a single cell — the current code computes `ll[v]`
+  three times per cell via `per_char_log_lik_ecology` which DOES
+  include γ_e effects. This is over-computing but should still
+  give correct sampling — not a hang cause.
 
 ## Minimum reproducer
 
