@@ -4,11 +4,11 @@ You MUST read the `r-conventions` skill before writing any code.
 
 ## Dispatcher
 
-Use the global `/dispatch` skill (`Skill(skill: "dispatch", ...)`). The skill
+Run `bash dispatch.sh <subcommand>` from the repo root. `dispatch.sh` is a
+thin wrapper that delegates to `~/.claude/skills/dispatch/dispatch.sh`;
+`todo-lock.sh` is used internally by that global script. The skill
 auto-detects per-repo overrides in `dev/dispatch/agent-brief.md` and
 `dev/dispatch/ranker.txt` and falls back to the bundled defaults otherwise.
-This repo does **not** ship its own `dispatch.sh` / `todo-lock.sh` — those
-live in `~/.claude/skills/dispatch/`.
 
 ---
 
