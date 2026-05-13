@@ -112,39 +112,39 @@ for (nm in c("phi", "pi0", "theta_1", "log_likelihood", "tree_length")) {
 
 cat("\n== logL distribution: aware vs blind (v2) ==\n")
 cat(sprintf("  blind  median=%.0f  IQR=[%.0f, %.0f]\n",
-            median(sB2$log_likelihood),
-            stats::quantile(sB2$log_likelihood, 0.25, names = FALSE),
-            stats::quantile(sB2$log_likelihood, 0.75, names = FALSE)))
+            median(sB2[, "log_likelihood"]),
+            stats::quantile(sB2[, "log_likelihood"], 0.25, names = FALSE),
+            stats::quantile(sB2[, "log_likelihood"], 0.75, names = FALSE)))
 cat(sprintf("  aware  median=%.0f  IQR=[%.0f, %.0f]\n",
-            median(sA2$log_likelihood),
-            stats::quantile(sA2$log_likelihood, 0.25, names = FALSE),
-            stats::quantile(sA2$log_likelihood, 0.75, names = FALSE)))
-gap <- median(sA2$log_likelihood) - median(sB2$log_likelihood)
+            median(sA2[, "log_likelihood"]),
+            stats::quantile(sA2[, "log_likelihood"], 0.25, names = FALSE),
+            stats::quantile(sA2[, "log_likelihood"], 0.75, names = FALSE)))
+gap <- median(sA2[, "log_likelihood"]) - median(sB2[, "log_likelihood"])
 cat(sprintf("  aware - blind median logL gap: %.1f  (positive = aware better)\n",
             gap))
 
 cat("\n== Tree length stability ==\n")
 cat(sprintf("  blind  median=%.2f  IQR=[%.2f, %.2f]  max=%.2f\n",
-            median(sB2$tree_length),
-            stats::quantile(sB2$tree_length, 0.25, names = FALSE),
-            stats::quantile(sB2$tree_length, 0.75, names = FALSE),
-            max(sB2$tree_length)))
+            median(sB2[, "tree_length"]),
+            stats::quantile(sB2[, "tree_length"], 0.25, names = FALSE),
+            stats::quantile(sB2[, "tree_length"], 0.75, names = FALSE),
+            max(sB2[, "tree_length"])))
 cat(sprintf("  aware  median=%.2f  IQR=[%.2f, %.2f]  max=%.2f\n",
-            median(sA2$tree_length),
-            stats::quantile(sA2$tree_length, 0.25, names = FALSE),
-            stats::quantile(sA2$tree_length, 0.75, names = FALSE),
-            max(sA2$tree_length)))
+            median(sA2[, "tree_length"]),
+            stats::quantile(sA2[, "tree_length"], 0.25, names = FALSE),
+            stats::quantile(sA2[, "tree_length"], 0.75, names = FALSE),
+            max(sA2[, "tree_length"])))
 
 if (v1Exists) {
   cat("\n== v1 reference (for comparison) ==\n")
   v1samp <- ReadMkLog("sim3-aware.log")
   v1samp <- v1samp[discard(seq_len(nrow(v1samp))), , drop = FALSE]
   cat(sprintf("  v1 aware logL median=%.0f  tree_length median=%.2f  max=%.2f\n",
-              median(v1samp$log_likelihood), median(v1samp$tree_length),
-              max(v1samp$tree_length)))
+              median(v1samp[, "log_likelihood"]), median(v1samp[, "tree_length"]),
+              max(v1samp[, "tree_length"])))
   v1B <- ReadMkLog("sim3-blind.log")
   v1B <- v1B[discard(seq_len(nrow(v1B))), , drop = FALSE]
-  v1gap <- median(v1samp$log_likelihood) - median(v1B$log_likelihood)
+  v1gap <- median(v1samp[, "log_likelihood"]) - median(v1B[, "log_likelihood"])
   cat(sprintf("  v1 (aware - blind) median logL gap: %.1f\n", v1gap))
   cat(sprintf("  v2 (aware - blind) median logL gap: %.1f\n", gap))
   cat("  v2 should have a non-negative gap (aware nests blind);\n")
