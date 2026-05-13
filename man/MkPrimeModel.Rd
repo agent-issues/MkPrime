@@ -17,8 +17,8 @@ MkPrimeModel(
   rateLogSdRate = 1,
   kPrimePrior = "empirical_geometric",
   empiricalNObs = NULL,
-  kprimeHyperA = 1,
-  kprimeHyperB = 1,
+  kprimeHyperA = NULL,
+  kprimeHyperB = NULL,
   kprimeAlpha = 1,
   kprimeBeta = 1,
   kprimeLogseriesC = 0.7,
@@ -75,7 +75,14 @@ the \code{"empirical_geometric"} prior. Defaults to the package dataset
 prior options.}
 
 \item{kprimeHyperA, kprimeHyperB}{Parameters for the Beta hyperprior on \code{p}
-when \code{kPrimePrior = "geometric"}. Defaults: a = 1, b = 1 (uniform).}
+when \code{kPrimePrior} is \code{"geometric"} or \code{"empirical_geometric"}.
+Both default to \code{NULL}, in which case \code{\link[=.FinalizeModel]{.FinalizeModel()}} supplies
+prior-specific defaults: \code{Beta(1, 1)} (uniform) for \code{"geometric"} and
+\code{Beta(4, 1)} for \code{"empirical_geometric"}. The informative default for
+the empirical_geometric prior pushes \code{p} toward 1 (E\link[htmltools:p]{p} = 0.8) so the
+geometric tail on \code{N_unobs} stays short — without this, the relabel
+correction on \verb{k'} can overrun the prior and inflate the posterior on
+the number of unobserved states.}
 
 \item{kprimeAlpha, kprimeBeta}{Starting values for the shared
 hyperparameters of the Beta-Geometric prior

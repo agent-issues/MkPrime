@@ -39,7 +39,15 @@
 #'   [empiricalNObs] tabulated from the `neotrans` corpus. Ignored for other
 #'   prior options.
 #' @param kprimeHyperA,kprimeHyperB Parameters for the Beta hyperprior on `p`
-#'   when `kPrimePrior = "geometric"`. Defaults: a = 1, b = 1 (uniform).
+#'   when `kPrimePrior` is `"geometric"` or `"empirical_geometric"`.
+#'   Both default to `NULL`, in which case `MkPrimeModel()` supplies
+#'   prior-specific defaults: `Beta(1, 1)` (uniform) for `"geometric"` and
+#'   `Beta(15, 1)` for `"empirical_geometric"`. The informative default for
+#'   the empirical_geometric prior pushes `p` toward 1 (E[p] = 15/16) so
+#'   the geometric tail on `N_unobs` stays short — without this, the
+#'   relabel correction on `k'` overruns the unconditional convolution
+#'   prior and inflates the posterior on the number of unobserved states
+#'   by several-fold.
 #' @param kprimeAlpha,kprimeBeta Starting values for the shared
 #'   hyperparameters of the Beta-Geometric prior
 #'   (`kPrimePrior = "beta_geometric"`). Both must be positive.
@@ -114,8 +122,8 @@ MkPrimeModel <- function(
     rateLogSdRate = 1,
     kPrimePrior = "empirical_geometric",
     empiricalNObs = NULL,
-    kprimeHyperA = 1,
-    kprimeHyperB = 1,
+    kprimeHyperA = NULL,
+    kprimeHyperB = NULL,
     kprimeAlpha = 1,
     kprimeBeta = 1,
     kprimeLogseriesC = 0.7,
@@ -163,6 +171,35 @@ MkPrimeModel <- function(
         "{.arg kprimeAlpha} and {.arg kprimeBeta} must be positive."
       )
     }
+  }
+
+  # Resolve kprimeHyperA / kprimeHyperB defaults.  NULL means "use the
+  # prior-specific default": Beta(1, 1) for plain geometric (uniform),
+  # Beta(15, 1) for empirical_geometric (E[p] ~= 0.94 — keeps the geometric
+  # tail on N_unobs short so the relabel correction on k' cannot overrun
+  # the prior).  Calibrated against the over-recovery diagnosed in
+  # dev/plans/2026-05-13-1430-empirical-geometric-prior-overrecovery-diagnosis.md;
+  # weaker priors leave the relabel-pull dominant and the posterior on
+  # the total number of unobserved states ends up several times the
+  # ground truth.  User-supplied values are validated and otherwise
+  # passed through unchanged.  beta_geometric and logseries priors do
+  # not use these.
+  if (is.null(kprimeHyperA) || is.null(kprimeHyperB)) {
+    if (kPrimePrior == "empirical_geometric") {
+      if (is.null(kprimeHyperA)) kprimeHyperA <- 15
+      if (is.null(kprimeHyperB)) kprimeHyperB <- 1
+    } else {
+      if (is.null(kprimeHyperA)) kprimeHyperA <- 1
+      if (is.null(kprimeHyperB)) kprimeHyperB <- 1
+    }
+  }
+  if (!is.numeric(kprimeHyperA) || length(kprimeHyperA) != 1L ||
+      kprimeHyperA <= 0) {
+    cli::cli_abort("{.arg kprimeHyperA} must be a positive scalar.")
+  }
+  if (!is.numeric(kprimeHyperB) || length(kprimeHyperB) != 1L ||
+      kprimeHyperB <= 0) {
+    cli::cli_abort("{.arg kprimeHyperB} must be a positive scalar.")
   }
 
   # M-052: validate Het parameters

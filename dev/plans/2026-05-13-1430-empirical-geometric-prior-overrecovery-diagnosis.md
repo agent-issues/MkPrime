@@ -2,8 +2,28 @@
 
 ## Status
 
-Diagnosed; **Fix B chosen** as the first thing to try. No code changes
-yet on `feature/empirical-geometric-prior` beyond housekeeping.
+Diagnosed; **Fix B implemented and committed** with `Beta(15, 1)` as the
+default empirical-Bayes hyperprior on `p` for `kPrimePrior =
+"empirical_geometric"`. Smoke test on the original 8-tip, 65-char,
+truth-Σu = 50 dataset now lands at Σu posterior ≈ 67 (134 % of truth, in
+the target [25, 75]); pre-fix was 172.6 (345 %).
+
+A second smoke (truth Σu = 0, 7-tip / 60 binary chars) revealed a
+**structural limit** of Fix B: at the prior asymptote `p → 1` the
+per-character k' = kObs → kObs + 1 prior log-ratio approaches
+`log(P_emp(kObs + 1) / P_emp(kObs))` ≈ −1.14 for kObs = 2, while the
+relabel correction at the same step contributes +1.10. The two nearly
+cancel, so under truth = 0 the posterior settles at Σu ≈ 28–32 (≈ 0.5
+unseen states per character) regardless of how tight the Beta on `p`
+is — verified by sweeping `(α, 1)` up to (200, 1). Pre-fix on the same
+dataset gives Σu ≈ 42 (Beta(1, 1)), so Fix B does provide a partial
+counteraction (~25 % reduction), but cannot drive Σu close to zero
+under truth = 0 alone.
+
+Driving Σu below ~5 under truth = 0 would require either Fix A on top
+of Fix B (only helps for kObs > 2 characters, since Z_kObs(p) = 1 when
+kObs = 2 — the support is unrestricted), or reconsideration of the
+relabel correction itself.
 
 ## Symptom
 
