@@ -17,7 +17,7 @@ produce results an agent needs to retrieve later.
 
 | Submitted | Type | Job ID | Branch | Description | Retrieve how | Owner |
 |-----------|------|--------|--------|-------------|-------------|-------|
-| 2026-03-31 | SLURM | 16632292 | main | M-131: Warmup stabilisation validation (8 datasets × 4 seeds, 200k iter each). Results in `/nobackup/pjjg18/m131/results/`. | `ssh::scp_download(session, "/nobackup/pjjg18/m131/results/", "inst/hamilton/")` | B |
+| ~~2026-03-31~~ | ~~SLURM~~ | ~~16632292~~ | ~~main~~ | ~~M-131: Warmup stabilisation validation (8 datasets × 4 seeds, 200k iter each).~~ **CLOSED 2026-05-13:** all 32 array tasks COMPLETED with ExitCode 0:0 but ran 4–11 s each; `/nobackup/pjjg18/m131/results/` is empty. The job exited cleanly without producing output — likely an early-exit guard in the R script. Nothing to retrieve. If M-131 validation is still wanted, resubmit (see [inst/hamilton/m131-warmup-validation.slurm](inst/hamilton/m131-warmup-validation.slurm)). | — | B |
 
 <!-- Example row:
 | 2026-03-29 | SLURM | 16622483 | main | Benchmark: Mk' vs RevBayes on Sun2018 (5 seeds) | `scp hamilton:scratch/mkp_bench/*.csv benchmark/` | E |
