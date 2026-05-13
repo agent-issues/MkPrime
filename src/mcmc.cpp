@@ -31,7 +31,9 @@ double cpp_log_likelihood_ecology(
     const IntegerVector& kPrime,
     double rateLoss, double rateLogSd, double rateNeo,
     NumericVector phi,
-    IntegerMatrix zMatrix);
+    IntegerMatrix zMatrix,
+    double pi0,
+    NumericVector theta);
 
 // Forward declarations for Phase 3f Gibbs sweep helpers (mcmc_ecology.cpp).
 double per_char_log_lik_ecology(
@@ -44,7 +46,9 @@ double per_char_log_lik_ecology(
     const NumericVector& rates,
     NumericVector phi,
     IntegerVector zRow,
-    const NumericMatrix& wEdge);
+    const NumericMatrix& wEdge,
+    int refEcology,
+    const std::vector<double>& gammaE);
 
 void recompute_w_edge(
     const McmcData& data,
@@ -742,7 +746,7 @@ static double compute_full_loglik_at(
     return cpp_log_likelihood_ecology(
       data, parent, child, edgeLen, state.kPrime,
       state.rateLoss, state.rateLogSd, state.rateNeo,
-      state.phi, state.zMatrix);
+      state.phi, state.zMatrix, state.pi0, state.theta);
   }
   return cpp_log_likelihood(
     data, parent, child, edgeLen,
@@ -3939,7 +3943,11 @@ static bool gibbs_z_sweep_impl(McmcData* data, McmcState* state, double beta) {
 
   int nChar = data->nChar;
   int kEco  = data->ecology.kEcology;
+  int refE  = data->ecology.refEcology;
+  int mode  = data->magnitudeMode;
   int nEdge = state->relBrLengths.size();
+  int zCols = kEco - 1;
+  if (zCols <= 0) return false;
 
   // Absolute edge lengths (relBr × treeLength)
   NumericVector edgeLen(nEdge);
@@ -3954,29 +3962,45 @@ static bool gibbs_z_sweep_impl(McmcData* data, McmcState* state, double beta) {
     ? cpp_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ)
     : NumericVector(1, 1.0);
 
-  IntegerVector zRow(kEco);
-  double log_pi0   = std::log(state->pi0);
-  double log_slab  = std::log1p(-state->pi0) - std::log(2.0);
+  // v2: gammaE depends on theta and pi0; constant across z choices for fixed cell.
+  std::vector<double> gammaE(kEco, 1.0);
+  for (int s = 0; s < kEco; ++s) {
+    if (s == refE) { gammaE[s] = 1.0; continue; }
+    int j = (s < refE) ? s : (s - 1);
+    double phi_s = (mode == 0) ? state->phi[0] : state->phi[s];
+    double th = (j < state->theta.size()) ? state->theta[j] : 0.5;
+    gammaE[s] = state->pi0 + (1.0 - state->pi0) *
+                (th * phi_s + (1.0 - th) / phi_s);
+  }
+
+  IntegerVector zRow(zCols);
+  double log_pi0    = std::log(state->pi0);
+  double log_1m_pi0 = std::log1p(-state->pi0);
 
   for (int c = 0; c < nChar; ++c) {
     int pi = data->charToPartition[c];
     if (pi < 0) continue;
     int kp = (data->parts[pi].type == 1) ? state->kPrime[c] : 2;
 
-    for (int s = 0; s < kEco; ++s) zRow[s] = state->zMatrix(c, s);
+    for (int j = 0; j < zCols; ++j) zRow[j] = state->zMatrix(c, j);
 
-    for (int s = 0; s < kEco; ++s) {
+    for (int j = 0; j < zCols; ++j) {
+      double th = state->theta[j];
+      double log_none = log_pi0;
+      double log_enc  = log_1m_pi0 + std::log(th);
+      double log_disc = log_1m_pi0 + std::log1p(-th);
+
       double ll[3];
       for (int v = 0; v < 3; ++v) {
-        zRow[s] = v;
+        zRow[j] = v;
         ll[v] = per_char_log_lik_ecology(
           *data, c, state->parent, state->child, edgeLen,
           kp, state->rateLoss, state->rateNeo,
-          rates, state->phi, zRow, wEdge);
+          rates, state->phi, zRow, wEdge,
+          refE, gammaE);
       }
-      double lp[3] = { log_pi0, log_slab, log_slab };
+      double lp[3] = { log_none, log_enc, log_disc };
 
-      // Sample categorical from softmax(lp_v + beta * ll_v).
       double logits[3];
       double mx = R_NegInf;
       for (int v = 0; v < 3; ++v) {
@@ -3984,8 +4008,7 @@ static bool gibbs_z_sweep_impl(McmcData* data, McmcState* state, double beta) {
         if (logits[v] > mx) mx = logits[v];
       }
       if (!std::isfinite(mx)) {
-        // All candidate values are -Inf — leave the cell unchanged.
-        zRow[s] = state->zMatrix(c, s);
+        zRow[j] = state->zMatrix(c, j);
         continue;
       }
       double sumExp = 0.0;
@@ -4001,8 +4024,8 @@ static bool gibbs_z_sweep_impl(McmcData* data, McmcState* state, double beta) {
         acc += pCum[v];
         if (u < acc) { chosen = v; break; }
       }
-      zRow[s] = chosen;
-      state->zMatrix(c, s) = chosen;
+      zRow[j] = chosen;
+      state->zMatrix(c, j) = chosen;
     }
   }
 
@@ -4010,7 +4033,7 @@ static bool gibbs_z_sweep_impl(McmcData* data, McmcState* state, double beta) {
   state->logLik = cpp_log_likelihood_ecology(
     *data, state->parent, state->child, edgeLen,
     state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
-    state->phi, state->zMatrix);
+    state->phi, state->zMatrix, state->pi0, state->theta);
   state->logPrior = cpp_log_prior(
     *data, state->treeLength, state->relBrLengths,
     state->rateLoss, state->rateLogSd, state->rateNeo,
@@ -4490,7 +4513,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     case 32: { // gibbs_z_sweep (ecology) — Gibbs over z_{c, s}
       return gibbs_z_sweep_impl(data, state, beta);
     }
-    case 31: { // logit-Bactrian on pi0 (ecology) — prior-only move
+    case 31: { // logit-Bactrian on pi0 (ecology) — v2: full MH with likelihood
       if (!data->ecologyAware) return false;
       double pi0Old = state->pi0;
       if (pi0Old <= 0.0 || pi0Old >= 1.0) return false;
@@ -4504,26 +4527,85 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         double e = std::exp(logitNew);
         pi0New = e / (1.0 + e);
       }
-      // Guard against floating-point boundary hits (sigmoid never returns
-      // exact 0 or 1 in IEEE doubles for finite input, but keep the guard).
       if (!(pi0New > 0.0 && pi0New < 1.0)) return false;
       state->pi0 = pi0New;
-      // Jacobian of the inverse-logit transform: d pi0 / d logit = pi0(1-pi0).
       double logHast = std::log(pi0New * (1.0 - pi0New)) -
                        std::log(pi0Old * (1.0 - pi0Old));
+      // v2: pi0 affects gamma_e and hence the likelihood. Full MH ratio.
+      int nEdge = state->relBrLengths.size();
+      NumericVector edgeLen(nEdge);
+      for (int i = 0; i < nEdge; ++i)
+        edgeLen[i] = state->treeLength * state->relBrLengths[i];
+      double newLL = cpp_log_likelihood_ecology(
+        *data, state->parent, state->child, edgeLen,
+        state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
+        state->phi, state->zMatrix, state->pi0, state->theta);
       double newLP = cpp_log_prior(
         *data, state->treeLength, state->relBrLengths,
         state->rateLoss, state->rateLogSd, state->rateNeo,
         state->p, state->kPrime, state->betaScale,
         state->kprimeAlpha, state->kprimeBeta,
         &state->phi, state->pi0, &state->zMatrix);
-      if (!R_FINITE(newLP)) { state->pi0 = pi0Old; return false; }
-      double logAlpha = (newLP - state->logPrior) + logHast;
+      if (!R_FINITE(newLP) || !R_FINITE(newLL)) {
+        state->pi0 = pi0Old;
+        return false;
+      }
+      double logAlpha = (newLL - state->logLik) + (newLP - state->logPrior) + logHast;
       if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+        state->logLik = newLL;
         state->logPrior = newLP;
         return true;
       }
       state->pi0 = pi0Old;
+      return false;
+    }
+    case 33: { // logit-Bactrian on theta_e (ecology v2) — full MH
+      if (!data->ecologyAware) return false;
+      if (state->theta.size() == 0) return false;
+      int nT = state->theta.size();
+      int idx = (nT == 1) ? 0 : static_cast<int>(R::unif_rand() * nT);
+      if (idx >= nT) idx = nT - 1;
+      double thOld = state->theta[idx];
+      if (thOld <= 0.0 || thOld >= 1.0) return false;
+      double logitOld = std::log(thOld / (1.0 - thOld));
+      double logitNew = logitOld + scaleTuning * bactrian_perturbation();
+      double thNew;
+      if (logitNew >= 0.0) {
+        double e = std::exp(-logitNew);
+        thNew = 1.0 / (1.0 + e);
+      } else {
+        double e = std::exp(logitNew);
+        thNew = e / (1.0 + e);
+      }
+      if (!(thNew > 0.0 && thNew < 1.0)) return false;
+      state->theta[idx] = thNew;
+      double logHast = std::log(thNew * (1.0 - thNew)) -
+                       std::log(thOld * (1.0 - thOld));
+      int nEdge = state->relBrLengths.size();
+      NumericVector edgeLen(nEdge);
+      for (int i = 0; i < nEdge; ++i)
+        edgeLen[i] = state->treeLength * state->relBrLengths[i];
+      double newLL = cpp_log_likelihood_ecology(
+        *data, state->parent, state->child, edgeLen,
+        state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
+        state->phi, state->zMatrix, state->pi0, state->theta);
+      double newLP = cpp_log_prior(
+        *data, state->treeLength, state->relBrLengths,
+        state->rateLoss, state->rateLogSd, state->rateNeo,
+        state->p, state->kPrime, state->betaScale,
+        state->kprimeAlpha, state->kprimeBeta,
+        &state->phi, state->pi0, &state->zMatrix);
+      if (!R_FINITE(newLP) || !R_FINITE(newLL)) {
+        state->theta[idx] = thOld;
+        return false;
+      }
+      double logAlpha = (newLL - state->logLik) + (newLP - state->logPrior) + logHast;
+      if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+        state->logLik = newLL;
+        state->logPrior = newLP;
+        return true;
+      }
+      state->theta[idx] = thOld;
       return false;
     }
     default:
@@ -4753,7 +4835,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       newLogLik = cpp_log_likelihood_ecology(*data, evalParent, evalChild,
         propEdgeLen, state->kPrime,
         state->rateLoss, state->rateLogSd, state->rateNeo,
-        state->phi, state->zMatrix);
+        state->phi, state->zMatrix, state->pi0, state->theta);
     } else {
       newLogLik = cpp_log_likelihood(*data, evalParent, evalChild,
         propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,

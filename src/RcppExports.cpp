@@ -439,8 +439,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // PruningMknEcology
-double PruningMknEcology(IntegerVector parent, IntegerVector child, NumericVector edgeLen, IntegerMatrix tipStates, double rateLoss, NumericVector rootFreqs, NumericVector rateMultipliers, NumericMatrix wEdge, IntegerMatrix zMat, NumericVector phi, int mode);
-RcppExport SEXP _MkPrime_PruningMknEcology(SEXP parentSEXP, SEXP childSEXP, SEXP edgeLenSEXP, SEXP tipStatesSEXP, SEXP rateLossSEXP, SEXP rootFreqsSEXP, SEXP rateMultipliersSEXP, SEXP wEdgeSEXP, SEXP zMatSEXP, SEXP phiSEXP, SEXP modeSEXP) {
+double PruningMknEcology(IntegerVector parent, IntegerVector child, NumericVector edgeLen, IntegerMatrix tipStates, double rateLoss, NumericVector rootFreqs, NumericVector rateMultipliers, NumericMatrix wEdge, IntegerMatrix zMat, NumericVector phi, int mode, int refEcology, Rcpp::Nullable<Rcpp::NumericVector> theta, double pi0);
+RcppExport SEXP _MkPrime_PruningMknEcology(SEXP parentSEXP, SEXP childSEXP, SEXP edgeLenSEXP, SEXP tipStatesSEXP, SEXP rateLossSEXP, SEXP rootFreqsSEXP, SEXP rateMultipliersSEXP, SEXP wEdgeSEXP, SEXP zMatSEXP, SEXP phiSEXP, SEXP modeSEXP, SEXP refEcologySEXP, SEXP thetaSEXP, SEXP pi0SEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -455,13 +455,16 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< IntegerMatrix >::type zMat(zMatSEXP);
     Rcpp::traits::input_parameter< NumericVector >::type phi(phiSEXP);
     Rcpp::traits::input_parameter< int >::type mode(modeSEXP);
-    rcpp_result_gen = Rcpp::wrap(PruningMknEcology(parent, child, edgeLen, tipStates, rateLoss, rootFreqs, rateMultipliers, wEdge, zMat, phi, mode));
+    Rcpp::traits::input_parameter< int >::type refEcology(refEcologySEXP);
+    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::NumericVector> >::type theta(thetaSEXP);
+    Rcpp::traits::input_parameter< double >::type pi0(pi0SEXP);
+    rcpp_result_gen = Rcpp::wrap(PruningMknEcology(parent, child, edgeLen, tipStates, rateLoss, rootFreqs, rateMultipliers, wEdge, zMat, phi, mode, refEcology, theta, pi0));
     return rcpp_result_gen;
 END_RCPP
 }
 // PruningJcEcology
-double PruningJcEcology(IntegerVector parent, IntegerVector child, NumericVector edgeLen, IntegerMatrix tipStates, int kStates, NumericVector rootFreqs, NumericVector rateMultipliers, NumericMatrix wEdge, IntegerMatrix zMat, NumericVector phi, int mode);
-RcppExport SEXP _MkPrime_PruningJcEcology(SEXP parentSEXP, SEXP childSEXP, SEXP edgeLenSEXP, SEXP tipStatesSEXP, SEXP kStatesSEXP, SEXP rootFreqsSEXP, SEXP rateMultipliersSEXP, SEXP wEdgeSEXP, SEXP zMatSEXP, SEXP phiSEXP, SEXP modeSEXP) {
+double PruningJcEcology(IntegerVector parent, IntegerVector child, NumericVector edgeLen, IntegerMatrix tipStates, int kStates, NumericVector rootFreqs, NumericVector rateMultipliers, NumericMatrix wEdge, IntegerMatrix zMat, NumericVector phi, int mode, int refEcology, Rcpp::Nullable<Rcpp::NumericVector> theta, double pi0);
+RcppExport SEXP _MkPrime_PruningJcEcology(SEXP parentSEXP, SEXP childSEXP, SEXP edgeLenSEXP, SEXP tipStatesSEXP, SEXP kStatesSEXP, SEXP rootFreqsSEXP, SEXP rateMultipliersSEXP, SEXP wEdgeSEXP, SEXP zMatSEXP, SEXP phiSEXP, SEXP modeSEXP, SEXP refEcologySEXP, SEXP thetaSEXP, SEXP pi0SEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -476,13 +479,16 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< IntegerMatrix >::type zMat(zMatSEXP);
     Rcpp::traits::input_parameter< NumericVector >::type phi(phiSEXP);
     Rcpp::traits::input_parameter< int >::type mode(modeSEXP);
-    rcpp_result_gen = Rcpp::wrap(PruningJcEcology(parent, child, edgeLen, tipStates, kStates, rootFreqs, rateMultipliers, wEdge, zMat, phi, mode));
+    Rcpp::traits::input_parameter< int >::type refEcology(refEcologySEXP);
+    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::NumericVector> >::type theta(thetaSEXP);
+    Rcpp::traits::input_parameter< double >::type pi0(pi0SEXP);
+    rcpp_result_gen = Rcpp::wrap(PruningJcEcology(parent, child, edgeLen, tipStates, kStates, rootFreqs, rateMultipliers, wEdge, zMat, phi, mode, refEcology, theta, pi0));
     return rcpp_result_gen;
 END_RCPP
 }
 // CppLogLikelihoodEcology
-double CppLogLikelihoodEcology(SEXP dataPtr, IntegerVector parent, IntegerVector child, NumericVector edgeLen, IntegerVector kPrime, double rateLoss, double rateLogSd, double rateNeo, NumericVector phi, IntegerMatrix zMatrix);
-RcppExport SEXP _MkPrime_CppLogLikelihoodEcology(SEXP dataPtrSEXP, SEXP parentSEXP, SEXP childSEXP, SEXP edgeLenSEXP, SEXP kPrimeSEXP, SEXP rateLossSEXP, SEXP rateLogSdSEXP, SEXP rateNeoSEXP, SEXP phiSEXP, SEXP zMatrixSEXP) {
+double CppLogLikelihoodEcology(SEXP dataPtr, IntegerVector parent, IntegerVector child, NumericVector edgeLen, IntegerVector kPrime, double rateLoss, double rateLogSd, double rateNeo, NumericVector phi, IntegerMatrix zMatrix, double pi0, Rcpp::Nullable<Rcpp::NumericVector> theta);
+RcppExport SEXP _MkPrime_CppLogLikelihoodEcology(SEXP dataPtrSEXP, SEXP parentSEXP, SEXP childSEXP, SEXP edgeLenSEXP, SEXP kPrimeSEXP, SEXP rateLossSEXP, SEXP rateLogSdSEXP, SEXP rateNeoSEXP, SEXP phiSEXP, SEXP zMatrixSEXP, SEXP pi0SEXP, SEXP thetaSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -496,13 +502,15 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< double >::type rateNeo(rateNeoSEXP);
     Rcpp::traits::input_parameter< NumericVector >::type phi(phiSEXP);
     Rcpp::traits::input_parameter< IntegerMatrix >::type zMatrix(zMatrixSEXP);
-    rcpp_result_gen = Rcpp::wrap(CppLogLikelihoodEcology(dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, phi, zMatrix));
+    Rcpp::traits::input_parameter< double >::type pi0(pi0SEXP);
+    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::NumericVector> >::type theta(thetaSEXP);
+    rcpp_result_gen = Rcpp::wrap(CppLogLikelihoodEcology(dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, phi, zMatrix, pi0, theta));
     return rcpp_result_gen;
 END_RCPP
 }
 // CppLogLikelihoodEcologyPerChar
-NumericVector CppLogLikelihoodEcologyPerChar(SEXP dataPtr, IntegerVector parent, IntegerVector child, NumericVector edgeLen, IntegerVector kPrime, double rateLoss, double rateLogSd, double rateNeo, NumericVector phi, IntegerMatrix zMatrix);
-RcppExport SEXP _MkPrime_CppLogLikelihoodEcologyPerChar(SEXP dataPtrSEXP, SEXP parentSEXP, SEXP childSEXP, SEXP edgeLenSEXP, SEXP kPrimeSEXP, SEXP rateLossSEXP, SEXP rateLogSdSEXP, SEXP rateNeoSEXP, SEXP phiSEXP, SEXP zMatrixSEXP) {
+NumericVector CppLogLikelihoodEcologyPerChar(SEXP dataPtr, IntegerVector parent, IntegerVector child, NumericVector edgeLen, IntegerVector kPrime, double rateLoss, double rateLogSd, double rateNeo, NumericVector phi, IntegerMatrix zMatrix, double pi0, Rcpp::Nullable<Rcpp::NumericVector> theta);
+RcppExport SEXP _MkPrime_CppLogLikelihoodEcologyPerChar(SEXP dataPtrSEXP, SEXP parentSEXP, SEXP childSEXP, SEXP edgeLenSEXP, SEXP kPrimeSEXP, SEXP rateLossSEXP, SEXP rateLogSdSEXP, SEXP rateNeoSEXP, SEXP phiSEXP, SEXP zMatrixSEXP, SEXP pi0SEXP, SEXP thetaSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -516,7 +524,9 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< double >::type rateNeo(rateNeoSEXP);
     Rcpp::traits::input_parameter< NumericVector >::type phi(phiSEXP);
     Rcpp::traits::input_parameter< IntegerMatrix >::type zMatrix(zMatrixSEXP);
-    rcpp_result_gen = Rcpp::wrap(CppLogLikelihoodEcologyPerChar(dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, phi, zMatrix));
+    Rcpp::traits::input_parameter< double >::type pi0(pi0SEXP);
+    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::NumericVector> >::type theta(thetaSEXP);
+    rcpp_result_gen = Rcpp::wrap(CppLogLikelihoodEcologyPerChar(dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, phi, zMatrix, pi0, theta));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -784,10 +794,10 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_validate_swap_partial_cl", (DL_FUNC) &_MkPrime_validate_swap_partial_cl, 3},
     {"_MkPrime_EcologyNodeMarginals", (DL_FUNC) &_MkPrime_EcologyNodeMarginals, 5},
     {"_MkPrime_EcologyEdgeWeights", (DL_FUNC) &_MkPrime_EcologyEdgeWeights, 3},
-    {"_MkPrime_PruningMknEcology", (DL_FUNC) &_MkPrime_PruningMknEcology, 11},
-    {"_MkPrime_PruningJcEcology", (DL_FUNC) &_MkPrime_PruningJcEcology, 11},
-    {"_MkPrime_CppLogLikelihoodEcology", (DL_FUNC) &_MkPrime_CppLogLikelihoodEcology, 10},
-    {"_MkPrime_CppLogLikelihoodEcologyPerChar", (DL_FUNC) &_MkPrime_CppLogLikelihoodEcologyPerChar, 10},
+    {"_MkPrime_PruningMknEcology", (DL_FUNC) &_MkPrime_PruningMknEcology, 14},
+    {"_MkPrime_PruningJcEcology", (DL_FUNC) &_MkPrime_PruningJcEcology, 14},
+    {"_MkPrime_CppLogLikelihoodEcology", (DL_FUNC) &_MkPrime_CppLogLikelihoodEcology, 12},
+    {"_MkPrime_CppLogLikelihoodEcologyPerChar", (DL_FUNC) &_MkPrime_CppLogLikelihoodEcologyPerChar, 12},
     {"_MkPrime_prepare_mcmc_data", (DL_FUNC) &_MkPrime_prepare_mcmc_data, 40},
     {"_MkPrime_set_branch_bins", (DL_FUNC) &_MkPrime_set_branch_bins, 2},
     {"_MkPrime_spr_proposal", (DL_FUNC) &_MkPrime_spr_proposal, 4},

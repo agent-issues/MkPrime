@@ -95,14 +95,19 @@ MkpLogLikelihood <- function(tree, mkd,
 # state-independent, so P(constant) = kStates * P(all tips in state 0).
 .ConstSiteProbJcEcology <- function(parent, child, edgeLen, nTip, kStates,
                                      rateMultipliers, wEdge,
-                                     zVec, phi, mode) {
+                                     zVec, phi, mode,
+                                     refEcology = 0L, theta = NULL,
+                                     pi0 = 0.5) {
   zMat1 <- matrix(as.integer(zVec), nrow = 1, byrow = FALSE)
   states0 <- matrix(0L, nrow = nTip, ncol = 1)
   rootFreqs <- rep(1 / kStates, kStates)
+  if (is.null(theta)) theta <- rep(0.5, max(0L, ncol(wEdge) - 1L))
   ll0 <- .PruningJcEcology(parent, child, edgeLen, states0,
                             as.integer(kStates), rootFreqs,
                             rateMultipliers,
-                            wEdge, zMat1, phi, as.integer(mode))
+                            wEdge, zMat1, phi, as.integer(mode),
+                            as.integer(refEcology), as.numeric(theta),
+                            as.numeric(pi0))
   kStates * exp(ll0)
 }
 
@@ -111,17 +116,23 @@ MkpLogLikelihood <- function(tree, mkd,
 # The MkN P matrix is asymmetric, so P(all 0) != P(all 1); sum both.
 .ConstSiteProbMknEcology <- function(parent, child, edgeLen, nTip,
                                       rateLoss, rateMultipliers, wEdge,
-                                      zVec, phi, mode) {
+                                      zVec, phi, mode,
+                                      refEcology = 0L, theta = NULL,
+                                      pi0 = 0.5) {
   zMat1 <- matrix(as.integer(zVec), nrow = 1, byrow = FALSE)
   rootFreqs <- c(rateLoss / (1 + rateLoss), 1 / (1 + rateLoss))
   states0 <- matrix(0L, nrow = nTip, ncol = 1)
   states1 <- matrix(1L, nrow = nTip, ncol = 1)
+  if (is.null(theta)) theta <- rep(0.5, max(0L, ncol(wEdge) - 1L))
+  refE <- as.integer(refEcology); th <- as.numeric(theta); pi <- as.numeric(pi0)
   ll0 <- .PruningMknEcology(parent, child, edgeLen, states0,
                              rateLoss, rootFreqs, rateMultipliers,
-                             wEdge, zMat1, phi, as.integer(mode))
+                             wEdge, zMat1, phi, as.integer(mode),
+                             refE, th, pi)
   ll1 <- .PruningMknEcology(parent, child, edgeLen, states1,
                              rateLoss, rootFreqs, rateMultipliers,
-                             wEdge, zMat1, phi, as.integer(mode))
+                             wEdge, zMat1, phi, as.integer(mode),
+                             refE, th, pi)
   exp(ll0) + exp(ll1)
 }
 
@@ -130,8 +141,17 @@ MkpLogLikelihood <- function(tree, mkd,
                                        rate_loss, rate_log_sd,
                                        nCat, rate_neo, relabel,
                                        phi, zMat, magnitudeMode = "global",
-                                       coding = "none") {
+                                       coding = "none",
+                                       refEcology = NULL,
+                                       theta = NULL,
+                                       pi0 = 0.5) {
   coding <- match.arg(coding, c("none", "variable"))
+  # v2 defaults: use mkd$refEcology if not supplied; theta = 0.5 vector.
+  if (is.null(refEcology)) refEcology <- mkd$refEcology %||% 0L
+  refEcology <- as.integer(refEcology)
+  if (is.null(theta)) theta <- rep(0.5, max(0L, mkd$kEcology - 1L))
+  theta <- as.numeric(theta)
+  pi0 <- as.numeric(pi0)
   # "informative" coding (singleton-site exclusion) is a follow-up.
   if (is.null(mkd$ecology) || is.null(mkd$kEcology)) {
     cli::cli_abort(
@@ -166,13 +186,15 @@ MkpLogLikelihood <- function(tree, mkd,
       rootFreqs <- as.numeric(mkn_stationary_freqs(rate_loss))
       ll <- .PruningMknEcology(parent, child, neoEl, tipStates,
                                 rate_loss, rootFreqs, rates,
-                                wEdge, zPart, phi, modeInt)
+                                wEdge, zPart, phi, modeInt,
+                                refEcology, theta, pi0)
       if (coding == "variable") {
         for (c in seq_len(part$nChar)) {
           P_const <- .ConstSiteProbMknEcology(
             parent, child, neoEl, nTip,
             rate_loss, rates, wEdge,
-            zPart[c, ], phi, modeInt
+            zPart[c, ], phi, modeInt,
+            refEcology, theta, pi0
           )
           ll <- ll - log(1 - P_const)
         }
@@ -182,12 +204,14 @@ MkpLogLikelihood <- function(tree, mkd,
       rootFreqs <- rep(1.0 / kStates, kStates)
       ll <- .PruningJcEcology(parent, child, edgeLength, tipStates,
                                kStates, rootFreqs, rates,
-                               wEdge, zPart, phi, modeInt)
+                               wEdge, zPart, phi, modeInt,
+                               refEcology, theta, pi0)
       if (coding == "variable") {
         for (c in seq_len(part$nChar)) {
           P_const <- .ConstSiteProbJcEcology(
             parent, child, edgeLength, nTip, kStates,
-            rates, wEdge, zPart[c, ], phi, modeInt
+            rates, wEdge, zPart[c, ], phi, modeInt,
+            refEcology, theta, pi0
           )
           ll <- ll - log(1 - P_const)
         }
@@ -203,12 +227,14 @@ MkpLogLikelihood <- function(tree, mkd,
         storage.mode(zSub) <- "integer"
         subLl <- .PruningJcEcology(parent, child, edgeLength, subStates,
                                     kp, rootFreqs, rates,
-                                    wEdge, zSub, phi, modeInt)
+                                    wEdge, zSub, phi, modeInt,
+                                    refEcology, theta, pi0)
         if (coding == "variable") {
           for (c in seq_along(cols)) {
             P_const <- .ConstSiteProbJcEcology(
               parent, child, edgeLength, nTip, kp,
-              rates, wEdge, zSub[c, ], phi, modeInt
+              rates, wEdge, zSub[c, ], phi, modeInt,
+              refEcology, theta, pi0
             )
             subLl <- subLl - log(1 - P_const)
           }

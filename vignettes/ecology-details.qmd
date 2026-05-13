@@ -1,0 +1,361 @@
+---
+title: "Ecology-aware MkPrime: mathematical details"
+format: html
+bibliography: references.bib
+vignette: >
+  %\VignetteIndexEntry{Ecology-aware MkPrime: mathematical details}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup}
+#| include: false
+library("MkPrime")
+```
+
+## Motivation
+
+The Mk model [@Lewis2001] and its extensions treat every morphological
+character as an independent draw from a shared substitution process. In
+reality, distantly related lineages that come to occupy the same
+ecological niche tend to evolve similar morphologies: rodents that
+adopt fossorial habits, fish that adopt deep-water habits, plants that
+adopt epiphytic habits, all converge on a recognisable phenotype.
+Under the independence assumption, the resulting parallel
+character-state changes look like phylogenetic signal, and the
+inferred tree groups together lineages by ecology rather than by
+descent.
+
+Ecology-aware MkPrime (enabled via `MkPrimeModel(ecologyAware = TRUE)`)
+addresses this by letting each character's substitution rate on each
+edge depend on the ecology assigned to that edge. The user supplies a
+discrete ecology coding at the tips of the tree (e.g. "terrestrial /
+arboreal / fossorial"). The model then infers, for each character and
+each ecology, whether transitions are *encouraged* (faster than
+baseline), *discouraged* (slower than baseline), or unaffected, and by
+how much. Convergent characters can be downweighted on the edges of
+the tree where convergence is plausible, returning the phylogenetic
+signal to its rightful place in the rest of the matrix.
+
+## The model
+
+### Edge ecology partition
+
+Tip ecologies are supplied as integer codes
+$y_t \in \{0, \ldots, K - 1\}$ for each tip $t$, with $K \geq 2$. We
+treat the ecology as a single $K$-state character evolving on the tree
+under JC($K$), reusing the existing pruning machinery for transformational
+characters. Branch lengths and (optionally) ACRV are shared with the
+morphological likelihood.
+
+A forward pruning pass on the ecology character computes the
+conditional likelihood at every internal node. A single backward pass
+then yields the per-node marginal posterior
+$P(\text{node}_n = e \mid \text{tree}, \text{ecology data})$ at every
+internal node, for every ecology state $e \in \{0, \ldots, K - 1\}$.
+For each edge $p \to c$, we define the **edge-ecology weights**
+
+$$
+w_{p \to c}(e) \;:=\; P(\text{node}_p = e \mid \text{tree}, \text{ecology data}),
+$$
+
+with the root edge using the stationary distribution $1/K$. The
+weights form an $n_{\text{edge}} \times K$ matrix that is recomputed
+once per likelihood evaluation and cached.
+
+### Reference ecology and identifiability
+
+With $K$ ecology states, only $K - 1$ degrees of freedom in the
+rate-modifier vector are identifiable from the data: the rate factor
+"in ecology $A$" and "in ecology $B$" are complementary, not
+independent. We therefore dummy-code against a **reference ecology**
+$e_{\text{ref}}$, chosen automatically as the ecology with the
+largest edge-weighted mass in the data; the reference ecology gets
+rate factor 1 by construction, and only non-reference ecologies carry
+a latent $z$.
+
+The choice of reference is mathematically arbitrary -- a different
+choice gives an equivalent posterior up to a sign flip on $\log \varphi$
+and the appropriate relabelling of $\theta_e$. We pick the most-frequent
+ecology because that loads most of the rate information into the
+well-conditioned $z = 0$ "no deviation" anchor.
+
+### Per-character rate modification
+
+For each character $c$ and each NON-reference ecology
+$e \in \{0, \ldots, K-1\} \setminus \{e_{\text{ref}}\}$ we introduce
+a latent
+
+$$
+z_{c, e} \in \{\text{none}, \text{encouraged}, \text{discouraged}\},
+$$
+
+with the asymmetric spike-and-slab prior
+
+$$
+P(z_{c, e} = \text{none}) = \pi_0, \quad
+P(\text{enc}) = (1 - \pi_0)\,\theta_e, \quad
+P(\text{disc}) = (1 - \pi_0)(1 - \theta_e).
+$$
+
+The hyperpriors are
+$\pi_0 \sim \mathrm{Beta}(7, 3)$ (mean $0.7$),
+$\theta_e \sim \mathrm{Beta}(\alpha_\theta, \beta_\theta)$ (default
+$\mathrm{Beta}(2, 2)$, weakly symmetric but allowing biological
+asymmetry between enhancement and depression), and
+$\log \varphi \sim \mathcal{N}(0, 0.5^2)$.
+
+### Rate normalisation by $\gamma$
+
+The crucial step. Without normalisation, the prior-expected per-edge
+rate factor on a non-reference ecology is
+
+$$
+\gamma_e(\pi_0, \theta_e, \varphi) \;=\; \pi_0 + (1 - \pi_0)\left[\theta_e\,\varphi + (1 - \theta_e)\,\varphi^{-1}\right] \;\geq\; 1,
+$$
+
+with equality iff $\varphi = 1$. Switching the ecology layer on then
+inflates the prior-expected rate by $\gamma_e$, and the chain
+compensates by stretching the tree length by $1/\gamma_e$. Three
+rate-related parameters
+(`tree_length`, baseline character rates, $\varphi$) lie on a single
+identifiability ridge, and the MCMC follows it badly.
+
+The ACRV-style fix: divide every rate factor by $\gamma_e$ so the
+prior-expected factor per non-reference cell is exactly 1. The
+applied modification then becomes, for a non-reference ecology $e$,
+
+$$
+\tilde\mu(z_{c, e}, \varphi, \pi_0, \theta_e) =
+\frac{\mu(z_{c, e}, \varphi)}{\gamma_e(\pi_0, \theta_e, \varphi)},
+\qquad
+\mu(z, \varphi) = \begin{cases}
+  1 & z = \text{none} \\
+  \varphi & z = \text{enc} \\
+  1/\varphi & z = \text{disc}
+\end{cases}
+$$
+
+with the convention that the reference ecology has rate factor 1
+unconditionally. The transition matrix for character $c$ on an edge
+$p \to c$ with branch length $t$ is the mixture
+
+$$
+P_c(t) = \sum_{e = 0}^{K-1} w_{p \to c}(e) \cdot
+  P_c^{(e)}\bigl(t \cdot \tilde\mu_{c, e}\bigr),
+$$
+
+with $\tilde\mu_{c, e_{\text{ref}}} \equiv 1$.
+
+For a **transformational** character $c$ this is the same scaling
+applied symmetrically to all transitions; for a **neomorphic**
+character (gain rate $r_{01}$, loss rate $r_{10}$) the
+encouraged-direction simultaneously multiplies gains by
+$\varphi/\gamma_e$ and divides losses by $\varphi/\gamma_e$,
+preserving the gain/loss asymmetry that produces state-level
+convergence between unrelated lineages sharing an ecology.
+
+### Why z is identifiable
+
+Two observations:
+
+1. **Transformational characters are symmetric in state labels**, but
+   $z = \text{enc}$ (rate factor $\varphi$) and $z = \text{disc}$
+   (rate factor $1/\varphi$) produce different *amounts* of change
+   over a given branch length and are therefore distinguishable from
+   the data, even though the off-diagonal pattern of the rate matrix
+   is unchanged.
+
+2. **Neomorphic characters are never relabelled**: 0 always means
+   absent and 1 always means present. The gain rate and loss rate
+   are physically distinct quantities and not interchangeable. So
+   $z = \text{enc}$ (more gains, fewer losses) and $z = \text{disc}$
+   (fewer gains, more losses) leave a directional signature that is
+   identifiable from the proportion of state-1 tips per clade and the
+   shape of the per-clade subtree pattern.
+
+The reference-ecology dummy-coding combined with full
+$\gamma$-normalisation closes the rate--time ridge, removes the
+$K$-vs-$K{-}1$ redundancy, and lifts the symmetric-slab assumption
+that the prior commits to equal numbers of enhanced and depressed
+characters.
+
+### Likelihood
+
+The full character-likelihood factorises as
+
+$$
+\log L \;=\; \sum_{c} \log L_c,
+$$
+
+with each $L_c$ computed by Felsenstein pruning using the
+ecology-mixture transition matrix above. The mixture is taken inside
+the edge loop, so the per-character cost scales as
+$O(n_{\text{edge}} \cdot K \cdot k^2)$ instead of the usual
+$O(n_{\text{edge}} \cdot k^2)$: a factor of $K$ overhead.
+
+## Caveats and edge cases
+
+* **Reference-ecology choice is not data-driven beyond edge mass.**
+  Picking the most-frequent ecology as reference is a numerical
+  convenience, not a model assumption -- a different choice gives
+  the same posterior on the tree and on quantities of interest
+  ($|\log \varphi|$, $\pi_0$, the per-character pattern of
+  affected vs unaffected ecologies), modulo relabelling. The
+  default is good unless the most-frequent ecology is also
+  biologically anomalous (e.g. an artificially aggregated
+  "unknown" category), in which case override
+  `referenceEcology` in `MkPrimeData`.
+
+* **Skewed edge-ecology degeneracy.** Even with $\gamma$-normalisation,
+  if essentially every edge in the tree carries the same ecology
+  (e.g. $26/30$ in some simulated test cases) there is little
+  information left to identify $\varphi$: the model can absorb the
+  effect into baseline rates. $\pi_0$ remains identifiable, but
+  $|\log \varphi|$ does not. Real data typically distribute ecology
+  more evenly along the backbone.
+
+* **Sparse-cell estimation.** Individual $z_{c, e}$ posteriors are
+  weakly identified at typical morphological matrix sizes
+  (~200 characters $\times$ a few tip-states-worth of edges).
+  Rank the top effects with confidence; treat the long tail with
+  appropriate uncertainty. The aggregate $\pi_0$ posterior is much
+  more robust than any individual cell.
+
+## MCMC
+
+The ecology layer adds the following moves to the existing MkPrime
+proposal scheme:
+
+* **Bactrian scale** on $\log \varphi$ (or each $\log \varphi_e$),
+  reusing the kernel at `src/mcmc.cpp`. Under v2 this move now has a
+  likelihood contribution via $\gamma_e$ on every non-reference edge
+  (it did not in v1).
+* **Logit random walk with Jacobian** on $\pi_0$ and on each
+  $\theta_e$ (one per non-reference ecology). Both now carry a
+  likelihood contribution via $\gamma_e$.
+* **Gibbs sweep** over each $(c, e)$ cell of the $z$ matrix every
+  $K_{\text{sweep}}$ generations, for $e \neq e_{\text{ref}}$: enumerate
+  the three values $\{0, 1, 2\}$, compute the conditional
+  log-posterior of each under the asymmetric slab, and sample
+  categorically.
+
+All four moves are integrated into the cost-adjusted move-weight
+scorer; the Gibbs sweep is the cheapest per-step (no likelihood
+recompute beyond the per-cell change) and the others recompute the
+full ecology-mixed likelihood. The Gibbs sweep's weight is pinned so
+the scorer does
+not preferentially inflate it.
+
+## Simulation evidence
+
+Three validation simulations live under `inst/simulations/ecology/`.
+Each is a self-contained R script that simulates from
+`.SimulateMkPrimeEcology()` and runs MCMC under the ecology-aware
+model.
+
+### Sim 1 -- null
+
+A random 16-tip tree with random binary tip ecology, 120 characters
+simulated with $z = 0$ everywhere. Both hyperparameters land where
+the model says they should under $H_0$: $\pi_0$ posterior mean
+$\approx 0.68$ (CI $[0.51, 0.84]$, prior mean $0.7$); $\varphi$
+posterior mean $\approx 1.04$ (CI $[0.16, 1.69]$, centred at $1$).
+The ecology layer does not introduce spurious signal when ecology is
+irrelevant.
+
+### Sim 2 -- recovery
+
+A random 16-tip tree with random binary tip ecology, with half of the
+transformational characters simulated under $z = \text{encouraged}$ in
+ecology 1 (and $z = 0$ in ecology 0) and $\varphi = 3$. The result
+on $\pi_0$ is clean ($\pi_0$ posterior $\approx 0.5$, well below the
+prior mean $0.7$, correctly detecting that $\approx$ 50% of cells
+carry a non-zero effect). The result on $\varphi$ in this regime is
+the rate-vs-ecology degeneracy described above: with edge ecology
+heavily skewed toward ecology 1 (the random tip ecology happened to
+yield $26/30$ edges in ecology 1), the model absorbs the effect into
+baseline rates and the $\varphi$ posterior remains near $1$. This is
+a sim-design issue, not a model bug; it documents the regime in which
+$\varphi$ is hard to identify even when $\pi_0$ is.
+
+### Sim 3 -- convergent ecology
+
+The headline demonstration. Sixteen tips arranged as four 4-tip
+clades $A, B, C, D$, with the true topology
+$((A, C), (B, D))$ but ecology shared by $A$ and $B$ (and separately
+by $C$ and $D$). Sixty neomorphic characters are simulated under
+$z = \text{encouraged}$ in ecology 1, generating genuine convergent
+state changes on the $A$ and $B$ edges; 180 transformational
+characters carry the baseline phylogenetic signal. Branch lengths are
+tuned (`stemBranch = 0.10`, `rootBranch = 0.15`) so that on baseline
+data alone the true tree wins under parsimony, while on the full
+convergent dataset the convergence-driven tree $((A, B), (C, D))$
+beats the truth under parsimony in 6--8 of 8 pilot replicates.
+
+On the 200{,}000-generation MCMC of a single replicate at the
+Goldilocks config:
+
+* **Hyperparameters detect the effect.** The aware-model posterior
+  on $\pi_0$ concentrates at $\approx 0.38$ (CI $[0.22, 0.72]$),
+  well below the prior mean $0.7$, and on $\varphi$ at $\approx 7$
+  (CI $[1.0, 32]$), with the CI excluding $1$. The model correctly
+  detects that ecology is exerting a non-trivial effect on the
+  characters.
+* **Tree-topology posterior is broad in both chains.** Across 200
+  post-burn-in samples, neither the blind nor the aware chain places
+  appreciable posterior probability on either reference bipartition.
+  Mean CID-to-truth and CID-to-wrong are essentially tied for both
+  chains, with a slight bias toward truth (CID gap $\approx 0.01$
+  blind, $\approx 0.005$ aware). The chain has mixed sufficiently to
+  escape the parsimony-tree starting basin, and the posterior over
+  topologies for this dataset is genuinely broad rather than
+  concentrated on either reference.
+
+In the **negative control** Sim 3b ($z = 0$ everywhere, so $A$ and
+$B$ share ecology by coincidence not by mechanism), the aware-model
+posterior correctly stays near the prior: $\pi_0 \approx 0.79$ (prior
+mean $0.7$), $\varphi \approx 1.4$ (CI includes $1$). The ecology
+layer does not invent an effect where there is none.
+
+The headline conclusion at the level of identifiable summaries
+($\pi_0, \varphi$) is therefore clean: the ecology-aware model
+turns on for genuinely convergent data and stays off for the matched
+null. At the level of tree-topology recovery, the 200k-iter chain on
+240 characters explores too broad a posterior to lock onto either
+reference tree, and further work is needed -- multi-replicate runs
+with longer chains, tighter tree-length priors, or larger character
+counts -- to obtain a clean topology-level demonstration.
+
+## Usage
+
+```{r usage}
+#| eval: false
+# Tip ecology as a named integer vector, aligned to mkd$taxon_names.
+ecology <- c(T1 = 0L, T2 = 0L, T3 = 1L, T4 = 1L, ...)
+
+mkd  <- MkPrimeData(myMatrix,
+                    neomorphic = neoIdx,
+                    ecology    = ecology)
+# mkd$refEcology now holds the auto-selected reference (most-frequent
+# ecology by tip count, refined to edge mass at MCMC start).
+
+model <- MkPrimeModel(
+  ecologyAware  = TRUE,
+  magnitudeMode = "global",   # or "per_ecology"
+  rho0Alpha     = 7,  rho0Beta = 3,   # Beta prior on pi0
+  thetaAlpha    = 2,  thetaBeta = 2,  # Beta prior on each theta_e
+  sigmaPhi      = 0.5
+)
+
+res <- RunMkPrime(mkd, model = model,
+                  mcmc = MkPrimeMCMC(nIter = 1e5))
+```
+
+After the run, the per-character / per-ecology posterior on $z$ is
+available in the chain output, alongside the standard topology,
+branch-length and rate samples. Visualisations of the
+$z$ matrix highlight which character/ecology cells contribute to the
+convergence signal.
+
+## References

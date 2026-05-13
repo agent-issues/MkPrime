@@ -117,20 +117,20 @@ validate_swap_partial_cl <- function(dataPtr, statePtr, nodeA) {
     .Call(`_MkPrime_EcologyEdgeWeights`, nodeMarginals, parent, child)
 }
 
-.PruningMknEcology <- function(parent, child, edgeLen, tipStates, rateLoss, rootFreqs, rateMultipliers, wEdge, zMat, phi, mode) {
-    .Call(`_MkPrime_PruningMknEcology`, parent, child, edgeLen, tipStates, rateLoss, rootFreqs, rateMultipliers, wEdge, zMat, phi, mode)
+.PruningMknEcology <- function(parent, child, edgeLen, tipStates, rateLoss, rootFreqs, rateMultipliers, wEdge, zMat, phi, mode, refEcology = -1L, theta = NULL, pi0 = 0.0) {
+    .Call(`_MkPrime_PruningMknEcology`, parent, child, edgeLen, tipStates, rateLoss, rootFreqs, rateMultipliers, wEdge, zMat, phi, mode, refEcology, theta, pi0)
 }
 
-.PruningJcEcology <- function(parent, child, edgeLen, tipStates, kStates, rootFreqs, rateMultipliers, wEdge, zMat, phi, mode) {
-    .Call(`_MkPrime_PruningJcEcology`, parent, child, edgeLen, tipStates, kStates, rootFreqs, rateMultipliers, wEdge, zMat, phi, mode)
+.PruningJcEcology <- function(parent, child, edgeLen, tipStates, kStates, rootFreqs, rateMultipliers, wEdge, zMat, phi, mode, refEcology = -1L, theta = NULL, pi0 = 0.0) {
+    .Call(`_MkPrime_PruningJcEcology`, parent, child, edgeLen, tipStates, kStates, rootFreqs, rateMultipliers, wEdge, zMat, phi, mode, refEcology, theta, pi0)
 }
 
-.CppLogLikelihoodEcology <- function(dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, phi, zMatrix) {
-    .Call(`_MkPrime_CppLogLikelihoodEcology`, dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, phi, zMatrix)
+.CppLogLikelihoodEcology <- function(dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, phi, zMatrix, pi0 = 0.0, theta = NULL) {
+    .Call(`_MkPrime_CppLogLikelihoodEcology`, dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, phi, zMatrix, pi0, theta)
 }
 
-.CppLogLikelihoodEcologyPerChar <- function(dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, phi, zMatrix) {
-    .Call(`_MkPrime_CppLogLikelihoodEcologyPerChar`, dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, phi, zMatrix)
+.CppLogLikelihoodEcologyPerChar <- function(dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, phi, zMatrix, pi0 = 0.0, theta = NULL) {
+    .Call(`_MkPrime_CppLogLikelihoodEcologyPerChar`, dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, phi, zMatrix, pi0, theta)
 }
 
 prepare_mcmc_data <- function(partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, kPriorBetaGeometric = FALSE, qHeterogeneity = FALSE, nBetaCat = 4L, betaScaleShape = 1.0, betaScaleRate = 1.0, kPriorEmpiricalGeometric = FALSE, empLogBody = numericVector(), empBodyLastK = 1L, empTailStartK = 0L, empTailDecay = 0.0, empLogTailStartP = -1e308, ecologyAware = FALSE, ecologyTipStates = integerVector(), kEcology = 0L, magnitudeModeStr = "global", rho0Alpha = 7.0, rho0Beta = 3.0, sigmaPhi = 0.5, gibbsZEvery = 50L, thetaAlpha = 2.0, thetaBeta = 2.0) {

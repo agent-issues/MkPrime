@@ -1,0 +1,152 @@
+---
+title: "Rodent ecology case study"
+format: html
+bibliography: references.bib
+vignette: >
+  %\VignetteIndexEntry{Rodent ecology case study}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup}
+#| include: false
+library("MkPrime")
+```
+
+## Dataset
+
+Empirical demonstration of the ecology-aware MkPrime model on a 102-taxon,
+220-character rodent morphological matrix with a four-state ecology
+annotation (terrestrial, arboreal, semiaquatic, fossorial) coded at column
+220 and an extant/extinct flag at column 221. The analysis here uses
+only the 60 extant taxa, dropping the extant/extinct column from the
+character matrix entirely; this keeps the topology comparable to a
+neontological tree and lets the MCMC converge faster than on the full
+mixed-fossil set.
+
+```{r data, eval=FALSE}
+raw <- ape::read.nexus.data("mbank_X24848.nex")
+mat <- do.call(rbind, raw)
+extant <- mat[, 221] == "0"
+matExtant <- mat[extant, -221]  # drop extant flag
+mkd <- MkPrimeData(matExtant, ecologyCol = 220)
+```
+
+`MkPrimeData` automatically picks the most-frequent ecology state as the
+reference (`mkd$refEcology`), which under the v2 normalisation acts as
+the rate-1 baseline. The remaining three states each get their own
+column in the latent `z` matrix.
+
+## Model
+
+The v2 ecology-aware NT model (see `vignette("ecology-details")` for
+the math) with default hyperparameters:
+
+```{r model, eval=FALSE}
+model <- MkPrimeModel(
+  ecologyAware  = TRUE,
+  magnitudeMode = "global",
+  rho0Alpha     = 7,  rho0Beta = 3,   # E[pi0] = 0.7
+  thetaAlpha    = 2,  thetaBeta = 2,  # weakly symmetric slab
+  sigmaPhi      = 0.5,
+  kPrimePrior   = "geometric",
+  coding        = "variable"
+)
+```
+
+A single chain of 500{,}000 generations with parsimony starting tree
+and default tuning takes ~3 hours on a workstation; same on `hamilton-hpc`
+in ~1 hour using parallel chains.
+
+```{r run, eval=FALSE}
+res <- RunMkPrime(mkd, model = model,
+                  mcmc = MkPrimeMCMC(nIter = 5e5))
+```
+
+## Results: which characters are associated with which ecologies?
+
+The headline output is a per-(character, ecology) posterior on the
+latent $z_{c, e}$ for each non-reference ecology $e$ and each
+character $c$. From the MCMC samples we compute marginals
+
+$$
+P(z_{c, e} = \text{enc}), \quad P(z_{c, e} = \text{disc}), \quad
+P(z_{c, e} = \text{none}) = 1 - P(\text{enc}) - P(\text{disc}).
+$$
+
+For ranking, we use the unitless effect size
+
+$$
+\text{effect}_{c, e} = (1 - P(z = \text{none})) \cdot E[|\log \varphi|]
+$$
+
+which combines the *probability* the character is affected by ecology
+$e$ with the *magnitude* of the effect when present. The sign of
+$P(\text{enc}) - P(\text{disc})$ gives the direction.
+
+### Top-ranked characters
+
+```{r top, eval=FALSE}
+# (placeholder — populated from inst/scripts/rodent-ecology-v2-zPost.csv
+#  once the v2 model run completes)
+```
+
+### Effect-direction heatmap
+
+The figure below shows $P(z = \text{enc}) - P(z = \text{disc})$ for
+each (character, ecology) cell, with rows reordered by total
+effect size. Red = the character changes more frequently under that
+ecology than the reference; blue = less frequently. Saturation
+encodes posterior confidence.
+
+```{r heatmap, eval=FALSE}
+# (image() call from inst/scripts/rodent-ecology-v2.R)
+```
+
+### Magnitude posterior
+
+```{r phi, eval=FALSE}
+hist(res$samples[, "phi"], breaks = 50,
+     main = "Posterior on global magnitude phi",
+     xlab = "phi (1 = no effect)")
+abline(v = 1, col = "red", lty = 2)
+```
+
+Under the v2 parameterisation, $\varphi$ now sits cleanly on the
+prior-mean-rate-1 scale, and the posterior position relative to 1
+directly indicates the strength of the typical ecology-driven rate
+multiplier. Compare to the prior $\mathcal{N}(0, 0.5^2)$ on
+$\log \varphi$ to gauge how strongly the data update the prior.
+
+## Comparison to the ecology-blind posterior
+
+The ecology layer most affects bipartitions involving taxa from the
+same ecology but distant phylogenetic groups (e.g.
+[discussion of specific clades pending result]). The blind posterior
+groups them by morphology; the aware posterior, by downweighting the
+ecology-driven characters, sometimes restores the descent-based
+grouping.
+
+```{r tree-compare, eval=FALSE}
+plot(ape::consensus(resBlind$trees, p = 0.5),
+     main = "Blind majority-rule consensus")
+plot(ape::consensus(resAware$trees, p = 0.5),
+     main = "Aware majority-rule consensus")
+```
+
+## Caveats
+
+* The per-cell $z$ posterior is identified by the data on this matrix
+  size, but individual cells are estimated weakly. Rank the *top
+  effects* with high confidence; treat the *long tail* of
+  ecology--character cells with appropriate uncertainty.
+* The reference ecology (most frequent: usually `terrestrial` in this
+  matrix) gets factor 1 by construction. Non-reference effects are
+  read as "rate relative to terrestrial", not "rate relative to no
+  ecology".
+* For multistate transformational characters the rate factor applies
+  symmetrically to all transitions; for neomorphic characters the
+  asymmetry between gains and losses is genuine and the direction
+  ($z = \text{enc}$ vs $z = \text{disc}$) is identifiable.
+
+## References

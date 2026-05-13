@@ -242,17 +242,28 @@ NumericMatrix EcologyEdgeWeights(
 }
 
 
-// Resolve the rate factor for a transformational character with influence
-// category z under magnitude mode `mode` (0 = global, 1 = per_ecology).
-// phi has length 1 in global mode and kEco in per_ecology mode.
-//   z == 0 (none):        factor = 1
-//   z == 1 (encouraged):  factor = phi[mode == 0 ? 0 : ecoState]
-//   z == 2 (discouraged): factor = 1 / phi[mode == 0 ? 0 : ecoState]
-static inline double trans_rate_factor(int z, int ecoState,
-                                       const double* phi, int mode) {
-  if (z == 0) return 1.0;
+// v2: compute gamma_e (prior-expected per-cell rate) for non-reference ecology e.
+//   gamma_e = pi0 + (1-pi0) * (theta_e * phi + (1-theta_e) / phi).
+// For the reference ecology, gamma_e = 1 by construction (rate factor = 1
+// always). `phi_e` is phi[0] under global mode and phi[ecoState] otherwise.
+static inline double gamma_e_compute(double pi0, double theta_e, double phi_e) {
+  return pi0 + (1.0 - pi0) * (theta_e * phi_e + (1.0 - theta_e) / phi_e);
+}
+
+// v2: resolve the rate factor for a transformational character.
+// Reference ecology: factor = 1 regardless of z. Non-reference:
+//   z == 0 (none):        factor = 1 / gamma_e
+//   z == 1 (encouraged):  factor = phi / gamma_e
+//   z == 2 (discouraged): factor = (1/phi) / gamma_e
+// phi_e is the per-ecology phi (or the global phi under mode 0).
+// gamma_e is precomputed.
+static inline double trans_rate_factor(int z, int ecoState, int refEcology,
+                                       const double* phi, int mode,
+                                       double gamma_e) {
+  if (ecoState == refEcology) return 1.0;
   double p = (mode == 0) ? phi[0] : phi[ecoState];
-  return (z == 1) ? p : 1.0 / p;
+  double mu = (z == 0) ? 1.0 : (z == 1) ? p : 1.0 / p;
+  return mu / gamma_e;
 }
 
 
@@ -279,6 +290,8 @@ static double pruning_jc_acrv_flat_ecology(
     NumericMatrix wEdge,
     IntegerMatrix zMat,
     NumericVector phi, int mode,
+    int refEcology,
+    const std::vector<double>& gammaE,
     double* buf, uint8_t* initFlg, int stride) {
 
   int nEdge = parent.size();
@@ -342,47 +355,25 @@ static double pruning_jc_acrv_flat_ecology(
       int ch  = chPtr[e];
       double tBase = elPtr[e] * rate;
 
-      // Precompute (ps, pd) for each (z-factor, ecology state) at this edge.
-      // factor 0 (none): identical across ecology states — compute once and
-      // duplicate. factor 1 (encouraged) / 2 (discouraged): depend on phi
-      // which varies with mode.
+      // v2: per-(z, s) rate factor incorporates phi and gamma_e normalisation.
+      //   ref ecology: factor = 1 for all z (rate unchanged).
+      //   non-ref:     z=0 -> 1/gamma_e; z=1 -> phi/gamma_e; z=2 -> (1/phi)/gamma_e.
       {
-        double exp0 = MKP_EXP(-kStates * tBase / km1);
-        double ps0  = inv_k + (1.0 - inv_k) * exp0;
-        double pd0  = inv_k - inv_k * exp0;
         for (int s = 0; s < kEco; ++s) {
-          psFactor[0 * kEco + s] = ps0;
-          pdFactor[0 * kEco + s] = pd0;
-        }
-        if (mode == 0) {
-          // Global phi: same encouraged/discouraged values for every ecology.
-          double p = phiPtr[0];
-          double tE = tBase * p;
-          double tD = tBase / p;
-          double expE = MKP_EXP(-kStates * tE / km1);
-          double expD = MKP_EXP(-kStates * tD / km1);
-          double psE = inv_k + (1.0 - inv_k) * expE;
-          double pdE = inv_k - inv_k * expE;
-          double psD = inv_k + (1.0 - inv_k) * expD;
-          double pdD = inv_k - inv_k * expD;
-          for (int s = 0; s < kEco; ++s) {
-            psFactor[1 * kEco + s] = psE;
-            pdFactor[1 * kEco + s] = pdE;
-            psFactor[2 * kEco + s] = psD;
-            pdFactor[2 * kEco + s] = pdD;
-          }
-        } else {
-          // Per-ecology phi.
-          for (int s = 0; s < kEco; ++s) {
-            double p = phiPtr[s];
-            double tE = tBase * p;
-            double tD = tBase / p;
-            double expE = MKP_EXP(-kStates * tE / km1);
-            double expD = MKP_EXP(-kStates * tD / km1);
-            psFactor[1 * kEco + s] = inv_k + (1.0 - inv_k) * expE;
-            pdFactor[1 * kEco + s] = inv_k - inv_k * expE;
-            psFactor[2 * kEco + s] = inv_k + (1.0 - inv_k) * expD;
-            pdFactor[2 * kEco + s] = inv_k - inv_k * expD;
+          double gE = gammaE[s];
+          for (int z = 0; z < 3; ++z) {
+            double factor;
+            if (s == refEcology) {
+              factor = 1.0;
+            } else {
+              double p = (mode == 0) ? phiPtr[0] : phiPtr[s];
+              double mu = (z == 0) ? 1.0 : (z == 1) ? p : 1.0 / p;
+              factor = mu / gE;
+            }
+            double tEff = tBase * factor;
+            double exV  = MKP_EXP(-kStates * tEff / km1);
+            psFactor[z * kEco + s] = inv_k + (1.0 - inv_k) * exV;
+            pdFactor[z * kEco + s] = inv_k - inv_k * exV;
           }
         }
       }
@@ -395,7 +386,16 @@ static double pruning_jc_acrv_flat_ecology(
         for (int c = 0; c < nChar; ++c) {
           double psMix = 0.0, pdMix = 0.0;
           for (int s = 0; s < kEco; ++s) {
-            int z   = zPtr[c + s * nChar];
+            // v2: zMat has kEco-1 cols (no column for ref ecology).
+            // For ref ecology, z is treated as 0 (factor is 1 anyway).
+            int z;
+            if (s == refEcology) {
+              z = 0;
+            } else {
+              // Column index among non-ref ecologies, ascending order.
+              int zCol = (s < refEcology) ? s : (s - 1);
+              z = zPtr[c + zCol * nChar];
+            }
             double w = wPtr[e + s * nEdge];
             psMix += w * psFactor[z * kEco + s];
             pdMix += w * pdFactor[z * kEco + s];
@@ -412,7 +412,16 @@ static double pruning_jc_acrv_flat_ecology(
         for (int c = 0; c < nChar; ++c) {
           double psMix = 0.0, pdMix = 0.0;
           for (int s = 0; s < kEco; ++s) {
-            int z   = zPtr[c + s * nChar];
+            // v2: zMat has kEco-1 cols (no column for ref ecology).
+            // For ref ecology, z is treated as 0 (factor is 1 anyway).
+            int z;
+            if (s == refEcology) {
+              z = 0;
+            } else {
+              // Column index among non-ref ecologies, ascending order.
+              int zCol = (s < refEcology) ? s : (s - 1);
+              z = zPtr[c + zCol * nChar];
+            }
             double w = wPtr[e + s * nEdge];
             psMix += w * psFactor[z * kEco + s];
             pdMix += w * pdFactor[z * kEco + s];
@@ -455,24 +464,31 @@ static double pruning_jc_acrv_flat_ecology(
 //   z == 1 (encouraged):  (rate01 * phi,  rate10 / phi)
 //   z == 2 (discouraged): (rate01 / phi,  rate10 * phi)
 // phi has length 1 in global mode and kEco in per_ecology mode.
+// v2: reference ecology has rate factor = 1 (base rates unchanged).
+// Non-reference: scale both directions by 1/gamma_e (z = 0), phi/gamma_e on
+// rate01 and (1/phi)/gamma_e on rate10 (z = 1), or vice versa (z = 2).
 static inline void mkn_rates_for_state(
-    int z, int ecoState,
+    int z, int ecoState, int refEcology,
     double rate01_base, double rate10_base,
     const double* phi, int mode,
+    double gamma_e,
     double& r01, double& r10) {
-  if (z == 0) {
+  if (ecoState == refEcology) {
     r01 = rate01_base;
     r10 = rate10_base;
     return;
   }
   double p = (mode == 0) ? phi[0] : phi[ecoState];
-  if (z == 1) {
-    r01 = rate01_base * p;
-    r10 = rate10_base / p;
+  double mu01, mu10;
+  if (z == 0) {
+    mu01 = 1.0; mu10 = 1.0;
+  } else if (z == 1) {
+    mu01 = p;   mu10 = 1.0 / p;
   } else {
-    r01 = rate01_base / p;
-    r10 = rate10_base * p;
+    mu01 = 1.0 / p; mu10 = p;
   }
+  r01 = rate01_base * mu01 / gamma_e;
+  r10 = rate10_base * mu10 / gamma_e;
 }
 
 
@@ -496,6 +512,8 @@ static double pruning_mkn_acrv_flat_ecology(
     NumericMatrix wEdge,
     IntegerMatrix zMat,
     NumericVector phi, int mode,
+    int refEcology,
+    const std::vector<double>& gammaE,
     double* buf, uint8_t* initFlg, int stride) {
 
   int nEdge = parent.size();
@@ -553,45 +571,25 @@ static double pruning_mkn_acrv_flat_ecology(
       int ch  = chPtr[e];
       double tBase = elPtr[e] * rate;
 
-      // Precompute P for each variant (none / enc / dis) on this (cat, edge).
-      // 'none' is ecology-independent; enc/dis depend on phi which may be
-      // per-ecology.
-      {
-        double lam0 = r01_base + r10_base;
-        double pi0_0 = r10_base / lam0;
-        double pi1_0 = r01_base / lam0;
-        double exp0 = MKP_EXP(-lam0 * tBase);
-        double P00_0 = pi0_0 + pi1_0 * exp0;
-        double P01_0 = pi1_0 - pi1_0 * exp0;
-        double P10_0 = pi0_0 - pi0_0 * exp0;
-        double P11_0 = pi1_0 + pi0_0 * exp0;
-        for (int s = 0; s < kEco; ++s) {
-          double* P = Pfactor.data() + (0 * kEco + s) * 4;
-          P[0] = P00_0; P[1] = P01_0; P[2] = P10_0; P[3] = P11_0;
-        }
-      }
-      for (int v = 1; v <= 2; ++v) {  // 1 = encouraged, 2 = discouraged
-        int sEnd = (mode == 0) ? 1 : kEco;
-        for (int s = 0; s < sEnd; ++s) {
+      // v2: precompute P matrices for each (z, s). Reference ecology uses base
+      // rates (no scaling); non-reference uses (r01 * mu01, r10 * mu10) / gamma_e
+      // per mkn_rates_for_state.
+      for (int s = 0; s < kEco; ++s) {
+        double gE = gammaE[s];
+        for (int z = 0; z < 3; ++z) {
           double r01, r10;
-          mkn_rates_for_state(v, s, r01_base, r10_base, phiPtr, mode, r01, r10);
-          double lam  = r01 + r10;
-          double pi0  = r10 / lam;
-          double pi1  = r01 / lam;
-          double ex   = MKP_EXP(-lam * tBase);
-          double P00 = pi0 + pi1 * ex;
-          double P01 = pi1 - pi1 * ex;
-          double P10 = pi0 - pi0 * ex;
-          double P11 = pi1 + pi0 * ex;
-          if (mode == 0) {
-            for (int ss = 0; ss < kEco; ++ss) {
-              double* P = Pfactor.data() + (v * kEco + ss) * 4;
-              P[0] = P00; P[1] = P01; P[2] = P10; P[3] = P11;
-            }
-          } else {
-            double* P = Pfactor.data() + (v * kEco + s) * 4;
-            P[0] = P00; P[1] = P01; P[2] = P10; P[3] = P11;
-          }
+          mkn_rates_for_state(z, s, refEcology, r01_base, r10_base,
+                              phiPtr, mode, gE, r01, r10);
+          double lam = r01 + r10;
+          double pi0_ = r10 / lam;
+          double pi1_ = r01 / lam;
+          double ex  = MKP_EXP(-lam * tBase);
+          double P00 = pi0_ + pi1_ * ex;
+          double P01 = pi1_ - pi1_ * ex;
+          double P10 = pi0_ - pi0_ * ex;
+          double P11 = pi1_ + pi0_ * ex;
+          double* P = Pfactor.data() + (z * kEco + s) * 4;
+          P[0] = P00; P[1] = P01; P[2] = P10; P[3] = P11;
         }
       }
 
@@ -602,7 +600,13 @@ static double pruning_mkn_acrv_flat_ecology(
         for (int c = 0; c < nChar; ++c) {
           double P00m = 0.0, P01m = 0.0, P10m = 0.0, P11m = 0.0;
           for (int s = 0; s < kEco; ++s) {
-            int z   = zPtr[c + s * nChar];
+            int z;
+            if (s == refEcology) {
+              z = 0;
+            } else {
+              int zCol = (s < refEcology) ? s : (s - 1);
+              z = zPtr[c + zCol * nChar];
+            }
             double w = wPtr[e + s * nEdge];
             const double* P = Pfactor.data() + (z * kEco + s) * 4;
             P00m += w * P[0]; P01m += w * P[1];
@@ -618,7 +622,13 @@ static double pruning_mkn_acrv_flat_ecology(
         for (int c = 0; c < nChar; ++c) {
           double P00m = 0.0, P01m = 0.0, P10m = 0.0, P11m = 0.0;
           for (int s = 0; s < kEco; ++s) {
-            int z   = zPtr[c + s * nChar];
+            int z;
+            if (s == refEcology) {
+              z = 0;
+            } else {
+              int zCol = (s < refEcology) ? s : (s - 1);
+              z = zPtr[c + zCol * nChar];
+            }
             double w = wPtr[e + s * nEdge];
             const double* P = Pfactor.data() + (z * kEco + s) * 4;
             P00m += w * P[0]; P01m += w * P[1];
@@ -661,12 +671,16 @@ double PruningMknEcology(
     NumericVector rateMultipliers,
     NumericMatrix wEdge,
     IntegerMatrix zMat,
-    NumericVector phi, int mode
+    NumericVector phi, int mode,
+    int refEcology = -1,
+    Rcpp::Nullable<Rcpp::NumericVector> theta = R_NilValue,
+    double pi0 = 0.0
 ) {
   int nTip    = tipStates.nrow();
   int nChar   = tipStates.ncol();
   int maxNode = 2 * nTip - 1;
   int stride  = nChar * 2;
+  int kEco    = wEdge.ncol();
 
   if (rootFreqs.size() != 2)
     stop("rootFreqs length must equal 2");
@@ -674,16 +688,32 @@ double PruningMknEcology(
     stop("wEdge nrow must equal nEdge");
   if (zMat.nrow() != nChar)
     stop("zMat nrow must equal nChar");
-  if (zMat.ncol() != wEdge.ncol())
-    stop("zMat ncol must equal kEco");
+  // v2: zMat has kEco-1 columns (one per non-ref ecology).
+  if (zMat.ncol() != kEco - 1)
+    stop("zMat ncol must equal kEco - 1 (v2)");
   if (mode != 0 && mode != 1)
     stop("mode must be 0 (global) or 1 (per_ecology)");
-  if (mode == 0 && phi.size() != 1)
-    stop("global mode requires phi length 1");
-  if (mode == 1 && phi.size() != wEdge.ncol())
+  if (mode == 0 && phi.size() != 1 && phi.size() != kEco)
+    stop("global mode requires phi length 1 or kEco");
+  if (mode == 1 && phi.size() != kEco)
     stop("per_ecology mode requires phi length kEco");
   if (rateLoss <= 0)
     stop("rateLoss must be positive");
+  if (refEcology < 0 || refEcology >= kEco)
+    stop("refEcology must be in [0, kEco)");
+
+  // Build gammaE from theta + pi0. gammaE[refEcology] = 1.
+  std::vector<double> gammaE(kEco, 1.0);
+  Rcpp::NumericVector thetaVec = theta.isNotNull()
+    ? Rcpp::NumericVector(theta) : Rcpp::NumericVector(kEco - 1, 0.5);
+  if (thetaVec.size() != kEco - 1)
+    stop("theta length must equal kEco - 1");
+  for (int s = 0; s < kEco; ++s) {
+    if (s == refEcology) { gammaE[s] = 1.0; continue; }
+    int j = (s < refEcology) ? s : (s - 1);
+    double phi_s = (mode == 0) ? phi[0] : phi[s];
+    gammaE[s] = gamma_e_compute(pi0, thetaVec[j], phi_s);
+  }
 
   std::vector<double>  buf((maxNode + 1) * stride, 0.0);
   std::vector<uint8_t> initFlg(maxNode + 1, 0u);
@@ -692,6 +722,7 @@ double PruningMknEcology(
     parent, child, edgeLen, tipStates,
     rateLoss, rootFreqs, rateMultipliers,
     wEdge, zMat, phi, mode,
+    refEcology, gammaE,
     buf.data(), initFlg.data(), stride
   );
 }
@@ -708,12 +739,16 @@ double PruningJcEcology(
     NumericVector rateMultipliers,
     NumericMatrix wEdge,
     IntegerMatrix zMat,
-    NumericVector phi, int mode
+    NumericVector phi, int mode,
+    int refEcology = -1,
+    Rcpp::Nullable<Rcpp::NumericVector> theta = R_NilValue,
+    double pi0 = 0.0
 ) {
   int nTip    = tipStates.nrow();
   int nChar   = tipStates.ncol();
   int maxNode = 2 * nTip - 1;
   int stride  = nChar * kStates;
+  int kEco    = wEdge.ncol();
 
   if (kStates < 2)
     stop("kStates must be >= 2");
@@ -723,14 +758,28 @@ double PruningJcEcology(
     stop("wEdge nrow must equal nEdge");
   if (zMat.nrow() != nChar)
     stop("zMat nrow must equal nChar");
-  if (zMat.ncol() != wEdge.ncol())
-    stop("zMat ncol must equal kEco (wEdge ncol)");
+  if (zMat.ncol() != kEco - 1)
+    stop("zMat ncol must equal kEco - 1 (v2)");
   if (mode != 0 && mode != 1)
     stop("mode must be 0 (global) or 1 (per_ecology)");
-  if (mode == 0 && phi.size() != 1)
-    stop("global mode requires phi length 1");
-  if (mode == 1 && phi.size() != wEdge.ncol())
+  if (mode == 0 && phi.size() != 1 && phi.size() != kEco)
+    stop("global mode requires phi length 1 or kEco");
+  if (mode == 1 && phi.size() != kEco)
     stop("per_ecology mode requires phi length kEco");
+  if (refEcology < 0 || refEcology >= kEco)
+    stop("refEcology must be in [0, kEco)");
+
+  std::vector<double> gammaE(kEco, 1.0);
+  Rcpp::NumericVector thetaVec = theta.isNotNull()
+    ? Rcpp::NumericVector(theta) : Rcpp::NumericVector(kEco - 1, 0.5);
+  if (thetaVec.size() != kEco - 1)
+    stop("theta length must equal kEco - 1");
+  for (int s = 0; s < kEco; ++s) {
+    if (s == refEcology) { gammaE[s] = 1.0; continue; }
+    int j = (s < refEcology) ? s : (s - 1);
+    double phi_s = (mode == 0) ? phi[0] : phi[s];
+    gammaE[s] = gamma_e_compute(pi0, thetaVec[j], phi_s);
+  }
 
   std::vector<double>  buf((maxNode + 1) * stride, 0.0);
   std::vector<uint8_t> initFlg(maxNode + 1, 0u);
@@ -739,6 +788,7 @@ double PruningJcEcology(
     parent, child, edgeLen, tipStates,
     kStates, rootFreqs, rateMultipliers,
     wEdge, zMat, phi, mode,
+    refEcology, gammaE,
     buf.data(), initFlg.data(), stride
   );
 }
@@ -758,9 +808,12 @@ static double const_site_prob_jc_eco_single(
     NumericVector edgeLen, int nTip, int kStates,
     NumericVector rates,
     NumericMatrix wEdge, const IntegerVector& zVec,
-    NumericVector phi, int mode) {
+    NumericVector phi, int mode,
+    int refEcology,
+    const std::vector<double>& gammaE) {
 
   IntegerMatrix tipStates(nTip, 1);  // all zeros (default-constructed)
+  // zVec is length (kEco - 1) — one entry per non-ref ecology in col order.
   IntegerMatrix zMat(1, zVec.size());
   for (int s = 0; s < zVec.size(); ++s) zMat(0, s) = zVec[s];
   NumericVector rootFreqs(kStates, 1.0 / kStates);
@@ -774,6 +827,7 @@ static double const_site_prob_jc_eco_single(
     parent, child, edgeLen, tipStates,
     kStates, rootFreqs, rates,
     wEdge, zMat, phi, mode,
+    refEcology, gammaE,
     buf.data(), initFlg.data(), stride);
   // JC symmetry: P(constant in any state) = kStates * P(all-tips-0).
   return kStates * std::exp(ll);
@@ -785,7 +839,9 @@ static double const_site_prob_mkn_eco_single(
     NumericVector edgeLen, int nTip,
     double rateLoss, NumericVector rates,
     NumericMatrix wEdge, const IntegerVector& zVec,
-    NumericVector phi, int mode) {
+    NumericVector phi, int mode,
+    int refEcology,
+    const std::vector<double>& gammaE) {
 
   IntegerMatrix zMat(1, zVec.size());
   for (int s = 0; s < zVec.size(); ++s) zMat(0, s) = zVec[s];
@@ -804,6 +860,7 @@ static double const_site_prob_mkn_eco_single(
     parent, child, edgeLen, tipStates0,
     rateLoss, rootFreqs, rates,
     wEdge, zMat, phi, mode,
+    refEcology, gammaE,
     buf.data(), initFlg.data(), stride);
 
   // Pseudo-char "all 1"
@@ -816,6 +873,7 @@ static double const_site_prob_mkn_eco_single(
     parent, child, edgeLen, tipStates1,
     rateLoss, rootFreqs, rates,
     wEdge, zMat, phi, mode,
+    refEcology, gammaE,
     buf.data(), initFlg.data(), stride);
 
   return std::exp(ll0) + std::exp(ll1);
@@ -841,13 +899,26 @@ double cpp_log_likelihood_ecology(
     const IntegerVector& kPrime,
     double rateLoss, double rateLogSd, double rateNeo,
     NumericVector phi,
-    IntegerMatrix zMatrix) {
+    IntegerMatrix zMatrix,
+    double pi0,
+    NumericVector theta) {
 
   int nTip = data.nTip;
   int nEdge = parent.size();
   int maxNode = 2 * nTip - 1;
   int kEco = data.ecology.kEcology;
   int mode = data.magnitudeMode;
+  int refE = data.ecology.refEcology;
+
+  // v2: compute gammaE per ecology state (1.0 at refEcology).
+  std::vector<double> gammaE(kEco, 1.0);
+  for (int s = 0; s < kEco; ++s) {
+    if (s == refE) { gammaE[s] = 1.0; continue; }
+    int j = (s < refE) ? s : (s - 1);
+    double phi_s = (mode == 0) ? phi[0] : phi[s];
+    double th = (j >= 0 && j < theta.size()) ? theta[j] : 0.5;
+    gammaE[s] = gamma_e_compute(pi0, th, phi_s);
+  }
   bool useAcrv = (rateLogSd > 0.0);
   NumericVector rates = useAcrv
     ? cpp_acrv_rates(rateLogSd, data.nCat, data.acrvZ)
@@ -872,15 +943,18 @@ double cpp_log_likelihood_ecology(
 
   double totalLoglik = 0.0;
 
+  // v2: zMatrix has nChar x (kEco - 1) columns.
+  int zCols = kEco - 1;
+
   for (int pi = 0; pi < (int)data.parts.size(); ++pi) {
     const PartInfo& part = data.parts[pi];
     int nCharPart = part.tipStates.ncol();
 
     // Subset zMatrix to this partition's characters (global → local indices).
-    IntegerMatrix zPart(nCharPart, kEco);
+    IntegerMatrix zPart(nCharPart, zCols);
     for (int c = 0; c < nCharPart; ++c) {
       int gi = part.globalCharIdx[c];
-      for (int s = 0; s < kEco; ++s) zPart(c, s) = zMatrix(gi, s);
+      for (int j = 0; j < zCols; ++j) zPart(c, j) = zMatrix(gi, j);
     }
 
     double ll = 0.0;
@@ -897,14 +971,16 @@ double cpp_log_likelihood_ecology(
         parent, child, neoEl, part.tipStates,
         rateLoss, rootFreqs, rates,
         wEdge, zPart, phi, mode,
+        refE, gammaE,
         buf.data(), initFlg.data(), stride);
       if (data.codingType == 1) {  // variable
         for (int c = 0; c < nCharPart; ++c) {
-          IntegerVector zVec(kEco);
-          for (int s = 0; s < kEco; ++s) zVec[s] = zPart(c, s);
+          IntegerVector zVec(zCols);
+          for (int j = 0; j < zCols; ++j) zVec[j] = zPart(c, j);
           double pConst = const_site_prob_mkn_eco_single(
             parent, child, neoEl, nTip,
-            rateLoss, rates, wEdge, zVec, phi, mode);
+            rateLoss, rates, wEdge, zVec, phi, mode,
+            refE, gammaE);
           ll -= std::log(1.0 - pConst);
         }
       }
@@ -919,14 +995,16 @@ double cpp_log_likelihood_ecology(
         parent, child, edgeLen, part.tipStates,
         kStates, rootFreqs, rates,
         wEdge, zPart, phi, mode,
+        refE, gammaE,
         buf.data(), initFlg.data(), stride);
       if (data.codingType == 1) {
         for (int c = 0; c < nCharPart; ++c) {
-          IntegerVector zVec(kEco);
-          for (int s = 0; s < kEco; ++s) zVec[s] = zPart(c, s);
+          IntegerVector zVec(zCols);
+          for (int j = 0; j < zCols; ++j) zVec[j] = zPart(c, j);
           double pConst = const_site_prob_jc_eco_single(
             parent, child, edgeLen, nTip, kStates,
-            rates, wEdge, zVec, phi, mode);
+            rates, wEdge, zVec, phi, mode,
+            refE, gammaE);
           ll -= std::log(1.0 - pConst);
         }
       }
@@ -943,12 +1021,12 @@ double cpp_log_likelihood_ecology(
         int nSub = static_cast<int>(cols.size());
 
         IntegerMatrix subStates(nTip, nSub);
-        IntegerMatrix subZ(nSub, kEco);
+        IntegerMatrix subZ(nSub, zCols);
         for (int c = 0; c < nSub; ++c) {
           for (int t = 0; t < nTip; ++t)
             subStates(t, c) = part.tipStates(t, cols[c]);
-          for (int s = 0; s < kEco; ++s)
-            subZ(c, s) = zPart(cols[c], s);
+          for (int j = 0; j < zCols; ++j)
+            subZ(c, j) = zPart(cols[c], j);
         }
         NumericVector rootFreqs(kp, 1.0 / kp);
         int stride = nSub * kp;
@@ -959,15 +1037,17 @@ double cpp_log_likelihood_ecology(
           parent, child, edgeLen, subStates,
           kp, rootFreqs, rates,
           wEdge, subZ, phi, mode,
+          refE, gammaE,
           buf.data(), initFlg.data(), stride);
 
         if (data.codingType == 1) {
           for (int c = 0; c < nSub; ++c) {
-            IntegerVector zVec(kEco);
-            for (int s = 0; s < kEco; ++s) zVec[s] = subZ(c, s);
+            IntegerVector zVec(zCols);
+            for (int j = 0; j < zCols; ++j) zVec[j] = subZ(c, j);
             double pConst = const_site_prob_jc_eco_single(
               parent, child, edgeLen, nTip, kp,
-              rates, wEdge, zVec, phi, mode);
+              rates, wEdge, zVec, phi, mode,
+              refE, gammaE);
             subLl -= std::log(1.0 - pConst);
           }
         }
@@ -1004,13 +1084,19 @@ double CppLogLikelihoodEcology(
     IntegerVector kPrime,
     double rateLoss, double rateLogSd, double rateNeo,
     NumericVector phi,
-    IntegerMatrix zMatrix
+    IntegerMatrix zMatrix,
+    double pi0 = 0.0,
+    Rcpp::Nullable<Rcpp::NumericVector> theta = R_NilValue
 ) {
   const McmcData& data = *Rcpp::XPtr<McmcData>(dataPtr).get();
   if (!data.ecologyAware) stop("McmcData was not built with ecologyAware = TRUE");
+  int kEco = data.ecology.kEcology;
+  Rcpp::NumericVector thetaVec = theta.isNotNull()
+    ? Rcpp::NumericVector(theta) : Rcpp::NumericVector(std::max(0, kEco - 1), 0.5);
   return cpp_log_likelihood_ecology(
     data, parent, child, edgeLen, kPrime,
-    rateLoss, rateLogSd, rateNeo, phi, zMatrix);
+    rateLoss, rateLogSd, rateNeo, phi, zMatrix,
+    pi0, thetaVec);
 }
 
 
@@ -1041,8 +1127,10 @@ double per_char_log_lik_ecology(
     double rateLoss, double rateNeo,
     const NumericVector& rates,
     NumericVector phi,
-    IntegerVector zRow,        // length kEco
-    const NumericMatrix& wEdge // nEdge x kEco
+    IntegerVector zRow,        // v2: length (kEco - 1)
+    const NumericMatrix& wEdge,// nEdge x kEco
+    int refEcology,
+    const std::vector<double>& gammaE
 ) {
   int nTip   = data.nTip;
   int nEdge  = parent.size();
@@ -1063,8 +1151,9 @@ double per_char_log_lik_ecology(
   // Single-column tipStates and single-row zPart.
   IntegerMatrix tipStates(nTip, 1);
   for (int t = 0; t < nTip; ++t) tipStates(t, 0) = part.tipStates(t, localCol);
-  IntegerMatrix zPart(1, kEco);
-  for (int s = 0; s < kEco; ++s) zPart(0, s) = zRow[s];
+  int zCols = kEco - 1;
+  IntegerMatrix zPart(1, zCols);
+  for (int j = 0; j < zCols; ++j) zPart(0, j) = zRow[j];
 
   double ll;
 
@@ -1080,15 +1169,16 @@ double per_char_log_lik_ecology(
       parent, child, neoEl, tipStates,
       rateLoss, rootFreqs, rates,
       wEdge, zPart, phi, mode,
+      refEcology, gammaE,
       buf.data(), initFlg.data(), stride);
     if (data.codingType == 1) {
       double pConst = const_site_prob_mkn_eco_single(
         parent, child, neoEl, nTip,
-        rateLoss, rates, wEdge, zRow, phi, mode);
+        rateLoss, rates, wEdge, zRow, phi, mode,
+        refEcology, gammaE);
       ll -= std::log(1.0 - pConst);
     }
   } else if (part.type == 2) {
-    // Known state space
     int kStates = part.k;
     NumericVector rootFreqs(kStates, 1.0 / kStates);
     int stride = 1 * kStates;
@@ -1098,15 +1188,16 @@ double per_char_log_lik_ecology(
       parent, child, edgeLen, tipStates,
       kStates, rootFreqs, rates,
       wEdge, zPart, phi, mode,
+      refEcology, gammaE,
       buf.data(), initFlg.data(), stride);
     if (data.codingType == 1) {
       double pConst = const_site_prob_jc_eco_single(
         parent, child, edgeLen, nTip, kStates,
-        rates, wEdge, zRow, phi, mode);
+        rates, wEdge, zRow, phi, mode,
+        refEcology, gammaE);
       ll -= std::log(1.0 - pConst);
     }
   } else {
-    // Transformational: kp drives the state count.
     NumericVector rootFreqs(kp, 1.0 / kp);
     int stride = 1 * kp;
     std::vector<double>  buf((maxNode + 1) * stride, 0.0);
@@ -1115,11 +1206,13 @@ double per_char_log_lik_ecology(
       parent, child, edgeLen, tipStates,
       kp, rootFreqs, rates,
       wEdge, zPart, phi, mode,
+      refEcology, gammaE,
       buf.data(), initFlg.data(), stride);
     if (data.codingType == 1) {
       double pConst = const_site_prob_jc_eco_single(
         parent, child, edgeLen, nTip, kp,
-        rates, wEdge, zRow, phi, mode);
+        rates, wEdge, zRow, phi, mode,
+        refEcology, gammaE);
       ll -= std::log(1.0 - pConst);
     }
     if (data.relabel) {
@@ -1175,7 +1268,9 @@ NumericVector CppLogLikelihoodEcologyPerChar(
     IntegerVector kPrime,
     double rateLoss, double rateLogSd, double rateNeo,
     NumericVector phi,
-    IntegerMatrix zMatrix
+    IntegerMatrix zMatrix,
+    double pi0 = 0.0,
+    Rcpp::Nullable<Rcpp::NumericVector> theta = R_NilValue
 ) {
   const McmcData& data = *Rcpp::XPtr<McmcData>(dataPtr).get();
   if (!data.ecologyAware) stop("McmcData was not built with ecologyAware = TRUE");
@@ -1185,7 +1280,23 @@ NumericVector CppLogLikelihoodEcologyPerChar(
 
   int nChar = data.nChar;
   int kEco  = data.ecology.kEcology;
+  int refE  = data.ecology.refEcology;
+  int mode  = data.magnitudeMode;
+  int zCols = kEco - 1;
   NumericVector out(nChar);
+
+  Rcpp::NumericVector thetaVec = theta.isNotNull()
+    ? Rcpp::NumericVector(theta) : Rcpp::NumericVector(std::max(0, zCols), 0.5);
+
+  // gammaE
+  std::vector<double> gammaE(kEco, 1.0);
+  for (int s = 0; s < kEco; ++s) {
+    if (s == refE) { gammaE[s] = 1.0; continue; }
+    int j = (s < refE) ? s : (s - 1);
+    double phi_s = (mode == 0) ? phi[0] : phi[s];
+    double th = (j >= 0 && j < thetaVec.size()) ? thetaVec[j] : 0.5;
+    gammaE[s] = gamma_e_compute(pi0, th, phi_s);
+  }
 
   NumericMatrix wEdge(parent.size(), kEco);
   recompute_w_edge(data, parent, child, edgeLen, wEdge);
@@ -1194,15 +1305,16 @@ NumericVector CppLogLikelihoodEcologyPerChar(
     ? cpp_acrv_rates(rateLogSd, data.nCat, data.acrvZ)
     : NumericVector(1, 1.0);
 
-  IntegerVector zRow(kEco);
+  IntegerVector zRow(zCols);
   for (int c = 0; c < nChar; ++c) {
-    for (int s = 0; s < kEco; ++s) zRow[s] = zMatrix(c, s);
+    for (int j = 0; j < zCols; ++j) zRow[j] = zMatrix(c, j);
     int kp = (data.charToPartition[c] >= 0 &&
               data.parts[data.charToPartition[c]].type == 1)
               ? kPrime[c] : 2;
     out[c] = per_char_log_lik_ecology(
       data, c, parent, child, edgeLen,
-      kp, rateLoss, rateNeo, rates, phi, zRow, wEdge);
+      kp, rateLoss, rateNeo, rates, phi, zRow, wEdge,
+      refE, gammaE);
   }
   return out;
 }
