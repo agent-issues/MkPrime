@@ -1,0 +1,110 @@
+True tree length: 1.87069 
+Variable characters: 65
+kObs distribution: 
+ 2  3  4 
+39 22  4 
+kTrue distribution: kTrueAll
+ 2  3  4  5 
+20 19 17  9 
+Total unseen states across all chars: 50
+
+=== Running arm: empirical_geometric ===
+Warmup 500 │ logP:-430.7 │ warmup: ~2000 iter
+Warmup 1000 │ logP:-399.6 │ warmup: ~2000 iter
+ℹ Move weights frozen:
+Warmup 1000 │ logP:-399.6 │ warmup: ~2000 iterTopology: nni:1.0% spr:1.0% gibbs_spr:1.0% gibbs_subtree_swap:1.0% tbr:1.0%
+pspr:1.0%
+Warmup 1000 │ logP:-399.6 │ warmup: ~2000 iterBranches: tree_length:1.0% branch_lengths:1.0% dirichlet_branch:1.0%
+local_dirichlet:1.0%
+Warmup 1000 │ logP:-399.6 │ warmup: ~2000 iterCharacters: mh_logit_p:53.2% gibbs_kPrime:25.5% kPrime:3.8% block_kPrime:1.5%
+joint_p_kprime:1.0%
+Warmup 1000 │ logP:-399.6 │ warmup: ~2000 iterRates: slice_rate_log_sd:1.9% rate_log_sd:1.9% joint_tl_rls:1.3%
+Warmup 1000 │ logP:-399.6 │ warmup: ~2000 iterSample 4000 │ logP:-429.3 │ minESS: ?
+
+Warmup 500 │ logP:-438.6 │ warmup: ~2000 iter
+ℹ Move weights frozen:
+Warmup 500 │ logP:-438.6 │ warmup: ~2000 iterTopology: nni:1.0% spr:1.0% gibbs_spr:1.0% gibbs_subtree_swap:1.0% tbr:1.0%
+pspr:1.0%
+Warmup 500 │ logP:-438.6 │ warmup: ~2000 iterBranches: tree_length:1.0% branch_lengths:1.0% dirichlet_branch:1.0%
+local_dirichlet:1.0%
+Warmup 500 │ logP:-438.6 │ warmup: ~2000 iterCharacters: mh_logit_p:51.5% gibbs_kPrime:25.5% kPrime:3.9% block_kPrime:1.5%
+joint_p_kprime:1.0%
+Warmup 500 │ logP:-438.6 │ warmup: ~2000 iterRates: joint_tl_rls:3.3% slice_rate_log_sd:1.9% rate_log_sd:1.4%
+Warmup 500 │ logP:-438.6 │ warmup: ~2000 iterSample 4000 │ logP:-441.6 │ minESS: ?
+
+  Wall time: 20.7 secs
+  Per-move acceptance:
+       tree_length     branch_lengths                nni                spr 
+             0.538              0.549              0.411              0.150 
+         gibbs_spr gibbs_subtree_swap                tbr               pspr 
+             0.431              0.224              0.113              0.132 
+  dirichlet_branch    local_dirichlet             kPrime       gibbs_kPrime 
+             0.036              0.032              0.848              1.000 
+      block_kPrime         mh_logit_p     joint_p_kprime        rate_log_sd 
+             0.000              0.416              0.725              0.825 
+ slice_rate_log_sd       joint_tl_rls 
+             1.000              0.433 
+  mh_logit_p acceptance: 0.416
+  Posterior mean u (total): 172.63  (truth: 50)
+  Mean of per-char posterior u: 2.656
+  Posterior u > 0 in 65 / 65 chars
+  CID to true tree: mean=0.837  median=0.856  (n=200 trees)
+Warning messages:
+1: 2 non-positive branch lengths clamped to 1e-8.
+ℹ Zero or negative lengths arise in NJ trees when taxa are very similar. They
+  are invalid for likelihood computation. 
+2: Warmup reached `maxWarmup` (2000) without stabilisation. 
+3: Warmup reached `maxWarmup` (2000) without stabilisation. 
+
+=== Running arm: geometric ===
+Warmup 1000 │ logP:-283.1 │ warmup: ~2000 iter
+ℹ Move weights frozen:
+Warmup 1000 │ logP:-283.1 │ warmup: ~2000 iterTopology: spr:1.0% gibbs_spr:1.0% gibbs_subtree_swap:1.0% tbr:1.0% pspr:1.0%
+nni:0.9%
+Warmup 1000 │ logP:-283.1 │ warmup: ~2000 iterBranches: tree_length:7.3% branch_lengths:1.0% dirichlet_branch:1.0%
+local_dirichlet:1.0%
+Warmup 1000 │ logP:-283.1 │ warmup: ~2000 iterCharacters: gibbs_kPrime:35.5% kPrime:14.6% p:1.9% block_kPrime:1.0%
+Warmup 1000 │ logP:-283.1 │ warmup: ~2000 iterRates: joint_tl_rls:15.4% rate_log_sd:13.5% slice_rate_log_sd:1.9%
+Warmup 1000 │ logP:-283.1 │ warmup: ~2000 iterSample 4000 │ logP:-309.1 │ minESS: ?
+
+ℹ Move weights frozen:
+Topology: nni:1.0% spr:1.0% gibbs_spr:1.0% gibbs_subtree_swap:1.0% tbr:1.0%
+pspr:1.0%
+Branches: tree_length:4.6% branch_lengths:1.0% dirichlet_branch:1.0%
+local_dirichlet:1.0%
+Characters: gibbs_kPrime:35.5% kPrime:12.0% p:1.9% block_kPrime:1.0%
+Rates: joint_tl_rls:24.6% rate_log_sd:9.5% slice_rate_log_sd:1.9%
+Sample 2000 │ logP:-288.6 │ minESS: ?
+Sample 4000 │ logP:-284.7 │ minESS: ?
+
+  Wall time: 5.14 secs
+  Per-move acceptance:
+       tree_length     branch_lengths                nni                spr 
+             0.547              0.614              0.577              0.157 
+         gibbs_spr gibbs_subtree_swap                tbr               pspr 
+             0.694              0.394              0.150              0.219 
+  dirichlet_branch    local_dirichlet             kPrime       gibbs_kPrime 
+             0.059              0.016              0.748              1.000 
+      block_kPrime                  p        rate_log_sd  slice_rate_log_sd 
+             0.000              1.000              0.748              1.000 
+      joint_tl_rls 
+             0.448 
+  Posterior mean u (total): 5.53  (truth: 50)
+  Mean of per-char posterior u: 0.085
+  Posterior u > 0 in 23 / 65 chars
+  CID to true tree: mean=0.814  median=0.849  (n=200 trees)
+Warning messages:
+1: 2 non-positive branch lengths clamped to 1e-8.
+ℹ Zero or negative lengths arise in NJ trees when taxa are very similar. They
+  are invalid for likelihood computation. 
+2: Warmup reached `maxWarmup` (2000) without stabilisation. 
+3: Warmup reached `maxWarmup` (2000) without stabilisation. 
+
+=== Side-by-side ===
+Truth total unseen states:                    50
+Sum posterior u  (empirical_geometric):     172.63
+Sum posterior u  (geometric):               5.53
+Empirical recovers 345.3% of unseen states
+Geometric  recovers 11.1% of unseen states
+
+--- Smoke test complete: no errors. ---

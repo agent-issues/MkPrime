@@ -86,3 +86,4 @@ MkPrime_*.gz
 
 # Local build config — never commit
 src/Makevars.win
+.positai
