@@ -80,7 +80,7 @@
 #'   clean stop: `file.create(cancelFile)`. See also [MkCancelPath()].
 #' @param checkpointFile Path to write checkpoint RDS files. `NULL`
 #'   (default) auto-derives from `logFile` when set
-#'   (e.g. `"run.log"` \u2192 `"run.ckp"`). Set to `FALSE` to
+#'   (e.g. `"run.log"` → `"run.ckp"`). Set to `FALSE` to
 #'   disable checkpointing. Checkpoints are saved at each
 #'   convergence check interval and on cancel.
 #' @param treeFile Path to write sampled trees in Newick format.
