@@ -202,6 +202,7 @@ RunMkPrime <- function(data, tree = NULL,
                        qHeterogeneity = qHet,
                        ecologyAware = ecoOn,
                        nPhi = nPhiMove,
+                       kEcology = if (ecoOn) as.integer(mkd$kEcology) else 0L,
                        joint2d = isTRUE(mcmc$joint2d))
 
   mcmc$thinWasAuto <- identical(mcmc$thin, "auto")
@@ -2378,6 +2379,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                        qHeterogeneity = qHet,
                        ecologyAware = ecoOn,
                        nPhi = nPhiMove,
+                       kEcology = if (ecoOn) as.integer(mkd$kEcology) else 0L,
                        joint2d = isTRUE(mcmc$joint2d))
 
   if (identical(mcmc$thin, "auto")) {
@@ -2546,6 +2548,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         mh_p        = tun$scale_p %||% 0.5,
         scale_phi   = tun$scale_phi %||% 0.5,
         scale_pi0   = tun$scale_pi0 %||% 0.5,
+        scale_theta = tun$scale_theta %||% 0.5,
         0.5
       )
     }
@@ -2766,6 +2769,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                         qHeterogeneity = FALSE,
                         ecologyAware = FALSE,
                         nPhi = 0L,
+                        kEcology = 0L,
                         joint2d = TRUE) {
   moves <- list(
     list(name = "tree_length", type = "scale", target = "tree_length",
@@ -2970,6 +2974,12 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
            weight = max(2, 2 * as.numeric(nPhi)), dim = 1L),
       list(name = "scale_pi0", type = "scale_pi0", target = "pi0",
            weight = 2, dim = 1L),
+      # v2: scale_theta updates the slab-balance theta_e for each
+      # non-reference ecology. Weight scales with kEco - 1 (number of
+      # non-ref ecologies) so per-entry visit rate stays roughly constant.
+      list(name = "scale_theta", type = "scale_theta", target = "theta",
+           weight = max(2, 2 * max(0L, as.numeric(kEcology) - 1)),
+           dim = 1L),
       # gibbs_z performs a full sweep over all (c, s) cells in one call,
       # so once-per-100-iterations is plenty for mixing.  In larger
       # problems (high nChar) the dominant kPrime moves push raw-weight
@@ -3054,7 +3064,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   slice_kprime_beta = 29L,
   scale_phi = 30L,
   scale_pi0 = 31L,
-  gibbs_z = 32L
+  gibbs_z = 32L,
+  scale_theta = 33L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)
@@ -3711,7 +3722,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   slice_rate_log_sd = "Rates", slice_beta_scale = "Rates",
   joint_tl_rls = "Rates", joint_tl_rl = "Rates",
 
-  scale_phi = "Ecology", scale_pi0 = "Ecology", gibbs_z = "Ecology"
+  scale_phi = "Ecology", scale_pi0 = "Ecology", gibbs_z = "Ecology",
+  scale_theta = "Ecology"
 )
 
 .moveCategoryOrder <- c("Topology", "Branches", "Characters", "Rates",
@@ -3820,6 +3832,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     slice_kprime_alpha = NA_real_, slice_kprime_beta = NA_real_,
     scale_phi = 0.35,
     scale_pi0 = 0.35,
+    scale_theta = 0.35,
     gibbs_z = NA_real_
   )
 
@@ -3855,6 +3868,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     slice_beta_scale = NA_character_,
     scale_phi = "scale_phi",
     scale_pi0 = "scale_pi0",
+    scale_theta = "scale_theta",
     gibbs_z = NA_character_
   )
 
