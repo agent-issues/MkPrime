@@ -3262,9 +3262,14 @@ static List pspr_proposal_impl(
 // ---------------------------------------------------------------------------
 
 static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
-                                     double beta) {
+                                     double beta,
+                                     bool sampleAndUpdate = true,
+                                     double* outLogZ = nullptr) {
   int nTrans = (int)data->transIdxGlobal.size();
-  if (nTrans == 0) return false;
+  if (nTrans == 0) {
+    if (outLogZ) *outLogZ = 0.0;
+    return false;
+  }
 
   // Pre-compute absolute edge lengths
   int nEdge = state->relBrLengths.size();
@@ -3626,6 +3631,33 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   }
 
   // ---------------------------------------------------------------
+  // Optionally compute total log-marginal-on-p:
+  //   log Z(p) = ∑_i log [∑_c exp(β · L_i(k'_c) + log π(k'_c | p))]
+  // This is the per-character normalising constant from the Gibbs full
+  // conditional, summed across all transformational characters.  Used by
+  // case 31 (joint p/k' MH) to compute the marginal acceptance ratio
+  // after integrating out k'.
+  // ---------------------------------------------------------------
+  if (outLogZ != nullptr) {
+    double logZ_total = 0.0;
+    bool ok = true;
+    for (int ti = 0; ti < nTrans; ++ti) {
+      int nCand = charNCand[ti];
+      if (nCand == 0) { ok = false; break; }
+      double maxW = charMaxLogW[ti];
+      if (!R_FINITE(maxW)) { ok = false; break; }
+      double* logW = &charLogW[ti * K_MAX_CAND];
+      double sumExp = 0.0;
+      for (int c = 0; c < nCand; ++c)
+        sumExp += std::exp(logW[c] - maxW);
+      logZ_total += maxW + std::log(sumExp);
+    }
+    *outLogZ = ok ? logZ_total : R_NegInf;
+  }
+
+  if (!sampleAndUpdate) return true;
+
+  // ---------------------------------------------------------------
   // Sampling phase: for each character, sample k' from the
   // precomputed log-weights in charLogW[].
   // ---------------------------------------------------------------
@@ -3807,7 +3839,8 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
 //           25=gibbs_kprime_sweep, 26=block_kprime_shift,
 //           27=scale_kprime_alpha, 28=scale_kprime_beta,
 //           29=slice_kprime_hyper,
-//           30=mh_logit_p (logit-scale MH on p for empirical_geometric prior)
+//           30=mh_logit_p (logit-scale MH on p for empirical_geometric prior),
+//           31=joint_p_kprime (logit-MH on p with Gibbs k' resample, marginal MH)
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -4236,6 +4269,83 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         return true;
       }
       state->kprimeBeta = oldKpB;
+      return false;
+    }
+    case 31: {
+      // joint_p_kprime — logit-MH on p paired with a Gibbs resample of k'.
+      // Crosses the (p, k')-posterior ridge that single-variable moves
+      // (case 30 mh_logit_p, case 25 gibbs_kprime_sweep) cannot.
+      //
+      // Proposal: q(p', k' | p, k') = q_p(p' | p) · g(k' | p', data)
+      //   where q_p is symmetric on logit scale and g is the Gibbs full
+      //   conditional density (factorising by character).
+      // MH ratio reduces, after the per-character Gibbs densities cancel
+      // against the joint posterior, to the marginal-on-p ratio:
+      //   α = [π_p(p') · Z(p')] / [π_p(p) · Z(p)] · |dp/dlogit(p)| ratio
+      // where Z(p) = ∏_i ∑_{k'_i} π(k'_i | p) · L_i(k'_i) is the per-character
+      // normalising constant of the Gibbs sweep (exposed by outLogZ).
+      if (!data->kPriorEmpiricalGeometric) return false;
+      if (oldP <= 0.0 || oldP >= 1.0) return false;
+
+      double logitP = std::log(oldP / (1.0 - oldP));
+      double logitPnew = logitP + scaleTuning * bactrian_perturbation();
+      double newP;
+      if (logitPnew >= 0.0) {
+        newP = 1.0 / (1.0 + std::exp(-logitPnew));
+      } else {
+        double e = std::exp(logitPnew);
+        newP = e / (1.0 + e);
+      }
+      if (newP <= 0.0 || newP >= 1.0) return false;
+
+      // 1) Compute log Z(oldP) — no state mutation.
+      double logZ_old = 0.0;
+      gibbs_kprime_sweep_impl(data, state, beta, /*sampleAndUpdate=*/false,
+                              &logZ_old);
+      if (!R_FINITE(logZ_old)) return false;
+
+      // 2) Snapshot k' / likelihood / prior / partition cache for rollback.
+      IntegerVector savedKPrime = clone(state->kPrime);
+      double savedLogLik = state->logLik;
+      double savedLogPrior = state->logPrior;
+      std::vector<double> savedPLC = state->partLogLik;
+
+      // 3) Set p = newP and run the sweep with sampling.  This draws
+      //    k' ~ g(· | newP, data), recomputes logLik/logPrior, and returns
+      //    log Z(newP).
+      state->p = newP;
+      double logZ_new = 0.0;
+      bool ok = gibbs_kprime_sweep_impl(data, state, beta,
+                                        /*sampleAndUpdate=*/true, &logZ_new);
+      if (!ok || !R_FINITE(logZ_new)) {
+        state->p = oldP;
+        state->kPrime = savedKPrime;
+        state->logLik = savedLogLik;
+        state->logPrior = savedLogPrior;
+        state->partLogLik = std::move(savedPLC);
+        return false;
+      }
+
+      double jacobian = std::log(newP) + std::log1p(-newP)
+                      - std::log(oldP) - std::log1p(-oldP);
+      double logPriorP_old = R::dbeta(oldP,
+        data->kprimeHyperA, data->kprimeHyperB, 1);
+      double logPriorP_new = R::dbeta(newP,
+        data->kprimeHyperA, data->kprimeHyperB, 1);
+      double logAlpha = (logPriorP_new - logPriorP_old)
+                      + (logZ_new - logZ_old)
+                      + jacobian;
+
+      if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+        return true;  // accept — state already updated by sweep
+      }
+
+      // Reject — restore everything.
+      state->p = oldP;
+      state->kPrime = savedKPrime;
+      state->logLik = savedLogLik;
+      state->logPrior = savedLogPrior;
+      state->partLogLik = std::move(savedPLC);
       return false;
     }
     case 30: { // mh_logit_p — logit-scale MH on p (for empirical_geometric)

@@ -505,6 +505,7 @@ MkPrimeMCMC <- function(
     scale_rate_log_sd = 0.5,
     scale_p = 0.5,
     scale_logit_p = 1.0,
+    scale_joint_p_kprime = 1.0,
     scale_rate_neo = 0.5,
     scale_neo_joint = 0.5,
     scale_beta_scale = 0.5,

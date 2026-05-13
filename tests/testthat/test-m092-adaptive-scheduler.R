@@ -427,7 +427,7 @@ test_that("All move names in .kMoveTypes are valid moveWeights names", {
     "gibbs_kPrime", "block_kPrime",
     "kprime_alpha", "kprime_beta",
     "slice_kprime_alpha", "slice_kprime_beta",
-    "mh_p", "mh_logit_p"
+    "mh_p", "mh_logit_p", "joint_p_kprime"
   )
   expect_true(all(names(MkPrime:::.kMoveTypes) %in% validInMcmc))
 })

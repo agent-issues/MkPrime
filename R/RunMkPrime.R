@@ -2494,6 +2494,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         p           = 0.5,  # Gibbs move: scale ignored by C++; placeholder
         mh_p        = tun$scale_p %||% 0.5,
         mh_logit_p  = tun$scale_logit_p %||% 1.0,
+        joint_p_kprime = tun$scale_joint_p_kprime %||%
+                         (tun$scale_logit_p %||% 1.0),
         0.5
       )
     }
@@ -2817,9 +2819,19 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       # `mh_logit_p`); the Jacobian appears as the Hastings ratio.  Give it
       # a higher weight than the legacy `mh_p` move so that even if it
       # mixes a little less efficiently than gibbs_kPrime it still moves p.
+      # joint_p_kprime (case 31): logit-MH on p combined with a Gibbs
+      # resample of k'.  Required to traverse the negative (p, k')
+      # posterior correlation that single-variable moves cannot cross.
+      # See data-raw/diagnose-slow-mixing-eg-findings notes for the
+      # measurement (cor(p, mean k') ≈ −0.83 on Hamilton tails).
+      # Cost: two Gibbs sweeps per call (~2× gibbs_kPrime); give it a
+      # weight comparable to gibbs_kPrime so the adaptive scheduler can
+      # promote it when it earns its keep.
       kPrimeMoves <- c(kPrimeMoves, list(
         list(name = "mh_logit_p", type = "logit_scale_p", target = "p",
-             weight = 3, dim = 1L)
+             weight = 3, dim = 1L),
+        list(name = "joint_p_kprime", type = "joint_p_kprime",
+             target = "p", weight = max(1, nTrans), dim = 1L)
       ))
     } else if (!identical(kPrimePrior, "logseries")) {
       # Conjugate Gibbs draw: p | k' ~ Beta(a + nTrans, b + sum(k' - kObs))
@@ -2897,7 +2909,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   # Joint 2D moves also get the floor so they're comparable to individual
   # scalar moves they complement.
   scalarTypes <- c("scale", "int_walk", "gibbs_p", "scale_p", "logit_scale_p",
-                    "slice", "kprime_alpha", "kprime_beta")
+                    "slice", "kprime_alpha", "kprime_beta",
+                    "joint_p_kprime")
   totalWeight <- sum(vapply(moves, `[[`, numeric(1), "weight"))
   floorVal <- totalWeight * 0.02
   for (i in seq_along(moves)) {
@@ -2919,7 +2932,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 # 15=block_gibbs_branch, 16=beta_scale (M-052), 17=tbr (M-053),
 # 25=gibbs_kprime_sweep, 26=block_kprime_shift,
 # 27=scale_kprime_alpha, 28=scale_kprime_beta,
-# 30=mh_logit_p (logit-scale MH on p, for empirical_geometric)
+# 30=mh_logit_p (logit-scale MH on p, for empirical_geometric),
+# 31=joint_p_kprime (logit-MH on p + Gibbs k' resample, marginal MH)
 .kMoveTypes <- c(
   tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
   rate_neo = 3L, branch_lengths = 4L,
@@ -2948,7 +2962,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   kprime_alpha = 27L,
   kprime_beta = 28L,
   slice_kprime_alpha = 29L,
-  slice_kprime_beta = 29L
+  slice_kprime_beta = 29L,
+  joint_p_kprime = 31L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)
@@ -3048,6 +3063,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       local_dirichlet = tuning$local_dirichlet_alpha %||% 0.1,
       mh_p        = tuning$scale_p %||% 0.5,
       mh_logit_p  = tuning$scale_logit_p %||% 1.0,
+      joint_p_kprime = tuning$scale_joint_p_kprime %||%
+                       (tuning$scale_logit_p %||% 1.0),
       0.5  # default; gibbs_p ignores scaleTun (returns before using it)
     )
     # For dirichlet_branch / local_dirichlet, intWalkWindow carries nCats
@@ -3564,7 +3581,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
   kPrime = "Characters", gibbs_kPrime = "Characters",
   block_kPrime = "Characters", p = "Characters", mh_p = "Characters",
-  mh_logit_p = "Characters",
+  mh_logit_p = "Characters", joint_p_kprime = "Characters",
 
   rate_loss = "Rates", rate_neo = "Rates", rate_log_sd = "Rates",
   beta_scale = "Rates", neo_joint = "Rates",
@@ -3658,7 +3675,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     tree_length = 0.35, branch_lengths = 0.23,
     nni = 0.23, spr = 0.10,
     kPrime = 0.35,
-    p = 0.35, mh_p = 0.35, mh_logit_p = 0.35,
+    p = 0.35, mh_p = 0.35, mh_logit_p = 0.35, joint_p_kprime = 0.35,
     rate_loss = 0.35, rate_log_sd = 0.35,
     rate_neo = 0.35, neo_joint = 0.35,
     beta_scale = 0.35,
@@ -3688,6 +3705,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     p = NA_character_,       # Gibbs move: no tuning needed
     mh_p = "scale_p",        # MH move: tune the log-scale step
     mh_logit_p = "scale_logit_p",  # MH move: tune the logit-scale step
+    joint_p_kprime = "scale_joint_p_kprime",  # MH on logit p with Gibbs k'
     rate_loss = "scale_rate_loss",
     rate_log_sd = "scale_rate_log_sd",
     rate_neo = "scale_rate_neo",
