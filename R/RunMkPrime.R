@@ -767,6 +767,11 @@ RunMkPrime <- function(data, tree = NULL,
   # Stabilisation detector state (Warmup phase)
   logPostHistory     <- r$logPostHistory %||% numeric(0)
   nStableConsecutive <- r$nStableConsecutive %||% 0L
+  # Anchor iteration for warmup ETA. Fixed at minWarmup initially; only
+  # advances when a confirmed stable-check streak resets (prevCount > 0 → 0),
+  # so the displayed ETA doesn't slide forward every batch while the chain is
+  # still in the pre-check or non-stabilising phase.
+  warmupAnchor       <- r$warmupAnchor %||% mcmc$minWarmup
 
   # samplePhaseStart: iteration at which sampling began (for iterNum in log files).
   # For legacy checkpoints without this field, default to mcmc$warmup.
@@ -991,9 +996,12 @@ RunMkPrime <- function(data, tree = NULL,
       # checks.  Monotonic: as iterations grow and stability accumulates,
       # warmupProgress only increases.
       nStableRequired <- 3L
-      remainStable <- max(0L, nStableRequired - nStableConsecutive)
+      # Anchor-based horizon: does not slide with batchEnd while the chain is
+      # in a non-stabilising streak. stabCheckPeriod matches the windowSize=10
+      # hardcoded in .CheckStabilisation() × warmupBatch (actual check interval).
+      stabCheckPeriod <- 10L * warmupBatch
       warmupHorizon <- max(mcmc$minWarmup,
-                           batchEnd + remainStable * mcmc$checkEvery)
+                           warmupAnchor + nStableRequired * stabCheckPeriod)
       warmupHorizon <- min(warmupHorizon, mcmc$warmup)  # cap at maxWarmup
       moveWeights <- .AdaptMoveWeights(
         moveWeights, r$chain_accept[[1L]], r$chain_propose[[1L]],
@@ -1010,7 +1018,7 @@ RunMkPrime <- function(data, tree = NULL,
       moveWeights <- .WarmupGibbsCap(moveWeights, pinnedWeights, gibbsKpIdx,
                                       factor = mcmc$gibbsWarmupFactor %||% (1/3))
 
-      tickerPages <- sprintf("warmup: ~%d iter", warmupHorizon)
+      tickerPages <- sprintf("warmup: ~%d iter", max(warmupHorizon, batchEnd))
 
       # M-126: Accumulate cold-chain state snapshots for rho estimation.
       # C++ saves no samples during warmup, so we use the chain state
@@ -1030,8 +1038,15 @@ RunMkPrime <- function(data, tree = NULL,
         stabResult <- .CheckStabilisation(
           logPostHistory, nStableConsecutive
         )
+        prevNStableConsecutive <- nStableConsecutive
         nStableConsecutive <- stabResult$nStableConsecutive
         r$nStableConsecutive <- nStableConsecutive
+        # Advance anchor only when a confirmed streak resets: prevCount > 0 → 0.
+        # Early-exit zeros (not enough data yet) don't advance the anchor.
+        if (nStableConsecutive == 0L && prevNStableConsecutive > 0L) {
+          warmupAnchor   <- batchEnd
+          r$warmupAnchor <- warmupAnchor
+        }
 
         if (stabResult$stable || batchEnd >= mcmc$warmup) {
           # M-171: Restore gibbs_kPrime to full pinned weight before Tuning/Sample.
