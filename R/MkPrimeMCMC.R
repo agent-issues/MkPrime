@@ -480,7 +480,9 @@ MkPrimeMCMC <- function(
       "slice_rate_loss", "slice_rate_neo", "slice_rate_log_sd",
       "slice_beta_scale",
       # Joint 2D moves
-      "joint_tl_rls", "joint_tl_rl"
+      "joint_tl_rls", "joint_tl_rl",
+      # Ecology-aware NT model (v2)
+      "scale_phi", "scale_pi0", "gibbs_z", "scale_theta"
     )
     bad <- setdiff(names(moveWeights), validNames)
     if (length(bad) > 0L) {
