@@ -138,16 +138,6 @@ works. The move design predates EG. Will recover once Fix B brings
 the EG posterior into a sensible regime; otherwise leave alone for
 now ([src/mcmc.cpp:3737–3823](../../src/mcmc.cpp#L3737)).
 
-## Side note: SLURM 16632292 closed empty
-
-M-131 warmup-stabilisation job (submitted 2026-03-31) `COMPLETED`
-with ExitCode 0:0 across all 32 array tasks but ran 4–11 s each;
-`/nobackup/pjjg18/m131/results/` is empty. Almost certainly an
-early-exit guard tripped on missing inputs. Row in
-[remote-jobs.md](../../remote-jobs.md) is now struck through with a
-CLOSED note. Not directly relevant to this branch's work but worth
-re-submitting if M-131 validation is still wanted.
-
 ## Pickup checklist for remote machine
 
 1. Pull this branch.
