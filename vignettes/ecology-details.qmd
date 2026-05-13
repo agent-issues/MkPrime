@@ -301,23 +301,30 @@ convergent dataset the convergence-driven tree $((A, B), (C, D))$
 beats the truth under parsimony in 6--8 of 8 pilot replicates.
 
 On the 200{,}000-generation MCMC of a single replicate at the
-Goldilocks config:
+Goldilocks config (v2 model):
 
 * **Hyperparameters detect the effect.** The aware-model posterior
-  on $\pi_0$ concentrates at $\approx 0.38$ (CI $[0.22, 0.72]$),
-  well below the prior mean $0.7$, and on $\varphi$ at $\approx 7$
-  (CI $[1.0, 32]$), with the CI excluding $1$. The model correctly
-  detects that ecology is exerting a non-trivial effect on the
-  characters.
-* **Tree-topology posterior is broad in both chains.** Across 200
-  post-burn-in samples, neither the blind nor the aware chain places
-  appreciable posterior probability on either reference bipartition.
-  Mean CID-to-truth and CID-to-wrong are essentially tied for both
-  chains, with a slight bias toward truth (CID gap $\approx 0.01$
-  blind, $\approx 0.005$ aware). The chain has mixed sufficiently to
-  escape the parsimony-tree starting basin, and the posterior over
-  topologies for this dataset is genuinely broad rather than
-  concentrated on either reference.
+  on $\pi_0$ concentrates at $\approx 0.45$ (CI $[0.05, 0.96]$), well
+  below the prior mean $0.7$, and on $\varphi$ at median $\approx 0.9$
+  but mean $\approx 2.1$ (CI $[0.03, 12.7]$), with a long heavy upper
+  tail. The model detects that ecology is exerting an effect, though
+  the wide CIs reflect that $\varphi$ in particular is poorly mixed.
+* **Aware log-likelihood remains below blind.** The blind chain
+  settles at logL median $-2239$ (IQR $[-2243, -2237]$, tight); the
+  aware chain at median $-2304$ (IQR $[-2362, -2255]$, much wider).
+  This is the same v2 ridge-closure deficit observed in the v1 Sim 3
+  run, somewhat improved: the v1 aware logL was $\sim 83$ nats below
+  blind, and v2 narrows the gap to $\sim 65$ nats. The $\gamma$
+  normalisation helps but does not fully resolve the rate--time
+  identifiability problem in the convergent-clades topology, where
+  every internal edge carries appreciable ecology mass and the chain
+  cannot easily separate tree length from per-edge rate.
+* **Tree length still wanders.** The aware chain visits tree lengths
+  with median $\approx 22$ (truth $\approx 9$) and maximum
+  $\approx 7500$, suggesting the chain is making rare large excursions
+  before returning. The blind chain stays at $\approx 10$ (matching
+  truth). Longer chains and/or tighter tree-length priors are likely
+  to be necessary for the convergent-clades scenario.
 
 In the **negative control** Sim 3b ($z = 0$ everywhere, so $A$ and
 $B$ share ecology by coincidence not by mechanism), the aware-model
