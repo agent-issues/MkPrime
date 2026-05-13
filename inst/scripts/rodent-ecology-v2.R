@@ -27,10 +27,9 @@ nexFile <- if (length(args) >= 1) args[1] else "~/downloads/mbank_X24848_2026-5-
 nIter   <- if (length(args) >= 2) as.integer(args[2]) else 500000L
 
 stopifnot(file.exists(nexFile))
-raw <- ape::read.nexus.data(nexFile)
-taxa <- names(raw)
-mat <- do.call(rbind, lapply(raw, function(x) as.character(unlist(x))))
-rownames(mat) <- taxa
+# TreeTools::ReadCharacters is more permissive than ape::read.nexus.data
+# (handles the leading-space SYMBOLS clause this matrix uses).
+mat <- TreeTools::ReadCharacters(nexFile)
 cat("Raw matrix:", nrow(mat), "tips x", ncol(mat), "chars\n")
 
 ecologyCol <- 220L
@@ -42,7 +41,27 @@ cat("Extant taxa:", length(keepTaxa), "of", nrow(mat), "\n")
 
 matKeep <- mat[keepTaxa, -extantCol, drop = FALSE]  # drop col 221 only
 ecoKeep <- ecoVec[keepTaxa]
-ecoStates <- sort(unique(ecoKeep[!is.na(ecoKeep) & ecoKeep != "?"]))
+# Polymorphic ecology codings like (01), (03) — recode as the first
+# state listed (treating polymorphism as the prevailing ecology).
+poly <- grepl("^\\(", ecoKeep)
+if (any(poly)) {
+  cat("Recoding", sum(poly), "polymorphic ecology entries to first listed state:\n")
+  recoded <- substr(sub("^\\(", "", ecoKeep[poly]), 1, 1)
+  print(data.frame(tip = rownames(matKeep)[poly], orig = ecoKeep[poly],
+                   new = recoded))
+  ecoKeep[poly] <- recoded
+  matKeep[poly, ecologyCol] <- recoded
+}
+# Drop any remaining missing-ecology tips (MkPrimeData ecology requires
+# a complete vector; could relax by passing NA, but cleaner to subset).
+hasEco <- !is.na(ecoKeep) & ecoKeep != "?" & !is.na(suppressWarnings(as.integer(ecoKeep)))
+if (any(!hasEco)) {
+  cat("Dropping", sum(!hasEco), "tips with missing/unparseable ecology:\n")
+  print(rownames(matKeep)[!hasEco])
+  matKeep <- matKeep[hasEco, , drop = FALSE]
+  ecoKeep <- ecoKeep[hasEco]
+}
+ecoStates <- sort(unique(ecoKeep))
 cat("Ecology states:", paste(ecoStates, collapse = ", "), "\n")
 cat("Ecology tip counts:\n"); print(table(ecoKeep))
 
@@ -54,7 +73,8 @@ neoIdx <- AutoDetectNeomorphic(pdForDetect)
 cat("Neomorphic chars:", length(neoIdx), " | transformational:",
     ncol(matKeep) - 1L - length(neoIdx), "\n")
 
-mkd <- MkPrimeData(matKeep, ecologyCol = ecologyCol,
+mkd <- MkPrimeData(pdForDetect,
+                   ecology = setNames(as.integer(ecoKeep), rownames(matKeep)),
                    neomorphic = neoIdx)
 cat("MkPrimeData built:",
     " nTip=", mkd$nTip, " nChar=", mkd$nChar,
