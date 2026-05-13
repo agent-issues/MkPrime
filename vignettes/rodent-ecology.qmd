@@ -87,8 +87,35 @@ $P(\text{enc}) - P(\text{disc})$ gives the direction.
 ### Top-ranked characters
 
 ```{r top, eval=FALSE}
-# (placeholder — populated from inst/scripts/rodent-ecology-v2-zPost.csv
-#  once the v2 model run completes)
+# Concrete code: compute the posterior over z and rank characters.
+zArr <- res$zSamples  # nIter x nChar x (kEco - 1)
+# Discard 1st quarter as warm-up:
+zArr <- zArr[seq.int(ceiling(dim(zArr)[1] / 4) + 1L, dim(zArr)[1]), , ,
+             drop = FALSE]
+pNone <- apply(zArr, c(2, 3), function(x) mean(x == 0L))
+pEnc  <- apply(zArr, c(2, 3), function(x) mean(x == 1L))
+pDisc <- apply(zArr, c(2, 3), function(x) mean(x == 2L))
+
+# Effect size = P(non-none) × E[|log phi|], aggregated max over ecologies.
+absLogPhi <- mean(abs(log(res$samples[, "phi"])))
+effSize <- (1 - pNone) * absLogPhi
+charRank <- order(apply(effSize, 1, max), decreasing = TRUE)
+
+# Build a tidy frame of top 20 characters x ecologies.
+ecoNames <- setdiff(seq.int(0L, mkd$kEcology - 1L), mkd$refEcology)
+top20 <- data.frame(
+  char = charRank[1:20],
+  type = mkd$type[charRank[1:20]],
+  effect = apply(effSize[charRank[1:20], , drop = FALSE], 1, max),
+  best_eco = ecoNames[apply(effSize[charRank[1:20], , drop = FALSE], 1, which.max)],
+  pEnc  = vapply(seq_len(20), function(i) {
+    pEnc[charRank[i], which.max(effSize[charRank[i], ])]
+  }, numeric(1)),
+  pDisc = vapply(seq_len(20), function(i) {
+    pDisc[charRank[i], which.max(effSize[charRank[i], ])]
+  }, numeric(1))
+)
+print(top20)
 ```
 
 ### Effect-direction heatmap
@@ -100,7 +127,21 @@ ecology than the reference; blue = less frequently. Saturation
 encodes posterior confidence.
 
 ```{r heatmap, eval=FALSE}
-# (image() call from inst/scripts/rodent-ecology-v2.R)
+effSigned <- pEnc - pDisc  # nChar x (kEco - 1)
+# Reorder rows by total effect-size.
+ord <- order(apply(abs(effSigned), 1, sum), decreasing = TRUE)
+ord <- ord[1:min(80, length(ord))]  # top 80 most-affected for readability
+M   <- t(effSigned[ord, , drop = FALSE])  # transpose so chars are columns
+op <- par(mar = c(4, 6, 3, 1))
+image(seq_len(nrow(M)), seq_len(ncol(M)), M,
+      col = grDevices::colorRampPalette(c("steelblue", "white",
+                                           "firebrick"))(64),
+      zlim = c(-1, 1),
+      xlab = "Ecology (non-reference)",
+      ylab = "Character (top 80, ranked by |effect|)",
+      main = "P(z = enc) - P(z = disc) per (character, ecology) cell")
+axis(1, at = seq_len(nrow(M)), labels = paste0("eco", ecoNames))
+par(op)
 ```
 
 ### Magnitude posterior

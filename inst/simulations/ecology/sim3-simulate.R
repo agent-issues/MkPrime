@@ -150,7 +150,10 @@
 .SimulateMkPrimeEcology <- function(tree, edgeEcology, z, phi,
                                     baseRate = 1, kStates = 2L,
                                     type = "transformational",
-                                    rateLoss = 1) {
+                                    rateLoss = 1,
+                                    normalize = FALSE,
+                                    pi0 = NULL, theta = NULL,
+                                    refEcology = 0L) {
   stopifnot(phi > 0, baseRate > 0, rateLoss > 0)
   edge   <- tree$edge
   brLen  <- tree$edge.length
@@ -166,6 +169,20 @@
   stopifnot(all(type %in% c("transformational", "neomorphic")))
   stopifnot(length(edgeEcology) == nEdge)
   mult <- c(1, phi, 1 / phi)  # indexed by z + 1L
+  # v2 optional rate normalisation by gamma_e. When `normalize = TRUE`,
+  # divide the realised per-cell rate factor by the prior-expected
+  # factor, so the model's parameterisation matches the simulator's.
+  # Useful for parameter-recovery sims; not realistic biology.
+  kEco <- ncol(z)
+  gammaE <- rep(1, kEco)
+  if (isTRUE(normalize)) {
+    if (is.null(pi0))   pi0   <- mean(z == 0L)
+    if (is.null(theta)) theta <- mean(z == 1L) / max(1, mean(z != 0L))
+    for (e in seq_len(kEco)) {
+      if ((e - 1L) == refEcology) next  # refEcology has factor 1
+      gammaE[e] <- pi0 + (1 - pi0) * (theta * phi + (1 - theta) / phi)
+    }
+  }
   # Asymmetric Q for neomorphic, parametrised as in the M2-NT model.
   rate01Base <- 2 / (1 + rateLoss)
   rate10Base <- 2 * rateLoss / (1 + rateLoss)
@@ -189,17 +206,18 @@
     child  <- edge[i, 2L]
     t      <- brLen[i]
     e      <- edgeEcology[i] + 1L  # 1-based for indexing
+    gE     <- gammaE[e]  # 1 unless normalize = TRUE and e != refEcology
     for (c in seq_len(nChar)) {
       zce <- z[c, e]
       parentSt <- stateMat[parent, c]
       if (type[c] == "neomorphic") {
         # Asymmetric two-state CTMC with per-edge (rate01, rate10).
         if (zce == 0L) {
-          a <- rate01Base; b <- rate10Base
+          a <- rate01Base / gE; b <- rate10Base / gE
         } else if (zce == 1L) {
-          a <- rate01Base * phi; b <- rate10Base / phi
+          a <- rate01Base * phi / gE; b <- rate10Base / phi / gE
         } else {
-          a <- rate01Base / phi; b <- rate10Base * phi
+          a <- rate01Base / phi / gE; b <- rate10Base * phi / gE
         }
         denom <- a + b
         pi1 <- a / denom
@@ -218,7 +236,7 @@
           stateMat[child, c] <- parentSt
           next
         }
-        r <- baseRate * mult[zce + 1L]
+        r <- baseRate * mult[zce + 1L] / gE
         pOff  <- (1 - exp(-k * r * t / (k - 1))) / k
         pSame <- 1 - (k - 1) * pOff
         if (stats::runif(1) < pSame) {
