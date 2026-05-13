@@ -2787,11 +2787,22 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
            weight = max(1, nTrans), dim = 1L),
       # Gibbs kPrime sweep: sample all k'_i from full conditionals
       list(name = "gibbs_kPrime", type = "gibbs_kprime_sweep",
-           target = "kPrime", weight = max(1, nTrans), dim = as.integer(nTrans)),
-      # Block kPrime shift: shift all trans chars by same delta
-      list(name = "block_kPrime", type = "block_kprime_shift",
-           target = "kPrime", weight = 2, dim = 1L)
+           target = "kPrime", weight = max(1, nTrans), dim = as.integer(nTrans))
     )
+    # Block kPrime shift: shift all transformational chars by the same
+    # delta.  Useful under a homogeneous-in-k' prior (plain geometric,
+    # beta_geometric, logseries) but produces 0% acceptance under
+    # empirical_geometric — that prior depends on k' (not on u), so a
+    # uniform shift lands every character in a wildly different prior
+    # region and the move is always rejected.  Schedule it only for
+    # priors where it works; mh_logit_p + joint_p_kprime carry the
+    # (p, k') coordination under empirical_geometric.
+    if (!identical(kPrimePrior, "empirical_geometric")) {
+      kPrimeMoves <- c(kPrimeMoves, list(
+        list(name = "block_kPrime", type = "block_kprime_shift",
+             target = "kPrime", weight = 2, dim = 1L)
+      ))
+    }
     if (identical(kPrimePrior, "beta_geometric")) {
       # Scale proposals for shared (α, β) hyperparameters.
       # Weights must be large enough for adaptation to fire (≥10 proposals

@@ -178,6 +178,37 @@ test_that("R and C++ log priors agree numerically under empirical_geometric", {
 })
 
 
+test_that("block_kPrime move is omitted under empirical_geometric", {
+  # The block_kPrime move proposes a uniform integer shift in k', which
+  # has ~0 % acceptance under the empirical_geometric prior (the prior is
+  # heterogeneous in k', so a uniform shift lands every character in a
+  # wildly different prior region).  mh_logit_p + joint_p_kprime carry
+  # the (p, k') coordination instead.  Verify the move is not scheduled
+  # for this prior, but is still scheduled for the plain geometric prior.
+  pd <- TreeTools::MatrixToPhyDat(matrix(
+    c(0, 1, 2, 0,
+      0, 1, 0, 1), 4, 2,
+    dimnames = list(paste0("t", 1:4), NULL)
+  ))
+  mkd <- MkPrimeData(pd)
+  nTrans <- sum(mkd$type == "transformational")
+
+  moves_eg <- MkPrime:::.BuildMoves(
+    nEdge = 5L, nTrans = nTrans, hasNeo = FALSE,
+    mcmc = MkPrimeMCMC(), fixTopology = FALSE,
+    kPrimePrior = "empirical_geometric"
+  )
+  expect_false("block_kPrime" %in% vapply(moves_eg, `[[`, character(1L), "name"))
+
+  moves_g <- MkPrime:::.BuildMoves(
+    nEdge = 5L, nTrans = nTrans, hasNeo = FALSE,
+    mcmc = MkPrimeMCMC(), fixTopology = FALSE,
+    kPrimePrior = "geometric"
+  )
+  expect_true("block_kPrime" %in% vapply(moves_g, `[[`, character(1L), "name"))
+})
+
+
 test_that("empirical_geometric prior runs short MCMC end-to-end", {
   library("ape")
   set.seed(11)
