@@ -551,6 +551,7 @@ RunMkPrime <- function(data, tree = NULL,
       # Ecology-aware state (NULL when model$ecologyAware = FALSE)
       phi            = s$phi,
       pi0            = s$pi0,
+      theta          = s$theta,
       z              = s$z
     )
   }
@@ -1450,6 +1451,7 @@ RunMkPrime <- function(data, tree = NULL,
       # Ecology-aware NT model state (length 0 / NULL when ecology disabled)
       phi            = if (length(s$phi) > 0L) s$phi else NULL,
       pi0            = if (length(s$phi) > 0L) s$pi0 else NULL,
+      theta          = if (length(s$theta) > 0L) s$theta else NULL,
       z              = if (length(s$zMatrix) > 0L) s$zMatrix else NULL
     )
   })
@@ -2188,6 +2190,7 @@ RunMkPrime <- function(data, tree = NULL,
           # Ecology-aware NT model state — NULL when ecology disabled.
           phi            = if (length(s$phi) > 0L) s$phi else NULL,
           pi0            = if (length(s$phi) > 0L) s$pi0 else NULL,
+          theta          = if (length(s$theta) > 0L) s$theta else NULL,
           z              = if (length(s$zMatrix) > 0L) s$zMatrix else NULL
         )
       })
