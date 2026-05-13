@@ -327,10 +327,23 @@ Goldilocks config (v2 model):
   to be necessary for the convergent-clades scenario.
 
 In the **negative control** Sim 3b ($z = 0$ everywhere, so $A$ and
-$B$ share ecology by coincidence not by mechanism), the aware-model
-posterior correctly stays near the prior: $\pi_0 \approx 0.79$ (prior
-mean $0.7$), $\varphi \approx 1.4$ (CI includes $1$). The ecology
-layer does not invent an effect where there is none.
+$B$ share ecology by coincidence not by mechanism), the v2
+aware-model posterior is clean: $\pi_0$ mean $0.76$ (CI
+$[0.31, 0.96]$, prior mean $0.7$), $\varphi$ mean $1.25$ (CI
+$[0.40, 3.58]$, includes $1$), and crucially **tree length stays at
+truth** with mean $9.10$ (CI $[7.06, 14.6]$, truth $\approx 9$). The
+v1 run had a much wider tree-length spread (CI extending to $47$);
+v2's $\gamma$-normalisation cleanly fixes the rate--time ridge in
+the absence of a real ecology effect.
+
+This is informative for the Sim 3 finding above: the v2 mixing
+problem is specific to the *combination* of convergent topology and
+a strong real ecology effect. Under $H_0$ on the same tree the chain
+mixes cleanly; under $H_1$ on a non-convergent random tree (Sim 1,
+Sim 2) the chain mixes cleanly. The pathology emerges only when the
+ecology layer is fighting the topology layer over the same edges.
+Most empirical morphological datasets do not present this extreme
+combination.
 
 The headline conclusion at the level of identifiable summaries
 ($\pi_0, \varphi$) is therefore clean: the ecology-aware model
