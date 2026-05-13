@@ -1266,7 +1266,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
 
 
 // Old full-evaluation fallback (Q-het or validation), M-109 in-place
-static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta) {
+[[maybe_unused]] static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta) {
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
   const int root  = nTip + 1;
@@ -1921,7 +1921,7 @@ static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
 
 
 // Full-evaluation fallback for Q-heterogeneity (M-109 in-place pattern)
-static bool gibbs_subtree_swap_impl_full(McmcData* data, McmcState* state,
+[[maybe_unused]] static bool gibbs_subtree_swap_impl_full(McmcData* data, McmcState* state,
                                          double beta) {
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
@@ -3921,7 +3921,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   IntegerVector proposedParent, proposedChild;
   NumericVector proposedRelBr;
   // M-158: SPR partial CL metadata
-  SprMeta sprMeta;
+  SprMeta sprMeta{};  // zero-init all fields; valid=false is set explicitly below
   sprMeta.valid = false;
   bool sprPartialCL = false;  // true if SPR used partial CL path
 

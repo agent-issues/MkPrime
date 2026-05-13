@@ -1012,7 +1012,7 @@ static void update_topo_nni(
 // can_use_partial_cl: check if partial CL is applicable for this move.
 // Returns false if cache is invalid, Q-het is enabled, etc.
 // ---------------------------------------------------------------------------
-static bool can_use_partial_cl(
+[[maybe_unused]] static bool can_use_partial_cl(
     const NodeCLCache& cache, const McmcData& data) {
   if (!cache.ready()) return false;
   if (data.qHeterogeneity) return false;
@@ -1085,7 +1085,6 @@ static SprMeta propose_spr_treenav(const TreeNav& topo) {
   m.valid = false;
   m.logHastings = R_NegInf;
 
-  int nTip = topo.nTip;
   int root = topo.root;
 
   // 1. Select random prune node v: any node whose parent u ≠ root
