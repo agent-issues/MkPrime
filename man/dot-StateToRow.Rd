@@ -10,7 +10,8 @@
   nEdge,
   tipLabels = NULL,
   kPrimePrior = "geometric",
-  qHeterogeneity = FALSE
+  qHeterogeneity = FALSE,
+  ecologyAware = FALSE
 )
 }
 \arguments{

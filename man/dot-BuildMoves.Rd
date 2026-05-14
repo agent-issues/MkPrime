@@ -12,6 +12,9 @@
   fixTopology = FALSE,
   kPrimePrior = "geometric",
   qHeterogeneity = FALSE,
+  ecologyAware = FALSE,
+  nPhi = 0L,
+  kEcology = 0L,
   joint2d = TRUE
 )
 }

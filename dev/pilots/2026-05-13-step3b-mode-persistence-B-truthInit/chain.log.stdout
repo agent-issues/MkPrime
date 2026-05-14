@@ -1,0 +1,73 @@
+[patch] .InitState replaced in MkPrime namespace
+kEcology: 2   nTheta: 1 
+== Running Step 3b truth-init chain (nIter= 100000 , thin= 40 ) ==
+[truth-init] phi=4.0000  theta=0.9700  log_lik=-2506.75  log_prior=-151.42
+Warmup 500 │ logP:-2483.7 │ warmup: ~3500 iter
+Warmup 1000 │ logP:-2414.9 │ warmup: ~4000 iter
+Warmup 1500 │ logP:-2491.8 │ warmup: ~4500 iter
+Warmup 2000 │ logP:-2478.4 │ warmup: ~5000 iter
+Warmup 2500 │ logP:-2458.4 │ warmup: ~5000 iter
+Warmup 3000 │ logP:-2442.2 │ warmup: ~5000 iter
+Warmup 3500 │ logP:-2379.7 │ warmup: ~5000 iter
+Warmup 4000 │ logP:-2462.7 │ warmup: ~5000 iter
+Warmup 4500 │ logP:-2269.0 │ warmup: ~5000 iter
+Tuning 5000 │ logP:-2410.5 │ minESS/s: ?
+Tuning 5500 │ logP:-2421.2 │ minESS/s: 0.44
+Tuning 6000 │ logP:-2319.0 │ minESS/s: 0.96
+Tuning 6500 │ logP:-2531.8 │ minESS/s: 0.44
+Tuning 7000 │ logP:-2536.7 │ minESS/s: 0.83
+Tuning 7500 │ logP:-2660.7 │ minESS/s: 0.47
+Tuning 8000 │ logP:-2568.4 │ minESS/s: 0.46
+Tuning 8500 │ logP:-2518.9 │ minESS/s: 0.43
+Tuning 9000 │ logP:-2476.3 │ minESS/s: 0.43
+Tuning 9500 │ logP:-2428.5 │ minESS/s: 0.57
+Tuning 10000 │ logP:-2519.1 │ minESS/s: 0.60
+Tuning 10500 │ logP:-2434.5 │ minESS/s: 0.39
+Tuning 11000 │ logP:-2427.7 │ minESS/s: 0.55
+Tuning 11500 │ logP:-2314.8 │ minESS/s: 0.49
+Tuning 12000 │ logP:-2384.3 │ minESS/s: 0.51
+Tuning 12500 │ logP:-2384.0 │ minESS/s: 0.48
+Tuning 13000 │ logP:-2308.2 │ minESS/s: 0.58
+Tuning 13500 │ logP:-2331.2 │ minESS/s: 0.59
+Tuning 14000 │ logP:-2293.0 │ minESS/s: 0.62
+Tuning 14500 │ logP:-2461.3 │ minESS/s: 0.61
+ℹ Move weights frozen:
+Tuning 14500 │ logP:-2461.3 │ minESS/s: 0.61Topology: gibbs_spr:9.7% nni:0.9% spr:0.9% gibbs_subtree_swap:0.9% tbr:0.9%
+pspr:0.9%
+Tuning 14500 │ logP:-2461.3 │ minESS/s: 0.61Branches: local_dirichlet:16.0% dirichlet_branch:9.7% tree_length:4.6%
+branch_lengths:1.1%
+Tuning 14500 │ logP:-2461.3 │ minESS/s: 0.61Characters: gibbs_kPrime:32.1% p:1.7% kPrime:1.0% block_kPrime:0.9%
+Tuning 14500 │ logP:-2461.3 │ minESS/s: 0.61Rates: neo_joint:2.5% slice_rate_loss:1.7% slice_rate_neo:1.7%
+slice_rate_log_sd:1.7% joint_tl_rl:1.5% rate_neo:1.3% rate_loss:0.9%
+rate_log_sd:0.9% joint_tl_rls:0.9%
+Tuning 14500 │ logP:-2461.3 │ minESS/s: 0.61Ecology: gibbs_z:1.8% scale_theta:1.8% scale_phi:0.9% scale_pi0:0.9%
+Tuning 14500 │ logP:-2461.3 │ minESS/s: 0.61ℹ Tuning complete (5 rounds). Best minESS/s: 0.62
+Tuning 14500 │ logP:-2461.3 │ minESS/s: 0.61Sample 15000 │ logP:-2393.6 │ minESS: ?
+Sample 20000 │ logP:-2477.8 │ minESS: ?
+Sample 25000 │ logP:-2350.3 │ minESS: 5
+Sample 30000 │ logP:-2488.3 │ minESS: 15
+Sample 35000 │ logP:-2485.5 │ minESS: 21
+Sample 40000 │ logP:-2413.4 │ minESS: 12
+Sample 45000 │ logP:-2414.1 │ minESS: 12
+Sample 50000 │ logP:-2327.1 │ minESS: 12
+Sample 55000 │ logP:-2382.7 │ minESS: 13
+Sample 60000 │ logP:-2454.3 │ minESS: 24
+Sample 65000 │ logP:-2439.1 │ minESS: 8
+Sample 70000 │ logP:-2458.2 │ minESS: 12
+Sample 75000 │ logP:-2424.3 │ minESS: 13
+Sample 80000 │ logP:-2400.3 │ minESS: 14
+Sample 85000 │ logP:-2320.9 │ minESS: 9
+Sample 90000 │ logP:-2453.1 │ minESS: 9
+Sample 95000 │ logP:-2531.1 │ minESS: 10
+Sample 100000 │ logP:-2407.0 │ minESS: 12
+
+ℹ Streaming mode: 2125 samples written to 'dev/pilots/2026-05-13-step3b-mode-persistence-B-truthInit/chain.log'.Load with: `result$samples <- ReadMkLog(result$logFile)`
+Elapsed: 26.81202 mins 
+[patch] .InitState restored
+Saved RDS to dev/pilots/2026-05-13-step3b-mode-persistence-B-truthInit/result.rds 
+Log file: dev/pilots/2026-05-13-step3b-mode-persistence-B-truthInit/chain.log 
+Done.
+Warning messages:
+1: Dropping 1 invariant character (kObs <= 1): column 19. 
+2: Dropping 1 invariant character (kObs <= 1): column 19. 
+3: Warmup reached `maxWarmup` (5000) without stabilisation. 

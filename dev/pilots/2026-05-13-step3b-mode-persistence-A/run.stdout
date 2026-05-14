@@ -1,0 +1,70 @@
+kEcology: 2   nTheta: 1 
+== Running Step 3b mode-persistence chain (nIter= 100000 , thin= 40 ) ==
+   Seed: 20260513
+   Expected runtime: ~22 min (5x the 20k pilot's 4.4 min)
+Warmup 500 │ logP:-2387.9 │ warmup: ~3500 iter
+Warmup 1000 │ logP:-2399.1 │ warmup: ~4000 iter
+Warmup 1500 │ logP:-2447.3 │ warmup: ~4500 iter
+Warmup 2000 │ logP:-2422.7 │ warmup: ~5000 iter
+Warmup 2500 │ logP:-2458.7 │ warmup: ~5000 iter
+Warmup 3000 │ logP:-2464.8 │ warmup: ~5000 iter
+Warmup 3500 │ logP:-2463.1 │ warmup: ~5000 iter
+Warmup 4000 │ logP:-2444.3 │ warmup: ~5000 iter
+Warmup 4500 │ logP:-2320.1 │ warmup: ~5000 iter
+Tuning 5000 │ logP:-2366.2 │ minESS/s: ?
+Tuning 5500 │ logP:-2395.4 │ minESS/s: 0.40
+Tuning 6000 │ logP:-2434.3 │ minESS/s: 0.57
+Tuning 6500 │ logP:-2359.6 │ minESS/s: 0.49
+Tuning 7000 │ logP:-2430.6 │ minESS/s: 0.49
+Tuning 7500 │ logP:-2462.8 │ minESS/s: 0.51
+Tuning 8000 │ logP:-2416.2 │ minESS/s: 0.48
+Tuning 8500 │ logP:-2553.0 │ minESS/s: 0.51
+Tuning 9000 │ logP:-2441.9 │ minESS/s: 0.61
+Tuning 9500 │ logP:-2474.6 │ minESS/s: 0.64
+Tuning 10000 │ logP:-2440.8 │ minESS/s: 0.45
+Tuning 10500 │ logP:-2532.1 │ minESS/s: 0.55
+Tuning 11000 │ logP:-2384.6 │ minESS/s: 0.53
+Tuning 11500 │ logP:-2446.1 │ minESS/s: 0.55
+Tuning 12000 │ logP:-2392.1 │ minESS/s: 0.41
+Tuning 12500 │ logP:-2410.8 │ minESS/s: 0.51
+Tuning 13000 │ logP:-2479.3 │ minESS/s: 0.49
+Tuning 13500 │ logP:-2502.1 │ minESS/s: 0.60
+Tuning 14000 │ logP:-2423.4 │ minESS/s: 0.44
+Tuning 14500 │ logP:-2411.8 │ minESS/s: 0.40
+ℹ Move weights frozen:
+Tuning 14500 │ logP:-2411.8 │ minESS/s: 0.40Topology: gibbs_spr:7.6% nni:0.9% spr:0.9% gibbs_subtree_swap:0.9% tbr:0.9%
+pspr:0.9%
+Tuning 14500 │ logP:-2411.8 │ minESS/s: 0.40Branches: local_dirichlet:15.8% dirichlet_branch:11.1% tree_length:5.4%
+branch_lengths:1.4%
+Tuning 14500 │ logP:-2411.8 │ minESS/s: 0.40Characters: gibbs_kPrime:32.1% p:1.7% kPrime:1.0% block_kPrime:0.9%
+Tuning 14500 │ logP:-2411.8 │ minESS/s: 0.40Rates: neo_joint:2.5% joint_tl_rl:1.8% joint_tl_rls:1.8% slice_rate_loss:1.7%
+slice_rate_neo:1.7% slice_rate_log_sd:1.7% rate_neo:1.2% rate_log_sd:0.9%
+rate_loss:0.9%
+Tuning 14500 │ logP:-2411.8 │ minESS/s: 0.40Ecology: gibbs_z:1.8% scale_theta:1.2% scale_phi:0.9% scale_pi0:0.9%
+Tuning 14500 │ logP:-2411.8 │ minESS/s: 0.40ℹ Tuning complete (5 rounds). Best minESS/s: 0.60
+Tuning 14500 │ logP:-2411.8 │ minESS/s: 0.40Sample 15000 │ logP:-2395.2 │ minESS: ?
+Sample 20000 │ logP:-2455.2 │ minESS: ?
+Sample 25000 │ logP:-2453.5 │ minESS: 17
+Sample 30000 │ logP:-2429.1 │ minESS: 31
+Sample 35000 │ logP:-2447.5 │ minESS: 23
+Sample 40000 │ logP:-2475.6 │ minESS: 29
+Sample 45000 │ logP:-2439.0 │ minESS: 24
+Sample 50000 │ logP:-2422.6 │ minESS: 20
+Sample 55000 │ logP:-2442.4 │ minESS: 19
+Sample 60000 │ logP:-2456.6 │ minESS: 21
+Sample 65000 │ logP:-2458.8 │ minESS: 33
+Sample 70000 │ logP:-2516.9 │ minESS: 54
+Sample 75000 │ logP:-2442.5 │ minESS: 48
+Sample 80000 │ logP:-2455.1 │ minESS: 39
+Sample 85000 │ logP:-2487.7 │ minESS: 32
+Sample 90000 │ logP:-2535.7 │ minESS: 35
+Sample 95000 │ logP:-2509.7 │ minESS: 26
+Sample 100000 │ logP:-2419.6 │ minESS: 32
+
+ℹ Streaming mode: 2125 samples written to 'dev/pilots/2026-05-13-step3b-mode-persistence-A/chain.log'.Load with: `result$samples <- ReadMkLog(result$logFile)`
+Elapsed: 27.09722 mins 
+Saved RDS to dev/pilots/2026-05-13-step3b-mode-persistence-A/result.rds 
+Log file: dev/pilots/2026-05-13-step3b-mode-persistence-A/chain.log 
+Done. Now run analyse.R to generate REPORT.md
+Warning message:
+Warmup reached `maxWarmup` (5000) without stabilisation. 

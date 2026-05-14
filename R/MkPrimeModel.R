@@ -662,12 +662,10 @@ LogPrior <- function(state, model, mkd) {
           nEncCol  * log(theta) +
           nDiscCol * log1p(-theta)
       )
-      # Beta hyperprior on theta_e (unnormalised: constant cancels in MH ratios
-      # but include the kernel for correct absolute log-posterior reporting).
-      lp <- lp + sum(
-        (model$thetaAlpha - 1) * log(theta) +
-          (model$thetaBeta  - 1) * log1p(-theta)
-      )
+      # Beta hyperprior on theta_e (full normalised log-density to match
+      # the C++ R::dbeta(..., 1) convention used in cpp_log_prior).
+      lp <- lp + sum(dbeta(theta, shape1 = model$thetaAlpha,
+                            shape2 = model$thetaBeta, log = TRUE))
     }
   }
 

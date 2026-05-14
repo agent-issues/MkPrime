@@ -30,7 +30,7 @@ test_that(".InitState initialises phi, pi0, z for ecology-aware models", {
   expect_equal(state$phi, 1.0)
   expect_equal(state$pi0, model$rho0Alpha / (model$rho0Alpha + model$rho0Beta))
   expect_true(is.matrix(state$z))
-  expect_equal(dim(state$z), c(f$mkd$nChar, f$mkd$kEcology))
+  expect_equal(dim(state$z), c(f$mkd$nChar, f$mkd$kEcology - 1L))
   expect_true(all(state$z == 0L))
   expect_true(is.finite(state$log_lik))
 })
@@ -169,7 +169,7 @@ test_that("cpp_log_likelihood_ecology matches R orchestrator (z = 0)", {
   model <- MkPrimeModel(ecologyAware = TRUE, expSteps = 10,
                         kPrimePrior = "geometric", coding = "none")
   dataPtr <- .MakeEcoDataPtr(f$mkd, model)
-  zMat <- matrix(0L, nrow = f$mkd$nChar, ncol = f$mkd$kEcology)
+  zMat <- matrix(0L, nrow = f$mkd$nChar, ncol = f$mkd$kEcology - 1L)
 
   parent <- f$tree$edge[, 1]
   child  <- f$tree$edge[, 2]
@@ -195,19 +195,21 @@ test_that("cpp_log_likelihood_ecology matches R orchestrator (mixed z, global ph
                         kPrimePrior = "geometric", coding = "none")
   dataPtr <- .MakeEcoDataPtr(f$mkd, model)
   set.seed(99)
-  zMat <- matrix(as.integer(sample(0:2, f$mkd$nChar * f$mkd$kEcology,
+  zMat <- matrix(as.integer(sample(0:2, f$mkd$nChar * (f$mkd$kEcology - 1L),
                                     replace = TRUE)),
-                 nrow = f$mkd$nChar, ncol = f$mkd$kEcology)
+                 nrow = f$mkd$nChar, ncol = f$mkd$kEcology - 1L)
 
   parent <- f$tree$edge[, 1]
   child  <- f$tree$edge[, 2]
   edgeLen <- f$tree$edge.length
 
+  # v2: pi0 default differs between C++ wrapper (0.0) and R orchestrator
+  # (0.5); pass explicitly to align.
   ll_cpp <- MkPrime:::.CppLogLikelihoodEcology(
     dataPtr, parent, child, edgeLen,
     kPrime = as.integer(f$mkd$kObs),
     rateLoss = 1.2, rateLogSd = 0, rateNeo = 0.9,
-    phi = 2.0, zMatrix = zMat)
+    phi = 2.0, zMatrix = zMat, pi0 = 0.5)
   ll_r <- MkPrime:::.MkpEcologyLogLikelihood(
     f$tree, f$mkd, kPrime = as.integer(f$mkd$kObs),
     rate_loss = 1.2, rate_log_sd = 0, nCat = model$nCat,
@@ -224,9 +226,9 @@ test_that("cpp_log_likelihood_ecology matches R orchestrator with ACRV", {
                         nCat = 4L)
   dataPtr <- .MakeEcoDataPtr(f$mkd, model)
   set.seed(13)
-  zMat <- matrix(as.integer(sample(0:2, f$mkd$nChar * f$mkd$kEcology,
+  zMat <- matrix(as.integer(sample(0:2, f$mkd$nChar * (f$mkd$kEcology - 1L),
                                     replace = TRUE)),
-                 nrow = f$mkd$nChar, ncol = f$mkd$kEcology)
+                 nrow = f$mkd$nChar, ncol = f$mkd$kEcology - 1L)
 
   parent <- f$tree$edge[, 1]
   child  <- f$tree$edge[, 2]
@@ -236,7 +238,7 @@ test_that("cpp_log_likelihood_ecology matches R orchestrator with ACRV", {
     dataPtr, parent, child, edgeLen,
     kPrime = as.integer(f$mkd$kObs),
     rateLoss = 1.0, rateLogSd = 0.5, rateNeo = 1.0,
-    phi = 1.8, zMatrix = zMat)
+    phi = 1.8, zMatrix = zMat, pi0 = 0.5)
   ll_r <- MkPrime:::.MkpEcologyLogLikelihood(
     f$tree, f$mkd, kPrime = as.integer(f$mkd$kObs),
     rate_loss = 1.0, rate_log_sd = 0.5, nCat = 4L,
@@ -253,9 +255,9 @@ test_that("cpp_log_likelihood_ecology matches R orchestrator with per_ecology ph
                         magnitudeMode = "per_ecology")
   dataPtr <- .MakeEcoDataPtr(f$mkd, model)
   set.seed(31)
-  zMat <- matrix(as.integer(sample(0:2, f$mkd$nChar * f$mkd$kEcology,
+  zMat <- matrix(as.integer(sample(0:2, f$mkd$nChar * (f$mkd$kEcology - 1L),
                                     replace = TRUE)),
-                 nrow = f$mkd$nChar, ncol = f$mkd$kEcology)
+                 nrow = f$mkd$nChar, ncol = f$mkd$kEcology - 1L)
   phi <- c(1.4, 0.7, 2.1)
   expect_equal(length(phi), f$mkd$kEcology)
 
@@ -267,7 +269,7 @@ test_that("cpp_log_likelihood_ecology matches R orchestrator with per_ecology ph
     dataPtr, parent, child, edgeLen,
     kPrime = as.integer(f$mkd$kObs),
     rateLoss = 1.0, rateLogSd = 0, rateNeo = 1.0,
-    phi = phi, zMatrix = zMat)
+    phi = phi, zMatrix = zMat, pi0 = 0.5)
   ll_r <- MkPrime:::.MkpEcologyLogLikelihood(
     f$tree, f$mkd, kPrime = as.integer(f$mkd$kObs),
     rate_loss = 1.0, rate_log_sd = 0, nCat = model$nCat,
@@ -283,9 +285,9 @@ test_that("cpp_log_likelihood_ecology with variable coding matches R orchestrato
                         kPrimePrior = "geometric", coding = "variable")
   dataPtr <- .MakeEcoDataPtr(f$mkd, model)
   set.seed(401)
-  zMat <- matrix(as.integer(sample(0:2, f$mkd$nChar * f$mkd$kEcology,
+  zMat <- matrix(as.integer(sample(0:2, f$mkd$nChar * (f$mkd$kEcology - 1L),
                                     replace = TRUE)),
-                 nrow = f$mkd$nChar, ncol = f$mkd$kEcology)
+                 nrow = f$mkd$nChar, ncol = f$mkd$kEcology - 1L)
 
   parent <- f$tree$edge[, 1]
   child  <- f$tree$edge[, 2]
@@ -295,7 +297,7 @@ test_that("cpp_log_likelihood_ecology with variable coding matches R orchestrato
     dataPtr, parent, child, edgeLen,
     kPrime = as.integer(f$mkd$kObs),
     rateLoss = 1.0, rateLogSd = 0, rateNeo = 1.0,
-    phi = 1.8, zMatrix = zMat)
+    phi = 1.8, zMatrix = zMat, pi0 = 0.5)
   ll_r <- MkPrime:::.MkpEcologyLogLikelihood(
     f$tree, f$mkd, kPrime = as.integer(f$mkd$kObs),
     rate_loss = 1.0, rate_log_sd = 0, nCat = model$nCat,
@@ -311,17 +313,19 @@ test_that("cpp_log_likelihood_ecology variable coding + z = 0 matches standard",
   model <- MkPrimeModel(ecologyAware = TRUE, expSteps = 10,
                         kPrimePrior = "geometric", coding = "variable")
   dataPtr <- .MakeEcoDataPtr(f$mkd, model)
-  zMat <- matrix(0L, nrow = f$mkd$nChar, ncol = f$mkd$kEcology)
+  zMat <- matrix(0L, nrow = f$mkd$nChar, ncol = f$mkd$kEcology - 1L)
 
   parent <- f$tree$edge[, 1]
   child  <- f$tree$edge[, 2]
   edgeLen <- f$tree$edge.length
 
+  # v2: z = 0 only matches the non-ecology baseline when phi = 1 (otherwise
+  # the non-ref ecology rate factor 1/gamma_e drifts away from 1).
   ll_cpp <- MkPrime:::.CppLogLikelihoodEcology(
     dataPtr, parent, child, edgeLen,
     kPrime = as.integer(f$mkd$kObs),
     rateLoss = 1.0, rateLogSd = 0, rateNeo = 1.0,
-    phi = 2.0, zMatrix = zMat)
+    phi = 1.0, zMatrix = zMat)
   ll_baseline <- MkPrime:::.MkpLogLikelihood(
     f$tree, f$mkd, kPrime = as.integer(f$mkd$kObs),
     rate_loss = 1.0, rate_log_sd = 0, nCat = model$nCat,
@@ -335,7 +339,7 @@ test_that("cpp_log_likelihood_ecology errors on informative coding", {
   model <- MkPrimeModel(ecologyAware = TRUE, expSteps = 10,
                         kPrimePrior = "geometric", coding = "informative")
   dataPtr <- .MakeEcoDataPtr(f$mkd, model)
-  zMat <- matrix(0L, nrow = f$mkd$nChar, ncol = f$mkd$kEcology)
+  zMat <- matrix(0L, nrow = f$mkd$nChar, ncol = f$mkd$kEcology - 1L)
   expect_error(
     MkPrime:::.CppLogLikelihoodEcology(
       dataPtr,
@@ -447,7 +451,8 @@ test_that("scale_phi move keeps logLik in sync with ecology likelihood (global)"
     rateLogSd = res$post$rateLogSd,
     rateNeo = res$post$rateNeo,
     phi = res$post$phi,
-    zMatrix = res$post$zMatrix)
+    zMatrix = res$post$zMatrix,
+    pi0 = res$post$pi0, theta = res$post$theta)
   expect_equal(res$post$logLik, ll_fresh, tolerance = 1e-10)
 })
 
@@ -492,7 +497,8 @@ test_that("scale_phi in per_ecology mode mutates exactly one phi entry", {
       rateLogSd = res$post$rateLogSd,
       rateNeo = res$post$rateNeo,
       phi = res$post$phi,
-      zMatrix = res$post$zMatrix)
+      zMatrix = res$post$zMatrix,
+      pi0 = res$post$pi0, theta = res$post$theta)
     expect_equal(res$post$logLik, ll_fresh, tolerance = 1e-10)
   } else {
     expect_equal(res$post$phi, res$pre$phi)
@@ -576,7 +582,7 @@ test_that("scale_pi0 move stays in (0, 1) and leaves logLik untouched", {
   f <- .MakeEcologyFixture()
   model <- MkPrimeModel(ecologyAware = TRUE, expSteps = 10,
                         kPrimePrior = "geometric", coding = "none")
-  zInit <- matrix(0L, f$mkd$nChar, f$mkd$kEcology)
+  zInit <- matrix(0L, f$mkd$nChar, f$mkd$kEcology - 1L)
   zInit[1, 1] <- 1L  # one slab cell so pi0 matters in the prior
   zInit[2, 2] <- 2L
   res <- .Pi0StateAfterMove(f, model, zInit, seed = 17L, scaleTuning = 0.5)
@@ -596,10 +602,10 @@ test_that("scale_pi0 prior delta matches dbeta + spike-and-slab contribution", {
   f <- .MakeEcologyFixture()
   model <- MkPrimeModel(ecologyAware = TRUE, expSteps = 10,
                         kPrimePrior = "geometric", coding = "none")
-  zInit <- matrix(0L, f$mkd$nChar, f$mkd$kEcology)
+  zInit <- matrix(0L, f$mkd$nChar, f$mkd$kEcology - 1L)
   zInit[1, 1] <- 1L
   zInit[3, 2] <- 2L
-  zInit[4, 3] <- 1L
+  zInit[4, 1] <- 1L
   res <- .Pi0StateAfterMove(f, model, zInit, seed = 22L, scaleTuning = 0.5)
   if (!res$accepted) skip("Pi0 move rejected at this seed; rerun with another.")
 
@@ -677,7 +683,8 @@ for (case in .PerCharCases) {
                             coding = cs$coding,
                             magnitudeMode = cs$magMode)
       dataPtr <- .MakeEcoDataPtr(f$mkd, model)
-      zMat <- cs$z(f$mkd$nChar, f$mkd$kEcology)
+      # v2: zMatrix is nChar x (kEcology - 1); phi length matches kEcology.
+      zMat <- cs$z(f$mkd$nChar, f$mkd$kEcology - 1L)
       phi  <- cs$phi(f$mkd$kEcology, cs$magMode)
 
       parent <- f$tree$edge[, 1]
@@ -735,7 +742,8 @@ test_that("gibbs_z sweep updates z and syncs logLik/logPrior to fresh eval", {
     as.integer(post$kPrime),
     rateLoss = post$rateLoss, rateLogSd = post$rateLogSd,
     rateNeo = post$rateNeo,
-    phi = post$phi, zMatrix = post$zMatrix)
+    phi = post$phi, zMatrix = post$zMatrix,
+    pi0 = post$pi0, theta = post$theta)
   expect_equal(post$logLik, ll_fresh, tolerance = 1e-10)
 
   # Some cells likely changed (sanity — not strictly required, but the

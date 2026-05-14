@@ -245,7 +245,8 @@ static double cpp_log_prior(
     double kprimeAlpha = 1.0, double kprimeBeta = 1.0,
     const NumericVector* phiPtr   = nullptr,
     double pi0                    = 0.0,
-    const IntegerMatrix* zMatPtr  = nullptr) {
+    const IntegerMatrix* zMatPtr  = nullptr,
+    const NumericVector* thetaPtr = nullptr) {
 
   // Hard floor: prevents Mk_v singularity (corrected likelihood → +∞ at zero)
   if (treeLength < 1e-6) return R_NegInf;
@@ -384,33 +385,51 @@ static double cpp_log_prior(
                      1.0 / data.betaScaleRate, 1);
   }
 
-  // Ecology-aware NT model: phi, pi0, z priors (mirrors LogPrior in R).
+  // Ecology-aware NT model (v2): phi, pi0, theta, z priors.
+  // Mirrors LogPrior in R/MkPrimeModel.R. Asymmetric slab:
+  //   P(z = none) = pi0
+  //   P(z = enc)  = (1 - pi0) * theta_e
+  //   P(z = disc) = (1 - pi0) * (1 - theta_e)
+  // theta_e ~ Beta(thetaAlpha, thetaBeta).
   if (data.ecologyAware) {
-    if (phiPtr == nullptr || zMatPtr == nullptr) return R_NegInf;
+    if (phiPtr == nullptr || zMatPtr == nullptr || thetaPtr == nullptr)
+      return R_NegInf;
     const NumericVector& phi = *phiPtr;
     const IntegerMatrix& zMat = *zMatPtr;
+    const NumericVector& theta = *thetaPtr;
     for (int i = 0; i < phi.size(); ++i) {
       if (phi[i] <= 0.0) return R_NegInf;
     }
     if (pi0 <= 0.0 || pi0 >= 1.0) return R_NegInf;
     int nCharZ = zMat.nrow();
     int kEcoZ  = zMat.ncol();
-    long nNone = 0, nSlab = 0;
-    for (int c = 0; c < nCharZ; ++c) {
-      for (int s = 0; s < kEcoZ; ++s) {
-        int zv = zMat(c, s);
-        if (zv == 0) ++nNone;
-        else if (zv == 1 || zv == 2) ++nSlab;
-        else return R_NegInf;
-      }
+    if (theta.size() != kEcoZ) return R_NegInf;
+    for (int e = 0; e < kEcoZ; ++e) {
+      if (theta[e] <= 0.0 || theta[e] >= 1.0) return R_NegInf;
     }
     for (int i = 0; i < phi.size(); ++i) {
       lp += R::dlnorm(phi[i], 0.0, data.sigmaPhi, 1);
     }
     lp += R::dbeta(pi0, data.rho0Alpha, data.rho0Beta, 1);
-    if (nNone > 0) lp += static_cast<double>(nNone) * std::log(pi0);
-    if (nSlab > 0) lp += static_cast<double>(nSlab) *
-                          (std::log1p(-pi0) - std::log(2.0));
+
+    double logPi0     = std::log(pi0);
+    double log1mPi0   = std::log1p(-pi0);
+    for (int e = 0; e < kEcoZ; ++e) {
+      long nNone = 0, nEnc = 0, nDisc = 0;
+      for (int c = 0; c < nCharZ; ++c) {
+        int zv = zMat(c, e);
+        if      (zv == 0) ++nNone;
+        else if (zv == 1) ++nEnc;
+        else if (zv == 2) ++nDisc;
+        else return R_NegInf;
+      }
+      double logTheta   = std::log(theta[e]);
+      double log1mTheta = std::log1p(-theta[e]);
+      if (nNone > 0) lp += static_cast<double>(nNone) * logPi0;
+      if (nEnc  > 0) lp += static_cast<double>(nEnc)  * (log1mPi0 + logTheta);
+      if (nDisc > 0) lp += static_cast<double>(nDisc) * (log1mPi0 + log1mTheta);
+      lp += R::dbeta(theta[e], data.thetaAlpha, data.thetaBeta, 1);
+    }
   }
 
   return lp;
@@ -653,7 +672,7 @@ double eval_log_prior_cpp(SEXP dataPtr, SEXP statePtr) {
     s->rateLoss, s->rateLogSd, s->rateNeo,
     s->p, s->kPrime, s->betaScale,
     s->kprimeAlpha, s->kprimeBeta,
-    &s->phi, s->pi0, &s->zMatrix);
+    &s->phi, s->pi0, &s->zMatrix, &s->theta);
 }
 
 
@@ -2693,7 +2712,7 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
     state->rateLoss, state->rateLogSd, state->rateNeo,
     state->p, state->kPrime, state->betaScale,
     state->kprimeAlpha, state->kprimeBeta,
-    &state->phi, state->pi0, &state->zMatrix);
+    &state->phi, state->pi0, &state->zMatrix, &state->theta);
   if (!R_FINITE(newLogPrior)) return false;
 
   // 16. MH acceptance
@@ -2900,7 +2919,7 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
     state->rateLoss, state->rateLogSd, state->rateNeo,
     state->p, state->kPrime, state->betaScale,
     state->kprimeAlpha, state->kprimeBeta,
-    &state->phi, state->pi0, &state->zMatrix);
+    &state->phi, state->pi0, &state->zMatrix, &state->theta);
   if (!R_FINITE(newLogPrior)) return false;
 
   // 13. MH acceptance
@@ -2957,7 +2976,7 @@ static double eval_slice_target(McmcData* data, McmcState* state,
     state->rateLoss, state->rateLogSd, state->rateNeo,
     state->p, state->kPrime, state->betaScale,
     state->kprimeAlpha, state->kprimeBeta,
-    &state->phi, state->pi0, &state->zMatrix);
+    &state->phi, state->pi0, &state->zMatrix, &state->theta);
   if (!R_FINITE(logPrior)) return R_NegInf;
 
   double logLik;
@@ -3041,7 +3060,7 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
         state->rateLoss, state->rateLogSd, state->rateNeo,
         state->p, state->kPrime, state->betaScale,
     state->kprimeAlpha, state->kprimeBeta,
-    &state->phi, state->pi0, &state->zMatrix);
+    &state->phi, state->pi0, &state->zMatrix, &state->theta);
 
       int nEdge = state->parent.size();
       NumericVector edgeLen(nEdge);
@@ -3128,7 +3147,7 @@ static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
       state->rateLoss, state->rateLogSd, state->rateNeo,
       state->p, state->kPrime, state->betaScale,
       state->kprimeAlpha, state->kprimeBeta,
-    &state->phi, state->pi0, &state->zMatrix);
+    &state->phi, state->pi0, &state->zMatrix, &state->theta);
     // Restore
     if (paramCode == 0) state->kprimeAlpha = oldVal;
     else                state->kprimeBeta  = oldVal;
@@ -3166,7 +3185,7 @@ static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
         state->rateLoss, state->rateLogSd, state->rateNeo,
         state->p, state->kPrime, state->betaScale,
         state->kprimeAlpha, state->kprimeBeta,
-    &state->phi, state->pi0, &state->zMatrix);
+    &state->phi, state->pi0, &state->zMatrix, &state->theta);
       return true;
     }
     if (u1 < u0) L = u1; else R_bound = u1;
@@ -3808,7 +3827,7 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
     state->rateLoss, state->rateLogSd, state->rateNeo,
     state->p, state->kPrime, state->betaScale,
     state->kprimeAlpha, state->kprimeBeta,
-    &state->phi, state->pi0, &state->zMatrix);
+    &state->phi, state->pi0, &state->zMatrix, &state->theta);
 
   state->nodeCL.invalidate_structure();  // M-161: kPrime changed, unit structure may differ
 
@@ -3853,7 +3872,7 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
     state->rateLoss, state->rateLogSd, state->rateNeo,
     state->p, state->kPrime, state->betaScale,
     state->kprimeAlpha, state->kprimeBeta,
-    &state->phi, state->pi0, &state->zMatrix);
+    &state->phi, state->pi0, &state->zMatrix, &state->theta);
 
   if (!R_FINITE(newLogPrior)) {
     for (int i = 0; i < nTrans; ++i)
@@ -4039,7 +4058,7 @@ static bool gibbs_z_sweep_impl(McmcData* data, McmcState* state, double beta) {
     state->rateLoss, state->rateLogSd, state->rateNeo,
     state->p, state->kPrime, state->betaScale,
     state->kprimeAlpha, state->kprimeBeta,
-    &state->phi, state->pi0, &state->zMatrix);
+    &state->phi, state->pi0, &state->zMatrix, &state->theta);
   return true;
 }
 
@@ -4359,7 +4378,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         state->rateLoss, state->rateLogSd, state->rateNeo,
         state->p, state->kPrime, state->betaScale,
     state->kprimeAlpha, state->kprimeBeta,
-    &state->phi, state->pi0, &state->zMatrix);
+    &state->phi, state->pi0, &state->zMatrix, &state->theta);
       state->logLik = state->logLik;  // unchanged
       return true;  // Gibbs: always accept
     }
@@ -4469,7 +4488,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         state->rateLoss, state->rateLogSd, state->rateNeo,
         state->p, state->kPrime, state->betaScale,
         state->kprimeAlpha, state->kprimeBeta,
-    &state->phi, state->pi0, &state->zMatrix);
+    &state->phi, state->pi0, &state->zMatrix, &state->theta);
       if (!R_FINITE(newLP)) { state->kprimeAlpha = oldKpA; return false; }
       double logAlpha = (newLP - state->logPrior) + std::log(mult);
       if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
@@ -4488,7 +4507,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         state->rateLoss, state->rateLogSd, state->rateNeo,
         state->p, state->kPrime, state->betaScale,
         state->kprimeAlpha, state->kprimeBeta,
-    &state->phi, state->pi0, &state->zMatrix);
+    &state->phi, state->pi0, &state->zMatrix, &state->theta);
       if (!R_FINITE(newLP)) { state->kprimeBeta = oldKpB; return false; }
       double logAlpha = (newLP - state->logPrior) + std::log(mult);
       if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
@@ -4545,7 +4564,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         state->rateLoss, state->rateLogSd, state->rateNeo,
         state->p, state->kPrime, state->betaScale,
         state->kprimeAlpha, state->kprimeBeta,
-        &state->phi, state->pi0, &state->zMatrix);
+        &state->phi, state->pi0, &state->zMatrix, &state->theta);
       if (!R_FINITE(newLP) || !R_FINITE(newLL)) {
         state->pi0 = pi0Old;
         return false;
@@ -4594,7 +4613,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         state->rateLoss, state->rateLogSd, state->rateNeo,
         state->p, state->kPrime, state->betaScale,
         state->kprimeAlpha, state->kprimeBeta,
-        &state->phi, state->pi0, &state->zMatrix);
+        &state->phi, state->pi0, &state->zMatrix, &state->theta);
       if (!R_FINITE(newLP) || !R_FINITE(newLL)) {
         state->theta[idx] = thOld;
         return false;
@@ -4640,7 +4659,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       state->rateLoss, state->rateLogSd, state->rateNeo,
       state->p, state->kPrime, state->betaScale,
     state->kprimeAlpha, state->kprimeBeta,
-    &state->phi, state->pi0, &state->zMatrix);
+    &state->phi, state->pi0, &state->zMatrix, &state->theta);
   }
 
   if (!R_FINITE(newLogPrior)) {
@@ -5104,15 +5123,16 @@ List run_mcmc_batch_cpp(
   int nKpHyperCols = includeBG ? 2 : (includeP ? 1 : 0);
   bool includeBS = data->qHeterogeneity;  // M-052: beta_scale column
   bool includeEco = data->ecologyAware;
-  int nPhiCols = includeEco ? (int)states[0]->phi.size() : 0;
-  int nPi0Cols = includeEco ? 1 : 0;
+  int nPhiCols   = includeEco ? (int)states[0]->phi.size()   : 0;
+  int nPi0Cols   = includeEco ? 1 : 0;
+  int nThetaCols = includeEco ? (int)states[0]->theta.size() : 0;
   // Base columns: log_post, log_lik, tree_length, rate_log_sd (4).
   // rate_loss included only when hasNeo (like rate_neo, p, beta_scale).
   // +2 diagnostic columns: swap_cold (cold-chain swaps since last sample),
   // topo_hash (topology fingerprint for change detection).
-  // +ecology: phi (nPhiCols) and pi0 (1) when ecologyAware.
+  // +ecology: phi (nPhiCols), pi0 (1), theta (nThetaCols) when ecologyAware.
   int nScalarCols = 4 + (hasNeo ? 2 : 0) + nKpHyperCols +
-                    (includeBS ? 1 : 0) + nPhiCols + nPi0Cols +
+                    (includeBS ? 1 : 0) + nPhiCols + nPi0Cols + nThetaCols +
                     2 + nTrans + nEdge;
   int maxSaved    = nBatch / thin + 2;
   std::vector<std::vector<double>> scalarRows;
@@ -5232,6 +5252,7 @@ List run_mcmc_batch_cpp(
       if (includeEco) {
         for (int e = 0; e < nPhiCols; ++e) row[col++] = s0->phi[e];
         row[col++] = s0->pi0;
+        for (int e = 0; e < nThetaCols; ++e) row[col++] = s0->theta[e];
       }
       // Diagnostic: cold-chain swaps since last sample
       row[col++] = static_cast<double>(coldSwapsSinceSample);

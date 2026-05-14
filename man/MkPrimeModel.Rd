@@ -32,6 +32,8 @@ MkPrimeModel(
   magnitudeMode = "global",
   rho0Alpha = 7,
   rho0Beta = 3,
+  thetaAlpha = 2,
+  thetaBeta = 2,
   sigmaPhi = 0.5,
   gibbsZEvery = 50L
 )
@@ -128,6 +130,12 @@ ecologies: \code{"global"} (default; single \code{phi}) or \code{"per_ecology"} 
 \code{pi_0}, the prior probability that a (character, ecology) pair has
 no ecology effect. Defaults: 7, 3 (so \code{E[pi_0] = 0.7}). Ignored when
 \code{ecologyAware = FALSE}.}
+
+\item{thetaAlpha, thetaBeta}{Shape parameters for the Beta hyperprior on
+\code{theta_e}, the slab balance for non-reference ecology \code{e}. Given a
+non-none \code{z}, \code{P(z = encouraged | non-none) = theta_e}. Defaults: 2, 2
+(weakly symmetric -- prior favours equal enc/disc but allows asymmetry).
+Ignored when \code{ecologyAware = FALSE}.}
 
 \item{sigmaPhi}{Standard deviation of the LogNormal prior on \code{phi} (or
 on each \code{phi_e}). Default 0.5. Ignored when \code{ecologyAware = FALSE}.}

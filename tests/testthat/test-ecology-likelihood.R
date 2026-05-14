@@ -224,20 +224,44 @@ test_that("EcologyEdgeWeights rows are proper probability distributions", {
 # Reference implementation: explicit matrix-mult mixture pruning.
 # Same algorithm as the C++ but written with no JC shortcuts, so a shared
 # bug between C++ and R is unlikely.
+# v2: zMat has (kEco - 1) columns (one per non-reference ecology). For
+# ecology state s, the rate factor is 1 at refEcology and mu_z / gamma_e
+# elsewhere, where mu_z = 1, phi, 1/phi for z in {0, 1, 2}.
 .EcologyJcLogLik_R <- function(parent, child, edgeLen, tipStates,
                                 kStates, rootFreqs, rateMultipliers,
-                                wEdge, zMat, phi, mode) {
+                                wEdge, zMat, phi, mode,
+                                refEcology = 0L, theta = NULL,
+                                pi0 = 0.0) {
   nTip  <- nrow(tipStates)
   nChar <- ncol(tipStates)
   nCat  <- length(rateMultipliers)
   kEco  <- ncol(wEdge)
   maxNode <- 2L * nTip - 1L
   root <- nTip + 1L
+  if (is.null(theta)) theta <- rep(0.5, max(0L, kEco - 1L))
+
+  # gamma_e per ecology state (1 at refEcology). theta/zMat columns are
+  # 0-indexed (s < refEcology) ? s : (s - 1).
+  gammaE <- rep(1.0, kEco)
+  for (s in seq_len(kEco) - 1L) {
+    if (s == refEcology) next
+    j1 <- if (s < refEcology) s + 1L else s   # 1-based theta/zMat col
+    phi_s <- if (mode == 0L) phi[1] else phi[s + 1L]
+    gammaE[s + 1L] <- pi0 + (1 - pi0) *
+      (theta[j1] * phi_s + (1 - theta[j1]) / phi_s)
+  }
+
+  zLookup <- function(c, s) {
+    if (s == refEcology) return(0L)
+    zCol <- if (s < refEcology) s + 1L else s
+    zMat[c, zCol]
+  }
 
   rateFactor <- function(z, s) {
-    if (z == 0L) return(1)
+    if (s == refEcology) return(1)
     p <- if (mode == 0L) phi[1] else phi[s + 1L]
-    if (z == 1L) p else 1 / p
+    mu <- if (z == 0L) 1 else if (z == 1L) p else 1 / p
+    mu / gammaE[s + 1L]
   }
 
   siteLik <- numeric(nChar)
@@ -261,7 +285,7 @@ test_that("EcologyEdgeWeights rows are proper probability distributions", {
       for (c in seq_len(nChar)) {
         Pmix <- matrix(0, kStates, kStates)
         for (s in seq_len(kEco) - 1L) {
-          lambda <- rateFactor(zMat[c, s + 1L], s)
+          lambda <- rateFactor(zLookup(c, s), s)
           t_eff <- t_base * lambda
           e_term <- exp(-kStates * t_eff / (kStates - 1))
           ps <- 1 / kStates + (1 - 1 / kStates) * e_term
@@ -311,11 +335,11 @@ test_that("PruningJcEcology with z = 0 and phi = 1 matches reference R", {
   set.seed(7)
   tipStates <- matrix(sample.int(s$kStates, 4 * 2, replace = TRUE) - 1L,
                       nrow = 4, ncol = 2)
-  zMat <- matrix(0L, nrow = 2, ncol = s$kEco)
+  zMat <- matrix(0L, nrow = 2, ncol = s$kEco - 1L)
   ll_cpp <- MkPrime:::.PruningJcEcology(
     s$parent, s$child, s$edgeLen, tipStates,
     s$kStates, s$rootFreqs, rateMultipliers = 1,
-    s$wEdge, zMat, phi = 1, mode = 0L
+    s$wEdge, zMat, phi = 1, mode = 0L, refEcology = 0L
   )
   ll_r <- .EcologyJcLogLik_R(
     s$parent, s$child, s$edgeLen, tipStates,
@@ -326,20 +350,24 @@ test_that("PruningJcEcology with z = 0 and phi = 1 matches reference R", {
 })
 
 
-test_that("PruningJcEcology: z = 0 implies result is independent of phi", {
+# v2: with z = 0 and non-reference ecology, the rate factor is 1/gamma_e
+# which depends on phi, so the v1 phi-invariance no longer holds. The test
+# is preserved (phi = 1 in both calls) to keep the smoke check that z = 0
+# is a stable baseline.
+test_that("PruningJcEcology: z = 0 is stable across calls (phi = 1)", {
   s <- .MakeJcEcoSetup(kStates = 2L, nChar = 3L, kEco = 2L)
   set.seed(11)
   tipStates <- matrix(sample.int(s$kStates, 4 * 3, replace = TRUE) - 1L,
                       nrow = 4, ncol = 3)
-  zMat <- matrix(0L, nrow = 3, ncol = s$kEco)
+  zMat <- matrix(0L, nrow = 3, ncol = s$kEco - 1L)
   ll1 <- MkPrime:::.PruningJcEcology(
     s$parent, s$child, s$edgeLen, tipStates,
     s$kStates, s$rootFreqs, 1,
-    s$wEdge, zMat, phi = 1, mode = 0L)
+    s$wEdge, zMat, phi = 1, mode = 0L, refEcology = 0L)
   ll2 <- MkPrime:::.PruningJcEcology(
     s$parent, s$child, s$edgeLen, tipStates,
     s$kStates, s$rootFreqs, 1,
-    s$wEdge, zMat, phi = 3.7, mode = 0L)
+    s$wEdge, zMat, phi = 1, mode = 0L, refEcology = 0L)
   expect_equal(ll1, ll2, tolerance = 1e-12)
 })
 
@@ -349,14 +377,12 @@ test_that("PruningJcEcology matches reference for mixed z and phi != 1", {
   set.seed(31)
   tipStates <- matrix(sample.int(s$kStates, 4 * 4, replace = TRUE) - 1L,
                       nrow = 4, ncol = 4)
-  zMat <- rbind(c(0L, 1L),
-                c(1L, 0L),
-                c(2L, 2L),
-                c(0L, 2L))
+  # v2: zMat has kEco - 1 columns (one for the non-reference ecology).
+  zMat <- matrix(c(1L, 0L, 2L, 2L), nrow = 4, ncol = 1L)
   ll_cpp <- MkPrime:::.PruningJcEcology(
     s$parent, s$child, s$edgeLen, tipStates,
     s$kStates, s$rootFreqs, 1,
-    s$wEdge, zMat, phi = 2.0, mode = 0L)
+    s$wEdge, zMat, phi = 2.0, mode = 0L, refEcology = 0L)
   ll_r <- .EcologyJcLogLik_R(
     s$parent, s$child, s$edgeLen, tipStates,
     s$kStates, s$rootFreqs, 1,
@@ -371,14 +397,15 @@ test_that("PruningJcEcology matches reference with per_ecology phi", {
   set.seed(42)
   tipStates <- matrix(sample.int(s$kStates, 4 * 3, replace = TRUE) - 1L,
                       nrow = 4, ncol = 3)
-  zMat <- rbind(c(0L, 1L, 2L),
-                c(1L, 2L, 0L),
-                c(2L, 0L, 1L))
+  # v2: zMat is nChar x (kEco - 1); columns map to non-ref ecologies 1, 2.
+  zMat <- rbind(c(1L, 2L),
+                c(2L, 0L),
+                c(0L, 1L))
   phi <- c(1.5, 2.0, 0.7)
   ll_cpp <- MkPrime:::.PruningJcEcology(
     s$parent, s$child, s$edgeLen, tipStates,
     s$kStates, s$rootFreqs, 1,
-    s$wEdge, zMat, phi = phi, mode = 1L)
+    s$wEdge, zMat, phi = phi, mode = 1L, refEcology = 0L)
   ll_r <- .EcologyJcLogLik_R(
     s$parent, s$child, s$edgeLen, tipStates,
     s$kStates, s$rootFreqs, 1,
@@ -392,13 +419,13 @@ test_that("PruningJcEcology matches reference with ACRV (nCat = 4)", {
   set.seed(99)
   tipStates <- matrix(sample.int(s$kStates, 4 * 5, replace = TRUE) - 1L,
                       nrow = 4, ncol = 5)
-  zMat <- matrix(sample(0:2, 5 * 2, replace = TRUE), nrow = 5, ncol = 2L)
-  zMat <- matrix(as.integer(zMat), nrow = 5, ncol = 2L)
+  zMat <- matrix(as.integer(sample(0:2, 5 * 1, replace = TRUE)),
+                 nrow = 5, ncol = 1L)
   rateMults <- c(0.5, 0.8, 1.2, 1.5)
   ll_cpp <- MkPrime:::.PruningJcEcology(
     s$parent, s$child, s$edgeLen, tipStates,
     s$kStates, s$rootFreqs, rateMults,
-    s$wEdge, zMat, phi = 1.8, mode = 0L)
+    s$wEdge, zMat, phi = 1.8, mode = 0L, refEcology = 0L)
   ll_r <- .EcologyJcLogLik_R(
     s$parent, s$child, s$edgeLen, tipStates,
     s$kStates, s$rootFreqs, rateMults,
@@ -411,24 +438,46 @@ test_that("PruningJcEcology matches reference with ACRV (nCat = 4)", {
 
 
 # Reference implementation for the binary asymmetric ecology mixture.
+# v2: zMat has (kEco - 1) columns; rates for non-ref ecology are scaled by
+# (mu_z / gamma_e); refEcology keeps base rates.
 .EcologyMknLogLik_R <- function(parent, child, edgeLen, tipStates,
                                  rateLoss, rootFreqs, rateMultipliers,
-                                 wEdge, zMat, phi, mode) {
+                                 wEdge, zMat, phi, mode,
+                                 refEcology = 0L, theta = NULL,
+                                 pi0 = 0.0) {
   nTip  <- nrow(tipStates)
   nChar <- ncol(tipStates)
   nCat  <- length(rateMultipliers)
   kEco  <- ncol(wEdge)
   maxNode <- 2L * nTip - 1L
   root <- nTip + 1L
+  if (is.null(theta)) theta <- rep(0.5, max(0L, kEco - 1L))
 
   r01_base <- 2 / (1 + rateLoss)
   r10_base <- 2 * rateLoss / (1 + rateLoss)
 
+  gammaE <- rep(1.0, kEco)
+  for (s in seq_len(kEco) - 1L) {
+    if (s == refEcology) next
+    j1 <- if (s < refEcology) s + 1L else s
+    phi_s <- if (mode == 0L) phi[1] else phi[s + 1L]
+    gammaE[s + 1L] <- pi0 + (1 - pi0) *
+      (theta[j1] * phi_s + (1 - theta[j1]) / phi_s)
+  }
+
+  zLookup <- function(c, s) {
+    if (s == refEcology) return(0L)
+    zCol <- if (s < refEcology) s + 1L else s
+    zMat[c, zCol]
+  }
+
   ratesForState <- function(z, s) {
-    if (z == 0L) return(c(r01_base, r10_base))
+    if (s == refEcology) return(c(r01_base, r10_base))
     p <- if (mode == 0L) phi[1] else phi[s + 1L]
-    if (z == 1L) c(r01_base * p, r10_base / p)
-    else         c(r01_base / p, r10_base * p)
+    gE <- gammaE[s + 1L]
+    if (z == 0L) c(r01_base / gE, r10_base / gE)
+    else if (z == 1L) c(r01_base * p / gE, r10_base / p / gE)
+    else c(r01_base / p / gE, r10_base * p / gE)
   }
 
   siteLik <- numeric(nChar)
@@ -452,13 +501,13 @@ test_that("PruningJcEcology matches reference with ACRV (nCat = 4)", {
       for (c in seq_len(nChar)) {
         Pmix <- matrix(0, 2, 2)
         for (s in seq_len(kEco) - 1L) {
-          r <- ratesForState(zMat[c, s + 1L], s)
+          r <- ratesForState(zLookup(c, s), s)
           r01 <- r[1]; r10 <- r[2]
           lam <- r01 + r10
-          pi0 <- r10 / lam; pi1 <- r01 / lam
+          pi0_s <- r10 / lam; pi1_s <- r01 / lam
           ex  <- exp(-lam * t)
-          Ps <- matrix(c(pi0 + pi1 * ex, pi1 - pi1 * ex,
-                         pi0 - pi0 * ex, pi1 + pi0 * ex),
+          Ps <- matrix(c(pi0_s + pi1_s * ex, pi1_s - pi1_s * ex,
+                         pi0_s - pi0_s * ex, pi1_s + pi0_s * ex),
                         nrow = 2, byrow = TRUE)
           Pmix <- Pmix + wEdge[e, s + 1L] * Ps
         }
@@ -505,11 +554,11 @@ test_that("PruningMknEcology with z = 0 and phi = 1 matches reference R", {
   tipStates <- matrix(c(0L, 1L, 0L, 1L,
                         1L, 0L, 1L, 0L,
                         0L, 0L, 1L, 1L), nrow = 4, byrow = FALSE)
-  zMat <- matrix(0L, nrow = 3, ncol = s$kEco)
+  zMat <- matrix(0L, nrow = 3, ncol = s$kEco - 1L)
   ll_cpp <- MkPrime:::.PruningMknEcology(
     s$parent, s$child, s$edgeLen, tipStates,
     s$rateLoss, s$rootFreqs, 1,
-    s$wEdge, zMat, phi = 1, mode = 0L)
+    s$wEdge, zMat, phi = 1, mode = 0L, refEcology = 0L)
   ll_r <- .EcologyMknLogLik_R(
     s$parent, s$child, s$edgeLen, tipStates,
     s$rateLoss, s$rootFreqs, 1,
@@ -518,19 +567,21 @@ test_that("PruningMknEcology with z = 0 and phi = 1 matches reference R", {
 })
 
 
-test_that("PruningMknEcology: z = 0 implies result independent of phi", {
+# v2: gamma-normalisation breaks the v1 phi-invariance under z = 0.
+# Test preserved as a stability smoke check at phi = 1.
+test_that("PruningMknEcology: z = 0 is stable across calls (phi = 1)", {
   s <- .MakeMknEcoSetup(nChar = 2L, kEco = 2L, rateLoss = 0.8)
   tipStates <- matrix(c(0L, 1L, 0L, 1L,
                         1L, 1L, 0L, 0L), nrow = 4, byrow = FALSE)
-  zMat <- matrix(0L, nrow = 2, ncol = s$kEco)
+  zMat <- matrix(0L, nrow = 2, ncol = s$kEco - 1L)
   ll1 <- MkPrime:::.PruningMknEcology(
     s$parent, s$child, s$edgeLen, tipStates,
     s$rateLoss, s$rootFreqs, 1,
-    s$wEdge, zMat, phi = 1, mode = 0L)
+    s$wEdge, zMat, phi = 1, mode = 0L, refEcology = 0L)
   ll2 <- MkPrime:::.PruningMknEcology(
     s$parent, s$child, s$edgeLen, tipStates,
     s$rateLoss, s$rootFreqs, 1,
-    s$wEdge, zMat, phi = 2.7, mode = 0L)
+    s$wEdge, zMat, phi = 1, mode = 0L, refEcology = 0L)
   expect_equal(ll1, ll2, tolerance = 1e-12)
 })
 
@@ -540,14 +591,12 @@ test_that("PruningMknEcology matches reference for mixed z and phi != 1", {
   set.seed(13)
   tipStates <- matrix(sample(0:1, 4 * 4, replace = TRUE), nrow = 4, ncol = 4)
   tipStates <- matrix(as.integer(tipStates), nrow = 4, ncol = 4)
-  zMat <- rbind(c(0L, 1L),
-                c(1L, 2L),
-                c(2L, 0L),
-                c(1L, 1L))
+  # v2: zMat is nChar x (kEco - 1).
+  zMat <- matrix(c(1L, 2L, 0L, 1L), nrow = 4, ncol = 1L)
   ll_cpp <- MkPrime:::.PruningMknEcology(
     s$parent, s$child, s$edgeLen, tipStates,
     s$rateLoss, s$rootFreqs, 1,
-    s$wEdge, zMat, phi = 2.5, mode = 0L)
+    s$wEdge, zMat, phi = 2.5, mode = 0L, refEcology = 0L)
   ll_r <- .EcologyMknLogLik_R(
     s$parent, s$child, s$edgeLen, tipStates,
     s$rateLoss, s$rootFreqs, 1,
@@ -562,14 +611,15 @@ test_that("PruningMknEcology matches reference with per_ecology phi", {
   set.seed(101)
   tipStates <- matrix(sample(0:1, 4 * 3, replace = TRUE), nrow = 4, ncol = 3)
   tipStates <- matrix(as.integer(tipStates), nrow = 4, ncol = 3)
-  zMat <- rbind(c(0L, 1L, 2L),
-                c(1L, 2L, 0L),
-                c(2L, 0L, 1L))
+  # v2: zMat is nChar x (kEco - 1) — columns map to non-ref ecologies 1, 2.
+  zMat <- rbind(c(1L, 2L),
+                c(2L, 0L),
+                c(0L, 1L))
   phi <- c(1.2, 2.5, 0.6)
   ll_cpp <- MkPrime:::.PruningMknEcology(
     s$parent, s$child, s$edgeLen, tipStates,
     s$rateLoss, s$rootFreqs, 1,
-    s$wEdge, zMat, phi = phi, mode = 1L)
+    s$wEdge, zMat, phi = phi, mode = 1L, refEcology = 0L)
   ll_r <- .EcologyMknLogLik_R(
     s$parent, s$child, s$edgeLen, tipStates,
     s$rateLoss, s$rootFreqs, 1,
@@ -583,13 +633,13 @@ test_that("PruningMknEcology matches reference with ACRV (nCat = 4)", {
   set.seed(77)
   tipStates <- matrix(sample(0:1, 4 * 5, replace = TRUE), nrow = 4, ncol = 5)
   tipStates <- matrix(as.integer(tipStates), nrow = 4, ncol = 5)
-  zMat <- matrix(as.integer(sample(0:2, 5 * 2, replace = TRUE)),
-                  nrow = 5, ncol = 2L)
+  zMat <- matrix(as.integer(sample(0:2, 5 * 1, replace = TRUE)),
+                  nrow = 5, ncol = 1L)
   rateMults <- c(0.4, 0.9, 1.1, 1.6)
   ll_cpp <- MkPrime:::.PruningMknEcology(
     s$parent, s$child, s$edgeLen, tipStates,
     s$rateLoss, s$rootFreqs, rateMults,
-    s$wEdge, zMat, phi = 1.7, mode = 0L)
+    s$wEdge, zMat, phi = 1.7, mode = 0L, refEcology = 0L)
   ll_r <- .EcologyMknLogLik_R(
     s$parent, s$child, s$edgeLen, tipStates,
     s$rateLoss, s$rootFreqs, rateMults,
@@ -602,26 +652,27 @@ test_that("PruningMknEcology validates argument shapes", {
   s <- .MakeMknEcoSetup(nChar = 2L, kEco = 2L)
   tipStates <- matrix(c(0L, 1L, 0L, 1L,
                         1L, 0L, 1L, 0L), nrow = 4, ncol = 2)
-  zMat <- matrix(0L, nrow = 2, ncol = 2)
+  zMat <- matrix(0L, nrow = 2, ncol = s$kEco - 1L)
+  # v2 allows phi length 1 or kEco in global mode; use kEco + 1 to trigger.
   expect_error(
     MkPrime:::.PruningMknEcology(
       s$parent, s$child, s$edgeLen, tipStates,
       s$rateLoss, s$rootFreqs, 1, s$wEdge, zMat,
-      phi = c(1, 1), mode = 0L),
+      phi = c(1, 1, 1), mode = 0L, refEcology = 0L),
     "global mode requires"
   )
   expect_error(
     MkPrime:::.PruningMknEcology(
       s$parent, s$child, s$edgeLen, tipStates,
       s$rateLoss, c(0.5, 0.5), 1, s$wEdge, zMat,
-      phi = 1, mode = 1L),
+      phi = 1, mode = 1L, refEcology = 0L),
     "per_ecology mode requires"
   )
   expect_error(
     MkPrime:::.PruningMknEcology(
       s$parent, s$child, s$edgeLen, tipStates,
       -1, s$rootFreqs, 1, s$wEdge, zMat,
-      phi = 1, mode = 0L),
+      phi = 1, mode = 0L, refEcology = 0L),
     "rateLoss must be positive"
   )
 })
@@ -661,20 +712,23 @@ test_that(".MkpEcologyLogLikelihood with z = 0 matches non-ecology likelihood", 
     coding = "none", rate_neo = 1.0, relabel = TRUE
   )
 
-  # Ecology-aware with z = 0 everywhere: rate factors all 1, result identical.
-  zMat <- matrix(0L, nrow = mkd$nChar, ncol = mkd$kEcology)
+  # Ecology-aware with z = 0 everywhere: rate factors all 1 at phi = 1
+  # (v2: gamma-normalisation makes non-ref factors phi-dependent otherwise).
+  zMat <- matrix(0L, nrow = mkd$nChar, ncol = mkd$kEcology - 1L)
   ll_eco <- MkPrime:::.MkpEcologyLogLikelihood(
     tree, mkd, kPrime = mkd$kObs,
     rate_loss = 1.0, rate_log_sd = 0, nCat = 1L,
     rate_neo = 1.0, relabel = TRUE,
-    phi = 1.5, zMat = zMat, magnitudeMode = "global"
+    phi = 1, zMat = zMat, magnitudeMode = "global"
   )
 
   expect_equal(ll_eco, ll_baseline, tolerance = 1e-10)
 })
 
 
-test_that(".MkpEcologyLogLikelihood: z = 0 invariant to phi value", {
+# v2: phi-invariance under z = 0 was a v1 property removed by gamma-
+# normalisation. Test preserved as a degenerate stability check at phi = 1.
+test_that(".MkpEcologyLogLikelihood: z = 0 is stable across calls (phi = 1)", {
   set.seed(5678)
   tips <- paste0("t", 1:5)
   mat <- matrix(c(
@@ -688,7 +742,7 @@ test_that(".MkpEcologyLogLikelihood: z = 0 invariant to phi value", {
   mkd <- MkPrimeData(pd, neomorphic = 3L, ecology = 4L)
   tree <- TreeTools::Preorder(ape::rtree(5, tip.label = tips))
 
-  zMat <- matrix(0L, nrow = mkd$nChar, ncol = mkd$kEcology)
+  zMat <- matrix(0L, nrow = mkd$nChar, ncol = mkd$kEcology - 1L)
   ll1 <- MkPrime:::.MkpEcologyLogLikelihood(
     tree, mkd, kPrime = mkd$kObs,
     rate_loss = 0.8, rate_log_sd = 0, nCat = 1L,
@@ -699,7 +753,7 @@ test_that(".MkpEcologyLogLikelihood: z = 0 invariant to phi value", {
     tree, mkd, kPrime = mkd$kObs,
     rate_loss = 0.8, rate_log_sd = 0, nCat = 1L,
     rate_neo = 1.2, relabel = TRUE,
-    phi = 4.5, zMat = zMat, magnitudeMode = "global"
+    phi = 1, zMat = zMat, magnitudeMode = "global"
   )
   expect_equal(ll1, ll2, tolerance = 1e-12)
 })
@@ -719,10 +773,10 @@ test_that(".MkpEcologyLogLikelihood: phi > 1 with non-zero z changes likelihood"
   mkd <- MkPrimeData(pd, neomorphic = 3L, ecology = 4L)
   tree <- TreeTools::Preorder(ape::rtree(5, tip.label = tips))
 
-  # mkd$kEcology is 3 here (ecology col has states {0, 1, 2}).
-  zMat <- matrix(c(0L, 1L, 2L,
-                   1L, 2L, 0L,
-                   2L, 0L, 1L), nrow = 3, ncol = 3, byrow = TRUE)
+  # v2: zMat is nChar x (kEco - 1) (kEcology is 3 → 2 non-ref columns).
+  zMat <- matrix(c(1L, 2L,
+                   2L, 0L,
+                   0L, 1L), nrow = 3, ncol = 2, byrow = TRUE)
   ll1 <- MkPrime:::.MkpEcologyLogLikelihood(
     tree, mkd, kPrime = mkd$kObs,
     rate_loss = 1.0, rate_log_sd = 0, nCat = 1L,
@@ -763,12 +817,14 @@ test_that(".MkpEcologyLogLikelihood with z = 0 + coding=variable matches standar
     coding = "variable", rate_neo = 1.0, relabel = TRUE
   )
 
-  zMat <- matrix(0L, nrow = mkd$nChar, ncol = mkd$kEcology)
+  # v2: phi must be 1 for z = 0 to match the non-ecology baseline; with phi != 1
+  # the non-reference ecology rate factor 1/gamma_e drifts away from 1.
+  zMat <- matrix(0L, nrow = mkd$nChar, ncol = mkd$kEcology - 1L)
   ll_eco <- MkPrime:::.MkpEcologyLogLikelihood(
     tree, mkd, kPrime = mkd$kObs,
     rate_loss = 1.0, rate_log_sd = 0, nCat = 1L,
     rate_neo = 1.0, relabel = TRUE,
-    phi = 2.5, zMat = zMat, magnitudeMode = "global",
+    phi = 1, zMat = zMat, magnitudeMode = "global",
     coding = "variable"
   )
   expect_equal(ll_eco, ll_baseline, tolerance = 1e-10)
@@ -794,7 +850,7 @@ test_that(".MkpEcologyLogLikelihood with ACRV + coding=variable + z = 0 matches 
     rate_loss = 1.0, rate_log_sd = 0.4, nCat = 4L,
     coding = "variable", rate_neo = 1.0, relabel = TRUE
   )
-  zMat <- matrix(0L, nrow = mkd$nChar, ncol = mkd$kEcology)
+  zMat <- matrix(0L, nrow = mkd$nChar, ncol = mkd$kEcology - 1L)
   ll_eco <- MkPrime:::.MkpEcologyLogLikelihood(
     tree, mkd, kPrime = mkd$kObs,
     rate_loss = 1.0, rate_log_sd = 0.4, nCat = 4L,
@@ -817,7 +873,7 @@ test_that(".MkpEcologyLogLikelihood errors on unsupported coding (informative)",
   pd <- TreeTools::MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd, ecology = 3L)
   tree <- TreeTools::Preorder(ape::rtree(5, tip.label = tips))
-  zMat <- matrix(0L, nrow = mkd$nChar, ncol = mkd$kEcology)
+  zMat <- matrix(0L, nrow = mkd$nChar, ncol = mkd$kEcology - 1L)
   expect_error(
     MkPrime:::.MkpEcologyLogLikelihood(
       tree, mkd, kPrime = mkd$kObs,
@@ -856,13 +912,13 @@ test_that("PruningJcEcology validates argument shapes", {
   s <- .MakeJcEcoSetup(kStates = 2L, nChar = 2L, kEco = 2L)
   tipStates <- matrix(c(0L, 0L, 1L, 1L, 1L, 0L, 0L, 1L),
                       nrow = 4, ncol = 2)
-  zMat <- matrix(0L, nrow = 2, ncol = 2)
-  # mode = 0 requires phi length 1
+  zMat <- matrix(0L, nrow = 2, ncol = s$kEco - 1L)
+  # v2 allows phi length 1 or kEco in global mode; use kEco + 1 to trigger.
   expect_error(
     MkPrime:::.PruningJcEcology(
       s$parent, s$child, s$edgeLen, tipStates,
       s$kStates, s$rootFreqs, 1, s$wEdge, zMat,
-      phi = c(1, 1), mode = 0L),
+      phi = c(1, 1, 1), mode = 0L, refEcology = 0L),
     "global mode requires"
   )
   # mode = 1 requires phi length kEco
@@ -870,7 +926,7 @@ test_that("PruningJcEcology validates argument shapes", {
     MkPrime:::.PruningJcEcology(
       s$parent, s$child, s$edgeLen, tipStates,
       s$kStates, s$rootFreqs, 1, s$wEdge, zMat,
-      phi = 1, mode = 1L),
+      phi = 1, mode = 1L, refEcology = 0L),
     "per_ecology mode requires"
   )
 })

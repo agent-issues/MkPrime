@@ -1,0 +1,51 @@
+kEcology: 2   nTheta: 1 
+== Running Step 3 pilot aware chain (nIter= 20000 , thin= 40 ) ==
+Warmup 500 │ logP:-2434.9 │ warmup: ~3500 iter
+Warmup 1000 │ logP:-2406.4 │ warmup: ~4000 iter
+Warmup 1500 │ logP:-2441.8 │ warmup: ~4500 iter
+Warmup 2000 │ logP:-2398.2 │ warmup: ~5000 iter
+Warmup 2500 │ logP:-2677.7 │ warmup: ~5000 iter
+Warmup 3000 │ logP:-2361.9 │ warmup: ~5000 iter
+Warmup 3500 │ logP:-2363.5 │ warmup: ~5000 iter
+Warmup 4000 │ logP:-2553.3 │ warmup: ~5000 iter
+Warmup 4500 │ logP:-2439.1 │ warmup: ~5000 iter
+Tuning 5000 │ logP:-2432.2 │ minESS/s: ?
+Tuning 5500 │ logP:-2416.3 │ minESS/s: 0.61
+Tuning 6000 │ logP:-2290.0 │ minESS/s: 0.71
+Tuning 6500 │ logP:-2484.1 │ minESS/s: 0.50
+Tuning 7000 │ logP:-2465.5 │ minESS/s: 0.66
+Tuning 7500 │ logP:-2473.6 │ minESS/s: 0.72
+Tuning 8000 │ logP:-2364.4 │ minESS/s: 0.89
+Tuning 8500 │ logP:-2387.2 │ minESS/s: 0.80
+Tuning 9000 │ logP:-2438.9 │ minESS/s: 0.78
+Tuning 9500 │ logP:-2461.6 │ minESS/s: 0.65
+Tuning 10000 │ logP:-2386.2 │ minESS/s: 0.63
+Tuning 10500 │ logP:-2634.9 │ minESS/s: 0.59
+Tuning 11000 │ logP:-2532.7 │ minESS/s: 0.62
+Tuning 11500 │ logP:-2384.1 │ minESS/s: 0.54
+Tuning 12000 │ logP:-2358.9 │ minESS/s: 0.61
+Tuning 12500 │ logP:-2389.2 │ minESS/s: 0.58
+ℹ Move weights frozen:
+Tuning 12500 │ logP:-2389.2 │ minESS/s: 0.58Topology: pspr:7.9% nni:0.9% spr:0.9% gibbs_spr:0.9% gibbs_subtree_swap:0.9%
+tbr:0.9%
+Tuning 12500 │ logP:-2389.2 │ minESS/s: 0.58Branches: local_dirichlet:14.6% dirichlet_branch:9.6% branch_lengths:1.1%
+tree_length:0.9%
+Tuning 12500 │ logP:-2389.2 │ minESS/s: 0.58Characters: gibbs_kPrime:32.1% p:1.7% kPrime:1.1% block_kPrime:0.9%
+Tuning 12500 │ logP:-2389.2 │ minESS/s: 0.58Rates: neo_joint:9.5% joint_tl_rl:1.8% slice_rate_loss:1.7% slice_rate_neo:1.7%
+slice_rate_log_sd:1.7% rate_log_sd:1.4% joint_tl_rls:1.4% rate_neo:1.1%
+rate_loss:0.9%
+Tuning 12500 │ logP:-2389.2 │ minESS/s: 0.58Ecology: gibbs_z:1.8% scale_theta:1.2% scale_phi:0.9% scale_pi0:0.9%
+Tuning 12500 │ logP:-2389.2 │ minESS/s: 0.58ℹ Tuning complete (4 rounds). Best minESS/s: 0.80
+Tuning 12500 │ logP:-2389.2 │ minESS/s: 0.58Sample 13000 │ logP:-2548.1 │ minESS: ?
+Sample 18000 │ logP:-2491.3 │ minESS: ?
+Sample 20000 │ logP:-2364.0 │ minESS: 10
+
+ℹ Streaming mode: 175 samples written to 'dev/pilots/2026-05-13-step3-sim3-pilot/sim3-pilot.log'.Load with: `result$samples <- ReadMkLog(result$logFile)`
+Elapsed: 4.385613 mins 
+Saved RDS to dev/pilots/2026-05-13-step3-sim3-pilot/sim3-pilot-result.rds 
+Log file: dev/pilots/2026-05-13-step3-sim3-pilot/sim3-pilot.log 
+Done.
+Warning messages:
+1: Dropping 1 invariant character (kObs <= 1): column 19. 
+2: Dropping 1 invariant character (kObs <= 1): column 19. 
+3: Warmup reached `maxWarmup` (5000) without stabilisation. 

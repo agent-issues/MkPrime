@@ -235,7 +235,8 @@ RunMkPrime <- function(data, tree = NULL,
                              kPrimePrior = model$kPrimePrior %||% "geometric",
                              qHeterogeneity = qHet,
                              ecologyAware = ecoOn,
-                             nPhi = nPhiMove)
+                             nPhi = nPhiMove,
+                             nTheta = if (ecoOn) as.integer(mkd$kEcology) - 1L else 0L)
 
   # --- Log file setup ---
   # Always stream to a log file for interrupt recovery.  When the user
@@ -3362,7 +3363,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 .ParamNames <- function(mkd, nEdge, kPrimePrior = "geometric",
                         qHeterogeneity = FALSE,
                         ecologyAware = FALSE,
-                        nPhi = 0L) {
+                        nPhi = 0L,
+                        nTheta = 0L) {
   hasNeo <- any(mkd$type == "neomorphic")
 
   nms <- c("log_posterior", "log_likelihood", "tree_length")
@@ -3385,7 +3387,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     nms <- c(nms, "beta_scale")
   }
 
-  # Ecology magnitude factor(s) and spike weight
+  # Ecology magnitude factor(s), spike weight, and slab-shape parameter(s)
   if (isTRUE(ecologyAware) && nPhi >= 1L) {
     if (nPhi == 1L) {
       nms <- c(nms, "phi")
@@ -3393,6 +3395,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       nms <- c(nms, paste0("phi_", seq_len(nPhi)))
     }
     nms <- c(nms, "pi0")
+    if (nTheta >= 1L) {
+      nms <- c(nms, paste0("theta_", seq_len(nTheta)))
+    }
   }
 
   # Diagnostic columns (always present from C++ batch)
@@ -3434,9 +3439,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   # M-052: beta_scale
   bsVal <- if (isTRUE(qHeterogeneity)) state$betaScale else numeric(0)
 
-  # Ecology magnitude factor(s) and spike weight
+  # Ecology magnitude factor(s), spike weight, and slab-shape parameter(s)
   ecoVal <- if (isTRUE(ecologyAware) && length(state$phi) > 0L) {
-    c(as.numeric(state$phi), state$pi0)
+    c(as.numeric(state$phi), state$pi0, as.numeric(state$theta))
   } else {
     numeric(0)
   }

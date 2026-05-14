@@ -211,6 +211,7 @@ test_that("LogPrior returns finite for well-formed ecology state", {
   mkd <- MkPrimeData(pd, ecology = 4)
   model <- MkPrimeModel(ecologyAware = TRUE, expSteps = 10,
                         kPrimePrior = "logseries")
+  # v2: state requires `theta` (length kEcology - 1) and z is nChar x (kEco-1).
   state <- list(
     tree_length = 1,
     rate_log_sd = 0.1,
@@ -219,7 +220,8 @@ test_that("LogPrior returns finite for well-formed ecology state", {
     kPrime = mkd$kObs,
     phi = 1,
     pi0 = 0.7,
-    z = matrix(0L, nrow = mkd$nChar, ncol = mkd$kEcology)
+    theta = rep(0.5, mkd$kEcology - 1L),
+    z = matrix(0L, nrow = mkd$nChar, ncol = mkd$kEcology - 1L)
   )
   expect_true(is.finite(MkPrime:::LogPrior(state, model, mkd)))
 })

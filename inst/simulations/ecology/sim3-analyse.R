@@ -1,15 +1,24 @@
 # sim3-analyse.R --------------------------------------------------------------
-# Post-hoc analysis of sim3-mcmc-result.rds: RF and clustering-info
-# distances from each posterior tree to the true and the convergent-
-# misled reference topologies.  Reports per-chain distributions and
-# "closer to truth vs closer to wrong" counts as a softer metric than
-# exact-bipartition matching.
+# Post-hoc analysis of an Sim 3 (or Sim 3b) MCMC result file.
+# Uses TreeDist::ClusteringInfoDist (CID) as the primary tree-distance
+# measure: it is a generalised information-theoretic distance that
+# degrades gracefully on near-misses (unlike RF, which is binary at the
+# bipartition level).  Reports per-chain CID distributions, plus exact
+# bipartition probabilities and a "closer to truth vs closer to wrong"
+# tally.
 suppressPackageStartupMessages({
   library("TreeTools")
   library("phangorn")
+  library("TreeDist")
 })
 
-res <- readRDS("inst/simulations/ecology/sim3-mcmc-result.rds")
+resultFile <- if (length(commandArgs(trailingOnly = TRUE)) > 0) {
+  commandArgs(trailingOnly = TRUE)[1]
+} else {
+  "inst/simulations/ecology/sim3-mcmc-result.rds"
+}
+cat("Reading result file:", resultFile, "\n")
+res <- readRDS(resultFile)
 
 trueTree  <- res$tree
 wrongTree <- Preorder(ape::read.tree(text =
@@ -22,33 +31,26 @@ scoreTrees <- function(trees, label) {
   if (length(trees) == 0L) {
     cat(label, ": no trees\n"); return(invisible())
   }
-  # Use TreeTools-based RF (TreeDist::RobinsonFouldsInfo / TreeTools::Subsplit).
-  # phangorn::RF.dist hits internal type errors on lists of phylo with
-  # mixed binary/non-binary trees out of MkPrime.
-  rfFor <- function(refTree) {
-    refSplits <- TreeTools::as.Splits(refTree)
-    vapply(trees, function(tr) {
-      sp <- TreeTools::as.Splits(tr, tipLabels = refTree$tip.label)
-      # RF = #non-trivial splits in either tree not in the other
-      sharedRef  <- sum(refSplits %in% sp)
-      sharedThis <- sum(sp %in% refSplits)
-      length(refSplits) + length(sp) - sharedRef - sharedThis
-    }, numeric(1))
-  }
-  rfTrue  <- rfFor(trueTree)
-  rfWrong <- rfFor(wrongTree)
-  closer <- ifelse(rfTrue < rfWrong, "truth",
-            ifelse(rfTrue > rfWrong, "wrong", "tied"))
+  class(trees) <- "multiPhylo"
+  # CID is normalized to [0, 1]: 0 = identical, 1 = maximally different.
+  cidTrue  <- as.numeric(TreeDist::ClusteringInfoDist(
+    trees, trueTree, normalize = TRUE))
+  cidWrong <- as.numeric(TreeDist::ClusteringInfoDist(
+    trees, wrongTree, normalize = TRUE))
+  closer <- ifelse(cidTrue < cidWrong, "truth",
+            ifelse(cidTrue > cidWrong, "wrong", "tied"))
   cat(sprintf("\n== %s (n = %d) ==\n", label, length(trees)))
-  cat(sprintf("  RF to TRUE  : mean=%.2f  median=%.1f  min=%d  max=%d\n",
-              mean(rfTrue), median(rfTrue), min(rfTrue), max(rfTrue)))
-  cat(sprintf("  RF to WRONG : mean=%.2f  median=%.1f  min=%d  max=%d\n",
-              mean(rfWrong), median(rfWrong), min(rfWrong), max(rfWrong)))
+  cat(sprintf("  CID to TRUE  : mean=%.3f  median=%.3f  min=%.3f  max=%.3f\n",
+              mean(cidTrue), median(cidTrue), min(cidTrue), max(cidTrue)))
+  cat(sprintf("  CID to WRONG : mean=%.3f  median=%.3f  min=%.3f  max=%.3f\n",
+              mean(cidWrong), median(cidWrong), min(cidWrong), max(cidWrong)))
   cat("  Closer to:\n"); print(table(closer))
-  cat(sprintf("  Trees at RF=0 to TRUE : %d  (%.1f%%)\n",
-              sum(rfTrue == 0), 100 * mean(rfTrue == 0)))
-  cat(sprintf("  Trees at RF=0 to WRONG: %d  (%.1f%%)\n",
-              sum(rfWrong == 0), 100 * mean(rfWrong == 0)))
+  cat(sprintf("  Trees at CID=0 to TRUE : %d  (%.1f%%)\n",
+              sum(cidTrue == 0), 100 * mean(cidTrue == 0)))
+  cat(sprintf("  Trees at CID=0 to WRONG: %d  (%.1f%%)\n",
+              sum(cidWrong == 0), 100 * mean(cidWrong == 0)))
+  cat(sprintf("  Mean CID gap (wrong - truth): %.4f\n",
+              mean(cidWrong - cidTrue)))
 }
 
 scoreTrees(discard(res$resBlind$trees), "BLIND")
