@@ -40,14 +40,17 @@
 #'   prior options.
 #' @param kprimeHyperA,kprimeHyperB Parameters for the Beta hyperprior on `p`
 #'   when `kPrimePrior` is `"geometric"` or `"empirical_geometric"`.
-#'   Both default to `NULL`, in which case `MkPrimeModel()` supplies
-#'   prior-specific defaults: `Beta(1, 1)` (uniform) for `"geometric"` and
-#'   `Beta(15, 1)` for `"empirical_geometric"`. The informative default for
-#'   the empirical_geometric prior pushes `p` toward 1 (E[p] = 15/16) so
-#'   the geometric tail on `N_unobs` stays short — without this, the
-#'   relabel correction on `k'` overruns the unconditional convolution
-#'   prior and inflates the posterior on the number of unobserved states
-#'   by several-fold.
+#'   Both default to `NULL`, which `MkPrimeModel()` resolves to the
+#'   uniform `Beta(1, 1)` for both priors.  An informative Beta(15, 1)
+#'   was tried as the default for the empirical_geometric prior to
+#'   counter an over-recovery symptom on an 8-tip synthetic dataset, but
+#'   on real Hamilton-scale data (25 tips, 50 chars, Geometric(0.4)
+#'   simulation truth) the tighter prior over-corrected: aggregate
+#'   posterior `Σu` was 0.48 of truth under Beta(15, 1) vs 0.83 under
+#'   Beta(1, 1).  The synthetic over-recovery was a small-tree artifact;
+#'   the uniform prior gives closer-to-truth inference on production
+#'   data.  See
+#'   `dev/plans/2026-05-13-1430-empirical-geometric-prior-overrecovery-diagnosis.md`.
 #' @param kprimeAlpha,kprimeBeta Starting values for the shared
 #'   hyperparameters of the Beta-Geometric prior
 #'   (`kPrimePrior = "beta_geometric"`). Both must be positive.
@@ -173,26 +176,19 @@ MkPrimeModel <- function(
     }
   }
 
-  # Resolve kprimeHyperA / kprimeHyperB defaults.  NULL means "use the
-  # prior-specific default": Beta(1, 1) for plain geometric (uniform),
-  # Beta(15, 1) for empirical_geometric (E[p] ~= 0.94 — keeps the geometric
-  # tail on N_unobs short so the relabel correction on k' cannot overrun
-  # the prior).  Calibrated against the over-recovery diagnosed in
-  # dev/plans/2026-05-13-1430-empirical-geometric-prior-overrecovery-diagnosis.md;
-  # weaker priors leave the relabel-pull dominant and the posterior on
-  # the total number of unobserved states ends up several times the
-  # ground truth.  User-supplied values are validated and otherwise
-  # passed through unchanged.  beta_geometric and logseries priors do
-  # not use these.
-  if (is.null(kprimeHyperA) || is.null(kprimeHyperB)) {
-    if (kPrimePrior == "empirical_geometric") {
-      if (is.null(kprimeHyperA)) kprimeHyperA <- 15
-      if (is.null(kprimeHyperB)) kprimeHyperB <- 1
-    } else {
-      if (is.null(kprimeHyperA)) kprimeHyperA <- 1
-      if (is.null(kprimeHyperB)) kprimeHyperB <- 1
-    }
-  }
+  # Resolve kprimeHyperA / kprimeHyperB defaults.  NULL means "uniform
+  # Beta(1, 1)" for both empirical_geometric and plain geometric.  An
+  # informative Beta(15, 1) was tried for empirical_geometric to counter
+  # an over-recovery symptom diagnosed on an 8-tip / 65-char synthetic
+  # dataset (see dev/plans/2026-05-13-1430-...md), but on the real
+  # 25-tip / 50-char Hamilton inference data — simulated under
+  # Geometric(0.4) — the tighter prior over-corrected and gave aggregate
+  # Sigma u posterior at 0.48 of truth, vs 0.83 under Beta(1, 1).  The
+  # synthetic over-recovery was an artifact of the small-tree
+  # configuration; on real data the uniform prior is closer to the
+  # truth.  beta_geometric and logseries priors do not use these.
+  if (is.null(kprimeHyperA)) kprimeHyperA <- 1
+  if (is.null(kprimeHyperB)) kprimeHyperB <- 1
   if (!is.numeric(kprimeHyperA) || length(kprimeHyperA) != 1L ||
       kprimeHyperA <= 0) {
     cli::cli_abort("{.arg kprimeHyperA} must be a positive scalar.")

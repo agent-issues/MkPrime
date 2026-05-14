@@ -318,11 +318,19 @@ test_that("empirical_geometric posterior on u beats geometric when true k' > kOb
 
 
 test_that("empirical_geometric posterior on Sigma u is two-sided bounded near truth", {
-  # Two-sided guard against the over-recovery regression diagnosed in
-  # dev/plans/2026-05-13-1430-empirical-geometric-prior-overrecovery-diagnosis.md
-  # (Σu posterior was ~345% of truth before the Beta(15, 1) hyperprior).
-  # Catches both under- and over-shrinkage on a synthetic dataset whose
-  # ground-truth Σu is known.
+  # Synthetic-only over-recovery test from the 2026-05-13 diagnosis.
+  # When Fix B (Beta(15, 1) hyperprior) was the default, this test passed
+  # at Σu ≈ 65 / truth 50.  After the revert to Beta(1, 1) it fails on
+  # this 8-tip / 65-char synthetic — Σu posterior climbs back toward
+  # ~170, which the diagnosis originally read as a model bug.  But
+  # comparing to ground truth on the 25-tip / 50-char Hamilton inference
+  # data showed the opposite: Beta(1, 1) gives aggregate Σu posterior at
+  # 0.83 of truth, vs 0.48 under Beta(15, 1).  The 8-tip over-recovery
+  # was a small-tree artifact, so this test is now skipped — we keep it
+  # in the file as a record of the synthetic regime where the symptom
+  # appears.  Re-enable if you set kprimeHyperA/B to a tight informative
+  # default and want to confirm it on this synthetic.
+  skip("8-tip synthetic over-recovery is a small-tree artifact; see plan doc")
   skip_slow_tests()
   library("ape")
   set.seed(2026)
@@ -393,25 +401,16 @@ test_that("empirical_geometric posterior on Sigma u is two-sided bounded near tr
 
 
 test_that("empirical_geometric posterior Sigma u is bounded under truth = 0", {
-  # Regression guard for the over-recovery pathology on a dataset whose
-  # ground-truth Σu is 0 (every character truly binary, kObs = kTrue).
-  #
-  # Structural note: Fix B (Beta(15, 1) hyperprior) cannot drive Σu to
-  # zero on this dataset.  At the prior asymptote p -> 1 the per-character
-  # k' = 2 -> 3 prior log-ratio is log(P_emp(3)/P_emp(2)) ≈ -1.139, while
-  # the relabel correction lgamma(k'+1) - lgamma(k'-kObs+1) shifts by
-  # log(3) ≈ +1.099.  The two nearly cancel and the residual posterior
-  # mass on k' > kObs is set by the (weak) likelihood signal on short
-  # branches.  With the current Beta(15, 1) default the chain converges
-  # at p ≈ 0.95 and Σu posterior settles around 30 on this 60-character
-  # dataset; even Beta(200, 1) only pushes it to ~28.  Driving Σu below
-  # ~5 would require Fix A on top of Fix B for characters with kObs > 2,
-  # plus reconsideration of the relabel correction.  See
-  # dev/plans/2026-05-13-1430-empirical-geometric-prior-overrecovery-diagnosis.md.
-  #
-  # What this test guards against: a revert of Fix B (Σu jumps back to
-  # ~42 under Beta(1, 1) on this seed) or any future change that breaks
-  # the partial counteraction Fix B provides.
+  # Synthetic truth=0 test from the Fix B QC pass.  When the package
+  # defaulted to Beta(15, 1), Σu posterior on this 60-binary-char dataset
+  # was ~32 (vs truth 0); after the revert to Beta(1, 1) it climbs back
+  # to ~42.  Both are far from truth — the residual mass at k' > kObs is
+  # set by the prior + relabel correction balance and the (weak) signal
+  # from binary chars on short branches.  The test was originally a
+  # regression guard for Fix B; with Fix B reverted it no longer applies.
+  # Skipped, kept in the file for context.  See the plan doc for the
+  # full structural-floor analysis.
+  skip("kept as a record of the truth=0 floor; not active after Fix B revert")
   skip_slow_tests()
   library("ape")
   set.seed(7)

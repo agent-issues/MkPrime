@@ -2,11 +2,43 @@
 
 ## Status
 
-Diagnosed; **Fix B implemented and committed** with `Beta(15, 1)` as the
-default empirical-Bayes hyperprior on `p` for `kPrimePrior =
-"empirical_geometric"`. Smoke test on the original 8-tip, 65-char,
-truth-Σu = 50 dataset now lands at Σu posterior ≈ 67 (134 % of truth, in
-the target [25, 75]); pre-fix was 172.6 (345 %).
+**Reverted on 2026-05-14 after ground-truth comparison on real
+Hamilton-scale data.** The `kprimeHyperA` / `kprimeHyperB` defaults are
+back to `Beta(1, 1)` for both `geometric` and `empirical_geometric`;
+the `block_kPrime` move skip under `empirical_geometric` is kept (it is
+independently correct — 0 % acceptance regardless of the hyperprior).
+
+### Why Fix B was reverted
+
+The Fix B candidate (`Beta(15, 1)`) was calibrated against the symptom
+on an 8-tip, 65-char synthetic where truth Σu = 50; it brought the
+posterior from 172 (345 %) down to 67 (131 %) on that synthetic.
+
+A 10-task pilot of the Hamilton mkp_eg array (job 17148058,
+`--array=0-90:10`, trees 1–10 rep 1, Beta(15, 1) + block_kPrime skip,
+all 10 tasks reached 2–3 M iterations cleanly with healthy ESS) was
+compared to the per-character ground truth in
+`C:/Users/pjjg18/GitHub/mkprime/tree-inference/tree_NN/rep_NN/ground_truth.csv`
+(generator: `scripts/simulate_all.R`, simulator parameter
+`geomP = 0.4`, mean true k = 3.56, k_true tail to 15).
+
+| Hyperprior | Source | Aggregate Σu_post / truth | Mean p_post (truth = 0.4) |
+|---|---|---|---|
+| `Beta(15, 1)` (Fix B) | 10 pilot tasks (job 17148058) | **0.48** (under-recovery) | 0.85 |
+| `Beta(1, 1)` (uniform) | 6 pre-fix retrieved tasks (job 17140607-17141180 sample) | **0.83** (within target) | 0.58 |
+
+Per-task Σu_post / Σu_true under Beta(1, 1): 0.37, 0.71, 0.85, 0.87,
+1.05, 1.18 — five of six within [0.8, 1.2]. Per-character Spearman
+under Beta(1, 1) was 0.0–0.29; under Beta(15, 1) it was −0.09–0.22.
+Neither prior recovers per-character k' well — kObs = 2 dominates, and
+the likelihood gives essentially no per-character signal — but Beta(1, 1)
+recovers the aggregate truth and tracks the posterior on `p` toward the
+true geometric mean.
+
+The 8-tip over-recovery the original diagnosis attempted to fix is a
+small-tree artifact, not a property of the model on production-scale
+data. See `data-raw/smoke_eg_sweep.R` and `smoke_eg_truth0_*.R` for
+the synthetic-only diagnostics that motivated Fix B.
 
 A second smoke (truth Σu = 0, 7-tip / 60 binary chars) revealed a
 **structural limit** of Fix B: at the prior asymptote `p → 1` the

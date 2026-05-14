@@ -76,13 +76,17 @@ prior options.}
 
 \item{kprimeHyperA, kprimeHyperB}{Parameters for the Beta hyperprior on \code{p}
 when \code{kPrimePrior} is \code{"geometric"} or \code{"empirical_geometric"}.
-Both default to \code{NULL}, in which case \code{\link[=.FinalizeModel]{.FinalizeModel()}} supplies
-prior-specific defaults: \code{Beta(1, 1)} (uniform) for \code{"geometric"} and
-\code{Beta(4, 1)} for \code{"empirical_geometric"}. The informative default for
-the empirical_geometric prior pushes \code{p} toward 1 (E\link[htmltools:p]{p} = 0.8) so the
-geometric tail on \code{N_unobs} stays short — without this, the relabel
-correction on \verb{k'} can overrun the prior and inflate the posterior on
-the number of unobserved states.}
+Both default to \code{NULL}, which \code{MkPrimeModel()} resolves to the
+uniform \code{Beta(1, 1)} for both priors.  An informative Beta(15, 1)
+was tried as the default for the empirical_geometric prior to
+counter an over-recovery symptom on an 8-tip synthetic dataset, but
+on real Hamilton-scale data (25 tips, 50 chars, Geometric(0.4)
+simulation truth) the tighter prior over-corrected: aggregate
+posterior \code{Σu} was 0.48 of truth under Beta(15, 1) vs 0.83 under
+Beta(1, 1).  The synthetic over-recovery was a small-tree artifact;
+the uniform prior gives closer-to-truth inference on production
+data.  See
+\code{dev/plans/2026-05-13-1430-empirical-geometric-prior-overrecovery-diagnosis.md}.}
 
 \item{kprimeAlpha, kprimeBeta}{Starting values for the shared
 hyperparameters of the Beta-Geometric prior
