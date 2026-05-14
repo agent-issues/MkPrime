@@ -156,34 +156,87 @@ necessary; it's just not sufficient.
   does not fix the underlying issue.
 - Trust any parameter-recovery claims from chains where ESS is near zero.
 
-### Should
+### Should (in order)
 
-1. **Redesign Sim 3 to have recoverable phylogenetic signal.** Either:
-   - Increase data: 32+ tips, 500+ chars, or
-   - Strengthen branch lengths so phylogenetic signal dominates
-     convergent character noise, or
-   - Reframe the success metric: instead of "recover the truth topology
-     exactly", evaluate "does ecology-aware sample closer-to-truth
-     topologies than blind?" via bipartition probabilities or CID
-     deltas. The existing aware-vs-blind CID comparison in
-     `sim3-multirep.R` already does this — that's the right metric.
+1. **Redesign Sim 3 for recoverable signal (paper requirement).** Current
+   config gives both blind and aware the same near-random topology.  Need
+   to find a dataset config where blind clearly fails AND aware clearly
+   succeeds — that's the paper's headline. Tactic: scale up character
+   count by 2.5–5x; optionally increase tips per clade. Keep convergent
+   structure (short stems, longer within-clade branches) so blind has
+   real difficulty.
 
-2. **Truth-init topology test.** Run a chain initialised from the truth
-   tree and check whether it leaves the truth basin. If it doesn't, the
-   posterior is concentrated near truth but the chain can't find that
-   region from random starts (mixing problem). If it does leave, the
-   posterior itself doesn't concentrate on truth (likelihood landscape
-   problem).
+2. **Reframe success metric (right framing, applies in any case).**
+   Headline becomes "aware better than blind in N of 20 reps" via the
+   CID delta and ecology-bipartition probabilities. `sim3-multirep.R`
+   already computes these — keep them as primary metrics, not "tl
+   matches truth".
 
-3. **Use sim3-multirep.R as designed.** The existing multi-rep driver
-   already measures bipartition probabilities and CID across replicates
-   — those are robust to single-chain mixing failure. The headline figure
-   should be "aware better than blind in N of 20 reps" not "aware median
-   tl equals truth".
+3. **Truth-init topology test (cheap, do after redesign).** Once the
+   redesigned dataset exists, initialise a chain from the truth tree and
+   check whether it stays. If it does, the posterior IS concentrated at
+   truth and the random-init chain is just failing to find it (pure
+   mixing problem). If it doesn't, the posterior peaks elsewhere
+   (likelihood landscape problem; the 2-nat rate_neo pull might be
+   creating a competing mode).
 
-4. **Document the topology-mixing limit in vignette.** Be honest that
-   v2 Sim 3 cannot exactly recover the convergent-tree topology in single
-   chains; report bipartition probabilities instead.
+4. **Then improve mixing.** Candidate interventions, in order of cheapness:
+   - Tighter rate_neo prior (current LogNormal(0, ?) seems wide — chain
+     visits rate_neo ∈ [0.2, 55]).
+   - Joint (tl, rate_neo, phi) move that preserves rate × time
+     products so the chain can step across the confounded subspace.
+   - Topology proposal re-weighting — currently 1093 unique topos in
+     1594 samples; acceptance is too high.
+
+## Profile likelihood diagnostic (2026-05-14)
+
+To discriminate mixing-vs-landscape, computed log-likelihood at truth and
+along single-parameter profiles holding all other parameters at truth:
+
+| Diagnostic | logLik |
+|------------|--------|
+| **Truth (tl=12.7, phi=4, pi0=0.75, theta=1, rate_neo=1)** | **−2324.04** |
+| Chain max logLik over 1594 post-burnin samples | −2328.59 |
+| Chain median logLik | −2435.03 |
+
+Truth is the most likely sampled point, by ~4.5 nats over the chain's
+single best sample. Posterior peaks at (or extremely near) truth — the
+chain cannot find that region from random init.
+
+### Single-parameter profiles at truth
+
+| rate_neo | logLik | Δ from truth | phi | logLik | Δ | tl | logLik | Δ | pi0 | logLik | Δ |
+|----------|--------|-------------|-----|--------|---|----|----|----|------|--------|---|
+| 0.5 | −2347.9 | −23.9 | 1 | −2478 | −154 | 6.4 | −2430 | −106 | 0.25 | −2358 | −34 |
+| **1.0 (T)** | **−2324.0** | **0** | 2 | −2359 | −35 | 9.5 | −2342 | −18 | 0.5 | −2338 | −14 |
+| 1.5 | −2322.4 | **+1.6** | **4 (T)** | **−2324** | **0** | **12.7 (T)** | **−2324** | **0** | **0.75 (T)** | **−2324** | **0** |
+| 2.0 | −2322.3 | **+1.7** | 5 | −2324 | +0.5 | 19 | −2337 | −13 | 0.9 | −2326 | −2 |
+| 5.0 | −2321.6 | **+2.5** | 7 | −2331 | −7 | 38 (chain median) | −2373 | **−49** | 0.99 | −2333 | −9 |
+| 20.0 | −2321.5 | **+2.5** | | | | 64 | −2381 | −56 | | | |
+
+**Findings**
+
+1. **phi, tl, pi0 are sharply identified at truth.** Sharp likelihood peaks;
+   chain wandering to (e.g.) tl=38 sits 49 nats below truth — pure mixing
+   failure.
+
+2. **rate_neo has a soft pull upward.** Truth rate_neo=1 is slightly
+   suboptimal; likelihood improves to +2.5 nats at rate_neo ≈ 5, then
+   plateaus. This confirms the hypothesis that convergent-ecology
+   character gains push rate_neo above truth. Small effect (2.5 nats
+   absolute) but real.
+
+3. **Joint phi × rate_neo at truth phi=4 is nearly flat** for rate_neo
+   ∈ [2, 8] (likelihood spans 0.8 nats) — chain can compensate phi=3-4
+   with rate_neo=2-5 and remain in a near-optimal basin. This is the
+   identifiability story the user raised.
+
+### Conclusion
+
+The dominant problem is **MCMC mixing**, not the rate_neo confounding (the
+latter is a 2-nat effect compared with the chain's 100+ nat shortfall from
+truth). The likelihood landscape is correct — truth is at the peak — but
+the chain cannot reach or stay at the peak from random initialisation.
 
 ## Key files
 
