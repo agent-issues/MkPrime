@@ -159,13 +159,17 @@ make_mcmc <- function(prefix) {
   MkPrimeMCMC(
     nIter      = Inf,
     thin       = 10L,
-    warmup     = 5000L,
+    maxWarmup  = 5000L,
     nRuns      = 2L,
     nChains    = 4L,
-    heat       = 0.2,
-    maxTime    = 6 * 3600,
+    heat       = 0.1,  # widened from 0.2 to help mode-jumping under the
+                        # empirical_geometric prior, which produces logP
+                        # swings of +-50 between adjacent reports.
+                        # Lower heat -> hotter hottest chain -> better
+                        # discovery of distant modes.
+    maxTime    = 10 * 3600,
     minEss     = 200L,
-    maxPsrf    = 1.1,
+    maxRhat    = 1.1,
     checkEvery = 500L,
     checkpointFile = file.path(ckp_dir, paste0(prefix, "_checkpoint.rds")),
     logFile        = file.path(ckp_dir, paste0(prefix, "_run.log")),

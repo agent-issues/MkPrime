@@ -94,7 +94,7 @@
 #'   When set, samples are flushed to disk in batches of `bufferSize`, so the
 #'   file can be opened in Tracer during the run.
 #'   For multiple runs (`nRuns > 1`), separate files are created automatically
-#'   by appending `_1`, `_2`, … before the file extension
+#'   by appending `_1`, `_2`, \dots before the file extension
 #'   (e.g. `"run.log"` → `"run_1.log"`, `"run_2.log"`).
 #'   See [ReadMkLog()] to load the log back into R after the run.
 #' @param bufferSize Integer. Number of thinned samples to accumulate per run
@@ -506,6 +506,7 @@ MkPrimeMCMC <- function(
     scale_rate_loss = 0.5,
     scale_rate_log_sd = 0.5,
     scale_p = 0.5,
+    scale_logit_p = 1.0,
     scale_rate_neo = 0.5,
     scale_neo_joint = 0.5,
     scale_beta_scale = 0.5,

@@ -743,8 +743,8 @@ RunMkPrime <- function(data, tree = NULL,
   # their score gets inflated relative to expensive topology moves.
   # v2: scale_pi0 NO LONGER prior-only — pi0 enters gamma_e and so the
   # likelihood. It must be a full MH move (already implemented C++-side,
-  # case 31) and not in alwaysAcceptTypes. Similarly for scale_phi
-  # (case 30) and the new scale_theta (case 33). gibbs_z still
+  # case 35) and not in alwaysAcceptTypes. Similarly for scale_phi
+  # (case 34) and the new scale_theta (case 37). gibbs_z still
   # always-accept (exact Gibbs sampler).
   alwaysAcceptTypes <- c("gibbs_p", "slice", "gibbs_kprime_sweep",
                          "kprime_alpha", "kprime_beta",
@@ -787,6 +787,11 @@ RunMkPrime <- function(data, tree = NULL,
   # Stabilisation detector state (Warmup phase)
   logPostHistory     <- r$logPostHistory %||% numeric(0)
   nStableConsecutive <- r$nStableConsecutive %||% 0L
+  # Anchor iteration for warmup ETA. Fixed at minWarmup initially; only
+  # advances when a confirmed stable-check streak resets (prevCount > 0 → 0),
+  # so the displayed ETA doesn't slide forward every batch while the chain is
+  # still in the pre-check or non-stabilising phase.
+  warmupAnchor       <- r$warmupAnchor %||% mcmc$minWarmup
 
   # samplePhaseStart: iteration at which sampling began (for iterNum in log files).
   # For legacy checkpoints without this field, default to mcmc$warmup.
@@ -1020,9 +1025,12 @@ RunMkPrime <- function(data, tree = NULL,
       # checks.  Monotonic: as iterations grow and stability accumulates,
       # warmupProgress only increases.
       nStableRequired <- 3L
-      remainStable <- max(0L, nStableRequired - nStableConsecutive)
+      # Anchor-based horizon: does not slide with batchEnd while the chain is
+      # in a non-stabilising streak. stabCheckPeriod matches the windowSize=10
+      # hardcoded in .CheckStabilisation() × warmupBatch (actual check interval).
+      stabCheckPeriod <- 10L * warmupBatch
       warmupHorizon <- max(mcmc$minWarmup,
-                           batchEnd + remainStable * mcmc$checkEvery)
+                           warmupAnchor + nStableRequired * stabCheckPeriod)
       warmupHorizon <- min(warmupHorizon, mcmc$warmup)  # cap at maxWarmup
       moveWeights <- .AdaptMoveWeights(
         moveWeights, r$chain_accept[[1L]], r$chain_propose[[1L]],
@@ -1039,7 +1047,7 @@ RunMkPrime <- function(data, tree = NULL,
       moveWeights <- .WarmupGibbsCap(moveWeights, pinnedWeights, gibbsKpIdx,
                                       factor = mcmc$gibbsWarmupFactor %||% (1/3))
 
-      tickerPages <- sprintf("warmup: ~%d iter", warmupHorizon)
+      tickerPages <- sprintf("warmup: ~%d iter", max(warmupHorizon, batchEnd))
 
       # M-126: Accumulate cold-chain state snapshots for rho estimation.
       # C++ saves no samples during warmup, so we use the chain state
@@ -1059,8 +1067,15 @@ RunMkPrime <- function(data, tree = NULL,
         stabResult <- .CheckStabilisation(
           logPostHistory, nStableConsecutive
         )
+        prevNStableConsecutive <- nStableConsecutive
         nStableConsecutive <- stabResult$nStableConsecutive
         r$nStableConsecutive <- nStableConsecutive
+        # Advance anchor only when a confirmed streak resets: prevCount > 0 → 0.
+        # Early-exit zeros (not enough data yet) don't advance the anchor.
+        if (nStableConsecutive == 0L && prevNStableConsecutive > 0L) {
+          warmupAnchor   <- batchEnd
+          r$warmupAnchor <- warmupAnchor
+        }
 
         if (stabResult$stable || batchEnd >= mcmc$warmup) {
           # M-171: Restore gibbs_kPrime to full pinned weight before Tuning/Sample.
@@ -2418,40 +2433,77 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     integer(1L)
   )
 
-  if (isStreaming && nRuns >= 2L && !is.null(mcmc$maxRhat)) {
-    # M-146: cross-run R-hat convergence orchestrator
-    # M-149 #6: skip Phase 1 if checkpoint was during Phase 2
-    serialResult <- .RunSerialRuns(mkd, model, mcmc, runs, moves,
-                                    tipLabels, paramNames, nEdge,
-                                    brColStart, logFilePaths,
-                                    convWindowSize, treeFile = NULL,
-                                    startIters = perRunStarts,
-                                    startPhase = checkpoint$serialPhase %||% 1L)
-    runs       <- serialResult$runs
-    stopReason <- serialResult$stopReason
-    actualIter <- serialResult$actualIter
-  } else {
-    for (run in seq_len(nRuns)) {
-      runs[[run]] <- .RunMkPrimeSingleRun(
-        mkd, model, mcmc, runs[[run]], moves, tipLabels, run,
-        paramNames, nEdge, brColStart,
-        logFilePath    = if (isStreaming) logFilePaths[run] else NULL,
-        cancelFile     = mcmc$cancelFile,
-        checkpointFile = if (nRuns == 1L) mcmc$checkpointFile else NULL,
-        startIter      = perRunStarts[run],
-        isStreaming    = isStreaming,
-        convWindowSize = convWindowSize,
-        treeFile       = NULL,
-        resumeMoveWeights = runs[[run]]$moveWeights %||% checkpoint$moveWeights
-      )
-      stopReason <- runs[[run]]$stop_reason
-      actualIter <- runs[[run]]$actual_iter
-      if (stopReason == "cancelled") break
+  tryCatch({
+    if (isStreaming && nRuns >= 2L && !is.null(mcmc$maxRhat)) {
+      # M-146: cross-run R-hat convergence orchestrator
+      # M-149 #6: skip Phase 1 if checkpoint was during Phase 2
+      serialResult <- .RunSerialRuns(mkd, model, mcmc, runs, moves,
+                                      tipLabels, paramNames, nEdge,
+                                      brColStart, logFilePaths,
+                                      convWindowSize, treeFile = NULL,
+                                      startIters = perRunStarts,
+                                      startPhase = checkpoint$serialPhase %||% 1L)
+      runs       <- serialResult$runs
+      stopReason <- serialResult$stopReason
+      actualIter <- serialResult$actualIter
+    } else {
+      for (run in seq_len(nRuns)) {
+        runs[[run]] <- .RunMkPrimeSingleRun(
+          mkd, model, mcmc, runs[[run]], moves, tipLabels, run,
+          paramNames, nEdge, brColStart,
+          logFilePath    = if (isStreaming) logFilePaths[run] else NULL,
+          cancelFile     = mcmc$cancelFile,
+          checkpointFile = if (nRuns == 1L) mcmc$checkpointFile else NULL,
+          startIter      = perRunStarts[run],
+          isStreaming    = isStreaming,
+          convWindowSize = convWindowSize,
+          treeFile       = NULL,
+          resumeMoveWeights = runs[[run]]$moveWeights %||% checkpoint$moveWeights
+        )
+        stopReason <- runs[[run]]$stop_reason
+        actualIter <- runs[[run]]$actual_iter
+        if (stopReason == "cancelled") break
+      }
     }
-  }
-
-  .BuildResult(runs, model, mkd, mcmc, paramNames, logFilePaths,
-               actualIter, stopReason)
+    .BuildResult(runs, model, mkd, mcmc, paramNames, logFilePaths,
+                 actualIter, stopReason)
+  },
+  interrupt = function(cond) {
+    # M-175: interrupt handler missing from resume path — mirror .RunWithRecovery.
+    # `runs` here reflects the last successfully completed batch state.
+    bestIter <- max(c(0L, vapply(runs,
+                                  function(r) r$actual_iter %||% 0L,
+                                  integer(1L))))
+    ckpSaved <- FALSE
+    if (!is.null(mcmc$checkpointFile) && bestIter > 0L) {
+      tryCatch({
+        .SaveCheckpoint(runs, mcmc, bestIter, paramNames,
+                        mcmc$checkpointFile, model = model)
+        ckpSaved <- TRUE
+      }, error = function(e) NULL)
+    }
+    if (!is.null(logFilePaths)) {
+      for (i in seq_along(logFilePaths)) {
+        tryCatch({
+          r <- runs[[i]]
+          if (!is.null(r$flush_idx) && r$flush_idx > 0L) {
+            .FlushBuffer(r$flush_buf, r$flush_idx, r$flush_iter, logFilePaths[i])
+          }
+        }, error = function(e) NULL)
+      }
+    }
+    if (ckpSaved) {
+      cli::cli_alert_warning(c(
+        "Run interrupted at iteration {bestIter}.",
+        "i" = "Checkpoint saved to {.file {mcmc$checkpointFile}}.",
+        "i" = "Re-run the same {.fn RunMkPrime} call to resume."
+      ))
+    } else {
+      cli::cli_alert_warning("Run interrupted.")
+    }
+    .BuildResult(runs, model, mkd, mcmc, paramNames, logFilePaths,
+                 max(bestIter, 0L), "interrupted")
+  })
 }
 
 
@@ -2547,6 +2599,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         local_dirichlet  = tun$local_dirichlet_alpha %||% 10,
         p           = 0.5,  # Gibbs move: scale ignored by C++; placeholder
         mh_p        = tun$scale_p %||% 0.5,
+        mh_logit_p  = tun$scale_logit_p %||% 1.0,
         scale_phi   = tun$scale_phi %||% 0.5,
         scale_pi0   = tun$scale_pi0 %||% 0.5,
         scale_theta = tun$scale_theta %||% 0.5,
@@ -2904,12 +2957,18 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
              sliceParamIdx = 1L)
       ))
     } else if (identical(kPrimePrior, "empirical_geometric")) {
-      # Convolution prior breaks p's Beta conjugacy; use MH on log(p) instead.
-      # Move reuses the legacy moveType 8 ("scale_p") which is a Bactrian
-      # multiplicative perturbation of p.
+      # Convolution prior breaks p's Beta conjugacy.  A Bactrian
+      # multiplicative MH on p in (0,1) is unusable here: under the
+      # empirical_geometric prior the posterior on p concentrates near 1,
+      # so any positive perturbation pushes p above 1 and is rejected; the
+      # adaptive scheduler then crushes the move to its weight floor and p
+      # stays stuck.  Instead, propose on the unbounded logit scale (case 30,
+      # `mh_logit_p`); the Jacobian appears as the Hastings ratio.  Give it
+      # a higher weight than the legacy `mh_p` move so that even if it
+      # mixes a little less efficiently than gibbs_kPrime it still moves p.
       kPrimeMoves <- c(kPrimeMoves, list(
-        list(name = "mh_p", type = "scale_p", target = "p", weight = 1,
-             dim = 1L)
+        list(name = "mh_logit_p", type = "logit_scale_p", target = "p",
+             weight = 3, dim = 1L)
       ))
     } else if (!identical(kPrimePrior, "logseries")) {
       # Conjugate Gibbs draw: p | k' ~ Beta(a + nTrans, b + sum(k' - kObs))
@@ -3011,8 +3070,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   # scalar move gets at least 2% of the pre-floor total weight.
   # Joint 2D moves also get the floor so they're comparable to individual
   # scalar moves they complement.
-  scalarTypes <- c("scale", "int_walk", "gibbs_p", "scale_p", "slice",
-                    "kprime_alpha", "kprime_beta",
+  scalarTypes <- c("scale", "int_walk", "gibbs_p", "scale_p", "logit_scale_p",
+                    "slice", "kprime_alpha", "kprime_beta",
                     "scale_phi", "scale_pi0")
   totalWeight <- sum(vapply(moves, `[[`, numeric(1), "weight"))
   floorVal <- totalWeight * 0.02
@@ -3034,11 +3093,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 # 12=weighted_br_scale, 13=weighted_spr, 14=weighted_subtree_swap,
 # 15=block_gibbs_branch, 16=beta_scale (M-052), 17=tbr (M-053),
 # 25=gibbs_kprime_sweep, 26=block_kprime_shift,
-# 27=scale_kprime_alpha, 28=scale_kprime_beta
+# 27=scale_kprime_alpha, 28=scale_kprime_beta,
+# 30=mh_logit_p (logit-scale MH on p, for empirical_geometric)
 .kMoveTypes <- c(
   tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
   rate_neo = 3L, branch_lengths = 4L,
   nni = 5L, spr = 6L, kPrime = 7L, p = 9L, mh_p = 8L,
+  mh_logit_p = 30L,
   gibbs_spr = 10L, gibbs_subtree_swap = 11L,
   weighted_branch_lengths = 12L,
   weighted_spr = 13L,
@@ -3063,10 +3124,10 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   kprime_beta = 28L,
   slice_kprime_alpha = 29L,
   slice_kprime_beta = 29L,
-  scale_phi = 30L,
-  scale_pi0 = 31L,
-  gibbs_z = 32L,
-  scale_theta = 33L
+  scale_phi = 34L,
+  scale_pi0 = 35L,
+  gibbs_z = 36L,
+  scale_theta = 37L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)
@@ -3192,6 +3253,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       dirichlet_branch = tuning$dirichlet_alpha %||% 0.1,
       local_dirichlet = tuning$local_dirichlet_alpha %||% 0.1,
       mh_p        = tuning$scale_p %||% 0.5,
+      mh_logit_p  = tuning$scale_logit_p %||% 1.0,
       0.5  # default; gibbs_p ignores scaleTun (returns before using it)
     )
     # For dirichlet_branch / local_dirichlet, intWalkWindow carries nCats
@@ -3264,6 +3326,19 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       prop <- ProposeScale(state$p, tuning = tuning$scale_p %||% 0.5)
       proposed$p <- prop$value
       logHastings <- prop$logHastings
+    },
+    logit_scale_p = {
+      # Logit-scale MH on p with Jacobian — robust near the boundary.
+      # This R fallback uses a normal step on the logit scale; the C++ path
+      # uses a Bactrian perturbation but the proposal kernel is symmetric in
+      # both cases so the Hastings ratio reduces to the Jacobian alone.
+      sigma <- tuning$scale_logit_p %||% 1.0
+      logitP <- qlogis(state$p)
+      logitPnew <- logitP + sigma * (runif(1) - 0.5)
+      newP <- plogis(logitPnew)
+      proposed$p <- newP
+      logHastings <- log(newP) + log1p(-newP) -
+                     log(state$p) - log1p(-state$p)
     }
   )
 
@@ -3720,6 +3795,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
   kPrime = "Characters", gibbs_kPrime = "Characters",
   block_kPrime = "Characters", p = "Characters", mh_p = "Characters",
+  mh_logit_p = "Characters",
 
   rate_loss = "Rates", rate_neo = "Rates", rate_log_sd = "Rates",
   beta_scale = "Rates", neo_joint = "Rates",
@@ -3817,7 +3893,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     tree_length = 0.35, branch_lengths = 0.23,
     nni = 0.23, spr = 0.10,
     kPrime = 0.35,
-    p = 0.35, rate_loss = 0.35, rate_log_sd = 0.35,
+    p = 0.35, mh_p = 0.35, mh_logit_p = 0.35,
+    rate_loss = 0.35, rate_log_sd = 0.35,
     rate_neo = 0.35, neo_joint = 0.35,
     beta_scale = 0.35,
     pspr = 0.10,
@@ -3849,6 +3926,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     kPrime = "int_walk_window",
     p = NA_character_,       # Gibbs move: no tuning needed
     mh_p = "scale_p",        # MH move: tune the log-scale step
+    mh_logit_p = "scale_logit_p",  # MH move: tune the logit-scale step
     rate_loss = "scale_rate_loss",
     rate_log_sd = "scale_rate_log_sd",
     rate_neo = "scale_rate_neo",

@@ -44,18 +44,18 @@ You are agent **{{AGENT_ID}}**, assigned to task **{{TASK_ID}}**: `{{TASK_ROW}}`
    - Dispatch checks: `bash gha-dispatch.sh agent-check.yml feature/<name>`
    - Poll results: `bash gha-poll.sh <run_id>` (from another agent slice; don't block)
 
-6. **Exit protocol**: use the global `/dispatch` skill (no local `dispatch.sh`
-   is shipped — invoke via `Skill(skill: "dispatch", args: "...")`).
+6. **Exit protocol**: run `bash dispatch.sh` from the repo root (it delegates
+   to the global skill script).
 
    **When blocking on external wait** (GHA, Hamilton, human review):
-   `Skill(skill: "dispatch", args: "checkin {{AGENT_ID}} --kind=<gha|hamilton|human|other> --ref=<id> --eta=<iso-8601> --resume=\"<next action>\"")`
+   `bash dispatch.sh checkin {{AGENT_ID}} --kind=<gha|hamilton|human|other> --ref=<id> --eta=<iso-8601> --resume="<next action>"`
 
    Exit cleanly. The dispatcher will park this task and resume when the ETA passes.
 
    **When complete**:
    - Update `to-do.md` (delete task row; create new sections if needed)
    - Append summary row to `completed-tasks.md` under today's date
-   - Call `Skill(skill: "dispatch", args: "checkin {{AGENT_ID}} --done")`
+   - Run `bash dispatch.sh checkin {{AGENT_ID}} --done`
    - The dispatcher will mark the agent slot as free.
 
 ## Budget discipline
@@ -63,13 +63,13 @@ You are agent **{{AGENT_ID}}**, assigned to task **{{TASK_ID}}**: `{{TASK_ROW}}`
 If the work won't fit in {{BUDGET_MINUTES}} minutes:
 1. Do a **meaningful sub-step** (fix one bug, implement one small feature, resolve one blocker)
 2. Check in with a resume action:
-   `Skill(skill: "dispatch", args: "checkin {{AGENT_ID}} --kind=other --eta=<next> --resume=\"<next step>\"")`
+   `bash dispatch.sh checkin {{AGENT_ID}} --kind=other --eta=<next> --resume="<next step>"`
 3. Exit cleanly rather than blowing the budget
 
 ## Tools
 
 - `.AGENTS/memory/` — technical references (architecture, testing, performance, conventions)
-- `Skill(skill: "dispatch", args: "...")` — global dispatcher (locks, checkin, reap, kill)
+- `bash dispatch.sh` — dispatcher CLI (locks, checkin, reap, kill)
 - `gha-dispatch.sh` / `gha-poll.sh` — GitHub Actions integration (parent `GitHub/` directory)
 - Claude Code skills — `Skill(skill: "hamilton-hpc")` for Hamilton SLURM,
   `Skill(skill: "r-package-profiling")` for VTune profiling

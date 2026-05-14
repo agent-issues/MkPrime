@@ -4077,9 +4077,12 @@ static bool gibbs_z_sweep_impl(McmcData* data, McmcState* state, double beta) {
 //           23=dirichlet_branch, 24=local_dirichlet,
 //           25=gibbs_kprime_sweep, 26=block_kprime_shift,
 //           27=scale_kprime_alpha, 28=scale_kprime_beta,
-//           29=slice_kprime_hyper, 30=scale_phi (ecology),
-//           31=scale_pi0 (ecology, logit-Bactrian),
-//           32=gibbs_z_sweep (ecology)
+//           29=slice_kprime_hyper,
+//           30=mh_logit_p (logit-scale MH on p for empirical_geometric prior),
+//           34=scale_phi (ecology),
+//           35=scale_pi0 (ecology, logit-Bactrian),
+//           36=gibbs_z_sweep (ecology),
+//           37=scale_theta (ecology, logit-Bactrian)
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -4517,7 +4520,28 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       state->kprimeBeta = oldKpB;
       return false;
     }
-    case 30: { // scale phi (Bactrian) — ecology-aware NT
+    case 30: { // mh_logit_p — logit-scale MH on p (for empirical_geometric)
+      // Multiplicative MH on p ∈ (0,1) overshoots when p is close to 1, which
+      // is the typical posterior region under the empirical_geometric prior.
+      // Propose on the unbounded logit scale instead, so no rejections from
+      // boundary violations. Jacobian is |dp/dlogit(p)| = p (1 − p).
+      if (oldP <= 0.0 || oldP >= 1.0) return false;
+      double logitP = std::log(oldP / (1.0 - oldP));
+      double logitPnew = logitP + scaleTuning * bactrian_perturbation();
+      double newP;
+      if (logitPnew >= 0.0) {
+        newP = 1.0 / (1.0 + std::exp(-logitPnew));
+      } else {
+        double e = std::exp(logitPnew);
+        newP = e / (1.0 + e);
+      }
+      if (newP <= 0.0 || newP >= 1.0) return false;
+      state->p = newP;
+      logHastings = std::log(newP) + std::log1p(-newP)
+                  - std::log(oldP) - std::log1p(-oldP);
+      break;
+    }
+    case 34: { // scale phi (Bactrian) — ecology-aware NT
       if (!data->ecologyAware || state->phi.size() == 0) return false;
       int nPhi = state->phi.size();
       phiOldIdx = (nPhi == 1) ? 0
@@ -4529,10 +4553,10 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       logHastings = std::log(mult);
       break;
     }
-    case 32: { // gibbs_z_sweep (ecology) — Gibbs over z_{c, s}
+    case 36: { // gibbs_z_sweep (ecology) — Gibbs over z_{c, s}
       return gibbs_z_sweep_impl(data, state, beta);
     }
-    case 31: { // logit-Bactrian on pi0 (ecology) — v2: full MH with likelihood
+    case 35: { // logit-Bactrian on pi0 (ecology) — v2: full MH with likelihood
       if (!data->ecologyAware) return false;
       double pi0Old = state->pi0;
       if (pi0Old <= 0.0 || pi0Old >= 1.0) return false;
@@ -4578,7 +4602,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       state->pi0 = pi0Old;
       return false;
     }
-    case 33: { // logit-Bactrian on theta_e (ecology v2) — full MH
+    case 37: { // logit-Bactrian on theta_e (ecology v2) — full MH
       if (!data->ecologyAware) return false;
       if (state->theta.size() == 0) return false;
       int nT = state->theta.size();
@@ -4687,7 +4711,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   const NumericVector& evalRelBr  = topologyChanged ? proposedRelBr  : state->relBrLengths;
 
   // ---- Likelihood evaluation (M-064: partial, M-065: vectors, M-121: node CL) ----
-  bool likChanges = (moveType != 8);
+  // Moves that only touch `p` (case 8 legacy multiplicative, case 30 logit MH)
+  // leave the likelihood untouched.
+  bool likChanges = (moveType != 8 && moveType != 30);
   // Ecology mode disables partition cache + partial CL; full eval routes
   // through cpp_log_likelihood_ecology.
   const bool eco = data->ecologyAware;
