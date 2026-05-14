@@ -1,0 +1,9 @@
+== Running truth-init aware chain WITH PINNED ECOLOGY MOVES ==
+Pinned weights (total = 0.17):
+  gibbs_z      = 0.08
+  scale_phi    = 0.03
+  scale_pi0    = 0.03
+  scale_theta  = 0.03
+[truth-init] log_lik=-4657.70 log_prior=-464.90 log_post=-5122.60
+Elapsed: 27.82842 mins 
+Saved truth-init-pinned-result.rds
