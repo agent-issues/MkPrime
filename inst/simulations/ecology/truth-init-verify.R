@@ -72,11 +72,29 @@ if (!is.null(zFinal) && is.list(zFinal) && length(zFinal) > 0) {
 if (!is.null(zFinal) && length(zFinal) > 0) {
   z1 <- zFinal[[1]]
   scaleTL <- sum(treeS1$edge.length)
-  # Override branch lengths to match log's tree_length (model rescaling
-  # currently stores TL separately from relBr)
+  # Pull sample 1's actual kPrime values from the log. The chain has
+  # been running gibbs_kPrime since init, so kObs is stale and using it
+  # would inflate the recomputed gap by 100+ nats. kPrime columns are
+  # named kPrime_118, kPrime_119, ..., one per character (transformational
+  # only; neomorphic = kObs).
+  kpCols <- grep("^kPrime_\\d+$", colnames(logCsv), value = TRUE)
+  if (length(kpCols) == 0) stop("no kPrime columns in log")
+  # logCsv kpCols cover transformational chars only. Build the full kPrime
+  # vector by starting from kObs and overwriting trans positions.
+  kpFull <- as.integer(mkdAware$kObs)
+  charIdx <- as.integer(sub("kPrime_", "", kpCols))
+  kpFull[charIdx] <- as.integer(unlist(s1[, kpCols]))
+  cat("kPrime cols in log:", length(kpCols),
+      " range charIdx:", min(charIdx), "..", max(charIdx), "\n")
+  cat("nChar mkd:", mkdAware$nChar, " nNeo:",
+      sum(mkdAware$type == "neomorphic"), "\n")
+  cat("kpFull table (head):\n"); print(table(kpFull))
+  cat("kObs   table (head):\n"); print(table(as.integer(mkdAware$kObs)))
+  cat("kpFull vs kObs differ at:", sum(kpFull != as.integer(mkdAware$kObs)),
+      "positions\n")
   ll <- .MkpEcologyLogLikelihood(
     treeS1, mkdAware,
-    kPrime = as.integer(mkdAware$kObs),
+    kPrime = kpFull,
     rate_loss = s1$rate_loss,
     rate_log_sd = s1$rate_log_sd,
     nCat = modelAware$nCat,
@@ -95,7 +113,7 @@ if (!is.null(zFinal) && length(zFinal) > 0) {
     rel_br_lengths = treeS1$edge.length / sum(treeS1$edge.length),
     rate_loss = s1$rate_loss, rate_log_sd = s1$rate_log_sd,
     rate_neo = s1$rate_neo, p = s1$p,
-    kPrime = as.integer(mkdAware$kObs),
+    kPrime = kpFull,
     phi = s1$phi, pi0 = s1$pi0, theta = s1$theta_1, z = z1
   )
   lp <- LogPrior(st, modelAware, mkdAware)

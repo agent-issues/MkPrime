@@ -1,92 +1,102 @@
-# Sim 3 v3 multirep HPC pilot — 8 reps × 100k iter
+# Sim 3 v3 multirep HPC results — pre-fix vs post-fix
 
-**Date:** 2026-05-14
-**SLURM job:** 17153939 (8 array tasks, all `COMPLETED`, 18-21 min each)
+**Dates:**
+- Pre-fix multirep: 2026-05-14 morning, job 17153939 (8 reps, all `COMPLETED`, 18-21 min each)
+- Post-fix multirep: 2026-05-14 afternoon, job 17157994 (8 reps, all `COMPLETED`, 37-47 min each; ~2× slower due to periodic eco-resync + tighter convergence)
+
 **Config:** nEco=120, nBase=360, phi=4, stem=0.30, root=0.15, tip=0.5
-**Priors:** sigmaPhi=1.0, theta~Uniform(1,1), rateNeoSdlog=1
 **Outputs (local):** `inst/simulations/ecology/multirep-v3-results/rep0[1-8]/summary.rds`
 
 ## Headline aware-vs-blind (mean ± sd over 8 reps)
 
-| Metric          | Blind         | Aware         | Δ (aware − blind) |
-| --------------- | ------------- | ------------- | ----------------- |
-| P(true AC)      | 0.000 ± 0.000 | 0.000 ± 0.000 | +0.000            |
-| P(wrong AB)     | 0.692 ± 0.352 | 0.135 ± 0.256 | **−0.557**        |
-| CID_to_truth    | 0.476 ± 0.035 | 0.673 ± 0.080 | +0.197 (worse)    |
+| Metric          | Blind (pre)   | Aware (pre)   | Δ (pre)    | Blind (post)  | Aware (post)  | Δ (post)   |
+| --------------- | ------------- | ------------- | ---------- | ------------- | ------------- | ---------- |
+| P(true AC)      | 0.000 ± 0.000 | 0.000 ± 0.000 | +0.000     | 0.001 ± 0.004 | 0.002 ± 0.004 | +0.001     |
+| P(wrong AB)     | 0.692 ± 0.352 | 0.135 ± 0.256 | **−0.557** | 0.551 ± 0.396 | 0.381 ± 0.341 | −0.170     |
+| **CID_to_truth** | 0.476 ± 0.035 | 0.673 ± 0.080 | +0.197 (worse) | 0.484 ± 0.034 | **0.432 ± 0.049** | **−0.052** (better) |
 
-Per-rep table in `multirep-v3-results/` (`multirep-v3-aggregate.R`).
+## What the post-fix numbers say
 
-## What the numbers mean
+1. **The expected sign on CID is now present.** Aware-vs-blind delta in
+   CID-to-truth flipped from +0.197 (aware *worse*) to −0.052 (aware
+   *better*). This is the qualitative pattern the ecology layer was
+   designed to produce. The pre-fix +0.197 was the artefact of a chain
+   that was destabilised by the kPrime / slice / topology-Gibbs
+   accumulator leaks and ended up wandering in low-density posterior
+   regions.
+2. **P(wrong) suppression is muted (-0.170 vs prior -0.557) but real
+   in aggregate.** High variance: 3/8 aware reps still show
+   P(wrong) > 0.4 (reps 1, 5, 7). These are reps where the chain found
+   the wrong bipartition despite the eco layer — i.e. the data alone
+   was too consistent with AB.
+3. **P(true) is still effectively zero.** Neither model recovers the
+   true AC bipartition in 7/8 reps. This is a topology-mixing problem
+   — the chain rarely visits the AC bipartition even though the
+   ecology layer correctly discourages AB. With `gibbs_spr` and
+   `gibbs_subtree_swap` gated in eco mode (S-4), topology moves rely
+   on random-MH spr/nni/tbr/pspr only; weight redistribution may be
+   needed.
+4. **Zero `[eco-resync` drift warnings across all 8 reps × 100k iter.**
+   The accumulator is rock-solid in production.
 
-**Good news.** The aware model strongly suppresses the misleading convergent
-bipartition (A,B): P(wrong) collapses from 0.69 → 0.14. In 5/8 reps, P(wrong)
-drops to essentially zero. This is exactly the qualitative pattern the ecology
-layer is designed to produce — it correctly refuses to be fooled by the
-convergent character-state similarity between AC tips.
+## Comparison to pre-fix multirep
 
-**Bad news.** Neither model recovers the true bipartition (P(true) = 0 in *all*
-16 chains). The aware model's tree-distance (CID) to truth is *worse* than
-blind's. So aware is "right for the wrong reason": its posterior trees do not
-contain the false AB grouping, but they also don't contain the true AC
-grouping — they're elsewhere in tree space entirely.
+The pre-fix run looked like a strong aware-vs-blind story on P(wrong)
+(−0.557) but came with a catastrophically worse CID (+0.197). It was a
+**false win**: the chain reported a posterior with no AB bipartition
+not because it had found the truth, but because the accumulator bugs
+were preventing it from settling anywhere coherent. Aware logged its
+trees in a high-entropy "neither AB nor AC" region of tree space.
 
-## Diagnostic — chain.log inspection (rep01)
+Post-fix, the chain reaches more focused posterior regions in both
+models. The blind chain still falls for AB convergent signal 55% of
+the time. The aware chain catches the AB-as-ecology illusion in most
+reps but isn't immune; and although CID drops below blind, P(true)
+remains low because topology mixing isn't strong enough yet.
 
-| Param           | Truth | Blind tail | Aware tail (3 samples) |
-| --------------- | ----- | ---------- | ---------------------- |
-| log_posterior   | —     | −4618      | −5225, −5251, −5068    |
-| log_likelihood  | —     | −4684      | −4934, −4870, −4776    |
-| tree_length     | 13.5  | 16–20      | 126, 346, 153          |
-| rate_neo        | 1.0   | 0.33–0.43  | 0.06, 1.06, 1.00       |
-| phi             | 4     | —          | 21.6, 21.6, 7.97       |
-| pi0             | 0.75  | —          | 0.28, 0.52, 0.38       |
-| theta_1         | 1.0   | —          | 0.97, 0.97, 0.98       |
+## Bugs fixed between the two runs
 
-Two things jump out:
+See `dev/red-team/findings.md` for the full ledger. Six fixes
+(commits `36e9b53`, `ad25928`, `b254b98`, `37fdbe5`):
 
-1. **Aware log_posterior is ~600 nats below blind.** Aware is not just slow to
-   converge — it's sitting in a completely wrong region of parameter space.
-2. **Aware is ridge-walking on phi × tree_length.** phi=22 with tree_length=346
-   gives roughly the same per-edge expected substitutions as phi=8 with TL=153
-   or (truth) phi=4 with TL=13.5 — these are quasi-equivalent under the
-   normalised mixture. The chain is wandering this ridge instead of locating
-   the truth peak.
+| ID  | Severity | Title                                                              |
+| --- | -------- | ------------------------------------------------------------------ |
+| S-1 | HIGH     | `gibbs_kprime_sweep` wrote non-eco logLik (36% of moves)          |
+| S-2 | HIGH     | `block_kprime_shift` else-branch same bug                          |
+| S-3 | MED      | Pre-proposal drift diagnostic used non-eco likelihood              |
+| S-4 | HIGH     | `gibbs_spr` / `gibbs_subtree_swap` used non-eco partial CL (34% of moves) |
+| S-5 | HIGH     | `eval_slice_target` + `slice_scalar_impl` used non-eco likelihood  |
+| L-4 | MED      | R `LogPrior` rejected theta ∈ {0, 1} + 0×log(0) NaN trap           |
 
-`theta_1 ≈ 0.97` is the one well-behaved aware parameter — it has locked onto
-the asymmetry that the ecology distinguishes correctly.
+Plus model-spec change: pi0 prior tightened from Beta(7, 3) (ESS=10)
+to Beta(75, 25) (ESS=100). Plus production safety net: periodic
+from-scratch resync in `run_mcmc_batch_cpp` every 20 iter, logs drift
+> 0.5 nats to stderr.
 
-## Why aware can have lower P(wrong) while having worse logL
+## Next moves
 
-Blind sits in a small basin around the convergent (AB) bipartition because the
-character matrix really does have many shared changes between A and C tips
-masquerading as AB-like signal under independence. Aware *knows* those shared
-changes are explainable by shared ecology, so it correctly down-weights the AB
-basin — but with phi/TL ridge-walking, it never settles on AC either. So
-P(wrong) goes to zero, P(true) stays at zero, and the trees in posterior are
-high-entropy.
+Priority order:
 
-## Next moves (mixing-focused)
+1. **Scale to 20 reps** to tighten the sd on the P(wrong) and CID
+   estimates. 8 reps is enough for the qualitative sign on CID but
+   not for a paper-quality figure.
+2. **Topology mixing.** The `gibbs_spr` gate makes random-MH the only
+   topology channel in eco mode; weights are static at small fractions.
+   Either redistribute spr/nni/tbr weight when ecologyAware, or build
+   an eco-aware streaming candidate evaluator (long-term).
+3. **Investigate the 3/8 reps where aware still finds AB.** Are those
+   reps where the ecology-edge marginals are weak (deep stem
+   confusion), or where the topology mixing simply doesn't have time
+   to escape AB? Per-rep posterior tree plots would tell.
+4. **Address open findings.** L-1 (wEdge root-edge spec), L-2/L-3
+   (simulator/model alignment, defer until kEco > 2), L-5 (ecology
+   rate hard-coded), M-1/M-2 (per_ecology mode refE handling),
+   M-3 (`gibbsZEvery` unused). Each is a small unit of work.
 
-The headline-quality result (P(wrong) ↓0.56, P(true) ↑) is one mixing fix
-away, not a model-spec change. Suggested order:
-
-1. **Joint phi × tree_length proposal.** The ridge is the dominant pathology.
-   A correlated bactrian move on (log phi, log TL) — or even sequential moves
-   tuned together — would let the chain slide along the ridge to the peak
-   instead of bouncing across it.
-2. **Tighter sigmaPhi if joint move alone isn't enough.** sigmaPhi=1.0 lets
-   phi roam up to e^2 ≈ 7.4 within 2 prior σ. The truth is 4; an even tighter
-   sigmaPhi (e.g. 0.7) would make phi ≈ 22 strongly improbable a priori
-   without precluding truth.
-3. **Re-run truth-init aware** with these fixes — confirm chain stays near
-   the truth peak rather than drifting onto the ridge within 1 sample.
-4. **If 1-3 fix mixing**, scale to 20 reps × extended iter via the
-   checkpoint-aware resume path. Files & dispatch already set up for this.
-
-## Files generated
+## Files
 
 - `inst/simulations/ecology/multirep-v3-results/rep0[1-8]/summary.rds`
 - `inst/simulations/ecology/multirep-v3-aggregate.R`
 - `inst/hamilton/sim3-multirep-v3/{setup_project.sh,run_rep.R,sim3-multirep-v3.sh,dispatch.R}`
-- Per-rep chain logs + checkpoints still on Hamilton at
-  `/nobackup/pjjg18/mkp-sim3-multirep-v3/results/rep0[1-8]/` — resume-ready.
+- Hamilton `/nobackup/pjjg18/mkp-sim3-multirep-v3/results/rep0[1-8]/`
+  retains chain logs + checkpoints for resume/extension.
