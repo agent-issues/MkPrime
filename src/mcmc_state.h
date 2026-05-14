@@ -150,8 +150,8 @@ struct McmcData {
   bool ecologyAware = false;
   EcologyInfo ecology;
   int    magnitudeMode = 0;
-  double rho0Alpha = 7.0;
-  double rho0Beta  = 3.0;
+  double rho0Alpha = 75.0;  // Beta(75, 25): mode 0.75, ESS 100
+  double rho0Beta  = 25.0;
   double sigmaPhi  = 1.0;
   int    gibbsZEvery = 50;
   // v2: Beta hyperprior on theta_e (slab balance). Default (1, 1) is

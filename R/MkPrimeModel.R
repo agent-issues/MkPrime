@@ -80,8 +80,14 @@
 #'   `phi_e` per ecology state). Ignored when `ecologyAware = FALSE`.
 #' @param rho0Alpha,rho0Beta Shape parameters for the Beta hyperprior on
 #'   `pi_0`, the prior probability that a (character, ecology) pair has
-#'   no ecology effect. Defaults: 7, 3 (so `E[pi_0] = 0.7`). Ignored when
-#'   `ecologyAware = FALSE`.
+#'   no ecology effect. Defaults: 75, 25 (mode 0.75, effective sample
+#'   size 100). The spike-and-slab is structurally a sparsity prior;
+#'   the previous Beta(7, 3) (ESS = 10) was overwhelmed by typical
+#'   z-cell counts (480 in a 120/360 NT split at kEco = 2) and let the
+#'   posterior collapse to a "every char is eco-driven" mode with
+#'   pi0 << 0.5. The new ESS = 100 retains data dominance for genuine
+#'   ecology signal while resisting random z reorganisation.
+#'   Ignored when `ecologyAware = FALSE`.
 #' @param thetaAlpha,thetaBeta Shape parameters for the Beta hyperprior on
 #'   `theta_e`, the slab balance for non-reference ecology `e`. Given a
 #'   non-none `z`, `P(z = encouraged | non-none) = theta_e`. Defaults: 1, 1
@@ -181,8 +187,8 @@ MkPrimeModel <- function(
     betaScaleRate = 1,
     ecologyAware = FALSE,
     magnitudeMode = "global",
-    rho0Alpha = 7,
-    rho0Beta = 3,
+    rho0Alpha = 75,
+    rho0Beta = 25,
     thetaAlpha = 1,
     thetaBeta = 1,
     sigmaPhi = 1,

@@ -159,7 +159,7 @@ test_that("prepare_mcmc_data + init_mcmc_state round-trip ecology values", {
     TRUE,
     ecoTip, as.integer(mkd$kEcology),
     model$magnitudeMode %||% "global",
-    model$rho0Alpha %||% 7.0, model$rho0Beta %||% 3.0,
+    model$rho0Alpha %||% 75.0, model$rho0Beta %||% 25.0,
     model$sigmaPhi %||% 1.0, as.integer(model$gibbsZEvery %||% 50L),
     model$thetaAlpha %||% 1.0, model$thetaBeta %||% 1.0
   )

@@ -4147,6 +4147,42 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                          int intWalkWindow, double beta,
                          double jointRho = 0.0) {
 
+  // Periodic from-scratch resync for ecology mode. Every K iterations,
+  // recompute state->logLik / state->logPrior from cpp_log_likelihood_ecology
+  // + cpp_log_prior and overwrite the accumulators. Guarantees correctness
+  // against any remaining incremental-update leaks, and logs residual drift
+  // so future leaks can be located by iter range. ~1ms per 100 iter = <1%
+  // overhead on a chain that takes ~20ms per iter.
+  if (data->ecologyAware) {
+    static int resyncCounter = 0;
+    if (++resyncCounter % 100 == 0) {
+      int nE = state->relBrLengths.size();
+      NumericVector curEl(nE);
+      for (int i = 0; i < nE; ++i)
+        curEl[i] = state->treeLength * state->relBrLengths[i];
+      double freshLL = cpp_log_likelihood_ecology(
+        *data, state->parent, state->child, curEl,
+        state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
+        state->phi, state->zMatrix, state->pi0, state->theta);
+      double freshLP = cpp_log_prior(
+        *data, state->treeLength, state->relBrLengths,
+        state->rateLoss, state->rateLogSd, state->rateNeo,
+        state->p, state->kPrime, state->betaScale,
+        state->kprimeAlpha, state->kprimeBeta,
+        &state->phi, state->pi0, &state->zMatrix, &state->theta);
+      double driftLL = freshLL - state->logLik;
+      double driftLP = freshLP - state->logPrior;
+      if (R_FINITE(freshLL) && R_FINITE(freshLP) &&
+          std::abs(driftLL) + std::abs(driftLP) > 0.5) {
+        REprintf("[eco-resync iter=%d mt=%d] dLL=%+.3f dLP=%+.3f\n",
+                 resyncCounter, moveType, driftLL, driftLP);
+        state->diagDriftCount++;
+      }
+      if (R_FINITE(freshLL)) state->logLik   = freshLL;
+      if (R_FINITE(freshLP)) state->logPrior = freshLP;
+    }
+  }
+
   // DIAG: write to file every 500 iterations as proof-of-life
   {
     static int diagFileCount = 0;
