@@ -72,7 +72,11 @@ modelAware <- MkPrimeModel(ecologyAware = TRUE,
 mcmc <- MkPrimeMCMC(nIter = nIter, nChains = 1L, nRuns = 1L,
                     thin = max(1L, nIter %/% 500L),
                     treeThin = max(1L, nIter %/% 500L),
-                    minWarmup = 1000L, maxWarmup = 4000L,
+                    # Short warmup: truth-init should already be at the peak,
+                    # so we don't need long convergence checks. Want most of
+                    # the budget in the sampling phase to see whether truth
+                    # holds or drifts.
+                    minWarmup = 200L, maxWarmup = 1000L,
                     logFile = file.path(outRoot, "truth-init.log"),
                     checkpointFile = file.path(outRoot, "truth-init.ckp"))
 
@@ -87,7 +91,11 @@ initOverrides <- list(
   rel_br_lengths = trueRelBr,
   phi = 4.0,
   pi0 = 0.75,
-  theta = 1.0,
+  # Truth is theta = 1, but the model's prior support is the open interval
+  # (0, 1) — both R LogPrior and C++ cpp_log_prior reject theta == 1 exactly.
+  # Nudge to 0.999 to land just inside the prior support; difference in
+  # likelihood is < 0.5 nats with z = 0 in column.
+  theta = 0.999,
   z = trueZ,
   rate_neo = 1.0,
   rate_loss = 1.0,
