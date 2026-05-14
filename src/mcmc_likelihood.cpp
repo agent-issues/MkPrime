@@ -2118,10 +2118,10 @@ SEXP prepare_mcmc_data(List partitions_r,
                        std::string magnitudeModeStr = "global",
                        double rho0Alpha = 7.0,
                        double rho0Beta  = 3.0,
-                       double sigmaPhi  = 0.5,
+                       double sigmaPhi  = 1.0,
                        int    gibbsZEvery = 50,
-                       double thetaAlpha = 2.0,
-                       double thetaBeta  = 2.0) {
+                       double thetaAlpha = 1.0,
+                       double thetaBeta  = 1.0) {
   McmcData* d = new McmcData();
   d->hasNeo = hasNeo;
   d->nCat = nCat;

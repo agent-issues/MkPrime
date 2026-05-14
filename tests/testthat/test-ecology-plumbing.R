@@ -114,7 +114,8 @@ test_that("prepare_mcmc_data + init_mcmc_state round-trip ecology values", {
     as.integer(f$mkd$kEcology),
     "global",
     model$rho0Alpha, model$rho0Beta,
-    model$sigmaPhi, as.integer(model$gibbsZEvery)
+    model$sigmaPhi, as.integer(model$gibbsZEvery),
+    model$thetaAlpha, model$thetaBeta
   )
   expect_true(inherits(dataPtr, "externalptr"))
 
@@ -159,7 +160,8 @@ test_that("prepare_mcmc_data + init_mcmc_state round-trip ecology values", {
     ecoTip, as.integer(mkd$kEcology),
     model$magnitudeMode %||% "global",
     model$rho0Alpha %||% 7.0, model$rho0Beta %||% 3.0,
-    model$sigmaPhi %||% 0.5, as.integer(model$gibbsZEvery %||% 50L)
+    model$sigmaPhi %||% 1.0, as.integer(model$gibbsZEvery %||% 50L),
+    model$thetaAlpha %||% 1.0, model$thetaBeta %||% 1.0
   )
 }
 

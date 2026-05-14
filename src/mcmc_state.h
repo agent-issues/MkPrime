@@ -152,12 +152,13 @@ struct McmcData {
   int    magnitudeMode = 0;
   double rho0Alpha = 7.0;
   double rho0Beta  = 3.0;
-  double sigmaPhi  = 0.5;
+  double sigmaPhi  = 1.0;
   int    gibbsZEvery = 50;
-  // v2: Beta hyperprior on theta_e (slab balance). Default (2, 2) is
-  // weakly symmetric -- prior favours equal enc/disc but allows asymmetry.
-  double thetaAlpha = 2.0;
-  double thetaBeta  = 2.0;
+  // v2: Beta hyperprior on theta_e (slab balance). Default (1, 1) is
+  // Uniform(0, 1), preserving the reference-swap symmetry (theta=1 under
+  // one reference choice equals theta=0 under the swapped choice).
+  double thetaAlpha = 1.0;
+  double thetaBeta  = 1.0;
   // v2: mapping from ecology state s -> column j in zMatrix/theta.
   // Length kEcology; -1 at the reference slot, ascending non-ref index
   // otherwise. Populated by prepare_mcmc_data (and refined by

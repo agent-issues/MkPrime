@@ -131,7 +131,9 @@ test_that("MkPrimeModel accepts ecology-aware options with sane defaults", {
   expect_identical(m$magnitudeMode, "global")
   expect_equal(m$rho0Alpha, 7)
   expect_equal(m$rho0Beta, 3)
-  expect_equal(m$sigmaPhi, 0.5)
+  expect_equal(m$sigmaPhi, 1)
+  expect_equal(m$thetaAlpha, 1)
+  expect_equal(m$thetaBeta, 1)
   expect_equal(m$gibbsZEvery, 50L)
 })
 

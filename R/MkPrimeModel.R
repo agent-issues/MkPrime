@@ -49,7 +49,11 @@
 #'   when `kPrimePrior = "logseries"`. Must be in (0, 1). Default 0.7, matching
 #'   the RevBayes `dnMkPrime` default.
 #' @param rateNeoMeanlog,rateNeoSdlog Parameters for the LogNormal prior
-#'   on the neomorphic partition rate scalar. Defaults: meanlog = 0, sdlog = 2.
+#'   on the neomorphic partition rate scalar. Defaults: meanlog = 0, sdlog = 1
+#'   (95% prior interval ~ [0.14, 7.4]).  Earlier defaults used sdlog = 2,
+#'   but that admitted rate_neo blow-ups along the (tree_length, rate_neo)
+#'   ridge near JC saturation; sdlog = 1 prevents the pathology while still
+#'   covering realistic per-partition rate scalings.
 #' @param qHeterogeneity Logical. Enable Q-matrix heterogeneity across
 #'   characters via discretised Dirichlet-marginal equilibrium frequencies?
 #'   Default `FALSE`. When enabled, each character's likelihood is averaged
@@ -80,11 +84,20 @@
 #'   `ecologyAware = FALSE`.
 #' @param thetaAlpha,thetaBeta Shape parameters for the Beta hyperprior on
 #'   `theta_e`, the slab balance for non-reference ecology `e`. Given a
-#'   non-none `z`, `P(z = encouraged | non-none) = theta_e`. Defaults: 2, 2
-#'   (weakly symmetric -- prior favours equal enc/disc but allows asymmetry).
+#'   non-none `z`, `P(z = encouraged | non-none) = theta_e`. Defaults: 1, 1
+#'   (uniform on `[0, 1]`). The uniform default respects the reference-
+#'   ecology swap symmetry (`theta = 1` under one reference choice is
+#'   equivalent to `theta = 0` under the swapped choice) and admits the
+#'   biologically natural "purely accelerating" (`theta = 1`) and "purely
+#'   decelerating" (`theta = 0`) boundary cases.  Earlier defaults used
+#'   `Beta(2, 2)` which assigns zero density to those boundaries.
 #'   Ignored when `ecologyAware = FALSE`.
 #' @param sigmaPhi Standard deviation of the LogNormal prior on `phi` (or
-#'   on each `phi_e`). Default 0.5. Ignored when `ecologyAware = FALSE`.
+#'   on each `phi_e`). Default 1.0 (95% prior interval ~ [0.14, 7.4],
+#'   centred at no-effect `phi = 1`).  Earlier defaults used 0.5, which
+#'   penalised `|log phi| > ~1` heavily and pulled the posterior toward
+#'   `phi = 1` even on data with strong ecology effects.
+#'   Ignored when `ecologyAware = FALSE`.
 #' @param gibbsZEvery Integer. Number of MCMC generations between Gibbs
 #'   sweeps over the per-(character, ecology) influence categories `z`.
 #'   Default 50. Ignored when `ecologyAware = FALSE`.
@@ -161,7 +174,7 @@ MkPrimeModel <- function(
     kprimeBeta = 1,
     kprimeLogseriesC = 0.7,
     rateNeoMeanlog = 0,
-    rateNeoSdlog = 2,
+    rateNeoSdlog = 1,
     qHeterogeneity = FALSE,
     nBetaCat = 4L,
     betaScaleShape = 1,
@@ -170,9 +183,9 @@ MkPrimeModel <- function(
     magnitudeMode = "global",
     rho0Alpha = 7,
     rho0Beta = 3,
-    thetaAlpha = 2,
-    thetaBeta = 2,
-    sigmaPhi = 0.5,
+    thetaAlpha = 1,
+    thetaBeta = 1,
+    sigmaPhi = 1,
     gibbsZEvery = 50L
 ) {
   coding <- match.arg(coding, c("variable", "informative", "none"))
