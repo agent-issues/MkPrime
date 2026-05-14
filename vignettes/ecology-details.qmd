@@ -101,9 +101,32 @@ $$
 The hyperpriors are
 $\pi_0 \sim \mathrm{Beta}(7, 3)$ (mean $0.7$),
 $\theta_e \sim \mathrm{Beta}(\alpha_\theta, \beta_\theta)$ (default
-$\mathrm{Beta}(2, 2)$, weakly symmetric but allowing biological
-asymmetry between enhancement and depression), and
-$\log \varphi \sim \mathcal{N}(0, 0.5^2)$.
+$\mathrm{Uniform}(0, 1) = \mathrm{Beta}(1, 1)$; see below), and
+$\log \varphi \sim \mathcal{N}(0, 1.0)$ (95% prior interval $[0.14, 7.4]$
+for $\varphi$, comfortably covering biologically realistic effect sizes).
+
+#### Why $\theta_e$ has a uniform prior
+
+The parameter $\theta_e$ gives the model directionality:
+$\theta_e \to 1$ means ecology $e$ tends to encourage character change
+(rates elevated relative to the reference); $\theta_e \to 0$ means it
+tends to discourage change. The default prior must be
+**symmetric in $\theta_e \leftrightarrow 1 - \theta_e$** because the
+labeling of "encourage vs discourage" is bound up with the choice of
+reference ecology: swapping reference flips $\theta_e \leftrightarrow
+1 - \theta_e$ while leaving the underlying physics unchanged. Any
+asymmetric prior on $\theta_e$ would implicitly favour one reference
+choice over another, which is meaningless.
+
+Uniform $\mathrm{Beta}(1, 1)$ is the unique symmetric prior that also
+admits the boundary cases $\theta_e \in \{0, 1\}$ ("purely depressing"
+and "purely accelerating" ecologies, respectively). Earlier defaults
+used $\mathrm{Beta}(2, 2)$, which is symmetric but assigns zero density
+to those boundaries, biasing the posterior away from data that
+genuinely supports purely-directional effects. Users with prior beliefs
+about directionality (e.g. for an ecology known to systematically
+accelerate change) can override via the `thetaAlpha` and `thetaBeta`
+arguments to `MkPrimeModel()`.
 
 ### Rate normalisation by $\gamma$
 
@@ -371,8 +394,8 @@ model <- MkPrimeModel(
   ecologyAware  = TRUE,
   magnitudeMode = "global",   # or "per_ecology"
   rho0Alpha     = 7,  rho0Beta = 3,   # Beta prior on pi0
-  thetaAlpha    = 2,  thetaBeta = 2,  # Beta prior on each theta_e
-  sigmaPhi      = 0.5
+  thetaAlpha    = 1,  thetaBeta = 1,  # Uniform on each theta_e
+  sigmaPhi      = 1.0                 # LogNormal(0, 1) on phi
 )
 
 res <- RunMkPrime(mkd, model = model,
