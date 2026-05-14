@@ -50,7 +50,8 @@ datSim <- .SimulateMkPrimeEcology(tree, edgeEc, zFull, phi = phi,
                                   refEcology = 0L, rateLoss = 1)
 
 pdSim <- MatrixToPhyDat(datSim)
-ecoTipVec <- eco[colnames(datSim)]
+mkdBlind <- MkPrimeData(pdSim, neomorphic = seq_len(nEco))
+ecoTipVec <- eco[mkdBlind$taxon_names]
 mkdAware <- MkPrimeData(pdSim, neomorphic = seq_len(nEco),
                         ecology = ecoTipVec)
 
