@@ -1,0 +1,12 @@
+Truth tree_length (sum edge.length, model units): 12.7 
+  [stem=0.1 x4 + root=0.15 x2 + within-clade edges]
+kEcology: 2   nTheta: 1 
+== Running aligned-units re-sim (nIter= 100000 , thin= 40 ) ==
+   Seed (data): 20260514 — NEW data with aligned sim params
+   Seed (MCMC): default init (no phi=4 override)
+   baseRate=1.0, normalize=TRUE, pi0=0.75, theta=1.0
+   Expected runtime: ~30 min
+Elapsed: 20.44769 mins 
+Saved RDS to dev/pilots/2026-05-14-aligned-units-resim/result.rds 
+Log file: dev/pilots/2026-05-14-aligned-units-resim/chain.log 
+Done. Now run analyse.R to generate REPORT.md
