@@ -406,7 +406,7 @@ test_that("init_mcmc_state allows empty phi (non-ecology mode)", {
 # ===== Phase 3-phi: Bactrian on log(phi) =====
 
 
-# Run a single phi Bactrian move (moveType = 30) and return the post-move
+# Run a single phi Bactrian move (moveType = 34) and return the post-move
 # C++ state plus the proposal seed details.  Used by the tests below.
 .PhiStateAfterMove <- function(f, model, seed = 7L,
                                scaleTuning = 0.5, beta = 1.0) {
@@ -416,7 +416,7 @@ test_that("init_mcmc_state allows empty phi (non-ecology mode)", {
   pre      <- get_mcmc_state(statePtr)
   set.seed(seed)
   accepted <- do_move_cpp(dataPtr, statePtr,
-                          moveType = 30L, charIdx = 0L,
+                          moveType = 34L, charIdx = 0L,
                           scaleTuning = scaleTuning,
                           betaSimplexTuning = 1.0,
                           intWalkWindow = 1L, beta = beta)
@@ -535,7 +535,7 @@ test_that("scale_phi declines outside ecology mode", {
     FALSE, integer(0), 0L, "global", 7.0, 3.0, 0.5, 50L
   )
   accepted <- do_move_cpp(dataPtr, statePtr,
-                          moveType = 30L, charIdx = 0L,
+                          moveType = 34L, charIdx = 0L,
                           scaleTuning = 0.5,
                           betaSimplexTuning = 1.0,
                           intWalkWindow = 1L, beta = 1.0)
@@ -555,7 +555,7 @@ test_that("MkPrimeModel rejects ecologyAware + qHeterogeneity", {
 # ===== Phase 3-pi0: logit-Bactrian on pi0 =====
 
 
-# Run a single pi0 logit-Bactrian move (moveType = 31) on a chain with at
+# Run a single pi0 logit-Bactrian move (moveType = 35) on a chain with at
 # least one non-zero z cell, so the prior actually depends on pi0.
 .Pi0StateAfterMove <- function(f, model, zInit, seed = 7L,
                                scaleTuning = 0.5, beta = 1.0) {
@@ -568,7 +568,7 @@ test_that("MkPrimeModel rejects ecologyAware + qHeterogeneity", {
   pre <- get_mcmc_state(statePtr)
   set.seed(seed)
   accepted <- do_move_cpp(dataPtr, statePtr,
-                          moveType = 31L, charIdx = 0L,
+                          moveType = 35L, charIdx = 0L,
                           scaleTuning = scaleTuning,
                           betaSimplexTuning = 1.0,
                           intWalkWindow = 1L, beta = beta)
@@ -725,7 +725,7 @@ test_that("gibbs_z sweep updates z and syncs logLik/logPrior to fresh eval", {
 
   set.seed(7L)
   accepted <- do_move_cpp(dataPtr, statePtr,
-                          moveType = 32L, charIdx = 0L,
+                          moveType = 36L, charIdx = 0L,
                           scaleTuning = 0.5,
                           betaSimplexTuning = 1.0,
                           intWalkWindow = 1L, beta = 1.0)
@@ -770,7 +770,7 @@ test_that("gibbs_z sweep collapses z to the spike at large pi0 + no data weight"
 
   set.seed(123L)
   accepted <- do_move_cpp(dataPtr, statePtr,
-                          moveType = 32L, charIdx = 0L,
+                          moveType = 36L, charIdx = 0L,
                           scaleTuning = 0.5,
                           betaSimplexTuning = 1.0,
                           intWalkWindow = 1L, beta = 0.0)
@@ -812,7 +812,7 @@ test_that("gibbs_z declines outside ecology mode", {
     FALSE, integer(0), 0L, "global", 7.0, 3.0, 0.5, 50L
   )
   accepted <- do_move_cpp(dataPtr, statePtr,
-                          moveType = 32L, charIdx = 0L,
+                          moveType = 36L, charIdx = 0L,
                           scaleTuning = 0.5,
                           betaSimplexTuning = 1.0,
                           intWalkWindow = 1L, beta = 1.0)
@@ -848,7 +848,7 @@ test_that("scale_pi0 declines outside ecology mode", {
     FALSE, integer(0), 0L, "global", 7.0, 3.0, 0.5, 50L
   )
   accepted <- do_move_cpp(dataPtr, statePtr,
-                          moveType = 31L, charIdx = 0L,
+                          moveType = 35L, charIdx = 0L,
                           scaleTuning = 0.5,
                           betaSimplexTuning = 1.0,
                           intWalkWindow = 1L, beta = 1.0)
