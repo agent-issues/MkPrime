@@ -100,6 +100,39 @@ for (rep in seq_len(nReps)) {
   resAware <- RunMkPrime(mkdAware, tree = startTree,
                          model = modelAware, mcmc = m)
 
+  # Apply post-hoc relabel to canonical phi >= 1 convention. The likelihood
+  # (and topology / logL gap) is invariant under (phi, theta, z) reflection,
+  # but RNG-dependent which mode each rep finds. Relabelling makes
+  # cross-rep phi/theta summaries interpretable. Robust to zero-sample reps
+  # (e.g. warmup ate the whole run on a short config).
+  ecoSummary <- tryCatch({
+    resAware <- RelabelEcology(resAware)
+    samp <- resAware$samples
+    if (NROW(samp) == 0L && !is.null(resAware$logFile)) {
+      samp <- ReadMkLog(resAware$logFile)
+    }
+    if (NROW(samp) == 0L) {
+      stop("zero samples; rep produced no usable posterior")
+    }
+    samp <- samp[seq.int(ceiling(nrow(samp) / 4) + 1L, nrow(samp)), ,
+                 drop = FALSE]
+    phiCols   <- grep("^phi(_|$)",   colnames(samp), value = TRUE)
+    thetaCols <- grep("^theta_",     colnames(samp), value = TRUE)
+    list(
+      phi_median   = vapply(phiCols,   function(c) median(samp[, c]),
+                            numeric(1)),
+      theta_median = vapply(thetaCols, function(c) median(samp[, c]),
+                            numeric(1)),
+      pi0_median   = median(samp[, "pi0"]),
+      tl_median    = median(samp[, "tree_length"]),
+      nRetained    = nrow(samp)
+    )
+  }, error = function(e) {
+    message(sprintf("  [eco-summary skipped: %s]", conditionMessage(e)))
+    list(phi_median = NA_real_, theta_median = NA_real_,
+         pi0_median = NA_real_, tl_median = NA_real_, nRetained = 0L)
+  })
+
   trB <- discard(resBlind$trees)
   trA <- discard(resAware$trees)
   class(trB) <- class(trA) <- "multiPhylo"
@@ -118,11 +151,16 @@ for (rep in seq_len(nReps)) {
     )
   }
   sB <- scoreOne(trB); sA <- scoreOne(trA)
-  results[[rep]] <- list(blind = sB, aware = sA)
+  results[[rep]] <- list(blind = sB, aware = sA, eco = ecoSummary)
   cat(sprintf("  blind  P(true)=%.3f  P(wrong)=%.3f  CIDtrue=%.3f  CIDwrong=%.3f\n",
               sB$pTrue, sB$pWrong, sB$cidTrue, sB$cidWrong))
   cat(sprintf("  aware  P(true)=%.3f  P(wrong)=%.3f  CIDtrue=%.3f  CIDwrong=%.3f\n",
               sA$pTrue, sA$pWrong, sA$cidTrue, sA$cidWrong))
+  cat(sprintf("  aware  phi_med=%.3f  theta_med=%.3f  pi0_med=%.3f  tl_med=%.3f\n",
+              mean(ecoSummary$phi_median),
+              mean(ecoSummary$theta_median),
+              ecoSummary$pi0_median,
+              ecoSummary$tl_median))
 }
 
 # Aggregate.
@@ -132,7 +170,11 @@ agg <- do.call(rbind, lapply(seq_along(results), function(i) {
              pTrue_blind  = r$blind$pTrue,  pTrue_aware  = r$aware$pTrue,
              pWrong_blind = r$blind$pWrong, pWrong_aware = r$aware$pWrong,
              cidTrue_blind  = r$blind$cidTrue,  cidTrue_aware  = r$aware$cidTrue,
-             cidWrong_blind = r$blind$cidWrong, cidWrong_aware = r$aware$cidWrong)
+             cidWrong_blind = r$blind$cidWrong, cidWrong_aware = r$aware$cidWrong,
+             phi_aware_med   = mean(r$eco$phi_median),
+             theta_aware_med = mean(r$eco$theta_median),
+             pi0_aware_med   = r$eco$pi0_median,
+             tl_aware_med    = r$eco$tl_median)
 }))
 cat("\n== Per-replicate summary ==\n")
 print(agg, row.names = FALSE)
