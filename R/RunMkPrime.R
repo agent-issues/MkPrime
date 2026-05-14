@@ -3098,7 +3098,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   # scalar moves they complement.
   scalarTypes <- c("scale", "int_walk", "gibbs_p", "scale_p", "logit_scale_p",
                     "slice", "kprime_alpha", "kprime_beta",
-                    "scale_phi", "scale_pi0")
+                    "scale_phi", "scale_pi0", "scale_theta")
   totalWeight <- sum(vapply(moves, `[[`, numeric(1), "weight"))
   floorVal <- totalWeight * 0.02
   for (i in seq_along(moves)) {

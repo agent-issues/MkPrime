@@ -823,6 +823,15 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
   if (data->qHeterogeneity)
     return gibbs_spr_impl_het(data, state, beta);
 
+  // Ecology mode: the partial-CL machinery used to compute candLL below
+  // does not include the per-character ecology rate modifiers (phi, z,
+  // pi0, gamma_e). Letting this move fire would silently overwrite
+  // state->logLik with a non-ecology value and bias subsequent MH
+  // ratios. Skip until an eco-aware streaming candidate evaluator
+  // exists. The chain falls back on spr/nni/tbr/pspr for topology
+  // exploration in eco mode.
+  if (data->ecologyAware) return false;
+
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
   const int root  = nTip + 1;
@@ -1578,6 +1587,11 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
   // M-114: Q-heterogeneity uses streaming partial CL
   if (data->qHeterogeneity)
     return gibbs_subtree_swap_impl_het(data, state, beta);
+
+  // Ecology mode: same reason as gibbs_spr_impl — the partial-CL
+  // candidate evaluation does not include phi/z/pi0/gamma_e, so the
+  // move would silently corrupt state->logLik. Skip in eco mode.
+  if (data->ecologyAware) return false;
 
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
@@ -2988,8 +3002,16 @@ static double eval_slice_target(McmcData* data, McmcState* state,
   bool hasPLC = !state->partLogLik.empty();
   ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
 
-  // rate_loss (1), rate_neo (3): only neomorphic partitions change
-  if (hasPLC && (paramIdx == 1 || paramIdx == 3)) {
+  if (data->ecologyAware) {
+    // Eco mode: partition cache unused. Always do a full eco recompute
+    // — otherwise the slice target drops phi/z/pi0/gamma_e factors
+    // and the sampler explores the wrong target distribution.
+    logLik = cpp_log_likelihood_ecology(
+      *data, state->parent, state->child, edgeLen,
+      state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
+      state->phi, state->zMatrix, state->pi0, state->theta);
+  } else if (hasPLC && (paramIdx == 1 || paramIdx == 3)) {
+    // rate_loss (1), rate_neo (3): only neomorphic partitions change
     logLik = state->logLik;
     for (size_t ni = 0; ni < data->neoPartIndices.size(); ++ni) {
       int pi = data->neoPartIndices[ni];
@@ -3069,7 +3091,16 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
       ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
 
       bool hasPLC = !state->partLogLik.empty();
-      if (hasPLC && (paramIdx == 1 || paramIdx == 3)) {
+      if (data->ecologyAware) {
+        // Eco mode: full eco recompute. Same reasoning as
+        // eval_slice_target — non-eco logLik would drop phi/z/pi0
+        // factors and corrupt state->logLik.
+        state->logLik = cpp_log_likelihood_ecology(
+          *data, state->parent, state->child, edgeLen,
+          state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
+          state->phi, state->zMatrix, state->pi0, state->theta);
+        state->partLogLik.clear();
+      } else if (hasPLC && (paramIdx == 1 || paramIdx == 3)) {
         // Update only neo partitions in cache
         for (size_t ni = 0; ni < data->neoPartIndices.size(); ++ni) {
           int pi = data->neoPartIndices[ni];

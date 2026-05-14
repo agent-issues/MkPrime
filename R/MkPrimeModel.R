@@ -653,7 +653,13 @@ LogPrior <- function(state, model, mkd) {
     if (is.null(phi) || any(phi <= 0)) return(-Inf)
     if (is.null(pi0) || pi0 <= 0 || pi0 >= 1) return(-Inf)
     if (is.null(z) || any(!z %in% 0:2)) return(-Inf)
-    if (is.null(theta) || any(theta <= 0) || any(theta >= 1)) return(-Inf)
+    # theta is allowed on the closed interval [0, 1]. Boundary values
+    # mean one of P(z = enc) or P(z = disc) is exactly zero — fine as
+    # long as no cells are sampled at the zero-mass state (the per-column
+    # arithmetic below skips zero-count contributions to avoid the
+    # 0 * log(0) = NaN trap). Mirrors the C++ guard in cpp_log_prior
+    # (src/mcmc.cpp:407-410, 428-430).
+    if (is.null(theta) || any(theta < 0) || any(theta > 1)) return(-Inf)
 
     lp <- lp + sum(dlnorm(phi, meanlog = 0, sdlog = model$sigmaPhi,
                           log = TRUE))
@@ -666,15 +672,25 @@ LogPrior <- function(state, model, mkd) {
     #   P(z = disc) = (1 - pi0) * (1 - theta[j])
     # theta_e ~ Beta(thetaAlpha, thetaBeta).
     if (is.matrix(z) && ncol(z) > 0L) {
-      nNoneCol <- colSums(z == 0L)
-      nEncCol  <- colSums(z == 1L)
-      nDiscCol <- colSums(z == 2L)
-      lp <- lp + sum(
-        nNoneCol * log(pi0) +
-          (nEncCol + nDiscCol) * log1p(-pi0) +
-          nEncCol  * log(theta) +
-          nDiscCol * log1p(-theta)
-      )
+      logPi0   <- log(pi0)
+      log1mPi0 <- log1p(-pi0)
+      for (j in seq_len(ncol(z))) {
+        zCol <- z[, j]
+        nNone <- sum(zCol == 0L)
+        nEnc  <- sum(zCol == 1L)
+        nDisc <- sum(zCol == 2L)
+        if (nNone > 0L) lp <- lp + nNone * logPi0
+        if (nEnc  > 0L) {
+          # When theta == 0, any z == enc cell has prior probability 0.
+          if (theta[j] <= 0) return(-Inf)
+          lp <- lp + nEnc * (log1mPi0 + log(theta[j]))
+        }
+        if (nDisc > 0L) {
+          # Symmetric: theta == 1 with discouraged cells means zero mass.
+          if (theta[j] >= 1) return(-Inf)
+          lp <- lp + nDisc * (log1mPi0 + log1p(-theta[j]))
+        }
+      }
       # Beta hyperprior on theta_e (full normalised log-density to match
       # the C++ R::dbeta(..., 1) convention used in cpp_log_prior).
       lp <- lp + sum(dbeta(theta, shape1 = model$thetaAlpha,
