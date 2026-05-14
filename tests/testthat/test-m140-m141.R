@@ -36,7 +36,7 @@ test_that("moves sorted by weight within category (highest first)", {
   n <- c("spr", "nni", "tbr")
   result <- .FormatMoveWeightsPlain(w, n)
   # Single Topology line, nni (20%) should appear before tbr (10%) before spr (5%)
-  expect_match(result, "nni=20\\.0%.*tbr=10\\.0%.*spr=5\\.0%")
+  expect_match(result, "nni:20\\.0%.*tbr:10\\.0%.*spr:5\\.0%")
 })
 
 test_that("absent categories are omitted", {

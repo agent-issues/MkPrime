@@ -318,8 +318,8 @@ test_that(".AdaptMoveWeights temperature annealing works", {
 
 test_that(".FormatMoveWeights produces readable string", {
   s <- MkPrime:::.FormatMoveWeights(c(0.3, 0.7), c("nni", "spr"))
-  expect_match(s, "nni=30.0%")
-  expect_match(s, "spr=70.0%")
+  expect_match(s, "nni:30.0%")
+  expect_match(s, "spr:70.0%")
 })
 
 
@@ -336,8 +336,8 @@ test_that(".LogMoveWeights writes categorized comment lines to log file", {
   # Header line + one category line (Topology)
   expect_length(lines, 2L)
   expect_match(lines[2], "^# Topology:")
-  expect_match(lines[2], "nni=60.0%")
-  expect_match(lines[2], "spr=40.0%")
+  expect_match(lines[2], "nni:60.0%")
+  expect_match(lines[2], "spr:40.0%")
 })
 
 
