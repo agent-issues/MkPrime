@@ -1,0 +1,13 @@
+Sim 3 v3 candidate: 2x-3x-stem
+  nChar = 480 (neo 120 + trans 360)
+  stem = 0.30  root = 0.15  tip = 0.50
+  truth tl = 13.50  phi = 4
+
+== Running BLIND chain ==
+Elapsed (blind): 6.571644 mins 
+
+== Running AWARE chain ==
+Elapsed (aware): 40.08568 mins 
+
+Saved to dev/pilots/2026-05-14-sim3-v3-redesign/result.rds
+Done. Run analyse.R for diagnostics.
