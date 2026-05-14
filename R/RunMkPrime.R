@@ -88,6 +88,7 @@ RunMkPrime <- function(data, tree = NULL,
                        mcmc = NULL,
                        fixTopology = FALSE,
                        overwrite = FALSE,
+                       initOverrides = NULL,
                        ...) {
 
   # --- Build or validate MCMC config ---
@@ -228,7 +229,8 @@ RunMkPrime <- function(data, tree = NULL,
   runs <- vector("list", nRuns)
   for (run in seq_len(nRuns)) {
     startTree <- if (run == 1L) tree else .PerturbStart(tree)
-    runs[[run]] <- .InitRun(startTree, mkd, model, mcmc, moves)
+    runs[[run]] <- .InitRun(startTree, mkd, model, mcmc, moves,
+                             initOverrides = initOverrides)
   }
 
   paramNames  <- .ParamNames(mkd, nEdge,
@@ -530,14 +532,14 @@ RunMkPrime <- function(data, tree = NULL,
 #' XPtrs are built inside [.RunMkPrimeSingleRun()] so the state can be sent
 #' to `future` workers without serialisation errors.
 #' @keywords internal
-.InitRun <- function(tree, mkd, model, mcmc, moves) {
+.InitRun <- function(tree, mkd, model, mcmc, moves, initOverrides = NULL) {
   nChains <- mcmc$nChains
   betas <- .BuildTemperatureLadder(nChains, mcmc$heat)
 
   # Build per-chain state as R lists (checkpoint-compatible format).
   chains <- vector("list", nChains)
   for (ch in seq_len(nChains)) {
-    s <- .InitState(tree, mkd, model)
+    s <- .InitState(tree, mkd, model, overrides = initOverrides)
     chains[[ch]] <- list(
       edge           = s$tree$edge,
       rel_br_lengths = s$rel_br_lengths,
@@ -2721,8 +2723,16 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
 
 #' Initialize MCMC state from tree and data
+#'
+#' @param overrides Optional named list of fields to substitute after the
+#'   default state has been built. Recognised keys: `tree`, `tree_length`,
+#'   `rel_br_lengths`, `rate_loss`, `rate_log_sd`, `rate_neo`, `kPrime`,
+#'   `phi`, `pi0`, `theta`, `z`. When supplied, `log_lik` and `log_prior`
+#'   are recomputed after substitution. Used by diagnostic truth-init
+#'   experiments; never needed in routine inference.
 #' @keywords internal
-.InitState <- function(tree, mkd, model) {
+.InitState <- function(tree, mkd, model, overrides = NULL) {
+  if (!is.null(overrides) && !is.null(overrides$tree)) tree <- overrides$tree
   treeLength <- sum(tree$edge.length)
   relBr <- tree$edge.length / treeLength
 
@@ -2776,6 +2786,22 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     state$theta <- rep(model$thetaAlpha / (model$thetaAlpha + model$thetaBeta),
                        nNonRef)
     state$z   <- matrix(0L, nrow = mkd$nChar, ncol = nNonRef)
+  }
+
+  # Apply user-supplied overrides (e.g. truth-init for diagnostics).
+  if (!is.null(overrides)) {
+    overrideKeys <- c("tree_length", "rel_br_lengths", "rate_loss",
+                      "rate_log_sd", "rate_neo", "kPrime",
+                      "phi", "pi0", "theta", "z")
+    for (k in overrideKeys) {
+      if (!is.null(overrides[[k]])) state[[k]] <- overrides[[k]]
+    }
+    # tree was already substituted at top; ensure tree_length/rel_br_lengths
+    # match the tree edge lengths if user provided only `tree`.
+    if (!is.null(overrides$tree) && is.null(overrides$tree_length)) {
+      state$tree_length    <- sum(tree$edge.length)
+      state$rel_br_lengths <- tree$edge.length / state$tree_length
+    }
   }
 
   # Tree is already preorder (reordered at init); use internal fast-path
