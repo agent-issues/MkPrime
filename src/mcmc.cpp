@@ -4147,41 +4147,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                          int intWalkWindow, double beta,
                          double jointRho = 0.0) {
 
-  // Periodic from-scratch resync for ecology mode. Every K iterations,
-  // recompute state->logLik / state->logPrior from cpp_log_likelihood_ecology
-  // + cpp_log_prior and overwrite the accumulators. Guarantees correctness
-  // against any remaining incremental-update leaks, and logs residual drift
-  // so future leaks can be located by iter range. ~1ms per 100 iter = <1%
-  // overhead on a chain that takes ~20ms per iter.
-  if (data->ecologyAware) {
-    static int resyncCounter = 0;
-    if (++resyncCounter % 100 == 0) {
-      int nE = state->relBrLengths.size();
-      NumericVector curEl(nE);
-      for (int i = 0; i < nE; ++i)
-        curEl[i] = state->treeLength * state->relBrLengths[i];
-      double freshLL = cpp_log_likelihood_ecology(
-        *data, state->parent, state->child, curEl,
-        state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
-        state->phi, state->zMatrix, state->pi0, state->theta);
-      double freshLP = cpp_log_prior(
-        *data, state->treeLength, state->relBrLengths,
-        state->rateLoss, state->rateLogSd, state->rateNeo,
-        state->p, state->kPrime, state->betaScale,
-        state->kprimeAlpha, state->kprimeBeta,
-        &state->phi, state->pi0, &state->zMatrix, &state->theta);
-      double driftLL = freshLL - state->logLik;
-      double driftLP = freshLP - state->logPrior;
-      if (R_FINITE(freshLL) && R_FINITE(freshLP) &&
-          std::abs(driftLL) + std::abs(driftLP) > 0.5) {
-        REprintf("[eco-resync iter=%d mt=%d] dLL=%+.3f dLP=%+.3f\n",
-                 resyncCounter, moveType, driftLL, driftLP);
-        state->diagDriftCount++;
-      }
-      if (R_FINITE(freshLL)) state->logLik   = freshLL;
-      if (R_FINITE(freshLP)) state->logPrior = freshLP;
-    }
-  }
+  // (Periodic eco resync now lives in run_mcmc_batch_cpp, so it also
+  // covers slice_scalar_impl moves which bypass do_move_impl.)
 
   // DIAG: write to file every 500 iterations as proof-of-life
   {
@@ -5340,6 +5307,47 @@ List run_mcmc_batch_cpp(
         (double)std::chrono::duration_cast<std::chrono::nanoseconds>(
           t1 - t0).count();
       if (accepted) acceptCounts(ch, moveIdx)++;
+
+      // Periodic from-scratch resync for ecology mode. Every K=20 iter
+      // recompute state->logLik / state->logPrior from
+      // cpp_log_likelihood_ecology + cpp_log_prior and overwrite the
+      // accumulators. Guarantees chain dynamics see a correct baseline
+      // regardless of any remaining incremental-update leaks. Logs any
+      // drift > 0.5 nats with iter / moveType so leaks can be located.
+      // Placed AFTER each move so it catches drift from every code
+      // path (including slice_scalar_impl, which bypasses
+      // do_move_impl).
+      if (data->ecologyAware && (iter % 20 == 0)) {
+        int nE = states[ch]->relBrLengths.size();
+        NumericVector curEl(nE);
+        for (int e = 0; e < nE; ++e)
+          curEl[e] = states[ch]->treeLength * states[ch]->relBrLengths[e];
+        double freshLL = cpp_log_likelihood_ecology(
+          *data, states[ch]->parent, states[ch]->child, curEl,
+          states[ch]->kPrime, states[ch]->rateLoss,
+          states[ch]->rateLogSd, states[ch]->rateNeo,
+          states[ch]->phi, states[ch]->zMatrix,
+          states[ch]->pi0, states[ch]->theta);
+        double freshLP = cpp_log_prior(
+          *data, states[ch]->treeLength, states[ch]->relBrLengths,
+          states[ch]->rateLoss, states[ch]->rateLogSd,
+          states[ch]->rateNeo, states[ch]->p, states[ch]->kPrime,
+          states[ch]->betaScale,
+          states[ch]->kprimeAlpha, states[ch]->kprimeBeta,
+          &states[ch]->phi, states[ch]->pi0,
+          &states[ch]->zMatrix, &states[ch]->theta);
+        double driftLL = freshLL - states[ch]->logLik;
+        double driftLP = freshLP - states[ch]->logPrior;
+        if (R_FINITE(freshLL) && R_FINITE(freshLP) &&
+            std::abs(driftLL) + std::abs(driftLP) > 0.5) {
+          REprintf("[eco-resync iter=%d ch=%d lastMt=%d] "
+                   "dLL=%+.3f dLP=%+.3f\n",
+                   iter, ch, moveType, driftLL, driftLP);
+          states[ch]->diagDriftCount++;
+        }
+        if (R_FINITE(freshLL)) states[ch]->logLik   = freshLL;
+        if (R_FINITE(freshLP)) states[ch]->logPrior = freshLP;
+      }
     }
 
     // Chain swap: propose one random adjacent pair per iteration
