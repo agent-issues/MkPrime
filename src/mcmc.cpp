@@ -3807,20 +3807,33 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
     state->kPrime[gi] = kObs_i + chosen;
   }
 
-  // Rebuild logLik, logPrior, and partition cache after sweep
-  ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
-  int nParts = (int)data->parts.size();
-  std::vector<double> newPLC(nParts);
-  double newLL = 0.0;
-  for (int pi = 0; pi < nParts; ++pi) {
-    newPLC[pi] = cpp_partition_log_likelihood(
-      *data, pi, state->parent, state->child, edgeLen,
+  // Rebuild logLik, logPrior, and partition cache after sweep.
+  // In ecology mode the partition cache is unused (fill_partition_cache
+  // is a no-op when data->ecologyAware) and the non-ecology partition
+  // pruning drops the phi/z/pi0/gamma_e rate modifiers — silently
+  // corrupting state->logLik by 10s-100s of nats per sweep. Route eco
+  // mode through cpp_log_likelihood_ecology instead.
+  if (data->ecologyAware) {
+    state->logLik = cpp_log_likelihood_ecology(
+      *data, state->parent, state->child, edgeLen,
       state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
-      state->betaScale, wsPtr);
-    newLL += newPLC[pi];
+      state->phi, state->zMatrix, state->pi0, state->theta);
+    state->partLogLik.clear();
+  } else {
+    ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
+    int nParts = (int)data->parts.size();
+    std::vector<double> newPLC(nParts);
+    double newLL = 0.0;
+    for (int pi = 0; pi < nParts; ++pi) {
+      newPLC[pi] = cpp_partition_log_likelihood(
+        *data, pi, state->parent, state->child, edgeLen,
+        state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
+        state->betaScale, wsPtr);
+      newLL += newPLC[pi];
+    }
+    state->logLik = newLL;
+    state->partLogLik = std::move(newPLC);
   }
-  state->logLik = newLL;
-  state->partLogLik = std::move(newPLC);
 
   state->logPrior = cpp_log_prior(
     *data, state->treeLength, state->relBrLengths,
@@ -3892,7 +3905,16 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
   std::vector<double> newPC;
   double newLogLik;
 
-  if (hasPLC) {
+  if (data->ecologyAware) {
+    // Ecology mode: partition cache is empty (fill_partition_cache is a
+    // no-op when ecologyAware). Use the eco orchestrator for a correct
+    // full recompute — otherwise the non-eco partition pruning silently
+    // drops phi/z/pi0/gamma_e contributions and corrupts state->logLik.
+    newLogLik = cpp_log_likelihood_ecology(
+      *data, state->parent, state->child, edgeLen,
+      state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
+      state->phi, state->zMatrix, state->pi0, state->theta);
+  } else if (hasPLC) {
     newPC = state->partLogLik;
     newLogLik = state->logLik;
     for (int pi = 0; pi < nParts; ++pi) {
@@ -4111,7 +4133,10 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     }
   }
 
-  // DIAG: pre-proposal LL consistency check (every 100 iterations)
+  // DIAG: pre-proposal LL consistency check (every 100 iterations).
+  // In ecology mode we MUST use cpp_log_likelihood_ecology — the non-eco
+  // path drops phi/z/pi0/gamma_e and would always report drift even when
+  // the accumulator is correct.
   {
     static int preCheckCount = 0;
     if (++preCheckCount % 100 == 0) {
@@ -4119,10 +4144,18 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       NumericVector curEl(nE);
       for (int i = 0; i < nE; ++i)
         curEl[i] = state->treeLength * state->relBrLengths[i];
-      double freshLL = cpp_log_likelihood(*data, state->parent, state->child,
-        curEl, state->kPrime, state->rateLoss, state->rateLogSd,
-        state->rateNeo, state->betaScale,
-        state->clWs.ready() ? &state->clWs : nullptr);
+      double freshLL;
+      if (data->ecologyAware) {
+        freshLL = cpp_log_likelihood_ecology(
+          *data, state->parent, state->child, curEl,
+          state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
+          state->phi, state->zMatrix, state->pi0, state->theta);
+      } else {
+        freshLL = cpp_log_likelihood(*data, state->parent, state->child,
+          curEl, state->kPrime, state->rateLoss, state->rateLogSd,
+          state->rateNeo, state->betaScale,
+          state->clWs.ready() ? &state->clWs : nullptr);
+      }
       double drift = std::abs(state->logLik - freshLL);
       if (drift > 1e-4) {
         state->diagDriftCount++;
