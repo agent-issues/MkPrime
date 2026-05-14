@@ -28,9 +28,13 @@ nIter    <- if (length(args) >= 3) as.integer(args[3]) else 200000L
 cat(sprintf("Sim 3 multi-rep: nReps=%d  seedBase=%d  nIter=%d\n",
             nReps, seedBase, nIter))
 
-# Goldilocks config (from sim3-pilot.R).
-nEco <- 60L; nBase <- 180L; phi <- 4; stemBr <- 0.10; rootBr <- 0.15
-tree <- .BuildConvergentTree(stemBranch = stemBr, rootBranch = rootBr)
+# Sim 3 v3 config: 2x chars + 3x stem (selected by parsimony-grid.R).
+# Stronger phylogenetic signal than v2 Goldilocks; parsimony shows
+# nTrueBase=7/8 and nFooled=8/8 (see dev/pilots/2026-05-14-sim3-v3-redesign).
+nEco <- 120L; nBase <- 360L; phi <- 4; stemBr <- 0.30; rootBr <- 0.15
+tipBr <- 0.5
+tree <- .BuildConvergentTree(tipBranch = tipBr,
+                              stemBranch = stemBr, rootBranch = rootBr)
 eco  <- .ConvergentEcology(tree)
 edgeEc <- .AssignEdgeEcology(tree, eco)
 
@@ -55,8 +59,14 @@ for (rep in seq_len(nReps)) {
   set.seed(seedBase + rep)
   cat(sprintf("\n=== Replicate %d / %d (seed %d) ===\n",
               rep, nReps, seedBase + rep))
+  # Aligned-units simulation: baseRate=1.0 matches model JC kernel;
+  # normalize=TRUE + explicit pi0/theta makes simulator gammaE match
+  # the model's gammaE at truth. See dev/pilots/2026-05-14-aligned-units-resim.
   datSim <- .SimulateMkPrimeEcology(tree, edgeEc, zFull, phi = phi,
-                                    type = cFull, baseRate = 0.5,
+                                    type = cFull, baseRate = 1.0,
+                                    normalize = TRUE,
+                                    pi0 = 0.75, theta = 1.0,
+                                    refEcology = 0L,
                                     rateLoss = 1)
   pdSim <- MatrixToPhyDat(datSim)
   mkdBlind <- MkPrimeData(pdSim, neomorphic = seq_len(nEco))
