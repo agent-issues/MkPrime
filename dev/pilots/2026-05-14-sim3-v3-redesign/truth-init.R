@@ -40,19 +40,48 @@ modelAware <- MkPrimeModel(ecologyAware = TRUE,
 # Truth-init: override .InitState in MkPrime namespace so chain starts
 # at truth params. Then restore at the end.
 origInit <- MkPrime:::.InitState
-truthInit <- function(mkd, model, mcmc, tree = NULL, ...) {
-  st <- origInit(mkd = mkd, model = model, mcmc = mcmc, tree = saved$tree, ...)
+truthInit <- function(tree, mkd, model) {
+  cat("[truth-init] called\n")
+  st <- origInit(tree = saved$tree, mkd = mkd, model = model)
+  cat("[truth-init] orig init OK, log_lik=", st$log_lik, "\n")
   # Override aware-relevant params at truth
   st$phi <- saved$config$phi
   st$pi0 <- 0.75
-  st$theta <- 1.0
+  # NB: truth theta = 1.0 but Beta(2, 2) prior has density 0 at 1; nudge inside.
+  st$theta <- 0.999
   st$rate_neo <- 1.0
   st$rate_loss <- 1.0
   st$tree_length <- saved$truthTL
-  # z matrix at truth
-  zTruth <- saved$z[, -1L, drop = FALSE]  # drop ref-eco column
+  st$tree <- saved$tree
+  st$rel_br_lengths <- saved$tree$edge.length / saved$truthTL
+  # z matrix at truth (drop ref-eco column)
+  zTruth <- saved$z[, -1L, drop = FALSE]
   storage.mode(zTruth) <- "integer"
-  st$zMatrix <- zTruth
+  st$z <- zTruth
+  # Recompute log-lik at truth init
+  ll_truth <- tryCatch(MkPrime:::.MkpEcologyLogLikelihood(
+    tree = saved$tree, mkd = mkd,
+    kPrime = st$kPrime,
+    rate_loss = 1.0, rate_log_sd = st$rate_log_sd,
+    nCat = model$nCat, rate_neo = 1.0,
+    relabel = model$relabel,
+    phi = st$phi, zMat = st$z,
+    magnitudeMode = model$magnitudeMode,
+    coding = model$coding, refEcology = mkd$refEcology,
+    theta = st$theta, pi0 = st$pi0
+  ), error = function(e) {cat("ERR computing logL:", conditionMessage(e), "\n"); NA})
+  st$log_lik <- ll_truth
+  # Recompute log_prior and log_post at truth state
+  lp_truth <- tryCatch(MkPrime:::LogPrior(st, model, mkd),
+                       error = function(e) {
+                         cat("ERR log_prior:", conditionMessage(e), "\n")
+                         NA
+                       })
+  st$log_prior <- lp_truth
+  st$log_post <- st$log_lik + st$log_prior
+  cat(sprintf("[truth-init] phi=%g pi0=%g theta=%g rn=%g rl=%g tl=%g log_lik=%s log_prior=%s\n",
+              st$phi, st$pi0, st$theta, st$rate_neo, st$rate_loss,
+              st$tree_length, format(ll_truth, digits=4), format(lp_truth, digits=4)))
   st
 }
 assignInNamespace(".InitState", truthInit, ns = "MkPrime")

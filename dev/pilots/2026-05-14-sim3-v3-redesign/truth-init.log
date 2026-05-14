@@ -1,0 +1,9 @@
+[patch] .InitState replaced with truth-init
+
+== Running truth-init aware chain (nIter= 50000 ) ==
+[truth-init] called
+[truth-init] orig init OK, log_lik= -4929.014 
+[truth-init] phi=4 pi0=0.75 theta=0.999 rn=1 rl=1 tl=13.5 log_lik=-4658 log_prior=-464.9
+Elapsed: 19.22703 mins 
+[patch] .InitState restored
+Saved truth-init-result.rds
