@@ -4150,23 +4150,6 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   // (Periodic eco resync now lives in run_mcmc_batch_cpp, so it also
   // covers slice_scalar_impl moves which bypass do_move_impl.)
 
-  // DIAG: write to file every 500 iterations as proof-of-life
-  {
-    static int diagFileCount = 0;
-    if (++diagFileCount == 1 || diagFileCount % 500 == 0) {
-      FILE* f = std::fopen("C:/Users/pjjg18/GitHub/mkp/pcl_diag.txt", "a");
-      if (f) {
-        std::fprintf(f, "iter=%d mt=%d cachePop=%d dirPCL=%d cacheValid=%d\n",
-                diagFileCount, moveType, state->diagCachePopCount,
-                state->diagDirPartialCount, (int)state->nodeCL.ready());
-        std::fclose(f);
-      } else {
-        // If fopen fails, try REprintf as last resort
-        REprintf("[DIAG] fopen failed iter=%d\n", diagFileCount);
-      }
-    }
-  }
-
   // DIAG: pre-proposal LL consistency check (every 100 iterations).
   // In ecology mode we MUST use cpp_log_likelihood_ecology — the non-eco
   // path drops phi/z/pi0/gamma_e and would always report drift even when

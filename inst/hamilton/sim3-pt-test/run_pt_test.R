@@ -133,13 +133,11 @@ cat(sprintf("P(true AC)=%.3f  P(wrong AB)=%.3f  CID-to-truth=%.3f\n",
 cat(sprintf("Compare 1-chain rep 05: P(true)=0.000 P(wrong)=0.462 CID=0.473\n"))
 
 # Swap rates if available
-if (!is.null(res$swap_accept)) {
-  cat("\nSwap accept rates between adjacent betas:\n")
-  rates <- res$swap_accept / pmax(1, res$swap_propose)
-  for (i in seq_along(rates)) {
-    cat(sprintf("  ladder %d<->%d: %d/%d = %.3f\n",
-                i, i + 1L,
-                res$swap_accept[i], res$swap_propose[i], rates[i]))
+if (!is.null(res$swap_rates)) {
+  cat("\nBetas:", paste(round(res$betas, 4), collapse = " -> "), "\n")
+  cat("Swap accept rates between adjacent betas:\n")
+  for (i in seq_along(res$swap_rates)) {
+    cat(sprintf("  ladder %d<->%d: %.3f\n", i, i + 1L, res$swap_rates[i]))
   }
 }
 
