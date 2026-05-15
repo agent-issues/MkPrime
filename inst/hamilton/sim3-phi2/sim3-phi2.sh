@@ -7,7 +7,7 @@
 #SBATCH --output=/nobackup/pjjg18/mkp-sim3-phi2/phi2.out
 #SBATCH --error=/nobackup/pjjg18/mkp-sim3-phi2/phi2.err
 #SBATCH --time=03:00:00
-#SBATCH --mem=8G
+#SBATCH --mem=2G
 #SBATCH --cpus-per-task=1
 
 set -euo pipefail

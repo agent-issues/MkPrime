@@ -9,7 +9,7 @@
 #SBATCH --output=/nobackup/pjjg18/mkp-sim3-truth-start/truth-start.out
 #SBATCH --error=/nobackup/pjjg18/mkp-sim3-truth-start/truth-start.err
 #SBATCH --time=02:00:00
-#SBATCH --mem=8G
+#SBATCH --mem=2G
 #SBATCH --cpus-per-task=1
 
 set -euo pipefail
