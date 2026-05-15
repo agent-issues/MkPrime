@@ -1,0 +1,13 @@
+.libPaths(c("/nobackup/pjjg18/mkp-sim3-multirep-v3/lib", .libPaths()))
+res <- readRDS("/nobackup/pjjg18/mkp-sim3-pt-test/results/pt-aware-result.rds")
+cat("=== Result fields ===\n")
+cat(paste(names(res), collapse=", "), "\n\n")
+cat("=== betas ===\n")
+print(res$betas)
+cat("\n=== swap_rates ===\n")
+print(res$swap_rates)
+cat("\n=== chain_acceptance[[1]] key moves ===\n")
+acc <- res$chain_acceptance[[1]]
+key <- c("nni","spr","tbr","pspr","tree_length","branch_lengths","scale_pi0","gibbs_z")
+for (k in key) if (k %in% names(acc)) cat(sprintf("  %-20s %.3f\n", k, acc[[k]]))
+cat("\nnSamples:", res$nSamples, "\n")

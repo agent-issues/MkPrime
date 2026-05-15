@@ -10,7 +10,7 @@
 #SBATCH --output=/nobackup/pjjg18/mkp-sim3-pt-test/pt-test.out
 #SBATCH --error=/nobackup/pjjg18/mkp-sim3-pt-test/pt-test.err
 #SBATCH --time=04:00:00
-#SBATCH --mem=4G
+#SBATCH --mem=512M
 #SBATCH --cpus-per-task=4
 
 set -euo pipefail
