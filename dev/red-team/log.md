@@ -130,6 +130,108 @@ Notes for next reviewer of this area:
 - If new accept blocks are added in future, force them through
   `compute_full_loglik_at` which already branches on `data.ecologyAware`.
 
+## Round 4 — area #4 R-side state init (2026-05-15)
+
+Files reviewed:
+- `R/RunMkPrime.R`: `RunMkPrime` (lines 84-340), `.InitRun` (535-601),
+  `.RunMkPrimeSingleRun` initialisation block (618-647), `.InitState`
+  (2734-2841), `.InitMcmcChain` (3232-3253), `.SaveCheckpoint`
+  (2184-2241), `ResumeMkPrime` (2288-2436), `.PerturbStart` (2516-2532)
+- `R/likelihood.R`: `.MkpEcologyLogLikelihood` (140-256), `.MkpLogLikelihood`
+- `R/MkPrimeModel.R`: `LogPrior` (510-708) — focused on ecology block
+- `R/MkPrimeData.R`: `.ExtractEcology` (335-386)
+- Cross-checked: `src/mcmc.cpp` `init_mcmc_state` (444-487),
+  `fill_partition_cache` (491-517), `cpp_log_prior` ecology block
+  (388-433), `get_mcmc_state` (598-640)
+
+Scenarios traced:
+- Does R `.MkpEcologyLogLikelihood` use `state$tree_length` /
+  `state$rel_br_lengths` or `tree$edge.length`?
+- Path of `initOverrides$tree`, `tree_length`, `rel_br_lengths` through
+  `.InitState` → likelihood call.
+- What chain-state fields `.InitRun` flattens vs what `.InitMcmcChain`
+  expects.
+- Checkpoint round-trip for `kprime_alpha`, `kprime_beta`, `beta_scale`.
+- C++ vs R boundary semantics for theta ∈ {0, 1}, pi0 ∈ {0, 1}, phi=0.
+- Preorder invariant under `initOverrides$tree` and `.PerturbStart`.
+- Whether `fill_partition_cache` provides a safety-net resync in eco mode.
+
+Findings filed: 9 (R4-1 .. R4-9) — 3 HIGH, 4 MED, 2 LOW.
+
+Most exposed file: `R/RunMkPrime.R` (`.InitState`, `.InitRun`,
+`.SaveCheckpoint`). R-side init now suspected to be the dominant source
+of the ~113-nat gap at sample 1 in dev pilot logs.
+
+Trivial fixes applied during round: none. Findings warrant a dedicated
+init-correctness commit.
+
+Notes for next reviewer of this area:
+- R4-1 + R4-7 together explain the smoking gun: R log_lik computed from
+  original `tree$edge.length`, C++ rebuilds from overridden
+  `treeLength * relBrLengths`, and `fill_partition_cache` eco branch
+  returns early so the mismatch survives until the first 20-iter resync.
+- R4-3 contradicts the L-4 "fix mirrors C++" claim; revisit L-4 status.
+- R4-4/R4-5 dormant until `beta_geometric` or qHeterogeneity is used in
+  production but easy to slip through.
+- Suggest single-place fix: in `.InitState`, after applying overrides,
+  rebuild `tree$edge.length <- state$tree_length * state$rel_br_lengths`
+  AND `tree <- TreeTools::Preorder(tree)` (re-applying relBr after
+  reorder). This addresses R4-1 and R4-2 in one pass.
+
+## Round 4 (C++) — area #4 C++ state init (2026-05-15)
+
+Files reviewed:
+- `src/mcmc.cpp`: `McmcState` struct (180-232), `init_mcmc_state` (444-487),
+  `fill_partition_cache` (491-517), `allocate_cl_workspace` (528-594),
+  `get_mcmc_state` (601-640), `compute_full_loglik_at` (759-783),
+  periodic eco-resync block in `run_mcmc_batch_cpp` (5311-5350)
+- `src/mcmc_state.h`: full file — `EcologyState`, `EcologyInfo`, `McmcData`
+  ecology fields, `ClWorkspace`
+- `src/mcmc_ecology.cpp`: `cpp_log_likelihood_ecology` entry (~900-1073),
+  `recompute_w_edge` (1230-1257), `compute_ecology_node_marginals` call
+  sites at 933, 1244, `CppLogLikelihoodEcologyPerChar` (1264-1320)
+- Cross-checked R: `.InitMcmcChain` (R/RunMkPrime.R:3232), `.InitRun`
+  chain reconstruction (633-647)
+
+Scenarios traced:
+- Whether `state->logLik` at the end of `fill_partition_cache` is a
+  fixed point of `cpp_log_likelihood_ecology` in eco mode (it is NOT;
+  the function returns early).
+- All read sites for `state->wEdge` and `state->wEdgeDirty` (zero reads).
+- Earliest iter at which the periodic resync fires (iter 20 for
+  `startIter = 1`).
+- Whether `init_mcmc_state` validates eco state shape against
+  `data->ecology.kEcology` (it cannot — no dataPtr).
+- Whether `cpp_log_likelihood_ecology` reuses `state->wEdge` or allocates
+  fresh (always fresh).
+- Storage-mode / cloning hygiene for phi, theta, zMatrix in
+  `init_mcmc_state`.
+
+Findings filed: 6 (R4C-1 .. R4C-6) — 1 HIGH, 2 MED, 3 LOW.
+
+Most exposed file: `src/mcmc.cpp` (`fill_partition_cache`). The eco
+early-return on line 497 is the single highest-leverage C++ defect and
+the direct counterpart to R-side R4-7: it materially differs from the
+non-eco contract (line 516 unconditionally overwrites `state->logLik`)
+and is the reason any R-side init bug survives invisibly until iter 20.
+
+Trivial fixes applied during round: none. Findings warrant a dedicated
+init-correctness commit (likely shared with the R-side round-4 fix).
+
+Notes for next reviewer of this area:
+- R4C-1 + R4-1/R4-7 are the same bug seen from two sides. The cleanest
+  fix touches both: rebuild `tree$edge.length` in R AND have
+  `fill_partition_cache` overwrite `state->logLik` with a fresh C++ eco
+  recompute (or at least warn loudly on mismatch — silent overwrite
+  hides upstream bugs).
+- After R4C-1 lands, the 20-iter resync block (line 5320) should
+  briefly continue logging — if it goes quiet for 100+ iter on a
+  truth-init replay, the smoking gun is fully resolved.
+- `state->wEdge` cache (R4C-3) is genuine perf headroom; revisit after
+  correctness is solid.
+- R4C-4 should be folded into the same fix commit since
+  `fill_partition_cache` is being edited anyway.
+
 ---
 
-last_focus: 3
+last_focus: 4
