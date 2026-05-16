@@ -150,15 +150,17 @@ struct McmcData {
   bool ecologyAware = false;
   EcologyInfo ecology;
   int    magnitudeMode = 0;
-  double rho0Alpha = 75.0;  // Beta(75, 25): mode 0.75, ESS 100
-  double rho0Beta  = 25.0;
-  double sigmaPhi  = 1.0;
+  // R5-1: ESS raised from 100 to 480 to match sim3 z-cell count (nChar=480).
+  // R5-2: sigmaPhi raised from 1.0 to 1.5 so phi=4 is within 5x of phi=1.
+  double rho0Alpha = 360.0;  // Beta(360, 120): mode 0.75, ESS 480
+  double rho0Beta  = 120.0;
+  double sigmaPhi  = 1.5;
   int    gibbsZEvery = 50;
-  // v2: Beta hyperprior on theta_e (slab balance). Default (1, 1) is
-  // Uniform(0, 1), preserving the reference-swap symmetry (theta=1 under
-  // one reference choice equals theta=0 under the swapped choice).
-  double thetaAlpha = 1.0;
-  double thetaBeta  = 1.0;
+  // v2: Beta hyperprior on theta_e (slab balance). R5-3: raised from (1,1)
+  // uniform to (2,2) to resist theta drifting to the 0.5 saddle where
+  // z=1 and z=2 become exchangeable and accelerate pi0 collapse.
+  double thetaAlpha = 2.0;
+  double thetaBeta  = 2.0;
   // v2: mapping from ecology state s -> column j in zMatrix/theta.
   // Length kEcology; -1 at the reference slot, ascending non-ref index
   // otherwise. Populated by prepare_mcmc_data (and refined by

@@ -80,29 +80,39 @@
 #'   `phi_e` per ecology state). Ignored when `ecologyAware = FALSE`.
 #' @param rho0Alpha,rho0Beta Shape parameters for the Beta hyperprior on
 #'   `pi_0`, the prior probability that a (character, ecology) pair has
-#'   no ecology effect. Defaults: 75, 25 (mode 0.75, effective sample
-#'   size 100). The spike-and-slab is structurally a sparsity prior;
-#'   the previous Beta(7, 3) (ESS = 10) was overwhelmed by typical
-#'   z-cell counts (480 in a 120/360 NT split at kEco = 2) and let the
-#'   posterior collapse to a "every char is eco-driven" mode with
-#'   pi0 << 0.5. The new ESS = 100 retains data dominance for genuine
-#'   ecology signal while resisting random z reorganisation.
+#'   no ecology effect. Defaults: 360, 120 (mode 0.75, effective sample
+#'   size 480). The spike-and-slab is structurally a sparsity prior;
+#'   earlier defaults of Beta(75, 25) (ESS = 100) were overwhelmed by
+#'   typical z-cell counts (480 in a 120/360 NT split at kEco = 2):
+#'   because per-cell likelihood contrast is sub-nat on datasets with
+#'   O(10) tips per ecology, the Gibbs z sweep samples from the prior
+#'   rather than the data, and pi0 MH then chases the z-counts (R5-1).
+#'   ESS = 480 matches the z-cell count in the sim3 setting, giving the
+#'   prior and data equal weight. Users with substantially different
+#'   character counts may want to override (Beta(alpha, alpha/3) preserves
+#'   mode 0.75 while scaling ESS with nChar).
 #'   Ignored when `ecologyAware = FALSE`.
 #' @param thetaAlpha,thetaBeta Shape parameters for the Beta hyperprior on
 #'   `theta_e`, the slab balance for non-reference ecology `e`. Given a
-#'   non-none `z`, `P(z = encouraged | non-none) = theta_e`. Defaults: 1, 1
-#'   (uniform on `[0, 1]`). The uniform default respects the reference-
-#'   ecology swap symmetry (`theta = 1` under one reference choice is
-#'   equivalent to `theta = 0` under the swapped choice) and admits the
-#'   biologically natural "purely accelerating" (`theta = 1`) and "purely
-#'   decelerating" (`theta = 0`) boundary cases.  Earlier defaults used
-#'   `Beta(2, 2)` which assigns zero density to those boundaries.
+#'   non-none `z`, `P(z = encouraged | non-none) = theta_e`. Defaults: 2, 2
+#'   (`Beta(2, 2)`, symmetric bell centred at 0.5). The uniform `Beta(1, 1)`
+#'   provides zero counterweight to z-cell counts: when per-cell likelihood
+#'   contrast is sub-nat (O(10) tips per ecology), theta drifts freely to
+#'   the 0.5 saddle where z=1 and z=2 become exchangeable, symmetrising
+#'   the chain and accelerating pi0 collapse (R5-3). `Beta(2, 2)` puts mild
+#'   mass at 0.5 while still admitting the biologically natural boundary
+#'   cases (`theta` near 0 or 1) at finite (though low) density; this
+#'   balances the counterweight need against boundary accessibility.
 #'   Ignored when `ecologyAware = FALSE`.
 #' @param sigmaPhi Standard deviation of the LogNormal prior on `phi` (or
-#'   on each `phi_e`). Default 1.0 (95% prior interval ~ [0.14, 7.4],
-#'   centred at no-effect `phi = 1`).  Earlier defaults used 0.5, which
-#'   penalised `|log phi| > ~1` heavily and pulled the posterior toward
-#'   `phi = 1` even on data with strong ecology effects.
+#'   on each `phi_e`). Default 1.5 (95% prior interval ~ [0.09, 11.2],
+#'   centred at no-effect `phi = 1`). With `sigmaPhi = 1.0` the prior
+#'   density at phi = 1 (no effect) was 9x higher than at phi = 4
+#'   (moderate ecology effect), making the prior the dominant force when
+#'   per-cell likelihood contrast is sub-nat (R5-2). At `sigmaPhi = 1.5`,
+#'   the ratio falls to ~5x, giving the data a realistic chance to move
+#'   phi to ecologically plausible values.  Earlier defaults used 0.5,
+#'   which penalised `|log phi| > ~1` heavily.
 #'   Ignored when `ecologyAware = FALSE`.
 #' @param gibbsZEvery Integer. Number of MCMC generations between Gibbs
 #'   sweeps over the per-(character, ecology) influence categories `z`.
@@ -123,8 +133,9 @@
 #'   \item{`encouraged`}{rate scaled by `phi` (asymmetric for neomorphic)}
 #'   \item{`discouraged`}{rate scaled by `1 / phi` (asymmetric for neomorphic)}
 #' }
-#' The prior on `z` is sparse: `P(z = none) = pi_0`, with `pi_0 ~ Beta(7, 3)`
-#' by default so most characters are *a priori* unaffected by ecology.
+#' The prior on `z` is sparse: `P(z = none) = pi_0`, with `pi_0 ~ Beta(360, 120)`
+#' by default (mode 0.75, ESS 480) so most characters are *a priori* unaffected
+#' by ecology.
 #'
 #' @section Q-matrix heterogeneity:
 #'
@@ -187,11 +198,11 @@ MkPrimeModel <- function(
     betaScaleRate = 1,
     ecologyAware = FALSE,
     magnitudeMode = "global",
-    rho0Alpha = 75,
-    rho0Beta = 25,
-    thetaAlpha = 1,
-    thetaBeta = 1,
-    sigmaPhi = 1,
+    rho0Alpha = 360,
+    rho0Beta = 120,
+    thetaAlpha = 2,
+    thetaBeta = 2,
+    sigmaPhi = 1.5,
     gibbsZEvery = 50L
 ) {
   coding <- match.arg(coding, c("variable", "informative", "none"))

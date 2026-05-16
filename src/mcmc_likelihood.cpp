@@ -2116,12 +2116,12 @@ SEXP prepare_mcmc_data(List partitions_r,
                        Rcpp::IntegerVector ecologyTipStates = Rcpp::IntegerVector(),
                        int    kEcology = 0,
                        std::string magnitudeModeStr = "global",
-                       double rho0Alpha = 75.0,
-                       double rho0Beta  = 25.0,
-                       double sigmaPhi  = 1.0,
+                       double rho0Alpha = 360.0,   // R5-1: ESS=480 matches sim3 z-cell count
+                       double rho0Beta  = 120.0,
+                       double sigmaPhi  = 1.5,     // R5-2: allows phi=4 within 5x of phi=1
                        int    gibbsZEvery = 50,
-                       double thetaAlpha = 1.0,
-                       double thetaBeta  = 1.0) {
+                       double thetaAlpha = 2.0,    // R5-3: Beta(2,2) resists theta=0.5 saddle
+                       double thetaBeta  = 2.0) {
   McmcData* d = new McmcData();
   d->hasNeo = hasNeo;
   d->nCat = nCat;
