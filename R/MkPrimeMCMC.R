@@ -539,9 +539,10 @@ MkPrimeMCMC <- function(
   if (is.na(nCore) || nCore < 1L) {
     cli::cli_abort("{.arg nCore} must be a positive integer.")
   }
-  if (nCore > parallel::detectCores(logical = FALSE)) {
+  physCores <- parallel::detectCores(logical = FALSE)
+  if (!is.na(physCores) && nCore > physCores) {
     cli::cli_warn(c(
-      "{.arg nCore} = {nCore} exceeds physical cores ({parallel::detectCores(logical = FALSE)}).",
+      "{.arg nCore} = {nCore} exceeds physical cores ({physCores}).",
       "i" = "Proceeding anyway; reduce if memory-bound."
     ))
   }
