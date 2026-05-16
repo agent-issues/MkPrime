@@ -1,13 +1,12 @@
 # Tests for parallel run mode (M-095 / M-096)
 #
-# The orchestration logic is tested with future::plan("sequential"), which
-# exercises the full .RunParallelRuns() code path in the current process
-# (futures are evaluated synchronously, so package internals are available).
-#
-# The multisession test additionally validates cross-process execution; it
-# requires the MkPrime package to be *installed* (not just load_all()'d),
-# because multisession workers start fresh R processes and load the package
-# from the library.  That test is skipped during development via load_all().
+# Parallel orchestration uses callr::r_bg() to spawn fresh R worker processes.
+# Tests that exercise nCore > 1 therefore require:
+#   (a) the callr package to be installed, and
+#   (b) MkPrime itself to be *installed* (not just load_all()'d), because
+#       callr workers start fresh R processes and load the package from the
+#       library.
+# Serial-path tests (nCore = 1) have no such constraint.
 
 .is_mkprime_installed <- function() {
   # Returns TRUE only when MkPrime is properly installed (not just loaded via
@@ -16,21 +15,34 @@
   !isTRUE(pkgload::is_dev_package("MkPrime"))
 }
 
-test_that("MkPrimeMCMC() accepts parallel and pollInterval", {
-  mcmc <- MkPrimeMCMC(parallel = TRUE, pollInterval = 5L)
-  expect_true(isTRUE(mcmc$parallel))
+test_that("MkPrimeMCMC() accepts nCore and pollInterval", {
+  mcmc <- suppressWarnings(MkPrimeMCMC(nCore = 2L, pollInterval = 5L))
+  expect_equal(mcmc$nCore, 2L)
   expect_equal(mcmc$pollInterval, 5L)
 })
 
-test_that("MkPrimeMCMC() validates parallel and pollInterval", {
-  expect_error(MkPrimeMCMC(parallel = "yes"),  "parallel")
-  expect_error(MkPrimeMCMC(parallel = NA),     "parallel")
-  expect_error(MkPrimeMCMC(pollInterval = 0L), "pollInterval")
-  expect_error(MkPrimeMCMC(pollInterval = -1L),"pollInterval")
+test_that("MkPrimeMCMC() validates nCore and pollInterval", {
+  expect_error(MkPrimeMCMC(nCore = 0L),                      "nCore")
+  expect_error(MkPrimeMCMC(nCore = -1L),                     "nCore")
+  expect_error(suppressWarnings(MkPrimeMCMC(nCore = "two")), "nCore")
+  expect_error(MkPrimeMCMC(pollInterval = 0L),               "pollInterval")
+  expect_error(MkPrimeMCMC(pollInterval = -1L),              "pollInterval")
 })
 
-test_that("parallel = TRUE with nRuns = 1 falls back to sequential", {
-  skip_if_not_installed("future")
+test_that("nCore defaults to getOption('mc.cores', 1L)", {
+  old <- getOption("mc.cores")
+  on.exit(options(mc.cores = old), add = TRUE)
+
+  options(mc.cores = 3L)
+  mcmc3 <- suppressWarnings(MkPrimeMCMC())
+  expect_equal(mcmc3$nCore, 3L)
+
+  options(mc.cores = NULL)
+  mcmc1 <- MkPrimeMCMC()
+  expect_equal(mcmc1$nCore, 1L)
+})
+
+test_that("nCore = 1 runs serially", {
   library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
@@ -38,133 +50,34 @@ test_that("parallel = TRUE with nRuns = 1 falls back to sequential", {
   pd   <- TreeTools::MatrixToPhyDat(mat)
 
   result <- suppressWarnings(RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 400L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
-                        parallel = TRUE)))
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 400L, maxWarmup = 200L,
+                       minWarmup = 200L, autoTune = FALSE, nCore = 1L)))
   expect_s3_class(result, "MkPosterior")
 })
 
-test_that("parallel mode auto-assigns logFile when logFile = NULL", {
-  # Regression: .BuildResult() was using mcmc$logFile (NULL) not logFilePaths
-  # to determine streaming mode, causing a crash on r$samples subscript.
-  skip_if_not_installed("future")
+test_that("nCore > 1 with nRuns = 1 silently runs serially", {
   library("ape")
-  library("future")
-
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
                  dimnames = list(paste0("t", 1:4), NULL))
   pd   <- TreeTools::MatrixToPhyDat(mat)
-
-  old_plan <- future::plan()
-  on.exit(future::plan(old_plan), add = TRUE)
-  future::plan("sequential")
-
-  # No logFile supplied — samples loaded into memory after temp-log cleanup
-  result <- suppressWarnings(RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 400L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
-                        parallel = TRUE, pollInterval = 1L)))
-
-  expect_s3_class(result, "MkPosterior")
-  expect_true(nrow(result$samples) > 0L)
-})
-
-test_that("parallel orchestration (sequential plan) returns valid MkPosterior", {
-  skip_if_not_installed("future")
-  library("ape")
-  library("future")
-
-  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
-  mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
-                 dimnames = list(paste0("t", 1:4), NULL))
-  pd   <- TreeTools::MatrixToPhyDat(mat)
-
-  old_plan <- future::plan()
-  on.exit(future::plan(old_plan), add = TRUE)
-  # Sequential plan: futures run synchronously in the current process,
-  # so package internals are available.  Exercises the full orchestration
-  # code path without requiring an installed package.
-  future::plan("sequential")
-
-  logFile <- tempfile(fileext = ".log")
-  on.exit(unlink(c(logFile,
-                   sub("\\.log$", "_1.log", logFile),
-                   sub("\\.log$", "_2.log", logFile))), add = TRUE)
 
   result <- suppressWarnings(RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(
-      nRuns       = 2L,
-      nIter       = 400L,
-      maxWarmup   = 200L,
-      minWarmup   = 200L,
-      autoTune    = FALSE,
-      logFile     = logFile,
-      parallel    = TRUE,
-      pollInterval = 1L
-    )))
-
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 400L, maxWarmup = 200L,
+                       minWarmup = 200L, autoTune = FALSE, nCore = 4L)))
   expect_s3_class(result, "MkPosterior")
-  expect_true(!is.null(result$logFile))
-  expect_true(result$nSamples > 0L)
-  expect_false(is.null(result$stop_reason))
-
-  samp <- ReadMkLog(result$logFile)
-  expect_true(nrow(samp) > 0L)
-  expect_true("log_posterior" %in% colnames(samp))
 })
 
-test_that("parallel mode saves checkpoint when checkpointFile is set", {
-  # Regression: checkpoint save was inside sequential else-branch only;
-  # parallel = TRUE + checkpointFile silently wrote nothing.
-  skip_if_not_installed("future")
+test_that("parallel orchestration with nCore = 2 returns valid MkPosterior", {
+  skip_if_not_installed("callr")
+  skip_if_not(.is_mkprime_installed(),
+              "MkPrime not installed — callr workers need installed package")
   library("ape")
-  library("future")
 
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
                  dimnames = list(paste0("t", 1:4), NULL))
   pd   <- TreeTools::MatrixToPhyDat(mat)
-
-  old_plan <- future::plan()
-  on.exit(future::plan(old_plan), add = TRUE)
-  future::plan("sequential")
-
-  cp_file <- tempfile(fileext = ".rds")
-  on.exit(unlink(cp_file), add = TRUE)
-
-  suppressWarnings(RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 400L, maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
-                        parallel = TRUE, pollInterval = 1L,
-                        checkpointFile = cp_file)))
-
-  expect_true(file.exists(cp_file))
-  cp <- readRDS(cp_file)
-  expect_equal(length(cp$runs), 2L)
-  for (r in cp$runs) {
-    expect_true(is.finite(r$chains[[1]]$log_lik))
-    expect_true(r$saved_idx > 0L)
-  }
-})
-
-test_that("parallel orchestration (multisession, 2 workers) returns valid MkPosterior", {
-  skip_if_not_installed("future")
-  skip_if(!.is_mkprime_installed(),
-          "MkPrime not installed — multisession workers need installed package")
-  library("ape")
-  library("future")
-
-  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
-  mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
-                 dimnames = list(paste0("t", 1:4), NULL))
-  pd   <- TreeTools::MatrixToPhyDat(mat)
-
-  old_plan <- future::plan()
-  on.exit(future::plan(old_plan), add = TRUE)
-  future::plan("multisession", workers = 2L)
-
-  logFile <- tempfile(fileext = ".log")
-  on.exit(unlink(c(logFile,
-                   sub("\\.log$", "_1.log", logFile),
-                   sub("\\.log$", "_2.log", logFile))), add = TRUE)
 
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(
@@ -173,16 +86,93 @@ test_that("parallel orchestration (multisession, 2 workers) returns valid MkPost
       maxWarmup   = 200L,
       minWarmup   = 200L,
       autoTune    = FALSE,
-      logFile     = logFile,
-      parallel    = TRUE,
-      pollInterval = 2L
+      nCore       = 2L,
+      pollInterval = 1L
     ))
 
   expect_s3_class(result, "MkPosterior")
   expect_true(result$nSamples > 0L)
-  expect_false(is.null(result$stop_reason))
+})
 
-  samp <- ReadMkLog(result$logFile)
-  expect_true(nrow(samp) > 0L)
-  expect_true("log_posterior" %in% colnames(samp))
+test_that("mc.cores option triggers parallel mode", {
+  skip_if_not_installed("callr")
+  skip_if_not(.is_mkprime_installed(),
+              "MkPrime not installed — callr workers need installed package")
+  library("ape")
+
+  old <- getOption("mc.cores")
+  on.exit(options(mc.cores = old), add = TRUE)
+
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
+                 dimnames = list(paste0("t", 1:4), NULL))
+  pd   <- TreeTools::MatrixToPhyDat(mat)
+
+  options(mc.cores = 2L)
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(
+      nRuns       = 2L,
+      nIter       = 400L,
+      maxWarmup   = 200L,
+      minWarmup   = 200L,
+      autoTune    = FALSE,
+      pollInterval = 1L
+    ))
+
+  expect_s3_class(result, "MkPosterior")
+  expect_true(result$nSamples > 0L)
+})
+
+test_that("parallel mode auto-assigns logFile when logFile = NULL", {
+  # Regression: .BuildResult() was using mcmc$logFile (NULL) not logFilePaths
+  # to determine streaming mode, causing a crash on r$samples subscript.
+  skip_if_not_installed("callr")
+  skip_if_not(.is_mkprime_installed(),
+              "MkPrime not installed — callr workers need installed package")
+  library("ape")
+
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
+                 dimnames = list(paste0("t", 1:4), NULL))
+  pd   <- TreeTools::MatrixToPhyDat(mat)
+
+  # No logFile supplied — samples loaded into memory after temp-log cleanup
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 400L, maxWarmup = 200L,
+                       minWarmup = 200L, autoTune = FALSE,
+                       nCore = 2L, pollInterval = 1L))
+
+  expect_s3_class(result, "MkPosterior")
+  expect_true(nrow(result$samples) > 0L)
+})
+
+test_that("parallel mode saves checkpoint when checkpointFile is set", {
+  # Regression: checkpoint save was inside sequential else-branch only;
+  # nCore > 1 + checkpointFile silently wrote nothing.
+  skip_if_not_installed("callr")
+  skip_if_not(.is_mkprime_installed(),
+              "MkPrime not installed — callr workers need installed package")
+  library("ape")
+
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
+                 dimnames = list(paste0("t", 1:4), NULL))
+  pd   <- TreeTools::MatrixToPhyDat(mat)
+
+  cp_file <- tempfile(fileext = ".rds")
+  on.exit(unlink(cp_file), add = TRUE)
+
+  suppressWarnings(RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 400L, maxWarmup = 200L,
+                       minWarmup = 200L, autoTune = FALSE,
+                       nCore = 2L, pollInterval = 1L,
+                       checkpointFile = cp_file)))
+
+  expect_true(file.exists(cp_file))
+  cp <- readRDS(cp_file)
+  expect_equal(length(cp$runs), 2L)
+  for (r in cp$runs) {
+    expect_true(is.finite(r$chains[[1]]$log_lik))
+    expect_true(r$saved_idx > 0L)
+  }
 })

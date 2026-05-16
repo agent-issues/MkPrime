@@ -46,7 +46,7 @@ MkPrimeMCMC(
   moveWeights = NULL,
   cacheBonus = 5,
   tuning = list(),
-  parallel = FALSE,
+  nCore = getOption("mc.cores", 1L),
   pollInterval = 10L,
   gibbsWarmupFactor = 1/3
 )
@@ -164,7 +164,7 @@ If the path has no file extension, \code{.log} is appended automatically.
 When set, samples are flushed to disk in batches of \code{bufferSize}, so the
 file can be opened in Tracer during the run.
 For multiple runs (\code{nRuns > 1}), separate files are created automatically
-by appending \verb{_1}, \verb{_2}, … before the file extension
+by appending \verb{_1}, \verb{_2}, \dots before the file extension
 (e.g. \code{"run.log"} → \code{"run_1.log"}, \code{"run_2.log"}).
 See \code{\link[=ReadMkLog]{ReadMkLog()}} to load the log back into R after the run.}
 
@@ -290,14 +290,18 @@ Ignored when Q-heterogeneity is enabled (partial CL not supported).}
 \item{tuning}{Named list of initial tuning parameters for each move
 type. See Details.}
 
-\item{parallel}{Logical. If \code{TRUE} and \code{nRuns > 1}, independent runs are
-launched as non-blocking \code{future::future()} workers and the main process
-polls for convergence. Requires the \pkg{future} package (in \code{Suggests}).
-Set a parallel plan before calling \code{\link[=RunMkPrime]{RunMkPrime()}}:
-\code{future::plan("multisession", workers = nRuns)}. Default \code{FALSE} (sequential).}
+\item{nCore}{Integer. Number of parallel worker processes for independent
+runs. Default \code{getOption("mc.cores", 1L)}, matching the convention used
+by \pkg{TreeDist}. With \code{nCore = 1} (the default), runs execute serially.
+With \code{nCore > 1} and \code{nRuns > 1}, runs are dispatched as background R
+processes via \code{\link[callr:r_bg]{callr::r_bg()}} and the parent process polls for
+convergence. If \code{nRuns == 1}, \code{nCore} is ignored (within-run
+parallelism is a separate facility). Currently, if \code{nRuns > nCore}, all
+runs are launched simultaneously and the OS schedules them; batched
+launch is a planned enhancement.}
 
 \item{pollInterval}{Integer. Seconds between convergence polls in parallel
-mode. Ignored when \code{parallel = FALSE}. Default \code{10L}.}
+mode. Ignored when \code{nCore = 1}. Default \code{10L}.}
 }
 \value{
 An S3 object of class \code{MkPrimeMCMC}.

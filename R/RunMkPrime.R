@@ -1,4 +1,4 @@
-# Main MCMC entry point for MkPrime
+﻿# Main MCMC entry point for MkPrime
 #
 # Phase 3: single chain, fixed topology, R-side loop.
 # Phase 4: topology moves (NNI, SPR) via mutable state$tree.
@@ -49,36 +49,28 @@
 #' result <- RunMkPrime(data, mcmc = mcmc)
 #' ```
 #'
-#' @section Parallel independent runs (HPC usage):
+#' @section Parallel independent runs:
 #'
-#' Set `parallel = TRUE` in [MkPrimeMCMC()] to run independent chains
-#' concurrently. The \pkg{future} package (in `Suggests`) provides the
-#' backend-agnostic parallelism. Call `future::plan()` **before**
-#' `RunMkPrime()`:
+#' Set `nCore` (in [MkPrimeMCMC()]) to dispatch multiple independent runs
+#' as parallel background R processes via [callr::r_bg()].
 #'
 #' ```r
-#' # Workstation — use local cores
-#' future::plan("multisession", workers = 4)
-#' result <- RunMkPrime(data, tree,
-#'   mcmc = MkPrimeMCMC(nRuns = 4, parallel = TRUE))
+#' # Workstation: 4 cores, 4 independent runs
+#' result <- RunMkPrime(data, tree, nRuns = 4L, nCore = 4L)
 #'
-#' # HPC (SLURM) — requires the future.batchtools package
-#' future::plan(future.batchtools::batchtools_slurm(
-#'   resources = list(ncpus = 1, memory = "4gb", walltime = "24:00:00")
-#' ))
-#' result <- RunMkPrime(data, tree,
-#'   mcmc = MkPrimeMCMC(nRuns = 4, parallel = TRUE,
-#'                       logFile  = "/scratch/myrun/run.log",
-#'                       pollInterval = 60L))
+#' # Or set via global option (TreeDist-style):
+#' options(mc.cores = 4L)
+#' result <- RunMkPrime(data, tree, nRuns = 4L)
 #' ```
 #'
-#' Notes for HPC:
-#' - Set `logFile` explicitly to a path on a shared filesystem (tempdir is
-#'   node-local and workers on different nodes cannot read it).
-#' - Use `pollInterval = 30` -- `60` seconds; job startup latency makes
-#'   frequent polling wasteful.
-#' - Set `checkpointFile` so runs can be resumed if the master job times out.
-#' - Each `future` worker becomes a separate job submission on SLURM/PBS/LSF.
+#' ## HPC usage
+#'
+#' Submit one R job per node from your scheduler (SLURM/PBS/LSF) and set
+#' `nCore` to the number of cores allocated per node. R-side dispatch to a
+#' remote scheduler is not supported.
+#'
+#' For long runs, set `checkpointFile` so the job can be resumed if it
+#' times out, and set `logFile` to a path on the local node's filesystem.
 #'
 #' @export
 RunMkPrime <- function(data, tree = NULL,
@@ -355,8 +347,8 @@ RunMkPrime <- function(data, tree = NULL,
   }
 
   tryCatch({
-    if (isTRUE(mcmc$parallel) && nRuns > 1L) {
-      # Parallel path: shared env is not accessible from future workers.
+    if (mcmc$nCore > 1L && nRuns > 1L) {
+      # Parallel path: shared env is not accessible from callr workers.
       # Checkpointing handled by the orchestrator after completion.
       parResult    <- .RunParallelRuns(mkd, model, mcmc, runs, moves,
                                         tipLabels, paramNames, nEdge,
@@ -517,7 +509,7 @@ RunMkPrime <- function(data, tree = NULL,
 #' Returns a fully R-serializable run state: `chains` holds per-chain
 #' parameter lists in checkpoint-compatible format; no XPtrs are created here.
 #' XPtrs are built inside [.RunMkPrimeSingleRun()] so the state can be sent
-#' to `future` workers without serialisation errors.
+#' to `callr` workers without serialisation errors.
 #' @keywords internal
 .InitRun <- function(tree, mkd, model, mcmc, moves) {
   nChains <- mcmc$nChains
@@ -590,7 +582,7 @@ RunMkPrime <- function(data, tree = NULL,
 #' Self-contained: accepts only R-serializable inputs (no XPtrs), reconstructs
 #' C++ state internally, runs the full `repeat` loop, and returns a serializable
 #' updated run state.  Used by the sequential `for (run)` loop in
-#' [RunMkPrime()] / [ResumeMkPrime()] and (Phase 10b) by `future` workers.
+#' [RunMkPrime()] / [ResumeMkPrime()] and (Phase 10b) by `callr` workers.
 #'
 #' @param initialState Run list from [.InitRun()] or a checkpoint, with
 #'   `chains` in checkpoint-compatible format (no `chainStates`).
@@ -1453,7 +1445,7 @@ RunMkPrime <- function(data, tree = NULL,
 
 #' Run multiple serial MCMC runs with cross-run R-hat convergence
 #'
-#' Called by [.RunWithRecovery()] when `parallel = FALSE`, `nRuns >= 2`, and
+#' Called by [.RunWithRecovery()] when `nCore == 1`, `nRuns >= 2`, and
 #' `maxRhat` is set.  Phase 1 runs each run sequentially until per-run ESS
 #' convergence (or nIter / maxTime / cancel).  Phase 2 checks cross-run R-hat
 #' from log files; if not met and iteration headroom remains, resumes each run
@@ -1598,12 +1590,13 @@ RunMkPrime <- function(data, tree = NULL,
 
 # --- Parallel run orchestration ---
 
-#' Launch and manage parallel independent MCMC runs via `future`
+#' Launch and manage parallel independent MCMC runs via `callr`
 #'
-#' Called by [RunMkPrime()] when `mcmc$parallel = TRUE` and `nRuns > 1`.
-#' Spawns `nRuns` non-blocking futures each calling [.RunMkPrimeSingleRun()],
-#' then polls for convergence / time limits / user cancel. When a stopping
-#' criterion fires, writes per-run cancel files so workers exit cleanly.
+#' Called by [RunMkPrime()] when `mcmc$nCore > 1` and `nRuns > 1`.
+#' Spawns `nRuns` non-blocking background R processes each calling
+#' [.RunMkPrimeSingleRun()], then polls for convergence / time limits /
+#' user cancel. When a stopping criterion fires, writes per-run cancel files
+#' so workers exit cleanly.
 #'
 #' @return Named list: `runs`, `logFilePaths`, `stopReason`, `actualIter`.
 #' @keywords internal
@@ -1612,18 +1605,16 @@ RunMkPrime <- function(data, tree = NULL,
                               isStreaming, logFilePaths, convWindowSize) {
   nRuns <- mcmc$nRuns
 
-  if (!requireNamespace("future", quietly = TRUE)) {
+  if (!requireNamespace("callr", quietly = TRUE)) {
     cli::cli_abort(c(
-      "Package {.pkg future} is required for parallel runs.",
-      "i" = "Install it with: {.code install.packages(\"future\")}",
-      "i" = "Then set a plan before calling RunMkPrime(): \\
-             {.code future::plan(\"multisession\", workers = {nRuns})}"
+      "Package {.pkg callr} is required for {.code nCore > 1}.",
+      "i" = "Install with {.code install.packages(\"callr\")}."
     ))
   }
 
   # Parallel mode requires streaming so the orchestrator can read samples.
   # Since RunMkPrime() now always streams (temp log), this branch is a
-  # safety net for any future direct callers.
+  # safety net for any direct callers.
   if (!isStreaming) {
     tmpLog <- tempfile(fileext = ".log")
     cli::cli_alert_info(c(
@@ -1638,15 +1629,30 @@ RunMkPrime <- function(data, tree = NULL,
   # Per-run cancel files (orchestrator signals each worker individually).
   cancelFiles <- vapply(seq_len(nRuns), function(i) tempfile(), character(1L))
 
-  # Launch nRuns persistent workers — each runs its full batch loop.
-  fList <- vector("list", nRuns)
+  # Generate L'Ecuyer-CMRG RNG streams in the parent for reproducibility.
+  streams <- .GenerateRNGStreams(nRuns)
+
+  # Allocate process handle list before launching so on.exit can clean up
+  # even if r_bg() fails mid-loop.
+  procs <- vector("list", nRuns)
+
+  # Kill any still-alive workers if we exit via error or interrupt.
+  on.exit({
+    for (p in procs) {
+      if (!is.null(p) && p$is_alive()) try(p$kill(), silent = TRUE)
+    }
+  }, add = TRUE)
+
+  # NOTE: Currently launches all nRuns workers simultaneously regardless of
+  # mcmc$nCore. Acceptable when nRuns is small (the MkPrime norm).
+  # Batched launch (ceiling(nRuns/nCore) waves) is a planned enhancement.
   for (run in seq_len(nRuns)) {
-    runState <- runs[[run]]
-    logPath  <- logFilePaths[run]
-    cfPath   <- cancelFiles[run]
-    fList[[run]] <- future::future(
-      {
-        .RunMkPrimeSingleRun(
+    procs[[run]] <- callr::r_bg(
+      func = function(mkd, model, mcmc, runState, moves, tipLabels, run,
+                      paramNames, nEdge, brColStart, logPath, cfPath,
+                      convWindowSize, seed) {
+        assign(".Random.seed", seed, envir = globalenv())
+        MkPrime:::.RunMkPrimeSingleRun(
           mkd, model, mcmc, runState, moves, tipLabels, run,
           paramNames, nEdge, brColStart,
           logFilePath    = logPath,
@@ -1658,11 +1664,28 @@ RunMkPrime <- function(data, tree = NULL,
           treeFile       = NULL
         )
       },
-      seed = TRUE
+      args = list(
+        mkd            = mkd,
+        model          = model,
+        mcmc           = mcmc,
+        runState       = runs[[run]],
+        moves          = moves,
+        tipLabels      = tipLabels,
+        run            = run,
+        paramNames     = paramNames,
+        nEdge          = nEdge,
+        brColStart     = brColStart,
+        logPath        = logFilePaths[run],
+        cfPath         = cancelFiles[run],
+        convWindowSize = convWindowSize,
+        seed           = streams[[run]]
+      ),
+      supervise = TRUE,
+      package   = TRUE
     )
   }
 
-  # Polling loop: sleep → check stopping criteria → signal workers if needed.
+  # Polling loop: sleep -> check stopping criteria -> signal workers if needed.
   startTime    <- proc.time()["elapsed"]
   pollInterval <- mcmc$pollInterval %||% 10L
   stopReason   <- "max_iter"
@@ -1670,7 +1693,7 @@ RunMkPrime <- function(data, tree = NULL,
 
   # Progress display and live trace plot
   hasProgressFn <- !is.null(mcmc$progressFn) && is.function(mcmc$progressFn)
-  pollStatus <- "Waiting for workers\u2026"
+  pollStatus <- "Waiting for workers…"
   cli::cli_progress_bar(
     "Parallel MCMC ({nRuns} runs)",
     format       = "{cli::pb_spin} {pollStatus}",
@@ -1718,18 +1741,18 @@ RunMkPrime <- function(data, tree = NULL,
       if (hasProgressFn) {
         nSamp <- nrow(diagCheck$perRunSamples[[1]])
         info <- list(
-          iter           = nSamp * if (is.numeric(mcmc$thin)) mcmc$thin else 1L,
-          nIter          = mcmc$nIter,
-          warmup         = mcmc$warmup,
-          inWarmup       = FALSE,
-          phase          = "Sample",
-          nRuns          = nRuns,
-          nChains        = mcmc$nChains,
-          runSamples     = diagCheck$perRunSamples,
-          currentState   = NULL,
+          iter             = nSamp * if (is.numeric(mcmc$thin)) mcmc$thin else 1L,
+          nIter            = mcmc$nIter,
+          warmup           = mcmc$warmup,
+          inWarmup         = FALSE,
+          phase            = "Sample",
+          nRuns            = nRuns,
+          nChains          = mcmc$nChains,
+          runSamples       = diagCheck$perRunSamples,
+          currentState     = NULL,
           recentAcceptance = NA_real_,
-          elapsed        = elapsed,
-          paramNames     = paramNames
+          elapsed          = elapsed,
+          paramNames       = paramNames
         )
         tryCatch(mcmc$progressFn(info), error = function(e) NULL)
       }
@@ -1742,17 +1765,17 @@ RunMkPrime <- function(data, tree = NULL,
     }
 
     # All workers finished naturally
-    if (all(vapply(fList, future::resolved, logical(1L)))) break
+    if (!any(vapply(procs, function(p) p$is_alive(), logical(1L)))) break
   }
 
   pollStatus <- paste0(
-    "Parallel MCMC (", nRuns, " runs) \u2014 ",
+    "Parallel MCMC (", nRuns, " runs) — ",
     stopReason, " [", .FormatElapsed(proc.time()["elapsed"] - startTime), "]"
   )
   cli::cli_progress_done()
 
-  # Collect results (blocks until each worker is done)
-  completedRuns <- lapply(fList, future::value)
+  # Collect results (blocks until each worker is done; kills are idempotent)
+  completedRuns <- lapply(procs, function(p) { p$wait(); p$get_result() })
 
   # Take actualIter from the first completed run
   actualIter <- completedRuns[[1L]]$actual_iter %||% actualIter
@@ -1763,6 +1786,43 @@ RunMkPrime <- function(data, tree = NULL,
     stopReason   = stopReason,
     actualIter   = actualIter
   )
+}
+
+
+#' Generate L'Ecuyer-CMRG RNG streams for parallel workers
+#'
+#' Creates `n` independent, non-overlapping RNG streams using the
+#' L'Ecuyer-CMRG generator. Each stream is a 7-element integer vector
+#' suitable for direct assignment to `.Random.seed` in a worker process.
+#' Pattern adapted from [parallel::clusterSetRNGStream()].
+#'
+#' @param n Positive integer. Number of streams to generate.
+#' @return A list of length `n`, each element a 7-element integer vector.
+#' @keywords internal
+.GenerateRNGStreams <- function(n) {
+  oldKind <- RNGkind()
+  oldSeed <- if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+    get(".Random.seed", envir = globalenv(), inherits = FALSE)
+  } else NULL
+  on.exit({
+    do.call(RNGkind, as.list(oldKind))
+    if (!is.null(oldSeed)) {
+      assign(".Random.seed", oldSeed, envir = globalenv())
+    } else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+      rm(".Random.seed", envir = globalenv())
+    }
+  }, add = TRUE)
+  RNGkind("L'Ecuyer-CMRG")
+  # Force a fresh L'Ecuyer-formatted .Random.seed; the previous seed was
+  # for the old generator and is the wrong shape for nextRNGStream().
+  runif(1L)
+  seed <- get(".Random.seed", envir = globalenv(), inherits = FALSE)
+  streams <- vector("list", n)
+  for (i in seq_len(n)) {
+    streams[[i]] <- seed
+    seed <- parallel::nextRNGStream(seed)
+  }
+  streams
 }
 
 

@@ -189,13 +189,17 @@
 #'   at 30% and SPR at 20%, with the remaining 50% allocated adaptively
 #'   among other moves. To disable adaptive scheduling entirely, pin all
 #'   moves (sum to 1). See section **Adaptive move scheduling** below.
-#' @param parallel Logical. If `TRUE` and `nRuns > 1`, independent runs are
-#'   launched as non-blocking `future::future()` workers and the main process
-#'   polls for convergence. Requires the \pkg{future} package (in `Suggests`).
-#'   Set a parallel plan before calling [RunMkPrime()]:
-#'   `future::plan("multisession", workers = nRuns)`. Default `FALSE` (sequential).
+#' @param nCore Integer. Number of parallel worker processes for independent
+#'   runs. Default `getOption("mc.cores", 1L)`, matching the convention used
+#'   by \pkg{TreeDist}. With `nCore = 1` (the default), runs execute serially.
+#'   With `nCore > 1` and `nRuns > 1`, runs are dispatched as background R
+#'   processes via [callr::r_bg()] and the parent process polls for
+#'   convergence. If `nRuns == 1`, `nCore` is ignored (within-run
+#'   parallelism is a separate facility). Currently, if `nRuns > nCore`, all
+#'   runs are launched simultaneously and the OS schedules them; batched
+#'   launch is a planned enhancement.
 #' @param pollInterval Integer. Seconds between convergence polls in parallel
-#'   mode. Ignored when `parallel = FALSE`. Default `10L`.
+#'   mode. Ignored when `nCore = 1`. Default `10L`.
 #' @param cacheBonus Numeric; multiplier applied to partial-CL-eligible
 #'   move weights (NNI, beta_simplex, Dirichlet, local_dirichlet) when the
 #'   node CL cache is valid. Default 5. A value of 1 disables the boost.
@@ -320,7 +324,7 @@ MkPrimeMCMC <- function(
     moveWeights = NULL,
     cacheBonus = 5,
     tuning = list(),
-    parallel = FALSE,
+    nCore = getOption("mc.cores", 1L),
     pollInterval = 10L,
     gibbsWarmupFactor = 1/3
 ) {
@@ -528,8 +532,15 @@ MkPrimeMCMC <- function(
   if (!is.null(checkEvery)) checkEvery <- as.integer(checkEvery)
   if (!is.null(plotEvery)) plotEvery <- as.integer(plotEvery)
 
-  if (!is.logical(parallel) || length(parallel) != 1L || is.na(parallel)) {
-    cli::cli_abort("{.arg parallel} must be a length-1 logical (TRUE or FALSE).")
+  nCore <- as.integer(nCore)
+  if (is.na(nCore) || nCore < 1L) {
+    cli::cli_abort("{.arg nCore} must be a positive integer.")
+  }
+  if (nCore > parallel::detectCores(logical = FALSE)) {
+    cli::cli_warn(c(
+      "{.arg nCore} = {nCore} exceeds physical cores ({parallel::detectCores(logical = FALSE)}).",
+      "i" = "Proceeding anyway; reduce if memory-bound."
+    ))
   }
   pollInterval <- as.integer(pollInterval)
   if (pollInterval < 1L) {
@@ -593,7 +604,7 @@ MkPrimeMCMC <- function(
          moveWeights = moveWeights,
          cacheBonus = cacheBonus,
          tuning = tuning,
-         parallel = parallel, pollInterval = pollInterval,
+         nCore = nCore, pollInterval = pollInterval,
          gibbsWarmupFactor = gibbsWarmupFactor),
     class = "MkPrimeMCMC"
   )
