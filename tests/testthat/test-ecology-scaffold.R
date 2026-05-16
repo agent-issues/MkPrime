@@ -129,11 +129,11 @@ test_that("MkPrimeModel accepts ecology-aware options with sane defaults", {
   m <- MkPrimeModel(ecologyAware = TRUE)
   expect_true(m$ecologyAware)
   expect_identical(m$magnitudeMode, "global")
-  expect_equal(m$rho0Alpha, 75)
-  expect_equal(m$rho0Beta, 25)
-  expect_equal(m$sigmaPhi, 1)
-  expect_equal(m$thetaAlpha, 1)
-  expect_equal(m$thetaBeta, 1)
+  expect_equal(m$rho0Alpha, 360)   # R5-1: ESS raised to ~nChar
+  expect_equal(m$rho0Beta, 120)    # R5-1: Beta(360,120), ESS=480
+  expect_equal(m$sigmaPhi, 1.5)    # R5-2: wider phi prior
+  expect_equal(m$thetaAlpha, 2)    # R5-3: away from uniform saddle
+  expect_equal(m$thetaBeta, 2)
   expect_equal(m$gibbsZEvery, 50L)
 })
 
