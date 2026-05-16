@@ -195,9 +195,12 @@
 #'   With `nCore > 1` and `nRuns > 1`, runs are dispatched as background R
 #'   processes via [callr::r_bg()] and the parent process polls for
 #'   convergence. If `nRuns == 1`, `nCore` is ignored (within-run
-#'   parallelism is a separate facility). Currently, if `nRuns > nCore`, all
-#'   runs are launched simultaneously and the OS schedules them; batched
-#'   launch is a planned enhancement.
+#'   parallelism is a separate facility). When `nRuns > nCore`, runs are
+#'   dispatched from a rolling pool of `nCore` workers: as each finishes,
+#'   the next pending run launches in its place. Cross-run convergence
+#'   (`maxRhat`) cannot trigger early in this regime — it activates only
+#'   once every run has produced samples — so prefer `nRuns <= nCore`
+#'   when convergence-based early stopping matters.
 #' @param pollInterval Integer. Seconds between convergence polls in parallel
 #'   mode. Ignored when `nCore = 1`. Default `10L`.
 #' @param cacheBonus Numeric; multiplier applied to partial-CL-eligible

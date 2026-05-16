@@ -1632,9 +1632,15 @@ RunMkPrime <- function(data, tree = NULL,
   # Generate L'Ecuyer-CMRG RNG streams in the parent for reproducibility.
   streams <- .GenerateRNGStreams(nRuns)
 
-  # Allocate process handle list before launching so on.exit can clean up
-  # even if r_bg() fails mid-loop.
-  procs <- vector("list", nRuns)
+  # Pool-based dispatch: keep at most poolSize workers active concurrently.
+  # When a worker finishes, the next pending run is launched in its place.
+  # Cross-run convergence (e.g. R-hat) cannot trigger until every run has
+  # produced samples, so when nRuns > nCore the convergence-based early
+  # stop is deferred until the pool has drained the queue.
+  poolSize <- min(mcmc$nCore, nRuns)
+  procs    <- vector("list", nRuns)
+  launched <- logical(nRuns)
+  finished <- logical(nRuns)
 
   # Kill any still-alive workers if we exit via error or interrupt.
   on.exit({
@@ -1643,11 +1649,8 @@ RunMkPrime <- function(data, tree = NULL,
     }
   }, add = TRUE)
 
-  # NOTE: Currently launches all nRuns workers simultaneously regardless of
-  # mcmc$nCore. Acceptable when nRuns is small (the MkPrime norm).
-  # Batched launch (ceiling(nRuns/nCore) waves) is a planned enhancement.
-  for (run in seq_len(nRuns)) {
-    procs[[run]] <- callr::r_bg(
+  launchOne <- function(run) {
+    callr::r_bg(
       func = function(mkd, model, mcmc, runState, moves, tipLabels, run,
                       paramNames, nEdge, brColStart, logPath, cfPath,
                       convWindowSize, seed) {
@@ -1685,6 +1688,12 @@ RunMkPrime <- function(data, tree = NULL,
     )
   }
 
+  # Launch initial pool.
+  for (run in seq_len(poolSize)) {
+    procs[[run]]    <- launchOne(run)
+    launched[run]   <- TRUE
+  }
+
   # Polling loop: sleep -> check stopping criteria -> signal workers if needed.
   startTime    <- proc.time()["elapsed"]
   pollInterval <- mcmc$pollInterval %||% 10L
@@ -1719,7 +1728,21 @@ RunMkPrime <- function(data, tree = NULL,
       break
     }
 
-    # Convergence (reads log files from disk)
+    # Reap finished workers; launch replacements from the pending queue.
+    for (run in seq_len(nRuns)) {
+      if (launched[run] && !finished[run] && !procs[[run]]$is_alive()) {
+        finished[run] <- TRUE
+      }
+    }
+    while (sum(launched & !finished) < poolSize && any(!launched)) {
+      nextRun           <- which(!launched)[1L]
+      procs[[nextRun]]  <- launchOne(nextRun)
+      launched[nextRun] <- TRUE
+    }
+
+    # Convergence (reads log files from disk; returns NULL until every
+    # logFilePaths entry has >=10 samples, so this is gated on the pool
+    # having drained the queue when nRuns > nCore).
     diagCheck <- .CheckConvergenceFromLogs(logFilePaths, paramNames, mcmc)
     if (!is.null(diagCheck)) {
       elStr  <- .FormatElapsed(elapsed)
@@ -1764,8 +1787,8 @@ RunMkPrime <- function(data, tree = NULL,
       }
     }
 
-    # All workers finished naturally
-    if (!any(vapply(procs, function(p) p$is_alive(), logical(1L)))) break
+    # Every run launched and every launched run finished?
+    if (all(launched) && all(finished)) break
   }
 
   pollStatus <- paste0(
@@ -1774,10 +1797,18 @@ RunMkPrime <- function(data, tree = NULL,
   )
   cli::cli_progress_done()
 
-  # Collect results (blocks until each worker is done; kills are idempotent)
-  completedRuns <- lapply(procs, function(p) { p$wait(); p$get_result() })
+  # Collect results. Launched runs: wait for the worker and take its return
+  # value. Never-launched runs (possible after early break via cancel/maxTime
+  # when nRuns > nCore): keep the initial state passed in via `runs`.
+  completedRuns <- runs
+  for (run in seq_len(nRuns)) {
+    if (!is.null(procs[[run]])) {
+      procs[[run]]$wait()
+      completedRuns[[run]] <- procs[[run]]$get_result()
+    }
+  }
 
-  # Take actualIter from the first completed run
+  # Take actualIter from the first launched run (always run 1 by construction)
   actualIter <- completedRuns[[1L]]$actual_iter %||% actualIter
 
   list(

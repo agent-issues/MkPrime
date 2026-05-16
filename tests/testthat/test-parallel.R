@@ -123,6 +123,42 @@ test_that("mc.cores option triggers parallel mode", {
   expect_true(result$nSamples > 0L)
 })
 
+test_that("pool dispatch: nRuns > nCore launches in waves", {
+  # nRuns = 4, nCore = 2 → at most 2 workers active at any time, rolling
+  # launch as each finishes. All 4 runs must still complete and contribute
+  # samples to the final MkPosterior.
+  skip_if_not_installed("callr")
+  skip_if_not(.is_mkprime_installed(),
+              "MkPrime not installed — callr workers need installed package")
+  library("ape")
+
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
+                 dimnames = list(paste0("t", 1:4), NULL))
+  pd   <- TreeTools::MatrixToPhyDat(mat)
+
+  result <- RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(
+      nRuns        = 4L,
+      nIter        = 300L,
+      maxWarmup    = 150L,
+      minWarmup    = 150L,
+      autoTune     = FALSE,
+      nCore        = 2L,
+      pollInterval = 1L
+    ))
+
+  expect_s3_class(result, "MkPosterior")
+  expect_true(result$nSamples > 0L)
+  # All four runs must have run to completion and contributed samples.
+  expect_equal(result$nRuns, 4L)
+  expect_length(result$per_run, 4L)
+  perRunRows <- vapply(result$per_run,
+                       function(r) nrow(r$samples),
+                       integer(1L))
+  expect_true(all(perRunRows > 0L))
+})
+
 test_that("parallel mode auto-assigns logFile when logFile = NULL", {
   # Regression: .BuildResult() was using mcmc$logFile (NULL) not logFilePaths
   # to determine streaming mode, causing a crash on r$samples subscript.

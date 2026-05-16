@@ -296,9 +296,12 @@ by \pkg{TreeDist}. With \code{nCore = 1} (the default), runs execute serially.
 With \code{nCore > 1} and \code{nRuns > 1}, runs are dispatched as background R
 processes via \code{\link[callr:r_bg]{callr::r_bg()}} and the parent process polls for
 convergence. If \code{nRuns == 1}, \code{nCore} is ignored (within-run
-parallelism is a separate facility). Currently, if \code{nRuns > nCore}, all
-runs are launched simultaneously and the OS schedules them; batched
-launch is a planned enhancement.}
+parallelism is a separate facility). When \code{nRuns > nCore}, runs are
+dispatched from a rolling pool of \code{nCore} workers: as each finishes,
+the next pending run launches in its place. Cross-run convergence
+(\code{maxRhat}) cannot trigger early in this regime — it activates only
+once every run has produced samples — so prefer \code{nRuns <= nCore}
+when convergence-based early stopping matters.}
 
 \item{pollInterval}{Integer. Seconds between convergence polls in parallel
 mode. Ignored when \code{nCore = 1}. Default \code{10L}.}
