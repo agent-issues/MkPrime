@@ -184,12 +184,12 @@
                         refEcology = 0L)
   datSim <- cbind(datNeo, datTrans)
 
-  pdSim <- MkPrime::MatrixToPhyDat(datSim)
+  pdSim <- MatrixToPhyDat(datSim)
   neoIdx <- seq_len(nNeo)
-  mkdBlind <- MkPrime::MkPrimeData(pdSim, neomorphic = neoIdx)
+  mkdBlind <- MkPrimeData(pdSim, neomorphic = neoIdx)
   ecoTipVec <- eco[mkdBlind$taxon_names]
-  mkdAware <- MkPrime::MkPrimeData(pdSim, neomorphic = neoIdx,
-                                   ecology = ecoTipVec)
+  mkdAware <- MkPrimeData(pdSim, neomorphic = neoIdx,
+                          ecology = ecoTipVec)
 
   list(pdSim    = pdSim,
        mkdBlind = mkdBlind,
