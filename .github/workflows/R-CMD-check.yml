@@ -70,7 +70,7 @@ jobs:
       - name: Set up R dependencies
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          cache-version: 2-${{ runner.arch }}
+          cache-version: 3-${{ runner.arch }}
           needs: |
             check
 
@@ -146,7 +146,7 @@ jobs:
       - name: Set up R dependencies
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          cache-version: 2-${{ runner.arch }}
+          cache-version: 3-${{ runner.arch }}
           needs: |
             check
             coverage

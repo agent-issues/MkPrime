@@ -1,4 +1,5 @@
 # Tests for M-170: constant_site_prob_jc single-pseudo-character optimisation.
+skip_if_not_installed("phangorn")
 #
 # Verifies:
 # 1. Numerical correctness for k = 2..5 on a simple balanced 4-tip tree.
