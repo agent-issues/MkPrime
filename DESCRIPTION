@@ -48,6 +48,11 @@ VignetteBuilder: quarto
 LinkingTo:
     Rcpp,
     TreeTools
+Config/Needs/check: rcmdcheck, testthat
+Config/Needs/coverage: covr
+Config/Needs/memcheck: pkgdown, testthat
+Config/Needs/website: pkgdown
+Config/testthat/parallel: false
 Config/roxygen2/version: 8.0.0
 Config/testthat/edition: 3
 Encoding: UTF-8
