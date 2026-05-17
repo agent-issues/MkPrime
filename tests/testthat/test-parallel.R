@@ -159,19 +159,26 @@ test_that("pool dispatch: nRuns > nCore launches in waves", {
   expect_true(all(perRunRows > 0L))
 })
 
-test_that("pool dispatch: wave behaviour confirmed by log mtime (PAR-004)", {
+test_that("pool dispatch: wave behaviour confirmed by launch times (PAR-004)", {
   # Regression: a bug that launched all nRuns workers simultaneously
-  # (ignoring nCore) would produce overlapping mtimes across all 4 log
-  # files. With correct wave dispatch (nCore = 2, nRuns = 4), runs 3 and
-  # 4 cannot start until at least one of runs 1/2 has finished, so the
-  # *last* modification time of logs 3/4 is >= the last modification of
-  # logs 1/2.
+  # (ignoring nCore) would dispatch runs 3 and 4 at the same time as
+  # runs 1 and 2. With correct wave dispatch (nCore = 2, nRuns = 4),
+  # runs 3 and 4 cannot launch until the polling loop detects that at
+  # least one of runs 1/2 has finished. We assert this using
+  # result$.par_launch_times — parent-side Sys.time() stamps recorded in
+  # .RunParallelRuns at the moment each callr worker is dispatched.
   #
-  # Why mtime, not a timing comparison between nCore=1 and nCore=4?
-  # A timing ratio (t_par / t_serial < 0.8) is fragile on Windows where
-  # callr worker startup (~1-2 s each) can dominate short runs, making
-  # the ratio flip. mtime directly measures the wave property being
-  # tested.
+  # Why parent launch times rather than log-file mtimes?
+  # NTFS mtime has 1-second resolution. On a fast machine all four short
+  # MCMC runs can finish writing within one NTFS tick, making
+  # min(mtimes[3:4]) == max(mtimes[1:2]) and the old expect_gte() pass
+  # trivially even when all four workers were launched simultaneously.
+  # Sys.time() in the parent process has ~10-16 ms resolution on Windows,
+  # far finer than the ~1 s polling gap, so a false pass is impossible.
+  #
+  # Flakiness margin: pollInterval = 1L and each run takes ~1-2 s, so
+  # wave 2 launches at least ~1 s after wave 1 — well above the 10-16 ms
+  # clock resolution.
   #
   # TODO(PAR-004 followup): interrupt behaviour (Ctrl-C during nCore=2
   # run should kill workers and show the parallel-specific message added
@@ -187,15 +194,6 @@ test_that("pool dispatch: wave behaviour confirmed by log mtime (PAR-004)", {
                  dimnames = list(paste0("t", 1:4), NULL))
   pd   <- TreeTools::MatrixToPhyDat(mat)
 
-  # Explicit logFile so per-run paths survive the temp-log cleanup that
-  # wipes result$logFile when the user did not supply one. .LogFilePaths
-  # appends _1, _2, ... before the extension.
-  logBase <- tempfile(fileext = ".log")
-  logStem <- tools::file_path_sans_ext(logBase)
-  perRunPaths <- paste0(logStem, "_", 1:4, ".log")
-  on.exit(unlink(perRunPaths), add = TRUE)
-
-  # Per-run work long enough (>=1s each) to exceed NTFS mtime resolution.
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(
       nRuns        = 4L,
@@ -204,19 +202,21 @@ test_that("pool dispatch: wave behaviour confirmed by log mtime (PAR-004)", {
       minWarmup    = 1000L,
       autoTune     = FALSE,
       nCore        = 2L,
-      pollInterval = 1L,
-      logFile      = logBase
+      pollInterval = 1L
     ))
 
   expect_s3_class(result, "MkPosterior")
   expect_equal(result$nRuns, 4L)
 
-  expect_true(all(file.exists(perRunPaths)))
-  mtimes <- vapply(perRunPaths,
-                   function(p) as.numeric(file.info(p)$mtime),
-                   numeric(1L))
-  # Wave 2 (runs 3+4) must finish writing after wave 1 (runs 1+2).
-  expect_gte(min(mtimes[3:4]), max(mtimes[1:2]))
+  # Retrieve parent-side launch timestamps (numeric seconds since epoch).
+  t <- result$.par_launch_times
+  expect_length(t, 4L)
+  expect_false(any(is.na(t)),
+               info = "All four workers must have been launched")
+  # Wave 1 (runs 1, 2) launches first; wave 2 (runs 3, 4) can only launch
+  # after the polling loop detects a wave-1 finish, so the earliest wave-2
+  # launch must be strictly later than the latest wave-1 launch.
+  expect_gt(min(t[3:4]), max(t[1:2]))
 })
 
 test_that("maxTime fires mid-pool with nRuns > nCore returns valid result (PAR-001 regression)", {
@@ -307,4 +307,72 @@ test_that("parallel mode saves checkpoint when checkpointFile is set", {
     expect_true(is.finite(r$chains[[1]]$log_lik))
     expect_true(r$saved_idx > 0L)
   }
+})
+
+# --- PAR-012: cancelGrace validation tests ---
+
+test_that("MkPrimeMCMC() validates cancelGrace", {
+  expect_error(MkPrimeMCMC(cancelGrace = 0L),   "cancelGrace")
+  expect_error(MkPrimeMCMC(cancelGrace = -1L),  "cancelGrace")
+  expect_error(suppressWarnings(MkPrimeMCMC(cancelGrace = "foo")), "cancelGrace")
+})
+
+test_that("MkPrimeMCMC() accepts cancelGrace as positive integer", {
+  mcmc <- MkPrimeMCMC(cancelGrace = 5L)
+  expect_equal(mcmc$cancelGrace, 5L)
+})
+
+test_that("MkPrimeMCMC() accepts cancelGrace = Inf", {
+  mcmc <- MkPrimeMCMC(cancelGrace = Inf)
+  expect_true(is.infinite(mcmc$cancelGrace))
+})
+
+# --- PAR-008/009: dropped_runs populated on early-stop with short cancelGrace ---
+
+test_that("dropped_runs populated when workers are killed by short cancelGrace (PAR-008/009)", {
+  # nRuns = 4, nCore = 2, maxTime = 2s, cancelGrace = 1s.
+  # Workers in-flight when maxTime fires won't finish their batch in 1s,
+  # so they get hard-killed → dropped_runs should be non-empty.
+  # We also check requested_nRuns is preserved.
+  skip_if_not_installed("callr")
+  skip_if_not(.is_mkprime_installed(),
+              "MkPrime not installed — callr workers need installed package")
+  library("ape")
+
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
+                 dimnames = list(paste0("t", 1:4), NULL))
+  pd   <- TreeTools::MatrixToPhyDat(mat)
+
+  # Use a long checkEvery so workers are mid-batch when cancelled.
+  result <- suppressWarnings(RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(
+      nRuns        = 4L,
+      nCore        = 2L,
+      nIter        = Inf,
+      maxWarmup    = 50000L,
+      minWarmup    = 50000L,
+      autoTune     = FALSE,
+      pollInterval = 1L,
+      maxTime      = 2L,
+      cancelGrace  = 1L,
+      checkEvery   = 10000L
+    )))
+
+  expect_s3_class(result, "MkPosterior")
+  # requested_nRuns must equal the configured nRuns (PAR-009)
+  expect_equal(result$requested_nRuns, 4L)
+  # dropped_runs must be a data.frame with the expected columns
+  expect_s3_class(result$dropped_runs, "data.frame")
+  expect_true(all(c("run", "reason", "message", "wait_s") %in%
+                    names(result$dropped_runs)))
+  # Given maxTime=2s, cancelGrace=1s, maxWarmup=50000, at least some runs must
+  # be dropped (killed mid-batch or unlaunched before the pool drains).
+  expect_gt(nrow(result$dropped_runs), 0L)
+  # Conservation invariant: completed + dropped == requested (PAR-009)
+  nCompleted <- if (!is.null(result$per_run)) length(result$per_run) else result$nRuns %||% 0L
+  expect_equal(result$requested_nRuns, nCompleted + nrow(result$dropped_runs))
+  # print() must not error when dropped_runs is populated (covers the new
+  # print.MkPosterior branch for PAR-009 display)
+  expect_no_error(capture.output(print(result)))
 })

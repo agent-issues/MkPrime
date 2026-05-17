@@ -281,13 +281,20 @@ RunMkPrime <- function(data, tree = NULL,
     return(invisible(NULL))
   }
 
-  runs       <- execResult$runs
-  stopReason <- execResult$stopReason
-  actualIter <- execResult$actualIter
+  runs        <- execResult$runs
+  stopReason  <- execResult$stopReason
+  actualIter  <- execResult$actualIter
+  drops       <- execResult$drops %||% .EmptyDrops()
+  launchTimes <- execResult$launchTimes
 
   # --- Build result ---
   result <- .BuildResult(runs, model, mkd, mcmc, paramNames, logFilePaths,
-                         actualIter, stopReason, isTempLog = isTempLog)
+                         actualIter, stopReason, isTempLog = isTempLog,
+                         drops = drops)
+
+  # Debug-only field: parent-side launch times (numeric POSIXct seconds) for
+  # each parallel worker, in run order. NULL for non-parallel runs.
+  result$.par_launch_times <- launchTimes
 
   # For temp-log runs, load samples into memory so the result is
   # self-contained (temp files will be deleted by on.exit).
@@ -358,6 +365,8 @@ RunMkPrime <- function(data, tree = NULL,
       logFilePaths <- parResult$logFilePaths
       stopReason   <- parResult$stopReason
       actualIter   <- parResult$actualIter
+      drops        <- parResult$drops
+      launchTimes  <- parResult$launchTimes
 
       if (!is.null(treeFile)) {
         for (r in runs) {
@@ -410,7 +419,11 @@ RunMkPrime <- function(data, tree = NULL,
       }
     }
 
-    list(runs = runs, stopReason = stopReason, actualIter = actualIter)
+    list(runs        = runs,
+         stopReason  = stopReason,
+         actualIter  = actualIter,
+         drops       = if (exists("drops")) drops else .EmptyDrops(),
+         launchTimes = if (exists("launchTimes")) launchTimes else NULL)
   },
   interrupt = function(cond) {
     # M-149: Best-effort checkpoint from shared state.
@@ -1609,6 +1622,19 @@ RunMkPrime <- function(data, tree = NULL,
 
 # --- Parallel run orchestration ---
 
+#' Empty drops data.frame (canonical zero-row structure)
+#' @keywords internal
+.EmptyDrops <- function() {
+  data.frame(
+    run     = integer(0L),
+    reason  = character(0L),
+    message = character(0L),
+    wait_s  = numeric(0L),
+    stringsAsFactors = FALSE
+  )
+}
+
+
 #' Launch and manage parallel independent MCMC runs via `callr`
 #'
 #' Called by [RunMkPrime()] when `mcmc$nCore > 1` and `nRuns > 1`.
@@ -1656,10 +1682,11 @@ RunMkPrime <- function(data, tree = NULL,
   # Cross-run convergence (e.g. R-hat) cannot trigger until every run has
   # produced samples, so when nRuns > nCore the convergence-based early
   # stop is deferred until the pool has drained the queue.
-  poolSize <- min(mcmc$nCore, nRuns)
-  procs    <- vector("list", nRuns)
-  launched <- logical(nRuns)
-  finished <- logical(nRuns)
+  poolSize    <- min(mcmc$nCore, nRuns)
+  procs       <- vector("list", nRuns)
+  launched    <- logical(nRuns)
+  finished    <- logical(nRuns)
+  launchTimes <- rep(NA_real_, nRuns)
 
   # Kill any still-alive workers if we exit via error or interrupt.
   on.exit({
@@ -1709,8 +1736,9 @@ RunMkPrime <- function(data, tree = NULL,
 
   # Launch initial pool.
   for (run in seq_len(poolSize)) {
-    procs[[run]]    <- launchOne(run)
-    launched[run]   <- TRUE
+    procs[[run]]       <- launchOne(run)
+    launched[run]      <- TRUE
+    launchTimes[run]   <- as.numeric(Sys.time())
   }
 
   # Polling loop: sleep -> check stopping criteria -> signal workers if needed.
@@ -1754,9 +1782,10 @@ RunMkPrime <- function(data, tree = NULL,
       }
     }
     while (sum(launched & !finished) < poolSize && any(!launched)) {
-      nextRun           <- which(!launched)[1L]
-      procs[[nextRun]]  <- launchOne(nextRun)
-      launched[nextRun] <- TRUE
+      nextRun                <- which(!launched)[1L]
+      procs[[nextRun]]       <- launchOne(nextRun)
+      launched[nextRun]      <- TRUE
+      launchTimes[nextRun]   <- as.numeric(Sys.time())
     }
 
     # Convergence (reads log files from disk; returns NULL until every
@@ -1821,21 +1850,98 @@ RunMkPrime <- function(data, tree = NULL,
   # `procs[[i]]` NULL for unlaunched runs, and `.BuildResult` cannot cope
   # with the bare initial state from `.InitRun` (no `flush_idx`, `saved_idx`,
   # etc.) — PAR-001. Workers that ignore the cancel file at a long batch
-  # boundary are hard-killed after a 30s grace period — PAR-003.
+  # boundary are hard-killed after a cancelGrace-second grace period — PAR-003.
+  #
+  # PAR-008: track drop reasons so callers can surface diagnostics.
+  # columns: run (int), reason (chr "unlaunched"/"killed"/"errored"),
+  #          message (chr), wait_s (dbl)
+  drops <- data.frame(
+    run     = integer(0L),
+    reason  = character(0L),
+    message = character(0L),
+    wait_s  = numeric(0L),
+    stringsAsFactors = FALSE
+  )
+
+  # PAR-012: configurable cancel-grace timeout (seconds → ms).
+  # Inf is stored as .Machine$integer.max ms ("wait forever") because
+  # processx $wait() does not accept Inf without coercion noise.
+  graceSec <- mcmc$cancelGrace %||% 30L
+  graceMs  <- if (is.infinite(graceSec)) .Machine$integer.max else
+                as.integer(graceSec) * 1000L
+
   completedRuns    <- vector("list", 0L)
   keptLogFilePaths <- character(0L)
+  nUnlaunched      <- 0L
   for (run in seq_len(nRuns)) {
-    if (is.null(procs[[run]])) next                 # never launched
-    procs[[run]]$wait(timeout = 30000)              # PAR-003: 30s max
+    if (is.null(procs[[run]])) {                     # never launched
+      nUnlaunched <- nUnlaunched + 1L
+      drops <- rbind(drops, data.frame(
+        run     = run,
+        reason  = "unlaunched",
+        message = "",
+        wait_s  = 0,
+        stringsAsFactors = FALSE
+      ))
+      next
+    }
+    t0 <- proc.time()["elapsed"]
+    procs[[run]]$wait(timeout = graceMs)             # PAR-003 / PAR-012
+    waitSec <- proc.time()["elapsed"] - t0
     if (procs[[run]]$is_alive()) {
       try(procs[[run]]$kill(), silent = TRUE)
+      cli::cli_warn(c(
+        "Run {run} hard-killed after {round(waitSec, 1)}s cancel-grace.",
+        "i" = "Worker was still running after the grace period \\
+               ({graceSec}s). Increase {.arg cancelGrace} in \\
+               {.fn MkPrimeMCMC} if batches are longer than the grace period."
+      ))
+      drops <- rbind(drops, data.frame(
+        run     = run,
+        reason  = "killed",
+        message = paste0("alive after ", round(waitSec, 1), "s grace"),
+        wait_s  = waitSec,
+        stringsAsFactors = FALSE
+      ))
+      next
     }
-    res <- tryCatch(procs[[run]]$get_result(), error = function(e) NULL)
-    if (is.null(res)) next                          # killed mid-batch
+    errMsg <- ""
+    res <- tryCatch(procs[[run]]$get_result(), error = function(e) {
+      errMsg <<- conditionMessage(e)
+      NULL
+    })
+    if (is.null(res)) {                              # worker crashed
+      cli::cli_warn(c(
+        "Run {run} produced no result (worker error).",
+        "x" = "{errMsg}"
+      ))
+      drops <- rbind(drops, data.frame(
+        run     = run,
+        reason  = "errored",
+        message = errMsg,
+        wait_s  = waitSec,
+        stringsAsFactors = FALSE
+      ))
+      next
+    }
     completedRuns    <- c(completedRuns,    list(res))
     keptLogFilePaths <- c(keptLogFilePaths, logFilePaths[run])
   }
   logFilePaths <- keptLogFilePaths
+
+  # Summary warning for unlaunched runs (benign — expected with early stop).
+  if (nUnlaunched > 0L) {
+    unlaunchedIdx <- drops$run[drops$reason == "unlaunched"]
+    idxStr <- paste(unlaunchedIdx, collapse = ", ")
+    cli::cli_warn(c(
+      "{nUnlaunched} run{?s} never launched (run{?s} {idxStr}): \\
+       stopping criterion fired before the pool reached \\
+       {if (nUnlaunched == 1L) 'it' else 'them'}.",
+      "i" = "This is expected when {.arg maxTime} or convergence fires before \\
+             the pool queue drains. Increase {.arg maxTime} or reduce \\
+             {.arg nRuns} if all runs are needed."
+    ))
+  }
 
   # Take actualIter from the first launched run, if any survived.
   if (length(completedRuns) > 0L) {
@@ -1846,7 +1952,9 @@ RunMkPrime <- function(data, tree = NULL,
     runs         = completedRuns,
     logFilePaths = logFilePaths,
     stopReason   = stopReason,
-    actualIter   = actualIter
+    actualIter   = actualIter,
+    drops        = drops,
+    launchTimes  = launchTimes
   )
 }
 
@@ -2115,8 +2223,12 @@ RunMkPrime <- function(data, tree = NULL,
 #' Build MkPosterior from all runs
 #' @keywords internal
 .BuildResult <- function(runs, model, mkd, mcmc, paramNames, logFilePaths,
-                         actualIter, stopReason, isTempLog = FALSE) {
-  nRuns       <- length(runs)
+                         actualIter, stopReason, isTempLog = FALSE,
+                         drops = NULL) {
+  if (is.null(drops)) drops <- .EmptyDrops()
+  nRuns         <- length(runs)
+  requestedRuns <- mcmc$nRuns %||% nRuns   # PAR-009: original requested count
+
   # PAR-006: when every parallel worker is hard-killed (PAR-003's 30s
   # timeout fires before any batch boundary), .RunParallelRuns returns
   # `runs = list()` and downstream dereferences below crash. Return a
@@ -2137,10 +2249,12 @@ RunMkPrime <- function(data, tree = NULL,
       model = model, data = mkd, mcmc = mcmc,
       warmup = mcmc$warmup, tuning = list()
     )
-    result$nSamples   <- 0L
-    result$nRuns      <- 0L
-    result$stopReason <- stopReason
-    result$actualIter <- actualIter
+    result$nSamples        <- 0L
+    result$nRuns           <- 0L
+    result$requested_nRuns <- requestedRuns
+    result$dropped_runs    <- drops
+    result$stopReason      <- stopReason
+    result$actualIter      <- actualIter
     return(result)
   }
   # Use logFilePaths (not mcmc$logFile) to determine streaming mode: in
@@ -2270,9 +2384,11 @@ RunMkPrime <- function(data, tree = NULL,
     }
   }
 
-  result$stop_reason <- stopReason
-  result$actual_iter <- actualIter
-  result$treeThin    <- mcmc$treeThin
+  result$stop_reason     <- stopReason
+  result$actual_iter     <- actualIter
+  result$treeThin        <- mcmc$treeThin
+  result$requested_nRuns <- requestedRuns    # PAR-009
+  result$dropped_runs    <- drops            # PAR-008
   result
 }
 

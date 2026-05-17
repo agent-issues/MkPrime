@@ -48,6 +48,7 @@ MkPrimeMCMC(
   tuning = list(),
   nCore = getOption("mc.cores", 1L),
   pollInterval = 10L,
+  cancelGrace = 30L,
   gibbsWarmupFactor = 1/3
 )
 }
@@ -315,6 +316,25 @@ rather than via Ctrl-C.}
 
 \item{pollInterval}{Integer. Seconds between convergence polls in parallel
 mode. Ignored when \code{nCore = 1}. Default \code{10L}.}
+
+\item{cancelGrace}{Integer (seconds) or \code{Inf}. After a stopping criterion
+fires (cancel file, \code{maxTime}, convergence), each parallel worker is sent
+a cancel file and given \code{cancelGrace} seconds to finish its current batch
+and exit cleanly. Workers still alive after the grace period are
+hard-killed. Default \code{30L}.
+
+Trade-off:
+\itemize{
+\item \strong{Shorter grace} → quicker abort, but workers mid-batch are hard-killed
+and their in-progress samples are lost (may trigger PAR-006-style
+all-killed scenarios if batches are longer than the grace period).
+\item \strong{Longer grace} → cancel is slower, but workers finish their batch
+reliably before stopping.
+\item \code{Inf} → wait indefinitely; workers are never hard-killed. Use when
+batch completion is more important than a timely abort.
+}
+
+Ignored when \code{nCore = 1}.}
 }
 \value{
 An S3 object of class \code{MkPrimeMCMC}.

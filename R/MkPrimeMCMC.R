@@ -213,6 +213,22 @@
 #'   rather than via Ctrl-C.
 #' @param pollInterval Integer. Seconds between convergence polls in parallel
 #'   mode. Ignored when `nCore = 1`. Default `10L`.
+#' @param cancelGrace Integer (seconds) or `Inf`. After a stopping criterion
+#'   fires (cancel file, `maxTime`, convergence), each parallel worker is sent
+#'   a cancel file and given `cancelGrace` seconds to finish its current batch
+#'   and exit cleanly. Workers still alive after the grace period are
+#'   hard-killed. Default `30L`.
+#'
+#'   Trade-off:
+#'   - **Shorter grace** → quicker abort, but workers mid-batch are hard-killed
+#'     and their in-progress samples are lost (may trigger PAR-006-style
+#'     all-killed scenarios if batches are longer than the grace period).
+#'   - **Longer grace** → cancel is slower, but workers finish their batch
+#'     reliably before stopping.
+#'   - `Inf` → wait indefinitely; workers are never hard-killed. Use when
+#'     batch completion is more important than a timely abort.
+#'
+#'   Ignored when `nCore = 1`.
 #' @param cacheBonus Numeric; multiplier applied to partial-CL-eligible
 #'   move weights (NNI, beta_simplex, Dirichlet, local_dirichlet) when the
 #'   node CL cache is valid. Default 5. A value of 1 disables the boost.
@@ -339,6 +355,7 @@ MkPrimeMCMC <- function(
     tuning = list(),
     nCore = getOption("mc.cores", 1L),
     pollInterval = 10L,
+    cancelGrace = 30L,
     gibbsWarmupFactor = 1/3
 ) {
   nIter <- if (is.infinite(nIter)) Inf else as.integer(nIter)
@@ -560,6 +577,19 @@ MkPrimeMCMC <- function(
   if (pollInterval < 1L) {
     cli::cli_abort("{.arg pollInterval} must be a positive integer.")
   }
+  # cancelGrace: positive integer (seconds) or Inf (wait forever).
+  # Inf is stored as-is; .RunParallelRuns converts it to .Machine$integer.max
+  # for processx's wait(timeout = ...) which does not accept Inf directly.
+  if (is.infinite(cancelGrace)) {
+    cancelGrace <- Inf
+  } else {
+    cancelGrace <- suppressWarnings(as.integer(cancelGrace))
+    if (is.na(cancelGrace) || cancelGrace < 1L) {
+      cli::cli_abort(
+        "{.arg cancelGrace} must be a positive integer (seconds) or {.val Inf}."
+      )
+    }
+  }
   cacheBonus <- as.numeric(cacheBonus)
   if (is.na(cacheBonus) || cacheBonus < 1) {
     cli::cli_abort("{.arg cacheBonus} must be >= 1, got {cacheBonus}.")
@@ -619,6 +649,7 @@ MkPrimeMCMC <- function(
          cacheBonus = cacheBonus,
          tuning = tuning,
          nCore = nCore, pollInterval = pollInterval,
+         cancelGrace = cancelGrace,
          gibbsWarmupFactor = gibbsWarmupFactor),
     class = "MkPrimeMCMC"
   )
