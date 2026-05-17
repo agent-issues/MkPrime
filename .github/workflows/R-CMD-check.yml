@@ -151,6 +151,14 @@ jobs:
             check
             coverage
 
+      - name: Pre-install package for Quarto vignette subprocess
+        # Quarto spawns a fresh R process when rendering .qmd vignettes; that
+        # subprocess uses R_LIBS_USER, not the R CMD check temp library.
+        # Pre-installing here ensures library("MkPrime") succeeds on all OSes.
+        if: runner.os == 'Windows'
+        run: R CMD INSTALL --no-multiarch .
+        shell: bash
+
       - name: Check package
         uses: r-lib/actions/check-r-package@v2
 

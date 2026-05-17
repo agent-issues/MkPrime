@@ -48,7 +48,7 @@ VignetteBuilder: quarto
 LinkingTo:
     Rcpp,
     TreeTools
-Config/Needs/check: rcmdcheck, testthat
+Config/Needs/check: rcmdcheck, testthat, phangorn
 Config/Needs/coverage: covr
 Config/Needs/memcheck: pkgdown, testthat, phangorn
 Config/Needs/website: pkgdown

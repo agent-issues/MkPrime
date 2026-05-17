@@ -49,6 +49,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Reduce ASLR entropy for ASan shadow mapping
+        # ASan requires a fixed shadow-memory range; modern Linux kernels with
+        # high vm.mmap_rnd_bits (default 32 on ubuntu-24.04) can place mappings
+        # that collide with that range, causing an immediate abort.
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+
       - name: Initialize ASan configuration
         run: |
           export LD_PRELOAD=$(gcc -print-file-name=libasan.so)
