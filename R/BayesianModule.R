@@ -1,4 +1,4 @@
-# R/BayesianModule.R
+﻿# R/BayesianModule.R
 # Reusable Shiny module: launch MkPrime MCMC as a detached Rscript process,
 # poll TSV log files for live progress, and support Reconnect after a session
 # restart.  Depends on M-075 (logFile streaming) and M-081 (cancelFile).
@@ -117,7 +117,7 @@
     ')',
     'if (!is.null(result)) {',
     '  # Write to a temp file then rename so result.rds is either complete or',
-    '  # absent — prevents a partial file if the process is killed during saveRDS.',
+    '  # absent -- prevents a partial file if the process is killed during saveRDS.',
     '  tmp <- paste0(file.path(.d, "result.rds"), ".tmp")',
     '  saveRDS(result, tmp)',
     '  file.rename(tmp, file.path(.d, "result.rds"))',
@@ -215,7 +215,7 @@ MkBayesianUi <- function(id) {
 #' Progress is polled every five seconds by reading the streaming TSV log
 #' files produced by [RunMkPrime()].
 #'
-#' @param id Shiny module namespace ID — must match the `id` passed to
+#' @param id Shiny module namespace ID -- must match the `id` passed to
 #'   [MkBayesianUi()].
 #' @param dataset A *reactive* that returns a `phyDat` object, or `NULL`
 #'   when no dataset is loaded.  Supplied by the host app.
@@ -246,7 +246,7 @@ MkBayesianServer <- function(id, dataset, startTree = NULL) {
       status     = "idle",  # idle | running | done | cancelled | error
       job        = NULL,    # list: logDir, logFiles, cancelFile, checkpointFile, nRuns, startTime, pid
       proc       = NULL,    # processx::process handle (NULL after session restart)
-      logSamples = NULL,    # matrix from .ReadAllLogs() — latest poll
+      logSamples = NULL,    # matrix from .ReadAllLogs() -- latest poll
       errorMsg   = NULL
     )
 
@@ -424,11 +424,11 @@ MkBayesianServer <- function(id, dataset, startTree = NULL) {
 
     # ---- Reconnect -----------------------------------------------------------
     # Decision tree:
-    #   done signal         → "done"  (no relaunch)
-    #   error file          → relaunch from checkpoint if present, else "error"
-    #   cancel signal       → relaunch from checkpoint if present, else "cancelled"
-    #   no signals, PID alive  → "running" (re-attach monitoring)
-    #   no signals, PID dead   → relaunch from checkpoint if present, else "error"
+    #   done signal         -> "done"  (no relaunch)
+    #   error file          -> relaunch from checkpoint if present, else "error"
+    #   cancel signal       -> relaunch from checkpoint if present, else "cancelled"
+    #   no signals, PID alive  -> "running" (re-attach monitoring)
+    #   no signals, PID dead   -> relaunch from checkpoint if present, else "error"
 
     shiny::observeEvent(input$reconnect, {
       logDir  <- trimws(input$logDir)
@@ -452,7 +452,7 @@ MkBayesianServer <- function(id, dataset, startTree = NULL) {
       rv$logSamples <- .ReadAllLogs(job$logFiles)
       rv$errorMsg   <- NULL
 
-      cpFile   <- job$checkpointFile  # NULL on old job.rds → file.exists(NULL) = FALSE
+      cpFile   <- job$checkpointFile  # NULL on old job.rds -> file.exists(NULL) = FALSE
       haveCp   <- !is.null(cpFile) && file.exists(cpFile)
 
       if (file.exists(file.path(job$logDir, "mkp_done.signal"))) {

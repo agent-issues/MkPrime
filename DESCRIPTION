@@ -41,9 +41,12 @@ Suggests:
     knitr,
     quarto,
     shiny (>= 1.7.0),
+    phangorn,
+    pkgload,
     testthat (>= 3.0.0),
     TreeDist,
-    TreeSearch
+    TreeSearch,
+    withr
 VignetteBuilder: quarto
 LinkingTo:
     Rcpp,

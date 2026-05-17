@@ -211,6 +211,11 @@ more often. Much cheaper than Gibbs SPR (no likelihood evaluation per
 candidate), but better guided than uniform SPR.
 See Yang & Rodríguez (2013); Ronquist et al. (2020).}
 
+\item{gibbsWarmupFactor}{Numeric in (0, 1]; weight of the Gibbs kPrime
+sweep relative to other moves during warmup (default \code{1/3}).
+A lower value reduces warmup overhead from the sweep; the weight is
+restored at the warmup-to-tuning transition.}
+
 \item{joint2d}{Logical; include 2D joint Bactrian proposals for
 correlated parameter pairs (default \code{TRUE}). Proposes correlated
 updates to tree_length × rate_log_sd (and tree_length × rate_loss

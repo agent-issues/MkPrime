@@ -193,7 +193,7 @@ RunMkPrime <- function(data, tree = NULL,
   if (mcmc$thinWasAuto) {
     mcmc$thin <- length(moves)
   }
-  # Resolve treeThin: NULL → same as thin; validate multiple-of-thin
+  # Resolve treeThin: NULL -> same as thin; validate multiple-of-thin
   mcmc$treeThinWasAuto <- is.null(mcmc$treeThin)
   if (mcmc$treeThinWasAuto) {
     mcmc$treeThin <- mcmc$thin
@@ -231,7 +231,7 @@ RunMkPrime <- function(data, tree = NULL,
   if (isTempLog) {
     mcmc$logFile <- tempfile("mkp_run_", fileext = ".log")
   }
-  # Always checkpoint — derive from log path if not already set
+  # Always checkpoint -- derive from log path if not already set
   if (is.null(mcmc$checkpointFile)) {
     mcmc$checkpointFile <- sub("\\.[^.]+$", ".ckp", mcmc$logFile)
   }
@@ -250,7 +250,7 @@ RunMkPrime <- function(data, tree = NULL,
   }
   .mkp_env$active_temp_logs <- tempFiles
 
-  # Clean up temp files on normal exit or error — but NOT on interrupt,
+  # Clean up temp files on normal exit or error -- but NOT on interrupt,
   # where we want MkPrimeRecover() to find them.
   if (isTempLog) {
     on.exit(.CleanupTempLogs(tempFiles), add = TRUE)
@@ -260,9 +260,9 @@ RunMkPrime <- function(data, tree = NULL,
   if (!is.null(treeFile)) writeLines("", treeFile)
 
   # Column indices for tree reconstruction in scalar_samples (1-based R).
-  # Layout: log_post, log_lik, tree_length, [rate_loss — if hasNeo],
-  #         rate_log_sd, [p — geometric only], [rate_neo — if hasNeo],
-  #         [beta_scale — if qHet], kPrime_i..., br_j...
+  # Layout: log_post, log_lik, tree_length, [rate_loss -- if hasNeo],
+  #         rate_log_sd, [p -- geometric only], [rate_neo -- if hasNeo],
+  #         [beta_scale -- if qHet], kPrime_i..., br_j...
   isLogseries <- identical(model$kPrimePrior, "logseries")
   pCols       <- if (isLogseries) 0L else 1L
   neoCols     <- if (hasNeo) 2L else 0L   # rate_loss + rate_neo
@@ -276,7 +276,7 @@ RunMkPrime <- function(data, tree = NULL,
 
   # If interrupted, on.exit cleanup is cancelled and we return early
   if (identical(execResult, "interrupted")) {
-    # Cancel the on.exit cleanup — temp logs must survive for recovery
+    # Cancel the on.exit cleanup -- temp logs must survive for recovery
     on.exit(NULL, add = FALSE)
     return(invisible(NULL))
   }
@@ -743,8 +743,8 @@ RunMkPrime <- function(data, tree = NULL,
   hasNeo        <- any(mkd$type == "neomorphic")
 
   # Auto-pin always-accept moves (Gibbs, slice) at initial weights.
-  # The warmup scheduler's score (accept_rate × dim / cost) gives these
-  # astronomical scores because acceptance = 1.0 and cost ≈ 0; this inflates
+  # The warmup scheduler's score (accept_rate x dim / cost) gives these
+  # astronomical scores because acceptance = 1.0 and cost ~ 0; this inflates
   # their weight and starves bottleneck MH moves.  One Gibbs draw or slice
   # sample per cycle is already optimal, so freeze them.
   # Also pin hyperparameter moves (kprime_alpha/beta): they are cheap but
@@ -782,7 +782,7 @@ RunMkPrime <- function(data, tree = NULL,
 
   # --- Three-phase state machine ---
   # Determine initial phase from checkpoint or fresh start.
-  # Phases: "Warmup" → "Tuning" → "Sample"
+  # Phases: "Warmup" -> "Tuning" -> "Sample"
   phase <- r$phase %||% (if (startIter <= mcmc$warmup) "Warmup" else "Sample")
   # M-141: wall-clock start of sample phase (for ETA estimation)
   sampleWallStart <- if (phase == "Sample") startTime else NA_real_
@@ -792,7 +792,7 @@ RunMkPrime <- function(data, tree = NULL,
   logPostHistory     <- r$logPostHistory %||% numeric(0)
   nStableConsecutive <- r$nStableConsecutive %||% 0L
   # Anchor iteration for warmup ETA. Fixed at minWarmup initially; only
-  # advances when a confirmed stable-check streak resets (prevCount > 0 → 0),
+  # advances when a confirmed stable-check streak resets (prevCount > 0 -> 0),
   # so the displayed ETA doesn't slide forward every batch while the chain is
   # still in the pre-check or non-stabilising phase.
   warmupAnchor       <- r$warmupAnchor %||% mcmc$minWarmup
@@ -819,9 +819,9 @@ RunMkPrime <- function(data, tree = NULL,
   effectiveTuningBudget <- r$effectiveTuningBudget %||% mcmc$tuningBudget
 
   # M-149: Re-allocate tuning infrastructure on Tuning-phase resume.
-  # The tuningBuf is normally allocated at the Warmup→Tuning transition,
+  # The tuningBuf is normally allocated at the Warmup->Tuning transition,
   # but that code doesn't re-run on resume.  Without this, the first saved
-  # sample during Tuning hits nrow(NULL) → crash.
+  # sample during Tuning hits nrow(NULL) -> crash.
   if (phase == "Tuning") {
     tuningBufSize <- as.integer(effectiveTuningBudget / mcmc$thin) + 100L
     tuningBuf <- matrix(NA_real_, nrow = tuningBufSize,
@@ -1022,7 +1022,7 @@ RunMkPrime <- function(data, tree = NULL,
       nStableRequired <- 3L
       # Anchor-based horizon: does not slide with batchEnd while the chain is
       # in a non-stabilising streak. stabCheckPeriod matches the windowSize=10
-      # hardcoded in .CheckStabilisation() × warmupBatch (actual check interval).
+      # hardcoded in .CheckStabilisation() x warmupBatch (actual check interval).
       stabCheckPeriod <- 10L * warmupBatch
       warmupHorizon <- max(mcmc$minWarmup,
                            warmupAnchor + nStableRequired * stabCheckPeriod)
@@ -1035,10 +1035,10 @@ RunMkPrime <- function(data, tree = NULL,
       )
 
       # M-171: Reduce Gibbs kPrime sweep frequency during warmup.
-      # The sweep costs ~200 ms/call and pinned at weight ∝ nTrans; calling
-      # it at 1/3 weight cuts warmup sweep overhead ~3× while int_walk and
+      # The sweep costs ~200 ms/call and pinned at weight prop. nTrans; calling
+      # it at 1/3 weight cuts warmup sweep overhead ~3x while int_walk and
       # block_shift moves maintain k' exploration between sweeps. Full weight
-      # is restored at the Warmup→Tuning/Sample transition below.
+      # is restored at the Warmup->Tuning/Sample transition below.
       moveWeights <- .WarmupGibbsCap(moveWeights, pinnedWeights, gibbsKpIdx,
                                       factor = mcmc$gibbsWarmupFactor %||% (1/3))
 
@@ -1065,7 +1065,7 @@ RunMkPrime <- function(data, tree = NULL,
         prevNStableConsecutive <- nStableConsecutive
         nStableConsecutive <- stabResult$nStableConsecutive
         r$nStableConsecutive <- nStableConsecutive
-        # Advance anchor only when a confirmed streak resets: prevCount > 0 → 0.
+        # Advance anchor only when a confirmed streak resets: prevCount > 0 -> 0.
         # Early-exit zeros (not enough data yet) don't advance the anchor.
         if (nStableConsecutive == 0L && prevNStableConsecutive > 0L) {
           warmupAnchor   <- batchEnd
@@ -1076,7 +1076,7 @@ RunMkPrime <- function(data, tree = NULL,
           # M-171: Restore gibbs_kPrime to full pinned weight before Tuning/Sample.
           moveWeights <- .RestoreGibbsCap(moveWeights, pinnedWeights, gibbsKpIdx)
 
-          # Transition: Warmup → Tuning (or Sample if autoTune = FALSE)
+          # Transition: Warmup -> Tuning (or Sample if autoTune = FALSE)
           if (batchEnd >= mcmc$warmup && !stabResult$stable) {
             cli::cli_warn(
               "Warmup reached {.arg maxWarmup} ({mcmc$warmup}) without stabilisation."
@@ -1211,7 +1211,7 @@ RunMkPrime <- function(data, tree = NULL,
 
           if (tuningRoundsDone >= mcmc$tuningRounds ||
               tuningIterUsed >= effectiveTuningBudget) {
-            # Transition: Tuning → Sample
+            # Transition: Tuning -> Sample
             phase      <- "Sample"
             r$phase    <- phase
             phaseLabel <- "Sample"
@@ -1264,7 +1264,7 @@ RunMkPrime <- function(data, tree = NULL,
     }
 
     # Warmup/tuning checkpoint at checkEvery intervals so long warmups
-    # are recoverable.  No samples to flush — just save chain state.
+    # are recoverable.  No samples to flush -- just save chain state.
     if (phase != "Sample" && !is.null(checkpointFile) &&
         !is.null(mcmc$checkEvery) && mcmc$checkEvery > 0L &&
         (batchEnd %/% mcmc$checkEvery) >
@@ -1370,7 +1370,7 @@ RunMkPrime <- function(data, tree = NULL,
       if (!is.null(diagCheck)) {
         # M-141: ETA from worst-case ESS accumulation rate.
         # Use whichever criterion (scalar ESS or tree ESS) has the
-        # worst current/target ratio — that's the binding constraint.
+        # worst current/target ratio -- that's the binding constraint.
         elapsedSample <- proc.time()["elapsed"] - sampleWallStart
         etaCurrent <- diagCheck$minEss
         etaTarget  <- mcmc$minEss
@@ -1524,7 +1524,7 @@ RunMkPrime <- function(data, tree = NULL,
     }
 
     # No cross-run convergence needed when nRuns < 2 or no maxRhat
-    # (defensive — caller should not route here in those cases).
+    # (defensive -- caller should not route here in those cases).
     if (nRuns < 2L || is.null(mcmc$maxRhat)) {
       return(list(runs = runs,
                   stopReason = runs[[nRuns]]$stop_reason,
@@ -1749,7 +1749,7 @@ RunMkPrime <- function(data, tree = NULL,
 
   # Progress display and live trace plot
   hasProgressFn <- !is.null(mcmc$progressFn) && is.function(mcmc$progressFn)
-  pollStatus <- "Waiting for workers…"
+  pollStatus <- "Waiting for workers..."
   cli::cli_progress_bar(
     "Parallel MCMC ({nRuns} runs)",
     format       = "{cli::pb_spin} {pollStatus}",
@@ -1840,7 +1840,7 @@ RunMkPrime <- function(data, tree = NULL,
   }
 
   pollStatus <- paste0(
-    "Parallel MCMC (", nRuns, " runs) — ",
+    "Parallel MCMC (", nRuns, " runs) -- ",
     stopReason, " [", .FormatElapsed(proc.time()["elapsed"] - startTime), "]"
   )
   cli::cli_progress_done()
@@ -1849,8 +1849,8 @@ RunMkPrime <- function(data, tree = NULL,
   # output: an early break via cancel/maxTime when nRuns > nCore can leave
   # `procs[[i]]` NULL for unlaunched runs, and `.BuildResult` cannot cope
   # with the bare initial state from `.InitRun` (no `flush_idx`, `saved_idx`,
-  # etc.) — PAR-001. Workers that ignore the cancel file at a long batch
-  # boundary are hard-killed after a cancelGrace-second grace period — PAR-003.
+  # etc.) -- PAR-001. Workers that ignore the cancel file at a long batch
+  # boundary are hard-killed after a cancelGrace-second grace period -- PAR-003.
   #
   # PAR-008: track drop reasons so callers can surface diagnostics.
   # columns: run (int), reason (chr "unlaunched"/"killed"/"errored"),
@@ -1863,7 +1863,7 @@ RunMkPrime <- function(data, tree = NULL,
     stringsAsFactors = FALSE
   )
 
-  # PAR-012: configurable cancel-grace timeout (seconds → ms).
+  # PAR-012: configurable cancel-grace timeout (seconds -> ms).
   # Inf is stored as .Machine$integer.max ms ("wait forever") because
   # processx $wait() does not accept Inf without coercion noise.
   graceSec <- mcmc$cancelGrace %||% 30L
@@ -1929,7 +1929,7 @@ RunMkPrime <- function(data, tree = NULL,
   }
   logFilePaths <- keptLogFilePaths
 
-  # Summary warning for unlaunched runs (benign — expected with early stop).
+  # Summary warning for unlaunched runs (benign -- expected with early stop).
   if (nUnlaunched > 0L) {
     unlaunchedIdx <- drops$run[drops$reason == "unlaunched"]
     idxStr <- paste(unlaunchedIdx, collapse = ", ")
@@ -2029,7 +2029,7 @@ RunMkPrime <- function(data, tree = NULL,
   combined <- do.call(rbind, perRunSamples)
   ess <- .EssMatrix(combined)
 
-  # kPrime are discrete nuisance parameters — exclude from convergence criteria
+  # kPrime are discrete nuisance parameters -- exclude from convergence criteria
   # (M-098). They remain in the `ess` vector for display in .PrintProgressTable.
   isConvParam <- !grepl("^kPrime_", names(ess)) & names(ess) != "log_likelihood"
   minEss <- min(ess[isConvParam], na.rm = TRUE)
@@ -2120,7 +2120,7 @@ RunMkPrime <- function(data, tree = NULL,
 
   if (any(vapply(perRunSamples, is.null, logical(1L)))) return(NULL)
 
-  # Equalise chain lengths — serial runs may produce different sample counts.
+  # Equalise chain lengths -- serial runs may produce different sample counts.
   # Keep the most recent (tail) samples to avoid penalising early convergers.
   nRows   <- vapply(perRunSamples, nrow, integer(1L))
   minRows <- min(nRows)
@@ -2619,7 +2619,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
   if (isStreaming) {
     # Rewind each log file to the checkpoint's saved_idx.  Any samples
-    # flushed after the last checkpoint are discarded — the chain state
+    # flushed after the last checkpoint are discarded -- the chain state
     # doesn't cover them.  Buffer reinit happens inside .RunMkPrimeSingleRun.
     for (run in seq_len(nRuns)) {
       .TruncateLogToN(logFilePaths[run],
@@ -2679,7 +2679,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                  actualIter, stopReason)
   },
   interrupt = function(cond) {
-    # M-175: interrupt handler missing from resume path — mirror .RunWithRecovery.
+    # M-175: interrupt handler missing from resume path -- mirror .RunWithRecovery.
     # `runs` here reflects the last successfully completed batch state.
     bestIter <- max(c(0L, vapply(runs,
                                   function(r) r$actual_iter %||% 0L,
@@ -2786,7 +2786,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 }
 
 
-#' Build scale tuning matrix for run_mcmc_batch_cpp (nChains × nMoves)
+#' Build scale tuning matrix for run_mcmc_batch_cpp (nChains x nMoves)
 #' @keywords internal
 .BuildScaleTuningMatrix <- function(chainTuning, moves) {
   nChains <- length(chainTuning)
@@ -2819,7 +2819,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 }
 
 
-#' Build slice width matrix for run_mcmc_batch_cpp (nChains × nMoves)
+#' Build slice width matrix for run_mcmc_batch_cpp (nChains x nMoves)
 #' @keywords internal
 .BuildSliceWidthMatrix <- function(chainTuning, moves) {
   nChains <- length(chainTuning)
@@ -2850,7 +2850,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 }
 
 
-#' Build joint-rho matrix (nChains × nMoves) for 2D joint Bactrian moves
+#' Build joint-rho matrix (nChains x nMoves) for 2D joint Bactrian moves
 #' @keywords internal
 .BuildJointRhoMatrix <- function(chainRhos, moves, nChains) {
   nMoves <- length(moves)
@@ -2897,7 +2897,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   rhos <- list(rho_tl_rls = 0.0, rho_tl_rl = 0.0)
   if (is.null(samples) || nrow(samples) < 50) return(rhos)
 
-  # tree_length × rate_log_sd
+  # tree_length x rate_log_sd
   if (all(c("tree_length", "rate_log_sd") %in% colnames(samples))) {
     tl <- samples[, "tree_length"]
     rls <- samples[, "rate_log_sd"]
@@ -2911,7 +2911,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     }
   }
 
-  # tree_length × rate_loss
+  # tree_length x rate_loss
   if (hasNeo && all(c("tree_length", "rate_loss") %in% colnames(samples))) {
     tl <- samples[, "tree_length"]
     rl <- samples[, "rate_loss"]
@@ -3072,7 +3072,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
   # Block Dirichlet simplex branch-length move (M-125)
   if (isTRUE(mcmc$dirichletBranch) && nEdge >= 4L) {
-    # M-127: K=5 empirically optimal (K sweep: 22× baseline at K=5 vs 2× at K=10)
+    # M-127: K=5 empirically optimal (K sweep: 22x baseline at K=5 vs 2x at K=10)
     nCatsDirichlet <- as.integer(mcmc$dirichletK %||% min(nEdge, 5L))
     moves <- c(moves, list(
       list(name = "dirichlet_branch", type = "dirichlet_simplex",
@@ -3083,7 +3083,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     ))
   }
 
-  # M-127: localized Dirichlet — connected edges for compact partial eval
+  # M-127: localized Dirichlet -- connected edges for compact partial eval
   if (isTRUE(mcmc$localDirichlet) && nEdge >= 4L) {
     nCatsLocal <- as.integer(mcmc$localDirichletK %||% min(nEdge, 6L))
     moves <- c(moves, list(
@@ -3097,7 +3097,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
   if (nTrans > 0) {
     kPrimeMoves <- list(
-      # Univariate integer walk (reduced weight — Gibbs sweep does heavy lifting)
+      # Univariate integer walk (reduced weight -- Gibbs sweep does heavy lifting)
       list(name = "kPrime", type = "int_walk", target = "kPrime",
            weight = max(1, nTrans), dim = 1L),
       # Gibbs kPrime sweep: sample all k'_i from full conditionals
@@ -3108,15 +3108,15 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
            target = "kPrime", weight = 2, dim = 1L)
     )
     if (identical(kPrimePrior, "beta_geometric")) {
-      # Scale proposals for shared (α, β) hyperparameters.
-      # Weights must be large enough for adaptation to fire (≥10 proposals
-      # per ~1000-iteration tuning round, so ≥1% share of total weight).
+      # Scale proposals for shared (alpha, beta) hyperparameters.
+      # Weights must be large enough for adaptation to fire (>=10 proposals
+      # per ~1000-iteration tuning round, so >=1% share of total weight).
       kPrimeMoves <- c(kPrimeMoves, list(
         list(name = "kprime_alpha", type = "kprime_alpha",
              target = "kprime_alpha", weight = 0.5, dim = 1L),
         list(name = "kprime_beta", type = "kprime_beta",
              target = "kprime_beta", weight = 0.5, dim = 1L),
-        # Prior-only slice samplers — robust, tuning-free exploration
+        # Prior-only slice samplers -- robust, tuning-free exploration
         list(name = "slice_kprime_alpha", type = "slice_kprime_hyper",
              target = "kprime_alpha", weight = 2, dim = 1L,
              sliceParamIdx = 0L),
@@ -3439,7 +3439,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       logHastings <- prop$logHastings
     },
     logit_scale_p = {
-      # Logit-scale MH on p with Jacobian — robust near the boundary.
+      # Logit-scale MH on p with Jacobian -- robust near the boundary.
       # This R fallback uses a normal step on the logit scale; the C++ path
       # uses a Bactrian perturbation but the proposal kernel is symmetric in
       # both cases so the Hastings ratio reduces to the Jacobian alone.
@@ -3839,7 +3839,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   weights
 }
 
-#' Restore gibbs_kPrime to its pinned weight at the Warmup→Tuning/Sample transition.
+#' Restore gibbs_kPrime to its pinned weight at the Warmup->Tuning/Sample transition.
 #'
 #' Undoes the reduction applied by `.WarmupGibbsCap()`. Excess weight is reclaimed
 #' proportionally from non-pinned moves.
@@ -4110,7 +4110,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' @param nStableConsecutive Integer counter of consecutive stable checks
 #'   so far (carried across calls).
 #' @param windowSize Number of snapshots per comparison window.
-#'   Default 10 (= 10 × 500 = 5000 iterations at default batch size).
+#'   Default 10 (= 10 x 500 = 5000 iterations at default batch size).
 #' @param zThreshold Absolute z-score threshold for declaring stability.
 #'   Default 1.5.
 #' @param nStableRequired Number of consecutive stable checks required.
@@ -4140,7 +4140,7 @@ if (n < 2L * windowSize) {
   nP    <- length(prev)
 
   denom <- sqrt(varR / nR + varP / nP)
-  # If both windows have zero variance, chain is flat → stable
+  # If both windows have zero variance, chain is flat -> stable
   if (denom < .Machine$double.eps) {
     nStableConsecutive <- nStableConsecutive + 1L
   } else {
