@@ -149,7 +149,7 @@ clean stop: \code{file.create(cancelFile)}. See also \code{\link[=MkCancelPath]{
 
 \item{checkpointFile}{Path to write checkpoint RDS files. \code{NULL}
 (default) auto-derives from \code{logFile} when set
-(e.g. \code{"run.log"} \u2192 \code{"run.ckp"}). Set to \code{FALSE} to
+(e.g. \code{"run.log"} -> \code{"run.ckp"}). Set to \code{FALSE} to
 disable checkpointing. Checkpoints are saved at each
 convergence check interval and on cancel.}
 
