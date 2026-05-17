@@ -130,6 +130,14 @@ jobs:
       - name: Set up Quarto
         uses: quarto-dev/quarto-actions/setup@v2
 
+      - name: Add Quarto to PATH (Windows / Scoop)
+        # quarto-dev/quarto-actions#59: Scoop installs quarto but doesn't
+        # add its shims dir to GITHUB_PATH, so quarto.exe is invisible to
+        # R CMD check. Prepend the shims directory explicitly.
+        if: runner.os == 'Windows'
+        run: echo "$env:USERPROFILE\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        shell: pwsh
+
       - name: Install apt packages
         if: runner.os == 'Linux'
         run: |
