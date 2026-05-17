@@ -38,7 +38,9 @@ jobs:
         apt-get update && apt-get install -y sudo
         cd /home/docker/R-svn/
         . /home/docker/rchk/scripts/cmpconfig.inc
-        for var in CPICFLAGS CFLAGS CXXFLAGS CC CXX PATH LLVM_COMPILER \
+        # Deliberately exclude PATH: it adds /home/docker/R-svn/bin first,
+        # which routes Rscript to an LLVM stub that lacks exec/R.
+        for var in CPICFLAGS CFLAGS CXXFLAGS CC CXX LLVM_COMPILER \
                    PKG_BUILD_DIR R_LIBS R_LIBSONLY LD; do
           echo "$var=${!var}" >> "$GITHUB_ENV"
         done

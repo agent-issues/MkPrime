@@ -72,10 +72,13 @@ jobs:
 
       - name: Install package
         run: |
-          cd ..
-          R CMD build --no-build-vignettes --no-manual --no-resave-data MkPrime
+          # Build from parent dir so the tarball lands outside the source tree;
+          # use $GITHUB_WORKSPACE (not a hardcoded package name) because the
+          # checkout directory matches the repo name ("r"), not the package name.
+          cd "$GITHUB_WORKSPACE/.."
+          R CMD build --no-build-vignettes --no-manual --no-resave-data "$GITHUB_WORKSPACE"
           R CMD INSTALL MkPrime*.tar.gz
-          cd MkPrime
+          cd "$GITHUB_WORKSPACE"
 
       - name: ASAN - memcheck ${{ matrix.config.test }}
         run: |
