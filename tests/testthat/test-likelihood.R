@@ -244,6 +244,7 @@ test_that("MkN pruning: asymmetric rate changes likelihood", {
 
 # Regression test for M-144: MkN root frequency swap between R and C++ paths
 test_that("C++ MCMC engine MkN likelihood matches R-side at rate_loss != 1", {
+  skip_if_not_installed("phangorn")
   library("TreeTools")
 
   set.seed(6184)
