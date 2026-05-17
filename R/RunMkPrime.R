@@ -455,7 +455,23 @@ RunMkPrime <- function(data, tree = NULL,
                error = function(e) 0L)
     }, integer(1L)))
 
-    if (ckpSaved) {
+    isParallel <- isTRUE(mcmc$nCore > 1L) && isTRUE(mcmc$nRuns > 1L)
+    if (isParallel) {
+      # PAR-002: workers in callr subprocesses cannot update shared$actualIter,
+      # so the checkpoint can't be advanced past iter 0. Be explicit so the
+      # user does not expect ResumeMkPrime() to continue from here.
+      cli::cli_alert_warning(c(
+        "Parallel run interrupted. {nSaved} sample{?s} saved to log file{?s}.",
+        "!" = "Worker state is not checkpointed for parallel runs \\
+               ({.code nCore > 1}); {.fn ResumeMkPrime} will start a fresh \\
+               run, not continue from here.",
+        "i" = "Load the partial samples for inspection: \\
+               {.code posterior <- MkPrimeRecover()}",
+        "i" = "For long parallel runs, prefer a bounded {.arg nIter} with \\
+               {.arg maxTime} so {.fn RunMkPrime} returns naturally rather \\
+               than via interrupt."
+      ))
+    } else if (ckpSaved) {
       cli::cli_alert_warning(c(
         "Run interrupted at iteration {shared$actualIter}. \\
          {nSaved} sample{?s} saved to log file{?s}.",
@@ -1655,7 +1671,7 @@ RunMkPrime <- function(data, tree = NULL,
                       paramNames, nEdge, brColStart, logPath, cfPath,
                       convWindowSize, seed) {
         assign(".Random.seed", seed, envir = globalenv())
-        MkPrime:::.RunMkPrimeSingleRun(
+        .RunMkPrimeSingleRun(
           mkd, model, mcmc, runState, moves, tipLabels, run,
           paramNames, nEdge, brColStart,
           logFilePath    = logPath,
@@ -1797,19 +1813,31 @@ RunMkPrime <- function(data, tree = NULL,
   )
   cli::cli_progress_done()
 
-  # Collect results. Launched runs: wait for the worker and take its return
-  # value. Never-launched runs (possible after early break via cancel/maxTime
-  # when nRuns > nCore): keep the initial state passed in via `runs`.
-  completedRuns <- runs
+  # Collect results. Shrink the result list to only runs that produced
+  # output: an early break via cancel/maxTime when nRuns > nCore can leave
+  # `procs[[i]]` NULL for unlaunched runs, and `.BuildResult` cannot cope
+  # with the bare initial state from `.InitRun` (no `flush_idx`, `saved_idx`,
+  # etc.) — PAR-001. Workers that ignore the cancel file at a long batch
+  # boundary are hard-killed after a 30s grace period — PAR-003.
+  completedRuns    <- vector("list", 0L)
+  keptLogFilePaths <- character(0L)
   for (run in seq_len(nRuns)) {
-    if (!is.null(procs[[run]])) {
-      procs[[run]]$wait()
-      completedRuns[[run]] <- procs[[run]]$get_result()
+    if (is.null(procs[[run]])) next                 # never launched
+    procs[[run]]$wait(timeout = 30000)              # PAR-003: 30s max
+    if (procs[[run]]$is_alive()) {
+      try(procs[[run]]$kill(), silent = TRUE)
     }
+    res <- tryCatch(procs[[run]]$get_result(), error = function(e) NULL)
+    if (is.null(res)) next                          # killed mid-batch
+    completedRuns    <- c(completedRuns,    list(res))
+    keptLogFilePaths <- c(keptLogFilePaths, logFilePaths[run])
   }
+  logFilePaths <- keptLogFilePaths
 
-  # Take actualIter from the first launched run (always run 1 by construction)
-  actualIter <- completedRuns[[1L]]$actual_iter %||% actualIter
+  # Take actualIter from the first launched run, if any survived.
+  if (length(completedRuns) > 0L) {
+    actualIter <- completedRuns[[1L]]$actual_iter %||% actualIter
+  }
 
   list(
     runs         = completedRuns,

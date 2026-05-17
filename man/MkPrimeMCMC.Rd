@@ -301,7 +301,17 @@ dispatched from a rolling pool of \code{nCore} workers: as each finishes,
 the next pending run launches in its place. Cross-run convergence
 (\code{maxRhat}) cannot trigger early in this regime — it activates only
 once every run has produced samples — so prefer \code{nRuns <= nCore}
-when convergence-based early stopping matters.}
+when convergence-based early stopping matters.
+
+\strong{Interrupt-resume is supported only for serial runs (\code{nCore = 1}).}
+In parallel mode workers run in separate \code{callr::r_bg()} processes
+and cannot write to the parent's checkpoint state, so an interrupted
+parallel run leaves only the streaming log files on disk; partial
+samples can be loaded with \code{\link[=MkPrimeRecover]{MkPrimeRecover()}} for inspection, but
+\code{\link[=ResumeMkPrime]{ResumeMkPrime()}} will start a fresh run rather than continue from
+the interrupt point. For long parallel runs, prefer a bounded
+\code{nIter} together with \code{maxTime} so \code{\link[=RunMkPrime]{RunMkPrime()}} returns naturally
+rather than via Ctrl-C.}
 
 \item{pollInterval}{Integer. Seconds between convergence polls in parallel
 mode. Ignored when \code{nCore = 1}. Default \code{10L}.}
