@@ -455,12 +455,15 @@ RunMkPrime <- function(data, tree = NULL,
                error = function(e) 0L)
     }, integer(1L)))
 
+    # PAR-007: use cli_warn (not cli_alert_warning) so the "!" / "i" /
+    # "x" prefix keys in the c(...) vector actually render as bullets
+    # instead of being concatenated into the lead line.
     isParallel <- isTRUE(mcmc$nCore > 1L) && isTRUE(mcmc$nRuns > 1L)
     if (isParallel) {
       # PAR-002: workers in callr subprocesses cannot update shared$actualIter,
       # so the checkpoint can't be advanced past iter 0. Be explicit so the
       # user does not expect ResumeMkPrime() to continue from here.
-      cli::cli_alert_warning(c(
+      cli::cli_warn(c(
         "Parallel run interrupted. {nSaved} sample{?s} saved to log file{?s}.",
         "!" = "Worker state is not checkpointed for parallel runs \\
                ({.code nCore > 1}); {.fn ResumeMkPrime} will start a fresh \\
@@ -472,14 +475,14 @@ RunMkPrime <- function(data, tree = NULL,
                than via interrupt."
       ))
     } else if (ckpSaved) {
-      cli::cli_alert_warning(c(
+      cli::cli_warn(c(
         "Run interrupted at iteration {shared$actualIter}. \\
          {nSaved} sample{?s} saved to log file{?s}.",
         "i" = "Checkpoint saved to {.file {mcmc$checkpointFile}}.",
         "i" = "Re-run the same {.fn RunMkPrime} call to resume."
       ))
     } else {
-      cli::cli_alert_warning(c(
+      cli::cli_warn(c(
         "Run interrupted. {nSaved} sample{?s} saved to temporary log file{?s}.",
         "i" = "Retrieve partial results: {.code posterior <- MkPrimeRecover()}"
       ))
@@ -2114,6 +2117,32 @@ RunMkPrime <- function(data, tree = NULL,
 .BuildResult <- function(runs, model, mkd, mcmc, paramNames, logFilePaths,
                          actualIter, stopReason, isTempLog = FALSE) {
   nRuns       <- length(runs)
+  # PAR-006: when every parallel worker is hard-killed (PAR-003's 30s
+  # timeout fires before any batch boundary), .RunParallelRuns returns
+  # `runs = list()` and downstream dereferences below crash. Return a
+  # minimal empty MkPosterior with the stopReason intact so the user
+  # gets diagnostic context rather than a "subscript out of bounds".
+  if (nRuns == 0L) {
+    cli::cli_warn(c(
+      "No runs produced output (stopReason: {.val {stopReason}}).",
+      "i" = "All parallel workers were killed before completing a batch.",
+      "i" = "Try shorter batches (lower {.arg checkEvery}) or a longer \\
+             {.arg maxTime}; for resumable progress prefer {.code nCore = 1}."
+    ))
+    emptySamples <- matrix(numeric(0), nrow = 0L, ncol = length(paramNames),
+                           dimnames = list(NULL, paramNames))
+    result <- MkPosterior(
+      samples = emptySamples, trees = list(),
+      acceptance = numeric(0),
+      model = model, data = mkd, mcmc = mcmc,
+      warmup = mcmc$warmup, tuning = list()
+    )
+    result$nSamples   <- 0L
+    result$nRuns      <- 0L
+    result$stopReason <- stopReason
+    result$actualIter <- actualIter
+    return(result)
+  }
   # Use logFilePaths (not mcmc$logFile) to determine streaming mode: in
   # parallel runs, .RunParallelRuns() may auto-assign a tempfile log even
   # when mcmc$logFile is NULL, so mcmc$logFile would be stale here.
@@ -2558,7 +2587,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       }
     }
     if (ckpSaved) {
-      cli::cli_alert_warning(c(
+      # PAR-007: cli_warn (not cli_alert_warning) renders bullet items.
+      cli::cli_warn(c(
         "Run interrupted at iteration {bestIter}.",
         "i" = "Checkpoint saved to {.file {mcmc$checkpointFile}}.",
         "i" = "Re-run the same {.fn RunMkPrime} call to resume."
