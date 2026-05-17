@@ -234,4 +234,79 @@ Notes for next reviewer of this area:
 
 ---
 
-last_focus: 4
+## Round 5 — area #5 pi0/phi/z sampler audit (2026-05-16)
+
+Files reviewed:
+- `src/mcmc.cpp` ecology priors (`cpp_log_prior` 239-436), proposals
+  (cases 34 scale_phi 4594-4604, 35 scale_pi0 4609-4654, 37 scale_theta
+  4655-4703), `gibbs_z_sweep_impl` 4011-4116
+- `src/mcmc_ecology.cpp` `gamma_e_compute` (249), `trans_rate_factor`
+  (260), `pruning_jc_acrv_flat_ecology` (285-457), `pruning_mkn_acrv_flat_ecology`
+  (470-700), `per_char_log_lik_ecology` (1121-1224)
+- `R/MkPrimeModel.R` `LogPrior` ecology block (650-705), defaults
+  (190-194)
+- `R/RelabelEcology.R` (1-200)
+- `inst/simulations/ecology/sim3-simulate.R` z-generation contract
+- `inst/hamilton/sim3-phi2/run_phi2.R` (single-chain phi=2 test setup)
+- `dev/plans/2026-05-13-1100-v2-asymmetric-slab-prior-and-gamma-ridge.md`
+  (label-switching diagnosis and RelabelEcology motivation)
+
+Scenarios traced:
+- Gibbs z conditional math: `lp[v]` matches `cpp_log_prior` z-contribution
+  exactly; gammaE per ecology s is hoisted correctly out of per-cell loop.
+  No off-by-one between (`theta[j]`, refE column skip) in gibbs_z vs the
+  global likelihood. **No bug in gibbs_z arithmetic.**
+- Posterior bound on pi0 given Beta(75, 25): max collapse = 75/580 = 0.129
+  for 480 cells. Reported dev-pilot pi0=0.027 is **mathematically
+  impossible** under this prior → filed R5-5.
+- Feedback-loop scenario: collapsed pi0 ⇒ collapsed prior P(z=0) ⇒
+  Gibbs z chooses z≠0 more often per-cell when likelihood signal is
+  weak ⇒ z-count drives pi0 lower next MH step. Identified as joint
+  identifiability collapse, filed R5-1 (HIGH).
+- Phi prior pull: dlnorm(4, 0, 1) = 0.044 vs dlnorm(1, 0, 1) = 0.399 ⇒
+  9× prior preference for null. Filed R5-2.
+- Theta uniform prior leaves no counterweight at theta≈0.5 saddle.
+  Filed R5-3.
+- RelabelEcology global-mode flip is robust (line 142-165) but mode
+  inference depends on column names; per_ecology vs global inference
+  could produce silent mismatches. Reported phi=0.397 contradicts the
+  ≥1 post-relabel invariant — filed R5-4 as either reporting bug or
+  silent relabel failure.
+- gibbs_z IS being called (visible in run logs at 1.8-3.1% acceptance
+  across sim1/sim2/sim3 runs). R4 finding M-3 about gibbsZEvery is
+  cosmetic, not the cause of pi0 collapse.
+
+**Diagnosis ruled out:**
+- No coding bug in gibbs_z conditional probabilities. lp matches the
+  global cpp_log_prior, ll is computed via per_char_log_lik_ecology which
+  is the same physics as the global eco likelihood, log-sum-exp is
+  numerically correct (subtract max, clamp non-finite).
+- pi0 / phi / theta proposals have correct Jacobians (logit-Bactrian
+  gives log(p(1-p)) Hastings; multiplicative Bactrian on phi gives
+  log(mult); all confirmed in cases 34-37).
+- gamma_e normalisation is intentional v2 design, not a bug — see
+  dev/plans/2026-05-13-1100-v2-asymmetric-slab-prior-and-gamma-ridge.md
+  for the rationale.
+
+Findings filed: 5 (R5-1 HIGH, R5-2 MED, R5-3 MED, R5-4 MED, R5-5 LOW)
+Trivial fixes applied during round: none.
+
+Notes for next reviewer of this area:
+- **R5-4 first**: verify whether reported phi=0.397 came from pre- or
+  post-relabel samples. If pre-relabel, post-relabel phi ≈ 2.52 and the
+  "phi 5× under truth" headline dissolves. This is a 10-minute check.
+- **R5-1 is the substantive scientific finding**. Test option (a) [tighter
+  pi0 prior] on Sim 2 first — it should leave the recovered-effect
+  signal intact while preventing pi0 from chasing the z-count. Option
+  (c) [marginalize z] is the principled fix and aligns with the
+  spike-and-slab literature (e.g. George & McCulloch 1993).
+- The current pi0 prior ESS = 100 vs 480 cells is the weakest link.
+  Increasing to ESS = nChar (480) restores prior dominance and lets
+  the chain stay at truth when the data are weakly informative.
+- Cross-check by running a SHORT pilot at sigmaPhi = 1.5 and
+  Beta(360, 120) on pi0 (truth-init): does pi0 stay near 0.75? If yes
+  → identifiability collapse confirmed.
+- The Mk' relabel correction (mk_prime_relabel_log) is z-independent
+  per character so cannot bias gibbs_z. Not the smoking gun.
+
+last_focus: 5
