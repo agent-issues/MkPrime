@@ -30,6 +30,43 @@ jobs:
     steps:
     - uses: actions/checkout@v6
 
-    - uses: randy3k/gh-actions/r-rchk@main
-      with:
-        cache-version: rchk-1
+    - name: Set up rchk environment
+      # Sources cmpconfig.inc from the rhub/ubuntu-rchk container to export the
+      # LLVM compiler flags that rchk requires; mirrors randy3k/gh-actions/r-rchk
+      # setup.sh (that action is broken: it uses actions/cache@v2, killed 2024-12).
+      run: |
+        apt-get update && apt-get install -y sudo
+        cd /home/docker/R-svn/
+        . /home/docker/rchk/scripts/cmpconfig.inc
+        for var in CPICFLAGS CFLAGS CXXFLAGS CC CXX PATH LLVM_COMPILER \
+                   PKG_BUILD_DIR R_LIBS R_LIBSONLY LD; do
+          echo "$var=${!var}" >> "$GITHUB_ENV"
+        done
+        echo "R_LIBS_USER=$R_LIBS" >> "$GITHUB_ENV"
+      shell: bash
+
+    - name: Install R dependencies
+      run: |
+        install.packages('remotes', repos = 'https://cran.rstudio.com/')
+        remotes::install_deps(dependencies = TRUE)
+      shell: Rscript {0}
+
+    - name: Install package
+      run: remotes::install_local()
+      shell: Rscript {0}
+
+    - name: Run rchk
+      run: |
+        PKG=$(Rscript -e "d=read.dcf('DESCRIPTION'); cat(d[, 'Package'])")
+        cd /home/docker/R-svn/
+        /home/docker/rchk/scripts/check_package.sh "$PKG"
+        FAIL=0
+        bcheck="packages/lib/$PKG/libs/$PKG.so.bcheck"
+        maacheck="packages/lib/$PKG/libs/$PKG.so.maacheck"
+        [ "$(wc -l < "$bcheck")"    -gt 3 ] && FAIL=1
+        [ "$(wc -l < "$maacheck")" -gt 3 ] && FAIL=1
+        cat "$maacheck"
+        cat "$bcheck"
+        [ "$FAIL" = 1 ] && { echo "rchk tests failed."; exit 1; }
+        echo "rchk tests succeeded."
+      shell: bash
