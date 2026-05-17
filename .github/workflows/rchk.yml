@@ -37,7 +37,10 @@ jobs:
       # exit 127. We export a sanitised PATH that keeps the LLVM tools but
       # removes the broken R stub, leaving /usr/bin/Rscript as the default R.
       run: |
-        apt-get update && apt-get install -y sudo
+        # r-base gives a working system Rscript (/usr/bin/Rscript); the
+        # container's own R stub (/home/docker/R-svn/bin/R) calls exec/R which
+        # is absent, so package installation must use the system R instead.
+        apt-get update && apt-get install -y sudo r-base
         cd /home/docker/R-svn/
         . /home/docker/rchk/scripts/cmpconfig.inc
 

@@ -261,7 +261,7 @@ R-hat supersedes the classical PSRF (Gelman--Rubin), which assumes
 approximate normality:
 
 ```{r convergence}
-diag <- ConvergenceDiagnostics(posterior)
+diag <- ConvergenceDiagnostics(posteriorDemo)
 print(diag)
 ```
 
