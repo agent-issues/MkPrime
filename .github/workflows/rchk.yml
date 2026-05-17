@@ -30,20 +30,6 @@ jobs:
     steps:
     - uses: actions/checkout@v6
 
-    - name: Set up rchk
-      uses: r-lib/actions/run-rchk@v2
-      with:
-        setup-only: true
-
-    - uses: randy3k/gh-actions/r-install-deps@main
+    - uses: randy3k/gh-actions/r-rchk@main
       with:
         cache-version: rchk-1
-
-    - name: Install package
-      run: |
-        remotes::install_local()
-      shell: Rscript {0}
-
-    - uses: r-lib/actions/run-rchk@v2
-      with:
-        run-only: true
