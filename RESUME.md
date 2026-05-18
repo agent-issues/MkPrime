@@ -30,15 +30,21 @@ This session was a hand-off-resume + collect cycle:
   COMPLETED exit 0 on t01_r01). Timing:
   - mk_k9:  ~11.88M iter in 8h → ~118k thinned samples (thin=100)
   - mk_k15: ~10.14M iter in 8h → ~101k thinned samples
-  - mk_k24:   ~235k iter in 8h → **~2,350 thinned samples** (43× slower than k15)
+  - mk_k24:   ~235k iter in 8h → ~2,350 thinned samples (43× slower than k15)
 
-  **Decision pending**: mk_k15 is clearly feasible to submit as full --array=0-259.
-  mk_k24 will fit in 8h walltime but produce only ~2k samples/rep — likely too
-  few for stable inference. Options: (a) submit k24 anyway with thin reduced
-  (no-oversample rule says ≥16, so thin=16 would give ~15k samples — borderline);
-  (b) rule out k24 as infeasible.
+- **mk_k15 full array submitted** as job **17218354** (`--array=0-259`, 8h each).
+  Resume capability means we can extend walltime later if results warrant. Wait
+  for k15 6-way+1 CID comparison before committing CPU to k24.
 
 ## Pending jobs
+
+### Hamilton HPC — mkp sim (8h walltime, resumable)
+
+| Job ID | Arm | Status | Note |
+|--------|-----|--------|------|
+| 17218354 | mk_k15 (--array=0-259) | QUEUED | Submitted post-collect; ~3.5 days end-to-end for the full array given shared partition |
+
+mk_k24 deliberately **on hold** pending k15 results — sequence cheap-first.
 
 ### Hamilton HPC (long-form M9 real-data, 3-day walltime)
 
@@ -72,9 +78,10 @@ syab07204 by_nt_9v from the 6-matrix comparison and note as infeasible.
 
 ## Open items / next steps
 
-1. **Decide mk_k15/mk_k24 full-array submission** (see "Decision pending"
-   above). If launching, edit `data-raw/hamilton/mk_k15_array.slurm` and
-   `mk_k24_array.slurm` to `--array=0-259` and `sbatch` from Hamilton.
+1. **When mk_k15 array (17218354) completes**: pull summaries, extend
+   `cid_six_prior.R` to a 7-way table. Then decide on k24 — submit at 8h to
+   see if even ~2k samples suffices, or skip if k15 already settles the
+   "does ramp continue past k=9?" question.
 2. **Decide 17217659 retry** at 128G vs skip.
 3. **Wait for long-form M9 to accumulate ≥50 trees/run** (earliest meaningful
    data ~09:00 BST 2026-05-19) then extend `process_pilot.R` to loop over
@@ -134,8 +141,9 @@ syab07204 by_nt_9v from the 6-matrix comparison and note as infeasible.
   patterns; `mkd$kObs` and `state$kPrime` are per-character. MkPrime expands back.
 - **kObs+1 sweet-spot hypothesis**: mk_k9 > mk_kp2 > mk_kp1 monotonically in
   6-way CID pilot. More flexibility helps in this sim, up to k=9. Whether the
-  ramp continues past k=9 is what k=15/k=24 arms test — k15 is feasible to
-  trial; k24 is too slow for stable inference at 8h walltime.
+  ramp continues past k=9 is what k=15/k=24 arms test — k15 full array
+  submitted; k24 held pending k15 outcome (and not "too slow" — runs are
+  resumable; an 8h test just bounds *throughput*, not *feasibility*).
 
 ## Suggested first action
 
