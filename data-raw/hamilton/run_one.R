@@ -25,6 +25,7 @@ rep_idx   <- as.integer(args[2])
 data_root <- args[3]
 out_dir   <- args[4]
 arm       <- match.arg(args[5], c("mk", "mk_kp1", "mk_kp2", "mk_k9",
+                                   "mk_k15", "mk_k24",
                                    "mkp", "mkp_eg", "mkp_geo", "combine"))
 
 cat(sprintf("tree=%d rep=%d arm=%s\n", tree_idx, rep_idx, arm))
@@ -434,6 +435,59 @@ if (arm == "mk") {
   partial <- list(trees = res$trees, stop_reason = res$stop_reason,
                   acceptance = res$acceptance)
   saveRDS(partial, file.path(out_dir, sprintf("mk_k9_%s.rds", tag)))
+
+} else if (arm == "mk_k15") {
+  # Mk with knownStates = 15 across all variable characters. Tests
+  # whether the flexibility advantage of k=9 over kObs+2 continues to
+  # climb at higher k.
+  kobs_raw <- apply(combined_mat, 2L, function(col) {
+    length(unique(col[!col %in% c("?", "-")]))
+  })
+  var_orig <- which(kobs_raw > 1L)
+  k15_for_mk <- setNames(rep(15L, length(var_orig)),
+                          as.character(var_orig))
+
+  res <- .run_arm(function() {
+    RunMkPrime(
+      pd, start_tree,
+      knownStates = k15_for_mk,
+      model = MkPrimeModel(coding = "variable"),
+      mcmc  = make_mcmc("mk_k15", thin_iters = 100L)
+    )
+  }, "mk_k15")
+
+  cat(sprintf("  Mk(15) done: %d trees, stop=%s\n",
+              length(res$trees), res$stop_reason))
+
+  partial <- list(trees = res$trees, stop_reason = res$stop_reason,
+                  acceptance = res$acceptance)
+  saveRDS(partial, file.path(out_dir, sprintf("mk_k15_%s.rds", tag)))
+
+} else if (arm == "mk_k24") {
+  # Mk with knownStates = 24 across all variable characters. High-k
+  # endpoint; tests whether the trend plateaus or keeps climbing.
+  kobs_raw <- apply(combined_mat, 2L, function(col) {
+    length(unique(col[!col %in% c("?", "-")]))
+  })
+  var_orig <- which(kobs_raw > 1L)
+  k24_for_mk <- setNames(rep(24L, length(var_orig)),
+                          as.character(var_orig))
+
+  res <- .run_arm(function() {
+    RunMkPrime(
+      pd, start_tree,
+      knownStates = k24_for_mk,
+      model = MkPrimeModel(coding = "variable"),
+      mcmc  = make_mcmc("mk_k24", thin_iters = 100L)
+    )
+  }, "mk_k24")
+
+  cat(sprintf("  Mk(24) done: %d trees, stop=%s\n",
+              length(res$trees), res$stop_reason))
+
+  partial <- list(trees = res$trees, stop_reason = res$stop_reason,
+                  acceptance = res$acceptance)
+  saveRDS(partial, file.path(out_dir, sprintf("mk_k24_%s.rds", tag)))
 }
 
 cat("  Done.\n")
