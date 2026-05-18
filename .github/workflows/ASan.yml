@@ -1,0 +1,95 @@
+# Address Sanitizer: Replicate CRAN's gcc-ASAN 'Additional Test'
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+      - '**asan**'
+    paths:
+      - '.github/workflows/ASan.yml'
+      - 'src/**'
+      - 'inst/include/**'
+      - 'memcheck/**'
+      - 'tests/testthat/**.R'
+      - 'vignettes/**.qmd'
+  pull_request:
+    paths:
+      - '.github/workflows/ASan.yml'
+      - 'src/**'
+      - 'inst/include/**'
+      - 'memcheck/**'
+      - 'tests/testthat/**.R'
+      - 'vignettes/**.qmd'
+
+name: gcc-ASAN
+
+jobs:
+  mem-check:
+    runs-on: ubuntu-24.04
+
+    name: AddressSanitizer ${{ matrix.config.test }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - {test: 'tests'}
+          - {test: 'examples'}
+          - {test: 'vignettes'}
+
+    env:
+      R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
+      _R_CHECK_FORCE_SUGGESTS_: false
+      RSPM: https://packagemanager.rstudio.com/cran/__linux__/noble/latest
+      USING_ASAN: true
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      # detect_leaks=0: g++ and make don't free all internal state before exit
+      # (by design — the OS reclaims it); LSan would treat that as a failure.
+      # CRAN's gcc-ASAN test targets use-after-free / buffer overflows, not leaks.
+      ASAN_OPTIONS: detect_leaks=0:detect_container_overflow=1:verify_asan_link_order=0
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Initialize ASan configuration
+        run: |
+          # Persist LD_PRELOAD so libasan is loaded before R's memory allocator
+          # on every subsequent step. Without this, R's allocator claims the
+          # address range [0x7fff7000-0x10007fff8000] before libasan can, and
+          # ASan aborts with "shadow memory range interleaves with an existing
+          # memory mapping". Loading libasan first via LD_PRELOAD lets it
+          # reserve the shadow range before any other allocations occur.
+          LIBASAN=$(gcc -print-file-name=libasan.so)
+          echo "LD_PRELOAD=$LIBASAN" >> "$GITHUB_ENV"
+
+          echo "PKG_CFLAGS = -g -O0 -fsanitize=address -fno-omit-frame-pointer" > src/Makevars
+          echo "PKG_CXXFLAGS = -g -O0 -fsanitize=address -fno-omit-frame-pointer" >> src/Makevars
+
+          mkdir ~/.R
+          echo "LDFLAGS = -g -O0 -fsanitize=address -fno-omit-frame-pointer" >> ~/.R/Makevars
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+
+      - name: Set up R dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          dependencies: "'soft'"
+          needs: |
+            memcheck
+
+      - name: Install package
+        run: |
+          # Build from parent dir so the tarball lands outside the source tree;
+          # use $GITHUB_WORKSPACE (not a hardcoded package name) because the
+          # checkout directory matches the repo name ("r"), not the package name.
+          cd "$GITHUB_WORKSPACE/.."
+          R CMD build --no-build-vignettes --no-manual --no-resave-data "$GITHUB_WORKSPACE"
+          R CMD INSTALL MkPrime*.tar.gz
+          cd "$GITHUB_WORKSPACE"
+
+      - name: ASAN - memcheck ${{ matrix.config.test }}
+        run: |
+          Rscript memcheck/${{ matrix.config.test }}.R

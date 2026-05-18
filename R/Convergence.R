@@ -1,4 +1,4 @@
-# Convergence monitoring for MkPrime MCMC
+﻿# Convergence monitoring for MkPrime MCMC
 #
 # Phase 5: ESS, R-hat (rank-normalized), convergence diagnostics.
 # Replaced coda-based PSRF with native rank-normalized R-hat
@@ -20,7 +20,7 @@
 #'   topology ESS (median pseudo-ESS) from the sampled trees.
 #'   Defaults to `FALSE`.
 #'   Each run is subsampled to at most 1,000 trees.
-#' @param frechetESS Logical. If `TRUE`, also compute the Fréchet
+#' @param frechetESS Logical. If `TRUE`, also compute the Frechet
 #'   correlation ESS (Magee et al. 2021).  This requires the full
 #'   n x n pairwise distance matrix rather than the partial cross-distance
 #'   matrix used for median pseudo-ESS, so is substantially slower.
@@ -52,7 +52,7 @@ ConvergenceDiagnostics <- function(posterior, trees = FALSE,
   # --- ESS (combined samples) ---
   ess <- .ComputeEss(pb$samples[, keyCols, drop = FALSE])
 
-  # kPrime are discrete nuisance parameters — exclude from summary min/max
+  # kPrime are discrete nuisance parameters -- exclude from summary min/max
   # (M-098). Individual kPrime ESS/R-hat remain in the output for display.
   isConvParam <- !grepl("^kPrime_", names(ess)) & names(ess) != "log_likelihood"
 
@@ -130,7 +130,7 @@ print.MkpDiagnostics <- function(x, ...) {
     }
   }
 
-  # kPrime summary row (min / median / max) — compact numbers, no fixed width
+  # kPrime summary row (min / median / max) -- compact numbers, no fixed width
   if (length(kPrimeNms) > 0L) {
     kpEss <- x$ess[kPrimeNms]
     kpMin <- min(kpEss, na.rm = TRUE)
@@ -158,10 +158,10 @@ print.MkpDiagnostics <- function(x, ...) {
   if (!is.null(x$treeEss)) {
     frech <- x$treeEss[["frechetCorrelationESS"]]
     mdps  <- x$treeEss[["medianPseudoESS"]]
-    cat(sprintf("  %-20s  %s\n", "topology (Fréchet)",  .FmtEss(frech)))
+    cat(sprintf("  %-20s  %s\n", "topology (Frechet)",  .FmtEss(frech)))
     cat(sprintf("  %-20s  %s\n", "topology (med.pseudo)", .FmtEss(mdps)))
   } else {
-    cat(sprintf("  %-20s  %s\n", "topology (Fréchet)",   formatC("NA", width = 6)))
+    cat(sprintf("  %-20s  %s\n", "topology (Frechet)",   formatC("NA", width = 6)))
     cat(sprintf("  %-20s  %s\n", "topology (med.pseudo)", formatC("NA", width = 6)))
   }
 
@@ -509,7 +509,7 @@ print.MkpDiagnostics <- function(x, ...) {
 #
 # When frechet = FALSE (default), only the median pseudo-ESS is computed
 # using a cross-distance matrix (maxRows x n), which is much cheaper than
-# the full n x n pairwise matrix required for Fréchet ESS.
+# the full n x n pairwise matrix required for Frechet ESS.
 .ComputeTreeEss <- function(pb, trees, frechet = FALSE) {
   if (isFALSE(trees)) return(NULL)
   if (!requireNamespace("TreeDist", quietly = TRUE)) return(NULL)
@@ -547,7 +547,7 @@ print.MkpDiagnostics <- function(x, ...) {
                frechet = frechet)
     })
     essMat <- do.call(rbind, chainRows)
-    # Minimum across runs — conservative multi-chain estimate.
+    # Minimum across runs -- conservative multi-chain estimate.
     # Replace non-finite values (from all-NA columns) with NA.
     result <- apply(essMat, 2, min, na.rm = TRUE)
     result[!is.finite(result)] <- NA_real_

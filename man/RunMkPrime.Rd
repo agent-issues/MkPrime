@@ -69,37 +69,27 @@ result <- RunMkPrime(data, mcmc = mcmc)
 }\if{html}{\out{</div>}}
 }
 
-\section{Parallel independent runs (HPC usage)}{
+\section{Parallel independent runs}{
 
 
-Set \code{parallel = TRUE} in \code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}} to run independent chains
-concurrently. The \pkg{future} package (in \code{Suggests}) provides the
-backend-agnostic parallelism. Call \code{future::plan()} \strong{before}
-\code{RunMkPrime()}:
+Set \code{nCore} (in \code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}}) to dispatch multiple independent runs
+as parallel background R processes via \code{\link[callr:r_bg]{callr::r_bg()}}.
 
-\if{html}{\out{<div class="sourceCode r">}}\preformatted{# Workstation — use local cores
-future::plan("multisession", workers = 4)
-result <- RunMkPrime(data, tree,
-  mcmc = MkPrimeMCMC(nRuns = 4, parallel = TRUE))
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{# Workstation: 4 cores, 4 independent runs
+result <- RunMkPrime(data, tree, nRuns = 4L, nCore = 4L)
 
-# HPC (SLURM) — requires the future.batchtools package
-future::plan(future.batchtools::batchtools_slurm(
-  resources = list(ncpus = 1, memory = "4gb", walltime = "24:00:00")
-))
-result <- RunMkPrime(data, tree,
-  mcmc = MkPrimeMCMC(nRuns = 4, parallel = TRUE,
-                      logFile  = "/scratch/myrun/run.log",
-                      pollInterval = 60L))
+# Or set via global option (TreeDist-style):
+options(mc.cores = 4L)
+result <- RunMkPrime(data, tree, nRuns = 4L)
 }\if{html}{\out{</div>}}
+\subsection{HPC usage}{
 
-Notes for HPC:
-\itemize{
-\item Set \code{logFile} explicitly to a path on a shared filesystem (tempdir is
-node-local and workers on different nodes cannot read it).
-\item Use \code{pollInterval = 30} -- \code{60} seconds; job startup latency makes
-frequent polling wasteful.
-\item Set \code{checkpointFile} so runs can be resumed if the master job times out.
-\item Each \code{future} worker becomes a separate job submission on SLURM/PBS/LSF.
+Submit one R job per node from your scheduler (SLURM/PBS/LSF) and set
+\code{nCore} to the number of cores allocated per node. R-side dispatch to a
+remote scheduler is not supported.
+
+For long runs, set \code{checkpointFile} so the job can be resumed if it
+times out, and set \code{logFile} to a path on the local node's filesystem.
 }
 }
 

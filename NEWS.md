@@ -1,5 +1,11 @@
 # MkPrime (development version)
 
+* Multiple MCMC runs now execute in parallel when `nCore > 1`
+  (defaults to `getOption("mc.cores", 1L)`). Backend: `callr::r_bg()`.
+  Mirrors the TreeDist option-driven pattern.
+* **Breaking (pre-release):** `parallel` argument to `MkPrimeMCMC()`
+  removed; use `nCore` instead. The `future` package is no longer used.
+
 * New `kPrimePrior = "empirical_geometric"` prior (now the default).  Decomposes
   `k' = N_obs + N_unobs`, with `N_obs` drawn from an empirical pmf tabulated
   from real morphological matrices (`empiricalNObs`) and `N_unobs` from a

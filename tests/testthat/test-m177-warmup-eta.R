@@ -2,6 +2,9 @@
 
 # Regression: .CheckStabilisation() returns nStableConsecutive correctly
 # and the anchor-based ETA does not slide forward on every batch.
+# Requires MkPrime.d2 (development companion package) to run.
+
+skip_if_not_installed("MkPrime.d2")
 
 test_that(".CheckStabilisation returns 0 when not enough data", {
   history <- rnorm(15)  # < 2 * windowSize (20)

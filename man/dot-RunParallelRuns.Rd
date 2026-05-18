@@ -2,7 +2,7 @@
 % Please edit documentation in R/RunMkPrime.R
 \name{.RunParallelRuns}
 \alias{.RunParallelRuns}
-\title{Launch and manage parallel independent MCMC runs via \code{future}}
+\title{Launch and manage parallel independent MCMC runs via \code{callr}}
 \usage{
 .RunParallelRuns(
   mkd,
@@ -24,9 +24,10 @@
 Named list: \code{runs}, \code{logFilePaths}, \code{stopReason}, \code{actualIter}.
 }
 \description{
-Called by \code{\link[=RunMkPrime]{RunMkPrime()}} when \code{mcmc$parallel = TRUE} and \code{nRuns > 1}.
-Spawns \code{nRuns} non-blocking futures each calling \code{\link[=.RunMkPrimeSingleRun]{.RunMkPrimeSingleRun()}},
-then polls for convergence / time limits / user cancel. When a stopping
-criterion fires, writes per-run cancel files so workers exit cleanly.
+Called by \code{\link[=RunMkPrime]{RunMkPrime()}} when \code{mcmc$nCore > 1} and \code{nRuns > 1}.
+Spawns \code{nRuns} non-blocking background R processes each calling
+\code{\link[=.RunMkPrimeSingleRun]{.RunMkPrimeSingleRun()}}, then polls for convergence / time limits /
+user cancel. When a stopping criterion fires, writes per-run cancel files
+so workers exit cleanly.
 }
 \keyword{internal}

@@ -38,6 +38,6 @@
 Self-contained: accepts only R-serializable inputs (no XPtrs), reconstructs
 C++ state internally, runs the full \code{repeat} loop, and returns a serializable
 updated run state.  Used by the sequential \verb{for (run)} loop in
-\code{\link[=RunMkPrime]{RunMkPrime()}} / \code{\link[=ResumeMkPrime]{ResumeMkPrime()}} and (Phase 10b) by \code{future} workers.
+\code{\link[=RunMkPrime]{RunMkPrime()}} / \code{\link[=ResumeMkPrime]{ResumeMkPrime()}} and (Phase 10b) by \code{callr} workers.
 }
 \keyword{internal}

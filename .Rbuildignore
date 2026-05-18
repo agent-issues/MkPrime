@@ -18,3 +18,4 @@
 ^CONTRIBUTING\.md$
 ^_pkgdown\.yml$
 ^data-raw$
+^tests/test_hyoliths_run\.R$

@@ -13,7 +13,8 @@
   logFilePaths,
   actualIter,
   stopReason,
-  isTempLog = FALSE
+  isTempLog = FALSE,
+  drops = NULL
 )
 }
 \description{

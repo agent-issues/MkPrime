@@ -1,0 +1,169 @@
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * 4'  # Thursdays, 4am
+  push:
+    branches:
+      - main
+      - master
+    paths-ignore:
+      - "Meta**"
+      - "docs**"
+      - "**.git"
+      - "**.json"
+      - "**.md"
+      - "**.yaml"
+      - "**.yml"
+      - "!**R-CMD-check.yml"
+      - "**.R[dD]ata"
+      - "**.Rpro*"
+  pull_request:
+    branches: ["*"]
+    paths-ignore:
+      - "Meta**"
+      - "docs**"
+      - "**.git"
+      - "**.json"
+      - "**.md"
+      - "**.yaml"
+      - "**.yml"
+      - "!**R-CMD-check.yml"
+      - "**.R[dD]ata"
+      - "**.Rpro*"
+
+name: R-CMD-check
+
+jobs:
+  check-release:
+    runs-on: ubuntu-24.04
+    name: ubuntu-24.04 (release)
+
+    env:
+      _R_CHECK_CRAN_INCOMING_: true
+      _R_CHECK_FORCE_SUGGESTS_: false
+      R_COMPILE_AND_INSTALL_PACKAGES: 'never'
+      _R_CHECK_THINGS_IN_CHECK_DIR_: false
+      R_REMOTES_STANDALONE: true
+      R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
+      RSPM: "https://packagemanager.posit.co/cran/__linux__/noble/latest"
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout git repo
+        uses: actions/checkout@v6
+
+      - name: Temporarily bump package version
+        run: |
+          old_version=$(grep "Version:" DESCRIPTION | awk '{print $2}')
+          if [[ $(echo "$old_version" | tr -cd '.' | wc -c) -eq 2 ]]; then
+            new_version="${old_version}.8888"
+            sed -i "s/Version: .*/Version: ${new_version}/" DESCRIPTION
+          fi
+        shell: bash
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+
+      - name: Set up Quarto
+        uses: quarto-dev/quarto-actions/setup@v2
+
+      - name: Set up R dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          cache-version: 3-${{ runner.arch }}
+          needs: |
+            check
+
+      - name: Check package
+        uses: r-lib/actions/check-r-package@v2
+
+
+  check-all:
+    runs-on: ${{ matrix.config.os }}
+    name: ${{ matrix.config.os }} (${{ matrix.config.r }})
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - {os: windows-latest,   r: "release"}
+          - {os: macos-15-intel,   r: "release"} # Until Intel architecture retired 2027-11
+          - {os: macOS-latest,     r: "release"}
+          - {os: ubuntu-24.04-arm, r: "release", rspm: "https://packagemanager.posit.co/cran/__linux__/noble/latest"}
+          - {os: ubuntu-24.04,     r: "devel",   rspm: "https://packagemanager.posit.co/cran/__linux__/noble/latest"}
+
+    env:
+      _R_CHECK_CRAN_INCOMING_: ${{ github.event_name == 'pull_request' }}
+      _R_CHECK_FORCE_SUGGESTS_: false
+      R_COMPILE_AND_INSTALL_PACKAGES: 'never'
+      _R_CHECK_THINGS_IN_CHECK_DIR_: false
+      R_REMOTES_STANDALONE: true
+      R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
+      _R_CHECK_CRAN_INCOMING_USE_ASPELL_: false
+      RSPM: ${{ matrix.config.rspm }}
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout git repo
+        uses: actions/checkout@v6
+
+      - name: Temporarily bump package version
+        run: |
+          old_version=$(grep "Version:" DESCRIPTION | awk '{print $2}')
+          if [[ $(echo "$old_version" | tr -cd '.' | wc -c) -eq 2 ]]; then
+            new_version="${old_version}.9999"
+            if [[ "$RUNNER_OS" == "macOS" ]]; then
+              sed -i "" "s/Version: .*/Version: ${new_version}/" DESCRIPTION
+            else
+              sed -i "s/Version: .*/Version: ${new_version}/" DESCRIPTION
+            fi
+          fi
+          echo "Current package version is now: $(grep "Version:" DESCRIPTION | awk '{print $2}')"
+        shell: bash
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: ${{ matrix.config.r }}
+
+      - name: Set up Quarto
+        uses: quarto-dev/quarto-actions/setup@v2
+
+      - name: Add Quarto to PATH (Windows / Scoop)
+        # quarto-dev/quarto-actions#59: Scoop installs quarto but doesn't
+        # add its shims dir to GITHUB_PATH, so quarto.exe is invisible to
+        # R CMD check. Prepend the shims directory explicitly.
+        if: runner.os == 'Windows'
+        run: echo "$env:USERPROFILE\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        shell: pwsh
+
+      - name: Install apt packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install texlive-latex-base texlive-fonts-recommended
+
+      - name: Set up R dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          cache-version: 3-${{ runner.arch }}
+          needs: |
+            check
+            coverage
+
+      - name: Pre-install package for Quarto vignette subprocess
+        # Quarto spawns a fresh R process when rendering .qmd vignettes; that
+        # subprocess uses R_LIBS_USER, not the R CMD check temp library.
+        # Pre-installing here ensures library("MkPrime") succeeds on all OSes.
+        if: runner.os == 'Windows'
+        run: R CMD INSTALL --no-multiarch .
+        shell: bash
+
+      - name: Check package
+        uses: r-lib/actions/check-r-package@v2
+
+      - name: Code coverage
+        if: runner.os == 'Windows'
+        run: |
+          covr::codecov()
+        shell: Rscript {0}
