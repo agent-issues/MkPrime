@@ -93,3 +93,6 @@ dev/pilots/*/summary/
 dev/pilots/*/analysis/*.rds
 dev/pilots/*/analysis/*.png
 
+# M9 real-data pilot: tree samples pulled from Hamilton, reproducible
+dev/m9-pilot/syab*/
+
