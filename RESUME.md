@@ -38,10 +38,13 @@ chains inflated). v6-realistic (truth TL=1.16, parsimony-anchored prior,
 phi=8 + longer eco stems for confound) is the new headline simulation.
 
 **Two flagged side-effects of the install:**
-1. Hamilton MkPrime had divergent local prior (rho0=Beta(360,120), the
-   R5-2 audit's tightened pi0 with ESS=480). Reinstall reverted to upstream
-   Beta(75,25). Every recent Hamilton sim may have been using the tighter
-   pi0. **Audit pending (task #22).**
+1. The reinstall **upgraded** Hamilton to the R5-tightened priors
+   (rho0=Beta(360,120), theta=Beta(2,2), sigmaPhi=1.5) committed upstream
+   2026-05-16 in `2fd4dd5`. Audit (task #22) showed Hamilton had been on
+   the looser (75,25) prior all along. **Headline finding survives** —
+   "aware regularises false-AB" was data-dominated under the looser prior
+   (~17% prior weight on pi0). v6-realistic + rodent-v3 use the tighter
+   prior; cross-version pi0 posterior comparison NOT directly comparable.
 2. PT-aware-mr3-rep05 (17226606) and rodent aware cont2 (17222514) were
    cancelled — both used the bad expSteps=10 prior.
 
