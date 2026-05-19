@@ -82,26 +82,21 @@ This session pushed three threads forward:
 
 | Job ID | Name | Status | On completion |
 |--------|------|--------|---------------|
-| 17222515 (blind-cont2) | mkp-rod-blind2 | **COMPLETED** 2026-05-19 (1h51m). 5M iter, **minESS=366**, median 1965, 5159 trees. Result at `/nobackup/pjjg18/mkp-rodent-blind-v2/results/rodent-blind-v2-result.rds`. | Ready — awaits aware to regenerate report |
-| 17222514 (aware-cont2) | mkp-rod-awar2 | RUNNING, 4h elapsed of 36h wall (cn027). Target 2.3M iter. | Check minESS from `rodent-aware-v2-result.rds`; if ≥ 200, regenerate `inst/scripts/rodent-comparison/` against the new aware RDS AND the converged blind RDS |
+| 17222515 (blind-cont2) | mkp-rod-blind2 | **COMPLETED** 2026-05-19 (1h51m). 5M iter, **minESS=366**, median 1965, 5159 trees. | Ready — awaits aware to regenerate report |
+| 17222514 (aware-cont2) | mkp-rod-awar2 | RUNNING, ~4h elapsed of 36h wall (cn027). Target 2.3M iter. | Check minESS; if ≥ 200, re-run `inst/scripts/rodent-comparison/rodent-comparison.R` (audited 2026-05-19 — root-invariant, no fix needed) against both converged RDS files. |
+| 17226503_[1-3] (v5break) | mkp-v5break | RUNNING, PT array. 80 chars, phi=6, weak ancestry signal — predicted falseInner E≈5.4 vs trueClade_A E≈2.3. | Inspect `/nobackup/pjjg18/mkp-sim3-v5break/results/rep0{1,2,3}/`. If blind P(falseInner) > 0.1 or P(AC) < 0.5: the methods story has its breaking point. If blind still recovers truth: queue v5stress (params noted in commit `06a7df3`'s run script). |
 
 ## Open items / next steps
 
-1. **Fix the scoring bug FIRST** (see top of file). Replace `hasBipart` in
-   all `run_v4*.R` and `run_v4cross*.R` scripts with a root-invariant
-   `TreeTools::as.Splits()` implementation, then re-score:
-   - All five v4cross-b-pt5 reps (saved as `*-result.rds`)
-   - v4cross-c, v4cross-b-pt, v4cross-b single-rep results
-   - Original v4a/v4b/v4c results if used in any narrative claim
-   This is cheap (no re-running MCMC) and could materially change the
-   simulation story.
+1. **Scoring bug fixed and rescored** (commits `7d1076d`, `6500cda`,
+   `2aa4db3`). See top of file for findings. Sim story collapsed; v5break
+   queued as the genuine break-blind shot.
 
-2. **Rodent comparison** (pilot DONE): Full 1M-iter chains compared in
-   `inst/scripts/rodent-comparison/`. Key result: 32/38 blind splits shared
-   with aware consensus (was 0/38 in pilot). MDS clouds largely separated
-   (centroid dist 9.65, spread ~9 / ~7). Both chains underconverged
-   (minESS 88 aware, 38 blind). cont2 run targets ESS ≥ 200 both sides;
-   blind cont2 already at minESS=366.
+2. **Rodent comparison audit clean** (commit `956bc6c`). `ape::consensus`
+   with `rooted=FALSE` and `prop.clades(rooted=FALSE)` canonicalise
+   internally — root-invariant. Verified empirically (45/38/32 splits
+   reproduce by manual Splits-based approach). Existing pilot report stands
+   methodologically; numerical results will improve when aware completes.
 
 2. **Decide narrative on the v4-cross result**. The 5-rep PT sweep shows aware
    ≠ better than blind on v4-cross. Options:
