@@ -31,7 +31,38 @@ RDS files re-scored; results in `inst/scripts/rescore-sim3-results.csv`.
 rescues" story has not been demonstrated on any tested simulation
 architecture. The eco confound at tested scales is too weak to
 differentiate the models. A sharper sim that actually breaks blind is
-required before any methodological claim can be made.
+required before any methodological claim can be made. v5break (job array
+17226503) is the live attempt.
+
+## 🔥 Cascading collapses from the scoring fix
+
+The same bug contaminated diagnostics, not just primary scores. Already
+overturned:
+
+- **"v4cross-b aware clade-B mode-trap"** (commit `24fcaf6`) — collapsed.
+  Legacy B-mono 83/243 → corrected **243/243**. Legacy unique topology
+  count 14 → corrected **1**. The aware chain was never pathological.
+  Audit at `inst/hamilton/sim3-v4cross-b/diagnose/audit-2026-05-19.md`
+  (commit `6cb7090`).
+- **9 other contaminated analysis scripts** patched: `sim3-mcmc.R`,
+  `sim3b-mcmc.R`, `sim3-v1v2-compare.R`, `sim3-multirep.R`,
+  `sim3-analyse.R`, `sim-figures.R`, `diagnostic-multirep-mixing.R`,
+  plus two `dev/pilots/` diagnostics (commit `97bc79e`). A *second* bug
+  pattern was also patched: `prop.part` output used as topology
+  fingerprint in dev pilots — different roots on same tree hash
+  differently, inflating "unique topology" counts.
+- **Stale RDS warning**: `sim3-multirep-n*.rds` bake legacy `agg` values
+  in; would need regeneration before re-plotting.
+
+Still to audit (next):
+- Rep 01 TL collapse + rep 05 topology valley (user memory
+  `project_mixing_followups`). Multirep code was contaminated; if those
+  claims came from the same pipeline, they may evaporate too.
+
+Confirmed UNAFFECTED:
+- Rodent comparison (`ape::consensus(rooted=FALSE)` is safe).
+- pi0/phi/z sampler R5-4 audit (no bipartition scoring involved).
+- Package R/ source (no bipartition logic).
 
 ## What this repo is
 
