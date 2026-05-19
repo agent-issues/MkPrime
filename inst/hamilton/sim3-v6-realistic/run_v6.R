@@ -137,7 +137,7 @@ run_one <- function(tag, mkd, model) {
   t0 <- Sys.time()
   if (file.exists(ckpFile)) {
     cat("Resuming from existing checkpoint:", ckpFile, "\n")
-    res <- ResumeMkPrime(mkd, mcmc = mcmc, model = model)
+    res <- ResumeMkPrime(checkpointFile = ckpFile, data = mkd, model = model)
   } else {
     res <- RunMkPrime(mkd, tree = startTree, model = model, mcmc = mcmc)
   }

@@ -129,7 +129,7 @@ cat(sprintf("MCMC: nIter=%d  thin=%d  treeThin=%d  warmup=[%d,%d]\n",
 if (file.exists(ckpFile)) {
   cat("Resuming from checkpoint:", ckpFile, "\n")
   t0  <- Sys.time()
-  res <- ResumeMkPrime(mkd, mcmc = mcmc, model = modelBlind)
+  res <- ResumeMkPrime(checkpointFile = ckpFile, data = mkd, model = modelBlind)
 } else {
   if (file.exists(logFile)) file.remove(logFile)
   t0  <- Sys.time()
