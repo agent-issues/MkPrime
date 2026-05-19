@@ -63,7 +63,10 @@ reference trees.
 | 17218354 | mk_k15 (--array=0-259) | COMPLETE | 186 converged, 74 timed out; summaries in place |
 | 17222516 | mk_k24 (--array=0-259) | RUNNING | ~88 tasks still running at last check; all converge within 8h |
 | 17224641 | summariser mk_k24 | COMPLETE | 260 summaries in `/nobackup/pjjg18/mkp-study/summary/` |
-| 17224967 | mk_k40 (--array=0-259) | QUEUED | Submitted 2026-05-19; same 8h budget; convergence expected within 8h as for k24 |
+| 17224967 | mk_k40 (--array=0-259) | FAILED | All 260 tasks crashed: syntax error (`unexpected }`) in run_one.R from bad block insertion |
+| 17225905 | mk_k40 (--array=0-259) | RUNNING | Resubmit after fix; ~26 tasks started as of poll; tree files confirming correct behaviour |
+
+**Bug fixed**: `run_one.R` had a stray `}` before `} else if (arm == "mk_k40")` and a missing closing `}`. Fixed via `tmp_fix_k40.py` on Hamilton. Verified with `tail -12`.
 
 On completion: `sbatch --array=0-259 summarize_array.slurm mk_k40`, scp summaries,
 add `mk_k40` to `cid_eight_prior.R` → `cid_nine_prior.R`.
