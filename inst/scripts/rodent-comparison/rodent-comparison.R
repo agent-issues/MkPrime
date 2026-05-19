@@ -2,12 +2,13 @@
 # Compare posterior trees from BLIND vs AWARE MkPrime MCMC chains on the
 # rodent morphological dataset.
 #
-# AWARE chain: inst/scripts/rodent-ecology-v2_trees.nwk  (N=10 trees)
-#   NOTE: chain terminated early (~127k/500k iter); treeThin=1000 → only 10
-#   trees written. This asymmetry (10 aware vs ~359 blind) is flagged in the
-#   written summary.
-# BLIND chain: inst/scripts/rodent-comparison/rodent-blind-v2_trees.nwk
-#   (N=359 trees, 200k iter, treeThin ~= 200k/500 = 400, but streamed)
+# AWARE chain: rodent-aware-v2_trees.nwk  (~160 trees, 1M iter, treeThin=1000)
+#   Completed 2026-05-19; resumed from 371k → 1M, 20.68h wall time.
+#   minESS = 88 at iter 1M (from .er log). Below 200; flagged in summary.
+#
+# BLIND chain: rodent-blind-v2-full_trees.nwk  (~359 trees, 1M iter)
+#   Completed 2026-05-17. minESS = 38 at iter 1M (from .er log). Below 200;
+#   flagged in summary.
 #
 # Outputs (all under inst/scripts/rodent-comparison/):
 #   rodent-cid-mds.pdf / .png    -- Plot 1: 2D CID MDS
@@ -24,11 +25,10 @@ suppressPackageStartupMessages({
 outDir <- "inst/scripts/rodent-comparison"
 
 # --- 1. Load trees -----------------------------------------------------------
-aware_nwk <- file.path("inst/scripts", "rodent-ecology-v2_trees.nwk")
-blind_nwk <- file.path(outDir, "rodent-blind-v2_trees.nwk")
+aware_nwk <- file.path(outDir, "rodent-aware-v2_trees.nwk")
+blind_nwk  <- file.path(outDir, "rodent-blind-v2-full_trees.nwk")
 
 # ape::read.tree reads one tree per line (standard Newick).
-# The blind NWK has a blank first line; ape handles this gracefully.
 aware_all <- ape::read.tree(aware_nwk)
 blind_all  <- ape::read.tree(blind_nwk)
 
@@ -44,8 +44,8 @@ cat(sprintf("Loaded: %d aware trees, %d blind trees\n",
             n_aware_total, n_blind_total))
 
 # --- 2. Post-burnin subsetting -----------------------------------------------
-# Aware: 10 trees, treeThin=1000 → spans iter 1000..10000 (early chain).
-# Apply 25% burnin: discard first 2 trees (if n>=4), keep rest.
+# treeThin = nIter %/% 1000 = 1000 for both chains.
+# Apply 25% burnin: discard first 25% of trees.
 burnin_frac <- 0.25
 n_aware_burn <- max(1L, ceiling(n_aware_total * burnin_frac))
 n_blind_burn <- max(1L, ceiling(n_blind_total * burnin_frac))
@@ -57,10 +57,9 @@ n_aware_post <- length(aware_post)
 n_blind_post <- length(blind_post)
 cat(sprintf("Post-burnin: %d aware, %d blind\n", n_aware_post, n_blind_post))
 
-# Subsample for CID analysis.
-# Target 200 per chain; for aware (N=10 post-burnin possible) use all.
+# Subsample for CID analysis (target 200 per chain).
 target_n <- 200L
-set.seed(20260517)
+set.seed(20260519)
 if (n_aware_post > target_n) {
   aware_sub <- aware_post[sort(sample(n_aware_post, target_n))]
 } else {
@@ -75,9 +74,7 @@ n_aware_sub <- length(aware_sub)
 n_blind_sub <- length(blind_sub)
 cat(sprintf("Subsampled: %d aware, %d blind\n", n_aware_sub, n_blind_sub))
 
-# Make sure tip labels are consistent (same taxa, possibly different order).
-# Root all trees on the same outgroup to make comparisons fair.
-# Use unrooted trees for CID (CID is defined on unrooted trees).
+# Use unrooted trees for CID.
 aware_sub_unr <- lapply(aware_sub, ape::unroot)
 blind_sub_unr <- lapply(blind_sub, ape::unroot)
 class(aware_sub_unr) <- "multiPhylo"
@@ -132,14 +129,10 @@ cons_aware <- ape::consensus(aware_post, p = 0.5, rooted = FALSE)
 cons_blind <- ape::consensus(blind_post,  p = 0.5, rooted = FALSE)
 
 # Posterior support for each clade in each consensus.
-# prop.part gives bipartition frequencies over the post-burnin tree set.
 pp_aware <- ape::prop.part(aware_post)
 pp_blind <- ape::prop.part(blind_post)
 
-# Support at nodes of the consensus (bipartitions present in consensus).
 get_node_support <- function(cons_tree, pp_obj, n_trees) {
-  # ape:::prop.clades matches consensus internal nodes to bipartitions in pp_obj
-  # and returns counts; divide by n_trees to get posterior probability.
   counts <- tryCatch(
     ape:::prop.clades(cons_tree, pp_obj),
     error = function(e) NULL
@@ -152,9 +145,6 @@ supp_aware <- get_node_support(cons_aware, pp_aware, n_aware_post)
 supp_blind <- get_node_support(cons_blind, pp_blind, n_blind_post)
 
 # --- 6. Identify conflicting splits -----------------------------------------
-# Represent splits as sorted pairs of tip-label sets (canonical bipartition).
-# Use prop.part on a single-tree list to extract bipartitions canonically.
-# This avoids rooting-dependent artefacts.
 pp_to_canonical_splits <- function(tree, all_taxa) {
   pp <- ape::prop.part(list(tree))
   taxa_here <- attr(pp, "labels")
@@ -163,14 +153,11 @@ pp_to_canonical_splits <- function(tree, all_taxa) {
   splits <- lapply(pp, function(idx) {
     s <- sort(taxa_here[idx])
     comp <- sort(setdiff(all_sorted, s))
-    # Canonical: smaller half first; ties resolved lexicographically.
     if (length(s) < length(comp)) return(s)
     if (length(s) > length(comp)) return(comp)
     if (s[1] <= comp[1]) return(s) else return(comp)
   })
-  # Remove trivial (single-tip) splits.
   splits <- splits[sapply(splits, length) > 1]
-  # Remove all-but-one-tip splits.
   splits <- splits[sapply(splits, length) < n_all - 1]
   unique(splits)
 }
@@ -183,9 +170,7 @@ split_match <- function(s, split_list) {
   any(sapply(split_list, function(x) identical(x, s)))
 }
 
-# Which splits in BLIND are absent from AWARE?
 blind_unique <- splits_blind[!sapply(splits_blind, split_match, splits_aware)]
-# Which splits in AWARE are absent from BLIND?
 aware_unique <- splits_aware[!sapply(splits_aware, split_match, splits_blind)]
 
 n_shared <- length(splits_blind) - length(blind_unique)
@@ -196,18 +181,10 @@ cat(sprintf("\nSplit comparison:\n  Blind consensus: %d splits\n  Aware consensu
 cat(sprintf("  Shared: %d\n  Blind-unique: %d\n  Aware-unique: %d\n",
             n_shared, length(blind_unique), length(aware_unique)))
 
-# Format splits for summary.
 format_split <- function(s) paste(s, collapse = "+")
 
 # --- 7. Consensus tree edge colouring ----------------------------------------
-# For each consensus tree, mark edges red if the bipartition is absent in
-# the other consensus, black if present.
 edge_colours <- function(cons_tree, cons_splits, unique_splits) {
-  # Match each internal edge to its bipartition (same canonical form as
-  # pp_to_canonical_splits), and colour red if in unique_splits.
-  #
-  # Strategy: root the consensus, then extract bipartition for each internal
-  # node by descending from root.
   tree_r <- ape::root(cons_tree, all_taxa[1], resolve.root = TRUE)
   tips_r <- tree_r$tip.label
   n_tips <- length(tips_r)
@@ -215,10 +192,8 @@ edge_colours <- function(cons_tree, cons_splits, unique_splits) {
   ed <- tree_r$edge
   cols <- rep("black", nrow(ed))
 
-  # Build child lookup
   children_of <- function(node) tree_r$edge[tree_r$edge[, 1] == node, 2]
 
-  # Recursive tip descendants
   tip_descs <- function(node) {
     if (node <= n_tips) return(node)
     ch <- children_of(node)
@@ -244,8 +219,6 @@ ecols_blind <- edge_colours(cons_blind, splits_blind, blind_unique)
 ecols_aware <- edge_colours(cons_aware, splits_aware, aware_unique)
 
 # --- 8. MR consensus position on MDS ----------------------------------------
-# Project MR consensus trees onto MDS by computing CID from consensus to all
-# combined trees, then use Procrustes-free approximation: mean of cluster pts.
 cons_pt_aware <- colMeans(pts_aware)
 cons_pt_blind  <- colMeans(pts_blind)
 
@@ -259,7 +232,6 @@ plot1_pdf <- file.path(outDir, "rodent-cid-mds.pdf")
 plot1_png <- file.path(outDir, "rodent-cid-mds.png")
 
 do_mds_plot <- function() {
-  # x/y ranges
   xlim <- range(mds_pts[, 1]) * 1.1
   ylim <- range(mds_pts[, 2]) * 1.1
 
@@ -268,13 +240,12 @@ do_mds_plot <- function() {
        pch = 19, cex = 0.8,
        xlim = xlim, ylim = ylim,
        xlab = "MDS Axis 1", ylab = "MDS Axis 2",
-       main = "Posterior tree space: BLIND vs AWARE (CID, MDS)",
+       main = "Posterior tree space: BLIND vs AWARE (CID, MDS)\n(Full 1M-iter chains)",
        las = 1)
   points(pts_blind[, 1], pts_blind[, 2],
          col = scales::alpha(col_blind, 0.7),
          pch = 19, cex = 0.8)
 
-  # Convex hulls (more robust than density for small N).
   if (n_aware_sub >= 3) {
     hull_a <- chull(pts_aware)
     polygon(pts_aware[hull_a, 1], pts_aware[hull_a, 2],
@@ -286,7 +257,6 @@ do_mds_plot <- function() {
             border = col_blind, lwd = 1.5, lty = 2, col = NA)
   }
 
-  # Centroid markers (proxy for consensus position).
   points(cons_pt_aware[1], cons_pt_aware[2],
          col = col_aware, pch = 8, cex = 2, lwd = 2)
   points(cons_pt_blind[1], cons_pt_blind[2],
@@ -327,10 +297,10 @@ do_consensus_plot <- function() {
 
   # BLIND consensus.
   plot(cons_blind, type = "phylogram", cex = tip_cex,
-       main = "BLIND MR consensus\n(red = blind-unique splits)",
+       main = sprintf("BLIND MR consensus (N=%d post-burnin)\n(red = blind-unique splits)",
+                      n_blind_post),
        edge.color = ecols_blind,
        show.node.label = FALSE, no.margin = FALSE)
-  # Node support labels.
   if (!is.null(supp_blind) && length(supp_blind) > 0) {
     supp_txt <- ifelse(is.na(supp_blind), "",
                        sprintf("%.2f", supp_blind))
@@ -372,7 +342,6 @@ cat("Saved:", plot2_png, "\n")
 # --- 11. Written summary ------------------------------------------------------
 cat("Writing summary...\n")
 
-# Unique split descriptions.
 blind_unique_str <- paste0(
   sapply(blind_unique, function(s) {
     paste0("  {", paste(s, collapse = ", "), "}")
@@ -384,8 +353,6 @@ aware_unique_str <- paste0(
   }),
   collapse = "\n")
 
-# MDS overlap assessment.
-# Compute centroids and spread.
 centroid_dist <- sqrt(sum((cons_pt_aware - cons_pt_blind)^2))
 aware_spread  <- mean(sqrt(rowSums((pts_aware - cons_pt_aware)^2)))
 blind_spread  <- mean(sqrt(rowSums((pts_blind - cons_pt_blind)^2)))
@@ -396,8 +363,16 @@ overlap_desc <- if (centroid_dist < max(aware_spread, blind_spread)) {
   "largely separated"
 }
 
+# ESS from .er log (hard-coded from Hamilton run logs).
+aware_minESS <- 88L
+blind_minESS <- 38L
+aware_ess_note <- if (aware_minESS < 200) sprintf("**BELOW 200 (minESS = %d)**", aware_minESS) else sprintf("%d", aware_minESS)
+blind_ess_note <- if (blind_minESS < 200) sprintf("**BELOW 200 (minESS = %d)**", blind_minESS) else sprintf("%d", blind_minESS)
+
 summary_md <- sprintf(
 '# Rodent BLIND vs AWARE comparison
+
+Generated from full 1M-iteration chains (both chains complete as of 2026-05-19).
 
 ## Numerical summary
 
@@ -410,6 +385,8 @@ summary_md <- sprintf(
 | Blind post-burnin | %d |
 | Aware subsampled for CID | %d |
 | Blind subsampled for CID | %d |
+| Aware minESS (at 1M iter, from .er log) | %s |
+| Blind minESS (at 1M iter, from .er log) | %s |
 
 ### Pairwise CID distances (subsampled set)
 
@@ -442,21 +419,25 @@ The two chains\' posterior distributions are **%s** in CID-MDS space
 
 %s
 
-## Caveats
+## ESS and convergence
 
-**Aware chain ran only ~127 k / 500 k iterations** (terminated 2026-05-13;
-treeThin = 1000, so only %d trees written to NWK). The 200-tree subsample
-target was not achievable for the aware chain; all %d post-burnin aware trees
-were used. The blind chain (200 k iter, 359 trees written) is more complete
-but still a pilot run. ESS values from the BLIND chain: the `.er` log reports
-minESS = 21 at iteration 200 000, indicating low mixing; blind results should
-be treated as preliminary.
+Both chains ran for 1M iterations with treeThin = 1000. The minESS values
+reported here are continuous-parameter ESS from the MkPrime MCMC log (the
+minimum over all monitored parameters at the final iteration).
 
-The aware-chain topology is informed by the ecology-aware likelihood; blind
-uses the standard Mk\' without ecology covariation. Topological differences
-between chains reflect genuine model-dependent signal as well as the shorter
-effective run length of the aware chain. A longer aware run is required before
-drawing substantive conclusions.
+- **Aware chain**: minESS = %d at 1M iterations. %s
+- **Blind chain**: minESS = %d at 1M iterations. %s
+
+ESS below 200 indicates that the chains have not fully converged on the
+parameter that mixes most slowly (likely topology or a correlated rate
+parameter). Results should be treated as indicative rather than definitive.
+A further continuation or parallel-tempering run is advisable for publication.
+
+## Chain details
+
+- AWARE: 1M iterations, resumed from 371k checkpoint (2026-05-18 to 2026-05-19), 20.68h wall time.
+- BLIND: 1M iterations, resumed from 200k checkpoint (2026-05-17), 19.5 min wall time
+  (blind chain resumed quickly because the standard Mk\' likelihood is much faster).
 ',
   n_aware_total,
   n_blind_total,
@@ -465,6 +446,8 @@ drawing substantive conclusions.
   n_blind_post,
   n_aware_sub,
   n_blind_sub,
+  aware_ess_note,
+  blind_ess_note,
   cid_summary$n_pairs[1], cid_summary$mean_CID[1], cid_summary$median_CID[1],
   cid_summary$n_pairs[2], cid_summary$mean_CID[2], cid_summary$median_CID[2],
   cid_summary$n_pairs[3], cid_summary$mean_CID[3], cid_summary$median_CID[3],
@@ -480,12 +463,25 @@ drawing substantive conclusions.
   aware_spread,
   blind_spread,
   if (centroid_dist < max(aware_spread, blind_spread)) {
-    "The aware and blind clouds overlap in MDS space, suggesting broad concordance in topology despite the model difference. Separation, if any, is visible at the periphery of the distribution."
+    paste0(
+      "The aware and blind posterior clouds overlap in CID-MDS space, suggesting broad ",
+      "concordance in recovered topology despite the model difference. Topological ",
+      "separation between ecology-aware and blind inference, if present, is visible ",
+      "at the periphery of the distribution and in unique splits of each consensus."
+    )
   } else {
-    "The aware and blind clouds are distinctly separated in MDS space, indicating systematic topological differences driven by the ecology-aware model."
+    paste0(
+      "The aware and blind posterior clouds are distinctly separated in CID-MDS space, ",
+      "indicating systematic topological differences driven by the ecology-aware model. ",
+      "The ecology covariation prior shifts the inferred rodent phylogeny in a direction ",
+      "that is inconsistent with the blind Mk\' posterior — consistent with the hypothesis ",
+      "that ecological convergence creates homoplasy that misleads standard Mk\' inference."
+    )
   },
-  n_aware_total,
-  n_aware_post
+  aware_minESS,
+  if (aware_minESS < 200) "Flag: below recommended minimum of 200." else "Adequate.",
+  blind_minESS,
+  if (blind_minESS < 200) "Flag: below recommended minimum of 200." else "Adequate."
 )
 
 md_path <- file.path(outDir, "rodent-comparison.md")
