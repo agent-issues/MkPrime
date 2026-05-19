@@ -219,9 +219,9 @@ fig2_core <- function() {
   text(0.7, ymax * 0.24, "Closer\nto truth", adj = c(0, 1.0),
        cex = 0.72, col = "grey30")
 
-  # Wilcoxon annotation
-  text(nReps + 0.45, ymax * 0.97, pAnnot,
-       adj = c(1, 1), cex = 0.72, col = "grey25", font = 3)
+  # Wilcoxon annotation — bottom-left to avoid legend overlap
+  text(0.55, ymin + ymax * 0.04, pAnnot,
+       adj = c(0, 0), cex = 0.72, col = "grey25", font = 3)
 
   # Legend
   legend("topright",
