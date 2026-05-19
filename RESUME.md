@@ -1,25 +1,37 @@
 # MkPrime ecology-aware — hand-off 2026-05-19
 
-## ⚠ Scoring bug discovered 2026-05-19
+## ⚠ Scoring bug fixed 2026-05-19 (commits `7d1076d`, `6500cda`)
 
-`hasBipart()` in every `run_v4*.R` script uses `ape::prop.part`, which is
-**root-dependent**. MCMC posterior trees are rooted but the root position
-varies across samples (~8 configurations in v4cross-b-pt5 rep01; ~30% of
-samples have the root on the BD side). When the root lies inside a clade,
-`prop.part` cannot return that clade — depressing its apparent posterior
-support purely as a measurement artefact.
+Legacy `hasBipart()` used `ape::prop.part`, which is **root-dependent**.
+MCMC trees vary root position across samples (3–20 root configs per chain,
+median ~12). When the root lay inside a target subset, the clade was
+invisible to `prop.part` → spurious low support.
 
-**Concrete evidence (v4cross-b-pt5 rep01, blind, 183 post-burnin trees):**
-P(AC)=0.978, P(BD)=0.148. On a binary tree AC|BD is the *same* split, so
-these should be equal. The asymmetry is entirely a rooting artefact.
+Fix: `inst/simulations/ecology/sim3-scoring.R` provides root-invariant
+`HasBipartSplits()` via `TreeTools::as.Splits`. All 22 v4/v4-cross saved
+RDS files re-scored; results in `inst/scripts/rescore-sim3-results.csv`.
 
-**Implication:** the "aware no better than blind on v4-cross" headline
-finding (and the "asymmetric mode-trap" / "clade C loss" follow-ups) need
-to be re-evaluated with a root-invariant scoring function before any
-narrative or paper commitment. Use `TreeTools::as.Splits()` instead.
+**Findings (corrected scoring):**
 
-**Fix scope:** scoring only; saved trees are fine, just re-score the RDS
-files. v4 runs are also affected (same `hasBipart` pattern).
+1. **Both blind AND aware essentially recover all true clades + sisters on
+   every v4/v4-cross regime tested.** Aware never demonstrably fails; blind
+   never demonstrably fails either — at 16 tips × 200–300 chars × phi=4 the
+   eco confound is too weak to break either model.
+2. **The "aware loses on v4-cross" 5-rep PT headline is gone.** Corrected
+   means: blind P(AC)=0.999, aware P(AC)=0.996; blind P(BD)=0.999, aware
+   P(BD)=0.996. Both chains essentially perfect.
+3. **The "v4c blind catastrophic" P(AC)=0 was an artefact.** Corrected =
+   1.000. v4b blind P(AC) 0.574 → 1.000. The original "blind drops AC"
+   motivation for v4-cross / v4c was the scoring bug, not real model
+   behaviour.
+4. **No active false-clade support anywhere** (P(falseInner)=0 everywhere;
+   P(falseAB) ≤ 0.006 in one rep). NOT a scoring artefact.
+
+**Implication for the paper narrative:** the entire "blind fails, aware
+rescues" story has not been demonstrated on any tested simulation
+architecture. The eco confound at tested scales is too weak to
+differentiate the models. A sharper sim that actually breaks blind is
+required before any methodological claim can be made.
 
 ## What this repo is
 
