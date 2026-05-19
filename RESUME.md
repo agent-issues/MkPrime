@@ -33,8 +33,27 @@ This session was a hand-off-resume + collect cycle:
   - mk_k24:   ~235k iter in 8h → ~2,350 thinned samples (43× slower than k15)
 
 - **mk_k15 full array submitted** as job **17218354** (`--array=0-259`, 8h each).
-  Resume capability means we can extend walltime later if results warrant. Wait
-  for k15 6-way+1 CID comparison before committing CPU to k24.
+  Resume capability means we can extend walltime later if results warrant.
+
+- **Preliminary 7-way CID (mk_k15 partial: 153 COMPLETED + 107 RUNNING summarised
+  from partial logs).** Job 17222171 ran the summariser; results in
+  `dev/pilots/2026-05-12-prior-validation/analysis/cid_seven_prior.R`:
+
+  | Arm | n | mean CID |
+  |---|---:|---:|
+  | mk | 260 | 0.2754 |
+  | mkp_eg | 260 | 0.2677 |
+  | mk_kp1 | 260 | 0.2595 |
+  | mkp_geo | 26 | 0.2562 |
+  | mk_kp2 | 260 | 0.2535 |
+  | mk_k9 | 260 | 0.2451 |
+  | **mk_k15** | 260 | **0.2418** |
+
+  Paired mk_k9 vs mk_k15 (260 common tasks): k15 wins 206/260, mean diff
+  −0.00335, binomial p = 4.3e-22. **The flexibility ramp extends past k=9**,
+  monotonically (mk_kp1 → mk_kp2 → mk_k9 → mk_k15) with diminishing
+  returns (Δk_p2→k9 = 0.0084; Δk9→k15 = 0.0033). Numbers will tighten when the
+  remaining 107 reps complete; ordering is very unlikely to flip.
 
 ## Pending jobs
 
@@ -140,10 +159,9 @@ syab07204 by_nt_9v from the 6-matrix comparison and note as infeasible.
 - **Per-pattern vs per-character k′ confusion**: phyDat compresses to unique
   patterns; `mkd$kObs` and `state$kPrime` are per-character. MkPrime expands back.
 - **kObs+1 sweet-spot hypothesis**: mk_k9 > mk_kp2 > mk_kp1 monotonically in
-  6-way CID pilot. More flexibility helps in this sim, up to k=9. Whether the
-  ramp continues past k=9 is what k=15/k=24 arms test — k15 full array
-  submitted; k24 held pending k15 outcome (and not "too slow" — runs are
-  resumable; an 8h test just bounds *throughput*, not *feasibility*).
+  6-way CID pilot. Confirmed extended in 7-way (2026-05-19, this session):
+  mk_k15 > mk_k9 (paired p=4.3e-22). Ramp is monotonic up to k=15 with
+  diminishing returns — open question whether k24 plateaus or continues.
 
 ## Suggested first action
 
