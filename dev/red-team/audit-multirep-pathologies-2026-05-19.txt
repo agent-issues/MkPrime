@@ -1,0 +1,42 @@
+=== Audit: multirep-v3 rep01 + rep05 against root-invariant scoring ===
+Date: 2026-05-19 17:24:00.251743
+Truth tree: 16 tips, TL = 13.500, AC split = {A1,A2,A3,A4,C1,C2,C3,C4}
+
+========== REP 01 ==========
+
+--- [AWARE] 240 samples, 240 saved trees ---
+  TL: min=2.360 q25=2.908 med=3.125 q75=3.443 max=5.083 last100mean=3.040  truth=13.500
+  post-burnin trees retained: 180 / 240
+  P(AC) legacy=0.0111  corrected=0.0222  (delta = +0.0111)
+  P(AB) legacy=0.7889  corrected=0.7889  (delta = +0.0000)
+  Unique topo (samples)   legacy topo_hash = 161  (out of 180)
+  Unique topo (saved trees) canonical splits hash = 160 (out of 180)
+  Most-frequent canonical topology share: 0.0222
+  Top 3 canonical topology shares: 0.0222  0.0167  0.0167
+  Root configurations seen (distinct positions): 31
+  Top root-config share: 0.1722
+  Top 3 root-config shares: 0.1722  0.1611  0.1167
+  Root inside AC tipset: 0 / 180 (NaN%)  NA/crosses: 180
+
+[BLIND] empty sample table -- skipping
+
+========== REP 05 ==========
+
+--- [AWARE] 243 samples, 243 saved trees ---
+  TL: min=11.867 q25=17.128 med=18.729 q75=20.978 max=30.501 last100mean=20.706  truth=13.500
+  post-burnin trees retained: 182 / 243
+  P(AC) legacy=0.0000  corrected=0.0000  (delta = +0.0000)
+  P(AB) legacy=0.4615  corrected=0.4615  (delta = +0.0000)
+  Unique topo (samples)   legacy topo_hash = 126  (out of 182)
+  Unique topo (saved trees) canonical splits hash = 111 (out of 182)
+  Most-frequent canonical topology share: 0.0604
+  Top 3 canonical topology shares: 0.0604  0.0604  0.0275
+  Root configurations seen (distinct positions): 16
+  Top root-config share: 0.2363
+  Top 3 root-config shares: 0.2363  0.1484  0.1374
+  Root inside AC tipset: 3 / 182 (100.000%)  NA/crosses: 179
+
+[BLIND] empty sample table -- skipping
+
+Saved RDS: dev/red-team/audit-multirep-pathologies-2026-05-19.rds
+=== done ===
