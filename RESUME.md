@@ -49,10 +49,10 @@ This session pushed three threads forward:
 
 | Job ID | Name | Wall | On completion |
 |--------|------|------|---------------|
-| TBD (aware-cont2) | mkp-rod-awar2 | 36h | Check minESS from `rodent-aware-v2-result.rds`; if ≥ 200, regenerate `inst/scripts/rodent-comparison/` |
-| TBD (blind-cont2) | mkp-rod-blind2 | 4h | Check minESS from `rodent-blind-v2-result.rds`; if ≥ 200, regenerate `inst/scripts/rodent-comparison/` |
+| 17222514 (aware-cont2) | mkp-rod-awar2 | 36h | Check minESS from `rodent-aware-v2-result.rds`; if ≥ 200, regenerate `inst/scripts/rodent-comparison/` |
+| 17222515 (blind-cont2) | mkp-rod-blind2 | 4h | Check minESS from `rodent-blind-v2-result.rds`; if ≥ 200, regenerate `inst/scripts/rodent-comparison/` |
 
-Both jobs submitted 2026-05-19. Check status with:
+Both jobs submitted and running 2026-05-19. Check status with:
 `/c/WINDOWS/System32/OpenSSH/ssh.exe pjjg18@hamilton8.dur.ac.uk "squeue -u pjjg18"`
 
 Targets: aware 1M→2.3M (patch nIter=2300000L), blind 1M→5M (patch nIter=5000000L).
