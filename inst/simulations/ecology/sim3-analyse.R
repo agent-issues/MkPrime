@@ -64,14 +64,10 @@ otherSplits <- list(
   trueB = c(paste0("B", 1:4), paste0("D", 1:4)),
   wrongCD = c(paste0("C", 1:4), paste0("D", 1:4))
 )
-hasBipart <- function(treeList, splitTips) {
-  vapply(treeList, function(tr) {
-    cl <- ape::prop.part(tr)
-    tips <- attr(cl, "labels")
-    splitSet <- which(tips %in% splitTips)
-    any(vapply(cl, function(p) setequal(p, splitSet), logical(1)))
-  }, logical(1))
-}
+# Use root-invariant HasBipartSplits() — see sim3-scoring.R. The old
+# prop.part-based hasBipart() in this file was root-dependent.
+source("inst/simulations/ecology/sim3-scoring.R")
+hasBipart <- HasBipartSplits
 
 reportSplits <- function(trees, label) {
   if (length(trees) == 0L) return(invisible())

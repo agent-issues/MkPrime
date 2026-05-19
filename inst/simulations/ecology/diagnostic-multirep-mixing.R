@@ -78,14 +78,10 @@ chain_map <- function(res) {
   )
 }
 
-hasACBipart <- function(treeList) {
-  vapply(treeList, function(tr) {
-    cl <- ape::prop.part(tr)
-    tips <- attr(cl, "labels")
-    splitSet <- which(tips %in% trueSplit)
-    any(vapply(cl, function(p) setequal(p, splitSet), logical(1)))
-  }, logical(1))
-}
+# Use root-invariant HasBipartSplits() — see sim3-scoring.R. Old
+# inline test was root-dependent.
+source("inst/simulations/ecology/sim3-scoring.R")
+hasACBipart <- function(treeList) HasBipartSplits(treeList, trueSplit)
 
 diagnose_rep <- function(repId) {
   d <- sprintf("inst/simulations/ecology/multirep-v3-results/rep%s", repId)

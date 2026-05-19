@@ -86,16 +86,11 @@ resAware <- RunMkPrime(mkdAware, tree = startTree,
 cat("Aware elapsed:", format(Sys.time() - t0), "\n")
 
 # Bipartition support.
+# Use root-invariant HasBipartSplits() — see sim3-scoring.R.
+source("inst/simulations/ecology/sim3-scoring.R")
 trueSplit  <- c(paste0("A", 1:4), paste0("C", 1:4))
 wrongSplit <- c(paste0("A", 1:4), paste0("B", 1:4))
-hasBipart <- function(treeList, splitTips) {
-  vapply(treeList, function(tr) {
-    cl <- ape::prop.part(tr)
-    tips <- attr(cl, "labels")
-    splitSet <- which(tips %in% splitTips)
-    any(vapply(cl, function(p) setequal(p, splitSet), logical(1)))
-  }, logical(1))
-}
+hasBipart <- HasBipartSplits
 discard <- function(x) x[seq.int(ceiling(length(x) / 4) + 1L, length(x))]
 
 cat("\n== Posterior bipartition support ==\n")

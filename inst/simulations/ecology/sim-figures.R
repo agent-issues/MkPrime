@@ -29,14 +29,12 @@ wrongTree <- Preorder(ape::read.tree(text = paste0(
 trueSplitTips  <- c(paste0("A", 1:4), paste0("C", 1:4))
 wrongSplitTips <- c(paste0("A", 1:4), paste0("B", 1:4))
 
-hasBipart <- function(treeList, splitTips) {
-  vapply(treeList, function(tr) {
-    cl <- ape::prop.part(tr)
-    tips <- attr(cl, "labels")
-    splitSet <- which(tips %in% splitTips)
-    any(vapply(cl, function(p) setequal(p, splitSet), logical(1)))
-  }, logical(1))
-}
+# Use root-invariant HasBipartSplits() — see sim3-scoring.R. Old
+# inline hasBipart() was root-dependent and biased every figure that
+# read it. Note: .PlotMultiRep reads `res$agg` which is pre-baked by
+# sim3-multirep.R; regenerate the multirep RDS to refresh those values.
+source("inst/simulations/ecology/sim3-scoring.R")
+hasBipart <- HasBipartSplits
 discard <- function(x) x[seq.int(ceiling(length(x) / 4) + 1L, length(x))]
 
 scoreOne <- function(trees, trueTree) {

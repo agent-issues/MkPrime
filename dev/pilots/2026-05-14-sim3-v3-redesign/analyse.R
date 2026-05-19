@@ -29,13 +29,14 @@ cat(sprintf("Config: nEco=%d nBase=%d phi=%g stem=%.2f root=%.2f\n",
             saved$config$stemBr, saved$config$rootBr))
 cat(sprintf("Truth tl = %.2f\n", truthTL))
 
-# Helper: tip-set membership
-hasSplit <- function(tr, tips) {
-  cl <- ape::prop.part(tr)
-  labs <- attr(cl, "labels")
-  target <- which(labs %in% tips)
-  any(sapply(cl, function(p) setequal(p, target)))
-}
+# Helper: tip-set membership.
+# AUDIT (2026-05-19): the old inline hasSplit() used ape::prop.part,
+# which is root-dependent. Replaced with HasBipartSplits() from
+# sim3-scoring.R. Note: the rfHash modal-topology check below is
+# ALSO root-dependent (different roots on the same unrooted tree
+# yield different hashes) — flagged inline at that block.
+source("inst/simulations/ecology/sim3-scoring.R")
+hasSplit <- function(tr, tips) HasBipartSplits(list(tr), tips)
 trueAC <- c(paste0("A", 1:4), paste0("C", 1:4))
 wrongAB <- c(paste0("A", 1:4), paste0("B", 1:4))
 trueAB_wrong <- wrongAB  # alias
@@ -62,11 +63,24 @@ process_chain <- function(res, label, awareLog = FALSE) {
   cat(sprintf("P(true bipartition AC together)  = %.3f\n", pAC))
   cat(sprintf("P(wrong bipartition AB together) = %.3f\n", pAB))
 
-  # Modal topology
+  # Modal topology.
+  # AUDIT (2026-05-19): rfHash uses ape::prop.part as a topology
+  # fingerprint, but prop.part output depends on root placement.
+  # Two trees with identical UNROOTED topology and different roots
+  # produce different hashes — this inflates the unique-topology
+  # count and depresses the modal-topology fraction. Replaced with a
+  # root-invariant canonical-splits hash via TreeTools::as.Splits.
   rfHash <- sapply(trees_pb, function(tr) {
-    paste(sort(unlist(lapply(ape::prop.part(tr), function(p) {
-      paste(sort(p), collapse = "_")
-    }))), collapse = "|")
+    spl <- TreeTools::as.Splits(tr, tipLabels = tr$tip.label)
+    m <- as.logical(spl)
+    if (is.null(dim(m))) m <- matrix(m, nrow = 1L)
+    # Canonicalise each row to its lexicographically-smaller orientation.
+    rows <- apply(m, 1L, function(r) {
+      key1 <- paste(which(r),  collapse = "_")
+      key2 <- paste(which(!r), collapse = "_")
+      if (key1 < key2) key1 else key2
+    })
+    paste(sort(rows), collapse = "|")
   })
   nUnique <- length(unique(rfHash))
   topCount <- max(table(rfHash))

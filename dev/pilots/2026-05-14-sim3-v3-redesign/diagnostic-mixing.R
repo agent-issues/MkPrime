@@ -112,13 +112,22 @@ chain_map_z <- function(res, idx, nChar) {
   NULL
 }
 
-# Hash the truth topology (sorted bipartition signature)
-truth_hash <- tryCatch(
-  paste(sort(vapply(ape::prop.part(truthTree),
-                    function(p) paste(sort(p), collapse = ","),
-                    character(1))),
-        collapse = "|"),
-  error = function(e) NA_character_)
+# Hash the truth topology (sorted UNROOTED bipartition signature).
+# AUDIT (2026-05-19): the previous hash used ape::prop.part output
+# directly, which is root-dependent. Two trees with identical
+# unrooted topology and different roots produce different hashes.
+# Use a canonical-splits hash via TreeTools::as.Splits instead.
+truth_hash <- tryCatch({
+  spl <- TreeTools::as.Splits(truthTree, tipLabels = truthTree$tip.label)
+  m <- as.logical(spl)
+  if (is.null(dim(m))) m <- matrix(m, nrow = 1L)
+  rows <- apply(m, 1L, function(r) {
+    key1 <- paste(which(r),  collapse = ",")
+    key2 <- paste(which(!r), collapse = ",")
+    if (key1 < key2) key1 else key2
+  })
+  paste(sort(rows), collapse = "|")
+}, error = function(e) NA_character_)
 
 # ---- Aware diagnostic ----
 cat("\n--- AWARE chain ---\n")
@@ -195,13 +204,11 @@ cat(sprintf("\nAware TL trace: min=%.2f  med=%.2f  max=%.2f  last100mean=%.2f  t
             mean(tail(tlA, 100)), r$truthTL))
 
 # Does the chain ever visit a tree containing the true bipartition?
+# AUDIT (2026-05-19): replaced root-dependent prop.part test with
+# root-invariant HasBipartSplits().
+source("inst/simulations/ecology/sim3-scoring.R")
 trueSplit  <- c(paste0("A", 1:4), paste0("C", 1:4))
-hasTrueAC <- vapply(resA$trees, function(tr) {
-  cl <- ape::prop.part(tr)
-  tips <- attr(cl, "labels")
-  splitSet <- which(tips %in% trueSplit)
-  any(vapply(cl, function(p) setequal(p, splitSet), logical(1)))
-}, logical(1))
+hasTrueAC <- HasBipartSplits(resA$trees, trueSplit)
 cat(sprintf("Aware: %d / %d samples contain the true AC bipartition (%.3f%%)\n",
             sum(hasTrueAC), length(hasTrueAC),
             100 * mean(hasTrueAC)))
