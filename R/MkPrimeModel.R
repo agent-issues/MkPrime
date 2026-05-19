@@ -12,8 +12,16 @@
 #' @param treeLengthShape,treeLengthRate Shape and rate for the Gamma prior
 #'   on tree length. Defaults: shape = 2, rate = 2 / `expSteps`.
 #' @param expSteps Expected number of character state changes. Used to set
-#'   the tree length prior scale. Default `NULL` (computed from parsimony score
-#'   of the starting tree).
+#'   the tree length prior scale. Default `NULL`: the parsimony (Fitch) score
+#'   of the starting tree on the supplied data is computed in
+#'   [`.FinalizeModel()`][.FinalizeModel] and inflated by `expStepsInflation`
+#'   (default 1.05) to encode the expectation that the true tree length sits
+#'   a few percent above the parsimony minimum. A numeric value supplied here
+#'   is treated as a user override and is used verbatim (no inflation
+#'   applied).
+#' @param expStepsInflation Multiplicative factor applied to the parsimony
+#'   score when `expSteps = NULL`. Default 1.05. Ignored when `expSteps` is
+#'   set explicitly.
 #' @param rateLossMeanlog,rateLossSdlog Parameters for the LogNormal prior
 #'   on `rate_loss` (neomorphic asymmetry). Defaults: meanlog = 0, sdlog = 2.
 #' @param rateLogSdShape,rateLogSdRate Shape and rate for the Gamma prior
@@ -179,6 +187,7 @@ MkPrimeModel <- function(
     treeLengthShape = 2,
     treeLengthRate = NULL,
     expSteps = NULL,
+    expStepsInflation = 1.05,
     rateLossMeanlog = 0,
     rateLossSdlog = 2,
     rateLogSdShape = 1,
@@ -300,10 +309,18 @@ MkPrimeModel <- function(
     }
   }
 
+  if (!is.numeric(expStepsInflation) || length(expStepsInflation) != 1L ||
+      !is.finite(expStepsInflation) || expStepsInflation <= 0) {
+    cli::cli_abort("{.arg expStepsInflation} must be a positive scalar.")
+  }
+
   # Derive treeLengthRate from expSteps if not provided
   if (is.null(treeLengthRate) && !is.null(expSteps)) {
     treeLengthRate <- 2 / expSteps
   }
+
+  # Flag user-supplied expSteps so .FinalizeModel knows whether to inflate.
+  expStepsUserSet <- !is.null(expSteps)
 
   structure(
     list(
@@ -313,6 +330,9 @@ MkPrimeModel <- function(
       treeLengthShape = treeLengthShape,
       treeLengthRate = treeLengthRate,
       expSteps = expSteps,
+      expStepsInflation = expStepsInflation,
+      expStepsUserSet = expStepsUserSet,
+      expStepsParsimony = NULL,
       rateLossMeanlog = rateLossMeanlog,
       rateLossSdlog = rateLossSdlog,
       rateLogSdShape = rateLogSdShape,
@@ -356,7 +376,16 @@ MkPrimeModel <- function(
 #' @keywords internal
 .FinalizeModel <- function(model, tree, mkd) {
   if (is.null(model$expSteps)) {
-    model$expSteps <- max(1, .FitchScore(tree, mkd))
+    parsimonyScore <- .FitchScore(tree, mkd)
+    inflation <- model$expStepsInflation %||% 1.05
+    model$expStepsParsimony <- parsimonyScore
+    model$expSteps <- max(1, parsimonyScore * inflation)
+    cli::cli_alert_info(
+      "Tree length prior: parsimony score = {parsimonyScore}; \\
+       expSteps = {signif(model$expSteps, 4)} \\
+       ({inflation}x parsimony). Gamma(shape = {model$treeLengthShape}, \\
+       rate = {signif(2 / model$expSteps, 4)})."
+    )
   }
   if (is.null(model$treeLengthRate)) {
     model$treeLengthRate <- 2 / model$expSteps
@@ -754,10 +783,25 @@ print.MkPrimeModel <- function(x, ...) {
     "OFF"
   }
 
+  expStepsStr <- if (is.null(x$expSteps)) {
+    "auto (parsimony-derived at .FinalizeModel time)"
+  } else if (isTRUE(x$expStepsUserSet)) {
+    paste0(signif(x$expSteps, 4), " (user-supplied)")
+  } else if (!is.null(x$expStepsParsimony)) {
+    paste0(
+      signif(x$expSteps, 4),
+      " (", signif(x$expStepsInflation %||% 1.05, 3),
+      "x parsimony score ", x$expStepsParsimony, ")"
+    )
+  } else {
+    paste0(signif(x$expSteps, 4))
+  }
+
   cli::cli_ul(c(
     "Coding: {x$coding}",
     "ACRV categories: {x$nCat}",
     "Relabelling correction: {x$relabel}",
+    paste0("expSteps: ", expStepsStr),
     "Tree length prior: Gamma({x$treeLengthShape}, {x$treeLengthRate %||% 'auto'})",
     "rate_loss prior: LogNormal({x$rateLossMeanlog}, {x$rateLossSdlog})",
     "rate_log_sd prior: Gamma({x$rateLogSdShape}, {x$rateLogSdRate})",

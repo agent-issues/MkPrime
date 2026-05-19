@@ -1,5 +1,15 @@
 # MkPrime (development version)
 
+* Tree-length prior now scales with the data.  When `expSteps` is left at its
+  default (`NULL`), `RunMkPrime()` / `.FinalizeModel()` set
+  `expSteps = expStepsInflation * parsimony(startingTree, data)` and derive
+  `treeLengthRate = 2 / expSteps`.  The new `expStepsInflation` argument
+  (default 1.05) encodes the expectation that the true tree length sits a few
+  percent above the parsimony minimum.  Numeric `expSteps` supplied by the
+  user is still respected verbatim.  **This changes the prior for every run
+  that did not previously pass an explicit `expSteps`**; the resolved value
+  is printed at chain start and shown by `print(model)`.
+
 * Ecology-aware substitution model.  `MkPrimeModel(ecologyAware = TRUE)`
   enables per-character, per-ecology rate modification via a
   spike-and-slab latent `z` and global magnitude `phi`.  Tip ecology

@@ -194,8 +194,22 @@ test_that("Fitch score used for expSteps default", {
   pd <- TreeTools::MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
+  # Default: parsimony score (3) inflated by 1.05 → 3.15
   model <- MkPrimeModel()
   finalized <- MkPrime:::.FinalizeModel(model, tree, mkd)
-  expect_equal(finalized$expSteps, 3)
-  expect_equal(finalized$treeLengthRate, 2 / 3)
+  expect_equal(finalized$expStepsParsimony, 3L)
+  expect_equal(finalized$expSteps, 3 * 1.05)
+  expect_equal(finalized$treeLengthRate, 2 / (3 * 1.05))
+
+  # Custom inflation factor
+  model2 <- MkPrimeModel(expStepsInflation = 1.20)
+  finalized2 <- MkPrime:::.FinalizeModel(model2, tree, mkd)
+  expect_equal(finalized2$expSteps, 3 * 1.20)
+  expect_equal(finalized2$treeLengthRate, 2 / (3 * 1.20))
+
+  # User-supplied expSteps overrides parsimony (no inflation applied)
+  model3 <- MkPrimeModel(expSteps = 10)
+  finalized3 <- MkPrime:::.FinalizeModel(model3, tree, mkd)
+  expect_equal(finalized3$expSteps, 10)
+  expect_true(isTRUE(finalized3$expStepsUserSet))
 })

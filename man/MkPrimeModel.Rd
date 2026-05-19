@@ -11,6 +11,7 @@ MkPrimeModel(
   treeLengthShape = 2,
   treeLengthRate = NULL,
   expSteps = NULL,
+  expStepsInflation = 1.05,
   rateLossMeanlog = 0,
   rateLossSdlog = 2,
   rateLogSdShape = 1,
@@ -23,18 +24,18 @@ MkPrimeModel(
   kprimeBeta = 1,
   kprimeLogseriesC = 0.7,
   rateNeoMeanlog = 0,
-  rateNeoSdlog = 2,
+  rateNeoSdlog = 1,
   qHeterogeneity = FALSE,
   nBetaCat = 4L,
   betaScaleShape = 1,
   betaScaleRate = 1,
   ecologyAware = FALSE,
   magnitudeMode = "global",
-  rho0Alpha = 7,
-  rho0Beta = 3,
+  rho0Alpha = 360,
+  rho0Beta = 120,
   thetaAlpha = 2,
   thetaBeta = 2,
-  sigmaPhi = 0.5,
+  sigmaPhi = 1.5,
   gibbsZEvery = 50L
 )
 }
@@ -51,8 +52,17 @@ characters? Default \code{TRUE}.}
 on tree length. Defaults: shape = 2, rate = 2 / \code{expSteps}.}
 
 \item{expSteps}{Expected number of character state changes. Used to set
-the tree length prior scale. Default \code{NULL} (computed from parsimony score
-of the starting tree).}
+the tree length prior scale. Default \code{NULL}: the parsimony (Fitch) score
+of the starting tree on the supplied data is computed in
+\code{\link[=.FinalizeModel]{.FinalizeModel()}} and inflated by \code{expStepsInflation}
+(default 1.05) to encode the expectation that the true tree length sits
+a few percent above the parsimony minimum. A numeric value supplied here
+is treated as a user override and is used verbatim (no inflation
+applied).}
+
+\item{expStepsInflation}{Multiplicative factor applied to the parsimony
+score when \code{expSteps = NULL}. Default 1.05. Ignored when \code{expSteps} is
+set explicitly.}
 
 \item{rateLossMeanlog, rateLossSdlog}{Parameters for the LogNormal prior
 on \code{rate_loss} (neomorphic asymmetry). Defaults: meanlog = 0, sdlog = 2.}
@@ -96,7 +106,11 @@ when \code{kPrimePrior = "logseries"}. Must be in (0, 1). Default 0.7, matching
 the RevBayes \code{dnMkPrime} default.}
 
 \item{rateNeoMeanlog, rateNeoSdlog}{Parameters for the LogNormal prior
-on the neomorphic partition rate scalar. Defaults: meanlog = 0, sdlog = 2.}
+on the neomorphic partition rate scalar. Defaults: meanlog = 0, sdlog = 1
+(95\% prior interval ~ \link{0.14, 7.4}).  Earlier defaults used sdlog = 2,
+but that admitted rate_neo blow-ups along the (tree_length, rate_neo)
+ridge near JC saturation; sdlog = 1 prevents the pathology while still
+covering realistic per-partition rate scalings.}
 
 \item{qHeterogeneity}{Logical. Enable Q-matrix heterogeneity across
 characters via discretised Dirichlet-marginal equilibrium frequencies?
@@ -128,17 +142,42 @@ ecologies: \code{"global"} (default; single \code{phi}) or \code{"per_ecology"} 
 
 \item{rho0Alpha, rho0Beta}{Shape parameters for the Beta hyperprior on
 \code{pi_0}, the prior probability that a (character, ecology) pair has
-no ecology effect. Defaults: 7, 3 (so \code{E[pi_0] = 0.7}). Ignored when
-\code{ecologyAware = FALSE}.}
+no ecology effect. Defaults: 360, 120 (mode 0.75, effective sample
+size 480). The spike-and-slab is structurally a sparsity prior;
+earlier defaults of Beta(75, 25) (ESS = 100) were overwhelmed by
+typical z-cell counts (480 in a 120/360 NT split at kEco = 2):
+because per-cell likelihood contrast is sub-nat on datasets with
+O(10) tips per ecology, the Gibbs z sweep samples from the prior
+rather than the data, and pi0 MH then chases the z-counts (R5-1).
+ESS = 480 matches the z-cell count in the sim3 setting, giving the
+prior and data equal weight. Users with substantially different
+character counts may want to override (Beta(alpha, alpha/3) preserves
+mode 0.75 while scaling ESS with nChar).
+Ignored when \code{ecologyAware = FALSE}.}
 
 \item{thetaAlpha, thetaBeta}{Shape parameters for the Beta hyperprior on
 \code{theta_e}, the slab balance for non-reference ecology \code{e}. Given a
 non-none \code{z}, \code{P(z = encouraged | non-none) = theta_e}. Defaults: 2, 2
-(weakly symmetric -- prior favours equal enc/disc but allows asymmetry).
+(\code{Beta(2, 2)}, symmetric bell centred at 0.5). The uniform \code{Beta(1, 1)}
+provides zero counterweight to z-cell counts: when per-cell likelihood
+contrast is sub-nat (O(10) tips per ecology), theta drifts freely to
+the 0.5 saddle where z=1 and z=2 become exchangeable, symmetrising
+the chain and accelerating pi0 collapse (R5-3). \code{Beta(2, 2)} puts mild
+mass at 0.5 while still admitting the biologically natural boundary
+cases (\code{theta} near 0 or 1) at finite (though low) density; this
+balances the counterweight need against boundary accessibility.
 Ignored when \code{ecologyAware = FALSE}.}
 
 \item{sigmaPhi}{Standard deviation of the LogNormal prior on \code{phi} (or
-on each \code{phi_e}). Default 0.5. Ignored when \code{ecologyAware = FALSE}.}
+on each \code{phi_e}). Default 1.5 (95\% prior interval ~ \link{0.09, 11.2},
+centred at no-effect \code{phi = 1}). With \code{sigmaPhi = 1.0} the prior
+density at phi = 1 (no effect) was 9x higher than at phi = 4
+(moderate ecology effect), making the prior the dominant force when
+per-cell likelihood contrast is sub-nat (R5-2). At \code{sigmaPhi = 1.5},
+the ratio falls to ~5x, giving the data a realistic chance to move
+phi to ecologically plausible values.  Earlier defaults used 0.5,
+which penalised \verb{|log phi| > ~1} heavily.
+Ignored when \code{ecologyAware = FALSE}.}
 
 \item{gibbsZEvery}{Integer. Number of MCMC generations between Gibbs
 sweeps over the per-(character, ecology) influence categories \code{z}.
@@ -166,8 +205,9 @@ category \verb{z_\{c,e\}} is sampled with three values:
 \item{\code{encouraged}}{rate scaled by \code{phi} (asymmetric for neomorphic)}
 \item{\code{discouraged}}{rate scaled by \code{1 / phi} (asymmetric for neomorphic)}
 }
-The prior on \code{z} is sparse: \code{P(z = none) = pi_0}, with \code{pi_0 ~ Beta(7, 3)}
-by default so most characters are \emph{a priori} unaffected by ecology.
+The prior on \code{z} is sparse: \code{P(z = none) = pi_0}, with \code{pi_0 ~ Beta(360, 120)}
+by default (mode 0.75, ESS 480) so most characters are \emph{a priori} unaffected
+by ecology.
 }
 
 \section{Q-matrix heterogeneity}{
