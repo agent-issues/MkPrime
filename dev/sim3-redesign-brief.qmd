@@ -1,6 +1,6 @@
 ---
 title: "Sim 3 — current design & redesign brief"
-date: 2026-05-16
+date: 2026-05-19
 format:
   html:
     toc: true
@@ -8,13 +8,31 @@ format:
     embed-resources: true
 ---
 
-## Current design (v3)
+## Current state (post-rescore, 2026-05-19)
+
+The sim 3 architecture (multirep-v3) is the **headline simulation** for the
+ecology paper. The scoring bug (commits `7d1076d`, `6500cda`, `97bc79e`) had
+masked most of the false-clade signal in 3/8 reps; after root-invariant
+rescoring (commits `82d9440`, `2f72f6e`) the picture is now clear: the blind
+chain reliably commits to the false eco-clade; the aware chain refuses that
+commitment but does not recover truth. That is the **partial dichotomy** — half
+the paper story, defensible now; the full "two models, two answers, one right"
+dichotomy awaits v5break (job 17226503, in flight).
+
+The v4 / v4-cross family (`7d1076d`, `6500cda`) turned out to test a regime
+where the eco confound is too weak to break either model; both blind and aware
+achieve P(true bipartitions) ≈ 1 after rescoring. The previously reported
+"blind drops AC" (v4b legacy P=0.574) and "aware catastrophic" (v4c legacy
+P=0) findings were scoring artefacts. Those results are **withdrawn**.
+
+---
+
+## Simulation design
 
 ### Tree
 
-Sixteen tips in four 4-tip clades arranged so that the **true topology is
-((A,C),(B,D))**. Clades A and B are assigned ecology state 1; clades C and D
-are assigned ecology state 0.
+Sixteen tips in four 4-tip clades; true topology **((A,C),(B,D))**.
+Eco-1 = **all of clades A and B** (the 8-tip false eco-clade).
 
 ```
            ┌── A1
@@ -23,7 +41,7 @@ are assigned ecology state 0.
      ┌──┤
      │  │  ┌── A3
      │  └──┤
-  ───┤     └── A4   ← eco 1 (same as B)
+  ───┤     └── A4   ← eco 1 (same as B — false convergent group)
      │
      │     ┌── C1
      │  ┌──┤
@@ -34,45 +52,22 @@ are assigned ecology state 0.
            └── C4   ← eco 0 (true sister of A)
 ```
 
-*(B,D) subtree mirrors the (A,C) subtree with B:eco1, D:eco0.)*
+*(B,D) subtree mirrors (A,C); B:eco1, D:eco0.)*
 
-The **spurious grouping** A+B is supported by characters that evolve faster
-on ecology-1 edges — these look convergent to a blind Mk model, which
-misinterprets shared ecology-1 signal as shared ancestry.
-
-### Branch lengths
-
-| Branch type | Symbol | v3 value | Notes |
-|-------------|--------|----------|-------|
-| Within-clade terminal | `tipBr` | 0.50 | All tips, and within-clade internal branches |
-| Clade stem | `stemBr` | 0.30 | One per clade, subtending the 4-tip group |
-| Root internal | `rootBr` | 0.15 | Separates (A,C) and (B,D) pairs |
-| **Total tree length** | — | **13.5** | |
-
-### Characters
+### Parameters
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| `nEco` | 120 | Neomorphic — all ecology-affected (z=1 for eco-1 taxa) |
-| `nBase` | 360 | Transformational — no ecology effect |
-| **Total** | **480** | — |
-| `phi` | 4 | Rate multiplier on ecology-1 edges for encouraged characters |
-| `pi0` | 0.75 | True fraction with no ecology effect (z=0) |
-| `theta` | 1.0 | All ecology-affected characters are "encouraged" (z=1), not "discouraged" |
-| `baseRate` | 1.0 | Per-character base rate (normalized) |
-
-All 120 ecology characters are assigned z=1 on ecology-1 edges, so the
-encouraged rate is `baseRate × phi = 4`. The 360 baseline characters evolve
-at `baseRate = 1` on all edges.
-
-### Estimation model
-
-Two chains per replicate — both run 100k iterations from a parsimony start
-tree:
-
-- **Blind**: standard Mk' (no ecology information supplied)
-- **Aware**: ecology-aware Mk' (tip ecology supplied; estimates phi, pi0,
-  theta, per-character z)
+| `tipBr` | 0.50 | Within-clade terminals and internals |
+| `stemBr` | 0.30 | Clade stem (one per clade) |
+| `rootBr` | 0.15 | Separates (A,C) and (B,D) pairs |
+| Total TL | 13.5 | Truth |
+| `nEco` | 120 | Neomorphic; all eco-affected (z=1 for eco-1 taxa) |
+| `nBase` | 360 | Transformational; no ecology effect |
+| `phi` | 4 | Rate multiplier on eco-1 edges for encouraged chars |
+| `pi0` | 0.75 | True fraction with no ecology effect |
+| `theta` | 1.0 | All eco-affected chars are encouraged (z=1) |
+| `baseRate` | 1.0 | Per-character base rate |
 
 Fixed priors (post-R5 audit): `rho0Alpha=360, rho0Beta=120` (pi0 ESS≈480),
 `sigmaPhi=1.5`, `thetaAlpha=thetaBeta=2`.
@@ -81,65 +76,146 @@ Fixed priors (post-R5 audit): `rho0Alpha=360, rho0Beta=120` (pi0 ESS≈480),
 
 ## What the experiments showed
 
-| Experiment | Blind P(AC) | Aware P(AC) | Key finding |
-|------------|-------------|-------------|-------------|
-| phi=4 multirep v3 (8 reps) | ≈0.001 | ≈0.002 | Neither chain finds AC |
-| phi=4 truth-start | — | 0.000 | Chain started at AC, drifted away |
-| phi=2 weak priors (1 rep) | 0.038 | 0.000 | Blind lucky hit; aware never finds AC |
-| phi=2 fixed priors (1 rep) | 0.000 | 0.000 | Blind stuck in AB; aware never finds AC |
+### multirep-v3: 8 reps × 2 chains (100k iter each)
 
-**Root cause**: the AC posterior mode is either absent or unreachably shallow.
-The truth-start experiment (started at true AC bipartition) shows the chain
-drifts to AB regardless — a posterior shape problem, not a mixing problem.
+Source: `inst/scripts/rescore-multirep-v3-report.md`,
+`inst/scripts/aware-multirep-v3-posterior-shape-report.md`.
+
+| metric | blind | aware |
+|--------|------:|------:|
+| mean P(AB) false eco-clade | **0.864** | **0.411** |
+| mean P(AC) true sister | 0.001 | 0.012 |
+| mean CID-to-truth | 0.484 | **0.432** |
+| reps with P(AB) > 0.5 | **7 / 8** | — |
+| reps with P(AB) > 0.9 | **5 / 8** | — |
+| reps with P(AC) > 0.5 | 0 / 8 | 0 / 8 |
+| truth in 95% credibility set | 0 / 8 | 0 / 8 |
+| model dichotomy (blind AB>0.5 AND aware AC>0.5) | **0 / 8** | |
+
+Aware chain topology diversity: 94–167 unique canonical topologies per chain;
+top-topology share 1.7–6.2 %.
+
+Paired comparison of mean CID-to-truth: aware lower in **8 / 8** reps;
+Wilcoxon V = 0, p = 0.0143.
+
+**Legacy scoring artefacts (now corrected):** reps 02, 05, 06 had the blind
+false-clade signal substantially or entirely hidden (P(AB) legacy → corrected:
+rep02 0→1.000, rep05 0→0.978, rep06 0.444→0.949). Mean blind P(AB) rose from
+0.551 (legacy) to 0.864 (corrected).
+
+Caveat reps:
+
+- **Rep 07**: aware P(AB)=0.983, TLmean=2.87 (truth=13.5) — aware mode-trap
+  on a short-TL local optimum; not a real signal inversion.
+- **Rep 01**: aware P(AB)=0.789, TLmean=3.19 — same TL-collapse mode-trap
+  (previously diagnosed, PT-fixable).
+
+### v4 / v4-cross family: null result after rescore
+
+Source: `inst/scripts/rescore-sim3-report.md` (commits `7d1076d`, `6500cda`).
+
+After root-invariant rescoring all 22 saved chains: **both blind AND aware
+achieve P(true bipartitions) ≈ 1 on every v4/v4-cross regime.** No false-clade
+support anywhere (P(falseInner) = 0 throughout; max P(falseAB) = 0.006).
+
+At 16 tips × 200–300 chars × phi=4, the eco confound is too weak to break
+either model. The v4 family tests a regime outside the interesting zone.
+
+Mode-trap diagnosis on v4cross-b (commit `24fcaf6`, audit `6cb7090`) also
+collapsed: legacy 14 unique topologies → corrected 1; legacy B-mono 83/243 →
+corrected 243/243. The aware chain was never pathological.
 
 ---
 
-## Design tensions
+## What we've learned
 
-### 1. Tip-count symmetry
-
-With 4 tips in each of A and B (both ecology-1), **8 taxa generate the
-convergent signal**. The aware model must discount all 8 simultaneously to
-recover the true A+C grouping. With equal-sized clades, the convergent and
-ancestral signals are balanced at the outset; any noise tips the chain
-toward AB.
-
-### 2. Internal branch length
-
-`rootBr = 0.15` and `stemBr = 0.30` are both substantial. Longer internal
-branches carry more true ancestry signal *but* also allow more convergent
-changes to accumulate, deepening the AB valley. Shorter branches reduce
-signal on both sides.
-
-### 3. Character composition
-
-All 120 ecology characters have z=1 (fully encouraged). In reality pi0=0.75,
-meaning only 25% of characters are truly ecology-affected; the remaining 75%
-are z=0 (generated as baseline). With 120 z=1 characters out of 480 total
-that is only 25%, which sounds right — but on the ecology-1 branches those
-120 characters all run at 4× rate simultaneously, producing a very strong
-aggregate convergent signal.
-
-### 4. Tree structure: symmetric four-clade vs alternatives
-
-The ((A,C),(B,D)) structure places A and C as true sisters, B and D as true
-sisters. A and B share ecology. This means:
-- The aware model needs to simultaneously explain A's characters as either
-  ancestry (from C) or ecology (from B)
-- The posterior is bimodal between AC and AB by design
-- There is no "in between" topology that partially captures both signals
+- **The "blind fails, aware rescues" headline is not demonstrable at all
+  scales.** The failure mode is scale-dependent.
+- **High homoplasy (multirep-v3):** blind goes wrong with confidence (mean
+  P(AB)=0.864). Aware regularises — strips ~half the false-clade mass, is
+  uniformly closer to truth in CID (8/8, p=0.014) — but **cannot recover
+  truth.** Posterior is honest-but-diffuse rather than focused on the correct
+  answer.
+- **Low homoplasy (v4 family):** both models fine; no contrast. Eco confound
+  at this scale is too weak to differentiate the models.
+- **The aware model's value is best framed as honest uncertainty / honest
+  regularisation when ancestry signal is weak**, not as reliable truth recovery.
+  That is still a publishable and methodologically important claim.
 
 ---
 
-## Candidate redesign dimensions
+## Simulation inventory by what they demonstrate
 
-| Dimension | Current | Could try | Expected effect |
-|-----------|---------|-----------|-----------------|
-| Tips per ecology clade | 4 | 2 or 3 | Fewer convergent taxa → shallower AB valley |
-| Clades | 4 (A,B,C,D) | 3 (A,B,C: ((A,C),B)) | Simpler contrasting pair; B is isolated |
-| Ecology balance | A+B = eco1, C+D = eco0 | A = eco1, B+C+D = eco0 | Only one clade convergent; weaker confound |
-| stemBr | 0.30 | 0.10 | Shorter stems → less convergent accumulation |
-| rootBr | 0.15 | 0.05–0.30 | Controls ancestry signal strength |
-| nEco / nBase | 120 / 360 | 60 / 420 | Fewer ecology chars → weaker convergent signal |
-| phi | 4 | 1.5–2 | Weaker rate boost → less dramatic convergence |
-| z assignment | all z=1 for eco chars | mix z=1 and z=2 | More realistic slab use |
+| Architecture | Setup | What it shows | Status |
+|---|---|---|---|
+| multirep-v3 (8 reps) | 16 tips, full-clade eco, tipBr=0.5 | Blind commits to false eco-clade; aware regularises but can't recover truth. **Partial dichotomy.** | Published in reports; v5break needed for full dichotomy |
+| v4 / v4-cross | 16 tips, 200–300 chars, phi=4 | Both models fine — eco confound too weak at this scale | Null result (artefact-free); no contrast to report |
+| v5break | 80 chars, phi=6, weak ancestry, isolated eco clade | Predicted: blind commits to falseInner; aware rescues. Goldilocks regime. | In flight (job 17226503, 3 reps PT) |
+
+---
+
+## v5break design rationale
+
+The multirep-v3 regime (480 chars, full 8-tip eco group) provides more
+eco signal than the aware model needs to be confused, but also enough phylogenetic
+signal that the eco confound never becomes catastrophic for blind. v5break
+addresses both levers simultaneously:
+
+- **Fewer characters (80):** less total phylogenetic information → blind more
+  susceptible to eco confound; aware's prior has more leverage.
+- **Higher phi (6):** stronger per-character eco signal → false clade is more
+  attractive.
+- **Weak ancestry signal:** shorter internal branches → true AC sister signal
+  is weak relative to the convergent AB signal.
+- **Concentrated eco:** isolated eco clade rather than full two-clade group →
+  aware's eco parameters are more identifiable.
+
+Predicted expected-change values at truth: falseInner E≈5.4 vs trueClade_A
+E≈2.3. If blind P(falseInner) > 0.1 or P(AC) < 0.5 → genuine break point
+demonstrated. If blind still recovers: queue v5stress (params in commit
+`06a7df3` run script).
+
+**Contingency:**
+
+- v5break works → full blind-fails/aware-rescues dichotomy for the paper.
+- v5break also fails → multirep-v3 + v4 null form a defensible
+  "scale-dependent regulariser" narrative: blind overcommits at high
+  homoplasy; aware refuses; at low homoplasy both succeed.
+
+---
+
+## Open questions
+
+1. **Does aware ever commit to truth in high-homoplasy regimes?** multirep-v3
+   shows it doesn't at 100k iter; PT-aware on multirep-v3 is queued (task 14)
+   to test whether mixing is the bottleneck or the posterior shape is flat
+   regardless.
+2. **Does PT fix the rep 01/07 TL-collapse mode-traps?** Queued behind v5break.
+3. **Does v5break deliver the clean dichotomy?** See above. Job 17226503 running.
+4. **Does PT-aware on multirep-v3 find AC?** If so, the diffuse posterior is a
+   mixing artefact, not a genuine limit of the aware model — changes the paper
+   framing significantly.
+
+---
+
+## Paper outline implication
+
+Current evidence supports **two figures:**
+
+1. **Blind overcommits on high-homoplasy data** (multirep-v3): bar chart of
+   P(AB) vs P(AC) across 8 reps, blind vs aware. Narrate as: blind is
+   overconfident on wrong answer; aware is honest about uncertainty. Use CID
+   Wilcoxon result (p=0.014) as quantitative support.
+
+2. **Scale dependence / null** (v4 family): both models recover truth when eco
+   confound is weak. Establishes that aware does not *introduce* error; blind is
+   not always broken.
+
+If v5break succeeds, Figure 1 becomes the full dichotomy (blind wrong, aware
+right) and multirep-v3 becomes supplementary or a bridging panel showing the
+high-homoplasy regime where neither model recovers truth cleanly.
+
+The paper claim shifts from "aware rescues" (too strong, unsupported) to
+**"aware is an honest regulariser: it avoids false commitment that blind
+makes, and is demonstrably closer to truth in CID even when it cannot identify
+the correct topology."**
