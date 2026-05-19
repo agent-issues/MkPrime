@@ -144,13 +144,51 @@ This session pushed three threads forward:
    is the same topology-valley failure as the multirep audit (rep 01/05). PT
    helps but does not eliminate it on hard configurations.
 
+## ⚠ SSH to Hamilton intermittent 2026-05-19 17:45+
+
+Permission denied (publickey,...) on multiple attempts. Several pending
+items are blocked:
+- `sim3-multirep-v3-pt/` (commit `b85714c`) built but not submitted
+- v5break poll (job 17226503)
+- rodent aware-v2-cont2 progress check (job 17222514)
+
+Once SSH returns, submit `sim3-multirep-v3-pt` first — it directly tests
+whether the warmup TL trap explanation for reps 01/07 can be resolved.
+
+## 🔬 Reps 01/07 caveat diagnosed (commit `669c5e8`)
+
+Aware reps 01 and 07 still support false AB clade because of a **warmup
+TL trap** affecting 5/8 reps (chains start TL=3.0; only 3 escape to
+high-TL basin ~18-21; 30-55 log-unit gap, untraversable in 100k iter
+single-chain). Among the stuck-low chains, parsimony delta drives P(AB);
+reps 01 and 07 have the two smallest deltas so they land highest on AB.
+
+This isn't a topology mode-trap (rep01 has 161 unique topologies in 180
+trees). It's a tree-length basin trap; flat low-TL likelihood defaults
+to parsimony signal.
+
+**Fix:** PT or longer warmup. Suggests the multirep-v3 regulariser
+effect will be even cleaner once warmup is fixed.
+
+## 📝 Results outline drafted (commit `b8f1eaf`)
+
+`inst/lit/results-outline.md` — 7 sections, bullets + key sentences,
+ready to expand to prose. Pairs with `inst/lit/intro-draft.md`.
+
+## 📊 Publication figures drafted (commit `3ee883e`)
+
+`inst/scripts/multirep-v3-figures/` — Fig 1 (false-clade support),
+Fig 2 (CID-to-truth paired), Fig 3 (MDS rep 02). Pilot-quality
+narratively, near-final visually.
+
 ## Pending jobs
 
 | Job ID | Name | Status | On completion |
 |--------|------|--------|---------------|
 | 17222515 (blind-cont2) | mkp-rod-blind2 | **COMPLETED** 2026-05-19 (1h51m). 5M iter, **minESS=366**, median 1965, 5159 trees. | Ready — awaits aware to regenerate report |
 | 17222514 (aware-cont2) | mkp-rod-awar2 | RUNNING, ~4h elapsed of 36h wall (cn027). Target 2.3M iter. | Check minESS; if ≥ 200, re-run `inst/scripts/rodent-comparison/rodent-comparison.R` (audited 2026-05-19 — root-invariant, no fix needed) against both converged RDS files. |
-| 17226503_[1-3] (v5break) | mkp-v5break | RUNNING, PT array. 80 chars, phi=6, weak ancestry signal — predicted falseInner E≈5.4 vs trueClade_A E≈2.3. | Inspect `/nobackup/pjjg18/mkp-sim3-v5break/results/rep0{1,2,3}/`. If blind P(falseInner) > 0.1 or P(AC) < 0.5: the methods story has its breaking point. If blind still recovers truth: queue v5stress (params noted in commit `06a7df3`'s run script). |
+| 17226503_[1-3] (v5break) | mkp-v5break | RUNNING (likely). 80 chars, phi=6, weak ancestry. | Inspect `/nobackup/pjjg18/mkp-sim3-v5break/results/rep0{1,2,3}/`. v5break is less critical now that multirep-v3 is the headline; v5break is a robustness/scale check. |
+| sim3-multirep-v3-pt (built, not submitted) | mkp-mr3-pt | Awaiting SSH restoration. Single-rep (05) PT, nChains=4, ~3-4h wall. | First job to submit when SSH is back; tests whether warmup TL trap explains rep05 aware diffuseness. |
 
 ## Open items / next steps
 
