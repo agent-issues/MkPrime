@@ -1,5 +1,50 @@
 # MkPrime ecology-aware — hand-off 2026-05-19
 
+## 🎯 TL prior recalibration (commits `bc24d52`, `83ab33a`, `2b8d183`)
+
+User flagged that simulated truth TL=13.5 (multirep-v3) is unrealistic
+(typical morphological matrices have TL ~ 1-2). Investigation revealed:
+
+**The TL prior was Gamma(2, 2/expSteps) with default expSteps=10**, giving
+mean TL=10 — wildly mismatched to morphological data. This caused chains
+to inflate TL **5-18× above truth** across all v4-family sims:
+
+| Sim | Truth TL | Blind chain TL | Inflation |
+|---|---:|---:|---:|
+| v4a | 2.40 | 20.9 | 8.7× |
+| v4b | 2.02 | 10.4 | 5.1× |
+| v4c | 1.24 | 6.5 | 5.3× |
+| v4cross-b | 2.02 | 9.4 | 4.7× |
+| v5break-rep01 | 1.30 | 7.5 | 5.8× |
+
+User's call:
+> "Simulations on saturated datasets are junk; they have next to no real
+> world interpretability. We need realistic simulations; else what's the
+> point?"
+
+**Fix in `bc24d52`:** `expSteps` now defaults from parsimony score
+(× 1.05). For 16-tip × 300-char dataset, parsimony ~283 → expSteps ~298,
+prior mean = parsimony. Eliminates the 5-13× inflation forcing function.
+
+**Active jobs with new prior (all submitted 2026-05-19):**
+| Job | What | Status |
+|---|---|---|
+| 17227192 | mkp-rod-blind-v3 (parsimony prior, 1M iter) | RUNNING |
+| 17227193 | mkp-rod-aware-v3 (parsimony prior, 1M iter) | RUNNING |
+| 17227212_[1-3] | mkp-v6-realistic (3-rep array) | PENDING |
+
+**multirep-v3 declared junk.** v4 family TL marginal (1.24-2.4 truth, but
+chains inflated). v6-realistic (truth TL=1.16, parsimony-anchored prior,
+phi=8 + longer eco stems for confound) is the new headline simulation.
+
+**Two flagged side-effects of the install:**
+1. Hamilton MkPrime had divergent local prior (rho0=Beta(360,120), the
+   R5-2 audit's tightened pi0 with ESS=480). Reinstall reverted to upstream
+   Beta(75,25). Every recent Hamilton sim may have been using the tighter
+   pi0. **Audit pending (task #22).**
+2. PT-aware-mr3-rep05 (17226606) and rodent aware cont2 (17222514) were
+   cancelled — both used the bad expSteps=10 prior.
+
 ## Session bookmarks (autonomous batch 2026-05-19)
 
 21 commits, 6 memory files touched. Key end-state:
