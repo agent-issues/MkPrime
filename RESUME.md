@@ -63,10 +63,10 @@ reference trees.
 | 17218354 | mk_k15 (--array=0-259) | COMPLETE | 186 converged, 74 timed out; summaries in place |
 | 17222516 | mk_k24 (--array=0-259) | RUNNING | ~88 tasks still running at last check; all converge within 8h |
 | 17224641 | summariser mk_k24 | COMPLETE | 260 summaries in `/nobackup/pjjg18/mkp-study/summary/` |
+| 17224967 | mk_k40 (--array=0-259) | QUEUED | Submitted 2026-05-19; same 8h budget; convergence expected within 8h as for k24 |
 
-**Suggested next sim step**: consider whether to push k=32 or accept k=24 as the
-ceiling (Δk15→k24 = −0.0020; further steps will yield ≤−0.001). May be worth one
-more pilot rep to check.
+On completion: `sbatch --array=0-259 summarize_array.slurm mk_k40`, scp summaries,
+add `mk_k40` to `cid_eight_prior.R` → `cid_nine_prior.R`.
 
 ### Hamilton HPC (long-form M9 real-data, 3-day walltime)
 
@@ -104,8 +104,8 @@ at 128G, or skip syab07204 by_nt_9v from the 6-matrix comparison.
    build the full 6-matrix × 3-model CID table. Compare against 07203 (asher).
 2. **Decide 17217659 retry** at 128G vs skip syab07204 by_nt_9v.
 3. **Pull neotrans `by_nt_kv` baseline CID** for the 6 matrices.
-4. **Decide on k=32 pilot**: Δk15→k24 = −0.0020; Δk24→k32 is expected ≤−0.001.
-   Possibly not worth it — consider accepting k=24 as the ceiling.
+4. **When mk_k40 (17224967) completes**: summarise, pull, run `cid_nine_prior.R`.
+   Expected Δ ≤ −0.001 given the geometric diminishing-returns pattern.
 5. **Re-summarise 74 timed-out mk_k15 tasks** with full data (now that 17218354
    is fully complete). Submit: `sbatch --array=<ids> summarize_array.slurm mk_k15`.
    Low priority if existing numbers are stable.
