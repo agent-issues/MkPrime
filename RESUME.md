@@ -61,9 +61,10 @@ This session was a hand-off-resume + collect cycle:
 
 | Job ID | Arm | Status | Note |
 |--------|-----|--------|------|
-| 17218354 | mk_k15 (--array=0-259) | QUEUED | Submitted post-collect; ~3.5 days end-to-end for the full array given shared partition |
+| 17218354 | mk_k15 (--array=0-259) | RUNNING | Full array; ~3.5 days end-to-end given shared partition |
+| 17222516 | mk_k24 (--array=0-259) | QUEUED | Submitted 2026-05-19; 43× slower → ~2.3k samples/8h run; resumable to 3d |
 
-mk_k24 deliberately **on hold** pending k15 results — sequence cheap-first.
+mk_k24 queued now that k15 results confirm ramp extends past k=9 (k15 beats k9, p=4.3e-22). Both jobs resumable; extend walltime if needed after first pass.
 
 ### Hamilton HPC (long-form M9 real-data, 3-day walltime)
 
