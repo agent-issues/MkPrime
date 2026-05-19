@@ -221,8 +221,8 @@ narratively, near-final visually.
 |--------|------|--------|---------------|
 | 17222515 (blind-cont2) | mkp-rod-blind2 | **COMPLETED** 2026-05-19 (1h51m). 5M iter, **minESS=366**, median 1965, 5159 trees. | Ready — awaits aware to regenerate report |
 | 17222514 (aware-cont2) | mkp-rod-awar2 | RUNNING, ~4h elapsed of 36h wall (cn027). Target 2.3M iter. | Check minESS; if ≥ 200, re-run `inst/scripts/rodent-comparison/rodent-comparison.R` (audited 2026-05-19 — root-invariant, no fix needed) against both converged RDS files. |
-| 17226503_[1-3] (v5break) | mkp-v5break | RUNNING (likely). 80 chars, phi=6, weak ancestry. | Inspect `/nobackup/pjjg18/mkp-sim3-v5break/results/rep0{1,2,3}/`. v5break is less critical now that multirep-v3 is the headline; v5break is a robustness/scale check. |
-| sim3-multirep-v3-pt (built, not submitted) | mkp-mr3-pt | Awaiting SSH restoration. Single-rep (05) PT, nChains=4, ~3-4h wall. | First job to submit when SSH is back; tests whether warmup TL trap explains rep05 aware diffuseness. |
+| 17226503_[1-3] (v5break) | mkp-v5break | **COMPLETED**. Both models recover AC at ≥0.994 in all 3 reps. No false-clade demo at moderate-homoplasy scales — eco signal too weak. Aware CID < blind CID in all 3 (small corroboration of multirep-v3 finding). | Treat v5break as a null check / robustness section; no follow-up needed. |
+| 17226606 (mr3-pt rep05) | mkp-mr3-pt | RUNNING. Single-rep PT (nChains=4) of multirep-v3 rep 05 (blind+aware). Tests warmup TL trap hypothesis. | Examine aware P(AC). If > 0.5: full dichotomy story works, queue 5-rep array. If still diffuse: regulariser framing stands. |
 
 ## Open items / next steps
 
