@@ -47,14 +47,16 @@ This session pushed three threads forward:
 
 ## Pending jobs
 
-| Type | ID / ref | Status | ETA | On completion |
-|------|----------|--------|-----|---------------|
-| Hamilton | 17215319 (`mkp-rod-awar`) | RUNNING (PD at last poll) | ~13h | (a) Verify chain reached ≥800k and minESS ≥200 via tail of `/nobackup/pjjg18/mkp-rodent-aware-v2/rodent-aware-v2.out`; (b) re-run the rodent comparison report — `inst/scripts/rodent-comparison/rodent-comparison.R` — using the new aware RDS at `/nobackup/pjjg18/mkp-rodent-aware-v2/results/rodent-aware-v2-result.rds` and the existing blind RDS at `/nobackup/pjjg18/mkp-rodent-blind-v2/results/rodent-blind-v2-result.rds`; (c) commit regenerated CID-MDS + consensus plots and the updated `.md` summary. |
+(none — job 17215319 completed 2026-05-19 04:47 BST; rodent comparison
+regenerated and committed on 2026-05-19)
 
 ## Open items / next steps
 
-1. **Wait for aware resume** (17215319). Likely completes overnight. On finish,
-   regenerate `inst/scripts/rodent-comparison/` outputs against the full chains.
+1. **Rodent comparison** (DONE): Full 1M-iter chains compared in
+   `inst/scripts/rodent-comparison/`. Key result: 32/38 blind splits shared
+   with aware consensus (was 0/38 in pilot). MDS clouds largely separated
+   (centroid dist 9.65, spread ~9 / ~7). Both chains underconverged
+   (minESS 88 aware, 38 blind). A longer run or PT is needed for publication.
 
 2. **Decide narrative on the v4-cross result**. The 5-rep PT sweep shows aware
    ≠ better than blind on v4-cross. Options:
