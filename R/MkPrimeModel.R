@@ -11,17 +11,20 @@
 #'   characters? Default `TRUE`.
 #' @param treeLengthShape,treeLengthRate Shape and rate for the Gamma prior
 #'   on tree length. Defaults: shape = 2, rate = 2 / `expSteps`.
-#' @param expSteps Expected number of character state changes. Used to set
-#'   the tree length prior scale. Default `NULL`: the parsimony (Fitch) score
+#' @param expSteps Expected tree length (sum of edge lengths in expected
+#'   substitutions per character). Used to set the tree length prior scale
+#'   via `rate = 2 / expSteps`. Default `NULL`: the parsimony (Fitch) score
 #'   of the starting tree on the supplied data is computed in
-#'   [`.FinalizeModel()`][.FinalizeModel] and inflated by `expStepsInflation`
-#'   (default 1.05) to encode the expectation that the true tree length sits
-#'   a few percent above the parsimony minimum. A numeric value supplied here
-#'   is treated as a user override and is used verbatim (no inflation
-#'   applied).
-#' @param expStepsInflation Multiplicative factor applied to the parsimony
-#'   score when `expSteps = NULL`. Default 1.05. Ignored when `expSteps` is
-#'   set explicitly.
+#'   [`.FinalizeModel()`][.FinalizeModel], divided by the number of
+#'   characters in the data (`nChar`), and inflated by `expStepsInflation`
+#'   (default 1.05). This encodes the parsimony score as a lower bound on
+#'   total expected state changes (`TL × nChar`), with the expectation that
+#'   true tree length sits a few percent above the per-character parsimony
+#'   minimum. A numeric value supplied here is treated as a user override
+#'   and is used verbatim (no division or inflation applied).
+#' @param expStepsInflation Multiplicative factor applied to
+#'   `parsimony_score / nChar` when `expSteps = NULL`. Default 1.05.
+#'   Ignored when `expSteps` is set explicitly.
 #' @param rateLossMeanlog,rateLossSdlog Parameters for the LogNormal prior
 #'   on `rate_loss` (neomorphic asymmetry). Defaults: meanlog = 0, sdlog = 2.
 #' @param rateLogSdShape,rateLogSdRate Shape and rate for the Gamma prior
@@ -377,13 +380,39 @@ MkPrimeModel <- function(
 .FinalizeModel <- function(model, tree, mkd) {
   if (is.null(model$expSteps)) {
     parsimonyScore <- .FitchScore(tree, mkd)
+    nChar <- mkd$nChar
+    if (is.null(nChar) || !is.finite(nChar) || nChar < 1L) {
+      cli::cli_abort(
+        "Cannot auto-derive {.arg expSteps}: {.code mkd$nChar} is missing \\
+         or invalid."
+      )
+    }
     inflation <- model$expStepsInflation %||% 1.05
     model$expStepsParsimony <- parsimonyScore
-    model$expSteps <- max(1, parsimonyScore * inflation)
+    expStepsRaw <- parsimonyScore / nChar
+    # Floor at 0.5 to avoid a degenerate prior on very small / very clean
+    # matrices (e.g., a fully-resolved tree with few state changes).
+    model$expSteps <- max(0.5, expStepsRaw * inflation)
+    # Sanity check: morphological TLs are typically O(1)-O(10) expected
+    # substitutions per character. A computed expSteps > 100 almost
+    # certainly indicates a units error upstream (e.g., parsimony score
+    # passed in raw, nChar missing).
+    if (model$expSteps > 100) {
+      cli::cli_warn(c(
+        "Auto-derived {.code expSteps = {signif(model$expSteps, 4)}} is \\
+         very large.",
+        i = "Typical morphological tree lengths are 1-10 expected \\
+             substitutions per character.",
+        i = "Check that {.code mkd$nChar} ({nChar}) and the parsimony \\
+             score ({parsimonyScore}) are correct, or supply \\
+             {.arg expSteps} explicitly."
+      ))
+    }
     cli::cli_alert_info(
-      "Tree length prior: parsimony score = {parsimonyScore}; \\
+      "Tree length prior: parsimony = {parsimonyScore}, nChar = {nChar}, \\
        expSteps = {signif(model$expSteps, 4)} \\
-       ({inflation}x parsimony). Gamma(shape = {model$treeLengthShape}, \\
+       ({inflation}x parsimony/nChar). \\
+       Gamma(shape = {model$treeLengthShape}, \\
        rate = {signif(2 / model$expSteps, 4)})."
     )
   }
@@ -791,7 +820,7 @@ print.MkPrimeModel <- function(x, ...) {
     paste0(
       signif(x$expSteps, 4),
       " (", signif(x$expStepsInflation %||% 1.05, 3),
-      "x parsimony score ", x$expStepsParsimony, ")"
+      "x parsimony/nChar; parsimony score ", x$expStepsParsimony, ")"
     )
   } else {
     paste0(signif(x$expSteps, 4))

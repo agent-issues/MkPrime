@@ -51,18 +51,21 @@ characters? Default \code{TRUE}.}
 \item{treeLengthShape, treeLengthRate}{Shape and rate for the Gamma prior
 on tree length. Defaults: shape = 2, rate = 2 / \code{expSteps}.}
 
-\item{expSteps}{Expected number of character state changes. Used to set
-the tree length prior scale. Default \code{NULL}: the parsimony (Fitch) score
+\item{expSteps}{Expected tree length (sum of edge lengths in expected
+substitutions per character). Used to set the tree length prior scale
+via \code{rate = 2 / expSteps}. Default \code{NULL}: the parsimony (Fitch) score
 of the starting tree on the supplied data is computed in
-\code{\link[=.FinalizeModel]{.FinalizeModel()}} and inflated by \code{expStepsInflation}
-(default 1.05) to encode the expectation that the true tree length sits
-a few percent above the parsimony minimum. A numeric value supplied here
-is treated as a user override and is used verbatim (no inflation
-applied).}
+\code{\link[=.FinalizeModel]{.FinalizeModel()}}, divided by the number of
+characters in the data (\code{nChar}), and inflated by \code{expStepsInflation}
+(default 1.05). This encodes the parsimony score as a lower bound on
+total expected state changes (\verb{TL × nChar}), with the expectation that
+true tree length sits a few percent above the per-character parsimony
+minimum. A numeric value supplied here is treated as a user override
+and is used verbatim (no division or inflation applied).}
 
-\item{expStepsInflation}{Multiplicative factor applied to the parsimony
-score when \code{expSteps = NULL}. Default 1.05. Ignored when \code{expSteps} is
-set explicitly.}
+\item{expStepsInflation}{Multiplicative factor applied to
+\code{parsimony_score / nChar} when \code{expSteps = NULL}. Default 1.05.
+Ignored when \code{expSteps} is set explicitly.}
 
 \item{rateLossMeanlog, rateLossSdlog}{Parameters for the LogNormal prior
 on \code{rate_loss} (neomorphic asymmetry). Defaults: meanlog = 0, sdlog = 2.}
