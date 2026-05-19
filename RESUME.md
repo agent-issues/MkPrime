@@ -22,16 +22,27 @@ User's call:
 > world interpretability. We need realistic simulations; else what's the
 > point?"
 
-**Fix in `bc24d52`:** `expSteps` now defaults from parsimony score
-(× 1.05). For 16-tip × 300-char dataset, parsimony ~283 → expSteps ~298,
-prior mean = parsimony. Eliminates the 5-13× inflation forcing function.
+**Fix attempt 1 in `bc24d52`** had a unit error: `expSteps = 1.05 ×
+parsimony` makes prior mean TL = parsimony score (total state changes),
+but MkPrime's `tree_length` is sum of edge lengths in per-character
+substitution units. Prior was 270× too high.
 
-**Active jobs with new prior (all submitted 2026-05-19):**
+**Fix attempt 2 in `f7b4644`** (final): `expSteps = (parsimony / nChar) ×
+1.05`. Worked values:
+- v6 (16 tips × 300 chars, parsimony 297) → expSteps = 1.04 ≈ truth TL 1.16 ✓
+- Rodent (60 tips × 217 chars, parsimony 1519) → expSteps = 7.35 (reasonable)
+- Toy (16 tips × 100 chars, parsimony 50) → expSteps = 0.525 (floor binding)
+
+Sanity-warn added if computed expSteps > 100. 29/29 tests pass.
+
+**Active jobs (after `f7b4644` unit-correction reinstall):**
 | Job | What | Status |
 |---|---|---|
-| 17227192 | mkp-rod-blind-v3 (parsimony prior, 1M iter) | RUNNING |
-| 17227193 | mkp-rod-aware-v3 (parsimony prior, 1M iter) | RUNNING |
-| 17227212_[1-3] | mkp-v6-realistic (3-rep array) | PENDING |
+| 17227245 | mkp-rod-blind-v3 (corrected expSteps≈7.35) | RUNNING |
+| 17227246 | mkp-rod-aware-v3 (corrected expSteps≈7.35) | RUNNING |
+| 17227247_[1-3] | mkp-v6-realistic (corrected expSteps≈1.04) | RUNNING |
+
+(Earlier 17227192/3 and 17227212 cancelled — prior was off by 270×.)
 
 **multirep-v3 declared junk.** v4 family TL marginal (1.24-2.4 truth, but
 chains inflated). v6-realistic (truth TL=1.16, parsimony-anchored prior,
