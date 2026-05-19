@@ -14,6 +14,30 @@
 #   rodent-cid-mds.pdf / .png    -- Plot 1: 2D CID MDS
 #   rodent-consensus.pdf / .png  -- Plot 2: MR consensus trees with conflict
 #   rodent-comparison.md         -- Written summary
+#
+# Root-dependence audit (2026-05-19) -------------------------------------------
+# The sim3 scoring layer was contaminated by a `ape::prop.part` + `setequal`
+# pattern that is root-dependent (see `inst/simulations/ecology/sim3-scoring.R`).
+# The MCMC posteriors here also have varying root configurations (aware: 4
+# distinct rootings across 120 post-burnin trees; blind: 9 distinct rootings
+# across 269 trees) -- so any root-dependent primitive would be vulnerable.
+#
+# This script was audited and is **NOT contaminated**:
+#   - `ape::consensus(rooted = FALSE)` (lines below) internally re-roots all
+#     trees to tip 1 and then runs `postprocess.prop.part(., "SHORTwise")`,
+#     which canonicalises bipartitions to the smaller side AND sums counts
+#     of duplicates. This is root-invariant. (Confirmed: ape::consensus source.)
+#   - `ape::prop.part(aware_post)` (used only as input to `prop.clades` below)
+#     is consumed by `ape:::prop.clades(cons_tree, pp_obj)` which defaults to
+#     `rooted = FALSE` and applies `SHORTwise` itself.
+#   - `pp_to_canonical_splits()` (line ~148) runs `ape::prop.part(list(tree))`
+#     on a single consensus tree and canonicalises to the smaller side --
+#     equivalent to Splits-based extraction for one tree.
+#
+# Empirical verification: a manual Splits-based MR consensus
+# (TreeTools::as.Splits + SHORTwise + 50% threshold) reproduces 45 aware
+# splits and 38 blind splits, with the same 32 shared count, matching
+# `ape::consensus` exactly.
 
 suppressPackageStartupMessages({
   library(ape)
