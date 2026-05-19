@@ -34,6 +34,35 @@ differentiate the models. A sharper sim that actually breaks blind is
 required before any methodological claim can be made. v5break (job array
 17226503) is the live attempt.
 
+## 🏆 multirep-v3 contains the false-clade demo we were chasing
+
+Rescore of all 8 reps × 2 chains (commit `82d9440`, table at
+`inst/scripts/rescore-multirep-v3-report.md`):
+
+**Blind chain (false-clade signal — robust)**:
+- Mean P(AB-wrong-eco-clade) = **0.864** across 8 reps
+- 7/8 reps with P(AB) > 0.5; **5/8 reps with P(AB) > 0.9**
+- Legacy scoring HID the signal in 3/8 reps (rep02 0→1.0, rep05 0→0.978,
+  rep06 0.44→0.95)
+
+**Aware chain (does NOT recover truth)**:
+- Mean P(AC-true) = 0.012; 0/8 reps with P(AC) > 0.5
+- Mean P(AB) reduced from 0.864 → 0.411 (aware breaks false clade)
+- Posterior diffuse: 94–167 unique canonical topologies per chain,
+  top-topology share 1.7–6.2%
+
+**Strict dichotomy (blind wrong, aware right): 0/8 reps.**
+
+Interpretation: the multirep-v3 high-homoplasy regime (tipBr=0.5,
+stemBr=0.30) is enough to deceive blind into the false clade, but aware
+cannot find AC in the same data — it simply refuses commitment. That's a
+defensible "aware-as-regulariser" half-story for the paper, but not the
+ideal "two models give different answers, one is right" full dichotomy.
+
+The v4 family failed because it had too LITTLE homoplasy to break blind.
+multirep-v3 has too MUCH for aware to recover. v5break (job 17226503) is
+in the goldilocks zone — moderate homoplasy with concentrated eco signal.
+
 ## 🔥 Cascading collapses from the scoring fix
 
 The same bug contaminated diagnostics, not just primary scores. Already
@@ -54,10 +83,16 @@ overturned:
 - **Stale RDS warning**: `sim3-multirep-n*.rds` bake legacy `agg` values
   in; would need regeneration before re-plotting.
 
-Still to audit (next):
-- Rep 01 TL collapse + rep 05 topology valley (user memory
-  `project_mixing_followups`). Multirep code was contaminated; if those
-  claims came from the same pipeline, they may evaporate too.
+Mixing followups audited (commit `5972085`):
+- **Rep 01 TL collapse SURVIVES** — TL root-invariant; chain wanders on
+  wrong side (P(AC)=0.022, P(AB-wrong)=0.789, ~160 canonical topologies).
+  Real mode-trap, PT-fixable.
+- **Rep 05 topology valley SURVIVES** — P(AC)=0 under both scorings;
+  unique-topology count modestly inflated 14% by legacy artefact but the
+  valley is genuine.
+- **New blind rep05 mode-lock revealed** by audit: P(AB) legacy 0 →
+  corrected 0.978. Same artefact class — root inside the AB tip set in
+  every sample. (Subsumed into the multirep-v3 rescore above.)
 
 Confirmed UNAFFECTED:
 - Rodent comparison (`ape::consensus(rooted=FALSE)` is safe).
