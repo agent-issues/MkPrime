@@ -47,8 +47,17 @@ This session pushed three threads forward:
 
 ## Pending jobs
 
-(none — job 17215319 completed 2026-05-19 04:47 BST; rodent comparison
-regenerated and committed on 2026-05-19)
+| Job ID | Name | Wall | On completion |
+|--------|------|------|---------------|
+| TBD (aware-cont2) | mkp-rod-awar2 | 36h | Check minESS from `rodent-aware-v2-result.rds`; if ≥ 200, regenerate `inst/scripts/rodent-comparison/` |
+| TBD (blind-cont2) | mkp-rod-blind2 | 4h | Check minESS from `rodent-blind-v2-result.rds`; if ≥ 200, regenerate `inst/scripts/rodent-comparison/` |
+
+Both jobs submitted 2026-05-19. Check status with:
+`/c/WINDOWS/System32/OpenSSH/ssh.exe pjjg18@hamilton8.dur.ac.uk "squeue -u pjjg18"`
+
+Targets: aware 1M→2.3M (patch nIter=2300000L), blind 1M→5M (patch nIter=5000000L).
+Checkpoints at `/nobackup/pjjg18/mkp-rodent-aware-v2/rodent-aware-v2.ckp` and
+`/nobackup/pjjg18/mkp-rodent-blind-v2/rodent-blind-v2.ckp`.
 
 ## Open items / next steps
 
