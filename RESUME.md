@@ -1,5 +1,39 @@
 # MkPrime ecology-aware — hand-off 2026-05-19
 
+## Session bookmarks (autonomous batch 2026-05-19)
+
+21 commits, 6 memory files touched. Key end-state:
+
+1. **`project_scoring_bug.md`** — durable lesson on ape root-dependence;
+   never use raw `prop.part` for bipartition support; safe alternatives
+   listed.
+2. **`inst/simulations/ecology/sim3-scoring.R`** — `HasBipartSplits`,
+   `ScoreTreesUnrooted`, `RootInsideSet`, `RootConfigCounts`. Source this
+   in every new analysis touching MCMC posterior trees.
+3. **multirep-v3 is the paper's headline sim.** Across 8 reps, blind P(false
+   AB clade)=0.864 (5/8 reps > 0.9); aware reduces to 0.411 and is uniformly
+   closer to truth in CID (Wilcoxon p=0.014, 8/8 reps). Aware doesn't commit
+   to AC; framed as "honest regulariser" not "recoverer".
+4. **v4 family is the null robustness check.** All v4/v4-cross sims now
+   show both models recover truth at 16 tips × 200-300 chars × phi=4. No
+   model differentiation — that's expected when blind doesn't fail.
+5. **2/8 multirep-v3 aware reps caveat (01, 07)** explained as **warmup TL
+   trap** affecting 5/8 reps. Fix: PT or longer warmup. `sim3-multirep-v3-pt/`
+   built (commit `b85714c`), pending SSH to submit.
+6. **Publication figures drafted** at `inst/scripts/multirep-v3-figures/`.
+   Results and methods outlines at `inst/lit/{results,methods}-outline.md`.
+7. **Rodent comparison clean** (audited; ape's rooted=FALSE is safe).
+   Awaiting aware-cont2 (job 17222514) to regenerate final report.
+
+## Highest-leverage next actions when SSH returns
+
+1. `sbatch inst/hamilton/sim3-multirep-v3-pt/sim3-multirep-v3-pt.sh` —
+   tests whether PT escapes the warmup TL trap for rep 05.
+2. Poll job 17226503 (v5break) and 17222514 (rodent aware cont2).
+3. If PT-aware-multirep-v3 shows clean AC recovery on rep 05, queue
+   `sim3-multirep-v3-pt5` array (task #18) for the publication run.
+
+
 ## ⚠ Scoring bug fixed 2026-05-19 (commits `7d1076d`, `6500cda`)
 
 Legacy `hasBipart()` used `ape::prop.part`, which is **root-dependent**.
