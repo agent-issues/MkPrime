@@ -1,0 +1,171 @@
+=== audit-rerun.R ===
+date: 2026-05-19 17:15:56 
+file: /nobackup/pjjg18/mkp-sim3-v4cross-b/results/aware-result.rds 
+relabelled attr: TRUE 
+ecologyAware: TRUE 
+magnitudeMode: global 
+nSamples: 243  stop: max_iter 
+
+taxa: A4 A3 A2 A1 C4 C3 C2 C1 B4 B3 B2 B1 D4 D3 D2 D1 
+A: A4 A3 A2 A1 
+B: B4 B3 B2 B1 
+C: C4 C3 C2 C1 
+D: D4 D3 D2 D1 
+
+phi col: phi    ll col: log_likelihood 
+nSamples (trees): 243   nrow(S): 243 
+
+Computing per-sample bipart tests + root configurations ...
+
+=== Step 1: Reproduce 'contiguous block 1..83' check ===
+Total samples: 243
+LEGACY    B-mono count: 83  (0.342)
+CORRECTED B-mono count: 243  (1.000)
+
+Legacy RLE (value, length):
+  value length
+1  TRUE     83
+2 FALSE    160
+
+Corrected RLE (value, length):
+  value length
+1  TRUE    243
+
+Legacy B-mono indices (first 20): 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 
+Legacy B-mono indices (last 5): 79 80 81 82 83 
+Legacy B-broken indices (first 5): 84 85 86 87 88 
+
+Corrected B-mono indices (first 20): 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 
+Corrected B-mono indices (last 5): 239 240 241 242 243 
+Corrected B-broken indices (first 5):  
+
+=== Discrepancy analysis: legacy vs corrected B-mono ===
+Samples where legacy != corrected: 160 / 243 (0.658)
+In disagreement set: legacy=TRUE only: 0 
+In disagreement set: corrected=TRUE only: 160 
+Root inside B (TRUE) by case:
+, , root_in_B = FALSE
+
+       corrected
+legacy  TRUE
+  FALSE    0
+  TRUE    82
+
+, , root_in_B = NA
+
+       corrected
+legacy  TRUE
+  FALSE  160
+  TRUE     1
+
+
+=== Phi/ll conditional on monophyly (LEGACY) ===
+LEGACY  B-mono   : n=  83  phi.med=6.355  phi.IQR=[2.990,9.162]  ll.mean=-1583.54
+LEGACY  B-broken : n= 160  phi.med=2.952  phi.IQR=[1.908,4.736]  ll.mean=-1587.83
+
+=== Phi/ll conditional on monophyly (CORRECTED) ===
+CORR: only one class present.
+   all B-mono 
+    n=243  phi.med=3.430  ll.mean=-1586.37
+
+=== Root configurations (canonicalised smaller side) ===
+Number of distinct root configs: 10 
+root_key
+A1,A2,A3,A4,B1,B3,B4,C1,C2,C3,C4,D1,D2,D3,D4 
+                                          54 
+A1,A2,A3,A4,B2,B3,B4,C1,C2,C3,C4,D1,D2,D3,D4 
+                                          54 
+                     A1,A2,A3,A4,C1,C2,C3,C4 
+                                          27 
+A1,A2,A3,A4,B1,B2,B4,C1,C2,C3,C4,D1,D2,D3,D4 
+                                          25 
+         A1,A2,A3,A4,C1,C2,C3,C4,D1,D2,D3,D4 
+                                          24 
+                                 A1,A2,A3,A4 
+                                          18 
+   A1,A2,A3,A4,B3,B4,C1,C2,C3,C4,D1,D2,D3,D4 
+                                          17 
+A1,A2,A3,B1,B2,B3,B4,C1,C2,C3,C4,D1,D2,D3,D4 
+                                          13 
+      A1,A2,A3,A4,B4,C1,C2,C3,C4,D1,D2,D3,D4 
+                                          10 
+         A1,A2,A3,A4,B1,B2,B3,B4,D1,D2,D3,D4 
+                                           1 
+
+=== Root config vs CORRECTED B-mono ===
+                                              corrected_B
+root_key                                       TRUE
+  A1,A2,A3,A4                                    18
+  A1,A2,A3,A4,B1,B2,B3,B4,D1,D2,D3,D4             1
+  A1,A2,A3,A4,B1,B2,B4,C1,C2,C3,C4,D1,D2,D3,D4   25
+  A1,A2,A3,A4,B1,B3,B4,C1,C2,C3,C4,D1,D2,D3,D4   54
+  A1,A2,A3,A4,B2,B3,B4,C1,C2,C3,C4,D1,D2,D3,D4   54
+  A1,A2,A3,A4,B3,B4,C1,C2,C3,C4,D1,D2,D3,D4      17
+  A1,A2,A3,A4,B4,C1,C2,C3,C4,D1,D2,D3,D4         10
+  A1,A2,A3,A4,C1,C2,C3,C4                        27
+  A1,A2,A3,A4,C1,C2,C3,C4,D1,D2,D3,D4            24
+  A1,A2,A3,B1,B2,B3,B4,C1,C2,C3,C4,D1,D2,D3,D4   13
+
+=== Root config vs LEGACY B-mono ===
+                                              legacy_B
+root_key                                       FALSE TRUE
+  A1,A2,A3,A4                                      0   18
+  A1,A2,A3,A4,B1,B2,B3,B4,D1,D2,D3,D4              0    1
+  A1,A2,A3,A4,B1,B2,B4,C1,C2,C3,C4,D1,D2,D3,D4    25    0
+  A1,A2,A3,A4,B1,B3,B4,C1,C2,C3,C4,D1,D2,D3,D4    54    0
+  A1,A2,A3,A4,B2,B3,B4,C1,C2,C3,C4,D1,D2,D3,D4    54    0
+  A1,A2,A3,A4,B3,B4,C1,C2,C3,C4,D1,D2,D3,D4       17    0
+  A1,A2,A3,A4,B4,C1,C2,C3,C4,D1,D2,D3,D4          10    0
+  A1,A2,A3,A4,C1,C2,C3,C4                          0   27
+  A1,A2,A3,A4,C1,C2,C3,C4,D1,D2,D3,D4              0   24
+  A1,A2,A3,B1,B2,B3,B4,C1,C2,C3,C4,D1,D2,D3,D4     0   13
+
+=== Root config over time (first 90 samples) ===
+Sample 1..10 root keys:
+ [1] "A1,A2,A3,B1,B2,B3,B4,C1,C2,C3,C4,D1,D2,D"
+ [2] "A1,A2,A3,B1,B2,B3,B4,C1,C2,C3,C4,D1,D2,D"
+ [3] "A1,A2,A3,B1,B2,B3,B4,C1,C2,C3,C4,D1,D2,D"
+ [4] "A1,A2,A3,B1,B2,B3,B4,C1,C2,C3,C4,D1,D2,D"
+ [5] "A1,A2,A3,B1,B2,B3,B4,C1,C2,C3,C4,D1,D2,D"
+ [6] "A1,A2,A3,B1,B2,B3,B4,C1,C2,C3,C4,D1,D2,D"
+ [7] "A1,A2,A3,B1,B2,B3,B4,C1,C2,C3,C4,D1,D2,D"
+ [8] "A1,A2,A3,B1,B2,B3,B4,C1,C2,C3,C4,D1,D2,D"
+ [9] "A1,A2,A3,B1,B2,B3,B4,C1,C2,C3,C4,D1,D2,D"
+[10] "A1,A2,A3,B1,B2,B3,B4,C1,C2,C3,C4,D1,D2,D"
+Sample 80..95 root keys:
+ [1] "A1,A2,A3,A4,C1,C2,C3,C4,D1,D2,D3,D4"     
+ [2] "A1,A2,A3,A4,C1,C2,C3,C4,D1,D2,D3,D4"     
+ [3] "A1,A2,A3,A4,C1,C2,C3,C4,D1,D2,D3,D4"     
+ [4] "A1,A2,A3,A4,C1,C2,C3,C4,D1,D2,D3,D4"     
+ [5] "A1,A2,A3,A4,B4,C1,C2,C3,C4,D1,D2,D3,D4"  
+ [6] "A1,A2,A3,A4,B4,C1,C2,C3,C4,D1,D2,D3,D4"  
+ [7] "A1,A2,A3,A4,B4,C1,C2,C3,C4,D1,D2,D3,D4"  
+ [8] "A1,A2,A3,A4,B4,C1,C2,C3,C4,D1,D2,D3,D4"  
+ [9] "A1,A2,A3,A4,B4,C1,C2,C3,C4,D1,D2,D3,D4"  
+[10] "A1,A2,A3,A4,B4,C1,C2,C3,C4,D1,D2,D3,D4"  
+[11] "A1,A2,A3,A4,B4,C1,C2,C3,C4,D1,D2,D3,D4"  
+[12] "A1,A2,A3,A4,B4,C1,C2,C3,C4,D1,D2,D3,D4"  
+[13] "A1,A2,A3,A4,B4,C1,C2,C3,C4,D1,D2,D3,D4"  
+[14] "A1,A2,A3,A4,B4,C1,C2,C3,C4,D1,D2,D3,D4"  
+[15] "A1,A2,A3,A4,B3,B4,C1,C2,C3,C4,D1,D2,D3,D"
+[16] "A1,A2,A3,A4,B3,B4,C1,C2,C3,C4,D1,D2,D3,D"
+
+Number of root-config switches: 17 
+First 20 switch positions: 14 15 38 39 56 60 84 94 97 122 136 147 169 186 194 211 235 
+
+=== Unique tree counts ===
+Unique topo_hash values (legacy chain field): 14 
+Computing unique unrooted topologies (via Splits sets) ...
+Unique unrooted topologies (Splits-based): 1 
+
+=== Cross-tab: root_in_B vs corrected B-mono ===
+         corrected_B
+root_in_B TRUE
+    FALSE   82
+
+=== Cross-tab: root_in_B vs legacy B-mono ===
+         legacy_B
+root_in_B FALSE TRUE
+    FALSE     0   82
+
+Done.
