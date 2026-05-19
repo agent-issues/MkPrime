@@ -112,5 +112,58 @@ SIM3V4_PARAMS <- list(
     baseRate    = 1.0,
     rateLoss    = 1,
     kStates     = 2L
+  ),
+
+  # --- v5break: BREAK-BLIND regime (v4-cross geometry only) -----------------
+  # Designed to FLIP the signal-to-noise ratio that has so far kept blind
+  # near-perfect at 16 tips x 200-300 chars. Strategy:
+  #
+  #   (i)  shrink clade-stem ancestry signal (stemBrClade = 0.03);
+  #   (ii) shrink matrix size (80 chars total) so per-clade synapomorphies
+  #        are NOT inflated by sheer character count;
+  #   (iii) keep eco stem in the UNSATURATED band (stemBrEco = 0.10, phi = 6)
+  #         so the spurious eco signal accumulates without washing out;
+  #   (iv) drop pi0 to 0.45 so 55 % of characters are ecology-encoded,
+  #         tripling the eco mass relative to v4 (pi0 = 0.75).
+  #
+  # Per ecology-affected binary character (transformational arm,
+  # r = phi = 6 on each eco stem of length 0.10):
+  #   P(change | eco stem) = (1 - exp(-1.2)) / 2 ~ 0.349
+  #   P(BOTH eco stems change in parallel | char is eco-encoded)
+  #                       ~ 0.349^2                         ~ 0.122
+  # Expected falseInner synapomorphies across nChar = 80:
+  #   80 * (1 - pi0) * 0.122                               ~ 5.4
+  #
+  # Per non-eco character on clade A stem (r = 1, t = 0.03):
+  #   P(change | clade stem) = (1 - exp(-0.06)) / 2        ~ 0.029
+  # Expected clade-A synapomorphies across nChar = 80:
+  #   80 * 0.029                                           ~ 2.3
+  #
+  # Root edge (r = 1, t = 0.05): P(change) ~ 0.048; expected supporting
+  # synapomorphies for the (A,C),(B,D) split ~ 80 * 0.048 ~ 3.8.
+  #
+  # Ratio false-inner : true-clade-A synapomorphies ~ 2.3 : 1.
+  # Ratio false-inner : true-AC-sister synapomorphies ~ 1.4 : 1.
+  # Blind chain expected to actively prefer the spurious eco grouping;
+  # aware chain should re-rank ecology-encoded characters and recover
+  # the true topology.
+  #
+  # USE ONLY WITH v4-cross GEOMETRY (eco-1 = {A1,A2,B1,B2}); v4 geometry
+  # (eco-1 = {A1,A2,C1,C2}) would only break clade A and C monophyly
+  # without contradicting the (A,C),(B,D) split.
+  v5break = list(
+    name        = "v5break_breakblind",
+    tipBr       = 0.04,
+    stemBrEco   = 0.10,
+    stemBrClade = 0.03,
+    rootBr      = 0.05,
+    nNeo        = 30L,
+    nTrans      = 50L,
+    phi         = 6,
+    pi0         = 0.45,
+    theta       = 1.0,
+    baseRate    = 1.0,
+    rateLoss    = 1,
+    kStates     = 2L
   )
 )
