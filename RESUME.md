@@ -1,4 +1,25 @@
-# MkPrime ecology-aware — hand-off 2026-05-18
+# MkPrime ecology-aware — hand-off 2026-05-19
+
+## ⚠ Scoring bug discovered 2026-05-19
+
+`hasBipart()` in every `run_v4*.R` script uses `ape::prop.part`, which is
+**root-dependent**. MCMC posterior trees are rooted but the root position
+varies across samples (~8 configurations in v4cross-b-pt5 rep01; ~30% of
+samples have the root on the BD side). When the root lies inside a clade,
+`prop.part` cannot return that clade — depressing its apparent posterior
+support purely as a measurement artefact.
+
+**Concrete evidence (v4cross-b-pt5 rep01, blind, 183 post-burnin trees):**
+P(AC)=0.978, P(BD)=0.148. On a binary tree AC|BD is the *same* split, so
+these should be equal. The asymmetry is entirely a rooting artefact.
+
+**Implication:** the "aware no better than blind on v4-cross" headline
+finding (and the "asymmetric mode-trap" / "clade C loss" follow-ups) need
+to be re-evaluated with a root-invariant scoring function before any
+narrative or paper commitment. Use `TreeTools::as.Splits()` instead.
+
+**Fix scope:** scoring only; saved trees are fine, just re-score the RDS
+files. v4 runs are also affected (same `hasBipart` pattern).
 
 ## What this repo is
 
@@ -47,25 +68,28 @@ This session pushed three threads forward:
 
 ## Pending jobs
 
-| Job ID | Name | Wall | On completion |
-|--------|------|------|---------------|
-| 17222514 (aware-cont2) | mkp-rod-awar2 | 36h | Check minESS from `rodent-aware-v2-result.rds`; if ≥ 200, regenerate `inst/scripts/rodent-comparison/` |
-| 17222515 (blind-cont2) | mkp-rod-blind2 | 4h | Check minESS from `rodent-blind-v2-result.rds`; if ≥ 200, regenerate `inst/scripts/rodent-comparison/` |
-
-Both jobs submitted and running 2026-05-19. Check status with:
-`/c/WINDOWS/System32/OpenSSH/ssh.exe pjjg18@hamilton8.dur.ac.uk "squeue -u pjjg18"`
-
-Targets: aware 1M→2.3M (patch nIter=2300000L), blind 1M→5M (patch nIter=5000000L).
-Checkpoints at `/nobackup/pjjg18/mkp-rodent-aware-v2/rodent-aware-v2.ckp` and
-`/nobackup/pjjg18/mkp-rodent-blind-v2/rodent-blind-v2.ckp`.
+| Job ID | Name | Status | On completion |
+|--------|------|--------|---------------|
+| 17222515 (blind-cont2) | mkp-rod-blind2 | **COMPLETED** 2026-05-19 (1h51m). 5M iter, **minESS=366**, median 1965, 5159 trees. Result at `/nobackup/pjjg18/mkp-rodent-blind-v2/results/rodent-blind-v2-result.rds`. | Ready — awaits aware to regenerate report |
+| 17222514 (aware-cont2) | mkp-rod-awar2 | RUNNING, 4h elapsed of 36h wall (cn027). Target 2.3M iter. | Check minESS from `rodent-aware-v2-result.rds`; if ≥ 200, regenerate `inst/scripts/rodent-comparison/` against the new aware RDS AND the converged blind RDS |
 
 ## Open items / next steps
 
-1. **Rodent comparison** (DONE): Full 1M-iter chains compared in
+1. **Fix the scoring bug FIRST** (see top of file). Replace `hasBipart` in
+   all `run_v4*.R` and `run_v4cross*.R` scripts with a root-invariant
+   `TreeTools::as.Splits()` implementation, then re-score:
+   - All five v4cross-b-pt5 reps (saved as `*-result.rds`)
+   - v4cross-c, v4cross-b-pt, v4cross-b single-rep results
+   - Original v4a/v4b/v4c results if used in any narrative claim
+   This is cheap (no re-running MCMC) and could materially change the
+   simulation story.
+
+2. **Rodent comparison** (pilot DONE): Full 1M-iter chains compared in
    `inst/scripts/rodent-comparison/`. Key result: 32/38 blind splits shared
    with aware consensus (was 0/38 in pilot). MDS clouds largely separated
    (centroid dist 9.65, spread ~9 / ~7). Both chains underconverged
-   (minESS 88 aware, 38 blind). A longer run or PT is needed for publication.
+   (minESS 88 aware, 38 blind). cont2 run targets ESS ≥ 200 both sides;
+   blind cont2 already at minESS=366.
 
 2. **Decide narrative on the v4-cross result**. The 5-rep PT sweep shows aware
    ≠ better than blind on v4-cross. Options:
@@ -129,6 +153,9 @@ Checkpoints at `/nobackup/pjjg18/mkp-rodent-aware-v2/rodent-aware-v2.ckp` and
   v4-cross-like configuration.
 - **`-amend` after a failed pre-commit hook** — the commit didn't happen, so
   amend rewrites the previous commit. Create a new commit instead.
+- **`ape::prop.part` for posterior tree scoring** — root-dependent. Use
+  `TreeTools::as.Splits` instead, or implement a manual unrooted bipartition
+  match. Discovered 2026-05-19; see top of file.
 
 ## Worktrees
 
