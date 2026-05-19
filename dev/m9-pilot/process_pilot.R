@@ -1,6 +1,9 @@
 #!/usr/bin/env Rscript
-# Process the 07203 pilot output: load trees for each model, prune to wcTree
-# taxa, compute CID-to-WCT. Confirms the pilot -> CID-vs-WCT pipeline.
+# Process M9 pilot/long-run output for one matrix: load trees, prune to wcTree
+# taxa, compute CID-to-WCT for each model.
+#
+# Usage: Rscript dev/m9-pilot/process_pilot.R <pid>
+# where <pid> is e.g. "07200" (matches both syab07200/ and the WCT list).
 
 suppressPackageStartupMessages({
   library(ape)
@@ -8,20 +11,42 @@ suppressPackageStartupMessages({
   library(TreeDist)
 })
 
-pid <- "07203"
+args <- commandArgs(trailingOnly = TRUE)
+pid <- if (length(args) >= 1) args[[1]] else "07203"
 models <- c("by_nt_9v", "t_9v", "t_kv")
-treesDir <- file.path("dev", "m9-pilot", "syab07203")
+treesDir <- file.path("dev", "m9-pilot", paste0("syab", pid))
+
+# Outgroup mapping mirrors ../neotrans/R/AsherSmithSetup.R
+outgroups <- list(
+  "07200" = "Ichthyornis",
+  "07201" = "aaCrocodylia",
+  "07202" = c("Tupaia", "Dermoptera"),
+  "07203" = c("Didelphis", "Macropus"),
+  "07204" = c("Monodelphis", "Sarcophilus"),
+  "07205" = c("Monodelphis", "Sarcophilus"),
+  "07206" = "Ornithorhynchus"
+)
+outgroup <- outgroups[[pid]]
+stopifnot(!is.null(outgroup))
 
 wcTrees <- setNames(unclass(ape::read.tree(
   "../neotrans/inst/wct/wellCorroboratedTrees.nwk")),
   paste0("0720", 0:6))
 wcTree <- wcTrees[[pid]]
-outgroup <- c("Didelphis", "Macropus")
+
+de_zz <- function(tr) {
+  # Mirrors neotrans::DeZZ — strip "zz" prefix and species suffix so tip
+  # labels match the WCT's genus-only labels.
+  lab <- tr[["tip.label"]]
+  zz <- startsWith(lab, "zz")
+  lab[zz] <- substr(lab[zz], 3, nchar(lab[zz]))
+  tr[["tip.label"]] <- sub("([^_]+)_.*", "\\1", lab, perl = TRUE)
+  tr
+}
 
 read_rb_trees <- function(f) {
-  # RB .trees is TSV: Iteration Posterior Likelihood Prior phylogeny
   tab <- read.delim(f, stringsAsFactors = FALSE)
-  trs <- lapply(tab$phylogeny, function(s) ape::read.tree(text = s))
+  trs <- lapply(tab$phylogeny, function(s) de_zz(ape::read.tree(text = s)))
   structure(trs, class = "multiPhylo")
 }
 
@@ -54,7 +79,7 @@ process_model <- function(model) {
   cat(sprintf("\n[%s] n=%d+%d post-burnin trees, common tips=%d/%d\n",
               model, length(t1b), length(t2b),
               length(commonTips), length(wcTree$tip.label)))
-  cat(sprintf("  CID vs asher: mean=%.4f sd=%.4f min=%.4f max=%.4f\n",
+  cat(sprintf("  CID vs WCT: mean=%.4f sd=%.4f min=%.4f max=%.4f\n",
               mean(cidAll), sd(cidAll), min(cidAll), max(cidAll)))
   data.frame(
     matrix = pid, model = model,
