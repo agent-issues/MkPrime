@@ -35,14 +35,19 @@ substitution units. Prior was 270× too high.
 
 Sanity-warn added if computed expSteps > 100. 29/29 tests pass.
 
-**Active jobs (after `f7b4644` unit-correction reinstall):**
+**Active jobs (after `f7b4644` unit-fix + `b8da51b` Resume-API fix):**
 | Job | What | Status |
 |---|---|---|
-| 17227245 | mkp-rod-blind-v3 (corrected expSteps≈7.35) | RUNNING |
-| 17227246 | mkp-rod-aware-v3 (corrected expSteps≈7.35) | RUNNING |
-| 17227247_[1-3] | mkp-v6-realistic (corrected expSteps≈1.04) | RUNNING |
+| 17227245 | mkp-rod-blind-v3 (corrected expSteps≈7.0) | RUNNING (parsimony search) |
+| 17227246 | mkp-rod-aware-v3 (corrected expSteps≈7.0) | RUNNING |
+| 17227265_[1-3] | mkp-v6-realistic (corrected expSteps≈1.04) | RUNNING |
 
-(Earlier 17227192/3 and 17227212 cancelled — prior was off by 270×.)
+(Earlier 17227192/3, 17227212, 17227247 cancelled — bad prior or Resume API mismatch.)
+
+**Other contra-API run scripts** flagged by subagent (need patching if resubmitted):
+sim3-v4a/b/c, sim3-v4cross-b/c/b-pt/b-pt5, sim3-v5break, sim3-multirep-v3/v4,
+sim3-multirep-v3-pt, sim3-phi2*, sim3-pt-test, rodent-blind-v2. Most won't be
+resubmitted under the "saturated sims are junk" stance.
 
 **multirep-v3 declared junk.** v4 family TL marginal (1.24-2.4 truth, but
 chains inflated). v6-realistic (truth TL=1.16, parsimony-anchored prior,
