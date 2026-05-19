@@ -1,4 +1,4 @@
-# mkp — hand-off 2026-05-18 (late evening, post-collect)
+# mkp — hand-off 2026-05-19 (8-way CID analysis complete)
 
 ## What this repo is
 
@@ -12,32 +12,13 @@ reference trees.
 
 ## Where we left off
 
-This session was a hand-off-resume + collect cycle:
+- **adc5476** — 7-way CID confirmed: mk_k15 beats mk_k9 (p=4.3e-22, 206/260 wins).
+  Ramp monotonic up to k=15; k24 queued.
 
-- **f6a91b7** — `dev/m9-pilot/process_pilot.R` extended to loop over all three
-  models on 07203. CID-vs-asher results:
+- **c368af4** — mk_k24 full array submitted as job **17222516** (260 tasks, 8h).
 
-  | model    |   n | CID_mean | CID_sd |
-  |----------|----:|---------:|-------:|
-  | by_nt_9v |  52 |   0.5703 | 0.0157 |
-  | t_9v     |  56 |   0.5737 | 0.0179 |
-  | t_kv     | 242 |   0.5929 | 0.0226 |
-
-  Real-data echo of the sim finding: fixed k=9 (both Bayesian by_nt_9v and t_9v)
-  beats the t_kv baseline by ~0.02 CID against asher WCT.
-
-- **mk_k15 / mk_k24 pilot reps completed** (jobs 17216080, 17216081 — both
-  COMPLETED exit 0 on t01_r01). Timing:
-  - mk_k9:  ~11.88M iter in 8h → ~118k thinned samples (thin=100)
-  - mk_k15: ~10.14M iter in 8h → ~101k thinned samples
-  - mk_k24:   ~235k iter in 8h → ~2,350 thinned samples (43× slower than k15)
-
-- **mk_k15 full array submitted** as job **17218354** (`--array=0-259`, 8h each).
-  Resume capability means we can extend walltime later if results warrant.
-
-- **Preliminary 7-way CID (mk_k15 partial: 153 COMPLETED + 107 RUNNING summarised
-  from partial logs).** Job 17222171 ran the summariser; results in
-  `dev/pilots/2026-05-12-prior-validation/analysis/cid_seven_prior.R`:
+- **1e42fbb** — `dev/pilots/2026-05-12-prior-validation/analysis/cid_eight_prior.R`
+  written and run. **8-way CID results** (job 17224641 ran summariser for mk_k24):
 
   | Arm | n | mean CID |
   |---|---:|---:|
@@ -47,69 +28,89 @@ This session was a hand-off-resume + collect cycle:
   | mkp_geo | 26 | 0.2562 |
   | mk_kp2 | 260 | 0.2535 |
   | mk_k9 | 260 | 0.2451 |
-  | **mk_k15** | 260 | **0.2418** |
+  | mk_k15 | 260 | 0.2418 |
+  | **mk_k24** | 260 | **0.2398** |
 
-  Paired mk_k9 vs mk_k15 (260 common tasks): k15 wins 206/260, mean diff
-  −0.00335, binomial p = 4.3e-22. **The flexibility ramp extends past k=9**,
-  monotonically (mk_kp1 → mk_kp2 → mk_k9 → mk_k15) with diminishing
-  returns (Δk_p2→k9 = 0.0084; Δk9→k15 = 0.0033). Numbers will tighten when the
-  remaining 107 reps complete; ordering is very unlikely to flip.
+  **Paired mk_k15 vs mk_k24** (260 common tasks): k24 wins 191/260, mean diff
+  −0.00197, binomial p = 2.03e-14. **The ramp continues past k=15**, but with
+  further diminishing returns:
+
+  | Step | Δ mean CID |
+  |------|-----------:|
+  | kp1 → kp2 | −0.0060 |
+  | kp2 → k9  | −0.0084 |
+  | k9  → k15 | −0.0034 |
+  | k15 → k24 | −0.0020 |
+
+  On the 26-task mkp_geo-limited subset: k15 ≈ k24 (0.2260 vs 0.2261 — tied).
+  Improvement from k24 comes from harder/larger trees.
+
+  **mk_k24 convergence**: Contrary to the pilot estimate (~30 iter/sec = 43×
+  slower), mk_k24 tasks converge on the built-in convergence criterion, finishing
+  in 1–4h rather than hitting the 8h walltime. 172 of 260 tasks converged within
+  ~4h; tree counts range from ~750 to 66k depending on task difficulty. The "43×
+  slower" figure was likely a measurement artefact from the pilot.
+
+  mk_k15 array (17218354): 186/260 converged, 74 timed out (8h walltime). The
+  74 timed-out summaries contain partial (but substantial) tree data.
 
 ## Pending jobs
 
-### Hamilton HPC — mkp sim (8h walltime, resumable)
+### Hamilton HPC — mkp sim
 
 | Job ID | Arm | Status | Note |
 |--------|-----|--------|------|
-| 17218354 | mk_k15 (--array=0-259) | RUNNING | Full array; ~3.5 days end-to-end given shared partition |
-| 17222516 | mk_k24 (--array=0-259) | QUEUED | Submitted 2026-05-19; 43× slower → ~2.3k samples/8h run; resumable to 3d |
+| 17218354 | mk_k15 (--array=0-259) | COMPLETE | 186 converged, 74 timed out; summaries in place |
+| 17222516 | mk_k24 (--array=0-259) | RUNNING | ~88 tasks still running at last check; all converge within 8h |
+| 17224641 | summariser mk_k24 | COMPLETE | 260 summaries in `/nobackup/pjjg18/mkp-study/summary/` |
 
-mk_k24 queued now that k15 results confirm ramp extends past k=9 (k15 beats k9, p=4.3e-22). Both jobs resumable; extend walltime if needed after first pass.
+**Suggested next sim step**: consider whether to push k=32 or accept k=24 as the
+ceiling (Δk15→k24 = −0.0020; further steps will yield ≤−0.001). May be worth one
+more pilot rep to check.
 
 ### Hamilton HPC (long-form M9 real-data, 3-day walltime)
 
-| Job ID | Matrix | Model | Status | Elapsed | Mem |
-|--------|--------|-------|--------|---------|-----|
-| 17217093 | syab07200 | by_nt_9v | RUNNING | ~6.5h | 32G |
-| 17217094 | syab07200 | t_kv | RUNNING | ~6.5h | 32G |
-| 17217095 | syab07200 | t_9v | RUNNING | ~6.5h | 32G |
-| 17217096 | syab07202 | by_nt_9v | RUNNING | ~6.5h | 32G |
-| 17217097 | syab07202 | t_kv | RUNNING | ~6.5h | 32G |
-| 17217098 | syab07202 | t_9v | RUNNING | ~6.5h | 32G |
-| 17217100 | syab07204 | t_kv | RUNNING | ~6.5h | 32G |
-| 17217103 | syab07205 | t_kv | RUNNING | ~6.5h | 32G |
-| 17217105 | syab07206 | by_nt_9v | RUNNING | ~6.5h | 32G |
-| 17217106 | syab07206 | t_kv | RUNNING | ~6.5h | 32G |
-| 17217107 | syab07206 | t_9v | RUNNING | ~6.5h | 32G |
-| 17217660 | syab07204 | t_9v | RUNNING | ~4h | 64G |
-| 17217661 | syab07205 | by_nt_9v | RUNNING | ~3.5h | 64G |
-| 17217662 | syab07205 | t_9v | PENDING | — | 64G |
+| Job ID | Matrix | Model | Status | Note |
+|--------|--------|-------|--------|------|
+| 17217093 | syab07200 | by_nt_9v | RUNNING | 3-day job, ~22h elapsed |
+| 17217094 | syab07200 | t_kv | RUNNING | ~22h elapsed |
+| 17217095 | syab07200 | t_9v | RUNNING | ~22h elapsed |
+| 17217096 | syab07202 | by_nt_9v | RUNNING | ~22h elapsed |
+| 17217097 | syab07202 | t_kv | RUNNING | ~22h elapsed |
+| 17217098 | syab07202 | t_9v | RUNNING | ~22h elapsed |
+| 17217100 | syab07204 | t_kv | RUNNING | ~22h elapsed |
+| 17217103 | syab07205 | t_kv | RUNNING | ~22h elapsed |
+| 17217105 | syab07206 | by_nt_9v | RUNNING | ~22h elapsed |
+| 17217106 | syab07206 | t_kv | RUNNING | ~22h elapsed |
+| 17217107 | syab07206 | t_9v | RUNNING | ~22h elapsed |
+| 17217660 | syab07204 | t_9v | RUNNING | ~22h elapsed |
+| 17217661 | syab07205 | by_nt_9v | RUNNING | ~22h elapsed |
+| 17217662 | syab07205 | t_9v | RUNNING | ~10.6h elapsed |
 
-All complete in ~2.5d (counting from job start). On completion: `scp` the
-`.trees` files from `/nobackup/pjjg18/m9-long/<matrix>/` to a per-matrix dir
-under `dev/m9-pilot/`, then run an extended `process_pilot.R` looping over
-matrix × model.
+All complete ~2026-05-20 ~09:00 BST. On completion: `scp` the `.trees` files
+from `/nobackup/pjjg18/m9-long/<matrix>/` to `dev/m9-pilot/syab<pid>/`, then
+run `Rscript dev/m9-pilot/process_pilot.R <pid>` for each matrix and build full
+CID table.
 
 ### Known problem — needs decision
 
-**17217659 (syab07204 by_nt_9v at 64G) OOM'd again** after 1m43s. 64G was not
-enough for this matrix+model combination. Options: resubmit at 128G, or skip
-syab07204 by_nt_9v from the 6-matrix comparison and note as infeasible.
+**17217659 (syab07204 by_nt_9v at 64G) OOM'd** after 1m43s. Options: resubmit
+at 128G, or skip syab07204 by_nt_9v from the 6-matrix comparison.
 
 ## Open items / next steps
 
-1. **When mk_k15 array (17218354) completes**: pull summaries, extend
-   `cid_six_prior.R` to a 7-way table. Then decide on k24 — submit at 8h to
-   see if even ~2k samples suffices, or skip if k15 already settles the
-   "does ramp continue past k=9?" question.
-2. **Decide 17217659 retry** at 128G vs skip.
-3. **Wait for long-form M9 to accumulate ≥50 trees/run** (earliest meaningful
-   data ~09:00 BST 2026-05-19) then extend `process_pilot.R` to loop over
-   matrix × model and produce the full CID table.
-4. **Pull neotrans `by_nt_kv` baseline CID** for the 6 matrices, so we can do
-   the (i) and (ii) comparisons from the original plan.
-5. **Pre-pub `_9i` (informative coding) variants**: deferred, after pilots
-   confirm M9 direction.
+1. **Long-form M9 collect** (~2026-05-20 09:00 BST): scp `.trees`, run
+   `process_pilot.R <pid>` for each of 07200, 07202, 07204, 07205, 07206, then
+   build the full 6-matrix × 3-model CID table. Compare against 07203 (asher).
+2. **Decide 17217659 retry** at 128G vs skip syab07204 by_nt_9v.
+3. **Pull neotrans `by_nt_kv` baseline CID** for the 6 matrices.
+4. **Decide on k=32 pilot**: Δk15→k24 = −0.0020; Δk24→k32 is expected ≤−0.001.
+   Possibly not worth it — consider accepting k=24 as the ceiling.
+5. **Re-summarise 74 timed-out mk_k15 tasks** with full data (now that 17218354
+   is fully complete). Submit: `sbatch --array=<ids> summarize_array.slurm mk_k15`.
+   Low priority if existing numbers are stable.
+6. **Pre-pub `_9i` (informative coding) variants**: deferred, after M9 pilots
+   confirm direction.
 
 ## Technical pointers
 
@@ -141,13 +142,17 @@ syab07204 by_nt_9v from the 6-matrix comparison and note as infeasible.
   matrices with ≥214 trans.nex lines (syab07204/07205). 64G itself is **not
   always enough** — see 17217659 (syab07204 by_nt_9v at 64G OOM'd at 1m43s).
   by_nt models may need 128G+ for these larger matrices.
-- **Per-arm MCMC speed (mkp sim)**: rough iter/sec on t01_r01:
-  - mk_k9:  ~1,500 iter/sec
-  - mk_k15: ~1,300 iter/sec
-  - mk_k24:    ~30 iter/sec (43× slower — matrix exp scales like k³)
+- **mk_k24 convergence behaviour**: uses built-in convergence criterion; most tasks
+  finish in 1–4h not 8h. Tree counts per task: 750–66k (wide range by difficulty).
+  The earlier "43× slower / ~2,350 samples" estimate was a pilot artefact — disregard.
+- **Per-arm MCMC speed (mkp sim)**: rough iter/sec on t01_r01 (from tree counts):
+  - mk_k9:  ~120k trees in 8h (hits walltime, thin=100)
+  - mk_k15: ~105k trees, converges; ~74 tasks hit 8h walltime
+  - mk_k24: converges early (~750–66k trees); 172/260 done within 4h of submission
 - **kObs alignment**: `chr*.nex` filenames are unpadded. `run_one.R` uses plain `sort()` → lex order (chr1, chr10, chr11, …). Analysis must match.
 - **EG arm result (corrected, 2026-05-17)**: median u_post = 1.01 (binary chars, n=9917); EG posterior on k′ is calibrated near kObs+1. mk_kp1 collapses this to a point estimate, beating EG on CID.
 - **No oversampling**: thin streamed MCMC to ~30k samples/run (thin_iters ≥ 16 for 8h job). See `feedback_no_oversample.md`.
+- **Summariser production vs canonical**: `tmp_summarize_streamed.R` (repo root) is the production working copy on Hamilton; `data-raw/hamilton/summarize_streamed.R` is stale (missing mk_k15/mk_k24 in match.arg). Reconcile before next major summariser change.
 
 ## Things ruled out
 
@@ -160,16 +165,17 @@ syab07204 by_nt_9v from the 6-matrix comparison and note as infeasible.
 - **Per-pattern vs per-character k′ confusion**: phyDat compresses to unique
   patterns; `mkd$kObs` and `state$kPrime` are per-character. MkPrime expands back.
 - **kObs+1 sweet-spot hypothesis**: mk_k9 > mk_kp2 > mk_kp1 monotonically in
-  6-way CID pilot. Confirmed extended in 7-way (2026-05-19, this session):
-  mk_k15 > mk_k9 (paired p=4.3e-22). Ramp is monotonic up to k=15 with
-  diminishing returns — open question whether k24 plateaus or continues.
+  6-way CID pilot. Extended in 7-way: mk_k15 > mk_k9 (p=4.3e-22). Extended in
+  8-way: mk_k24 > mk_k15 (p=2.0e-14). Ramp is monotonic up to k=24 with strongly
+  diminishing returns (Δk15→k24 = −0.0020 vs Δkp2→k9 = −0.0084).
+- **mk_k24 infeasibility**: earlier "43× slower" pilot estimate was wrong. mk_k24
+  converges via built-in criterion, finishing within the 8h walltime for all tasks.
 
 ## Suggested first action
 
 ```powershell
-# Survey long-form M9 progress — how many trees per matrix×model so far?
-ssh pjjg18@hamilton8.dur.ac.uk 'for d in /nobackup/pjjg18/m9-long/syab*/; do echo "=== $(basename $d) ==="; for f in $d/*_run_1.trees; do echo "  $(basename $f) $(wc -l < $f) lines"; done; done'
+# Check M9 long-run progress (~22h elapsed, complete ~09:00 BST 2026-05-20)
+ssh pjjg18@hamilton8.dur.ac.uk 'for d in /nobackup/pjjg18/m9-long/syab*/; do echo "=== $(basename $d) ==="; for f in $d/*.trees; do echo "  $(basename $f): $(wc -l < $f) lines"; done; done'
 ```
 
-Then decide on mk_k15/mk_k24 full-array submission and 17217659 128G resubmit
-(see "Open items" 1–2).
+Then `scp` trees for any completed matrices and run `process_pilot.R <pid>`.
