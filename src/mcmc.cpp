@@ -3527,7 +3527,15 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
       // M-172: call pruning on unique-pattern matrix (nAct ≤ nUniq ≤ nChar).
       // When all unique patterns are still active, use uniqueTipStates directly;
       // otherwise build a sub-matrix of the still-active unique patterns.
-      int neededStride = nAct * k;
+      //
+      // JC-COLLAPSE: when ko >= 2 and not Het, run the lumped-state kernel at
+      // kEff = kObs + 1; pruning cost scales as kEff/k (~k/3 for typical
+      // kObs=2). Het is deferred — JC lumpability holds only under equal
+      // stationary frequencies within the lumped class. The workspace stride
+      // gibbsMaxStride is already worst-case (nUniq*(kObs+K_MAX_CAND)) so the
+      // collapsed kernel always fits without reallocation.
+      const bool useCollapse = (!useHet) && (ko >= 2);
+      int neededStride = nAct * (useCollapse ? (tp.kObs + 1) : k);
       if (nAct == tp.nUniq) {
         // All unique patterns active — use uniqueTipStates directly
         if (useHet) {
@@ -3537,6 +3545,12 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
           pruning_f81_het_acrv_persite(
             state->parent, state->child, edgeLen, part.uniqueTipStates,
             k, 1.0, hetBins, nBC, rates,
+            state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
+            neededStride, siteLL.data());
+        } else if (useCollapse) {
+          pruning_jc_acrv_persite_collapsed(
+            state->parent, state->child, edgeLen, part.uniqueTipStates,
+            k, tp.kObs, acrvRates,
             state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
             neededStride, siteLL.data());
         } else {
@@ -3560,6 +3574,12 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
           pruning_f81_het_acrv_persite(
             state->parent, state->child, edgeLen, sub,
             k, 1.0, hetBins, nBC, rates,
+            state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
+            neededStride, siteLL.data());
+        } else if (useCollapse) {
+          pruning_jc_acrv_persite_collapsed(
+            state->parent, state->child, edgeLen, sub,
+            k, tp.kObs, acrvRates,
             state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
             neededStride, siteLL.data());
         } else {

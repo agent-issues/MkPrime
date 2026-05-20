@@ -473,6 +473,39 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// test_persite_uncollapsed
+Rcpp::NumericVector test_persite_uncollapsed(IntegerVector parent, IntegerVector child, NumericVector edge_length, IntegerMatrix tip_states, int kStates, NumericVector rate_multipliers);
+RcppExport SEXP _MkPrime_test_persite_uncollapsed(SEXP parentSEXP, SEXP childSEXP, SEXP edge_lengthSEXP, SEXP tip_statesSEXP, SEXP kStatesSEXP, SEXP rate_multipliersSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< IntegerVector >::type parent(parentSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type child(childSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type edge_length(edge_lengthSEXP);
+    Rcpp::traits::input_parameter< IntegerMatrix >::type tip_states(tip_statesSEXP);
+    Rcpp::traits::input_parameter< int >::type kStates(kStatesSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type rate_multipliers(rate_multipliersSEXP);
+    rcpp_result_gen = Rcpp::wrap(test_persite_uncollapsed(parent, child, edge_length, tip_states, kStates, rate_multipliers));
+    return rcpp_result_gen;
+END_RCPP
+}
+// test_persite_collapsed
+Rcpp::NumericVector test_persite_collapsed(IntegerVector parent, IntegerVector child, NumericVector edge_length, IntegerMatrix tip_states, int kFull, int kObs, NumericVector rate_multipliers);
+RcppExport SEXP _MkPrime_test_persite_collapsed(SEXP parentSEXP, SEXP childSEXP, SEXP edge_lengthSEXP, SEXP tip_statesSEXP, SEXP kFullSEXP, SEXP kObsSEXP, SEXP rate_multipliersSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< IntegerVector >::type parent(parentSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type child(childSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type edge_length(edge_lengthSEXP);
+    Rcpp::traits::input_parameter< IntegerMatrix >::type tip_states(tip_statesSEXP);
+    Rcpp::traits::input_parameter< int >::type kFull(kFullSEXP);
+    Rcpp::traits::input_parameter< int >::type kObs(kObsSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type rate_multipliers(rate_multipliersSEXP);
+    rcpp_result_gen = Rcpp::wrap(test_persite_collapsed(parent, child, edge_length, tip_states, kFull, kObs, rate_multipliers));
+    return rcpp_result_gen;
+END_RCPP
+}
 // prepare_mcmc_data
 SEXP prepare_mcmc_data(List partitions_r, IntegerVector kObs_r, CharacterVector charTypes_r, bool hasNeo, int nCat, std::string codingStr, bool relabelFlag, double treeLengthShape, double treeLengthRate, double rateLossMeanlog, double rateLossSdlog, double rateLogSdShape, double rateLogSdRate, double rateNeoMeanlog, double rateNeoSdlog, double kprimeHyperA, double kprimeHyperB, bool kPriorLogseries, double kprimeLogseriesC, bool kPriorBetaGeometric, bool qHeterogeneity, int nBetaCat, double betaScaleShape, double betaScaleRate, bool kPriorEmpiricalGeometric, Rcpp::NumericVector empLogBody, int empBodyLastK, int empTailStartK, double empTailDecay, double empLogTailStartP);
 RcppExport SEXP _MkPrime_prepare_mcmc_data(SEXP partitions_rSEXP, SEXP kObs_rSEXP, SEXP charTypes_rSEXP, SEXP hasNeoSEXP, SEXP nCatSEXP, SEXP codingStrSEXP, SEXP relabelFlagSEXP, SEXP treeLengthShapeSEXP, SEXP treeLengthRateSEXP, SEXP rateLossMeanlogSEXP, SEXP rateLossSdlogSEXP, SEXP rateLogSdShapeSEXP, SEXP rateLogSdRateSEXP, SEXP rateNeoMeanlogSEXP, SEXP rateNeoSdlogSEXP, SEXP kprimeHyperASEXP, SEXP kprimeHyperBSEXP, SEXP kPriorLogseriesSEXP, SEXP kprimeLogseriesCSEXP, SEXP kPriorBetaGeometricSEXP, SEXP qHeterogeneitySEXP, SEXP nBetaCatSEXP, SEXP betaScaleShapeSEXP, SEXP betaScaleRateSEXP, SEXP kPriorEmpiricalGeometricSEXP, SEXP empLogBodySEXP, SEXP empBodyLastKSEXP, SEXP empTailStartKSEXP, SEXP empTailDecaySEXP, SEXP empLogTailStartPSEXP) {
@@ -729,6 +762,8 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_run_mcmc_batch_cpp", (DL_FUNC) &_MkPrime_run_mcmc_batch_cpp, 20},
     {"_MkPrime_debug_mcmc_data", (DL_FUNC) &_MkPrime_debug_mcmc_data, 1},
     {"_MkPrime_validate_swap_partial_cl", (DL_FUNC) &_MkPrime_validate_swap_partial_cl, 3},
+    {"_MkPrime_test_persite_uncollapsed", (DL_FUNC) &_MkPrime_test_persite_uncollapsed, 6},
+    {"_MkPrime_test_persite_collapsed", (DL_FUNC) &_MkPrime_test_persite_collapsed, 7},
     {"_MkPrime_prepare_mcmc_data", (DL_FUNC) &_MkPrime_prepare_mcmc_data, 30},
     {"_MkPrime_set_branch_bins", (DL_FUNC) &_MkPrime_set_branch_bins, 2},
     {"_MkPrime_spr_proposal", (DL_FUNC) &_MkPrime_spr_proposal, 4},
