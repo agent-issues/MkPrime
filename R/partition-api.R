@@ -311,3 +311,108 @@
   # Return:
   state
 }
+
+
+# Build the move spec for the partition-aware MCMC path.
+#
+# Wraps .BuildMoves (which is unchanged — §7a contract for the legacy path).
+# When `partitionSpec` is trivial, returns the legacy spec unchanged. When
+# non-trivial, adds per-class moves consistent with the unlinked components:
+#
+#   "shape" in spec$unlink           -> scale_class_rate_log_sd_c per class
+#   "ratemultiplier" in spec$unlink  -> dirichlet_simplex on class_w
+#
+# Per-class move specs use new `type` strings that the C++ dispatcher must
+# learn to handle in a follow-up commit; until then they are listed in the
+# move schedule but the .RequirePartitionImplemented gate prevents execution
+# from ever reaching the dispatcher.
+.BuildMovesPartitioned <- function(nEdge, nTrans, hasNeo, mcmc,
+                                   partitionSpec,
+                                   fixTopology   = FALSE,
+                                   kPrimePrior   = "geometric",
+                                   qHeterogeneity = FALSE,
+                                   joint2d       = TRUE) {
+  # Always build the legacy spec first; trivial partition is a no-op.
+  moves <- .BuildMoves(nEdge, nTrans, hasNeo, mcmc,
+                       fixTopology   = fixTopology,
+                       kPrimePrior   = kPrimePrior,
+                       qHeterogeneity = qHeterogeneity,
+                       joint2d       = joint2d)
+
+  if (is.null(partitionSpec$partition) || partitionSpec$nClasses == 1L) {
+    # Return:
+    return(moves)
+  }
+
+  nClasses <- partitionSpec$nClasses
+
+  # "shape" unlinked: one MH scale move per class on class_rate_log_sd[c].
+  # Each move targets a single component of a length-nClasses state vector.
+  if ("shape" %in% partitionSpec$unlink) {
+    for (c in seq_len(nClasses)) {
+      moves <- c(moves, list(
+        list(
+          name      = paste0("scale_class_rate_log_sd_", c),
+          type      = "scale_class_rate_log_sd",
+          target    = "class_rate_log_sd",
+          weight    = 1,
+          dim       = 1L,
+          classIdx  = as.integer(c)
+        )
+      ))
+    }
+  }
+
+  # "ratemultiplier" unlinked: one Dirichlet-simplex move on class_w
+  # (length nClasses). class_rate is derived from w via the char-weighted
+  # mean-1 map.
+  if ("ratemultiplier" %in% partitionSpec$unlink) {
+    moves <- c(moves, list(
+      list(
+        name   = "dirichlet_simplex_class_w",
+        type   = "dirichlet_simplex_class_w",
+        target = "class_w",
+        weight = max(1, nClasses),
+        dim    = as.integer(nClasses)
+      )
+    ))
+  }
+
+  # Return:
+  moves
+}
+
+
+# Parameter name vector for the partition-aware sample matrix.
+#
+# Extends .ParamNames (unchanged — §7a contract on the legacy schema) with
+# per-class columns when partitionSpec is non-trivial. Column-naming
+# convention is `class<c>_rate_log_sd`, `w_<c>` (mirroring plan v4 §8 row 6).
+.ParamNamesPartitioned <- function(mkd, nEdge, partitionSpec,
+                                    kPrimePrior   = "geometric",
+                                    qHeterogeneity = FALSE) {
+  nms <- .ParamNames(mkd, nEdge, kPrimePrior = kPrimePrior,
+                     qHeterogeneity = qHeterogeneity)
+
+  if (is.null(partitionSpec$partition) || partitionSpec$nClasses == 1L) {
+    # Return:
+    return(nms)
+  }
+
+  nClasses <- partitionSpec$nClasses
+  extra <- character(0)
+
+  if ("shape" %in% partitionSpec$unlink) {
+    extra <- c(extra, paste0("class", seq_len(nClasses), "_rate_log_sd"))
+  }
+  if ("ratemultiplier" %in% partitionSpec$unlink) {
+    extra <- c(extra, paste0("w_", seq_len(nClasses)))
+  }
+
+  # Order: legacy columns first, then per-class additions appended.
+  # Downstream readers (AutoPart's 03_diagnostics.R / 04_metrics.R) read
+  # columns by name, so appending is safe — see plan v4 §8 row 6.
+
+  # Return:
+  c(nms, extra)
+}
