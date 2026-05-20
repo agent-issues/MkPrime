@@ -86,14 +86,25 @@
 
 
 # Flush nRows rows of the buffer to logFile (tab-separated append).
+#
+# Each row is written via a single writeLines() call on an explicitly
+# opened append-mode connection.  An earlier implementation built the
+# entire flush block as one large concatenated string and passed it to
+# cat(); on networked filesystems (Hamilton /nobackup) the resulting
+# write() could be split across syscalls, occasionally leaving the log
+# file with a torn row that scan() refuses to parse.  Per-row writes
+# keep every payload well below PIPE_BUF (44 columns ~= 350 bytes), so
+# each line is a single atomic OS write.
 # @keywords internal
 .FlushBuffer <- function(buffer, nRows, iterNums, logFile) {
   if (nRows == 0L) return(invisible(NULL))
-  rows  <- buffer[seq_len(nRows), , drop = FALSE]
-  lines <- vapply(seq_len(nRows), function(i) {
-    paste(c(iterNums[i], rows[i, ]), collapse = "\t")
-  }, character(1L))
-  cat(paste(lines, collapse = "\n"), "\n", file = logFile, append = TRUE, sep = "")
+  rows <- buffer[seq_len(nRows), , drop = FALSE]
+  con <- file(logFile, open = "a")
+  on.exit(close(con), add = TRUE)
+  for (i in seq_len(nRows)) {
+    line <- paste(c(iterNums[i], rows[i, ]), collapse = "\t")
+    writeLines(line, con, useBytes = TRUE)
+  }
   invisible(NULL)
 }
 

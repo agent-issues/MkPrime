@@ -36,6 +36,17 @@
 #'   ecologies) or \code{"per_ecology"} (one phi per ecology).  If
 #'   \code{NULL} (default), inferred from column names: \code{"global"} if
 #'   a column named \code{phi} exists, \code{"per_ecology"} otherwise.
+#' @param trimZSamples \code{NULL} (default) or one of \code{"tail"} /
+#'   \code{"head"}.  When \code{result$z_samples} has more entries than
+#'   \code{samples} has rows (surplus) and this argument is non-\code{NULL},
+#'   the function warns and drops the surplus entries from the specified
+#'   end instead of aborting.  Use \code{"tail"} when the surplus entries
+#'   are at the end of the list (the common case: a streaming run
+#'   interrupted mid-flush left in-memory z snapshots not recorded in the
+#'   log).  Use \code{"head"} in the rare case the surplus is at the
+#'   beginning.  \strong{Wrong direction silently pairs z snapshots with
+#'   the wrong sample rows}, so the call must be deliberate.  A shortfall
+#'   of z entries always aborts regardless of this argument.
 #'
 #' @return The \code{result} object with \code{samples}, \code{z_samples},
 #'   and the model's \code{magnitudeMode} field updated in place. All other
@@ -49,7 +60,7 @@
 #'   resCanonical <- RelabelEcology(res)
 #' }
 #' @export
-RelabelEcology <- function(result, magnitudeMode = NULL) {
+RelabelEcology <- function(result, magnitudeMode = NULL, trimZSamples = NULL) {
   # Guard: not an MkPosterior
   if (!inherits(result, "MkPosterior")) {
     cli::cli_abort(
@@ -121,10 +132,38 @@ RelabelEcology <- function(result, magnitudeMode = NULL) {
     )
   }
   if (length(zSamples) != nSamples) {
-    cli::cli_abort(
-      "{.code result$z_samples} has {length(zSamples)} entries but \\
-       {.code samples} has {nSamples} rows; they must align."
-    )
+    surplus <- length(zSamples) - nSamples
+    if (!is.null(trimZSamples) && surplus > 0L) {
+      trimZSamples <- match.arg(trimZSamples, c("tail", "head"))
+      cli::cli_warn(c(
+        "{.code result$z_samples} has {length(zSamples)} entries but \\
+         {.code samples} has {nSamples} rows; trimming {abs(surplus)} \\
+         z entr{?y/ies} from the {trimZSamples}.",
+        "i" = "Verify the trim direction is correct; a wrong choice silently \\
+               pairs z snapshots with the wrong sample rows."
+      ))
+      if (identical(trimZSamples, "tail")) {
+        zSamples <- zSamples[seq_len(nSamples)]
+      } else {
+        zSamples <- zSamples[(surplus + 1L):length(zSamples)]
+      }
+    } else {
+      direction <- if (surplus > 0L) "tail" else "head"
+      cli::cli_abort(c(
+        "{.code result$z_samples} has {length(zSamples)} entries but \\
+         {.code samples} has {nSamples} rows; cannot relabel without \\
+         a paired z snapshot per sample.",
+        "i" = "Difference: {abs(surplus)} extra z entr{?y/ies} \\
+               ({if (surplus > 0L) 'surplus' else 'shortfall'}).",
+        "i" = "If you know the surplus is at the {direction} of the list \\
+               (most common: streaming run interrupted/resumed and \\
+               in-memory state outran the log), pass \\
+               {.code trimZSamples = \"{direction}\"} to drop the \\
+               extras and proceed.  Mis-specifying the direction would \\
+               pair wrong z snapshots with sample rows, so the call must \\
+               be deliberate."
+      ))
+    }
   }
 
   # -------------------------------------------------------------------------

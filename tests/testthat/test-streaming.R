@@ -375,3 +375,169 @@ test_that("In-memory mode is unchanged when logFile = NULL", {
   expect_equal(nrow(result$samples), 40L)
   expect_s3_class(result, "MkPosterior")
 })
+
+
+# --- .FlushBuffer torn-write regression (STREAM-005) ----------------------
+
+test_that(".FlushBuffer writes exactly one line per row with full columns", {
+  tf <- tempfile(fileext = ".log")
+  on.exit(unlink(tf), add = TRUE)
+  # Tab-separated header so .FlushBuffer's appends slot in below it.
+  paramNames <- paste0("p", seq_len(43L))   # mimic the 44-col scalar layout
+  writeLines(paste(c("Sample", paramNames), collapse = "\t"), tf)
+
+  nRows <- 25L
+  nCols <- length(paramNames)
+  buffer <- matrix(seq_len(nRows * nCols) + 0.5,
+                   nrow = nRows, ncol = nCols,
+                   dimnames = list(NULL, paramNames))
+  iterNums <- seq_len(nRows) * 100L
+
+  MkPrime:::.FlushBuffer(buffer, nRows, iterNums, tf)
+
+  lines <- readLines(tf)
+  # Header + nRows data lines, no torn trailing fragment
+  expect_equal(length(lines), nRows + 1L)
+  fieldCounts <- vapply(lines, function(l) length(strsplit(l, "\t",
+                                                            fixed = TRUE)[[1]]),
+                        integer(1L))
+  # Every line, header included, must carry Sample + 43 params = 44 fields
+  expect_true(all(fieldCounts == nCols + 1L),
+              label = "no line has a truncated column count")
+})
+
+test_that(".FlushBuffer with nRows = 0 is a no-op", {
+  tf <- tempfile(fileext = ".log")
+  on.exit(unlink(tf), add = TRUE)
+  writeLines("Sample\tA\tB", tf)
+
+  buffer <- matrix(0, nrow = 5L, ncol = 2L, dimnames = list(NULL, c("A", "B")))
+  MkPrime:::.FlushBuffer(buffer, 0L, integer(5L), tf)
+
+  expect_equal(readLines(tf), "Sample\tA\tB")
+})
+
+test_that("Streaming run emits no torn log rows", {
+  # Integration check: every data line in the log must have the same
+  # column count as the header.  Catches torn writes from .FlushBuffer
+  # that an earlier `cat(paste(lines, collapse='\n'), '\n', ...)` could
+  # produce when a single write() split across an NFS boundary.
+  f <- .mkStreamFixture()
+  log_file <- tempfile(fileext = ".log")
+  on.exit(unlink(log_file), add = TRUE)
+
+  set.seed(9921)
+  RunMkPrime(f$pd, f$tree,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 400L, thin = 5L,
+                        maxWarmup = 100L, minWarmup = 100L,
+                        autoTune = FALSE,
+                        logFile = log_file, bufferSize = 7L))
+
+  lines <- readLines(log_file)
+  lines <- lines[nzchar(lines)]
+  isHeader <- startsWith(lines, "Sample\t")
+  isComment <- startsWith(lines, "#")
+  expect_true(any(isHeader))
+  nFields <- length(strsplit(lines[which(isHeader)[1]], "\t",
+                              fixed = TRUE)[[1]])
+  dataLines <- lines[!isHeader & !isComment]
+  expect_gt(length(dataLines), 0L)
+  dataFields <- vapply(dataLines,
+                       function(l) length(strsplit(l, "\t", fixed = TRUE)[[1]]),
+                       integer(1L))
+  expect_true(all(dataFields == nFields),
+              label = "every data row matches header column count")
+})
+
+
+# --- z_samples / saved_idx alignment invariant (STREAM-005) ---------------
+
+test_that("Streaming ecology run keeps z_samples aligned with log rows", {
+  # Integration check: for an ecology-aware streaming run, the number of
+  # z snapshots returned in $z_samples must equal the number of rows the
+  # log file actually contains, otherwise RelabelEcology() can't run.
+  set.seed(42L)
+  tips <- paste0("t", 1:6)
+  mat <- matrix(c(
+    0, 1, 0, 1, 0, 1,
+    0, 0, 1, 1, 0, 1,
+    0, 1, 1, 0, 1, 0,
+    0, 0, 1, 1, 2, 2
+  ), nrow = 6L, ncol = 4L, byrow = FALSE,
+  dimnames = list(tips, NULL))
+  pd  <- TreeTools::MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd, ecology = 4L)
+  tree <- TreeTools::Preorder(ape::rtree(6L, tip.label = tips))
+
+  log_file <- tempfile(fileext = ".log")
+  on.exit(unlink(log_file), add = TRUE)
+
+  model <- MkPrimeModel(ecologyAware = TRUE, expSteps = 10,
+                        kPrimePrior = "geometric", coding = "none")
+  mcmc  <- MkPrimeMCMC(nIter = 200L, nChains = 1L, nRuns = 1L,
+                        thin = 5L, treeThin = 5L,
+                        maxWarmup = 50L, minWarmup = 50L,
+                        autoTune = FALSE,
+                        logFile = log_file, bufferSize = 4L,
+                        checkpointFile = NULL)
+  res <- RunMkPrime(mkd, tree = tree, model = model, mcmc = mcmc)
+
+  samp <- ReadMkLog(log_file)
+  expect_gt(nrow(samp), 0L)
+  expect_equal(length(res$z_samples), nrow(samp))
+})
+
+test_that("RelabelEcology aborts with diagnostics when z_samples misaligned", {
+  # Default behaviour (no trimZSamples): abort with an informative message
+  # that names the surplus count and suggests trimZSamples = "tail".
+  samples <- matrix(c(2.5, 0.3, 0.4,
+                       0.8, 0.2, 0.6),
+                     nrow = 2L, byrow = TRUE,
+                     dimnames = list(NULL, c("phi", "pi0", "theta_1")))
+  zList <- list(
+    matrix(c(0L, 1L, 2L), nrow = 3L, ncol = 1L),
+    matrix(c(2L, 0L, 1L), nrow = 3L, ncol = 1L),
+    matrix(c(1L, 1L, 0L), nrow = 3L, ncol = 1L)  # surplus
+  )
+  fake <- list(
+    samples = samples,
+    z_samples = zList,
+    model = list(ecologyAware = TRUE, magnitudeMode = "global"),
+    data  = list(refEcology = 0L, kEcology = 2L)
+  )
+  class(fake) <- "MkPosterior"
+
+  # Must abort, not warn-and-trim
+  expect_error(RelabelEcology(fake, magnitudeMode = "global"),
+               "z_samples")
+})
+
+test_that("RelabelEcology trims tail surplus when trimZSamples = 'tail'", {
+  # When the caller explicitly confirms the surplus entries are at the tail
+  # (typical: streaming run interrupted mid-flush), RelabelEcology should
+  # warn and keep only the first nSamples z entries.
+  samples <- matrix(c(2.5, 0.3, 0.4,
+                       0.8, 0.2, 0.6),
+                     nrow = 2L, byrow = TRUE,
+                     dimnames = list(NULL, c("phi", "pi0", "theta_1")))
+  zList <- list(
+    matrix(c(0L, 1L, 2L), nrow = 3L, ncol = 1L),  # paired with row 1
+    matrix(c(2L, 0L, 1L), nrow = 3L, ncol = 1L),  # paired with row 2
+    matrix(c(1L, 1L, 0L), nrow = 3L, ncol = 1L)   # surplus at tail
+  )
+  fake <- list(
+    samples = samples,
+    z_samples = zList,
+    model = list(ecologyAware = TRUE, magnitudeMode = "global"),
+    data  = list(refEcology = 0L, kEcology = 2L)
+  )
+  class(fake) <- "MkPosterior"
+
+  expect_warning(
+    out <- RelabelEcology(fake, magnitudeMode = "global",
+                          trimZSamples = "tail"),
+    "z_samples"
+  )
+  expect_equal(length(out$z_samples), 2L)
+  expect_true(isTRUE(attr(out, "relabelled")))
+})

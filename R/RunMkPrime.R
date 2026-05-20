@@ -2331,6 +2331,29 @@ RunMkPrime <- function(data, tree = NULL,
         runs[[run]]$samples <- runs[[run]]$samples[integer(0), , drop = FALSE]
       }
     }
+    # Align ecology z snapshots with the authoritative saved_idx.  Every
+    # logged sample row gets a paired z_samples push in the Sample-phase
+    # loop, so they should be equal by construction.  If they ever drift
+    # (e.g. carried over across an interrupted/resumed run that lost log
+    # rows), trim z_samples to match so RelabelEcology()'s alignment
+    # invariant holds.  Warn rather than abort: the surplus entries are
+    # discarded silently otherwise and the user has no way to investigate.
+    if (!is.null(runs[[run]]$z_samples)) {
+      nZ <- length(runs[[run]]$z_samples)
+      if (nZ != idx) {
+        cli::cli_warn(c(
+          "Run {run}: {.code z_samples} has {nZ} entries but \\
+           {.code saved_idx} is {idx}; aligning to {idx}.",
+          "i" = "Surplus z snapshots typically indicate a resume that \\
+                 truncated log rows without pruning the in-memory state."
+        ))
+        if (idx > 0L) {
+          runs[[run]]$z_samples <- runs[[run]]$z_samples[seq_len(min(nZ, idx))]
+        } else {
+          runs[[run]]$z_samples <- list()
+        }
+      }
+    }
   }
 
   # Per-run summaries

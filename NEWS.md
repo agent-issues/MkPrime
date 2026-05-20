@@ -1,5 +1,28 @@
 # MkPrime (development version)
 
+* Streaming log writer (`.FlushBuffer()`) now appends one row per
+  `writeLines()` call on an explicitly opened append connection.  The
+  previous implementation built the whole flush block as a single
+  concatenated string and passed it to `cat()`; on networked filesystems
+  the underlying `write()` could be split across syscalls, occasionally
+  leaving the log file with a torn row that broke `ReadMkLog()` and
+  `RelabelEcology()` on resume.  Per-row writes keep every payload well
+  below `PIPE_BUF`, so each line is a single atomic OS write.
+
+* `.BuildResult()` now aligns `z_samples` with the run's authoritative
+  `saved_idx` before returning, warning when they differ.  Surplus
+  snapshots (typically carried over from a resume that truncated log
+  rows) are trimmed instead of corrupting the `MkPosterior` invariant.
+
+* `RelabelEcology()` aborts with a rich diagnostic message when
+  `result$z_samples` length does not match `nrow(samples)`, replacing
+  the previous bare length-mismatch error.  A new `trimZSamples =
+  "tail"` / `"head"` argument allows deliberate trimming when the
+  surplus direction is known (most common: a streaming run interrupted
+  mid-flush left extra in-memory z snapshots not recorded in the log).
+  A shortfall of z entries still aborts unconditionally -- relabelling
+  needs a paired z snapshot per sample.
+
 * Multiple MCMC runs now execute in parallel when `nCore > 1`
   (defaults to `getOption("mc.cores", 1L)`). Backend: `callr::r_bg()`.
   Mirrors the TreeDist option-driven pattern.
