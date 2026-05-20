@@ -1,4 +1,66 @@
-# MkPrime ecology-aware — hand-off 2026-05-19
+# MkPrime ecology-aware — cron-fired update 2026-05-20 01:23 BST
+
+## 🎯 v6-realistic NULL result (commit `3b61e17`)
+
+Across 3 reps at realistic TL=1.16 with corrected prior:
+
+| Rep | Blind P(AC) | Aware P(AC) | Blind P(AB) | Aware P(AB) | Blind CID | Aware CID | Blind TL | Aware TL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 1.000 | 1.000 | 0.000 | 0.000 | 0.065 | 0.000 | 1.16 | 1.35 |
+| 2 | 1.000 | 1.000 | 0.000 | 0.000 | 0.065 | 0.100 | 1.31 | 1.32 |
+| 3 | 1.000 | 1.000 | 0.000 | 0.000 | 0.065 | 0.065 | 1.00 | 1.06 |
+
+**Both models recover truth.** No model differentiation at realistic TL.
+TL prior fix works (truth 1.16; posterior medians within 16% of truth in
+6/6 chains; vs old 5-13× inflation).
+
+**The multirep-v3 "blind fails / aware regularises" headline does NOT
+survive at realistic TL.** It was an artefact of saturation (truth TL=13.5,
+expSteps=10 prior with mean=10) plus the root-dependence scoring bug.
+
+**One caveat worth flagging, not a story:** aware concentrates one eco-1
+stem onto a long edge (median 2.1-2.6 vs truth 0.15) while leaving the
+other compressed. Looks like a rooting/edge-mass artefact; blind keeps
+both eco stems near truth. Not the "regulariser" story we want.
+
+## Three live paper options
+
+(a) **Strengthen eco confound at realistic TL** — push phi or stemBrEco
+    further. Risk: pushes back into saturation.
+(b) **Extend to N=8 reps** — put CIs on small CID/branch-length effect
+    sizes. Probably confirms null.
+(c) **Pivot paper to prior-anchoring as the contribution** — "v3 was a
+    cautionary tale; the parsimony-anchored expSteps fix is the
+    contribution." Honest 3-rep evidence favours this.
+
+## Active jobs
+
+| Job | What | Status |
+|---|---|---|
+| 17227246 | mkp-rod-aware-v3 (1M) | RUNNING (~270k samples, minESS 10, climbing) |
+| 17231585 | mkp-rod-blind-v3 (resubmitted) | RUNNING (~3 min, fresh start) |
+
+(17227245 rodent blind v3 failed on stale checkpoint + old Resume API; cleared and resubmitted.)
+
+## Recommended next step when user returns
+
+1. Read `inst/scripts/v6-realistic-analysis/v6-realistic-analysis-report.md`
+   for the full v6 numerical picture.
+2. Pick a paper direction (a / b / c). My honest read: **(c) is the
+   defensible publishable story now**. The methodological contribution is:
+   - Identified that morphological matrices need parsimony-anchored TL
+     priors (the default Gamma(2, 0.2) drives chains into saturation).
+   - Showed that an ecology-aware model exists and produces sensible
+     posteriors under a correctly-calibrated prior; doesn't break things
+     when ancestry signal is strong.
+   - Demonstrated the *risk* of saturated MCMC chains misleading inference
+     (the multirep-v3 cautionary tale, traced back through the scoring bug
+     to the prior).
+3. The rodent v3 chains will tell us whether the parsimony-anchored prior
+   recovers a sensible TL on real morphological data (expected TL ≈ 7-15
+   vs the v2 saturated 127). That's the empirical anchor for option (c).
+
+# MkPrime ecology-aware — hand-off 2026-05-19 (earlier state below)
 
 ## 🎯 TL prior recalibration (commits `bc24d52`, `83ab33a`, `2b8d183`)
 
