@@ -72,7 +72,8 @@ Recent commits (top first):
 
 | Type | ID / ref | Status | ETA | On completion |
 |------|----------|--------|-----|---------------|
-| SLURM | `17245693` (mkp-rod-v4-val) | submitted 2026-05-20 (post-arrive) | ~5h serial PT, 8h walltime | Check `/nobackup/pjjg18/mkp-rodent-v4/aware-validate/*.{out,err}` for clean exit + RelabelEcology success. If clean, write production script `rodent-v4-aware.sh` with `nRuns=4 nChains=4 nCore=4 nIter=100000` and `--cpus-per-task=4 --mem=8G --time=48:00:00`, submit. If `RelabelEcology` aborts with z_samples drift, rerun with `trimZSamples="tail"` after inspection. |
+| SLURM | `17249673` (mkp-rod-v4-aw) | submitted 2026-05-20 post-validation | ~13h, 24h walltime | Production rodent aware run: nRuns=4 nChains=4 nCore=4 nIter=100k. Outputs at `/nobackup/pjjg18/mkp-rodent-v4/aware/`. On completion, load `results/rodent-aware-v4-result.rds`, check Rhat across 4 runs, run `RelabelEcology()` on each run's res, compute paper metrics (P(true sister), CID, phi/theta posteriors). If walltime hit, resubmit same script — `ResumeMkPrime()` synthesises master ckp from per-run files. |
+| SLURM | `17245693` (mkp-rod-v4-val) | COMPLETED 2026-05-20 21:12 BST | done | Validation succeeded: 20k iter / 2h50m / 125 samples / streaming fix confirmed / RelabelEcology success. Production submitted as `17249673`. |
 | SLURM | `17234909_*` (mkp-mk-tlshrink) | UNKNOWN — was running at 13:30 BST, may have finished | ~0-2h | Not ecology — mkp-core arm benchmarking. Ignore on this branch; collect from mkp main when ready. |
 
 The rodent v3 cont jobs (`17238607`, `17238608`) FAILED and are not requeued.
