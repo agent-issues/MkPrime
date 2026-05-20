@@ -1,11 +1,17 @@
 # Build partition list from MkPrimeData internals
 #
 # Groups characters by (type, kObs) for neomorphic/transformational,
-# or by (type, known_k) for known-state-space characters.
+# or by (type, known_k) for known-state-space characters. When a user
+# partition is supplied, sub-groups further by (classIdx, type, kObs)
+# so each emitted partition belongs to exactly one user class.
 # Each partition contains tip state data in a format ready for the
 # C++ likelihood engine.
 #
 # @param mkd An MkPrimeData object.
+# @param partition Optional integer vector of length mkd$nChar (post
+#   invariant drop) assigning each character to a user class with values
+#   forming a contiguous range 1:nClasses. `NULL` (the default) emits a
+#   single user class containing every character (classIdx = 1L).
 # @return List of partition objects, each with:
 #   - type: "neomorphic", "transformational", or "known"
 #   - kObs: observed state count for characters in this partition
@@ -15,68 +21,68 @@
 #   - tip_states: integer matrix (nTip x nChar), 0-indexed, NA for ambiguous
 #   - unique_tip_states: integer matrix (nTip x nUnique), deduplicated columns
 #   - pattern_index: integer vector (nChar), 0-based index into unique_tip_states
-.BuildPartitions <- function(mkd) {
-  partitions <- list()
+#   - classIdx: integer scalar, user-class membership (1L when partition = NULL)
+.BuildPartitions <- function(mkd, partition = NULL) {
+  if (is.null(partition)) {
+    partition <- rep(1L, mkd$nChar)
+  } else {
+    partition <- as.integer(partition)
+  }
+  nClasses <- max(partition)
 
-  # Neomorphic: all grouped together (all binary, same model)
-  neoIdx <- which(mkd$type == "neomorphic")
-  if (length(neoIdx)) {
-    ts <- mkd$matrix[, neoIdx, drop = FALSE]
+  # Sub-group within each (classIdx, type, kObs) bucket.
+  # A user class spanning multiple kObs values yields multiple PartInfos
+  # carrying the same classIdx; this is necessary because JC pruning needs
+  # a fixed k per partition (load-bearing in the C++ loop, plan v4 §2).
+  .emit <- function(sel, ptype, kObsVal, kVal, classIdx) {
+    if (!length(sel)) return(NULL)
+    ts <- mkd$matrix[, sel, drop = FALSE]
     pc <- .ComputePatternIndex(ts)
-    partitions[[length(partitions) + 1L]] <- list(
-      type              = "neomorphic",
-      kObs              = 2L,
-      kObsPerChar       = mkd$kObs[neoIdx],
-      k                 = NA_integer_,
-      char_indices      = neoIdx,
-      nChar             = length(neoIdx),
+    list(
+      type              = ptype,
+      kObs              = kObsVal,
+      kObsPerChar       = mkd$kObs[sel],
+      k                 = kVal,
+      char_indices      = sel,
+      nChar             = length(sel),
       tip_states        = ts,
       unique_tip_states = pc$unique_tip_states,
-      pattern_index     = pc$pattern_index
+      pattern_index     = pc$pattern_index,
+      classIdx          = classIdx
     )
   }
 
-  # Transformational: group by kObs
-  transIdx <- which(mkd$type == "transformational")
-  if (length(transIdx)) {
-    transKObs <- mkd$kObs[transIdx]
-    for (ko in sort(unique(transKObs))) {
-      sel <- transIdx[transKObs == ko]
-      ts  <- mkd$matrix[, sel, drop = FALSE]
-      pc  <- .ComputePatternIndex(ts)
-      partitions[[length(partitions) + 1L]] <- list(
-        type              = "transformational",
-        kObs              = ko,
-        kObsPerChar       = mkd$kObs[sel],
-        k                 = NA_integer_,
-        char_indices      = sel,
-        nChar             = length(sel),
-        tip_states        = ts,
-        unique_tip_states = pc$unique_tip_states,
-        pattern_index     = pc$pattern_index
-      )
-    }
-  }
+  partitions <- list()
+  for (cls in seq_len(nClasses)) {
+    classMask <- partition == cls
 
-  # Known: group by known_k
-  knownIdx <- which(mkd$type == "known")
-  if (length(knownIdx)) {
-    knownKVals <- mkd$known_k[knownIdx]
-    for (kv in sort(unique(knownKVals))) {
-      sel <- knownIdx[knownKVals == kv]
-      ts  <- mkd$matrix[, sel, drop = FALSE]
-      pc  <- .ComputePatternIndex(ts)
-      partitions[[length(partitions) + 1L]] <- list(
-        type              = "known",
-        kObs              = max(mkd$kObs[sel]),
-        kObsPerChar       = mkd$kObs[sel],
-        k                 = kv,
-        char_indices      = sel,
-        nChar             = length(sel),
-        tip_states        = ts,
-        unique_tip_states = pc$unique_tip_states,
-        pattern_index     = pc$pattern_index
-      )
+    # Neomorphic: all chars in this class grouped together (binary, same model)
+    neoIdx <- which(mkd$type == "neomorphic" & classMask)
+    if (length(neoIdx)) {
+      partitions[[length(partitions) + 1L]] <-
+        .emit(neoIdx, "neomorphic", 2L, NA_integer_, cls)
+    }
+
+    # Transformational: group by kObs within this class
+    transIdx <- which(mkd$type == "transformational" & classMask)
+    if (length(transIdx)) {
+      transKObs <- mkd$kObs[transIdx]
+      for (ko in sort(unique(transKObs))) {
+        sel <- transIdx[transKObs == ko]
+        partitions[[length(partitions) + 1L]] <-
+          .emit(sel, "transformational", ko, NA_integer_, cls)
+      }
+    }
+
+    # Known: group by known_k within this class
+    knownIdx <- which(mkd$type == "known" & classMask)
+    if (length(knownIdx)) {
+      knownKVals <- mkd$known_k[knownIdx]
+      for (kv in sort(unique(knownKVals))) {
+        sel <- knownIdx[knownKVals == kv]
+        partitions[[length(partitions) + 1L]] <-
+          .emit(sel, "known", max(mkd$kObs[sel]), kv, cls)
+      }
     }
   }
 
