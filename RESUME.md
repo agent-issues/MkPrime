@@ -1,177 +1,151 @@
-# mkp — hand-off 2026-05-20 (12-arm results — oracle does NOT win)
+# mkp — hand-off 2026-05-20 (prior-vs-fixed-k report drafted; mk_tlshrink finishing)
 
 ## What this repo is
 
 MkPrime — R package for Bayesian phylogenetic inference under the Mk′ model
 for discrete morphological characters. The current focus is a 2026-05-12
 prior-validation pilot comparing arms on 26 simulated trees × 10 reps to find
-which k-specification best recovers the true tree (CID-to-truth). A parallel
-real-data pilot (in neotrans; see below) tests whether the winning arm from
-simulation transfers to six empirical matrices compared against well-corroborated
-reference trees.
+which k-specification best recovers the true tree (CID-to-truth). A 13th arm,
+*mk_tlshrink*, runs as an interventional test of the regularisation-via-saturation
+hypothesis. A parallel real-data pilot (in neotrans) tests whether the winning
+arm from simulation transfers to six empirical matrices compared against
+well-corroborated reference trees.
 
 ## Where we left off
 
-- **adc5476** — 7-way CID confirmed: mk_k15 beats mk_k9 (p=4.3e-22, 206/260 wins).
-  Ramp monotonic up to k=15; k24 queued.
+This session:
 
-- **c368af4** — mk_k24 full array submitted as job **17222516** (260 tasks, 8h).
+- **Pulled mk_tlshrink interim results** (Hamilton job 17234909, still running at
+  hand-off time). After two rounds of partial summariser submission (jobs 17237306,
+  17243611), 55 of 260 tasks have RDS summaries. Headline:
 
-- **1e42fbb** — `dev/pilots/2026-05-12-prior-validation/analysis/cid_eight_prior.R`
-  written and run. **8-way CID results** (job 17224641 ran summariser for mk_k24):
-
-  | Arm | n | mean CID |
+  | Arm | Mean CID (n = 55 paired) | Mean TL |
   |---|---:|---:|
-  | mk | 260 | 0.2754 |
-  | mkp_eg | 260 | 0.2677 |
-  | mk_kp1 | 260 | 0.2595 |
-  | mkp_geo | 26 | 0.2562 |
-  | mk_kp2 | 260 | 0.2535 |
-  | mk_k9 | 260 | 0.2451 |
-  | mk_k15 | 260 | 0.2418 |
-  | **mk_k24** | 260 | **0.2398** |
+  | mk_k40       | 0.2207 | 1.19 |
+  | mk_tlshrink  | 0.2478 | 0.78 |
+  | mk           | 0.2516 | 1.39 |
 
-  **Paired mk_k15 vs mk_k24** (260 common tasks): k24 wins 191/260, mean diff
-  −0.00197, binomial p = 2.03e-14. **The ramp continues past k=15**, but with
-  further diminishing returns:
+  mk_tlshrink achieves mean TL = 0.78 — *shorter* than mk_k40's 1.19, against a
+  simulation truth of 1.40 — but loses to mk_k40 on 54 of 55 paired tasks
+  (binomial sign test, p = 3.11 × 10⁻¹⁵). It modestly beats kObs-Mk
+  (margin 0.0038 CID). **TL shrinkage alone is insufficient to replicate the
+  mk_k40 advantage.** The JC(k=40) saturation cap is doing something the
+  explicit Gamma prior on T cannot — adaptively reshaping the topology
+  posterior, not just the branch-length scale.
 
-  | Step | Δ mean CID |
-  |------|-----------:|
-  | kp1 → kp2 | −0.0060 |
-  | kp2 → k9  | −0.0084 |
-  | k9  → k15 | −0.0034 |
-  | k15 → k24 | −0.0020 |
+- **Drafted the co-author write-up** at
+  [mkprime/mk-prime-prior-vs-fixed-k.qmd](../mkprime/mk-prime-prior-vs-fixed-k.qmd)
+  (mkprime commit 11f7f5d, pushed to ms609/mkprime). Three findings,
+  themed-not-chronological, in `/method-voice`:
+    1. Mk′'s data-aware prior is a passenger — per-character k′ posterior is
+       prior-dominated; aggregate CID is flat across Mk′ family; even the
+       oracle (mk_ktrue) loses to mk_k40.
+    2. Mk with fixed large k monotonically wins (the ramp).
+    3. Mechanism is saturation regularisation, not TL inflation
+       (TL_HYPOTHESIS_TEST.md) and not explicit TL shrinkage (mk_tlshrink).
+  Supporting CSV digest at `mkprime/report-data/cid_thirteen_arm_digest.csv`
+  (2941 rows across 13 arms; pulled from
+  `/nobackup/pjjg18/mkp-study/summary/*.rds`).
+  Bib expanded at `mkprime/inst/REFERENCES.bib` from 1 to 7 entries
+  (added Wright2014, Harrison2015, GelmanRubin1992, Felsenstein1981,
+  Geyer1992, SmithCID).
 
-  On the 26-task mkp_geo-limited subset: k15 ≈ k24 (0.2260 vs 0.2261 — tied).
-  Improvement from k24 comes from harder/larger trees.
+- **db4c348 (pre-session)** — TreeESS exported (Option A: drop dot prefix).
+  This was committed before the conversation compact and is in the package now.
 
-  **mk_k24 convergence**: Contrary to the pilot estimate (~30 iter/sec = 43×
-  slower), mk_k24 tasks converge on the built-in convergence criterion, finishing
-  in 1–4h rather than hitting the 8h walltime. 172 of 260 tasks converged within
-  ~4h; tree counts range from ~750 to 66k depending on task difficulty. The "43×
-  slower" figure was likely a measurement artefact from the pilot.
+## 13-arm CID results (preliminary; full mk_tlshrink completion expected ~22:00 BST today)
 
-  mk_k15 array (17218354): 186/260 converged, 74 timed out (8h walltime). The
-  74 timed-out summaries contain partial (but substantial) tree data.
+Same as 12-arm table from the previous hand-off, now with mk_tlshrink (n = 55
+of 260) slotted in:
 
-## 12-way CID results (final, all arrays complete or near-complete as of 2026-05-20 04:30 BST)
-
-| Arm | n | mean CID | Family |
+| Arm | n | Mean CID | Family |
 |---|---:|---:|---|
 | **mk_k40** | 260 | **0.2385** | fixed-k (winner) |
 | mk_k24 | 260 | 0.2398 | fixed-k |
 | mk_k15 | 260 | 0.2418 | fixed-k |
 | mk_k9 | 260 | 0.2451 | fixed-k |
+| **mk_tlshrink** | 55 | **0.2478** | Gamma(20, 20/0.7) on TL, k = kObs |
 | mk_kp2 | 260 | 0.2535 | fixed-k |
-| mkp_geo | 26 | 0.2562 | Mk′ geometric |
+| mkp_geo | 26 | 0.2573 | Mk′ geometric |
 | mk_kp1 | 260 | 0.2595 | fixed-k |
 | mkp_logs | 260 | 0.2595 | Mk′ logseries(c=0.95) |
-| **mk_ktrue** | 260 | **0.2624** | **oracle (k=k_true per char)** |
+| mk_ktrue | 260 | 0.2624 | oracle (k=k_true per char) |
 | mkp_highk | 260 | 0.2639 | Mk′ geom Beta(1,20) |
 | mkp_eg | 260 | 0.2677 | Mk′ empirical_geom |
 | mk | 260 | 0.2754 | kObs |
 
-**HEADLINE FINDING**: The oracle (mk_ktrue) does NOT beat mk_k40 — mk_k40 wins by 0.024 CID, paired p = 5.9×10⁻⁴⁵. mk_ktrue ≈ mkp_highk (p=0.15). The mk_k40 advantage is *not* about correctly modelling state-space cardinality.
-
-**The mechanism is regularisation-via-saturation:**
-1. Under JC(k=40), transition probability saturates at 1/k = 0.025
-2. Data can't pull branch lengths higher than the saturation regime → tree-length prior dominates → shorter branches
-3. Shorter branches → less LBA-style topology noise → better CID
-4. mk_ktrue uses per-character k_true (mean 3.78) — only weakly activates saturation
-5. Mk′ arms (mkp_eg, mkp_geo, mkp_highk, mkp_logs) carry a **relabel correction** that cancels some of the saturation-driven regularisation (per the k′ posterior agent — `R/likelihood.R:185`, mk_k40 uses `knownStates=40` → type="known" → relabel skipped)
-6. So: **mis-specification → more regularisation → better tree**. The "blunt tool" wins because its bluntness IS the regulariser.
-
-This rewrites the story for the paper. mk_k40 is best read as a regulariser disguised as a model, not as a "right" model.
-
-Δ ramp now (kp1→kp2→k9→k15→k24→k40): −0.0060, −0.0084, −0.0034, −0.0020, −0.0013. Strong diminishing returns; mk_k40 is near the ceiling.
-
-## Red-team audit (2026-05-19, opus subagents)
-
-Initial mk_k40 > mk paradox investigated. **Not a code bug** — `mk` uses k=kObs (realistic baseline), but the simulation's character-filter retains many characters with k_true > kObs (51.9% have hidden multistate; 36.9% have k_true ∈ {3..20} but kObs=2). mk_k40 wins because kObs is mis-specified for those characters. The ramp captures the cost of trusting kObs.
-
-Findings in:
-- `RED_TEAM_simulation.md` (kObs vs k_true distribution; trees 11-26 generation script missing; 35 contaminated rows in ground_truth.csv from rbind leakage)
-- `RED_TEAM_likelihood.md` (no code bugs; NOTE-1 mechanism: JC(k) × tree-length-prior interaction acts as LBA regulariser at higher k)
-- `RED_TEAM_summariser.md` (no CID bug; CRITICAL: mk_k40 dispatch was on Hamilton via tmp_add_k40.py but NOT in committed run_one.R; same now applies to mk_ktrue, mkp_highk, mkp_logs)
-- `RED_TEAM_stratification.md` (paradox is NOT tree-shape-confounded; mk_k40 wins 26/26 trees, uniform across J1)
-- `TL_HYPOTHESIS_TEST.md` (2026-05-19 evening; **re-verified 2026-05-20 post-STREAM-003 fix**) — **the "high-k forces long branches" intuition was WRONG: high-k arms infer SHORTER trees than mk (mk_k40 TL=1.19, mkp_eg TL=1.34, mk TL=1.39, truth TL=1.40). Spearman ρ(ΔTL, ΔCID) = −0.36, p=1.9e-9. Mechanism: under JC(k=40), transition prob saturates at 1/k=0.025; T can't be increased to fit more transitions, so prior pulls T short. Short branches → less LBA noise → better topology. So "the blunter tool wins" is via the *prior pulling T short under high-k saturation*, not via long-branch regularisation. mk's TL ≈ truth but its topology is worst — having the right TL is bad for topology under kObs misspecification.**
-  - **STREAM-003 contamination check (2026-05-20)**: re-ran `redteam_tl_hypothesis.R` after the brColStart fix (`7a1569b`). Headline numbers are bit-identical to the pre-fix version (mk TL 1.394, mk_k40 TL 1.194, mkp_eg TL 1.339, median ratio 0.89×, Wilcoxon V=0, p=1.0). The summariser bypasses the buggy R-side `result$trees` reconstruction entirely by reading C++'s `.log` (for the `tree_length` scalar column) and `.nwk` (for trees) directly. So the TL analysis was never on the contaminated path. Same applies to CID — the 12-arm CID table in this RESUME is correct as published.
-  - 12-arm TL/CID rank pattern from the re-run further strengthens the story: mk_ktrue TL 1.327 / CID 0.262; mkp_highk TL 1.321 / CID 0.264; mkp_logs TL 1.295 / CID 0.259; mk_kp2 TL 1.263 / CID 0.253; mk_k9 TL 1.220 / CID 0.245; mk_k40 TL 1.194 / CID 0.239. Lower TL ↔ better CID across all 12 arms — monotone, no exceptions.
+mk_tlshrink ranks fifth — between mk_k9 and mk_kp2, with a much *shorter*
+posterior tree than any arm. Direction is decisive even at n = 55; the patch
+to n = 260 may shift the precise mean by a fraction.
 
 ## Pending jobs
 
-### Hamilton HPC — mkp sim — mk_tlshrink resubmitted (2026-05-20)
-
-| Job ID | Arm | Status | Note |
-|--------|-----|--------|------|
-| 17234909 | mk_tlshrink | RUNNING | 8h walltime, kObs + Gamma(20, 20/0.7) TL prior (mean 0.7, sd 0.16); resubmitted after disk cleanup freed 381 GB |
-
-**Previous attempts 17232762, 17232792, 17233062 all failed** — `/nobackup` was at 600G/600G quota. Fixed: deleted all raw `.log`/`.nwk`/`_checkpoint.rds` from `results/` (335G) and `logs/` (4.7G). Quota now 219G/600G. All 12 completed arms retain their 260 RDS summaries in `summary/`.
-
-**Hypothesis under test**: An explicit shrinkage prior that pulls posterior TL **well below truth** (truth=1.4, prior mean=0.7, half of truth and below mk_k40's 1.2) on the kObs-based Mk arm should achieve at least mk_k40-level CID if shorter-than-truth TL is what drives the regularisation. Three regimes possible:
-  - `mk_tlshrink` CID ≪ mk_k40 (≤ 0.239): mechanism confirmed; paper reframes as pure branch-length-shrinkage result.
-  - `mk_tlshrink` CID ≈ mk_k40: shorter TL is sufficient but matters how it's achieved (data vs prior).
-  - `mk_tlshrink` CID > mk_k40 (closer to mk's 0.275): saturation story is incomplete — the JC(k=40) state-space structure adds something beyond TL shrinkage.
-
-On completion: `sbatch --array=0-259 summarize_array.slurm mk_tlshrink`, scp summaries, extend cid_twelve_prior.R → cid_thirteen_prior.R with the new arm.
-
-### Hamilton HPC — mkp sim (previous arrays — all complete, raws deleted)
-
-All completed arms (mk, mkp_eg, mk_kp1, mk_kp2, mk_k9, mk_k15, mk_k24, mk_k40, mk_ktrue, mkp_highk, mkp_logs, mkp_geo) have 260 RDS summaries in `/nobackup/pjjg18/mkp-study/summary/`. Raw `.log`, `.nwk`, and `_checkpoint.rds` deleted 2026-05-20 to reclaim quota.
-
-The mk_ktrue R-exit error needs diagnosing before re-running — see open items.
-
-**mk_ktrue setup** (this session, 2026-05-19):
-- 260 `ground_truth.csv` files extracted from local `C:\Users\pjjg18\GitHub\mkprime\tree-inference\` and scp'd to Hamilton at `/nobackup/pjjg18/mkprime-files/tree-inference/tree_NN/rep_MM/`
-- `run_one.R` patched via `tmp_add_ktrue.py` to add `mk_ktrue` dispatch (reads ground_truth.csv, maps lex-sorted column order → file_num → k_true). NOT YET committed to canonical run_one.R.
-- `summarize_streamed.R` and `summarize_array.slurm` also patched to accept mk_ktrue.
-- Smoke test (`tmp_test_ktrue_mapping.R`) confirmed: lex mapping correct, k_true ≥ kObs everywhere, mean overage 1.56 on t01_r01.
-- Slurm script: `/nobackup/pjjg18/mkp-study/mk_ktrue_array.slurm`. Confirmed first task running cleanly: `mk_ktrue: k_true range 2-11, mean 3.78, vs kObs range 2-4` on t01_r01.
-
-On mk_ktrue completion: `sbatch --array=0-259 summarize_array.slurm mk_ktrue`, scp summaries, build `cid_ten_prior.R` from cid_nine_prior.R template.
-
-### Hamilton HPC (long-form M9 real-data, 3-day walltime)
-
-| Job ID | Matrix | Model | Status | Note |
-|--------|--------|-------|--------|------|
-| 17217093 | syab07200 | by_nt_9v | RUNNING | 3-day job, ~22h elapsed |
-| 17217094 | syab07200 | t_kv | RUNNING | ~22h elapsed |
-| 17217095 | syab07200 | t_9v | RUNNING | ~22h elapsed |
-| 17217096 | syab07202 | by_nt_9v | RUNNING | ~22h elapsed |
-| 17217097 | syab07202 | t_kv | RUNNING | ~22h elapsed |
-| 17217098 | syab07202 | t_9v | RUNNING | ~22h elapsed |
-| 17217100 | syab07204 | t_kv | RUNNING | ~22h elapsed |
-| 17217103 | syab07205 | t_kv | RUNNING | ~22h elapsed |
-| 17217105 | syab07206 | by_nt_9v | RUNNING | ~22h elapsed |
-| 17217106 | syab07206 | t_kv | RUNNING | ~22h elapsed |
-| 17217107 | syab07206 | t_9v | RUNNING | ~22h elapsed |
-| 17217660 | syab07204 | t_9v | RUNNING | ~22h elapsed |
-| 17217661 | syab07205 | by_nt_9v | RUNNING | ~22h elapsed |
-| 17217662 | syab07205 | t_9v | RUNNING | ~10.6h elapsed |
-
-All complete ~2026-05-20 ~09:00 BST. On completion: `scp` the `.trees` files
-from `/nobackup/pjjg18/m9-long/<matrix>/` to `dev/m9-pilot/syab<pid>/`, then
-run `Rscript dev/m9-pilot/process_pilot.R <pid>` for each matrix and build full
-CID table.
-
-### Known problem — needs decision
-
-**17217659 (syab07204 by_nt_9v at 64G) OOM'd** after 1m43s. Options: resubmit
-at 128G, or skip syab07204 by_nt_9v from the 6-matrix comparison.
+| Type | ID | Status | ETA | On completion |
+|------|----|--------|-----|---------------|
+| HPC | 17234909 | mk_tlshrink array, 205/260 RUNNING, 55 finished | ~1 h 40 min (8 h walltime) | `sbatch --array=<remaining indices> summarize_array.slurm mk_tlshrink`; refresh CSV digest via `Rscript /tmp/build_digest.R` (saved as `/nobackup/pjjg18/mkp-study/cid_thirteen_arm_digest.csv`); scp to `../mkprime/report-data/`; re-render qmd. Re-poll Spearman ρ(TL, CID) including 13th arm in `redteam_tl_hypothesis.R`. |
+| HPC | 17217093-17217107 + 17217660-17217662 | 14 M9 long-form jobs, RUNNING | ~21 h (~04:30 BST 2026-05-21) | scp `.trees` from `/nobackup/pjjg18/m9-long/<matrix>/`; run `dev/m9-pilot/process_pilot.R <pid>` per matrix; build 6-matrix × 3-model CID table. Compare against 07203 (asher). |
 
 ## Open items / next steps
 
-1. **Diagnose the spurious R parser error in mk_ktrue** — 126 of 260 mk_ktrue tasks were marked FAILED (exit code 1) but ALL ran to completion and wrote RDS files. The err log shows MCMC done ✔, then warnings, then "Error: unexpected ')'" before exit. The script structure is fine. Likely candidates: (a) a downstream finalizer hook somewhere; (b) `cat(\"...\\n\")` interaction with batch-mode R; (c) warnings being converted to errors by some option. Low urgency — data is usable as-is — but worth understanding before submitting more runs.
-2. **Re-frame the paper around regularisation-via-saturation**. The new findings invalidate the original "high-k beats kObs because the data have hidden multistate" framing. The oracle (mk_ktrue) loses by 0.024 CID. So the mechanism isn't "k=40 ≈ k_true on average" — it's JC(40) saturation cap driving branch-length regularisation via the prior. mk_k40 is a regulariser disguised as a model. See `TL_HYPOTHESIS_TEST.md` and `KPRIME_POSTERIOR_SHAPE.md` for mechanism details.
-3. **Commit canonical run_one.R + auxiliary scripts** — all dispatches now in `data-raw/hamilton/run_one.R` plus summarize_streamed.R, summarize_array.slurm, mk_ktrue_array.slurm, mkp_highk_array.slurm, mkp_logs_array.slurm. Commit. (Task #12 in this session)
-4. **Direct test of saturation hypothesis**: re-run a single task with mk_k40 but with a *very tight* prior on tree length forcing TL = 1.4 (the truth). If CID degrades back toward Mk's level, the mechanism is confirmed as branch-length-mediated. Cheap one-task experiment.
-5. **The mk_no_relabel arm**: take Mk′ (with kPrimePrior) but bypass the relabel correction (treat characters as type="known" while still inferring k′). Tests whether the relabel correction is the gap between mkp_highk and mk_k40.
-6. **Long-form M9 collect** (~2026-05-20 09:00 BST): scp `.trees`, run `process_pilot.R <pid>` for each of 07200, 07202, 07204, 07205, 07206, then build the full 6-matrix × 3-model CID table. Compare against 07203 (asher).
-7. **Decide 17217659 retry** at 128G vs skip syab07204 by_nt_9v.
-8. **Pull neotrans `by_nt_kv` baseline CID** for the 6 matrices.
-9. **Clean 35 contaminated rows** in ground_truth.csv files (orig_idx ≤ 0, rbind leakage). Per-character analyses only.
-10. **Re-run mk_k40 with treeLengthRate = 2k/((k−1)·FitchScore)** to test NOTE-1 mechanism directly. Now lower priority since the saturation explanation is well-supported.
-11. **Pre-pub `_9i` (informative coding) variants**: deferred, after M9 pilots confirm direction.
+1. **Patch mk-prime-prior-vs-fixed-k.qmd when mk_tlshrink finishes.** The
+   inline R chunk in §3.2 reads `n_paired` from the digest CSV at render
+   time, so the fix is: (a) submit a final summariser for the remaining ~200
+   task indices; (b) rebuild the digest CSV on Hamilton; (c) scp to
+   `mkprime/report-data/cid_thirteen_arm_digest.csv`; (d) `quarto render`.
+   The TODO comment at line 227 marks the patch site.
+
+2. **Resolve a Felsenstein1981 vs 1978 citation choice** in the qmd — §3.3 cites
+   `[@Felsenstein1981]` for the long-branch-attraction context; the canonical
+   LBA paper is Felsenstein 1978 (Syst Zool 27:401–410). Either add the 1978
+   entry to `mkprime/inst/REFERENCES.bib` and swap, or keep 1981 (which does
+   discuss long-branch effects in ML).
+
+3. **Flip the AI-callout to reviewed** in the qmd when the user has read it
+   (template note already in the callout comment block).
+
+4. **Diagnose the spurious R parser error** in mk_ktrue / mk_tlshrink — 126/260
+   mk_ktrue and 32/55-so-far mk_tlshrink tasks marked FAILED despite
+   completing the MCMC successfully ("done ✔", samples written, then
+   `Error: unexpected symbol` on exit). Data is intact and the summariser
+   handles them. Low urgency; would let us avoid the spurious FAILED labels
+   in sacct.
+
+5. **Long-form M9 collect** (~2026-05-21 morning local): scp `.trees`, run
+   `process_pilot.R <pid>` for 07200, 07202, 07204, 07205, 07206; build the
+   full 6-matrix × 3-model CID table. Compare against 07203 (asher).
+
+6. **Decide on 17217659 retry** at 128 G vs skip syab07204 by_nt_9v.
+
+7. **Re-frame the paper around regularisation-via-saturation** — the new
+   findings invalidate the original "high-k beats kObs because the data have
+   hidden multistate" framing. The new write-up in mkprime is the first
+   draft of that re-frame.
+
+8. **Commit canonical run_one.R + auxiliary scripts** — all dispatches now
+   in `data-raw/hamilton/run_one.R` plus summarize_streamed.R,
+   summarize_array.slurm, mk_ktrue_array.slurm, mkp_highk_array.slurm,
+   mkp_logs_array.slurm. Commit.
+
+9. **Direct test of saturation hypothesis**: re-run a single task with mk_k40
+   but with a *very tight* prior on tree length forcing TL = 1.4 (the truth).
+   If CID degrades back toward Mk's level, the mechanism is confirmed as
+   branch-length-mediated.
+
+10. **The mk_no_relabel arm**: take Mk′ (with kPrimePrior) but bypass the
+    relabel correction (treat characters as type="known" while still
+    inferring k′). Tests whether the relabel correction is the gap between
+    mkp_highk and mk_k40.
+
+11. **Pull neotrans `by_nt_kv` baseline CID** for the 6 matrices.
+
+12. **Clean 35 contaminated rows** in ground_truth.csv files (orig_idx ≤ 0,
+    rbind leakage). Per-character analyses only.
+
+13. **Install new MkPrime package on Hamilton** — currently-running jobs (mk_tlshrink
+    17234909, M9 long-form) use the OLD package loaded at job start. New per-run
+    tree files + parallel ResumeMkPrime are committed locally but not yet
+    installed on Hamilton. Defer until current runs finish to avoid mid-run
+    behaviour drift.
 
 ## Technical pointers
 
@@ -186,13 +160,14 @@ at 128G, or skip syab07204 by_nt_9v from the 6-matrix comparison.
 - **PowerShell quoting**: use single-quoted strings for ssh commands containing
   `$` to avoid PowerShell variable interpolation. PowerShell 5.1 lacks `&&` /
   `||`; chain with `;` only when failure is acceptable.
+- **PowerShell heredocs for ssh**: PowerShell `@'...'@` then piped to `ssh ... 'cat > /tmp/X.R && Rscript /tmp/X.R'` works cleanly for multi-line R scripts on Hamilton. Avoid embedded heredoc-in-heredoc (broke 2026-05-20).
 - **Background SSH on Windows can hang** if the ssh session is initiated as a
   Bash background task; route through PowerShell instead. Even PowerShell ssh
   can be slow to first-handshake (~30s) when the cluster is under load.
 - **Hamilton paths (mkp sim study)**:
   - Run scripts: `/nobackup/pjjg18/mkp-study/{run_one.R, summarize_streamed.R, *_array.slurm}`
   - Raw streamed logs: `/nobackup/pjjg18/mkp-study/results/t{NN}_r{MM}/{arm}_run_1.log`
-  - Tree files: `/nobackup/pjjg18/mkp-study/results/t{NN}_r{MM}/{arm}_trees.nwk`
+  - Tree files: `/nobackup/pjjg18/mkp-study/results/t{NN}_r{MM}/{arm}_trees.nwk` (legacy) or `{arm}_trees_run_*.nwk` (new code)
   - Summaries: `/nobackup/pjjg18/mkp-study/summary/{arm}_t{NN}_r{MM}.rds`
   - Data root: `/nobackup/pjjg18/mkprime-files/tree-inference/tree_{NN}/rep_{MM}/chr*.nex`
 - **Hamilton paths (M9 real-data pilot)**:
@@ -200,6 +175,10 @@ at 128G, or skip syab07204 by_nt_9v from the 6-matrix comparison.
   - Long runs (3d): `/nobackup/pjjg18/m9-long/<matrix>/{model}_run_{1,2}.trees`
   - Logs: `/nobackup/pjjg18/m9-long/logs/m9L-<matrix>-<model>_<jobid>.{out,err}`
   - Source nex files: `/nobackup/pjjg18/07200_by_t_kv/`, `/nobackup/pjjg18/07202_ns_n_kv/`, etc.
+- **Sibling repo for write-ups**: `../mkprime` is served via GitHub Pages.
+  New reports go there, not in mkp itself. Pattern: report YAML matches
+  `mk-prime-simulation-report.qmd`; data digests in `report-data/`; bib in
+  `inst/REFERENCES.bib`.
 - **Local tree files are gitignored**: `dev/m9-pilot/syab*/` is in `.gitignore`
   (intentional — big outputs); CID summaries are too. Record numerical results
   in commits / RESUME.md, not files.
@@ -220,6 +199,8 @@ at 128G, or skip syab07204 by_nt_9v from the 6-matrix comparison.
 - **EG arm result (corrected, 2026-05-17)**: median u_post = 1.01 (binary chars, n=9917); EG posterior on k′ is calibrated near kObs+1. mk_kp1 collapses this to a point estimate, beating EG on CID.
 - **No oversampling**: thin streamed MCMC to ~30k samples/run (thin_iters ≥ 16 for 8h job). See `feedback_no_oversample.md`.
 - **Summariser production vs canonical**: `tmp_summarize_streamed.R` (repo root) is the production working copy on Hamilton; `data-raw/hamilton/summarize_streamed.R` is stale (missing mk_k15/mk_k24 in match.arg). Reconcile before next major summariser change.
+- **mkprime/inst/REFERENCES.bib**: as of 2026-05-20 contains Lewis2001, Wright2014, Harrison2015, GelmanRubin1992, Felsenstein1981, Geyer1992, SmithCID. Felsenstein1978 (LBA) is NOT in there — add before next revision.
+- **mk_tlshrink TL prior**: Gamma(20, 20/0.7) = shape 20, rate 20/0.7 ≈ 28.57 → mean = shape/rate = 0.7, sd = √(shape)/rate = √20/28.57 ≈ 0.157. Coded in run_one.R; not yet committed to canonical.
 
 ## Things ruled out
 
@@ -237,17 +218,25 @@ at 128G, or skip syab07204 by_nt_9v from the 6-matrix comparison.
   diminishing returns (Δk15→k24 = −0.0020 vs Δkp2→k9 = −0.0084).
 - **mk_k24 infeasibility**: earlier "43× slower" pilot estimate was wrong. mk_k24
   converges via built-in criterion, finishing within the 8h walltime for all tasks.
+- **High-k forces longer branches (the natural intuition)**: rejected
+  2026-05-19. TL goes DOWN monotonically with k (mk_k40 TL=1.19, mk TL=1.39),
+  not up. Spearman ρ(ΔTL, ΔCID) = −0.37, p=1.9e-9.
+- **Pure TL-shrinkage explanation of mk_k40 advantage**: rejected 2026-05-20.
+  mk_tlshrink with Gamma(20, 20/0.7) prior on T achieves TL=0.78 (shorter
+  than mk_k40's 1.19) but CID=0.248 vs mk_k40's 0.221 (n=55 paired, p=3e-15).
+  TL shrinkage is necessary but not sufficient; the saturation effect on the
+  topology likelihood is the missing piece.
 
 ## Suggested first action
 
-Check mk_tlshrink progress (job 17234909, submitted 2026-05-20):
+Check whether mk_tlshrink has finished and the M9 jobs are still alive:
+
 ```powershell
-ssh pjjg18@hamilton8.dur.ac.uk 'squeue -j 17234909 -h -o "%T %M %l"'
+ssh pjjg18@hamilton8.dur.ac.uk 'squeue --me -h -o "%i %T %M %l %j" | head -50; echo "---"; ls /nobackup/pjjg18/mkp-study/summary/mk_tlshrink_*.rds | wc -l'
 ```
 
-On completion: `sbatch --array=0-259 summarize_array.slurm mk_tlshrink`, scp summaries, extend `cid_twelve_prior.R` → `cid_thirteen_prior.R`.
-
-M9 long-runs (14 jobs) complete ~2026-05-21 evening (were at ~1d20h of 3d on 2026-05-20 ~09:30 BST):
-```powershell
-ssh pjjg18@hamilton8.dur.ac.uk 'squeue --me -h -o "%i %T %M %l %j" | grep m9L'
-```
+If `mk_tlshrink_*.rds` count is 260, ssh in to rebuild the digest with the
+saved script, scp it to `../mkprime/report-data/`, then re-render the qmd.
+If it is still partial, submit a partial summariser for newly-finished
+indices via `sbatch --array=<list> summarize_array.slurm mk_tlshrink`
+(see in-session example for syntax).
