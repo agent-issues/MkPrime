@@ -261,12 +261,16 @@ RunMkPrime <- function(data, tree = NULL,
 
   # Column indices for tree reconstruction in scalar_samples (1-based R).
   # Layout: log_post, log_lik, tree_length, [rate_loss -- if hasNeo],
-  #         rate_log_sd, [p -- geometric only], [rate_neo -- if hasNeo],
-  #         [beta_scale -- if qHet], kPrime_i..., br_j...
-  isLogseries <- identical(model$kPrimePrior, "logseries")
-  pCols       <- if (isLogseries) 0L else 1L
-  neoCols     <- if (hasNeo) 2L else 0L   # rate_loss + rate_neo
-  brColStart  <- 4L + neoCols + pCols + qHet + nTrans + 1L
+  #         rate_log_sd, [p -- geometric/eg only / kprime_alpha+beta -- if BG],
+  #         [rate_neo -- if hasNeo], [beta_scale -- if qHet],
+  #         swap_cold, topo_hash, kPrime_i..., br_j...
+  # STREAM-003: the 2 diagnostic cols (swap_cold, topo_hash) MUST be counted.
+  isBetaGeometric <- identical(model$kPrimePrior, "beta_geometric")
+  isLogseries     <- identical(model$kPrimePrior, "logseries")
+  pCols           <- if (isLogseries) 0L else if (isBetaGeometric) 2L else 1L
+  neoCols         <- if (hasNeo) 2L else 0L   # rate_loss + rate_neo
+  diagCols        <- 2L                        # swap_cold, topo_hash
+  brColStart      <- 4L + neoCols + pCols + qHet + diagCols + nTrans + 1L
 
   # --- Execute MCMC (with interrupt recovery) ---
   execResult <- .RunWithRecovery(
@@ -2627,10 +2631,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     }
   }
 
-  tipLabels   <- tree$tip.label %||% rownames(mkd$matrix)
-  isLogseries <- identical(model$kPrimePrior, "logseries")
-  pCols       <- if (isLogseries) 0L else 1L
-  brColStart  <- 5L + pCols + (any(mkd$type == "neomorphic")) + qHet + nTrans + 1L
+  tipLabels       <- tree$tip.label %||% rownames(mkd$matrix)
+  # STREAM-003 + STREAM-004: count diagnostic cols, and 2 cols for BG prior.
+  isBetaGeometric <- identical(model$kPrimePrior, "beta_geometric")
+  isLogseries     <- identical(model$kPrimePrior, "logseries")
+  pCols           <- if (isLogseries) 0L else if (isBetaGeometric) 2L else 1L
+  diagCols        <- 2L                          # swap_cold, topo_hash
+  brColStart      <- 5L + pCols + (any(mkd$type == "neomorphic")) + qHet +
+                     diagCols + nTrans + 1L
 
   # --- Sequential per-run execution ---
   stopReason <- "max_iter"
