@@ -256,8 +256,14 @@ RunMkPrime <- function(data, tree = NULL,
     on.exit(.CleanupTempLogs(tempFiles), add = TRUE)
   }
 
-  treeFile <- mcmc$treeFile
-  if (!is.null(treeFile)) writeLines("", treeFile)
+  # Per-run tree files (mirrors per-run log convention).  Each run writes
+  # to its own newick stream so cross-run convergence diagnostics can be
+  # computed on tree-derived statistics without interleaving.
+  treeFile      <- mcmc$treeFile
+  treeFilePaths <- .TreeFilePaths(treeFile, nRuns)
+  if (!is.null(treeFilePaths)) {
+    for (p in treeFilePaths) writeLines(character(0), p)
+  }
 
   # Column indices for tree reconstruction in scalar_samples (1-based R).
   # Layout: log_post, log_lik, tree_length, [rate_loss -- if hasNeo],
@@ -275,7 +281,7 @@ RunMkPrime <- function(data, tree = NULL,
   # --- Execute MCMC (with interrupt recovery) ---
   execResult <- .RunWithRecovery(
     mkd, model, mcmc, runs, moves, tipLabels, paramNames, nEdge, brColStart,
-    logFilePaths, convWindowSize, treeFile, isTempLog
+    logFilePaths, convWindowSize, treeFilePaths, isTempLog
   )
 
   # If interrupted, on.exit cleanup is cancelled and we return early
@@ -334,7 +340,7 @@ RunMkPrime <- function(data, tree = NULL,
 #' @keywords internal
 .RunWithRecovery <- function(mkd, model, mcmc, runs, moves, tipLabels,
                               paramNames, nEdge, brColStart, logFilePaths,
-                              convWindowSize, treeFile, isTempLog) {
+                              convWindowSize, treeFilePaths, isTempLog) {
   nRuns <- mcmc$nRuns
   stopReason <- "max_iter"
   actualIter <- if (is.finite(mcmc$nIter)) mcmc$nIter else mcmc$warmup
@@ -363,7 +369,7 @@ RunMkPrime <- function(data, tree = NULL,
       # Checkpointing handled by the orchestrator after completion.
       parResult    <- .RunParallelRuns(mkd, model, mcmc, runs, moves,
                                         tipLabels, paramNames, nEdge,
-                                        brColStart, treeFile,
+                                        brColStart, treeFilePaths,
                                         TRUE, logFilePaths, convWindowSize)
       runs         <- parResult$runs
       logFilePaths <- parResult$logFilePaths
@@ -372,11 +378,16 @@ RunMkPrime <- function(data, tree = NULL,
       drops        <- parResult$drops
       launchTimes  <- parResult$launchTimes
 
-      if (!is.null(treeFile)) {
-        for (r in runs) {
-          for (tr in r$tree_samples) {
-            if (!is.null(tr)) cat(ape::write.tree(tr), "\n",
-                                  file = treeFile, append = TRUE)
+      # Each run writes to its own newick stream so cross-run R-hat on
+      # tree-derived statistics can be computed without de-interleaving.
+      if (!is.null(treeFilePaths)) {
+        for (run in seq_along(runs)) {
+          treePath <- treeFilePaths[run]
+          if (!is.null(treePath)) {
+            for (tr in runs[[run]]$tree_samples) {
+              if (!is.null(tr)) cat(ape::write.tree(tr), "\n",
+                                    file = treePath, append = TRUE)
+            }
           }
         }
       }
@@ -390,7 +401,7 @@ RunMkPrime <- function(data, tree = NULL,
       serialResult <- .RunSerialRuns(mkd, model, mcmc, runs, moves,
                                       tipLabels, paramNames, nEdge,
                                       brColStart, logFilePaths,
-                                      convWindowSize, treeFile,
+                                      convWindowSize, treeFilePaths,
                                       shared = shared)
       runs       <- serialResult$runs
       stopReason <- serialResult$stopReason
@@ -407,7 +418,7 @@ RunMkPrime <- function(data, tree = NULL,
           startIter      = 1L,
           isStreaming     = TRUE,
           convWindowSize = convWindowSize,
-          treeFile       = treeFile,
+          treeFile       = if (is.null(treeFilePaths)) NULL else treeFilePaths[run],
           shared         = shared
         )
         shared$runs[[run]] <- runs[[run]]
@@ -1491,7 +1502,8 @@ RunMkPrime <- function(data, tree = NULL,
 #' @keywords internal
 .RunSerialRuns <- function(mkd, model, mcmc, runs, moves, tipLabels,
                             paramNames, nEdge, brColStart, logFilePaths,
-                            convWindowSize, treeFile, startIters = NULL,
+                            convWindowSize, treeFilePaths,
+                            startIters = NULL,
                             shared = NULL, startPhase = 1L) {
   nRuns     <- length(runs)
   epochSize <- max(mcmc$checkEvery %||% 1000L, 1000L)
@@ -1515,7 +1527,7 @@ RunMkPrime <- function(data, tree = NULL,
         startIter      = startIters[run],
         isStreaming     = TRUE,
         convWindowSize = convWindowSize,
-        treeFile       = treeFile,
+        treeFile       = if (is.null(treeFilePaths)) NULL else treeFilePaths[run],
         shared         = shared,
         resumeMoveWeights = runs[[run]]$moveWeights
       )
@@ -1601,7 +1613,7 @@ RunMkPrime <- function(data, tree = NULL,
         startIter      = startIters[run],
         isStreaming     = TRUE,
         convWindowSize = convWindowSize,
-        treeFile       = treeFile,
+        treeFile       = if (is.null(treeFilePaths)) NULL else treeFilePaths[run],
         shared         = shared,
         resumeMoveWeights = runs[[run]]$moveWeights
       )
@@ -1650,7 +1662,7 @@ RunMkPrime <- function(data, tree = NULL,
 #' @return Named list: `runs`, `logFilePaths`, `stopReason`, `actualIter`.
 #' @keywords internal
 .RunParallelRuns <- function(mkd, model, mcmc, runs, moves, tipLabels,
-                              paramNames, nEdge, brColStart, treeFile,
+                              paramNames, nEdge, brColStart, treeFilePaths,
                               isStreaming, logFilePaths, convWindowSize) {
   nRuns <- mcmc$nRuns
 
@@ -2446,12 +2458,17 @@ RunMkPrime <- function(data, tree = NULL,
     r
   })
 
-  version <- if (isStreaming) 2L else 1L
+  # Version 3 (per-run tree files): adds treeFilePaths so each run's newick
+  # stream is preserved by ResumeMkPrime() exactly as written.  Backward
+  # compat: ResumeMkPrime() falls back to .TreeFilePaths(mcmc$treeFile, ...)
+  # when reading v2 checkpoints (which never had a treeFilePaths field).
+  version <- if (isStreaming) 3L else 1L
   payload <- list(runs = serialRuns, mcmc = mcmc, iter = iter,
                   timestamp = Sys.time(), version = version)
   if (isStreaming) {
-    payload$logFilePaths <- .LogFilePaths(mcmc$logFile, length(runs))
-    payload$paramNames   <- paramNames
+    payload$logFilePaths  <- .LogFilePaths(mcmc$logFile, length(runs))
+    payload$treeFilePaths <- .TreeFilePaths(mcmc$treeFile, length(runs))
+    payload$paramNames    <- paramNames
   }
   if (!is.null(moveWeights))  payload$moveWeights  <- moveWeights
   if (!is.null(phase))        payload$phase        <- phase
@@ -2512,10 +2529,10 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   checkpoint <- readRDS(checkpointFile)
 
   version <- checkpoint$version %||% 1L
-  if (!version %in% c(1L, 2L)) {
+  if (!version %in% c(1L, 2L, 3L)) {
     cli::cli_abort("Unsupported checkpoint version: {version}.")
   }
-  isStreaming <- version == 2L
+  isStreaming <- version >= 2L
 
   if (inherits(data, "MkPrimeData")) {
     mkd <- data
@@ -2574,6 +2591,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     nEdge      <- nrow(runs[[1]]$chains[[1]]$edge)
     paramNames <- checkpoint$paramNames
     logFilePaths   <- checkpoint$logFilePaths
+    # v3+ stores treeFilePaths explicitly; v2 must derive it on the fly.
+    treeFilePaths  <- checkpoint$treeFilePaths %||%
+                      .TreeFilePaths(mcmc$treeFile, nRuns)
 
     # Check whether log files exist.  If they were temp files (deleted on
     # clean exit), recreate them so the chain can resume from checkpoint
@@ -2600,6 +2620,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     nEdge      <- sum(grepl("^br_", colnames(runs[[1]]$samples)))
     paramNames <- colnames(runs[[1]]$samples)
     logFilePaths   <- NULL
+    treeFilePaths  <- NULL
     convWindowSize <- 0L
   }
 
@@ -2631,6 +2652,25 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     }
   }
 
+  # Tree files: each run has its own newick stream.  Drop any trees written
+  # between the last checkpoint and the SIGKILL/Ctrl-C so each per-run file
+  # matches its tree_saved_idx, and verify the sync invariant with the
+  # corresponding log (every tree has a backing param row).
+  if (!is.null(treeFilePaths)) {
+    for (run in seq_along(treeFilePaths)) {
+      tp <- treeFilePaths[run]
+      if (!is.null(tp) && file.exists(tp)) {
+        .TruncateTreeToN(
+          tp,
+          as.integer(runs[[run]]$tree_saved_idx %||% 0L),
+          logFilePath = if (!is.null(logFilePaths)) logFilePaths[run] else NULL,
+          saved_idx   = as.integer(runs[[run]]$saved_idx %||% 0L),
+          treeEvery   = treeEvery
+        )
+      }
+    }
+  }
+
   tipLabels       <- tree$tip.label %||% rownames(mkd$matrix)
   # STREAM-003 + STREAM-004: count diagnostic cols, and 2 cols for BG prior.
   isBetaGeometric <- identical(model$kPrimePrior, "beta_geometric")
@@ -2652,13 +2692,68 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   )
 
   tryCatch({
-    if (isStreaming && nRuns >= 2L && !is.null(mcmc$maxRhat)) {
+    if (isStreaming && mcmc$nCore > 1L && nRuns > 1L) {
+      # Parallel resume: mirror the RunMkPrime parallel branch.  Workers
+      # cannot share a treeFile (interleaved cat() calls corrupt newick),
+      # so they accumulate trees in r$tree_samples and the coordinator
+      # appends them after all workers complete.  Capture the pre-resume
+      # tree_saved_idx per run so we only write the *new* tail, not the
+      # trees already present in treeFile from the previous session.
+      preIdx <- vapply(runs, function(r) {
+        as.integer(r$tree_saved_idx %||% 0L)
+      }, integer(1L))
+
+      # Strip already-saved trees from carried-over tree_samples so the
+      # coordinator write loop below (and .BuildResult's tree trim) emit
+      # only the new tail.  The trimmed entries are already on disk in
+      # treeFile (verified above by .TruncateTreeToN).
+      for (run in seq_len(nRuns)) {
+        if (preIdx[run] > 0L && !is.null(runs[[run]]$tree_samples)) {
+          ts <- runs[[run]]$tree_samples
+          keep <- min(preIdx[run], length(ts))
+          runs[[run]]$tree_samples <- if (keep < length(ts)) {
+            ts[(keep + 1L):length(ts)]
+          } else {
+            vector("list", 0L)
+          }
+          runs[[run]]$tree_saved_idx <- 0L
+        }
+      }
+
+      parResult    <- .RunParallelRuns(mkd, model, mcmc, runs, moves,
+                                        tipLabels, paramNames, nEdge,
+                                        brColStart, treeFilePaths,
+                                        TRUE, logFilePaths, convWindowSize)
+      runs         <- parResult$runs
+      logFilePaths <- parResult$logFilePaths
+      stopReason   <- parResult$stopReason
+      actualIter   <- parResult$actualIter
+
+      # Append the new trees produced by this resume session, per run.
+      if (!is.null(treeFilePaths)) {
+        for (run in seq_along(runs)) {
+          treePath <- treeFilePaths[run]
+          if (!is.null(treePath)) {
+            for (tr in runs[[run]]$tree_samples) {
+              if (!is.null(tr)) cat(ape::write.tree(tr), "\n",
+                                    file = treePath, append = TRUE)
+            }
+          }
+        }
+      }
+
+      if (!is.null(mcmc$checkpointFile)) {
+        .SaveCheckpoint(runs, mcmc, actualIter, paramNames,
+                        mcmc$checkpointFile, model = model)
+      }
+    } else if (isStreaming && nRuns >= 2L && !is.null(mcmc$maxRhat)) {
       # M-146: cross-run R-hat convergence orchestrator
       # M-149 #6: skip Phase 1 if checkpoint was during Phase 2
       serialResult <- .RunSerialRuns(mkd, model, mcmc, runs, moves,
                                       tipLabels, paramNames, nEdge,
                                       brColStart, logFilePaths,
-                                      convWindowSize, treeFile = NULL,
+                                      convWindowSize,
+                                      treeFilePaths = treeFilePaths,
                                       startIters = perRunStarts,
                                       startPhase = checkpoint$serialPhase %||% 1L)
       runs       <- serialResult$runs
@@ -2675,7 +2770,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
           startIter      = perRunStarts[run],
           isStreaming    = isStreaming,
           convWindowSize = convWindowSize,
-          treeFile       = NULL,
+          treeFile       = if (is.null(treeFilePaths)) NULL else treeFilePaths[run],
           resumeMoveWeights = runs[[run]]$moveWeights %||% checkpoint$moveWeights
         )
         stopReason <- runs[[run]]$stop_reason
