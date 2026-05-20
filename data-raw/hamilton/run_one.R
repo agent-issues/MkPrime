@@ -18,6 +18,7 @@ suppressPackageStartupMessages({
   library(ape)
   library(TreeTools)
 })
+options(warn = 1L)  # print warnings as they happen; avoids spurious parser-error in exit warning summary (mk_ktrue/mk_tlshrink)
 
 args      <- commandArgs(trailingOnly = TRUE)
 tree_idx  <- as.integer(args[1])
