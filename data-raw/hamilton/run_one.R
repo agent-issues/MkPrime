@@ -177,7 +177,10 @@ make_mcmc <- function(prefix, thin_iters = 10L) {
     maxTime    = 7.5 * 3600,
     minEss     = 200L,
     maxRhat    = 1.1,
-    checkEvery = 500L,
+    checkEvery = 2500L,  # keep checkEveryThin = checkEvery / thin >= 5 so the
+                         # convergence window (4 * checkEveryThin samples) stays
+                         # large enough for Rhat/ESS to be stable. If thinning
+                         # changes, scale this proportionally.
     checkpointFile = file.path(ckp_dir, paste0(prefix, "_checkpoint.rds")),
     logFile        = file.path(ckp_dir, paste0(prefix, "_run.log")),
     treeFile       = file.path(ckp_dir, paste0(prefix, "_trees.nwk"))
@@ -354,7 +357,7 @@ if (arm == "mk") {
       start_tree,
       model = MkPrimeModel(coding = "variable",
                             kPrimePrior = "geometric"),
-      mcmc  = make_mcmc("mkp_geo", thin_iters = 100L)
+      mcmc  = make_mcmc("mkp_geo", thin_iters = 500L)
     )
   }, "mkp_geo")
 
@@ -399,7 +402,7 @@ if (arm == "mk") {
       pd, start_tree,
       knownStates = kObs_for_mk + 2L,
       model = MkPrimeModel(coding = "variable"),
-      mcmc  = make_mcmc("mk_kp2", thin_iters = 100L)
+      mcmc  = make_mcmc("mk_kp2", thin_iters = 500L)
     )
   }, "mk_kp2")
 
@@ -426,7 +429,7 @@ if (arm == "mk") {
       pd, start_tree,
       knownStates = k9_for_mk,
       model = MkPrimeModel(coding = "variable"),
-      mcmc  = make_mcmc("mk_k9", thin_iters = 100L)
+      mcmc  = make_mcmc("mk_k9", thin_iters = 500L)
     )
   }, "mk_k9")
 
@@ -453,7 +456,7 @@ if (arm == "mk") {
       pd, start_tree,
       knownStates = k15_for_mk,
       model = MkPrimeModel(coding = "variable"),
-      mcmc  = make_mcmc("mk_k15", thin_iters = 100L)
+      mcmc  = make_mcmc("mk_k15", thin_iters = 500L)
     )
   }, "mk_k15")
 
@@ -479,7 +482,7 @@ if (arm == "mk") {
       pd, start_tree,
       knownStates = k24_for_mk,
       model = MkPrimeModel(coding = "variable"),
-      mcmc  = make_mcmc("mk_k24", thin_iters = 100L)
+      mcmc  = make_mcmc("mk_k24", thin_iters = 500L)
     )
   }, "mk_k24")
 
@@ -504,7 +507,7 @@ if (arm == "mk") {
       pd, start_tree,
       knownStates = k40_for_mk,
       model = MkPrimeModel(coding = "variable"),
-      mcmc  = make_mcmc("mk_k40", thin_iters = 100L)
+      mcmc  = make_mcmc("mk_k40", thin_iters = 500L)
     )
   }, "mk_k40")
 
@@ -529,7 +532,7 @@ if (arm == "mk") {
                             kPrimePrior = "geometric",
                             kprimeHyperA = 1,
                             kprimeHyperB = 20),
-      mcmc  = make_mcmc("mkp_highk", thin_iters = 100L)
+      mcmc  = make_mcmc("mkp_highk", thin_iters = 500L)
     )
   }, "mkp_highk")
 
@@ -572,7 +575,7 @@ if (arm == "mk") {
       model = MkPrimeModel(coding = "variable",
                             kPrimePrior = "logseries",
                             kprimeLogseriesC = 0.95),
-      mcmc  = make_mcmc("mkp_logs", thin_iters = 100L)
+      mcmc  = make_mcmc("mkp_logs", thin_iters = 500L)
     )
   }, "mkp_logs")
 
@@ -637,7 +640,7 @@ if (arm == "mk") {
       pd, start_tree,
       knownStates = k_for_mk,
       model = MkPrimeModel(coding = "variable"),
-      mcmc  = make_mcmc("mk_ktrue", thin_iters = 100L)
+      mcmc  = make_mcmc("mk_ktrue", thin_iters = 500L)
     )
   }, "mk_ktrue")
 
@@ -678,7 +681,7 @@ if (arm == "mk") {
       model = MkPrimeModel(coding = "variable",
                             treeLengthShape = 20,
                             treeLengthRate  = 20 / 0.7),
-      mcmc  = make_mcmc("mk_tlshrink", thin_iters = 100L)
+      mcmc  = make_mcmc("mk_tlshrink", thin_iters = 500L)
     )
   }, "mk_tlshrink")
 
