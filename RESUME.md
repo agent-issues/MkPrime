@@ -44,12 +44,12 @@ Recent commits (top first):
 
 ## Open items / next steps
 
-1. **Decide rodent v3 path** — fresh restart vs scalar-only salvage. If
-   restart: submit `inst/ecology/hamilton/rodent-v3/rodent-v3-aware.sh`
-   from scratch after `rm /nobackup/pjjg18/mkp-rodent-v3/aware/*.{ckp,log,nwk}`.
-   Queue 2-3 sequential continuations via `--dependency=afterany`. With
-   the merged code these will work (per-run trees, post-RDS cleanup,
-   thin=500 streaming defaults, streaming bugs fixed).
+1. **Rodent v4 path chosen** — fresh restart with v4 harness (`inst/ecology/hamilton/rodent-v4/`),
+   PT (nChains=4) + parallel runs (nRuns=4, nCore=4) for Rhat + mode-trap resilience.
+   Validation job `17245693` submitted (serial, nIter=20k); production parallel
+   submission gated on its clean exit + `RelabelEcology()` success. Note: parallel
+   mode (`nCore>1`) is NOT checkpoint-resumable — size production `nIter` to fit
+   walltime with margin (see commit `b47e488` comments).
 2. **Paper structure conversation** — the v9 PT-MCMC null result kills
    the original Sim 2 "blind fails / aware rescues" framing. Options:
    reframe around "aware reduces false sisters 3.5×" as a regularisation
@@ -72,10 +72,11 @@ Recent commits (top first):
 
 | Type | ID / ref | Status | ETA | On completion |
 |------|----------|--------|-----|---------------|
+| SLURM | `17245693` (mkp-rod-v4-val) | submitted 2026-05-20 (post-arrive) | ~5h serial PT, 8h walltime | Check `/nobackup/pjjg18/mkp-rodent-v4/aware-validate/*.{out,err}` for clean exit + RelabelEcology success. If clean, write production script `rodent-v4-aware.sh` with `nRuns=4 nChains=4 nCore=4 nIter=100000` and `--cpus-per-task=4 --mem=8G --time=48:00:00`, submit. If `RelabelEcology` aborts with z_samples drift, rerun with `trimZSamples="tail"` after inspection. |
 | SLURM | `17234909_*` (mkp-mk-tlshrink) | UNKNOWN — was running at 13:30 BST, may have finished | ~0-2h | Not ecology — mkp-core arm benchmarking. Ignore on this branch; collect from mkp main when ready. |
 
-No ecology-specific SLURM jobs queued. The rodent v3 cont jobs (`17238607`,
-`17238608`) FAILED; not requeued (requires restart decision above).
+The rodent v3 cont jobs (`17238607`, `17238608`) FAILED and are not requeued.
+v3 directory `/nobackup/pjjg18/mkp-rodent-v3/aware/` left intact for audit.
 
 ## Technical pointers
 
