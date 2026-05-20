@@ -1,4 +1,76 @@
-# MkPrime ecology-aware — cron-fired update 2026-05-20 01:23 BST
+# MkPrime ecology-aware — cron-fired update 2026-05-20 01:23 BST (extended 02:30)
+
+## 🧪 MP trap test + multi-eco pre-screen (commits `5a83abb`, `9764b01`)
+
+Following user feedback ("test of the trap"), used `TreeSearch::MaximizeParsimony`
+as a fast deterministic proxy for whether blind ML can be fooled. Results:
+
+| Sim | Truth TL | MP finds false eco-clade? | Mean MP step gap (truth - false) |
+|---|---:|---:|---:|
+| v6-realistic (n=3) | 1.16 | 0/3 | 0 (tie) |
+| v5break (n=3) | 1.30 | 0/3 | ~7-8 |
+| multirep-v3 (n=8) | 13.5 | **7/8** | ~28-30 (false better) |
+
+**multirep-v3 MP-blind correspondence is 7/8 ↔ blind ML P(AB)=0.864** — confirms the
+long-tree trap is real for both MP and ML. The corrected blind MCMC matches MP's
+deterministic verdict. Validates the MP-as-proxy approach.
+
+Multi-ecology v8 pre-screen (6 variants × 8 reps each, phi 4-10, pi0 0.2-0.5,
+TL 1.4-1.9, including 3-ecology + 2-ecology designs): **none broke MP**. Best was
+12% (1/8 reps).
+
+**The phi-rate-multiplier mechanism cannot create a parsimony trap at TL ≤ 2 along
+any single-axis variation we have tested.** v7 + v8 confirm the structural limit
+diagnosed earlier: rate inflation makes eco-clades noisy, not directionally
+convergent.
+
+## 🐀 Rodent posterior diagnostics (commit `e90d67c`)
+
+From the saved rodent aware-v2 chain (1M iter complete, post-burnin n=443):
+
+| Param | median | 90% CI |
+|---|---:|---|
+| phi | **4.03** | (3.10, 5.78) |
+| pi0 | 0.43 | (0.29, 0.56) |
+| theta arboreal | 0.17 | (0.07, 0.26) |
+| theta semiaquatic | 0.50 | (0.31, 0.72) |
+| theta fossorial | 0.29 | (0.16, 0.41) |
+| TL | 22.6 | (15.4, 31.1) |
+
+**Real ecological gravity: phi ≈ 4** — substantially less than v6/v7's phi=8.
+~50% of chars eco-affected per ecology. Cross-ecology Jaccard 0.50-0.67 (high
+overlap) but Pearson r ≈ 0 (independent recruitment). Biological top-flagged
+chars are postcranial/locomotor + craniofacial features — sensible.
+
+TL=22.6 is much smaller than the v2 saturated 127 — the chain may have
+finally found a less-saturated mode in the 371k → 1M iterations.
+
+## 🎯 Paper-direction options after the diagnostic landscape
+
+(a) **"aware as honest regulariser at long-tree regimes"** — multirep-v3 IS
+    the demonstration. Argument: long-tree regimes occur in real palaeontology
+    (deeper trees, rapid radiations, well-sampled clades). Acknowledge it as
+    saturation-regime; document the prior-anchored fix; rodent as the
+    intermediate empirical case.
+(b) **Change the ecology MODEL to directional bias** — significant code change
+    to `.SimulateMkPrimeEcology` (add per-eco state-bias) and `MkPrimeModel`.
+    Would enable directional convergence at realistic TL. Could be the
+    headline methodological contribution.
+(c) **Add unexplored design levers** — larger taxon counts (60+), asymmetric
+    clade sizes, or pre-saturated tip evolution (already at equilibrium then
+    eco signal layered on). Could find a trap zone without changing the model.
+(d) **Honest negative result paper** — methods paper documenting that
+    eco-rate-multipliers cannot trap MP/ML at realistic TL with current
+    morphological-data scales. Conclusion: the aware model is a no-op in
+    realistic regimes; future work to develop a model that can capture
+    realistic eco-driven convergence.
+
+Honest read: (a) is the most defensible publication path with existing work.
+(b) is the most ambitious / scientifically interesting if user wants to commit
+code time. (c) might find new traps but the search space is large and the
+single-axis search has been exhausted. (d) is publishable but unsatisfying.
+
+
 
 ## 🎯 v6-realistic NULL result (commit `3b61e17`)
 
