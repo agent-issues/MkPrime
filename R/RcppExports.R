@@ -5,6 +5,10 @@ pruning_jc_acrv <- function(parent, child, edge_length, tip_states, kStates, roo
     .Call(`_MkPrime_pruning_jc_acrv`, parent, child, edge_length, tip_states, kStates, root_freqs, rate_multipliers)
 }
 
+pruning_jc_acrv_collapsed <- function(parent, child, edge_length, tip_states, kFull, kObs, rate_multipliers) {
+    .Call(`_MkPrime_pruning_jc_acrv_collapsed`, parent, child, edge_length, tip_states, kFull, kObs, rate_multipliers)
+}
+
 pruning_mkn_acrv <- function(parent, child, edge_length, tip_states, rate_loss, root_freqs, rate_multipliers) {
     .Call(`_MkPrime_pruning_mkn_acrv`, parent, child, edge_length, tip_states, rate_loss, root_freqs, rate_multipliers)
 }
@@ -15,6 +19,14 @@ constant_site_prob_jc <- function(parent, child, edge_length, nTip, kStates, roo
 
 singleton_site_prob_jc <- function(parent, child, edge_length, nTip, kStates, root_freqs, rate_multipliers) {
     .Call(`_MkPrime_singleton_site_prob_jc`, parent, child, edge_length, nTip, kStates, root_freqs, rate_multipliers)
+}
+
+constant_site_prob_jc_collapsed <- function(parent, child, edge_length, nTip, kFull, kObs, rate_multipliers) {
+    .Call(`_MkPrime_constant_site_prob_jc_collapsed`, parent, child, edge_length, nTip, kFull, kObs, rate_multipliers)
+}
+
+singleton_site_prob_jc_collapsed <- function(parent, child, edge_length, nTip, kFull, kObs, rate_multipliers) {
+    .Call(`_MkPrime_singleton_site_prob_jc_collapsed`, parent, child, edge_length, nTip, kFull, kObs, rate_multipliers)
 }
 
 constant_site_prob_mkn <- function(parent, child, edge_length, nTip, rate_loss, root_freqs, rate_multipliers) {
@@ -39,6 +51,10 @@ mkp_hello <- function() {
 
 pruning_jc <- function(parent, child, edge_length, tip_states, kStates, root_freqs) {
     .Call(`_MkPrime_pruning_jc`, parent, child, edge_length, tip_states, kStates, root_freqs)
+}
+
+pruning_jc_collapsed <- function(parent, child, edge_length, tip_states, kFull, kObs) {
+    .Call(`_MkPrime_pruning_jc_collapsed`, parent, child, edge_length, tip_states, kFull, kObs)
 }
 
 pruning_mkn <- function(parent, child, edge_length, tip_states, rate_loss, root_freqs) {
