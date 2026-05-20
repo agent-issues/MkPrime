@@ -1,0 +1,4 @@
+"eco_a","eco_b","name_a","name_b","n_flag_a","n_flag_b","n_both","jaccard","cor_pearson"
+"eco1","eco2","arboreal","semiaquatic",131,213,127,0.585253456221198,-0.0477404239375337
+"eco1","eco3","arboreal","fossorial",131,149,93,0.497326203208556,-0.0122009500959076
+"eco2","eco3","semiaquatic","fossorial",213,149,145,0.668202764976959,-0.00047333972568612
