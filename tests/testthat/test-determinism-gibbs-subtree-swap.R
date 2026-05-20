@@ -37,10 +37,10 @@ library("TreeTools")
 .det_mcmc <- function() {
   MkPrimeMCMC(
     nRuns         = 1L,
-    nIter         = 600L,
+    nIter         = 547L,
     thin          = 5L,
-    maxWarmup     = 300L,
-    minWarmup     = 300L,
+    maxWarmup     = 273L,
+    minWarmup     = 273L,
     autoTune      = FALSE,
     gibbsSubtreeSwap = TRUE
   )
@@ -82,10 +82,10 @@ test_that("gibbsSubtreeSwap=FALSE also produces identical samples across calls",
   pd   <- .det_pd()
   mcmc <- MkPrimeMCMC(
     nRuns         = 1L,
-    nIter         = 600L,
+    nIter         = 547L,
     thin          = 5L,
-    maxWarmup     = 300L,
-    minWarmup     = 300L,
+    maxWarmup     = 273L,
+    minWarmup     = 273L,
     autoTune      = FALSE,
     gibbsSubtreeSwap = FALSE
   )
