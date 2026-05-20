@@ -130,6 +130,132 @@ double pruning_jc(Rcpp::IntegerVector parent,
 }
 
 
+// Collapsed-state Felsenstein pruning for JC(kFull) when only kObs < kFull
+// distinct states are observed across all tips.
+//
+// Exploits strong lumpability of JC(kFull) under the partition
+// {{0}, {1}, ..., {kObs-1}, U}, where U is the set of n_U = kFull - kObs
+// states that never appear at any tip. The pruning runs on
+// kEff = kObs + 1 conditional-likelihood columns:
+//   - columns 0..kObs-1: observed singleton classes
+//   - column kObs: the lumped class (carries multiplicity n_U)
+//
+// Transition probabilities use kFull in the JC analytic formula (so branch
+// lengths retain their full-model semantics: substitutions within U still
+// consume branch length). The Felsenstein O(k) update uses a weighted
+// row-sum that gives the lumped column weight n_U:
+//   sum_eff = sum_{j<kObs} CL[j] + n_U * CL[kObs]
+//   new_CL[i] = p_diff * sum_eff + (p_same - p_diff) * CL[i]   for all i
+// Root frequencies are (1/kFull) on observed columns, (n_U/kFull) on the
+// lumped column, so the root site-lik reduces to (1/kFull) * sum_eff_root.
+//
+// CL convention: average-over-class form
+//   cl_lump[I] := (1 / |I|) * sum_{s in I} cl_full[s]
+// This gives the uniform Felsenstein update above (no per-row class-size
+// factor). Tip initialisation (data is already 0..kObs-1 contiguous per
+// .PhyDatToIntMatrix; -1 = missing):
+//   observed state s: CL[s] = 1, others 0
+//   missing:          CL[0..kObs-1] = 1, CL[kObs] = 1
+// (Under the average convention a missing tip is consistent with every
+//  class, so cl_lump[I] = 1 for all I; the lumped column's multiplicity
+//  enters only via the weighted Σ_eff above, not via the tip value.)
+//
+// Returns the identical log-likelihood as pruning_jc(... kStates=kFull ...)
+// would on the equivalent uncollapsed tip data.
+
+// [[Rcpp::export]]
+double pruning_jc_collapsed(Rcpp::IntegerVector parent,
+                            Rcpp::IntegerVector child,
+                            Rcpp::NumericVector edge_length,
+                            Rcpp::IntegerMatrix tip_states,
+                            int kFull,
+                            int kObs) {
+  if (kObs < 1 || kObs >= kFull) {
+    Rcpp::stop("pruning_jc_collapsed requires 1 <= kObs < kFull.");
+  }
+  int nEdge = parent.size();
+  int nTip = tip_states.nrow();
+  int nChar = tip_states.ncol();
+  int kEff = kObs + 1;
+  double n_U = static_cast<double>(kFull - kObs);
+
+  int maxNode = 0;
+  for (int e = nEdge - 1; e >= 0; --e) {
+    if (parent[e] > maxNode) maxNode = parent[e];
+    if (child[e] > maxNode) maxNode = child[e];
+  }
+  int nNode = maxNode;
+
+  int clSize = nChar * kEff;
+  std::vector<std::vector<double>> CL(nNode + 1, std::vector<double>(clSize, 0.0));
+  std::vector<bool> initialized(nNode + 1, false);
+
+  for (int tip = 1; tip <= nTip; ++tip) {
+    for (int c = 0; c < nChar; ++c) {
+      int state = tip_states(tip - 1, c);
+      int offset = c * kEff;
+      if (state < 0) {
+        for (int s = 0; s < kEff; ++s) CL[tip][offset + s] = 1.0;
+      } else {
+        // state is guaranteed to be in 0..kObs-1 by the data-remap invariant
+        CL[tip][offset + state] = 1.0;
+      }
+    }
+    initialized[tip] = true;
+  }
+
+  for (int e = nEdge - 1; e >= 0; --e) {
+    int par = parent[e];
+    int ch = child[e];
+    double t = edge_length[e];
+
+    double inv_k = 1.0 / kFull;
+    double exp_term = MKP_EXP(-kFull * t / (kFull - 1.0));
+    double p_same = inv_k + (1.0 - inv_k) * exp_term;
+    double p_diff = inv_k - inv_k * exp_term;
+    double diff_coeff = p_same - p_diff;
+
+    if (!initialized[par]) {
+      for (int c = 0; c < nChar; ++c) {
+        int offset = c * kEff;
+        double sum_eff = 0.0;
+        for (int j = 0; j < kObs; ++j) sum_eff += CL[ch][offset + j];
+        sum_eff += n_U * CL[ch][offset + kObs];
+        for (int i = 0; i < kEff; ++i)
+          CL[par][offset + i] = p_diff * sum_eff + diff_coeff * CL[ch][offset + i];
+      }
+      initialized[par] = true;
+    } else {
+      for (int c = 0; c < nChar; ++c) {
+        int offset = c * kEff;
+        double sum_eff = 0.0;
+        for (int j = 0; j < kObs; ++j) sum_eff += CL[ch][offset + j];
+        sum_eff += n_U * CL[ch][offset + kObs];
+        for (int i = 0; i < kEff; ++i)
+          CL[par][offset + i] *= p_diff * sum_eff + diff_coeff * CL[ch][offset + i];
+      }
+    }
+  }
+
+  int root = nTip + 1;
+  double inv_kFull = 1.0 / kFull;
+  double logLik = 0.0;
+  for (int c = 0; c < nChar; ++c) {
+    int offset = c * kEff;
+    double sum_eff = 0.0;
+    for (int s = 0; s < kObs; ++s) sum_eff += CL[root][offset + s];
+    sum_eff += n_U * CL[root][offset + kObs];
+    double site_lik = inv_kFull * sum_eff;
+    if (site_lik <= 0.0) {
+      return R_NegInf;
+    }
+    logLik += std::log(site_lik);
+  }
+
+  return logLik;
+}
+
+
 // Felsenstein pruning for MkN (asymmetric binary) model.
 //
 // Same structure as pruning_jc but uses asymmetric 2-state P(t).
