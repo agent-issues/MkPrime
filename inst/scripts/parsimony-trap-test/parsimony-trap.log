@@ -1,0 +1,117 @@
+
+=== v6-realistic rep01 ===
+  cv=Inf   nMPT=3    bestScore=   297.000  truthLen=   297.000  pTrueSister=1.00  pFalseEco=0.00
+  cv=3     nMPT=3    bestScore=    22.621  truthLen=   297.000  pTrueSister=1.00  pFalseEco=0.00
+  cv=6     nMPT=3    bestScore=    13.555  truthLen=   297.000  pTrueSister=1.00  pFalseEco=0.00
+  cv=12    nMPT=3    bestScore=     7.555  truthLen=   297.000  pTrueSister=1.00  pFalseEco=0.00
+
+=== v6-realistic rep02 ===
+  cv=Inf   nMPT=6    bestScore=   293.000  truthLen=   293.000  pTrueSister=1.00  pFalseEco=0.00
+  cv=3     nMPT=3    bestScore=    23.850  truthLen=   293.000  pTrueSister=1.00  pFalseEco=0.00
+  cv=6     nMPT=3    bestScore=    14.190  truthLen=   293.000  pTrueSister=1.00  pFalseEco=0.00
+  cv=12    nMPT=3    bestScore=     7.859  truthLen=   293.000  pTrueSister=1.00  pFalseEco=0.00
+
+=== v6-realistic rep03 ===
+  cv=Inf   nMPT=3    bestScore=   300.000  truthLen=   300.000  pTrueSister=1.00  pFalseEco=0.00
+  cv=3     nMPT=3    bestScore=    21.221  truthLen=   300.000  pTrueSister=1.00  pFalseEco=0.00
+  cv=6     nMPT=3    bestScore=    12.590  truthLen=   300.000  pTrueSister=1.00  pFalseEco=0.00
+  cv=12    nMPT=3    bestScore=     6.966  truthLen=   300.000  pTrueSister=1.00  pFalseEco=0.00
+
+=== multirep-v3 rep01 ===
+  cv=Inf   nMPT=2    bestScore=  1957.000  truthLen=  1993.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=3     nMPT=3    bestScore=   230.633  truthLen=  1993.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=6     nMPT=3    bestScore=   156.100  truthLen=  1993.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=12    nMPT=3    bestScore=    95.289  truthLen=  1993.000  pTrueSister=0.00  pFalseEco=1.00
+
+=== multirep-v3 rep02 ===
+  cv=Inf   nMPT=5    bestScore=  1965.000  truthLen=  1993.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=3     nMPT=3    bestScore=   231.175  truthLen=  1993.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=6     nMPT=3    bestScore=   156.686  truthLen=  1993.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=12    nMPT=3    bestScore=    95.721  truthLen=  1993.000  pTrueSister=0.00  pFalseEco=1.00
+
+=== multirep-v3 rep03 ===
+  cv=Inf   nMPT=3    bestScore=  1964.000  truthLen=  2003.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=3     nMPT=3    bestScore=   231.793  truthLen=  2003.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=6     nMPT=3    bestScore=   156.811  truthLen=  2003.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=12    nMPT=3    bestScore=    95.677  truthLen=  2003.000  pTrueSister=0.00  pFalseEco=1.00
+
+=== multirep-v3 rep04 ===
+  cv=Inf   nMPT=3    bestScore=  1938.000  truthLen=  1971.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=3     nMPT=3    bestScore=   229.615  truthLen=  1971.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=6     nMPT=3    bestScore=   154.966  truthLen=  1971.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=12    nMPT=3    bestScore=    94.347  truthLen=  1971.000  pTrueSister=0.00  pFalseEco=1.00
+
+=== multirep-v3 rep05 ===
+  cv=Inf   nMPT=3    bestScore=  1947.000  truthLen=  1974.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=3     nMPT=3    bestScore=   229.319  truthLen=  1974.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=6     nMPT=3    bestScore=   155.300  truthLen=  1974.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=12    nMPT=3    bestScore=    94.814  truthLen=  1974.000  pTrueSister=0.00  pFalseEco=1.00
+
+=== multirep-v3 rep06 ===
+  cv=Inf   nMPT=3    bestScore=  1937.000  truthLen=  1961.000  pTrueSister=0.00  pFalseEco=0.00
+  cv=3     nMPT=3    bestScore=   230.548  truthLen=  1961.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=6     nMPT=3    bestScore=   155.440  truthLen=  1961.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=12    nMPT=3    bestScore=    94.516  truthLen=  1961.000  pTrueSister=0.00  pFalseEco=0.00
+
+=== multirep-v3 rep07 ===
+  cv=Inf   nMPT=6    bestScore=  1927.000  truthLen=  1957.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=3     nMPT=3    bestScore=   228.971  truthLen=  1957.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=6     nMPT=3    bestScore=   154.161  truthLen=  1957.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=12    nMPT=3    bestScore=    93.728  truthLen=  1957.000  pTrueSister=0.00  pFalseEco=1.00
+
+=== multirep-v3 rep08 ===
+  cv=Inf   nMPT=6    bestScore=  1973.000  truthLen=  1996.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=3     nMPT=3    bestScore=   233.094  truthLen=  1996.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=6     nMPT=3    bestScore=   157.710  truthLen=  1996.000  pTrueSister=0.00  pFalseEco=1.00
+  cv=12    nMPT=3    bestScore=    96.207  truthLen=  1996.000  pTrueSister=0.00  pFalseEco=1.00
+
+=== v5break rep01 ===
+  cv=Inf   nMPT=38   bestScore=    84.000  truthLen=    89.000  pTrueSister=1.00  pFalseEco=0.00
+  cv=3     nMPT=15   bestScore=     7.400  truthLen=    89.000  pTrueSister=1.00  pFalseEco=0.00
+  cv=6     nMPT=15   bestScore=     4.357  truthLen=    89.000  pTrueSister=1.00  pFalseEco=0.00
+  cv=12    nMPT=15   bestScore=     2.396  truthLen=    89.000  pTrueSister=1.00  pFalseEco=0.00
+
+=== v5break rep02 ===
+  cv=Inf   nMPT=300  bestScore=    69.000  truthLen=    77.000  pTrueSister=1.00  pFalseEco=0.00
+  cv=3     nMPT=38   bestScore=     5.100  truthLen=    77.000  pTrueSister=1.00  pFalseEco=0.00
+  cv=6     nMPT=40   bestScore=     3.000  truthLen=    77.000  pTrueSister=1.00  pFalseEco=0.00
+  cv=12    nMPT=35   bestScore=     1.648  truthLen=    77.000  pTrueSister=1.00  pFalseEco=0.00
+
+=== v5break rep03 ===
+  cv=Inf   nMPT=3    bestScore=    92.000  truthLen=   102.000  pTrueSister=1.00  pFalseEco=0.00
+  cv=3     nMPT=3    bestScore=     7.400  truthLen=   102.000  pTrueSister=1.00  pFalseEco=0.00
+  cv=6     nMPT=3    bestScore=     4.393  truthLen=   102.000  pTrueSister=1.00  pFalseEco=0.00
+  cv=12    nMPT=3    bestScore=     2.407  truthLen=   102.000  pTrueSister=1.00  pFalseEco=0.00
+
+
+=== Summary (false-eco-clade hit fraction by dataset x weighting) ===
+      dataset concavity anyMPT_hasFalseEco anyMPT_hasTrueSister pFalseEco
+  multirep-v3        12              0.875                    0     0.875
+  multirep-v3         3              1.000                    0     1.000
+  multirep-v3         6              1.000                    0     1.000
+  multirep-v3       Inf              0.875                    0     0.875
+      v5break        12              0.000                    1     0.000
+      v5break         3              0.000                    1     0.000
+      v5break         6              0.000                    1     0.000
+      v5break       Inf              0.000                    1     0.000
+ v6-realistic        12              0.000                    1     0.000
+ v6-realistic         3              0.000                    1     0.000
+ v6-realistic         6              0.000                    1     0.000
+ v6-realistic       Inf              0.000                    1     0.000
+ pTrueSister deltaStepsEW nReps
+           0    29.750000     8
+           0    27.125000     8
+           0    28.250000     8
+           0    30.000000     8
+           1     7.666667     3
+           1     7.333333     3
+           1     7.666667     3
+           1     7.666667     3
+           1     0.000000     3
+           1     0.000000     3
+           1     0.000000     3
+           1     0.000000     3
+
+Written:
+   inst/scripts/parsimony-trap-test/parsimony-trap-results.csv 
+   inst/scripts/parsimony-trap-test/parsimony-trap-summary.csv 

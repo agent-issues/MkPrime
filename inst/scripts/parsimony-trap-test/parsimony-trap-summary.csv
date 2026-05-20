@@ -1,0 +1,13 @@
+"dataset","concavity","anyMPT_hasFalseEco","anyMPT_hasTrueSister","pFalseEco","pTrueSister","deltaStepsEW","nReps"
+"multirep-v3","12",0.875,0,0.875,0,29.75,8
+"multirep-v3","3",1,0,1,0,27.125,8
+"multirep-v3","6",1,0,1,0,28.25,8
+"multirep-v3","Inf",0.875,0,0.875,0,30,8
+"v5break","12",0,1,0,1,7.66666666666667,3
+"v5break","3",0,1,0,1,7.33333333333333,3
+"v5break","6",0,1,0,1,7.66666666666667,3
+"v5break","Inf",0,1,0,1,7.66666666666667,3
+"v6-realistic","12",0,1,0,1,0,3
+"v6-realistic","3",0,1,0,1,0,3
+"v6-realistic","6",0,1,0,1,0,3
+"v6-realistic","Inf",0,1,0,1,0,3
