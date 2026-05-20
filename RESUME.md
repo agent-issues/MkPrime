@@ -97,21 +97,26 @@ shrinkage buys almost nothing on CID. Saturation does the work.
    **Done 2026-05-20** (mkprime commit dc65348). Digest rebuilt at n=260,
    scp'd, qmd re-rendered with updated narrative and figure captions.
 
-2. **Resolve a Felsenstein1981 vs 1978 citation choice** in the qmd — §3.3 cites
-   `[@Felsenstein1981]` for the long-branch-attraction context; the canonical
-   LBA paper is Felsenstein 1978 (Syst Zool 27:401–410). Either add the 1978
-   entry to `mkprime/inst/REFERENCES.bib` and swap, or keep 1981 (which does
-   discuss long-branch effects in ML).
+2. ~~**Resolve Felsenstein1981 vs 1978 citation choice**~~ **Done 2026-05-20**
+   (mkprime commit 6036a49). Added Felsenstein1978 (Syst Zool 27:401–410,
+   "Cases in which parsimony or compatibility methods will be positively
+   misleading") to `inst/REFERENCES.bib`; swapped `[@Felsenstein1981]` →
+   `[@Felsenstein1978]` in §3.3; re-rendered HTML.
 
 3. **Flip the AI-callout to reviewed** in the qmd when the user has read it
    (template note already in the callout comment block).
 
-4. **Diagnose the spurious R parser error** in mk_ktrue / mk_tlshrink — 126/260
-   mk_ktrue and 32/55-so-far mk_tlshrink tasks marked FAILED despite
-   completing the MCMC successfully ("done ✔", samples written, then
-   `Error: unexpected symbol` on exit). Data is intact and the summariser
-   handles them. Low urgency; would let us avoid the spurious FAILED labels
-   in sacct.
+4. ~~**Diagnose the spurious R parser error** in mk_ktrue / mk_tlshrink~~
+   **Workaround applied 2026-05-20** (mkp commit 75dd825; live on Hamilton
+   at `/nobackup/pjjg18/mkp-study/run_one.R`). Added `options(warn = 1L)`
+   at the top of `run_one.R` so warnings print immediately rather than
+   queuing for R's exit-time `Warning messages:` formatter, which was
+   triggering a srcref-into-comment-block parser error on the only two
+   arms that emit warnings during MCMC. **Caveat**: symptom-targeted, not
+   root-caused — the agent could not reproduce the parser error in
+   isolation, and the em-dash theory does not unify mk_ktrue and
+   mk_tlshrink. Verify on the next array submission that tasks show
+   COMPLETED rather than FAILED; if not, the diagnosis is wrong.
 
 5. **Long-form M9 collect** (~2026-05-21 morning local): scp `.trees`, run
    `process_pilot.R <pid>` for 07200, 07202, 07204, 07205, 07206; build the
@@ -124,10 +129,14 @@ shrinkage buys almost nothing on CID. Saturation does the work.
    hidden multistate" framing. The new write-up in mkprime is the first
    draft of that re-frame.
 
-8. **Commit canonical run_one.R + auxiliary scripts** — all dispatches now
-   in `data-raw/hamilton/run_one.R` plus summarize_streamed.R,
-   summarize_array.slurm, mk_ktrue_array.slurm, mkp_highk_array.slurm,
-   mkp_logs_array.slurm. Commit.
+8. ~~**Commit canonical run_one.R + auxiliary scripts**~~ **Done 2026-05-20**
+   (mkp commits f72fddc, 75dd825). All Hamilton dispatch scripts now under
+   VC in `data-raw/hamilton/`: `run_one.R`, `summarize_streamed.R` (already
+   matched Hamilton byte-for-byte), `summarize_array.slurm`, the per-arm
+   `*_array.slurm` files including newly-fetched `mkp_eg_array.slurm`, plus
+   previously-untracked `install_dt.R`, `summarize_inspect.sh`,
+   `verify_summary.R`. `run_one.R` includes the item-#4 `options(warn = 1L)`
+   fix.
 
 9. **Direct test of saturation hypothesis**: re-run a single task with mk_k40
    but with a *very tight* prior on tree length forcing TL = 1.4 (the truth).
@@ -233,10 +242,11 @@ shrinkage buys almost nothing on CID. Saturation does the work.
 
 ## Suggested first action
 
-mk_tlshrink is done and the report is patched. Next mission-critical
-decision: pick up one of items #2 (Felsenstein citation), #4 (diagnose
-spurious R parser error in mk_ktrue/mk_tlshrink exit), #7 (paper re-frame
-around regularisation-via-saturation), or wait ~20h to collect the M9
-long-form jobs (#5). Item #8 (commit canonical run_one.R + array slurm
-scripts in `data-raw/hamilton/`) is the cheapest cleanup if working
-between bigger pieces.
+Items #2, #4, #8 cleared 2026-05-20 by parallel subagents. Remaining
+priorities: #3 (flip AI-callout to reviewed once the user has read
+the report); #7 (re-frame paper around regularisation-via-saturation);
+#5 (M9 long-form collect when the 14 RUNNING jobs land, ~04:30 BST
+2026-05-21); #9 (direct saturation test — mk_k40 with very tight TL
+prior pinning TL = 1.4). #7 is the heaviest piece; #3 is a one-line
+edit; #9 needs a new Hamilton array but is the cleanest mechanism
+confirmation.
