@@ -3839,42 +3839,6 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                          int intWalkWindow, double beta,
                          double jointRho = 0.0) {
 
-  // DIAG: write to file every 500 iterations as proof-of-life
-  {
-    static int diagFileCount = 0;
-    if (++diagFileCount == 1 || diagFileCount % 500 == 0) {
-      FILE* f = std::fopen("C:/Users/pjjg18/GitHub/mkp/pcl_diag.txt", "a");
-      if (f) {
-        std::fprintf(f, "iter=%d mt=%d cachePop=%d dirPCL=%d cacheValid=%d\n",
-                diagFileCount, moveType, state->diagCachePopCount,
-                state->diagDirPartialCount, (int)state->nodeCL.ready());
-        std::fclose(f);
-      } else {
-        // If fopen fails, try REprintf as last resort
-        REprintf("[DIAG] fopen failed iter=%d\n", diagFileCount);
-      }
-    }
-  }
-
-  // DIAG: pre-proposal LL consistency check (every 100 iterations)
-  {
-    static int preCheckCount = 0;
-    if (++preCheckCount % 100 == 0) {
-      int nE = state->relBrLengths.size();
-      NumericVector curEl(nE);
-      for (int i = 0; i < nE; ++i)
-        curEl[i] = state->treeLength * state->relBrLengths[i];
-      double freshLL = cpp_log_likelihood(*data, state->parent, state->child,
-        curEl, state->kPrime, state->rateLoss, state->rateLogSd,
-        state->rateNeo, state->betaScale,
-        state->clWs.ready() ? &state->clWs : nullptr);
-      double drift = std::abs(state->logLik - freshLL);
-      if (drift > 1e-4) {
-        state->diagDriftCount++;
-      }
-    }
-  }
-
   // Snapshot scalar state for rollback
   double oldTL   = state->treeLength;
   double oldRL   = state->rateLoss;
