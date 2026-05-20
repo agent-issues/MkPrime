@@ -229,7 +229,8 @@ RunMkPrime <- function(data, tree = NULL,
   nTrans <- length(transIdx)
 
   qHet <- isTRUE(model$qHeterogeneity)
-  moves <- .BuildMoves(nEdge, nTrans, hasNeo, mcmc,
+  moves <- .BuildMovesPartitioned(nEdge, nTrans, hasNeo, mcmc,
+                       partitionSpec = partitionSpec,
                        fixTopology = fixTopology,
                        kPrimePrior = model$kPrimePrior %||% "geometric",
                        qHeterogeneity = qHet,
@@ -262,7 +263,7 @@ RunMkPrime <- function(data, tree = NULL,
                             partitionSpec = partitionSpec)
   }
 
-  paramNames  <- .ParamNames(mkd, nEdge,
+  paramNames  <- .ParamNamesPartitioned(mkd, nEdge, partitionSpec,
                              kPrimePrior = model$kPrimePrior %||% "geometric",
                              qHeterogeneity = qHet)
 
@@ -837,12 +838,24 @@ RunMkPrime <- function(data, tree = NULL,
   names(moveDim) <- moveNames
   # M-171: index for warmup-phase sweep frequency reduction (NA = no trans chars)
   gibbsKpIdx <- match("gibbs_kPrime", moveNames)
-  moveTypeCodes <- vapply(moves, function(m) .kMoveTypes[[m$name]], integer(1L))
+  moveTypeCodes <- vapply(moves, function(m) {
+    # For per-class moves (e.g. scale_class_rate_log_sd_1) the unique name
+    # is not in .kMoveTypes; fall back to m$type which IS registered.
+    key <- if (m$name %in% names(.kMoveTypes)) m$name else m$type %||% m$name
+    .kMoveTypes[[key]]
+  }, integer(1L))
   # Slice param index: 0=treeLength, 1=rateLoss, 2=rateLogSd, 3=rateNeo, 4=betaScale
   sliceParamCodes <- vapply(moves, function(m) m$sliceParamIdx %||% 0L, integer(1L))
-  # Per-move integer parameter (e.g. nCats for dirichlet_branch; 0 = use chain default)
+  # Per-move integer parameter.
+  # nCats: for dirichlet_branch / local_dirichlet (intWalkWindow carries nCats).
+  # classIdx: for scale_class_rate_log_sd (1-based index passed via charIdx).
+  # dim: for dirichlet_simplex_class_w (intWalkWindow carries nClasses).
   moveIntParams <- vapply(moves, function(m) {
-    if (!is.null(m$nCats)) as.integer(m$nCats) else 0L
+    if (!is.null(m$nCats)) as.integer(m$nCats)
+    else if (!is.null(m$classIdx)) as.integer(m$classIdx)
+    else if (!is.null(m$type) && m$type == "dirichlet_simplex_class_w")
+      as.integer(m$dim %||% 0L)
+    else 0L
   }, integer(1L))
   transIdx      <- which(mkd$type == "transformational")
   transIdx0     <- if (length(transIdx) > 0L) transIdx - 1L else integer(0L)
@@ -3606,7 +3619,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 # 15=block_gibbs_branch, 16=beta_scale (M-052), 17=tbr (M-053),
 # 25=gibbs_kprime_sweep, 26=block_kprime_shift,
 # 27=scale_kprime_alpha, 28=scale_kprime_beta,
-# 30=mh_logit_p (logit-scale MH on p, for empirical_geometric)
+# 30=mh_logit_p (logit-scale MH on p, for empirical_geometric),
+# 31=scale_class_rate_log_sd (per-class shape; charIdx carries 1-based classIdx),
+# 32=dirichlet_simplex_class_w (Dirichlet simplex on class_w)
 .kMoveTypes <- c(
   tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
   rate_neo = 3L, branch_lengths = 4L,
@@ -3635,7 +3650,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   kprime_alpha = 27L,
   kprime_beta = 28L,
   slice_kprime_alpha = 29L,
-  slice_kprime_beta = 29L
+  slice_kprime_beta = 29L,
+  scale_class_rate_log_sd = 31L,
+  dirichlet_simplex_class_w = 32L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)
@@ -3735,7 +3752,15 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       local_dirichlet = tuning$local_dirichlet_alpha %||% 0.1,
       mh_p        = tuning$scale_p %||% 0.5,
       mh_logit_p  = tuning$scale_logit_p %||% 1.0,
-      0.5  # default; gibbs_p ignores scaleTun (returns before using it)
+      dirichlet_simplex_class_w = tuning$dirichlet_class_w_alpha %||% 10,
+      {
+        # Per-class moves: switch on type rather than instance name
+        if (!is.null(move$type) && move$type == "scale_class_rate_log_sd") {
+          tuning$scale_class_rate_log_sd %||% 0.5
+        } else {
+          0.5  # default; gibbs_p ignores scaleTun (returns before using it)
+        }
+      }
     )
     # For dirichlet_branch / local_dirichlet, intWalkWindow carries nCats
     iww <- if (!is.null(move$nCats)) as.integer(move$nCats)

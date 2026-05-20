@@ -5012,15 +5012,19 @@ List run_mcmc_batch_cpp(
   bool includeP  = !data->kPriorLogseries && !includeBG;
   int nKpHyperCols = includeBG ? 2 : (includeP ? 1 : 0);
   bool includeBS = data->qHeterogeneity;  // M-052: beta_scale column
-  // Per-class partition columns (Layer 1)
-  int nClassRLS = (nChains > 0 && states[0]->usePartitioned)
+  // Per-class partition columns (Layer 1).
+  // Emit classRateLogSd columns iff any move in the schedule has type 31
+  // (scale_class_rate_log_sd), which indicates shape is unlinked.
+  // Emit classW columns iff any move has type 32 (dirichlet_simplex_class_w).
+  bool hasMove31 = false, hasMove32 = false;
+  for (int m = 0; m < nMoves; ++m) {
+    if (moveTypeCodes[m] == 31) hasMove31 = true;
+    if (moveTypeCodes[m] == 32) hasMove32 = true;
+  }
+  int nClassRLS = (hasMove31 && nChains > 0 && states[0]->usePartitioned)
                   ? (int)states[0]->classRateLogSd.size() : 0;
-  // Only emit classRateLogSd when it is per-class (length > 1 means shape is unlinked)
-  if (nClassRLS == 1) nClassRLS = 0;
-  int nClassW = (nChains > 0 && states[0]->usePartitioned)
-                ? (int)states[0]->classW.size() : 0;
-  // Only emit classW when it is per-class (length > 1 means ratemultiplier is unlinked)
-  if (nClassW == 1) nClassW = 0;
+  int nClassW   = (hasMove32 && nChains > 0 && states[0]->usePartitioned)
+                  ? (int)states[0]->classW.size() : 0;
   // Base columns: log_post, log_lik, tree_length, rate_log_sd (4).
   // rate_loss included only when hasNeo (like rate_neo, p, beta_scale).
   // +2 diagnostic columns: swap_cold (cold-chain swaps since last sample),
