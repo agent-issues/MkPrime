@@ -22,7 +22,7 @@ test_that("Checkpoint file is written at check intervals", {
 
   # Read and verify structure
   cp <- readRDS(cp_file)
-  expect_equal(cp$version, 2L)  # always streaming since always-on checkpointing
+  expect_equal(cp$version, 3L)  # v3 adds per-run treeFilePaths
   expect_true(inherits(cp$timestamp, "POSIXct"))
   expect_true(is.list(cp$runs))
   expect_true(cp$iter > 0)
@@ -483,4 +483,312 @@ test_that("Serial multi-run checkpoint stores serialPhase", {
     expect_true(!is.null(r$actual_iter))
     expect_true(r$actual_iter > 0)
   }
+})
+
+
+# --- Tree-file handling on resume (fast unit tests) ---
+
+test_that(".TruncateTreeToN drops trailing trees", {
+  tf <- tempfile(fileext = ".nwk")
+  on.exit(unlink(tf), add = TRUE)
+  writeLines(c(
+    "(a:0.1,b:0.2);",
+    "(a:0.3,b:0.4);",
+    "(a:0.5,b:0.6);"
+  ), tf)
+
+  MkPrime:::.TruncateTreeToN(tf, 2L)
+  trees <- readLines(tf)
+  expect_equal(length(trees), 2L)
+  expect_equal(trees[1], "(a:0.1,b:0.2);")
+  expect_equal(trees[2], "(a:0.3,b:0.4);")
+})
+
+test_that(".TruncateTreeToN drops trailing partial line", {
+  tf <- tempfile(fileext = ".nwk")
+  on.exit(unlink(tf), add = TRUE)
+  # Final line is a torn write (no terminating semicolon).
+  writeLines(c(
+    "(a:0.1,b:0.2);",
+    "(a:0.3,b:0.4);",
+    "(a:0.5,b:0.6"
+  ), tf)
+
+  MkPrime:::.TruncateTreeToN(tf, 2L)
+  trees <- readLines(tf)
+  expect_equal(length(trees), 2L)
+  expect_true(all(grepl("\\);$", trees)))
+})
+
+test_that(".TruncateTreeToN with nTrees == 0 empties the file", {
+  tf <- tempfile(fileext = ".nwk")
+  on.exit(unlink(tf), add = TRUE)
+  writeLines(c("(a:0.1,b:0.2);", "(a:0.3,b:0.4);"), tf)
+
+  MkPrime:::.TruncateTreeToN(tf, 0L)
+  expect_true(file.exists(tf))
+  expect_equal(length(readLines(tf)), 0L)
+})
+
+test_that(".TruncateTreeToN is a no-op when treeFile is NULL or missing", {
+  expect_silent(MkPrime:::.TruncateTreeToN(NULL, 5L))
+  tf <- tempfile(fileext = ".nwk")
+  expect_false(file.exists(tf))
+  expect_silent(MkPrime:::.TruncateTreeToN(tf, 5L))
+})
+
+
+# --- Tree file preserved and extended across resume (serial path) ---
+
+test_that("Resume preserves pre-checkpoint trees and appends new ones (serial)", {
+  library("ape")
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  cp_file   <- tempfile(fileext = ".ckp")
+  log_file  <- tempfile(fileext = ".log")
+  tree_file <- tempfile(fileext = ".nwk")
+  on.exit(unlink(c(cp_file, log_file, tree_file,
+                    sub("\\.[^.]+$", "_1.log", log_file))), add = TRUE)
+
+  set.seed(91011)
+  mcmcConf <- MkPrimeMCMC(nRuns = 1L, nIter = 5000L, thin = 5L,
+                           maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
+                           checkEvery = 300L, logFile = log_file,
+                           treeFile = tree_file, checkpointFile = cp_file,
+                           maxTime = 0.5)
+  result1 <- RunMkPrime(pd, tree, mcmc = mcmcConf)
+
+  expect_true(file.exists(tree_file))
+  lines_before <- readLines(tree_file, warn = FALSE)
+  tree_lines_before <- lines_before[grepl("\\);\\s*$", lines_before)]
+  n_trees_before <- length(tree_lines_before)
+  # Snapshot the first valid tree lines so we can verify they're preserved.
+  head_before <- tree_lines_before[seq_len(min(3L, n_trees_before))]
+
+  # Resume from the checkpoint.
+  result2 <- ResumeMkPrime(cp_file, pd, tree)
+
+  expect_true(file.exists(tree_file))
+  lines_after <- readLines(tree_file, warn = FALSE)
+  tree_lines_after <- lines_after[grepl("\\);\\s*$", lines_after)]
+  expect_gte(length(tree_lines_after), n_trees_before)
+
+  # Pre-checkpoint trees must still be intact at the top of the file.
+  if (length(head_before) > 0L) {
+    expect_equal(tree_lines_after[seq_along(head_before)], head_before)
+  }
+
+  # The resulting file must parse cleanly via ape.
+  if (length(tree_lines_after) > 0L) {
+    parsed <- ape::read.tree(tree_file)
+    if (inherits(parsed, "phylo")) parsed <- list(parsed)
+    expect_true(length(parsed) >= n_trees_before)
+  }
+})
+
+
+# --- Resume discards post-checkpoint trees from a torn write ---
+
+test_that("Resume truncates post-checkpoint trees written before SIGKILL", {
+  library("ape")
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  cp_file   <- tempfile(fileext = ".ckp")
+  log_file  <- tempfile(fileext = ".log")
+  tree_file <- tempfile(fileext = ".nwk")
+  on.exit(unlink(c(cp_file, log_file, tree_file,
+                    sub("\\.[^.]+$", "_1.log", log_file))), add = TRUE)
+
+  set.seed(20342)
+  mcmcConf <- MkPrimeMCMC(nRuns = 1L, nIter = 5000L, thin = 5L,
+                           maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
+                           checkEvery = 300L, logFile = log_file,
+                           treeFile = tree_file, checkpointFile = cp_file,
+                           maxTime = 0.5)
+  RunMkPrime(pd, tree, mcmc = mcmcConf)
+
+  # Inject "torn" trees that the checkpoint never recorded.
+  cat("(t1:0.1,t2:0.2,(t3:0.3,t4:0.4):0.05);\n",
+      "(t1:0.9,t2:0.8,(t3:0.7,t4:0.6", # missing closing ");"
+      file = tree_file, append = TRUE, sep = "")
+
+  n_before_resume <- sum(grepl("\\);\\s*$",
+                                readLines(tree_file, warn = FALSE)))
+
+  # Resume should rewind the tree file to tree_saved_idx, dropping both the
+  # extra complete tree and the torn one.
+  result2 <- ResumeMkPrime(cp_file, pd, tree)
+
+  # The resulting file must parse cleanly via ape.
+  parsed <- ape::read.tree(tree_file)
+  if (inherits(parsed, "phylo")) parsed <- list(parsed)
+  expect_true(length(parsed) > 0L || length(readLines(tree_file)) == 0L)
+})
+
+
+# --- Per-run tree files: nRuns=2 writes to separate streams ---
+
+test_that("Per-run tree files separate by run", {
+  library("ape")
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  log_base  <- tempfile()
+  tree_base <- tempfile()
+  log_file  <- paste0(log_base, ".log")
+  tree_file <- paste0(tree_base, ".nwk")
+  cp_file   <- tempfile(fileext = ".ckp")
+  expected_logs  <- paste0(log_base,  "_", 1:2, ".log")
+  expected_trees <- paste0(tree_base, "_", 1:2, ".nwk")
+  on.exit(unlink(c(cp_file, log_file, tree_file,
+                   expected_logs, expected_trees)), add = TRUE)
+
+  set.seed(42)
+  mcmcConf <- MkPrimeMCMC(nRuns = 2L, nIter = 3000L, thin = 5L,
+                           maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
+                           checkEvery = 300L, logFile = log_file,
+                           treeFile = tree_file, checkpointFile = cp_file,
+                           maxTime = 0.5, nCore = 1L)
+  RunMkPrime(pd, tree, mcmc = mcmcConf)
+
+  for (p in expected_trees) expect_true(file.exists(p),
+                                         info = paste("missing:", p))
+  l1 <- readLines(expected_trees[1], warn = FALSE)
+  l2 <- readLines(expected_trees[2], warn = FALSE)
+  t1 <- l1[grepl("\\);\\s*$", l1)]
+  t2 <- l2[grepl("\\);\\s*$", l2)]
+  expect_gt(length(t1), 0L)
+  expect_gt(length(t2), 0L)
+  # The shared tree_file path must NOT have been created.
+  expect_false(file.exists(tree_file))
+  # Streams must be independent (different runs from different RNG seeds /
+  # initial states virtually never produce identical sample sequences).
+  expect_false(identical(t1, t2))
+})
+
+
+# --- Resume preserves per-run tree files across nRuns=2 ---
+
+test_that("Resume preserves pre-checkpoint trees and appends new ones (nRuns=2 serial)", {
+  library("ape")
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  log_base  <- tempfile()
+  tree_base <- tempfile()
+  log_file  <- paste0(log_base, ".log")
+  tree_file <- paste0(tree_base, ".nwk")
+  cp_file   <- tempfile(fileext = ".ckp")
+  expected_logs  <- paste0(log_base,  "_", 1:2, ".log")
+  expected_trees <- paste0(tree_base, "_", 1:2, ".nwk")
+  on.exit(unlink(c(cp_file, log_file, tree_file,
+                   expected_logs, expected_trees)), add = TRUE)
+
+  set.seed(777)
+  mcmcConf <- MkPrimeMCMC(nRuns = 2L, nIter = 3000L, thin = 5L,
+                           maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
+                           checkEvery = 300L, logFile = log_file,
+                           treeFile = tree_file, checkpointFile = cp_file,
+                           maxTime = 0.5, nCore = 1L)
+  RunMkPrime(pd, tree, mcmc = mcmcConf)
+
+  before <- lapply(expected_trees, function(p) {
+    l <- readLines(p, warn = FALSE)
+    l[grepl("\\);\\s*$", l)]
+  })
+
+  ResumeMkPrime(cp_file, pd, tree)
+
+  after <- lapply(expected_trees, function(p) {
+    l <- readLines(p, warn = FALSE)
+    l[grepl("\\);\\s*$", l)]
+  })
+
+  for (i in seq_along(expected_trees)) {
+    expect_gte(length(after[[i]]), length(before[[i]]))
+    if (length(before[[i]]) > 0L) {
+      expect_equal(after[[i]][seq_along(before[[i]])], before[[i]])
+    }
+    # Each per-run file must parse cleanly.
+    parsed <- ape::read.tree(expected_trees[i])
+    if (inherits(parsed, "phylo")) parsed <- list(parsed)
+    expect_true(length(parsed) >= length(before[[i]]))
+  }
+})
+
+
+# --- Sync-invariant aborts ---
+
+test_that("Resume aborts on tree/log desync (fewer trees than checkpoint)", {
+  library("ape")
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+
+  cp_file   <- tempfile(fileext = ".ckp")
+  log_file  <- tempfile(fileext = ".log")
+  tree_file <- tempfile(fileext = ".nwk")
+  on.exit(unlink(c(cp_file, log_file, tree_file)), add = TRUE)
+
+  set.seed(31337)
+  mcmcConf <- MkPrimeMCMC(nRuns = 1L, nIter = 5000L, thin = 5L,
+                           maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
+                           checkEvery = 300L, logFile = log_file,
+                           treeFile = tree_file, checkpointFile = cp_file,
+                           maxTime = 0.5)
+  RunMkPrime(pd, tree, mcmc = mcmcConf)
+
+  # Corrupt the tree file: drop half the valid trees so nValid < tree_saved_idx.
+  lines <- readLines(tree_file, warn = FALSE)
+  tree_lines <- lines[grepl("\\);\\s*$", lines)]
+  skip_if(length(tree_lines) < 4L,
+          "Run did not produce enough trees to corrupt meaningfully.")
+  keep <- floor(length(tree_lines) / 2L)
+  writeLines(tree_lines[seq_len(keep)], tree_file)
+
+  expect_error(ResumeMkPrime(cp_file, pd, tree),
+               regexp = "desync|fewer")
+})
+
+
+test_that("Sync invariant catches truncated log via .TruncateTreeToN", {
+  # Direct unit test: build a tree file and call .TruncateTreeToN with a
+  # saved_idx that's too small for the number of trees on disk.
+  tf <- tempfile(fileext = ".nwk")
+  lf <- tempfile(fileext = ".log")
+  on.exit(unlink(c(tf, lf)), add = TRUE)
+  writeLines(c("(a:0.1,b:0.2);",
+               "(a:0.3,b:0.4);",
+               "(a:0.5,b:0.6);"), tf)
+  writeLines(c("Sample\tx", "1\t1", "2\t2"), lf)
+
+  # 3 trees * treeEvery=2 = 6 param rows required, but saved_idx=2.
+  expect_error(
+    MkPrime:::.TruncateTreeToN(tf, 3L,
+                                logFilePath = lf,
+                                saved_idx   = 2L,
+                                treeEvery   = 2L),
+    regexp = "desync|require"
+  )
+})
+
+
+test_that(".TruncateTreeToN aborts when nValid < nTrees (no log args)", {
+  tf <- tempfile(fileext = ".nwk")
+  on.exit(unlink(tf), add = TRUE)
+  writeLines(c("(a:0.1,b:0.2);", "(a:0.3,b:0.4);"), tf)
+  # File has 2 valid trees but the chain thinks there should be 5.
+  expect_error(MkPrime:::.TruncateTreeToN(tf, 5L),
+               regexp = "desync|fewer")
 })

@@ -231,13 +231,13 @@ test_that("Streaming checkpoint is version 2 and state-only", {
 
   expect_true(file.exists(cp_file))
   cp <- readRDS(cp_file)
-  expect_equal(cp$version, 2L)
+  expect_equal(cp$version, 3L)
   expect_null(cp$runs[[1]]$samples)
   expect_false(is.null(cp$logFilePaths))
   expect_false(is.null(cp$paramNames))
 })
 
-test_that("Checkpoint is always streaming (version 2) even without logFile", {
+test_that("Checkpoint is always streaming (version 3) even without logFile", {
   f <- .mkStreamFixture()
   cp_file <- tempfile(fileext = ".rds")
   on.exit(unlink(cp_file), add = TRUE)
@@ -248,8 +248,8 @@ test_that("Checkpoint is always streaming (version 2) even without logFile", {
                         checkEvery = 200L, checkpointFile = cp_file))
 
   cp <- readRDS(cp_file)
-  # Always streaming now (temp log), so version 2
-  expect_equal(cp$version, 2L)
+  # Always streaming now (temp log), so version 3
+  expect_equal(cp$version, 3L)
   # Samples live in log files, not in checkpoint
   expect_null(cp$runs[[1]]$samples)
   # But chain state is preserved
