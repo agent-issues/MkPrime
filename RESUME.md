@@ -45,6 +45,44 @@ chars are postcranial/locomotor + craniofacial features — sensible.
 TL=22.6 is much smaller than the v2 saturated 127 — the chain may have
 finally found a less-saturated mode in the 371k → 1M iterations.
 
+## 🎯 BREAKTHROUGH: v9 directional-z trap at realistic TL (commits `8fc37ef`, `e7c7f82`)
+
+User insight 2026-05-20: "move to a neomorphic world... ecology A is gaining some
+characters at a higher rate, and ecology B is losing these same characters at a
+higher rate. That's the cleanest framing of a convergent signal."
+
+**The existing `.SimulateMkPrimeEcology` already supports asymmetric neomorphic
+rates** via z indexing: z=1 gives (rate01 × phi, rate10 / phi) — directional,
+not symmetric. This mode was never exercised before. v9 exploits it.
+
+**v9 MP pre-screen** (`dev/sim-design/v9-discriminate.R`):
+
+| Variant | Mechanism | TL | phi | MP pAB (false sister) | MP pTrue (AC) |
+|---|---|---:|---:|---:|---:|
+| v9a M1-divergent (realistic) | z[A]=1, z[B]=2 | 1.48 | 6 | 25% | 88% |
+| v9b M1-divergent (pushed) | z[A]=1, z[B]=2 | 1.52 | 8 | 12% | 88% |
+| **v9c M2-parallel (realistic)** | **z[A]=z[B]=1** | **1.48** | **6** | **62%** | **62%** |
+
+**v9c found a parsimony trap at TL=1.48** (realistic) with 62% of reps showing
+the false (A,B) sister grouping. The mechanism: both eco-A and eco-B elevate
+gain rate on the same chars → both clade trends to state 1 → blind sees A+B
+share derived states.
+
+**v9 Hamilton MCMC array submitted: 17233486_[1-3] (PENDING).**
+This tests whether blind ML actually commits to the false clade AND whether
+aware ML rescues truth. Result expected in ~2h. If both hold, the paper has
+its long-sought realistic-TL headline.
+
+## 🐀 Rodent v3 blind verdict (1M iter, 30 min wall, completed 06:31 BST)
+
+- minESS = 76 (median 311) — borderline paper-grade
+- **Posterior TL median = 126.9** (vs v2 saturated 127.8) — essentially identical
+- The parsimony-anchored prior did NOT lower TL — the rodent likelihood
+  GENUINELY prefers saturated TL. Rodent is empirically a long-tree case.
+
+**Implication**: the long-tree regime where aware regularises is empirically
+relevant (rodent lives there). The multirep-v3 narrative isn't a corner-case.
+
 ## 🎯 Paper-direction options after the diagnostic landscape
 
 (a) **"aware as honest regulariser at long-tree regimes"** — multirep-v3 IS
