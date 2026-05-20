@@ -140,10 +140,9 @@
 
 
 # Layer-1 implementation gate. Called from RunMkPrime once validation has
-# produced a (possibly non-trivial) partition spec. Until the user-class
-# state, eta_neo reparameterisation, and sibling C++ likelihood land in
-# follow-up commits, this aborts cleanly so the §7a bit-identity guarantee
-# for partition = NULL stays under test.
+# produced a (possibly non-trivial) partition spec. Until the C++ MCMC loop
+# integration lands in a follow-up commit, this aborts cleanly so the §7a
+# bit-identity guarantee for partition = NULL stays under test.
 .RequirePartitionImplemented <- function(spec) {
   if (is.null(spec$partition) && length(spec$unlink) == 0L) {
     # Return:
@@ -154,4 +153,161 @@
     "i" = "Layer 1 of feature/partition-api is in progress; pass \\
           {.code partition = NULL} for now."
   ))
+}
+
+
+# Derive per-class character counts from a partition vector.
+# Returns integer vector of length nClasses with the number of characters
+# in each user class. Used to convert between the Dirichlet w-simplex
+# (char-weighted simplex) and class-rate vectors (§5.1).
+.PartitionNCharPerClass <- function(partition, nClasses) {
+  out <- tabulate(partition, nbins = nClasses)
+  if (any(out == 0L)) {
+    cli::cli_abort(
+      "Empty user class{?es} {.val {which(out == 0L)}} in partition vector."
+    )
+  }
+  # Return:
+  as.integer(out)
+}
+
+
+# Convert a w-simplex (char-weighted) to per-class rate.
+#   class_rate[c] = w[c] * nChar / nChar_c
+# Inverse: w[c] = class_rate[c] * nChar_c / nChar.
+# The mean-1 constraint sum(nChar_c * class_rate[c]) / nChar = 1 (§5.1) is
+# satisfied iff w is on the unit simplex (sum(w) = 1).
+.PartitionWToClassRate <- function(w, nCharPerClass) {
+  nChar <- sum(nCharPerClass)
+  # Return:
+  as.numeric(w) * nChar / as.numeric(nCharPerClass)
+}
+
+.PartitionClassRateToW <- function(classRate, nCharPerClass) {
+  nChar <- sum(nCharPerClass)
+  # Return:
+  as.numeric(classRate) * as.numeric(nCharPerClass) / nChar
+}
+
+
+# Initial state for the partition-aware MCMC path.
+#
+# Wraps .InitState (which is unchanged — §7a contract) and adds per-class
+# fields when partitionSpec is non-trivial. Returned state contains:
+#
+#   - Everything in legacy state (tree, tree_length, rel_br_lengths,
+#     rate_loss, rate_log_sd, kPrime, optional p / kprime_alpha+beta /
+#     rate_neo / beta_scale, log_lik / log_prior / log_post).
+#   - state$nChar_c: integer vector length nClasses.
+#   - state$class_rate_log_sd: numeric vector. Length nClasses when "shape"
+#     is unlinked (each c starts at rate_log_sd = 0.5); length 1 when
+#     linked (== rate_log_sd).
+#   - state$class_w: numeric vector length nClasses on the unit simplex
+#     (Dirichlet domain). Initialised to nChar_c / nChar — the
+#     "weights proportional to character count" prior mean, which gives
+#     class_rate ≡ 1 in every class (matches the legacy rate = 1).
+#   - state$class_rate: numeric vector length nClasses derived from w
+#     (initially identically 1.0 by construction).
+#   - state$eta_neo: scalar, 1.0 by default. Only consumed when hasNeo.
+#
+# log_lik is recomputed via cpp_log_likelihood_partitioned (sibling) so
+# the initial likelihood reflects the partition-aware path even when
+# class_rate is identically 1 (the §7b numeric-equivalence regime).
+.InitStatePartitioned <- function(tree, mkd, model, partitionSpec) {
+  # Build base state via the existing legacy initializer (bit-identical
+  # to the §7a-locked path).
+  state <- .InitState(tree, mkd, model)
+
+  # Trivial spec: nothing to add. Caller can treat as legacy.
+  if (is.null(partitionSpec$partition) || partitionSpec$nClasses == 1L) {
+    state$nChar_c          <- as.integer(mkd$nChar)
+    state$class_w          <- 1.0
+    state$class_rate       <- 1.0
+    state$class_rate_log_sd <- state$rate_log_sd
+    state$eta_neo          <- 1.0
+    # Return:
+    return(state)
+  }
+
+  nClasses <- partitionSpec$nClasses
+  nChar    <- mkd$nChar
+  nCharPC  <- .PartitionNCharPerClass(partitionSpec$partition, nClasses)
+  state$nChar_c <- nCharPC
+
+  # class_w initialised so class_rate == 1.0 for every class:
+  #   class_rate[c] = w[c] * nChar / nChar_c == 1
+  #   => w[c] = nChar_c / nChar  (a valid simplex point: sum = 1)
+  state$class_w    <- nCharPC / nChar
+  state$class_rate <- .PartitionWToClassRate(state$class_w, nCharPC)
+
+  # class_rate_log_sd is per-class only when "shape" is unlinked. Each c
+  # starts at the legacy value 0.5 so the partition-aware path collapses
+  # to the legacy LL at initial state regardless of unlink-shape choice.
+  if ("shape" %in% partitionSpec$unlink) {
+    state$class_rate_log_sd <- rep(state$rate_log_sd, nClasses)
+  } else {
+    state$class_rate_log_sd <- state$rate_log_sd
+  }
+
+  # eta_neo is the per-§5.2 asymmetry parameter; only sampled when hasNeo.
+  # Layer 1 freezes it at 1.0 (the no-asymmetry geometric mean) because
+  # the Q-matrix-asymmetry semantics need clarification before the
+  # eta_neo != 1 path can be honoured by cpp_log_likelihood_partitioned.
+  # For Casali (hasNeo == FALSE) this is irrelevant; eta_neo is never
+  # consulted.
+  state$eta_neo <- 1.0
+
+  # Recompute log_lik via the partition-aware sibling so the initial value
+  # is consistent with the path the chain will subsequently take. At the
+  # trivial class_rate ≡ 1.0 starting point this MUST equal the legacy
+  # log_lik to ~1e-10 (§7b contract).
+  tree_st <- state$tree
+  parent  <- tree_st$edge[, 1]
+  child   <- tree_st$edge[, 2]
+  edgeLen <- tree_st$edge.length
+  hasNeo  <- any(mkd$type == "neomorphic")
+
+  dataPtr <- prepare_mcmc_data(
+    partitions_r              = mkd$partitions,
+    kObs_r                    = mkd$kObs,
+    charTypes_r               = mkd$type,
+    hasNeo                    = hasNeo,
+    nCat                      = model$nCat,
+    codingStr                 = model$coding,
+    relabelFlag               = isTRUE(model$relabel),
+    treeLengthShape           = model$treeLengthShape,
+    treeLengthRate            = model$treeLengthRate %||% 1,
+    rateLossMeanlog           = model$rateLossMeanlog,
+    rateLossSdlog             = model$rateLossSdlog,
+    rateLogSdShape            = model$rateLogSdShape,
+    rateLogSdRate             = model$rateLogSdRate,
+    rateNeoMeanlog            = model$rateNeoMeanlog,
+    rateNeoSdlog              = model$rateNeoSdlog,
+    kprimeHyperA              = model$kprimeHyperA,
+    kprimeHyperB              = model$kprimeHyperB,
+    kPriorLogseries           = identical(model$kPrimePrior, "logseries"),
+    kprimeLogseriesC          = model$kprimeLogseriesC,
+    kPriorBetaGeometric       = identical(model$kPrimePrior, "beta_geometric"),
+    qHeterogeneity            = isTRUE(model$qHeterogeneity),
+    nBetaCat                  = model$nBetaCat,
+    betaScaleShape            = model$betaScaleShape,
+    betaScaleRate             = model$betaScaleRate,
+    kPriorEmpiricalGeometric  = FALSE,
+    empLogBody                = numeric(0)
+  )
+
+  state$log_lik <- cpp_log_likelihood_partitioned_xptr(
+    dataPtr, parent, child, edgeLen, as.integer(state$kPrime),
+    rateLoss   = state$rate_loss,
+    rateLogSd  = state$class_rate_log_sd,
+    classRate  = state$class_rate,
+    etaNeo     = state$eta_neo,
+    betaScale  = state$beta_scale %||% 1.0
+  )
+  # log_prior and log_post are not yet updated for the per-class fields
+  # (their priors land in a follow-up commit with the moves).
+  state$log_post <- state$log_lik + state$log_prior
+
+  # Return:
+  state
 }
