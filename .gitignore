@@ -96,3 +96,10 @@ dev/pilots/*/analysis/*.png
 # M9 real-data pilot: tree samples pulled from Hamilton, reproducible
 dev/m9-pilot/syab*/
 
+# Profiling: VTune result dirs are huge and stale-dangerous; rebuild each round
+dev/profiling/result_*/
+dev/profiling/.vtune-lib-*/
+dev/profiling/*.vtune-lib/
+dev/profiling/drivers/*-profvis.html
+dev/profiling/drivers/*.Rprof
+
