@@ -181,6 +181,12 @@ at 128G, or skip syab07204 by_nt_9v from the 6-matrix comparison.
 
 - **SSH**: PowerShell ssh to `hamilton8.dur.ac.uk` works; Bash-tool ssh does NOT
   (different config). Always route Hamilton commands through PowerShell.
+- **PowerShell tool history**: The Claude Code PowerShell tool failed silently
+  (exit 1, no output) in all sessions prior to 2026-05-20 because pwsh was
+  installed only via the Windows Store (app execution alias — can't be spawned
+  from Electron). Fixed by installing the MSI via `choco install powershell-core`.
+  The MSI puts a real exe at `C:\Program Files\PowerShell\7\pwsh.exe`. Hamilton
+  SSH was working via the `hamilton-hpc` skill, not the PowerShell tool directly.
 - **PowerShell quoting**: use single-quoted strings for ssh commands containing
   `$` to avoid PowerShell variable interpolation. PowerShell 5.1 lacks `&&` /
   `||`; chain with `;` only when failure is acceptable.
