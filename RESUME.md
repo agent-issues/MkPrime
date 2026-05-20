@@ -1,4 +1,4 @@
-# mkp — hand-off 2026-05-20 (prior-vs-fixed-k report drafted; mk_tlshrink finishing)
+# mkp — hand-off 2026-05-20 (prior-vs-fixed-k report patched to n=260 mk_tlshrink)
 
 ## What this repo is
 
@@ -13,25 +13,33 @@ well-corroborated reference trees.
 
 ## Where we left off
 
-This session:
+This session (continuation):
 
-- **Pulled mk_tlshrink interim results** (Hamilton job 17234909, still running at
-  hand-off time). After two rounds of partial summariser submission (jobs 17237306,
-  17243611), 55 of 260 tasks have RDS summaries. Headline:
+- **Completed mk_tlshrink array** (Hamilton job 17234909, all 260 tasks).
+  Submitted summariser job 17245451 for the 205 outstanding indices; rebuilt
+  the digest CSV at n=260; refreshed `mkprime/report-data/cid_thirteen_arm_digest.csv`;
+  re-rendered `mk-prime-prior-vs-fixed-k.qmd` (mkprime commit dc65348, pushed).
+  Patched the qmd to remove the "partial" TODO and update fig caption /
+  panel title to "250 of 260" (was "every"). Headline at n=260:
 
-  | Arm | Mean CID (n = 55 paired) | Mean TL |
+  | Arm | Mean CID (n = 260 paired) | Mean TL |
   |---|---:|---:|
-  | mk_k40       | 0.2207 | 1.19 |
-  | mk_tlshrink  | 0.2478 | 0.78 |
-  | mk           | 0.2516 | 1.39 |
+  | mk_k40       | 0.2385 | 1.19 |
+  | mk           | 0.2754 | 1.39 |
+  | mk_tlshrink  | 0.2723 | 0.78 |
 
-  mk_tlshrink achieves mean TL = 0.78 — *shorter* than mk_k40's 1.19, against a
-  simulation truth of 1.40 — but loses to mk_k40 on 54 of 55 paired tasks
-  (binomial sign test, p = 3.11 × 10⁻¹⁵). It modestly beats kObs-Mk
-  (margin 0.0038 CID). **TL shrinkage alone is insufficient to replicate the
-  mk_k40 advantage.** The JC(k=40) saturation cap is doing something the
-  explicit Gamma prior on T cannot — adaptively reshaping the topology
-  posterior, not just the branch-length scale.
+  mk_tlshrink loses to mk_k40 on 250/260 paired tasks (binomial sign test,
+  p = 3.67 × 10⁻⁶¹), and beats kObs-Mk in 165/260 (p = 1.68 × 10⁻⁵) with a
+  margin of 0.0031 CID — well below the 0.0369 mk vs mk_k40 gap. Mean TL =
+  0.775 (stable vs the 0.78 interim value). The n=55 first batch was
+  favourable to mk_tlshrink (then ranked fifth on the leaderboard); at full
+  n=260 it sits second-worst, just above mk. **Conclusion unchanged**: TL
+  shrinkage alone is insufficient to replicate the mk_k40 advantage; the
+  saturation effect on the topology likelihood is the missing piece.
+
+Previous session:
+
+- **Pulled mk_tlshrink interim results** (n=55/260; first batch favourable).
 
 - **Drafted the co-author write-up** at
   [mkprime/mk-prime-prior-vs-fixed-k.qmd](../mkprime/mk-prime-prior-vs-fixed-k.qmd)
@@ -53,10 +61,7 @@ This session:
 - **db4c348 (pre-session)** — TreeESS exported (Option A: drop dot prefix).
   This was committed before the conversation compact and is in the package now.
 
-## 13-arm CID results (preliminary; full mk_tlshrink completion expected ~22:00 BST today)
-
-Same as 12-arm table from the previous hand-off, now with mk_tlshrink (n = 55
-of 260) slotted in:
+## 13-arm CID results (full n=260 mk_tlshrink)
 
 | Arm | n | Mean CID | Family |
 |---|---:|---:|---|
@@ -64,7 +69,6 @@ of 260) slotted in:
 | mk_k24 | 260 | 0.2398 | fixed-k |
 | mk_k15 | 260 | 0.2418 | fixed-k |
 | mk_k9 | 260 | 0.2451 | fixed-k |
-| **mk_tlshrink** | 55 | **0.2478** | Gamma(20, 20/0.7) on TL, k = kObs |
 | mk_kp2 | 260 | 0.2535 | fixed-k |
 | mkp_geo | 26 | 0.2573 | Mk′ geometric |
 | mk_kp1 | 260 | 0.2595 | fixed-k |
@@ -72,27 +76,26 @@ of 260) slotted in:
 | mk_ktrue | 260 | 0.2624 | oracle (k=k_true per char) |
 | mkp_highk | 260 | 0.2639 | Mk′ geom Beta(1,20) |
 | mkp_eg | 260 | 0.2677 | Mk′ empirical_geom |
+| **mk_tlshrink** | 260 | **0.2723** | Gamma(20, 20/0.7) on TL, k = kObs |
 | mk | 260 | 0.2754 | kObs |
 
-mk_tlshrink ranks fifth — between mk_k9 and mk_kp2, with a much *shorter*
-posterior tree than any arm. Direction is decisive even at n = 55; the patch
-to n = 260 may shift the precise mean by a fraction.
+At n=260, mk_tlshrink sits second-worst — modestly above the kObs baseline
+mk (Δ = 0.0031, p = 1.7e-5) but well below every fixed-k arm and all Mk′
+variants except mkp_eg. Its mean posterior TL (0.775) is the shortest of any
+arm — about half of truth (1.40) and well below mk_k40's 1.19 — yet that
+shrinkage buys almost nothing on CID. Saturation does the work.
 
 ## Pending jobs
 
 | Type | ID | Status | ETA | On completion |
 |------|----|--------|-----|---------------|
-| HPC | 17234909 | mk_tlshrink array, 205/260 RUNNING, 55 finished | ~1 h 40 min (8 h walltime) | `sbatch --array=<remaining indices> summarize_array.slurm mk_tlshrink`; refresh CSV digest via `Rscript /tmp/build_digest.R` (saved as `/nobackup/pjjg18/mkp-study/cid_thirteen_arm_digest.csv`); scp to `../mkprime/report-data/`; re-render qmd. Re-poll Spearman ρ(TL, CID) including 13th arm in `redteam_tl_hypothesis.R`. |
-| HPC | 17217093-17217107 + 17217660-17217662 | 14 M9 long-form jobs, RUNNING | ~21 h (~04:30 BST 2026-05-21) | scp `.trees` from `/nobackup/pjjg18/m9-long/<matrix>/`; run `dev/m9-pilot/process_pilot.R <pid>` per matrix; build 6-matrix × 3-model CID table. Compare against 07203 (asher). |
+| HPC | 17217093-17217107 + 17217660-17217662 | 14 M9 long-form jobs, RUNNING (2d 5h of 3d walltime) | ~20 h (~04:30 BST 2026-05-21) | scp `.trees` from `/nobackup/pjjg18/m9-long/<matrix>/`; run `dev/m9-pilot/process_pilot.R <pid>` per matrix; build 6-matrix × 3-model CID table. Compare against 07203 (asher). |
 
 ## Open items / next steps
 
-1. **Patch mk-prime-prior-vs-fixed-k.qmd when mk_tlshrink finishes.** The
-   inline R chunk in §3.2 reads `n_paired` from the digest CSV at render
-   time, so the fix is: (a) submit a final summariser for the remaining ~200
-   task indices; (b) rebuild the digest CSV on Hamilton; (c) scp to
-   `mkprime/report-data/cid_thirteen_arm_digest.csv`; (d) `quarto render`.
-   The TODO comment at line 227 marks the patch site.
+1. ~~**Patch mk-prime-prior-vs-fixed-k.qmd when mk_tlshrink finishes.**~~
+   **Done 2026-05-20** (mkprime commit dc65348). Digest rebuilt at n=260,
+   scp'd, qmd re-rendered with updated narrative and figure captions.
 
 2. **Resolve a Felsenstein1981 vs 1978 citation choice** in the qmd — §3.3 cites
    `[@Felsenstein1981]` for the long-branch-attraction context; the canonical
@@ -222,21 +225,18 @@ to n = 260 may shift the precise mean by a fraction.
   2026-05-19. TL goes DOWN monotonically with k (mk_k40 TL=1.19, mk TL=1.39),
   not up. Spearman ρ(ΔTL, ΔCID) = −0.37, p=1.9e-9.
 - **Pure TL-shrinkage explanation of mk_k40 advantage**: rejected 2026-05-20.
-  mk_tlshrink with Gamma(20, 20/0.7) prior on T achieves TL=0.78 (shorter
-  than mk_k40's 1.19) but CID=0.248 vs mk_k40's 0.221 (n=55 paired, p=3e-15).
-  TL shrinkage is necessary but not sufficient; the saturation effect on the
-  topology likelihood is the missing piece.
+  mk_tlshrink with Gamma(20, 20/0.7) prior on T achieves TL=0.775 (shorter
+  than mk_k40's 1.19) but CID=0.2723 vs mk_k40's 0.2385 (n=260 paired,
+  10/260 wins for tlshrink, p=3.67e-61). TL shrinkage is necessary but not
+  sufficient; the saturation effect on the topology likelihood is the
+  missing piece.
 
 ## Suggested first action
 
-Check whether mk_tlshrink has finished and the M9 jobs are still alive:
-
-```powershell
-ssh pjjg18@hamilton8.dur.ac.uk 'squeue --me -h -o "%i %T %M %l %j" | head -50; echo "---"; ls /nobackup/pjjg18/mkp-study/summary/mk_tlshrink_*.rds | wc -l'
-```
-
-If `mk_tlshrink_*.rds` count is 260, ssh in to rebuild the digest with the
-saved script, scp it to `../mkprime/report-data/`, then re-render the qmd.
-If it is still partial, submit a partial summariser for newly-finished
-indices via `sbatch --array=<list> summarize_array.slurm mk_tlshrink`
-(see in-session example for syntax).
+mk_tlshrink is done and the report is patched. Next mission-critical
+decision: pick up one of items #2 (Felsenstein citation), #4 (diagnose
+spurious R parser error in mk_ktrue/mk_tlshrink exit), #7 (paper re-frame
+around regularisation-via-saturation), or wait ~20h to collect the M9
+long-form jobs (#5). Item #8 (commit canonical run_one.R + array slurm
+scripts in `data-raw/hamilton/`) is the cheapest cleanup if working
+between bigger pieces.
