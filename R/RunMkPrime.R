@@ -149,6 +149,14 @@ RunMkPrime <- function(data, tree = NULL,
   partitionSpec <- .ValidatePartitionArgs(partition, unlink, mkd)
   .RequirePartitionImplemented(partitionSpec)
 
+  # When a user partition is supplied, rebuild mkd$partitions with classIdx
+  # populated for each PartInfo. The C++ McmcData uses classIdx to map each
+  # partition to its user class; without this, nClasses stays 1 regardless.
+  # When partition = NULL, mkd$partitions is left unchanged (§7a contract).
+  if (!is.null(partitionSpec$partition)) {
+    mkd$partitions <- .BuildPartitions(mkd, partition = partitionSpec$partition)
+  }
+
   if (is.null(tree)) {
     startInput <- if (inherits(data, "phyDat")) data else mkd$phyDat
     if (requireNamespace("TreeSearch", quietly = TRUE)) {
@@ -250,7 +258,8 @@ RunMkPrime <- function(data, tree = NULL,
   runs <- vector("list", nRuns)
   for (run in seq_len(nRuns)) {
     startTree <- if (run == 1L) tree else .PerturbStart(tree)
-    runs[[run]] <- .InitRun(startTree, mkd, model, mcmc, moves)
+    runs[[run]] <- .InitRun(startTree, mkd, model, mcmc, moves,
+                            partitionSpec = partitionSpec)
   }
 
   paramNames  <- .ParamNames(mkd, nEdge,
@@ -608,15 +617,27 @@ RunMkPrime <- function(data, tree = NULL,
 #' XPtrs are built inside [.RunMkPrimeSingleRun()] so the state can be sent
 #' to `callr` workers without serialisation errors.
 #' @keywords internal
-.InitRun <- function(tree, mkd, model, mcmc, moves) {
+.InitRun <- function(tree, mkd, model, mcmc, moves,
+                     partitionSpec = NULL) {
   nChains <- mcmc$nChains
   betas <- .BuildTemperatureLadder(nChains, mcmc$heat)
+
+  # Determine whether to use the partition-aware state initializer. The
+  # partitioned path is active when `partition` is non-NULL (even trivial
+  # nClasses == 1): this keeps legacy chains untouched (§7a contract) while
+  # routing partition = rep(1L, nChar) through the new C++ path (§7b).
+  usePartitioned <- !is.null(partitionSpec) &&
+    !is.null(partitionSpec$partition)
 
   # Build per-chain state as R lists (checkpoint-compatible format).
   chains <- vector("list", nChains)
   for (ch in seq_len(nChains)) {
-    s <- .InitState(tree, mkd, model)
-    chains[[ch]] <- list(
+    if (usePartitioned) {
+      s <- .InitStatePartitioned(tree, mkd, model, partitionSpec)
+    } else {
+      s <- .InitState(tree, mkd, model)
+    }
+    ch_list <- list(
       edge           = s$tree$edge,
       rel_br_lengths = s$rel_br_lengths,
       tree_length    = s$tree_length,
@@ -629,6 +650,15 @@ RunMkPrime <- function(data, tree = NULL,
       log_prior      = s$log_prior,
       log_post       = s$log_post
     )
+    # Partition-API extra fields (absent for legacy chains — §7a contract).
+    if (usePartitioned) {
+      ch_list$class_rate_log_sd <- as.numeric(s$class_rate_log_sd)
+      ch_list$class_w           <- as.numeric(s$class_w)
+      ch_list$class_rate        <- as.numeric(s$class_rate)
+      ch_list$nChar_c           <- as.integer(s$nChar_c)
+      ch_list$eta_neo           <- s$eta_neo
+    }
+    chains[[ch]] <- ch_list
   }
 
   moveNames <- vapply(moves, `[[`, character(1), "name")
@@ -703,6 +733,10 @@ RunMkPrime <- function(data, tree = NULL,
   r$chainStates <- vector("list", nChains)
   for (ch in seq_len(nChains)) {
     ch_r <- r$chains[[ch]]
+    # Partition-API (Layer 1): pass per-class vectors when present in the
+    # serialized chain list (set by .InitRun when partitionSpec is non-NULL).
+    # Legacy chains (partition = NULL) lack these fields; the default empty
+    # vectors in init_mcmc_state leave usePartitioned = FALSE (§7a contract).
     r$chainStates[[ch]] <- init_mcmc_state(
       ch_r$edge[, 1L], ch_r$edge[, 2L],
       ch_r$rel_br_lengths, ch_r$tree_length,
@@ -710,7 +744,14 @@ RunMkPrime <- function(data, tree = NULL,
       ch_r$rate_neo %||% 1.0, ch_r$p %||% 0.5,
       as.integer(ch_r$kPrime),
       ch_r$log_lik, ch_r$log_prior,
-      ch_r$beta_scale %||% 1.0
+      ch_r$beta_scale %||% 1.0,
+      ch_r$kprime_alpha %||% 1.0,
+      ch_r$kprime_beta %||% 1.0,
+      classRateLogSd = as.numeric(ch_r$class_rate_log_sd %||% numeric(0)),
+      classW         = as.numeric(ch_r$class_w %||% numeric(0)),
+      classRate      = as.numeric(ch_r$class_rate %||% numeric(0)),
+      nCharPerClass  = as.integer(ch_r$nChar_c %||% integer(0)),
+      etaNeo         = ch_r$eta_neo %||% 1.0
     )
   }
   for (ch in seq_len(nChains)) {

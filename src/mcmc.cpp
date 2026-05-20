@@ -180,6 +180,22 @@ struct McmcState {
   int diagCachePopCount = 0;
   double diagMaxDiff = 0.0;
 
+  // Partition-API (Layer 1, plan v4 §4.2).
+  // When usePartitioned is false (legacy path), these are ignored and the
+  // legacy scalar fields (rateLogSd, rateNeo) govern the MCMC loop exactly
+  // as before. When usePartitioned is true, cpp_log_likelihood_partitioned
+  // is called with the per-class vectors below.
+  //
+  // Invariant: classRateLogSd[0] == rateLogSd and etaNeo == 1.0 (frozen in
+  // Layer 1) so that rateNeo == 1.0. They are kept in lockstep so the partial-
+  // CL paths (which take scalars) can still use state->rateLogSd safely.
+  bool usePartitioned = false;
+  NumericVector classRateLogSd;   // length 1 (linked) or nClasses (unlinked shape)
+  NumericVector classW;           // length nClasses (simplex; 1 when trivial)
+  NumericVector classRate;        // length 1 (linked) or nClasses; derived from w
+  IntegerVector nCharPerClass;    // length nClasses
+  double etaNeo = 1.0;           // frozen at 1.0 in Layer 1
+
 };
 
 
@@ -348,7 +364,12 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
                      double logLik, double logPrior,
                      double betaScale = 1.0,
                      double kprimeAlpha = 1.0,
-                     double kprimeBeta = 1.0) {
+                     double kprimeBeta = 1.0,
+                     NumericVector classRateLogSd = NumericVector(0),
+                     NumericVector classW         = NumericVector(0),
+                     NumericVector classRate      = NumericVector(0),
+                     IntegerVector nCharPerClass  = IntegerVector(0),
+                     double etaNeo = 1.0) {
   McmcState* s = new McmcState();
   s->parent       = clone(parent);
   s->child        = clone(child);
@@ -365,6 +386,22 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
   s->logPrior     = logPrior;
   s->betaScale    = betaScale;
   s->brSnapshot   = NumericVector(relBrLengths.size());
+  s->etaNeo       = etaNeo;
+  // Partition-API (Layer 1): when per-class vectors are supplied, activate
+  // the partitioned likelihood path. Legacy callers pass no per-class args;
+  // their behaviour is unchanged (usePartitioned stays false).
+  if (classRate.size() > 0) {
+    s->usePartitioned  = true;
+    s->classRateLogSd  = clone(classRateLogSd);
+    s->classW          = clone(classW);
+    s->classRate       = clone(classRate);
+    s->nCharPerClass   = clone(nCharPerClass);
+    s->etaNeo          = etaNeo;
+    // Invariant: keep legacy scalar in lockstep with classRateLogSd[0].
+    if (classRateLogSd.size() > 0)
+      s->rateLogSd = classRateLogSd[0];
+    // Layer 1 freezes etaNeo at 1.0 → rateNeo stays 1.0 (no change needed).
+  }
   return Rcpp::XPtr<McmcState>(s, true);
 }
 
@@ -631,6 +668,14 @@ static double compute_full_loglik_at(
     const IntegerVector& parent,
     const IntegerVector& child,
     const NumericVector& edgeLen) {
+  if (state.usePartitioned) {
+    return cpp_log_likelihood_partitioned(
+      data, parent, child, edgeLen,
+      state.kPrime, state.rateLoss,
+      state.classRateLogSd, state.classRate,
+      state.etaNeo, state.betaScale,
+      state.clWs.ready() ? &state.clWs : nullptr);
+  }
   return cpp_log_likelihood(
     data, parent, child, edgeLen,
     state.kPrime, state.rateLoss, state.rateLogSd, state.rateNeo,
@@ -2862,10 +2907,16 @@ static double eval_slice_target(McmcData* data, McmcState* state,
       logLik += (newPart - oldPart);
     }
   } else {
-    logLik = cpp_log_likelihood(
-      *data, state->parent, state->child, edgeLen,
-      state->kPrime, state->rateLoss, state->rateLogSd,
-      state->rateNeo, state->betaScale, wsPtr);
+    logLik = state->usePartitioned
+      ? cpp_log_likelihood_partitioned(
+          *data, state->parent, state->child, edgeLen,
+          state->kPrime, state->rateLoss,
+          state->classRateLogSd, state->classRate,
+          state->etaNeo, state->betaScale, wsPtr)
+      : cpp_log_likelihood(
+          *data, state->parent, state->child, edgeLen,
+          state->kPrime, state->rateLoss, state->rateLogSd,
+          state->rateNeo, state->betaScale, wsPtr);
   }
   if (!R_FINITE(logLik)) return R_NegInf;
   return beta * logLik + logPrior;
@@ -2942,10 +2993,16 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
         for (size_t pi = 0; pi < state->partLogLik.size(); ++pi)
           state->logLik += state->partLogLik[pi];
       } else {
-        state->logLik = cpp_log_likelihood(
-          *data, state->parent, state->child, edgeLen,
-          state->kPrime, state->rateLoss, state->rateLogSd,
-          state->rateNeo, state->betaScale, wsPtr);
+        state->logLik = state->usePartitioned
+          ? cpp_log_likelihood_partitioned(
+              *data, state->parent, state->child, edgeLen,
+              state->kPrime, state->rateLoss,
+              state->classRateLogSd, state->classRate,
+              state->etaNeo, state->betaScale, wsPtr)
+          : cpp_log_likelihood(
+              *data, state->parent, state->child, edgeLen,
+              state->kPrime, state->rateLoss, state->rateLogSd,
+              state->rateNeo, state->betaScale, wsPtr);
         // Invalidate partition cache (full recompute was done)
         state->partLogLik.clear();
       }
@@ -4328,10 +4385,17 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                                     state->rateLogSd, state->betaScale, dirty);
     usedPartialCL = true;
     // DIAG: compare NNI partial-CL with full eval
-    { double fullLL = cpp_log_likelihood(*data, evalParent, evalChild,
-        propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
-        state->rateNeo, state->betaScale,
-        state->clWs.ready() ? &state->clWs : nullptr);
+    { ClWorkspace* nniWs = state->clWs.ready() ? &state->clWs : nullptr;
+      double fullLL = state->usePartitioned
+        ? cpp_log_likelihood_partitioned(
+            *data, evalParent, evalChild, propEdgeLen,
+            state->kPrime, state->rateLoss,
+            state->classRateLogSd, state->classRate,
+            state->etaNeo, state->betaScale, nniWs)
+        : cpp_log_likelihood(
+            *data, evalParent, evalChild, propEdgeLen,
+            state->kPrime, state->rateLoss, state->rateLogSd,
+            state->rateNeo, state->betaScale, nniWs);
       double diff = std::abs(newLogLik - fullLL);
       state->diagNniPartialCount++;
       if (diff > state->diagMaxDiff) state->diagMaxDiff = diff;
@@ -4359,10 +4423,17 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                                     state->rateLogSd, state->betaScale, dirty);
     usedPartialCL = true;
     // DIAG: compare BS partial-CL with full eval
-    { double fullLL = cpp_log_likelihood(*data, evalParent, evalChild,
-        propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
-        state->rateNeo, state->betaScale,
-        state->clWs.ready() ? &state->clWs : nullptr);
+    { ClWorkspace* bsWs = state->clWs.ready() ? &state->clWs : nullptr;
+      double fullLL = state->usePartitioned
+        ? cpp_log_likelihood_partitioned(
+            *data, evalParent, evalChild, propEdgeLen,
+            state->kPrime, state->rateLoss,
+            state->classRateLogSd, state->classRate,
+            state->etaNeo, state->betaScale, bsWs)
+        : cpp_log_likelihood(
+            *data, evalParent, evalChild, propEdgeLen,
+            state->kPrime, state->rateLoss, state->rateLogSd,
+            state->rateNeo, state->betaScale, bsWs);
       double diff = std::abs(newLogLik - fullLL);
       state->diagBsPartialCount++;
       if (diff > state->diagMaxDiff) state->diagMaxDiff = diff;
@@ -4386,10 +4457,18 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     int nInternal = nEdge + 1 - data->nTip;
     if ((int)dirty.size() > (int)(0.8 * (nInternal + data->nTip))) {
       state->diagDirFullbackCount++;
-      newLogLik = cpp_log_likelihood(*data, evalParent, evalChild,
-        propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
-        state->rateNeo, state->betaScale,
-        state->clWs.ready() ? &state->clWs : nullptr);
+      { ClWorkspace* dWs = state->clWs.ready() ? &state->clWs : nullptr;
+        newLogLik = state->usePartitioned
+          ? cpp_log_likelihood_partitioned(
+              *data, evalParent, evalChild, propEdgeLen,
+              state->kPrime, state->rateLoss,
+              state->classRateLogSd, state->classRate,
+              state->etaNeo, state->betaScale, dWs)
+          : cpp_log_likelihood(
+              *data, evalParent, evalChild, propEdgeLen,
+              state->kPrime, state->rateLoss, state->rateLogSd,
+              state->rateNeo, state->betaScale, dWs);
+      }
     } else {
       newLogLik = partial_eval_dirty(state->nodeCL, *data,
                                       evalParent, evalChild, propEdgeLen,
@@ -4398,10 +4477,17 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       usedPartialCL = true;
 
       // DIAG: compare Dirichlet partial-CL with full eval
-      { double fullLL = cpp_log_likelihood(*data, evalParent, evalChild,
-          propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
-          state->rateNeo, state->betaScale,
-          state->clWs.ready() ? &state->clWs : nullptr);
+      { ClWorkspace* dWs2 = state->clWs.ready() ? &state->clWs : nullptr;
+        double fullLL = state->usePartitioned
+          ? cpp_log_likelihood_partitioned(
+              *data, evalParent, evalChild, propEdgeLen,
+              state->kPrime, state->rateLoss,
+              state->classRateLogSd, state->classRate,
+              state->etaNeo, state->betaScale, dWs2)
+          : cpp_log_likelihood(
+              *data, evalParent, evalChild, propEdgeLen,
+              state->kPrime, state->rateLoss, state->rateLogSd,
+              state->rateNeo, state->betaScale, dWs2);
         double diff = std::abs(newLogLik - fullLL);
         state->diagDirPartialCount++;
         if (diff > state->diagMaxDiff) state->diagMaxDiff = diff;
@@ -4444,10 +4530,18 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     if ((int)dirty.size() > (int)(0.8 * (nInternal + data->nTip))) {
       // Dirty set too large — fall back to full eval
       // (TreeNav already updated; will be reversed on rejection)
-      newLogLik = cpp_log_likelihood(*data, sprParent, sprChild,
-        propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
-        state->rateNeo, state->betaScale,
-        state->clWs.ready() ? &state->clWs : nullptr);
+      { ClWorkspace* sWs = state->clWs.ready() ? &state->clWs : nullptr;
+        newLogLik = state->usePartitioned
+          ? cpp_log_likelihood_partitioned(
+              *data, sprParent, sprChild, propEdgeLen,
+              state->kPrime, state->rateLoss,
+              state->classRateLogSd, state->classRate,
+              state->etaNeo, state->betaScale, sWs)
+          : cpp_log_likelihood(
+              *data, sprParent, sprChild, propEdgeLen,
+              state->kPrime, state->rateLoss, state->rateLogSd,
+              state->rateNeo, state->betaScale, sWs);
+      }
     } else {
       // 4. Partial CL evaluation
       newLogLik = partial_eval_dirty(state->nodeCL, *data,
@@ -4462,10 +4556,18 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     NumericVector propEdgeLen(nEdge);
     for (int i = 0; i < nEdge; ++i)
       propEdgeLen[i] = state->treeLength * evalRelBr[i];
-    newLogLik = cpp_log_likelihood(*data, evalParent, evalChild,
-      propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
-      state->rateNeo, state->betaScale,
-      state->clWs.ready() ? &state->clWs : nullptr);
+    { ClWorkspace* pWs = state->clWs.ready() ? &state->clWs : nullptr;
+      newLogLik = state->usePartitioned
+        ? cpp_log_likelihood_partitioned(
+            *data, evalParent, evalChild, propEdgeLen,
+            state->kPrime, state->rateLoss,
+            state->classRateLogSd, state->classRate,
+            state->etaNeo, state->betaScale, pWs)
+        : cpp_log_likelihood(
+            *data, evalParent, evalChild, propEdgeLen,
+            state->kPrime, state->rateLoss, state->rateLogSd,
+            state->rateNeo, state->betaScale, pWs);
+    }
   } else {
     int nParts = (int)data->parts.size();
     int nEdge  = evalRelBr.size();

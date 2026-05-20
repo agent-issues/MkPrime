@@ -140,18 +140,25 @@
 
 
 # Layer-1 implementation gate. Called from RunMkPrime once validation has
-# produced a (possibly non-trivial) partition spec. Until the C++ MCMC loop
-# integration lands in a follow-up commit, this aborts cleanly so the §7a
-# bit-identity guarantee for partition = NULL stays under test.
+# produced a (possibly non-trivial) partition spec. This commit opens the
+# gate for the trivial spec (nClasses == 1, unlink = character(0)) which
+# routes through cpp_log_likelihood_partitioned with length-1 per-class
+# vectors — the §7b numeric-equivalence regime. Real partitioning (nClasses
+# > 1 or non-empty unlink) stays closed until the per-class moves land.
 .RequirePartitionImplemented <- function(spec) {
-  if (is.null(spec$partition) && length(spec$unlink) == 0L) {
+  # Trivial spec: partition = NULL (legacy path) OR the nClasses == 1 /
+  # unlink = character(0) case that the MCMC loop now handles via the
+  # partitioned likelihood (§7b contract).
+  if (is.null(spec$partition) ||
+      (spec$nClasses == 1L && length(spec$unlink) == 0L)) {
     # Return:
     return(invisible(NULL))
   }
   cli::cli_abort(c(
-    "Partition-aware code path is not yet implemented at this commit.",
-    "i" = "Layer 1 of feature/partition-api is in progress; pass \\
-          {.code partition = NULL} for now."
+    "Partition-aware code path is not yet fully implemented.",
+    "i" = "Layer 1 currently supports {.code partition = rep(1L, nChar)} \\
+          with {.code unlink = character(0)} (trivial spec, §7b regime). \\
+          Multi-class partitions with per-class moves land in a follow-up commit."
   ))
 }
 

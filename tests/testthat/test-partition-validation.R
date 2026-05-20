@@ -199,15 +199,15 @@ test_that(".RequirePartitionImplemented is a no-op for the trivial spec", {
 test_that(".RequirePartitionImplemented errors with helpful message when partition is supplied", {
   spec <- list(partition = c(1L, 2L), unlink = character(0), nClasses = 2L)
   expect_error(.RequirePartitionImplemented(spec),
-               regexp = "not yet implemented",
+               regexp = "not yet fully implemented",
                fixed = FALSE)
 })
 
-test_that(".RequirePartitionImplemented errors when unlink is supplied", {
-  # This shouldn't happen in practice (validator coerces unlink to character(0)
-  # when partition = NULL or nClasses == 1), but guard the gate explicitly.
+test_that(".RequirePartitionImplemented is a no-op when partition = NULL (even with spurious unlink)", {
+  # In practice the validator coerces unlink to character(0) before calling
+  # this gate when partition = NULL, so unlink = "shape" here is contrived.
+  # The gate now allows any partition = NULL spec silently (§7a contract:
+  # the legacy path is always open regardless of unlink content).
   spec <- list(partition = NULL, unlink = "shape", nClasses = 1L)
-  expect_error(.RequirePartitionImplemented(spec),
-               regexp = "not yet implemented",
-               fixed = FALSE)
+  expect_silent(.RequirePartitionImplemented(spec))
 })

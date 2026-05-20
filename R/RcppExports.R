@@ -73,8 +73,8 @@ fitch_score_r <- function(parent, child, tipStates, nTip, kStates) {
     .Call(`_MkPrime_fitch_score_r`, parent, child, tipStates, nTip, kStates)
 }
 
-init_mcmc_state <- function(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale = 1.0, kprimeAlpha = 1.0, kprimeBeta = 1.0) {
-    .Call(`_MkPrime_init_mcmc_state`, parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta)
+init_mcmc_state <- function(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale = 1.0, kprimeAlpha = 1.0, kprimeBeta = 1.0, classRateLogSd = numeric(0), classW = numeric(0), classRate = numeric(0), nCharPerClass = integer(0), etaNeo = 1.0) {
+    .Call(`_MkPrime_init_mcmc_state`, parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta, classRateLogSd, classW, classRate, nCharPerClass, etaNeo)
 }
 
 fill_partition_cache <- function(dataPtr, statePtr) {
