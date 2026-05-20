@@ -23,15 +23,50 @@ stem onto a long edge (median 2.1-2.6 vs truth 0.15) while leaving the
 other compressed. Looks like a rooting/edge-mass artefact; blind keeps
 both eco stems near truth. Not the "regulariser" story we want.
 
-## Three live paper options
+## 🔬 v7-induce discriminator: structural limit of phi model (commit `b256e3e`)
 
-(a) **Strengthen eco confound at realistic TL** — push phi or stemBrEco
-    further. Risk: pushes back into saturation.
-(b) **Extend to N=8 reps** — put CIs on small CID/branch-length effect
-    sizes. Probably confirms null.
-(c) **Pivot paper to prior-anchoring as the contribution** — "v3 was a
-    cautionary tale; the parsimony-anchored expSteps fix is the
-    contribution." Honest 3-rep evidence favours this.
+User proposed three levers: reduce nChar, push eco signal, drift TL up
+slightly. v7 discriminator (`dev/sim-design/v7-discriminate.R`) tested 4
+variants spanning these levers at TL ≤ 2:
+
+| Variant | phi | pi0 | TL | Parsimony delta (AB − truth) | Verdict |
+|---|---|---|---|---:|---|
+| v7a (proposed) | 10 | 0.30 | 1.53 | **+1.88** | truth still wins |
+| v7b (stronger) | 12 | 0.20 | 1.62 | +0.88 | truth still wins |
+| v7c (push TL) | 12 | 0.20 | 1.80 | +2.25 | truth still wins |
+| v7d (aggressive) | 15 | 0.15 | 1.69 | −0.25 | coin flip |
+
+Target was AB ≤ −5 (blind should commit to false clade). **None achieved
+it.** Pushing further (v7d, phi=15) flattens MP-best to 50/50 — past the
+optimum, eco-clades randomise rather than converge.
+
+**Structural reason:** `phi` is a SYMMETRIC rate multiplier
+(`mult <- c(1, phi, 1/phi)` indexed by z+1 in `sim3-simulate.R`). It makes
+eco-clades NOISY but not DIRECTIONALLY convergent. At realistic TL with
+high phi, both eco stems reach equilibrium and the within-clade
+homoplasy is resolved cheaply on the truth tree.
+
+**The eco-rate-multiplier model cannot produce A↔B parallel synapomorphies
+at realistic TL.** To break blind at TL ≤ 2 would require directional eco
+bias (eco-1 prefers state X, eco-0 prefers state Y), not rate inflation.
+
+## Paper options (refined)
+
+(a) ~~**Strengthen eco confound at realistic TL**~~ — **STRUCTURALLY
+    IMPOSSIBLE** with current phi-as-rate model. Would need to change
+    the model itself to directional bias.
+(b) **Extend to N=8 reps at v6** — confirms null with CIs. Modest cost,
+    no narrative change.
+(c) **Pivot paper to prior-anchoring + multirep-v3 as cautionary tale**
+    — frame the contribution as "we found that the default Mk' TL prior
+    drives chains into saturation; the parsimony-anchored fix recovers
+    realistic posteriors; aware exists and behaves sensibly under both
+    regimes". Honest 3-rep evidence + structural argument favours this.
+(d) **Add directional eco-bias model** (new option) — code change to
+    `.SimulateMkPrimeEcology` and `MkPrimeModel` to support a per-state
+    bias on eco branches. Would enable directional convergence at
+    realistic TL but is a significant model extension. Could be the
+    headline contribution if the user wants to commit.
 
 ## Active jobs
 
