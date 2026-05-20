@@ -13,6 +13,8 @@ RunMkPrime(
   mcmc = NULL,
   fixTopology = FALSE,
   overwrite = FALSE,
+  partition = NULL,
+  unlink = character(0),
   ...
 )
 }
@@ -39,6 +41,23 @@ behaviour). Default \code{FALSE} enables NNI and SPR topology proposals.}
 \code{mcmc$checkpointFile} points to an existing file, the run is
 automatically resumed from that checkpoint.
 Set to \code{TRUE} to discard the existing checkpoint and start fresh.}
+
+\item{partition}{Optional integer vector of length \code{mkd$nChar} (after
+invariant-character drop) assigning each character to a user class.
+Values must form a contiguous range \code{1:nClasses}. \code{NULL} (the default)
+routes through the unchanged legacy code path; see the §7a bit-identity
+contract in \code{NOTES/partition-api-plan.md}.}
+
+\item{unlink}{Character vector of model-component tokens to unlink
+across classes. Layer 1 honours \code{"shape"} (per-class \code{rate_log_sd}) and
+\code{"ratemultiplier"} (char-weighted mean-1 Dirichlet on class rates).
+Layer 2 will add \code{"brlens"} (per-class branch lengths under a shared
+topology). Tokens match case-insensitively with partial-prefix
+resolution (warns on prefix; errors on ambiguous prefix or unknown
+token with an \code{agrep}-driven "did you mean" suggestion). Silently
+coerced to \code{character(0)} with an info-level alert when \code{partition}
+is \code{NULL} or \code{nClasses == 1} so the AutoPart dispatcher can pass
+\code{unlink} uniformly across treatments.}
 
 \item{...}{Additional arguments forwarded to \code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}}. Allows
 passing MCMC configuration inline (e.g. \code{nIter}, \code{logFile}, \code{nChains})

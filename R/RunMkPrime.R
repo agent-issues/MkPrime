@@ -29,6 +29,21 @@
 #'   `mcmc$checkpointFile` points to an existing file, the run is
 #'   automatically resumed from that checkpoint.
 #'   Set to `TRUE` to discard the existing checkpoint and start fresh.
+#' @param partition Optional integer vector of length `mkd$nChar` (after
+#'   invariant-character drop) assigning each character to a user class.
+#'   Values must form a contiguous range `1:nClasses`. `NULL` (the default)
+#'   routes through the unchanged legacy code path; see the §7a bit-identity
+#'   contract in `NOTES/partition-api-plan.md`.
+#' @param unlink Character vector of model-component tokens to unlink
+#'   across classes. Layer 1 honours `"shape"` (per-class `rate_log_sd`) and
+#'   `"ratemultiplier"` (char-weighted mean-1 Dirichlet on class rates).
+#'   Layer 2 will add `"brlens"` (per-class branch lengths under a shared
+#'   topology). Tokens match case-insensitively with partial-prefix
+#'   resolution (warns on prefix; errors on ambiguous prefix or unknown
+#'   token with an `agrep`-driven "did you mean" suggestion). Silently
+#'   coerced to `character(0)` with an info-level alert when `partition`
+#'   is `NULL` or `nClasses == 1` so the AutoPart dispatcher can pass
+#'   `unlink` uniformly across treatments.
 #' @param ... Additional arguments forwarded to [MkPrimeMCMC()]. Allows
 #'   passing MCMC configuration inline (e.g. `nIter`, `logFile`, `nChains`)
 #'   without constructing a separate object. Cannot be combined with an
@@ -82,6 +97,8 @@ RunMkPrime <- function(data, tree = NULL,
                        mcmc = NULL,
                        fixTopology = FALSE,
                        overwrite = FALSE,
+                       partition = NULL,
+                       unlink = character(0),
                        ...) {
 
   # --- Build or validate MCMC config ---
@@ -123,6 +140,14 @@ RunMkPrime <- function(data, tree = NULL,
     mkd <- MkPrimeData(data, neomorphic = neomorphic,
                        knownStates = knownStates)
   }
+
+  # --- Partition API (Layer 1 plumbing; see NOTES/partition-api-plan.md) ---
+  # Validation and silent coercion happen here so any error is raised before
+  # the expensive tree/MCMC setup runs. When partition is NULL (the default)
+  # the next call is a no-op and execution falls through to the unchanged
+  # legacy code path (§7a bit-identity contract).
+  partitionSpec <- .ValidatePartitionArgs(partition, unlink, mkd)
+  .RequirePartitionImplemented(partitionSpec)
 
   if (is.null(tree)) {
     startInput <- if (inherits(data, "phyDat")) data else mkd$phyDat
