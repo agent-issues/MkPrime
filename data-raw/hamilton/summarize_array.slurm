@@ -22,7 +22,7 @@ export OMP_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 
 case "$ARM" in
-  mk|mkp|mkp_eg|mk_kp1|mk_kp2|mk_k9|mk_k15|mk_k24|mk_k40|mk_ktrue|mkp_highk|mkp_logs)
+  mk|mkp|mkp_eg|mk_kp1|mk_kp2|mk_k9|mk_k15|mk_k24|mk_k40|mk_ktrue|mkp_highk|mkp_logs|mk_tlshrink)
     TREE=$(( SLURM_ARRAY_TASK_ID / 10 + 1 ))
     REP=$(( SLURM_ARRAY_TASK_ID % 10 + 1 ))
     ;;

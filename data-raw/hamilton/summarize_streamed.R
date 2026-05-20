@@ -32,7 +32,7 @@ suppressPackageStartupMessages({
 args         <- commandArgs(trailingOnly = TRUE)
 tree_idx     <- as.integer(args[1])
 rep_idx      <- as.integer(args[2])
-arm          <- match.arg(args[3], c("mk", "mkp_geo", "mkp_eg", "mkp", "mk_kp1", "mk_kp2", "mk_k9", "mk_k15", "mk_k24", "mk_k40", "mk_ktrue", "mkp_highk", "mkp_logs"))
+arm          <- match.arg(args[3], c("mk", "mkp_geo", "mkp_eg", "mkp", "mk_kp1", "mk_kp2", "mk_k9", "mk_k15", "mk_k24", "mk_k40", "mk_ktrue", "mkp_highk", "mkp_logs", "mk_tlshrink"))
 results_root <- args[4]
 data_root    <- args[5]
 out_dir      <- args[6]

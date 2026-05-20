@@ -26,6 +26,7 @@ data_root <- args[3]
 out_dir   <- args[4]
 arm       <- match.arg(args[5], c("mk", "mk_kp1", "mk_kp2", "mk_k9",
                                    "mk_k15", "mk_k24", "mk_k40", "mk_ktrue",
+                                   "mk_tlshrink",
                                    "mkp", "mkp_eg", "mkp_geo", "mkp_highk", "mkp_logs", "combine"))
 
 cat(sprintf("tree=%d rep=%d arm=%s\n", tree_idx, rep_idx, arm))
@@ -647,6 +648,46 @@ if (arm == "mk") {
                   acceptance = res$acceptance,
                   k_true = k_for_mk)
   saveRDS(partial, file.path(out_dir, sprintf("mk_ktrue_%s.rds", tag)))
+
+} else if (arm == "mk_tlshrink") {
+  # Mk (kObs) with an explicit branch-length shrinkage prior.
+  # Tests the regularisation-via-saturation hypothesis: if shorter posterior
+  # tree length is what's driving mk_k40's CID advantage, then forcing TL
+  # short via the prior (while keeping k=kObs) should close most of the gap
+  # to mk_k40 without changing the state-space spec.
+  #
+  # Prior: Gamma(shape=20, rate=20/0.7) -> mean 0.7 (HALF of truth TL=1.4,
+  # and well below mk_k40's posterior of ~1.2), sd ~0.157 — informative
+  # enough to dominate the diffuse default and pull TL clearly below truth.
+  # Default mk uses Gamma(2, 2/FitchScore) which has mean ~Fitch score
+  # (~30-100), effectively diffuse, so the data determines TL.
+  # The hypothesis: if regularisation-via-short-TL is what makes mk_k40 win,
+  # then a prior pulling TL well below truth should achieve at least
+  # mk_k40-level CID — without changing the state-space spec.
+  kobs_raw <- apply(combined_mat, 2L, function(col) {
+    length(unique(col[!col %in% c("?", "-")]))
+  })
+  var_orig <- which(kobs_raw > 1L)
+  kObs_for_mk <- setNames(as.integer(kobs_raw[var_orig]),
+                           as.character(var_orig))
+
+  res <- .run_arm(function() {
+    RunMkPrime(
+      pd, start_tree,
+      knownStates = kObs_for_mk,
+      model = MkPrimeModel(coding = "variable",
+                            treeLengthShape = 20,
+                            treeLengthRate  = 20 / 0.7),
+      mcmc  = make_mcmc("mk_tlshrink", thin_iters = 100L)
+    )
+  }, "mk_tlshrink")
+
+  cat(sprintf("  Mk(tlshrink) done: %d trees, stop=%s\n",
+              length(res$trees), res$stop_reason))
+
+  partial <- list(trees = res$trees, stop_reason = res$stop_reason,
+                  acceptance = res$acceptance)
+  saveRDS(partial, file.path(out_dir, sprintf("mk_tlshrink_%s.rds", tag)))
 }
 
 cat("  Done.\n")

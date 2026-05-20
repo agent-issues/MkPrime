@@ -98,7 +98,20 @@ Findings in:
 
 ## Pending jobs
 
-### Hamilton HPC — mkp sim (all four arrays complete)
+### Hamilton HPC — mkp sim — mk_tlshrink running (2026-05-20)
+
+| Job ID | Arm | Status | Note |
+|--------|-----|--------|------|
+| 17233062 | mk_tlshrink | RUNNING | 8h walltime, kObs + Gamma(20, 20/0.7) TL prior (mean 0.7, sd 0.16); v1 at mean=1.2 cancelled — too close to truth to count as shrinkage |
+
+**Hypothesis under test**: An explicit shrinkage prior that pulls posterior TL **well below truth** (truth=1.4, prior mean=0.7, half of truth and below mk_k40's 1.2) on the kObs-based Mk arm should achieve at least mk_k40-level CID if shorter-than-truth TL is what drives the regularisation. Three regimes possible:
+  - `mk_tlshrink` CID ≪ mk_k40 (≤ 0.239): mechanism confirmed; paper reframes as pure branch-length-shrinkage result.
+  - `mk_tlshrink` CID ≈ mk_k40: shorter TL is sufficient but matters how it's achieved (data vs prior).
+  - `mk_tlshrink` CID > mk_k40 (closer to mk's 0.275): saturation story is incomplete — the JC(k=40) state-space structure adds something beyond TL shrinkage.
+
+On completion: `sbatch --array=0-259 summarize_array.slurm mk_tlshrink`, scp summaries, extend cid_twelve_prior.R → cid_thirteen_prior.R with the new arm.
+
+### Hamilton HPC — mkp sim (previous four arrays — all complete)
 
 | Job ID | Arm | Final state | Note |
 |--------|-----|--------|------|
