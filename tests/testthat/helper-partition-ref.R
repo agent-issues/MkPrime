@@ -51,15 +51,20 @@
     treeFile     = NULL,
     checkpointFile = NULL,
     progressFn   = NULL,
-    # Two moves are non-deterministic across separate R processes even with
-    # set.seed() (bisected 2026-05-20). Both must be off for the §7a
-    # bit-identity guarantee to be testable. These are properties of the
-    # existing moves on main, not introduced by this branch — flagged as
-    # separate issues, out of Layer 1 scope:
+    # gibbsSubtreeSwap must be off — it breaks bit-identity even within a
+    # single process across two seeded runs (real bug in the existing move
+    # on main, separately filed for fix).
     #
-    #   - gibbsSubtreeSwap: breaks even within a single process across two
-    #     seeded runs (likely an unseeded internal RNG or hash-order quirk).
-    #   - joint2d: deterministic within a process; diverges across processes.
+    # joint2d is kept off as a belt-and-braces precaution. A re-investigation
+    # 2026-05-20 (joint2d agent) confirmed joint2d itself is deterministic
+    # both within and across processes, so this is not strictly required —
+    # but the §7a reference was generated with it off, so keep this until
+    # the reference is regenerated.
+    #
+    # A SEPARATE, currently-uncharacterised cross-process divergence
+    # emerges at longer chains (≥1000 iter / ≥200 warmup) even with both
+    # gibbsSubtreeSwap and joint2d off. The §7a reference accordingly uses
+    # the short (100 iter / 50 warmup) regime where bit-identity holds.
     gibbsSubtreeSwap = FALSE,
     joint2d          = FALSE
   )
