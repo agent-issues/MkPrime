@@ -196,17 +196,42 @@ test_that(".RequirePartitionImplemented is a no-op for the trivial spec", {
   expect_silent(.RequirePartitionImplemented(spec))
 })
 
-test_that(".RequirePartitionImplemented errors with helpful message when partition is supplied", {
+test_that(".RequirePartitionImplemented is a no-op for multi-class with empty unlink", {
+  # nClasses > 1 with unlink = character(0) routes through the partitioned
+  # likelihood with class_rate ≡ 1, which is the §7b numeric-equivalence
+  # regime — gate is open.
   spec <- list(partition = c(1L, 2L), unlink = character(0), nClasses = 2L)
+  expect_silent(.RequirePartitionImplemented(spec))
+})
+
+test_that(".RequirePartitionImplemented is a no-op for multi-class with Layer-1 tokens", {
+  # "shape" and "ratemultiplier" are Layer-1 supported.
+  spec <- list(partition = c(1L, 1L, 2L, 2L), unlink = "shape", nClasses = 2L)
+  expect_silent(.RequirePartitionImplemented(spec))
+  spec2 <- list(partition = c(1L, 1L, 2L, 2L), unlink = "ratemultiplier", nClasses = 2L)
+  expect_silent(.RequirePartitionImplemented(spec2))
+  spec3 <- list(partition = c(1L, 1L, 2L, 2L), unlink = c("shape", "ratemultiplier"),
+                nClasses = 2L)
+  expect_silent(.RequirePartitionImplemented(spec3))
+})
+
+test_that(".RequirePartitionImplemented errors on 'brlens' unlink (deferred to Layer 2)", {
+  spec <- list(partition = c(1L, 1L, 2L, 2L), unlink = "brlens", nClasses = 2L)
   expect_error(.RequirePartitionImplemented(spec),
-               regexp = "not yet fully implemented",
+               regexp = "brlens",
+               fixed = FALSE)
+  # Errors even when combined with Layer-1 tokens
+  spec2 <- list(partition = c(1L, 1L, 2L, 2L), unlink = c("shape", "brlens"),
+                nClasses = 2L)
+  expect_error(.RequirePartitionImplemented(spec2),
+               regexp = "brlens",
                fixed = FALSE)
 })
 
 test_that(".RequirePartitionImplemented is a no-op when partition = NULL (even with spurious unlink)", {
   # In practice the validator coerces unlink to character(0) before calling
   # this gate when partition = NULL, so unlink = "shape" here is contrived.
-  # The gate now allows any partition = NULL spec silently (§7a contract:
+  # The gate allows any partition = NULL spec silently (§7a contract:
   # the legacy path is always open regardless of unlink content).
   spec <- list(partition = NULL, unlink = "shape", nClasses = 1L)
   expect_silent(.RequirePartitionImplemented(spec))
