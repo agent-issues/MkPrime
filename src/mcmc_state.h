@@ -108,6 +108,10 @@ struct McmcData {
   // case classIdx on each PartInfo is read from the R-side partitions list.
   int nClasses = 1;
 
+  // Partition-API (plan v4 §5.1): Dirichlet(α) concentration on class_w.
+  // Default 1.0 = flat Dirichlet. Tunable via MkPrimeModel(classRateConcentration).
+  double classRateConcentration = 1.0;
+
   // Q-matrix heterogeneity (M-052): Dirichlet-marginal discretization.
   // When enabled, characters evolve under a mixture of F81 Q-matrices with
   // equilibrium frequencies drawn from a discretized symmetric Dirichlet.

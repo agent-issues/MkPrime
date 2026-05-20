@@ -154,12 +154,23 @@
     # Return:
     return(invisible(NULL))
   }
-  cli::cli_abort(c(
-    "Partition-aware code path is not yet fully implemented.",
-    "i" = "Layer 1 currently supports {.code partition = rep(1L, nChar)} \\
-          with {.code unlink = character(0)} (trivial spec, §7b regime). \\
-          Multi-class partitions with per-class moves land in a follow-up commit."
-  ))
+
+  # Layer 1 gate: multi-class with "shape" and/or "ratemultiplier" unlink is
+  # now supported (per-class moves implemented). "brlens" stays deferred
+  # to Layer 2.
+  if ("brlens" %in% spec$unlink) {
+    cli::cli_abort(c(
+      "{.val brlens} unlink is not yet implemented (Layer 2).",
+      "i" = "Supported tokens in Layer 1: {.val shape}, {.val ratemultiplier}."
+    ))
+  }
+  if (spec$nClasses > 1L &&
+      !all(spec$unlink %in% .kPartitionApiUnlinkLayer1)) {
+    cli::cli_abort(c(
+      "Unsupported {.arg unlink} token(s) for multi-class partition.",
+      "i" = "Layer 1 supports: {.val {.kPartitionApiUnlinkLayer1}}."
+    ))
+  }
 }
 
 
@@ -311,9 +322,12 @@
     etaNeo     = state$eta_neo,
     betaScale  = state$beta_scale %||% 1.0
   )
-  # log_prior and log_post are not yet updated for the per-class fields
-  # (their priors land in a follow-up commit with the moves).
-  state$log_post <- state$log_lik + state$log_prior
+  # Recompute log_prior with the extended LogPrior() that handles per-class
+  # fields (class_w, class_rate_log_sd). At the initial point (class_w ==
+  # nChar_c / nChar, class_rate_log_sd == rate_log_sd for all classes),
+  # the partitioned prior equals the legacy prior to ~1e-10 (§7b analogue).
+  state$log_prior <- LogPrior(state, model, mkd)
+  state$log_post  <- state$log_lik + state$log_prior
 
   # Return:
   state

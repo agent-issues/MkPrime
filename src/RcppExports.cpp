@@ -379,6 +379,32 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// eval_log_prior_partitioned_cpp
+double eval_log_prior_partitioned_cpp(SEXP dataPtr, SEXP statePtr, Rcpp::NumericVector classRateLogSd, Rcpp::NumericVector classW, double etaNeo);
+RcppExport SEXP _MkPrime_eval_log_prior_partitioned_cpp(SEXP dataPtrSEXP, SEXP statePtrSEXP, SEXP classRateLogSdSEXP, SEXP classWSEXP, SEXP etaNeoSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type dataPtr(dataPtrSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type statePtr(statePtrSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type classRateLogSd(classRateLogSdSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type classW(classWSEXP);
+    Rcpp::traits::input_parameter< double >::type etaNeo(etaNeoSEXP);
+    rcpp_result_gen = Rcpp::wrap(eval_log_prior_partitioned_cpp(dataPtr, statePtr, classRateLogSd, classW, etaNeo));
+    return rcpp_result_gen;
+END_RCPP
+}
+// set_class_rate_concentration
+void set_class_rate_concentration(SEXP dataPtr, double concentration);
+RcppExport SEXP _MkPrime_set_class_rate_concentration(SEXP dataPtrSEXP, SEXP concentrationSEXP) {
+BEGIN_RCPP
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type dataPtr(dataPtrSEXP);
+    Rcpp::traits::input_parameter< double >::type concentration(concentrationSEXP);
+    set_class_rate_concentration(dataPtr, concentration);
+    return R_NilValue;
+END_RCPP
+}
 // eval_full_loglik_cpp
 double eval_full_loglik_cpp(SEXP dataPtr, SEXP statePtr);
 RcppExport SEXP _MkPrime_eval_full_loglik_cpp(SEXP dataPtrSEXP, SEXP statePtrSEXP) {
@@ -864,6 +890,8 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_compute_topo_hash", (DL_FUNC) &_MkPrime_compute_topo_hash, 1},
     {"_MkPrime_get_state_log_lik", (DL_FUNC) &_MkPrime_get_state_log_lik, 1},
     {"_MkPrime_eval_log_prior_cpp", (DL_FUNC) &_MkPrime_eval_log_prior_cpp, 2},
+    {"_MkPrime_eval_log_prior_partitioned_cpp", (DL_FUNC) &_MkPrime_eval_log_prior_partitioned_cpp, 5},
+    {"_MkPrime_set_class_rate_concentration", (DL_FUNC) &_MkPrime_set_class_rate_concentration, 2},
     {"_MkPrime_eval_full_loglik_cpp", (DL_FUNC) &_MkPrime_eval_full_loglik_cpp, 2},
     {"_MkPrime_eval_full_loglik_at_cpp", (DL_FUNC) &_MkPrime_eval_full_loglik_at_cpp, 5},
     {"_MkPrime_do_move_cpp", (DL_FUNC) &_MkPrime_do_move_cpp, 8},

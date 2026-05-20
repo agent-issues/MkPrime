@@ -101,6 +101,14 @@ eval_log_prior_cpp <- function(dataPtr, statePtr) {
     .Call(`_MkPrime_eval_log_prior_cpp`, dataPtr, statePtr)
 }
 
+eval_log_prior_partitioned_cpp <- function(dataPtr, statePtr, classRateLogSd, classW, etaNeo) {
+    .Call(`_MkPrime_eval_log_prior_partitioned_cpp`, dataPtr, statePtr, classRateLogSd, classW, etaNeo)
+}
+
+set_class_rate_concentration <- function(dataPtr, concentration) {
+    invisible(.Call(`_MkPrime_set_class_rate_concentration`, dataPtr, concentration))
+}
+
 eval_full_loglik_cpp <- function(dataPtr, statePtr) {
     .Call(`_MkPrime_eval_full_loglik_cpp`, dataPtr, statePtr)
 }
