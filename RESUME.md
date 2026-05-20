@@ -100,11 +100,13 @@ Findings in:
 
 ## Pending jobs
 
-### Hamilton HPC — mkp sim — mk_tlshrink running (2026-05-20)
+### Hamilton HPC — mkp sim — mk_tlshrink resubmitted (2026-05-20)
 
 | Job ID | Arm | Status | Note |
 |--------|-----|--------|------|
-| 17233062 | mk_tlshrink | RUNNING | 8h walltime, kObs + Gamma(20, 20/0.7) TL prior (mean 0.7, sd 0.16); v1 at mean=1.2 cancelled — too close to truth to count as shrinkage |
+| 17234909 | mk_tlshrink | RUNNING | 8h walltime, kObs + Gamma(20, 20/0.7) TL prior (mean 0.7, sd 0.16); resubmitted after disk cleanup freed 381 GB |
+
+**Previous attempts 17232762, 17232792, 17233062 all failed** — `/nobackup` was at 600G/600G quota. Fixed: deleted all raw `.log`/`.nwk`/`_checkpoint.rds` from `results/` (335G) and `logs/` (4.7G). Quota now 219G/600G. All 12 completed arms retain their 260 RDS summaries in `summary/`.
 
 **Hypothesis under test**: An explicit shrinkage prior that pulls posterior TL **well below truth** (truth=1.4, prior mean=0.7, half of truth and below mk_k40's 1.2) on the kObs-based Mk arm should achieve at least mk_k40-level CID if shorter-than-truth TL is what drives the regularisation. Three regimes possible:
   - `mk_tlshrink` CID ≪ mk_k40 (≤ 0.239): mechanism confirmed; paper reframes as pure branch-length-shrinkage result.
@@ -113,15 +115,9 @@ Findings in:
 
 On completion: `sbatch --array=0-259 summarize_array.slurm mk_tlshrink`, scp summaries, extend cid_twelve_prior.R → cid_thirteen_prior.R with the new arm.
 
-### Hamilton HPC — mkp sim (previous four arrays — all complete)
+### Hamilton HPC — mkp sim (previous arrays — all complete, raws deleted)
 
-| Job ID | Arm | Final state | Note |
-|--------|-----|--------|------|
-| 17225905 | mk_k40 | 191 COMPLETED, 32 FAILED, 37 TIMEOUT | All 260 RDS summaries present; cid numbers unchanged from partial-data version (0.2385 final vs 0.2386 partial) |
-| 17227281 | mk_ktrue | 4 COMPLETED, 126 FAILED, 130 TIMEOUT | All 260 RDS summaries present. FAILED status was spurious — R hit a benign parser error on exit AFTER MCMC completed and saveRDS ran. Data is usable. **mk_ktrue mean CID = 0.2624 — the oracle LOSES to mk_k40 by 0.024 (p=5.9e-45).** |
-| 17227627 | mkp_highk | 75 COMPLETED, 185 TIMEOUT | All 260 RDS summaries; mean CID 0.2639 |
-| 17227628 | mkp_logs | 260 COMPLETED | All 260 RDS summaries; mean CID 0.2595 |
-| 17231608-11 | summarisers (4 arms) | COMPLETED | 1040 summaries scp'd to local; cid_twelve_prior.R run; plot saved |
+All completed arms (mk, mkp_eg, mk_kp1, mk_kp2, mk_k9, mk_k15, mk_k24, mk_k40, mk_ktrue, mkp_highk, mkp_logs, mkp_geo) have 260 RDS summaries in `/nobackup/pjjg18/mkp-study/summary/`. Raw `.log`, `.nwk`, and `_checkpoint.rds` deleted 2026-05-20 to reclaim quota.
 
 The mk_ktrue R-exit error needs diagnosing before re-running — see open items.
 
@@ -244,14 +240,14 @@ at 128G, or skip syab07204 by_nt_9v from the 6-matrix comparison.
 
 ## Suggested first action
 
+Check mk_tlshrink progress (job 17234909, submitted 2026-05-20):
 ```powershell
-# Check mk_ktrue (17227281) progress
-ssh pjjg18@hamilton8.dur.ac.uk 'sacct -j 17227281 --format=State -X | sort | uniq -c'
+ssh pjjg18@hamilton8.dur.ac.uk 'squeue -j 17234909 -h -o "%T %M %l"'
 ```
 
-If most COMPLETED: `sbatch --array=0-259 summarize_array.slurm mk_ktrue`, then scp the mk_ktrue summaries and build `cid_ten_prior.R` from cid_nine_prior.R.
+On completion: `sbatch --array=0-259 summarize_array.slurm mk_tlshrink`, scp summaries, extend `cid_twelve_prior.R` → `cid_thirteen_prior.R`.
 
-Also check M9 long-runs (complete ~09:00 BST 2026-05-20):
+M9 long-runs (14 jobs) complete ~2026-05-21 evening (were at ~1d20h of 3d on 2026-05-20 ~09:30 BST):
 ```powershell
-ssh pjjg18@hamilton8.dur.ac.uk 'for d in /nobackup/pjjg18/m9-long/syab*/; do echo "=== $(basename $d) ==="; for f in $d/*.trees; do echo "  $(basename $f): $(wc -l < $f) lines"; done; done'
+ssh pjjg18@hamilton8.dur.ac.uk 'squeue --me -h -o "%i %T %M %l %j" | grep m9L'
 ```
