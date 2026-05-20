@@ -28,7 +28,7 @@ suppressPackageStartupMessages({
   devtools::load_all(".", quiet = TRUE)
   library("TreeTools")
 })
-source("inst/simulations/ecology/sim3-scoring.R")
+source("inst/ecology/simulations/sim3-scoring.R")
 
 OUT_DIR <- "dev/red-team"
 TXT <- file.path(OUT_DIR, "audit-multirep-pathologies-2026-05-19.txt")
@@ -41,7 +41,7 @@ cat(sprintf("Date: %s\n", Sys.time()))
 # Truth setup matches sim3-multirep.R
 nEco <- 120L; nBase <- 360L; phi <- 4
 stemBr <- 0.30; rootBr <- 0.15; tipBr <- 0.5
-source("inst/simulations/ecology/sim3-helpers.R")
+source("inst/ecology/simulations/sim3-helpers.R")
 truthTree <- .BuildConvergentTree(tipBranch = tipBr,
                                    stemBranch = stemBr, rootBranch = rootBr)
 truthTL <- sum(truthTree$edge.length)
@@ -65,7 +65,7 @@ canonicalSplitsHash <- function(tr) {
 }
 
 auditOne <- function(repId) {
-  d <- sprintf("inst/simulations/ecology/multirep-v3-results/rep%s", repId)
+  d <- sprintf("inst/ecology/simulations/multirep-v3-results/rep%s", repId)
   cat(sprintf("\n========== REP %s ==========\n", repId))
   resA <- readRDS(file.path(d, "aware-result.rds"))
   resA <- RelabelEcology(resA)

@@ -6,8 +6,8 @@
 
 ## Data audited
 
-- `inst/simulations/ecology/multirep-v3-results/rep01/{aware,blind}-result.rds`
-- `inst/simulations/ecology/multirep-v3-results/rep05/{aware,blind}-result.rds`
+- `inst/ecology/simulations/multirep-v3-results/rep01/{aware,blind}-result.rds`
+- `inst/ecology/simulations/multirep-v3-results/rep05/{aware,blind}-result.rds`
 
 Sample matrices are empty in the blind RDS files (streaming-only); tree lists (`res$trees`) are saved and were used directly for bipartition + topology counting.
 

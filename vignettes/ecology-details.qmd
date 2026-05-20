@@ -272,7 +272,7 @@ not preferentially inflate it.
 
 ## Simulation evidence
 
-Three validation simulations live under `inst/simulations/ecology/`.
+Three validation simulations live under `inst/ecology/simulations/`.
 Each is a self-contained R script that simulates from
 `.SimulateMkPrimeEcology()` and runs MCMC under the ecology-aware
 model.

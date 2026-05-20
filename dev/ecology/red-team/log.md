@@ -23,7 +23,7 @@ Files reviewed:
 - `src/mcmc_ecology.cpp` (1100+ lines)
 - `src/mcmc.cpp` ecology block in `cpp_log_prior` (lines 388-433)
 - `R/MkPrimeModel.R` `LogPrior` (lines 504-686)
-- `inst/simulations/ecology/sim3-simulate.R`
+- `inst/ecology/simulations/sim3-simulate.R`
 - `vignettes/ecology-details.qmd`
 
 Scenarios traced:
@@ -246,8 +246,8 @@ Files reviewed:
 - `R/MkPrimeModel.R` `LogPrior` ecology block (650-705), defaults
   (190-194)
 - `R/RelabelEcology.R` (1-200)
-- `inst/simulations/ecology/sim3-simulate.R` z-generation contract
-- `inst/hamilton/sim3-phi2/run_phi2.R` (single-chain phi=2 test setup)
+- `inst/ecology/simulations/sim3-simulate.R` z-generation contract
+- `inst/ecology/hamilton/sim3-phi2/run_phi2.R` (single-chain phi=2 test setup)
 - `dev/plans/2026-05-13-1100-v2-asymmetric-slab-prior-and-gamma-ridge.md`
   (label-switching diagnosis and RelabelEcology motivation)
 

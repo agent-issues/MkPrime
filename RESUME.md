@@ -63,14 +63,14 @@ Recent commits (top first):
 
 | Job ID | What | Status | ETA | On completion |
 |---|---|---|---|---|
-| 17233486_[1-3] | v9-induce MCMC array (PT 4-chain, blind+aware, parallel z mechanism, TL=1.48) | RUNNING | ~2h | Inspect `/nobackup/pjjg18/mkp-sim3-v9-induce/results/rep0{1,2,3}/`. KEY QUESTION: does blind P(falseSister_AB) > 0.5 AND aware P(trueSister_AC) > 0.5? If both yes, paper has its realistic-TL headline. Pull RDS files, build analysis under `inst/scripts/v9-analysis/`. |
-| 17227246 | rodent aware v3 (1M iter) | RUNNING (10h+, 12h wall) | ~2h then may time out | Check `/nobackup/pjjg18/mkp-rodent-v3/aware/results/`. If saved, compute ESS; expect similar TL saturation as blind (~127). If timed out at <1M iter, queue continuation. Then regenerate `inst/scripts/rodent-comparison/` against the new chains. |
+| 17233486_[1-3] | v9-induce MCMC array (PT 4-chain, blind+aware, parallel z mechanism, TL=1.48) | RUNNING | ~2h | Inspect `/nobackup/pjjg18/mkp-sim3-v9-induce/results/rep0{1,2,3}/`. KEY QUESTION: does blind P(falseSister_AB) > 0.5 AND aware P(trueSister_AC) > 0.5? If both yes, paper has its realistic-TL headline. Pull RDS files, build analysis under `inst/ecology/scripts/v9-analysis/`. |
+| 17227246 | rodent aware v3 (1M iter) | RUNNING (10h+, 12h wall) | ~2h then may time out | Check `/nobackup/pjjg18/mkp-rodent-v3/aware/results/`. If saved, compute ESS; expect similar TL saturation as blind (~127). If timed out at <1M iter, queue continuation. Then regenerate `inst/ecology/scripts/rodent-comparison/` against the new chains. |
 
 ## Open items / next steps
 
 1. **Analyse v9 MCMC results** when array 17233486 completes. The make-or-break
    moment for the paper headline.
-   - Use root-invariant scoring (`inst/simulations/ecology/sim3-scoring.R`)
+   - Use root-invariant scoring (`inst/ecology/simulations/sim3-scoring.R`)
    - Track P(trueSister_AC), P(falseSister_AB), per-clade monophyly, CID
    - If blind fails AND aware rescues: replicate at N=8, write Fig 1
    - If aware does not rescue: extend the analysis to understand WHY (the
@@ -82,7 +82,7 @@ Recent commits (top first):
    target may not hit minESS=200. Pattern: extend via checkpoint resume.
 
 3. **Manuscript structure** can now firm up. Outlines exist at
-   `inst/lit/results-outline.md` + `inst/lit/methods-outline.md`. Update them
+   `inst/ecology/lit/results-outline.md` + `inst/ecology/lit/methods-outline.md`. Update them
    once v9 MCMC results are in. Likely structure:
    - Sim 1 (v6-realistic, TL=1.16): both models recover truth — robustness null
    - Sim 2 (v9, TL=1.48, directional z): blind fails / aware rescues — the headline
@@ -93,7 +93,7 @@ Recent commits (top first):
 4. **Model documentation update** needed. The directional z mode is a real
    feature but was undocumented. `R/MkPrimeModel.R` and `R/RunMkPrime.R`
    should reference the (z=1 means rate01 × phi, rate10 / phi) interpretation.
-   `inst/simulations/ecology/sim3-simulate.R` line 218-220 confirms the math.
+   `inst/ecology/simulations/sim3-simulate.R` line 218-220 confirms the math.
 
 5. **The first v9 subagent flagged spurious API refusals** when dispatching
    tasks mentioning "trap" / "directional bias". Five refusals before the
@@ -124,7 +124,7 @@ Recent commits (top first):
   `coding="variable"`, `expSteps=10` (legacy; v3 uses auto), `rho0Alpha=7`,
   `rho0Beta=3`, `thetaAlpha=2`, `thetaBeta=2`, `sigmaPhi=0.5`,
   `set.seed(20260512)`.
-- **v4-cross helpers**: `inst/simulations/ecology/sim3v4cross-helpers.R` and
+- **v4-cross helpers**: `inst/ecology/simulations/sim3v4cross-helpers.R` and
   `sim3v4-helpers.R`. Note `MatrixToPhyDat` / `MkPrimeData` are NOT exported
   in the installed lib — use bare names, not `MkPrime::` prefix.
 - **PT execution model**: `nChains > 1` runs sequentially in MkPrimeMCMC;
@@ -168,7 +168,7 @@ Recent commits (top first):
   amend rewrites the previous commit. Create a new commit instead.
 - **`ape::prop.part` for posterior tree scoring** — root-dependent. Use
   `TreeTools::as.Splits` instead, via `HasBipartSplits` in
-  `inst/simulations/ecology/sim3-scoring.R`. Discovered 2026-05-19.
+  `inst/ecology/simulations/sim3-scoring.R`. Discovered 2026-05-19.
 - **`expSteps=10` default** for the TL prior — produces Gamma mean=10, gives
   5-13× TL inflation on realistic 16-tip morphological sims. Fixed in `bc24d52`
   (then unit-corrected in `f7b4644`).
