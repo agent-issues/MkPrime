@@ -4493,7 +4493,15 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     }
     if (nniInPlace) { state->parent[nniCRow] = nniSavedP_cRow; state->parent[nniWRow] = nniSavedP_wRow; }
     if (classIdx31 >= 0) state->classRateLogSd[classIdx31] = oldClassRLS;
-    if (moveType == 32 && !classWSnapshot.isNULL()) state->classW = classWSnapshot;
+    if (moveType == 32 && !classWSnapshot.isNULL()) {
+      state->classW = classWSnapshot;
+      int nChar32 = 0;
+      for (int k = 0; k < (int)state->nCharPerClass.size(); ++k) nChar32 += state->nCharPerClass[k];
+      for (int k = 0; k < (int)state->classW.size(); ++k) {
+        int nk = (k < (int)state->nCharPerClass.size()) ? state->nCharPerClass[k] : 1;
+        state->classRate[k] = (nk > 0) ? state->classW[k] * nChar32 / nk : 1.0;
+      }
+    }
     return false;
   }
 
@@ -4520,7 +4528,15 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     }
     if (nniInPlace) { state->parent[nniCRow] = nniSavedP_cRow; state->parent[nniWRow] = nniSavedP_wRow; }
     if (classIdx31 >= 0) state->classRateLogSd[classIdx31] = oldClassRLS;
-    if (moveType == 32 && !classWSnapshot.isNULL()) state->classW = classWSnapshot;
+    if (moveType == 32 && !classWSnapshot.isNULL()) {
+      state->classW = classWSnapshot;
+      int nChar32 = 0;
+      for (int k = 0; k < (int)state->nCharPerClass.size(); ++k) nChar32 += state->nCharPerClass[k];
+      for (int k = 0; k < (int)state->classW.size(); ++k) {
+        int nk = (k < (int)state->nCharPerClass.size()) ? state->nCharPerClass[k] : 1;
+        state->classRate[k] = (nk > 0) ? state->classW[k] * nChar32 / nk : 1.0;
+      }
+    }
     return false;
   }
 
