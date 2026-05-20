@@ -41,7 +41,25 @@ n_thin       <- if (length(args) >= 7L) as.integer(args[7]) else 1000L
 tag       <- sprintf("t%02d_r%02d", tree_idx, rep_idx)
 task_dir  <- file.path(results_root, tag)
 log_file  <- file.path(task_dir,  sprintf("%s_run_1.log", arm))
-tree_file <- file.path(task_dir,  sprintf("%s_trees.nwk", arm))
+
+# Tree files: dual-format. Old runs (pre-2026-05-20 per-run-tree-files
+# change) wrote a single shared {arm}_trees.nwk with both runs
+# interleaved. New runs write per-run {arm}_trees_run_1.nwk,
+# {arm}_trees_run_2.nwk, ... so cross-run R-hat works on tree
+# statistics. Read whichever is present; if both somehow exist, prefer
+# the per-run files (newer convention).
+single_tree <- file.path(task_dir, sprintf("%s_trees.nwk", arm))
+multi_tree  <- list.files(task_dir,
+                          pattern = sprintf("^%s_trees_run_[0-9]+\\.nwk$", arm),
+                          full.names = TRUE)
+multi_tree  <- multi_tree[order(multi_tree)]
+tree_files  <- if (length(multi_tree) > 0L) {
+  multi_tree
+} else if (file.exists(single_tree)) {
+  single_tree
+} else {
+  character(0L)
+}
 true_tree_file <- file.path(data_root,
                             sprintf("tree_%02d/tree.nwk", tree_idx))
 
@@ -49,13 +67,13 @@ dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 out_file <- file.path(out_dir, sprintf("%s_%s.rds", arm, tag))
 
 cat(sprintf("[%s] tag=%s arm=%s\n", format(Sys.time(), "%H:%M:%S"), tag, arm))
-cat("  log : ", log_file,  "\n")
-cat("  tree: ", tree_file, "\n")
-cat("  true: ", true_tree_file, "\n")
-cat("  out : ", out_file,  "\n")
+cat("  log  : ", log_file,  "\n")
+cat("  tree : ", paste(tree_files, collapse = ", "), "\n")
+cat("  true : ", true_tree_file, "\n")
+cat("  out  : ", out_file,  "\n")
 
-stopifnot(file.exists(log_file), file.exists(tree_file),
-          file.exists(true_tree_file))
+stopifnot(file.exists(log_file), length(tree_files) > 0L,
+          all(file.exists(tree_files)), file.exists(true_tree_file))
 
 # ---- Load character data in MCMC lex order to get kObs alignment -----------
 # IMPORTANT: run_one.R uses plain sort() on chr*.nex filenames, which gives
@@ -146,12 +164,18 @@ last_row <- as.list(dt[n_samples,
 rm(dt); invisible(gc(verbose = FALSE))
 
 # ---- Stream trees & thin uniformly ------------------------------------------
-# Count tree lines without loading them all.
-n_trees <- length(count.fields(tree_file, sep = "\n", quote = "")) # robust
-cat(sprintf("  n_trees=%d\n", n_trees))
+# Concatenate lines across all per-run tree files (or just the single
+# legacy file). For CID, all trees go into one bag; for future R-hat on
+# tree statistics, the per-run files remain separate on disk.
+t1 <- Sys.time()
+all_lines <- unlist(lapply(tree_files, readLines, warn = FALSE),
+                    use.names = FALSE)
+n_trees   <- length(all_lines)
+cat(sprintf("  n_trees=%d (across %d file(s))\n",
+            n_trees, length(tree_files)))
 
 if (n_trees == 0L) {
-  stop("No trees in ", tree_file)
+  stop("No trees in ", paste(tree_files, collapse = ", "))
 }
 
 # Thin: take the last min(n_trees, 5*n_thin) and uniformly sample n_thin
@@ -166,9 +190,6 @@ keep_idx <- if (tail_n <= n_thin) {
 keep_set <- unique(keep_idx)
 n_keep   <- length(keep_set)
 
-t1 <- Sys.time()
-# Single pass: read the file, retain only the rows we need.
-all_lines <- readLines(tree_file, warn = FALSE)
 sel_lines <- all_lines[keep_set]
 rm(all_lines); invisible(gc(verbose = FALSE))
 
@@ -231,7 +252,7 @@ summary_list <- list(
   p_mean        = p_mean,
   last_row      = last_row,
   log_file      = log_file,
-  tree_file     = tree_file
+  tree_files    = tree_files
 )
 
 saveRDS(summary_list, out_file, compress = "gzip")
@@ -246,7 +267,7 @@ cat(sprintf("  Wrote %s  (%.2f MB)\n", out_file, size_mb))
 # 2026-05-16 and 2026-05-20 incidents).
 if (file.exists(out_file) && file.info(out_file)$size > 1024L) {
   raws <- c(log_file,
-            tree_file,
+            tree_files,
             file.path(task_dir, sprintf("%s_run_2.log", arm)))
   existing <- raws[file.exists(raws)]
   if (length(existing) > 0L) {
