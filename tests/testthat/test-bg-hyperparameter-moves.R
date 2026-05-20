@@ -1,4 +1,5 @@
 # Tests for Beta-Geometric hyperparameter (α, β) moves — M-163
+skip_if_not_installed("phangorn")
 
 # --- Helper -------------------------------------------------------------------
 make_bg_fixture <- function() {

@@ -46,8 +46,9 @@ MkPrimeMCMC(
   moveWeights = NULL,
   cacheBonus = 5,
   tuning = list(),
-  parallel = FALSE,
+  nCore = getOption("mc.cores", 1L),
   pollInterval = 10L,
+  cancelGrace = 30L,
   gibbsWarmupFactor = 1/3
 )
 }
@@ -148,7 +149,7 @@ clean stop: \code{file.create(cancelFile)}. See also \code{\link[=MkCancelPath]{
 
 \item{checkpointFile}{Path to write checkpoint RDS files. \code{NULL}
 (default) auto-derives from \code{logFile} when set
-(e.g. \code{"run.log"} \u2192 \code{"run.ckp"}). Set to \code{FALSE} to
+(e.g. \code{"run.log"} -> \code{"run.ckp"}). Set to \code{FALSE} to
 disable checkpointing. Checkpoints are saved at each
 convergence check interval and on cancel.}
 
@@ -164,7 +165,7 @@ If the path has no file extension, \code{.log} is appended automatically.
 When set, samples are flushed to disk in batches of \code{bufferSize}, so the
 file can be opened in Tracer during the run.
 For multiple runs (\code{nRuns > 1}), separate files are created automatically
-by appending \verb{_1}, \verb{_2}, … before the file extension
+by appending \verb{_1}, \verb{_2}, \dots before the file extension
 (e.g. \code{"run.log"} → \code{"run_1.log"}, \code{"run_2.log"}).
 See \code{\link[=ReadMkLog]{ReadMkLog()}} to load the log back into R after the run.}
 
@@ -209,6 +210,11 @@ Fitch parsimony score, so topologically better positions are proposed
 more often. Much cheaper than Gibbs SPR (no likelihood evaluation per
 candidate), but better guided than uniform SPR.
 See Yang & Rodríguez (2013); Ronquist et al. (2020).}
+
+\item{gibbsWarmupFactor}{Numeric in (0, 1]; weight of the Gibbs kPrime
+sweep relative to other moves during warmup (default \code{1/3}).
+A lower value reduces warmup overhead from the sweep; the weight is
+restored at the warmup-to-tuning transition.}
 
 \item{joint2d}{Logical; include 2D joint Bactrian proposals for
 correlated parameter pairs (default \code{TRUE}). Proposes correlated
@@ -290,14 +296,50 @@ Ignored when Q-heterogeneity is enabled (partial CL not supported).}
 \item{tuning}{Named list of initial tuning parameters for each move
 type. See Details.}
 
-\item{parallel}{Logical. If \code{TRUE} and \code{nRuns > 1}, independent runs are
-launched as non-blocking \code{future::future()} workers and the main process
-polls for convergence. Requires the \pkg{future} package (in \code{Suggests}).
-Set a parallel plan before calling \code{\link[=RunMkPrime]{RunMkPrime()}}:
-\code{future::plan("multisession", workers = nRuns)}. Default \code{FALSE} (sequential).}
+\item{nCore}{Integer. Number of parallel worker processes for independent
+runs. Default \code{getOption("mc.cores", 1L)}, matching the convention used
+by \pkg{TreeDist}. With \code{nCore = 1} (the default), runs execute serially.
+With \code{nCore > 1} and \code{nRuns > 1}, runs are dispatched as background R
+processes via \code{\link[callr:r_bg]{callr::r_bg()}} and the parent process polls for
+convergence. If \code{nRuns == 1}, \code{nCore} is ignored (within-run
+parallelism is a separate facility). When \code{nRuns > nCore}, runs are
+dispatched from a rolling pool of \code{nCore} workers: as each finishes,
+the next pending run launches in its place. Cross-run convergence
+(\code{maxRhat}) cannot trigger early in this regime — it activates only
+once every run has produced samples — so prefer \code{nRuns <= nCore}
+when convergence-based early stopping matters.
+
+\strong{Interrupt-resume is supported only for serial runs (\code{nCore = 1}).}
+In parallel mode workers run in separate \code{callr::r_bg()} processes
+and cannot write to the parent's checkpoint state, so an interrupted
+parallel run leaves only the streaming log files on disk; partial
+samples can be loaded with \code{\link[=MkPrimeRecover]{MkPrimeRecover()}} for inspection, but
+\code{\link[=ResumeMkPrime]{ResumeMkPrime()}} will start a fresh run rather than continue from
+the interrupt point. For long parallel runs, prefer a bounded
+\code{nIter} together with \code{maxTime} so \code{\link[=RunMkPrime]{RunMkPrime()}} returns naturally
+rather than via Ctrl-C.}
 
 \item{pollInterval}{Integer. Seconds between convergence polls in parallel
-mode. Ignored when \code{parallel = FALSE}. Default \code{10L}.}
+mode. Ignored when \code{nCore = 1}. Default \code{10L}.}
+
+\item{cancelGrace}{Integer (seconds) or \code{Inf}. After a stopping criterion
+fires (cancel file, \code{maxTime}, convergence), each parallel worker is sent
+a cancel file and given \code{cancelGrace} seconds to finish its current batch
+and exit cleanly. Workers still alive after the grace period are
+hard-killed. Default \code{30L}.
+
+Trade-off:
+\itemize{
+\item \strong{Shorter grace} → quicker abort, but workers mid-batch are hard-killed
+and their in-progress samples are lost (may trigger PAR-006-style
+all-killed scenarios if batches are longer than the grace period).
+\item \strong{Longer grace} → cancel is slower, but workers finish their batch
+reliably before stopping.
+\item \code{Inf} → wait indefinitely; workers are never hard-killed. Use when
+batch completion is more important than a timely abort.
+}
+
+Ignored when \code{nCore = 1}.}
 }
 \value{
 An S3 object of class \code{MkPrimeMCMC}.

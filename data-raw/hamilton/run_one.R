@@ -9,7 +9,8 @@
 #   rep_idx    integer 1-10 (rep_MM in tree_NN/)
 #   data_root  /nobackup/pjjg18/mkprime-files/tree-inference
 #   out_dir    /nobackup/pjjg18/mkp-study/results
-#   arm        "mk", "mkp", "mkp_eg" (empirical_geometric prior), or "combine"
+#   arm        "mk", "mkp", "mkp_eg" (empirical_geometric prior),
+#              "mkp_geo" (geometric prior, EG-001 pilot), or "combine"
 
 .libPaths(c("/nobackup/pjjg18/mkp-study/lib", .libPaths()))
 suppressPackageStartupMessages({
@@ -23,7 +24,10 @@ tree_idx  <- as.integer(args[1])
 rep_idx   <- as.integer(args[2])
 data_root <- args[3]
 out_dir   <- args[4]
-arm       <- match.arg(args[5], c("mk", "mkp", "mkp_eg", "combine"))
+arm       <- match.arg(args[5], c("mk", "mk_kp1", "mk_kp2", "mk_k9",
+                                   "mk_k15", "mk_k24", "mk_k40", "mk_ktrue",
+                                   "mk_tlshrink",
+                                   "mkp", "mkp_eg", "mkp_geo", "mkp_highk", "mkp_logs", "combine"))
 
 cat(sprintf("tree=%d rep=%d arm=%s\n", tree_idx, rep_idx, arm))
 tag <- sprintf("t%02d_r%02d", tree_idx, rep_idx)
@@ -155,10 +159,10 @@ cat(sprintf("  Loaded %d characters, %d taxa\n", n_char_raw, n_taxa_raw))
 start_tree <- NJTree(pd, edgeLengths = TRUE)
 
 # ---- MCMC config ------------------------------------------------------------
-make_mcmc <- function(prefix) {
+make_mcmc <- function(prefix, thin_iters = 10L) {
   MkPrimeMCMC(
     nIter      = Inf,
-    thin       = 10L,
+    thin       = thin_iters,
     maxWarmup  = 5000L,
     nRuns      = 2L,
     nChains    = 4L,
@@ -167,10 +171,16 @@ make_mcmc <- function(prefix) {
                         # swings of +-50 between adjacent reports.
                         # Lower heat -> hotter hottest chain -> better
                         # discovery of distant modes.
-    maxTime    = 10 * 3600,
+    # HARNESS-001 fix: keep below SLURM wall (8h in *_array.slurm) so the
+    # R-level graceful stop can fire and `saveRDS(partial, ...)` below runs
+    # before SIGKILL. 7.5h gives ~30 min for shutdown / serialisation.
+    maxTime    = 7.5 * 3600,
     minEss     = 200L,
     maxRhat    = 1.1,
-    checkEvery = 500L,
+    checkEvery = 2500L,  # keep checkEveryThin = checkEvery / thin >= 5 so the
+                         # convergence window (4 * checkEveryThin samples) stays
+                         # large enough for Rhat/ESS to be stable. If thinning
+                         # changes, scale this proportionally.
     checkpointFile = file.path(ckp_dir, paste0(prefix, "_checkpoint.rds")),
     logFile        = file.path(ckp_dir, paste0(prefix, "_run.log")),
     treeFile       = file.path(ckp_dir, paste0(prefix, "_trees.nwk"))
@@ -222,6 +232,37 @@ if (arm == "mk") {
     acceptance  = res$acceptance
   )
   saveRDS(partial, file.path(out_dir, sprintf("mk_%s.rds", tag)))
+
+} else if (arm == "mk_kp1") {
+  # Mk with knownStates = kObs_i + 1 per character (one unobserved state
+  # allowed). Reference point for EG vs mk floor: tests whether moving the
+  # fixed-k floor up by one shifts tree recovery.
+  kobs_raw <- apply(combined_mat, 2L, function(col) {
+    length(unique(col[!col %in% c("?", "-")]))
+  })
+  var_orig <- which(kobs_raw > 1L)
+  kObs_for_mk <- setNames(as.integer(kobs_raw[var_orig]),
+                           as.character(var_orig))
+
+  res <- .run_arm(function() {
+    RunMkPrime(
+      pd,
+      start_tree,
+      knownStates = kObs_for_mk + 1L,
+      model = MkPrimeModel(coding = "variable"),
+      mcmc  = make_mcmc("mk_kp1")
+    )
+  }, "mk_kp1")
+
+  cat(sprintf("  Mk(kObs+1) done: %d trees, stop=%s\n",
+              length(res$trees), res$stop_reason))
+
+  partial <- list(
+    trees       = res$trees,
+    stop_reason = res$stop_reason,
+    acceptance  = res$acceptance
+  )
+  saveRDS(partial, file.path(out_dir, sprintf("mk_kp1_%s.rds", tag)))
 
 } else if (arm == "mkp") {
   mkd_mkp <- MkPrimeData(pd)
@@ -301,6 +342,355 @@ if (arm == "mk") {
     u_post_means = u_post_means
   )
   saveRDS(partial, file.path(out_dir, sprintf("mkp_eg_%s.rds", tag)))
+
+} else if (arm == "mkp_geo") {
+  # Mk' with plain geometric prior on k' (EG-001 pilot arm).
+  # Uses kPrimePrior = "geometric": k'_i ~ Geometric(p) shifted by kObs_i.
+  # This removes the EG suspect normaliser (EG-001 HIGH) to test whether the
+  # u_post≈1 anchor is caused by the missing per-character truncation
+  # normaliser in the empirical_geometric prior.
+  mkd_mkp <- MkPrimeData(pd)
+
+  res <- .run_arm(function() {
+    RunMkPrime(
+      mkd_mkp,
+      start_tree,
+      model = MkPrimeModel(coding = "variable",
+                            kPrimePrior = "geometric"),
+      mcmc  = make_mcmc("mkp_geo", thin_iters = 500L)
+    )
+  }, "mkp_geo")
+
+  cat(sprintf("  Mk' (geometric) done: %d trees, stop=%s\n",
+              length(res$trees), res$stop_reason))
+
+  if (is.null(res$samples) || nrow(res$samples) == 0L) {
+    res$samples <- ReadMkLog(res$logFile)
+  }
+  kp_cols <- grep("^kPrime_", colnames(res$samples), value = TRUE)
+  kObs <- mkd_mkp$kObs
+  if (length(kp_cols) > 0) {
+    k_post_means <- colMeans(res$samples[, kp_cols, drop = FALSE])
+    u_post_means <- k_post_means - kObs
+  } else {
+    u_post_means <- rep(NA_real_, mkd_mkp$nChar)
+  }
+
+  partial <- list(
+    trees        = res$trees,
+    stop_reason  = res$stop_reason,
+    acceptance   = res$acceptance,
+    n_char       = mkd_mkp$nChar,
+    kObs         = as.integer(kObs),
+    u_post_means = u_post_means
+  )
+  saveRDS(partial, file.path(out_dir, sprintf("mkp_geo_%s.rds", tag)))
+
+} else if (arm == "mk_kp2") {
+  # Mk with knownStates = kObs_i + 2 per character (two unobserved states
+  # allowed). Companion to mk_kp1: tests whether the +1 advantage persists
+  # or reverses as we move further above the observed floor.
+  kobs_raw <- apply(combined_mat, 2L, function(col) {
+    length(unique(col[!col %in% c("?", "-")]))
+  })
+  var_orig <- which(kobs_raw > 1L)
+  kObs_for_mk <- setNames(as.integer(kobs_raw[var_orig]),
+                           as.character(var_orig))
+
+  res <- .run_arm(function() {
+    RunMkPrime(
+      pd, start_tree,
+      knownStates = kObs_for_mk + 2L,
+      model = MkPrimeModel(coding = "variable"),
+      mcmc  = make_mcmc("mk_kp2", thin_iters = 500L)
+    )
+  }, "mk_kp2")
+
+  cat(sprintf("  Mk(kObs+2) done: %d trees, stop=%s\n",
+              length(res$trees), res$stop_reason))
+
+  partial <- list(trees = res$trees, stop_reason = res$stop_reason,
+                  acceptance = res$acceptance)
+  saveRDS(partial, file.path(out_dir, sprintf("mk_kp2_%s.rds", tag)))
+
+} else if (arm == "mk_k9") {
+  # Mk with knownStates = 9 across all variable characters (fixed ceiling
+  # comparator). 9 is a natural DNA-ish upper bound; well above observed
+  # max kObs ~7 in this dataset.
+  kobs_raw <- apply(combined_mat, 2L, function(col) {
+    length(unique(col[!col %in% c("?", "-")]))
+  })
+  var_orig <- which(kobs_raw > 1L)
+  k9_for_mk <- setNames(rep(9L, length(var_orig)),
+                         as.character(var_orig))
+
+  res <- .run_arm(function() {
+    RunMkPrime(
+      pd, start_tree,
+      knownStates = k9_for_mk,
+      model = MkPrimeModel(coding = "variable"),
+      mcmc  = make_mcmc("mk_k9", thin_iters = 500L)
+    )
+  }, "mk_k9")
+
+  cat(sprintf("  Mk(9) done: %d trees, stop=%s\n",
+              length(res$trees), res$stop_reason))
+
+  partial <- list(trees = res$trees, stop_reason = res$stop_reason,
+                  acceptance = res$acceptance)
+  saveRDS(partial, file.path(out_dir, sprintf("mk_k9_%s.rds", tag)))
+
+} else if (arm == "mk_k15") {
+  # Mk with knownStates = 15 across all variable characters. Tests
+  # whether the flexibility advantage of k=9 over kObs+2 continues to
+  # climb at higher k.
+  kobs_raw <- apply(combined_mat, 2L, function(col) {
+    length(unique(col[!col %in% c("?", "-")]))
+  })
+  var_orig <- which(kobs_raw > 1L)
+  k15_for_mk <- setNames(rep(15L, length(var_orig)),
+                          as.character(var_orig))
+
+  res <- .run_arm(function() {
+    RunMkPrime(
+      pd, start_tree,
+      knownStates = k15_for_mk,
+      model = MkPrimeModel(coding = "variable"),
+      mcmc  = make_mcmc("mk_k15", thin_iters = 500L)
+    )
+  }, "mk_k15")
+
+  cat(sprintf("  Mk(15) done: %d trees, stop=%s\n",
+              length(res$trees), res$stop_reason))
+
+  partial <- list(trees = res$trees, stop_reason = res$stop_reason,
+                  acceptance = res$acceptance)
+  saveRDS(partial, file.path(out_dir, sprintf("mk_k15_%s.rds", tag)))
+
+} else if (arm == "mk_k24") {
+  # Mk with knownStates = 24 across all variable characters. High-k
+  # endpoint; tests whether the trend plateaus or keeps climbing.
+  kobs_raw <- apply(combined_mat, 2L, function(col) {
+    length(unique(col[!col %in% c("?", "-")]))
+  })
+  var_orig <- which(kobs_raw > 1L)
+  k24_for_mk <- setNames(rep(24L, length(var_orig)),
+                          as.character(var_orig))
+
+  res <- .run_arm(function() {
+    RunMkPrime(
+      pd, start_tree,
+      knownStates = k24_for_mk,
+      model = MkPrimeModel(coding = "variable"),
+      mcmc  = make_mcmc("mk_k24", thin_iters = 500L)
+    )
+  }, "mk_k24")
+
+  cat(sprintf("  Mk(24) done: %d trees, stop=%s\n",
+              length(res$trees), res$stop_reason))
+
+  partial <- list(trees = res$trees, stop_reason = res$stop_reason,
+                  acceptance = res$acceptance)
+  saveRDS(partial, file.path(out_dir, sprintf("mk_k24_%s.rds", tag)))
+} else if (arm == "mk_k40") {
+  # Mk with knownStates = 40 across all variable characters. Extended
+  # endpoint; tests whether the k-ramp continues past k=24.
+  kobs_raw <- apply(combined_mat, 2L, function(col) {
+    length(unique(col[!col %in% c("?", "-")]))
+  })
+  var_orig <- which(kobs_raw > 1L)
+  k40_for_mk <- setNames(rep(40L, length(var_orig)),
+                          as.character(var_orig))
+
+  res <- .run_arm(function() {
+    RunMkPrime(
+      pd, start_tree,
+      knownStates = k40_for_mk,
+      model = MkPrimeModel(coding = "variable"),
+      mcmc  = make_mcmc("mk_k40", thin_iters = 500L)
+    )
+  }, "mk_k40")
+
+  cat(sprintf("  Mk(40) done: %d trees, stop=%s\n",
+              length(res$trees), res$stop_reason))
+
+  partial <- list(trees = res$trees, stop_reason = res$stop_reason,
+                  acceptance = res$acceptance)
+  saveRDS(partial, file.path(out_dir, sprintf("mk_k40_%s.rds", tag)))
+} else if (arm == "mkp_highk") {
+  # Mk' with geometric prior on k' but a STRONG high-k Beta(1, 20) hyperprior
+  # on p: E[p] = 1/21 ≈ 0.048, so E[k'] ≈ kObs + 21. Tests whether Mk' can
+  # match mk_k40 if its prior is shifted to put mass on large k'. Same
+  # likelihood as mkp_geo — only the hyperprior differs.
+  mkd_mkp <- MkPrimeData(pd)
+
+  res <- .run_arm(function() {
+    RunMkPrime(
+      mkd_mkp,
+      start_tree,
+      model = MkPrimeModel(coding = "variable",
+                            kPrimePrior = "geometric",
+                            kprimeHyperA = 1,
+                            kprimeHyperB = 20),
+      mcmc  = make_mcmc("mkp_highk", thin_iters = 500L)
+    )
+  }, "mkp_highk")
+
+  cat(sprintf("  Mk' (geometric, high-k Beta(1,20)) done: %d trees, stop=%s\n",
+              length(res$trees), res$stop_reason))
+
+  if (is.null(res$samples) || nrow(res$samples) == 0L) {
+    res$samples <- ReadMkLog(res$logFile)
+  }
+  kp_cols <- grep("^kPrime_", colnames(res$samples), value = TRUE)
+  kObs <- mkd_mkp$kObs
+  if (length(kp_cols) > 0) {
+    k_post_means <- colMeans(res$samples[, kp_cols, drop = FALSE])
+    u_post_means <- k_post_means - kObs
+  } else {
+    u_post_means <- rep(NA_real_, mkd_mkp$nChar)
+  }
+
+  partial <- list(
+    trees        = res$trees,
+    stop_reason  = res$stop_reason,
+    acceptance   = res$acceptance,
+    n_char       = mkd_mkp$nChar,
+    kObs         = as.integer(kObs),
+    u_post_means = u_post_means
+  )
+  saveRDS(partial, file.path(out_dir, sprintf("mkp_highk_%s.rds", tag)))
+
+} else if (arm == "mkp_logs") {
+  # Mk' with logseries prior on k': P(k) ∝ c^k / k with c = 0.95. Much heavier
+  # right tail than geometric — approximates a "diffuse / 1/k-like" prior on
+  # state-space cardinality. Tests whether a flatter prior over k lets Mk'
+  # explore the high-k regime that mk_k40 implicitly inhabits.
+  mkd_mkp <- MkPrimeData(pd)
+
+  res <- .run_arm(function() {
+    RunMkPrime(
+      mkd_mkp,
+      start_tree,
+      model = MkPrimeModel(coding = "variable",
+                            kPrimePrior = "logseries",
+                            kprimeLogseriesC = 0.95),
+      mcmc  = make_mcmc("mkp_logs", thin_iters = 500L)
+    )
+  }, "mkp_logs")
+
+  cat(sprintf("  Mk' (logseries c=0.95) done: %d trees, stop=%s\n",
+              length(res$trees), res$stop_reason))
+
+  if (is.null(res$samples) || nrow(res$samples) == 0L) {
+    res$samples <- ReadMkLog(res$logFile)
+  }
+  kp_cols <- grep("^kPrime_", colnames(res$samples), value = TRUE)
+  kObs <- mkd_mkp$kObs
+  if (length(kp_cols) > 0) {
+    k_post_means <- colMeans(res$samples[, kp_cols, drop = FALSE])
+    u_post_means <- k_post_means - kObs
+  } else {
+    u_post_means <- rep(NA_real_, mkd_mkp$nChar)
+  }
+
+  partial <- list(
+    trees        = res$trees,
+    stop_reason  = res$stop_reason,
+    acceptance   = res$acceptance,
+    n_char       = mkd_mkp$nChar,
+    kObs         = as.integer(kObs),
+    u_post_means = u_post_means
+  )
+  saveRDS(partial, file.path(out_dir, sprintf("mkp_logs_%s.rds", tag)))
+
+} else if (arm == "mk_ktrue") {
+  # Mk with knownStates = k_true per character (oracle / ceiling arm).
+  # Reads ground_truth.csv from the rep directory and sets the state-space
+  # cap to the simulator's k_true for each character. This is the
+  # "best-possible" baseline since we feed inference the true generative
+  # state-space cardinality. Real-world analyses cannot do this; mk_ktrue
+  # exists only to bound where the kObs-based ramp asymptotes.
+  gt_path <- file.path(dataset_dir, "ground_truth.csv")
+  stopifnot(file.exists(gt_path))
+  gt <- read.csv(gt_path)
+  # ground_truth.csv has char_idx = 1..50 matching chr{N}.nex file number,
+  # NOT lex sort order. combined_mat columns are in lex sort order
+  # (chr1, chr10, chr11, ..., chr19, chr2, ..., chr29, chr3, ..., chr9).
+  # Extract file-number from each lex-sorted file and look up k_true.
+  file_nums <- as.integer(sub("^chr([0-9]+)\\.nex$", "\\1",
+                              basename(nex_files)))
+  k_true_lex <- gt$k_true[match(file_nums, gt$char_idx)]
+  stopifnot(all(!is.na(k_true_lex)))
+
+  kobs_raw <- apply(combined_mat, 2L, function(col) {
+    length(unique(col[!col %in% c("?", "-")]))
+  })
+  var_orig <- which(kobs_raw > 1L)
+  # Sanity: k_true must be >= kObs for variable characters
+  stopifnot(all(k_true_lex[var_orig] >= kobs_raw[var_orig]))
+  k_for_mk <- setNames(as.integer(k_true_lex[var_orig]),
+                       as.character(var_orig))
+  cat(sprintf("  mk_ktrue: k_true range %d-%d, mean %.2f, vs kObs range %d-%d\n",
+              min(k_for_mk), max(k_for_mk), mean(k_for_mk),
+              min(kobs_raw[var_orig]), max(kobs_raw[var_orig])))
+
+  res <- .run_arm(function() {
+    RunMkPrime(
+      pd, start_tree,
+      knownStates = k_for_mk,
+      model = MkPrimeModel(coding = "variable"),
+      mcmc  = make_mcmc("mk_ktrue", thin_iters = 500L)
+    )
+  }, "mk_ktrue")
+
+  cat(sprintf("  Mk(ktrue) done: %d trees, stop=%s\n",
+              length(res$trees), res$stop_reason))
+
+  partial <- list(trees = res$trees, stop_reason = res$stop_reason,
+                  acceptance = res$acceptance,
+                  k_true = k_for_mk)
+  saveRDS(partial, file.path(out_dir, sprintf("mk_ktrue_%s.rds", tag)))
+
+} else if (arm == "mk_tlshrink") {
+  # Mk (kObs) with an explicit branch-length shrinkage prior.
+  # Tests the regularisation-via-saturation hypothesis: if shorter posterior
+  # tree length is what's driving mk_k40's CID advantage, then forcing TL
+  # short via the prior (while keeping k=kObs) should close most of the gap
+  # to mk_k40 without changing the state-space spec.
+  #
+  # Prior: Gamma(shape=20, rate=20/0.7) -> mean 0.7 (HALF of truth TL=1.4,
+  # and well below mk_k40's posterior of ~1.2), sd ~0.157 — informative
+  # enough to dominate the diffuse default and pull TL clearly below truth.
+  # Default mk uses Gamma(2, 2/FitchScore) which has mean ~Fitch score
+  # (~30-100), effectively diffuse, so the data determines TL.
+  # The hypothesis: if regularisation-via-short-TL is what makes mk_k40 win,
+  # then a prior pulling TL well below truth should achieve at least
+  # mk_k40-level CID — without changing the state-space spec.
+  kobs_raw <- apply(combined_mat, 2L, function(col) {
+    length(unique(col[!col %in% c("?", "-")]))
+  })
+  var_orig <- which(kobs_raw > 1L)
+  kObs_for_mk <- setNames(as.integer(kobs_raw[var_orig]),
+                           as.character(var_orig))
+
+  res <- .run_arm(function() {
+    RunMkPrime(
+      pd, start_tree,
+      knownStates = kObs_for_mk,
+      model = MkPrimeModel(coding = "variable",
+                            treeLengthShape = 20,
+                            treeLengthRate  = 20 / 0.7),
+      mcmc  = make_mcmc("mk_tlshrink", thin_iters = 500L)
+    )
+  }, "mk_tlshrink")
+
+  cat(sprintf("  Mk(tlshrink) done: %d trees, stop=%s\n",
+              length(res$trees), res$stop_reason))
+
+  partial <- list(trees = res$trees, stop_reason = res$stop_reason,
+                  acceptance = res$acceptance)
+  saveRDS(partial, file.path(out_dir, sprintf("mk_tlshrink_%s.rds", tag)))
 }
 
 cat("  Done.\n")

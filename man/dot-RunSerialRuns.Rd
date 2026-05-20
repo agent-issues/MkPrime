@@ -26,7 +26,7 @@
 Named list: \code{runs}, \code{stopReason}, \code{actualIter}.
 }
 \description{
-Called by \code{\link[=.RunWithRecovery]{.RunWithRecovery()}} when \code{parallel = FALSE}, \code{nRuns >= 2}, and
+Called by \code{\link[=.RunWithRecovery]{.RunWithRecovery()}} when \code{nCore == 1}, \code{nRuns >= 2}, and
 \code{maxRhat} is set.  Phase 1 runs each run sequentially until per-run ESS
 convergence (or nIter / maxTime / cancel).  Phase 2 checks cross-run R-hat
 from log files; if not met and iteration headroom remains, resumes each run

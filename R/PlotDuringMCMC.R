@@ -650,7 +650,7 @@ MkpWatchLog <- function(logFiles,
 #' @return Character vector of length `nRuns`.
 #' @export
 MkLogPaths <- function(logFile, nRuns) {
-  MkPrime:::.LogFilePaths(logFile, as.integer(nRuns))
+  .LogFilePaths(logFile, as.integer(nRuns))
 }
 
 

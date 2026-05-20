@@ -1,4 +1,5 @@
 # Tests for the Beta-Geometric kPrime prior
+skip_if_not_installed("phangorn")
 
 # --- Helper: build small trans-only dataset ---------------------------------
 make_bg_fixture <- function() {

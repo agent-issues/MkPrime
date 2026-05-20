@@ -38,6 +38,24 @@
 }
 
 
+# Resolve tree file paths for nRuns runs (mirrors .LogFilePaths exactly).
+# Single run: path unchanged.  Multiple runs: "base.nwk" → "base_1.nwk", ...
+# Each run gets its own newick stream so cross-run R-hat / diagnostics can be
+# computed on tree-derived statistics without de-interleaving.
+# @keywords internal
+.TreeFilePaths <- function(treeFile, nRuns) {
+  if (is.null(treeFile)) return(NULL)
+  if (nRuns == 1L) return(treeFile)
+  ext  <- tools::file_ext(treeFile)
+  base <- tools::file_path_sans_ext(treeFile)
+  if (nzchar(ext)) {
+    paste0(base, "_", seq_len(nRuns), ".", ext)
+  } else {
+    paste0(base, "_", seq_len(nRuns))
+  }
+}
+
+
 # Create log file(s) and write the tab-separated header line.
 # Returns character vector of resolved paths (length nRuns).
 # @keywords internal
@@ -111,6 +129,94 @@
   nRows <- if (r$conv_filled) nrow(r$conv_window) else r$conv_head
   if (nRows < minRows) return(NULL)
   if (r$conv_filled) r$conv_window else r$conv_window[seq_len(nRows), , drop = FALSE]
+}
+
+
+# Truncate a newick tree file to exactly nTrees complete tree lines.
+# Used on resume to discard trees written after the last checkpoint
+# (and to drop a trailing partial line if SIGKILL hit mid-`cat()`).
+# A "complete" tree line is non-blank and ends with ");" optionally
+# followed by whitespace -- cheap parse-free check that catches the
+# common torn-write case.  Treats `nTrees == 0` as "empty the file".
+#
+# Sync invariant: after this function returns successfully, the number of
+# valid trees on disk equals nTrees, and (nTrees * treeEvery) <= saved_idx
+# (every tree has a corresponding param row in the log file).  If either
+# invariant cannot be established the function aborts -- the user's framing
+# is "never end up with a tree from that gen with no corresponding param
+# row", so we fail loudly rather than silently rewriting the log to match.
+#
+# @param treeFile Path to newick file (or NULL / nonexistent -> no-op).
+# @param nTrees   Number of valid trees the chain *thinks* are on disk
+#                 (typically `run$tree_saved_idx`).
+# @param logFilePath Optional companion log path for the sync-invariant
+#                    cross-check.  When NULL the invariant is skipped.
+# @param saved_idx Number of param rows the chain has recorded
+#                  (`run$saved_idx`).  NA_integer_ skips the invariant.
+# @param treeEvery Ratio `mcmc$treeThin / mcmc$thin` (>= 1L).
+# @keywords internal
+.TruncateTreeToN <- function(treeFile, nTrees,
+                             logFilePath = NULL,
+                             saved_idx   = NA_integer_,
+                             treeEvery   = 1L) {
+  if (is.null(treeFile) || !file.exists(treeFile)) return(invisible(NULL))
+  lines <- readLines(treeFile, warn = FALSE)
+  isTree <- nzchar(trimws(lines)) &
+            grepl("\\);\\s*$", lines, perl = TRUE)
+  treeIdx <- which(isTree)
+  nAvail <- length(treeIdx)
+
+  if (nTrees == 0L) {
+    if (nAvail > 0L) {
+      cli::cli_alert_info(
+        "Rewinding {.file {treeFile}}: discarding {nAvail} post-checkpoint tree{?s}."
+      )
+    }
+    writeLines(character(0), treeFile)
+  } else if (nAvail > nTrees) {
+    # Post-checkpoint trees written before SIGKILL: drop them.
+    nDropped <- nAvail - nTrees
+    cli::cli_alert_info(
+      "Rewinding {.file {treeFile}}: discarding {nDropped} post-checkpoint tree{?s}."
+    )
+    writeLines(lines[treeIdx[seq_len(nTrees)]], treeFile)
+  } else if (nAvail == nTrees && length(lines) > nAvail) {
+    # File has the expected number of valid trees but also trailing junk
+    # (typically a torn final write).  Rewrite so the file is clean.
+    writeLines(lines[treeIdx], treeFile)
+  } else if (nAvail < nTrees) {
+    # Desync: the chain's checkpoint thinks there are more trees on disk than
+    # actually exist.  The user's instruction is explicit -- "never end up
+    # with a tree from that gen with no corresponding param row" -- which
+    # implies the inverse: never end up with a param row whose corresponding
+    # tree was lost.  We refuse to silently rewrite the log to match.  Abort.
+    cli::cli_abort(c(
+      "Tree/log desync detected in {.file {treeFile}}.",
+      "x" = "Found {nAvail} valid tree{?s} on disk, but the checkpoint \\
+             recorded {nTrees}.",
+      "i" = "The chain's param log has rows for trees that are no longer \\
+             on disk; resuming would produce a permanently inconsistent \\
+             output.  Restore the tree file from backup or restart the run."
+    ))
+  }
+
+  # Sync invariant: every tree has a corresponding param row.
+  # tree_saved_idx * treeEvery is the saved_idx at which the last tree was
+  # written, which must not exceed the total saved_idx.
+  if (!is.null(logFilePath) && !is.na(saved_idx) && nTrees > 0L) {
+    needed <- as.integer(nTrees) * as.integer(treeEvery)
+    if (needed > as.integer(saved_idx)) {
+      cli::cli_abort(c(
+        "Tree/log desync detected for {.file {treeFile}}.",
+        "x" = "{nTrees} tree{?s} on disk require >= {needed} param row{?s}, \\
+               but the log records only {saved_idx}.",
+        "i" = "Companion log: {.file {logFilePath}}.",
+        "i" = "The log was truncated below the trees that reference it; \\
+               restore from backup or restart the run."
+      ))
+    }
+  }
+  invisible(NULL)
 }
 
 

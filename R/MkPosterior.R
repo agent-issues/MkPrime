@@ -62,6 +62,27 @@ print.MkPosterior <- function(x, ...) {
                (x$nSamples %/% nRuns)
     info <- c(info, "Runs: {nRuns} ({perRunN} samples each)")
   }
+
+  # PAR-009: surface run shrinkage when some runs were dropped
+  drops <- x$dropped_runs
+  if (!is.null(drops) && nrow(drops) > 0L) {
+    reqN    <- x$requested_nRuns %||% (nRuns + nrow(drops))
+    nDrop   <- nrow(drops)
+    # Build per-drop description: "run 5 (unlaunched)", "run 6 (killed at 1.2s)"
+    dropDesc <- vapply(seq_len(nDrop), function(i) {
+      r <- drops[i, ]
+      detail <- switch(r$reason,
+        unlaunched = "unlaunched",
+        killed     = paste0("killed at ", round(r$wait_s, 1), "s"),
+        errored    = "errored",
+        r$reason
+      )
+      paste0("run ", r$run, " (", detail, ")")
+    }, character(1L))
+    cli::cli_alert_warning(
+      "{nDrop} of {reqN} run{?s} did not return: {paste(dropDesc, collapse = ', ')}."
+    )
+  }
   if (nChains > 1L) {
     info <- c(info, "Chains per run: {nChains} (cold + {nChains - 1L} heated)")
   }

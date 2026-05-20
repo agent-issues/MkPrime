@@ -1,5 +1,11 @@
 # MkPrime (development version)
 
+* Multiple MCMC runs now execute in parallel when `nCore > 1`
+  (defaults to `getOption("mc.cores", 1L)`). Backend: `callr::r_bg()`.
+  Mirrors the TreeDist option-driven pattern.
+* **Breaking (pre-release):** `parallel` argument to `MkPrimeMCMC()`
+  removed; use `nCore` instead. The `future` package is no longer used.
+
 * Tree-length prior now scales with the data.  When `expSteps` is left at its
   default (`NULL`), `RunMkPrime()` / `.FinalizeModel()` set
   `expSteps = expStepsInflation * parsimony(startingTree, data) / nChar`

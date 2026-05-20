@@ -1,4 +1,4 @@
-# Main MCMC entry point for MkPrime
+﻿# Main MCMC entry point for MkPrime
 #
 # Phase 3: single chain, fixed topology, R-side loop.
 # Phase 4: topology moves (NNI, SPR) via mutable state$tree.
@@ -49,36 +49,28 @@
 #' result <- RunMkPrime(data, mcmc = mcmc)
 #' ```
 #'
-#' @section Parallel independent runs (HPC usage):
+#' @section Parallel independent runs:
 #'
-#' Set `parallel = TRUE` in [MkPrimeMCMC()] to run independent chains
-#' concurrently. The \pkg{future} package (in `Suggests`) provides the
-#' backend-agnostic parallelism. Call `future::plan()` **before**
-#' `RunMkPrime()`:
+#' Set `nCore` (in [MkPrimeMCMC()]) to dispatch multiple independent runs
+#' as parallel background R processes via [callr::r_bg()].
 #'
 #' ```r
-#' # Workstation — use local cores
-#' future::plan("multisession", workers = 4)
-#' result <- RunMkPrime(data, tree,
-#'   mcmc = MkPrimeMCMC(nRuns = 4, parallel = TRUE))
+#' # Workstation: 4 cores, 4 independent runs
+#' result <- RunMkPrime(data, tree, nRuns = 4L, nCore = 4L)
 #'
-#' # HPC (SLURM) — requires the future.batchtools package
-#' future::plan(future.batchtools::batchtools_slurm(
-#'   resources = list(ncpus = 1, memory = "4gb", walltime = "24:00:00")
-#' ))
-#' result <- RunMkPrime(data, tree,
-#'   mcmc = MkPrimeMCMC(nRuns = 4, parallel = TRUE,
-#'                       logFile  = "/scratch/myrun/run.log",
-#'                       pollInterval = 60L))
+#' # Or set via global option (TreeDist-style):
+#' options(mc.cores = 4L)
+#' result <- RunMkPrime(data, tree, nRuns = 4L)
 #' ```
 #'
-#' Notes for HPC:
-#' - Set `logFile` explicitly to a path on a shared filesystem (tempdir is
-#'   node-local and workers on different nodes cannot read it).
-#' - Use `pollInterval = 30` -- `60` seconds; job startup latency makes
-#'   frequent polling wasteful.
-#' - Set `checkpointFile` so runs can be resumed if the master job times out.
-#' - Each `future` worker becomes a separate job submission on SLURM/PBS/LSF.
+#' ## HPC usage
+#'
+#' Submit one R job per node from your scheduler (SLURM/PBS/LSF) and set
+#' `nCore` to the number of cores allocated per node. R-side dispatch to a
+#' remote scheduler is not supported.
+#'
+#' For long runs, set `checkpointFile` so the job can be resumed if it
+#' times out, and set `logFile` to a path on the local node's filesystem.
 #'
 #' @export
 RunMkPrime <- function(data, tree = NULL,
@@ -210,7 +202,7 @@ RunMkPrime <- function(data, tree = NULL,
   if (mcmc$thinWasAuto) {
     mcmc$thin <- length(moves)
   }
-  # Resolve treeThin: NULL → same as thin; validate multiple-of-thin
+  # Resolve treeThin: NULL -> same as thin; validate multiple-of-thin
   mcmc$treeThinWasAuto <- is.null(mcmc$treeThin)
   if (mcmc$treeThinWasAuto) {
     mcmc$treeThin <- mcmc$thin
@@ -252,7 +244,7 @@ RunMkPrime <- function(data, tree = NULL,
   if (isTempLog) {
     mcmc$logFile <- tempfile("mkp_run_", fileext = ".log")
   }
-  # Always checkpoint — derive from log path if not already set
+  # Always checkpoint -- derive from log path if not already set
   if (is.null(mcmc$checkpointFile)) {
     mcmc$checkpointFile <- sub("\\.[^.]+$", ".ckp", mcmc$logFile)
   }
@@ -271,44 +263,61 @@ RunMkPrime <- function(data, tree = NULL,
   }
   .mkp_env$active_temp_logs <- tempFiles
 
-  # Clean up temp files on normal exit or error — but NOT on interrupt,
+  # Clean up temp files on normal exit or error -- but NOT on interrupt,
   # where we want MkPrimeRecover() to find them.
   if (isTempLog) {
     on.exit(.CleanupTempLogs(tempFiles), add = TRUE)
   }
 
-  treeFile <- mcmc$treeFile
-  if (!is.null(treeFile)) writeLines("", treeFile)
+  # Per-run tree files (mirrors per-run log convention).  Each run writes
+  # to its own newick stream so cross-run convergence diagnostics can be
+  # computed on tree-derived statistics without interleaving.
+  treeFile      <- mcmc$treeFile
+  treeFilePaths <- .TreeFilePaths(treeFile, nRuns)
+  if (!is.null(treeFilePaths)) {
+    for (p in treeFilePaths) writeLines(character(0), p)
+  }
 
   # Column indices for tree reconstruction in scalar_samples (1-based R).
-  # Layout: log_post, log_lik, tree_length, [rate_loss — if hasNeo],
-  #         rate_log_sd, [p — geometric only], [rate_neo — if hasNeo],
-  #         [beta_scale — if qHet], kPrime_i..., br_j...
-  isLogseries <- identical(model$kPrimePrior, "logseries")
-  pCols       <- if (isLogseries) 0L else 1L
-  neoCols     <- if (hasNeo) 2L else 0L   # rate_loss + rate_neo
-  brColStart  <- 4L + neoCols + pCols + qHet + nTrans + 1L
+  # Layout: log_post, log_lik, tree_length, [rate_loss -- if hasNeo],
+  #         rate_log_sd, [p -- geometric/eg only / kprime_alpha+beta -- if BG],
+  #         [rate_neo -- if hasNeo], [beta_scale -- if qHet],
+  #         swap_cold, topo_hash, kPrime_i..., br_j...
+  # STREAM-003: the 2 diagnostic cols (swap_cold, topo_hash) MUST be counted.
+  isBetaGeometric <- identical(model$kPrimePrior, "beta_geometric")
+  isLogseries     <- identical(model$kPrimePrior, "logseries")
+  pCols           <- if (isLogseries) 0L else if (isBetaGeometric) 2L else 1L
+  neoCols         <- if (hasNeo) 2L else 0L   # rate_loss + rate_neo
+  diagCols        <- 2L                        # swap_cold, topo_hash
+  brColStart      <- 4L + neoCols + pCols + qHet + diagCols + nTrans + 1L
 
   # --- Execute MCMC (with interrupt recovery) ---
   execResult <- .RunWithRecovery(
     mkd, model, mcmc, runs, moves, tipLabels, paramNames, nEdge, brColStart,
-    logFilePaths, convWindowSize, treeFile, isTempLog
+    logFilePaths, convWindowSize, treeFilePaths, isTempLog
   )
 
   # If interrupted, on.exit cleanup is cancelled and we return early
   if (identical(execResult, "interrupted")) {
-    # Cancel the on.exit cleanup — temp logs must survive for recovery
+    # Cancel the on.exit cleanup -- temp logs must survive for recovery
     on.exit(NULL, add = FALSE)
     return(invisible(NULL))
   }
 
-  runs       <- execResult$runs
-  stopReason <- execResult$stopReason
-  actualIter <- execResult$actualIter
+  runs        <- execResult$runs
+  stopReason  <- execResult$stopReason
+  actualIter  <- execResult$actualIter
+  drops       <- execResult$drops %||% .EmptyDrops()
+  launchTimes <- execResult$launchTimes
 
   # --- Build result ---
   result <- .BuildResult(runs, model, mkd, mcmc, paramNames, logFilePaths,
-                         actualIter, stopReason, isTempLog = isTempLog)
+                         actualIter, stopReason, isTempLog = isTempLog,
+                         drops = drops)
+
+  # Debug-only field: parent-side launch times (numeric POSIXct seconds) for
+  # each parallel worker, in run order. NULL for non-parallel runs.
+  result$.par_launch_times <- launchTimes
 
   # For temp-log runs, load samples into memory so the result is
   # self-contained (temp files will be deleted by on.exit).
@@ -344,7 +353,7 @@ RunMkPrime <- function(data, tree = NULL,
 #' @keywords internal
 .RunWithRecovery <- function(mkd, model, mcmc, runs, moves, tipLabels,
                               paramNames, nEdge, brColStart, logFilePaths,
-                              convWindowSize, treeFile, isTempLog) {
+                              convWindowSize, treeFilePaths, isTempLog) {
   nRuns <- mcmc$nRuns
   stopReason <- "max_iter"
   actualIter <- if (is.finite(mcmc$nIter)) mcmc$nIter else mcmc$warmup
@@ -368,23 +377,30 @@ RunMkPrime <- function(data, tree = NULL,
   }
 
   tryCatch({
-    if (isTRUE(mcmc$parallel) && nRuns > 1L) {
-      # Parallel path: shared env is not accessible from future workers.
+    if (mcmc$nCore > 1L && nRuns > 1L) {
+      # Parallel path: shared env is not accessible from callr workers.
       # Checkpointing handled by the orchestrator after completion.
       parResult    <- .RunParallelRuns(mkd, model, mcmc, runs, moves,
                                         tipLabels, paramNames, nEdge,
-                                        brColStart, treeFile,
+                                        brColStart, treeFilePaths,
                                         TRUE, logFilePaths, convWindowSize)
       runs         <- parResult$runs
       logFilePaths <- parResult$logFilePaths
       stopReason   <- parResult$stopReason
       actualIter   <- parResult$actualIter
+      drops        <- parResult$drops
+      launchTimes  <- parResult$launchTimes
 
-      if (!is.null(treeFile)) {
-        for (r in runs) {
-          for (tr in r$tree_samples) {
-            if (!is.null(tr)) cat(ape::write.tree(tr), "\n",
-                                  file = treeFile, append = TRUE)
+      # Each run writes to its own newick stream so cross-run R-hat on
+      # tree-derived statistics can be computed without de-interleaving.
+      if (!is.null(treeFilePaths)) {
+        for (run in seq_along(runs)) {
+          treePath <- treeFilePaths[run]
+          if (!is.null(treePath)) {
+            for (tr in runs[[run]]$tree_samples) {
+              if (!is.null(tr)) cat(ape::write.tree(tr), "\n",
+                                    file = treePath, append = TRUE)
+            }
           }
         }
       }
@@ -398,7 +414,7 @@ RunMkPrime <- function(data, tree = NULL,
       serialResult <- .RunSerialRuns(mkd, model, mcmc, runs, moves,
                                       tipLabels, paramNames, nEdge,
                                       brColStart, logFilePaths,
-                                      convWindowSize, treeFile,
+                                      convWindowSize, treeFilePaths,
                                       shared = shared)
       runs       <- serialResult$runs
       stopReason <- serialResult$stopReason
@@ -415,7 +431,7 @@ RunMkPrime <- function(data, tree = NULL,
           startIter      = 1L,
           isStreaming     = TRUE,
           convWindowSize = convWindowSize,
-          treeFile       = treeFile,
+          treeFile       = if (is.null(treeFilePaths)) NULL else treeFilePaths[run],
           shared         = shared
         )
         shared$runs[[run]] <- runs[[run]]
@@ -431,7 +447,11 @@ RunMkPrime <- function(data, tree = NULL,
       }
     }
 
-    list(runs = runs, stopReason = stopReason, actualIter = actualIter)
+    list(runs        = runs,
+         stopReason  = stopReason,
+         actualIter  = actualIter,
+         drops       = if (exists("drops")) drops else .EmptyDrops(),
+         launchTimes = if (exists("launchTimes")) launchTimes else NULL)
   },
   interrupt = function(cond) {
     # M-149: Best-effort checkpoint from shared state.
@@ -476,15 +496,34 @@ RunMkPrime <- function(data, tree = NULL,
                error = function(e) 0L)
     }, integer(1L)))
 
-    if (ckpSaved) {
-      cli::cli_alert_warning(c(
+    # PAR-007: use cli_warn (not cli_alert_warning) so the "!" / "i" /
+    # "x" prefix keys in the c(...) vector actually render as bullets
+    # instead of being concatenated into the lead line.
+    isParallel <- isTRUE(mcmc$nCore > 1L) && isTRUE(mcmc$nRuns > 1L)
+    if (isParallel) {
+      # PAR-002: workers in callr subprocesses cannot update shared$actualIter,
+      # so the checkpoint can't be advanced past iter 0. Be explicit so the
+      # user does not expect ResumeMkPrime() to continue from here.
+      cli::cli_warn(c(
+        "Parallel run interrupted. {nSaved} sample{?s} saved to log file{?s}.",
+        "!" = "Worker state is not checkpointed for parallel runs \\
+               ({.code nCore > 1}); {.fn ResumeMkPrime} will start a fresh \\
+               run, not continue from here.",
+        "i" = "Load the partial samples for inspection: \\
+               {.code posterior <- MkPrimeRecover()}",
+        "i" = "For long parallel runs, prefer a bounded {.arg nIter} with \\
+               {.arg maxTime} so {.fn RunMkPrime} returns naturally rather \\
+               than via interrupt."
+      ))
+    } else if (ckpSaved) {
+      cli::cli_warn(c(
         "Run interrupted at iteration {shared$actualIter}. \\
          {nSaved} sample{?s} saved to log file{?s}.",
         "i" = "Checkpoint saved to {.file {mcmc$checkpointFile}}.",
         "i" = "Re-run the same {.fn RunMkPrime} call to resume."
       ))
     } else {
-      cli::cli_alert_warning(c(
+      cli::cli_warn(c(
         "Run interrupted. {nSaved} sample{?s} saved to temporary log file{?s}.",
         "i" = "Retrieve partial results: {.code posterior <- MkPrimeRecover()}"
       ))
@@ -530,7 +569,7 @@ RunMkPrime <- function(data, tree = NULL,
 #' Returns a fully R-serializable run state: `chains` holds per-chain
 #' parameter lists in checkpoint-compatible format; no XPtrs are created here.
 #' XPtrs are built inside [.RunMkPrimeSingleRun()] so the state can be sent
-#' to `future` workers without serialisation errors.
+#' to `callr` workers without serialisation errors.
 #' @keywords internal
 .InitRun <- function(tree, mkd, model, mcmc, moves, initOverrides = NULL) {
   nChains <- mcmc$nChains
@@ -608,7 +647,7 @@ RunMkPrime <- function(data, tree = NULL,
 #' Self-contained: accepts only R-serializable inputs (no XPtrs), reconstructs
 #' C++ state internally, runs the full `repeat` loop, and returns a serializable
 #' updated run state.  Used by the sequential `for (run)` loop in
-#' [RunMkPrime()] / [ResumeMkPrime()] and (Phase 10b) by `future` workers.
+#' [RunMkPrime()] / [ResumeMkPrime()] and (Phase 10b) by `callr` workers.
 #'
 #' @param initialState Run list from [.InitRun()] or a checkpoint, with
 #'   `chains` in checkpoint-compatible format (no `chainStates`).
@@ -736,8 +775,8 @@ RunMkPrime <- function(data, tree = NULL,
   hasNeo        <- any(mkd$type == "neomorphic")
 
   # Auto-pin always-accept moves (Gibbs, slice) at initial weights.
-  # The warmup scheduler's score (accept_rate × dim / cost) gives these
-  # astronomical scores because acceptance = 1.0 and cost ≈ 0; this inflates
+  # The warmup scheduler's score (accept_rate x dim / cost) gives these
+  # astronomical scores because acceptance = 1.0 and cost ~ 0; this inflates
   # their weight and starves bottleneck MH moves.  One Gibbs draw or slice
   # sample per cycle is already optimal, so freeze them.
   # Also pin hyperparameter moves (kprime_alpha/beta): they are cheap but
@@ -780,7 +819,7 @@ RunMkPrime <- function(data, tree = NULL,
 
   # --- Three-phase state machine ---
   # Determine initial phase from checkpoint or fresh start.
-  # Phases: "Warmup" → "Tuning" → "Sample"
+  # Phases: "Warmup" -> "Tuning" -> "Sample"
   phase <- r$phase %||% (if (startIter <= mcmc$warmup) "Warmup" else "Sample")
   # M-141: wall-clock start of sample phase (for ETA estimation)
   sampleWallStart <- if (phase == "Sample") startTime else NA_real_
@@ -790,7 +829,7 @@ RunMkPrime <- function(data, tree = NULL,
   logPostHistory     <- r$logPostHistory %||% numeric(0)
   nStableConsecutive <- r$nStableConsecutive %||% 0L
   # Anchor iteration for warmup ETA. Fixed at minWarmup initially; only
-  # advances when a confirmed stable-check streak resets (prevCount > 0 → 0),
+  # advances when a confirmed stable-check streak resets (prevCount > 0 -> 0),
   # so the displayed ETA doesn't slide forward every batch while the chain is
   # still in the pre-check or non-stabilising phase.
   warmupAnchor       <- r$warmupAnchor %||% mcmc$minWarmup
@@ -817,9 +856,9 @@ RunMkPrime <- function(data, tree = NULL,
   effectiveTuningBudget <- r$effectiveTuningBudget %||% mcmc$tuningBudget
 
   # M-149: Re-allocate tuning infrastructure on Tuning-phase resume.
-  # The tuningBuf is normally allocated at the Warmup→Tuning transition,
+  # The tuningBuf is normally allocated at the Warmup->Tuning transition,
   # but that code doesn't re-run on resume.  Without this, the first saved
-  # sample during Tuning hits nrow(NULL) → crash.
+  # sample during Tuning hits nrow(NULL) -> crash.
   if (phase == "Tuning") {
     tuningBufSize <- as.integer(effectiveTuningBudget / mcmc$thin) + 100L
     tuningBuf <- matrix(NA_real_, nrow = tuningBufSize,
@@ -1029,7 +1068,7 @@ RunMkPrime <- function(data, tree = NULL,
       nStableRequired <- 3L
       # Anchor-based horizon: does not slide with batchEnd while the chain is
       # in a non-stabilising streak. stabCheckPeriod matches the windowSize=10
-      # hardcoded in .CheckStabilisation() × warmupBatch (actual check interval).
+      # hardcoded in .CheckStabilisation() x warmupBatch (actual check interval).
       stabCheckPeriod <- 10L * warmupBatch
       warmupHorizon <- max(mcmc$minWarmup,
                            warmupAnchor + nStableRequired * stabCheckPeriod)
@@ -1042,10 +1081,10 @@ RunMkPrime <- function(data, tree = NULL,
       )
 
       # M-171: Reduce Gibbs kPrime sweep frequency during warmup.
-      # The sweep costs ~200 ms/call and pinned at weight ∝ nTrans; calling
-      # it at 1/3 weight cuts warmup sweep overhead ~3× while int_walk and
+      # The sweep costs ~200 ms/call and pinned at weight prop. nTrans; calling
+      # it at 1/3 weight cuts warmup sweep overhead ~3x while int_walk and
       # block_shift moves maintain k' exploration between sweeps. Full weight
-      # is restored at the Warmup→Tuning/Sample transition below.
+      # is restored at the Warmup->Tuning/Sample transition below.
       moveWeights <- .WarmupGibbsCap(moveWeights, pinnedWeights, gibbsKpIdx,
                                       factor = mcmc$gibbsWarmupFactor %||% (1/3))
 
@@ -1072,7 +1111,7 @@ RunMkPrime <- function(data, tree = NULL,
         prevNStableConsecutive <- nStableConsecutive
         nStableConsecutive <- stabResult$nStableConsecutive
         r$nStableConsecutive <- nStableConsecutive
-        # Advance anchor only when a confirmed streak resets: prevCount > 0 → 0.
+        # Advance anchor only when a confirmed streak resets: prevCount > 0 -> 0.
         # Early-exit zeros (not enough data yet) don't advance the anchor.
         if (nStableConsecutive == 0L && prevNStableConsecutive > 0L) {
           warmupAnchor   <- batchEnd
@@ -1083,7 +1122,7 @@ RunMkPrime <- function(data, tree = NULL,
           # M-171: Restore gibbs_kPrime to full pinned weight before Tuning/Sample.
           moveWeights <- .RestoreGibbsCap(moveWeights, pinnedWeights, gibbsKpIdx)
 
-          # Transition: Warmup → Tuning (or Sample if autoTune = FALSE)
+          # Transition: Warmup -> Tuning (or Sample if autoTune = FALSE)
           if (batchEnd >= mcmc$warmup && !stabResult$stable) {
             cli::cli_warn(
               "Warmup reached {.arg maxWarmup} ({mcmc$warmup}) without stabilisation."
@@ -1218,7 +1257,7 @@ RunMkPrime <- function(data, tree = NULL,
 
           if (tuningRoundsDone >= mcmc$tuningRounds ||
               tuningIterUsed >= effectiveTuningBudget) {
-            # Transition: Tuning → Sample
+            # Transition: Tuning -> Sample
             phase      <- "Sample"
             r$phase    <- phase
             phaseLabel <- "Sample"
@@ -1271,7 +1310,7 @@ RunMkPrime <- function(data, tree = NULL,
     }
 
     # Warmup/tuning checkpoint at checkEvery intervals so long warmups
-    # are recoverable.  No samples to flush — just save chain state.
+    # are recoverable.  No samples to flush -- just save chain state.
     if (phase != "Sample" && !is.null(checkpointFile) &&
         !is.null(mcmc$checkEvery) && mcmc$checkEvery > 0L &&
         (batchEnd %/% mcmc$checkEvery) >
@@ -1377,7 +1416,7 @@ RunMkPrime <- function(data, tree = NULL,
       if (!is.null(diagCheck)) {
         # M-141: ETA from worst-case ESS accumulation rate.
         # Use whichever criterion (scalar ESS or tree ESS) has the
-        # worst current/target ratio — that's the binding constraint.
+        # worst current/target ratio -- that's the binding constraint.
         elapsedSample <- proc.time()["elapsed"] - sampleWallStart
         etaCurrent <- diagCheck$minEss
         etaTarget  <- mcmc$minEss
@@ -1489,7 +1528,7 @@ RunMkPrime <- function(data, tree = NULL,
 
 #' Run multiple serial MCMC runs with cross-run R-hat convergence
 #'
-#' Called by [.RunWithRecovery()] when `parallel = FALSE`, `nRuns >= 2`, and
+#' Called by [.RunWithRecovery()] when `nCore == 1`, `nRuns >= 2`, and
 #' `maxRhat` is set.  Phase 1 runs each run sequentially until per-run ESS
 #' convergence (or nIter / maxTime / cancel).  Phase 2 checks cross-run R-hat
 #' from log files; if not met and iteration headroom remains, resumes each run
@@ -1499,7 +1538,8 @@ RunMkPrime <- function(data, tree = NULL,
 #' @keywords internal
 .RunSerialRuns <- function(mkd, model, mcmc, runs, moves, tipLabels,
                             paramNames, nEdge, brColStart, logFilePaths,
-                            convWindowSize, treeFile, startIters = NULL,
+                            convWindowSize, treeFilePaths,
+                            startIters = NULL,
                             shared = NULL, startPhase = 1L) {
   nRuns     <- length(runs)
   epochSize <- max(mcmc$checkEvery %||% 1000L, 1000L)
@@ -1523,7 +1563,7 @@ RunMkPrime <- function(data, tree = NULL,
         startIter      = startIters[run],
         isStreaming     = TRUE,
         convWindowSize = convWindowSize,
-        treeFile       = treeFile,
+        treeFile       = if (is.null(treeFilePaths)) NULL else treeFilePaths[run],
         shared         = shared,
         resumeMoveWeights = runs[[run]]$moveWeights
       )
@@ -1536,7 +1576,7 @@ RunMkPrime <- function(data, tree = NULL,
     }
 
     # No cross-run convergence needed when nRuns < 2 or no maxRhat
-    # (defensive — caller should not route here in those cases).
+    # (defensive -- caller should not route here in those cases).
     if (nRuns < 2L || is.null(mcmc$maxRhat)) {
       return(list(runs = runs,
                   stopReason = runs[[nRuns]]$stop_reason,
@@ -1609,7 +1649,7 @@ RunMkPrime <- function(data, tree = NULL,
         startIter      = startIters[run],
         isStreaming     = TRUE,
         convWindowSize = convWindowSize,
-        treeFile       = treeFile,
+        treeFile       = if (is.null(treeFilePaths)) NULL else treeFilePaths[run],
         shared         = shared,
         resumeMoveWeights = runs[[run]]$moveWeights
       )
@@ -1634,32 +1674,44 @@ RunMkPrime <- function(data, tree = NULL,
 
 # --- Parallel run orchestration ---
 
-#' Launch and manage parallel independent MCMC runs via `future`
+#' Empty drops data.frame (canonical zero-row structure)
+#' @keywords internal
+.EmptyDrops <- function() {
+  data.frame(
+    run     = integer(0L),
+    reason  = character(0L),
+    message = character(0L),
+    wait_s  = numeric(0L),
+    stringsAsFactors = FALSE
+  )
+}
+
+
+#' Launch and manage parallel independent MCMC runs via `callr`
 #'
-#' Called by [RunMkPrime()] when `mcmc$parallel = TRUE` and `nRuns > 1`.
-#' Spawns `nRuns` non-blocking futures each calling [.RunMkPrimeSingleRun()],
-#' then polls for convergence / time limits / user cancel. When a stopping
-#' criterion fires, writes per-run cancel files so workers exit cleanly.
+#' Called by [RunMkPrime()] when `mcmc$nCore > 1` and `nRuns > 1`.
+#' Spawns `nRuns` non-blocking background R processes each calling
+#' [.RunMkPrimeSingleRun()], then polls for convergence / time limits /
+#' user cancel. When a stopping criterion fires, writes per-run cancel files
+#' so workers exit cleanly.
 #'
 #' @return Named list: `runs`, `logFilePaths`, `stopReason`, `actualIter`.
 #' @keywords internal
 .RunParallelRuns <- function(mkd, model, mcmc, runs, moves, tipLabels,
-                              paramNames, nEdge, brColStart, treeFile,
+                              paramNames, nEdge, brColStart, treeFilePaths,
                               isStreaming, logFilePaths, convWindowSize) {
   nRuns <- mcmc$nRuns
 
-  if (!requireNamespace("future", quietly = TRUE)) {
+  if (!requireNamespace("callr", quietly = TRUE)) {
     cli::cli_abort(c(
-      "Package {.pkg future} is required for parallel runs.",
-      "i" = "Install it with: {.code install.packages(\"future\")}",
-      "i" = "Then set a plan before calling RunMkPrime(): \\
-             {.code future::plan(\"multisession\", workers = {nRuns})}"
+      "Package {.pkg callr} is required for {.code nCore > 1}.",
+      "i" = "Install with {.code install.packages(\"callr\")}."
     ))
   }
 
   # Parallel mode requires streaming so the orchestrator can read samples.
   # Since RunMkPrime() now always streams (temp log), this branch is a
-  # safety net for any future direct callers.
+  # safety net for any direct callers.
   if (!isStreaming) {
     tmpLog <- tempfile(fileext = ".log")
     cli::cli_alert_info(c(
@@ -1674,14 +1726,33 @@ RunMkPrime <- function(data, tree = NULL,
   # Per-run cancel files (orchestrator signals each worker individually).
   cancelFiles <- vapply(seq_len(nRuns), function(i) tempfile(), character(1L))
 
-  # Launch nRuns persistent workers — each runs its full batch loop.
-  fList <- vector("list", nRuns)
-  for (run in seq_len(nRuns)) {
-    runState <- runs[[run]]
-    logPath  <- logFilePaths[run]
-    cfPath   <- cancelFiles[run]
-    fList[[run]] <- future::future(
-      {
+  # Generate L'Ecuyer-CMRG RNG streams in the parent for reproducibility.
+  streams <- .GenerateRNGStreams(nRuns)
+
+  # Pool-based dispatch: keep at most poolSize workers active concurrently.
+  # When a worker finishes, the next pending run is launched in its place.
+  # Cross-run convergence (e.g. R-hat) cannot trigger until every run has
+  # produced samples, so when nRuns > nCore the convergence-based early
+  # stop is deferred until the pool has drained the queue.
+  poolSize    <- min(mcmc$nCore, nRuns)
+  procs       <- vector("list", nRuns)
+  launched    <- logical(nRuns)
+  finished    <- logical(nRuns)
+  launchTimes <- rep(NA_real_, nRuns)
+
+  # Kill any still-alive workers if we exit via error or interrupt.
+  on.exit({
+    for (p in procs) {
+      if (!is.null(p) && p$is_alive()) try(p$kill(), silent = TRUE)
+    }
+  }, add = TRUE)
+
+  launchOne <- function(run) {
+    callr::r_bg(
+      func = function(mkd, model, mcmc, runState, moves, tipLabels, run,
+                      paramNames, nEdge, brColStart, logPath, cfPath,
+                      convWindowSize, seed) {
+        assign(".Random.seed", seed, envir = globalenv())
         .RunMkPrimeSingleRun(
           mkd, model, mcmc, runState, moves, tipLabels, run,
           paramNames, nEdge, brColStart,
@@ -1694,11 +1765,35 @@ RunMkPrime <- function(data, tree = NULL,
           treeFile       = NULL
         )
       },
-      seed = TRUE
+      args = list(
+        mkd            = mkd,
+        model          = model,
+        mcmc           = mcmc,
+        runState       = runs[[run]],
+        moves          = moves,
+        tipLabels      = tipLabels,
+        run            = run,
+        paramNames     = paramNames,
+        nEdge          = nEdge,
+        brColStart     = brColStart,
+        logPath        = logFilePaths[run],
+        cfPath         = cancelFiles[run],
+        convWindowSize = convWindowSize,
+        seed           = streams[[run]]
+      ),
+      supervise = TRUE,
+      package   = TRUE
     )
   }
 
-  # Polling loop: sleep → check stopping criteria → signal workers if needed.
+  # Launch initial pool.
+  for (run in seq_len(poolSize)) {
+    procs[[run]]       <- launchOne(run)
+    launched[run]      <- TRUE
+    launchTimes[run]   <- as.numeric(Sys.time())
+  }
+
+  # Polling loop: sleep -> check stopping criteria -> signal workers if needed.
   startTime    <- proc.time()["elapsed"]
   pollInterval <- mcmc$pollInterval %||% 10L
   stopReason   <- "max_iter"
@@ -1706,7 +1801,7 @@ RunMkPrime <- function(data, tree = NULL,
 
   # Progress display and live trace plot
   hasProgressFn <- !is.null(mcmc$progressFn) && is.function(mcmc$progressFn)
-  pollStatus <- "Waiting for workers\u2026"
+  pollStatus <- "Waiting for workers..."
   cli::cli_progress_bar(
     "Parallel MCMC ({nRuns} runs)",
     format       = "{cli::pb_spin} {pollStatus}",
@@ -1732,7 +1827,22 @@ RunMkPrime <- function(data, tree = NULL,
       break
     }
 
-    # Convergence (reads log files from disk)
+    # Reap finished workers; launch replacements from the pending queue.
+    for (run in seq_len(nRuns)) {
+      if (launched[run] && !finished[run] && !procs[[run]]$is_alive()) {
+        finished[run] <- TRUE
+      }
+    }
+    while (sum(launched & !finished) < poolSize && any(!launched)) {
+      nextRun                <- which(!launched)[1L]
+      procs[[nextRun]]       <- launchOne(nextRun)
+      launched[nextRun]      <- TRUE
+      launchTimes[nextRun]   <- as.numeric(Sys.time())
+    }
+
+    # Convergence (reads log files from disk; returns NULL until every
+    # logFilePaths entry has >=10 samples, so this is gated on the pool
+    # having drained the queue when nRuns > nCore).
     diagCheck <- .CheckConvergenceFromLogs(logFilePaths, paramNames, mcmc)
     if (!is.null(diagCheck)) {
       elStr  <- .FormatElapsed(elapsed)
@@ -1754,18 +1864,18 @@ RunMkPrime <- function(data, tree = NULL,
       if (hasProgressFn) {
         nSamp <- nrow(diagCheck$perRunSamples[[1]])
         info <- list(
-          iter           = nSamp * if (is.numeric(mcmc$thin)) mcmc$thin else 1L,
-          nIter          = mcmc$nIter,
-          warmup         = mcmc$warmup,
-          inWarmup       = FALSE,
-          phase          = "Sample",
-          nRuns          = nRuns,
-          nChains        = mcmc$nChains,
-          runSamples     = diagCheck$perRunSamples,
-          currentState   = NULL,
+          iter             = nSamp * if (is.numeric(mcmc$thin)) mcmc$thin else 1L,
+          nIter            = mcmc$nIter,
+          warmup           = mcmc$warmup,
+          inWarmup         = FALSE,
+          phase            = "Sample",
+          nRuns            = nRuns,
+          nChains          = mcmc$nChains,
+          runSamples       = diagCheck$perRunSamples,
+          currentState     = NULL,
           recentAcceptance = NA_real_,
-          elapsed        = elapsed,
-          paramNames     = paramNames
+          elapsed          = elapsed,
+          paramNames       = paramNames
         )
         tryCatch(mcmc$progressFn(info), error = function(e) NULL)
       }
@@ -1777,28 +1887,164 @@ RunMkPrime <- function(data, tree = NULL,
       }
     }
 
-    # All workers finished naturally
-    if (all(vapply(fList, future::resolved, logical(1L)))) break
+    # Every run launched and every launched run finished?
+    if (all(launched) && all(finished)) break
   }
 
   pollStatus <- paste0(
-    "Parallel MCMC (", nRuns, " runs) \u2014 ",
+    "Parallel MCMC (", nRuns, " runs) -- ",
     stopReason, " [", .FormatElapsed(proc.time()["elapsed"] - startTime), "]"
   )
   cli::cli_progress_done()
 
-  # Collect results (blocks until each worker is done)
-  completedRuns <- lapply(fList, future::value)
+  # Collect results. Shrink the result list to only runs that produced
+  # output: an early break via cancel/maxTime when nRuns > nCore can leave
+  # `procs[[i]]` NULL for unlaunched runs, and `.BuildResult` cannot cope
+  # with the bare initial state from `.InitRun` (no `flush_idx`, `saved_idx`,
+  # etc.) -- PAR-001. Workers that ignore the cancel file at a long batch
+  # boundary are hard-killed after a cancelGrace-second grace period -- PAR-003.
+  #
+  # PAR-008: track drop reasons so callers can surface diagnostics.
+  # columns: run (int), reason (chr "unlaunched"/"killed"/"errored"),
+  #          message (chr), wait_s (dbl)
+  drops <- data.frame(
+    run     = integer(0L),
+    reason  = character(0L),
+    message = character(0L),
+    wait_s  = numeric(0L),
+    stringsAsFactors = FALSE
+  )
 
-  # Take actualIter from the first completed run
-  actualIter <- completedRuns[[1L]]$actual_iter %||% actualIter
+  # PAR-012: configurable cancel-grace timeout (seconds -> ms).
+  # Inf is stored as .Machine$integer.max ms ("wait forever") because
+  # processx $wait() does not accept Inf without coercion noise.
+  graceSec <- mcmc$cancelGrace %||% 30L
+  graceMs  <- if (is.infinite(graceSec)) .Machine$integer.max else
+                as.integer(graceSec) * 1000L
+
+  completedRuns    <- vector("list", 0L)
+  keptLogFilePaths <- character(0L)
+  nUnlaunched      <- 0L
+  for (run in seq_len(nRuns)) {
+    if (is.null(procs[[run]])) {                     # never launched
+      nUnlaunched <- nUnlaunched + 1L
+      drops <- rbind(drops, data.frame(
+        run     = run,
+        reason  = "unlaunched",
+        message = "",
+        wait_s  = 0,
+        stringsAsFactors = FALSE
+      ))
+      next
+    }
+    t0 <- proc.time()["elapsed"]
+    procs[[run]]$wait(timeout = graceMs)             # PAR-003 / PAR-012
+    waitSec <- proc.time()["elapsed"] - t0
+    if (procs[[run]]$is_alive()) {
+      try(procs[[run]]$kill(), silent = TRUE)
+      cli::cli_warn(c(
+        "Run {run} hard-killed after {round(waitSec, 1)}s cancel-grace.",
+        "i" = "Worker was still running after the grace period \\
+               ({graceSec}s). Increase {.arg cancelGrace} in \\
+               {.fn MkPrimeMCMC} if batches are longer than the grace period."
+      ))
+      drops <- rbind(drops, data.frame(
+        run     = run,
+        reason  = "killed",
+        message = paste0("alive after ", round(waitSec, 1), "s grace"),
+        wait_s  = waitSec,
+        stringsAsFactors = FALSE
+      ))
+      next
+    }
+    errMsg <- ""
+    res <- tryCatch(procs[[run]]$get_result(), error = function(e) {
+      errMsg <<- conditionMessage(e)
+      NULL
+    })
+    if (is.null(res)) {                              # worker crashed
+      cli::cli_warn(c(
+        "Run {run} produced no result (worker error).",
+        "x" = "{errMsg}"
+      ))
+      drops <- rbind(drops, data.frame(
+        run     = run,
+        reason  = "errored",
+        message = errMsg,
+        wait_s  = waitSec,
+        stringsAsFactors = FALSE
+      ))
+      next
+    }
+    completedRuns    <- c(completedRuns,    list(res))
+    keptLogFilePaths <- c(keptLogFilePaths, logFilePaths[run])
+  }
+  logFilePaths <- keptLogFilePaths
+
+  # Summary warning for unlaunched runs (benign -- expected with early stop).
+  if (nUnlaunched > 0L) {
+    unlaunchedIdx <- drops$run[drops$reason == "unlaunched"]
+    idxStr <- paste(unlaunchedIdx, collapse = ", ")
+    cli::cli_warn(c(
+      "{nUnlaunched} run{?s} never launched (run{?s} {idxStr}): \\
+       stopping criterion fired before the pool reached \\
+       {if (nUnlaunched == 1L) 'it' else 'them'}.",
+      "i" = "This is expected when {.arg maxTime} or convergence fires before \\
+             the pool queue drains. Increase {.arg maxTime} or reduce \\
+             {.arg nRuns} if all runs are needed."
+    ))
+  }
+
+  # Take actualIter from the first launched run, if any survived.
+  if (length(completedRuns) > 0L) {
+    actualIter <- completedRuns[[1L]]$actual_iter %||% actualIter
+  }
 
   list(
     runs         = completedRuns,
     logFilePaths = logFilePaths,
     stopReason   = stopReason,
-    actualIter   = actualIter
+    actualIter   = actualIter,
+    drops        = drops,
+    launchTimes  = launchTimes
   )
+}
+
+
+#' Generate L'Ecuyer-CMRG RNG streams for parallel workers
+#'
+#' Creates `n` independent, non-overlapping RNG streams using the
+#' L'Ecuyer-CMRG generator. Each stream is a 7-element integer vector
+#' suitable for direct assignment to `.Random.seed` in a worker process.
+#' Pattern adapted from [parallel::clusterSetRNGStream()].
+#'
+#' @param n Positive integer. Number of streams to generate.
+#' @return A list of length `n`, each element a 7-element integer vector.
+#' @keywords internal
+.GenerateRNGStreams <- function(n) {
+  oldKind <- RNGkind()
+  oldSeed <- if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+    get(".Random.seed", envir = globalenv(), inherits = FALSE)
+  } else NULL
+  on.exit({
+    do.call(RNGkind, as.list(oldKind))
+    if (!is.null(oldSeed)) {
+      assign(".Random.seed", oldSeed, envir = globalenv())
+    } else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+      rm(".Random.seed", envir = globalenv())
+    }
+  }, add = TRUE)
+  RNGkind("L'Ecuyer-CMRG")
+  # Force a fresh L'Ecuyer-formatted .Random.seed; the previous seed was
+  # for the old generator and is the wrong shape for nextRNGStream().
+  runif(1L)
+  seed <- get(".Random.seed", envir = globalenv(), inherits = FALSE)
+  streams <- vector("list", n)
+  for (i in seq_len(n)) {
+    streams[[i]] <- seed
+    seed <- parallel::nextRNGStream(seed)
+  }
+  streams
 }
 
 
@@ -1835,7 +2081,7 @@ RunMkPrime <- function(data, tree = NULL,
   combined <- do.call(rbind, perRunSamples)
   ess <- .EssMatrix(combined)
 
-  # kPrime are discrete nuisance parameters — exclude from convergence criteria
+  # kPrime are discrete nuisance parameters -- exclude from convergence criteria
   # (M-098). They remain in the `ess` vector for display in .PrintProgressTable.
   isConvParam <- !grepl("^kPrime_", names(ess)) & names(ess) != "log_likelihood"
   minEss <- min(ess[isConvParam], na.rm = TRUE)
@@ -1926,7 +2172,7 @@ RunMkPrime <- function(data, tree = NULL,
 
   if (any(vapply(perRunSamples, is.null, logical(1L)))) return(NULL)
 
-  # Equalise chain lengths — serial runs may produce different sample counts.
+  # Equalise chain lengths -- serial runs may produce different sample counts.
   # Keep the most recent (tail) samples to avoid penalising early convergers.
   nRows   <- vapply(perRunSamples, nrow, integer(1L))
   minRows <- min(nRows)
@@ -2029,8 +2275,40 @@ RunMkPrime <- function(data, tree = NULL,
 #' Build MkPosterior from all runs
 #' @keywords internal
 .BuildResult <- function(runs, model, mkd, mcmc, paramNames, logFilePaths,
-                         actualIter, stopReason, isTempLog = FALSE) {
-  nRuns       <- length(runs)
+                         actualIter, stopReason, isTempLog = FALSE,
+                         drops = NULL) {
+  if (is.null(drops)) drops <- .EmptyDrops()
+  nRuns         <- length(runs)
+  requestedRuns <- mcmc$nRuns %||% nRuns   # PAR-009: original requested count
+
+  # PAR-006: when every parallel worker is hard-killed (PAR-003's 30s
+  # timeout fires before any batch boundary), .RunParallelRuns returns
+  # `runs = list()` and downstream dereferences below crash. Return a
+  # minimal empty MkPosterior with the stopReason intact so the user
+  # gets diagnostic context rather than a "subscript out of bounds".
+  if (nRuns == 0L) {
+    cli::cli_warn(c(
+      "No runs produced output (stopReason: {.val {stopReason}}).",
+      "i" = "All parallel workers were killed before completing a batch.",
+      "i" = "Try shorter batches (lower {.arg checkEvery}) or a longer \\
+             {.arg maxTime}; for resumable progress prefer {.code nCore = 1}."
+    ))
+    emptySamples <- matrix(numeric(0), nrow = 0L, ncol = length(paramNames),
+                           dimnames = list(NULL, paramNames))
+    result <- MkPosterior(
+      samples = emptySamples, trees = list(),
+      acceptance = numeric(0),
+      model = model, data = mkd, mcmc = mcmc,
+      warmup = mcmc$warmup, tuning = list()
+    )
+    result$nSamples        <- 0L
+    result$nRuns           <- 0L
+    result$requested_nRuns <- requestedRuns
+    result$dropped_runs    <- drops
+    result$stopReason      <- stopReason
+    result$actualIter      <- actualIter
+    return(result)
+  }
   # Use logFilePaths (not mcmc$logFile) to determine streaming mode: in
   # parallel runs, .RunParallelRuns() may auto-assign a tempfile log even
   # when mcmc$logFile is NULL, so mcmc$logFile would be stale here.
@@ -2165,9 +2443,11 @@ RunMkPrime <- function(data, tree = NULL,
     }
   }
 
-  result$stop_reason <- stopReason
-  result$actual_iter <- actualIter
-  result$treeThin    <- mcmc$treeThin
+  result$stop_reason     <- stopReason
+  result$actual_iter     <- actualIter
+  result$treeThin        <- mcmc$treeThin
+  result$requested_nRuns <- requestedRuns    # PAR-009
+  result$dropped_runs    <- drops            # PAR-008
   result
 }
 
@@ -2226,12 +2506,17 @@ RunMkPrime <- function(data, tree = NULL,
     r
   })
 
-  version <- if (isStreaming) 2L else 1L
+  # Version 3 (per-run tree files): adds treeFilePaths so each run's newick
+  # stream is preserved by ResumeMkPrime() exactly as written.  Backward
+  # compat: ResumeMkPrime() falls back to .TreeFilePaths(mcmc$treeFile, ...)
+  # when reading v2 checkpoints (which never had a treeFilePaths field).
+  version <- if (isStreaming) 3L else 1L
   payload <- list(runs = serialRuns, mcmc = mcmc, iter = iter,
                   timestamp = Sys.time(), version = version)
   if (isStreaming) {
-    payload$logFilePaths <- .LogFilePaths(mcmc$logFile, length(runs))
-    payload$paramNames   <- paramNames
+    payload$logFilePaths  <- .LogFilePaths(mcmc$logFile, length(runs))
+    payload$treeFilePaths <- .TreeFilePaths(mcmc$treeFile, length(runs))
+    payload$paramNames    <- paramNames
   }
   if (!is.null(moveWeights))  payload$moveWeights  <- moveWeights
   if (!is.null(phase))        payload$phase        <- phase
@@ -2292,10 +2577,10 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   checkpoint <- readRDS(checkpointFile)
 
   version <- checkpoint$version %||% 1L
-  if (!version %in% c(1L, 2L)) {
+  if (!version %in% c(1L, 2L, 3L)) {
     cli::cli_abort("Unsupported checkpoint version: {version}.")
   }
-  isStreaming <- version == 2L
+  isStreaming <- version >= 2L
 
   if (inherits(data, "MkPrimeData")) {
     mkd <- data
@@ -2354,6 +2639,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     nEdge      <- nrow(runs[[1]]$chains[[1]]$edge)
     paramNames <- checkpoint$paramNames
     logFilePaths   <- checkpoint$logFilePaths
+    # v3+ stores treeFilePaths explicitly; v2 must derive it on the fly.
+    treeFilePaths  <- checkpoint$treeFilePaths %||%
+                      .TreeFilePaths(mcmc$treeFile, nRuns)
 
     # Check whether log files exist.  If they were temp files (deleted on
     # clean exit), recreate them so the chain can resume from checkpoint
@@ -2380,6 +2668,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     nEdge      <- sum(grepl("^br_", colnames(runs[[1]]$samples)))
     paramNames <- colnames(runs[[1]]$samples)
     logFilePaths   <- NULL
+    treeFilePaths  <- NULL
     convWindowSize <- 0L
   }
 
@@ -2411,7 +2700,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
   if (isStreaming) {
     # Rewind each log file to the checkpoint's saved_idx.  Any samples
-    # flushed after the last checkpoint are discarded — the chain state
+    # flushed after the last checkpoint are discarded -- the chain state
     # doesn't cover them.  Buffer reinit happens inside .RunMkPrimeSingleRun.
     for (run in seq_len(nRuns)) {
       .TruncateLogToN(logFilePaths[run],
@@ -2419,10 +2708,33 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     }
   }
 
-  tipLabels   <- tree$tip.label %||% rownames(mkd$matrix)
-  isLogseries <- identical(model$kPrimePrior, "logseries")
-  pCols       <- if (isLogseries) 0L else 1L
-  brColStart  <- 5L + pCols + (any(mkd$type == "neomorphic")) + qHet + nTrans + 1L
+  # Tree files: each run has its own newick stream.  Drop any trees written
+  # between the last checkpoint and the SIGKILL/Ctrl-C so each per-run file
+  # matches its tree_saved_idx, and verify the sync invariant with the
+  # corresponding log (every tree has a backing param row).
+  if (!is.null(treeFilePaths)) {
+    for (run in seq_along(treeFilePaths)) {
+      tp <- treeFilePaths[run]
+      if (!is.null(tp) && file.exists(tp)) {
+        .TruncateTreeToN(
+          tp,
+          as.integer(runs[[run]]$tree_saved_idx %||% 0L),
+          logFilePath = if (!is.null(logFilePaths)) logFilePaths[run] else NULL,
+          saved_idx   = as.integer(runs[[run]]$saved_idx %||% 0L),
+          treeEvery   = treeEvery
+        )
+      }
+    }
+  }
+
+  tipLabels       <- tree$tip.label %||% rownames(mkd$matrix)
+  # STREAM-003 + STREAM-004: count diagnostic cols, and 2 cols for BG prior.
+  isBetaGeometric <- identical(model$kPrimePrior, "beta_geometric")
+  isLogseries     <- identical(model$kPrimePrior, "logseries")
+  pCols           <- if (isLogseries) 0L else if (isBetaGeometric) 2L else 1L
+  diagCols        <- 2L                          # swap_cold, topo_hash
+  brColStart      <- 5L + pCols + (any(mkd$type == "neomorphic")) + qHet +
+                     diagCols + nTrans + 1L
 
   # --- Sequential per-run execution ---
   stopReason <- "max_iter"
@@ -2436,13 +2748,68 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   )
 
   tryCatch({
-    if (isStreaming && nRuns >= 2L && !is.null(mcmc$maxRhat)) {
+    if (isStreaming && mcmc$nCore > 1L && nRuns > 1L) {
+      # Parallel resume: mirror the RunMkPrime parallel branch.  Workers
+      # cannot share a treeFile (interleaved cat() calls corrupt newick),
+      # so they accumulate trees in r$tree_samples and the coordinator
+      # appends them after all workers complete.  Capture the pre-resume
+      # tree_saved_idx per run so we only write the *new* tail, not the
+      # trees already present in treeFile from the previous session.
+      preIdx <- vapply(runs, function(r) {
+        as.integer(r$tree_saved_idx %||% 0L)
+      }, integer(1L))
+
+      # Strip already-saved trees from carried-over tree_samples so the
+      # coordinator write loop below (and .BuildResult's tree trim) emit
+      # only the new tail.  The trimmed entries are already on disk in
+      # treeFile (verified above by .TruncateTreeToN).
+      for (run in seq_len(nRuns)) {
+        if (preIdx[run] > 0L && !is.null(runs[[run]]$tree_samples)) {
+          ts <- runs[[run]]$tree_samples
+          keep <- min(preIdx[run], length(ts))
+          runs[[run]]$tree_samples <- if (keep < length(ts)) {
+            ts[(keep + 1L):length(ts)]
+          } else {
+            vector("list", 0L)
+          }
+          runs[[run]]$tree_saved_idx <- 0L
+        }
+      }
+
+      parResult    <- .RunParallelRuns(mkd, model, mcmc, runs, moves,
+                                        tipLabels, paramNames, nEdge,
+                                        brColStart, treeFilePaths,
+                                        TRUE, logFilePaths, convWindowSize)
+      runs         <- parResult$runs
+      logFilePaths <- parResult$logFilePaths
+      stopReason   <- parResult$stopReason
+      actualIter   <- parResult$actualIter
+
+      # Append the new trees produced by this resume session, per run.
+      if (!is.null(treeFilePaths)) {
+        for (run in seq_along(runs)) {
+          treePath <- treeFilePaths[run]
+          if (!is.null(treePath)) {
+            for (tr in runs[[run]]$tree_samples) {
+              if (!is.null(tr)) cat(ape::write.tree(tr), "\n",
+                                    file = treePath, append = TRUE)
+            }
+          }
+        }
+      }
+
+      if (!is.null(mcmc$checkpointFile)) {
+        .SaveCheckpoint(runs, mcmc, actualIter, paramNames,
+                        mcmc$checkpointFile, model = model)
+      }
+    } else if (isStreaming && nRuns >= 2L && !is.null(mcmc$maxRhat)) {
       # M-146: cross-run R-hat convergence orchestrator
       # M-149 #6: skip Phase 1 if checkpoint was during Phase 2
       serialResult <- .RunSerialRuns(mkd, model, mcmc, runs, moves,
                                       tipLabels, paramNames, nEdge,
                                       brColStart, logFilePaths,
-                                      convWindowSize, treeFile = NULL,
+                                      convWindowSize,
+                                      treeFilePaths = treeFilePaths,
                                       startIters = perRunStarts,
                                       startPhase = checkpoint$serialPhase %||% 1L)
       runs       <- serialResult$runs
@@ -2459,7 +2826,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
           startIter      = perRunStarts[run],
           isStreaming    = isStreaming,
           convWindowSize = convWindowSize,
-          treeFile       = NULL,
+          treeFile       = if (is.null(treeFilePaths)) NULL else treeFilePaths[run],
           resumeMoveWeights = runs[[run]]$moveWeights %||% checkpoint$moveWeights
         )
         stopReason <- runs[[run]]$stop_reason
@@ -2471,7 +2838,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                  actualIter, stopReason)
   },
   interrupt = function(cond) {
-    # M-175: interrupt handler missing from resume path — mirror .RunWithRecovery.
+    # M-175: interrupt handler missing from resume path -- mirror .RunWithRecovery.
     # `runs` here reflects the last successfully completed batch state.
     bestIter <- max(c(0L, vapply(runs,
                                   function(r) r$actual_iter %||% 0L,
@@ -2495,7 +2862,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       }
     }
     if (ckpSaved) {
-      cli::cli_alert_warning(c(
+      # PAR-007: cli_warn (not cli_alert_warning) renders bullet items.
+      cli::cli_warn(c(
         "Run interrupted at iteration {bestIter}.",
         "i" = "Checkpoint saved to {.file {mcmc$checkpointFile}}.",
         "i" = "Re-run the same {.fn RunMkPrime} call to resume."
@@ -2577,7 +2945,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 }
 
 
-#' Build scale tuning matrix for run_mcmc_batch_cpp (nChains × nMoves)
+#' Build scale tuning matrix for run_mcmc_batch_cpp (nChains x nMoves)
 #' @keywords internal
 .BuildScaleTuningMatrix <- function(chainTuning, moves) {
   nChains <- length(chainTuning)
@@ -2613,7 +2981,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 }
 
 
-#' Build slice width matrix for run_mcmc_batch_cpp (nChains × nMoves)
+#' Build slice width matrix for run_mcmc_batch_cpp (nChains x nMoves)
 #' @keywords internal
 .BuildSliceWidthMatrix <- function(chainTuning, moves) {
   nChains <- length(chainTuning)
@@ -2644,7 +3012,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 }
 
 
-#' Build joint-rho matrix (nChains × nMoves) for 2D joint Bactrian moves
+#' Build joint-rho matrix (nChains x nMoves) for 2D joint Bactrian moves
 #' @keywords internal
 .BuildJointRhoMatrix <- function(chainRhos, moves, nChains) {
   nMoves <- length(moves)
@@ -2691,7 +3059,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   rhos <- list(rho_tl_rls = 0.0, rho_tl_rl = 0.0)
   if (is.null(samples) || nrow(samples) < 50) return(rhos)
 
-  # tree_length × rate_log_sd
+  # tree_length x rate_log_sd
   if (all(c("tree_length", "rate_log_sd") %in% colnames(samples))) {
     tl <- samples[, "tree_length"]
     rls <- samples[, "rate_log_sd"]
@@ -2705,7 +3073,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     }
   }
 
-  # tree_length × rate_loss
+  # tree_length x rate_loss
   if (hasNeo && all(c("tree_length", "rate_loss") %in% colnames(samples))) {
     tl <- samples[, "tree_length"]
     rl <- samples[, "rate_loss"]
@@ -2930,7 +3298,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
   # Block Dirichlet simplex branch-length move (M-125)
   if (isTRUE(mcmc$dirichletBranch) && nEdge >= 4L) {
-    # M-127: K=5 empirically optimal (K sweep: 22× baseline at K=5 vs 2× at K=10)
+    # M-127: K=5 empirically optimal (K sweep: 22x baseline at K=5 vs 2x at K=10)
     nCatsDirichlet <- as.integer(mcmc$dirichletK %||% min(nEdge, 5L))
     moves <- c(moves, list(
       list(name = "dirichlet_branch", type = "dirichlet_simplex",
@@ -2941,7 +3309,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     ))
   }
 
-  # M-127: localized Dirichlet — connected edges for compact partial eval
+  # M-127: localized Dirichlet -- connected edges for compact partial eval
   if (isTRUE(mcmc$localDirichlet) && nEdge >= 4L) {
     nCatsLocal <- as.integer(mcmc$localDirichletK %||% min(nEdge, 6L))
     moves <- c(moves, list(
@@ -2955,7 +3323,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
   if (nTrans > 0) {
     kPrimeMoves <- list(
-      # Univariate integer walk (reduced weight — Gibbs sweep does heavy lifting)
+      # Univariate integer walk (reduced weight -- Gibbs sweep does heavy lifting)
       list(name = "kPrime", type = "int_walk", target = "kPrime",
            weight = max(1, nTrans), dim = 1L),
       # Gibbs kPrime sweep: sample all k'_i from full conditionals
@@ -2966,15 +3334,15 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
            target = "kPrime", weight = 2, dim = 1L)
     )
     if (identical(kPrimePrior, "beta_geometric")) {
-      # Scale proposals for shared (α, β) hyperparameters.
-      # Weights must be large enough for adaptation to fire (≥10 proposals
-      # per ~1000-iteration tuning round, so ≥1% share of total weight).
+      # Scale proposals for shared (alpha, beta) hyperparameters.
+      # Weights must be large enough for adaptation to fire (>=10 proposals
+      # per ~1000-iteration tuning round, so >=1% share of total weight).
       kPrimeMoves <- c(kPrimeMoves, list(
         list(name = "kprime_alpha", type = "kprime_alpha",
              target = "kprime_alpha", weight = 0.5, dim = 1L),
         list(name = "kprime_beta", type = "kprime_beta",
              target = "kprime_beta", weight = 0.5, dim = 1L),
-        # Prior-only slice samplers — robust, tuning-free exploration
+        # Prior-only slice samplers -- robust, tuning-free exploration
         list(name = "slice_kprime_alpha", type = "slice_kprime_hyper",
              target = "kprime_alpha", weight = 2, dim = 1L,
              sliceParamIdx = 0L),
@@ -3354,7 +3722,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       logHastings <- prop$logHastings
     },
     logit_scale_p = {
-      # Logit-scale MH on p with Jacobian — robust near the boundary.
+      # Logit-scale MH on p with Jacobian -- robust near the boundary.
       # This R fallback uses a normal step on the logit scale; the C++ path
       # uses a Bactrian perturbation but the proposal kernel is symmetric in
       # both cases so the Hastings ratio reduces to the Jacobian alone.
@@ -3779,7 +4147,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   weights
 }
 
-#' Restore gibbs_kPrime to its pinned weight at the Warmup→Tuning/Sample transition.
+#' Restore gibbs_kPrime to its pinned weight at the Warmup->Tuning/Sample transition.
 #'
 #' Undoes the reduction applied by `.WarmupGibbsCap()`. Excess weight is reclaimed
 #' proportionally from non-pinned moves.
@@ -4062,7 +4430,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' @param nStableConsecutive Integer counter of consecutive stable checks
 #'   so far (carried across calls).
 #' @param windowSize Number of snapshots per comparison window.
-#'   Default 10 (= 10 × 500 = 5000 iterations at default batch size).
+#'   Default 10 (= 10 x 500 = 5000 iterations at default batch size).
 #' @param zThreshold Absolute z-score threshold for declaring stability.
 #'   Default 1.5.
 #' @param nStableRequired Number of consecutive stable checks required.
@@ -4092,7 +4460,7 @@ if (n < 2L * windowSize) {
   nP    <- length(prev)
 
   denom <- sqrt(varR / nR + varP / nP)
-  # If both windows have zero variance, chain is flat → stable
+  # If both windows have zero variance, chain is flat -> stable
   if (denom < .Machine$double.eps) {
     nStableConsecutive <- nStableConsecutive + 1L
   } else {

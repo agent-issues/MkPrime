@@ -25,6 +25,10 @@ articles:
     navbar: ~
     contents:
       - hyoliths
+  - title: Technical details
+    navbar: ~
+    contents:
+      - het-details
 
 reference:
   - title: Running an analysis

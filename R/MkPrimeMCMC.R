@@ -80,7 +80,7 @@
 #'   clean stop: `file.create(cancelFile)`. See also [MkCancelPath()].
 #' @param checkpointFile Path to write checkpoint RDS files. `NULL`
 #'   (default) auto-derives from `logFile` when set
-#'   (e.g. `"run.log"` \u2192 `"run.ckp"`). Set to `FALSE` to
+#'   (e.g. `"run.log"` -> `"run.ckp"`). Set to `FALSE` to
 #'   disable checkpointing. Checkpoints are saved at each
 #'   convergence check interval and on cancel.
 #' @param treeFile Path to write sampled trees in Newick format.
@@ -140,6 +140,10 @@
 #'   more often. Much cheaper than Gibbs SPR (no likelihood evaluation per
 #'   candidate), but better guided than uniform SPR.
 #'   See Yang & Rodríguez (2013); Ronquist et al. (2020).
+#' @param gibbsWarmupFactor Numeric in (0, 1]; weight of the Gibbs kPrime
+#'   sweep relative to other moves during warmup (default `1/3`). A lower
+#'   value reduces warmup overhead from the sweep; the weight is restored at
+#'   the warmup-to-tuning transition.
 #' @param joint2d Logical; include 2D joint Bactrian proposals for
 #'   correlated parameter pairs (default `TRUE`). Proposes correlated
 #'   updates to tree_length × rate_log_sd (and tree_length × rate_loss
@@ -189,13 +193,46 @@
 #'   at 30% and SPR at 20%, with the remaining 50% allocated adaptively
 #'   among other moves. To disable adaptive scheduling entirely, pin all
 #'   moves (sum to 1). See section **Adaptive move scheduling** below.
-#' @param parallel Logical. If `TRUE` and `nRuns > 1`, independent runs are
-#'   launched as non-blocking `future::future()` workers and the main process
-#'   polls for convergence. Requires the \pkg{future} package (in `Suggests`).
-#'   Set a parallel plan before calling [RunMkPrime()]:
-#'   `future::plan("multisession", workers = nRuns)`. Default `FALSE` (sequential).
+#' @param nCore Integer. Number of parallel worker processes for independent
+#'   runs. Default `getOption("mc.cores", 1L)`, matching the convention used
+#'   by \pkg{TreeDist}. With `nCore = 1` (the default), runs execute serially.
+#'   With `nCore > 1` and `nRuns > 1`, runs are dispatched as background R
+#'   processes via [callr::r_bg()] and the parent process polls for
+#'   convergence. If `nRuns == 1`, `nCore` is ignored (within-run
+#'   parallelism is a separate facility). When `nRuns > nCore`, runs are
+#'   dispatched from a rolling pool of `nCore` workers: as each finishes,
+#'   the next pending run launches in its place. Cross-run convergence
+#'   (`maxRhat`) cannot trigger early in this regime — it activates only
+#'   once every run has produced samples — so prefer `nRuns <= nCore`
+#'   when convergence-based early stopping matters.
+#'
+#'   **Interrupt-resume is supported only for serial runs (`nCore = 1`).**
+#'   In parallel mode workers run in separate `callr::r_bg()` processes
+#'   and cannot write to the parent's checkpoint state, so an interrupted
+#'   parallel run leaves only the streaming log files on disk; partial
+#'   samples can be loaded with [MkPrimeRecover()] for inspection, but
+#'   [ResumeMkPrime()] will start a fresh run rather than continue from
+#'   the interrupt point. For long parallel runs, prefer a bounded
+#'   `nIter` together with `maxTime` so [RunMkPrime()] returns naturally
+#'   rather than via Ctrl-C.
 #' @param pollInterval Integer. Seconds between convergence polls in parallel
-#'   mode. Ignored when `parallel = FALSE`. Default `10L`.
+#'   mode. Ignored when `nCore = 1`. Default `10L`.
+#' @param cancelGrace Integer (seconds) or `Inf`. After a stopping criterion
+#'   fires (cancel file, `maxTime`, convergence), each parallel worker is sent
+#'   a cancel file and given `cancelGrace` seconds to finish its current batch
+#'   and exit cleanly. Workers still alive after the grace period are
+#'   hard-killed. Default `30L`.
+#'
+#'   Trade-off:
+#'   - **Shorter grace** → quicker abort, but workers mid-batch are hard-killed
+#'     and their in-progress samples are lost (may trigger PAR-006-style
+#'     all-killed scenarios if batches are longer than the grace period).
+#'   - **Longer grace** → cancel is slower, but workers finish their batch
+#'     reliably before stopping.
+#'   - `Inf` → wait indefinitely; workers are never hard-killed. Use when
+#'     batch completion is more important than a timely abort.
+#'
+#'   Ignored when `nCore = 1`.
 #' @param cacheBonus Numeric; multiplier applied to partial-CL-eligible
 #'   move weights (NNI, beta_simplex, Dirichlet, local_dirichlet) when the
 #'   node CL cache is valid. Default 5. A value of 1 disables the boost.
@@ -320,8 +357,9 @@ MkPrimeMCMC <- function(
     moveWeights = NULL,
     cacheBonus = 5,
     tuning = list(),
-    parallel = FALSE,
+    nCore = getOption("mc.cores", 1L),
     pollInterval = 10L,
+    cancelGrace = 30L,
     gibbsWarmupFactor = 1/3
 ) {
   nIter <- if (is.infinite(nIter)) Inf else as.integer(nIter)
@@ -532,12 +570,33 @@ MkPrimeMCMC <- function(
   if (!is.null(checkEvery)) checkEvery <- as.integer(checkEvery)
   if (!is.null(plotEvery)) plotEvery <- as.integer(plotEvery)
 
-  if (!is.logical(parallel) || length(parallel) != 1L || is.na(parallel)) {
-    cli::cli_abort("{.arg parallel} must be a length-1 logical (TRUE or FALSE).")
+  nCore <- as.integer(nCore)
+  if (is.na(nCore) || nCore < 1L) {
+    cli::cli_abort("{.arg nCore} must be a positive integer.")
+  }
+  physCores <- parallel::detectCores(logical = FALSE)
+  if (!is.na(physCores) && nCore > physCores) {
+    cli::cli_warn(c(
+      "{.arg nCore} = {nCore} exceeds physical cores ({physCores}).",
+      "i" = "Proceeding anyway; reduce if memory-bound."
+    ))
   }
   pollInterval <- as.integer(pollInterval)
   if (pollInterval < 1L) {
     cli::cli_abort("{.arg pollInterval} must be a positive integer.")
+  }
+  # cancelGrace: positive integer (seconds) or Inf (wait forever).
+  # Inf is stored as-is; .RunParallelRuns converts it to .Machine$integer.max
+  # for processx's wait(timeout = ...) which does not accept Inf directly.
+  if (is.infinite(cancelGrace)) {
+    cancelGrace <- Inf
+  } else {
+    cancelGrace <- suppressWarnings(as.integer(cancelGrace))
+    if (is.na(cancelGrace) || cancelGrace < 1L) {
+      cli::cli_abort(
+        "{.arg cancelGrace} must be a positive integer (seconds) or {.val Inf}."
+      )
+    }
   }
   cacheBonus <- as.numeric(cacheBonus)
   if (is.na(cacheBonus) || cacheBonus < 1) {
@@ -597,7 +656,8 @@ MkPrimeMCMC <- function(
          moveWeights = moveWeights,
          cacheBonus = cacheBonus,
          tuning = tuning,
-         parallel = parallel, pollInterval = pollInterval,
+         nCore = nCore, pollInterval = pollInterval,
+         cancelGrace = cancelGrace,
          gibbsWarmupFactor = gibbsWarmupFactor),
     class = "MkPrimeMCMC"
   )

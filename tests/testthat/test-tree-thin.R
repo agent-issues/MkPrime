@@ -79,3 +79,29 @@ test_that("treeThin stored in result object", {
                        autoTune = FALSE)))
   expect_equal(result$treeThin, 25L)
 })
+
+
+# STREAM-003 regression: brColStart must account for the 2 diagnostic
+# columns (swap_cold, topo_hash) that C++ writes between the last
+# hyperparam column and the per-character kPrime block.  When brColStart
+# was off-by-two, the reconstructed tree's first 1-2 edge lengths were
+# taken from kPrime / topo_hash cells (one of them an FNV hash ~1e16) and
+# the last actual br_* were dropped.  Trees still parsed via ape, but with
+# garbage edge lengths.  See dev/red-team/findings.md (TREEMOVE / STREAM-003).
+test_that("streamed trees have finite, non-negative, plausible edge lengths", {
+  tree <- .mkp_test_tree()
+  pd   <- .mkp_test_pd()
+  set.seed(2026)
+  result <- suppressWarnings(RunMkPrime(pd, tree, fixTopology = TRUE,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 200L, thin = 5L,
+                       maxWarmup = 100L, minWarmup = 100L,
+                       autoTune = FALSE)))
+  expect_true(length(result$trees) > 0L)
+  for (tr in result$trees) {
+    expect_true(all(is.finite(tr$edge.length)))
+    expect_true(all(tr$edge.length >= 0))
+    # Sanity: edge lengths should sum to a reasonable tree length (well below
+    # the FNV hash scale of ~1e16 that the brColStart bug would inject).
+    expect_lt(sum(tr$edge.length), 1e8)
+  }
+})
