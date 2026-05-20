@@ -1,6 +1,6 @@
-# Per-character partition API for `RunMkPrime` — design plan (v3)
+# Per-character partition API for `RunMkPrime` — design plan (v4)
 
-**Status:** draft v3, awaiting user discussion.
+**Status:** draft v4, awaiting implementation sign-off.
 **Driver:** AutoPart Casali production pipeline (T0–T4 treatments).
 **Branch:** `feature/partition-api`, off `main` at `db4c348`.
 **Cross-references:** MrBayes `unlink` and `Ratepr`
@@ -14,6 +14,17 @@ type (neomorphic / transformational), and (c) a list of model components
 to *unlink* across classes. It is deliberately a design conversation:
 every section ends with the decisions a senior reviewer would want to
 weigh in on.
+
+**v4 changes from v3** (Martin's feedback, 2026-05-20 session 2):
+
+- Mixed-type classes: **SUPPORTED** (§3.2 reversed — a class may contain both neomorphic
+  and transformational characters; Q1 resolved).
+- Token name corrected: `"ratemultiplier"` throughout (§3.3, §4.2, §1 table; Q4 resolved).
+- §5.2 reparameterised: within a class the geometric mean of neomorphic forward (gain) and
+  reverse (loss) rates equals `class_rate[c]`, matching the transformational rate. This
+  decouples the mean-1 constraint from `eta_neo` and simplifies the formula (Q5 resolved).
+- `knownStates` kept unchanged; Q2 resolved.
+- Token vocabulary `c("shape", "ratemultiplier", "brlens")` for v1 confirmed; Q3 resolved.
 
 **v3 changes from v2** (Martin's feedback, 2026-05-20):
 
@@ -42,12 +53,12 @@ neomorphic chars in the Casali corpus).
 
 | Treatment | `nClasses` | What is unlinked across classes |
 |-----------|-----------:|----------------------------------|
-| T0 (unpartitioned)        | 1     | — (nothing to unlink)             |
-| T1 (anatomical)           | K≈2   | `shape`, `rate`                   |
-| T2a (AutoPart, isolated)  | K+1   | `shape`, `rate`                   |
-| T2b (AutoPart, merged)    | K     | `shape`, `rate`                   |
-| T3 (AutoPart unlinked)    | K+1   | `shape`, `rate`, `brlens`         |
-| T4 (random control)       | K+1   | `shape`, `rate`                   |
+| T0 (unpartitioned)        | 1     | — (nothing to unlink)                       |
+| T1 (anatomical)           | K≈2   | `shape`, `ratemultiplier`                   |
+| T2a (AutoPart, isolated)  | K+1   | `shape`, `ratemultiplier`                   |
+| T2b (AutoPart, merged)    | K     | `shape`, `ratemultiplier`                   |
+| T3 (AutoPart unlinked)    | K+1   | `shape`, `ratemultiplier`, `brlens`         |
+| T4 (random control)       | K+1   | `shape`, `ratemultiplier`                   |
 
 **Ecology-aware composability note** (informational only, **not a design
 driver**): the `ecology-aware` branch adds a per-character `z` and
@@ -71,9 +82,9 @@ Survey findings (`R/RunMkPrime.R`, `R/partition.R`, `R/likelihood.R`,
   per group, and MkN vs JC are different code paths. The new user-class
   layer wraps around this; it does not replace it.
 - **Per-character type today**: `mkd$type[i]` records each character's
-  model. In the new design, type is assigned at the **class** level
-  (§3.3), and the per-character `mkd$type` is derived as `type[i] =
-  partitionType[ partition[i] ]`.
+  model. In the new design (v4), types remain per-character — set by
+  the existing `neomorphic` and `knownStates` args, unchanged. Classes
+  may mix types freely (§3.2).
 - **MCMC state is one-of-each globally**: `tree_length`,
   `rel_br_lengths`, `rate_log_sd`, `rate_loss`, `rate_neo`. Each
   becomes a vector of length 1 or nClasses depending on `unlink`,
@@ -93,10 +104,13 @@ RunMkPrime <- function(data, tree = NULL,
                        fixTopology = FALSE,
                        overwrite = FALSE,
                        partition = NULL,                # NEW
-                       partitionType = NULL,            # NEW
                        unlink = character(0),           # NEW
                        ...)
 ```
+
+`partitionType` is **removed** from the v4 design. Per-character model types are already
+carried by `mkd$type[i]`, set via the existing `neomorphic` and `knownStates` args.
+Supporting mixed-type classes makes a per-class type label redundant.
 
 ### 3.1 `partition`
 
@@ -104,35 +118,22 @@ RunMkPrime <- function(data, tree = NULL,
 Or `integer(nChar)` with values in `1:nClasses`, no NAs. Validated
 against `mkd$nChar` after invariant-character drop.
 
-### 3.2 `partitionType`
+### 3.2 Per-character type assignment (v4: `partitionType` removed)
 
-`NULL` (default) → all classes treated as `"transformational"`. Or
-`character(nClasses)` with values in `{"transformational",
-"neomorphic"}`, one per class. Per-character types are derived as
-`mkd$type[i] = partitionType[ partition[i] ]`.
+Per-character model types (`neomorphic` / `transformational` / `known`)
+remain per-character, not per-class. They are set via the existing
+`neomorphic = integer(0)` and `knownStates` args, exactly as today.
+Mixed-type classes are **supported** [Q1 resolved]: `eta_neo` (§5.2)
+applies to neomorphic chars in a class; transformational chars in the
+same class use `class_rate[c]` directly.
 
-Backward-compat with the legacy `neomorphic = integer(0)` arg:
-
-- If `partition = NULL`, the legacy `neomorphic` arg works as today.
-- If `partition` is supplied **and** `partitionType = NULL`, default
-  to all-transformational. Pass `partitionType` explicitly to opt in
-  to neomorphic classes.
-- If both `partition` and the legacy `neomorphic` arg are supplied,
-  hard-error: the type spec must come from one source or the other,
-  not both.
-
-**Open question (Q1 below):** can a single class contain both
-neomorphic and transformational characters? Martin's clarification was
-"a partition is flagged as either neomorphic or transformational" —
-reads as *no*. I'm going with that constraint.
+Backward-compat: the `neomorphic` and `knownStates` args are unchanged
+and work whether or not `partition` is supplied.
 
 **Known characters:** the legacy `knownStates` mechanism survives
-unchanged. Known-state characters can be members of any user class;
-their per-character `k` is still set from `knownStates`. The class's
-`partitionType` is then a constraint on the *other* (non-known) chars
-in the same class. Acceptable, or do we want a third `partitionType`
-value `"known"`? I'd vote no (it makes the class type orthogonal to
-the existence of known chars), but flagging.
+unchanged [Q2 resolved]. Known-state characters can be members of any
+user class; their per-character `k` is set from `knownStates`
+independently of class membership.
 
 ### 3.3 `unlink`
 
@@ -140,11 +141,11 @@ Character vector of component tokens. Default `character(0)`:
 everything linked. Token vocabulary borrowed from MrBayes
 (`Help_Unlink`, `command.c` L12798):
 
-| Token         | Effect                                                            | MrBayes analogue   |
-|---------------|-------------------------------------------------------------------|--------------------|
-| `"shape"`     | per-class `rate_log_sd[c]` (ACRV Γ shape)                         | `shape`            |
-| `"rate"`      | per-class `class_rate[c]` multiplier (mean-1 Dirichlet)           | `ratemultiplier`   |
-| `"brlens"`    | per-class branch lengths under shared topology (subParam idiom)   | `brlens`           |
+| Token                | Effect                                                            | MrBayes analogue   |
+|----------------------|-------------------------------------------------------------------|--------------------|
+| `"shape"`            | per-class `rate_log_sd[c]` (ACRV Γ shape)                         | `shape`            |
+| `"ratemultiplier"`   | per-class `class_rate[c]` multiplier (mean-1 Dirichlet)           | `ratemultiplier`   |
+| `"brlens"`           | per-class branch lengths under shared topology (subParam idiom)   | `brlens`           |
 
 Out of scope for v1: `pinvar`, `statefreq`, `tratio`, etc. — MkPrime
 doesn't expose these as user-tunable.
@@ -171,12 +172,12 @@ class**. Each `PartInfo` (R-side list and C++ struct) gains a
 
 ### 4.2 Per-class state fields
 
-| State field             | Length when "linked" | Length when "unlinked" | Token        |
-|-------------------------|----------------------|------------------------|--------------|
-| `class_rate_log_sd`     | 1                    | nClasses               | `"shape"`    |
-| `class_rate`            | implicit ≡ 1         | nClasses (on simplex)  | `"rate"`     |
+| State field             | Length when "linked" | Length when "unlinked" | Token                |
+|-------------------------|----------------------|------------------------|----------------------|
+| `class_rate_log_sd`     | 1                    | nClasses               | `"shape"`            |
+| `class_rate`            | implicit ≡ 1         | nClasses (on simplex)  | `"ratemultiplier"`   |
 | `class_rel_br_lengths`  | 1 (length-nEdge)     | nClasses (each length-nEdge) | `"brlens"` |
-| `class_tree_length`     | 1                    | nClasses               | `"brlens"`   |
+| `class_tree_length`     | 1                    | nClasses               | `"brlens"`           |
 
 `rate_neo` and `rate_loss` stay as **global scalars** regardless of
 `unlink` — they're shared across all neomorphic classes (§5.2). Not
@@ -228,45 +229,46 @@ User-tunable via a new `MkPrimeModel(classRateConcentration = 1)` arg.
 `beta_simplex` move infrastructure (currently used for
 `rel_br_lengths`).
 
-### 5.2 `rate_neo` reparameterisation under mean-1
+### 5.2 `rate_neo` → `eta_neo` reparameterisation [Q5 resolved]
 
-`rate_neo` stays as a **single global scalar** (per Martin's
-clarification). For mean-1 consistency we drop the current LogNormal(0, 2)
-*free* parameterisation and instead derive `(r_neo, r_trans)` from one
-free positive scalar `eta_neo > 0`:
+`eta_neo` is a **single global scalar** controlling gain→loss vs
+loss→gain asymmetry in neomorphic characters. The constraint is:
 
-- Free parameter: `eta_neo` ~ LogNormal(0, `rateNeoSdlog`), default
-  `rateNeoSdlog = 1` (current default).
-- Derived: `r_neo = nChar * eta_neo / (nNeo * eta_neo + nTrans)`,
-  `r_trans = nChar / (nNeo * eta_neo + nTrans)`.
-- Identity: `(nNeo * r_neo + nTrans * r_trans) / nChar = 1` by
-  construction. At `eta_neo = 1`, `r_neo = r_trans = 1` (no
-  asymmetry).
+> Within any class `c`, the **geometric mean** of the neomorphic
+> forward (gain) rate and reverse (loss) rate equals the
+> transformational rate, i.e. `class_rate[c]`.
 
-Where `nNeo`, `nTrans` are dataset-global counts.
+- Free parameter: `eta_neo > 0` ~ LogNormal(0, `rateNeoSdlog`),
+  default `rateNeoSdlog = 1`.
+- Within class `c`, for each neomorphic char:
+  ```
+  r_gain_c = class_rate[c] * sqrt(eta_neo)
+  r_loss_c = class_rate[c] / sqrt(eta_neo)
+  ```
+  Geometric mean: `sqrt(r_gain_c * r_loss_c) = class_rate[c]` ✓.
+  Ratio: `r_gain_c / r_loss_c = eta_neo` (same in every class).
+- Transformational chars in class `c`: rate = `class_rate[c]` (unchanged).
+- At `eta_neo = 1`: `r_gain_c = r_loss_c = class_rate[c]` (no
+  asymmetry; neomorphic and transformational chars in the same class
+  have the same rate).
+- `eta_neo > 1`: gain dominates (acquisition more common than loss).
 
-**Composition with `class_rate`:** within class `c`, derive per-class
-effective rates:
-
+**Mean-1 constraint** is carried entirely by `class_rate` (§5.1),
+independently of `eta_neo`:
 ```
-r_trans_c = class_rate[c] * nChar_c / (nNeo_c * eta_neo + nTrans_c)
-r_neo_c   = eta_neo * r_trans_c
+sum_c (nChar_c * class_rate[c]) / nChar = 1
 ```
+All characters (neomorphic and transformational) are weighted equally;
+the geometric-mean formulation ensures this without coupling `eta_neo`
+into the normalisation.
 
-so the per-class char-weighted mean of effective rates equals
-`class_rate[c]`. The ratio `r_neo_c / r_trans_c = eta_neo` is the same
-in every class — that is what Martin's "single rate_neo shared by all
-neomorphic characters" means in this formulation. The global
-char-weighted mean across all chars in the dataset is exactly 1 by
-class_rate's mean-1 constraint.
+Edge cases: when `nNeo_c = 0` (pure-trans class), `r_gain_c` and
+`r_loss_c` are undefined and unused. When `nTrans_c = 0` (pure-neo
+class), the formulas apply directly.
 
-Edge cases: when `nNeo_c = 0` (pure trans class), `r_neo_c` is
-undefined but unused; when `nTrans_c = 0` (pure neo class), `r_trans_c
-= class_rate[c] * nChar_c / (nNeo_c * eta_neo)` reduces cleanly.
-
-**For Casali**: all classes have `partitionType = "transformational"`,
-so `nNeo = 0` globally and `eta_neo` is never sampled — the production
-chains are unaffected by this change.
+**For Casali**: `nNeo = 0` globally (all transformational chars), so
+`eta_neo` is never sampled — the production chains are unaffected by
+this change.
 
 **Behavioural change**: existing chains with non-default `rate_neo`
 will produce a different posterior under the new parameterisation
@@ -310,11 +312,11 @@ forward-compatibility note only.
 
 Move construction iterates over each component:
 
-| Component | Linked                                          | Unlinked                                           |
-|-----------|-------------------------------------------------|----------------------------------------------------|
-| `shape`   | one `rate_log_sd` move (current)                | nClasses `rate_log_sd` moves                       |
-| `rate`    | none (vector is implicit ≡ 1)                   | one Dirichlet-simplex move on `w`                  |
-| `brlens`  | one `tree_length` + one `rel_br_lengths` move (current) | nClasses copies of each, plus topology moves that update all per-class simplexes |
+| Component            | Linked                                          | Unlinked                                           |
+|----------------------|-------------------------------------------------|----------------------------------------------------|
+| `shape`              | one `rate_log_sd` move (current)                | nClasses `rate_log_sd` moves                       |
+| `ratemultiplier`     | none (vector is implicit ≡ 1)                   | one Dirichlet-simplex move on `w`                  |
+| `brlens`             | one `tree_length` + one `rel_br_lengths` move (current) | nClasses copies of each, plus topology moves that update all per-class simplexes |
 
 Topology moves change the edge set across all classes simultaneously
 (MrBayes idiom).
@@ -378,12 +380,12 @@ Document in NEWS.md.
    (~8 functions in `src/proposals.cpp` and `src/tree_moves.cpp`) to
    accept and update a `NumericMatrix` of per-class branch lengths.
    Estimate ~1 week + tests. **Clean wedge** — defer to Layer 2.
-3. **Pure-typed classes constraint.** v3 §3.2 forbids classes mixing
-   neomorphic and transformational chars. Acceptable for Casali (all
-   trans) and for foreseeable use; if a user needs mixed classes,
-   they can simply put neomorphic chars in their own class.
-4. **Token vocabulary scope.** v3 proposes `shape`, `rate`, `brlens`.
-   Defer `rateloss`, `betascale`, `pinvar`, etc. to v2.
+3. **Mixed-type classes [resolved].** v4 supports classes mixing
+   neomorphic and transformational chars. `eta_neo` applies only to
+   neomorphic chars within each class; the geometric-mean formulation
+   (§5.2) keeps the per-class mean-1 constraint clean.
+4. **Token vocabulary scope.** v4 uses `"shape"`, `"ratemultiplier"`,
+   `"brlens"`. Defer `rateloss`, `betascale`, `pinvar`, etc. to v2.
 5. **Composability with `ecology-aware`.** Informational only (§5.3);
    no code dependency. If it lands later, retest.
 6. **Log-file column count.** Each `unlink` component adds 1 or
@@ -414,17 +416,17 @@ Under `tests/testthat/`:
   (matching topology hash across classes), chain runs.
 - `test-partition-unlink-all.R`: T3 equivalent — `unlink =
   c("shape", "rate", "brlens")`.
-- `test-partition-type-neomorphic.R`: a class flagged
-  `partitionType = "neomorphic"` runs without error, `eta_neo` is
-  sampled.
+- `test-partition-type-neomorphic.R`: a dataset with neomorphic chars
+  in a partitioned run triggers `eta_neo` sampling; mixed-type class
+  (neo + trans chars in same class) runs without error.
 - `test-partition-validation.R`: bad inputs produce clean errors
-  (NAs in partition, out-of-range class IDs, mismatched
-  `partitionType` length, unknown unlink token, mixed-type class).
+  (NAs in partition, out-of-range class IDs, unknown unlink token).
 - `test-partition-unlink-matching.R`: partial-prefix match warns;
   ambiguous prefix errors; unknown token suggests via `agrep`.
 - `test-partition-rate-neo-reparam.R`: `eta_neo = 1` reproduces the
-  default `rate_neo = 1` likelihood; `eta_neo > 1` shifts neo and
-  trans rates symmetrically.
+  default `rate_neo = 1` likelihood; `eta_neo > 1` shifts neo gain and
+  loss rates symmetrically around `class_rate[c]` (geometric mean
+  preserved).
 
 Smoke test (manual): dispatch all five Casali treatments against a
 small matrix via the AutoPart 02 script.
@@ -449,38 +451,34 @@ ship after Layer 1; T3 follows.
 
 ---
 
-## 11. Decisions for Martin
+## 11. Decisions
 
-Numbered for easy reply. Items Martin has already resolved are marked
-[**resolved**].
+All design decisions are now resolved. Layer 1 can start.
 
-1. **Mixed-type classes (§3.2).** Forbid (current v3 default), or
-   allow? Forbid is simpler and Martin's wording suggests forbid.
-2. **`partitionType` value for known-state-space classes (§3.2).**
-   Keep `knownStates` mechanism unchanged and treat
-   `partitionType = "transformational"` as a no-op for known chars
-   in the class (current v3), or add a third
-   `partitionType = "known"` value? I lean keep it as-is.
-3. **Token vocabulary scope (§3.3).** Confirm `c("shape", "rate",
-   "brlens")` for v1; defer `rateloss`, `betascale`, etc.
-4. **Token name for "rate"** — terse `"rate"` (my proposal) or
-   `"ratemultiplier"` (exact MrBayes match)? Partial-prefix matching
-   resolves both.
-5. **`rate_neo` → `eta_neo` reparameterisation (§5.2).** Martin
-   confirmed the mean-1 nervousness and the "single global scalar"
-   scope; my v3 §5.2 is the minimal mean-1-respecting form. Confirm
-   this is what you meant.
+1. **Mixed-type classes.** [**resolved 2026-05-20: SUPPORTED.**]
+   Classes may freely mix neomorphic and transformational characters;
+   `partitionType` arg removed from the signature (§3.2).
+2. **`knownStates` handling.** [**resolved 2026-05-20: keep unchanged.**]
+   `knownStates` mechanism survives unmodified; `partitionType` removal
+   makes this a non-question — per-char types come from existing args.
+3. **Token vocabulary scope.** [**resolved 2026-05-20: confirmed
+   `c("shape", "ratemultiplier", "brlens")` for v1; defer `rateloss`,
+   `betascale`, etc.**]
+4. **Token name for rate multiplier.** [**resolved 2026-05-20:
+   `"ratemultiplier"` (exact MrBayes match).**]
+5. **`rate_neo` → `eta_neo` reparameterisation.** [**resolved
+   2026-05-20: geometric-mean formulation (§5.2).** Within each class,
+   `sqrt(r_gain_c * r_loss_c) = class_rate[c]`; `eta_neo = r_gain /
+   r_loss` is the asymmetry ratio; mean-1 constraint is independent of
+   `eta_neo`.]
 6. **Numeric-tolerance equivalence contract (§7).** [**resolved
    2026-05-20: accepted as proposed.**]
-7. **Scope of v1.** Layer 1 ships 5/6 treatments standalone; Layer 2
-   adds T3. Acceptable? (§10)
+7. **Scope of v1.** [**resolved 2026-05-20: Layer 1 ships 5/6
+   treatments; Layer 2 adds T3. Acceptable.**]
 8. **Partial-prefix matching with warning (§3.3).** [**resolved
    2026-05-20: implement as proposed.**]
-9. **Ecology-aware composability test.** Out of scope while
-   `ecology-aware` is hypothetical (§5.3). Re-evaluate if it merges.
-   [**effectively resolved 2026-05-20.**]
-
-Once 1–5 and 7 are settled, Layer 1 can start.
+9. **Ecology-aware composability test.** [**resolved 2026-05-20:
+   out of scope; §5.3 is informational only.**]
 
 ---
 
