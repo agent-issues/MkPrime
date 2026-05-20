@@ -153,6 +153,18 @@ set_branch_bins <- function(dataPtr, nBins) {
     invisible(.Call(`_MkPrime_set_branch_bins`, dataPtr, nBins))
 }
 
+cpp_log_likelihood_xptr <- function(dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, betaScale = 1.0) {
+    .Call(`_MkPrime_cpp_log_likelihood_xptr`, dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, betaScale)
+}
+
+cpp_log_likelihood_partitioned_xptr <- function(dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, classRate, etaNeo, betaScale = 1.0) {
+    .Call(`_MkPrime_cpp_log_likelihood_partitioned_xptr`, dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, classRate, etaNeo, betaScale)
+}
+
+cpp_data_nclasses <- function(dataPtr) {
+    .Call(`_MkPrime_cpp_data_nclasses`, dataPtr)
+}
+
 spr_proposal <- function(edge, nTip, treeLength, relBrLengths) {
     .Call(`_MkPrime_spr_proposal`, edge, nTip, treeLength, relBrLengths)
 }
