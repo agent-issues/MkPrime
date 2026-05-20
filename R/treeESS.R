@@ -42,8 +42,16 @@
 #' "Estimating the effective sample size of tree topologies from
 #' Bayesian phylogenetic analyses."
 #' \emph{Genome Biology and Evolution}, 8(8), 2319--2332.
-#' @keywords internal
-.TreeESS <- function(trees, dist_fn = TreeDist::RobinsonFoulds,
+#' @examples
+#' if (requireNamespace("ape", quietly = TRUE) &&
+#'     requireNamespace("TreeDist", quietly = TRUE)) {
+#'   set.seed(1)
+#'   trees <- lapply(seq_len(10), function(i) ape::rtree(8))
+#'   class(trees) <- "multiPhylo"
+#'   TreeESS(trees)
+#' }
+#' @export
+TreeESS <- function(trees, dist_fn = TreeDist::RobinsonFoulds,
                      min_nsamples = 5L, frechet = FALSE,
                      maxRows = 200L) {
   dmat <- as.matrix(dist_fn(trees))

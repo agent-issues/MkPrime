@@ -503,7 +503,7 @@ print.MkpDiagnostics <- function(x, ...) {
 }
 
 
-# Compute topology ESS from sampled trees using internal .TreeESS + TreeDist RF.
+# Compute topology ESS from sampled trees using TreeESS() + TreeDist RF.
 # Returns named numeric vector (frechetCorrelationESS, medianPseudoESS)
 # as the minimum across runs (conservative), or NULL if skipped or failed.
 #
@@ -543,8 +543,8 @@ print.MkpDiagnostics <- function(x, ...) {
 
   tryCatch({
     chainRows <- lapply(perRunTrees, function(chain) {
-      .TreeESS(chain, dist_fn = TreeDist::RobinsonFoulds,
-               frechet = frechet)
+      TreeESS(chain, dist_fn = TreeDist::RobinsonFoulds,
+              frechet = frechet)
     })
     essMat <- do.call(rbind, chainRows)
     # Minimum across runs -- conservative multi-chain estimate.

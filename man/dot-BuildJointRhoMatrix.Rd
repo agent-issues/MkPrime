@@ -2,11 +2,11 @@
 % Please edit documentation in R/RunMkPrime.R
 \name{.BuildJointRhoMatrix}
 \alias{.BuildJointRhoMatrix}
-\title{Build joint-rho matrix (nChains × nMoves) for 2D joint Bactrian moves}
+\title{Build joint-rho matrix (nChains x nMoves) for 2D joint Bactrian moves}
 \usage{
 .BuildJointRhoMatrix(chainRhos, moves, nChains)
 }
 \description{
-Build joint-rho matrix (nChains × nMoves) for 2D joint Bactrian moves
+Build joint-rho matrix (nChains x nMoves) for 2D joint Bactrian moves
 }
 \keyword{internal}

@@ -14,7 +14,7 @@
   paramNames,
   nEdge,
   brColStart,
-  treeFile,
+  treeFilePaths,
   isStreaming,
   logFilePaths,
   convWindowSize

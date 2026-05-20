@@ -2224,8 +2224,8 @@ RunMkPrime <- function(data, tree = NULL,
 
   tryCatch({
     essVals <- vapply(perRunTrees, function(chain) {
-      .TreeESS(chain, dist_fn = TreeDist::RobinsonFoulds,
-               frechet = FALSE)[["medianPseudoESS"]]
+      TreeESS(chain, dist_fn = TreeDist::RobinsonFoulds,
+              frechet = FALSE)[["medianPseudoESS"]]
     }, double(1))
     essVals <- essVals[is.finite(essVals)]
     if (length(essVals) == 0L) return(NA_real_)
@@ -4291,8 +4291,8 @@ if (n < 2L * windowSize) {
   if (!is.null(tuningTrees) && length(tuningTrees) >= 20L) {
     trees <- structure(tuningTrees, class = "multiPhylo")
     treeEss <- tryCatch(
-      .TreeESS(trees, dist_fn = TreeDist::RobinsonFoulds,
-               frechet = FALSE)[["medianPseudoESS"]],
+      TreeESS(trees, dist_fn = TreeDist::RobinsonFoulds,
+              frechet = FALSE)[["medianPseudoESS"]],
       error = function(e) NA_real_
     )
     if (!is.na(treeEss) && is.finite(treeEss)) {

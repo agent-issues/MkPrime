@@ -14,7 +14,7 @@ topology ESS (median pseudo-ESS) from the sampled trees.
 Defaults to \code{FALSE}.
 Each run is subsampled to at most 1,000 trees.}
 
-\item{frechetESS}{Logical. If \code{TRUE}, also compute the Fréchet
+\item{frechetESS}{Logical. If \code{TRUE}, also compute the Frechet
 correlation ESS (Magee et al. 2021).  This requires the full
 n x n pairwise distance matrix rather than the partial cross-distance
 matrix used for median pseudo-ESS, so is substantially slower.

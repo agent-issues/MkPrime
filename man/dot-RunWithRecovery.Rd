@@ -16,7 +16,7 @@
   brColStart,
   logFilePaths,
   convWindowSize,
-  treeFile,
+  treeFilePaths,
   isTempLog
 )
 }

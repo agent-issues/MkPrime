@@ -2,11 +2,11 @@
 % Please edit documentation in R/RunMkPrime.R
 \name{.BuildSliceWidthMatrix}
 \alias{.BuildSliceWidthMatrix}
-\title{Build slice width matrix for run_mcmc_batch_cpp (nChains × nMoves)}
+\title{Build slice width matrix for run_mcmc_batch_cpp (nChains x nMoves)}
 \usage{
 .BuildSliceWidthMatrix(chainTuning, moves)
 }
 \description{
-Build slice width matrix for run_mcmc_batch_cpp (nChains × nMoves)
+Build slice width matrix for run_mcmc_batch_cpp (nChains x nMoves)
 }
 \keyword{internal}
