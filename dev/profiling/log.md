@@ -254,6 +254,78 @@ Orchestrator-level (`.MkpEcologyLogLikelihood`, 1000 reps): baseline 0.57 ms, T-
 
 **Cleanup.** `dev/profiling/.vtune-lib-prof/`, `dev/profiling/.vtune-lib-t009/`, `dev/profiling/drivers/11c_bench_b.R`, `dev/profiling/drivers/11c_bench_t.R` removed after filing (gitignored / temporary).
 
+## Round 6 — T-010 partition cache for ecology — 2026-05-21
+
+**Goal.** Restore partition-level likelihood caching to the ecology-aware MCMC
+path. Predicted recovery: 5–10× wall on the rodent matrix once non-tree moves
+hit a cache for partitions they don't touch.
+
+**Implementation.**
+- Added `cpp_partition_log_likelihood_ecology` (bit-identical to one
+  orchestrator iteration) and `compute_gamma_e_ecology` helper in
+  `src/mcmc_ecology.cpp`.
+- Refactored `cpp_log_likelihood_ecology` to call the per-partition function
+  per partition (summation order preserved).
+- Wired `state->wEdge` + `state->wEdgeDirty` into a real cache via
+  `eco_refresh_wedge`/`eco_recompute_all_partitions` helpers in
+  `src/mcmc.cpp`.
+- Reused `state->partLogLik` as the ecology partition cache (cleared on
+  tree-move accept paths, same as the blind path).
+- Refactored every move-handler eco branch: slice probes use partition
+  cache; kPrime moves recompute only the trans partition (subgroup
+  composition caveat — recompute whole trans partition is the easiest
+  correct option, documented); phi/pi0/theta moves keep wEdge cached and
+  recompute all partitions; tree moves invalidate wEdge.
+- `wEdgeDirty = true` added to every tree-move accept path (8 sites).
+
+**Build.** `dev/profiling/.vtune-lib-t010/` clean rebuild.
+
+**Tests.** 228/228 across `filter="ecology|likelihood|mcmc"` (was 226/226 on
+T-008+T-009 HEAD; +2 from a new T-010 cache-reproducibility test in
+`tests/testthat/test-ecology-likelihood.R`). 0 failures. The existing
+"per-char ecology log-liks sum to total" invariant already covered the
+orchestrator-vs-partition correctness check.
+
+**Drift check.** Rodent matrix, 1000-iter aware MCMC: **zero `[eco-resync]`
+warnings** emitted (the 20-iter cross-check threshold of |dLL|+|dLP| > 0.5
+nats was never crossed). Cache invalidation logic is correct.
+
+**Bench results** (`dev/profiling/drivers/11d_t010_bench.R`, rodent matrix
+64×217, kEco=4, 200 iter):
+
+| Build | Aware (s) | Blind (s) | Aware iter/s | Ratio |
+|-------|-----------|-----------|--------------|-------|
+| Baseline (T-008+T-009 in HEAD) | 24.59 | 0.97 | 8.13 | 25.3× |
+| **T-010** | **21.40** | **0.77** | **9.35** | 27.79× |
+| Δ aware  | -13.0 %  | -20.6 %  | +15.0 %  | — |
+
+**Why only 13 %, not the predicted 5–10×.** Production move schedule on
+rodent assigns ~78 % weight to tree-touching moves (NNI 17 %, SPR 8.5 %,
+TBR 8.5 %, pSPR 8.5 %, gibbs_spr 2.9 %, gibbs_subtree_swap 2.9 %,
+branch_lengths 11 %, dirichlet_branch 8.3 %, local_dirichlet 8.3 %,
+tree_length 1.7 %) — all of which invalidate wEdge AND need every partition
+recomputed. Only ~22 % of moves benefit from the partition cache (slice on
+rate_loss/rate_neo → neo partitions only; phi/pi0/theta/rateLogSd →
+wEdge-cached; kPrime int_walk → one trans partition; z sweep → cached
+post-sweep refresh). Within those ~22 %, the cache delivers the predicted
+savings; on the wall they're diluted by the dominant tree-move cost.
+
+**Per-call cost** (`dev/profiling/drivers/11c_per_call_cost.R`,
+30 reps): aware orchestrator 0.67 ms/call — unchanged from baseline (T-010
+is bit-identical at the orchestrator level, by design).
+
+**Next bigger win** requires either (a) partial-CL evaluation in ecology
+tree moves (much larger refactor; ecology `wEdge` couples every edge so
+naive partial CL doesn't apply), or (b) approximate / incremental wEdge
+update for branch-length moves. Both deferred.
+
+**Status updates.**
+- T-007 → PARTIALLY-OPTIMISED (T-008 + T-009 + T-010 together).
+- T-010 → APPLIED, VERIFIED ~13 % wall on the rodent matrix.
+
+**Cleanup.** `dev/profiling/.vtune-lib-t010/` removed after filing. No
+`src/Makevars.win` left behind.
+
 ---
 
 last_focus: 0

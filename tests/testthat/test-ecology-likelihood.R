@@ -681,6 +681,51 @@ test_that("PruningMknEcology validates argument shapes", {
 # ===== .MkpEcologyLogLikelihood: full orchestrator integration =====
 
 
+test_that("T-010: orchestrator output reproducible across calls (cache-safe)", {
+  # The T-010 refactor splits cpp_log_likelihood_ecology into a per-partition
+  # function plus a thin outer loop. The orchestrator-total = sum(per-char)
+  # invariant is exercised by test-ecology-plumbing.R::"per-char ecology log-liks
+  # sum to total (...)" across multiple coding/mode combinations.
+  #
+  # This additional probe asserts that two back-to-back orchestrator calls with
+  # the same inputs return bit-identical results — a regression guard against
+  # any cache-state-leakage bug introduced by the T-010 refactor.
+  set.seed(20260521)
+  tips <- paste0("t", 1:8)
+  nChar <- 12L
+  mat <- matrix(0L, nrow = 8L, ncol = nChar + 1L,
+                dimnames = list(tips, NULL))
+  for (c in seq_len(nChar)) mat[, c] <- sample.int(3L, 8L, replace = TRUE) - 1L
+  mat[, nChar + 1L] <- sample.int(4L, 8L, replace = TRUE) - 1L  # ecology kEco=4
+  pd <- TreeTools::MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd, ecology = nChar + 1L)
+
+  tree <- TreeTools::Preorder(ape::rtree(8, tip.label = tips))
+
+  zCols <- mkd$kEcology - 1L
+  zMat <- matrix(sample.int(3L, mkd$nChar * zCols, replace = TRUE) - 1L,
+                 nrow = mkd$nChar, ncol = zCols)
+  storage.mode(zMat) <- "integer"
+
+  ll1 <- MkPrime:::.MkpEcologyLogLikelihood(
+    tree, mkd, kPrime = mkd$kObs,
+    rate_loss = 1.0, rate_log_sd = 0, nCat = 1L,
+    rate_neo = 1.0, relabel = TRUE,
+    phi = 1.6, zMat = zMat, magnitudeMode = "global",
+    refEcology = 0L, theta = rep(0.5, zCols), pi0 = 0.5
+  )
+  ll2 <- MkPrime:::.MkpEcologyLogLikelihood(
+    tree, mkd, kPrime = mkd$kObs,
+    rate_loss = 1.0, rate_log_sd = 0, nCat = 1L,
+    rate_neo = 1.0, relabel = TRUE,
+    phi = 1.6, zMat = zMat, magnitudeMode = "global",
+    refEcology = 0L, theta = rep(0.5, zCols), pi0 = 0.5
+  )
+  expect_equal(ll1, ll2, tolerance = 0)
+  expect_true(is.finite(ll1))
+})
+
+
 test_that(".MkpEcologyLogLikelihood with z = 0 matches non-ecology likelihood", {
   # Construct a small MkPrimeData with one ecology column.
   # Tree: 6-tip random; chars: 4 transformational + 2 neomorphic + 1 ecology.

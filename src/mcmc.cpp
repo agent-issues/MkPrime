@@ -591,15 +591,21 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
 void fill_partition_cache(SEXP dataPtr, SEXP statePtr) {
   McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
   McmcState* state = Rcpp::XPtr<McmcState>(statePtr).get();
-  // Ecology mode does not use the partition cache; the dispatcher routes
-  // every move through cpp_log_likelihood_ecology.  Leave partLogLik empty
-  // and trust the R-computed initial logLik (already the ecology value).
-  if (data->ecologyAware) return;
   int nParts = (int)data->parts.size();
   int nEdge  = state->relBrLengths.size();
   NumericVector edgeLen(nEdge);
   for (int i = 0; i < nEdge; ++i)
     edgeLen[i] = state->treeLength * state->relBrLengths[i];
+
+  if (data->ecologyAware) {
+    // T-010: populate the ecology partition cache. wEdge is recomputed and
+    // cached on state->wEdge so subsequent non-tree moves can skip the
+    // forward+backward sweep over the ecology tree.
+    state->wEdgeDirty = true;
+    state->logLik = eco_recompute_all_partitions(data, state, edgeLen);
+    return;
+  }
+
   state->partLogLik.resize(nParts);
   double totalLogLik = 0.0;
   for (int pi = 0; pi < nParts; ++pi) {
@@ -1197,6 +1203,7 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
   state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
+  state->wEdgeDirty = true;        // T-010: topology/branches changed
   return true;
 }
 
@@ -1506,6 +1513,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
   state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
+  state->wEdgeDirty = true;        // T-010: topology/branches changed
   return true;
 }
 
@@ -1650,6 +1658,7 @@ static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta) {
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
   state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
+  state->wEdgeDirty = true;        // T-010: topology/branches changed
   return true;
 }
 
@@ -1910,6 +1919,7 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
   state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
+  state->wEdgeDirty = true;        // T-010: topology/branches changed
   return true;
 }
 
@@ -2166,6 +2176,7 @@ static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
   state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
+  state->wEdgeDirty = true;        // T-010: topology/branches changed
   return true;
 }
 
@@ -2275,6 +2286,7 @@ static bool gibbs_subtree_swap_impl_full(McmcData* data, McmcState* state,
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
   state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
+  state->wEdgeDirty = true;        // T-010: topology/branches changed
   return true;
 }
 
@@ -2559,6 +2571,7 @@ static bool block_gibbs_branch_sweep_impl(
     // Invalidate partition cache (sweep touched multiple partitions)
     state->partLogLik.clear();
     state->nodeCL.invalidate_all();  // M-143/M-161: branch lengths changed
+    state->wEdgeDirty = true;        // T-010: branch lengths changed
   }
   return nAccepted > 0;
 }
@@ -2842,6 +2855,7 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
     state->logPrior = newLogPrior;
     state->partLogLik.clear();
     state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
+  state->wEdgeDirty = true;        // T-010: topology/branches changed
     return true;
   }
   return false;
@@ -3049,6 +3063,7 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
     state->logPrior = newLogPrior;
     state->partLogLik.clear();
     state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
+  state->wEdgeDirty = true;        // T-010: topology/branches changed
     return true;
   }
   return false;
@@ -3103,13 +3118,46 @@ static double eval_slice_target(McmcData* data, McmcState* state,
   ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
 
   if (data->ecologyAware) {
-    // Eco mode: partition cache unused. Always do a full eco recompute
-    // — otherwise the slice target drops phi/z/pi0/gamma_e factors
-    // and the sampler explores the wrong target distribution.
-    logLik = cpp_log_likelihood_ecology(
-      *data, state->parent, state->child, edgeLen,
-      state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
-      state->phi, state->zMatrix, state->pi0, state->theta);
+    // T-010: partition cache restored for ecology. Tree-length (paramIdx 0)
+    // changes every edge length and therefore invalidates wEdge; rate_loss
+    // and rate_neo touch only neomorphic partitions; rate_log_sd changes
+    // ACRV rates for every partition. wEdge is independent of all four
+    // slice params, so we just need to recompute the right partitions.
+    // This is a probe — DO NOT mutate state->partLogLik (mirror blind path).
+    if (paramIdx == 0) state->wEdgeDirty = true;
+    bool hasPLCEco = !state->partLogLik.empty();
+    eco_refresh_wedge(data, state, edgeLen);
+    std::vector<double> gammaE;
+    compute_gamma_e_ecology(*data, state->phi, state->pi0, state->theta,
+                            gammaE);
+    NumericVector rates = (state->rateLogSd > 0.0)
+      ? cpp_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ)
+      : NumericVector(1, 1.0);
+    if (hasPLCEco && (paramIdx == 1 || paramIdx == 3)) {
+      // rate_loss / rate_neo: neomorphic partitions only.
+      logLik = state->logLik;
+      for (size_t ni = 0; ni < data->neoPartIndices.size(); ++ni) {
+        int pi = data->neoPartIndices[ni];
+        double newPart = cpp_partition_log_likelihood_ecology(
+          *data, pi, state->parent, state->child, edgeLen,
+          state->kPrime, state->rateLoss, state->rateNeo,
+          state->phi, state->zMatrix,
+          state->wEdge, gammaE, rates);
+        logLik += (newPart - state->partLogLik[pi]);
+      }
+    } else {
+      // Tree length, rate_log_sd, or stale cache: recompute every partition,
+      // reusing cached wEdge when clean.
+      int nParts = (int)data->parts.size();
+      logLik = 0.0;
+      for (int pi = 0; pi < nParts; ++pi) {
+        logLik += cpp_partition_log_likelihood_ecology(
+          *data, pi, state->parent, state->child, edgeLen,
+          state->kPrime, state->rateLoss, state->rateNeo,
+          state->phi, state->zMatrix,
+          state->wEdge, gammaE, rates);
+      }
+    }
   } else if (hasPLC && (paramIdx == 1 || paramIdx == 3)) {
     // rate_loss (1), rate_neo (3): only neomorphic partitions change
     logLik = state->logLik;
@@ -3192,14 +3240,32 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
 
       bool hasPLC = !state->partLogLik.empty();
       if (data->ecologyAware) {
-        // Eco mode: full eco recompute. Same reasoning as
-        // eval_slice_target — non-eco logLik would drop phi/z/pi0
-        // factors and corrupt state->logLik.
-        state->logLik = cpp_log_likelihood_ecology(
-          *data, state->parent, state->child, edgeLen,
-          state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
-          state->phi, state->zMatrix, state->pi0, state->theta);
-        state->partLogLik.clear();
+        // T-010: refresh partition cache + state->logLik. wEdge cache is
+        // reused unless paramIdx == 0 (tree length) which invalidates it.
+        if (paramIdx == 0) state->wEdgeDirty = true;
+        bool hasPLCEco = !state->partLogLik.empty();
+        if (hasPLCEco && (paramIdx == 1 || paramIdx == 3)) {
+          eco_refresh_wedge(data, state, edgeLen);
+          std::vector<double> gammaE;
+          compute_gamma_e_ecology(*data, state->phi, state->pi0, state->theta,
+                                  gammaE);
+          NumericVector rates = (state->rateLogSd > 0.0)
+            ? cpp_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ)
+            : NumericVector(1, 1.0);
+          for (size_t ni = 0; ni < data->neoPartIndices.size(); ++ni) {
+            int pi = data->neoPartIndices[ni];
+            state->partLogLik[pi] = cpp_partition_log_likelihood_ecology(
+              *data, pi, state->parent, state->child, edgeLen,
+              state->kPrime, state->rateLoss, state->rateNeo,
+              state->phi, state->zMatrix,
+              state->wEdge, gammaE, rates);
+          }
+          state->logLik = 0.0;
+          for (size_t pi = 0; pi < state->partLogLik.size(); ++pi)
+            state->logLik += state->partLogLik[pi];
+        } else {
+          state->logLik = eco_recompute_all_partitions(data, state, edgeLen);
+        }
       } else if (hasPLC && (paramIdx == 1 || paramIdx == 3)) {
         // Update only neo partitions in cache
         for (size_t ni = 0; ni < data->neoPartIndices.size(); ++ni) {
@@ -3939,17 +4005,36 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   }
 
   // Rebuild logLik, logPrior, and partition cache after sweep.
-  // In ecology mode the partition cache is unused (fill_partition_cache
-  // is a no-op when data->ecologyAware) and the non-ecology partition
-  // pruning drops the phi/z/pi0/gamma_e rate modifiers — silently
-  // corrupting state->logLik by 10s-100s of nats per sweep. Route eco
-  // mode through cpp_log_likelihood_ecology instead.
+  // T-010: ecology partition cache restored. kPrime changes affect only
+  // transformational partitions, so we recompute just those (kPrime subgroup
+  // composition for one trans char can change — easiest correct option is
+  // to recompute the whole trans partition).
   if (data->ecologyAware) {
-    state->logLik = cpp_log_likelihood_ecology(
-      *data, state->parent, state->child, edgeLen,
-      state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
-      state->phi, state->zMatrix, state->pi0, state->theta);
-    state->partLogLik.clear();
+    bool hasPLCEco = !state->partLogLik.empty();
+    if (hasPLCEco) {
+      eco_refresh_wedge(data, state, edgeLen);
+      std::vector<double> gammaE;
+      compute_gamma_e_ecology(*data, state->phi, state->pi0, state->theta,
+                              gammaE);
+      NumericVector rates = (state->rateLogSd > 0.0)
+        ? cpp_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ)
+        : NumericVector(1, 1.0);
+      double newLL = 0.0;
+      int nP = (int)data->parts.size();
+      for (int pi = 0; pi < nP; ++pi) {
+        if (data->parts[pi].type == 1) {  // transformational only
+          state->partLogLik[pi] = cpp_partition_log_likelihood_ecology(
+            *data, pi, state->parent, state->child, edgeLen,
+            state->kPrime, state->rateLoss, state->rateNeo,
+            state->phi, state->zMatrix,
+            state->wEdge, gammaE, rates);
+        }
+        newLL += state->partLogLik[pi];
+      }
+      state->logLik = newLL;
+    } else {
+      state->logLik = eco_recompute_all_partitions(data, state, edgeLen);
+    }
   } else {
     ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
     int nParts = (int)data->parts.size();
@@ -4037,14 +4122,51 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
   double newLogLik;
 
   if (data->ecologyAware) {
-    // Ecology mode: partition cache is empty (fill_partition_cache is a
-    // no-op when ecologyAware). Use the eco orchestrator for a correct
-    // full recompute — otherwise the non-eco partition pruning silently
-    // drops phi/z/pi0/gamma_e contributions and corrupts state->logLik.
-    newLogLik = cpp_log_likelihood_ecology(
-      *data, state->parent, state->child, edgeLen,
-      state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
-      state->phi, state->zMatrix, state->pi0, state->theta);
+    // T-010: block kPrime shift — transformational partitions only;
+    // wEdge unchanged. Reuse cached partLogLik for non-trans partitions.
+    bool hasPLCEco = !state->partLogLik.empty();
+    if (hasPLCEco) {
+      newPC = state->partLogLik;
+      newLogLik = state->logLik;
+      eco_refresh_wedge(data, state, edgeLen);
+      std::vector<double> gammaE;
+      compute_gamma_e_ecology(*data, state->phi, state->pi0, state->theta,
+                              gammaE);
+      NumericVector rates = (state->rateLogSd > 0.0)
+        ? cpp_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ)
+        : NumericVector(1, 1.0);
+      for (int pi = 0; pi < nParts; ++pi) {
+        if (data->parts[pi].type == 1) {
+          double v = cpp_partition_log_likelihood_ecology(
+            *data, pi, state->parent, state->child, edgeLen,
+            state->kPrime, state->rateLoss, state->rateNeo,
+            state->phi, state->zMatrix,
+            state->wEdge, gammaE, rates);
+          newLogLik += (v - newPC[pi]);
+          newPC[pi] = v;
+        }
+      }
+    } else {
+      // No cached PLC — compute all partitions into a local vector
+      // (don't mutate state in case the move is rejected).
+      newPC.resize(nParts);
+      newLogLik = 0.0;
+      eco_refresh_wedge(data, state, edgeLen);
+      std::vector<double> gammaE;
+      compute_gamma_e_ecology(*data, state->phi, state->pi0, state->theta,
+                              gammaE);
+      NumericVector rates = (state->rateLogSd > 0.0)
+        ? cpp_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ)
+        : NumericVector(1, 1.0);
+      for (int pi = 0; pi < nParts; ++pi) {
+        newPC[pi] = cpp_partition_log_likelihood_ecology(
+          *data, pi, state->parent, state->child, edgeLen,
+          state->kPrime, state->rateLoss, state->rateNeo,
+          state->phi, state->zMatrix,
+          state->wEdge, gammaE, rates);
+        newLogLik += newPC[pi];
+      }
+    }
   } else if (hasPLC) {
     newPC = state->partLogLik;
     newLogLik = state->logLik;
@@ -4224,10 +4346,8 @@ static bool gibbs_z_sweep_impl(McmcData* data, McmcState* state, double beta) {
   }
 
   // Recompute logLik / logPrior fresh to avoid drift.
-  state->logLik = cpp_log_likelihood_ecology(
-    *data, state->parent, state->child, edgeLen,
-    state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
-    state->phi, state->zMatrix, state->pi0, state->theta);
+  // T-010: refresh every partition into the cache; wEdge unchanged by z.
+  state->logLik = eco_recompute_all_partitions(data, state, edgeLen);
   state->logPrior = cpp_log_prior(
     *data, state->treeLength, state->relBrLengths,
     state->rateLoss, state->rateLogSd, state->rateNeo,
@@ -4746,15 +4866,30 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       state->pi0 = pi0New;
       double logHast = std::log(pi0New * (1.0 - pi0New)) -
                        std::log(pi0Old * (1.0 - pi0Old));
-      // v2: pi0 affects gamma_e and hence the likelihood. Full MH ratio.
+      // T-010: pi0 affects gamma_e only (not wEdge); all partitions need a
+      // fresh per-partition log-lik but the expensive wEdge sweep is reused.
       int nEdge = state->relBrLengths.size();
       NumericVector edgeLen(nEdge);
       for (int i = 0; i < nEdge; ++i)
         edgeLen[i] = state->treeLength * state->relBrLengths[i];
-      double newLL = cpp_log_likelihood_ecology(
-        *data, state->parent, state->child, edgeLen,
-        state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
-        state->phi, state->zMatrix, state->pi0, state->theta);
+      eco_refresh_wedge(data, state, edgeLen);
+      std::vector<double> gammaE;
+      compute_gamma_e_ecology(*data, state->phi, state->pi0, state->theta,
+                              gammaE);
+      NumericVector rates = (state->rateLogSd > 0.0)
+        ? cpp_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ)
+        : NumericVector(1, 1.0);
+      int nP = (int)data->parts.size();
+      std::vector<double> newPC(nP);
+      double newLL = 0.0;
+      for (int pi = 0; pi < nP; ++pi) {
+        newPC[pi] = cpp_partition_log_likelihood_ecology(
+          *data, pi, state->parent, state->child, edgeLen,
+          state->kPrime, state->rateLoss, state->rateNeo,
+          state->phi, state->zMatrix,
+          state->wEdge, gammaE, rates);
+        newLL += newPC[pi];
+      }
       double newLP = cpp_log_prior(
         *data, state->treeLength, state->relBrLengths,
         state->rateLoss, state->rateLogSd, state->rateNeo,
@@ -4769,6 +4904,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
         state->logLik = newLL;
         state->logPrior = newLP;
+        state->partLogLik = std::move(newPC);
         return true;
       }
       state->pi0 = pi0Old;
@@ -4796,14 +4932,29 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       state->theta[idx] = thNew;
       double logHast = std::log(thNew * (1.0 - thNew)) -
                        std::log(thOld * (1.0 - thOld));
+      // T-010: theta affects gamma_e only; wEdge cached.
       int nEdge = state->relBrLengths.size();
       NumericVector edgeLen(nEdge);
       for (int i = 0; i < nEdge; ++i)
         edgeLen[i] = state->treeLength * state->relBrLengths[i];
-      double newLL = cpp_log_likelihood_ecology(
-        *data, state->parent, state->child, edgeLen,
-        state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
-        state->phi, state->zMatrix, state->pi0, state->theta);
+      eco_refresh_wedge(data, state, edgeLen);
+      std::vector<double> gammaE;
+      compute_gamma_e_ecology(*data, state->phi, state->pi0, state->theta,
+                              gammaE);
+      NumericVector rates = (state->rateLogSd > 0.0)
+        ? cpp_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ)
+        : NumericVector(1, 1.0);
+      int nP = (int)data->parts.size();
+      std::vector<double> newPC(nP);
+      double newLL = 0.0;
+      for (int pi = 0; pi < nP; ++pi) {
+        newPC[pi] = cpp_partition_log_likelihood_ecology(
+          *data, pi, state->parent, state->child, edgeLen,
+          state->kPrime, state->rateLoss, state->rateNeo,
+          state->phi, state->zMatrix,
+          state->wEdge, gammaE, rates);
+        newLL += newPC[pi];
+      }
       double newLP = cpp_log_prior(
         *data, state->treeLength, state->relBrLengths,
         state->rateLoss, state->rateLogSd, state->rateNeo,
@@ -4818,6 +4969,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
         state->logLik = newLL;
         state->logPrior = newLP;
+        state->partLogLik = std::move(newPC);
         return true;
       }
       state->theta[idx] = thOld;
@@ -4886,16 +5038,120 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   // Moves that only touch `p` (case 8 legacy multiplicative, case 30 logit MH)
   // leave the likelihood untouched.
   bool likChanges = (moveType != 8 && moveType != 30);
-  // Ecology mode disables partition cache + partial CL; full eval routes
-  // through cpp_log_likelihood_ecology.
+  // T-010: ecology mode now uses partition cache for non-tree moves. Tree /
+  // branch moves invalidate wEdge; non-tree moves keep wEdge valid.
   const bool eco = data->ecologyAware;
   bool hasPLC = !eco && !state->partLogLik.empty();
   double newLogLik;
   std::vector<double> newPC;
   bool usedPartialCL = false;
 
+  // Move types that change tree topology or any edge length (-> wEdge dirty
+  // for the next eco call). Note: case 7 (int_walk kPrime), case 34 (phi)
+  // do NOT touch the tree.
+  auto move_invalidates_wedge = [](int mt) {
+    switch (mt) {
+      case 0:   // scale_tl
+      case 4:   // beta_simplex
+      case 5:   // NNI
+      case 6:   // SPR
+      case 10:  // gibbs_spr (returns false in eco — keep here for completeness)
+      case 11:  // gibbs_subtree_swap (returns false in eco)
+      case 12:  // weighted_branch_scale
+      case 13:  // weighted_spr
+      case 14:  // weighted_subtree_swap
+      case 15:  // block_gibbs_branch
+      case 17:  // TBR
+      case 20:  // pSPR
+      case 21:  // joint_tl_rls
+      case 22:  // joint_tl_rl
+      case 23:  // dirichlet_branch
+      case 24:  // local_dirichlet
+        return true;
+      default:
+        return false;
+    }
+  };
+
   if (!likChanges) {
     newLogLik = state->logLik;
+  } else if (eco) {
+    // T-010: ecology partition cache.
+    int nEdge = evalRelBr.size();
+    NumericVector propEdgeLen(nEdge);
+    for (int i = 0; i < nEdge; ++i)
+      propEdgeLen[i] = state->treeLength * evalRelBr[i];
+
+    // Determine which partitions need recomputation and whether to refresh
+    // wEdge from the proposed tree.
+    bool wEdgeChanges = move_invalidates_wedge(moveType);
+    bool hasPLCEco = !state->partLogLik.empty();
+
+    // Build wEdge for the *evaluation* topology (which is either the proposed
+    // tree for topology moves, or state->parent/child otherwise).
+    NumericMatrix evalWEdge;
+    if (wEdgeChanges || state->wEdgeDirty ||
+        state->wEdge.nrow() != nEdge ||
+        state->wEdge.ncol() != data->ecology.kEcology) {
+      // Recompute fresh against the proposed topology / edge lengths.
+      evalWEdge = NumericMatrix(nEdge, data->ecology.kEcology);
+      recompute_w_edge(*data, evalParent, evalChild, propEdgeLen, evalWEdge);
+    } else {
+      evalWEdge = state->wEdge;
+    }
+
+    std::vector<double> gammaE;
+    compute_gamma_e_ecology(*data, state->phi, state->pi0, state->theta,
+                            gammaE);
+    NumericVector rates = (state->rateLogSd > 0.0)
+      ? cpp_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ)
+      : NumericVector(1, 1.0);
+
+    if (hasPLCEco && moveType == 7) {
+      // kPrime int_walk: only the partition containing charIdx changes
+      // (wEdge unchanged; subgroup composition handled by recomputing
+      // the whole trans partition).
+      int ap = data->charToPartition[charIdx];
+      newPC = state->partLogLik;
+      newLogLik = state->logLik;
+      if (ap >= 0) {
+        double v = cpp_partition_log_likelihood_ecology(
+          *data, ap, evalParent, evalChild, propEdgeLen,
+          state->kPrime, state->rateLoss, state->rateNeo,
+          state->phi, state->zMatrix,
+          evalWEdge, gammaE, rates);
+        newLogLik += (v - newPC[ap]);
+        newPC[ap] = v;
+      }
+    } else if (hasPLCEco && (moveType == 1 || moveType == 3 || moveType == 18)) {
+      // rate_loss / rate_neo / neo_joint: neomorphic partitions only.
+      newPC = state->partLogLik;
+      newLogLik = state->logLik;
+      for (size_t ni = 0; ni < data->neoPartIndices.size(); ++ni) {
+        int pi = data->neoPartIndices[ni];
+        double v = cpp_partition_log_likelihood_ecology(
+          *data, pi, evalParent, evalChild, propEdgeLen,
+          state->kPrime, state->rateLoss, state->rateNeo,
+          state->phi, state->zMatrix,
+          evalWEdge, gammaE, rates);
+        newLogLik += (v - newPC[pi]);
+        newPC[pi] = v;
+      }
+    } else {
+      // Tree moves, phi (34), rateLogSd (2), and any cold-start: every
+      // partition. wEdge has been built for the eval topology above.
+      int nP = (int)data->parts.size();
+      newPC.assign(nP, 0.0);
+      newLogLik = 0.0;
+      for (int pi = 0; pi < nP; ++pi) {
+        newPC[pi] = cpp_partition_log_likelihood_ecology(
+          *data, pi, evalParent, evalChild, propEdgeLen,
+          state->kPrime, state->rateLoss, state->rateNeo,
+          state->phi, state->zMatrix,
+          evalWEdge, gammaE, rates);
+        newLogLik += newPC[pi];
+      }
+    }
   } else if (!eco && nniInPlace && state->nodeCL.ready()) {
     // M-121: NNI with valid node CL cache → partial evaluation
     int nEdge = evalRelBr.size();
@@ -5127,6 +5383,20 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     // OPP-6b: in-place NNI — state->parent already modified in-place.
     // Partition cache handled by std::move(newPC) above (recomputed via
     // default branch of the partial-lik switch).
+
+    // T-010: invalidate cached wEdge when the accepted move changed the
+    // tree topology or any edge length. Use the same predicate as eval.
+    if (eco) {
+      switch (moveType) {
+        case 0:  case 4:  case 5:  case 6:
+        case 10: case 11: case 12: case 13: case 14: case 15:
+        case 17: case 20: case 21: case 22: case 23: case 24:
+          state->wEdgeDirty = true;
+          break;
+        default:
+          break;
+      }
+    }
 
     // M-121/M-161: cache management on acceptance.
     // Partial CL moves keep the cache valid (already updated).
