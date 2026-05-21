@@ -575,3 +575,130 @@ today) or wait for shared-arena cache (T-015).
 **Cleanup.** src/mcmc.cpp bench patch reverted to `% 20`. No
 `.vtune-lib-*/` created (not needed for this round). No
 src/Makevars.win touched.
+
+---
+
+## Round 12 (T-015) — 2026-05-21
+
+**Target.** Investigate the "remaining ~75 % of aware-PT amplification"
+that T-014 left on the table, with four candidate hypotheses (cache
+eviction between chains, hidden per-chain rebuild, PT swap cost, false
+sharing) and a brief that explicitly said *don't presume a fix exists*.
+
+**Method.** Advisor pre-consult flagged a math-framing issue in the
+T-014 write-up: the "1.89× excess amplification" was computed as
+(aware 4.24× slowdown) / (blind 2.24× slowdown), treating blind's
+super-linear scaling as the no-amplification baseline. Linear scaling
+under PT is 4× per outer iter (you do 4× the chain-moves), not the 2.24×
+that blind achieves. Blind's 2.24× **already contains a cache-sharing
+bonus**; aware can't be expected to match it unless aware is also
+memory-bound (which it isn't — aware does ~4× more EXP per edge per cat
+than blind, by T-007's per-call cost analysis). Advisor recommended:
+chrono-instrument the PT loop before VTune, since hotspots can't
+discriminate between "compute-bound, scales linearly" and "memory-bound,
+scales sub-linearly".
+
+**Instrumentation.** Added env-gated (`MKPRIME_T015_DIAG=1`) per-chain
+chrono accumulators inside the PT loop at `src/mcmc.cpp:6121-6249`:
+one bracket per move dispatch (`do_move_impl` / `slice_scalar_impl` /
+`slice_kprime_hyper_impl`), one per drift-resync gate firing, and a
+single accumulator around the `std::swap(*states[iPair], *states[jPair])`
+at `:6243`. Emitted to stderr at end of each batch via REprintf.
+Inert when env unset; instrumentation cost adds <1 % under the gate.
+
+**Bench.** `dev/profiling/drivers/rodent_aware_timing.R` (rodent
+60×217, kEco=4, 500 iter) at `MKP_TIMING_NCHAINS ∈ {1, 2, 4}` with
+diag enabled. Numbers are per-chain-move mean μs averaged across
+chains and both batches (200 + 300 iter):
+
+| nChains | Blind iter/s | Aware iter/s | Blind per-move μs | Aware per-move μs |
+|---|---|---|---|---|
+| 1 | 222 | 11.5 | 1475 | ~82700 |
+| 2 | 160 | 5.3  | ~1563 | ~91300 |
+| 4 | 102 | 2.7  | ~1659 | ~90600 |
+
+**Per-chain-move growth from 1ch → 4ch:** blind +12.5 %, aware +9.5 %.
+The small uniform ~10 % growth affects both modes symmetrically — **no
+aware-specific locality cost**. **Caveat:** per-chain weight adaptation
+produced different move mixes across the 1ch/2ch/4ch runs (e.g. blind
+1ch nni:11.7 % vs 4ch nni:4.7 %; aware 1ch nni:15.9 % vs 4ch nni:1.1 %),
+so per-chain-move μs averages over different work distributions. The
+12.5 % vs 9.5 % gap is within this confound; what matters for T-015 is
+the pattern — comparable growth between modes — not the exact %s.
+
+The "super-linear" pattern blind shows in outer-iter throughput
+(222 → 102 = 2.18× slowdown vs 4× linear) is explained entirely by
+**fixed per-outer-iter R overhead** (sample save, streamed log write,
+R callback at batch boundary). On 4 chains:
+- Blind 4ch outer iter = 9.8 ms; 4 × per-move (1.66 ms) = 6.6 ms; **3.2 ms is fixed overhead (33 %)**.
+- Aware 4ch outer iter = 370 ms; 4 × per-move (90.6 ms) = 362 ms; **only 8 ms is fixed overhead (2 %)**.
+
+Multiplying chains scales the move work but the fixed overhead is
+already paid. For blind that fixed overhead is comparable to its tiny
+per-move cost, so adding chains looks sub-linear; for aware it's
+negligible, so adding chains looks linear.
+
+**Swap cost (hypothesis #3).** `swap_total_ns` was 0.000 s under both
+modes across all chain counts — `std::swap(McmcState)` is move-based
+(Rcpp SEXP refcount-swap + std::vector pointer-swap) and registered
+below the chrono resolution. <0.001 % of wall.
+
+**Drift-resync (hypothesis #2 residual).** At default `% 200` cadence
+the gate fires 2-3 times per 500-iter batch. Aware 4ch: 232 ms total
+out of 184 s wall = 0.13 %. T-014's fix already collapsed this; no
+remaining headroom.
+
+**Lazy populate (hypothesis #2 primary).** `populate_eco_cache_full`
+at `src/mcmc.cpp:4868` is gated to NNI moves AND only fires when
+`MKPRIME_ECO_PARTIAL_CL=1`. Default unset → ecoCL is dormant. Not
+applicable to the default workload.
+
+**False sharing (hypothesis #4).** Single-threaded PT loop; not
+applicable.
+
+**Verdict.** T-015 as phrased is **REFUTED**. Per-chain-move time is
+flat-to-within-3% between modes when normalised by chain count. The
+remaining "~75 % of excess amplification" in T-014's framing was a
+math artefact of comparing blind's super-linear scaling (driven by
+fixed R overhead) to aware's near-linear scaling (driven by move time
+dominating). There is no aware-specific PT locality cost to recover.
+
+**Implication for T-014's framing.** T-014's "shared arena" candidate
+for the remaining 1.69× excess is misconceived; there is no recoverable
+excess. T-014's drift-gate fix is real and stands (~12 % wall at 4ch),
+but it accounts for *all* the recoverable PT-specific cost on rodent,
+not 25 %.
+
+**Implication for production.** Hamilton viability is unchanged from
+T-014's conclusion: aware nChains=4 PT on rodent runs at ~linear in
+nChains. For a 30 k iter warmup budget under the v2 8 h walltime,
+nChains=1 + nRuns=4 remains the viable production option. PT amplifies
+walltime by ~4× as expected from doing 4× the work, not because of any
+fixable locality cost.
+
+**Filed.** T-015 in findings.md, status **REFUTED-AS-PHRASED**,
+kind `[Investigation]`, priority P1 (closes a candidate that would
+otherwise have absorbed a major refactor).
+
+**Tests.** 228 / 228 pass (`filter="ecology|likelihood|mcmc"`), 0
+failures, 6 expected skips. The instrumentation is bit-identity-safe
+(only writes to local accumulators when env-gated).
+
+**What's NOT done (out of scope for T-015 but worth recording).**
+The orchestrator-level heap allocations in
+`cpp_partition_log_likelihood_ecology` (`src/mcmc_ecology.cpp:1005,
+1029`) and in `const_site_prob_*_eco_single` (`:854, :893, :924`) still
+allocate ~800 KB per call uniformly per chain. This is a *T-007*
+follow-up (uniform per-chain cost), not T-015 (excess at nChains>1).
+Adding T-008-style workspace pre-allocation here would shave a fraction
+of aware wall regardless of nChains. Estimated 5-10 % wall, but the
+ecology orchestrator's call frequency dropped substantially after
+T-010's partition cache, so the gain may be smaller in practice.
+Filing as candidate **T-016**? — defer to the next /profile rotation.
+
+**Cleanup.** Diagnostic instrumentation kept in-tree behind the
+`MKPRIME_T015_DIAG=1` gate (inert by default, costs ~5 LoC of variable
+declarations + ~25 LoC of accumulators + emission). Re-usable for future
+PT-related investigations.
+
+last_focus: 15

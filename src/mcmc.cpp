@@ -6043,6 +6043,24 @@ List run_mcmc_batch_cpp(
     if (v >= 1) resyncEvery = v;
   }
 
+  // T-015 diagnostic: per-chain timing of the PT loop. Off unless
+  // MKPRIME_T015_DIAG=1. Emits per-chain move-dispatch / drift-resync
+  // accumulators and one swap accumulator at end of batch, to stderr.
+  // Numbers cross-validate the throughput-arithmetic claim that aware
+  // nChains=4 PT runs at near-linear scaling (no super-linear
+  // amplification) vs blind's super-linear cache bonus.
+  bool t015Diag = false;
+  {
+    const char* env = std::getenv("MKPRIME_T015_DIAG");
+    t015Diag = (env != nullptr && env[0] == '1');
+  }
+  std::vector<double> t015MoveNs(nChains, 0.0);
+  std::vector<double> t015ResyncNs(nChains, 0.0);
+  std::vector<long long> t015MoveCalls(nChains, 0);
+  std::vector<long long> t015ResyncCalls(nChains, 0);
+  double t015SwapNs = 0.0;
+  long long t015SwapCalls = 0;
+
   // Extract raw state pointers
   std::vector<McmcState*> states(nChains);
   for (int ch = 0; ch < nChains; ++ch)
@@ -6153,6 +6171,7 @@ List run_mcmc_batch_cpp(
       }
 
       auto t0 = std::chrono::steady_clock::now();
+      auto t015_t0 = t0;
       bool accepted;
       if (moveType == 19) {
         // Slice sampling — self-contained, no MH accept/reject
@@ -6187,6 +6206,12 @@ List run_mcmc_batch_cpp(
       moveTimeNs(ch, moveIdx) +=
         (double)std::chrono::duration_cast<std::chrono::nanoseconds>(
           t1 - t0).count();
+      if (t015Diag) {
+        t015MoveNs[ch] +=
+          (double)std::chrono::duration_cast<std::chrono::nanoseconds>(
+            t1 - t015_t0).count();
+        t015MoveCalls[ch]++;
+      }
       if (accepted) acceptCounts(ch, moveIdx)++;
 
       // Periodic from-scratch resync for ecology mode. Every K=20 iter
@@ -6199,6 +6224,7 @@ List run_mcmc_batch_cpp(
       // path (including slice_scalar_impl, which bypasses
       // do_move_impl).
       if (data->ecologyAware && (iter % resyncEvery == 0)) {
+        auto t015_r0 = std::chrono::steady_clock::now();
         int nE = states[ch]->relBrLengths.size();
         NumericVector curEl(nE);
         for (int e = 0; e < nE; ++e)
@@ -6228,6 +6254,13 @@ List run_mcmc_batch_cpp(
         }
         if (R_FINITE(freshLL)) states[ch]->logLik   = freshLL;
         if (R_FINITE(freshLP)) states[ch]->logPrior = freshLP;
+        if (t015Diag) {
+          auto t015_r1 = std::chrono::steady_clock::now();
+          t015ResyncNs[ch] +=
+            (double)std::chrono::duration_cast<std::chrono::nanoseconds>(
+              t015_r1 - t015_r0).count();
+          t015ResyncCalls[ch]++;
+        }
       }
     }
 
@@ -6240,7 +6273,15 @@ List run_mcmc_batch_cpp(
       double logAlpha = (betas[iPair] - betas[jPair]) *
                         (states[jPair]->logLik - states[iPair]->logLik);
       if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+        auto t015_s0 = std::chrono::steady_clock::now();
         std::swap(*states[iPair], *states[jPair]);
+        if (t015Diag) {
+          auto t015_s1 = std::chrono::steady_clock::now();
+          t015SwapNs +=
+            (double)std::chrono::duration_cast<std::chrono::nanoseconds>(
+              t015_s1 - t015_s0).count();
+          t015SwapCalls++;
+        }
         swapAccept[iPair]++;
         if (iPair == 0) coldSwapsSinceSample++;
       }
@@ -6301,6 +6342,32 @@ List run_mcmc_batch_cpp(
   for (int i = 0; i < nSaved; ++i)
     for (int j = 0; j < nScalarCols; ++j)
       scalarMat(i, j) = scalarRows[i][j];
+
+  // T-015: emit per-chain timing breakdown when MKPRIME_T015_DIAG=1.
+  if (t015Diag) {
+    double tot_move = 0.0, tot_resync = 0.0;
+    long long tot_move_calls = 0, tot_resync_calls = 0;
+    for (int ch = 0; ch < nChains; ++ch) {
+      tot_move        += t015MoveNs[ch];
+      tot_resync      += t015ResyncNs[ch];
+      tot_move_calls  += t015MoveCalls[ch];
+      tot_resync_calls += t015ResyncCalls[ch];
+    }
+    REprintf("[T015 batch nBatch=%d nChains=%d] move_total=%.3f s "
+             "resync_total=%.3f s swap_total=%.3f s swap_calls=%lld\n",
+             nBatch, nChains, tot_move * 1e-9, tot_resync * 1e-9,
+             t015SwapNs * 1e-9, t015SwapCalls);
+    for (int ch = 0; ch < nChains; ++ch) {
+      double per_move = (t015MoveCalls[ch] > 0)
+        ? t015MoveNs[ch] / (double)t015MoveCalls[ch] : 0.0;
+      double per_resync = (t015ResyncCalls[ch] > 0)
+        ? t015ResyncNs[ch] / (double)t015ResyncCalls[ch] : 0.0;
+      REprintf("[T015 ch=%d] move_calls=%lld move_mean_us=%.3f "
+               "resync_calls=%lld resync_mean_us=%.3f\n",
+               ch, t015MoveCalls[ch], per_move * 1e-3,
+               t015ResyncCalls[ch], per_resync * 1e-3);
+    }
+  }
 
   // DIAG: aggregate counters from cold chain (index 0)
   IntegerVector diagCounters = IntegerVector::create(
