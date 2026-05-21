@@ -465,4 +465,79 @@ substantially in place; T-013 is the remaining work.
 
 ---
 
+## Round 11 — T-013 NNI partial-CL wiring (in conversation) — 2026-05-21
+
+**Goal.** Verify the T-012 partial-eval mechanics by exposing them to R,
+then wire NNI partial-CL into production via `state->ecoCL`. Spec target:
+aware wall ≤ 18 s (≥ 12 % improvement vs T-012 baseline 20.58 s); ≥ 5 %
+floor for reporting.
+
+**Method.** The first T-013 background agent died after ~15 min having
+added the R-callable `.CppPartialEvalEcologyNNI` wrapper +
+`12b_partial_bitident.R` driver + `12c_rodent_dirty_fraction.R`
+analysis, but never wired production. Salvaged the agent's diff
+(`src/mcmc_ecology.cpp` modifications + the two new drivers) and
+completed the work in the foreground.
+
+**Bit-identity gate (P0a).** 20 random in-place NNI swaps on a
+10-tip / 6-char / kEco=3 fixture — every sample passed with exact
+`|partial − fresh_new| = 0` and `|restored − fresh_old| = 0`. The
+mechanics (populate, dirty-set walk, partial recompute, save/restore)
+are mathematically correct.
+
+**Empirical dirty fraction (P0b).** `12c_rodent_dirty_fraction.R` on
+the rodent topology (60 tips, 59 internal nodes, 118 edges, kEco=4):
+30 random NNI swaps. Dirty count mean 45.7, median 54, max 57
+(fraction of nInternal: mean 0.77, max 0.97). wEdge-dirty edges
+mean 89.1, median 109 (~92 % of edges). **Naive partial-eval saving
+1 − dirty/nInternal = 7.6 % median.** This is the dealbreaker: even
+with perfect partial-eval, the rodent move geometry leaves so much
+of the tree dirty that the savings are tiny.
+
+**Production wiring landed.** Lazy `populate_eco_cache_full` before
+NNI proposals + partial-eval branch in the main MH eco accept block
+(mirrors the M-158 NNI pattern with `update_topo_nni` on the cache's
+TreeNav, partial-eval call, save scratch on the cache for rollback,
+revert TreeNav on fallback). Reject path: restore CLs + reverse swap
+symmetrically. Wiring is gated behind `MKPRIME_ECO_PARTIAL_CL=1`
+env var (default OFF) — see Wall below for why.
+
+**Wall (P0c).**
+- T-012 baseline: aware 20.58 s, blind 0.78 s, ratio 26.4×.
+- T-013 gate OFF (default): aware 20.76 s, blind 0.77 s, ratio 27.0×.
+- T-013 gate ON: aware 20.69 s, blind 0.78 s, ratio 26.5×.
+
+All within bench noise. With gate ON the partial-eval path engages
+on every NNI; on rodent the dirty fraction is so high that the
+dirty-walk + save/restore overhead approximately cancels the per-call
+savings.
+
+**5000-iter drift gate.** With wiring engaged (no env gate),
+wall 506.22 s, **0 `[eco-resync]` warnings**. Correctness confirmed.
+
+**Decision: gate behind env var.** Default OFF avoids the small
+overhead on the rodent workload (where partial-eval is net ~0 %).
+Setting `MKPRIME_ECO_PARTIAL_CL=1` engages the partial-eval path —
+useful for benchmarking on larger trees where dirty fraction should
+shrink (path-to-root grows ~log(nTip) while nInternal grows ~nTip).
+This was the cleanest way to land the infrastructure without forcing
+a possible regression on production runs.
+
+**Tests.** 228 / 228 pass (`filter="ecology|likelihood|mcmc"`), 0
+failures, 6 expected skips. Bit-identity driver `12b_partial_bitident.R`
+PASSES (|diff| = 0 across all 20 samples + rollback).
+
+**T-007 status.** Stays **PARTIALLY-OPTIMISED**. The 25× wall ratio
+is essentially unchanged. The architectural foundation for partial-CL
+is now complete; further wall recovery on rodent-sized trees would
+require either (a) algorithmic redesign of the wEdge dependency
+(approximate marginals that don't propagate globally) or (b)
+per-character CL caching with a restructured pruner — both are major
+multi-week refactors out of scope for the current focus rotation.
+
+**Cleanup.** `dev/profiling/.vtune-lib-t013/` removed after filing.
+No `src/Makevars.win` left behind.
+
+---
+
 last_focus: 0

@@ -4845,11 +4845,17 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                         state->rateLogSd, state->rateNeo);
   }
 
-  // T-013: pre-NNI population of the ecology partial-CL cache.  Only NNI
-  // currently uses the cache; other tree moves continue through the legacy
-  // full-eval path (their dirty sets are large enough that partial-eval is
-  // either net-loss or marginal — see dev/profiling/findings.md T-013).
-  if (moveType == 5 && data->ecologyAware && !state->ecoCL.ready()) {
+  // T-013: pre-NNI population of the ecology partial-CL cache.  Disabled by
+  // default — opt in via env MKPRIME_ECO_PARTIAL_CL=1.  On the rodent matrix
+  // (64 tips, kEco=4) the dirty fraction per NNI swap is ~91 % median (see
+  // dev/profiling/findings.md T-013) so partial-eval is a net loss after
+  // dirty-walk + save/restore overhead.  May benefit larger trees.
+  static const bool ecoPartialClEnabled = []{
+    const char* env = std::getenv("MKPRIME_ECO_PARTIAL_CL");
+    return env != nullptr && env[0] == '1';
+  }();
+  if (ecoPartialClEnabled && moveType == 5 && data->ecologyAware
+      && !state->ecoCL.ready()) {
     int nEdge = state->relBrLengths.size();
     NumericVector absLen(nEdge);
     for (int i = 0; i < nEdge; ++i)
