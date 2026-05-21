@@ -230,4 +230,25 @@ First rotation visit. Opus agent, ~30 min. Scratch-file rule honoured (`claude_r
 
 ---
 
-last_focus: 9
+(superseded — see end of file)
+
+## Round 9 — area #2 (EG p-sampler revisit, case 25 escalation) — 2026-05-20
+
+Opus, general-purpose. Files: `src/mcmc.cpp` (cases 9/25/26/30), `R/MkPrimeModel.R` (.LogPemp, .LogPriorEmpiricalGeometric), `R/RunMkPrime.R` (EG move-pool wiring), `R/data.R` (MkPrimeEmpiricalPrior).
+
+Scenarios: round-2 escalation — does case 25 (gibbs_kprime) silently use plain Geometric(p) under EG? **No.** Precomputes `egLogPriorByK[m] = log Σ_{j=2..m} P_emp(j)·p·(1−p)^(m−j)`, formula + indexing identical to `.LogPriorEmpiricalGeometric`. Case 9 (gibbs_p) self-guards under EG and is replaced by case 30 in the R pool. Case 26 (block_kprime_shift) routes through `cpp_log_prior` → EG branch. No bypass paths.
+
+**No new commits since round 2** in scope files (`src/mcmc.cpp`, `R/MkPrimeMCMC.R`, `R/RunMkPrime.R`, `R/MkPrimeModel.R`). Round-2 case-30 verdict carries forward.
+
+**0 new findings.** Round-2 EG-007..010 still OPEN by design.
+
+Headline: **case 25 EG-aware; the round-2 next-reviewer escalation is closed.** No new bugs in the EG sampler surface.
+
+Latent / next reviewer:
+- `MkPrimeEmpiricalPrior` constructor doesn't enforce `tail_start_k == length(body) + 2`; user-supplied mismatch creates silent probability gap. Sampler & density agree on the gap so MCMC self-consistent, but downstream P_emp tabulation miscalibrated. Document or validate.
+- Regression test: assert `egLogPriorByK[k]` matches `.LogPriorEmpiricalGeometric` across body/tail boundary for several p — locks in agreement verified by inspection this round.
+- EG-008 (0.35→0.44 target), EG-010 (σ_logit cap) remain easy follow-ups.
+
+---
+
+last_focus: 2
