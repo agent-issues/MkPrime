@@ -1,14 +1,18 @@
 # rodent-comparison.R ---------------------------------------------------------
-# Compare posterior trees from BLIND vs AWARE MkPrime MCMC chains on the
-# rodent morphological dataset.
+# Compare posterior trees from BLIND vs AWARE MkNT MCMC chains on the rodent
+# morphological dataset.
 #
-# AWARE chain: rodent-aware-v2_trees.nwk  (~160 trees, 1M iter, treeThin=1000)
-#   Completed 2026-05-19; resumed from 371k → 1M, 20.68h wall time.
-#   minESS = 88 at iter 1M (from .er log). Below 200; flagged in summary.
+# AWARE chain: rodent-MkNT-aware_trees_{1..4}.nwk  (4 runs x 100k iter, treeThin=100)
+#   MkNT v1 ecology-aware; nChains=4 PT; nCore=4 callr workers.
+#   See Hamilton /nobackup/pjjg18/mkp-rodent-MkNT-v1/aware/.
 #
-# BLIND chain: rodent-blind-v2-full_trees.nwk  (~359 trees, 1M iter)
-#   Completed 2026-05-17. minESS = 38 at iter 1M (from .er log). Below 200;
-#   flagged in summary.
+# BLIND chain: rodent-MkNT-blind_trees_{1..4}.nwk  (4 runs x 100k iter, treeThin=100)
+#   Matched MkNT v1 with no ecology layer. 2525 trees total. min ESS ~105-140,
+#   max Rhat ~1.04-1.07 at 100k iter.
+#
+# If MkNT aware tree files are not yet populated (job in progress) the script
+# falls back to the legacy Mk' rodent-aware-v2_trees.nwk and stamps a warning
+# into the summary. Re-run after MkNT aware completes.
 #
 # Outputs (all under inst/ecology/scripts/rodent-comparison/):
 #   rodent-cid-mds.pdf / .png    -- Plot 1: 2D CID MDS
@@ -49,12 +53,42 @@ suppressPackageStartupMessages({
 outDir <- "inst/ecology/scripts/rodent-comparison"
 
 # --- 1. Load trees -----------------------------------------------------------
-aware_nwk <- file.path(outDir, "rodent-aware-v2_trees.nwk")
-blind_nwk  <- file.path(outDir, "rodent-blind-v2-full_trees.nwk")
+read_multirun_trees <- function(pattern) {
+  files <- Sys.glob(file.path(outDir, pattern))
+  files <- files[file.info(files)$size > 0]
+  if (length(files) == 0L) return(NULL)
+  trees <- do.call(c, lapply(files, function(f) {
+    tr <- ape::read.tree(f)
+    if (inherits(tr, "phylo")) list(tr) else as.list(tr)
+  }))
+  class(trees) <- "multiPhylo"
+  attr(trees, "source_files") <- files
+  trees
+}
 
-# ape::read.tree reads one tree per line (standard Newick).
-aware_all <- ape::read.tree(aware_nwk)
-blind_all  <- ape::read.tree(blind_nwk)
+# BLIND: MkNT v1.
+blind_all  <- read_multirun_trees("rodent-MkNT-blind_trees_*.nwk")
+blind_tag  <- "MkNT v1 (4 runs x 100k iter)"
+blind_provenance <- "MkNT v1 multirun (4 x 100k iter, treeThin=100, PT nChains=4)"
+if (is.null(blind_all)) {
+  message("MkNT blind not found; falling back to Mk' rodent-blind-v2.")
+  blind_all <- ape::read.tree(file.path(outDir, "rodent-blind-v2-full_trees.nwk"))
+  blind_tag <- "Mk' v2 fallback"
+  blind_provenance <- "Mk' v2 fallback (rodent-blind-v2-full_trees.nwk)"
+}
+
+# AWARE: MkNT v1; fall back to Mk' v2 if not yet streamed.
+aware_all <- read_multirun_trees("rodent-MkNT-aware_trees_*.nwk")
+aware_tag <- "MkNT v1 (4 runs x 100k iter)"
+aware_provenance <- "MkNT v1 multirun (4 x 100k iter, treeThin=100, PT nChains=4)"
+aware_is_placeholder <- FALSE
+if (is.null(aware_all)) {
+  warning("MkNT aware trees not yet populated; using Mk' v2 placeholder.")
+  aware_all <- ape::read.tree(file.path(outDir, "rodent-aware-v2_trees.nwk"))
+  aware_tag <- "Mk' v2 PLACEHOLDER (MkNT aware run still in progress)"
+  aware_provenance <- "PLACEHOLDER (Mk' v2 fallback while MkNT aware run is in progress)"
+  aware_is_placeholder <- TRUE
+}
 
 # Ensure multiPhylo class
 if (inherits(aware_all, "phylo")) aware_all <- list(aware_all)
@@ -264,8 +298,15 @@ do_mds_plot <- function() {
        pch = 19, cex = 0.8,
        xlim = xlim, ylim = ylim,
        xlab = "MDS Axis 1", ylab = "MDS Axis 2",
-       main = "Posterior tree space: BLIND vs AWARE (CID, MDS)\n(Full 1M-iter chains)",
-       las = 1)
+       main = "Posterior tree space: BLIND vs AWARE (CID, MDS)",
+       las = 1, cex.main = 1.0)
+  mtext(sprintf("Aware: %s\nBlind: %s", aware_tag, blind_tag),
+        side = 3, line = 0.2, cex = 0.7,
+        col = if (aware_is_placeholder) "firebrick" else "black")
+  if (aware_is_placeholder) {
+    mtext("WARNING: AWARE cloud is a Mk' placeholder; separation reflects model swap, not ecology effect.",
+          side = 1, line = 3.7, cex = 0.65, col = "firebrick")
+  }
   points(pts_blind[, 1], pts_blind[, 2],
          col = scales::alpha(col_blind, 0.7),
          pch = 19, cex = 0.8)
@@ -321,8 +362,8 @@ do_consensus_plot <- function() {
 
   # BLIND consensus.
   plot(cons_blind, type = "phylogram", cex = tip_cex,
-       main = sprintf("BLIND MR consensus (N=%d post-burnin)\n(red = blind-unique splits)",
-                      n_blind_post),
+       main = sprintf("BLIND MR consensus (N=%d post-burnin)\n%s\n(red = blind-unique splits)",
+                      n_blind_post, blind_tag),
        edge.color = ecols_blind,
        show.node.label = FALSE, no.margin = FALSE)
   if (!is.null(supp_blind) && length(supp_blind) > 0) {
@@ -338,8 +379,8 @@ do_consensus_plot <- function() {
   # AWARE consensus.
   plot(cons_aware, type = "phylogram", cex = tip_cex,
        main = sprintf(
-         "AWARE MR consensus (N=%d post-burnin)\n(red = aware-unique splits)",
-         n_aware_post),
+         "AWARE MR consensus (N=%d post-burnin)\n%s\n(red = aware-unique splits)",
+         n_aware_post, aware_tag),
        edge.color = ecols_aware,
        show.node.label = FALSE, no.margin = FALSE)
   if (!is.null(supp_aware) && length(supp_aware) > 0) {
@@ -387,11 +428,25 @@ overlap_desc <- if (centroid_dist < max(aware_spread, blind_spread)) {
   "largely separated"
 }
 
-# ESS from .er log (hard-coded from Hamilton run logs).
-aware_minESS <- 88L
-blind_minESS <- 38L
-aware_ess_note <- if (aware_minESS < 200) sprintf("**BELOW 200 (minESS = %d)**", aware_minESS) else sprintf("%d", aware_minESS)
-blind_ess_note <- if (blind_minESS < 200) sprintf("**BELOW 200 (minESS = %d)**", blind_minESS) else sprintf("%d", blind_minESS)
+# ESS from .err log of the parallel-runs MCMC tail.
+# BLIND MkNT v1: from /nobackup/pjjg18/mkp-rodent-MkNT-v1/blind/rodent-MkNT-blind.err,
+#   final convergence line "min ESS = 140 | max Rhat = 1.054" (2026-05-21).
+# AWARE: MkNT run still in progress at script-update time; placeholder values
+#   shown below if running against MkNT, or legacy Mk' values if fallback active.
+blind_minESS <- 140L
+blind_maxRhat <- 1.054
+if (aware_is_placeholder) {
+  aware_minESS <- 88L          # legacy Mk' v2 value (kept for fallback panel)
+  aware_maxRhat <- NA_real_
+} else {
+  aware_minESS <- NA_integer_  # filled in manually after re-run from MkNT err log
+  aware_maxRhat <- NA_real_
+}
+aware_ess_note <- if (is.na(aware_minESS)) "TBD (parse MkNT aware err log)" else
+                  if (aware_minESS < 200) sprintf("**BELOW 200 (minESS = %d)**", aware_minESS) else
+                  sprintf("%d", aware_minESS)
+blind_ess_note <- if (blind_minESS < 200) sprintf("**BELOW 200 (minESS = %d)**", blind_minESS) else
+                  sprintf("%d", blind_minESS)
 
 summary_md <- sprintf(
 '# Rodent BLIND vs AWARE comparison
@@ -459,9 +514,8 @@ A further continuation or parallel-tempering run is advisable for publication.
 
 ## Chain details
 
-- AWARE: 1M iterations, resumed from 371k checkpoint (2026-05-18 to 2026-05-19), 20.68h wall time.
-- BLIND: 1M iterations, resumed from 200k checkpoint (2026-05-17), 19.5 min wall time
-  (blind chain resumed quickly because the standard Mk\' likelihood is much faster).
+- AWARE (this rendering): %s
+- BLIND (this rendering): %s
 ',
   n_aware_total,
   n_blind_total,
@@ -503,9 +557,11 @@ A further continuation or parallel-tempering run is advisable for publication.
     )
   },
   aware_minESS,
-  if (aware_minESS < 200) "Flag: below recommended minimum of 200." else "Adequate.",
+  if (!is.na(aware_minESS) && aware_minESS < 200) "Flag: below recommended minimum of 200." else "Adequate / TBD.",
   blind_minESS,
-  if (blind_minESS < 200) "Flag: below recommended minimum of 200." else "Adequate."
+  if (blind_minESS < 200) "Flag: below recommended minimum of 200." else "Adequate.",
+  aware_provenance,
+  blind_provenance
 )
 
 md_path <- file.path(outDir, "rodent-comparison.md")
