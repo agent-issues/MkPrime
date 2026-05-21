@@ -54,6 +54,53 @@ test_that("flat-CL persite collapsed kernel matches uncollapsed at <1e-12", {
                              max(diffs), length(diffs)))
 })
 
+test_that("flat-CL collapsed pruning_jc_flat & pruning_jc_acrv_flat match at <1e-12", {
+  # Stage 2 kernels: pruning_jc_flat_collapsed + pruning_jc_acrv_flat_collapsed
+  # with fused asc. Both log_likelihood AND outConstProb must match.
+  library("ape")
+
+  cases <- expand.grid(
+    seed   = c(1L, 7L, 19L, 42L),
+    nTip   = c(5L, 12L, 25L),
+    kObs   = c(1L, 2L, 3L, 4L),
+    uplift = c(1L, 2L, 5L, 10L),
+    useAcrv = c(TRUE, FALSE)
+  )
+  cases$kFull <- cases$kObs + cases$uplift
+  cases <- cases[cases$kFull <= 14L, ]
+
+  diffs <- t(vapply(seq_len(nrow(cases)), function(i) {
+    set.seed(cases$seed[i])
+    nTip <- cases$nTip[i]; nChar <- 20L
+    tree <- ape::rtree(nTip, br = function(n) runif(n, 0.05, 0.5))
+    tree$tip.label <- paste0("t", seq_len(nTip))
+    parent <- as.integer(tree$edge[, 1])
+    child  <- as.integer(tree$edge[, 2])
+    mat <- matrix(sample(0:(cases$kObs[i] - 1L), nTip * nChar, replace = TRUE),
+                  nTip, nChar)
+    if (length(mat) > 10) {
+      miss <- sample.int(length(mat), max(1L, length(mat) %/% 10L))
+      mat[miss] <- -1L
+    }
+    storage.mode(mat) <- "integer"
+    rates <- if (cases$useAcrv[i]) {
+      z <- qnorm((seq_len(4) - 0.5) / 4); r <- exp(z * 0.5); r / mean(r)
+    } else 1.0
+    res <- test_flat_jc_constprob_pair(parent, child, tree$edge.length,
+                                        mat, cases$kFull[i], cases$kObs[i],
+                                        cases$useAcrv[i], rates)
+    c(ll = abs(res$ll_unc - res$ll_col),
+      cp = abs(res$constprob_unc - res$constprob_col))
+  }, numeric(2)))
+
+  expect_true(max(diffs[, "ll"]) < 1e-12,
+              info = sprintf("ll max diff = %.3e (%d cases)",
+                             max(diffs[, "ll"]), nrow(diffs)))
+  expect_true(max(diffs[, "cp"]) < 1e-12,
+              info = sprintf("constprob max diff = %.3e",
+                             max(diffs[, "cp"])))
+})
+
 test_that("collapsed kernel handles kObs=1 (singleton observed) cleanly", {
   set.seed(2026)
   library("ape")
