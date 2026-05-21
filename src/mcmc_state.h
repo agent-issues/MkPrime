@@ -238,19 +238,6 @@ void pruning_jc_acrv_persite_collapsed(
     double* buf, uint8_t* initFlg, int stride,
     double* siteLL);
 
-// Single-character JC log-likelihood for Gibbs kPrime sweep.
-// Handles JC + ACRV + Het + ascertainment correction + relabeling.
-// constSiteProb should be pre-computed via const_site_prob_for_k().
-double single_char_loglik_jc(
-    const McmcData& data,
-    const Rcpp::IntegerVector& parent,
-    const Rcpp::IntegerVector& child,
-    const Rcpp::NumericVector& edgeLen,
-    const int* tipCol,
-    int kStates, int kObs,
-    double betaScale,
-    const Rcpp::NumericVector& acrvRates,
-    double constSiteProb);
 
 // Constant-site probability for a given kStates (cache helper for Gibbs sweep).
 double const_site_prob_for_k(

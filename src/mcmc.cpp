@@ -3314,7 +3314,7 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   // ---------------------------------------------------------------
   // M-155: Batched precomputation of per-site likelihoods
   //
-  // Instead of calling single_char_loglik_jc() ~300 times (one per
+  // Instead of calling a per-character JC likelihood ~300 times (one per
   // character per candidate k'), batch all characters sharing the same
   // candidate k into a single partition-level pruning call.
   // ---------------------------------------------------------------
