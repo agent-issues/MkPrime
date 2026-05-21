@@ -394,4 +394,75 @@ No `src/Makevars.win` left behind.
 
 ---
 
+## Round 10 — T-012 partial-salvage of dead background agent — 2026-05-21
+
+**Goal.** Implement Lever 1 + Lever 2 lite for the ecology pruner (per the
+T-011 finding's "next round recommendation": NNI partial-CL with
+save/restore via `EcoCLCache`, expected ~8–12 % wall).
+
+**Method.** Dispatched an Opus background subagent (`agentId
+a80bae8b738eab40c`) in an isolated worktree with the full T-012 brief.
+The agent worked for ~14 minutes (11:22 → 11:36) modifying
+`src/ecology_cl_cache.h` (+513 LoC), `src/mcmc_ecology.cpp` (+285 LoC),
+and creating `dev/profiling/drivers/12a_bitident.R`; then went silent.
+By 11:55 there were no R/build/g++ processes in the tasklist, the
+agent's JSONL transcript was 0 bytes (never flushed), and
+`TaskOutput a80bae8b738eab40c` reported "no task found" — the harness
+had reaped the task entry. Worktree contents survived.
+
+**Salvage.** Inspected the diff from `worktree-ecology-aware` parent.
+What landed:
+- `EcoCacheUnit` + `EcoCLCache` allocation, per-(cat, node) CL storage
+  with tip init, and a full postorder downpass.
+- `populate_eco_cache_full` orchestrator (per-partition, per-subgroup
+  units; bit-identical at the root to the legacy pruner).
+- `eco_cache_total_loglik` (sums per-unit root logliks with relabel /
+  ascertainment corrections, mirroring the legacy partition wrapper).
+- `eco_cache_partial_eval_nni` + `find_dirty_nni_eco` + dirty-edge
+  walker over `detect_dirty_child_nodes` (the T-011 helper, now
+  consumed) + `save_dirty_eco_cls` / `restore_dirty_eco_cls`.
+- R-callable `.CppLogLikelihoodEcologyCached` exporting the full
+  `populate_eco_cache_full` + `eco_cache_total_loglik` path for
+  bit-identity testing.
+
+What did NOT land:
+- Wiring into `do_move_impl` for NNI. `src/mcmc.cpp` is untouched.
+- Bit-identity testing of the **partial-eval** path
+  (`eco_cache_partial_eval_nni`) — only the full-eval path can be
+  driven from R as of this commit.
+- The 5000-iter drift stress and the production-mode wall bench: with
+  no consultation wiring, both reduce to the T-011 baseline (which
+  was verified clean).
+- The agent's own `12a_bitident.R` was broken (referenced a
+  non-existent `mkd$dataPtr`); rewritten by the salvage step using the
+  `prepare_mcmc_data` + test-helper pattern from
+  `tests/testthat/test-ecology-plumbing.R`.
+
+**Verified.**
+- `dev/profiling/drivers/12a_bitident.R`: legacy
+  `.CppLogLikelihoodEcology` vs cached `.CppLogLikelihoodEcologyCached`
+  on a 10-tip / 6-character / kEco=3 random fixture: **|diff| = 0
+  exactly**. The full-eval cache mechanics are correct.
+- `Rscript -e 'devtools::test(filter="ecology|likelihood|mcmc")'`:
+  **228 / 228 pass**, 0 failures, 6 expected skips.
+- `dev/profiling/drivers/11e_t011_bench.R` (200-iter rodent):
+  aware **20.58 s**, blind **0.78 s**, ratio **26.38×** — within bench
+  noise of the T-011 baseline (20.47 / 0.79 / 25.91×).
+
+**Decision.** Commit the salvaged work as T-012 PARTIAL — bit-identity
+gate is the right correctness anchor for the full-eval path; partial-eval
+correctness and production wiring belong to a follow-up (T-013).
+The dead-code anti-pattern advisor flagged on T-011 doesn't apply here
+because the new functions ARE called via `CppLogLikelihoodEcologyCached`
+and the bit-identity driver exercises them on every run.
+
+**T-007 status:** stays **PARTIALLY-OPTIMISED**. The 25× aware-vs-blind
+gap is essentially unchanged. The infrastructure to close it is now
+substantially in place; T-013 is the remaining work.
+
+**Cleanup.** `dev/profiling/.vtune-lib-t012/` removed after filing. No
+`src/Makevars.win` left behind.
+
+---
+
 last_focus: 0

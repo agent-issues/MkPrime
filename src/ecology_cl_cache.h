@@ -416,4 +416,517 @@ struct EcoCLCache {
 }
 
 
+// ===========================================================================
+// T-012: cached ecology pruning helpers
+// ===========================================================================
+//
+// The cached pruner stores per-(unit, cat, node) post-mixture CLs in
+// `unit.cl`.  Each edge contribution under the ecology mixture is a
+// kEco-weighted blend of per-ecology JC or MkN transition probabilities;
+// the blend depends on the per-character z-row, the per-edge wEdge weights,
+// and the gammaE / phi scalars.  Because the mixture is per-character, the
+// transition is computed per-character at each edge — there is no "single
+// matrix per edge" we can precompute.  The cache value is therefore the
+// per-character CL after multiplying in all child contributions.
+//
+// Bit-identity vs the legacy flat pruner is preserved by:
+//   * iterating ecology states `s` in ascending order (matches legacy)
+//   * iterating rate categories `cat` outside the node loop (matches legacy)
+//   * accumulating each unit's site-likelihoods over cats then averaging
+//     with `1 / nCat` (matches legacy nCat normalisation)
+//   * processing children in topo.ch0 / ch1 / ch2 order
+//
+// The cache is single-precision-equivalent: we operate in `double` throughout.
+
+#include "gibbs_z_workspace.h"  // GibbsZWorkspace — not needed but mirrors blind path
+
+// Forward declaration for the legacy const-site helper from mcmc_ecology.cpp.
+// We re-use it for the per-character ascertainment correction (per-character
+// pseudo-pruning).  Bit-identical to legacy.  Defined as a static inside
+// mcmc_ecology.cpp; declared here as the inline helpers we add in the same
+// translation unit can call it directly.
+
+
+// ---------------------------------------------------------------------------
+// eco_apply_mixture_jc: compute one (edge, cat) contribution under the JC-K
+// ecology mixture and overlay it into `dst` (per-character buffer).
+//
+// For each character c, the per-state contribution from child CL `srcCL` to
+// the parent is:
+//   contrib[i] = pdMix(c) * sum_clCh(c) + (psMix(c) - pdMix(c)) * srcCL[c*k+i]
+// where psMix/pdMix are the kEco-weighted sums of (ps/pd)Factor[z, s] under
+// the character's z-row and the edge's wEdge row.
+//
+// If `firstChild` is true, the contribution is written; otherwise it is
+// multiplied in (Felsenstein accumulation).
+// ---------------------------------------------------------------------------
+[[maybe_unused]] static void eco_apply_mixture_jc(
+    const EcoCacheUnit& unit,
+    const double* srcCL, double* dst,
+    int e, int nEdge, int kEco,
+    int refEcology, int mode,
+    const double* psFactor, const double* pdFactor,
+    const double* wPtr, const int* zPtr,
+    bool firstChild
+) {
+  int k = unit.kStates;
+  int nChar = unit.nChar;
+  // Special-case tip child detection isn't applied here; the caller knows
+  // when src is a tip CL and can use the tip-edge fast path if desired.
+
+  if (firstChild) {
+    for (int c = 0; c < nChar; ++c) {
+      double psMix = 0.0, pdMix = 0.0;
+      for (int s = 0; s < kEco; ++s) {
+        int z;
+        if (s == refEcology) z = 0;
+        else {
+          int zCol = (s < refEcology) ? s : (s - 1);
+          z = zPtr[c + zCol * nChar];
+        }
+        double w = wPtr[e + s * nEdge];
+        psMix += w * psFactor[z * kEco + s];
+        pdMix += w * pdFactor[z * kEco + s];
+      }
+      double diff_coeff = psMix - pdMix;
+      int offset = c * k;
+      double sum_cl = 0.0;
+      for (int j = 0; j < k; ++j) sum_cl += srcCL[offset + j];
+      for (int i = 0; i < k; ++i)
+        dst[offset + i] = pdMix * sum_cl + diff_coeff * srcCL[offset + i];
+    }
+  } else {
+    for (int c = 0; c < nChar; ++c) {
+      double psMix = 0.0, pdMix = 0.0;
+      for (int s = 0; s < kEco; ++s) {
+        int z;
+        if (s == refEcology) z = 0;
+        else {
+          int zCol = (s < refEcology) ? s : (s - 1);
+          z = zPtr[c + zCol * nChar];
+        }
+        double w = wPtr[e + s * nEdge];
+        psMix += w * psFactor[z * kEco + s];
+        pdMix += w * pdFactor[z * kEco + s];
+      }
+      double diff_coeff = psMix - pdMix;
+      int offset = c * k;
+      double sum_cl = 0.0;
+      for (int j = 0; j < k; ++j) sum_cl += srcCL[offset + j];
+      for (int i = 0; i < k; ++i)
+        dst[offset + i] *= pdMix * sum_cl + diff_coeff * srcCL[offset + i];
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// eco_apply_mixture_mkn: same as eco_apply_mixture_jc but for the
+// neomorphic 2-state mixture (full 2x2 matvec per character).
+// ---------------------------------------------------------------------------
+[[maybe_unused]] static void eco_apply_mixture_mkn(
+    const EcoCacheUnit& unit,
+    const double* srcCL, double* dst,
+    int e, int nEdge, int kEco,
+    int refEcology, int /*mode*/,
+    const double* Pfactor,  // size 3 * kEco * 4
+    const double* wPtr, const int* zPtr,
+    bool firstChild
+) {
+  (void)unit;
+  int nChar = unit.nChar;
+  if (firstChild) {
+    for (int c = 0; c < nChar; ++c) {
+      double P00m = 0, P01m = 0, P10m = 0, P11m = 0;
+      for (int s = 0; s < kEco; ++s) {
+        int z;
+        if (s == refEcology) z = 0;
+        else {
+          int zCol = (s < refEcology) ? s : (s - 1);
+          z = zPtr[c + zCol * nChar];
+        }
+        double w = wPtr[e + s * nEdge];
+        const double* P = Pfactor + (z * kEco + s) * 4;
+        P00m += w * P[0]; P01m += w * P[1];
+        P10m += w * P[2]; P11m += w * P[3];
+      }
+      int off = c * 2;
+      double cl0 = srcCL[off], cl1 = srcCL[off + 1];
+      dst[off]     = P00m * cl0 + P01m * cl1;
+      dst[off + 1] = P10m * cl0 + P11m * cl1;
+    }
+  } else {
+    for (int c = 0; c < nChar; ++c) {
+      double P00m = 0, P01m = 0, P10m = 0, P11m = 0;
+      for (int s = 0; s < kEco; ++s) {
+        int z;
+        if (s == refEcology) z = 0;
+        else {
+          int zCol = (s < refEcology) ? s : (s - 1);
+          z = zPtr[c + zCol * nChar];
+        }
+        double w = wPtr[e + s * nEdge];
+        const double* P = Pfactor + (z * kEco + s) * 4;
+        P00m += w * P[0]; P01m += w * P[1];
+        P10m += w * P[2]; P11m += w * P[3];
+      }
+      int off = c * 2;
+      double cl0 = srcCL[off], cl1 = srcCL[off + 1];
+      dst[off]     *= P00m * cl0 + P01m * cl1;
+      dst[off + 1] *= P10m * cl0 + P11m * cl1;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// eco_compute_jc_factors: fill psFactor / pdFactor (length 3*kEco each) for
+// a single (cat, edge) cell.  Mirrors the corresponding block in
+// pruning_jc_acrv_flat_ecology, so the values are bit-identical.
+// ---------------------------------------------------------------------------
+[[maybe_unused]] static void eco_compute_jc_factors(
+    int kStates, int kEco, int refEcology, int mode,
+    const double* phiPtr,
+    const std::vector<double>& gammaE,
+    double tBase,
+    double* psFactor, double* pdFactor
+) {
+  double inv_k = 1.0 / kStates;
+  double km1 = (double)kStates - 1.0;
+  for (int s = 0; s < kEco; ++s) {
+    double gE = gammaE[s];
+    for (int z = 0; z < 3; ++z) {
+      double factor;
+      if (s == refEcology) factor = 1.0;
+      else {
+        double p = (mode == 0) ? phiPtr[0] : phiPtr[s];
+        double mu = (z == 0) ? 1.0 : (z == 1) ? p : 1.0 / p;
+        factor = mu / gE;
+      }
+      double tEff = tBase * factor;
+      double exV = MKP_EXP(-kStates * tEff / km1);
+      psFactor[z * kEco + s] = inv_k + (1.0 - inv_k) * exV;
+      pdFactor[z * kEco + s] = inv_k - inv_k * exV;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// eco_compute_mkn_factors: fill Pfactor (length 3*kEco*4) for one (cat, edge)
+// cell.  Mirrors the corresponding block in pruning_mkn_acrv_flat_ecology.
+// ---------------------------------------------------------------------------
+[[maybe_unused]] static void eco_compute_mkn_factors(
+    int kEco, int refEcology, int mode,
+    const double* phiPtr,
+    const std::vector<double>& gammaE,
+    double rateLoss,
+    double tBase,
+    double* Pfactor
+) {
+  double sum_rl = 1.0 + rateLoss;
+  double r01_base = 2.0 / sum_rl;
+  double r10_base = 2.0 * rateLoss / sum_rl;
+  for (int s = 0; s < kEco; ++s) {
+    double gE = gammaE[s];
+    for (int z = 0; z < 3; ++z) {
+      double mu01, mu10;
+      if (s == refEcology) {
+        mu01 = 1.0; mu10 = 1.0;
+      } else {
+        double p = (mode == 0) ? phiPtr[0] : phiPtr[s];
+        if (z == 0) { mu01 = 1.0; mu10 = 1.0; }
+        else if (z == 1) { mu01 = p; mu10 = 1.0 / p; }
+        else { mu01 = 1.0 / p; mu10 = p; }
+      }
+      double r01, r10;
+      if (s == refEcology) { r01 = r01_base; r10 = r10_base; }
+      else { r01 = r01_base * mu01 / gE; r10 = r10_base * mu10 / gE; }
+      double lam = r01 + r10;
+      double pi0_ = r10 / lam;
+      double pi1_ = r01 / lam;
+      double ex = MKP_EXP(-lam * tBase);
+      double P00 = pi0_ + pi1_ * ex;
+      double P01 = pi1_ - pi1_ * ex;
+      double P10 = pi0_ - pi0_ * ex;
+      double P11 = pi1_ + pi0_ * ex;
+      double* P = Pfactor + (z * kEco + s) * 4;
+      P[0] = P00; P[1] = P01; P[2] = P10; P[3] = P11;
+    }
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// eco_full_downpass_unit: write CLs for one EcoCacheUnit by running a full
+// postorder downpass under the current wEdge / params.  Mirrors the legacy
+// flat pruner edge-iteration order so the root CLs match bit-for-bit.
+// ---------------------------------------------------------------------------
+[[maybe_unused]] static void eco_full_downpass_unit(
+    EcoCacheUnit& unit,
+    const IntegerVector& parent, const IntegerVector& child,
+    const NumericVector& edgeLen, int nTip,
+    int kEco, int refEcology, int mode,
+    const NumericVector& phi,
+    const NumericMatrix& wEdge,
+    const IntegerMatrix& zMat,  // sub-zMat aligned with unit chars
+    const std::vector<double>& gammaE,
+    const std::vector<double>& rates,
+    double rateLoss
+) {
+  int nEdge = parent.size();
+  int nCat = (int)rates.size();
+  int maxNode = 2 * nTip - 1;
+  const int* parPtr = INTEGER(parent);
+  const int* chPtr  = INTEGER(child);
+  const double* elPtr = REAL(edgeLen);
+  const double* wPtr  = REAL(wEdge);
+  const int* zPtr     = INTEGER(zMat);
+  const double* phiPtr = REAL(phi);
+
+  std::vector<uint8_t> initFlg(maxNode + 1, 0);
+  std::vector<double> psFactor(3 * kEco), pdFactor(3 * kEco);
+  std::vector<double> Pfactor;
+  if (unit.isMkN) Pfactor.assign(3 * kEco * 4, 0.0);
+
+  for (int cat = 0; cat < nCat; ++cat) {
+    double rate = rates[cat];
+    for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
+    for (int t = 1; t <= nTip; ++t) initFlg[t] = 1;
+
+    for (int e = nEdge - 1; e >= 0; --e) {
+      int par = parPtr[e], ch = chPtr[e];
+      double tBase = elPtr[e] * rate * unit.rateScale;
+
+      if (unit.isMkN) {
+        eco_compute_mkn_factors(kEco, refEcology, mode, phiPtr, gammaE,
+                                rateLoss, tBase, Pfactor.data());
+      } else {
+        eco_compute_jc_factors(unit.kStates, kEco, refEcology, mode, phiPtr,
+                               gammaE, tBase, psFactor.data(), pdFactor.data());
+      }
+
+      double* dst = unit.CL(cat, par);
+      const double* src = unit.CL(cat, ch);
+      bool firstChild = !initFlg[par];
+
+      if (unit.isMkN) {
+        eco_apply_mixture_mkn(unit, src, dst, e, nEdge, kEco,
+                              refEcology, mode, Pfactor.data(),
+                              wPtr, zPtr, firstChild);
+      } else {
+        eco_apply_mixture_jc(unit, src, dst, e, nEdge, kEco,
+                             refEcology, mode,
+                             psFactor.data(), pdFactor.data(),
+                             wPtr, zPtr, firstChild);
+      }
+      initFlg[par] = 1;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// eco_recompute_dirty_unit: rebuild CLs only at `dirtyNodes` (in postorder)
+// for one EcoCacheUnit using TreeNav child pointers.
+//
+// Each dirty node `node`'s CL is rebuilt by:
+//   for cat in 0..nCat-1:
+//     for each child slot in (ch0, ch1, ch2):
+//       compute contribution from child CL (which is current — either it
+//       was clean or already updated earlier in postorder)
+//       first child: write; subsequent: multiply
+//
+// The per-edge wEdge / edgeLen come from the caller's *current* arrays
+// (proposed topology for an NNI move).
+// ---------------------------------------------------------------------------
+[[maybe_unused]] static void eco_recompute_dirty_unit(
+    EcoCacheUnit& unit,
+    const EcoCLCache& cache,
+    const IntegerVector& parent, const IntegerVector& child,
+    const NumericVector& edgeLen,
+    int kEco, int refEcology, int mode,
+    const NumericVector& phi,
+    const NumericMatrix& wEdge,
+    const IntegerMatrix& zMat,
+    const std::vector<double>& gammaE,
+    const std::vector<double>& rates,
+    double rateLoss,
+    const std::vector<int>& dirtyNodes
+) {
+  int nEdge = parent.size();
+  int nCat = (int)rates.size();
+  const int* parPtr = INTEGER(parent);
+  const int* chPtr  = INTEGER(child);
+  const double* elPtr = REAL(edgeLen);
+  const double* wPtr  = REAL(wEdge);
+  const int* zPtr    = INTEGER(zMat);
+  const double* phiPtr = REAL(phi);
+
+  std::vector<double> psFactor(3 * kEco), pdFactor(3 * kEco);
+  std::vector<double> Pfactor;
+  if (unit.isMkN) Pfactor.assign(3 * kEco * 4, 0.0);
+
+  // Map child node -> edge index (so we can grab edge length & wEdge row).
+  // Build once per call.  Cheap (O(nEdge)).
+  std::vector<int> childEdgeOf(cache.maxNode + 1, -1);
+  for (int e = 0; e < nEdge; ++e) childEdgeOf[chPtr[e]] = e;
+  (void)parPtr;  // unused; we use topo's parent pointers
+
+  for (int cat = 0; cat < nCat; ++cat) {
+    double rate = rates[cat];
+
+    for (int node : dirtyNodes) {
+      if (node <= cache.nTip) continue;
+      double* dst = unit.CL(cat, node);
+      bool first = true;
+
+      int children[3] = { cache.topo.ch0[node],
+                          cache.topo.ch1[node],
+                          cache.topo.ch2[node] };
+      for (int ci = 0; ci < 3; ++ci) {
+        int ch = children[ci];
+        if (ch < 0) continue;
+        int e = childEdgeOf[ch];
+        if (e < 0) continue;  // shouldn't happen
+        double tBase = elPtr[e] * rate * unit.rateScale;
+
+        if (unit.isMkN) {
+          eco_compute_mkn_factors(kEco, refEcology, mode, phiPtr, gammaE,
+                                  rateLoss, tBase, Pfactor.data());
+        } else {
+          eco_compute_jc_factors(unit.kStates, kEco, refEcology, mode, phiPtr,
+                                 gammaE, tBase, psFactor.data(), pdFactor.data());
+        }
+
+        const double* src = unit.CL(cat, ch);
+
+        if (unit.isMkN) {
+          eco_apply_mixture_mkn(unit, src, dst, e, nEdge, kEco,
+                                refEcology, mode, Pfactor.data(),
+                                wPtr, zPtr, first);
+        } else {
+          eco_apply_mixture_jc(unit, src, dst, e, nEdge, kEco,
+                               refEcology, mode,
+                               psFactor.data(), pdFactor.data(),
+                               wPtr, zPtr, first);
+        }
+        first = false;
+      }
+    }
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// eco_unit_root_loglik: pruning log-lik contribution for one EcoCacheUnit
+// (no ascertainment correction, no relabel — those are applied externally).
+// Bit-identical to the legacy summation order.
+// ---------------------------------------------------------------------------
+[[maybe_unused]] static double eco_unit_root_loglik(
+    const EcoCacheUnit& unit, int root, int nCat
+) {
+  int k = unit.kStates;
+  int nChar = unit.nChar;
+  const double* rf = unit.rootFreqs.data();
+
+  if (nCat == 1) {
+    const double* clRoot = unit.CL(0, root);
+    double logLik = 0.0;
+    for (int c = 0; c < nChar; ++c) {
+      int offset = c * k;
+      double sl = 0.0;
+      for (int s = 0; s < k; ++s) sl += rf[s] * clRoot[offset + s];
+      if (sl <= 0.0) return R_NegInf;
+      logLik += std::log(sl);
+    }
+    return logLik;
+  }
+  std::vector<double> siteLikSum(nChar, 0.0);
+  for (int cat = 0; cat < nCat; ++cat) {
+    const double* clRoot = unit.CL(cat, root);
+    for (int c = 0; c < nChar; ++c) {
+      int offset = c * k;
+      double sl = 0.0;
+      for (int s = 0; s < k; ++s) sl += rf[s] * clRoot[offset + s];
+      siteLikSum[c] += sl;
+    }
+  }
+  double inv_nCat = 1.0 / nCat;
+  double logLik = 0.0;
+  for (int c = 0; c < nChar; ++c) {
+    double avg = siteLikSum[c] * inv_nCat;
+    if (avg <= 0.0) return R_NegInf;
+    logLik += std::log(avg);
+  }
+  return logLik;
+}
+
+
+// ---------------------------------------------------------------------------
+// find_dirty_nni_eco: same dirty-node walk as find_dirty_nni in
+// node_cl_cache.h, but using EcoCLCache.topo (which is updated symmetrically
+// after the proposal).  Returns nodes in postorder (v deepest first, root
+// last).  When wEdge changes affect non-path nodes, the caller unions the
+// result with `cache.invalidate_ancestors_of_dirty_edges`-derived nodes.
+// ---------------------------------------------------------------------------
+[[maybe_unused]] static std::vector<int> find_dirty_nni_eco(
+    const TreeNav& topo, int v, int u
+) {
+  std::vector<int> path;
+  path.reserve(16);
+  path.push_back(v);
+  int cur = u;
+  while (cur >= 0) {
+    path.push_back(cur);
+    cur = topo.parentNode[cur];
+  }
+  return path;
+}
+
+
+// ---------------------------------------------------------------------------
+// save_dirty_eco_cls / restore_dirty_eco_cls: M-158-style backup + restore
+// of CL data for all (unit, cat, dirtyNode) cells.
+// ---------------------------------------------------------------------------
+struct EcoDirtyScratch {
+  std::vector<double> savedCL;
+  std::vector<int> dirtyNodes;
+};
+
+[[maybe_unused]] static void save_dirty_eco_cls(
+    EcoCLCache& cache,
+    EcoDirtyScratch& scratch,
+    const std::vector<int>& dirtyNodes
+) {
+  size_t total = 0;
+  for (const auto& u : cache.units)
+    total += (size_t)u.nCat * dirtyNodes.size() * u.stride;
+  scratch.savedCL.resize(total);
+  scratch.dirtyNodes = dirtyNodes;
+  double* dst = scratch.savedCL.data();
+  for (const auto& u : cache.units) {
+    for (int cat = 0; cat < u.nCat; ++cat) {
+      for (int node : dirtyNodes) {
+        const double* src = u.CL(cat, node);
+        std::memcpy(dst, src, u.stride * sizeof(double));
+        dst += u.stride;
+      }
+    }
+  }
+}
+
+[[maybe_unused]] static void restore_dirty_eco_cls(
+    EcoCLCache& cache,
+    const EcoDirtyScratch& scratch
+) {
+  const double* src = scratch.savedCL.data();
+  for (auto& u : cache.units) {
+    for (int cat = 0; cat < u.nCat; ++cat) {
+      for (int node : scratch.dirtyNodes) {
+        double* dst = u.CL(cat, node);
+        std::memcpy(dst, src, u.stride * sizeof(double));
+        src += u.stride;
+      }
+    }
+  }
+}
+
+
 #endif  // MKPRIME_ECOLOGY_CL_CACHE_H

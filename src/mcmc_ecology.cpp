@@ -1445,3 +1445,288 @@ NumericVector CppLogLikelihoodEcologyPerChar(
   }
   return out;
 }
+
+
+// ===========================================================================
+// T-012: cached ecology pruner (populate + cached eval)
+// ===========================================================================
+//
+// populate_eco_cache_full builds the per-unit storage and runs a full
+// downpass writing CLs at every internal node, snapshots the (wEdge,
+// scalar param) baseline, and marks topoValid / structureValid / nodeValid
+// = true for every internal node.
+//
+// eco_cache_total_loglik computes the full ecology log-likelihood from the
+// cached root CLs, applying ascertainment correction and (for transformational
+// units) the Mk' relabel correction.  Bit-identical to
+// cpp_log_likelihood_ecology when the cache was populated against the same
+// inputs.
+
+static IntegerMatrix make_sub_zmat_eco(const IntegerMatrix& zMatrix,
+                                       const std::vector<int>& globalCharIdx,
+                                       int zCols) {
+  int nSub = (int)globalCharIdx.size();
+  IntegerMatrix sub(nSub, zCols);
+  for (int c = 0; c < nSub; ++c) {
+    int gi = globalCharIdx[c];
+    for (int j = 0; j < zCols; ++j) sub(c, j) = zMatrix(gi, j);
+  }
+  return sub;
+}
+
+
+// Populate the entire cache (units + tip CLs + full downpass + snapshot).
+static void populate_eco_cache_full(
+    EcoCLCache& cache, const McmcData& data,
+    const IntegerVector& parent, const IntegerVector& child,
+    const NumericVector& edgeLen, const IntegerVector& kPrime,
+    double rateLoss, double rateLogSd, double rateNeo,
+    const NumericVector& phi,
+    const IntegerMatrix& zMatrix,
+    double pi0, const NumericVector& theta,
+    const NumericMatrix& wEdge,
+    const std::vector<double>& gammaE
+) {
+  int nTip = data.nTip;
+  int maxNode = 2 * nTip - 1;
+  int kEco = data.ecology.kEcology;
+  int mode = data.magnitudeMode;
+  int refE = data.ecology.refEcology;
+  int nCat = (rateLogSd > 0.0) ? data.nCat : 1;
+
+  cache.nTip = nTip;
+  cache.maxNode = maxNode;
+  cache.useAcrv = (rateLogSd > 0.0);
+  cache.cachedRateLogSd = rateLogSd;
+
+  NumericVector ratesV = (rateLogSd > 0.0)
+    ? cpp_acrv_rates(rateLogSd, data.nCat, data.acrvZ)
+    : NumericVector(1, 1.0);
+  cache.rates.assign(ratesV.begin(), ratesV.end());
+
+  cache.topo.build(parent, child, edgeLen, nTip);
+  cache.nodeValid.assign(maxNode + 1, 0u);
+  for (int t = 1; t <= nTip; ++t) cache.nodeValid[t] = 1u;
+
+  build_eco_cache_units(cache, data, kPrime);
+  int zCols = kEco - 1;
+
+  for (auto& unit : cache.units) {
+    unit.allocate(maxNode, nCat);
+    if (unit.isMkN) {
+      unit.rootFreqs = { rateLoss / (1.0 + rateLoss), 1.0 / (1.0 + rateLoss) };
+      unit.rateScale = rateNeo;
+    } else {
+      unit.rateScale = 1.0;
+      unit.rootFreqs.assign(unit.kStates, 1.0 / unit.kStates);
+    }
+    unit.init_tips(nTip);
+
+    IntegerMatrix unitZ = make_sub_zmat_eco(zMatrix, unit.globalCharIdx, zCols);
+    eco_full_downpass_unit(
+      unit, parent, child, edgeLen, nTip,
+      kEco, refE, mode, phi, wEdge, unitZ,
+      gammaE, cache.rates, rateLoss
+    );
+  }
+
+  for (int n = nTip + 1; n <= maxNode; ++n) cache.nodeValid[n] = 1u;
+  cache.topoValid = true;
+  cache.structureValid = true;
+  snapshot_eco_inputs(cache, wEdge, edgeLen, phi, pi0, theta, gammaE);
+}
+
+
+// Compute total log-likelihood from cached CLs (incl. ascertainment +
+// relabel correction).
+static double eco_cache_total_loglik(
+    const EcoCLCache& cache, const McmcData& data,
+    const IntegerVector& parent, const IntegerVector& child,
+    const NumericVector& edgeLen,
+    const IntegerVector& kPrime, double rateLoss, double rateNeo,
+    const NumericVector& phi,
+    const IntegerMatrix& zMatrix,
+    const NumericMatrix& wEdge,
+    const std::vector<double>& gammaE
+) {
+  int kEco = data.ecology.kEcology;
+  int mode = data.magnitudeMode;
+  int refE = data.ecology.refEcology;
+  int nTip = data.nTip;
+  int root = nTip + 1;
+  int zCols = kEco - 1;
+  int nCat = (int)cache.rates.size();
+  if (nCat < 1) nCat = 1;
+  NumericVector ratesV(cache.rates.size());
+  for (size_t i = 0; i < cache.rates.size(); ++i) ratesV[i] = cache.rates[i];
+
+  double total = 0.0;
+  for (const auto& unit : cache.units) {
+    double ll = eco_unit_root_loglik(unit, root, nCat);
+    if (!R_FINITE(ll)) return R_NegInf;
+
+    if (data.codingType == 1) {
+      IntegerVector zVec(zCols);
+      const int nSub = unit.nChar;
+      for (int c = 0; c < nSub; ++c) {
+        int gi = unit.globalCharIdx[c];
+        for (int j = 0; j < zCols; ++j) zVec[j] = zMatrix(gi, j);
+        double pConst;
+        if (unit.isMkN) {
+          NumericVector neoEl(parent.size());
+          for (int e = 0; e < parent.size(); ++e) neoEl[e] = edgeLen[e] * rateNeo;
+          pConst = const_site_prob_mkn_eco_single(
+            parent, child, neoEl, nTip, rateLoss, ratesV,
+            wEdge, zVec, phi, mode, refE, gammaE);
+        } else {
+          pConst = const_site_prob_jc_eco_single(
+            parent, child, edgeLen, nTip, unit.kStates, ratesV,
+            wEdge, zVec, phi, mode, refE, gammaE);
+        }
+        if (pConst > 0.0 && pConst < 1.0)
+          ll -= std::log(1.0 - pConst);
+      }
+    } else if (data.codingType == 2) {
+      stop("informative coding is not yet supported under ecologyAware");
+    }
+
+    if (unit.doRelabel) {
+      for (int c = 0; c < unit.nChar; ++c) {
+        int gi = unit.globalCharIdx[c];
+        ll += mk_prime_relabel_log(unit.kStates, data.kObs[gi]);
+      }
+    }
+
+    total += ll;
+  }
+
+  (void)kPrime;
+  return total;
+}
+
+
+// Partial eval for an NNI move.  Assumes cache.topo + (parent, child) have
+// already been updated to the proposed topology.  wEdge has been computed
+// against the proposed topology too.  Returns the partial-eval logLik;
+// `fallback` is set to true if the dirty set is too large (caller should
+// then use a full eval instead).
+static double eco_cache_partial_eval_nni(
+    EcoCLCache& cache, const McmcData& data,
+    const IntegerVector& parent, const IntegerVector& child,
+    const NumericVector& edgeLen, const IntegerVector& kPrime,
+    double rateLoss, double rateNeo,
+    const NumericVector& phi,
+    const IntegerMatrix& zMatrix,
+    double pi0, const NumericVector& theta,
+    const NumericMatrix& wEdge,
+    const std::vector<double>& gammaE,
+    int v, int u,
+    EcoDirtyScratch& scratch,
+    int& dirtyCount,
+    bool& fallback
+) {
+  fallback = false;
+  int kEco = data.ecology.kEcology;
+  int mode = data.magnitudeMode;
+  int refE = data.ecology.refEcology;
+  int nTip = data.nTip;
+  int maxNode = cache.maxNode;
+  int zCols = kEco - 1;
+
+  std::vector<int> topoPath = find_dirty_nni_eco(cache.topo, v, u);
+  std::vector<int> wDirty = detect_dirty_child_nodes(cache, child, wEdge, edgeLen);
+
+  std::vector<uint8_t> mark(maxNode + 1, 0);
+  for (int n : topoPath) if (n >= 0) mark[n] = 1;
+  for (int ch : wDirty) {
+    int p = cache.topo.parentNode[ch];
+    while (p >= 0) {
+      if (mark[p]) break;
+      mark[p] = 1;
+      p = cache.topo.parentNode[p];
+    }
+  }
+
+  std::vector<std::pair<int,int>> depthNode;
+  for (int n = nTip + 1; n <= maxNode; ++n) {
+    if (!mark[n]) continue;
+    int d = 0;
+    for (int x = n; x >= 0; x = cache.topo.parentNode[x]) ++d;
+    depthNode.emplace_back(d, n);
+  }
+  std::sort(depthNode.begin(), depthNode.end(),
+            [](const auto& a, const auto& b) { return a.first > b.first; });
+  std::vector<int> dirty;
+  dirty.reserve(depthNode.size());
+  for (auto& dn : depthNode) dirty.push_back(dn.second);
+  dirtyCount = (int)dirty.size();
+
+  int nInternal = maxNode - nTip;
+  if (nInternal > 0 && dirtyCount * 10 > nInternal * 7) {
+    fallback = true;
+    return R_NegInf;
+  }
+
+  save_dirty_eco_cls(cache, scratch, dirty);
+
+  for (auto& unit : cache.units) {
+    IntegerMatrix unitZ = make_sub_zmat_eco(zMatrix, unit.globalCharIdx, zCols);
+    eco_recompute_dirty_unit(
+      unit, cache,
+      parent, child, edgeLen,
+      kEco, refE, mode,
+      phi, wEdge, unitZ, gammaE, cache.rates, rateLoss,
+      dirty
+    );
+  }
+
+  double ll = eco_cache_total_loglik(
+    cache, data, parent, child, edgeLen, kPrime,
+    rateLoss, rateNeo, phi, zMatrix, wEdge, gammaE
+  );
+
+  cache.diagPartialEvalCount++;
+  cache.diagCachedSubtreeCount += dirtyCount;
+
+  (void)pi0; (void)theta;
+  return ll;
+}
+
+
+// R-callable wrapper: build a cache, populate it, return total logLik.
+// Used in tests to verify bit-identity vs the legacy pruner.
+//
+// [[Rcpp::export(.CppLogLikelihoodEcologyCached)]]
+double CppLogLikelihoodEcologyCached(
+    SEXP dataPtr,
+    IntegerVector parent, IntegerVector child,
+    NumericVector edgeLen,
+    IntegerVector kPrime,
+    double rateLoss, double rateLogSd, double rateNeo,
+    NumericVector phi,
+    IntegerMatrix zMatrix,
+    double pi0 = 0.0,
+    Rcpp::Nullable<Rcpp::NumericVector> theta = R_NilValue
+) {
+  const McmcData& data = *Rcpp::XPtr<McmcData>(dataPtr).get();
+  if (!data.ecologyAware) stop("McmcData was not built with ecologyAware = TRUE");
+  int kEco = data.ecology.kEcology;
+  int zCols = kEco - 1;
+  Rcpp::NumericVector thetaVec = theta.isNotNull()
+    ? Rcpp::NumericVector(theta) : Rcpp::NumericVector(std::max(0, zCols), 0.5);
+
+  std::vector<double> gammaE;
+  compute_gamma_e_ecology(data, phi, pi0, thetaVec, gammaE);
+
+  NumericMatrix wEdge(parent.size(), kEco);
+  recompute_w_edge(data, parent, child, edgeLen, wEdge);
+
+  EcoCLCache cache;
+  populate_eco_cache_full(cache, data, parent, child, edgeLen, kPrime,
+                          rateLoss, rateLogSd, rateNeo,
+                          phi, zMatrix, pi0, thetaVec, wEdge, gammaE);
+
+  return eco_cache_total_loglik(cache, data, parent, child, edgeLen,
+                                 kPrime, rateLoss, rateNeo,
+                                 phi, zMatrix, wEdge, gammaE);
+}
