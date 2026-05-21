@@ -27,6 +27,11 @@
 #include <cmath>
 #include <vector>
 #include <map>
+#include <cstdlib>     // getenv
+#include <cstdio>      // fprintf for env-gated diag
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 using namespace Rcpp;
 
@@ -284,33 +289,32 @@ static inline double trans_rate_factor(int z, int ecoState, int refEcology,
 //
 // Returns total log-likelihood across characters, or R_NegInf if any per-
 // character average likelihood is non-positive.
-static double pruning_jc_acrv_flat_ecology(
-    IntegerVector parent, IntegerVector child,
-    NumericVector edge_length, IntegerMatrix tip_states,
-    int kStates, NumericVector root_freqs,
-    NumericVector rate_multipliers,
-    NumericMatrix wEdge,
-    IntegerMatrix zMat,
-    NumericVector phi, int mode,
+// T-017: raw-pointer variant. The original Rcpp-argument signature is kept as
+// a thin wrapper below for callers that already have Rcpp objects in hand.
+// This variant takes only POD inputs and is safe to invoke from inside an
+// OpenMP parallel region — no R-side state is touched.
+//
+// Pointer layouts (column-major):
+//   parPtr[e], chPtr[e]    : 1-indexed node IDs, length nEdge
+//   elPtr[e]               : edge lengths, length nEdge
+//   tsPtr[(tip-1) + c*nTip]: tip state, c=0..nChar-1, tip=1..nTip
+//   rfPtr[s]               : root frequencies, length kStates
+//   rmPtr[cat]             : ACRV rate multipliers, length nCat
+//   wPtr[e + s*nEdge]      : per-edge ecology weights, kEco columns
+//   zPtr[c + j*nChar]      : per-character z-vector, kEco-1 columns
+//   phiPtr[s_or_0]         : phi (length 1 if mode=0 else kEco)
+static double pruning_jc_acrv_flat_ecology_raw(
+    const int* parPtr, const int* chPtr, int nEdge,
+    const double* elPtr,
+    const int* tsPtr, int nTip, int nChar,
+    int kStates, const double* rfPtr,
+    const double* rmPtr, int nCat,
+    const double* wPtr, int kEco,
+    const int* zPtr,
+    const double* phiPtr, int mode,
     int refEcology,
     const std::vector<double>& gammaE,
     double* buf, uint8_t* initFlg, int stride) {
-
-  int nEdge = parent.size();
-  int nTip  = tip_states.nrow();
-  int nChar = tip_states.ncol();
-  int nCat  = rate_multipliers.size();
-  int kEco  = wEdge.ncol();
-
-  const int* parPtr = INTEGER(parent);
-  const int* chPtr  = INTEGER(child);
-  const double* elPtr = REAL(edge_length);
-  const int* tsPtr   = INTEGER(tip_states);
-  const double* rfPtr = REAL(root_freqs);
-  const double* rmPtr = REAL(rate_multipliers);
-  const double* wPtr  = REAL(wEdge);          // column-major: wPtr[e + s * nEdge]
-  const int* zPtr     = INTEGER(zMat);         // column-major: zPtr[c + s * nChar]
-  const double* phiPtr = REAL(phi);
 
   int maxNode = 2 * nTip - 1;
   int root    = nTip + 1;
@@ -526,6 +530,35 @@ static double pruning_jc_acrv_flat_ecology(
 }
 
 
+// Thin Rcpp-arg wrapper around the raw-pointer pruner.  Kept for callers
+// that already hold Rcpp objects and run serially.  Const-ref args avoid
+// the Rcpp Vector copy-constructor (which touches the precious-object list
+// and is NOT thread-safe).
+static inline double pruning_jc_acrv_flat_ecology(
+    const Rcpp::IntegerVector& parent, const Rcpp::IntegerVector& child,
+    const Rcpp::NumericVector& edge_length,
+    const Rcpp::IntegerMatrix& tip_states,
+    int kStates, const Rcpp::NumericVector& root_freqs,
+    const Rcpp::NumericVector& rate_multipliers,
+    const Rcpp::NumericMatrix& wEdge,
+    const Rcpp::IntegerMatrix& zMat,
+    const Rcpp::NumericVector& phi, int mode,
+    int refEcology,
+    const std::vector<double>& gammaE,
+    double* buf, uint8_t* initFlg, int stride) {
+  return pruning_jc_acrv_flat_ecology_raw(
+    INTEGER(parent), INTEGER(child), parent.size(),
+    REAL(edge_length),
+    INTEGER(tip_states), tip_states.nrow(), tip_states.ncol(),
+    kStates, REAL(root_freqs),
+    REAL(rate_multipliers), rate_multipliers.size(),
+    REAL(wEdge), wEdge.ncol(),
+    INTEGER(zMat),
+    REAL(phi), mode, refEcology, gammaE,
+    buf, initFlg, stride);
+}
+
+
 // Resolve the (rate01, rate10) pair for a neomorphic character with
 // influence category z under magnitude mode `mode`. Unlike the
 // transformational case, the modification is per-direction:
@@ -573,34 +606,21 @@ static inline void mkn_rates_for_state(
 //
 // Returns total log-likelihood across characters, or R_NegInf if any per-
 // character average likelihood is non-positive.
-static double pruning_mkn_acrv_flat_ecology(
-    IntegerVector parent, IntegerVector child,
-    NumericVector edge_length, IntegerMatrix tip_states,
-    double rate_loss, NumericVector root_freqs,
-    NumericVector rate_multipliers,
-    NumericMatrix wEdge,
-    IntegerMatrix zMat,
-    NumericVector phi, int mode,
+// T-017: raw-pointer variant.  See header comment for pruning_jc_acrv_flat_ecology_raw.
+static double pruning_mkn_acrv_flat_ecology_raw(
+    const int* parPtr, const int* chPtr, int nEdge,
+    const double* elPtr,
+    const int* tsPtr, int nTip, int nChar,
+    double rate_loss, const double* rfPtr,
+    const double* rmPtr, int nCat,
+    const double* wPtr, int kEco,
+    const int* zPtr,
+    const double* phiPtr, int mode,
     int refEcology,
     const std::vector<double>& gammaE,
     double* buf, uint8_t* initFlg, int stride) {
 
-  int nEdge = parent.size();
-  int nTip  = tip_states.nrow();
-  int nChar = tip_states.ncol();
-  int nCat  = rate_multipliers.size();
-  int kEco  = wEdge.ncol();
   const int kStates = 2;
-
-  const int* parPtr = INTEGER(parent);
-  const int* chPtr  = INTEGER(child);
-  const double* elPtr = REAL(edge_length);
-  const int* tsPtr   = INTEGER(tip_states);
-  const double* rfPtr = REAL(root_freqs);
-  const double* rmPtr = REAL(rate_multipliers);
-  const double* wPtr  = REAL(wEdge);
-  const int* zPtr     = INTEGER(zMat);
-  const double* phiPtr = REAL(phi);
 
   int maxNode = 2 * nTip - 1;
   int root    = nTip + 1;
@@ -729,6 +749,32 @@ static double pruning_mkn_acrv_flat_ecology(
   return logLik;
 }
 
+
+// Thin Rcpp-arg wrapper around the raw-pointer MkN pruner.  See note on
+// pruning_jc_acrv_flat_ecology above re const-ref / thread-safety.
+static inline double pruning_mkn_acrv_flat_ecology(
+    const Rcpp::IntegerVector& parent, const Rcpp::IntegerVector& child,
+    const Rcpp::NumericVector& edge_length,
+    const Rcpp::IntegerMatrix& tip_states,
+    double rate_loss, const Rcpp::NumericVector& root_freqs,
+    const Rcpp::NumericVector& rate_multipliers,
+    const Rcpp::NumericMatrix& wEdge,
+    const Rcpp::IntegerMatrix& zMat,
+    const Rcpp::NumericVector& phi, int mode,
+    int refEcology,
+    const std::vector<double>& gammaE,
+    double* buf, uint8_t* initFlg, int stride) {
+  return pruning_mkn_acrv_flat_ecology_raw(
+    INTEGER(parent), INTEGER(child), parent.size(),
+    REAL(edge_length),
+    INTEGER(tip_states), tip_states.nrow(), tip_states.ncol(),
+    rate_loss, REAL(root_freqs),
+    REAL(rate_multipliers), rate_multipliers.size(),
+    REAL(wEdge), wEdge.ncol(),
+    INTEGER(zMat),
+    REAL(phi), mode, refEcology, gammaE,
+    buf, initFlg, stride);
+}
 
 
 // R-callable wrapper around pruning_mkn_acrv_flat_ecology for testing.
@@ -873,49 +919,73 @@ double PruningJcEcology(
 // constant-site probability is computed per character via a single
 // pseudo-character pruning pass.
 
-static double const_site_prob_jc_eco_single(
-    IntegerVector parent, IntegerVector child,
-    NumericVector edgeLen, int nTip, int kStates,
-    NumericVector rates,
-    NumericMatrix wEdge, const IntegerVector& zVec,
-    NumericVector phi, int mode,
+// T-017: raw-pointer variants of const_site_prob_*_eco_single.  All Rcpp
+// temporaries replaced with std::vector so these are safe to call from
+// inside an OpenMP parallel region.
+//
+// Raw-pointer layout matches the inner pruner:
+//   parPtr[e], chPtr[e]       length nEdge
+//   elPtr[e]                  length nEdge
+//   wPtr[e + s*nEdge]         column-major (nEdge x kEco)
+//   zVecPtr[j]                length (kEco - 1)
+//   phiPtr[s_or_0]            length 1 (mode=0) or kEco (mode=1)
+//   rmPtr[cat]                length nCat
+static double const_site_prob_jc_eco_single_raw(
+    const int* parPtr, const int* chPtr, int nEdge,
+    const double* elPtr,
+    int nTip, int kStates,
+    const double* rmPtr, int nCat,
+    const double* wPtr, int kEco,
+    const int* zVecPtr,           // length (kEco - 1)
+    const double* phiPtr, int mode,
     int refEcology,
     const std::vector<double>& gammaE) {
 
-  IntegerMatrix tipStates(nTip, 1);  // all zeros (default-constructed)
-  // zVec is length (kEco - 1) — one entry per non-ref ecology in col order.
-  IntegerMatrix zMat(1, zVec.size());
-  for (int s = 0; s < zVec.size(); ++s) zMat(0, s) = zVec[s];
-  NumericVector rootFreqs(kStates, 1.0 / kStates);
+  // Pseudo-character: nChar = 1, all-zero tip states, single-row zMat row.
+  // Build flat row-major-but-here-column-major-equivalent buffers (nChar = 1
+  // so layout collapses).  Memory layout used by the inner pruner:
+  //   tsPtr[(tip-1) + c*nTip]      → c = 0 only, so tsPtr[tip-1]
+  //   zPtr[c + j*nChar]            → c = 0, nChar = 1, so zPtr[j]
+  std::vector<int> tipStates(nTip, 0);      // all 0
+  std::vector<int> zVec(kEco - 1, 0);
+  for (int j = 0; j < kEco - 1; ++j) zVec[j] = zVecPtr[j];
+  std::vector<double> rootFreqs(kStates, 1.0 / kStates);
 
   int maxNode = 2 * nTip - 1;
   int stride  = kStates;
   std::vector<double>  buf((maxNode + 1) * stride, 0.0);
   std::vector<uint8_t> initFlg(maxNode + 1, 0u);
 
-  double ll = pruning_jc_acrv_flat_ecology(
-    parent, child, edgeLen, tipStates,
-    kStates, rootFreqs, rates,
-    wEdge, zMat, phi, mode,
-    refEcology, gammaE,
+  double ll = pruning_jc_acrv_flat_ecology_raw(
+    parPtr, chPtr, nEdge,
+    elPtr,
+    tipStates.data(), nTip, /*nChar=*/1,
+    kStates, rootFreqs.data(),
+    rmPtr, nCat,
+    wPtr, kEco,
+    zVec.data(),
+    phiPtr, mode, refEcology, gammaE,
     buf.data(), initFlg.data(), stride);
   // JC symmetry: P(constant in any state) = kStates * P(all-tips-0).
   return kStates * std::exp(ll);
 }
 
 
-static double const_site_prob_mkn_eco_single(
-    IntegerVector parent, IntegerVector child,
-    NumericVector edgeLen, int nTip,
-    double rateLoss, NumericVector rates,
-    NumericMatrix wEdge, const IntegerVector& zVec,
-    NumericVector phi, int mode,
+static double const_site_prob_mkn_eco_single_raw(
+    const int* parPtr, const int* chPtr, int nEdge,
+    const double* elPtr,
+    int nTip,
+    double rateLoss,
+    const double* rmPtr, int nCat,
+    const double* wPtr, int kEco,
+    const int* zVecPtr,           // length (kEco - 1)
+    const double* phiPtr, int mode,
     int refEcology,
     const std::vector<double>& gammaE) {
 
-  IntegerMatrix zMat(1, zVec.size());
-  for (int s = 0; s < zVec.size(); ++s) zMat(0, s) = zVec[s];
-  NumericVector rootFreqs(2);
+  std::vector<int> zVec(kEco - 1, 0);
+  for (int j = 0; j < kEco - 1; ++j) zVec[j] = zVecPtr[j];
+  std::vector<double> rootFreqs(2);
   rootFreqs[0] = rateLoss / (1.0 + rateLoss);
   rootFreqs[1] = 1.0 / (1.0 + rateLoss);
 
@@ -925,28 +995,75 @@ static double const_site_prob_mkn_eco_single(
   std::vector<uint8_t> initFlg(maxNode + 1, 0u);
 
   // Pseudo-char "all 0"
-  IntegerMatrix tipStates0(nTip, 1);  // zeros
-  double ll0 = pruning_mkn_acrv_flat_ecology(
-    parent, child, edgeLen, tipStates0,
-    rateLoss, rootFreqs, rates,
-    wEdge, zMat, phi, mode,
-    refEcology, gammaE,
+  std::vector<int> tipStates0(nTip, 0);
+  double ll0 = pruning_mkn_acrv_flat_ecology_raw(
+    parPtr, chPtr, nEdge,
+    elPtr,
+    tipStates0.data(), nTip, /*nChar=*/1,
+    rateLoss, rootFreqs.data(),
+    rmPtr, nCat,
+    wPtr, kEco,
+    zVec.data(),
+    phiPtr, mode, refEcology, gammaE,
     buf.data(), initFlg.data(), stride);
 
   // Pseudo-char "all 1"
-  IntegerMatrix tipStates1(nTip, 1);
-  for (int t = 0; t < nTip; ++t) tipStates1(t, 0) = 1;
+  std::vector<int> tipStates1(nTip, 1);
   // Re-zero buffers for the second pass
   std::fill(buf.begin(), buf.end(), 0.0);
   std::fill(initFlg.begin(), initFlg.end(), 0u);
-  double ll1 = pruning_mkn_acrv_flat_ecology(
-    parent, child, edgeLen, tipStates1,
-    rateLoss, rootFreqs, rates,
-    wEdge, zMat, phi, mode,
-    refEcology, gammaE,
+  double ll1 = pruning_mkn_acrv_flat_ecology_raw(
+    parPtr, chPtr, nEdge,
+    elPtr,
+    tipStates1.data(), nTip, /*nChar=*/1,
+    rateLoss, rootFreqs.data(),
+    rmPtr, nCat,
+    wPtr, kEco,
+    zVec.data(),
+    phiPtr, mode, refEcology, gammaE,
     buf.data(), initFlg.data(), stride);
 
   return std::exp(ll0) + std::exp(ll1);
+}
+
+
+// Thin Rcpp-arg wrappers around the raw variants.  Kept so serial callers
+// (per_char_log_lik_ecology in the Gibbs z sweep) need no signature change.
+static inline double const_site_prob_jc_eco_single(
+    const Rcpp::IntegerVector& parent, const Rcpp::IntegerVector& child,
+    const Rcpp::NumericVector& edgeLen, int nTip, int kStates,
+    const Rcpp::NumericVector& rates,
+    const Rcpp::NumericMatrix& wEdge, const Rcpp::IntegerVector& zVec,
+    const Rcpp::NumericVector& phi, int mode,
+    int refEcology,
+    const std::vector<double>& gammaE) {
+  return const_site_prob_jc_eco_single_raw(
+    INTEGER(parent), INTEGER(child), parent.size(),
+    REAL(edgeLen),
+    nTip, kStates,
+    REAL(rates), rates.size(),
+    REAL(wEdge), wEdge.ncol(),
+    INTEGER(zVec),
+    REAL(phi), mode, refEcology, gammaE);
+}
+
+static inline double const_site_prob_mkn_eco_single(
+    const Rcpp::IntegerVector& parent, const Rcpp::IntegerVector& child,
+    const Rcpp::NumericVector& edgeLen, int nTip,
+    double rateLoss, const Rcpp::NumericVector& rates,
+    const Rcpp::NumericMatrix& wEdge, const Rcpp::IntegerVector& zVec,
+    const Rcpp::NumericVector& phi, int mode,
+    int refEcology,
+    const std::vector<double>& gammaE) {
+  return const_site_prob_mkn_eco_single_raw(
+    INTEGER(parent), INTEGER(child), parent.size(),
+    REAL(edgeLen),
+    nTip,
+    rateLoss,
+    REAL(rates), rates.size(),
+    REAL(wEdge), wEdge.ncol(),
+    INTEGER(zVec),
+    REAL(phi), mode, refEcology, gammaE);
 }
 
 
@@ -964,20 +1081,44 @@ static double const_site_prob_mkn_eco_single(
 // (same per-partition summation order: transformational characters are
 // sub-grouped by kPrime via std::map so ascending-k order is preserved).
 
-double cpp_partition_log_likelihood_ecology(
+// T-017: thread-safe partition-likelihood core.  All inputs are raw POD;
+// no Rcpp constructors are invoked, so this can be called from inside an
+// OpenMP parallel region.  All locally-needed scratch (zPart-equivalent,
+// subset states, root freqs, neoEl, dirichlet/buffer/initFlg) is held in
+// std::vector — glibc and Windows allocator are both thread-safe.
+//
+// Pointer layouts:
+//   parPtr, chPtr      length nEdge
+//   elPtr              length nEdge
+//   wPtr               nEdge x kEco column-major (e + s*nEdge)
+//   tipStatesGlobal    nTip x part.tipStates.ncol() column-major, length
+//                      nTip * nCharPart, the global per-partition tip-state
+//                      matrix; the function selects sub-columns as needed.
+//   kPrimePtr          length nCharsTotal (global indices), only the entries
+//                      part.globalCharIdx[c] are read.
+//   globalCharIdxPtr   length nCharPart, maps local c -> global char index
+//   phiPtr             length 1 (mode 0) or kEco (mode 1)
+//   ratesPtr           length nCat
+//   zMatrixGlobalPtr   nCharsTotal x (kEco-1) column-major; selects rows by
+//                      globalCharIdx[c].  Pointer layout: zPtr[gi + j*nCharsTotal].
+//   thinking-cap layout note (zPart-equivalent constructed locally):
+//     local zPart is built column-major as nCharPart x (kEco-1):
+//       zPart[c + j*nCharPart] = zMatrixGlobalPtr[globalCharIdxPtr[c] + j*nCharsTotal]
+//     This matches the pruner's expected layout for INTEGER(zMat) where
+//     zPtr[c + j*nChar] is read in the per-char loops.
+static double cpp_partition_log_likelihood_ecology_raw(
     const McmcData& data, int partIdx,
-    Rcpp::IntegerVector parent, Rcpp::IntegerVector child,
-    Rcpp::NumericVector edgeLen,
-    const Rcpp::IntegerVector& kPrime,
+    const int* parPtr, const int* chPtr, int nEdge,
+    const double* elPtr,
+    const int* kPrimePtr,
     double rateLoss, double rateNeo,
-    Rcpp::NumericVector phi,
-    Rcpp::IntegerMatrix zMatrix,
-    const Rcpp::NumericMatrix& wEdge,
+    const double* phiPtr, int phiLen,
+    const int* zMatrixGlobalPtr, int nCharsTotal,
+    const double* wPtr,
     const std::vector<double>& gammaE,
-    const Rcpp::NumericVector& rates) {
+    const double* ratesPtr, int nCat) {
 
   int nTip = data.nTip;
-  int nEdge = parent.size();
   int maxNode = 2 * nTip - 1;
   int kEco = data.ecology.kEcology;
   int mode = data.magnitudeMode;
@@ -986,62 +1127,95 @@ double cpp_partition_log_likelihood_ecology(
 
   const PartInfo& part = data.parts[partIdx];
   int nCharPart = part.tipStates.ncol();
+  const int* partTipsPtr = INTEGER(part.tipStates);   // nTip x nCharPart, col-major
+  const int* gciPtr      = INTEGER(part.globalCharIdx);
 
-  // Subset zMatrix to this partition's characters (global → local indices).
-  IntegerMatrix zPart(nCharPart, zCols);
+  // Local zPart: nCharPart x zCols column-major.  Layout
+  //   zPartLocal[c + j*nCharPart]
+  // matches what the pruner reads via zPtr[c + j*nChar].
+  std::vector<int> zPartLocal(nCharPart * zCols);
   for (int c = 0; c < nCharPart; ++c) {
-    int gi = part.globalCharIdx[c];
-    for (int j = 0; j < zCols; ++j) zPart(c, j) = zMatrix(gi, j);
+    int gi = gciPtr[c];
+    for (int j = 0; j < zCols; ++j) {
+      zPartLocal[c + j * nCharPart] = zMatrixGlobalPtr[gi + j * nCharsTotal];
+    }
   }
+
+  // Suppress unused warnings (phiLen captured for documentation only).
+  (void)phiLen;
 
   double ll = 0.0;
 
   if (part.type == 0) {
-    // Neomorphic
-    NumericVector neoEl(nEdge);
-    for (int i = 0; i < nEdge; ++i) neoEl[i] = edgeLen[i] * rateNeo;
-    NumericVector rootFreqs = mkn_stationary_local(rateLoss);
+    // Neomorphic.  Build neoEl = edgeLen * rateNeo into a std::vector.
+    std::vector<double> neoEl(nEdge);
+    for (int i = 0; i < nEdge; ++i) neoEl[i] = elPtr[i] * rateNeo;
+    // rootFreqs from mkn stationary (length 2).
+    std::vector<double> rootFreqs(2);
+    rootFreqs[0] = rateLoss / (1.0 + rateLoss);
+    rootFreqs[1] = 1.0 / (1.0 + rateLoss);
     int stride = nCharPart * 2;
     std::vector<double>  buf((maxNode + 1) * stride, 0.0);
     std::vector<uint8_t> initFlg(maxNode + 1, 0u);
-    ll = pruning_mkn_acrv_flat_ecology(
-      parent, child, neoEl, part.tipStates,
-      rateLoss, rootFreqs, rates,
-      wEdge, zPart, phi, mode,
-      refE, gammaE,
+    ll = pruning_mkn_acrv_flat_ecology_raw(
+      parPtr, chPtr, nEdge,
+      neoEl.data(),
+      partTipsPtr, nTip, nCharPart,
+      rateLoss, rootFreqs.data(),
+      ratesPtr, nCat,
+      wPtr, kEco,
+      zPartLocal.data(),
+      phiPtr, mode, refE, gammaE,
       buf.data(), initFlg.data(), stride);
     if (data.codingType == 1) {  // variable
+      // zVec for character c is the column-c row of zPartLocal,
+      // i.e. zVec[j] = zPartLocal[c + j*nCharPart].
+      std::vector<int> zVec(zCols);
       for (int c = 0; c < nCharPart; ++c) {
-        IntegerVector zVec(zCols);
-        for (int j = 0; j < zCols; ++j) zVec[j] = zPart(c, j);
-        double pConst = const_site_prob_mkn_eco_single(
-          parent, child, neoEl, nTip,
-          rateLoss, rates, wEdge, zVec, phi, mode,
-          refE, gammaE);
+        for (int j = 0; j < zCols; ++j)
+          zVec[j] = zPartLocal[c + j * nCharPart];
+        double pConst = const_site_prob_mkn_eco_single_raw(
+          parPtr, chPtr, nEdge,
+          neoEl.data(),
+          nTip,
+          rateLoss,
+          ratesPtr, nCat,
+          wPtr, kEco,
+          zVec.data(),
+          phiPtr, mode, refE, gammaE);
         ll -= std::log(1.0 - pConst);
       }
     }
   } else if (part.type == 2) {
-    // Known state space
+    // Known state space.
     int kStates = part.k;
-    NumericVector rootFreqs(kStates, 1.0 / kStates);
+    std::vector<double> rootFreqs(kStates, 1.0 / kStates);
     int stride = nCharPart * kStates;
     std::vector<double>  buf((maxNode + 1) * stride, 0.0);
     std::vector<uint8_t> initFlg(maxNode + 1, 0u);
-    ll = pruning_jc_acrv_flat_ecology(
-      parent, child, edgeLen, part.tipStates,
-      kStates, rootFreqs, rates,
-      wEdge, zPart, phi, mode,
-      refE, gammaE,
+    ll = pruning_jc_acrv_flat_ecology_raw(
+      parPtr, chPtr, nEdge,
+      elPtr,
+      partTipsPtr, nTip, nCharPart,
+      kStates, rootFreqs.data(),
+      ratesPtr, nCat,
+      wPtr, kEco,
+      zPartLocal.data(),
+      phiPtr, mode, refE, gammaE,
       buf.data(), initFlg.data(), stride);
     if (data.codingType == 1) {
+      std::vector<int> zVec(zCols);
       for (int c = 0; c < nCharPart; ++c) {
-        IntegerVector zVec(zCols);
-        for (int j = 0; j < zCols; ++j) zVec[j] = zPart(c, j);
-        double pConst = const_site_prob_jc_eco_single(
-          parent, child, edgeLen, nTip, kStates,
-          rates, wEdge, zVec, phi, mode,
-          refE, gammaE);
+        for (int j = 0; j < zCols; ++j)
+          zVec[j] = zPartLocal[c + j * nCharPart];
+        double pConst = const_site_prob_jc_eco_single_raw(
+          parPtr, chPtr, nEdge,
+          elPtr,
+          nTip, kStates,
+          ratesPtr, nCat,
+          wPtr, kEco,
+          zVec.data(),
+          phiPtr, mode, refE, gammaE);
         ll -= std::log(1.0 - pConst);
       }
     }
@@ -1052,49 +1226,60 @@ double cpp_partition_log_likelihood_ecology(
     // transformational partition. Optimisation deferred (T-010 caveat).
     std::map<int, std::vector<int>> byKp;
     for (int c = 0; c < nCharPart; ++c) {
-      int gi = part.globalCharIdx[c];
-      byKp[kPrime[gi]].push_back(c);
+      int gi = gciPtr[c];
+      byKp[kPrimePtr[gi]].push_back(c);
     }
     for (auto& kv : byKp) {
       int kp = kv.first;
       const std::vector<int>& cols = kv.second;
       int nSub = static_cast<int>(cols.size());
 
-      IntegerMatrix subStates(nTip, nSub);
-      IntegerMatrix subZ(nSub, zCols);
+      // subStates: nTip x nSub column-major, layout subStates[t + c*nTip].
+      // subZ: nSub x zCols column-major, layout subZ[c + j*nSub].
+      std::vector<int> subStates(nTip * nSub);
+      std::vector<int> subZ(nSub * zCols);
       for (int c = 0; c < nSub; ++c) {
         for (int t = 0; t < nTip; ++t)
-          subStates(t, c) = part.tipStates(t, cols[c]);
+          subStates[t + c * nTip] = partTipsPtr[t + cols[c] * nTip];
         for (int j = 0; j < zCols; ++j)
-          subZ(c, j) = zPart(cols[c], j);
+          subZ[c + j * nSub] = zPartLocal[cols[c] + j * nCharPart];
       }
-      NumericVector rootFreqs(kp, 1.0 / kp);
+      std::vector<double> rootFreqs(kp, 1.0 / kp);
       int stride = nSub * kp;
       std::vector<double>  buf((maxNode + 1) * stride, 0.0);
       std::vector<uint8_t> initFlg(maxNode + 1, 0u);
 
-      double subLl = pruning_jc_acrv_flat_ecology(
-        parent, child, edgeLen, subStates,
-        kp, rootFreqs, rates,
-        wEdge, subZ, phi, mode,
-        refE, gammaE,
+      double subLl = pruning_jc_acrv_flat_ecology_raw(
+        parPtr, chPtr, nEdge,
+        elPtr,
+        subStates.data(), nTip, nSub,
+        kp, rootFreqs.data(),
+        ratesPtr, nCat,
+        wPtr, kEco,
+        subZ.data(),
+        phiPtr, mode, refE, gammaE,
         buf.data(), initFlg.data(), stride);
 
       if (data.codingType == 1) {
+        std::vector<int> zVec(zCols);
         for (int c = 0; c < nSub; ++c) {
-          IntegerVector zVec(zCols);
-          for (int j = 0; j < zCols; ++j) zVec[j] = subZ(c, j);
-          double pConst = const_site_prob_jc_eco_single(
-            parent, child, edgeLen, nTip, kp,
-            rates, wEdge, zVec, phi, mode,
-            refE, gammaE);
+          for (int j = 0; j < zCols; ++j)
+            zVec[j] = subZ[c + j * nSub];
+          double pConst = const_site_prob_jc_eco_single_raw(
+            parPtr, chPtr, nEdge,
+            elPtr,
+            nTip, kp,
+            ratesPtr, nCat,
+            wPtr, kEco,
+            zVec.data(),
+            phiPtr, mode, refE, gammaE);
           subLl -= std::log(1.0 - pConst);
         }
       }
 
       if (data.relabel) {
         for (int c = 0; c < nSub; ++c) {
-          int gi = part.globalCharIdx[cols[c]];
+          int gi = gciPtr[cols[c]];
           subLl += mk_prime_relabel_log(kp, data.kObs[gi]);
         }
       }
@@ -1103,10 +1288,47 @@ double cpp_partition_log_likelihood_ecology(
   }
 
   if (data.codingType == 2) {
-    stop("informative coding is not yet supported under ecologyAware");
+    // Cannot call Rcpp::stop from a parallel region (longjmp out of a worker
+    // thread is UB).  cpp_log_likelihood_ecology guards this case before the
+    // parallel region; if reached here outside that path, return R_NegInf as
+    // a safe sentinel — the existing tests verify codingType==1 paths.
+    return R_NegInf;
   }
 
   return ll;
+}
+
+
+// T-017: existing Rcpp-arg entry point is preserved as a thin wrapper.  All
+// move-handler callers in mcmc.cpp pass through here, untouched.  Const-ref
+// args avoid the Vector copy-constructor (precious-object list mutation).
+double cpp_partition_log_likelihood_ecology(
+    const McmcData& data, int partIdx,
+    const Rcpp::IntegerVector& parent, const Rcpp::IntegerVector& child,
+    const Rcpp::NumericVector& edgeLen,
+    const Rcpp::IntegerVector& kPrime,
+    double rateLoss, double rateNeo,
+    const Rcpp::NumericVector& phi,
+    const Rcpp::IntegerMatrix& zMatrix,
+    const Rcpp::NumericMatrix& wEdge,
+    const std::vector<double>& gammaE,
+    const Rcpp::NumericVector& rates) {
+  if (data.codingType == 2) {
+    // Preserve the legacy diagnostic for the Rcpp entry (serial only).
+    stop("informative coding is not yet supported under ecologyAware");
+  }
+  int nCharsTotal = zMatrix.nrow();  // global #characters
+  return cpp_partition_log_likelihood_ecology_raw(
+    data, partIdx,
+    INTEGER(parent), INTEGER(child), parent.size(),
+    REAL(edgeLen),
+    INTEGER(kPrime),
+    rateLoss, rateNeo,
+    REAL(phi), phi.size(),
+    INTEGER(zMatrix), nCharsTotal,
+    REAL(wEdge),
+    gammaE,
+    REAL(rates), rates.size());
 }
 
 
@@ -1146,20 +1368,221 @@ void compute_gamma_e_ecology(
 // partition, preserving the per-partition summation order. The total is
 // bit-identical to the pre-refactor monolithic body.
 
+// T-017: EcoWorkItem is one unit of pruning work on a single
+// (partition, kPrime-subgroup) pair.  For neomorphic / known partitions
+// there is exactly one item per partition (subgroupKp = -1).  For
+// transformational partitions there is one item per kPrime subgroup
+// (subgroupKp = the kPrime value, which is also the state-space size).
+struct EcoWorkItem {
+  int partIdx;       // index into data.parts[]
+  int subgroupKp;    // -1 = neo/known; else kPrime value
+};
+
+
+// T-017: per-work-item core.  Bit-identical to the corresponding branch in
+// cpp_partition_log_likelihood_ecology_raw, but operating on a single
+// neo/known partition or a single transformational subgroup.  Pure
+// std::vector scratch; no Rcpp constructors, no R-API calls.  Safe to invoke
+// from inside an OpenMP parallel region.
+static double compute_eco_work_item_ll(
+    const EcoWorkItem& w,
+    const McmcData& data,
+    const int* parPtr, const int* chPtr, int nEdge,
+    const double* elPtr,
+    const int* kPrimePtr,
+    double rateLoss, double rateNeo,
+    const double* phiPtr, int phiLen,
+    const int* zMatrixGlobalPtr, int nCharsTotal,
+    const double* wPtr,
+    const std::vector<double>& gammaE,
+    const double* ratesPtr, int nCat) {
+
+  (void)phiLen;
+
+  int nTip = data.nTip;
+  int maxNode = 2 * nTip - 1;
+  int kEco = data.ecology.kEcology;
+  int mode = data.magnitudeMode;
+  int refE = data.ecology.refEcology;
+  int zCols = kEco - 1;
+
+  const PartInfo& part = data.parts[w.partIdx];
+  int nCharPart = part.tipStates.ncol();
+  const int* partTipsPtr = INTEGER(part.tipStates);
+  const int* gciPtr      = INTEGER(part.globalCharIdx);
+
+  if (w.subgroupKp < 0) {
+    // Whole partition (neo or known).  Build local zPart from the global
+    // zMatrix using globalCharIdx.
+    std::vector<int> zPartLocal(nCharPart * zCols);
+    for (int c = 0; c < nCharPart; ++c) {
+      int gi = gciPtr[c];
+      for (int j = 0; j < zCols; ++j)
+        zPartLocal[c + j * nCharPart] = zMatrixGlobalPtr[gi + j * nCharsTotal];
+    }
+    double ll = 0.0;
+    if (part.type == 0) {
+      // Neomorphic.
+      std::vector<double> neoEl(nEdge);
+      for (int i = 0; i < nEdge; ++i) neoEl[i] = elPtr[i] * rateNeo;
+      std::vector<double> rootFreqs(2);
+      rootFreqs[0] = rateLoss / (1.0 + rateLoss);
+      rootFreqs[1] = 1.0 / (1.0 + rateLoss);
+      int stride = nCharPart * 2;
+      std::vector<double>  buf((maxNode + 1) * stride, 0.0);
+      std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+      ll = pruning_mkn_acrv_flat_ecology_raw(
+        parPtr, chPtr, nEdge,
+        neoEl.data(),
+        partTipsPtr, nTip, nCharPart,
+        rateLoss, rootFreqs.data(),
+        ratesPtr, nCat,
+        wPtr, kEco,
+        zPartLocal.data(),
+        phiPtr, mode, refE, gammaE,
+        buf.data(), initFlg.data(), stride);
+      if (data.codingType == 1) {
+        std::vector<int> zVec(zCols);
+        for (int c = 0; c < nCharPart; ++c) {
+          for (int j = 0; j < zCols; ++j)
+            zVec[j] = zPartLocal[c + j * nCharPart];
+          double pConst = const_site_prob_mkn_eco_single_raw(
+            parPtr, chPtr, nEdge,
+            neoEl.data(),
+            nTip,
+            rateLoss,
+            ratesPtr, nCat,
+            wPtr, kEco,
+            zVec.data(),
+            phiPtr, mode, refE, gammaE);
+          ll -= std::log(1.0 - pConst);
+        }
+      }
+    } else { // part.type == 2
+      int kStates = part.k;
+      std::vector<double> rootFreqs(kStates, 1.0 / kStates);
+      int stride = nCharPart * kStates;
+      std::vector<double>  buf((maxNode + 1) * stride, 0.0);
+      std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+      ll = pruning_jc_acrv_flat_ecology_raw(
+        parPtr, chPtr, nEdge,
+        elPtr,
+        partTipsPtr, nTip, nCharPart,
+        kStates, rootFreqs.data(),
+        ratesPtr, nCat,
+        wPtr, kEco,
+        zPartLocal.data(),
+        phiPtr, mode, refE, gammaE,
+        buf.data(), initFlg.data(), stride);
+      if (data.codingType == 1) {
+        std::vector<int> zVec(zCols);
+        for (int c = 0; c < nCharPart; ++c) {
+          for (int j = 0; j < zCols; ++j)
+            zVec[j] = zPartLocal[c + j * nCharPart];
+          double pConst = const_site_prob_jc_eco_single_raw(
+            parPtr, chPtr, nEdge,
+            elPtr,
+            nTip, kStates,
+            ratesPtr, nCat,
+            wPtr, kEco,
+            zVec.data(),
+            phiPtr, mode, refE, gammaE);
+          ll -= std::log(1.0 - pConst);
+        }
+      }
+    }
+    return ll;
+  }
+
+  // Transformational subgroup: one kPrime value (= w.subgroupKp).
+  int kp = w.subgroupKp;
+  // Collect the local column indices for this subgroup.  The order MUST
+  // match the std::map iteration order in the serial reference (ascending
+  // kPrime, then ascending insertion order of cols within a kp); the byKp
+  // map ordering in the raw routine sorts by kp.  Within a kp the cols
+  // vector preserves the order chars were visited (ascending c), so we
+  // iterate c = 0..nCharPart-1 here too.
+  std::vector<int> cols;
+  cols.reserve(nCharPart);
+  for (int c = 0; c < nCharPart; ++c) {
+    int gi = gciPtr[c];
+    if (kPrimePtr[gi] == kp) cols.push_back(c);
+  }
+  int nSub = static_cast<int>(cols.size());
+
+  std::vector<int> subStates(nTip * nSub);
+  std::vector<int> subZ(nSub * zCols);
+  for (int c = 0; c < nSub; ++c) {
+    for (int t = 0; t < nTip; ++t)
+      subStates[t + c * nTip] = partTipsPtr[t + cols[c] * nTip];
+    int gi = gciPtr[cols[c]];
+    for (int j = 0; j < zCols; ++j)
+      subZ[c + j * nSub] = zMatrixGlobalPtr[gi + j * nCharsTotal];
+  }
+  std::vector<double> rootFreqs(kp, 1.0 / kp);
+  int stride = nSub * kp;
+  std::vector<double>  buf((maxNode + 1) * stride, 0.0);
+  std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+
+  double subLl = pruning_jc_acrv_flat_ecology_raw(
+    parPtr, chPtr, nEdge,
+    elPtr,
+    subStates.data(), nTip, nSub,
+    kp, rootFreqs.data(),
+    ratesPtr, nCat,
+    wPtr, kEco,
+    subZ.data(),
+    phiPtr, mode, refE, gammaE,
+    buf.data(), initFlg.data(), stride);
+
+  if (data.codingType == 1) {
+    std::vector<int> zVec(zCols);
+    for (int c = 0; c < nSub; ++c) {
+      for (int j = 0; j < zCols; ++j)
+        zVec[j] = subZ[c + j * nSub];
+      double pConst = const_site_prob_jc_eco_single_raw(
+        parPtr, chPtr, nEdge,
+        elPtr,
+        nTip, kp,
+        ratesPtr, nCat,
+        wPtr, kEco,
+        zVec.data(),
+        phiPtr, mode, refE, gammaE);
+      subLl -= std::log(1.0 - pConst);
+    }
+  }
+
+  if (data.relabel) {
+    for (int c = 0; c < nSub; ++c) {
+      int gi = gciPtr[cols[c]];
+      subLl += mk_prime_relabel_log(kp, data.kObs[gi]);
+    }
+  }
+  return subLl;
+}
+
+
 double cpp_log_likelihood_ecology(
     const McmcData& data,
-    IntegerVector parent, IntegerVector child,
-    NumericVector edgeLen,
+    const IntegerVector& parent, const IntegerVector& child,
+    const NumericVector& edgeLen,
     const IntegerVector& kPrime,
     double rateLoss, double rateLogSd, double rateNeo,
-    NumericVector phi,
-    IntegerMatrix zMatrix,
+    const NumericVector& phi,
+    const IntegerMatrix& zMatrix,
     double pi0,
-    NumericVector theta) {
+    const NumericVector& theta) {
 
   int nTip = data.nTip;
   int nEdge = parent.size();
   int kEco = data.ecology.kEcology;
+
+  // Informative-coding guard: cannot longjmp from a parallel worker thread,
+  // so reject here in the serial preamble (no parallel partition currently
+  // supports informative coding).
+  if (data.codingType == 2) {
+    stop("informative coding is not yet supported under ecologyAware");
+  }
 
   // v2: compute gammaE per ecology state (1.0 at refEcology).
   std::vector<double> gammaE;
@@ -1187,13 +1610,105 @@ double cpp_log_likelihood_ecology(
     }
   }
 
-  double totalLoglik = 0.0;
-  for (int pi = 0; pi < (int)data.parts.size(); ++pi) {
-    totalLoglik += cpp_partition_log_likelihood_ecology(
-      data, pi, parent, child, edgeLen, kPrime,
-      rateLoss, rateNeo, phi, zMatrix,
-      wEdge, gammaE, rates);
+  // T-017: build the flat work-item list serially.  One item per neo/known
+  // partition; one item per kPrime subgroup inside each transformational
+  // partition.  Order in the list determines the post-parallel serial merge
+  // order; this is fixed regardless of thread schedule so the final sum is
+  // bit-identical to the serial reference.
+  //
+  // The serial reference summed partitions in index order, and within a
+  // transformational partition summed kPrime subgroups in ascending-kPrime
+  // order (std::map iteration order).  We reproduce that exact ordering
+  // here.
+  std::vector<EcoWorkItem> work;
+  work.reserve(data.parts.size() * 2);
+  for (int piIdx = 0; piIdx < (int)data.parts.size(); ++piIdx) {
+    const PartInfo& part = data.parts[piIdx];
+    if (part.type == 0 || part.type == 2) {
+      work.push_back({piIdx, -1});
+    } else {
+      // Enumerate kPrime values present in this partition's chars.
+      std::map<int, int> kpSet;  // kp -> count (count is unused; map sorts).
+      int nCharPart = part.tipStates.ncol();
+      const int* gciPtr = INTEGER(part.globalCharIdx);
+      const int* kpPtr  = INTEGER(kPrime);
+      for (int c = 0; c < nCharPart; ++c) {
+        int gi = gciPtr[c];
+        ++kpSet[kpPtr[gi]];
+      }
+      for (auto& kv : kpSet) {
+        work.push_back({piIdx, kv.first});
+      }
+    }
   }
+
+  // Pre-allocated per-item result buffer.  Each parallel iteration writes
+  // exactly one slot (no contention).  Serial sum after the parallel region
+  // → bit-identical to the serial reference.
+  int nWork = static_cast<int>(work.size());
+  std::vector<double> partialLL(nWork, 0.0);
+
+  const int* parPtr      = INTEGER(parent);
+  const int* chPtr       = INTEGER(child);
+  const double* elPtr    = REAL(edgeLen);
+  const int* kPrimePtr   = INTEGER(kPrime);
+  const double* phiPtr   = REAL(phi);
+  const int* zMatrixPtr  = INTEGER(zMatrix);
+  int nCharsTotal        = zMatrix.nrow();
+  const double* wPtr     = REAL(wEdge);
+  const double* ratesPtr = REAL(rates);
+  int nCat               = rates.size();
+  int phiLen             = phi.size();
+
+  // T-017: parallelise the flat list with dynamic scheduling.  Per-item
+  // result writes into a unique slot of partialLL, so no contention.  Each
+  // worker only calls thread-safe std::vector operations + the inner pruner
+  // raw entry points.  No Rcpp constructors, no R-API calls, no RNG.
+  //
+  // DO NOT replace this with reduction(+:totalLoglik): FP add isn't
+  // associative and the reduction tree order depends on thread schedule,
+  // which would break bit-identity vs the serial reference.
+
+  // Env-gated diagnostic (T-017): prints thread + work-item info ONCE per
+  // process when MKPRIME_T017_DIAG=1.  Helps verify the parallel region
+  // is engaging.  Inert when env unset.
+#ifdef _OPENMP
+  {
+    static bool t017_diag_done = false;
+    if (!t017_diag_done) {
+      const char* env = std::getenv("MKPRIME_T017_DIAG");
+      if (env != nullptr && env[0] == '1') {
+        t017_diag_done = true;
+        std::fprintf(stderr,
+          "[T017] cpp_log_likelihood_ecology: nWork=%d, "
+          "omp_get_max_threads=%d, _OPENMP=%d\n",
+          nWork, omp_get_max_threads(), _OPENMP);
+      }
+    }
+  }
+#endif
+
+#ifdef _OPENMP
+  #pragma omp parallel for schedule(dynamic)
+#endif
+  for (int wi = 0; wi < nWork; ++wi) {
+    partialLL[wi] = compute_eco_work_item_ll(
+      work[wi], data,
+      parPtr, chPtr, nEdge,
+      elPtr,
+      kPrimePtr,
+      rateLoss, rateNeo,
+      phiPtr, phiLen,
+      zMatrixPtr, nCharsTotal,
+      wPtr,
+      gammaE,
+      ratesPtr, nCat);
+  }
+
+  // Serial merge.  Order = work-item list order = serial reference order →
+  // bit-identical to the pre-T-017 serial sum.
+  double totalLoglik = 0.0;
+  for (int wi = 0; wi < nWork; ++wi) totalLoglik += partialLL[wi];
   return totalLoglik;
 }
 

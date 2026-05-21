@@ -25,17 +25,19 @@ using namespace Rcpp;
 // Forward declaration for relabelling correction (corrections.cpp)
 double mk_prime_relabel_log(int kPrime, int kObs);
 
-// Forward declaration for ecology orchestrator (mcmc_ecology.cpp)
+// Forward declaration for ecology orchestrator (mcmc_ecology.cpp).
+// T-017: const-ref args (was pass-by-value) to avoid the Rcpp Vector copy-
+// constructor (precious-object list mutation, not thread-safe).
 double cpp_log_likelihood_ecology(
     const McmcData& data,
-    IntegerVector parent, IntegerVector child,
-    NumericVector edgeLen,
+    const IntegerVector& parent, const IntegerVector& child,
+    const NumericVector& edgeLen,
     const IntegerVector& kPrime,
     double rateLoss, double rateLogSd, double rateNeo,
-    NumericVector phi,
-    IntegerMatrix zMatrix,
+    const NumericVector& phi,
+    const IntegerMatrix& zMatrix,
     double pi0,
-    NumericVector theta);
+    const NumericVector& theta);
 
 // Forward declarations for Phase 3f Gibbs sweep helpers (mcmc_ecology.cpp).
 double per_char_log_lik_ecology(
@@ -62,14 +64,20 @@ void recompute_w_edge(
 // T-010: per-partition ecology likelihood (mcmc_ecology.cpp).
 // Accepts pre-computed wEdge, gammaE, rates so the caller can hoist them
 // out of a multi-partition or move loop and reuse them across calls.
+//
+// T-017: signature changed to const-ref for all Rcpp args.  Pass-by-value
+// invokes the Rcpp Vector copy-constructor which touches the precious-object
+// list (Rcpp_PreciousPreserve/Release) — that's not thread-safe.  Const-ref
+// avoids the copy entirely.  No call-site change required; all existing
+// callers pass named objects.
 double cpp_partition_log_likelihood_ecology(
     const McmcData& data, int partIdx,
-    IntegerVector parent, IntegerVector child,
-    NumericVector edgeLen,
+    const IntegerVector& parent, const IntegerVector& child,
+    const NumericVector& edgeLen,
     const IntegerVector& kPrime,
     double rateLoss, double rateNeo,
-    NumericVector phi,
-    IntegerMatrix zMatrix,
+    const NumericVector& phi,
+    const IntegerMatrix& zMatrix,
     const NumericMatrix& wEdge,
     const std::vector<double>& gammaE,
     const NumericVector& rates);
