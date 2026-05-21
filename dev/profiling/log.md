@@ -540,4 +540,38 @@ No `src/Makevars.win` left behind.
 
 ---
 
-last_focus: 0
+last_focus: 14
+
+## Round 11 (T-014) — 2026-05-21
+
+**Target:** "aware PT amplification" — aware costs 4.2× more per outer iter
+under `nChains=4` PT than `nChains=1` (10.6 → 2.5 iter/s); blind only 2.2×
+(228 → 101.6 iter/s). User-requested while triaging stalled Hamilton job
+17258771.
+
+**Method.** No VTune this round — code inspection of the PT outer loop
+(`src/mcmc.cpp:6116-6219`) plus targeted modulus toggle on the eco
+drift-resync gate at `:6188`. Driver: `dev/profiling/drivers/rodent_aware_timing.R`
+with `MKP_TIMING_NCHAINS={1,4}` (added a one-line env-var hook for chain
+count).
+
+**Found.** The drift-resync gate fires for every chain when
+`iter % 20 == 0`, calling `cpp_log_likelihood_ecology` + `cpp_log_prior`
+from scratch (uncached). Bench: switching `% 20` → `% 200` gives
+**Δ +12 % wall** at nChains=4 (2.5 → 2.8 iter/s) and ~0 % at nChains=1.
+
+This accounts for ~25 % of the excess PT amplification; the remaining
+~75 % is per-chain ecology state (zMatrix / wEdge / gammaE) defeating
+inter-chain cache locality — a much larger refactor (filed as T-015
+candidate in the finding, not pursued this round).
+
+**Filed:** T-014 in findings.md, status OPEN, kind [Optimise], priority P0.
+
+**Hamilton implication.** Even with the 12 % fix, aware nChains=4 PT
+projects 12 h on rodent at 30 k iter warmup, hitting the v2 walltime
+limit. User now has a clean choice: nChains=1 + nRuns=4 (no PT, viable
+today) or wait for shared-arena cache (T-015).
+
+**Cleanup.** src/mcmc.cpp bench patch reverted to `% 20`. No
+`.vtune-lib-*/` created (not needed for this round). No
+src/Makevars.win touched.

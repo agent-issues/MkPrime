@@ -12,6 +12,7 @@ suppressPackageStartupMessages({
 })
 
 nIterShort <- 500L     # tiny — just want iter/sec
+nChainsTest <- as.integer(Sys.getenv("MKP_TIMING_NCHAINS", "1"))
 nexFile    <- "inst/ecology/data/rodent-X24848.nex"
 stopifnot(file.exists(nexFile))
 
@@ -67,12 +68,13 @@ modelBlind <- MkPrimeModel(ecologyAware = FALSE,
                             rateLossMeanlog = 0, rateLossSdlog = 2,
                             rateLogSdShape  = 1, rateLogSdRate = 1,
                             rateNeoMeanlog  = 0, rateNeoSdlog  = 1)
-mcmcShort <- MkPrimeMCMC(nIter = nIterShort, nChains = 1L, nRuns = 1L,
+mcmcShort <- MkPrimeMCMC(nIter = nIterShort, nChains = nChainsTest, nRuns = 1L,
                           nCore = 1L,
                           thin = 1L, treeThin = 1L,
                           minWarmup = 100L, maxWarmup = 200L,
                           logFile = tempfile(fileext = ".log"),
                           checkpointFile = tempfile(fileext = ".ckp"))
+cat("nChainsTest =", nChainsTest, "\n")
 
 cat("\n=== BLIND timing (nIter=", nIterShort, ", serial, nChains=1) ===\n", sep="")
 tB <- system.time(

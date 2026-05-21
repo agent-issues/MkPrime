@@ -6030,6 +6030,19 @@ List run_mcmc_batch_cpp(
   int nMoves     = moveTypeCodes.size();
   int nTrans     = transIdxCpp.size();
 
+  // T-014: configurable drift-resync gate frequency. Default 200 (was 20
+  // hard-coded; that fired per-chain at 5 % of iterations, dominating
+  // ~25 % of the aware-PT amplification on rodent). Lower (e.g. 1 or 5)
+  // when debugging a new partial-CL path; higher (or absent) trusts the
+  // cached path. The 5000-iter drift driver (`11g_t011_drift.R`) confirmed
+  // 0 events at the previous /20 cadence so /200 is a safe production default.
+  int resyncEvery = 200;
+  const char* resyncEnv = std::getenv("MKPRIME_ECO_RESYNC_EVERY");
+  if (resyncEnv != nullptr) {
+    int v = std::atoi(resyncEnv);
+    if (v >= 1) resyncEvery = v;
+  }
+
   // Extract raw state pointers
   std::vector<McmcState*> states(nChains);
   for (int ch = 0; ch < nChains; ++ch)
@@ -6185,7 +6198,7 @@ List run_mcmc_batch_cpp(
       // Placed AFTER each move so it catches drift from every code
       // path (including slice_scalar_impl, which bypasses
       // do_move_impl).
-      if (data->ecologyAware && (iter % 20 == 0)) {
+      if (data->ecologyAware && (iter % resyncEvery == 0)) {
         int nE = states[ch]->relBrLengths.size();
         NumericVector curEl(nE);
         for (int e = 0; e < nE; ++e)
