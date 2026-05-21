@@ -84,9 +84,7 @@ truthTL <- sum(tree$edge.length)
 set.seed(1)
 randTree <- Preorder(ape::rtree(mkdAware$nTip,
                                 tip.label = mkdAware$taxon_names))
-psTrees <- TreeSearch::MaximizeParsimony(pdSim, tree = randTree,
-                                         verbosity = 0)
-startTree <- Preorder(psTrees[[1]])
+startTree <- Preorder(TreeSearch::AdditionTree(pdSim))
 startTree$edge.length <- rep(0.1, nrow(startTree$edge))
 
 trueSplit  <- c(paste0("A", 1:4), paste0("C", 1:4))

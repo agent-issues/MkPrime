@@ -87,9 +87,7 @@ cat("MkPrimeData built:",
 # ---------------------------------------------------------------------------
 set.seed(20260512)
 randTree  <- Preorder(ape::rtree(mkd$nTip, tip.label = mkd$taxon_names))
-psTrees   <- TreeSearch::MaximizeParsimony(mkd$phyDat, tree = randTree,
-                                           verbosity = 0)
-startTree <- Preorder(psTrees[[1]])
+startTree <- Preorder(TreeSearch::AdditionTree(mkd$phyDat))
 startTree$edge.length <- rep(0.1, nrow(startTree$edge))
 
 # ---------------------------------------------------------------------------

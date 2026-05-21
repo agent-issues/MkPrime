@@ -46,9 +46,7 @@ cat("kEcology:", mkd$kEcology, "  nTheta:", mkd$kEcology - 1L, "\n")
 # Parsimony start tree
 set.seed(1)
 randTree <- Preorder(ape::rtree(mkd$nTip, tip.label = mkd$taxon_names))
-psTrees  <- TreeSearch::MaximizeParsimony(MatrixToPhyDat(datSim), tree = randTree,
-                                          verbosity = 0)
-startTree <- Preorder(psTrees[[1]])
+startTree <- Preorder(TreeSearch::AdditionTree(MatrixToPhyDat(datSim)))
 startTree$edge.length <- rep(0.1, nrow(startTree$edge))
 
 modelAware <- MkPrimeModel(

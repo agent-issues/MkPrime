@@ -119,9 +119,7 @@ cat("type counts:\n"); print(table(mkd$type))
 # ---------------------------------------------------------------------------
 set.seed(20260521)
 randTree  <- Preorder(ape::rtree(mkd$nTip, tip.label = mkd$taxon_names))
-psTrees   <- TreeSearch::MaximizeParsimony(mkd$phyDat, tree = randTree,
-                                           ratchIter = 5, verbosity = 0)
-startTree <- Preorder(psTrees[[1]])
+startTree <- Preorder(TreeSearch::AdditionTree(mkd$phyDat))
 startTree$edge.length <- rep(0.1, nrow(startTree$edge))
 cat("Parsimony start score:", sum(TreeSearch::CharacterLength(startTree, mkd$phyDat)), "\n")
 

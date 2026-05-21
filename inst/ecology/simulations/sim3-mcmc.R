@@ -64,13 +64,8 @@ cat("Blind nChar:", mkdBlind$nChar,
 set.seed(1)
 randTree  <- Preorder(ape::rtree(mkdBlind$nTip,
                                  tip.label = mkdBlind$taxon_names))
-# Use TreeSearch::MaximizeParsimony instead of phangorn::optim.parsimony:
-# the latter triggers a reorderRcpp type-mismatch crash with the installed
-# phangorn 2.12.1 + ape 5.8.1 combination on Windows.
-psTrees   <- TreeSearch::MaximizeParsimony(pdSim, tree = randTree,
-                                           verbosity = 0)
-startTree <- Preorder(psTrees[[1]])
-# MaximizeParsimony returns trees without branch lengths; RunMkPrime requires
+startTree <- Preorder(TreeSearch::AdditionTree(pdSim))
+# AdditionTree returns trees without branch lengths; RunMkPrime requires
 # them.  Initialise to a small uniform value -- MCMC will quickly relax.
 startTree$edge.length <- rep(0.1, nrow(startTree$edge))
 

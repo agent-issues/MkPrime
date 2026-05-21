@@ -48,9 +48,7 @@ cat("kEcology:", mkdAware$kEcology, " | nChar:", mkdAware$nChar, "\n")
 set.seed(1)
 randTree  <- Preorder(ape::rtree(mkdAware$nTip,
                                  tip.label = mkdAware$taxon_names))
-psTrees   <- TreeSearch::MaximizeParsimony(pdSim, tree = randTree,
-                                           verbosity = 0)
-startTree <- Preorder(psTrees[[1]])
+startTree <- Preorder(TreeSearch::AdditionTree(pdSim))
 startTree$edge.length <- rep(0.1, nrow(startTree$edge))
 
 modelAware <- MkPrimeModel(ecologyAware = TRUE,

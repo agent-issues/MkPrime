@@ -50,9 +50,7 @@ mkd <- MkPrimeData(pdSim, neomorphic = seq_len(nEco), ecology = ecoTipVec)
 # Parsimony start tree (matches sim3-mcmc.R).
 set.seed(1)
 randTree <- Preorder(ape::rtree(mkd$nTip, tip.label = mkd$taxon_names))
-psTrees  <- TreeSearch::MaximizeParsimony(pdSim, tree = randTree,
-                                           verbosity = 0)
-startTree <- Preorder(psTrees[[1]])
+startTree <- Preorder(TreeSearch::AdditionTree(pdSim))
 startTree$edge.length <- rep(0.1, nrow(startTree$edge))
 
 modelBlind <- MkPrimeModel(ecologyAware = FALSE,

@@ -97,10 +97,7 @@ mkdAware <- MkPrimeData(pdSim, neomorphic = seq_len(nNeo),
 set.seed(1)
 randTree <- Preorder(ape::rtree(mkdBlind$nTip,
                                 tip.label = mkdBlind$taxon_names))
-psTrees <- TreeSearch::MaximizeParsimony(pdSim, tree = randTree,
-                                          verbosity = 0)
-if (inherits(psTrees, "phylo")) psTrees <- list(psTrees)
-startTree <- Preorder(psTrees[[1]])
+startTree <- Preorder(TreeSearch::AdditionTree(pdSim))
 startTree$edge.length <- rep(0.1, nrow(startTree$edge))
 cli::cli_alert_info(
   "Parsimony start tree: TL slot will be 0.1/edge; pre-MCMC parsimony \\

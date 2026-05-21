@@ -60,9 +60,7 @@ truthTL <- sum(tree$edge.length)
 set.seed(1)
 randTree <- Preorder(ape::rtree(mkdBlind$nTip,
                                 tip.label = mkdBlind$taxon_names))
-psTrees <- TreeSearch::MaximizeParsimony(pdSim, tree = randTree,
-                                         verbosity = 0)
-startTree <- Preorder(psTrees[[1]])
+startTree <- Preorder(TreeSearch::AdditionTree(pdSim))
 startTree$edge.length <- rep(0.1, nrow(startTree$edge))
 
 modelBlind <- MkPrimeModel(ecologyAware = FALSE,
