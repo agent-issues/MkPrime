@@ -701,4 +701,70 @@ Filing as candidate **T-016**? — defer to the next /profile rotation.
 declarations + ~25 LoC of accumulators + emission). Re-usable for future
 PT-related investigations.
 
-last_focus: 15
+---
+
+## Round 13 (T-018 — adaptive move-weight decay; salvaged) — 2026-05-21
+
+**Target.** After T-015 closed the PT-locality investigation, the
+user picked options 1 (threaded PT) and 2 (adaptive moves) from the
+"how do we actually improve aware performance" conversation. Two
+background subagents launched in worktrees. **Both died silently**
+(known Opus-on-big-refactor failure mode — same pattern as the T-012
+agent death in Round 10). The Sonnet T-018 agent made ~85 % progress
+before dying. Salvaged from `mkp/.claude/worktrees/agent-a0b72a05663949b39/`.
+
+**Salvage strategy.** Unlocked dead worktrees with `git worktree
+unlock`, copied `R/RunMkPrime.R` and `tests/testthat/test-t018-
+adaptive-moves.R` to `/tmp/`, removed the worktrees with `git worktree
+remove --force`, deleted the stale branch refs, created a fresh
+`t018-adaptive-moves` branch off `origin/t015-pt-locality`, applied
+the copied files. The dev/t018_*.R scratch scripts were NOT copied
+(throwaway agent-only files).
+
+**What landed (R-side only, no C++ changes).** `.DecayLowAcceptMoves()`
+in `R/RunMkPrime.R:4209` — multiplicative decay (default ×0.7) on free
+moves with batch-level cold-chain acceptance < 2 % and ≥ 30 proposals
+in the batch. Floor at 0.1 × initial weight per move. Re-normalises
+to preserve the unpinned budget. Wired at `:1098-1107` inside the
+warmup loop, after `.AdaptMoveWeights()`. Frozen at warmup-to-sampling
+transition by the existing phase guard. `MKPRIME_ADAPT_DIAG=1` enables
+per-decay `message()` to stderr. 120 LoC R + 13 unit tests.
+
+**Verified.**
+- 241 / 241 tests pass (228 baseline + 13 new T-018), 7 skips
+  (1 new gated behind `MKPRIME_SLOW_TESTS=true`).
+- Rodent 500-iter bench: aware 45.76 s (10.9 iter/s) vs. T-015
+  baseline 43.56 s (11.5 iter/s) — within ±5 % noise.
+- The `[T-018 decay]` diagnostic did NOT fire on the rodent run.
+  Confirmed function is exported and call site executes; the
+  default thresholds (n_min=30 proposals, accept_floor=2 %) simply
+  don't trigger on rodent with warmup=100-200 iter. Low-weight
+  moves don't accumulate 30 proposals; high-weight moves accept
+  above 2 %.
+
+**Honest framing.** T-018 is a defensive correctness improvement
+that lands the infrastructure for acceptance-aware move-weight
+adaptation. On rodent 500-iter it's a no-op (bench null). The
+production benefit is conditional: long warmups (≥ 2000 iter) on
+harder datasets where pathological low-acceptance patterns can
+develop in slice or branch-length moves. Filing with the bench
+null openly disclosed; if a future workload triggers decay we
+can revisit.
+
+**Filed.** T-018 in findings.md, status APPLIED, kind [Optimise],
+priority P2 (because bench impact on the production target is null;
+defensive infrastructure rather than wall recovery).
+
+**Sibling task T-017 (threaded PT).** Opus agent died with near-zero
+progress (single chore commit, no threading work). Same death pattern
+as T-012 Opus agent. Re-launching with the same brief is likely to
+fail the same way. User opted to schedule a 90-min cron wakeup to
+launch a Plan-then-action sequence — a Plan subagent first scopes
+the R-API thread-safety landscape (read-only, lower death risk),
+then a fresh implementation agent works against a concrete design.
+
+**Cleanup.** Dead agent worktrees removed (`git worktree remove
+--force`), stale branches deleted (`git branch -D t017-pt-threaded
+t018-adaptive-moves`). Salvaged files in /tmp left for now (small).
+
+last_focus: 18
