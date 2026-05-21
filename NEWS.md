@@ -1,5 +1,13 @@
 # MkPrime (development version)
 
+* `RunMkPrime(tree = NULL)` now starts from a greedy parsimony
+  stepwise-addition tree (`TreeSearch::AdditionTree`) when `TreeSearch`
+  is installed, falling back to `TreeTools::NJTree` otherwise.  The
+  parsimony tree is a methodologically preferred MCMC start for
+  morphological data, and `AdditionTree` is essentially instant
+  (no iterative search).  Behaviour is unchanged when a `tree`
+  argument is supplied.
+
 * Multiple MCMC runs now execute in parallel when `nCore > 1`
   (defaults to `getOption("mc.cores", 1L)`). Backend: `callr::r_bg()`.
   Mirrors the TreeDist option-driven pattern.
