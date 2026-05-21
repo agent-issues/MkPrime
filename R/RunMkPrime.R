@@ -278,18 +278,16 @@ RunMkPrime <- function(data, tree = NULL,
     for (p in treeFilePaths) writeLines(character(0), p)
   }
 
-  # Column indices for tree reconstruction in scalar_samples (1-based R).
-  # Layout: log_post, log_lik, tree_length, [rate_loss -- if hasNeo],
-  #         rate_log_sd, [p -- geometric/eg only / kprime_alpha+beta -- if BG],
-  #         [rate_neo -- if hasNeo], [beta_scale -- if qHet],
-  #         swap_cold, topo_hash, kPrime_i..., br_j...
-  # STREAM-003: the 2 diagnostic cols (swap_cold, topo_hash) MUST be counted.
-  isBetaGeometric <- identical(model$kPrimePrior, "beta_geometric")
-  isLogseries     <- identical(model$kPrimePrior, "logseries")
-  pCols           <- if (isLogseries) 0L else if (isBetaGeometric) 2L else 1L
-  neoCols         <- if (hasNeo) 2L else 0L   # rate_loss + rate_neo
-  diagCols        <- 2L                        # swap_cold, topo_hash
-  brColStart      <- 4L + neoCols + pCols + qHet + diagCols + nTrans + 1L
+  # Column index where br_* columns start in scalar_samples (1-based R).
+  # STREAM-006: previously this was reassembled from a layout formula that
+  # was kept in sync with `.ParamNames` by hand; the formula silently omitted
+  # the ecology block (phi/pi0/theta_*) and corrupted stored tree edge.length
+  # values when ecologyAware=TRUE. Derive from paramNames directly so it
+  # cannot drift from `.ParamNames`.
+  brColStart      <- match("br_1", paramNames)
+  if (is.na(brColStart)) {
+    cli::cli_abort("Internal: no {.field br_1} column in {.field paramNames}.")
+  }
 
   # --- Execute MCMC (with interrupt recovery) ---
   execResult <- .RunWithRecovery(
@@ -2751,13 +2749,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   }
 
   tipLabels       <- tree$tip.label %||% rownames(mkd$matrix)
-  # STREAM-003 + STREAM-004: count diagnostic cols, and 2 cols for BG prior.
-  isBetaGeometric <- identical(model$kPrimePrior, "beta_geometric")
-  isLogseries     <- identical(model$kPrimePrior, "logseries")
-  pCols           <- if (isLogseries) 0L else if (isBetaGeometric) 2L else 1L
-  diagCols        <- 2L                          # swap_cold, topo_hash
-  brColStart      <- 5L + pCols + (any(mkd$type == "neomorphic")) + qHet +
-                     diagCols + nTrans + 1L
+  # STREAM-006: derive brColStart from paramNames (which is canonical via
+  # .ParamNames) so the layout-formula drift bug (ecology cols omitted) can
+  # never recur. See matching change in the RunMkPrime() entry path.
+  brColStart      <- match("br_1", paramNames)
+  if (is.na(brColStart)) {
+    cli::cli_abort("Internal: no {.field br_1} column in {.field paramNames} on resume.")
+  }
 
   # --- Sequential per-run execution ---
   stopReason <- "max_iter"

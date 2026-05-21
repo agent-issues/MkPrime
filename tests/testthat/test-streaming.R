@@ -541,3 +541,52 @@ test_that("RelabelEcology trims tail surplus when trimZSamples = 'tail'", {
   expect_equal(length(out$z_samples), 2L)
   expect_true(isTRUE(attr(out, "relabelled")))
 })
+
+
+# --- STREAM-006: stored tree edge.length must equal log tree_length ---
+# Bug: brColStart formula in .RunMkPrime / .ResumeMkPrime omitted the ecology
+# block (phi, pi0, theta_*) when ecologyAware=TRUE. The first nEco edges of
+# every stored phylo had bogus values (kPrime integers scaled by tree_length);
+# only the trailing edges were correct. Fix: derive brColStart from paramNames.
+test_that("STREAM-006 stored tree edge.length sums to log tree_length (ecology-aware)", {
+  set.seed(42)
+  # Minimal ecology-aware fixture: 6 tips, 5 chars, 3 ecology states.
+  mat <- matrix(c(
+    0, 1, 0, 1, 0,
+    1, 0, 1, 0, 1,
+    0, 0, 1, 1, 0,
+    1, 1, 0, 0, 1,
+    0, 1, 1, 0, 0,
+    1, 0, 0, 1, 1
+  ), nrow = 6, byrow = TRUE,
+  dimnames = list(paste0("t", 1:6), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+  eco <- setNames(c(0L, 0L, 1L, 1L, 2L, 2L), paste0("t", 1:6))
+  mkd <- MkPrimeData(pd, ecology = eco, neomorphic = integer(0))
+  set.seed(7)
+  tree <- TreeTools::Preorder(ape::rtree(6, tip.label = paste0("t", 1:6)))
+  tree$edge.length <- rep(0.1, nrow(tree$edge))
+  model <- MkPrimeModel(ecologyAware = TRUE, magnitudeMode = "global",
+                        kPrimePrior = "geometric",
+                        rho0Alpha = 2, rho0Beta = 2,
+                        thetaAlpha = 2, thetaBeta = 2,
+                        sigmaPhi = 0.5)
+  logFile <- tempfile(fileext = ".log")
+  ckpFile <- tempfile(fileext = ".ckp")
+  mcmc <- MkPrimeMCMC(nIter = 400L, nChains = 1L, nRuns = 1L,
+                      thin = 20L, treeThin = 20L,
+                      minWarmup = 100L, maxWarmup = 200L,
+                      logFile = logFile, checkpointFile = ckpFile)
+  res <- RunMkPrime(mkd, tree = tree, model = model, mcmc = mcmc)
+  samp <- ReadMkLog(logFile)
+  expect_gte(length(res$trees), 2L)
+  expect_equal(nrow(samp), length(res$trees))
+  # Each stored phylo's sum(edge.length) must equal log tree_length to high
+  # precision (Dirichlet branch proportions sum to 1).
+  for (i in seq_along(res$trees)) {
+    el_sum <- sum(res$trees[[i]]$edge.length)
+    tl_log <- samp[i, "tree_length"]
+    expect_equal(el_sum, tl_log, tolerance = 1e-6,
+                 info = paste("sample i =", i))
+  }
+})
