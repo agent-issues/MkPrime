@@ -232,4 +232,28 @@ End-to-end driver 11 (200 iter rodent, same seed): baseline 21.27 s → T-008 21
 
 ---
 
+## Round 8 — T-009 tip-edge fast path port — 2026-05-21
+
+**Implementation.** Ported T-006 tip-edge fast path to `pruning_jc_acrv_flat_ecology` in `src/mcmc_ecology.cpp`. Added a `tipChild = (ch <= nTip)` branch before the per-character propagation loop in both init and multiply branches. Tip path:
+- known state s: `clPar[i] = pdMix` for i≠s, `clPar[i] = psMix` for i==s (init); `clPar[i] *= pdMix/psMix` (multiply)
+- missing: `clPar[i] = 1.0` (init, by JC identity Σ w_s·(K·pdF+(psF−pdF))=1); no-op (multiply)
+The internal-child path is unchanged. psMix/pdMix accumulation order preserved for FP consistency.
+
+**Bench results.** Isolated `.PruningJcEcology` direct call (k=4, nChar=150, nTip=60, kEco=4, 5000 reps, 5 outer):
+- Baseline: 0.241 ms/call
+- T-009:    0.241 ms/call
+- Δ: ~0 % (within Windows 10 ms `proc.time` resolution)
+
+Orchestrator-level (`.MkpEcologyLogLikelihood`, 1000 reps): baseline 0.57 ms, T-009 0.57 ms.
+
+**Why near-zero gain.** The dominant per-edge cost in the ecology pruner is the `for (s = 0; s < kEco; ++s)` psMix/pdMix accumulation (kEco `MKP_EXP` calls × 3 z-values precomputed), not the K-state inner loops that T-009 eliminates. For kEco=4, K=4: the saved `sum_cl` (4 adds) and collapsed writes are negligible relative to 4 EXP-dominated mixture accumulations per character per edge. The saving is real (saves ~K adds + K reads per tip-edge character) but too small to measure above the benchmark noise floor.
+
+**Tests:** 226 / 226 pass (`filter="ecology|likelihood"`), 0 failures, 4 skips (slow MCMC + pilot RDS).
+
+**Code correctness.** The implementation is mathematically correct and tested. It sets up the code structure for future cases where the inner K-state work is comparatively more expensive (e.g., larger K under rate-variation or when heap-alloc cost is removed by T-008).
+
+**Cleanup.** `dev/profiling/.vtune-lib-prof/`, `dev/profiling/.vtune-lib-t009/`, `dev/profiling/drivers/11c_bench_b.R`, `dev/profiling/drivers/11c_bench_t.R` removed after filing (gitignored / temporary).
+
+---
+
 last_focus: 0
