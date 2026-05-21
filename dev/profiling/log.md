@@ -328,4 +328,70 @@ update for branch-length moves. Both deferred.
 
 ---
 
+## Round 9 — T-011 partial-CL for ecology tree moves — 2026-05-21
+
+**Goal.** Predicted ~5× wall recovery on rodent via Lever 1 (node-CL cache
+for the ecology pruner) per the T-011 spec.
+
+**Outcome.** **Foundation landed; 0 % measured wall delta**; no regressions.
+Reframed as "T-012-ready scaffolding" — see T-011 in findings.md.
+
+**Methodology.**
+1. Pre-implementation advisor consultation. Prediction: spec's "simplest"
+   Lever 1 (invalidate-everything-on-wEdgeDirty) gives 0 % wall because
+   T-010's partition cache already captures every cache-eligible non-tree
+   move. Meaningful wall recovery requires either Lever 2 lite (per-edge
+   wEdge dirty detection) or an M-158-style save/restore around tree-move
+   evals — both are ~500 LoC of code I didn't have appetite to ship and
+   stress-test under the round budget.
+2. Implemented the cache structure + invalidation skeleton anyway, as the
+   spec's required scope. Verified per-call cost unchanged, drift clean,
+   tests green.
+3. Post-implementation advisor consultation. Confirmed reading: don't ship
+   dead code, document the scaffolding for what it is, commit honestly.
+4. Removed dead `pruning_*_ecology_cached` helpers from `src/mcmc_ecology.cpp`
+   per advisor; kept header + invalidation wiring + design notes.
+
+**Verification.**
+- `dev/profiling/drivers/11e_t011_bench.R` (rodent 64×217, 200 iter):
+  baseline (T-010 HEAD) aware **20.38 s**, blind **0.76 s**, ratio **26.82×**
+  → T-011 aware **20.47 s**, blind **0.79 s**, ratio **25.91×**. Within
+  bench noise either direction.
+- `dev/profiling/drivers/11g_t011_drift.R` (5000-iter aware MCMC):
+  wall **473.98 s**, **0 `[eco-resync]` warnings**. Cache invalidation
+  is correct at every wired site.
+- `Rscript -e 'devtools::test(filter="ecology|likelihood|mcmc")'`:
+  **228 / 228 pass**, 0 failures, 6 skips (matches T-010 baseline).
+- `dev/profiling/drivers/11c_per_call_cost.R`: per-call aware
+  orchestrator cost unchanged (~0.33–0.67 ms, within noise of T-010).
+
+**Code landed.**
+- `src/ecology_cl_cache.h` (~360 LoC): EcoCacheUnit, EcoCLCache, build /
+  detect / snapshot / equality helpers. All `[[maybe_unused]]` with a
+  STATUS comment block explaining the deferral. Future Lever 2 round
+  consumes this directly.
+- `src/mcmc.cpp`: include header, add `EcoCLCache ecoCL;` to McmcState,
+  17 `state->ecoCL.invalidate_*` calls mirroring every existing
+  `state->nodeCL.invalidate_*` call site.
+- `src/mcmc_ecology.cpp`: include header. Dead cached pruner helpers
+  removed per advisor before commit.
+
+**Side-finding spawned.** `gibbs_kprime_sweep_impl` uses the blind pruner
+under ecology mode (no wEdge / phi / z consultation). Possible
+correctness bug — spawned as a separate task to audit.
+
+**T-007 status:** **stays PARTIALLY-OPTIMISED.** The 25× wall gap is
+essentially unchanged.
+
+**Next round recommendation.** T-012: NNI + branch-simplex partial-CL
+with save/restore via `EcoCLCache`. Expected gain ~8–12 % wall on
+NNI alone (17 % move weight × ~50 % dirty-set reduction). Add SPR
+later once the NNI path is proven; SPR/TBR/pSPR have wider dirty
+sets and lower marginal return.
+
+**Cleanup.** `dev/profiling/.vtune-lib-t011/` removed after filing.
+No `src/Makevars.win` left behind.
+
+---
+
 last_focus: 0

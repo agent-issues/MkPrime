@@ -22,6 +22,7 @@
 
 #include "mcmc_state.h"
 #include "gibbs_z_workspace.h"
+#include "ecology_cl_cache.h"
 #include "fast_exp.h"
 #include <cmath>
 #include <vector>
@@ -727,6 +728,7 @@ static double pruning_mkn_acrv_flat_ecology(
   }
   return logLik;
 }
+
 
 
 // R-callable wrapper around pruning_mkn_acrv_flat_ecology for testing.

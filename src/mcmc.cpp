@@ -13,6 +13,7 @@
 #include "gibbs_partial_cl.h"
 #include "fitch.h"
 #include "node_cl_cache.h"
+#include "ecology_cl_cache.h"
 #include <TreeTools/renumber_tree.h>
 #include <cmath>
 #include <cstring>
@@ -238,6 +239,9 @@ struct McmcState {
   ClWorkspace gibbsWs;
   // M-121: persistent node-level CL cache for partial evaluation
   NodeCLCache nodeCL;
+  // T-011: persistent ecology CL cache (parallel to nodeCL for the eco path).
+  // Populated lazily; consulted only when ecologyAware mode is active.
+  EcoCLCache ecoCL;
   // M-125: snapshot for block Dirichlet branch-length rollback
   NumericVector brSnapshot;
   // M-127: which edges the Dirichlet proposal modified (for partial CL eval)
@@ -1203,6 +1207,7 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
   state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
+  state->ecoCL.invalidate_all();   // T-011: topology/branches changed
   state->wEdgeDirty = true;        // T-010: topology/branches changed
   return true;
 }
@@ -1513,6 +1518,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
   state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
+  state->ecoCL.invalidate_all();   // T-011: topology/branches changed
   state->wEdgeDirty = true;        // T-010: topology/branches changed
   return true;
 }
@@ -1658,6 +1664,7 @@ static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta) {
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
   state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
+  state->ecoCL.invalidate_all();   // T-011: topology/branches changed
   state->wEdgeDirty = true;        // T-010: topology/branches changed
   return true;
 }
@@ -1919,6 +1926,7 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
   state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
+  state->ecoCL.invalidate_all();   // T-011: topology/branches changed
   state->wEdgeDirty = true;        // T-010: topology/branches changed
   return true;
 }
@@ -2176,6 +2184,7 @@ static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
   state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
+  state->ecoCL.invalidate_all();   // T-011: topology/branches changed
   state->wEdgeDirty = true;        // T-010: topology/branches changed
   return true;
 }
@@ -2286,6 +2295,7 @@ static bool gibbs_subtree_swap_impl_full(McmcData* data, McmcState* state,
   state->logLik = candLL[chosen];
   state->partLogLik.clear();
   state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
+  state->ecoCL.invalidate_all();   // T-011: topology/branches changed
   state->wEdgeDirty = true;        // T-010: topology/branches changed
   return true;
 }
@@ -2571,6 +2581,7 @@ static bool block_gibbs_branch_sweep_impl(
     // Invalidate partition cache (sweep touched multiple partitions)
     state->partLogLik.clear();
     state->nodeCL.invalidate_all();  // M-143/M-161: branch lengths changed
+    state->ecoCL.invalidate_all();   // T-011: branch lengths changed
     state->wEdgeDirty = true;        // T-010: branch lengths changed
   }
   return nAccepted > 0;
@@ -2855,7 +2866,8 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
     state->logPrior = newLogPrior;
     state->partLogLik.clear();
     state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
-  state->wEdgeDirty = true;        // T-010: topology/branches changed
+    state->ecoCL.invalidate_all();   // T-011: topology/branches changed
+    state->wEdgeDirty = true;        // T-010: topology/branches changed
     return true;
   }
   return false;
@@ -3063,7 +3075,8 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
     state->logPrior = newLogPrior;
     state->partLogLik.clear();
     state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
-  state->wEdgeDirty = true;        // T-010: topology/branches changed
+    state->ecoCL.invalidate_all();   // T-011: topology/branches changed
+    state->wEdgeDirty = true;        // T-010: topology/branches changed
     return true;
   }
   return false;
@@ -3291,12 +3304,15 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
       switch (paramIdx) {
         case 1: case 3:  // rate_loss, rate_neo: only neomorphic units
           state->nodeCL.invalidate_neo_cls();
+          state->ecoCL.invalidate_neo_cls();   // T-011
           break;
         case 2:  // rateLogSd: ACRV rates change, all units
           state->nodeCL.invalidate_all_cls();
+          state->ecoCL.invalidate_all_cls();   // T-011
           break;
         default:  // tree_length (0), beta_scale (4)
           state->nodeCL.invalidate_all();
+          state->ecoCL.invalidate_all();       // T-011
           break;
       }
       return true;
@@ -4059,6 +4075,7 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
     &state->phi, state->pi0, &state->zMatrix, &state->theta);
 
   state->nodeCL.invalidate_structure();  // M-161: kPrime changed, unit structure may differ
+  state->ecoCL.invalidate_structure();   // T-011: kPrime changed
 
   return true;  // Gibbs: always accept
 }
@@ -4201,6 +4218,7 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
     state->logPrior = newLogPrior;
     state->partLogLik = std::move(newPC);
     state->nodeCL.invalidate_structure();  // M-161: kPrime changed
+    state->ecoCL.invalidate_structure();   // T-011: kPrime changed
     return true;
   }
 
@@ -4347,6 +4365,8 @@ static bool gibbs_z_sweep_impl(McmcData* data, McmcState* state, double beta) {
 
   // Recompute logLik / logPrior fresh to avoid drift.
   // T-010: refresh every partition into the cache; wEdge unchanged by z.
+  // T-011: every char's per-edge mixture changed → every cached node CL stale.
+  state->ecoCL.invalidate_all_cls();
   state->logLik = eco_recompute_all_partitions(data, state, edgeLen);
   state->logPrior = cpp_log_prior(
     *data, state->treeLength, state->relBrLengths,
@@ -4905,6 +4925,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         state->logLik = newLL;
         state->logPrior = newLP;
         state->partLogLik = std::move(newPC);
+        state->ecoCL.invalidate_all_cls();  // T-011: pi0 changed factor table
         return true;
       }
       state->pi0 = pi0Old;
@@ -4970,6 +4991,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         state->logLik = newLL;
         state->logPrior = newLP;
         state->partLogLik = std::move(newPC);
+        state->ecoCL.invalidate_all_cls();  // T-011: theta changed factor table
         return true;
       }
       state->theta[idx] = thOld;
@@ -5401,27 +5423,39 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     // M-121/M-161: cache management on acceptance.
     // Partial CL moves keep the cache valid (already updated).
     // Other moves: granular invalidation by move type.
+    // T-011: mirror the same granular invalidation on state->ecoCL so the
+    // ecology partial-CL cache stays in sync.  When eco mode is off the
+    // ecoCL is empty and the invalidate_* calls are O(1) no-ops.
     if (!usedPartialCL && likChanges) {
       switch (moveType) {
         case 1: case 3: case 18:
           // rate_loss, rate_neo, neo_joint: only neomorphic units affected
           state->nodeCL.invalidate_neo_cls();
+          state->ecoCL.invalidate_neo_cls();
           break;
         case 2:
           // rateLogSd: ACRV rates change, all units stale
           state->nodeCL.invalidate_all_cls();
+          state->ecoCL.invalidate_all_cls();
           break;
         case 7:
           // kPrime int_walk: unit structure may change
           state->nodeCL.invalidate_structure();
+          state->ecoCL.invalidate_structure();
           break;
         case 16:
           // beta_scale: Q-het parameter, all units stale
           state->nodeCL.invalidate_all_cls();
+          state->ecoCL.invalidate_all_cls();
+          break;
+        // T-011: ecology scalar params — wEdge unchanged, factor table dirty.
+        case 34: case 35: case 37:  // scale_phi, scale_pi0, scale_theta
+          state->ecoCL.invalidate_all_cls();
           break;
         default:
           // tree_length (0), topology, etc.: full invalidation
           state->nodeCL.invalidate_all();
+          state->ecoCL.invalidate_all();
           break;
       }
     }
