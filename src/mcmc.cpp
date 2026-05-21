@@ -82,6 +82,48 @@ void compute_gamma_e_ecology(
     const NumericVector& theta,
     std::vector<double>& gammaE);
 
+// T-013: ecology partial-CL cache management (defined in mcmc_ecology.cpp).
+void populate_eco_cache_full(
+    EcoCLCache& cache, const McmcData& data,
+    const IntegerVector& parent, const IntegerVector& child,
+    const NumericVector& edgeLen, const IntegerVector& kPrime,
+    double rateLoss, double rateLogSd, double rateNeo,
+    const NumericVector& phi,
+    const IntegerMatrix& zMatrix,
+    double pi0, const NumericVector& theta,
+    const NumericMatrix& wEdge,
+    const std::vector<double>& gammaE
+);
+
+double eco_cache_total_loglik(
+    const EcoCLCache& cache, const McmcData& data,
+    const IntegerVector& parent, const IntegerVector& child,
+    const NumericVector& edgeLen,
+    const IntegerVector& kPrime, double rateLoss, double rateNeo,
+    const NumericVector& phi,
+    const IntegerMatrix& zMatrix,
+    const NumericMatrix& wEdge,
+    const std::vector<double>& gammaE
+);
+
+double eco_cache_partial_eval_nni(
+    EcoCLCache& cache, const McmcData& data,
+    const IntegerVector& parent, const IntegerVector& child,
+    const NumericVector& edgeLen, const IntegerVector& kPrime,
+    double rateLoss, double rateNeo,
+    const NumericVector& phi,
+    const IntegerMatrix& zMatrix,
+    double pi0, const NumericVector& theta,
+    const NumericMatrix& wEdge,
+    const std::vector<double>& gammaE,
+    int v, int u,
+    EcoDirtyScratch& scratch,
+    int& dirtyCount,
+    bool& fallback,
+    int* nWedgeDirtyEdges = nullptr,
+    double dirtyFracThreshold = 0.70
+);
+
 // cpp_acrv_rates lives in mcmc_likelihood.cpp.
 NumericVector cpp_acrv_rates(double rateLogSd, int nCat,
                               const std::vector<double>& acrvZ);
@@ -4803,6 +4845,27 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                         state->rateLogSd, state->rateNeo);
   }
 
+  // T-013: pre-NNI population of the ecology partial-CL cache.  Only NNI
+  // currently uses the cache; other tree moves continue through the legacy
+  // full-eval path (their dirty sets are large enough that partial-eval is
+  // either net-loss or marginal — see dev/profiling/findings.md T-013).
+  if (moveType == 5 && data->ecologyAware && !state->ecoCL.ready()) {
+    int nEdge = state->relBrLengths.size();
+    NumericVector absLen(nEdge);
+    for (int i = 0; i < nEdge; ++i)
+      absLen[i] = state->treeLength * state->relBrLengths[i];
+    NumericMatrix wEdgeNow(nEdge, data->ecology.kEcology);
+    recompute_w_edge(*data, state->parent, state->child, absLen, wEdgeNow);
+    std::vector<double> gammaENow;
+    compute_gamma_e_ecology(*data, state->phi, state->pi0, state->theta,
+                            gammaENow);
+    populate_eco_cache_full(
+      state->ecoCL, *data, state->parent, state->child, absLen,
+      state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
+      state->phi, state->zMatrix, state->pi0, state->theta,
+      wEdgeNow, gammaENow);
+  }
+
   switch (moveType) {
     case 0: { // scale tree_length (Bactrian, M-118)
       double mult = std::exp(scaleTuning * bactrian_perturbation());
@@ -5398,6 +5461,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     }
   };
 
+  // T-013: track whether the eco partial-CL path was used (for accept/reject)
+  bool usedEcoPartialCL = false;
+
   if (!likChanges) {
     newLogLik = state->logLik;
   } else if (eco) {
@@ -5406,6 +5472,57 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     NumericVector propEdgeLen(nEdge);
     for (int i = 0; i < nEdge; ++i)
       propEdgeLen[i] = state->treeLength * evalRelBr[i];
+
+    // T-013: NNI partial-eval path.  Try only when NNI in-place AND cache is
+    // ready.  Falls through to T-010 full-eval logic on fallback (dirty set
+    // too large) or when partial-CL is inapplicable.
+    bool ecoPartialAccepted = false;
+    if (nniInPlace && state->ecoCL.ready()) {
+      // Mirror the M-158 NNI pattern: update cache's TreeNav in-place
+      // before partial eval, revert on fallback / reject.
+      update_topo_nni(state->ecoCL.topo, nniVNode, nniUNode,
+                      nniCNode, nniWNode);
+
+      NumericMatrix evalWEdge(nEdge, data->ecology.kEcology);
+      recompute_w_edge(*data, evalParent, evalChild, propEdgeLen, evalWEdge);
+      std::vector<double> gammaE;
+      compute_gamma_e_ecology(*data, state->phi, state->pi0, state->theta,
+                              gammaE);
+      EcoDirtyScratch scratch;
+      int dirtyCount = 0;
+      bool fallback = false;
+      double partial_ll = eco_cache_partial_eval_nni(
+        state->ecoCL, *data, evalParent, evalChild, propEdgeLen,
+        state->kPrime, state->rateLoss, state->rateNeo,
+        state->phi, state->zMatrix, state->pi0, state->theta,
+        evalWEdge, gammaE,
+        nniVNode, nniUNode,
+        scratch, dirtyCount, fallback);
+
+      if (!fallback) {
+        newLogLik = partial_ll;
+        ecoPartialAccepted = true;
+        usedEcoPartialCL = true;
+        // Stash rollback state on the cache.
+        state->ecoCL.rollbackSavedCL    = std::move(scratch.savedCL);
+        state->ecoCL.rollbackDirtyNodes = std::move(scratch.dirtyNodes);
+        state->ecoCL.rollbackNniV = nniVNode;
+        state->ecoCL.rollbackNniU = nniUNode;
+        state->ecoCL.rollbackNniC = nniCNode;
+        state->ecoCL.rollbackNniW = nniWNode;
+        state->ecoCL.rollbackTopoUpdated = true;
+      } else {
+        // Dirty set too large.  Revert cache TreeNav; fall through.
+        update_topo_nni(state->ecoCL.topo, nniVNode, nniUNode,
+                        nniWNode, nniCNode);
+      }
+    }
+
+    if (ecoPartialAccepted) {
+      // Partial-eval path took over; skip the legacy logic.
+      // partLogLik is now stale relative to newLogLik (partial-eval doesn't
+      // maintain it); will be cleared on accept.
+    } else {
 
     // Determine which partitions need recomputation and whether to refresh
     // wEdge from the proposed tree.
@@ -5477,6 +5594,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         newLogLik += newPC[pi];
       }
     }
+    }  // close T-013 ecoPartialAccepted-else
   } else if (!eco && nniInPlace && state->nodeCL.ready()) {
     // M-121: NNI with valid node CL cache → partial evaluation
     int nEdge = evalRelBr.size();
@@ -5767,6 +5885,15 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     if (usedPartialCL && !state->partLogLik.empty())
       state->partLogLik.clear();
 
+    // T-013: eco partial-CL accept — cache already reflects the NEW topology.
+    // partLogLik isn't maintained on this path; clear so future non-tree-move
+    // evals fall through to the T-010 full-recompute path which rebuilds it.
+    if (usedEcoPartialCL) {
+      state->partLogLik.clear();
+      state->wEdgeDirty = true;
+      state->ecoCL.rollbackTopoUpdated = false;
+    }
+
     return true;
   }
 
@@ -5819,6 +5946,29 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     reverse_topo_spr(state->nodeCL.topo, sprMeta);
     if (usedPartialCL) {
       restore_dirty_cls(state->nodeCL, state->nodeCL.dirtyNodes);
+    }
+  }
+
+  // T-013: rollback eco partial-CL on rejection.  Restore the saved CLs at
+  // dirty nodes and reverse the NNI swap on the cache's TreeNav.
+  if (usedEcoPartialCL) {
+    EcoCLCache& c = state->ecoCL;
+    if (!c.rollbackSavedCL.empty() && !c.rollbackDirtyNodes.empty()) {
+      const double* src = c.rollbackSavedCL.data();
+      for (auto& u : c.units) {
+        for (int cat = 0; cat < u.nCat; ++cat) {
+          for (int node : c.rollbackDirtyNodes) {
+            double* dst = u.CL(cat, node);
+            std::memcpy(dst, src, u.stride * sizeof(double));
+            src += u.stride;
+          }
+        }
+      }
+    }
+    if (c.rollbackTopoUpdated && c.rollbackNniV >= 0) {
+      update_topo_nni(c.topo, c.rollbackNniV, c.rollbackNniU,
+                      c.rollbackNniW, c.rollbackNniC);  // reverse swap
+      c.rollbackTopoUpdated = false;
     }
   }
 

@@ -154,6 +154,18 @@ struct EcoCLCache {
   int diagFullEvalCount = 0;
   int diagPartialEvalCount = 0;
 
+  // T-013: rollback scratch for partial-eval NNI.  Holds saved CLs at dirty
+  // nodes + the NNI swap parameters so the reject path can both restore
+  // node CLs and reverse the TreeNav update.  Reused across iterations to
+  // avoid per-call alloc.  Defined inline (EcoDirtyScratch struct appears
+  // later in this header) via a forward-declared pointer-like wrapper:
+  // we keep the buffers separate here and the struct provides typed access.
+  std::vector<double> rollbackSavedCL;
+  std::vector<int>    rollbackDirtyNodes;
+  int rollbackNniV = -1, rollbackNniU = -1;
+  int rollbackNniC = -1, rollbackNniW = -1;
+  bool rollbackTopoUpdated = false;
+
   // ----- predicate helpers -----
   bool ready() const {
     return topoValid && structureValid;
@@ -888,6 +900,10 @@ struct EcoCLCache {
 struct EcoDirtyScratch {
   std::vector<double> savedCL;
   std::vector<int> dirtyNodes;
+  // T-013: NNI rollback also restores TreeNav.  Track the NNI nodes so the
+  // reject path knows which (v, u, cNode, wNode) tuple to reverse.
+  int nniV = -1, nniU = -1, nniC = -1, nniW = -1;
+  bool topoUpdated = false;
 };
 
 [[maybe_unused]] static void save_dirty_eco_cls(

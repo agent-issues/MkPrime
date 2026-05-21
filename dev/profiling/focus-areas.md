@@ -8,6 +8,7 @@ Methodology: profvis surfaces only the top-level R wrapper because by-self time 
 
 | # | Area | Files | Why hot (1 line) | Baseline cost | Last profiled | Status |
 |---|------|-------|------------------|---------------|---------------|--------|
+| 0 | **Ecology-aware orchestrator + per-char helper** | `src/mcmc_ecology.cpp`, `src/mcmc.cpp` (eco call sites) | Aware path bypasses partition cache / nodeCL / ClWorkspace — 25× wall vs blind on rodent matrix, only 2× per-call cost; the rest is excess call frequency. Three sub-targets filed (T-007 headline, T-008 allocations, T-009 tip-edge fast path, T-010 cache restore) | aware 24.59 s / 200 iter (rodent MkNT) vs blind 0.97 s — 25.3× ratio | 2026-05-21 | PROFILED |
 | 1 | Felsenstein pruning (CL accumulation) | `src/mcmc_likelihood.cpp`, `src/node_cl_cache.h` | Called per evaluated tree per partition; dominant cost in a typical MCMC iteration | 99.8 s / 800 iter (Sun2018, EG, prod move weights) | 2026-05-18 | PROFILED |
 | 2 | Partial CL invalidation under SPR | `src/node_cl_cache.h` (`find_dirty_spr`, partial-eval walks), `src/tree_moves.cpp` | M-158 (be2f67b) introduced partial-CL evaluation for SPR; the dirty-set walk is the new hot loop for any accepted tree move | — | — | NEW |
 | 3 | Per-character k′ Gibbs sweep | `src/mcmc_likelihood.cpp` (Gibbs kPrime), `src/mcmc.cpp` (cases dispatching to it) | M-154+M-155+M-172 (e8819a1, 224bda8, 2b9b4c9) — block + within-partition pattern compression; called every iteration for every transformational character | — | — | NEW |

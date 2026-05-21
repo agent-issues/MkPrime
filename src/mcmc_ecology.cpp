@@ -1476,7 +1476,7 @@ static IntegerMatrix make_sub_zmat_eco(const IntegerMatrix& zMatrix,
 
 
 // Populate the entire cache (units + tip CLs + full downpass + snapshot).
-static void populate_eco_cache_full(
+void populate_eco_cache_full(
     EcoCLCache& cache, const McmcData& data,
     const IntegerVector& parent, const IntegerVector& child,
     const NumericVector& edgeLen, const IntegerVector& kPrime,
@@ -1539,7 +1539,7 @@ static void populate_eco_cache_full(
 
 // Compute total log-likelihood from cached CLs (incl. ascertainment +
 // relabel correction).
-static double eco_cache_total_loglik(
+double eco_cache_total_loglik(
     const EcoCLCache& cache, const McmcData& data,
     const IntegerVector& parent, const IntegerVector& child,
     const NumericVector& edgeLen,
@@ -1610,7 +1610,10 @@ static double eco_cache_total_loglik(
 // against the proposed topology too.  Returns the partial-eval logLik;
 // `fallback` is set to true if the dirty set is too large (caller should
 // then use a full eval instead).
-static double eco_cache_partial_eval_nni(
+//
+// `dirtyFracThreshold` (default 0.70) is the fraction-of-internals at and
+// beyond which partial-eval gives up.  Caller can raise this experimentally.
+double eco_cache_partial_eval_nni(
     EcoCLCache& cache, const McmcData& data,
     const IntegerVector& parent, const IntegerVector& child,
     const NumericVector& edgeLen, const IntegerVector& kPrime,
@@ -1623,7 +1626,9 @@ static double eco_cache_partial_eval_nni(
     int v, int u,
     EcoDirtyScratch& scratch,
     int& dirtyCount,
-    bool& fallback
+    bool& fallback,
+    int* nWedgeDirtyEdges = nullptr,
+    double dirtyFracThreshold = 0.70
 ) {
   fallback = false;
   int kEco = data.ecology.kEcology;
@@ -1635,6 +1640,7 @@ static double eco_cache_partial_eval_nni(
 
   std::vector<int> topoPath = find_dirty_nni_eco(cache.topo, v, u);
   std::vector<int> wDirty = detect_dirty_child_nodes(cache, child, wEdge, edgeLen);
+  if (nWedgeDirtyEdges) *nWedgeDirtyEdges = (int)wDirty.size();
 
   std::vector<uint8_t> mark(maxNode + 1, 0);
   for (int n : topoPath) if (n >= 0) mark[n] = 1;
@@ -1662,7 +1668,7 @@ static double eco_cache_partial_eval_nni(
   dirtyCount = (int)dirty.size();
 
   int nInternal = maxNode - nTip;
-  if (nInternal > 0 && dirtyCount * 10 > nInternal * 7) {
+  if (nInternal > 0 && (double)dirtyCount > dirtyFracThreshold * (double)nInternal) {
     fallback = true;
     return R_NegInf;
   }
@@ -1729,4 +1735,95 @@ double CppLogLikelihoodEcologyCached(
   return eco_cache_total_loglik(cache, data, parent, child, edgeLen,
                                  kPrime, rateLoss, rateNeo,
                                  phi, zMatrix, wEdge, gammaE);
+}
+
+
+// T-013: R-callable partial-eval-NNI wrapper.
+//
+// Populate a fresh cache on (parentOld, childOld), then drive the partial-eval
+// path for an NNI swap that produces (parentNew, childNew).  Returns a list
+// with:
+//   partial_ll  — log-likelihood from eco_cache_partial_eval_nni
+//   dirty_count — # nodes recomputed
+//   fallback    — heuristic flag if dirty set was too large
+//   restored_ll — after restore_dirty_eco_cls, total loglik against OLD
+//                 topology (rollback regression: should equal a fresh full
+//                 eval on OLD).
+//
+// [[Rcpp::export(.CppPartialEvalEcologyNNI)]]
+Rcpp::List CppPartialEvalEcologyNNI(
+    SEXP dataPtr,
+    IntegerVector parentOld, IntegerVector childOld,
+    IntegerVector parentNew, IntegerVector childNew,
+    NumericVector edgeLen,
+    IntegerVector kPrime,
+    double rateLoss, double rateLogSd, double rateNeo,
+    NumericVector phi,
+    IntegerMatrix zMatrix,
+    double pi0,
+    Rcpp::Nullable<Rcpp::NumericVector> theta,
+    int vNode, int uNode,
+    double dirtyFracThreshold = 0.70
+) {
+  const McmcData& data = *Rcpp::XPtr<McmcData>(dataPtr).get();
+  if (!data.ecologyAware) stop("McmcData was not built with ecologyAware = TRUE");
+  int kEco  = data.ecology.kEcology;
+  int zCols = kEco - 1;
+  int nTip  = data.nTip;
+  Rcpp::NumericVector thetaVec = theta.isNotNull()
+    ? Rcpp::NumericVector(theta) : Rcpp::NumericVector(std::max(0, zCols), 0.5);
+
+  std::vector<double> gammaE;
+  compute_gamma_e_ecology(data, phi, pi0, thetaVec, gammaE);
+
+  // 1. Populate cache on OLD topology (this snapshots wEdge_old etc.)
+  NumericMatrix wEdgeOld(parentOld.size(), kEco);
+  recompute_w_edge(data, parentOld, childOld, edgeLen, wEdgeOld);
+
+  EcoCLCache cache;
+  populate_eco_cache_full(cache, data, parentOld, childOld, edgeLen, kPrime,
+                          rateLoss, rateLogSd, rateNeo,
+                          phi, zMatrix, pi0, thetaVec, wEdgeOld, gammaE);
+
+  // 2. Build wEdge for NEW topology.
+  NumericMatrix wEdgeNew(parentNew.size(), kEco);
+  recompute_w_edge(data, parentNew, childNew, edgeLen, wEdgeNew);
+
+  // 3. Update cache.topo to reflect NEW topology (mirrors what production does
+  //    in the partial-eval branch before calling eco_cache_partial_eval_nni).
+  cache.topo.build(parentNew, childNew, edgeLen, nTip);
+
+  // 4. Partial eval.
+  EcoDirtyScratch scratch;
+  int dirtyCount = 0;
+  int nWedgeDirtyEdges = 0;
+  bool fallback = false;
+  double partial_ll = eco_cache_partial_eval_nni(
+    cache, data, parentNew, childNew, edgeLen, kPrime,
+    rateLoss, rateNeo, phi, zMatrix, pi0, thetaVec,
+    wEdgeNew, gammaE, vNode, uNode,
+    scratch, dirtyCount, fallback,
+    &nWedgeDirtyEdges, dirtyFracThreshold);
+  int nInternal = (data.nTip - 1);  // for nTip tips, internal-node count = nTip-1
+
+  // 5. Rollback: restore dirty CLs, then evaluate against OLD topology.
+  double restored_ll = R_NaReal;
+  if (!fallback) {
+    restore_dirty_eco_cls(cache, scratch);
+    // Restore cache.topo to OLD topology so eco_cache_total_loglik traverses
+    // the correct tree.
+    cache.topo.build(parentOld, childOld, edgeLen, nTip);
+    restored_ll = eco_cache_total_loglik(
+      cache, data, parentOld, childOld, edgeLen, kPrime,
+      rateLoss, rateNeo, phi, zMatrix, wEdgeOld, gammaE);
+  }
+
+  return Rcpp::List::create(
+    Rcpp::_["partial_ll"] = partial_ll,
+    Rcpp::_["dirty_count"] = dirtyCount,
+    Rcpp::_["n_wedge_dirty_edges"] = nWedgeDirtyEdges,
+    Rcpp::_["n_internal"] = nInternal,
+    Rcpp::_["fallback"] = fallback,
+    Rcpp::_["restored_ll"] = restored_ll
+  );
 }
