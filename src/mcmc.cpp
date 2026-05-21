@@ -3614,12 +3614,29 @@ static List pspr_proposal_impl(
 //
 // Samples each k'_i from its full conditional in a single random-order scan
 // of all transformational characters. Always accepts (Gibbs update).
+//
+// Red-team S-1 follow-up (2026-05-21): under ecologyAware==TRUE, the blind
+// per-site pruners ignore phi/pi0/theta/zMatrix/wEdge and therefore draw
+// from a wrong full conditional. The ecology branch below evaluates the
+// candidate weights via per_char_log_lik_ecology, the same helper used by
+// gibbs_z_sweep_impl, which produces fully-corrected per-character log-
+// likelihoods (pruner + asc + relabel) under the ecology mixture model.
 // ---------------------------------------------------------------------------
+
+// Forward declaration of the ecology branch.
+static bool gibbs_kprime_sweep_impl_ecology(McmcData* data, McmcState* state,
+                                            double beta);
 
 static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
                                      double beta) {
   int nTrans = (int)data->transIdxGlobal.size();
   if (nTrans == 0) return false;
+
+  // Ecology-aware path uses a dedicated implementation that evaluates the
+  // candidate weights under the full ecology mixture conditional.
+  if (data->ecologyAware) {
+    return gibbs_kprime_sweep_impl_ecology(data, state, beta);
+  }
 
   // Pre-compute absolute edge lengths
   int nEdge = state->relBrLengths.size();
@@ -4078,6 +4095,292 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   state->ecoCL.invalidate_structure();   // T-011: kPrime changed
 
   return true;  // Gibbs: always accept
+}
+
+
+// ---------------------------------------------------------------------------
+// Gibbs kPrime sweep — ecology-aware branch (red-team S-1 follow-up).
+//
+// Mirrors the blind sweep's structure (per-character categorical over
+// ko = 0..K_MAX_CAND-1, log-sum-exp sampling, prior families, M-164
+// early termination) but evaluates each candidate's likelihood via
+// per_char_log_lik_ecology — the same helper used by gibbs_z_sweep_impl —
+// which honours phi/pi0/theta/zMatrix/wEdge and the ecology mixture.
+//
+// Notes vs. the blind path:
+//   * M-172 unique-pattern compression is DROPPED. Per-character ecology
+//     weights depend on the character's zRow (per-character), so two
+//     characters sharing a tip-state pattern can have different ecology
+//     likelihoods. Correctness > speed; this is a known cost.
+//   * No external ascertainment or relabel correction is applied here:
+//     per_char_log_lik_ecology already adds both (see mcmc_ecology.cpp
+//     :1300-1346). Adding them externally would double-count.
+//   * useHet is not supported in ecology mode (the ecology pruner has no
+//     het variant — same constraint as gibbs_z_sweep_impl).
+//   * Post-sweep recompute keeps the partition cache path from the blind
+//     impl (lines that begin "if (data->ecologyAware)").
+// ---------------------------------------------------------------------------
+static bool gibbs_kprime_sweep_impl_ecology(McmcData* data, McmcState* state,
+                                            double beta) {
+  int nTrans = (int)data->transIdxGlobal.size();
+  if (nTrans == 0) return false;
+  if (data->codingType == 2) return false;  // informative not supported under ecology
+
+  int nEdge = state->relBrLengths.size();
+  NumericVector edgeLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    edgeLen[i] = state->treeLength * state->relBrLengths[i];
+
+  // Hoist wEdge, gammaE, ACRV rates out of the per-cell loop (same pattern
+  // as gibbs_z_sweep_impl).
+  eco_refresh_wedge(data, state, edgeLen);
+  std::vector<double> gammaE;
+  compute_gamma_e_ecology(*data, state->phi, state->pi0, state->theta, gammaE);
+  NumericVector rates = (state->rateLogSd > 0.0)
+    ? cpp_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ)
+    : NumericVector(1, 1.0);
+  int refE  = data->ecology.refEcology;
+  int kEco  = data->ecology.kEcology;
+  int zCols = std::max(0, kEco - 1);
+  int nTip  = data->nTip;
+  int maxNode = 2 * nTip - 1;
+
+  // Prior components (identical to blind path)
+  bool isBetaGeometric = data->kPriorBetaGeometric;
+  bool isEmpGeom       = data->kPriorEmpiricalGeometric;
+  bool isGeometric = !data->kPriorLogseries && !isBetaGeometric && !isEmpGeom;
+  double logP = 0.0, log1mP = 0.0;
+  double lsLogC = 0.0, lsLogNorm = 0.0;
+  if (isGeometric || isEmpGeom) {
+    logP   = std::log(state->p);
+    log1mP = std::log1p(-state->p);
+  } else if (!isBetaGeometric) {
+    double c = data->kprimeLogseriesC;
+    lsLogC    = std::log(c);
+    lsLogNorm = std::log(-std::log1p(-c));
+  }
+
+  static const int K_MAX_CAND = 50;
+  static const double LOG_CUTOFF = -25.0;
+
+  // Beta-Geometric incremental log-prior
+  std::vector<double> bgLogPrior;
+  if (isBetaGeometric) {
+    double a = state->kprimeAlpha;
+    double b = state->kprimeBeta;
+    bgLogPrior.resize(K_MAX_CAND);
+    bgLogPrior[0] = std::log(a) - std::log(a + b);
+    for (int ko = 1; ko < K_MAX_CAND; ++ko) {
+      bgLogPrior[ko] = bgLogPrior[ko - 1]
+                      + std::log(b + ko - 1)
+                      - std::log(a + b + ko);
+    }
+  }
+
+  // Per-trans bookkeeping (kObs, globalCharIdx) and max candidate k for
+  // workspace sizing.
+  std::vector<int> tiKObs(nTrans, 0);
+  std::vector<int> tiGi(nTrans, 0);
+  int maxCandK = 0;
+  for (int ti = 0; ti < nTrans; ++ti) {
+    int gi = data->transIdxGlobal[ti];
+    tiGi[ti]   = gi;
+    tiKObs[ti] = data->kObs[gi];
+    int hi = tiKObs[ti] + K_MAX_CAND - 1;
+    if (hi > maxCandK) maxCandK = hi;
+  }
+
+  // Empirical-geometric: tabulate log P(k' = m) once.
+  std::vector<double> egLogPriorByK;
+  if (isEmpGeom) {
+    egLogPriorByK.assign(maxCandK + 2, R_NegInf);
+    double logQ = (data->empTailDecay > 0.0)
+                  ? std::log(data->empTailDecay) : R_NegInf;
+    int bodyLen = (int)data->empLogBody.size();
+    std::vector<double> terms;
+    terms.reserve(64);
+    for (int m = 2; m <= maxCandK + 1; ++m) {
+      terms.clear();
+      double mx = R_NegInf;
+      for (int j = 2; j <= m; ++j) {
+        double logPemp;
+        int bodyIdx = j - 2;
+        if (bodyIdx < bodyLen) {
+          logPemp = data->empLogBody[bodyIdx];
+        } else if (data->empTailStartK > 0 && j >= data->empTailStartK &&
+                   std::isfinite(data->empLogTailStartP) &&
+                   std::isfinite(logQ)) {
+          logPemp = data->empLogTailStartP +
+                    (j - data->empTailStartK) * logQ;
+        } else {
+          continue;
+        }
+        if (!std::isfinite(logPemp)) continue;
+        double term = logPemp + logP + (m - j) * log1mP;
+        terms.push_back(term);
+        if (term > mx) mx = term;
+      }
+      if (!terms.empty() && std::isfinite(mx)) {
+        double s = 0.0;
+        for (double t : terms) s += std::exp(t - mx);
+        egLogPriorByK[m] = mx + std::log(s);
+      }
+    }
+  }
+
+  // Lambda computing the prior contribution at candidate (kObs + ko).
+  auto logPriorAt = [&](int kObs_, int ko) -> double {
+    int k = kObs_ + ko;
+    if (isBetaGeometric) {
+      return bgLogPrior[ko];
+    } else if (isGeometric) {
+      return logP + ko * log1mP;
+    } else if (isEmpGeom) {
+      return (k >= 0 && k < (int)egLogPriorByK.size())
+             ? egLogPriorByK[k] : R_NegInf;
+    } else {
+      return k * lsLogC - std::log(static_cast<double>(k)) - lsLogNorm;
+    }
+  };
+
+  // Allocate one workspace large enough for any candidate k we'll evaluate.
+  // per_char_log_lik_ecology still allocates an internal buf per call (see
+  // mcmc_ecology.cpp ~1292), but the GibbsZWorkspace covers its zPart/tipStates.
+  GibbsZWorkspace ws;
+  ws.ensure(maxNode, maxCandK, nTip, zCols);
+
+  IntegerVector zRow(zCols);
+
+  // Per-character logW table (flat) and termination flags.
+  std::vector<double> charLogW(nTrans * K_MAX_CAND, R_NegInf);
+  std::vector<double> charMaxLogW(nTrans, R_NegInf);
+  std::vector<double> charMaxLL(nTrans, R_NegInf);
+  std::vector<int>    charNCand(nTrans, 0);
+  std::vector<bool>   terminated(nTrans, false);
+
+  // Outer loop: build per-character weights ko = 0..K_MAX_CAND-1, with M-164
+  // early termination per-character (no pattern grouping).
+  for (int ko = 0; ko < K_MAX_CAND; ++ko) {
+    bool anyActive = false;
+    for (int ti = 0; ti < nTrans; ++ti) {
+      if (terminated[ti]) continue;
+      anyActive = true;
+      int gi   = tiGi[ti];
+      int kObs = tiKObs[ti];
+      int k    = kObs + ko;
+
+      double logPrior_k = logPriorAt(kObs, ko);
+
+      // M-164 pre-filter: if even the best plausible likelihood seen so far
+      // would put this candidate below the current best by LOG_CUTOFF, drop
+      // the character from further consideration. Identical logic to the
+      // blind path but on a per-character basis (no pattern groups).
+      if (ko >= 2) {
+        double optimisticW = beta * charMaxLL[ti] + logPrior_k;
+        if (optimisticW < charMaxLogW[ti] + LOG_CUTOFF) {
+          terminated[ti] = true;
+          continue;
+        }
+      }
+
+      // Pull zRow for this character.
+      for (int j = 0; j < zCols; ++j) zRow[j] = state->zMatrix(gi, j);
+
+      // Per-character ecology log-lik at candidate k. This call already
+      // applies the ascertainment correction (codingType == 1) and the
+      // Mk' relabel correction (data.relabel) internally — do NOT add them
+      // externally here or they will be double-counted.
+      double ll = per_char_log_lik_ecology(
+        *data, gi, state->parent, state->child, edgeLen,
+        k, state->rateLoss, state->rateNeo,
+        rates, state->phi, zRow, state->wEdge,
+        refE, gammaE, ws);
+
+      double w = (R_FINITE(ll)) ? (beta * ll + logPrior_k) : R_NegInf;
+      charLogW[ti * K_MAX_CAND + ko] = w;
+      charNCand[ti]++;
+      if (R_FINITE(ll) && ll > charMaxLL[ti]) charMaxLL[ti] = ll;
+      if (R_FINITE(w) && w > charMaxLogW[ti]) charMaxLogW[ti] = w;
+
+      // Per-character M-164 termination on observed weight.
+      if (!R_FINITE(ll) || w < charMaxLogW[ti] + LOG_CUTOFF) {
+        terminated[ti] = true;
+      }
+    }
+    if (!anyActive) break;
+  }
+
+  // Sampling phase (identical structure to the blind path).
+  std::vector<int> perm(nTrans);
+  for (int i = 0; i < nTrans; ++i) perm[i] = i;
+  for (int i = nTrans - 1; i > 0; --i) {
+    int j = static_cast<int>(R::unif_rand() * (i + 1));
+    if (j > i) j = i;
+    std::swap(perm[i], perm[j]);
+  }
+
+  for (int si = 0; si < nTrans; ++si) {
+    int ti = perm[si];
+    int gi = tiGi[ti];
+    int kObs_i = tiKObs[ti];
+    int nCand = charNCand[ti];
+    if (nCand == 0) continue;
+
+    double maxW = charMaxLogW[ti];
+    if (!R_FINITE(maxW)) continue;  // no usable candidate
+    double* logW = &charLogW[ti * K_MAX_CAND];
+
+    double sumExp = 0.0;
+    for (int c = 0; c < nCand; ++c)
+      sumExp += std::exp(logW[c] - maxW);
+
+    double u = R::unif_rand() * sumExp;
+    double cum = 0.0;
+    int chosen = nCand - 1;
+    for (int c = 0; c < nCand; ++c) {
+      cum += std::exp(logW[c] - maxW);
+      if (cum >= u) { chosen = c; break; }
+    }
+
+    state->kPrime[gi] = kObs_i + chosen;
+  }
+
+  // Post-sweep: refresh wEdge (kPrime doesn't change wEdge but harmless to
+  // verify) and recompute partition cache + logLik via the ecology path.
+  // Mirror the blind path's post-sweep ecology block.
+  bool hasPLCEco = !state->partLogLik.empty();
+  if (hasPLCEco) {
+    eco_refresh_wedge(data, state, edgeLen);
+    compute_gamma_e_ecology(*data, state->phi, state->pi0, state->theta,
+                            gammaE);
+    double newLL = 0.0;
+    int nP = (int)data->parts.size();
+    for (int pi = 0; pi < nP; ++pi) {
+      if (data->parts[pi].type == 1) {  // transformational only
+        state->partLogLik[pi] = cpp_partition_log_likelihood_ecology(
+          *data, pi, state->parent, state->child, edgeLen,
+          state->kPrime, state->rateLoss, state->rateNeo,
+          state->phi, state->zMatrix,
+          state->wEdge, gammaE, rates);
+      }
+      newLL += state->partLogLik[pi];
+    }
+    state->logLik = newLL;
+  } else {
+    state->logLik = eco_recompute_all_partitions(data, state, edgeLen);
+  }
+
+  state->logPrior = cpp_log_prior(
+    *data, state->treeLength, state->relBrLengths,
+    state->rateLoss, state->rateLogSd, state->rateNeo,
+    state->p, state->kPrime, state->betaScale,
+    state->kprimeAlpha, state->kprimeBeta,
+    &state->phi, state->pi0, &state->zMatrix, &state->theta);
+
+  state->nodeCL.invalidate_structure();
+  state->ecoCL.invalidate_structure();   // T-011: kPrime changed
+
+  return true;
 }
 
 
