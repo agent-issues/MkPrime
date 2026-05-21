@@ -125,6 +125,26 @@ validate_swap_partial_cl <- function(dataPtr, statePtr, nodeA) {
     .Call(`_MkPrime_validate_swap_partial_cl`, dataPtr, statePtr, nodeA)
 }
 
+test_persite_uncollapsed <- function(parent, child, edge_length, tip_states, kStates, rate_multipliers) {
+    .Call(`_MkPrime_test_persite_uncollapsed`, parent, child, edge_length, tip_states, kStates, rate_multipliers)
+}
+
+test_persite_collapsed <- function(parent, child, edge_length, tip_states, kFull, kObs, rate_multipliers) {
+    .Call(`_MkPrime_test_persite_collapsed`, parent, child, edge_length, tip_states, kFull, kObs, rate_multipliers)
+}
+
+test_flat_jc_uncollapsed <- function(parent, child, edge_length, tip_states, kStates, acrv, rate_multipliers) {
+    .Call(`_MkPrime_test_flat_jc_uncollapsed`, parent, child, edge_length, tip_states, kStates, acrv, rate_multipliers)
+}
+
+test_flat_jc_collapsed <- function(parent, child, edge_length, tip_states, kFull, kObs, acrv, rate_multipliers) {
+    .Call(`_MkPrime_test_flat_jc_collapsed`, parent, child, edge_length, tip_states, kFull, kObs, acrv, rate_multipliers)
+}
+
+test_flat_jc_constprob_pair <- function(parent, child, edge_length, tip_states, kFull, kObs, acrv, rate_multipliers) {
+    .Call(`_MkPrime_test_flat_jc_constprob_pair`, parent, child, edge_length, tip_states, kFull, kObs, acrv, rate_multipliers)
+}
+
 prepare_mcmc_data <- function(partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, kPriorBetaGeometric = FALSE, qHeterogeneity = FALSE, nBetaCat = 4L, betaScaleShape = 1.0, betaScaleRate = 1.0, kPriorEmpiricalGeometric = FALSE, empLogBody = numericVector(), empBodyLastK = 1L, empTailStartK = 0L, empTailDecay = 0.0, empLogTailStartP = -1e308) {
     .Call(`_MkPrime_prepare_mcmc_data`, partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, kPriorBetaGeometric, qHeterogeneity, nBetaCat, betaScaleShape, betaScaleRate, kPriorEmpiricalGeometric, empLogBody, empBodyLastK, empTailStartK, empTailDecay, empLogTailStartP)
 }
