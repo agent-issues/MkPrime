@@ -44,12 +44,13 @@ Recent commits (top first):
 
 ## Open items / next steps
 
-1. **Rodent v4 path chosen** — fresh restart with v4 harness (`inst/ecology/hamilton/rodent-v4/`),
-   PT (nChains=4) + parallel runs (nRuns=4, nCore=4) for Rhat + mode-trap resilience.
-   Validation job `17245693` submitted (serial, nIter=20k); production parallel
-   submission gated on its clean exit + `RelabelEcology()` success. Note: parallel
-   mode (`nCore>1`) is NOT checkpoint-resumable — size production `nIter` to fit
-   walltime with margin (see commit `b47e488` comments).
+1. **Project model scope = MkNT, not Mk'.** The validated MkNT model
+   (neomorphic: F81-type; transformational: Mk with k = kObs) is the
+   project's likelihood. The ecology-aware project adds an ecology layer
+   on top. Mk' (with free k') is unreleased and out of scope. Invoke via
+   `MkPrimeData(knownStates = setNames(kObs[trans], trans))` so every
+   non-neomorphic char is registered as "known". Active runs:
+   `inst/ecology/hamilton/rodent-MkNT-v1/` (aware 17254914 + blind 17254915).
 2. **Paper structure conversation** — the v9 PT-MCMC null result kills
    the original Sim 2 "blind fails / aware rescues" framing. Options:
    reframe around "aware reduces false sisters 3.5×" as a regularisation
@@ -72,8 +73,10 @@ Recent commits (top first):
 
 | Type | ID / ref | Status | ETA | On completion |
 |------|----------|--------|-----|---------------|
-| SLURM | `17249673` (mkp-rod-v4-aw) | submitted 2026-05-20 post-validation | ~13h, 24h walltime | Production rodent aware run: nRuns=4 nChains=4 nCore=4 nIter=100k. Outputs at `/nobackup/pjjg18/mkp-rodent-v4/aware/`. On completion, load `results/rodent-aware-v4-result.rds`, check Rhat across 4 runs, run `RelabelEcology()` on each run's res, compute paper metrics (P(true sister), CID, phi/theta posteriors). If walltime hit, resubmit same script — `ResumeMkPrime()` synthesises master ckp from per-run files. |
-| SLURM | `17245693` (mkp-rod-v4-val) | COMPLETED 2026-05-20 21:12 BST | done | Validation succeeded: 20k iter / 2h50m / 125 samples / streaming fix confirmed / RelabelEcology success. Production submitted as `17249673`. |
+| SLURM | `17254914` (rod-MkNT-aw) | submitted 2026-05-21 | ~13h, 24h walltime | **MkNT-validated** aware: nRuns=4 nChains=4 nCore=4 nIter=100k. Outputs `/nobackup/pjjg18/mkp-rodent-MkNT-v1/aware/`. On completion, check Rhat, run `RelabelEcology()`, plot posterior trees with reconstructed branch lengths (helper at `inst/ecology/helpers/reconstruct-trees-from-log.R`; the new code already produces correct trees so reconstruction is a no-op safety check). |
+| SLURM | `17254915` (rod-MkNT-bl) | submitted 2026-05-21 | ~13h, 24h walltime | **MkNT-validated** blind (no ecology layer). Matched config. Outputs `/nobackup/pjjg18/mkp-rodent-MkNT-v1/blind/`. Side-by-side aware-vs-blind comparison after both finish. |
+| SLURM | `17249673` (mkp-rod-v4-aw) | CANCELLED 2026-05-21 | n/a | Was running Mk' (kPrimePrior="geometric"); cancelled because project scope is MkNT. Replaced by 17254914/17254915. |
+| SLURM | `17245693` (mkp-rod-v4-val) | COMPLETED 2026-05-20 21:12 BST | done | Validation under Mk' — also out of scope. Surfaced the brColStart ecology-cols bug (fix in commit `be1bdbb`). |
 | SLURM | `17234909_*` (mkp-mk-tlshrink) | UNKNOWN — was running at 13:30 BST, may have finished | ~0-2h | Not ecology — mkp-core arm benchmarking. Ignore on this branch; collect from mkp main when ready. |
 
 The rodent v3 cont jobs (`17238607`, `17238608`) FAILED and are not requeued.
