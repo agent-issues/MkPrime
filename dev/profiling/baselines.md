@@ -6,5 +6,8 @@ Reference timings; refreshed each round. `/profile regress` rebuilds the same dr
 |------|--------|----------|-------------|----------------|-------|
 | step6 (legacy) | `data-raw/step6_profile_eg.R` | 94.3 | `.Call → run_mcmc_batch_cpp` | 99.27 | 2026-05-18 |
 | 1 (Felsenstein pruning) | `dev/profiling/drivers/01_felsenstein_pruning.R` | 17.39 (baseline) / 16.45 (T-005) / **12.07 (T-005 + T-006)** | `pruning_jc_acrv_persite` 75 % (VTune baseline); after T-005+T-006: `persite_impl<0>` 4.4 s + kfixed<2..24> ~3 s combined | 75 → ~40 (VTune) | 2026-05-19 |
+| 0 (Eco orchestrator wall) | `dev/profiling/drivers/11_aware_vs_blind_rodent.R` | aware 24.59 / blind 0.97 (200 iter, rodent MkNT, kEco=4, nTip=64, nChar=217) | `.Call → run_mcmc_batch_cpp` | 97.20 (Rprof) | 2026-05-21 |
+| 0 (Eco orchestrator per-call) | `dev/profiling/drivers/11c_per_call_cost.R` | aware 0.67 ms / blind 0.33 ms (30 reps, nCat=1) | — (isolated likelihood call) | 2.0× per call | 2026-05-21 |
+| T-008 (per_char batch) | `dev/profiling/drivers/12_per_char_alloc.R` | baseline 18.7 ms/batch (217 chars) → T-008 18.1 ms/batch (~4 % speedup); 0 heap allocs per sweep (was 7812) | — (isolated per-char helper) | ~4 % batch speedup; 0 heap allocs | 2026-05-21 |
 
 Driver 1 yields ~8 iter/s under empirical_geometric + production move weights on Sun2018 (54 taxa, 225 chars, all transformational). PROFILING.md (2026-03-28) reported **2611 iter/s** on the same dataset under a reduced move schedule (NNI+SPR+BetaSimplex+kPrime+scalar only); the 330× slowdown is driven primarily by Gibbs k′ sweep (29.5 % weight) and Gibbs SPR / subtree-swap (1.3 % each) — these were explicitly excluded from the 2611 iter/s reference run.

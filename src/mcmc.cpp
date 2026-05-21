@@ -9,6 +9,7 @@
 // directly, avoiding repeated matrix construction/decomposition.
 
 #include "mcmc_state.h"
+#include "gibbs_z_workspace.h"
 #include "gibbs_partial_cl.h"
 #include "fitch.h"
 #include "node_cl_cache.h"
@@ -48,13 +49,37 @@ double per_char_log_lik_ecology(
     IntegerVector zRow,
     const NumericMatrix& wEdge,
     int refEcology,
-    const std::vector<double>& gammaE);
+    const std::vector<double>& gammaE,
+    GibbsZWorkspace& ws);
 
 void recompute_w_edge(
     const McmcData& data,
     IntegerVector parent, IntegerVector child,
     NumericVector edgeLen,
     NumericMatrix& wEdgeOut);
+
+// T-010: per-partition ecology likelihood (mcmc_ecology.cpp).
+// Accepts pre-computed wEdge, gammaE, rates so the caller can hoist them
+// out of a multi-partition or move loop and reuse them across calls.
+double cpp_partition_log_likelihood_ecology(
+    const McmcData& data, int partIdx,
+    IntegerVector parent, IntegerVector child,
+    NumericVector edgeLen,
+    const IntegerVector& kPrime,
+    double rateLoss, double rateNeo,
+    NumericVector phi,
+    IntegerMatrix zMatrix,
+    const NumericMatrix& wEdge,
+    const std::vector<double>& gammaE,
+    const NumericVector& rates);
+
+// T-010: build the kEco-vector gammaE from current state (cheap O(kEco)).
+void compute_gamma_e_ecology(
+    const McmcData& data,
+    const NumericVector& phi,
+    double pi0,
+    const NumericVector& theta,
+    std::vector<double>& gammaE);
 
 // cpp_acrv_rates lives in mcmc_likelihood.cpp.
 NumericVector cpp_acrv_rates(double rateLogSd, int nCat,
@@ -230,6 +255,81 @@ struct McmcState {
   double diagMaxDiff = 0.0;
 
 };
+
+
+// ---------------------------------------------------------------------------
+// T-010: helpers for the ecology-aware partition cache
+// ---------------------------------------------------------------------------
+//
+// `state->wEdge` is the per-edge ecology-state weight matrix (nEdge × kEco),
+// expensive to recompute (full forward+backward sweep on the tree).
+// `state->wEdgeDirty` is set true whenever any move modifies the tree topology
+// or any branch length; cleared after a successful recompute. gammaE and ACRV
+// rates are cheap and computed per call.
+//
+// `state->partLogLik` is reused as the ecology partition cache (the blind path
+// uses it likewise). When ecologyAware is true the cache is initialised from
+// the ecology orchestrator (see fill_partition_cache); when set the
+// per-partition sum equals state->logLik.
+
+// Recompute and cache state->wEdge if dirty. No-op otherwise.
+static inline void eco_refresh_wedge(McmcData* data, McmcState* state,
+                                     const NumericVector& edgeLen) {
+  if (!state->wEdgeDirty &&
+      state->wEdge.nrow() == edgeLen.size() &&
+      state->wEdge.ncol() == data->ecology.kEcology) {
+    return;
+  }
+  if (state->wEdge.nrow() != edgeLen.size() ||
+      state->wEdge.ncol() != data->ecology.kEcology) {
+    state->wEdge = NumericMatrix(edgeLen.size(), data->ecology.kEcology);
+  }
+  recompute_w_edge(*data, state->parent, state->child, edgeLen, state->wEdge);
+  state->wEdgeDirty = false;
+}
+
+// Compute one partition's ecology log-lik, using the cached wEdge and a
+// freshly-computed gammaE / rates. Convenience wrapper around the per-
+// partition function for move-handler call sites.
+static double eco_partition_loglik(McmcData* data, McmcState* state,
+                                   int partIdx, const NumericVector& edgeLen) {
+  eco_refresh_wedge(data, state, edgeLen);
+  std::vector<double> gammaE;
+  compute_gamma_e_ecology(*data, state->phi, state->pi0, state->theta, gammaE);
+  NumericVector rates = (state->rateLogSd > 0.0)
+    ? cpp_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ)
+    : NumericVector(1, 1.0);
+  return cpp_partition_log_likelihood_ecology(
+    *data, partIdx, state->parent, state->child, edgeLen,
+    state->kPrime, state->rateLoss, state->rateNeo,
+    state->phi, state->zMatrix,
+    state->wEdge, gammaE, rates);
+}
+
+// Recompute ALL ecology partitions, refresh state->partLogLik and
+// state->logLik. Cheaper than cpp_log_likelihood_ecology by ~tree-build cost
+// when wEdge is already cached (e.g. phi/pi0/theta/rateLogSd moves).
+static double eco_recompute_all_partitions(McmcData* data, McmcState* state,
+                                           const NumericVector& edgeLen) {
+  eco_refresh_wedge(data, state, edgeLen);
+  std::vector<double> gammaE;
+  compute_gamma_e_ecology(*data, state->phi, state->pi0, state->theta, gammaE);
+  NumericVector rates = (state->rateLogSd > 0.0)
+    ? cpp_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ)
+    : NumericVector(1, 1.0);
+  int nParts = (int)data->parts.size();
+  if ((int)state->partLogLik.size() != nParts) state->partLogLik.assign(nParts, 0.0);
+  double total = 0.0;
+  for (int pi = 0; pi < nParts; ++pi) {
+    state->partLogLik[pi] = cpp_partition_log_likelihood_ecology(
+      *data, pi, state->parent, state->child, edgeLen,
+      state->kPrime, state->rateLoss, state->rateNeo,
+      state->phi, state->zMatrix,
+      state->wEdge, gammaE, rates);
+    total += state->partLogLik[pi];
+  }
+  return total;
+}
 
 
 // ---------------------------------------------------------------------------
@@ -4045,6 +4145,28 @@ static bool gibbs_z_sweep_impl(McmcData* data, McmcState* state, double beta) {
                 (th * phi_s + (1.0 - th) / phi_s);
   }
 
+  // Allocate ONE workspace for the whole sweep — eliminates per-call heap allocs.
+  // Size to the maximum stride (= kStates) needed across all partitions.
+  int nTip    = data->nTip;
+  int maxNode = 2 * nTip - 1;
+  int maxStride = 0;
+  for (const PartInfo& part : data->parts) {
+    int s = (part.type == 0) ? 2 : part.k;
+    if (s > maxStride) maxStride = s;
+  }
+  // Transformational partitions can have kPrime > part.k (which is 0 for type 1).
+  // Use current kPrime max for type-1 parts.
+  for (int c = 0; c < nChar; ++c) {
+    int pi = data->charToPartition[c];
+    if (pi < 0) continue;
+    if (data->parts[pi].type == 1) {
+      int kp = state->kPrime[c];
+      if (kp > maxStride) maxStride = kp;
+    }
+  }
+  GibbsZWorkspace ws;
+  if (maxStride > 0) ws.ensure(maxNode, maxStride, nTip, zCols);
+
   IntegerVector zRow(zCols);
   double log_pi0    = std::log(state->pi0);
   double log_1m_pi0 = std::log1p(-state->pi0);
@@ -4069,7 +4191,7 @@ static bool gibbs_z_sweep_impl(McmcData* data, McmcState* state, double beta) {
           *data, c, state->parent, state->child, edgeLen,
           kp, state->rateLoss, state->rateNeo,
           rates, state->phi, zRow, wEdge,
-          refE, gammaE);
+          refE, gammaE, ws);
       }
       double lp[3] = { log_none, log_enc, log_disc };
 

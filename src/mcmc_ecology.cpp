@@ -21,6 +21,7 @@
 // rate. Multiple ecology axes are out of scope here.
 
 #include "mcmc_state.h"
+#include "gibbs_z_workspace.h"
 #include "fast_exp.h"
 #include <cmath>
 #include <vector>
@@ -381,7 +382,74 @@ static double pruning_jc_acrv_flat_ecology(
       double* clPar = buf + par * stride;
       double* clCh  = buf + ch  * stride;
 
-      // Per-character propagation with the mixture (p_same, p_diff).
+      // T-009 (2026-05-21): tip-edge fast path.  When ch is a tip, the child
+      // CL is one-hot (known state s: clCh[s]=1, rest 0) or all-ones (missing).
+      // sum_cl = 1 (known) or kStates (missing) by construction; the per-state
+      // update collapses:
+      //   init + known s:   clPar[i] = pdMix (i≠s), psMix (i==s)
+      //   init + missing:   clPar[i] = 1.0  (JC identity: Σ w_s·(K·pdF+(psF−pdF))=1)
+      //   multiply + known: clPar[i] *= pdMix (i≠s), psMix (i==s)
+      //   multiply + missing: no-op (× 1.0)
+      // psMix/pdMix are computed in the same accumulation order as the internal
+      // path to preserve FP results for those quantities.
+      const bool tipChild = (ch <= nTip);
+
+      if (tipChild) {
+        if (!initFlg[par]) {
+          for (int c = 0; c < nChar; ++c) {
+            double psMix = 0.0, pdMix = 0.0;
+            for (int s = 0; s < kEco; ++s) {
+              int z;
+              if (s == refEcology) {
+                z = 0;
+              } else {
+                int zCol = (s < refEcology) ? s : (s - 1);
+                z = zPtr[c + zCol * nChar];
+              }
+              double w = wPtr[e + s * nEdge];
+              psMix += w * psFactor[z * kEco + s];
+              pdMix += w * pdFactor[z * kEco + s];
+            }
+            int state  = tsPtr[(ch - 1) + c * nTip];
+            int offset = c * kStates;
+            if (state < 0) {
+              // Missing: full marginalisation → clPar[i] = 1.
+              for (int i = 0; i < kStates; ++i) clPar[offset + i] = 1.0;
+            } else {
+              for (int i = 0; i < kStates; ++i) clPar[offset + i] = pdMix;
+              clPar[offset + state] = psMix;
+            }
+          }
+          initFlg[par] = 1u;
+        } else {
+          for (int c = 0; c < nChar; ++c) {
+            double psMix = 0.0, pdMix = 0.0;
+            for (int s = 0; s < kEco; ++s) {
+              int z;
+              if (s == refEcology) {
+                z = 0;
+              } else {
+                int zCol = (s < refEcology) ? s : (s - 1);
+                z = zPtr[c + zCol * nChar];
+              }
+              double w = wPtr[e + s * nEdge];
+              psMix += w * psFactor[z * kEco + s];
+              pdMix += w * pdFactor[z * kEco + s];
+            }
+            int state  = tsPtr[(ch - 1) + c * nTip];
+            if (state < 0) {
+              // Missing: multiply by 1 — no-op.
+            } else {
+              int offset = c * kStates;
+              for (int i = 0; i < kStates; ++i)
+                clPar[offset + i] *= (i == state) ? psMix : pdMix;
+            }
+          }
+        }
+        continue;
+      }
+
+      // Internal-child path (unchanged).
       if (!initFlg[par]) {
         for (int c = 0; c < nChar; ++c) {
           double psMix = 0.0, pdMix = 0.0;
@@ -881,6 +949,190 @@ static double const_site_prob_mkn_eco_single(
 
 
 // ---------------------------------------------------------------------------
+// cpp_partition_log_likelihood_ecology: per-partition variant. (T-010)
+// ---------------------------------------------------------------------------
+//
+// Mirrors the inner-loop body of cpp_log_likelihood_ecology for a single
+// partition `partIdx`. Accepts pre-computed wEdge, gammaE, and ACRV rates
+// so the orchestrator (or move handler) can hoist them out of the
+// per-partition loop. Enables partition-level caching for non-tree moves
+// in the ecology-aware path.
+//
+// Behaviour is bit-identical to one inner-loop iteration of the orchestrator
+// (same per-partition summation order: transformational characters are
+// sub-grouped by kPrime via std::map so ascending-k order is preserved).
+
+double cpp_partition_log_likelihood_ecology(
+    const McmcData& data, int partIdx,
+    Rcpp::IntegerVector parent, Rcpp::IntegerVector child,
+    Rcpp::NumericVector edgeLen,
+    const Rcpp::IntegerVector& kPrime,
+    double rateLoss, double rateNeo,
+    Rcpp::NumericVector phi,
+    Rcpp::IntegerMatrix zMatrix,
+    const Rcpp::NumericMatrix& wEdge,
+    const std::vector<double>& gammaE,
+    const Rcpp::NumericVector& rates) {
+
+  int nTip = data.nTip;
+  int nEdge = parent.size();
+  int maxNode = 2 * nTip - 1;
+  int kEco = data.ecology.kEcology;
+  int mode = data.magnitudeMode;
+  int refE = data.ecology.refEcology;
+  int zCols = kEco - 1;
+
+  const PartInfo& part = data.parts[partIdx];
+  int nCharPart = part.tipStates.ncol();
+
+  // Subset zMatrix to this partition's characters (global → local indices).
+  IntegerMatrix zPart(nCharPart, zCols);
+  for (int c = 0; c < nCharPart; ++c) {
+    int gi = part.globalCharIdx[c];
+    for (int j = 0; j < zCols; ++j) zPart(c, j) = zMatrix(gi, j);
+  }
+
+  double ll = 0.0;
+
+  if (part.type == 0) {
+    // Neomorphic
+    NumericVector neoEl(nEdge);
+    for (int i = 0; i < nEdge; ++i) neoEl[i] = edgeLen[i] * rateNeo;
+    NumericVector rootFreqs = mkn_stationary_local(rateLoss);
+    int stride = nCharPart * 2;
+    std::vector<double>  buf((maxNode + 1) * stride, 0.0);
+    std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+    ll = pruning_mkn_acrv_flat_ecology(
+      parent, child, neoEl, part.tipStates,
+      rateLoss, rootFreqs, rates,
+      wEdge, zPart, phi, mode,
+      refE, gammaE,
+      buf.data(), initFlg.data(), stride);
+    if (data.codingType == 1) {  // variable
+      for (int c = 0; c < nCharPart; ++c) {
+        IntegerVector zVec(zCols);
+        for (int j = 0; j < zCols; ++j) zVec[j] = zPart(c, j);
+        double pConst = const_site_prob_mkn_eco_single(
+          parent, child, neoEl, nTip,
+          rateLoss, rates, wEdge, zVec, phi, mode,
+          refE, gammaE);
+        ll -= std::log(1.0 - pConst);
+      }
+    }
+  } else if (part.type == 2) {
+    // Known state space
+    int kStates = part.k;
+    NumericVector rootFreqs(kStates, 1.0 / kStates);
+    int stride = nCharPart * kStates;
+    std::vector<double>  buf((maxNode + 1) * stride, 0.0);
+    std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+    ll = pruning_jc_acrv_flat_ecology(
+      parent, child, edgeLen, part.tipStates,
+      kStates, rootFreqs, rates,
+      wEdge, zPart, phi, mode,
+      refE, gammaE,
+      buf.data(), initFlg.data(), stride);
+    if (data.codingType == 1) {
+      for (int c = 0; c < nCharPart; ++c) {
+        IntegerVector zVec(zCols);
+        for (int j = 0; j < zCols; ++j) zVec[j] = zPart(c, j);
+        double pConst = const_site_prob_jc_eco_single(
+          parent, child, edgeLen, nTip, kStates,
+          rates, wEdge, zVec, phi, mode,
+          refE, gammaE);
+        ll -= std::log(1.0 - pConst);
+      }
+    }
+  } else {
+    // Transformational: subgroup by kPrime (per-character).
+    // NOTE: when one char's kPrime changes, the subgroup composition
+    // changes — easiest correct option is to recompute the whole
+    // transformational partition. Optimisation deferred (T-010 caveat).
+    std::map<int, std::vector<int>> byKp;
+    for (int c = 0; c < nCharPart; ++c) {
+      int gi = part.globalCharIdx[c];
+      byKp[kPrime[gi]].push_back(c);
+    }
+    for (auto& kv : byKp) {
+      int kp = kv.first;
+      const std::vector<int>& cols = kv.second;
+      int nSub = static_cast<int>(cols.size());
+
+      IntegerMatrix subStates(nTip, nSub);
+      IntegerMatrix subZ(nSub, zCols);
+      for (int c = 0; c < nSub; ++c) {
+        for (int t = 0; t < nTip; ++t)
+          subStates(t, c) = part.tipStates(t, cols[c]);
+        for (int j = 0; j < zCols; ++j)
+          subZ(c, j) = zPart(cols[c], j);
+      }
+      NumericVector rootFreqs(kp, 1.0 / kp);
+      int stride = nSub * kp;
+      std::vector<double>  buf((maxNode + 1) * stride, 0.0);
+      std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+
+      double subLl = pruning_jc_acrv_flat_ecology(
+        parent, child, edgeLen, subStates,
+        kp, rootFreqs, rates,
+        wEdge, subZ, phi, mode,
+        refE, gammaE,
+        buf.data(), initFlg.data(), stride);
+
+      if (data.codingType == 1) {
+        for (int c = 0; c < nSub; ++c) {
+          IntegerVector zVec(zCols);
+          for (int j = 0; j < zCols; ++j) zVec[j] = subZ(c, j);
+          double pConst = const_site_prob_jc_eco_single(
+            parent, child, edgeLen, nTip, kp,
+            rates, wEdge, zVec, phi, mode,
+            refE, gammaE);
+          subLl -= std::log(1.0 - pConst);
+        }
+      }
+
+      if (data.relabel) {
+        for (int c = 0; c < nSub; ++c) {
+          int gi = part.globalCharIdx[cols[c]];
+          subLl += mk_prime_relabel_log(kp, data.kObs[gi]);
+        }
+      }
+      ll += subLl;
+    }
+  }
+
+  if (data.codingType == 2) {
+    stop("informative coding is not yet supported under ecologyAware");
+  }
+
+  return ll;
+}
+
+
+// Compute the kEco-vector gammaE[s] = pi0 + (1-pi0) * (theta_e * phi_e +
+// (1-theta_e) / phi_e) with gammaE[refE] = 1. Cheap (O(kEco)) so it is
+// recomputed per call rather than cached. Exposed so move handlers can
+// build gammaE without going through the full orchestrator.
+void compute_gamma_e_ecology(
+    const McmcData& data,
+    const Rcpp::NumericVector& phi,
+    double pi0,
+    const Rcpp::NumericVector& theta,
+    std::vector<double>& gammaE) {
+  int kEco = data.ecology.kEcology;
+  int mode = data.magnitudeMode;
+  int refE = data.ecology.refEcology;
+  gammaE.assign(kEco, 1.0);
+  for (int s = 0; s < kEco; ++s) {
+    if (s == refE) { gammaE[s] = 1.0; continue; }
+    int j = (s < refE) ? s : (s - 1);
+    double phi_s = (mode == 0) ? phi[0] : phi[s];
+    double th = (j >= 0 && j < theta.size()) ? theta[j] : 0.5;
+    gammaE[s] = gamma_e_compute(pi0, th, phi_s);
+  }
+}
+
+
+// ---------------------------------------------------------------------------
 // cpp_log_likelihood_ecology: full-data orchestrator under the ecology mixture
 // ---------------------------------------------------------------------------
 //
@@ -888,9 +1140,9 @@ static double const_site_prob_mkn_eco_single(
 // ecology marginals + edge weights from the current tree, then iterate
 // partitions invoking the ecology-aware pruning variants.
 //
-// No ascertainment correction yet — corresponds to coding = "none". A
-// mixture-aware constant-/singleton-site pseudo-character path is the next
-// addition (Phase 3h).
+// T-010: refactored to call cpp_partition_log_likelihood_ecology per
+// partition, preserving the per-partition summation order. The total is
+// bit-identical to the pre-refactor monolithic body.
 
 double cpp_log_likelihood_ecology(
     const McmcData& data,
@@ -905,20 +1157,12 @@ double cpp_log_likelihood_ecology(
 
   int nTip = data.nTip;
   int nEdge = parent.size();
-  int maxNode = 2 * nTip - 1;
   int kEco = data.ecology.kEcology;
-  int mode = data.magnitudeMode;
-  int refE = data.ecology.refEcology;
 
   // v2: compute gammaE per ecology state (1.0 at refEcology).
-  std::vector<double> gammaE(kEco, 1.0);
-  for (int s = 0; s < kEco; ++s) {
-    if (s == refE) { gammaE[s] = 1.0; continue; }
-    int j = (s < refE) ? s : (s - 1);
-    double phi_s = (mode == 0) ? phi[0] : phi[s];
-    double th = (j >= 0 && j < theta.size()) ? theta[j] : 0.5;
-    gammaE[s] = gamma_e_compute(pi0, th, phi_s);
-  }
+  std::vector<double> gammaE;
+  compute_gamma_e_ecology(data, phi, pi0, theta, gammaE);
+
   bool useAcrv = (rateLogSd > 0.0);
   NumericVector rates = useAcrv
     ? cpp_acrv_rates(rateLogSd, data.nCat, data.acrvZ)
@@ -942,133 +1186,12 @@ double cpp_log_likelihood_ecology(
   }
 
   double totalLoglik = 0.0;
-
-  // v2: zMatrix has nChar x (kEco - 1) columns.
-  int zCols = kEco - 1;
-
   for (int pi = 0; pi < (int)data.parts.size(); ++pi) {
-    const PartInfo& part = data.parts[pi];
-    int nCharPart = part.tipStates.ncol();
-
-    // Subset zMatrix to this partition's characters (global → local indices).
-    IntegerMatrix zPart(nCharPart, zCols);
-    for (int c = 0; c < nCharPart; ++c) {
-      int gi = part.globalCharIdx[c];
-      for (int j = 0; j < zCols; ++j) zPart(c, j) = zMatrix(gi, j);
-    }
-
-    double ll = 0.0;
-
-    if (part.type == 0) {
-      // Neomorphic
-      NumericVector neoEl(nEdge);
-      for (int i = 0; i < nEdge; ++i) neoEl[i] = edgeLen[i] * rateNeo;
-      NumericVector rootFreqs = mkn_stationary_local(rateLoss);
-      int stride = nCharPart * 2;
-      std::vector<double>  buf((maxNode + 1) * stride, 0.0);
-      std::vector<uint8_t> initFlg(maxNode + 1, 0u);
-      ll = pruning_mkn_acrv_flat_ecology(
-        parent, child, neoEl, part.tipStates,
-        rateLoss, rootFreqs, rates,
-        wEdge, zPart, phi, mode,
-        refE, gammaE,
-        buf.data(), initFlg.data(), stride);
-      if (data.codingType == 1) {  // variable
-        for (int c = 0; c < nCharPart; ++c) {
-          IntegerVector zVec(zCols);
-          for (int j = 0; j < zCols; ++j) zVec[j] = zPart(c, j);
-          double pConst = const_site_prob_mkn_eco_single(
-            parent, child, neoEl, nTip,
-            rateLoss, rates, wEdge, zVec, phi, mode,
-            refE, gammaE);
-          ll -= std::log(1.0 - pConst);
-        }
-      }
-    } else if (part.type == 2) {
-      // Known state space
-      int kStates = part.k;
-      NumericVector rootFreqs(kStates, 1.0 / kStates);
-      int stride = nCharPart * kStates;
-      std::vector<double>  buf((maxNode + 1) * stride, 0.0);
-      std::vector<uint8_t> initFlg(maxNode + 1, 0u);
-      ll = pruning_jc_acrv_flat_ecology(
-        parent, child, edgeLen, part.tipStates,
-        kStates, rootFreqs, rates,
-        wEdge, zPart, phi, mode,
-        refE, gammaE,
-        buf.data(), initFlg.data(), stride);
-      if (data.codingType == 1) {
-        for (int c = 0; c < nCharPart; ++c) {
-          IntegerVector zVec(zCols);
-          for (int j = 0; j < zCols; ++j) zVec[j] = zPart(c, j);
-          double pConst = const_site_prob_jc_eco_single(
-            parent, child, edgeLen, nTip, kStates,
-            rates, wEdge, zVec, phi, mode,
-            refE, gammaE);
-          ll -= std::log(1.0 - pConst);
-        }
-      }
-    } else {
-      // Transformational: subgroup by kPrime (per-character)
-      std::map<int, std::vector<int>> byKp;
-      for (int c = 0; c < nCharPart; ++c) {
-        int gi = part.globalCharIdx[c];
-        byKp[kPrime[gi]].push_back(c);
-      }
-      for (auto& kv : byKp) {
-        int kp = kv.first;
-        const std::vector<int>& cols = kv.second;
-        int nSub = static_cast<int>(cols.size());
-
-        IntegerMatrix subStates(nTip, nSub);
-        IntegerMatrix subZ(nSub, zCols);
-        for (int c = 0; c < nSub; ++c) {
-          for (int t = 0; t < nTip; ++t)
-            subStates(t, c) = part.tipStates(t, cols[c]);
-          for (int j = 0; j < zCols; ++j)
-            subZ(c, j) = zPart(cols[c], j);
-        }
-        NumericVector rootFreqs(kp, 1.0 / kp);
-        int stride = nSub * kp;
-        std::vector<double>  buf((maxNode + 1) * stride, 0.0);
-        std::vector<uint8_t> initFlg(maxNode + 1, 0u);
-
-        double subLl = pruning_jc_acrv_flat_ecology(
-          parent, child, edgeLen, subStates,
-          kp, rootFreqs, rates,
-          wEdge, subZ, phi, mode,
-          refE, gammaE,
-          buf.data(), initFlg.data(), stride);
-
-        if (data.codingType == 1) {
-          for (int c = 0; c < nSub; ++c) {
-            IntegerVector zVec(zCols);
-            for (int j = 0; j < zCols; ++j) zVec[j] = subZ(c, j);
-            double pConst = const_site_prob_jc_eco_single(
-              parent, child, edgeLen, nTip, kp,
-              rates, wEdge, zVec, phi, mode,
-              refE, gammaE);
-            subLl -= std::log(1.0 - pConst);
-          }
-        }
-
-        if (data.relabel) {
-          for (int c = 0; c < nSub; ++c) {
-            int gi = part.globalCharIdx[cols[c]];
-            subLl += mk_prime_relabel_log(kp, data.kObs[gi]);
-          }
-        }
-        ll += subLl;
-      }
-    }
-
-    if (data.codingType == 2) {
-      stop("informative coding is not yet supported under ecologyAware");
-    }
-
-    totalLoglik += ll;
+    totalLoglik += cpp_partition_log_likelihood_ecology(
+      data, pi, parent, child, edgeLen, kPrime,
+      rateLoss, rateNeo, phi, zMatrix,
+      wEdge, gammaE, rates);
   }
-
   return totalLoglik;
 }
 
@@ -1130,7 +1253,8 @@ double per_char_log_lik_ecology(
     IntegerVector zRow,        // v2: length (kEco - 1)
     const NumericMatrix& wEdge,// nEdge x kEco
     int refEcology,
-    const std::vector<double>& gammaE
+    const std::vector<double>& gammaE,
+    GibbsZWorkspace& ws        // caller-owned workspace; no per-call alloc
 ) {
   int nTip   = data.nTip;
   int nEdge  = parent.size();
@@ -1305,6 +1429,7 @@ NumericVector CppLogLikelihoodEcologyPerChar(
     ? cpp_acrv_rates(rateLogSd, data.nCat, data.acrvZ)
     : NumericVector(1, 1.0);
 
+  GibbsZWorkspace ws;
   IntegerVector zRow(zCols);
   for (int c = 0; c < nChar; ++c) {
     for (int j = 0; j < zCols; ++j) zRow[j] = zMatrix(c, j);
@@ -1314,7 +1439,7 @@ NumericVector CppLogLikelihoodEcologyPerChar(
     out[c] = per_char_log_lik_ecology(
       data, c, parent, child, edgeLen,
       kp, rateLoss, rateNeo, rates, phi, zRow, wEdge,
-      refE, gammaE);
+      refE, gammaE, ws);
   }
   return out;
 }
