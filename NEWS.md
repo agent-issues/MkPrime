@@ -1,5 +1,13 @@
 # MkPrime (development version)
 
+* `RunMkPrime(tree = NULL)` now starts from a greedy parsimony
+  stepwise-addition tree (`TreeSearch::AdditionTree`) when `TreeSearch`
+  is installed, falling back to `TreeTools::NJTree` otherwise.  The
+  parsimony tree is a methodologically preferred MCMC start for
+  morphological data, and `AdditionTree` is essentially instant
+  (no iterative search).  Behaviour is unchanged when a `tree`
+  argument is supplied.
+
 * Streaming log writer (`.FlushBuffer()`) now appends one row per
   `writeLines()` call on an explicitly opened append connection.  The
   previous implementation built the whole flush block as a single

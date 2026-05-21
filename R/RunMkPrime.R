@@ -13,7 +13,9 @@
 #'
 #' @param data A `phyDat` object or `MkPrimeData` object.
 #' @param tree A `phylo` object (starting topology), or `NULL` (default)
-#'   to start from a neighbour-joining tree built from the data.
+#'   to start from a greedy parsimony stepwise-addition tree (via
+#'   `TreeSearch::AdditionTree`) when the `TreeSearch` package is
+#'   installed, falling back to a neighbour-joining tree otherwise.
 #' @param neomorphic,knownStates Passed to [MkPrimeData()] if `data` is
 #'   a `phyDat` object.
 #' @param model An `MkPrimeModel` object, or `NULL` for defaults.
@@ -124,17 +126,28 @@ RunMkPrime <- function(data, tree = NULL,
   }
 
   if (is.null(tree)) {
-    njInput <- if (inherits(data, "phyDat")) data else mkd$phyDat
-    tree <- TreeTools::NJTree(njInput, edgeLengths = TRUE)
-    cli::cli_alert_info("No starting tree supplied; using neighbour-joining tree.")
+    startInput <- if (inherits(data, "phyDat")) data else mkd$phyDat
+    if (requireNamespace("TreeSearch", quietly = TRUE)) {
+      tree <- TreeSearch::AdditionTree(startInput)
+      tree$edge.length <- rep(0.1, nrow(tree$edge))
+      cli::cli_alert_info(
+        "No starting tree supplied; using greedy parsimony addition tree.")
+    } else {
+      tree <- TreeTools::NJTree(startInput, edgeLengths = TRUE)
+      cli::cli_alert_info(c(
+        "No starting tree supplied; using neighbour-joining tree.",
+        "i" = "Install {.pkg TreeSearch} to use the preferred parsimony \\
+               addition tree."))
+    }
   } else if (!inherits(tree, "phylo")) {
-    cli::cli_abort("{.arg tree} must be a {.cls phylo} object, or {.val NULL} to use a neighbour-joining tree.")
+    cli::cli_abort("{.arg tree} must be a {.cls phylo} object, or {.val NULL} to use a default starting tree.")
   }
   if (is.null(tree$edge.length)) {
     cli::cli_abort(c(
       "{.arg tree} has no branch lengths.",
       "i" = "Supply a tree with edge lengths, e.g. \\
-             {.code TreeTools::NJTree(data)}."
+             {.code TreeSearch::AdditionTree(data)} (then set \\
+             {.code tree$edge.length <- rep(0.1, nrow(tree$edge))})."
     ))
   }
   nNeg <- sum(tree$edge.length <= 0)
@@ -2618,8 +2631,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     if (is.null(model)) model <- MkPrimeModel()
     if (is.null(tree)) {
       # Need tree only for .FinalizeModel (Fitch parsimony score)
-      njInput <- if (inherits(data, "phyDat")) data else mkd$phyDat
-      tree <- TreeTools::NJTree(njInput, edgeLengths = TRUE)
+      startInput <- if (inherits(data, "phyDat")) data else mkd$phyDat
+      if (requireNamespace("TreeSearch", quietly = TRUE)) {
+        tree <- TreeSearch::AdditionTree(startInput)
+        tree$edge.length <- rep(0.1, nrow(tree$edge))
+      } else {
+        tree <- TreeTools::NJTree(startInput, edgeLengths = TRUE)
+      }
     }
     tree <- TreeTools::Preorder(tree)
     model <- .FinalizeModel(model, tree, mkd)
