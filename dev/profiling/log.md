@@ -768,3 +768,114 @@ then a fresh implementation agent works against a concrete design.
 t018-adaptive-moves`). Salvaged files in /tmp left for now (small).
 
 last_focus: 18
+
+---
+
+## Round 14 (T-017 — OpenMP partition pruner via plan-then-action) — 2026-05-21
+
+**Target.** Thread-parallel ecology partition pruner to recover wall at
+nChains=4 aware. After T-015 closed the PT-locality investigation, user
+picked threaded chains (T-017) + adaptive moves (T-018) as the highest-
+leverage code-only options to pursue. A prior one-shot Opus impl
+subagent had died silently on this brief (Round 13 of the T-018
+salvage entry). Strategy this round: **Plan-then-action** + cron-
+scheduled 90-min delay (to keep the impl agent's chances of avoiding
+the silent-death failure mode).
+
+**Plan phase.** Opus Plan subagent + worktree + read-only tools.
+Inventoried 47 RNG sites + 74 Rcpp alloc sites across `do_move_impl`
+helpers + proposals.cpp + tree_moves.cpp. Identified that the inner
+ecology pruners (`pruning_*_flat_ecology` in `src/mcmc_ecology.cpp`)
+are already thread-safe (std::vector workspaces only); the obstacle is
+Rcpp-allocated temporaries in the orchestrator. Proposed Phase 1
+(partition-loop parallelism, ~430 LoC, bit-identical) vs Phase 2 (full
+chain dispatch threading, 700-1100 LoC, breaks RNG order). Wrote
+design content; could not directly write file (Plan agent system
+prompt prohibits file writes — dispatcher wrote it to
+`dev/profiling/t017-design.md`).
+
+**Advisor reviews (2 passes).** First pass caught: (a) the design's
+`reduction(+:double)` is ULP-order-dependent and would break bit-
+identity, (b) projected 2.14× over-counts available parallelism since
+rodent has only 2 partitions × 3 trans subgroups = 4 work items.
+Second pass after design update caught: (c) outer + inner pragmas
+would nest (OMP_NESTED off by default → inner dead code; on →
+oversubscription), so **flatten the two loops into a single work-item
+list**. Empirical discriminator (`dev/t017_discriminator.R`) confirmed
+rodent has 1 neo (160 chars) + 3 known subgroups (44, 9, 4 chars).
+Updated design with: flatten, per-thread partial-sum slots, serial
+merge, schedule(dynamic). Final projection: 1.55-1.9× wall (50/50
+neo-vs-trans split bounds critical path).
+
+**Implementation phase.** Opus impl subagent + worktree. Worked ~80
+min. Produced substantive work: `cpp_partition_log_likelihood_ecology`
+Rcpp temporaries → `std::vector`, new `EcoWorkItem` struct +
+`compute_eco_work_item_ll` worker (lines 1376-1620 of new mcmc_ecology.cpp),
+flat work-item construction + `#pragma omp parallel for schedule(dynamic)`
++ partial-sum slots + serial merge in `cpp_log_likelihood_ecology`
+(at ~:1692). Also: const-ref signatures on the orchestrator entry
+(was pass-by-value Rcpp; pass-by-value invokes the Rcpp Vector copy
+constructor which touches the precious-object list — NOT thread-safe).
+**Agent did NOT commit before returning** (same anti-pattern as T-018
+agent in Round 13 — salvage required from agent worktree at
+`mkp/.claude/worktrees/agent-acb308a87806e256e/`).
+
+**Build issues encountered during salvage.** (1) User-level
+`~/.R/Makevars` sets `PKG_CXXFLAGS = ` (empty) which **overrides** the
+package's `PKG_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS)` at compile time,
+so `-fopenmp` made it to link but not compile, `_OPENMP` was
+undefined, and the `#ifdef _OPENMP` blocks were stripped. Pragmas
+became no-ops. (2) `R_MAKEVARS_USER=NUL` doesn't work on Windows
+(`make` interprets NUL as a filename). Use
+`R_MAKEVARS_USER=/tmp/empty_makevars` (empty file). (3) Workaround
+committed in tree: hard-code `PKG_CXXFLAGS = -fopenmp` in both
+`src/Makevars` and `src/Makevars.win` instead of using the macro.
+
+**Verified.**
+- `_OPENMP=201511` confirmed via `MKPRIME_T017_DIAG=1` diagnostic.
+  `omp_get_max_threads=4`, `nWork=4` on rodent (matches discriminator).
+- 233 / 233 tests pass (`filter="ecology|likelihood|mcmc|omp"`).
+  3 new bit-identity test_that blocks in
+  `tests/testthat/test-omp-determinism.R` (5 assertions). Bit-identity
+  holds at OMP_NUM_THREADS ∈ {1, 4} within a single build.
+
+**BENCH NULL.** rodent_aware_timing.R nChains=4 OMP=4: **182-184 s
+wall (2.7 iter/s)** vs T-015 serial baseline 184 s. **No improvement.**
+nChains=1 OMP=4: 45.75-47.34 s vs OMP=1 41.78 s — **13 % slowdown**.
+
+**Root cause (advisor's pre-flagged risk #5: glibc malloc contention).**
+`compute_eco_work_item_ll` allocates fresh `std::vector<double>` workspaces
+per call (~400 KB `buf` on rodent neo partition: 120 × 432 doubles). With
+4 threads concurrently calling the worker on every likelihood evaluation,
+all 4 contend for glibc's global malloc lock. Total allocs: ~96 mallocs
+per outer iter at nChains=4 aware. The lock contention serialises the
+parallel work, eliminating the speedup the design predicted.
+
+**Phase 1b path (~30 LoC, next round).** Pre-allocate per-thread
+`std::vector<EcoThreadScratch>` (bufs sized to `maxBufSize` across all
+work items) BEFORE the parallel region in
+`cpp_log_likelihood_ecology`. Pass `int threadIdx = omp_get_thread_num()`
+into `compute_eco_work_item_ll` so each thread reuses its own buffer.
+Eliminates per-call malloc. Projected: 1.5-1.9× wall on rodent (per
+advisor's pre-malloc-contention analysis).
+
+**LoC budget overrun.** Design estimated ~430 LoC net diff; impl
+delivered ~950 LoC (+829 / −169 in mcmc_ecology.cpp alone). The
+const-ref signature refactor in mcmc.cpp added unplanned scope.
+Acceptable given the correctness motivation (Rcpp copy-ctor isn't
+thread-safe).
+
+**Decision: ship Phase 1 infrastructure.** Without OpenMP wiring and
+the flatten architecture, parallelism is impossible. Phase 1b is a
+focused 30-LoC follow-up; the user can choose to land it next round.
+Honest framing: T-017 is APPLIED-INFRASTRUCTURE, not APPLIED-WIN.
+
+**Tests.** 233 / 233 pass, 6 skips. `test-omp-determinism.R` is the
+new bit-identity gate.
+
+**Cleanup.** Dead impl-agent worktree removed (`git worktree remove
+--force`). Salvaged `dev/t017_discriminator.R` and design doc kept
+in tree. Hard-coded `-fopenmp` Makevars are committed (with comment
+explaining why `$(SHLIB_OPENMP_CXXFLAGS)` was unsafe on this setup).
+
+last_focus: 17

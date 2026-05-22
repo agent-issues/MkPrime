@@ -1,0 +1,12 @@
+# T-017: OpenMP-parallel ecology partition pruner.
+#
+# IMPORTANT: $(SHLIB_OPENMP_CXXFLAGS) does NOT expand for PKG_CXXFLAGS on
+# Rtools45 (verified 2026-05-21) — it only resolves at link time. Hard-code
+# -fopenmp here to ensure both compile and link receive the flag.
+#
+# This file is committed (the .gitignore exclusion has been removed). If
+# you need a local profiling build with different flags, copy this file to
+# src/Makevars.win.local and edit; do NOT modify the committed Makevars.win
+# without considering the OpenMP build.
+PKG_CXXFLAGS = -fopenmp
+PKG_LIBS = -fopenmp

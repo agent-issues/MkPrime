@@ -1,0 +1,7 @@
+# T-017: OpenMP-parallel ecology partition pruner.
+# Hard-coded -fopenmp because $(SHLIB_OPENMP_CXXFLAGS) doesn't expand
+# for PKG_CXXFLAGS on Rtools45 (verified 2026-05-21). On platforms
+# without OpenMP support the build will fail; remove this Makevars or
+# strip -fopenmp manually if you need a no-OpenMP build.
+PKG_CXXFLAGS = -fopenmp
+PKG_LIBS = -fopenmp

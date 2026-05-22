@@ -84,8 +84,12 @@ MkPrime_*.gz
 /.agent-*
 /.tnt-bench
 
-# Local build config — never commit
-src/Makevars.win
+# Local build config — Makevars.win is now committed (T-017 OpenMP build
+# needs SHLIB_OPENMP_CXXFLAGS on Windows). If a local profiling build needs
+# different flags, copy src/Makevars.win to src/Makevars.win.local and
+# edit that instead — do NOT uncomment the exclusion below.
+# src/Makevars.win
+src/Makevars.win.local
 
 # Pilot run outputs (binary RDS pulled from Hamilton; reproducible, not source)
 dev/pilots/*/summary/
