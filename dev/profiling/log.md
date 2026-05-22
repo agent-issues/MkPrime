@@ -575,3 +575,196 @@ today) or wait for shared-arena cache (T-015).
 **Cleanup.** src/mcmc.cpp bench patch reverted to `% 20`. No
 `.vtune-lib-*/` created (not needed for this round). No
 src/Makevars.win touched.
+
+---
+
+## Round 12 (T-015) — 2026-05-21
+
+**Target.** Investigate the "remaining ~75 % of aware-PT amplification"
+that T-014 left on the table, with four candidate hypotheses (cache
+eviction between chains, hidden per-chain rebuild, PT swap cost, false
+sharing) and a brief that explicitly said *don't presume a fix exists*.
+
+**Method.** Advisor pre-consult flagged a math-framing issue in the
+T-014 write-up: the "1.89× excess amplification" was computed as
+(aware 4.24× slowdown) / (blind 2.24× slowdown), treating blind's
+super-linear scaling as the no-amplification baseline. Linear scaling
+under PT is 4× per outer iter (you do 4× the chain-moves), not the 2.24×
+that blind achieves. Blind's 2.24× **already contains a cache-sharing
+bonus**; aware can't be expected to match it unless aware is also
+memory-bound (which it isn't — aware does ~4× more EXP per edge per cat
+than blind, by T-007's per-call cost analysis). Advisor recommended:
+chrono-instrument the PT loop before VTune, since hotspots can't
+discriminate between "compute-bound, scales linearly" and "memory-bound,
+scales sub-linearly".
+
+**Instrumentation.** Added env-gated (`MKPRIME_T015_DIAG=1`) per-chain
+chrono accumulators inside the PT loop at `src/mcmc.cpp:6121-6249`:
+one bracket per move dispatch (`do_move_impl` / `slice_scalar_impl` /
+`slice_kprime_hyper_impl`), one per drift-resync gate firing, and a
+single accumulator around the `std::swap(*states[iPair], *states[jPair])`
+at `:6243`. Emitted to stderr at end of each batch via REprintf.
+Inert when env unset; instrumentation cost adds <1 % under the gate.
+
+**Bench.** `dev/profiling/drivers/rodent_aware_timing.R` (rodent
+60×217, kEco=4, 500 iter) at `MKP_TIMING_NCHAINS ∈ {1, 2, 4}` with
+diag enabled. Numbers are per-chain-move mean μs averaged across
+chains and both batches (200 + 300 iter):
+
+| nChains | Blind iter/s | Aware iter/s | Blind per-move μs | Aware per-move μs |
+|---|---|---|---|---|
+| 1 | 222 | 11.5 | 1475 | ~82700 |
+| 2 | 160 | 5.3  | ~1563 | ~91300 |
+| 4 | 102 | 2.7  | ~1659 | ~90600 |
+
+**Per-chain-move growth from 1ch → 4ch:** blind +12.5 %, aware +9.5 %.
+The small uniform ~10 % growth affects both modes symmetrically — **no
+aware-specific locality cost**. **Caveat:** per-chain weight adaptation
+produced different move mixes across the 1ch/2ch/4ch runs (e.g. blind
+1ch nni:11.7 % vs 4ch nni:4.7 %; aware 1ch nni:15.9 % vs 4ch nni:1.1 %),
+so per-chain-move μs averages over different work distributions. The
+12.5 % vs 9.5 % gap is within this confound; what matters for T-015 is
+the pattern — comparable growth between modes — not the exact %s.
+
+The "super-linear" pattern blind shows in outer-iter throughput
+(222 → 102 = 2.18× slowdown vs 4× linear) is explained entirely by
+**fixed per-outer-iter R overhead** (sample save, streamed log write,
+R callback at batch boundary). On 4 chains:
+- Blind 4ch outer iter = 9.8 ms; 4 × per-move (1.66 ms) = 6.6 ms; **3.2 ms is fixed overhead (33 %)**.
+- Aware 4ch outer iter = 370 ms; 4 × per-move (90.6 ms) = 362 ms; **only 8 ms is fixed overhead (2 %)**.
+
+Multiplying chains scales the move work but the fixed overhead is
+already paid. For blind that fixed overhead is comparable to its tiny
+per-move cost, so adding chains looks sub-linear; for aware it's
+negligible, so adding chains looks linear.
+
+**Swap cost (hypothesis #3).** `swap_total_ns` was 0.000 s under both
+modes across all chain counts — `std::swap(McmcState)` is move-based
+(Rcpp SEXP refcount-swap + std::vector pointer-swap) and registered
+below the chrono resolution. <0.001 % of wall.
+
+**Drift-resync (hypothesis #2 residual).** At default `% 200` cadence
+the gate fires 2-3 times per 500-iter batch. Aware 4ch: 232 ms total
+out of 184 s wall = 0.13 %. T-014's fix already collapsed this; no
+remaining headroom.
+
+**Lazy populate (hypothesis #2 primary).** `populate_eco_cache_full`
+at `src/mcmc.cpp:4868` is gated to NNI moves AND only fires when
+`MKPRIME_ECO_PARTIAL_CL=1`. Default unset → ecoCL is dormant. Not
+applicable to the default workload.
+
+**False sharing (hypothesis #4).** Single-threaded PT loop; not
+applicable.
+
+**Verdict.** T-015 as phrased is **REFUTED**. Per-chain-move time is
+flat-to-within-3% between modes when normalised by chain count. The
+remaining "~75 % of excess amplification" in T-014's framing was a
+math artefact of comparing blind's super-linear scaling (driven by
+fixed R overhead) to aware's near-linear scaling (driven by move time
+dominating). There is no aware-specific PT locality cost to recover.
+
+**Implication for T-014's framing.** T-014's "shared arena" candidate
+for the remaining 1.69× excess is misconceived; there is no recoverable
+excess. T-014's drift-gate fix is real and stands (~12 % wall at 4ch),
+but it accounts for *all* the recoverable PT-specific cost on rodent,
+not 25 %.
+
+**Implication for production.** Hamilton viability is unchanged from
+T-014's conclusion: aware nChains=4 PT on rodent runs at ~linear in
+nChains. For a 30 k iter warmup budget under the v2 8 h walltime,
+nChains=1 + nRuns=4 remains the viable production option. PT amplifies
+walltime by ~4× as expected from doing 4× the work, not because of any
+fixable locality cost.
+
+**Filed.** T-015 in findings.md, status **REFUTED-AS-PHRASED**,
+kind `[Investigation]`, priority P1 (closes a candidate that would
+otherwise have absorbed a major refactor).
+
+**Tests.** 228 / 228 pass (`filter="ecology|likelihood|mcmc"`), 0
+failures, 6 expected skips. The instrumentation is bit-identity-safe
+(only writes to local accumulators when env-gated).
+
+**What's NOT done (out of scope for T-015 but worth recording).**
+The orchestrator-level heap allocations in
+`cpp_partition_log_likelihood_ecology` (`src/mcmc_ecology.cpp:1005,
+1029`) and in `const_site_prob_*_eco_single` (`:854, :893, :924`) still
+allocate ~800 KB per call uniformly per chain. This is a *T-007*
+follow-up (uniform per-chain cost), not T-015 (excess at nChains>1).
+Adding T-008-style workspace pre-allocation here would shave a fraction
+of aware wall regardless of nChains. Estimated 5-10 % wall, but the
+ecology orchestrator's call frequency dropped substantially after
+T-010's partition cache, so the gain may be smaller in practice.
+Filing as candidate **T-016**? — defer to the next /profile rotation.
+
+**Cleanup.** Diagnostic instrumentation kept in-tree behind the
+`MKPRIME_T015_DIAG=1` gate (inert by default, costs ~5 LoC of variable
+declarations + ~25 LoC of accumulators + emission). Re-usable for future
+PT-related investigations.
+
+---
+
+## Round 13 (T-018 — adaptive move-weight decay; salvaged) — 2026-05-21
+
+**Target.** After T-015 closed the PT-locality investigation, the
+user picked options 1 (threaded PT) and 2 (adaptive moves) from the
+"how do we actually improve aware performance" conversation. Two
+background subagents launched in worktrees. **Both died silently**
+(known Opus-on-big-refactor failure mode — same pattern as the T-012
+agent death in Round 10). The Sonnet T-018 agent made ~85 % progress
+before dying. Salvaged from `mkp/.claude/worktrees/agent-a0b72a05663949b39/`.
+
+**Salvage strategy.** Unlocked dead worktrees with `git worktree
+unlock`, copied `R/RunMkPrime.R` and `tests/testthat/test-t018-
+adaptive-moves.R` to `/tmp/`, removed the worktrees with `git worktree
+remove --force`, deleted the stale branch refs, created a fresh
+`t018-adaptive-moves` branch off `origin/t015-pt-locality`, applied
+the copied files. The dev/t018_*.R scratch scripts were NOT copied
+(throwaway agent-only files).
+
+**What landed (R-side only, no C++ changes).** `.DecayLowAcceptMoves()`
+in `R/RunMkPrime.R:4209` — multiplicative decay (default ×0.7) on free
+moves with batch-level cold-chain acceptance < 2 % and ≥ 30 proposals
+in the batch. Floor at 0.1 × initial weight per move. Re-normalises
+to preserve the unpinned budget. Wired at `:1098-1107` inside the
+warmup loop, after `.AdaptMoveWeights()`. Frozen at warmup-to-sampling
+transition by the existing phase guard. `MKPRIME_ADAPT_DIAG=1` enables
+per-decay `message()` to stderr. 120 LoC R + 13 unit tests.
+
+**Verified.**
+- 241 / 241 tests pass (228 baseline + 13 new T-018), 7 skips
+  (1 new gated behind `MKPRIME_SLOW_TESTS=true`).
+- Rodent 500-iter bench: aware 45.76 s (10.9 iter/s) vs. T-015
+  baseline 43.56 s (11.5 iter/s) — within ±5 % noise.
+- The `[T-018 decay]` diagnostic did NOT fire on the rodent run.
+  Confirmed function is exported and call site executes; the
+  default thresholds (n_min=30 proposals, accept_floor=2 %) simply
+  don't trigger on rodent with warmup=100-200 iter. Low-weight
+  moves don't accumulate 30 proposals; high-weight moves accept
+  above 2 %.
+
+**Honest framing.** T-018 is a defensive correctness improvement
+that lands the infrastructure for acceptance-aware move-weight
+adaptation. On rodent 500-iter it's a no-op (bench null). The
+production benefit is conditional: long warmups (≥ 2000 iter) on
+harder datasets where pathological low-acceptance patterns can
+develop in slice or branch-length moves. Filing with the bench
+null openly disclosed; if a future workload triggers decay we
+can revisit.
+
+**Filed.** T-018 in findings.md, status APPLIED, kind [Optimise],
+priority P2 (because bench impact on the production target is null;
+defensive infrastructure rather than wall recovery).
+
+**Sibling task T-017 (threaded PT).** Opus agent died with near-zero
+progress (single chore commit, no threading work). Same death pattern
+as T-012 Opus agent. Re-launching with the same brief is likely to
+fail the same way. User opted to schedule a 90-min cron wakeup to
+launch a Plan-then-action sequence — a Plan subagent first scopes
+the R-API thread-safety landscape (read-only, lower death risk),
+then a fresh implementation agent works against a concrete design.
+
+**Cleanup.** Dead agent worktrees removed (`git worktree remove
+--force`), stale branches deleted (`git branch -D t017-pt-threaded
+t018-adaptive-moves`). Salvaged files in /tmp left for now (small).
+
+last_focus: 18
