@@ -1,6 +1,8 @@
 # Rodent BLIND vs AWARE comparison
 
-Generated from full 1M-iteration chains (both chains complete as of 2026-05-19).
+Generated 2026-05-22.
+AWARE: MkNT v1 v5 (2 runs × 30k iter, nChains=4 PT, PT-RT-001 fix; mode-trap suspected).
+BLIND: MkNT v1 (4 runs × 100k iter, nChains=4 PT, converged).
 
 ## Numerical summary
 
@@ -13,8 +15,8 @@ Generated from full 1M-iteration chains (both chains complete as of 2026-05-19).
 | Blind post-burnin | 1893 |
 | Aware subsampled for CID | 200 |
 | Blind subsampled for CID | 200 |
-| Aware minESS (at 1M iter, from .er log) | TBD (parse MkNT aware err log) |
-| Blind minESS (at 1M iter, from .er log) | **BELOW 200 (minESS = 140)** |
+| Aware minESS | TBD (parse MkNT aware err log) |
+| Blind minESS | **BELOW 200 (minESS = 140)** |
 
 ### Pairwise CID distances (subsampled set)
 
@@ -143,12 +145,11 @@ The aware and blind posterior clouds are distinctly separated in CID-MDS space, 
 
 ## ESS and convergence
 
-Both chains ran for 1M iterations with treeThin = 1000. The minESS values
-reported here are continuous-parameter ESS from the MkPrime MCMC log (the
-minimum over all monitored parameters at the final iteration).
+The minESS values reported here are continuous-parameter ESS from the MkPrime
+MCMC log (the minimum over all monitored parameters at the final iteration).
 
-- **Aware chain**: minESS = NA at 1M iterations. Adequate / TBD.
-- **Blind chain**: minESS = 140 at 1M iterations. Flag: below recommended minimum of 200.
+- **Aware chain (v5, 2 runs × 30k iter)**: minESS = NA. Adequate / TBD.
+- **Blind chain (4 runs × 100k iter)**: minESS = 140. Flag: below recommended minimum of 200.
 
 ESS below 200 indicates that the chains have not fully converged on the
 parameter that mixes most slowly (likely topology or a correlated rate

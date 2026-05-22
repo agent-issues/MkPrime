@@ -99,6 +99,26 @@ test_that("Single taxon with all states works", {
 })
 
 
+test_that("Polytomous start tree warns and resolves automatically", {
+  pd <- .mkp_test_pd()
+  # Star tree: all 4 tips share one internal node -> single polytomy at root
+  poly_tree <- ape::read.tree(text = "(t1:0.1,t2:0.2,t3:0.1,t4:0.3);")
+  expect_false(ape::is.binary(poly_tree))
+
+  warned_polytom <- FALSE
+  res <- withCallingHandlers(
+    RunMkPrime(pd, poly_tree, fixTopology = TRUE,
+               nIter = 200L, maxWarmup = 100L, nRuns = 1L),
+    warning = function(w) {
+      if (grepl("polytom", conditionMessage(w))) warned_polytom <<- TRUE
+      invokeRestart("muffleWarning")
+    }
+  )
+  expect_true(warned_polytom)
+  expect_s3_class(res, "MkPosterior")
+})
+
+
 test_that("Dropped invariant neomorphic char does not trigger binary warning", {
   # Char 1: invariant (all 0), marked neomorphic; Char 2: variable
   mat <- matrix(c(0, 0, 0, 0, 0,

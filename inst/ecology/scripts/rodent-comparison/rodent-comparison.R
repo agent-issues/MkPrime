@@ -451,7 +451,9 @@ blind_ess_note <- if (blind_minESS < 200) sprintf("**BELOW 200 (minESS = %d)**",
 summary_md <- sprintf(
 '# Rodent BLIND vs AWARE comparison
 
-Generated from full 1M-iteration chains (both chains complete as of 2026-05-19).
+Generated 2026-05-22.
+AWARE: MkNT v1 v5 (2 runs × 30k iter, nChains=4 PT, PT-RT-001 fix; mode-trap suspected).
+BLIND: MkNT v1 (4 runs × 100k iter, nChains=4 PT, converged).
 
 ## Numerical summary
 
@@ -464,8 +466,8 @@ Generated from full 1M-iteration chains (both chains complete as of 2026-05-19).
 | Blind post-burnin | %d |
 | Aware subsampled for CID | %d |
 | Blind subsampled for CID | %d |
-| Aware minESS (at 1M iter, from .er log) | %s |
-| Blind minESS (at 1M iter, from .er log) | %s |
+| Aware minESS | %s |
+| Blind minESS | %s |
 
 ### Pairwise CID distances (subsampled set)
 
@@ -500,12 +502,11 @@ The two chains\' posterior distributions are **%s** in CID-MDS space
 
 ## ESS and convergence
 
-Both chains ran for 1M iterations with treeThin = 1000. The minESS values
-reported here are continuous-parameter ESS from the MkPrime MCMC log (the
-minimum over all monitored parameters at the final iteration).
+The minESS values reported here are continuous-parameter ESS from the MkPrime
+MCMC log (the minimum over all monitored parameters at the final iteration).
 
-- **Aware chain**: minESS = %d at 1M iterations. %s
-- **Blind chain**: minESS = %d at 1M iterations. %s
+- **Aware chain (v5, 2 runs × 30k iter)**: minESS = %d. %s
+- **Blind chain (4 runs × 100k iter)**: minESS = %d. %s
 
 ESS below 200 indicates that the chains have not fully converged on the
 parameter that mixes most slowly (likely topology or a correlated rate
