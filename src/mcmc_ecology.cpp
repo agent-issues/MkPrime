@@ -919,6 +919,56 @@ double PruningJcEcology(
 // constant-site probability is computed per character via a single
 // pseudo-character pruning pass.
 
+// T-017: EcoWorkItem is one unit of pruning work on a single
+// (partition, kPrime-subgroup) pair.  For neomorphic / known partitions
+// there is exactly one item per partition (subgroupKp = -1).  For
+// transformational partitions there is one item per kPrime subgroup
+// (subgroupKp = the kPrime value, which is also the state-space size).
+struct EcoWorkItem {
+  int partIdx;       // index into data.parts[]
+  int subgroupKp;    // -1 = neo/known; else kPrime value
+};
+
+// T-017 Phase 1b: per-thread scratch workspace.  Eliminates the per-call
+// malloc/free that Phase 1 left in `compute_eco_work_item_ll`.
+// T-016: extended with tipStatesZero/tipStatesOne so const_site_prob_*_raw
+// can also use caller-supplied scratch instead of allocating per call.
+struct EcoThreadScratch {
+  std::vector<double>  buf;          // (maxNode + 1) * maxStride doubles
+  std::vector<uint8_t> initFlg;      // (maxNode + 1) bytes
+  std::vector<int>     zPartLocal;   // maxNCharPart * zCols
+  std::vector<int>     subStates;    // nTip * maxNSub
+  std::vector<int>     subZ;         // maxNSub * zCols
+  std::vector<int>     cols;         // up to maxNCharPart
+  std::vector<int>     zVec;         // zCols
+  std::vector<double>  neoEl;        // nEdge doubles
+  std::vector<double>  rootFreqs;    // up to maxKStates doubles
+  std::vector<int>     tipStatesZero; // nTip zeros  — for const_site_prob single-char passes
+  std::vector<int>     tipStatesOne;  // nTip ones   — for const_site_prob_mkn second pass
+  int maxNode  = 0;
+  int maxStride = 0;
+  int maxNTip  = 0;
+
+  void allocate(int maxNode_, int maxStride_, int maxNCharPart,
+                int maxNSub, int zCols, int nTip, int nEdge,
+                int maxKStates) {
+    maxNode   = maxNode_;
+    maxStride = maxStride_;
+    maxNTip   = nTip;
+    buf.assign(static_cast<size_t>(maxNode_ + 1) * maxStride_, 0.0);
+    initFlg.assign(maxNode_ + 1, 0u);
+    zPartLocal.assign(static_cast<size_t>(maxNCharPart) * std::max(1, zCols), 0);
+    subStates.assign(static_cast<size_t>(nTip) * std::max(1, maxNSub), 0);
+    subZ.assign(static_cast<size_t>(maxNSub) * std::max(1, zCols), 0);
+    cols.assign(maxNCharPart, 0);
+    zVec.assign(std::max(1, zCols), 0);
+    neoEl.assign(nEdge, 0.0);
+    rootFreqs.assign(std::max(2, maxKStates), 0.0);
+    tipStatesZero.assign(nTip, 0);
+    tipStatesOne.assign(nTip, 1);
+  }
+};
+
 // T-017: raw-pointer variants of const_site_prob_*_eco_single.  All Rcpp
 // temporaries replaced with std::vector so these are safe to call from
 // inside an OpenMP parallel region.
@@ -936,92 +986,84 @@ static double const_site_prob_jc_eco_single_raw(
     int nTip, int kStates,
     const double* rmPtr, int nCat,
     const double* wPtr, int kEco,
-    const int* zVecPtr,           // length (kEco - 1)
+    const int* zVecPtr,           // length (kEco - 1); caller-owned, passed to pruner
     const double* phiPtr, int mode,
     int refEcology,
-    const std::vector<double>& gammaE) {
+    const std::vector<double>& gammaE,
+    EcoThreadScratch& scratch) {  // T-016: caller-owned scratch; no per-call alloc
 
-  // Pseudo-character: nChar = 1, all-zero tip states, single-row zMat row.
-  // Build flat row-major-but-here-column-major-equivalent buffers (nChar = 1
-  // so layout collapses).  Memory layout used by the inner pruner:
-  //   tsPtr[(tip-1) + c*nTip]      → c = 0 only, so tsPtr[tip-1]
-  //   zPtr[c + j*nChar]            → c = 0, nChar = 1, so zPtr[j]
-  std::vector<int> tipStates(nTip, 0);      // all 0
-  std::vector<int> zVec(kEco - 1, 0);
-  for (int j = 0; j < kEco - 1; ++j) zVec[j] = zVecPtr[j];
-  std::vector<double> rootFreqs(kStates, 1.0 / kStates);
+  double* rootFreqs = scratch.rootFreqs.data();
+  for (int k = 0; k < kStates; ++k) rootFreqs[k] = 1.0 / kStates;
 
   int maxNode = 2 * nTip - 1;
   int stride  = kStates;
-  std::vector<double>  buf((maxNode + 1) * stride, 0.0);
-  std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+  size_t bufBytes = static_cast<size_t>(maxNode + 1) * stride;
+  std::fill_n(scratch.buf.begin(), bufBytes, 0.0);
+  std::fill_n(scratch.initFlg.begin(), maxNode + 1, 0u);
 
+  // JC symmetry: P(constant in any state) = kStates * P(all-tips-0).
   double ll = pruning_jc_acrv_flat_ecology_raw(
     parPtr, chPtr, nEdge,
     elPtr,
-    tipStates.data(), nTip, /*nChar=*/1,
-    kStates, rootFreqs.data(),
+    scratch.tipStatesZero.data(), nTip, /*nChar=*/1,
+    kStates, rootFreqs,
     rmPtr, nCat,
     wPtr, kEco,
-    zVec.data(),
+    zVecPtr,
     phiPtr, mode, refEcology, gammaE,
-    buf.data(), initFlg.data(), stride);
-  // JC symmetry: P(constant in any state) = kStates * P(all-tips-0).
+    scratch.buf.data(), scratch.initFlg.data(), stride);
   return kStates * std::exp(ll);
 }
 
 
 static double const_site_prob_mkn_eco_single_raw(
     const int* parPtr, const int* chPtr, int nEdge,
-    const double* elPtr,
+    const double* elPtr,          // caller must pass already-scaled neoEl
     int nTip,
     double rateLoss,
     const double* rmPtr, int nCat,
     const double* wPtr, int kEco,
-    const int* zVecPtr,           // length (kEco - 1)
+    const int* zVecPtr,           // length (kEco - 1); caller-owned, passed to pruner
     const double* phiPtr, int mode,
     int refEcology,
-    const std::vector<double>& gammaE) {
+    const std::vector<double>& gammaE,
+    EcoThreadScratch& scratch) {  // T-016: caller-owned scratch; no per-call alloc
 
-  std::vector<int> zVec(kEco - 1, 0);
-  for (int j = 0; j < kEco - 1; ++j) zVec[j] = zVecPtr[j];
-  std::vector<double> rootFreqs(2);
+  double* rootFreqs = scratch.rootFreqs.data();
   rootFreqs[0] = rateLoss / (1.0 + rateLoss);
   rootFreqs[1] = 1.0 / (1.0 + rateLoss);
 
   int maxNode = 2 * nTip - 1;
   int stride  = 2;
-  std::vector<double>  buf((maxNode + 1) * stride, 0.0);
-  std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+  size_t bufBytes = static_cast<size_t>(maxNode + 1) * stride;
 
   // Pseudo-char "all 0"
-  std::vector<int> tipStates0(nTip, 0);
+  std::fill_n(scratch.buf.begin(), bufBytes, 0.0);
+  std::fill_n(scratch.initFlg.begin(), maxNode + 1, 0u);
   double ll0 = pruning_mkn_acrv_flat_ecology_raw(
     parPtr, chPtr, nEdge,
     elPtr,
-    tipStates0.data(), nTip, /*nChar=*/1,
-    rateLoss, rootFreqs.data(),
+    scratch.tipStatesZero.data(), nTip, /*nChar=*/1,
+    rateLoss, rootFreqs,
     rmPtr, nCat,
     wPtr, kEco,
-    zVec.data(),
+    zVecPtr,
     phiPtr, mode, refEcology, gammaE,
-    buf.data(), initFlg.data(), stride);
+    scratch.buf.data(), scratch.initFlg.data(), stride);
 
   // Pseudo-char "all 1"
-  std::vector<int> tipStates1(nTip, 1);
-  // Re-zero buffers for the second pass
-  std::fill(buf.begin(), buf.end(), 0.0);
-  std::fill(initFlg.begin(), initFlg.end(), 0u);
+  std::fill_n(scratch.buf.begin(), bufBytes, 0.0);
+  std::fill_n(scratch.initFlg.begin(), maxNode + 1, 0u);
   double ll1 = pruning_mkn_acrv_flat_ecology_raw(
     parPtr, chPtr, nEdge,
     elPtr,
-    tipStates1.data(), nTip, /*nChar=*/1,
-    rateLoss, rootFreqs.data(),
+    scratch.tipStatesOne.data(), nTip, /*nChar=*/1,
+    rateLoss, rootFreqs,
     rmPtr, nCat,
     wPtr, kEco,
-    zVec.data(),
+    zVecPtr,
     phiPtr, mode, refEcology, gammaE,
-    buf.data(), initFlg.data(), stride);
+    scratch.buf.data(), scratch.initFlg.data(), stride);
 
   return std::exp(ll0) + std::exp(ll1);
 }
@@ -1029,6 +1071,9 @@ static double const_site_prob_mkn_eco_single_raw(
 
 // Thin Rcpp-arg wrappers around the raw variants.  Kept so serial callers
 // (per_char_log_lik_ecology in the Gibbs z sweep) need no signature change.
+// T-016: each wrapper carries a function-static EcoThreadScratch; the zVec
+// is copied once from the Rcpp IntegerVector into scratch.zVec, then the raw
+// variant receives scratch.zVec.data() — no allocation inside _raw.
 static inline double const_site_prob_jc_eco_single(
     const Rcpp::IntegerVector& parent, const Rcpp::IntegerVector& child,
     const Rcpp::NumericVector& edgeLen, int nTip, int kStates,
@@ -1037,14 +1082,28 @@ static inline double const_site_prob_jc_eco_single(
     const Rcpp::NumericVector& phi, int mode,
     int refEcology,
     const std::vector<double>& gammaE) {
+  static EcoThreadScratch jcScratch;
+  int nEdge  = parent.size();
+  int kEco   = wEdge.ncol();
+  int zCols  = std::max(1, kEco - 1);
+  int maxNode = 2 * nTip - 1;
+  if (jcScratch.maxNode < maxNode || jcScratch.maxStride < kStates ||
+      (int)jcScratch.rootFreqs.size() < kStates ||
+      (int)jcScratch.zVec.size() < zCols ||
+      jcScratch.maxNTip < nTip) {
+    jcScratch.allocate(maxNode, kStates, 1, 1, zCols, nTip, nEdge, kStates);
+  }
+  int* zPtr = jcScratch.zVec.data();
+  for (int j = 0; j < kEco - 1; ++j) zPtr[j] = zVec[j];
   return const_site_prob_jc_eco_single_raw(
-    INTEGER(parent), INTEGER(child), parent.size(),
+    INTEGER(parent), INTEGER(child), nEdge,
     REAL(edgeLen),
     nTip, kStates,
     REAL(rates), rates.size(),
-    REAL(wEdge), wEdge.ncol(),
-    INTEGER(zVec),
-    REAL(phi), mode, refEcology, gammaE);
+    REAL(wEdge), kEco,
+    zPtr,
+    REAL(phi), mode, refEcology, gammaE,
+    jcScratch);
 }
 
 static inline double const_site_prob_mkn_eco_single(
@@ -1055,15 +1114,28 @@ static inline double const_site_prob_mkn_eco_single(
     const Rcpp::NumericVector& phi, int mode,
     int refEcology,
     const std::vector<double>& gammaE) {
+  static EcoThreadScratch mknScratch;
+  int nEdge  = parent.size();
+  int kEco   = wEdge.ncol();
+  int zCols  = std::max(1, kEco - 1);
+  int maxNode = 2 * nTip - 1;
+  if (mknScratch.maxNode < maxNode || mknScratch.maxStride < 2 ||
+      (int)mknScratch.zVec.size() < zCols ||
+      mknScratch.maxNTip < nTip) {
+    mknScratch.allocate(maxNode, 2, 1, 1, zCols, nTip, nEdge, 2);
+  }
+  int* zPtr = mknScratch.zVec.data();
+  for (int j = 0; j < kEco - 1; ++j) zPtr[j] = zVec[j];
   return const_site_prob_mkn_eco_single_raw(
-    INTEGER(parent), INTEGER(child), parent.size(),
+    INTEGER(parent), INTEGER(child), nEdge,
     REAL(edgeLen),
     nTip,
     rateLoss,
     REAL(rates), rates.size(),
-    REAL(wEdge), wEdge.ncol(),
-    INTEGER(zVec),
-    REAL(phi), mode, refEcology, gammaE);
+    REAL(wEdge), kEco,
+    zPtr,
+    REAL(phi), mode, refEcology, gammaE,
+    mknScratch);
 }
 
 
@@ -1130,15 +1202,39 @@ static double cpp_partition_log_likelihood_ecology_raw(
   const int* partTipsPtr = INTEGER(part.tipStates);   // nTip x nCharPart, col-major
   const int* gciPtr      = INTEGER(part.globalCharIdx);
 
-  // Local zPart: nCharPart x zCols column-major.  Layout
-  //   zPartLocal[c + j*nCharPart]
-  // matches what the pruner reads via zPtr[c + j*nChar].
-  std::vector<int> zPartLocal(nCharPart * zCols);
+  // T-016: function-static scratch — eliminates per-call malloc/free for all
+  // local vectors.  Serial-only (all callers are in the serial chain loop;
+  // no OpenMP region wraps this function — confirmed by grep of mcmc.cpp).
+  // Grow-only resize: re-allocate if any dimension exceeds current capacity.
+  int maxKStates = 2, maxNSub = 1;
+  if (part.type == 2) {
+    maxKStates = part.k;
+  } else if (part.type == 1) {
+    for (int c = 0; c < nCharPart; ++c) {
+      int kp = kPrimePtr[gciPtr[c]];
+      if (kp > maxKStates) maxKStates = kp;
+    }
+    maxNSub = nCharPart;  // upper bound
+  }
+  int maxStride = nCharPart * std::max(2, maxKStates);
+
+  static EcoThreadScratch orcScratch;
+  if (orcScratch.maxNode < maxNode || orcScratch.maxStride < maxStride ||
+      (int)orcScratch.zPartLocal.size() < nCharPart * std::max(1, zCols) ||
+      (int)orcScratch.subStates.size() < nTip * maxNSub ||
+      (int)orcScratch.neoEl.size() < nEdge ||
+      (int)orcScratch.rootFreqs.size() < maxKStates ||
+      orcScratch.maxNTip < nTip) {
+    orcScratch.allocate(maxNode, maxStride, std::max(nCharPart, maxNSub),
+                        maxNSub, std::max(1, zCols), nTip, nEdge, maxKStates);
+  }
+
+  // Build local zPart: nCharPart x zCols column-major, layout zPartLocal[c + j*nCharPart].
+  int* zPartLocal = orcScratch.zPartLocal.data();
   for (int c = 0; c < nCharPart; ++c) {
     int gi = gciPtr[c];
-    for (int j = 0; j < zCols; ++j) {
+    for (int j = 0; j < zCols; ++j)
       zPartLocal[c + j * nCharPart] = zMatrixGlobalPtr[gi + j * nCharsTotal];
-    }
   }
 
   // Suppress unused warnings (phiLen captured for documentation only).
@@ -1147,64 +1243,66 @@ static double cpp_partition_log_likelihood_ecology_raw(
   double ll = 0.0;
 
   if (part.type == 0) {
-    // Neomorphic.  Build neoEl = edgeLen * rateNeo into a std::vector.
-    std::vector<double> neoEl(nEdge);
+    // Neomorphic.  Build neoEl = edgeLen * rateNeo.
+    double* neoEl = orcScratch.neoEl.data();
     for (int i = 0; i < nEdge; ++i) neoEl[i] = elPtr[i] * rateNeo;
-    // rootFreqs from mkn stationary (length 2).
-    std::vector<double> rootFreqs(2);
+    double* rootFreqs = orcScratch.rootFreqs.data();
     rootFreqs[0] = rateLoss / (1.0 + rateLoss);
     rootFreqs[1] = 1.0 / (1.0 + rateLoss);
     int stride = nCharPart * 2;
-    std::vector<double>  buf((maxNode + 1) * stride, 0.0);
-    std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+    size_t bufBytes = static_cast<size_t>(maxNode + 1) * stride;
+    std::fill_n(orcScratch.buf.begin(), bufBytes, 0.0);
+    std::fill_n(orcScratch.initFlg.begin(), maxNode + 1, 0u);
     ll = pruning_mkn_acrv_flat_ecology_raw(
       parPtr, chPtr, nEdge,
-      neoEl.data(),
+      neoEl,
       partTipsPtr, nTip, nCharPart,
-      rateLoss, rootFreqs.data(),
+      rateLoss, rootFreqs,
       ratesPtr, nCat,
       wPtr, kEco,
-      zPartLocal.data(),
+      zPartLocal,
       phiPtr, mode, refE, gammaE,
-      buf.data(), initFlg.data(), stride);
+      orcScratch.buf.data(), orcScratch.initFlg.data(), stride);
     if (data.codingType == 1) {  // variable
-      // zVec for character c is the column-c row of zPartLocal,
-      // i.e. zVec[j] = zPartLocal[c + j*nCharPart].
-      std::vector<int> zVec(zCols);
+      // zVec for character c is column c of zPartLocal.
+      int* zVec = orcScratch.zVec.data();
       for (int c = 0; c < nCharPart; ++c) {
         for (int j = 0; j < zCols; ++j)
           zVec[j] = zPartLocal[c + j * nCharPart];
         double pConst = const_site_prob_mkn_eco_single_raw(
           parPtr, chPtr, nEdge,
-          neoEl.data(),
+          neoEl,
           nTip,
           rateLoss,
           ratesPtr, nCat,
           wPtr, kEco,
-          zVec.data(),
-          phiPtr, mode, refE, gammaE);
+          zVec,
+          phiPtr, mode, refE, gammaE,
+          orcScratch);
         ll -= std::log(1.0 - pConst);
       }
     }
   } else if (part.type == 2) {
     // Known state space.
     int kStates = part.k;
-    std::vector<double> rootFreqs(kStates, 1.0 / kStates);
+    double* rootFreqs = orcScratch.rootFreqs.data();
+    for (int k = 0; k < kStates; ++k) rootFreqs[k] = 1.0 / kStates;
     int stride = nCharPart * kStates;
-    std::vector<double>  buf((maxNode + 1) * stride, 0.0);
-    std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+    size_t bufBytes = static_cast<size_t>(maxNode + 1) * stride;
+    std::fill_n(orcScratch.buf.begin(), bufBytes, 0.0);
+    std::fill_n(orcScratch.initFlg.begin(), maxNode + 1, 0u);
     ll = pruning_jc_acrv_flat_ecology_raw(
       parPtr, chPtr, nEdge,
       elPtr,
       partTipsPtr, nTip, nCharPart,
-      kStates, rootFreqs.data(),
+      kStates, rootFreqs,
       ratesPtr, nCat,
       wPtr, kEco,
-      zPartLocal.data(),
+      zPartLocal,
       phiPtr, mode, refE, gammaE,
-      buf.data(), initFlg.data(), stride);
+      orcScratch.buf.data(), orcScratch.initFlg.data(), stride);
     if (data.codingType == 1) {
-      std::vector<int> zVec(zCols);
+      int* zVec = orcScratch.zVec.data();
       for (int c = 0; c < nCharPart; ++c) {
         for (int j = 0; j < zCols; ++j)
           zVec[j] = zPartLocal[c + j * nCharPart];
@@ -1214,8 +1312,9 @@ static double cpp_partition_log_likelihood_ecology_raw(
           nTip, kStates,
           ratesPtr, nCat,
           wPtr, kEco,
-          zVec.data(),
-          phiPtr, mode, refE, gammaE);
+          zVec,
+          phiPtr, mode, refE, gammaE,
+          orcScratch);
         ll -= std::log(1.0 - pConst);
       }
     }
@@ -1234,34 +1333,35 @@ static double cpp_partition_log_likelihood_ecology_raw(
       const std::vector<int>& cols = kv.second;
       int nSub = static_cast<int>(cols.size());
 
-      // subStates: nTip x nSub column-major, layout subStates[t + c*nTip].
-      // subZ: nSub x zCols column-major, layout subZ[c + j*nSub].
-      std::vector<int> subStates(nTip * nSub);
-      std::vector<int> subZ(nSub * zCols);
+      // subStates: nTip x nSub column-major.  subZ: nSub x zCols column-major.
+      int* subStates = orcScratch.subStates.data();
+      int* subZ      = orcScratch.subZ.data();
       for (int c = 0; c < nSub; ++c) {
         for (int t = 0; t < nTip; ++t)
           subStates[t + c * nTip] = partTipsPtr[t + cols[c] * nTip];
         for (int j = 0; j < zCols; ++j)
           subZ[c + j * nSub] = zPartLocal[cols[c] + j * nCharPart];
       }
-      std::vector<double> rootFreqs(kp, 1.0 / kp);
+      double* rootFreqs = orcScratch.rootFreqs.data();
+      for (int k = 0; k < kp; ++k) rootFreqs[k] = 1.0 / kp;
       int stride = nSub * kp;
-      std::vector<double>  buf((maxNode + 1) * stride, 0.0);
-      std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+      size_t bufBytes = static_cast<size_t>(maxNode + 1) * stride;
+      std::fill_n(orcScratch.buf.begin(), bufBytes, 0.0);
+      std::fill_n(orcScratch.initFlg.begin(), maxNode + 1, 0u);
 
       double subLl = pruning_jc_acrv_flat_ecology_raw(
         parPtr, chPtr, nEdge,
         elPtr,
-        subStates.data(), nTip, nSub,
-        kp, rootFreqs.data(),
+        subStates, nTip, nSub,
+        kp, rootFreqs,
         ratesPtr, nCat,
         wPtr, kEco,
-        subZ.data(),
+        subZ,
         phiPtr, mode, refE, gammaE,
-        buf.data(), initFlg.data(), stride);
+        orcScratch.buf.data(), orcScratch.initFlg.data(), stride);
 
       if (data.codingType == 1) {
-        std::vector<int> zVec(zCols);
+        int* zVec = orcScratch.zVec.data();
         for (int c = 0; c < nSub; ++c) {
           for (int j = 0; j < zCols; ++j)
             zVec[j] = subZ[c + j * nSub];
@@ -1271,8 +1371,9 @@ static double cpp_partition_log_likelihood_ecology_raw(
             nTip, kp,
             ratesPtr, nCat,
             wPtr, kEco,
-            zVec.data(),
-            phiPtr, mode, refE, gammaE);
+            zVec,
+            phiPtr, mode, refE, gammaE,
+            orcScratch);
           subLl -= std::log(1.0 - pConst);
         }
       }
@@ -1368,53 +1469,9 @@ void compute_gamma_e_ecology(
 // partition, preserving the per-partition summation order. The total is
 // bit-identical to the pre-refactor monolithic body.
 
-// T-017: EcoWorkItem is one unit of pruning work on a single
-// (partition, kPrime-subgroup) pair.  For neomorphic / known partitions
-// there is exactly one item per partition (subgroupKp = -1).  For
-// transformational partitions there is one item per kPrime subgroup
-// (subgroupKp = the kPrime value, which is also the state-space size).
-struct EcoWorkItem {
-  int partIdx;       // index into data.parts[]
-  int subgroupKp;    // -1 = neo/known; else kPrime value
-};
-
-// T-017 Phase 1b: per-thread scratch workspace.  Eliminates the per-call
-// malloc/free that Phase 1 left in `compute_eco_work_item_ll` (the ~300 KB
-// `buf` was contending on glibc's global malloc lock with 4 threads, yielding
-// 0× speedup despite OpenMP being active).  One instance per thread, sized
-// once at the start of `cpp_log_likelihood_ecology`.  Reused across all
-// work items handled by that thread.  Bit-identity preserved: each call
-// zero-fills the prefixes it uses; final logLik depends only on the sum of
-// per-item partial results, in fixed serial-merge order.
-struct EcoThreadScratch {
-  std::vector<double>  buf;       // (maxNode + 1) * maxStride doubles
-  std::vector<uint8_t> initFlg;   // (maxNode + 1) bytes
-  std::vector<int>     zPartLocal; // maxNCharPart * zCols
-  std::vector<int>     subStates;  // nTip * maxNSub
-  std::vector<int>     subZ;       // maxNSub * zCols
-  std::vector<int>     cols;       // up to maxNCharPart
-  std::vector<int>     zVec;       // zCols
-  std::vector<double>  neoEl;      // nEdge doubles
-  std::vector<double>  rootFreqs;  // up to maxKStates doubles
-  int maxNode = 0;
-  int maxStride = 0;
-
-  void allocate(int maxNode_, int maxStride_, int maxNCharPart,
-                int maxNSub, int zCols, int nTip, int nEdge,
-                int maxKStates) {
-    maxNode   = maxNode_;
-    maxStride = maxStride_;
-    buf.assign(static_cast<size_t>(maxNode_ + 1) * maxStride_, 0.0);
-    initFlg.assign(maxNode_ + 1, 0u);
-    zPartLocal.assign(static_cast<size_t>(maxNCharPart) * std::max(1, zCols), 0);
-    subStates.assign(static_cast<size_t>(nTip) * std::max(1, maxNSub), 0);
-    subZ.assign(static_cast<size_t>(maxNSub) * std::max(1, zCols), 0);
-    cols.assign(maxNCharPart, 0);
-    zVec.assign(std::max(1, zCols), 0);
-    neoEl.assign(nEdge, 0.0);
-    rootFreqs.assign(std::max(2, maxKStates), 0.0);
-  }
-};
+// (EcoWorkItem and EcoThreadScratch moved earlier — see above the
+// const_site_prob_*_raw functions — so those functions can take
+// EcoThreadScratch& parameters.)
 
 
 // T-017: per-work-item core.  Bit-identical to the corresponding branch in
@@ -1498,7 +1555,8 @@ static double compute_eco_work_item_ll(
             ratesPtr, nCat,
             wPtr, kEco,
             zVec,
-            phiPtr, mode, refE, gammaE);
+            phiPtr, mode, refE, gammaE,
+            scratch);
           ll -= std::log(1.0 - pConst);
         }
       }
@@ -1532,7 +1590,8 @@ static double compute_eco_work_item_ll(
             ratesPtr, nCat,
             wPtr, kEco,
             zVec,
-            phiPtr, mode, refE, gammaE);
+            phiPtr, mode, refE, gammaE,
+            scratch);
           ll -= std::log(1.0 - pConst);
         }
       }
@@ -1594,7 +1653,8 @@ static double compute_eco_work_item_ll(
         ratesPtr, nCat,
         wPtr, kEco,
         zVec,
-        phiPtr, mode, refE, gammaE);
+        phiPtr, mode, refE, gammaE,
+        scratch);
       subLl -= std::log(1.0 - pConst);
     }
   }
@@ -1745,7 +1805,8 @@ double cpp_log_likelihood_ecology(
         (int)s.zPartLocal.size() < std::max(maxNCharPart, maxNSub) * zColsLocal ||
         (int)s.subStates.size() < nTip * maxNSub ||
         (int)s.neoEl.size() < nEdge ||
-        (int)s.rootFreqs.size() < maxKStates) {
+        (int)s.rootFreqs.size() < maxKStates ||
+        s.maxNTip < nTip) {
       s.allocate(maxNodeLocal, maxStride, std::max(maxNCharPart, maxNSub),
                  maxNSub, zColsLocal, nTip, nEdge, maxKStates);
     }
