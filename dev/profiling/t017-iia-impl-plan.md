@@ -161,7 +161,7 @@ The complete list from `git show worktree-ecology-aware:src/mcmc.cpp | grep -nE 
 | 4707 | unif | gibbs_z_sweep_impl | rng.unif() |
 | 4744 | cpp_log_prior | " | KEEP |
 | 4779-5982 | **`do_move_impl` body** — must take `ChainRng& rng` arg | (see §2 for signature) | every bactrian_perturbation() call becomes `bactrian_perturbation(rng)`; every R::unif_rand becomes `rng.unif()` (sites at 4905, 4910, 4911, 4917, 4923, 4939, 4955, 4957, 5040, 5068, 5069, 5122, 5128, 5148, 5158, 5189, 5197, 5208, 5217, 5240, 5242, 5263, 5276, 5304, 5318, 5343, 5370) |
-| 5830 | unif | (in cpp_log_likelihood diagnostic, mcmc.cpp body — verify if reachable from hot path; treat as out-of-scope if it's in a diagnostic-only function) | INVESTIGATE; likely KEEP |
+| ~5850 | `std::log(R::unif_rand()) < logAlpha` | **`do_move_impl` MH accept-reject** (the central Metropolis-Hastings acceptance draw) | `std::log(rng.unif()) < logAlpha` — IN SCOPE, must thread |
 | **6193** | `R::unif_rand() * tw` (move-index select) | **chain loop body** | `rngs[ch].unif() * tw` |
 | **6213** | `R::unif_rand() * nTrans` (int_walk char pick) | **chain loop body** | `rngs[ch].unif() * nTrans` |
 | 6322, 6328 | unif (swap proposals) | OUTSIDE chain loop body, serial | **KEEP** (serial; documented in §0) |
@@ -411,9 +411,10 @@ Phase 2a is **DONE** when ALL of the following hold:
 
 2. **Test suite:** ≥ 228 / 246 tests pass. Up to 18 test files may need expected-value updates (per §4 budget). 6 expected skips persist.
 
-3. **Determinism:** A new test in `tests/testthat/test-chain-rng-determinism.R` proves same-seed reproducibility within the new build:
+3. **Determinism + coverage:** A new test in `tests/testthat/test-chain-rng-determinism.R` proves BOTH same-seed reproducibility AND that no R-RNG sites were missed during threading. The second assertion is **load-bearing**: same-seed reproducibility alone does NOT catch missed sites (both runs draw the same R-RNG values), so a missed `R::unif_rand()` call passes test 1 silently while latent-detonating in Phase 2b.
+
    ```r
-   test_that("Same R seed produces identical MCMC samples (T-017-IIa)", {
+   test_that("Same R seed produces identical MCMC samples (T-017-IIa, determinism)", {
      mkd <- MkPrimeData(...small fixture...)
      set.seed(20260522)
      r1 <- run_mcmc(mkd, nChains = 4, nBatch = 200, ...)
@@ -421,7 +422,29 @@ Phase 2a is **DONE** when ALL of the following hold:
      r2 <- run_mcmc(mkd, nChains = 4, nBatch = 200, ...)
      expect_identical(r1$samples, r2$samples)
    })
+
+   test_that("MCMC advances R-RNG by exactly one step (T-017-IIa, coverage gate)", {
+     # After Phase 2a there must be EXACTLY ONE R::unif_rand() draw inside
+     # run_mcmc_batch_cpp (the base_seed). Any additional R-RNG advance
+     # indicates a missed RNG site that should have been routed through
+     # ChainRng. This test will FAIL if even one R-RNG site is missed.
+     mkd <- MkPrimeData(...small fixture...)
+
+     set.seed(20260522)
+     # Predict: run the MCMC, then sample one R uniform. This should equal
+     # the SECOND uniform from the base state (the MCMC consumed exactly one).
+     r_mcmc <- run_mcmc(mkd, nChains = 4, nBatch = 200, ...)
+     after_mcmc <- runif(1)
+
+     set.seed(20260522)
+     .junk <- runif(1)              # consume one for the MCMC's base_seed
+     expected_after <- runif(1)
+     expect_equal(after_mcmc, expected_after,
+                  info = "MCMC must consume exactly 1 R-RNG draw (base_seed). More implies a missed RNG site.")
+   })
    ```
+
+   **Important for impl agent:** if test 2 fails with `after_mcmc` further along the R-RNG stream than `expected_after`, run the negative-check grep from §8.1 to find missed sites. Do NOT relax the test to consume more draws — that defeats its purpose.
 
 4. **Bench:** Rodent aware nChains=4 OMP=1: **≤ 183 s** wall (174 s ± 5%). 5 runs, median. No regression.
 
@@ -432,6 +455,8 @@ Phase 2a is **DONE** when ALL of the following hold:
 ## 9. Anti-pattern reminders for impl agent
 
 These are not new — they're the lessons from Round 13/14 silent-death incidents. **Read these and internalise.**
+
+- **Signature-first strategy (do not skip).** When threading `ChainRng&` through `do_move_impl` (1200 LoC, 27+ sites), change the function signature FIRST, push the change, then let the compiler enumerate every unconverted call site as a compile error. Same approach for `slice_scalar_impl`, the `gibbs_*_impl` family, etc. This is far more reliable than grep-driven editing — grep WILL miss a site. The compiler will not. Workflow: (1) add `ChainRng& rng` to the function signature, (2) the body still uses `R::unif_rand()` etc., (3) compile fails at the call site in `run_mcmc_batch_cpp`, fix it, (4) `R::*` inside the body becomes safe to rewrite to `rng.*` because the rng is now in scope. Repeat per function.
 
 - **Commit early.** As soon as `chain_rng.h` compiles and `bactrian_perturbation(ChainRng&)` plus the first 2-3 in-scope helpers (`slice_scalar_impl` is a small, contained target — do it first) are wired and the suite still builds, **commit**. This is your salvage point. If the session is killed at 70% through `do_move_impl`, the dispatcher can salvage the working part and dispatch a follow-up for the rest.
 
