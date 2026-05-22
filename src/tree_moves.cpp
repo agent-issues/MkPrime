@@ -8,19 +8,30 @@
 // M-065: Added _impl versions that accept parent/child vectors directly
 // (called from do_move_impl). The Rcpp-exported versions remain as thin
 // wrappers that decompose the edge matrix and call _impl.
+// T-017-IIa: impl functions take ChainRng& rng; R-exported wrappers seed from R.
 
 #include <Rcpp.h>
+#include "chain_rng.h"
 #include <TreeTools/renumber_tree.h>
 #include <vector>
 
 using namespace Rcpp;
+
+// Helper: construct a one-shot ChainRng from R's RNG (for R-exported wrappers).
+// Draws exactly one R-RNG value.
+static inline ChainRng rng_from_r() {
+  uint64_t seed = static_cast<uint64_t>(
+    unif_rand() * static_cast<double>(std::numeric_limits<uint32_t>::max()));
+  return ChainRng(seed);
+}
 
 
 // ---------------------------------------------------------------------------
 // NNI proposal — vector-based implementation
 // ---------------------------------------------------------------------------
 
-List nni_proposal_impl(IntegerVector parent, IntegerVector child,
+List nni_proposal_impl(ChainRng& rng,
+                       IntegerVector parent, IntegerVector child,
                        int nTip, double treeLength,
                        NumericVector relBrLengths) {
   int nEdge = parent.size();
@@ -42,7 +53,7 @@ List nni_proposal_impl(IntegerVector parent, IntegerVector child,
   }
 
   // Pick a random internal edge
-  int pickInternal = (int)(unif_rand() * (double)internalRows.size());
+  int pickInternal = (int)(rng.unif() * (double)internalRows.size());
   if (pickInternal >= (int)internalRows.size())
     pickInternal = internalRows.size() - 1;
   int edgeRow = internalRows[pickInternal];
@@ -67,9 +78,9 @@ List nni_proposal_impl(IntegerVector parent, IntegerVector child,
   }
 
   // Pick one child of v and one sibling of v to swap
-  int pickV = (int)(unif_rand() * (double)vChildRows.size());
+  int pickV = (int)(rng.unif() * (double)vChildRows.size());
   if (pickV >= (int)vChildRows.size()) pickV = vChildRows.size() - 1;
-  int pickU = (int)(unif_rand() * (double)uSibRows.size());
+  int pickU = (int)(rng.unif() * (double)uSibRows.size());
   if (pickU >= (int)uSibRows.size()) pickU = uSibRows.size() - 1;
 
   int cRow = vChildRows[pickV];
@@ -256,7 +267,8 @@ static int tbr_find_child_row(const IntegerVector& child, int node) {
   return -1;
 }
 
-List tbr_proposal_impl(IntegerVector parent, IntegerVector child,
+List tbr_proposal_impl(ChainRng& rng,
+                       IntegerVector parent, IntegerVector child,
                         int nTip, double treeLength,
                         NumericVector relBrLengths) {
   const int nEdge = parent.size();
@@ -278,7 +290,7 @@ List tbr_proposal_impl(IntegerVector parent, IntegerVector child,
     if (parent[i] != root) eligiblePrune.push_back(i);
   if (eligiblePrune.empty()) return fail();
 
-  int pickPrune = (int)(unif_rand() * (double)eligiblePrune.size());
+  int pickPrune = (int)(rng.unif() * (double)eligiblePrune.size());
   if (pickPrune >= (int)eligiblePrune.size())
     pickPrune = (int)eligiblePrune.size() - 1;
   const int pruneRow = eligiblePrune[pickPrune];
@@ -332,7 +344,7 @@ List tbr_proposal_impl(IntegerVector parent, IntegerVector child,
 
   if (v > nTip && nSubEdge > 0) {
     // Pick a random subtree edge
-    int pickSub = (int)(unif_rand() * (double)nSubEdge);
+    int pickSub = (int)(rng.unif() * (double)nSubEdge);
     if (pickSub >= nSubEdge) pickSub = nSubEdge - 1;
     const int subRow = subEdgeRows[pickSub];
     const int x = parent[subRow];
@@ -379,7 +391,7 @@ List tbr_proposal_impl(IntegerVector parent, IntegerVector child,
           vPathRow = vChildRow2; vOtherRow = vChildRow1;
         }
 
-        const double sigma = unif_rand();
+        const double sigma = rng.unif();
 
         // Transform 1: v → c_other becomes a₁ → c_other
         //   parent changes v → a₁, length += L(v → a₁)
@@ -422,7 +434,7 @@ List tbr_proposal_impl(IntegerVector parent, IntegerVector child,
       // No topology change; just redistribute branch lengths with sigma.
       // Draw sigma to consume a RNG call (matching the forward/reverse symmetry)
       // but discard it — no topology or branch-length change when x == v.
-      (void)unif_rand();
+      (void)rng.unif();
       // subRow is the chosen edge (v → y). The "other" child of v is the
       // other edge. We redistribute lSubEdge between the chosen edge and
       // combine with the other to define lMergeSub.
@@ -452,12 +464,12 @@ List tbr_proposal_impl(IntegerVector parent, IntegerVector child,
   if (candidates.empty()) return fail();
   const int nCand = (int)candidates.size();
 
-  int pickRegraft = (int)(unif_rand() * (double)nCand);
+  int pickRegraft = (int)(rng.unif() * (double)nCand);
   if (pickRegraft >= nCand) pickRegraft = nCand - 1;
   const int regraftRow = candidates[pickRegraft];
   const int b = newChild[regraftRow];
 
-  const double tau = unif_rand();
+  const double tau = rng.unif();
   const double lRegraft = newAbsLen[regraftRow];
 
   // 1. Suppress u: (p -> u) becomes (p -> w)
@@ -510,7 +522,8 @@ List tbr_proposal(IntegerMatrix edge, int nTip, double treeLength,
     par[i] = edge(i, 0);
     ch[i]  = edge(i, 1);
   }
-  List result = tbr_proposal_impl(par, ch, nTip, treeLength, relBrLengths);
+  ChainRng rng = rng_from_r();
+  List result = tbr_proposal_impl(rng, par, ch, nTip, treeLength, relBrLengths);
   IntegerVector rp = result["parent"];
   IntegerVector rc = result["child"];
   IntegerMatrix outEdge(nEdge, 2);
@@ -566,7 +579,8 @@ List nni_proposal(IntegerMatrix edge, int nTip, double treeLength,
     parent[i] = edge(i, 0);
     child[i] = edge(i, 1);
   }
-  List result = nni_proposal_impl(parent, child, nTip, treeLength,
+  ChainRng rng = rng_from_r();
+  List result = nni_proposal_impl(rng, parent, child, nTip, treeLength,
                                   relBrLengths);
 
   // Reconstruct edge matrix for R-side compatibility

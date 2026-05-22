@@ -139,10 +139,13 @@ NumericVector cpp_acrv_rates(double rateLogSd, int nCat,
 
 // Forward declarations for proposals in other TUs
 // M-065: vector-based _impl versions (no edge matrix)
-List nni_proposal_impl(IntegerVector parent, IntegerVector child,
+// T-017-IIa: all proposal impls take ChainRng& rng as first argument
+List nni_proposal_impl(ChainRng& rng,
+                       IntegerVector parent, IntegerVector child,
                        int nTip, double treeLength,
                        NumericVector relBrLengths);
-List spr_proposal_impl(IntegerVector parent, IntegerVector child,
+List spr_proposal_impl(ChainRng& rng,
+                       IntegerVector parent, IntegerVector child,
                        int nTip, double treeLength,
                        NumericVector relBrLengths);
 // M-084: subtree swap helpers (tree_moves.cpp)
@@ -153,20 +156,24 @@ std::vector<int> get_valid_swap_partners_impl(const IntegerVector& parent,
                                               const IntegerVector& child,
                                               int nTip, int pruneNode);
 // M-053: TBR proposal (tree_moves.cpp)
-List tbr_proposal_impl(IntegerVector parent, IntegerVector child,
-                        int nTip, double treeLength,
-                        NumericVector relBrLengths);
+List tbr_proposal_impl(ChainRng& rng,
+                       IntegerVector parent, IntegerVector child,
+                       int nTip, double treeLength,
+                       NumericVector relBrLengths);
 List beta_simplex_proposal(NumericVector x, int index, double tuning);
-bool beta_simplex_impl(NumericVector& x, int index, double tuning,
+bool beta_simplex_impl(ChainRng& rng,
+                       NumericVector& x, int index, double tuning,
                        double& logHastings, int& outOther,
                        double& outOldIdx, double& outOldOther);  // OPP-5
 
 // M-125: block Dirichlet simplex proposal (defined in proposals.cpp)
-bool dirichlet_simplex_impl(NumericVector& x, int nCats, double alpha,
+bool dirichlet_simplex_impl(ChainRng& rng,
+                            NumericVector& x, int nCats, double alpha,
                             double& logHastings, NumericVector& snapshot,
                             std::vector<int>& modifiedEdges);
 // M-127: localized Dirichlet simplex (neighborhood selection)
-bool local_dirichlet_impl(NumericVector& x,
+bool local_dirichlet_impl(ChainRng& rng,
+                          NumericVector& x,
                           const IntegerVector& parent,
                           const IntegerVector& child,
                           int nCats, double alpha,
@@ -998,14 +1005,14 @@ double eval_full_loglik_at_cpp(SEXP dataPtr, SEXP statePtr,
 // ---------------------------------------------------------------------------
 
 // Old full-evaluation path (used as fallback and for validation)
-static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta);
+static bool gibbs_spr_impl_full(ChainRng& rng, McmcData* data, McmcState* state, double beta);
 // M-114: partial CL path for Q-heterogeneity
-static bool gibbs_spr_impl_het(McmcData* data, McmcState* state, double beta);
+static bool gibbs_spr_impl_het(ChainRng& rng, McmcData* data, McmcState* state, double beta);
 
-static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
+static bool gibbs_spr_impl(ChainRng& rng, McmcData* data, McmcState* state, double beta) {
   // M-114: Q-heterogeneity uses streaming partial CL
   if (data->qHeterogeneity)
-    return gibbs_spr_impl_het(data, state, beta);
+    return gibbs_spr_impl_het(rng, data, state, beta);
 
   // Ecology mode: the partial-CL machinery used to compute candLL below
   // does not include the per-character ecology rate modifiers (phi, z,
@@ -1028,7 +1035,7 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
   if (eligible.empty()) return false;
 
   // 2. Pick random prune edge
-  int pickIdx = (int)(R::unif_rand() * (double)eligible.size());
+  int pickIdx = (int)(rng.unif() * (double)eligible.size());
   if (pickIdx >= (int)eligible.size()) pickIdx = (int)eligible.size() - 1;
   const int pruneRow = eligible[pickIdx];
   const int u = state->parent[pruneRow];
@@ -1246,7 +1253,7 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
   }
 
   // 9. Sample
-  double rnd = R::unif_rand() * sumW;
+  double rnd = rng.unif() * sumW;
   if (rnd < wOrig) return false;
   rnd -= wOrig;
   int chosen = nCand - 1;
@@ -1294,7 +1301,7 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
 // each CLGroup's likelihood under a mixture of F81 components by streaming
 // over (betaBin, rotation) and accumulating per-site raw likelihoods.
 // ---------------------------------------------------------------------------
-static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
+static bool gibbs_spr_impl_het(ChainRng& rng, McmcData* data, McmcState* state,
                                 double beta) {
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
@@ -1766,17 +1773,17 @@ static int find_child_row_gibbs(const IntegerVector& child, int node) {
 }
 
 // Full-evaluation fallback (Q-het or validation)
-static bool gibbs_subtree_swap_impl_full(McmcData* data, McmcState* state,
+static bool gibbs_subtree_swap_impl_full(ChainRng& rng, McmcData* data, McmcState* state,
                                          double beta);
 // M-114: partial CL path for Q-heterogeneity
-static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
+static bool gibbs_subtree_swap_impl_het(ChainRng& rng, McmcData* data, McmcState* state,
                                          double beta);
 
-static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
+static bool gibbs_subtree_swap_impl(ChainRng& rng, McmcData* data, McmcState* state,
                                     double beta) {
   // M-114: Q-heterogeneity uses streaming partial CL
   if (data->qHeterogeneity)
-    return gibbs_subtree_swap_impl_het(data, state, beta);
+    return gibbs_subtree_swap_impl_het(rng, data, state, beta);
 
   // Ecology mode: same reason as gibbs_spr_impl — the partial-CL
   // candidate evaluation does not include phi/z/pi0/gamma_e, so the
@@ -2009,12 +2016,12 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
 // ---------------------------------------------------------------------------
 // M-114: Gibbs subtree swap with streaming partial CL for Q-heterogeneity.
 // ---------------------------------------------------------------------------
-static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
+static bool gibbs_subtree_swap_impl_het(ChainRng& rng, McmcData* data, McmcState* state,
                                          double beta) {
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
 
-  int pickIdx = (int)(R::unif_rand() * (double)nEdge);
+  int pickIdx = (int)(rng.unif() * (double)nEdge);
   if (pickIdx >= nEdge) pickIdx = nEdge - 1;
   const int nodeA = state->child[pickIdx];
 
@@ -3270,7 +3277,7 @@ static double eval_slice_target(McmcData* data, McmcState* state,
 // Univariate stepping-out slice sampler.
 // Returns true on success (always, barring degenerate cases).
 // Updates state in place, including logLik, logPrior, and partLogLik cache.
-static bool slice_scalar_impl(McmcData* data, McmcState* state,
+static bool slice_scalar_impl(ChainRng& rng, McmcData* data, McmcState* state,
                                int paramIdx, double width,
                                double beta, int maxSteps = 10,
                                int* nExpansionsOut = nullptr) {
@@ -3282,11 +3289,11 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
   double logY0 = beta * state->logLik + state->logPrior + u0;
 
   // Slice height
-  double logZ = logY0 + std::log(R::unif_rand());
+  double logZ = logY0 + std::log(rng.unif());
 
   // Stepping out on log scale (count expansions for width adaptation)
   int nExp = 0;
-  double L = u0 - width * R::unif_rand();
+  double L = u0 - width * rng.unif();
   double R_bound = L + width;
 
   for (int j = 0; j < maxSteps; ++j) {
@@ -3306,7 +3313,7 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
 
   // Shrink in on log scale
   for (int iter = 0; iter < 100; ++iter) {
-    double u1 = L + R::unif_rand() * (R_bound - L);
+    double u1 = L + rng.unif() * (R_bound - L);
     double x1 = std::exp(u1);
     set_scalar(state, paramIdx, x1);
     double logTarget1 = eval_slice_target(data, state, paramIdx, beta) + u1;
@@ -3408,7 +3415,7 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
 // (the log(x) Jacobian arises from sampling u = log(x) and transforming).
 // No likelihood evaluation needed — α/β only affect the prior.
 // ---------------------------------------------------------------------------
-static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
+static bool slice_kprime_hyper_impl(ChainRng& rng, McmcData* data, McmcState* state,
                                      int paramCode, double width,
                                      int maxSteps = 10,
                                      int* nExpansionsOut = nullptr) {
@@ -3420,7 +3427,7 @@ static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
 
   // Target: logPrior(current) + u (Jacobian)
   double logY0 = state->logPrior + u0;
-  double logZ = logY0 + std::log(R::unif_rand());
+  double logZ = logY0 + std::log(rng.unif());
 
   // Helper lambda to evaluate target at a candidate u
   auto evalTarget = [&](double u) -> double {
@@ -3443,7 +3450,7 @@ static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
 
   // Stepping out
   int nExp = 0;
-  double L = u0 - width * R::unif_rand();
+  double L = u0 - width * rng.unif();
   double R_bound = L + width;
   for (int j = 0; j < maxSteps; ++j) {
     if (evalTarget(L) <= logZ) break;
@@ -3459,7 +3466,7 @@ static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
 
   // Shrink in
   for (int iter = 0; iter < 100; ++iter) {
-    double u1 = L + R::unif_rand() * (R_bound - L);
+    double u1 = L + rng.unif() * (R_bound - L);
     double logTarget1 = evalTarget(u1);
     if (logTarget1 >= logZ) {
       // Accept
@@ -4800,7 +4807,7 @@ static bool gibbs_z_sweep_impl(McmcData* data, McmcState* state, double beta) {
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
 // ---------------------------------------------------------------------------
 
-static bool do_move_impl(McmcData* data, McmcState* state,
+static bool do_move_impl(ChainRng& rng, McmcData* data, McmcState* state,
                          int moveType, int charIdx,
                          double scaleTuning, double betaSimplexTuning,
                          int intWalkWindow, double beta,
@@ -4951,10 +4958,10 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     }
     case 4: { // beta_simplex — O(1) rollback: save 2 modified elements
       int n_br = state->relBrLengths.size();
-      int idx = static_cast<int>(R::unif_rand() * n_br);
+      int idx = static_cast<int>(rng.unif() * n_br);
       if (idx >= n_br) idx = n_br - 1;
       bsIdx1 = idx;
-      if (!beta_simplex_impl(state->relBrLengths, idx,
+      if (!beta_simplex_impl(rng, state->relBrLengths, idx,
                              betaSimplexTuning, logHastings,
                              bsIdx2, bsOldVal1, bsOldVal2))
         return false;
@@ -5051,7 +5058,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         // TreeNav is updated + partial eval happens in the evaluation section
       } else {
         // Fallback: full eval path (original OPP-6 pattern)
-        List prop = spr_proposal_impl(state->parent, state->child,
+        List prop = spr_proposal_impl(rng, state->parent, state->child,
                                       data->nTip, state->treeLength,
                                       state->relBrLengths);
         logHastings = as<double>(prop["logHastings"]);
@@ -5064,7 +5071,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       break;
     }
     case 17: { // TBR — M-053: OPP-6 pattern (defer topology commit)
-      List prop = tbr_proposal_impl(state->parent, state->child,
+      List prop = tbr_proposal_impl(rng, state->parent, state->child,
                                     data->nTip, state->treeLength,
                                     state->relBrLengths);
       logHastings = as<double>(prop["logHastings"]);
@@ -5122,10 +5129,10 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       return true;  // Gibbs: always accept
     }
     case 10: { // gibbs_spr — M-085
-      return gibbs_spr_impl(data, state, beta);
+      return gibbs_spr_impl(rng, data, state, beta);
     }
     case 11: { // gibbs_subtree_swap — M-086
-      return gibbs_subtree_swap_impl(data, state, beta);
+      return gibbs_subtree_swap_impl(rng, data, state, beta);
     }
     case 12: { // weighted_branch_scale — M-087, O(1) rollback
       if (!weighted_branch_scale_impl(data, state, beta, logHastings,
@@ -5191,7 +5198,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       // nCats passed via intWalkWindow for this move type (repurposed)
       int nCats = intWalkWindow;
       if (nCats < 2) nCats = 2;
-      if (!dirichlet_simplex_impl(state->relBrLengths, nCats,
+      if (!dirichlet_simplex_impl(rng, state->relBrLengths, nCats,
                                   scaleTuning, logHastings,
                                   state->brSnapshot,
                                   state->dirEdges)) {
@@ -5202,7 +5209,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     case 24: { // M-127: local_dirichlet (neighborhood Dirichlet on relBrLengths)
       int nCats = intWalkWindow;
       if (nCats < 2) nCats = 2;
-      if (!local_dirichlet_impl(state->relBrLengths,
+      if (!local_dirichlet_impl(rng, state->relBrLengths,
                                 state->parent, state->child,
                                 nCats, scaleTuning, logHastings,
                                 state->brSnapshot,
@@ -6041,7 +6048,11 @@ bool do_move_cpp(SEXP dataPtr, SEXP statePtr,
                  int intWalkWindow, double beta) {
   McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
   McmcState* state = Rcpp::XPtr<McmcState>(statePtr).get();
-  return do_move_impl(data, state, moveType, charIdx,
+  // T-017-IIa: R-exported wrapper uses one R-RNG draw to seed a ChainRng
+  uint64_t seed = static_cast<uint64_t>(
+    R::unif_rand() * static_cast<double>(std::numeric_limits<uint32_t>::max()));
+  ChainRng rng(seed);
+  return do_move_impl(rng, data, state, moveType, charIdx,
                       scaleTuning, betaSimplexTuning, intWalkWindow, beta);
 }
 
@@ -6202,6 +6213,27 @@ List run_mcmc_batch_cpp(
   if (nChains > 0) particleState[0] = PS_AT_COLD;
   int roundTripCount = 0;
 
+  // T-017-IIa: Per-chain RNG instances (one per chain, indexed by ch).
+  std::vector<ChainRng> rngs;
+  rngs.reserve(nChains);
+
+  // T-017-IIa: Per-chain RNG seed stream.
+  // Draw exactly ONE R-RNG value to establish the base seed, then use
+  // Weyl-mix to spread nChains seeds far apart in the mt19937_64 state space.
+  // This is the ONLY R-RNG draw consumed inside run_mcmc_batch_cpp; all
+  // other random draws within the per-chain loop go through ChainRng.
+  {
+    uint64_t base_seed = static_cast<uint64_t>(
+      R::unif_rand() * static_cast<double>(std::numeric_limits<uint32_t>::max()));
+    // Weyl-mix constant: 2^64 / phi (golden ratio). Spreads chain seeds
+    // to avoid low-bit correlation between adjacent-index seeds.
+    constexpr uint64_t WEYL_MIX = 0x9E3779B97F4A7C15ULL;
+    for (int ch = 0; ch < nChains; ++ch) {
+      uint64_t chain_seed = base_seed ^ (static_cast<uint64_t>(ch) * WEYL_MIX);
+      rngs.emplace_back(chain_seed);
+    }
+  }
+
   // Main iteration loop
   for (int i = 0; i < nBatch; ++i) {
     // Check for user interrupt every 10 iterations (expensive moves can take
@@ -6219,7 +6251,7 @@ List run_mcmc_batch_cpp(
       const auto& cw = useBoost ? cumWeightsCached : cumWeights;
       if (useBoost) ++cacheHits; else ++cacheMisses;
 
-      double u = R::unif_rand() * tw;
+      double u = rngs[ch].unif() * tw;
       int moveIdx = 0;
       while (moveIdx < nMoves - 1 && u > cw[moveIdx]) ++moveIdx;
 
@@ -6230,7 +6262,7 @@ List run_mcmc_batch_cpp(
       // charIdx: for int_walk → random trans character; for slice → paramIdx
       int charIdx = 0;
       if (moveType == 7 && nTrans > 0) {
-        int r = static_cast<int>(R::unif_rand() * nTrans);
+        int r = static_cast<int>(rngs[ch].unif() * nTrans);
         if (r >= nTrans) r = nTrans - 1;
         charIdx = transIdxCpp[r];
       } else if (moveType == 19) {
@@ -6244,14 +6276,14 @@ List run_mcmc_batch_cpp(
         // Slice sampling — self-contained, no MH accept/reject
         int nExp = 0;
         accepted = slice_scalar_impl(
-          data, states[ch], charIdx,
+          rngs[ch], data, states[ch], charIdx,
           sliceWidths(ch, moveIdx), betas[ch], 10, &nExp);
         sliceExpansions(ch, moveIdx) += nExp;
       } else if (moveType == 29) {
         // Prior-only slice sampler for BG hyperparameters (M-163)
         int nExp = 0;
         accepted = slice_kprime_hyper_impl(
-          data, states[ch], sliceParamCodes[moveIdx],
+          rngs[ch], data, states[ch], sliceParamCodes[moveIdx],
           sliceWidths(ch, moveIdx), 10, &nExp);
         sliceExpansions(ch, moveIdx) += nExp;
       } else {
@@ -6260,7 +6292,7 @@ List run_mcmc_batch_cpp(
                     ? moveIntParams[moveIdx]
                     : chainIntWalkWins[ch];
         accepted = do_move_impl(
-          data, states[ch],
+          rngs[ch], data, states[ch],
           moveType, charIdx,
           chainScaleTunings(ch, moveIdx),
           chainBsmpTunings[ch],

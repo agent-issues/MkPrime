@@ -5,8 +5,10 @@
 // BetaSimplex: redistribute mass between two simplex elements.
 //
 // M-065: Added spr_proposal_impl that accepts parent/child vectors directly.
+// T-017-IIa: impl functions take ChainRng& rng; R-exported wrappers seed from R.
 
 #include <Rcpp.h>
+#include "chain_rng.h"
 #include <TreeTools/renumber_tree.h>
 #include <numeric>  // std::accumulate (used by dirichlet_simplex_impl)
 #include <vector>
@@ -14,12 +16,21 @@
 
 using namespace Rcpp;
 
+// Helper: construct a one-shot ChainRng from R's RNG (for R-exported wrappers
+// that call threaded impl functions). Draws exactly one R-RNG value.
+static inline ChainRng rng_from_r() {
+  uint64_t seed = static_cast<uint64_t>(
+    unif_rand() * static_cast<double>(std::numeric_limits<uint32_t>::max()));
+  return ChainRng(seed);
+}
+
 
 // ---------------------------------------------------------------------------
 // SPR proposal — vector-based implementation
 // ---------------------------------------------------------------------------
 
-List spr_proposal_impl(IntegerVector parent, IntegerVector child,
+List spr_proposal_impl(ChainRng& rng,
+                       IntegerVector parent, IntegerVector child,
                        int nTip, double treeLength,
                        NumericVector relBrLengths) {
   const int nEdge = parent.size();
@@ -41,7 +52,7 @@ List spr_proposal_impl(IntegerVector parent, IntegerVector child,
                         _["logHastings"] = R_NegInf);
   }
 
-  int pickPrune = (int)(unif_rand() * (double)eligiblePrune.size());
+  int pickPrune = (int)(rng.unif() * (double)eligiblePrune.size());
   if (pickPrune >= (int)eligiblePrune.size())
     pickPrune = eligiblePrune.size() - 1;
   const int pruneRow = eligiblePrune[pickPrune];
@@ -112,13 +123,13 @@ List spr_proposal_impl(IntegerVector parent, IntegerVector child,
                         _["logHastings"] = R_NegInf);
   }
 
-  int pickRegraft = (int)(unif_rand() * (double)candidates.size());
+  int pickRegraft = (int)(rng.unif() * (double)candidates.size());
   if (pickRegraft >= (int)candidates.size())
     pickRegraft = candidates.size() - 1;
   const int regraftRow = candidates[pickRegraft];
   const int b = child[regraftRow];
 
-  const double tau = unif_rand();
+  const double tau = rng.unif();
 
   // Absolute branch lengths
   NumericVector absLen(nEdge);
@@ -177,7 +188,8 @@ List spr_proposal(IntegerMatrix edge, int nTip, double treeLength,
     parent[i] = edge(i, 0);
     child[i] = edge(i, 1);
   }
-  List result = spr_proposal_impl(parent, child, nTip, treeLength,
+  ChainRng rng = rng_from_r();
+  List result = spr_proposal_impl(rng, parent, child, nTip, treeLength,
                                   relBrLengths);
 
   // Reconstruct edge matrix for R-side compatibility
@@ -202,13 +214,14 @@ List spr_proposal(IntegerMatrix edge, int nTip, double treeLength,
 // Returns false if the proposal is degenerate (total <= 0); sets logHastings.
 // Output params for O(1) rollback: outOther = index of second modified element,
 // outOldIdx/outOldOther = original values before modification.
-bool beta_simplex_impl(NumericVector& x, int index, double tuning,
+bool beta_simplex_impl(ChainRng& rng,
+                       NumericVector& x, int index, double tuning,
                        double& logHastings, int& outOther,
                        double& outOldIdx, double& outOldOther) {
   const int n = x.size();
   if (n < 2) { logHastings = 0.0; outOther = index; return true; }
 
-  int other = (int)(unif_rand() * (double)(n - 1));
+  int other = (int)(rng.unif() * (double)(n - 1));
   if (other >= index) ++other;
   if (other >= n) other = n - 1;
   if (other == index) other = (index + 1) % n;
@@ -224,7 +237,7 @@ bool beta_simplex_impl(NumericVector& x, int index, double tuning,
   const double oldF    = oldA / total;
   const double alpha   = oldF * tuning + 1.0;
   const double betaPar = (1.0 - oldF) * tuning + 1.0;
-  const double newF    = R::rbeta(alpha, betaPar);
+  const double newF    = rng.rbeta(alpha, betaPar);
 
   x[index] = newF * total;
   x[other] = (1.0 - newF) * total;
@@ -244,9 +257,10 @@ List beta_simplex_proposal(NumericVector x, int index, double tuning) {
   if (n < 2) return List::create(_["value"] = x, _["logHastings"] = 0.0);
 
   NumericVector xNew = clone(x);
+  ChainRng rng = rng_from_r();
   double logHastings;
   int dummy; double d1, d2;
-  if (!beta_simplex_impl(xNew, index, tuning, logHastings, dummy, d1, d2))
+  if (!beta_simplex_impl(rng, xNew, index, tuning, logHastings, dummy, d1, d2))
     return List::create(_["value"] = x, _["logHastings"] = 0.0);
   return List::create(_["value"] = xNew, _["logHastings"] = logHastings);
 }
@@ -268,7 +282,8 @@ List beta_simplex_proposal(NumericVector x, int index, double tuning) {
 //
 // Returns false if proposal is degenerate; true otherwise.
 // ---------------------------------------------------------------------------
-static bool dirichlet_core(NumericVector& x,
+static bool dirichlet_core(ChainRng& rng,
+                           NumericVector& x,
                            const std::vector<int>& indices,
                            double alpha, double& logHastings,
                            NumericVector& snapshot) {
@@ -297,7 +312,7 @@ static bool dirichlet_core(NumericVector& x,
   std::vector<double> zK(nCats);
   double gammaSum = 0.0;
   for (int i = 0; i < nCats; ++i) {
-    zK[i] = R::rgamma(alphaFwd[i], 1.0);
+    zK[i] = rng.rgamma(alphaFwd[i], 1.0);
     if (zK[i] < 1e-300) zK[i] = 1e-300;
     gammaSum += zK[i];
   }
@@ -339,7 +354,8 @@ static bool dirichlet_core(NumericVector& x,
 // ---------------------------------------------------------------------------
 // Random Dirichlet: Fisher-Yates selection + core (M-125)
 // ---------------------------------------------------------------------------
-bool dirichlet_simplex_impl(NumericVector& x, int nCats, double alpha,
+bool dirichlet_simplex_impl(ChainRng& rng,
+                            NumericVector& x, int nCats, double alpha,
                             double& logHastings, NumericVector& snapshot,
                             std::vector<int>& modifiedEdges) {
   const int n = x.size();
@@ -352,13 +368,13 @@ bool dirichlet_simplex_impl(NumericVector& x, int nCats, double alpha,
   std::vector<int> pool(n);
   for (int i = 0; i < n; ++i) pool[i] = i;
   for (int i = 0; i < nCats; ++i) {
-    int j = i + (int)(unif_rand() * (double)(n - i));
+    int j = i + (int)(rng.unif() * (double)(n - i));
     if (j >= n) j = n - 1;
     std::swap(pool[i], pool[j]);
   }
 
   modifiedEdges.assign(pool.begin(), pool.begin() + nCats);
-  return dirichlet_core(x, modifiedEdges, alpha, logHastings, snapshot);
+  return dirichlet_core(rng, x, modifiedEdges, alpha, logHastings, snapshot);
 }
 
 
@@ -367,6 +383,7 @@ bool dirichlet_simplex_impl(NumericVector& x, int nCats, double alpha,
 // edge. Returns K connected edge indices. Used by local_dirichlet_impl.
 // ---------------------------------------------------------------------------
 static std::vector<int> select_neighborhood(
+    ChainRng& rng,
     const IntegerVector& parent, const IntegerVector& child,
     int nCats) {
 
@@ -391,7 +408,7 @@ static std::vector<int> select_neighborhood(
   }
 
   // Pick a random starting edge
-  int startEdge = (int)(unif_rand() * (double)nEdge);
+  int startEdge = (int)(rng.unif() * (double)nEdge);
   if (startEdge >= nEdge) startEdge = nEdge - 1;
 
   // BFS on edge adjacency (vector-based queue)
@@ -429,7 +446,8 @@ static std::vector<int> select_neighborhood(
 // ---------------------------------------------------------------------------
 // Local Dirichlet: neighborhood selection + core (M-127)
 // ---------------------------------------------------------------------------
-bool local_dirichlet_impl(NumericVector& x,
+bool local_dirichlet_impl(ChainRng& rng,
+                          NumericVector& x,
                           const IntegerVector& parent,
                           const IntegerVector& child,
                           int nCats, double alpha,
@@ -441,8 +459,8 @@ bool local_dirichlet_impl(NumericVector& x,
   if (nCats < 2) nCats = 2;
   if (nCats > n) nCats = n;
 
-  modifiedEdges = select_neighborhood(parent, child, nCats);
-  return dirichlet_core(x, modifiedEdges, alpha, logHastings, snapshot);
+  modifiedEdges = select_neighborhood(rng, parent, child, nCats);
+  return dirichlet_core(rng, x, modifiedEdges, alpha, logHastings, snapshot);
 }
 
 
@@ -454,7 +472,8 @@ List dirichlet_simplex_proposal(NumericVector x, int nCats, double alpha) {
   NumericVector snapshot(n);
   std::vector<int> modEdges;
   double logHastings;
-  if (!dirichlet_simplex_impl(xNew, nCats, alpha, logHastings, snapshot,
+  ChainRng rng = rng_from_r();
+  if (!dirichlet_simplex_impl(rng, xNew, nCats, alpha, logHastings, snapshot,
                                modEdges))
     return List::create(_["value"] = x, _["logHastings"] = R_NegInf);
   return List::create(_["value"] = xNew, _["logHastings"] = logHastings,
@@ -472,7 +491,8 @@ List local_dirichlet_proposal(NumericVector x,
   NumericVector snapshot(n);
   std::vector<int> modEdges;
   double logHastings;
-  if (!local_dirichlet_impl(xNew, parent, child, nCats, alpha,
+  ChainRng rng = rng_from_r();
+  if (!local_dirichlet_impl(rng, xNew, parent, child, nCats, alpha,
                              logHastings, snapshot, modEdges))
     return List::create(_["value"] = x, _["logHastings"] = R_NegInf);
   return List::create(_["value"] = xNew, _["logHastings"] = logHastings,
