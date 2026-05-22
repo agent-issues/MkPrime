@@ -4774,6 +4774,21 @@ List run_mcmc_batch_cpp(
   // Diagnostic: count accepted swaps involving the cold chain (index 0)
   int coldSwapsSinceSample = 0;
 
+  // PT-RT-001: round-trip-time tracking. Each "particle" is an MCMC state
+  // identity; particleAtSlot[s] gives which particle currently sits at
+  // ladder slot s (slot 0 = cold = beta 1). On every accepted swap we
+  // swap the two slot entries. We count a "round trip" each time a
+  // particle returns to the cold slot after having reached the hot slot
+  // since its last cold visit. Particle 0 starts at the cold slot, so
+  // its initial state is PS_AT_COLD; particles initially at heated slots
+  // start with state PS_NONE so they don't trivially count a partial trip.
+  std::vector<int> particleAtSlot(nChains);
+  for (int s = 0; s < nChains; ++s) particleAtSlot[s] = s;
+  enum ParticleState : char { PS_NONE = 0, PS_AT_COLD = 1, PS_AT_HOT = 2 };
+  std::vector<char> particleState(nChains, PS_NONE);
+  if (nChains > 0) particleState[0] = PS_AT_COLD;
+  int roundTripCount = 0;
+
   // Main iteration loop
   for (int i = 0; i < nBatch; ++i) {
     // Check for user interrupt every 10 iterations (expensive moves can take
@@ -4859,6 +4874,19 @@ List run_mcmc_batch_cpp(
         std::swap(*states[iPair], *states[jPair]);
         swapAccept[iPair]++;
         if (iPair == 0) coldSwapsSinceSample++;
+
+        // PT-RT-001: update particle-at-slot map and possibly count round trip.
+        std::swap(particleAtSlot[iPair], particleAtSlot[jPair]);
+        int slotHot = nChains - 1;
+        for (int s_chk : { iPair, jPair }) {
+          int p = particleAtSlot[s_chk];
+          if (s_chk == 0) {
+            if (particleState[p] == PS_AT_HOT) roundTripCount++;
+            particleState[p] = PS_AT_COLD;
+          } else if (s_chk == slotHot) {
+            if (particleState[p] == PS_AT_COLD) particleState[p] = PS_AT_HOT;
+          }
+        }
       }
     }
 
@@ -4939,6 +4967,7 @@ List run_mcmc_batch_cpp(
     _["slice_expansions"] = sliceExpansions,
     _["swap_accept"]      = swapAccept,
     _["swap_propose"]     = swapPropose,
+    _["round_trip_count"] = roundTripCount,
     _["scalar_samples"]   = scalarMat,
     _["edge_samples"]     = edgeSamples,
     _["n_saved"]          = nSaved,
