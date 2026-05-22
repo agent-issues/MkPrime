@@ -879,3 +879,58 @@ in tree. Hard-coded `-fopenmp` Makevars are committed (with comment
 explaining why `$(SHLIB_OPENMP_CXXFLAGS)` was unsafe on this setup).
 
 last_focus: 17
+
+---
+
+## Round 15 — T-017-IIa Phase 2a (per-chain RNG threading, APPLIED-INFRASTRUCTURE) — 2026-05-22
+
+**Focus area:** T-017-IIa Phase 2a — thread a per-chain `ChainRng` (`std::mt19937_64`) through all
+MCMC move helpers so that, in a future Phase 2b, `run_mcmc_batch_cpp` can seed each chain
+independently from a single Weyl-sequence draw and eliminate all in-loop `R::unif_rand()` calls.
+
+**What landed (commits 833f49a, 6ada7df, 9a597c6 on branch `t017-iia-rng-threading`):**
+
+- `src/chain_rng.h` — new `ChainRng` struct wrapping `std::mt19937_64` with typed `unif()`,
+  `rnorm(mu,sd)`, `rgamma(shape,scale)`, `rbeta(a,b)` methods.  Seeded from a single
+  `R::unif_rand()` draw at call time; zero additional R-RNG draws consumed inside any move.
+- `do_move_cpp` seeds one `ChainRng` per call from 1 `R::unif_rand()` draw; all in-scope helpers
+  (`gibbs_spr_impl`, `gibbs_subtree_swap_impl`, `bactrian_*`) threaded through `ChainRng&`.
+- `run_mcmc_batch_cpp` draws exactly 1 `R::unif_rand()` as a Weyl-sequence base seed; all
+  internal loops consume from that stream.
+- `tests/testthat/test-chain-rng-determinism.R` — 29 new determinism-gate tests verifying that
+  seeding `do_move_cpp` with the same RNG produces bit-identical state trajectories.
+
+**Test suite result:** `[ FAIL 0 | WARN 0 | SKIP 35 | PASS 5034 ]` — no regressions.
+
+**Bench status: deferred.** This branch (`worktree-ecology-aware`) predates the ecology API
+(`MkPrimeData` lacks the `ecology=` argument); the aware-mode rodent wall-time bench cannot run
+here.  Bench against aware-mode wall is deferred until this work merges forward into the ecology
+branch.  No wall delta claimed.
+
+**Flaky-test fix (commit 08fc750):** after T-017-IIa, `do_move_cpp` consumes exactly 1 R-RNG draw
+per call, making `devtools::test()` always position R at the same state for the GibbsSPR
+acceptance test — which happened to produce 0 acceptances in 200 tries (P ≈ 56 % under that seed).
+Fixed by adding `set.seed(139L)` + bumping `n_try` to 1000 (P(0 acc) ≈ 6 × 10⁻⁷).
+
+**What T-017 Phase 2b still needs (NOT done here):**
+- Refactor `cpp_log_prior` and rate-scalar helpers to accept `ChainRng&` (currently still call
+  `R::rnorm`, `R::rgamma` directly).
+- Remove the per-call `R::unif_rand()` seed in `do_move_cpp` (replace with a Weyl-mixed stream
+  seeded once at `run_mcmc_batch_cpp`).
+- `#pragma omp parallel for` over chains in `run_mcmc_batch_cpp` (blocked on R-API isolation).
+- Benchmarks against aware-mode wall on the merged branch.
+
+**Filed:** T-017-IIa row in findings.md (status APPLIED-INFRASTRUCTURE, kind [Refactor],
+no wall delta).
+
+**Rebase note.** The impl agent inadvertently branched off `e0315ca` (T-018 commit) rather than
+`worktree-ecology-aware` HEAD; the resulting branch was missing T-017 Phase 1+1b, T-019, JC-collapse,
+ecology infrastructure (`src/mcmc_ecology.cpp`, `test-ecology-*.R`, ecology vignettes). Salvage:
+rebased the 5 work commits (chain_rng.h, signatures+seed, full threading, determinism tests,
+gibbs-spr stabilisation) onto `worktree-ecology-aware`. One mcmc.cpp include conflict (trivial) +
+one signature-merge conflict for `gibbs_kprime_sweep_impl_ecology` forward decl (added ChainRng&
+arg to match Phase 2a convention). Phase 2b will need to thread ChainRng through the ecology-
+branch helpers (`gibbs_kprime_sweep_impl_ecology` body, `cpp_log_prior` ecology callers, etc.) —
+the rebase exposes those as TODO.
+
+last_focus: 17
