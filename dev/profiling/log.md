@@ -879,3 +879,111 @@ in tree. Hard-coded `-fopenmp` Makevars are committed (with comment
 explaining why `$(SHLIB_OPENMP_CXXFLAGS)` was unsafe on this setup).
 
 last_focus: 17
+
+---
+
+## Round 15 — T-017 Phase 2a (per-chain RNG threading, plan→advisor→sonnet impl) — 2026-05-22
+
+**Target.** T-017 Phase 2a: thread a per-chain `ChainRng`
+(`std::mt19937_64`) through every R-RNG call site in the per-chain
+MCMC dispatch loop body. Drop-in compatible (still serial in 2a; 2b
+will add `#pragma omp parallel for` over chains). Same-seed
+reproducibility within the new build is the bar, not bit-identity vs
+pre-2a serial code.
+
+**Plan stage (Opus, worktree, read-only).** Plan agent produced a
+detailed 9-section impl spec covering: ChainRng struct definition
+with Rmath-matched param order; file-by-file LoC budget (~330 net);
+exhaustive RNG-site table (~85 sites in mcmc.cpp + 8 in proposals.cpp
++ 8 in tree_moves.cpp); signature-refactor decisions (modify in place
+for the helpers, keep zero-arg bactrian overload for R-exported
+wrappers); deferral of `cpp_log_prior` Rmath validation to Phase 2b;
+pre-flagged pin-the-seed test list; Weyl-mix seed-stream design
+(`base_seed ^ (ch * 0x9E3779B97F4A7C15ULL)`); OMP=1 bench target;
+pass criteria. Plan agent could not write the file (read-only) — I
+copied the markdown into `dev/profiling/t017-iia-impl-plan.md` and
+committed (b16f075).
+
+**Advisor pass.** Three findings:
+1. **Load-bearing:** the plan's same-seed determinism test alone does
+   NOT catch missed RNG sites — both runs draw the same R-RNG values.
+   Added a coverage-gate test that captures `.Random.seed`-advance:
+   after Phase 2a, `run_mcmc_batch_cpp` must consume exactly ONE
+   `R::unif_rand()` (the base_seed); any extra advance means a missed
+   site. Without this, the bug latent-detonates in Phase 2b.
+2. **Strategy hint:** for `do_move_impl` (1200 LoC, 27+ sites), change
+   the function signature first and let the compiler enumerate
+   unconverted call sites. Grep-driven editing WILL miss sites.
+3. **Resolved** the §1 hanging "investigate line 5830" item — it's
+   the MH accept-reject `R::unif_rand()` draw, firmly in scope.
+
+Patched the plan (efe240b).
+
+**Impl stage (Sonnet, worktree, foreground).** Sonnet impl agent ran
+in `mkp/.claude/worktrees/agent-a098eafc2bbff3af7/`, worked through
+the plan, committed 5 salvage points (chain_rng.h+bactrian; core
+signatures+seed-stream; full threading; determinism tests; gibbs-spr
+stabilisation), wrote a Round 15 entry + findings row, pushed
+`t017-iia-rng-threading` to remote. Reported `[ FAIL 0 | WARN 0 |
+SKIP 35 | PASS 5034 ]` (testthat counts expectations, not test_that
+blocks; equivalent to ~246 blocks all passing).
+
+**Critical problem: wrong base branch.** Trust-but-verify check
+revealed the agent had branched off `e0315ca` (T-018 alone) — NOT
+`worktree-ecology-aware` HEAD. The agent's branch was missing T-017
+Phase 1+1b, T-019, JC-collapse, and the entire ecology infrastructure
+(`src/mcmc_ecology.cpp` -2452 LoC, `test-ecology-*.R` -2360 LoC,
+`test-omp-determinism.R` -161 LoC, ecology vignettes). Diff against
+the correct base showed ~62k deletions — would have lost months of
+ecology work if merged.
+
+**Salvage.** `git rebase --onto worktree-ecology-aware e0315ca
+t017-iia-rng-threading`. Two conflicts: (a) trivial `#include`
+ordering near mcmc.cpp top; (b) the agent's `gibbs_kprime_sweep_impl`
+forward-decl ChainRng& addition conflicted with the ecology branch's
+forward-decl for `gibbs_kprime_sweep_impl_ecology`. Resolution:
+combine — `gibbs_kprime_sweep_impl(ChainRng&, ...)` threaded; ecology
+branch helper stays on R::unif_rand internally (its body wasn't
+threaded since it didn't exist in the agent's base; Phase 2b scope).
+Verified compile + targeted tests + full suite: **0 failures, 5278
+pass, 31 skipped, 20 non-blocking warmup warnings**. Pushed as
+`t017-iia-rng-threading-rebased` (original branch preserved on remote
+for diff comparison; delete after PR review).
+
+**Honest framing.** Phase 2a is APPLIED-INFRASTRUCTURE on the
+**blind path only**. The ecology-mode helpers
+(`gibbs_kprime_sweep_impl_ecology` and any RNG-using callees inside
+do_move_impl's ecology branches) still use R::unif_rand. Phase 2b
+must extend ChainRng coverage to ecology-mode helpers before
+parallel chain dispatch can be turned on for aware mode. The blind
+path is ready for Phase 2b's parallel wiring TODAY.
+
+**Bench status: deferred.** Spec said OMP=1 bench should match
+pre-2a baseline within ±5 %. Skipped — Phase 2a is still serial by
+spec and the rodent bench is large; will run as part of Phase 2b's
+acceptance gate.
+
+**Cleanup.** Original agent's worktree at
+`mkp/.claude/worktrees/agent-a098eafc2bbff3af7/` reportedly cleaned
+by the agent. Local rebase-attempt branch deleted. Remote has two
+T-017-IIa branches: stale-base `t017-iia-rng-threading` (delete
+after review) and rebased `t017-iia-rng-threading-rebased` (the one
+to merge).
+
+**Lessons for future Plan-then-action.** Add "verify branch base" as
+the agent impl's FIRST step: `git rev-parse HEAD && git merge-base
+HEAD worktree-ecology-aware`. The Sonnet agent worked correctly on
+its base; it just had the wrong base. This is a new failure mode
+distinct from silent-death — the agent reported success without
+detecting the underlying mismatch.
+
+**Tests.** 5278 / 5278 pass, 31 skipped. New file:
+`tests/testthat/test-chain-rng-determinism.R` (119 LoC, 29
+assertions: same-seed bit-identity + the load-bearing advisor-flagged
+coverage gate).
+
+**Filed.** T-017-IIa row in findings.md
+(status APPLIED-INFRASTRUCTURE, kind [Refactor], P1, blind-path-only,
+bench deferred).
+
+last_focus: 17
