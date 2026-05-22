@@ -1378,6 +1378,44 @@ struct EcoWorkItem {
   int subgroupKp;    // -1 = neo/known; else kPrime value
 };
 
+// T-017 Phase 1b: per-thread scratch workspace.  Eliminates the per-call
+// malloc/free that Phase 1 left in `compute_eco_work_item_ll` (the ~300 KB
+// `buf` was contending on glibc's global malloc lock with 4 threads, yielding
+// 0× speedup despite OpenMP being active).  One instance per thread, sized
+// once at the start of `cpp_log_likelihood_ecology`.  Reused across all
+// work items handled by that thread.  Bit-identity preserved: each call
+// zero-fills the prefixes it uses; final logLik depends only on the sum of
+// per-item partial results, in fixed serial-merge order.
+struct EcoThreadScratch {
+  std::vector<double>  buf;       // (maxNode + 1) * maxStride doubles
+  std::vector<uint8_t> initFlg;   // (maxNode + 1) bytes
+  std::vector<int>     zPartLocal; // maxNCharPart * zCols
+  std::vector<int>     subStates;  // nTip * maxNSub
+  std::vector<int>     subZ;       // maxNSub * zCols
+  std::vector<int>     cols;       // up to maxNCharPart
+  std::vector<int>     zVec;       // zCols
+  std::vector<double>  neoEl;      // nEdge doubles
+  std::vector<double>  rootFreqs;  // up to maxKStates doubles
+  int maxNode = 0;
+  int maxStride = 0;
+
+  void allocate(int maxNode_, int maxStride_, int maxNCharPart,
+                int maxNSub, int zCols, int nTip, int nEdge,
+                int maxKStates) {
+    maxNode   = maxNode_;
+    maxStride = maxStride_;
+    buf.assign(static_cast<size_t>(maxNode_ + 1) * maxStride_, 0.0);
+    initFlg.assign(maxNode_ + 1, 0u);
+    zPartLocal.assign(static_cast<size_t>(maxNCharPart) * std::max(1, zCols), 0);
+    subStates.assign(static_cast<size_t>(nTip) * std::max(1, maxNSub), 0);
+    subZ.assign(static_cast<size_t>(maxNSub) * std::max(1, zCols), 0);
+    cols.assign(maxNCharPart, 0);
+    zVec.assign(std::max(1, zCols), 0);
+    neoEl.assign(nEdge, 0.0);
+    rootFreqs.assign(std::max(2, maxKStates), 0.0);
+  }
+};
+
 
 // T-017: per-work-item core.  Bit-identical to the corresponding branch in
 // cpp_partition_log_likelihood_ecology_raw, but operating on a single
@@ -1395,7 +1433,8 @@ static double compute_eco_work_item_ll(
     const int* zMatrixGlobalPtr, int nCharsTotal,
     const double* wPtr,
     const std::vector<double>& gammaE,
-    const double* ratesPtr, int nCat) {
+    const double* ratesPtr, int nCat,
+    EcoThreadScratch& scratch) {
 
   (void)phiLen;
 
@@ -1411,10 +1450,14 @@ static double compute_eco_work_item_ll(
   const int* partTipsPtr = INTEGER(part.tipStates);
   const int* gciPtr      = INTEGER(part.globalCharIdx);
 
+  // T-017 Phase 1b: reuse pre-allocated scratch buffers, zero-fill the
+  // prefixes we'll touch.  Eliminates the per-call malloc/free that was
+  // contending on glibc's global lock with 4 threads.
+
   if (w.subgroupKp < 0) {
     // Whole partition (neo or known).  Build local zPart from the global
     // zMatrix using globalCharIdx.
-    std::vector<int> zPartLocal(nCharPart * zCols);
+    int* zPartLocal = scratch.zPartLocal.data();
     for (int c = 0; c < nCharPart; ++c) {
       int gi = gciPtr[c];
       for (int j = 0; j < zCols; ++j)
@@ -1423,59 +1466,62 @@ static double compute_eco_work_item_ll(
     double ll = 0.0;
     if (part.type == 0) {
       // Neomorphic.
-      std::vector<double> neoEl(nEdge);
+      double* neoEl = scratch.neoEl.data();
       for (int i = 0; i < nEdge; ++i) neoEl[i] = elPtr[i] * rateNeo;
-      std::vector<double> rootFreqs(2);
+      double* rootFreqs = scratch.rootFreqs.data();
       rootFreqs[0] = rateLoss / (1.0 + rateLoss);
       rootFreqs[1] = 1.0 / (1.0 + rateLoss);
       int stride = nCharPart * 2;
-      std::vector<double>  buf((maxNode + 1) * stride, 0.0);
-      std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+      size_t bufBytes = static_cast<size_t>(maxNode + 1) * stride;
+      std::fill_n(scratch.buf.begin(), bufBytes, 0.0);
+      std::fill_n(scratch.initFlg.begin(), maxNode + 1, 0u);
       ll = pruning_mkn_acrv_flat_ecology_raw(
         parPtr, chPtr, nEdge,
-        neoEl.data(),
+        neoEl,
         partTipsPtr, nTip, nCharPart,
-        rateLoss, rootFreqs.data(),
+        rateLoss, rootFreqs,
         ratesPtr, nCat,
         wPtr, kEco,
-        zPartLocal.data(),
+        zPartLocal,
         phiPtr, mode, refE, gammaE,
-        buf.data(), initFlg.data(), stride);
+        scratch.buf.data(), scratch.initFlg.data(), stride);
       if (data.codingType == 1) {
-        std::vector<int> zVec(zCols);
+        int* zVec = scratch.zVec.data();
         for (int c = 0; c < nCharPart; ++c) {
           for (int j = 0; j < zCols; ++j)
             zVec[j] = zPartLocal[c + j * nCharPart];
           double pConst = const_site_prob_mkn_eco_single_raw(
             parPtr, chPtr, nEdge,
-            neoEl.data(),
+            neoEl,
             nTip,
             rateLoss,
             ratesPtr, nCat,
             wPtr, kEco,
-            zVec.data(),
+            zVec,
             phiPtr, mode, refE, gammaE);
           ll -= std::log(1.0 - pConst);
         }
       }
     } else { // part.type == 2
       int kStates = part.k;
-      std::vector<double> rootFreqs(kStates, 1.0 / kStates);
+      double* rootFreqs = scratch.rootFreqs.data();
+      for (int k = 0; k < kStates; ++k) rootFreqs[k] = 1.0 / kStates;
       int stride = nCharPart * kStates;
-      std::vector<double>  buf((maxNode + 1) * stride, 0.0);
-      std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+      size_t bufBytes = static_cast<size_t>(maxNode + 1) * stride;
+      std::fill_n(scratch.buf.begin(), bufBytes, 0.0);
+      std::fill_n(scratch.initFlg.begin(), maxNode + 1, 0u);
       ll = pruning_jc_acrv_flat_ecology_raw(
         parPtr, chPtr, nEdge,
         elPtr,
         partTipsPtr, nTip, nCharPart,
-        kStates, rootFreqs.data(),
+        kStates, rootFreqs,
         ratesPtr, nCat,
         wPtr, kEco,
-        zPartLocal.data(),
+        zPartLocal,
         phiPtr, mode, refE, gammaE,
-        buf.data(), initFlg.data(), stride);
+        scratch.buf.data(), scratch.initFlg.data(), stride);
       if (data.codingType == 1) {
-        std::vector<int> zVec(zCols);
+        int* zVec = scratch.zVec.data();
         for (int c = 0; c < nCharPart; ++c) {
           for (int j = 0; j < zCols; ++j)
             zVec[j] = zPartLocal[c + j * nCharPart];
@@ -1485,7 +1531,7 @@ static double compute_eco_work_item_ll(
             nTip, kStates,
             ratesPtr, nCat,
             wPtr, kEco,
-            zVec.data(),
+            zVec,
             phiPtr, mode, refE, gammaE);
           ll -= std::log(1.0 - pConst);
         }
@@ -1502,16 +1548,15 @@ static double compute_eco_work_item_ll(
   // map ordering in the raw routine sorts by kp.  Within a kp the cols
   // vector preserves the order chars were visited (ascending c), so we
   // iterate c = 0..nCharPart-1 here too.
-  std::vector<int> cols;
-  cols.reserve(nCharPart);
+  int* cols = scratch.cols.data();
+  int nSub = 0;
   for (int c = 0; c < nCharPart; ++c) {
     int gi = gciPtr[c];
-    if (kPrimePtr[gi] == kp) cols.push_back(c);
+    if (kPrimePtr[gi] == kp) cols[nSub++] = c;
   }
-  int nSub = static_cast<int>(cols.size());
 
-  std::vector<int> subStates(nTip * nSub);
-  std::vector<int> subZ(nSub * zCols);
+  int* subStates = scratch.subStates.data();
+  int* subZ      = scratch.subZ.data();
   for (int c = 0; c < nSub; ++c) {
     for (int t = 0; t < nTip; ++t)
       subStates[t + c * nTip] = partTipsPtr[t + cols[c] * nTip];
@@ -1519,24 +1564,26 @@ static double compute_eco_work_item_ll(
     for (int j = 0; j < zCols; ++j)
       subZ[c + j * nSub] = zMatrixGlobalPtr[gi + j * nCharsTotal];
   }
-  std::vector<double> rootFreqs(kp, 1.0 / kp);
+  double* rootFreqs = scratch.rootFreqs.data();
+  for (int k = 0; k < kp; ++k) rootFreqs[k] = 1.0 / kp;
   int stride = nSub * kp;
-  std::vector<double>  buf((maxNode + 1) * stride, 0.0);
-  std::vector<uint8_t> initFlg(maxNode + 1, 0u);
+  size_t bufBytes = static_cast<size_t>(maxNode + 1) * stride;
+  std::fill_n(scratch.buf.begin(), bufBytes, 0.0);
+  std::fill_n(scratch.initFlg.begin(), maxNode + 1, 0u);
 
   double subLl = pruning_jc_acrv_flat_ecology_raw(
     parPtr, chPtr, nEdge,
     elPtr,
-    subStates.data(), nTip, nSub,
-    kp, rootFreqs.data(),
+    subStates, nTip, nSub,
+    kp, rootFreqs,
     ratesPtr, nCat,
     wPtr, kEco,
-    subZ.data(),
+    subZ,
     phiPtr, mode, refE, gammaE,
-    buf.data(), initFlg.data(), stride);
+    scratch.buf.data(), scratch.initFlg.data(), stride);
 
   if (data.codingType == 1) {
-    std::vector<int> zVec(zCols);
+    int* zVec = scratch.zVec.data();
     for (int c = 0; c < nSub; ++c) {
       for (int j = 0; j < zCols; ++j)
         zVec[j] = subZ[c + j * nSub];
@@ -1546,7 +1593,7 @@ static double compute_eco_work_item_ll(
         nTip, kp,
         ratesPtr, nCat,
         wPtr, kEco,
-        zVec.data(),
+        zVec,
         phiPtr, mode, refE, gammaE);
       subLl -= std::log(1.0 - pConst);
     }
@@ -1648,6 +1695,62 @@ double cpp_log_likelihood_ecology(
   int nWork = static_cast<int>(work.size());
   std::vector<double> partialLL(nWork, 0.0);
 
+  // T-017 Phase 1b: per-thread scratch workspace, persisted across calls
+  // via function-static.  Eliminates the per-call malloc that was the
+  // remaining bottleneck after Phase 1a (~300 KB `buf` × 4 threads
+  // contending on glibc's global lock).
+  //
+  // Function-static is thread-safe for this function's current use
+  // pattern (chain dispatch is serial — only one chain calls
+  // cpp_log_likelihood_ecology at a time, even under PT).  Phase 2
+  // (threaded move dispatch) would need to revisit this — e.g., move
+  // scratch onto McmcState so it becomes per-chain.
+  int maxNCharPart = 0, maxNSub = 0, maxKStates = 2, maxStride = 0;
+  for (const EcoWorkItem& w : work) {
+    const PartInfo& part = data.parts[w.partIdx];
+    int nCharPart = part.tipStates.ncol();
+    if (nCharPart > maxNCharPart) maxNCharPart = nCharPart;
+    int stride;
+    if (w.subgroupKp < 0) {
+      int kStates = (part.type == 0) ? 2 : part.k;
+      if (kStates > maxKStates) maxKStates = kStates;
+      stride = nCharPart * kStates;
+    } else {
+      int kp = w.subgroupKp;
+      if (kp > maxKStates) maxKStates = kp;
+      int nSub = 0;
+      const int* gciPtr = INTEGER(part.globalCharIdx);
+      const int* kpPtr  = INTEGER(kPrime);
+      for (int c = 0; c < nCharPart; ++c)
+        if (kpPtr[gciPtr[c]] == kp) ++nSub;
+      if (nSub > maxNSub) maxNSub = nSub;
+      stride = nSub * kp;
+    }
+    if (stride > maxStride) maxStride = stride;
+  }
+  if (maxNSub < 1) maxNSub = 1;
+  int maxNodeLocal = 2 * nTip - 1;
+  int zColsLocal = std::max(1, kEco - 1);
+  int nThreads = 1;
+#ifdef _OPENMP
+  nThreads = omp_get_max_threads();
+#endif
+
+  static std::vector<EcoThreadScratch> scratch;
+  if ((int)scratch.size() < nThreads) scratch.resize(nThreads);
+  // Grow-only resize: if current capacity insufficient for ANY dimension,
+  // re-allocate.  Otherwise reuse.
+  for (auto& s : scratch) {
+    if (s.maxNode < maxNodeLocal || s.maxStride < maxStride ||
+        (int)s.zPartLocal.size() < std::max(maxNCharPart, maxNSub) * zColsLocal ||
+        (int)s.subStates.size() < nTip * maxNSub ||
+        (int)s.neoEl.size() < nEdge ||
+        (int)s.rootFreqs.size() < maxKStates) {
+      s.allocate(maxNodeLocal, maxStride, std::max(maxNCharPart, maxNSub),
+                 maxNSub, zColsLocal, nTip, nEdge, maxKStates);
+    }
+  }
+
   const int* parPtr      = INTEGER(parent);
   const int* chPtr       = INTEGER(child);
   const double* elPtr    = REAL(edgeLen);
@@ -1692,6 +1795,10 @@ double cpp_log_likelihood_ecology(
   #pragma omp parallel for schedule(dynamic)
 #endif
   for (int wi = 0; wi < nWork; ++wi) {
+    int tid = 0;
+#ifdef _OPENMP
+    tid = omp_get_thread_num();
+#endif
     partialLL[wi] = compute_eco_work_item_ll(
       work[wi], data,
       parPtr, chPtr, nEdge,
@@ -1702,7 +1809,8 @@ double cpp_log_likelihood_ecology(
       zMatrixPtr, nCharsTotal,
       wPtr,
       gammaE,
-      ratesPtr, nCat);
+      ratesPtr, nCat,
+      scratch[tid]);
   }
 
   // Serial merge.  Order = work-item list order = serial reference order →
