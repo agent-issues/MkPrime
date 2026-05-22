@@ -10,6 +10,7 @@
 
 #include "mcmc_state.h"
 #include "gibbs_z_workspace.h"
+#include "chain_rng.h"
 #include "gibbs_partial_cl.h"
 #include "fitch.h"
 #include "node_cl_cache.h"
@@ -194,6 +195,14 @@ static inline double bactrian_perturbation() {
   return raw * BACTRIAN_SCALE;
 }
 
+// T-017-IIa: ChainRng overload for in-MCMC callers (15 sites).
+// Zero-arg version above is kept for the R-exported bactrian_draws wrapper.
+static inline double bactrian_perturbation(ChainRng& rng) {
+  double z = rng.rnorm(0.0, BACTRIAN_SD);
+  double raw = (rng.unif() < 0.5) ? (BACTRIAN_M + z) : (-BACTRIAN_M + z);
+  return raw * BACTRIAN_SCALE;
+}
+
 // Exported for unit testing (test-bactrian.R)
 // [[Rcpp::export]]
 NumericVector bactrian_draws(int n) {
@@ -221,6 +230,21 @@ static inline void bactrian_2d_perturbation(double rho,
   double s1 = (R::unif_rand() < 0.5) ? BACTRIAN_M : -BACTRIAN_M;
   double pSame = 0.5 * (1.0 + rho);
   double s2 = (R::unif_rand() < pSame) ? s1 : -s1;
+  z1 = (s1 + e1) * BACTRIAN_SCALE;
+  z2 = (s2 + e2) * BACTRIAN_SCALE;
+}
+
+// T-017-IIa: ChainRng overload for in-MCMC callers (4 sites).
+// Zero-arg version above is kept for the R-exported bactrian_2d_draws wrapper.
+static inline void bactrian_2d_perturbation(ChainRng& rng, double rho,
+                                            double& z1, double& z2) {
+  double n1 = rng.rnorm(0.0, 1.0);
+  double n2 = rng.rnorm(0.0, 1.0);
+  double e1 = BACTRIAN_SD * n1;
+  double e2 = BACTRIAN_SD * (rho * n1 + std::sqrt(1.0 - rho * rho) * n2);
+  double s1 = (rng.unif() < 0.5) ? BACTRIAN_M : -BACTRIAN_M;
+  double pSame = 0.5 * (1.0 + rho);
+  double s2 = (rng.unif() < pSame) ? s1 : -s1;
   z1 = (s1 + e1) * BACTRIAN_SCALE;
   z2 = (s2 + e2) * BACTRIAN_SCALE;
 }
