@@ -6,10 +6,10 @@ Generated from full 1M-iteration chains (both chains complete as of 2026-05-19).
 
 | Quantity | Value |
 |---|---|
-| Aware trees (total from NWK) | 268 |
+| Aware trees (total from NWK) | 334 |
 | Blind trees (total from NWK) | 2525 |
 | Burnin fraction applied | 25% |
-| Aware post-burnin | 201 |
+| Aware post-burnin | 250 |
 | Blind post-burnin | 1893 |
 | Aware subsampled for CID | 200 |
 | Blind subsampled for CID | 200 |
@@ -20,17 +20,17 @@ Generated from full 1M-iteration chains (both chains complete as of 2026-05-19).
 
 | Comparison | N pairs | Mean CID | Median CID |
 |---|---|---|---|
-| Within aware | 19900 | 15.4616 | 18.1947 |
-| Within blind | 19900 | 13.6185 | 13.3912 |
-| Between chains | 40000 | 43.9473 | 43.7442 |
+| Within aware | 19900 | 11.3002 | 6.4772 |
+| Within blind | 19900 | 13.6411 | 13.4330 |
+| Between chains | 40000 | 45.3120 | 45.4249 |
 
 ## Split agreement
 
 - BLIND MR consensus: **45 splits**
-- AWARE MR consensus: **29 splits**
+- AWARE MR consensus: **51 splits**
 - Shared splits: **0**
 - Blind-unique splits: **45**
-- Aware-unique splits: **29**
+- Aware-unique splits: **51**
 
 ### Blind-unique splits (absent from AWARE consensus)
   {Acomys, Arvicanthis, Arvicola, Chaetodipus, Cricetomys, Dipodomys, Dipus, Geomys, Gerbillus, Heteromys, Hydromys, Jaculus, Lepus, Mus, Napaeozapus, Neotoma, Ochotona, Orthogeomys, Oryctolagus, Pedetes, Perognathus, Platacanthomyidae, Rattus, Spalax, Sylvilagus, Thomomys}
@@ -80,40 +80,62 @@ Generated from full 1M-iteration chains (both chains complete as of 2026-05-19).
   {Macropus, Vombatus}
 
 ### Aware-unique splits (absent from BLIND consensus)
-  {Anomalurus, Aplodontia, Castor, Chinchilla, Eliomys, Heteromys, Hydromys, Massoutiera, Myoxus, Perognathus, Thryonomys, Tupaia}
-  {Anomalurus, Aplodontia, Castor, Chinchilla, Eliomys, Heteromys, Hydromys, Massoutiera, Myoxus, Thryonomys, Tupaia}
-  {Anomalurus, Chinchilla, Thryonomys}
-  {Anomalurus, Thryonomys}
-  {Acomys, Chaetodipus, Didelphis, Heterocephalus, Hydrochoerus, Laonastes, Mus, Spalax}
-  {Chaetodipus, Didelphis, Heterocephalus, Hydrochoerus, Laonastes, Mus}
-  {Acomys, Spalax}
-  {Arvicanthis, Cavia, Myocastor, Napaeozapus, Ochotona, Papio_hamadryas, Tamiasciurus}
-  {Arvicanthis, Cavia, Myocastor, Napaeozapus}
-  {Arvicanthis, Cavia, Myocastor}
-  {Arvicanthis, Myocastor}
-  {Ochotona, Tamiasciurus}
-  {Arvicola, Dipus, Geomys, Neotoma, Pedetes, Platacanthomyidae, Thomomys}
-  {Arvicola, Dipus, Geomys, Neotoma, Pedetes, Platacanthomyidae}
-  {Dipus, Geomys, Neotoma, Pedetes, Platacanthomyidae}
-  {Neotoma, Pedetes}
-  {Geomys, Platacanthomyidae}
+  {Arvicola, Capromys, Cricetomys, Dasyprocta, Dermoptera, Dipus, Echimys, Erethizon, Eulemur_macaco, Geomys, Glaucomys, Graphiurus, Hystrix, Jaculus, Lepus, Macropus, Marmota, Neotoma, Orthogeomys, Oryctolagus, Pedetes, Perognathus, Platacanthomyidae, Ratufa, Rhynchocyon, Sciurus, Sylvilagus, Thomomys, Vombatus}
+  {Capromys, Cricetomys, Dasyprocta, Dermoptera, Echimys, Erethizon, Eulemur_macaco, Glaucomys, Graphiurus, Hystrix, Jaculus, Lepus, Macropus, Marmota, Orthogeomys, Oryctolagus, Perognathus, Ratufa, Rhynchocyon, Sciurus, Vombatus}
+  {Capromys, Cricetomys, Dasyprocta, Dermoptera, Erethizon, Eulemur_macaco, Glaucomys, Graphiurus, Jaculus, Lepus, Macropus, Marmota, Orthogeomys, Oryctolagus, Ratufa, Sciurus, Vombatus}
+  {Capromys, Cricetomys, Dasyprocta, Dermoptera, Eulemur_macaco, Glaucomys, Graphiurus, Macropus, Marmota, Orthogeomys, Oryctolagus, Sciurus}
+  {Capromys, Dasyprocta, Eulemur_macaco, Glaucomys, Graphiurus, Macropus, Marmota, Orthogeomys, Oryctolagus}
+  {Capromys, Dasyprocta, Glaucomys, Graphiurus, Macropus, Marmota, Orthogeomys, Oryctolagus}
+  {Capromys, Glaucomys, Graphiurus, Macropus, Marmota, Orthogeomys}
   {Glaucomys, Graphiurus, Macropus, Marmota, Orthogeomys}
   {Glaucomys, Graphiurus, Macropus, Marmota}
   {Graphiurus, Macropus, Marmota}
   {Graphiurus, Macropus}
-  {Capromys, Dasyprocta, Eulemur_macaco, Oryctolagus}
   {Dasyprocta, Oryctolagus}
-  {Dermoptera, Jaculus, Vombatus}
+  {Cricetomys, Dermoptera, Sciurus}
+  {Dermoptera, Sciurus}
+  {Erethizon, Jaculus, Vombatus}
   {Jaculus, Vombatus}
+  {Lepus, Ratufa}
+  {Echimys, Rhynchocyon}
+  {Arvicola, Dipus, Geomys, Neotoma, Pedetes, Platacanthomyidae, Thomomys}
+  {Arvicola, Dipus, Geomys, Neotoma, Pedetes, Platacanthomyidae}
+  {Dipus, Geomys, Neotoma, Pedetes, Platacanthomyidae}
+  {Dipus, Geomys, Platacanthomyidae}
+  {Geomys, Platacanthomyidae}
+  {Neotoma, Pedetes}
+  {Acomys, Anomalurus, Aplodontia, Arvicanthis, Castor, Cavia, Chaetodipus, Chinchilla, Cuniculus, Didelphis, Dipodomys, Eliomys, Heterocephalus, Heteromys, Hydrochoerus, Hydromys, Laonastes, Massoutiera, Mus, Myocastor, Myoxus, Napaeozapus, Ochotona, Papio_hamadryas, Spalax, Tamiasciurus, Thryonomys, Tupaia}
+  {Acomys, Anomalurus, Aplodontia, Arvicanthis, Castor, Cavia, Chaetodipus, Chinchilla, Didelphis, Eliomys, Heterocephalus, Heteromys, Hydrochoerus, Hydromys, Laonastes, Massoutiera, Mus, Myocastor, Myoxus, Napaeozapus, Ochotona, Papio_hamadryas, Spalax, Tamiasciurus, Thryonomys, Tupaia}
+  {Acomys, Anomalurus, Aplodontia, Arvicanthis, Castor, Cavia, Chaetodipus, Chinchilla, Didelphis, Heterocephalus, Heteromys, Hydrochoerus, Hydromys, Laonastes, Massoutiera, Mus, Myocastor, Myoxus, Napaeozapus, Ochotona, Papio_hamadryas, Spalax, Tamiasciurus, Thryonomys}
+  {Acomys, Anomalurus, Aplodontia, Chaetodipus, Chinchilla, Didelphis, Heterocephalus, Hydrochoerus, Laonastes, Mus, Spalax, Thryonomys}
+  {Acomys, Anomalurus, Chaetodipus, Chinchilla, Didelphis, Heterocephalus, Hydrochoerus, Laonastes, Mus, Spalax, Thryonomys}
+  {Acomys, Chaetodipus, Chinchilla, Didelphis, Heterocephalus, Hydrochoerus, Laonastes, Mus, Spalax}
+  {Acomys, Chaetodipus, Didelphis, Heterocephalus, Hydrochoerus, Laonastes, Mus, Spalax}
+  {Acomys, Chaetodipus, Didelphis, Heterocephalus, Hydrochoerus, Laonastes, Mus}
+  {Chaetodipus, Didelphis, Heterocephalus, Hydrochoerus, Laonastes, Mus}
+  {Chaetodipus, Heterocephalus, Hydrochoerus, Laonastes, Mus}
+  {Hydrochoerus, Mus}
+  {Chaetodipus, Heterocephalus}
+  {Anomalurus, Thryonomys}
+  {Arvicanthis, Castor, Cavia, Heteromys, Hydromys, Massoutiera, Myocastor, Myoxus, Napaeozapus, Ochotona, Papio_hamadryas, Tamiasciurus}
+  {Arvicanthis, Cavia, Heteromys, Massoutiera, Myocastor, Myoxus, Napaeozapus, Ochotona, Papio_hamadryas, Tamiasciurus}
+  {Arvicanthis, Cavia, Heteromys, Myocastor, Myoxus, Napaeozapus, Ochotona, Papio_hamadryas, Tamiasciurus}
+  {Arvicanthis, Cavia, Heteromys, Myocastor, Napaeozapus, Ochotona, Papio_hamadryas, Tamiasciurus}
+  {Arvicanthis, Cavia, Myocastor, Napaeozapus, Ochotona, Papio_hamadryas, Tamiasciurus}
+  {Arvicanthis, Cavia, Myocastor, Napaeozapus, Papio_hamadryas}
+  {Arvicanthis, Cavia, Myocastor, Napaeozapus}
+  {Arvicanthis, Cavia, Myocastor}
+  {Arvicanthis, Myocastor}
+  {Ochotona, Tamiasciurus}
+  {Castor, Hydromys}
+  {Cuniculus, Dipodomys}
   {Gerbillus, Rattus, Tamias}
   {Gerbillus, Rattus}
-  {Cricetomys, Sciurus}
-  {Cuniculus, Dipodomys}
 
 ## MDS topology
 
 The two chains' posterior distributions are **largely separated** in CID-MDS space
-(centroid distance = 41.1963; aware spread = 21.0507, blind spread = 20.6980).
+(centroid distance = 42.9340; aware spread = 22.3546, blind spread = 20.8677).
 
 ## Key patterns
 
