@@ -137,6 +137,7 @@ test_that("GibbsSPR on a 4-tip tree changes topology at least once in 100 tries"
 # ---------------------------------------------------------------------------
 
 test_that("GibbsSPR samples better topologies more often than random", {
+  set.seed(139L)
   # Build a dataset with 4 tips where one tree topology has much higher
   # likelihood. Use a star-like character matrix that strongly favours
   # ((t1,t2),(t3,t4)).
@@ -157,8 +158,8 @@ test_that("GibbsSPR samples better topologies more often than random", {
   fill_partition_cache(dataPtr, statePtr)
   allocate_cl_workspace(dataPtr, statePtr)
 
-  # Run 200 GibbsSPR moves; count how many times topology changes
-  n_try <- 200L
+  # Run 1000 GibbsSPR moves; count how many times topology changes
+  n_try <- 1000L
   n_acc <- sum(vapply(seq_len(n_try), function(i)
     do_move_cpp(dataPtr, statePtr, 10L, 0L, 0.5, 0.5, 1L, 1.0),
     logical(1L)))
