@@ -182,6 +182,19 @@ RunMkPrime <- function(data, tree = NULL,
     ))
   }
 
+  # Binary tree required by C++ kernel; guard against polytomous input
+  # (e.g. consensus trees, NJ trees with zero-length ties).
+  if (!ape::is.binary(tree)) {
+    nPoly <- sum(tabulate(tree$edge[, 1L]) > 2L)
+    cli::cli_warn(c(
+      "{.arg tree} contains {nPoly} polytom{?y/ies}.",
+      "i" = "The C++ kernel requires a fully bifurcating tree.",
+      "i" = "Resolving polytomies with {.fn ape::multi2di} \\
+             ({.code random = FALSE})."
+    ))
+    tree <- ape::multi2di(tree, random = FALSE)
+  }
+
   if (is.null(model)) model <- MkPrimeModel()
   # mcmc already defaulted above (before auto-resume check)
 
@@ -2829,6 +2842,16 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       } else {
         tree <- TreeTools::NJTree(startInput, edgeLengths = TRUE)
       }
+    }
+    if (!ape::is.binary(tree)) {
+      nPoly <- sum(tabulate(tree$edge[, 1L]) > 2L)
+      cli::cli_warn(c(
+        "{.arg tree} contains {nPoly} polytom{?y/ies}.",
+        "i" = "The C++ kernel requires a fully bifurcating tree.",
+        "i" = "Resolving polytomies with {.fn ape::multi2di} \\
+               ({.code random = FALSE})."
+      ))
+      tree <- ape::multi2di(tree, random = FALSE)
     }
     tree <- TreeTools::Preorder(tree)
     model <- .FinalizeModel(model, tree, mkd)
