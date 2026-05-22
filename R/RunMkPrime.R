@@ -973,6 +973,9 @@ RunMkPrime <- function(data, tree = NULL,
     if (nChains > 1L) {
       r$swap_accept  <- r$swap_accept  + result$swap_accept
       r$swap_propose <- r$swap_propose + result$swap_propose
+      # PT-RT-001: accumulate round-trip count (canonical PT mixing diagnostic).
+      r$round_trip_count <- (r$round_trip_count %||% 0L) +
+                            (result$round_trip_count %||% 0L)
     }
 
     # --- Sample handling depends on phase ---
@@ -1073,8 +1076,15 @@ RunMkPrime <- function(data, tree = NULL,
           r$chain_slice_exp[[ch]], moves
         )
       }
-      if (nChains > 1L)
+      if (nChains > 1L) {
         r$betas <- .AdaptTemperatures(r$betas, r$swap_accept, r$swap_propose)
+        # PT-RT-001: surface ladder-too-coarse warning at most once per run.
+        lw <- attr(r$betas, "ladder_warning")
+        if (!is.null(lw) && !isTRUE(r$ladder_warning_emitted)) {
+          cli::cli_warn(c("!" = lw))
+          r$ladder_warning_emitted <- TRUE
+        }
+      }
       # Adaptive move weight scheduling (M-092): acceptance-rate heuristic.
       # Anneal softmax temperature relative to an adaptive warmup horizon:
       # the projected total warmup length based on remaining stabilisation
@@ -2397,6 +2407,7 @@ RunMkPrime <- function(data, tree = NULL,
     if (mcmc$nChains > 1L) {
       result$betas      <- r$betas
       result$swap_rates <- r$swap_accept / pmax(r$swap_propose, 1L)
+      result$round_trip_count <- r$round_trip_count %||% 0L
     }
     result
   })
@@ -2433,6 +2444,9 @@ RunMkPrime <- function(data, tree = NULL,
     if (mcmc$nChains > 1L) {
       result$betas <- runs[[1]]$betas
       result$swap_rates <- perRunSummaries[[1]]$swap_rates
+      # PT-RT-001: total round trips across all runs (canonical PT diagnostic)
+      result$round_trip_count <- sum(vapply(perRunSummaries,
+        function(s) s$round_trip_count %||% 0L, integer(1)))
       result$chain_acceptance <- lapply(seq_len(mcmc$nChains), function(ch) {
         runs[[1]]$chain_accept[[ch]] / pmax(runs[[1]]$chain_propose[[ch]], 1L)
       })
@@ -2462,6 +2476,7 @@ RunMkPrime <- function(data, tree = NULL,
       if (!is.null(r$betas)) {
         result$betas <- r$betas
         result$swap_rates <- r$swap_rates
+        result$round_trip_count <- r$round_trip_count %||% 0L
         result$chain_acceptance <- lapply(seq_len(mcmc$nChains), function(ch) {
           runs[[1]]$chain_accept[[ch]] /
             pmax(runs[[1]]$chain_propose[[ch]], 1L)
@@ -2486,6 +2501,8 @@ RunMkPrime <- function(data, tree = NULL,
       if (mcmc$nChains > 1L) {
         result$betas <- runs[[1]]$betas
         result$swap_rates <- perRunSummaries[[1]]$swap_rates
+        result$round_trip_count <- sum(vapply(perRunSummaries,
+          function(s) s$round_trip_count %||% 0L, integer(1)))
         result$chain_acceptance <- lapply(seq_len(mcmc$nChains), function(ch) {
           runs[[1]]$chain_accept[[ch]] /
             pmax(runs[[1]]$chain_propose[[ch]], 1L)
@@ -3862,9 +3879,26 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
 
 #' Adapt temperature ladder based on swap acceptance rates
+#'
+#' Reshape the geometric PT ladder so adjacent swaps target `target`
+#' acceptance. The hot-end clamp is **0.5** rather than the more permissive
+#' 0.95 used pre-PT-RT-001: on sharp likelihoods (e.g. Mk on dense
+#' morphological matrices) the swap-rate target is trivially met by a
+#' ladder that's so narrow the hot chain is essentially the cold chain,
+#' yielding ostensibly "good" swap acceptance but zero between-mode
+#' mixing. A 0.5 ceiling guarantees the hot chain operates at a meaningful
+#' temperature delta from cold.
+#'
+#' Returns the new betas vector. When the clamp is binding (heat at the
+#' upper limit AND swap rates below `target / 2`), an attribute
+#' `ladder_warning` is set so the caller can surface a recommendation to
+#' add more PT chains.
+#'
 #' @keywords internal
 .AdaptTemperatures <- function(betas, swapAccept, swapPropose,
-                               target = 0.25) {
+                               target = 0.25,
+                               heatMax = 0.5,
+                               heatMin = 0.01) {
   nChains <- length(betas)
   if (nChains < 2L) return(betas)
 
@@ -3875,11 +3909,24 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
   heat <- betas[nChains]
   adj <- exp(0.5 * (overallRate - target))
-  heatNew <- heat^adj
+  heatRaw <- heat^adj
 
-  heatNew <- max(0.01, min(0.95, heatNew))
+  # Clamp first, then check whether the clamp is binding *and* swap rates
+  # are below half-target. That combination indicates the temperature delta
+  # is genuinely too coarse for this likelihood — adding more chains is the
+  # only remedy short of widening the cold-to-hot span further.
+  heatNew <- max(heatMin, min(heatMax, heatRaw))
+  newBetas <- .BuildTemperatureLadder(nChains, heatNew)
 
-  .BuildTemperatureLadder(nChains, heatNew)
+  clampedHigh <- heatRaw > heatMax
+  if (clampedHigh && overallRate < target / 2) {
+    attr(newBetas, "ladder_warning") <-
+      sprintf("PT ladder pinned to heat = %.2f (hot beta = %.3f) yet swap rate is %.1f%% (target %.1f%%). The %d-chain ladder is too coarse for this likelihood; consider `nChains = %d` or higher.",
+              heatMax, heatMax, 100 * overallRate, 100 * target,
+              nChains, nChains + 2L)
+  }
+
+  newBetas
 }
 
 
