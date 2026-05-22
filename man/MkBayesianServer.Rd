@@ -7,7 +7,7 @@
 MkBayesianServer(id, dataset, startTree = NULL)
 }
 \arguments{
-\item{id}{Shiny module namespace ID — must match the \code{id} passed to
+\item{id}{Shiny module namespace ID -- must match the \code{id} passed to
 \code{\link[=MkBayesianUi]{MkBayesianUi()}}.}
 
 \item{dataset}{A \emph{reactive} that returns a \code{phyDat} object, or \code{NULL}

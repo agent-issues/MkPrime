@@ -5,6 +5,10 @@ pruning_jc_acrv <- function(parent, child, edge_length, tip_states, kStates, roo
     .Call(`_MkPrime_pruning_jc_acrv`, parent, child, edge_length, tip_states, kStates, root_freqs, rate_multipliers)
 }
 
+pruning_jc_acrv_collapsed <- function(parent, child, edge_length, tip_states, kFull, kObs, rate_multipliers) {
+    .Call(`_MkPrime_pruning_jc_acrv_collapsed`, parent, child, edge_length, tip_states, kFull, kObs, rate_multipliers)
+}
+
 pruning_mkn_acrv <- function(parent, child, edge_length, tip_states, rate_loss, root_freqs, rate_multipliers) {
     .Call(`_MkPrime_pruning_mkn_acrv`, parent, child, edge_length, tip_states, rate_loss, root_freqs, rate_multipliers)
 }
@@ -15,6 +19,14 @@ constant_site_prob_jc <- function(parent, child, edge_length, nTip, kStates, roo
 
 singleton_site_prob_jc <- function(parent, child, edge_length, nTip, kStates, root_freqs, rate_multipliers) {
     .Call(`_MkPrime_singleton_site_prob_jc`, parent, child, edge_length, nTip, kStates, root_freqs, rate_multipliers)
+}
+
+constant_site_prob_jc_collapsed <- function(parent, child, edge_length, nTip, kFull, kObs, rate_multipliers) {
+    .Call(`_MkPrime_constant_site_prob_jc_collapsed`, parent, child, edge_length, nTip, kFull, kObs, rate_multipliers)
+}
+
+singleton_site_prob_jc_collapsed <- function(parent, child, edge_length, nTip, kFull, kObs, rate_multipliers) {
+    .Call(`_MkPrime_singleton_site_prob_jc_collapsed`, parent, child, edge_length, nTip, kFull, kObs, rate_multipliers)
 }
 
 constant_site_prob_mkn <- function(parent, child, edge_length, nTip, rate_loss, root_freqs, rate_multipliers) {
@@ -39,6 +51,10 @@ mkp_hello <- function() {
 
 pruning_jc <- function(parent, child, edge_length, tip_states, kStates, root_freqs) {
     .Call(`_MkPrime_pruning_jc`, parent, child, edge_length, tip_states, kStates, root_freqs)
+}
+
+pruning_jc_collapsed <- function(parent, child, edge_length, tip_states, kFull, kObs) {
+    .Call(`_MkPrime_pruning_jc_collapsed`, parent, child, edge_length, tip_states, kFull, kObs)
 }
 
 pruning_mkn <- function(parent, child, edge_length, tip_states, rate_loss, root_freqs) {
@@ -139,6 +155,26 @@ validate_swap_partial_cl <- function(dataPtr, statePtr, nodeA) {
 
 .CppPartialEvalEcologyNNI <- function(dataPtr, parentOld, childOld, parentNew, childNew, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, phi, zMatrix, pi0, theta, vNode, uNode, dirtyFracThreshold = 0.70) {
     .Call(`_MkPrime_CppPartialEvalEcologyNNI`, dataPtr, parentOld, childOld, parentNew, childNew, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, phi, zMatrix, pi0, theta, vNode, uNode, dirtyFracThreshold)
+}
+
+test_persite_uncollapsed <- function(parent, child, edge_length, tip_states, kStates, rate_multipliers) {
+    .Call(`_MkPrime_test_persite_uncollapsed`, parent, child, edge_length, tip_states, kStates, rate_multipliers)
+}
+
+test_persite_collapsed <- function(parent, child, edge_length, tip_states, kFull, kObs, rate_multipliers) {
+    .Call(`_MkPrime_test_persite_collapsed`, parent, child, edge_length, tip_states, kFull, kObs, rate_multipliers)
+}
+
+test_flat_jc_uncollapsed <- function(parent, child, edge_length, tip_states, kStates, acrv, rate_multipliers) {
+    .Call(`_MkPrime_test_flat_jc_uncollapsed`, parent, child, edge_length, tip_states, kStates, acrv, rate_multipliers)
+}
+
+test_flat_jc_collapsed <- function(parent, child, edge_length, tip_states, kFull, kObs, acrv, rate_multipliers) {
+    .Call(`_MkPrime_test_flat_jc_collapsed`, parent, child, edge_length, tip_states, kFull, kObs, acrv, rate_multipliers)
+}
+
+test_flat_jc_constprob_pair <- function(parent, child, edge_length, tip_states, kFull, kObs, acrv, rate_multipliers) {
+    .Call(`_MkPrime_test_flat_jc_constprob_pair`, parent, child, edge_length, tip_states, kFull, kObs, acrv, rate_multipliers)
 }
 
 prepare_mcmc_data <- function(partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, kPriorBetaGeometric = FALSE, qHeterogeneity = FALSE, nBetaCat = 4L, betaScaleShape = 1.0, betaScaleRate = 1.0, kPriorEmpiricalGeometric = FALSE, empLogBody = numericVector(), empBodyLastK = 1L, empTailStartK = 0L, empTailDecay = 0.0, empLogTailStartP = -1e308, ecologyAware = FALSE, ecologyTipStates = integerVector(), kEcology = 0L, magnitudeModeStr = "global", rho0Alpha = 360.0, rho0Beta = 120.0, sigmaPhi = 1.5, gibbsZEvery = 50L, thetaAlpha = 2.0, thetaBeta = 2.0) {

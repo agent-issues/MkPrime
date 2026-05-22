@@ -211,11 +211,6 @@ more often. Much cheaper than Gibbs SPR (no likelihood evaluation per
 candidate), but better guided than uniform SPR.
 See Yang & Rodríguez (2013); Ronquist et al. (2020).}
 
-\item{gibbsWarmupFactor}{Numeric in (0, 1]; weight of the Gibbs kPrime
-sweep relative to other moves during warmup (default \code{1/3}).
-A lower value reduces warmup overhead from the sweep; the weight is
-restored at the warmup-to-tuning transition.}
-
 \item{joint2d}{Logical; include 2D joint Bactrian proposals for
 correlated parameter pairs (default \code{TRUE}). Proposes correlated
 updates to tree_length × rate_log_sd (and tree_length × rate_loss
@@ -309,15 +304,16 @@ the next pending run launches in its place. Cross-run convergence
 once every run has produced samples — so prefer \code{nRuns <= nCore}
 when convergence-based early stopping matters.
 
-\strong{Interrupt-resume is supported only for serial runs (\code{nCore = 1}).}
-In parallel mode workers run in separate \code{callr::r_bg()} processes
-and cannot write to the parent's checkpoint state, so an interrupted
-parallel run leaves only the streaming log files on disk; partial
-samples can be loaded with \code{\link[=MkPrimeRecover]{MkPrimeRecover()}} for inspection, but
-\code{\link[=ResumeMkPrime]{ResumeMkPrime()}} will start a fresh run rather than continue from
-the interrupt point. For long parallel runs, prefer a bounded
-\code{nIter} together with \code{maxTime} so \code{\link[=RunMkPrime]{RunMkPrime()}} returns naturally
-rather than via Ctrl-C.}
+\strong{Parallel runs are fully resumable.} Each callr worker writes its
+own per-run \code{.ckp} file every \code{checkEvery} iterations (paths derived
+from \code{checkpointFile}: \code{run.ckp} -> \code{run_1.ckp}, \code{run_2.ckp}, ...).
+On SIGKILL, SLURM walltime overrun, or Ctrl-C, work is lost only
+back to the most recent per-run checkpoint -- bounded by \code{checkEvery}
+iterations per run.  \code{\link[=ResumeMkPrime]{ResumeMkPrime()}} (or just re-running the same
+\code{\link[=RunMkPrime]{RunMkPrime()}} call with \code{overwrite = FALSE}) synthesises the master
+checkpoint from the per-run \code{.ckp} files when the parent process did
+not exit cleanly.  Checkpoint writes use a tmp+rename idiom so a
+SIGKILL during a save leaves the previous \code{.ckp} intact.}
 
 \item{pollInterval}{Integer. Seconds between convergence polls in parallel
 mode. Ignored when \code{nCore = 1}. Default \code{10L}.}
@@ -340,6 +336,11 @@ batch completion is more important than a timely abort.
 }
 
 Ignored when \code{nCore = 1}.}
+
+\item{gibbsWarmupFactor}{Numeric in (0, 1]; weight of the Gibbs kPrime
+sweep relative to other moves during warmup (default \code{1/3}). A lower
+value reduces warmup overhead from the sweep; the weight is restored at
+the warmup-to-tuning transition.}
 }
 \value{
 An S3 object of class \code{MkPrimeMCMC}.

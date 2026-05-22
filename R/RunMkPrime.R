@@ -390,7 +390,10 @@ RunMkPrime <- function(data, tree = NULL,
   tryCatch({
     if (mcmc$nCore > 1L && nRuns > 1L) {
       # Parallel path: shared env is not accessible from callr workers.
-      # Checkpointing handled by the orchestrator after completion.
+      # Each worker writes its own per-run .ckp and per-run .nwk to disk
+      # every checkEvery iterations, so on SIGKILL/walltime overrun the
+      # state survives.  ResumeMkPrime() synthesises the master from
+      # per-run ckps when the parent did not exit cleanly.
       parResult    <- .RunParallelRuns(mkd, model, mcmc, runs, moves,
                                         tipLabels, paramNames, nEdge,
                                         brColStart, treeFilePaths,
@@ -402,20 +405,10 @@ RunMkPrime <- function(data, tree = NULL,
       drops        <- parResult$drops
       launchTimes  <- parResult$launchTimes
 
-      # Each run writes to its own newick stream so cross-run R-hat on
-      # tree-derived statistics can be computed without de-interleaving.
-      if (!is.null(treeFilePaths)) {
-        for (run in seq_along(runs)) {
-          treePath <- treeFilePaths[run]
-          if (!is.null(treePath)) {
-            for (tr in runs[[run]]$tree_samples) {
-              if (!is.null(tr)) cat(ape::write.tree(tr), "\n",
-                                    file = treePath, append = TRUE)
-            }
-          }
-        }
-      }
-
+      # Trees are streamed worker-side to per-run treeFilePaths[run] (no
+      # post-completion dump needed).  Master checkpoint write below uses
+      # the worker state returned via $get_result(); it doesn't depend on
+      # the per-run ckps that the workers also produced on disk.
       if (!is.null(mcmc$checkpointFile)) {
         .SaveCheckpoint(runs, mcmc, actualIter, paramNames,
                         mcmc$checkpointFile, model = model)
@@ -465,29 +458,47 @@ RunMkPrime <- function(data, tree = NULL,
          launchTimes = if (exists("launchTimes")) launchTimes else NULL)
   },
   interrupt = function(cond) {
+    isParallel <- isTRUE(mcmc$nCore > 1L) && isTRUE(mcmc$nRuns > 1L)
+
     # M-149: Best-effort checkpoint from shared state.
+    # Parallel: synthesise master from per-run ckps that workers wrote to
+    # disk before they were killed by the on.exit() pool teardown.
+    # Serial: use shared$runs / shared$actualIter as before.
     ckpSaved <- FALSE
-    if (!is.null(mcmc$checkpointFile) && shared$actualIter > 0L) {
+    ckpIter  <- 0L
+    if (isParallel && !is.null(mcmc$checkpointFile)) {
+      synthIter <- tryCatch(
+        .SynthesiseMasterFromPerRun(mcmc$checkpointFile, nRuns),
+        error = function(e) 0L
+      )
+      if (synthIter > 0L) {
+        ckpSaved <- TRUE
+        ckpIter  <- synthIter
+      }
+    } else if (!is.null(mcmc$checkpointFile) && shared$actualIter > 0L) {
       tryCatch({
         .SaveCheckpoint(shared$runs, mcmc, shared$actualIter,
                         paramNames, mcmc$checkpointFile,
                         moveWeights = shared$moveWeights,
                         phase = shared$phase, model = model)
         ckpSaved <- TRUE
+        ckpIter  <- shared$actualIter
       }, error = function(e) NULL)
     }
 
-    # Flush any buffered samples to disk (best-effort).
-    # Use shared$runs when available (latest state); fall back to local runs.
-    flushRuns <- if (shared$actualIter > 0L) shared$runs else runs
-    for (i in seq_along(logFilePaths)) {
-      tryCatch({
-        if (!is.null(flushRuns[[i]]$flush_idx) &&
-            flushRuns[[i]]$flush_idx > 0L) {
-          .FlushBuffer(flushRuns[[i]]$flush_buf, flushRuns[[i]]$flush_idx,
-                       flushRuns[[i]]$flush_iter, logFilePaths[i])
-        }
-      }, error = function(e) NULL)
+    # Flush any buffered samples to disk (best-effort, serial path only;
+    # parallel workers do their own flushing on cancel-file detection).
+    if (!isParallel) {
+      flushRuns <- if (shared$actualIter > 0L) shared$runs else runs
+      for (i in seq_along(logFilePaths)) {
+        tryCatch({
+          if (!is.null(flushRuns[[i]]$flush_idx) &&
+              flushRuns[[i]]$flush_idx > 0L) {
+            .FlushBuffer(flushRuns[[i]]$flush_buf, flushRuns[[i]]$flush_idx,
+                         flushRuns[[i]]$flush_iter, logFilePaths[i])
+          }
+        }, error = function(e) NULL)
+      }
     }
 
     # Store recovery metadata so MkPrimeRecover() can reconstruct results.
@@ -510,25 +521,26 @@ RunMkPrime <- function(data, tree = NULL,
     # PAR-007: use cli_warn (not cli_alert_warning) so the "!" / "i" /
     # "x" prefix keys in the c(...) vector actually render as bullets
     # instead of being concatenated into the lead line.
-    isParallel <- isTRUE(mcmc$nCore > 1L) && isTRUE(mcmc$nRuns > 1L)
-    if (isParallel) {
-      # PAR-002: workers in callr subprocesses cannot update shared$actualIter,
-      # so the checkpoint can't be advanced past iter 0. Be explicit so the
-      # user does not expect ResumeMkPrime() to continue from here.
+    if (isParallel && ckpSaved) {
+      cli::cli_warn(c(
+        "Parallel run interrupted at iteration {ckpIter}. \\
+         {nSaved} sample{?s} saved to log file{?s}.",
+        "i" = "Master checkpoint synthesised from per-run ckps and saved \\
+               to {.file {mcmc$checkpointFile}}.",
+        "i" = "Re-run the same {.fn RunMkPrime} call to resume."
+      ))
+    } else if (isParallel) {
       cli::cli_warn(c(
         "Parallel run interrupted. {nSaved} sample{?s} saved to log file{?s}.",
-        "!" = "Worker state is not checkpointed for parallel runs \\
-               ({.code nCore > 1}); {.fn ResumeMkPrime} will start a fresh \\
-               run, not continue from here.",
-        "i" = "Load the partial samples for inspection: \\
-               {.code posterior <- MkPrimeRecover()}",
-        "i" = "For long parallel runs, prefer a bounded {.arg nIter} with \\
-               {.arg maxTime} so {.fn RunMkPrime} returns naturally rather \\
-               than via interrupt."
+        "!" = "No per-run checkpoint was found on disk -- workers were \\
+               killed before writing their first checkpoint.  \\
+               {.fn ResumeMkPrime} will start a fresh run.",
+        "i" = "Reduce {.arg checkEvery} for tighter recovery granularity, \\
+               or load the partial samples with {.code MkPrimeRecover()}."
       ))
     } else if (ckpSaved) {
       cli::cli_warn(c(
-        "Run interrupted at iteration {shared$actualIter}. \\
+        "Run interrupted at iteration {ckpIter}. \\
          {nSaved} sample{?s} saved to log file{?s}.",
         "i" = "Checkpoint saved to {.file {mcmc$checkpointFile}}.",
         "i" = "Re-run the same {.fn RunMkPrime} call to resume."
@@ -1764,6 +1776,12 @@ RunMkPrime <- function(data, tree = NULL,
   # Per-run cancel files (orchestrator signals each worker individually).
   cancelFiles <- vapply(seq_len(nRuns), function(i) tempfile(), character(1L))
 
+  # Per-run checkpoint paths.  When mcmc$checkpointFile is set, each worker
+  # writes its own .ckp every checkEvery iters; on SIGKILL/walltime overrun
+  # ResumeMkPrime() synthesises the master from these.  NULL when the user
+  # disables checkpointing.
+  perRunCkpPaths <- .CkpFilePaths(mcmc$checkpointFile, nRuns)
+
   # Generate L'Ecuyer-CMRG RNG streams in the parent for reproducibility.
   streams <- .GenerateRNGStreams(nRuns)
 
@@ -1789,18 +1807,18 @@ RunMkPrime <- function(data, tree = NULL,
     callr::r_bg(
       func = function(mkd, model, mcmc, runState, moves, tipLabels, run,
                       paramNames, nEdge, brColStart, logPath, cfPath,
-                      convWindowSize, seed) {
+                      ckpPath, treePath, convWindowSize, seed) {
         assign(".Random.seed", seed, envir = globalenv())
         .RunMkPrimeSingleRun(
           mkd, model, mcmc, runState, moves, tipLabels, run,
           paramNames, nEdge, brColStart,
           logFilePath    = logPath,
           cancelFile     = cfPath,
-          checkpointFile = NULL,
+          checkpointFile = ckpPath,
           startIter      = 1L,
           isStreaming    = TRUE,
           convWindowSize = convWindowSize,
-          treeFile       = NULL
+          treeFile       = treePath
         )
       },
       args = list(
@@ -1816,6 +1834,8 @@ RunMkPrime <- function(data, tree = NULL,
         brColStart     = brColStart,
         logPath        = logFilePaths[run],
         cfPath         = cancelFiles[run],
+        ckpPath        = if (is.null(perRunCkpPaths)) NULL else perRunCkpPaths[run],
+        treePath       = if (is.null(treeFilePaths))  NULL else treeFilePaths[run],
         convWindowSize = convWindowSize,
         seed           = streams[[run]]
       ),
@@ -2298,8 +2318,8 @@ RunMkPrime <- function(data, tree = NULL,
 
   tryCatch({
     essVals <- vapply(perRunTrees, function(chain) {
-      .TreeESS(chain, dist_fn = TreeDist::RobinsonFoulds,
-               frechet = FALSE)[["medianPseudoESS"]]
+      TreeESS(chain, dist_fn = TreeDist::RobinsonFoulds,
+              frechet = FALSE)[["medianPseudoESS"]]
     }, double(1))
     essVals <- essVals[is.finite(essVals)]
     if (length(essVals) == 0L) return(NA_real_)
@@ -2590,7 +2610,99 @@ RunMkPrime <- function(data, tree = NULL,
   if (!is.null(phase))        payload$phase        <- phase
   if (!is.null(model))        payload$model        <- model
   if (!is.null(serialPhase))  payload$serialPhase  <- serialPhase
-  saveRDS(payload, file)
+
+  # Atomic write: save to a sibling .tmp first, then rename over the target.
+  # file.rename() is atomic on POSIX and on Windows (same-volume).  This is
+  # essential for parallel workers under SIGKILL/SIGTERM: a torn saveRDS()
+  # leaves a corrupt .ckp that ResumeMkPrime cannot read.  The .tmp may
+  # survive an interrupted save; ignore stray .tmp files on read.
+  tmpFile <- paste0(file, ".tmp")
+  saveRDS(payload, tmpFile)
+  file.rename(tmpFile, file)
+}
+
+
+# Rebuild the master checkpoint from per-run checkpoints written by parallel
+# workers.  Used by ResumeMkPrime() when the parent process did not exit
+# cleanly (SIGKILL, SLURM walltime overrun): in that case the master .ckp is
+# stale or missing, but each callr worker has been writing its own .ckp every
+# `checkEvery` iterations.  Returns invisibly the iter that was synthesised;
+# 0L means nothing on disk to synthesise (caller falls back to fresh start).
+#
+# @keywords internal
+.SynthesiseMasterFromPerRun <- function(checkpointFile, nRuns) {
+  if (is.null(checkpointFile) || nRuns <= 1L) return(invisible(0L))
+  perRunPaths <- .CkpFilePaths(checkpointFile, nRuns)
+  if (is.null(perRunPaths)) return(invisible(0L))
+
+  perRunExists <- file.exists(perRunPaths)
+  if (!any(perRunExists)) return(invisible(0L))
+
+  masterExists <- file.exists(checkpointFile)
+  masterMtime  <- if (masterExists) file.mtime(checkpointFile) else
+                    as.POSIXct(0, origin = "1970-01-01")
+  perRunNewer  <- any(file.mtime(perRunPaths[perRunExists]) > masterMtime)
+
+  # No work to do: master is up-to-date with every per-run ckp.
+  if (masterExists && !perRunNewer) return(invisible(0L))
+
+  mergedRuns <- vector("list", nRuns)
+  iters      <- integer(nRuns)
+  for (i in seq_len(nRuns)) {
+    if (perRunExists[i]) {
+      ck <- tryCatch(readRDS(perRunPaths[i]), error = function(e) NULL)
+      if (!is.null(ck) && length(ck$runs) >= 1L) {
+        mergedRuns[[i]] <- ck$runs[[1L]]
+        iters[i]        <- as.integer(ck$iter %||% 0L)
+      }
+    }
+  }
+
+  # If no per-run ckp was readable, leave master alone.
+  if (all(vapply(mergedRuns, is.null, logical(1)))) return(invisible(0L))
+
+  # Reference payload: prefer master (already has full metadata for the
+  # multi-run format); else any successfully-read per-run ckp.
+  ref <- if (masterExists) {
+    tryCatch(readRDS(checkpointFile), error = function(e) NULL)
+  } else NULL
+  if (is.null(ref)) {
+    firstOk <- which(!vapply(mergedRuns, is.null, logical(1)))[1L]
+    ref     <- readRDS(perRunPaths[firstOk])
+  }
+
+  # Fill any null slots from the master's initial state.  In normal use
+  # .RunWithRecovery writes an iter-0 master ckp with all initial run
+  # states before launching workers, so ref$runs has nRuns entries and
+  # this just restarts that run from scratch.  We do NOT clone from
+  # another run's per-run ckp -- that would launch two chains from the
+  # same state, defeating cross-run R-hat diagnostics.
+  for (i in seq_len(nRuns)) {
+    if (is.null(mergedRuns[[i]])) {
+      if (!is.null(ref$runs) && length(ref$runs) >= i &&
+          !is.null(ref$runs[[i]])) {
+        mergedRuns[[i]] <- ref$runs[[i]]
+      }
+      # else: leave NULL; ResumeMkPrime will fail with a clear error.
+    }
+  }
+
+  if (any(vapply(mergedRuns, is.null, logical(1)))) {
+    missingIdx <- which(vapply(mergedRuns, is.null, logical(1)))
+    cli::cli_warn(c(
+      "Synthesised master is missing state for run{?s} \\
+       {.val {missingIdx}} (no per-run ckp and no initial state in master).",
+      "i" = "Resume will likely fail; consider \\
+             {.code RunMkPrime(..., overwrite = TRUE)} for a fresh run."
+    ))
+  }
+
+  maxIter <- max(iters, 0L)
+  .SaveCheckpoint(mergedRuns, ref$mcmc, maxIter, ref$paramNames,
+                  checkpointFile, moveWeights = ref$moveWeights,
+                  phase = ref$phase, model = ref$model,
+                  serialPhase = ref$serialPhase)
+  invisible(maxIter)
 }
 
 
@@ -2642,6 +2754,43 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                            neomorphic = integer(0),
                            knownStates = integer(0),
                            model = NULL) {
+  # Parallel-mode recovery: if the parent process did not exit cleanly
+  # (SIGKILL / SLURM walltime overrun), the master .ckp is stale or
+  # missing but each callr worker wrote its own per-run .ckp.  Rebuild
+  # the master from those before reading it.  See .SynthesiseMasterFromPerRun.
+  masterReadable <- file.exists(checkpointFile) && tryCatch({
+    .testCk <- readRDS(checkpointFile); TRUE
+  }, error = function(e) FALSE)
+
+  inferredNRuns <- if (masterReadable) {
+    .testCk$mcmc$nRuns %||% 1L
+  } else {
+    # Master missing or corrupt: discover per-run ckps via glob and infer
+    # nRuns from the highest index.
+    ext  <- tools::file_ext(checkpointFile)
+    base <- tools::file_path_sans_ext(basename(checkpointFile))
+    pat  <- if (nzchar(ext)) {
+      paste0("^", base, "_\\d+\\.", ext, "$")
+    } else {
+      paste0("^", base, "_\\d+$")
+    }
+    dir   <- dirname(checkpointFile)
+    found <- list.files(dir, pattern = pat, full.names = FALSE)
+    if (length(found) == 0L) {
+      cli::cli_abort(c(
+        "Cannot resume: {.file {checkpointFile}} is missing/unreadable \\
+         and no per-run ckps were found in {.path {dir}}.",
+        "i" = "Start a fresh run with {.code RunMkPrime(..., overwrite = TRUE)}."
+      ))
+    }
+    sampleCk <- readRDS(file.path(dir, found[1L]))
+    sampleCk$mcmc$nRuns %||% length(found)
+  }
+
+  if (inferredNRuns > 1L) {
+    .SynthesiseMasterFromPerRun(checkpointFile, inferredNRuns)
+  }
+
   checkpoint <- readRDS(checkpointFile)
 
   version <- checkpoint$version %||% 1L
@@ -4714,8 +4863,8 @@ if (n < 2L * windowSize) {
   if (!is.null(tuningTrees) && length(tuningTrees) >= 20L) {
     trees <- structure(tuningTrees, class = "multiPhylo")
     treeEss <- tryCatch(
-      .TreeESS(trees, dist_fn = TreeDist::RobinsonFoulds,
-               frechet = FALSE)[["medianPseudoESS"]],
+      TreeESS(trees, dist_fn = TreeDist::RobinsonFoulds,
+              frechet = FALSE)[["medianPseudoESS"]],
       error = function(e) NA_real_
     )
     if (!is.na(treeEss) && is.finite(treeEss)) {

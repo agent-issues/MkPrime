@@ -206,15 +206,16 @@
 #'   once every run has produced samples — so prefer `nRuns <= nCore`
 #'   when convergence-based early stopping matters.
 #'
-#'   **Interrupt-resume is supported only for serial runs (`nCore = 1`).**
-#'   In parallel mode workers run in separate `callr::r_bg()` processes
-#'   and cannot write to the parent's checkpoint state, so an interrupted
-#'   parallel run leaves only the streaming log files on disk; partial
-#'   samples can be loaded with [MkPrimeRecover()] for inspection, but
-#'   [ResumeMkPrime()] will start a fresh run rather than continue from
-#'   the interrupt point. For long parallel runs, prefer a bounded
-#'   `nIter` together with `maxTime` so [RunMkPrime()] returns naturally
-#'   rather than via Ctrl-C.
+#'   **Parallel runs are fully resumable.** Each callr worker writes its
+#'   own per-run `.ckp` file every `checkEvery` iterations (paths derived
+#'   from `checkpointFile`: `run.ckp` -> `run_1.ckp`, `run_2.ckp`, ...).
+#'   On SIGKILL, SLURM walltime overrun, or Ctrl-C, work is lost only
+#'   back to the most recent per-run checkpoint -- bounded by `checkEvery`
+#'   iterations per run.  [ResumeMkPrime()] (or just re-running the same
+#'   [RunMkPrime()] call with `overwrite = FALSE`) synthesises the master
+#'   checkpoint from the per-run `.ckp` files when the parent process did
+#'   not exit cleanly.  Checkpoint writes use a tmp+rename idiom so a
+#'   SIGKILL during a save leaves the previous `.ckp` intact.
 #' @param pollInterval Integer. Seconds between convergence polls in parallel
 #'   mode. Ignored when `nCore = 1`. Default `10L`.
 #' @param cancelGrace Integer (seconds) or `Inf`. After a stopping criterion

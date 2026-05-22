@@ -648,6 +648,668 @@ void pruning_jc_acrv_persite(
 }
 
 
+// Collapsed-state variant of persite_impl: when kObs < kFull, lump the
+// kFull - kObs never-seen states into a single column. JC(k) is strongly
+// lumpable, so this is bit-identical (modulo FP reordering) to the
+// uncollapsed kernel; see src/likelihood.cpp::pruning_jc_collapsed for the
+// math. K_EFF_TPL = kObs + 1 is the per-character stride and the unroll
+// length; kFull stays runtime since it varies with ko in the Gibbs sweep.
+template<int K_EFF_TPL>
+static inline void persite_collapsed_impl(
+    int kEffRuntime, int kFull, int kObs,
+    int nEdge, int nTip, int nChar, int nCat,
+    const int* parPtr, const int* chPtr, const double* elPtr,
+    const int* tsPtr, const double* rmPtr,
+    int maxNode, int root, int stride,
+    double* buf, uint8_t* initFlg, double* siteLL) {
+
+  const int kEff      = (K_EFF_TPL > 0) ? K_EFF_TPL : kEffRuntime;
+  const int lumpIdx   = kEff - 1;          // kObs == lumpIdx
+  const double n_U    = static_cast<double>(kFull - kObs);
+  const double inv_k  = 1.0 / kFull;
+  const double km1    = kFull - 1.0;
+
+  std::vector<double> site_lik_sum(nChar, 0.0);
+  int clCols = nChar * kEff;
+
+  std::memset(initFlg, 0, (maxNode + 1) * sizeof(uint8_t));
+  for (int tip = 1; tip <= nTip; ++tip) {
+    double* cl = buf + tip * stride;
+    std::fill(cl, cl + clCols, 0.0);
+    for (int c = 0; c < nChar; ++c) {
+      int state  = tsPtr[(tip - 1) + c * nTip];
+      int offset = c * kEff;
+      if (state < 0) {
+        // Missing: CL uniform 1 across all kEff entries (n_U weighting is
+        // applied later in Σ_eff and at the root, not in the tip CL itself).
+        #pragma GCC unroll 8
+        for (int s = 0; s < kEff; ++s) cl[offset + s] = 1.0;
+      } else {
+        // Observed states are always in [0, kObs-1]; the lumped column
+        // (offset + lumpIdx) stays 0 from the std::fill above.
+        cl[offset + state] = 1.0;
+      }
+    }
+    initFlg[tip] = 1;
+  }
+
+  for (int cat = 0; cat < nCat; ++cat) {
+    double rate = rmPtr[cat];
+    for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
+
+    for (int e = nEdge - 1; e >= 0; --e) {
+      int par = parPtr[e];
+      int ch  = chPtr[e];
+      double t        = elPtr[e] * rate;
+      double exp_term = MKP_EXP(-kFull * t / km1);
+      double p_same   = inv_k + (1.0 - inv_k) * exp_term;
+      double p_diff   = inv_k - inv_k * exp_term;
+      double* __restrict__ clPar = buf + par * stride;
+      const double* __restrict__ clCh = buf + ch * stride;
+      double diff_coeff = p_same - p_diff;
+
+      // Tip-edge fast path (cf. T-006). Tips never carry a lumped state, so
+      // observed-state child CL is one-hot in [0, kObs-1] with lumped col 0;
+      // missing-child CL is uniform 1 across kEff entries.
+      const bool tipChild = (ch <= nTip);
+      if (tipChild) {
+        if (!initFlg[par]) {
+          for (int c = 0; c < nChar; ++c) {
+            int state  = tsPtr[(ch - 1) + c * nTip];
+            int offset = c * kEff;
+            if (state < 0) {
+              // Missing: Σ_eff = kObs + n_U = kFull; clPar[i] = p_diff*kFull +
+              // diff_coeff = 1 (identity-on-1 trick from the nested-vector
+              // version).
+              #pragma GCC unroll 8
+              for (int i = 0; i < kEff; ++i) clPar[offset + i] = 1.0;
+            } else {
+              // Observed state s: Σ_eff = 1; clPar[i] = p_diff + diff_coeff
+              // when i == s, else p_diff.
+              #pragma GCC unroll 8
+              for (int i = 0; i < kEff; ++i) clPar[offset + i] = p_diff;
+              clPar[offset + state] = p_same;
+            }
+          }
+          initFlg[par] = 1;
+        } else {
+          for (int c = 0; c < nChar; ++c) {
+            int state  = tsPtr[(ch - 1) + c * nTip];
+            int offset = c * kEff;
+            if (state < 0) {
+              // Missing: factor is 1 across all kEff entries — no-op.
+            } else {
+              #pragma GCC unroll 8
+              for (int i = 0; i < kEff; ++i)
+                clPar[offset + i] *= (i == state) ? p_same : p_diff;
+            }
+          }
+        }
+        continue;
+      }
+
+      // Internal-child path: Σ_eff sums observed columns plus n_U × lumped.
+      if (!initFlg[par]) {
+        for (int c = 0; c < nChar; ++c) {
+          int offset = c * kEff;
+          double sum_eff = 0.0;
+          #pragma GCC unroll 8
+          for (int j = 0; j < lumpIdx; ++j) sum_eff += clCh[offset + j];
+          sum_eff += n_U * clCh[offset + lumpIdx];
+          #pragma GCC unroll 8
+          for (int i = 0; i < kEff; ++i)
+            clPar[offset + i] = p_diff * sum_eff + diff_coeff * clCh[offset + i];
+        }
+        initFlg[par] = 1;
+      } else {
+        for (int c = 0; c < nChar; ++c) {
+          int offset = c * kEff;
+          double sum_eff = 0.0;
+          #pragma GCC unroll 8
+          for (int j = 0; j < lumpIdx; ++j) sum_eff += clCh[offset + j];
+          sum_eff += n_U * clCh[offset + lumpIdx];
+          #pragma GCC unroll 8
+          for (int i = 0; i < kEff; ++i)
+            clPar[offset + i] *= p_diff * sum_eff + diff_coeff * clCh[offset + i];
+        }
+      }
+    }
+
+    const double* clRoot = buf + root * stride;
+    for (int c = 0; c < nChar; ++c) {
+      int offset = c * kEff;
+      double sum_eff = 0.0;
+      #pragma GCC unroll 8
+      for (int s = 0; s < lumpIdx; ++s) sum_eff += clRoot[offset + s];
+      sum_eff += n_U * clRoot[offset + lumpIdx];
+      site_lik_sum[c] += inv_k * sum_eff;
+    }
+  }
+
+  double inv_nCat = 1.0 / nCat;
+  for (int c = 0; c < nChar; ++c) {
+    double avg = site_lik_sum[c] * inv_nCat;
+    siteLL[c] = (avg > 0.0) ? std::log(avg) : R_NegInf;
+  }
+}
+
+void pruning_jc_acrv_persite_collapsed(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    int kFull, int kObs,
+    NumericVector rate_multipliers,
+    double* buf, uint8_t* initFlg, int stride,
+    double* siteLL) {
+
+  // Precondition: caller dispatches only when kObs + 1 < kFull (i.e. n_U >= 2)
+  // since kEff == kFull gives no savings. The kernel still produces correct
+  // results for kObs + 1 == kFull (n_U == 1) — it just degenerates to the
+  // uncollapsed kernel with a useless rename of column kFull-1 as "lumped".
+  int nEdge = parent.size();
+  int nTip  = tip_states.nrow();
+  int nChar = tip_states.ncol();
+  int nCat  = rate_multipliers.size();
+  int kEff  = kObs + 1;
+
+  const int* parPtr   = INTEGER(parent);
+  const int* chPtr    = INTEGER(child);
+  const double* elPtr = REAL(edge_length);
+  const int* tsPtr    = INTEGER(tip_states);
+  const double* rmPtr = REAL(rate_multipliers);
+
+  int maxNode = 2 * nTip - 1;
+  int root    = nTip + 1;
+
+  // kEff = kObs + 1; for typical morphological data kObs ∈ {2,3,4,5}, so
+  // template-specialise kEff over the common small range and fall through to
+  // runtime for the long tail.
+  #define DISPATCH_KEFF(KE) \
+    case KE: persite_collapsed_impl<KE>(0, kFull, kObs, \
+                nEdge, nTip, nChar, nCat, \
+                parPtr, chPtr, elPtr, tsPtr, rmPtr, \
+                maxNode, root, stride, buf, initFlg, siteLL); return
+  switch (kEff) {
+    DISPATCH_KEFF(2);  DISPATCH_KEFF(3);  DISPATCH_KEFF(4);  DISPATCH_KEFF(5);
+    DISPATCH_KEFF(6);  DISPATCH_KEFF(7);  DISPATCH_KEFF(8);  DISPATCH_KEFF(9);
+    DISPATCH_KEFF(10); DISPATCH_KEFF(11); DISPATCH_KEFF(12);
+    default:
+      persite_collapsed_impl<0>(kEff, kFull, kObs,
+                                 nEdge, nTip, nChar, nCat,
+                                 parPtr, chPtr, elPtr, tsPtr, rmPtr,
+                                 maxNode, root, stride, buf, initFlg, siteLL);
+      return;
+  }
+  #undef DISPATCH_KEFF
+}
+
+
+// Test harness: thin Rcpp wrappers exposing both persite kernels for
+// direct equivalence checking from R. Allocates buffers locally (not
+// performance-sensitive — tests only).
+// [[Rcpp::export]]
+Rcpp::NumericVector test_persite_uncollapsed(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    int kStates, NumericVector rate_multipliers) {
+  int nTip  = tip_states.nrow();
+  int nChar = tip_states.ncol();
+  int maxNode = 2 * nTip - 1;
+  int stride  = nChar * kStates;
+  std::vector<double> buf(static_cast<size_t>(maxNode + 1) * stride, 0.0);
+  std::vector<uint8_t> initFlg(maxNode + 1, 0);
+  NumericVector out(nChar);
+  pruning_jc_acrv_persite(parent, child, edge_length, tip_states,
+                           kStates, rate_multipliers,
+                           buf.data(), initFlg.data(), stride, out.begin());
+  return out;
+}
+
+// [[Rcpp::export]]
+Rcpp::NumericVector test_persite_collapsed(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    int kFull, int kObs, NumericVector rate_multipliers) {
+  int nTip  = tip_states.nrow();
+  int nChar = tip_states.ncol();
+  int maxNode = 2 * nTip - 1;
+  int kEff    = kObs + 1;
+  int stride  = nChar * kEff;
+  std::vector<double> buf(static_cast<size_t>(maxNode + 1) * stride, 0.0);
+  std::vector<uint8_t> initFlg(maxNode + 1, 0);
+  NumericVector out(nChar);
+  pruning_jc_acrv_persite_collapsed(parent, child, edge_length, tip_states,
+                                     kFull, kObs, rate_multipliers,
+                                     buf.data(), initFlg.data(), stride, out.begin());
+  return out;
+}
+
+
+// Collapsed-state flat-CL JC pruning (non-ACRV). Mirrors pruning_jc_flat with
+// kEff = kObs + 1 columns per character (observed cols + one lumped column
+// representing the kFull - kObs never-seen states). JC(k) is strongly lumpable
+// → result is mathematically identical to pruning_jc_flat at kStates = kFull,
+// with inner-loop arithmetic scaling as kEff/kFull. See PR #2 /
+// src/likelihood.cpp::pruning_jc_collapsed for the math derivation; here we
+// add fused ascertainment so the kernel is a drop-in for the existing
+// pruning_jc_flat dispatch sites in cpp_partition_log_likelihood.
+//
+// Root frequencies are uniform JC stationary (no root_freqs param): observed
+// columns each weight 1/kFull, lumped column weights n_U/kFull.
+//
+// Fused asc: pseudo-char "all tips in observed state 0" propagated alongside
+// the main CL; at the root, sum_eff_root = Σ_{s<kObs} aRoot[s] + n_U·aRoot[kObs]
+// equals P(const) by JC symmetry (sum over kFull symmetric constant patterns).
+// outConstProb matches the uncollapsed kernel's convention: directly usable
+// as P(constant site), no kFull multiplication or nCat division by caller.
+static double pruning_jc_flat_collapsed(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    int kFull, int kObs,
+    double* buf, uint8_t* initFlg, int stride,
+    double* outConstProb = nullptr,
+    double* preAscBuf = nullptr, uint8_t* preAscInit = nullptr) {
+
+  int nEdge = parent.size();
+  int nTip  = tip_states.nrow();
+  int nChar = tip_states.ncol();
+  const int kEff   = kObs + 1;
+  const int lumpIdx = kObs;
+  const double n_U = static_cast<double>(kFull - kObs);
+
+#ifndef NDEBUG
+  assert_valid_preorder(parent, child, nTip);
+#endif
+
+  const int* parPtr = INTEGER(parent);
+  const int* chPtr  = INTEGER(child);
+  const double* elPtr = REAL(edge_length);
+  const int* tsPtr  = INTEGER(tip_states);
+
+  int maxNode = 2 * nTip - 1;
+  int clCols  = nChar * kEff;
+
+  for (int n = 0; n <= maxNode; ++n) {
+    std::fill(buf + n * stride, buf + n * stride + clCols, 0.0);
+    initFlg[n] = 0;
+  }
+  for (int tip = 1; tip <= nTip; ++tip) {
+    double* cl = buf + tip * stride;
+    for (int c = 0; c < nChar; ++c) {
+      int state  = tsPtr[(tip - 1) + c * nTip];
+      int offset = c * kEff;
+      if (state < 0) {
+        // Missing: uniform 1 across kEff entries (n_U weight applied in Σ_eff,
+        // not in tip CL itself — same convention as the persite collapsed
+        // kernel and src/likelihood.cpp::pruning_jc_collapsed).
+        for (int s = 0; s < kEff; ++s) cl[offset + s] = 1.0;
+      } else {
+        // Observed states ∈ [0, kObs-1]; lumped col (offset + lumpIdx) stays 0.
+        cl[offset + state] = 1.0;
+      }
+    }
+    initFlg[tip] = 1;
+  }
+
+  // Fused asc pseudo-char: "all tips in observed state 0" with kEff cols.
+  std::vector<double> ascBufLocal;
+  std::vector<uint8_t> ascInitLocal;
+  double* ascBufPtr = nullptr;
+  uint8_t* ascInitPtr = nullptr;
+  if (outConstProb) {
+    int ascSize = (maxNode + 1) * kEff;
+    if (preAscBuf) {
+      ascBufPtr = preAscBuf;
+      ascInitPtr = preAscInit;
+      std::memset(ascBufPtr, 0, ascSize * sizeof(double));
+      std::memset(ascInitPtr, 0, (maxNode + 1) * sizeof(uint8_t));
+    } else {
+      ascBufLocal.assign(ascSize, 0.0);
+      ascInitLocal.assign(maxNode + 1, 0);
+      ascBufPtr = ascBufLocal.data();
+      ascInitPtr = ascInitLocal.data();
+    }
+    for (int tip = 1; tip <= nTip; ++tip) {
+      ascBufPtr[tip * kEff] = 1.0;  // observed state 0
+      ascInitPtr[tip] = 1;
+    }
+  }
+
+  const double inv_k = 1.0 / kFull;
+  const double km1   = kFull - 1.0;
+
+  for (int e = nEdge - 1; e >= 0; --e) {
+    int par = parPtr[e];
+    int ch  = chPtr[e];
+    double t        = elPtr[e];
+    double exp_term = MKP_EXP(-kFull * t / km1);
+    double p_same   = inv_k + (1.0 - inv_k) * exp_term;
+    double p_diff   = inv_k - inv_k * exp_term;
+    double diff_coeff = p_same - p_diff;
+    double* clPar = buf + par * stride;
+    double* clCh  = buf + ch  * stride;
+
+    if (!initFlg[par]) {
+      for (int c = 0; c < nChar; ++c) {
+        int offset = c * kEff;
+        double sum_eff = 0.0;
+        for (int j = 0; j < lumpIdx; ++j) sum_eff += clCh[offset + j];
+        sum_eff += n_U * clCh[offset + lumpIdx];
+        for (int i = 0; i < kEff; ++i)
+          clPar[offset + i] = p_diff * sum_eff + diff_coeff * clCh[offset + i];
+      }
+      initFlg[par] = 1;
+    } else {
+      for (int c = 0; c < nChar; ++c) {
+        int offset = c * kEff;
+        double sum_eff = 0.0;
+        for (int j = 0; j < lumpIdx; ++j) sum_eff += clCh[offset + j];
+        sum_eff += n_U * clCh[offset + lumpIdx];
+        for (int i = 0; i < kEff; ++i)
+          clPar[offset + i] *= p_diff * sum_eff + diff_coeff * clCh[offset + i];
+      }
+    }
+
+    if (outConstProb) {
+      double* aPar = ascBufPtr + par * kEff;
+      double* aCh  = ascBufPtr + ch  * kEff;
+      double asc_sum = 0.0;
+      for (int j = 0; j < lumpIdx; ++j) asc_sum += aCh[j];
+      asc_sum += n_U * aCh[lumpIdx];
+      if (!ascInitPtr[par]) {
+        for (int i = 0; i < kEff; ++i)
+          aPar[i] = p_diff * asc_sum + diff_coeff * aCh[i];
+        ascInitPtr[par] = 1;
+      } else {
+        for (int i = 0; i < kEff; ++i)
+          aPar[i] *= p_diff * asc_sum + diff_coeff * aCh[i];
+      }
+    }
+  }
+
+  int root = nTip + 1;
+  double* clRoot = buf + root * stride;
+  double logLik  = 0.0;
+  for (int c = 0; c < nChar; ++c) {
+    int offset = c * kEff;
+    double sum_eff = 0.0;
+    for (int s = 0; s < lumpIdx; ++s) sum_eff += clRoot[offset + s];
+    sum_eff += n_U * clRoot[offset + lumpIdx];
+    double sl = inv_k * sum_eff;
+    if (sl <= 0.0) return R_NegInf;
+    logLik += std::log(sl);
+  }
+
+  if (outConstProb) {
+    double* ascRoot = ascBufPtr + root * kEff;
+    double sum_eff = 0.0;
+    for (int s = 0; s < lumpIdx; ++s) sum_eff += ascRoot[s];
+    sum_eff += n_U * ascRoot[lumpIdx];
+    // P(const) = kFull · P(all tips in state 0) = kFull · (1/kFull) · sum_eff = sum_eff.
+    *outConstProb = sum_eff;
+  }
+
+  return logLik;
+}
+
+
+static double pruning_jc_acrv_flat_collapsed(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    int kFull, int kObs,
+    NumericVector rate_multipliers,
+    double* buf, uint8_t* initFlg, int stride,
+    double* outConstProb = nullptr,
+    double* preAscBuf = nullptr, uint8_t* preAscInit = nullptr,
+    double* preSiteLikSum = nullptr) {
+
+  int nEdge = parent.size();
+  int nTip  = tip_states.nrow();
+  int nChar = tip_states.ncol();
+  int nCat  = rate_multipliers.size();
+  const int kEff   = kObs + 1;
+  const int lumpIdx = kObs;
+  const double n_U = static_cast<double>(kFull - kObs);
+
+#ifndef NDEBUG
+  assert_valid_preorder(parent, child, nTip);
+#endif
+
+  const int* parPtr = INTEGER(parent);
+  const int* chPtr  = INTEGER(child);
+  const double* elPtr = REAL(edge_length);
+  const int* tsPtr  = INTEGER(tip_states);
+  const double* rmPtr = REAL(rate_multipliers);
+
+  int maxNode = 2 * nTip - 1;
+  int root    = nTip + 1;
+  int clCols  = nChar * kEff;
+
+  std::vector<double> siteLikLocal;
+  double* siteLikPtr;
+  if (preSiteLikSum) {
+    siteLikPtr = preSiteLikSum;
+    std::memset(siteLikPtr, 0, nChar * sizeof(double));
+  } else {
+    siteLikLocal.assign(nChar, 0.0);
+    siteLikPtr = siteLikLocal.data();
+  }
+
+  const double inv_k = 1.0 / kFull;
+  const double km1   = kFull - 1.0;
+
+  std::memset(initFlg, 0, (maxNode + 1) * sizeof(uint8_t));
+  for (int tip = 1; tip <= nTip; ++tip) {
+    double* cl = buf + tip * stride;
+    std::fill(cl, cl + clCols, 0.0);
+    for (int c = 0; c < nChar; ++c) {
+      int state  = tsPtr[(tip - 1) + c * nTip];
+      int offset = c * kEff;
+      if (state < 0) {
+        for (int s = 0; s < kEff; ++s) cl[offset + s] = 1.0;
+      } else {
+        cl[offset + state] = 1.0;
+      }
+    }
+    initFlg[tip] = 1;
+  }
+
+  std::vector<double> ascBufLocal;
+  std::vector<uint8_t> ascInitLocal;
+  double* ascBufPtr = nullptr;
+  uint8_t* ascInitPtr = nullptr;
+  double constProbCatSum = 0.0;
+  if (outConstProb) {
+    int ascSize = (maxNode + 1) * kEff;
+    if (preAscBuf) {
+      ascBufPtr = preAscBuf;
+      ascInitPtr = preAscInit;
+      std::memset(ascBufPtr, 0, ascSize * sizeof(double));
+      std::memset(ascInitPtr, 0, (maxNode + 1) * sizeof(uint8_t));
+    } else {
+      ascBufLocal.assign(ascSize, 0.0);
+      ascInitLocal.assign(maxNode + 1, 0);
+      ascBufPtr = ascBufLocal.data();
+      ascInitPtr = ascInitLocal.data();
+    }
+    for (int tip = 1; tip <= nTip; ++tip) {
+      ascBufPtr[tip * kEff] = 1.0;
+      ascInitPtr[tip] = 1;
+    }
+  }
+
+  for (int cat = 0; cat < nCat; ++cat) {
+    double rate = rmPtr[cat];
+    for (int n = nTip + 1; n <= maxNode; ++n) initFlg[n] = 0;
+    if (outConstProb)
+      for (int n = nTip + 1; n <= maxNode; ++n) ascInitPtr[n] = 0;
+
+    for (int e = nEdge - 1; e >= 0; --e) {
+      int par = parPtr[e];
+      int ch  = chPtr[e];
+      double t        = elPtr[e] * rate;
+      double exp_term = MKP_EXP(-kFull * t / km1);
+      double p_same   = inv_k + (1.0 - inv_k) * exp_term;
+      double p_diff   = inv_k - inv_k * exp_term;
+      double diff_coeff = p_same - p_diff;
+      double* clPar = buf + par * stride;
+      double* clCh  = buf + ch  * stride;
+
+      if (!initFlg[par]) {
+        for (int c = 0; c < nChar; ++c) {
+          int offset = c * kEff;
+          double sum_eff = 0.0;
+          for (int j = 0; j < lumpIdx; ++j) sum_eff += clCh[offset + j];
+          sum_eff += n_U * clCh[offset + lumpIdx];
+          for (int i = 0; i < kEff; ++i)
+            clPar[offset + i] = p_diff * sum_eff + diff_coeff * clCh[offset + i];
+        }
+        initFlg[par] = 1;
+      } else {
+        for (int c = 0; c < nChar; ++c) {
+          int offset = c * kEff;
+          double sum_eff = 0.0;
+          for (int j = 0; j < lumpIdx; ++j) sum_eff += clCh[offset + j];
+          sum_eff += n_U * clCh[offset + lumpIdx];
+          for (int i = 0; i < kEff; ++i)
+            clPar[offset + i] *= p_diff * sum_eff + diff_coeff * clCh[offset + i];
+        }
+      }
+
+      if (outConstProb) {
+        double* aPar = ascBufPtr + par * kEff;
+        double* aCh  = ascBufPtr + ch  * kEff;
+        double asc_sum = 0.0;
+        for (int j = 0; j < lumpIdx; ++j) asc_sum += aCh[j];
+        asc_sum += n_U * aCh[lumpIdx];
+        if (!ascInitPtr[par]) {
+          for (int i = 0; i < kEff; ++i)
+            aPar[i] = p_diff * asc_sum + diff_coeff * aCh[i];
+          ascInitPtr[par] = 1;
+        } else {
+          for (int i = 0; i < kEff; ++i)
+            aPar[i] *= p_diff * asc_sum + diff_coeff * aCh[i];
+        }
+      }
+    }
+
+    double* clRoot = buf + root * stride;
+    for (int c = 0; c < nChar; ++c) {
+      int offset = c * kEff;
+      double sum_eff = 0.0;
+      for (int s = 0; s < lumpIdx; ++s) sum_eff += clRoot[offset + s];
+      sum_eff += n_U * clRoot[offset + lumpIdx];
+      siteLikPtr[c] += inv_k * sum_eff;
+    }
+
+    if (outConstProb) {
+      double* ascRoot = ascBufPtr + root * kEff;
+      double sum_eff = 0.0;
+      for (int s = 0; s < lumpIdx; ++s) sum_eff += ascRoot[s];
+      sum_eff += n_U * ascRoot[lumpIdx];
+      constProbCatSum += sum_eff;
+    }
+  }
+
+  double logLik   = 0.0;
+  double inv_nCat = 1.0 / nCat;
+  for (int c = 0; c < nChar; ++c) {
+    double avg = siteLikPtr[c] * inv_nCat;
+    if (avg <= 0.0) return R_NegInf;
+    logLik += std::log(avg);
+  }
+
+  if (outConstProb)
+    *outConstProb = constProbCatSum / nCat;
+
+  return logLik;
+}
+
+
+// Test wrappers (mirror test_persite_* pattern from stage 1).
+// [[Rcpp::export]]
+double test_flat_jc_uncollapsed(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    int kStates, bool acrv, NumericVector rate_multipliers) {
+  int nTip  = tip_states.nrow();
+  int nChar = tip_states.ncol();
+  int maxNode = 2 * nTip - 1;
+  int stride  = nChar * kStates;
+  std::vector<double> buf(static_cast<size_t>(maxNode + 1) * stride, 0.0);
+  std::vector<uint8_t> initFlg(maxNode + 1, 0);
+  NumericVector rf(kStates, 1.0 / kStates);
+  if (acrv) {
+    return pruning_jc_acrv_flat(parent, child, edge_length, tip_states,
+                                 kStates, rf, rate_multipliers,
+                                 buf.data(), initFlg.data(), stride);
+  }
+  return pruning_jc_flat(parent, child, edge_length, tip_states,
+                          kStates, rf, buf.data(), initFlg.data(), stride);
+}
+
+// [[Rcpp::export]]
+double test_flat_jc_collapsed(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    int kFull, int kObs, bool acrv, NumericVector rate_multipliers) {
+  int nTip  = tip_states.nrow();
+  int nChar = tip_states.ncol();
+  int maxNode = 2 * nTip - 1;
+  int kEff    = kObs + 1;
+  int stride  = nChar * kEff;
+  std::vector<double> buf(static_cast<size_t>(maxNode + 1) * stride, 0.0);
+  std::vector<uint8_t> initFlg(maxNode + 1, 0);
+  if (acrv) {
+    return pruning_jc_acrv_flat_collapsed(parent, child, edge_length, tip_states,
+                                           kFull, kObs, rate_multipliers,
+                                           buf.data(), initFlg.data(), stride);
+  }
+  return pruning_jc_flat_collapsed(parent, child, edge_length, tip_states,
+                                    kFull, kObs,
+                                    buf.data(), initFlg.data(), stride);
+}
+
+// [[Rcpp::export]]
+Rcpp::List test_flat_jc_constprob_pair(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    int kFull, int kObs, bool acrv, NumericVector rate_multipliers) {
+  int nTip  = tip_states.nrow();
+  int nChar = tip_states.ncol();
+  int maxNode = 2 * nTip - 1;
+  // Uncollapsed
+  int strideU = nChar * kFull;
+  std::vector<double> bufU(static_cast<size_t>(maxNode + 1) * strideU, 0.0);
+  std::vector<uint8_t> initU(maxNode + 1, 0);
+  NumericVector rf(kFull, 1.0 / kFull);
+  double cpU = 0.0;
+  double llU = acrv
+    ? pruning_jc_acrv_flat(parent, child, edge_length, tip_states,
+                            kFull, rf, rate_multipliers,
+                            bufU.data(), initU.data(), strideU, &cpU)
+    : pruning_jc_flat(parent, child, edge_length, tip_states,
+                       kFull, rf, bufU.data(), initU.data(), strideU, &cpU);
+  // Collapsed
+  int kEff = kObs + 1;
+  int strideC = nChar * kEff;
+  std::vector<double> bufC(static_cast<size_t>(maxNode + 1) * strideC, 0.0);
+  std::vector<uint8_t> initC(maxNode + 1, 0);
+  double cpC = 0.0;
+  double llC = acrv
+    ? pruning_jc_acrv_flat_collapsed(parent, child, edge_length, tip_states,
+                                      kFull, kObs, rate_multipliers,
+                                      bufC.data(), initC.data(), strideC, &cpC)
+    : pruning_jc_flat_collapsed(parent, child, edge_length, tip_states,
+                                 kFull, kObs,
+                                 bufC.data(), initC.data(), strideC, &cpC);
+  return Rcpp::List::create(
+    Rcpp::Named("ll_unc")        = llU,
+    Rcpp::Named("ll_col")        = llC,
+    Rcpp::Named("constprob_unc") = cpU,
+    Rcpp::Named("constprob_col") = cpC);
+}
+
+
 static double pruning_mkn_flat(
     IntegerVector parent, IntegerVector child,
     NumericVector edge_length, IntegerMatrix tip_states,
@@ -1584,90 +2246,6 @@ static double het_singleton_site_prob(
 }
 
 
-// ---------------------------------------------------------------------------
-// Single-character JC likelihood helpers (for Gibbs kPrime sweep)
-// ---------------------------------------------------------------------------
-
-// Inline JC pruning for one character with ACRV.
-// Returns raw (not log) site likelihood averaged over rate categories.
-// tipCol: pointer to nTip ints (0-indexed states, -1 = missing).
-static double jc1_acrv(
-    const IntegerVector& parent, const IntegerVector& child,
-    const NumericVector& edgeLen,
-    const int* tipCol, int nTip, int kStates,
-    const NumericVector& rates, int nCat) {
-
-  int nEdge = parent.size();
-  int maxNode = 2 * nTip - 1;
-  int root = nTip + 1;
-
-  // M-162: raw pointers
-  const int* parPtr = INTEGER(parent);
-  const int* chPtr  = INTEGER(child);
-  const double* elP  = REAL(edgeLen);
-  const double* rtP  = REAL(rates);
-
-  std::vector<double> cl((maxNode + 1) * kStates);
-  std::vector<uint8_t> flg(maxNode + 1);
-
-  // Init tips once (constant across rate categories)
-  std::memset(cl.data(), 0, cl.size() * sizeof(double));
-  std::memset(flg.data(), 0, flg.size() * sizeof(uint8_t));
-  for (int t = 1; t <= nTip; ++t) {
-    double* p = cl.data() + t * kStates;
-    int st = tipCol[t - 1];
-    if (st < 0) {
-      for (int s = 0; s < kStates; ++s) p[s] = 1.0;
-    } else {
-      p[st] = 1.0;
-    }
-    flg[t] = 1;
-  }
-
-  double inv_k = 1.0 / kStates;
-  double km1 = kStates - 1.0;
-  double siteLikSum = 0.0;
-
-  for (int cat = 0; cat < nCat; ++cat) {
-    double rate = rtP[cat];
-
-    // Reset internal node init flags (tips stay init'd)
-    for (int n = nTip + 1; n <= maxNode; ++n) flg[n] = 0;
-
-    for (int e = nEdge - 1; e >= 0; --e) {
-      int par = parPtr[e], ch = chPtr[e];
-      double t = elP[e] * rate;
-      double ex = MKP_EXP(-kStates * t / km1);
-      double ps = inv_k + (1.0 - inv_k) * ex;
-      double pd = inv_k - inv_k * ex;
-      double dc = ps - pd;
-
-      double* cp = cl.data() + par * kStates;
-      double* cc = cl.data() + ch * kStates;
-
-      double sum = 0.0;
-      for (int j = 0; j < kStates; ++j) sum += cc[j];
-
-      if (!flg[par]) {
-        for (int i = 0; i < kStates; ++i)
-          cp[i] = pd * sum + dc * cc[i];
-        flg[par] = 1;
-      } else {
-        for (int i = 0; i < kStates; ++i)
-          cp[i] *= pd * sum + dc * cc[i];
-      }
-    }
-
-    double* clR = cl.data() + root * kStates;
-    double sl = 0.0;
-    for (int s = 0; s < kStates; ++s) sl += inv_k * clR[s];
-    siteLikSum += sl;
-  }
-
-  return siteLikSum / nCat;
-}
-
-
 // Constant-site probability for a given kStates, handling JC and Het paths.
 double const_site_prob_for_k(
     const McmcData& data,
@@ -1695,64 +2273,6 @@ double const_site_prob_for_k(
     // Phase 7: add singleton_site_prob_jc when coding == 2
     return p;
   }
-}
-
-
-// Full log-likelihood for one transformational character under JC(kStates).
-// Handles JC, ACRV, Het/F81, ascertainment correction, and relabeling.
-double single_char_loglik_jc(
-    const McmcData& data,
-    const IntegerVector& parent, const IntegerVector& child,
-    const NumericVector& edgeLen,
-    const int* tipCol,
-    int kStates, int kObs,
-    double betaScale,
-    const NumericVector& acrvRates,
-    double constSiteProb) {
-
-  double ll;
-
-  if (data.qHeterogeneity) {
-    // F81 Het path: create 1-column matrix and use existing pruning function
-    IntegerMatrix sub(data.nTip, 1);
-    for (int t = 0; t < data.nTip; ++t) sub(t, 0) = tipCol[t];
-
-    double hetBins[16];
-    compute_het_bins(betaScale, kStates, data.nBetaCat, hetBins);
-
-    int maxNode = 2 * data.nTip - 1;
-    int tmpStride = kStates;  // 1 character x kStates states
-    std::vector<double> tmpBuf((maxNode + 1) * tmpStride, 0.0);
-    std::vector<uint8_t> tmpInit(maxNode + 1, 0);
-
-    NumericVector rates = acrvRates;
-    if (rates.size() == 0) rates = NumericVector(1, 1.0);
-
-    ll = pruning_f81_het_acrv_flat(
-      parent, child, edgeLen, sub,
-      kStates, 1.0, hetBins, data.nBetaCat, rates,
-      tmpBuf.data(), tmpInit.data(), tmpStride);
-  } else {
-    // JC path: inline single-character pruning
-    double rawLik = jc1_acrv(parent, child, edgeLen, tipCol,
-                              data.nTip, kStates, acrvRates,
-                              acrvRates.size());
-    if (rawLik <= 0.0) return R_NegInf;
-    ll = std::log(rawLik);
-  }
-
-  // Ascertainment correction
-  if (data.codingType != 0) {
-    if (constSiteProb >= 1.0) return R_NegInf;
-    ll -= std::log(1.0 - constSiteProb);
-  }
-
-  // Relabeling correction
-  if (data.relabel) {
-    ll += mk_prime_relabel_log(kStates, kObs);
-  }
-
-  return ll;
 }
 
 
@@ -1927,9 +2447,31 @@ double cpp_partition_log_likelihood(
         ll -= part.tipStates.ncol() * std::log(1.0 - p);
       }
     } else {
-      // Homogeneous path (original).
+      // Homogeneous path. JC-COLLAPSE (stage 2): when kObsMax + 1 < kStates,
+      // pruning runs on kEff = kObsMax + 1 columns per char with lumped
+      // unseen states. Fused asc still gives the correct P(const) by JC
+      // symmetry (verified per-site at <1e-13 across 384 sweep cases).
+      // Singleton (coding == 2) stays on the uncollapsed path: it's a
+      // single per-partition call, depends only on kFull, and saves
+      // marginal time relative to its existing cost.
       NumericVector rootFreqs(kStates, 1.0 / kStates);
-      if (useWs) {
+      int kObsMaxLocal = 0;
+      for (int ci = 0; ci < part.tipStates.ncol(); ++ci)
+        if (part.kObsLocal[ci] > kObsMaxLocal) kObsMaxLocal = part.kObsLocal[ci];
+      const bool useCollapse = useWs && (kObsMaxLocal + 1 < kStates);
+      if (useCollapse) {
+        ll = useAcrv
+          ? pruning_jc_acrv_flat_collapsed(parent, child, edgeLen, part.tipStates,
+                                            kStates, kObsMaxLocal, rates,
+                                            ws->buf.data(), ws->init.data(),
+                                            ws->strideMax, knownCPtr,
+                                            scrAsc, scrAscI, scrSite)
+          : pruning_jc_flat_collapsed(parent, child, edgeLen, part.tipStates,
+                                       kStates, kObsMaxLocal,
+                                       ws->buf.data(), ws->init.data(),
+                                       ws->strideMax, knownCPtr,
+                                       scrAsc, scrAscI);
+      } else if (useWs) {
         ll = useAcrv
           ? pruning_jc_acrv_flat(parent, child, edgeLen, part.tipStates,
                                   kStates, rootFreqs, rates,
@@ -2017,8 +2559,26 @@ double cpp_partition_log_likelihood(
           ll -= nCharPart * std::log(1.0 - p);
         }
       } else {
+        // JC-COLLAPSE (stage 2): transformational allSame at kp0; collapse
+        // when kObsMax + 1 < kp0.
         NumericVector rootFreqs(kp0, 1.0 / kp0);
-        if (wsOk) {
+        int kObsMaxLocal = 0;
+        for (int ci = 0; ci < nCharPart; ++ci)
+          if (part.kObsLocal[ci] > kObsMaxLocal) kObsMaxLocal = part.kObsLocal[ci];
+        const bool useCollapse = wsOk && (kObsMaxLocal + 1 < kp0);
+        if (useCollapse) {
+          ll += useAcrv
+            ? pruning_jc_acrv_flat_collapsed(parent, child, edgeLen, part.tipStates,
+                                              kp0, kObsMaxLocal, rates,
+                                              ws->buf.data(), ws->init.data(),
+                                              ws->strideMax, transCPtr,
+                                              scrAsc, scrAscI, scrSite)
+            : pruning_jc_flat_collapsed(parent, child, edgeLen, part.tipStates,
+                                         kp0, kObsMaxLocal,
+                                         ws->buf.data(), ws->init.data(),
+                                         ws->strideMax, transCPtr,
+                                         scrAsc, scrAscI);
+        } else if (wsOk) {
           ll += useAcrv
             ? pruning_jc_acrv_flat(parent, child, edgeLen, part.tipStates,
                                     kp0, rootFreqs, rates,
@@ -2114,8 +2674,28 @@ double cpp_partition_log_likelihood(
             subLl -= nSub * std::log(1.0 - p);
           }
         } else {
+          // JC-COLLAPSE (stage 2): per sub-group, collapse when
+          // kObsMaxSub + 1 < kp. kObsMaxSub is taken over chars actually in
+          // this sub-group; the wider partition's kObs is not relevant here.
           NumericVector rootFreqs(kp, 1.0 / kp);
-          if (wsOk) {
+          int kObsMaxSub = 0;
+          for (int c = 0; c < nSub; ++c)
+            if (part.kObsLocal[cols[c]] > kObsMaxSub)
+              kObsMaxSub = part.kObsLocal[cols[c]];
+          const bool useCollapse = wsOk && (kObsMaxSub + 1 < kp);
+          if (useCollapse) {
+            subLl = useAcrv
+              ? pruning_jc_acrv_flat_collapsed(parent, child, edgeLen, sub,
+                                                kp, kObsMaxSub, rates,
+                                                ws->buf.data(), ws->init.data(),
+                                                ws->strideMax, subCPtr,
+                                                scrAsc, scrAscI, scrSite)
+              : pruning_jc_flat_collapsed(parent, child, edgeLen, sub,
+                                           kp, kObsMaxSub,
+                                           ws->buf.data(), ws->init.data(),
+                                           ws->strideMax, subCPtr,
+                                           scrAsc, scrAscI);
+          } else if (wsOk) {
             subLl = useAcrv
               ? pruning_jc_acrv_flat(parent, child, edgeLen, sub,
                                       kp, rootFreqs, rates,

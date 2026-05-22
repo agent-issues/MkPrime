@@ -16,7 +16,7 @@
   brColStart,
   logFilePaths,
   convWindowSize,
-  treeFile,
+  treeFilePaths,
   startIters = NULL,
   shared = NULL,
   startPhase = 1L

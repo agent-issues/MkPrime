@@ -305,27 +305,55 @@ MkpLogLikelihood <- function(tree, mkd,
       }
 
     } else if (part$type == "known") {
-      # Known state space: all chars use the fixed k
+      # Mk: fixed k known per character; collapse all unseen states into a
+      # single lumped column.  When the partition has chars of mixed kObs,
+      # the SAME collapse with kEff = max_char(kObs) + 1 is exact: JC
+      # lumpability holds under any state partition, so chars with smaller
+      # kObs simply never populate the upper observed columns. We derive
+      # kObsMax from per-char data so future partition refactors that mix
+      # kObs (or pack neomorphic + transformational together) keep working.
       kStates <- part$k
-      rootFreqs <- rep(1.0 / kStates, kStates)
-
-      if (rate_log_sd > 0) {
-        ll <- pruning_jc_acrv(parent, child, edgeLength,
-                              tipStates, kStates, rootFreqs, rates)
-      } else {
-        ll <- pruning_jc(parent, child, edgeLength,
-                         tipStates, kStates, rootFreqs)
-      }
-
-      if (coding != "none") {
-        puninf <- constant_site_prob_jc(parent, child, edgeLength,
-                                        nTip, kStates, rootFreqs, rates)
-        if (coding == "informative") {
-          puninf <- puninf + singleton_site_prob_jc(
-            parent, child, edgeLength, nTip, kStates, rootFreqs, rates
-          )
+      kObsMax <- max(part$kObsPerChar)
+      if (kObsMax < kStates) {
+        if (rate_log_sd > 0) {
+          ll <- pruning_jc_acrv_collapsed(parent, child, edgeLength,
+                                          tipStates, kStates, kObsMax, rates)
+        } else {
+          ll <- pruning_jc_collapsed(parent, child, edgeLength,
+                                     tipStates, kStates, kObsMax)
         }
-        ll <- ll - nCharPart * log(1 - puninf)
+
+        if (coding != "none") {
+          puninf <- constant_site_prob_jc_collapsed(
+            parent, child, edgeLength, nTip, kStates, kObsMax, rates
+          )
+          if (coding == "informative") {
+            puninf <- puninf + singleton_site_prob_jc_collapsed(
+              parent, child, edgeLength, nTip, kStates, kObsMax, rates
+            )
+          }
+          ll <- ll - nCharPart * log(1 - puninf)
+        }
+      } else {
+        rootFreqs <- rep(1.0 / kStates, kStates)
+        if (rate_log_sd > 0) {
+          ll <- pruning_jc_acrv(parent, child, edgeLength,
+                                tipStates, kStates, rootFreqs, rates)
+        } else {
+          ll <- pruning_jc(parent, child, edgeLength,
+                           tipStates, kStates, rootFreqs)
+        }
+
+        if (coding != "none") {
+          puninf <- constant_site_prob_jc(parent, child, edgeLength,
+                                          nTip, kStates, rootFreqs, rates)
+          if (coding == "informative") {
+            puninf <- puninf + singleton_site_prob_jc(
+              parent, child, edgeLength, nTip, kStates, rootFreqs, rates
+            )
+          }
+          ll <- ll - nCharPart * log(1 - puninf)
+        }
       }
 
     } else {
@@ -334,30 +362,56 @@ MkpLogLikelihood <- function(tree, mkd,
       kPrimePart <- kPrime[part$char_indices]
       ll <- 0.0
 
+      kObsPerCharPart <- part$kObsPerChar
       for (kp in sort(unique(kPrimePart))) {
         cols <- which(kPrimePart == kp)
         subStates <- tipStates[, cols, drop = FALSE]
         nCharSub <- length(cols)
 
-        rootFreqs <- rep(1.0 / kp, kp)
-
-        if (rate_log_sd > 0) {
-          subLl <- pruning_jc_acrv(parent, child, edgeLength,
-                                    subStates, kp, rootFreqs, rates)
-        } else {
-          subLl <- pruning_jc(parent, child, edgeLength,
-                               subStates, kp, rootFreqs)
-        }
-
-        if (coding != "none") {
-          puninf <- constant_site_prob_jc(parent, child, edgeLength,
-                                          nTip, kp, rootFreqs, rates)
-          if (coding == "informative") {
-            puninf <- puninf + singleton_site_prob_jc(
-              parent, child, edgeLength, nTip, kp, rootFreqs, rates
-            )
+        # Derive kObsMax from per-char kObs of *this sub-batch* so the
+        # dispatch survives future partition refactors that mix kObs.
+        kObsMaxSub <- max(kObsPerCharPart[cols])
+        if (kObsMaxSub < kp) {
+          # State-collapse path: kEff = kObsMaxSub + 1.
+          if (rate_log_sd > 0) {
+            subLl <- pruning_jc_acrv_collapsed(parent, child, edgeLength,
+                                               subStates, kp, kObsMaxSub, rates)
+          } else {
+            subLl <- pruning_jc_collapsed(parent, child, edgeLength,
+                                          subStates, kp, kObsMaxSub)
           }
-          subLl <- subLl - nCharSub * log(1 - puninf)
+
+          if (coding != "none") {
+            puninf <- constant_site_prob_jc_collapsed(
+              parent, child, edgeLength, nTip, kp, kObsMaxSub, rates
+            )
+            if (coding == "informative") {
+              puninf <- puninf + singleton_site_prob_jc_collapsed(
+                parent, child, edgeLength, nTip, kp, kObsMaxSub, rates
+              )
+            }
+            subLl <- subLl - nCharSub * log(1 - puninf)
+          }
+        } else {
+          rootFreqs <- rep(1.0 / kp, kp)
+          if (rate_log_sd > 0) {
+            subLl <- pruning_jc_acrv(parent, child, edgeLength,
+                                      subStates, kp, rootFreqs, rates)
+          } else {
+            subLl <- pruning_jc(parent, child, edgeLength,
+                                 subStates, kp, rootFreqs)
+          }
+
+          if (coding != "none") {
+            puninf <- constant_site_prob_jc(parent, child, edgeLength,
+                                            nTip, kp, rootFreqs, rates)
+            if (coding == "informative") {
+              puninf <- puninf + singleton_site_prob_jc(
+                parent, child, edgeLength, nTip, kp, rootFreqs, rates
+              )
+            }
+            subLl <- subLl - nCharSub * log(1 - puninf)
+          }
         }
 
         ll <- ll + subLl

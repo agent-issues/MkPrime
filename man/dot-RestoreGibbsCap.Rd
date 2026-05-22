@@ -2,7 +2,7 @@
 % Please edit documentation in R/RunMkPrime.R
 \name{.RestoreGibbsCap}
 \alias{.RestoreGibbsCap}
-\title{Restore gibbs_kPrime to its pinned weight at the Warmup→Tuning/Sample transition.}
+\title{Restore gibbs_kPrime to its pinned weight at the Warmup->Tuning/Sample transition.}
 \usage{
 .RestoreGibbsCap(weights, pinnedWeights, gibbsKpIdx)
 }

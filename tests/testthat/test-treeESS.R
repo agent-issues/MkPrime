@@ -122,9 +122,9 @@ test_that(".MedianPseudoESS returns NA for too-short chain", {
   expect_true(is.na(.MedianPseudoESS(dmat_short)))
 })
 
-# ---- Tests: .TreeESS wrapper ----
+# ---- Tests: TreeESS wrapper ----
 
-test_that(".TreeESS default returns median only (cross-distance fast path)", {
+test_that("TreeESS default returns median only (cross-distance fast path)", {
   skip_if_not_installed("TreeDist")
   skip_if_not_installed("ape")
 
@@ -134,14 +134,14 @@ test_that(".TreeESS default returns median only (cross-distance fast path)", {
   tr3 <- read.tree(text = "((a,(b,c)),(d,e));")
   trees <- c(tr1, tr2, tr3, tr1, tr2, tr3, tr1, tr2, tr3, tr1)
 
-  result <- .TreeESS(trees)
+  result <- TreeESS(trees)
   expect_named(result, c("frechetCorrelationESS", "medianPseudoESS"))
   expect_true(is.na(result[["frechetCorrelationESS"]]))
   expect_true(is.finite(result[["medianPseudoESS"]]))
   expect_true(result[["medianPseudoESS"]] > 0)
 })
 
-test_that(".TreeESS with frechet = TRUE computes both methods", {
+test_that("TreeESS with frechet = TRUE computes both methods", {
   skip_if_not_installed("TreeDist")
   skip_if_not_installed("ape")
 
@@ -151,7 +151,7 @@ test_that(".TreeESS with frechet = TRUE computes both methods", {
   tr3 <- read.tree(text = "((a,(b,c)),(d,e));")
   trees <- c(tr1, tr2, tr3, tr1, tr2, tr3, tr1, tr2, tr3, tr1)
 
-  result <- .TreeESS(trees, frechet = TRUE)
+  result <- TreeESS(trees, frechet = TRUE)
   expect_named(result, c("frechetCorrelationESS", "medianPseudoESS"))
   expect_true(all(is.finite(result)))
   expect_true(all(result > 0))
@@ -168,7 +168,20 @@ test_that("median pseudo-ESS agrees between fast path and full matrix", {
   trees <- c(tr1, tr2, tr3, tr1, tr2, tr3, tr1, tr2, tr3, tr1)
 
   # n=10, maxRows=200 > 10, so both paths use all rows
-  fast <- .TreeESS(trees, frechet = FALSE)
-  full <- .TreeESS(trees, frechet = TRUE)
+  fast <- TreeESS(trees, frechet = FALSE)
+  full <- TreeESS(trees, frechet = TRUE)
   expect_equal(fast[["medianPseudoESS"]], full[["medianPseudoESS"]])
+})
+
+test_that("TreeESS returns finite positive number on rtree(8) posterior", {
+  skip_if_not_installed("TreeDist")
+  skip_if_not_installed("ape")
+
+  set.seed(42)
+  trees <- lapply(seq_len(10), function(i) ape::rtree(8))
+  class(trees) <- "multiPhylo"
+
+  result <- TreeESS(trees)
+  expect_true(is.finite(result[["medianPseudoESS"]]))
+  expect_true(result[["medianPseudoESS"]] > 0)
 })

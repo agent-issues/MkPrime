@@ -26,6 +26,7 @@
     partitions[[length(partitions) + 1L]] <- list(
       type              = "neomorphic",
       kObs              = 2L,
+      kObsPerChar       = mkd$kObs[neoIdx],
       k                 = NA_integer_,
       char_indices      = neoIdx,
       nChar             = length(neoIdx),
@@ -46,6 +47,7 @@
       partitions[[length(partitions) + 1L]] <- list(
         type              = "transformational",
         kObs              = ko,
+        kObsPerChar       = mkd$kObs[sel],
         k                 = NA_integer_,
         char_indices      = sel,
         nChar             = length(sel),
@@ -67,6 +69,7 @@
       partitions[[length(partitions) + 1L]] <- list(
         type              = "known",
         kObs              = max(mkd$kObs[sel]),
+        kObsPerChar       = mkd$kObs[sel],
         k                 = kv,
         char_indices      = sel,
         nChar             = length(sel),

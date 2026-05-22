@@ -39,7 +39,7 @@
 
 
 # Resolve tree file paths for nRuns runs (mirrors .LogFilePaths exactly).
-# Single run: path unchanged.  Multiple runs: "base.nwk" → "base_1.nwk", ...
+# Single run: path unchanged.  Multiple runs: "base.nwk" -> "base_1.nwk", ...
 # Each run gets its own newick stream so cross-run R-hat / diagnostics can be
 # computed on tree-derived statistics without de-interleaving.
 # @keywords internal
@@ -48,6 +48,25 @@
   if (nRuns == 1L) return(treeFile)
   ext  <- tools::file_ext(treeFile)
   base <- tools::file_path_sans_ext(treeFile)
+  if (nzchar(ext)) {
+    paste0(base, "_", seq_len(nRuns), ".", ext)
+  } else {
+    paste0(base, "_", seq_len(nRuns))
+  }
+}
+
+
+# Resolve checkpoint file paths for nRuns runs (mirrors .TreeFilePaths).
+# Single run: path unchanged.  Multiple runs: "base.ckp" -> "base_1.ckp", ...
+# Each parallel worker writes its own checkpoint so SIGKILL/walltime overrun
+# leaves usable per-run state on disk; ResumeMkPrime() synthesises the master
+# checkpoint from these per-run files when the parent has died abnormally.
+# @keywords internal
+.CkpFilePaths <- function(checkpointFile, nRuns) {
+  if (is.null(checkpointFile)) return(NULL)
+  if (nRuns == 1L) return(checkpointFile)
+  ext  <- tools::file_ext(checkpointFile)
+  base <- tools::file_path_sans_ext(checkpointFile)
   if (nzchar(ext)) {
     paste0(base, "_", seq_len(nRuns), ".", ext)
   } else {

@@ -279,19 +279,20 @@ void pruning_f81_het_acrv_persite(
     double* buf, uint8_t* initFlg, int stride,
     double* siteLL);
 
-// Single-character JC log-likelihood for Gibbs kPrime sweep.
-// Handles JC + ACRV + Het + ascertainment correction + relabeling.
-// constSiteProb should be pre-computed via const_site_prob_for_k().
-double single_char_loglik_jc(
-    const McmcData& data,
-    const Rcpp::IntegerVector& parent,
-    const Rcpp::IntegerVector& child,
-    const Rcpp::NumericVector& edgeLen,
-    const int* tipCol,
-    int kStates, int kObs,
-    double betaScale,
-    const Rcpp::NumericVector& acrvRates,
-    double constSiteProb);
+// Lumped-state variant of pruning_jc_acrv_persite for kObs < kFull.
+// Uses kEff = kObs + 1 columns per character (observed + 1 lumped) with the
+// JC(k) lumpability identity; result is mathematically identical to the
+// uncollapsed kernel, with inner-loop arithmetic scaling as kEff/kFull.
+// Caller must ensure stride >= nChar * (kObs + 1) and dispatch only when
+// the saving is real (kObs + 1 < kFull).
+void pruning_jc_acrv_persite_collapsed(
+    Rcpp::IntegerVector parent, Rcpp::IntegerVector child,
+    Rcpp::NumericVector edge_length, Rcpp::IntegerMatrix tip_states,
+    int kFull, int kObs,
+    Rcpp::NumericVector rate_multipliers,
+    double* buf, uint8_t* initFlg, int stride,
+    double* siteLL);
+
 
 // Constant-site probability for a given kStates (cache helper for Gibbs sweep).
 double const_site_prob_for_k(

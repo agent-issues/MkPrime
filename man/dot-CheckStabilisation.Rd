@@ -20,7 +20,7 @@
 so far (carried across calls).}
 
 \item{windowSize}{Number of snapshots per comparison window.
-Default 10 (= 10 × 500 = 5000 iterations at default batch size).}
+Default 10 (= 10 x 500 = 5000 iterations at default batch size).}
 
 \item{zThreshold}{Absolute z-score threshold for declaring stability.
 Default 1.5.}

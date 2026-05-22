@@ -2,11 +2,11 @@
 % Please edit documentation in R/RunMkPrime.R
 \name{.BuildScaleTuningMatrix}
 \alias{.BuildScaleTuningMatrix}
-\title{Build scale tuning matrix for run_mcmc_batch_cpp (nChains × nMoves)}
+\title{Build scale tuning matrix for run_mcmc_batch_cpp (nChains x nMoves)}
 \usage{
 .BuildScaleTuningMatrix(chainTuning, moves)
 }
 \description{
-Build scale tuning matrix for run_mcmc_batch_cpp (nChains × nMoves)
+Build scale tuning matrix for run_mcmc_batch_cpp (nChains x nMoves)
 }
 \keyword{internal}
