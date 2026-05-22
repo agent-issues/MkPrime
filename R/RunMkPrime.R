@@ -1089,7 +1089,15 @@ RunMkPrime <- function(data, tree = NULL,
         )
       }
       if (nChains > 1L) {
-        r$betas <- .AdaptTemperatures(r$betas, r$swap_accept, r$swap_propose)
+        ptHeatMax <- tryCatch(
+          {
+            v <- as.numeric(Sys.getenv("MKPRIME_PT_HEAT_MAX", unset = ""))
+            if (is.na(v) || length(v) == 0L || !is.finite(v) || v <= 0 || v >= 1) 0.5 else v
+          },
+          warning = function(e) 0.5
+        )
+        r$betas <- .AdaptTemperatures(r$betas, r$swap_accept, r$swap_propose,
+                                      heatMax = ptHeatMax)
         # PT-RT-001: surface ladder-too-coarse warning at most once per run.
         lw <- attr(r$betas, "ladder_warning")
         if (!is.null(lw) && !isTRUE(r$ladder_warning_emitted)) {
