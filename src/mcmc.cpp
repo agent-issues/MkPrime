@@ -3706,7 +3706,10 @@ static List pspr_proposal_impl(
 // ---------------------------------------------------------------------------
 
 // Forward declaration of the ecology branch.
-static bool gibbs_kprime_sweep_impl_ecology(ChainRng& rng, McmcData* data, McmcState* state,
+// NOTE: ecology branch is Phase 2b scope — still uses R::unif_rand internally.
+// Phase 2a threads ChainRng through the blind path only; aware-mode RNG
+// remains on R's stream until 2b lands.
+static bool gibbs_kprime_sweep_impl_ecology(McmcData* data, McmcState* state,
                                             double beta);
 
 static bool gibbs_kprime_sweep_impl(ChainRng& rng, McmcData* data, McmcState* state,
@@ -3717,7 +3720,7 @@ static bool gibbs_kprime_sweep_impl(ChainRng& rng, McmcData* data, McmcState* st
   // Ecology-aware path uses a dedicated implementation that evaluates the
   // candidate weights under the full ecology mixture conditional.
   if (data->ecologyAware) {
-    return gibbs_kprime_sweep_impl_ecology(rng, data, state, beta);
+    return gibbs_kprime_sweep_impl_ecology(data, state, beta);
   }
 
   // Pre-compute absolute edge lengths
