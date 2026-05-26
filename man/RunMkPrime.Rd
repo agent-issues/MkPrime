@@ -22,7 +22,9 @@ RunMkPrime(
 \item{data}{A \code{phyDat} object or \code{MkPrimeData} object.}
 
 \item{tree}{A \code{phylo} object (starting topology), or \code{NULL} (default)
-to start from a neighbour-joining tree built from the data.}
+to start from a greedy parsimony stepwise-addition tree (via
+\code{TreeSearch::AdditionTree}) when the \code{TreeSearch} package is
+installed, falling back to a neighbour-joining tree otherwise.}
 
 \item{neomorphic, knownStates}{Passed to \code{\link[=MkPrimeData]{MkPrimeData()}} if \code{data} is
 a \code{phyDat} object.}

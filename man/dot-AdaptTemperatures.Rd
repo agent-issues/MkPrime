@@ -4,9 +4,29 @@
 \alias{.AdaptTemperatures}
 \title{Adapt temperature ladder based on swap acceptance rates}
 \usage{
-.AdaptTemperatures(betas, swapAccept, swapPropose, target = 0.25)
+.AdaptTemperatures(
+  betas,
+  swapAccept,
+  swapPropose,
+  target = 0.25,
+  heatMax = 0.5,
+  heatMin = 0.01
+)
 }
 \description{
-Adapt temperature ladder based on swap acceptance rates
+Reshape the geometric PT ladder so adjacent swaps target \code{target}
+acceptance. The hot-end clamp is \strong{0.5} rather than the more permissive
+0.95 used pre-PT-RT-001: on sharp likelihoods (e.g. Mk on dense
+morphological matrices) the swap-rate target is trivially met by a
+ladder that's so narrow the hot chain is essentially the cold chain,
+yielding ostensibly "good" swap acceptance but zero between-mode
+mixing. A 0.5 ceiling guarantees the hot chain operates at a meaningful
+temperature delta from cold.
+}
+\details{
+Returns the new betas vector. When the clamp is binding (heat at the
+upper limit AND swap rates below \code{target / 2}), an attribute
+\code{ladder_warning} is set so the caller can surface a recommendation to
+add more PT chains.
 }
 \keyword{internal}
