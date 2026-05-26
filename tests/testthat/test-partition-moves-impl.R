@@ -165,3 +165,58 @@ test_that("unlink=c(shape,ratemultiplier) chain runs, all per-class columns pres
   expect_true(all(samp[, "class1_rate_log_sd"] > 0))
   expect_true(all(samp[, "class2_rate_log_sd"] > 0))
 })
+
+
+# ==============================================================================
+# 4. class1_rate_log_sd random-walk regression
+# ==============================================================================
+
+# Guards the lockstep invariant `classRateLogSd[0] == rateLogSd`. The
+# partitioned prior in mcmc.cpp explicitly skips the c==0 Gamma term on the
+# assumption this holds (init_mcmc_state sets it; the move sites in
+# do_move_impl maintain it). If that invariant is dropped — as it was when
+# Layer 1 landed — the c==0 slot becomes unconstrained, a symmetric
+# log-scale Bactrian proposal random-walks it upward unboundedly while the
+# likelihood saturates under ACRV (rates → 0/∞), leaving log_likelihood
+# bounded and the corruption invisible until the trace explodes to ~1e+46
+# at production scale.
+test_that("class1_rate_log_sd stays in lockstep with rate_log_sd (no slot-0 drift)", {
+  d <- .setup_2class_data(seed = 91L, nChar = 12L, nTip = 8L)
+  set.seed(91L)
+  result <- RunMkPrime(
+    data      = d$mkd,
+    tree      = d$tree,
+    mcmc      = MkPrimeMCMC(
+      nIter            = 5000L,
+      maxWarmup        = 1000L,
+      minWarmup        = 1000L,
+      nChains          = 1L,
+      thin             = 1L,
+      autoTune         = FALSE,
+      gibbsSubtreeSwap = FALSE
+    ),
+    partition = d$part,
+    unlink    = c("shape", "ratemultiplier")
+  )
+
+  samp <- result$samples
+
+  # All class shapes must stay finite and modest in magnitude. The slot-0
+  # drift bug pushed class1 to 1e+25..1e+46 in production runs; even at
+  # 5000 iter the unbounded RW will leave class1 well outside [1e-3, 1e3].
+  for (col in c("class1_rate_log_sd", "class2_rate_log_sd")) {
+    v <- samp[, col]
+    expect_true(all(is.finite(v)), label = paste(col, "finite"))
+    expect_lt(max(v), 1e3, label = paste(col, "max bounded"))
+    expect_gt(min(v), 1e-3, label = paste(col, "min bounded"))
+  }
+
+  # Lockstep: class1_rate_log_sd and the legacy rate_log_sd column are the
+  # same underlying state vector slot, so every sample must agree exactly.
+  expect_equal(
+    unname(samp[, "class1_rate_log_sd"]),
+    unname(samp[, "rate_log_sd"]),
+    tolerance = 0,
+    label = "class1 lockstep with legacy rate_log_sd"
+  )
+})

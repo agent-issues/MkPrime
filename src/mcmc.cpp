@@ -3029,7 +3029,16 @@ static void set_scalar(McmcState* state, int paramIdx, double val) {
   switch (paramIdx) {
     case 0: state->treeLength = val; break;
     case 1: state->rateLoss = val; break;
-    case 2: state->rateLogSd = val; break;
+    case 2:
+      state->rateLogSd = val;
+      // Lockstep invariant: classRateLogSd[0] == rateLogSd when partitioned.
+      // The partitioned prior (cpp_log_prior_partitioned) skips c==0 on the
+      // assumption this invariant holds; without the mirror, classRateLogSd[0]
+      // would be unconstrained and the likelihood (which reads classRateLogSd)
+      // would diverge from the prior path.
+      if (state->usePartitioned && state->classRateLogSd.size() > 0)
+        state->classRateLogSd[0] = val;
+      break;
     case 3: state->rateNeo = val; break;
     case 4: state->betaScale = val; break;
   }
@@ -4055,6 +4064,14 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   double oldClassRLS  = 0.0;  // old classRateLogSd[classIdx31]
   NumericVector classWSnapshot;  // full classW snapshot for case 32 rollback
 
+  // Lockstep invariant: classRateLogSd[0] == rateLogSd when partitioned.
+  // Cases 2 / 21 mirror writes to classRateLogSd[0]; this snapshot lets the
+  // rollback paths below restore it unconditionally without coupling to the
+  // case-31 rollback (which only fires when classIdx31 >= 0).
+  double oldClassRLS0 =
+    (state->usePartitioned && state->classRateLogSd.size() > 0)
+    ? state->classRateLogSd[0] : 0.0;
+
   // O(1) relBr rollback for cases 4 and 12 (save 2 modified elements)
   int bsIdx1 = -1, bsIdx2 = -1;
   double bsOldVal1 = 0.0, bsOldVal2 = 0.0;
@@ -4110,6 +4127,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     case 2: { // scale rate_log_sd (Bactrian, M-118)
       double mult = std::exp(scaleTuning * bactrian_perturbation());
       state->rateLogSd = oldRLSD * mult;
+      if (state->usePartitioned && state->classRateLogSd.size() > 0)
+        state->classRateLogSd[0] = state->rateLogSd;  // lockstep
       logHastings = std::log(mult);
       break;
     }
@@ -4339,6 +4358,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       double mult2 = std::exp(scaleTuning * z2);
       state->treeLength = oldTL * mult1;
       state->rateLogSd  = oldRLSD * mult2;
+      if (state->usePartitioned && state->classRateLogSd.size() > 0)
+        state->classRateLogSd[0] = state->rateLogSd;  // lockstep
       logHastings = std::log(mult1) + std::log(mult2);
       break;
     }
@@ -4444,6 +4465,10 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         state->classRateLogSd[cIdx0] = oldClassRLS;
         return false;
       }
+      // Lockstep: keep state->rateLogSd in sync with classRateLogSd[0] so
+      // the legacy prior term and the trace's `rate_log_sd` column stay
+      // coherent with the value the partitioned likelihood actually uses.
+      if (cIdx0 == 0) state->rateLogSd = state->classRateLogSd[0];
       logHastings = std::log(mult);
       // NOTE: cpp_log_prior handles only the scalar rateLogSd; the per-class
       // Gamma prior contribution is pending the parallel agent cpp_log_prior
@@ -4493,6 +4518,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     }
     if (nniInPlace) { state->parent[nniCRow] = nniSavedP_cRow; state->parent[nniWRow] = nniSavedP_wRow; }
     if (classIdx31 >= 0) state->classRateLogSd[classIdx31] = oldClassRLS;
+    // Lockstep rollback: cases 2/21 mirror rateLogSd → classRateLogSd[0].
+    if (state->usePartitioned && state->classRateLogSd.size() > 0)
+      state->classRateLogSd[0] = oldClassRLS0;
     if (moveType == 32 && !classWSnapshot.isNULL()) {
       state->classW = classWSnapshot;
       int nChar32 = 0;
@@ -4528,6 +4556,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     }
     if (nniInPlace) { state->parent[nniCRow] = nniSavedP_cRow; state->parent[nniWRow] = nniSavedP_wRow; }
     if (classIdx31 >= 0) state->classRateLogSd[classIdx31] = oldClassRLS;
+    // Lockstep rollback: cases 2/21 mirror rateLogSd → classRateLogSd[0].
+    if (state->usePartitioned && state->classRateLogSd.size() > 0)
+      state->classRateLogSd[0] = oldClassRLS0;
     if (moveType == 32 && !classWSnapshot.isNULL()) {
       state->classW = classWSnapshot;
       int nChar32 = 0;
@@ -4885,6 +4916,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   if (nniInPlace) { state->parent[nniCRow] = nniSavedP_cRow; state->parent[nniWRow] = nniSavedP_wRow; }
   // Per-class rollback (cases 31, 32)
   if (classIdx31 >= 0) state->classRateLogSd[classIdx31] = oldClassRLS;
+  // Lockstep rollback: cases 2/21 mirror rateLogSd → classRateLogSd[0].
+  if (state->usePartitioned && state->classRateLogSd.size() > 0)
+    state->classRateLogSd[0] = oldClassRLS0;
   if (moveType == 32 && !classWSnapshot.isNULL()) {
     state->classW = classWSnapshot;
     // Restore classRate from snapshot
