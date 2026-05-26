@@ -1,0 +1,166 @@
+# Lane N2 — mechanical `log(1.0 - p)` -> `log1p(-p)` substitution
+#
+# STATUS: NOT APPLIED. Captured for completeness per orchestrator brief.
+# The substitution is BIT-EQUIVALENT in IEEE 754 double for every
+# reachable input p in [0, 1); see dev/red-team/numerical/pruning-underflow.md
+# Experiment 6. No precision is recovered; the patch is a code-clarity /
+# static-analyser-hygiene improvement only.
+#
+# To apply (from repo root):
+#   patch -p1 < dev/red-team/patches/N2-pruning-underflow.patch
+#
+# 16 sites total across 3 files:
+#   src/mcmc_likelihood.cpp  : 8 sites (lines 2367, 2396, 2447, 2497,
+#                                       2559, 2604, 2674, 2721)
+#   src/mcmc.cpp             : 6 sites (lines 1094, 1407, 1798, 2062,
+#                                       3697, 5469)
+#   src/node_cl_cache.h      : 2 sites (lines 719, 724)
+#
+# Unified diff follows.
+
+--- a/src/mcmc_likelihood.cpp
++++ b/src/mcmc_likelihood.cpp
+@@ -2364,7 +2364,7 @@ static double pruning_jc_acrv_flat(
+         double p = neoConstProb;
+         if (coding == 2) p += het_singleton_site_prob(
+           parent, child, neoEl, nTip, 2, rateLoss, hetBins, nBC, rates);
+-        ll -= part.tipStates.ncol() * std::log(1.0 - p);
++        ll -= part.tipStates.ncol() * std::log1p(-p);
+       }
+     } else {
+       // Homogeneous path (original).
+@@ -2393,7 +2393,7 @@ static double pruning_jc_acrv_flat(
+         double p = neoConstProb;
+         if (coding == 2) p += singleton_site_prob_mkn(parent, child, neoEl, nTip,
+                                                        rateLoss, rootFreqs, rates);
+-        ll -= part.tipStates.ncol() * std::log(1.0 - p);
++        ll -= part.tipStates.ncol() * std::log1p(-p);
+       }
+     }
+   } else if (part.type == 2) {
+@@ -2444,7 +2444,7 @@ static double pruning_jc_acrv_flat(
+         double p = knownConstProb;
+         if (coding == 2) p += het_singleton_site_prob(
+           parent, child, edgeLen, nTip, kStates, 1.0, hetBins, nBC, rates);
+-        ll -= part.tipStates.ncol() * std::log(1.0 - p);
++        ll -= part.tipStates.ncol() * std::log1p(-p);
+       }
+     } else {
+       // Homogeneous path. JC-COLLAPSE (stage 2): when kObsMax + 1 < kStates,
+@@ -2494,7 +2494,7 @@ static double pruning_jc_acrv_flat(
+         double p = knownConstProb;
+         if (coding == 2) p += singleton_site_prob_jc(parent, child, edgeLen, nTip,
+                                                       kStates, rootFreqs, rates);
+-        ll -= part.tipStates.ncol() * std::log(1.0 - p);
++        ll -= part.tipStates.ncol() * std::log1p(-p);
+       }
+     }
+   } else {
+@@ -2556,7 +2556,7 @@ static double pruning_jc_acrv_flat(
+           double p = transConstProb;
+           if (coding == 2) p += het_singleton_site_prob(
+             parent, child, edgeLen, nTip, kp0, 1.0, hetBins, nBC, rates);
+-          ll -= nCharPart * std::log(1.0 - p);
++          ll -= nCharPart * std::log1p(-p);
+         }
+       } else {
+         // Homogeneous transformational (allSame).
+@@ -2601,7 +2601,7 @@ static double pruning_jc_acrv_flat(
+           double p = transConstProb;
+           if (coding == 2) p += singleton_site_prob_jc(parent, child, edgeLen, nTip,
+                                                         kp0, rootFreqs, rates);
+-          ll -= nCharPart * std::log(1.0 - p);
++          ll -= nCharPart * std::log1p(-p);
+         }
+       }
+     } else {
+@@ -2671,7 +2671,7 @@ static double pruning_jc_acrv_flat(
+             double p = subConstProb;
+             if (coding == 2) p += het_singleton_site_prob(
+               parent, child, edgeLen, nTip, kp, 1.0, hetBinsSub, nBC, rates);
+-            subLl -= nSub * std::log(1.0 - p);
++            subLl -= nSub * std::log1p(-p);
+           }
+         } else {
+           // Homogeneous trans sub-group.
+@@ -2718,7 +2718,7 @@ static double pruning_jc_acrv_flat(
+             double p = subConstProb;
+             if (coding == 2) p += singleton_site_prob_jc(parent, child, edgeLen, nTip,
+                                                           kp, rootFreqs, rates);
+-            subLl -= nSub * std::log(1.0 - p);
++            subLl -= nSub * std::log1p(-p);
+           }
+         }
+       }
+
+--- a/src/mcmc.cpp
++++ b/src/mcmc.cpp
+@@ -1091,7 +1091,7 @@
+           if (coding == 2) constP += singleton_site_prob_jc(parent, child, edgeLen, nTip,
+                                                               groups[gi].kStates, rootFreqs,
+                                                               rates);
+-          grpLL -= groups[gi].nChar * std::log(1.0 - constP);
++          grpLL -= groups[gi].nChar * std::log1p(-constP);
+         }
+       }
+
+@@ -1404,7 +1404,7 @@
+                                                              g.kStates, rootFreqs,
+                                                              rates);
+           }
+-          grpLL -= nChar_gi * std::log(1.0 - constP);
++          grpLL -= nChar_gi * std::log1p(-constP);
+         }
+       }
+
+@@ -1795,7 +1795,7 @@
+           if (coding == 2) constP += singleton_site_prob_jc(parent, child, edgeLen, nTip,
+                                                              groups[gi].kStates, rootFreqs,
+                                                              rates);
+-          grpLL -= groups[gi].nChar * std::log(1.0 - constP);
++          grpLL -= groups[gi].nChar * std::log1p(-constP);
+         }
+       }
+
+@@ -2059,7 +2059,7 @@
+                                                              g.kStates, rootFreqs,
+                                                              rates);
+           }
+-          grpLL -= nChar_gi * std::log(1.0 - constP);
++          grpLL -= nChar_gi * std::log1p(-constP);
+         }
+       }
+
+@@ -3694,7 +3694,7 @@
+       // Apply ascertainment correction.
+       double constLLAdj = (csp > 0.0 && csp < 1.0)
+-        ? -std::log(1.0 - csp) : 0.0;
++        ? -std::log1p(-csp) : 0.0;
+       // ...
+
+@@ -5466,7 +5466,7 @@
+           if (coding == 2) constP += singleton_site_prob_jc(parent, child, edgeLen, nTip,
+                                                              groups[gi].kStates, rootFreqs,
+                                                              rates);
+-          grpLL -= groups[gi].nChar * std::log(1.0 - constP);
++          grpLL -= groups[gi].nChar * std::log1p(-constP);
+         }
+       }
+
+--- a/src/node_cl_cache.h
++++ b/src/node_cl_cache.h
+@@ -716,12 +716,12 @@
+           double pu = constant_site_prob_jc(parent, child, absEdgeLen,
+                                              nTip, k, rootFreqs, rates);
+           if (pu > 0.0 && pu < 1.0)
+-            ll -= unit.nChar * std::log(1.0 - pu);
++            ll -= unit.nChar * std::log1p(-pu);
+         }
+         // p stays 0.0 → final correction block below is a no-op for type 1
+       }
+       if (p > 0.0 && p < 1.0) {
+-        ll -= partNChar[pi] * std::log(1.0 - p);
++        ll -= partNChar[pi] * std::log1p(-p);
+       }
+     }
+     totalLL += ll;

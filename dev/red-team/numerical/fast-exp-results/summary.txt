@@ -1,0 +1,21 @@
+Lane N1 - fast_exp + closed-form P(t) stability
+Mode: QUICK
+Elapsed: 0.2s
+
+Scalar fast_neg_exp max rel err vs mpmath: 7.963e-15
+Scalar std::exp     max rel err vs mpmath: 1.299e-16
+
+JC p_diff max rel err  (fast): 3.339e-05
+  worst regime: (4, 1e-12, 3.3389431776462825e-05, 3.3389431776462825e-05)
+
+MkN max rel err (fast): 2.212e-05
+  worst regime: (1.0, 1e-12, 2.212171912150605e-05)
+
+F81 max rel err (fast): 7.343e-05
+  worst regime: (6, 0.0, 3.0, 0, 3.671407047712592e-13, 1.2, 7.34267855427293e-05)
+
+Cancellation study:
+  JC p_diff current: 3.878e-01
+  JC p_diff with expm1 fix: 2.373e-16
+  F81 1-d   current: 1.715e-01
+  F81 1-d   with expm1 fix: 1.841e-16

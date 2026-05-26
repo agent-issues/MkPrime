@@ -1,0 +1,138 @@
+From: numerical-auditor (Lane N1)
+Subject: [patch proposal, not committed] Use std::expm1 to compute 1 - E in JC/MkN/F81 closed forms
+
+Lane N1 audit (dev/red-team/numerical/fast-exp-conditioning.md) found that
+the closed-form transition probabilities suffer catastrophic cancellation
+when (rate * branch) <= ~1e-10:
+
+  p_diff = inv_k - inv_k * exp(-alpha * t)         [JC]
+  one_m_d = 1 - exp(-mu * t)                       [F81]
+  P01 / P10 = i01 - i01 * exp(-lambda * t)         [MkN]
+
+Worst observed relative error on the audit grid:
+
+  JC  p_diff   3.9e-1  at rt ~ 1e-15
+  F81 1-d     1.7e-1  at mu*t ~ 1e-15
+  MkN P01     4.4e-5  at lambda*t = 1e-12
+
+After replacing `1 - exp(arg)` with `-std::expm1(arg)`, all three drop to
+<= 2.4e-16 across the entire grid. fast_neg_exp itself is correct (<= 8.6e-15
+relative error in [-708, 0]); the issue is purely algebraic.
+
+The patch keeps MKP_EXP for the E-as-such reads (e.g. p_same = inv_k + ...*E)
+and only adds one std::expm1 call per branch.
+
+Patch is *not* committed - the auditor lane is read-only on src/.
+
+----- patch begins -----
+
+diff --git a/src/rate_matrix.cpp b/src/rate_matrix.cpp
+--- a/src/rate_matrix.cpp
++++ b/src/rate_matrix.cpp
+@@ -29,9 +29,12 @@ Rcpp::NumericMatrix jc_transition_probs(int k, double t) {
+
+   Rcpp::NumericMatrix P(k, k);
+   double inv_k = 1.0 / k;
+-  double exp_term = MKP_EXP(-k * t / (k - 1.0));
+-  double diag = inv_k + (1.0 - inv_k) * exp_term;
+-  double off_diag = inv_k - inv_k * exp_term;
++  // Use expm1 to avoid catastrophic cancellation in (1 - E) at small rt.
++  double arg = -k * t / (k - 1.0);
++  double neg_expm1 = -std::expm1(arg);          // = 1 - exp(arg), ulp-accurate
++  double exp_term  = 1.0 - neg_expm1;           // = exp(arg)
++  double diag      = inv_k + (1.0 - inv_k) * exp_term;
++  double off_diag  = inv_k * neg_expm1;
+
+   for (int i = 0; i < k; ++i) {
+     for (int j = 0; j < k; ++j) {
+@@ -75,12 +78,15 @@ Rcpp::NumericMatrix mkn_transition_probs(double rate_loss, double t) {
+   double rate01 = 2.0 / sum_rl;
+   double rate10 = 2.0 * rate_loss / sum_rl;
+   double lambda = rate01 + rate10;
+-  double exp_term = MKP_EXP(-lambda * t);
++  // expm1 form avoids cancellation in P01/P10 at small lambda*t.
++  double arg = -lambda * t;
++  double neg_expm1 = -std::expm1(arg);
++  double exp_term  = 1.0 - neg_expm1;
+
+   double inv_lambda_01 = rate01 / lambda;
+   double inv_lambda_10 = rate10 / lambda;
+
+   Rcpp::NumericMatrix P(2, 2);
+   P(0, 0) = inv_lambda_10 + inv_lambda_01 * exp_term;
+-  P(0, 1) = inv_lambda_01 - inv_lambda_01 * exp_term;
+-  P(1, 0) = inv_lambda_10 - inv_lambda_10 * exp_term;
++  P(0, 1) = inv_lambda_01 * neg_expm1;
++  P(1, 0) = inv_lambda_10 * neg_expm1;
+   P(1, 1) = inv_lambda_01 + inv_lambda_10 * exp_term;
+
+diff --git a/src/likelihood.cpp b/src/likelihood.cpp
+--- a/src/likelihood.cpp
++++ b/src/likelihood.cpp
+@@ -81,9 +81,11 @@ double pruning_jc(/* args */) {
+
+     // Compute JC transition probabilities for this branch
+     double inv_k = 1.0 / kStates;
+-    double exp_term = MKP_EXP(-kStates * t / (kStates - 1.0));
+-    double p_same = inv_k + (1.0 - inv_k) * exp_term;
+-    double p_diff = inv_k - inv_k * exp_term;
++    double arg = -kStates * t / (kStates - 1.0);
++    double neg_expm1 = -std::expm1(arg);
++    double exp_term  = 1.0 - neg_expm1;
++    double p_same    = inv_k + (1.0 - inv_k) * exp_term;
++    double p_diff    = inv_k * neg_expm1;
+
+     // ... rest unchanged
+
+(Apply the same edit at likelihood.cpp:213 — JC collapsed pruning — and at
+likelihood.cpp:312 — MkN P00/P01/P10/P11. Pattern identical.)
+
+diff --git a/src/gibbs_partial_cl.h b/src/gibbs_partial_cl.h
+--- a/src/gibbs_partial_cl.h
++++ b/src/gibbs_partial_cl.h
+@@ -257,8 +257,11 @@ inline void f81_transition(const double* cl, double* result,
+                             int nChar, int kStates,
+                             const double* pi, double mu, double t) {
+-  double exp_t = MKP_EXP(-mu * t);
+-  double one_minus_exp = 1.0 - exp_t;
++  // expm1 form: one_minus_exp = 1 - exp(arg) is exact even at tiny mu*t.
++  double arg = -mu * t;
++  double one_minus_exp = -std::expm1(arg);
++  double exp_t = 1.0 - one_minus_exp;
+   for (int c = 0; c < nChar; ++c) {
+
+(Same pattern at gibbs_partial_cl.h:208 — jc_trans_params analogue — and
+:235 — mkn_trans_params.)
+
+diff --git a/src/mcmc_likelihood.cpp b/src/mcmc_likelihood.cpp
+--- a/src/mcmc_likelihood.cpp
++++ b/src/mcmc_likelihood.cpp
+@@ -1864,9 +1864,11 @@ void run_one_chain_step(/* args */) {
+         for (int e = nEdge - 1; e >= 0; --e) {
+           int par = parPtr[e];
+           int ch  = chPtr[e];
+           double t = elPtr[e] * acrvRate;
+-          double d = MKP_EXP(-mu * t);
+-          double one_minus_d = 1.0 - d;
++          double arg = -mu * t;
++          double one_minus_d = -std::expm1(arg);
++          double d = 1.0 - one_minus_d;
+
+(Same edit needed at mcmc_likelihood.cpp:2051, :2180 and the JC sites at
+211, 378, 511, 704, 984, 1150, and the MkN sites at 1399, 1574, and the
+node_cl_cache.h sites at 197, 220, and the acrv.cpp / ascertainment.cpp
+sites. Total: ~24 call sites. Each edit is purely mechanical.)
+
+----- patch ends -----
+
+Performance note: std::expm1 is ~1.5x slower than std::exp and ~3-4x slower
+than fast_neg_exp. Each call site already does one MKP_EXP per branch per
+class; replacing it with one std::expm1 + one subtract adds an extra ~50%
+to the exp-computation cost. The exp computation is a small fraction of
+the per-branch loop (k linear ops dominate for k > 4), so the wall-clock
+impact is expected to be a few percent at most.
+
+Suggested validation:
+  - run tests/testthat at the same numerical tolerance
+  - add a regression test at rt = 1e-12 confirming p_diff matches an mpmath
+    or explicit Taylor reference to 1e-14

@@ -1,0 +1,18 @@
+diff --git a/src/mcmc_likelihood.cpp b/src/mcmc_likelihood.cpp
+index 8bfceec..5e2b31a 100644
+--- a/src/mcmc_likelihood.cpp
++++ b/src/mcmc_likelihood.cpp
+@@ -2270,7 +2270,12 @@ double const_site_prob_for_k(
+     NumericVector rootFreqs(kStates, 1.0 / kStates);
+     double p = constant_site_prob_jc(parent, child, edgeLen, data.nTip,
+                                       kStates, rootFreqs, acrvRates);
+-    // Phase 7: add singleton_site_prob_jc when coding == 2
++    // L5-trivial: informative coding adds the JC singleton probability.
++    // Het+informative remains gated upstream (see het_singleton_site_prob).
++    if (data.codingType == 2) {
++      p += singleton_site_prob_jc(parent, child, edgeLen, data.nTip,
++                                   kStates, rootFreqs, acrvRates);
++    }
+     return p;
+   }
+ }
