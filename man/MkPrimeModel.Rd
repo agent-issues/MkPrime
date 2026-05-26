@@ -27,7 +27,8 @@ MkPrimeModel(
   qHeterogeneity = FALSE,
   nBetaCat = 4L,
   betaScaleShape = 1,
-  betaScaleRate = 1
+  betaScaleRate = 1,
+  classRateConcentration = 1
 )
 }
 \arguments{

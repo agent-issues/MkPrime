@@ -29,6 +29,21 @@
 #'   `mcmc$checkpointFile` points to an existing file, the run is
 #'   automatically resumed from that checkpoint.
 #'   Set to `TRUE` to discard the existing checkpoint and start fresh.
+#' @param partition Optional integer vector of length `mkd$nChar` (after
+#'   invariant-character drop) assigning each character to a user class.
+#'   Values must form a contiguous range `1:nClasses`. `NULL` (the default)
+#'   routes through the unchanged legacy code path; see the §7a bit-identity
+#'   contract in `NOTES/partition-api-plan.md`.
+#' @param unlink Character vector of model-component tokens to unlink
+#'   across classes. Layer 1 honours `"shape"` (per-class `rate_log_sd`) and
+#'   `"ratemultiplier"` (char-weighted mean-1 Dirichlet on class rates).
+#'   Layer 2 will add `"brlens"` (per-class branch lengths under a shared
+#'   topology). Tokens match case-insensitively with partial-prefix
+#'   resolution (warns on prefix; errors on ambiguous prefix or unknown
+#'   token with an `agrep`-driven "did you mean" suggestion). Silently
+#'   coerced to `character(0)` with an info-level alert when `partition`
+#'   is `NULL` or `nClasses == 1` so the AutoPart dispatcher can pass
+#'   `unlink` uniformly across treatments.
 #' @param ... Additional arguments forwarded to [MkPrimeMCMC()]. Allows
 #'   passing MCMC configuration inline (e.g. `nIter`, `logFile`, `nChains`)
 #'   without constructing a separate object. Cannot be combined with an
@@ -82,6 +97,8 @@ RunMkPrime <- function(data, tree = NULL,
                        mcmc = NULL,
                        fixTopology = FALSE,
                        overwrite = FALSE,
+                       partition = NULL,
+                       unlink = character(0),
                        ...) {
 
   # --- Build or validate MCMC config ---
@@ -122,6 +139,22 @@ RunMkPrime <- function(data, tree = NULL,
   } else {
     mkd <- MkPrimeData(data, neomorphic = neomorphic,
                        knownStates = knownStates)
+  }
+
+  # --- Partition API (Layer 1 plumbing; see NOTES/partition-api-plan.md) ---
+  # Validation and silent coercion happen here so any error is raised before
+  # the expensive tree/MCMC setup runs. When partition is NULL (the default)
+  # the next call is a no-op and execution falls through to the unchanged
+  # legacy code path (§7a bit-identity contract).
+  partitionSpec <- .ValidatePartitionArgs(partition, unlink, mkd)
+  .RequirePartitionImplemented(partitionSpec)
+
+  # When a user partition is supplied, rebuild mkd$partitions with classIdx
+  # populated for each PartInfo. The C++ McmcData uses classIdx to map each
+  # partition to its user class; without this, nClasses stays 1 regardless.
+  # When partition = NULL, mkd$partitions is left unchanged (§7a contract).
+  if (!is.null(partitionSpec$partition)) {
+    mkd$partitions <- .BuildPartitions(mkd, partition = partitionSpec$partition)
   }
 
   if (is.null(tree)) {
@@ -196,7 +229,8 @@ RunMkPrime <- function(data, tree = NULL,
   nTrans <- length(transIdx)
 
   qHet <- isTRUE(model$qHeterogeneity)
-  moves <- .BuildMoves(nEdge, nTrans, hasNeo, mcmc,
+  moves <- .BuildMovesPartitioned(nEdge, nTrans, hasNeo, mcmc,
+                       partitionSpec = partitionSpec,
                        fixTopology = fixTopology,
                        kPrimePrior = model$kPrimePrior %||% "geometric",
                        qHeterogeneity = qHet,
@@ -225,10 +259,11 @@ RunMkPrime <- function(data, tree = NULL,
   runs <- vector("list", nRuns)
   for (run in seq_len(nRuns)) {
     startTree <- if (run == 1L) tree else .PerturbStart(tree)
-    runs[[run]] <- .InitRun(startTree, mkd, model, mcmc, moves)
+    runs[[run]] <- .InitRun(startTree, mkd, model, mcmc, moves,
+                            partitionSpec = partitionSpec)
   }
 
-  paramNames  <- .ParamNames(mkd, nEdge,
+  paramNames  <- .ParamNamesPartitioned(mkd, nEdge, partitionSpec,
                              kPrimePrior = model$kPrimePrior %||% "geometric",
                              qHeterogeneity = qHet)
 
@@ -583,15 +618,27 @@ RunMkPrime <- function(data, tree = NULL,
 #' XPtrs are built inside [.RunMkPrimeSingleRun()] so the state can be sent
 #' to `callr` workers without serialisation errors.
 #' @keywords internal
-.InitRun <- function(tree, mkd, model, mcmc, moves) {
+.InitRun <- function(tree, mkd, model, mcmc, moves,
+                     partitionSpec = NULL) {
   nChains <- mcmc$nChains
   betas <- .BuildTemperatureLadder(nChains, mcmc$heat)
+
+  # Determine whether to use the partition-aware state initializer. The
+  # partitioned path is active when `partition` is non-NULL (even trivial
+  # nClasses == 1): this keeps legacy chains untouched (§7a contract) while
+  # routing partition = rep(1L, nChar) through the new C++ path (§7b).
+  usePartitioned <- !is.null(partitionSpec) &&
+    !is.null(partitionSpec$partition)
 
   # Build per-chain state as R lists (checkpoint-compatible format).
   chains <- vector("list", nChains)
   for (ch in seq_len(nChains)) {
-    s <- .InitState(tree, mkd, model)
-    chains[[ch]] <- list(
+    if (usePartitioned) {
+      s <- .InitStatePartitioned(tree, mkd, model, partitionSpec)
+    } else {
+      s <- .InitState(tree, mkd, model)
+    }
+    ch_list <- list(
       edge           = s$tree$edge,
       rel_br_lengths = s$rel_br_lengths,
       tree_length    = s$tree_length,
@@ -604,6 +651,15 @@ RunMkPrime <- function(data, tree = NULL,
       log_prior      = s$log_prior,
       log_post       = s$log_post
     )
+    # Partition-API extra fields (absent for legacy chains — §7a contract).
+    if (usePartitioned) {
+      ch_list$class_rate_log_sd <- as.numeric(s$class_rate_log_sd)
+      ch_list$class_w           <- as.numeric(s$class_w)
+      ch_list$class_rate        <- as.numeric(s$class_rate)
+      ch_list$nChar_c           <- as.integer(s$nChar_c)
+      ch_list$eta_neo           <- s$eta_neo
+    }
+    chains[[ch]] <- ch_list
   }
 
   moveNames <- vapply(moves, `[[`, character(1), "name")
@@ -678,6 +734,10 @@ RunMkPrime <- function(data, tree = NULL,
   r$chainStates <- vector("list", nChains)
   for (ch in seq_len(nChains)) {
     ch_r <- r$chains[[ch]]
+    # Partition-API (Layer 1): pass per-class vectors when present in the
+    # serialized chain list (set by .InitRun when partitionSpec is non-NULL).
+    # Legacy chains (partition = NULL) lack these fields; the default empty
+    # vectors in init_mcmc_state leave usePartitioned = FALSE (§7a contract).
     r$chainStates[[ch]] <- init_mcmc_state(
       ch_r$edge[, 1L], ch_r$edge[, 2L],
       ch_r$rel_br_lengths, ch_r$tree_length,
@@ -685,7 +745,14 @@ RunMkPrime <- function(data, tree = NULL,
       ch_r$rate_neo %||% 1.0, ch_r$p %||% 0.5,
       as.integer(ch_r$kPrime),
       ch_r$log_lik, ch_r$log_prior,
-      ch_r$beta_scale %||% 1.0
+      ch_r$beta_scale %||% 1.0,
+      ch_r$kprime_alpha %||% 1.0,
+      ch_r$kprime_beta %||% 1.0,
+      classRateLogSd = as.numeric(ch_r$class_rate_log_sd %||% numeric(0)),
+      classW         = as.numeric(ch_r$class_w %||% numeric(0)),
+      classRate      = as.numeric(ch_r$class_rate %||% numeric(0)),
+      nCharPerClass  = as.integer(ch_r$nChar_c %||% integer(0)),
+      etaNeo         = ch_r$eta_neo %||% 1.0
     )
   }
   for (ch in seq_len(nChains)) {
@@ -771,12 +838,24 @@ RunMkPrime <- function(data, tree = NULL,
   names(moveDim) <- moveNames
   # M-171: index for warmup-phase sweep frequency reduction (NA = no trans chars)
   gibbsKpIdx <- match("gibbs_kPrime", moveNames)
-  moveTypeCodes <- vapply(moves, function(m) .kMoveTypes[[m$name]], integer(1L))
+  moveTypeCodes <- vapply(moves, function(m) {
+    # For per-class moves (e.g. scale_class_rate_log_sd_1) the unique name
+    # is not in .kMoveTypes; fall back to m$type which IS registered.
+    key <- if (m$name %in% names(.kMoveTypes)) m$name else m$type %||% m$name
+    .kMoveTypes[[key]]
+  }, integer(1L))
   # Slice param index: 0=treeLength, 1=rateLoss, 2=rateLogSd, 3=rateNeo, 4=betaScale
   sliceParamCodes <- vapply(moves, function(m) m$sliceParamIdx %||% 0L, integer(1L))
-  # Per-move integer parameter (e.g. nCats for dirichlet_branch; 0 = use chain default)
+  # Per-move integer parameter.
+  # nCats: for dirichlet_branch / local_dirichlet (intWalkWindow carries nCats).
+  # classIdx: for scale_class_rate_log_sd (1-based index passed via charIdx).
+  # dim: for dirichlet_simplex_class_w (intWalkWindow carries nClasses).
   moveIntParams <- vapply(moves, function(m) {
-    if (!is.null(m$nCats)) as.integer(m$nCats) else 0L
+    if (!is.null(m$nCats)) as.integer(m$nCats)
+    else if (!is.null(m$classIdx)) as.integer(m$classIdx)
+    else if (!is.null(m$type) && m$type == "dirichlet_simplex_class_w")
+      as.integer(m$dim %||% 0L)
+    else 0L
   }, integer(1L))
   transIdx      <- which(mkd$type == "transformational")
   transIdx0     <- if (length(transIdx) > 0L) transIdx - 1L else integer(0L)
@@ -3540,7 +3619,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 # 15=block_gibbs_branch, 16=beta_scale (M-052), 17=tbr (M-053),
 # 25=gibbs_kprime_sweep, 26=block_kprime_shift,
 # 27=scale_kprime_alpha, 28=scale_kprime_beta,
-# 30=mh_logit_p (logit-scale MH on p, for empirical_geometric)
+# 30=mh_logit_p (logit-scale MH on p, for empirical_geometric),
+# 31=scale_class_rate_log_sd (per-class shape; charIdx carries 1-based classIdx),
+# 32=dirichlet_simplex_class_w (Dirichlet simplex on class_w)
 .kMoveTypes <- c(
   tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
   rate_neo = 3L, branch_lengths = 4L,
@@ -3569,7 +3650,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   kprime_alpha = 27L,
   kprime_beta = 28L,
   slice_kprime_alpha = 29L,
-  slice_kprime_beta = 29L
+  slice_kprime_beta = 29L,
+  scale_class_rate_log_sd = 31L,
+  dirichlet_simplex_class_w = 32L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)
@@ -3669,7 +3752,15 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       local_dirichlet = tuning$local_dirichlet_alpha %||% 0.1,
       mh_p        = tuning$scale_p %||% 0.5,
       mh_logit_p  = tuning$scale_logit_p %||% 1.0,
-      0.5  # default; gibbs_p ignores scaleTun (returns before using it)
+      dirichlet_simplex_class_w = tuning$dirichlet_class_w_alpha %||% 10,
+      {
+        # Per-class moves: switch on type rather than instance name
+        if (!is.null(move$type) && move$type == "scale_class_rate_log_sd") {
+          tuning$scale_class_rate_log_sd %||% 0.5
+        } else {
+          0.5  # default; gibbs_p ignores scaleTun (returns before using it)
+        }
+      }
     )
     # For dirichlet_branch / local_dirichlet, intWalkWindow carries nCats
     iww <- if (!is.null(move$nCats)) as.integer(move$nCats)

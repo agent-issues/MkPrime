@@ -180,6 +180,22 @@ struct McmcState {
   int diagCachePopCount = 0;
   double diagMaxDiff = 0.0;
 
+  // Partition-API (Layer 1, plan v4 §4.2).
+  // When usePartitioned is false (legacy path), these are ignored and the
+  // legacy scalar fields (rateLogSd, rateNeo) govern the MCMC loop exactly
+  // as before. When usePartitioned is true, cpp_log_likelihood_partitioned
+  // is called with the per-class vectors below.
+  //
+  // Invariant: classRateLogSd[0] == rateLogSd and etaNeo == 1.0 (frozen in
+  // Layer 1) so that rateNeo == 1.0. They are kept in lockstep so the partial-
+  // CL paths (which take scalars) can still use state->rateLogSd safely.
+  bool usePartitioned = false;
+  NumericVector classRateLogSd;   // length 1 (linked) or nClasses (unlinked shape)
+  NumericVector classW;           // length nClasses (simplex; 1 when trivial)
+  NumericVector classRate;        // length 1 (linked) or nClasses; derived from w
+  IntegerVector nCharPerClass;    // length nClasses
+  double etaNeo = 1.0;           // frozen at 1.0 in Layer 1
+
 };
 
 
@@ -337,6 +353,103 @@ static double cpp_log_prior(
 
 
 // ---------------------------------------------------------------------------
+// cpp_log_prior_partitioned — plan v4 §5.1 + §5.4
+//
+// Adds three per-class prior contributions on top of the legacy log-prior:
+//
+//   1. Dirichlet(α) on classW (unit simplex) — plan §5.1.
+//      α == 1 gives a flat Dirichlet whose log-density is a constant;
+//      at K == 1 (trivial spec) the Dirichlet degenerates and its
+//      contribution is 0 — matching the legacy scalar path (§7b contract).
+//
+//   2. Gamma(rateLogSdShape, rateLogSdRate) i.i.d. on each
+//      classRateLogSd[c] — plan §5.4. Skipped when classRateLogSd has
+//      length 1 (linked shape) because the legacy rateLogSd prior already
+//      covers that value — no double-counting.
+//
+//   3. LogNormal(0, rateNeoSdlog) on etaNeo — §5.2. Included for
+//      forward compatibility; in Layer 1 etaNeo is frozen at 1.0 so
+//      the contribution is the constant LogNormal-mode density.
+//      Skipped entirely when !data.hasNeo.
+//
+// All other legacy contributions are identical to cpp_log_prior — the
+// same scalar state variables are consumed.
+// ---------------------------------------------------------------------------
+
+static double cpp_log_prior_partitioned(
+    const McmcData& data,
+    double treeLength, const NumericVector& relBrLengths,
+    double rateLoss, double rateLogSd, double rateNeo,
+    double p, const IntegerVector& kPrime,
+    const NumericVector& classRateLogSd,  // length 1 (linked) or nClasses
+    const NumericVector& classW,          // length 1 or nClasses (simplex)
+    double etaNeo,
+    double betaScale = 1.0,
+    double kprimeAlpha = 1.0, double kprimeBeta = 1.0) {
+
+  // 1. Legacy contributions — delegate to the existing static function.
+  //    This covers tree length, Dirichlet(1) on rel branch lengths, rate_loss,
+  //    rate_log_sd (the scalar shared across all classes), rate_neo (scalar),
+  //    kPrime prior, and beta_scale.
+  double lp = cpp_log_prior(
+    data, treeLength, relBrLengths, rateLoss, rateLogSd, rateNeo,
+    p, kPrime, betaScale, kprimeAlpha, kprimeBeta);
+
+  if (!R_FINITE(lp)) return R_NegInf;
+
+  // 2. Dirichlet(α) on classW — per-class rate contribution (§5.1).
+  //    K == 1 (trivial spec): w = (1.0) is the only point on the degenerate
+  //    simplex. The Dirichlet log-density is 0 (normalising constant = 0 for
+  //    K=1 after the lgamma(1*α)-1*lgamma(α) = 0 identity). Skip the loop.
+  int K = classW.size();
+  if (K > 1) {
+    double alpha = data.classRateConcentration;
+    // log Dir(w; α) = lgamma(K*α) - K*lgamma(α) + (α-1)*sum(log(w))
+    double logDirConst = std::lgamma(K * alpha) - K * std::lgamma(alpha);
+    double sumLogW = 0.0;
+    for (int c = 0; c < K; ++c) {
+      if (classW[c] <= 0.0) return R_NegInf;
+      sumLogW += std::log(classW[c]);
+    }
+    lp += logDirConst + (alpha - 1.0) * sumLogW;
+  }
+
+  // 3. Gamma i.i.d. on classRateLogSd — per-class shape contribution (§5.4).
+  //    Length-1 means LINKED: the scalar rateLogSd prior is already counted
+  //    by cpp_log_prior above — no extra terms needed.
+  //    When UNLINKED (size > 1), classRateLogSd[0] == rateLogSd (maintained
+  //    by init_mcmc_state), so c == 0 is already covered by the legacy prior.
+  //    Add Gamma densities only for c == 1 .. K-1 to avoid double-counting.
+  if (classRateLogSd.size() > 1) {
+    for (int c = 1; c < classRateLogSd.size(); ++c) {
+      double sd_c = classRateLogSd[c];
+      if (sd_c < 0.0) return R_NegInf;
+      if (sd_c > 0.0) {
+        lp += R::dgamma(sd_c, data.rateLogSdShape,
+                         1.0 / data.rateLogSdRate, 1);
+      } else if (data.rateLogSdShape > 1.0) {
+        return R_NegInf;
+      }
+      // sd_c == 0, shape == 1: dgamma at 0 = rateLogSdRate; the density is
+      // finite and is added here. Consistent with the legacy boundary treatment
+      // in cpp_log_prior.
+    }
+  }
+
+  // 4. etaNeo prior: LogNormal(0, rateNeoSdlog) — plan §5.2.
+  //    Only when hasNeo; at etaNeo == 1.0 this is the mode of the LogNormal,
+  //    but the prior is still finite and correct for the MH ratio.
+  //    Note: the legacy rateNeo prior (inside cpp_log_prior) is already added
+  //    for the scalar rateNeo. In the partitioned path rateNeo == etaNeo
+  //    (Layer 1 sets both to 1.0 and keeps them in lockstep), so the legacy
+  //    term already covers etaNeo. No extra term is needed here; this comment
+  //    is a forward-compatibility marker for when etaNeo becomes free.
+
+  return lp;
+}
+
+
+// ---------------------------------------------------------------------------
 // init_mcmc_state: create XPtr<McmcState>
 // ---------------------------------------------------------------------------
 
@@ -348,7 +461,12 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
                      double logLik, double logPrior,
                      double betaScale = 1.0,
                      double kprimeAlpha = 1.0,
-                     double kprimeBeta = 1.0) {
+                     double kprimeBeta = 1.0,
+                     NumericVector classRateLogSd = NumericVector(0),
+                     NumericVector classW         = NumericVector(0),
+                     NumericVector classRate      = NumericVector(0),
+                     IntegerVector nCharPerClass  = IntegerVector(0),
+                     double etaNeo = 1.0) {
   McmcState* s = new McmcState();
   s->parent       = clone(parent);
   s->child        = clone(child);
@@ -365,6 +483,22 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
   s->logPrior     = logPrior;
   s->betaScale    = betaScale;
   s->brSnapshot   = NumericVector(relBrLengths.size());
+  s->etaNeo       = etaNeo;
+  // Partition-API (Layer 1): when per-class vectors are supplied, activate
+  // the partitioned likelihood path. Legacy callers pass no per-class args;
+  // their behaviour is unchanged (usePartitioned stays false).
+  if (classRate.size() > 0) {
+    s->usePartitioned  = true;
+    s->classRateLogSd  = clone(classRateLogSd);
+    s->classW          = clone(classW);
+    s->classRate       = clone(classRate);
+    s->nCharPerClass   = clone(nCharPerClass);
+    s->etaNeo          = etaNeo;
+    // Invariant: keep legacy scalar in lockstep with classRateLogSd[0].
+    if (classRateLogSd.size() > 0)
+      s->rateLogSd = classRateLogSd[0];
+    // Layer 1 freezes etaNeo at 1.0 → rateNeo stays 1.0 (no change needed).
+  }
   return Rcpp::XPtr<McmcState>(s, true);
 }
 
@@ -546,6 +680,78 @@ double eval_log_prior_cpp(SEXP dataPtr, SEXP statePtr) {
 }
 
 
+// Partition-API: R-callable wrapper around cpp_log_prior_partitioned.
+// Mirrors eval_log_prior_cpp (legacy scalar surface) for the partitioned path.
+// classRateLogSd: length 1 (linked) or nClasses (unlinked).
+// classW: length 1 (trivial) or nClasses (simplex).
+// When classRateLogSd and classW each have length 1, the result must equal
+// eval_log_prior_cpp to ~1e-10 (§7b analogue for the prior).
+// [[Rcpp::export]]
+double eval_log_prior_partitioned_cpp(
+    SEXP dataPtr, SEXP statePtr,
+    Rcpp::NumericVector classRateLogSd,
+    Rcpp::NumericVector classW,
+    double etaNeo) {
+  McmcData*  d = Rcpp::XPtr<McmcData>(dataPtr);
+  McmcState* s = Rcpp::XPtr<McmcState>(statePtr);
+  return cpp_log_prior_partitioned(
+    *d, s->treeLength, s->relBrLengths,
+    s->rateLoss, s->rateLogSd, s->rateNeo,
+    s->p, s->kPrime,
+    classRateLogSd, classW, etaNeo,
+    s->betaScale, s->kprimeAlpha, s->kprimeBeta);
+}
+
+
+// Setter for classRateConcentration (plan v4 §5.1). Avoids changing the
+// prepare_mcmc_data signature; pattern mirrors set_branch_bins (M-090).
+// [[Rcpp::export]]
+void set_class_rate_concentration(SEXP dataPtr, double concentration) {
+  McmcData* d = Rcpp::XPtr<McmcData>(dataPtr);
+  d->classRateConcentration = concentration;
+}
+
+
+// ---------------------------------------------------------------------------
+// compute_log_prior: dispatch to legacy or partitioned prior function.
+//
+// Mirrors the compute_full_loglik_at dispatch pattern from commit 2ba52bd.
+// Two overloads:
+//
+//   compute_log_prior(data, state)
+//     — reads all prior-relevant fields from state; use when MCMC is
+//       evaluating the current state (no proposal).
+//
+//   compute_log_prior_at(data, state, relBrLengths)
+//     — overrides the branch-length simplex (for Dirichlet move proposals
+//       where only the topology / relBrLengths change but other fields stay
+//       at state values).  All other fields read from state.
+//
+// ---------------------------------------------------------------------------
+
+static double compute_log_prior_at(
+    const McmcData& data, const McmcState& state,
+    const NumericVector& relBrLengths) {
+  if (state.usePartitioned) {
+    return cpp_log_prior_partitioned(
+      data, state.treeLength, relBrLengths,
+      state.rateLoss, state.rateLogSd, state.rateNeo,
+      state.p, state.kPrime,
+      state.classRateLogSd, state.classW, state.etaNeo,
+      state.betaScale, state.kprimeAlpha, state.kprimeBeta);
+  }
+  return cpp_log_prior(
+    data, state.treeLength, relBrLengths,
+    state.rateLoss, state.rateLogSd, state.rateNeo,
+    state.p, state.kPrime, state.betaScale,
+    state.kprimeAlpha, state.kprimeBeta);
+}
+
+static double compute_log_prior(const McmcData& data, const McmcState& state) {
+  return compute_log_prior_at(data, state, state.relBrLengths);
+}
+
+
 // ---------------------------------------------------------------------------
 // preorder_into  (M-109)
 //
@@ -631,6 +837,14 @@ static double compute_full_loglik_at(
     const IntegerVector& parent,
     const IntegerVector& child,
     const NumericVector& edgeLen) {
+  if (state.usePartitioned) {
+    return cpp_log_likelihood_partitioned(
+      data, parent, child, edgeLen,
+      state.kPrime, state.rateLoss,
+      state.classRateLogSd, state.classRate,
+      state.etaNeo, state.betaScale,
+      state.clWs.ready() ? &state.clWs : nullptr);
+  }
   return cpp_log_likelihood(
     data, parent, child, edgeLen,
     state.kPrime, state.rateLoss, state.rateLogSd, state.rateNeo,
@@ -2571,11 +2785,7 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
   for (int k = 0; k < nEdge; ++k)
     propRelBr[k] = ordAbsFinal[k] / state->treeLength;
 
-  double newLogPrior = cpp_log_prior(
-    *data, state->treeLength, propRelBr,
-    state->rateLoss, state->rateLogSd, state->rateNeo,
-    state->p, state->kPrime, state->betaScale,
-    state->kprimeAlpha, state->kprimeBeta);
+  double newLogPrior = compute_log_prior_at(*data, *state, propRelBr);
   if (!R_FINITE(newLogPrior)) return false;
 
   // 16. MH acceptance
@@ -2777,11 +2987,7 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
   for (int k = 0; k < nEdge; ++k)
     propRelBr[k] = ordAbsFinal[k] / state->treeLength;
 
-  double newLogPrior = cpp_log_prior(
-    *data, state->treeLength, propRelBr,
-    state->rateLoss, state->rateLogSd, state->rateNeo,
-    state->p, state->kPrime, state->betaScale,
-    state->kprimeAlpha, state->kprimeBeta);
+  double newLogPrior = compute_log_prior_at(*data, *state, propRelBr);
   if (!R_FINITE(newLogPrior)) return false;
 
   // 13. MH acceptance
@@ -2833,11 +3039,7 @@ static void set_scalar(McmcState* state, int paramIdx, double val) {
 // when the parameter only affects a subset of partitions.
 static double eval_slice_target(McmcData* data, McmcState* state,
                                 int paramIdx, double beta) {
-  double logPrior = cpp_log_prior(
-    *data, state->treeLength, state->relBrLengths,
-    state->rateLoss, state->rateLogSd, state->rateNeo,
-    state->p, state->kPrime, state->betaScale,
-    state->kprimeAlpha, state->kprimeBeta);
+  double logPrior = compute_log_prior(*data, *state);
   if (!R_FINITE(logPrior)) return R_NegInf;
 
   double logLik;
@@ -2862,10 +3064,16 @@ static double eval_slice_target(McmcData* data, McmcState* state,
       logLik += (newPart - oldPart);
     }
   } else {
-    logLik = cpp_log_likelihood(
-      *data, state->parent, state->child, edgeLen,
-      state->kPrime, state->rateLoss, state->rateLogSd,
-      state->rateNeo, state->betaScale, wsPtr);
+    logLik = state->usePartitioned
+      ? cpp_log_likelihood_partitioned(
+          *data, state->parent, state->child, edgeLen,
+          state->kPrime, state->rateLoss,
+          state->classRateLogSd, state->classRate,
+          state->etaNeo, state->betaScale, wsPtr)
+      : cpp_log_likelihood(
+          *data, state->parent, state->child, edgeLen,
+          state->kPrime, state->rateLoss, state->rateLogSd,
+          state->rateNeo, state->betaScale, wsPtr);
   }
   if (!R_FINITE(logLik)) return R_NegInf;
   return beta * logLik + logPrior;
@@ -2916,11 +3124,7 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
     double logTarget1 = eval_slice_target(data, state, paramIdx, beta) + u1;
     if (logTarget1 >= logZ) {
       // Accept — recompute and cache logLik / logPrior / partLogLik
-      state->logPrior = cpp_log_prior(
-        *data, state->treeLength, state->relBrLengths,
-        state->rateLoss, state->rateLogSd, state->rateNeo,
-        state->p, state->kPrime, state->betaScale,
-    state->kprimeAlpha, state->kprimeBeta);
+      state->logPrior = compute_log_prior(*data, *state);
 
       int nEdge = state->parent.size();
       NumericVector edgeLen(nEdge);
@@ -2942,10 +3146,16 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
         for (size_t pi = 0; pi < state->partLogLik.size(); ++pi)
           state->logLik += state->partLogLik[pi];
       } else {
-        state->logLik = cpp_log_likelihood(
-          *data, state->parent, state->child, edgeLen,
-          state->kPrime, state->rateLoss, state->rateLogSd,
-          state->rateNeo, state->betaScale, wsPtr);
+        state->logLik = state->usePartitioned
+          ? cpp_log_likelihood_partitioned(
+              *data, state->parent, state->child, edgeLen,
+              state->kPrime, state->rateLoss,
+              state->classRateLogSd, state->classRate,
+              state->etaNeo, state->betaScale, wsPtr)
+          : cpp_log_likelihood(
+              *data, state->parent, state->child, edgeLen,
+              state->kPrime, state->rateLoss, state->rateLogSd,
+              state->rateNeo, state->betaScale, wsPtr);
         // Invalidate partition cache (full recompute was done)
         state->partLogLik.clear();
       }
@@ -3002,11 +3212,7 @@ static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
     double oldVal = (paramCode == 0) ? state->kprimeAlpha : state->kprimeBeta;
     if (paramCode == 0) state->kprimeAlpha = xCand;
     else                state->kprimeBeta  = xCand;
-    double lp = cpp_log_prior(
-      *data, state->treeLength, state->relBrLengths,
-      state->rateLoss, state->rateLogSd, state->rateNeo,
-      state->p, state->kPrime, state->betaScale,
-      state->kprimeAlpha, state->kprimeBeta);
+    double lp = compute_log_prior(*data, *state);
     // Restore
     if (paramCode == 0) state->kprimeAlpha = oldVal;
     else                state->kprimeBeta  = oldVal;
@@ -3039,11 +3245,7 @@ static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
       if (paramCode == 0) state->kprimeAlpha = x1;
       else                state->kprimeBeta  = x1;
       // Recompute and cache logPrior
-      state->logPrior = cpp_log_prior(
-        *data, state->treeLength, state->relBrLengths,
-        state->rateLoss, state->rateLogSd, state->rateNeo,
-        state->p, state->kPrime, state->betaScale,
-        state->kprimeAlpha, state->kprimeBeta);
+      state->logPrior = compute_log_prior(*data, *state);
       return true;
     }
     if (u1 < u0) L = u1; else R_bound = u1;
@@ -3700,11 +3902,7 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   state->logLik = newLL;
   state->partLogLik = std::move(newPLC);
 
-  state->logPrior = cpp_log_prior(
-    *data, state->treeLength, state->relBrLengths,
-    state->rateLoss, state->rateLogSd, state->rateNeo,
-    state->p, state->kPrime, state->betaScale,
-    state->kprimeAlpha, state->kprimeBeta);
+  state->logPrior = compute_log_prior(*data, *state);
 
   state->nodeCL.invalidate_structure();  // M-161: kPrime changed, unit structure may differ
 
@@ -3744,11 +3942,7 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
   }
 
   // Recompute log-prior
-  double newLogPrior = cpp_log_prior(
-    *data, state->treeLength, state->relBrLengths,
-    state->rateLoss, state->rateLogSd, state->rateNeo,
-    state->p, state->kPrime, state->betaScale,
-    state->kprimeAlpha, state->kprimeBeta);
+  double newLogPrior = compute_log_prior(*data, *state);
 
   if (!R_FINITE(newLogPrior)) {
     for (int i = 0; i < nTrans; ++i)
@@ -3828,6 +4022,8 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
 //           27=scale_kprime_alpha, 28=scale_kprime_beta,
 //           29=slice_kprime_hyper,
 //           30=mh_logit_p (logit-scale MH on p for empirical_geometric prior)
+//           31=scale_class_rate_log_sd (per-class ACRV shape; charIdx=1-based classIdx)
+//           32=dirichlet_simplex_class_w (Dirichlet simplex on class_w)
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -3853,6 +4049,11 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   bool topologyChanged = false;
   int oldKPrimeVal = 0;     // single-element rollback for case 7 (kPrime)
   int kPrimeCharIdx = -1;   // which character was changed
+
+  // Rollback storage for per-class moves (cases 31, 32)
+  int    classIdx31   = -1;   // 0-based class index for case 31 rollback
+  double oldClassRLS  = 0.0;  // old classRateLogSd[classIdx31]
+  NumericVector classWSnapshot;  // full classW snapshot for case 32 rollback
 
   // O(1) relBr rollback for cases 4 and 12 (save 2 modified elements)
   int bsIdx1 = -1, bsIdx2 = -1;
@@ -4081,11 +4282,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       double shape2 = data->kprimeHyperB + sumU;
       state->p = R::rbeta(shape1, shape2);
       // Recompute prior (p changed; likelihood unchanged)
-      state->logPrior = cpp_log_prior(
-        *data, state->treeLength, state->relBrLengths,
-        state->rateLoss, state->rateLogSd, state->rateNeo,
-        state->p, state->kPrime, state->betaScale,
-    state->kprimeAlpha, state->kprimeBeta);
+      state->logPrior = compute_log_prior(*data, *state);
       state->logLik = state->logLik;  // unchanged
       return true;  // Gibbs: always accept
     }
@@ -4190,11 +4387,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       state->kprimeAlpha = oldKpA * mult;
       if (state->kprimeAlpha <= 0.0) return false;
       // Prior-only: likelihood is unchanged, compute prior ratio directly
-      double newLP = cpp_log_prior(
-        *data, state->treeLength, state->relBrLengths,
-        state->rateLoss, state->rateLogSd, state->rateNeo,
-        state->p, state->kPrime, state->betaScale,
-        state->kprimeAlpha, state->kprimeBeta);
+      double newLP = compute_log_prior(*data, *state);
       if (!R_FINITE(newLP)) { state->kprimeAlpha = oldKpA; return false; }
       double logAlpha = (newLP - state->logPrior) + std::log(mult);
       if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
@@ -4208,11 +4401,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       double mult = std::exp(scaleTuning * bactrian_perturbation());
       state->kprimeBeta = oldKpB * mult;
       if (state->kprimeBeta <= 0.0) return false;
-      double newLP = cpp_log_prior(
-        *data, state->treeLength, state->relBrLengths,
-        state->rateLoss, state->rateLogSd, state->rateNeo,
-        state->p, state->kPrime, state->betaScale,
-        state->kprimeAlpha, state->kprimeBeta);
+      double newLP = compute_log_prior(*data, *state);
       if (!R_FINITE(newLP)) { state->kprimeBeta = oldKpB; return false; }
       double logAlpha = (newLP - state->logPrior) + std::log(mult);
       if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
@@ -4243,6 +4432,48 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                   - std::log(oldP) - std::log1p(-oldP);
       break;
     }
+    case 31: { // scale_class_rate_log_sd - Bactrian scale on classRateLogSd[c-1]
+      // charIdx carries the 1-based class index supplied by run_mcmc_batch_cpp.
+      int cIdx0 = charIdx - 1;  // convert to 0-based
+      if (cIdx0 < 0 || cIdx0 >= (int)state->classRateLogSd.size()) return false;
+      classIdx31  = cIdx0;
+      oldClassRLS = state->classRateLogSd[cIdx0];
+      double mult = std::exp(scaleTuning * bactrian_perturbation());
+      state->classRateLogSd[cIdx0] = oldClassRLS * mult;
+      if (state->classRateLogSd[cIdx0] <= 0.0) {
+        state->classRateLogSd[cIdx0] = oldClassRLS;
+        return false;
+      }
+      logHastings = std::log(mult);
+      // NOTE: cpp_log_prior handles only the scalar rateLogSd; the per-class
+      // Gamma prior contribution is pending the parallel agent cpp_log_prior
+      // extension. Acceptance is LL-ratio only until reconciled.
+      break;
+    }
+    case 32: { // dirichlet_simplex_class_w - Dirichlet proposal on classW simplex
+      int nC = (int)state->classW.size();
+      if (nC < 2) return false;
+      classWSnapshot = clone(state->classW);
+      std::vector<int> dummyEdges;
+      NumericVector tmpSnap = clone(state->classW);
+      if (!dirichlet_simplex_impl(state->classW, nC,
+                                  betaSimplexTuning, logHastings,
+                                  tmpSnap, dummyEdges)) {
+        state->classW = classWSnapshot;
+        return false;
+      }
+      // Recompute classRate[c] = classW[c] * nChar / nChar_c  (section 5.1)
+      int nChar = 0;
+      for (int k = 0; k < (int)state->nCharPerClass.size(); ++k)
+        nChar += state->nCharPerClass[k];
+      for (int k = 0; k < nC; ++k) {
+        int nk = (k < (int)state->nCharPerClass.size()) ? state->nCharPerClass[k] : 1;
+        state->classRate[k] = (nk > 0) ? state->classW[k] * nChar / nk : 1.0;
+      }
+      // NOTE: Dirichlet prior on classW is pending the parallel agent
+      // cpp_log_prior extension. Acceptance is LL-ratio only until reconciled.
+      break;
+    }
     default:
       return false;
   }
@@ -4261,6 +4492,16 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       for (int i = 0; i < nE; ++i) state->relBrLengths[i] = state->brSnapshot[i];
     }
     if (nniInPlace) { state->parent[nniCRow] = nniSavedP_cRow; state->parent[nniWRow] = nniSavedP_wRow; }
+    if (classIdx31 >= 0) state->classRateLogSd[classIdx31] = oldClassRLS;
+    if (moveType == 32 && !classWSnapshot.isNULL()) {
+      state->classW = classWSnapshot;
+      int nChar32 = 0;
+      for (int k = 0; k < (int)state->nCharPerClass.size(); ++k) nChar32 += state->nCharPerClass[k];
+      for (int k = 0; k < (int)state->classW.size(); ++k) {
+        int nk = (k < (int)state->nCharPerClass.size()) ? state->nCharPerClass[k] : 1;
+        state->classRate[k] = (nk > 0) ? state->classW[k] * nChar32 / nk : 1.0;
+      }
+    }
     return false;
   }
 
@@ -4269,11 +4510,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   if (nniInPlace) {
     newLogPrior = state->logPrior;
   } else {
-    newLogPrior = cpp_log_prior(
-      *data, state->treeLength, state->relBrLengths,
-      state->rateLoss, state->rateLogSd, state->rateNeo,
-      state->p, state->kPrime, state->betaScale,
-    state->kprimeAlpha, state->kprimeBeta);
+    newLogPrior = compute_log_prior(*data, *state);
   }
 
   if (!R_FINITE(newLogPrior)) {
@@ -4290,6 +4527,16 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       for (int i = 0; i < nE; ++i) state->relBrLengths[i] = state->brSnapshot[i];
     }
     if (nniInPlace) { state->parent[nniCRow] = nniSavedP_cRow; state->parent[nniWRow] = nniSavedP_wRow; }
+    if (classIdx31 >= 0) state->classRateLogSd[classIdx31] = oldClassRLS;
+    if (moveType == 32 && !classWSnapshot.isNULL()) {
+      state->classW = classWSnapshot;
+      int nChar32 = 0;
+      for (int k = 0; k < (int)state->nCharPerClass.size(); ++k) nChar32 += state->nCharPerClass[k];
+      for (int k = 0; k < (int)state->classW.size(); ++k) {
+        int nk = (k < (int)state->nCharPerClass.size()) ? state->nCharPerClass[k] : 1;
+        state->classRate[k] = (nk > 0) ? state->classW[k] * nChar32 / nk : 1.0;
+      }
+    }
     return false;
   }
 
@@ -4328,10 +4575,17 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                                     state->rateLogSd, state->betaScale, dirty);
     usedPartialCL = true;
     // DIAG: compare NNI partial-CL with full eval
-    { double fullLL = cpp_log_likelihood(*data, evalParent, evalChild,
-        propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
-        state->rateNeo, state->betaScale,
-        state->clWs.ready() ? &state->clWs : nullptr);
+    { ClWorkspace* nniWs = state->clWs.ready() ? &state->clWs : nullptr;
+      double fullLL = state->usePartitioned
+        ? cpp_log_likelihood_partitioned(
+            *data, evalParent, evalChild, propEdgeLen,
+            state->kPrime, state->rateLoss,
+            state->classRateLogSd, state->classRate,
+            state->etaNeo, state->betaScale, nniWs)
+        : cpp_log_likelihood(
+            *data, evalParent, evalChild, propEdgeLen,
+            state->kPrime, state->rateLoss, state->rateLogSd,
+            state->rateNeo, state->betaScale, nniWs);
       double diff = std::abs(newLogLik - fullLL);
       state->diagNniPartialCount++;
       if (diff > state->diagMaxDiff) state->diagMaxDiff = diff;
@@ -4359,10 +4613,17 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                                     state->rateLogSd, state->betaScale, dirty);
     usedPartialCL = true;
     // DIAG: compare BS partial-CL with full eval
-    { double fullLL = cpp_log_likelihood(*data, evalParent, evalChild,
-        propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
-        state->rateNeo, state->betaScale,
-        state->clWs.ready() ? &state->clWs : nullptr);
+    { ClWorkspace* bsWs = state->clWs.ready() ? &state->clWs : nullptr;
+      double fullLL = state->usePartitioned
+        ? cpp_log_likelihood_partitioned(
+            *data, evalParent, evalChild, propEdgeLen,
+            state->kPrime, state->rateLoss,
+            state->classRateLogSd, state->classRate,
+            state->etaNeo, state->betaScale, bsWs)
+        : cpp_log_likelihood(
+            *data, evalParent, evalChild, propEdgeLen,
+            state->kPrime, state->rateLoss, state->rateLogSd,
+            state->rateNeo, state->betaScale, bsWs);
       double diff = std::abs(newLogLik - fullLL);
       state->diagBsPartialCount++;
       if (diff > state->diagMaxDiff) state->diagMaxDiff = diff;
@@ -4386,10 +4647,18 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     int nInternal = nEdge + 1 - data->nTip;
     if ((int)dirty.size() > (int)(0.8 * (nInternal + data->nTip))) {
       state->diagDirFullbackCount++;
-      newLogLik = cpp_log_likelihood(*data, evalParent, evalChild,
-        propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
-        state->rateNeo, state->betaScale,
-        state->clWs.ready() ? &state->clWs : nullptr);
+      { ClWorkspace* dWs = state->clWs.ready() ? &state->clWs : nullptr;
+        newLogLik = state->usePartitioned
+          ? cpp_log_likelihood_partitioned(
+              *data, evalParent, evalChild, propEdgeLen,
+              state->kPrime, state->rateLoss,
+              state->classRateLogSd, state->classRate,
+              state->etaNeo, state->betaScale, dWs)
+          : cpp_log_likelihood(
+              *data, evalParent, evalChild, propEdgeLen,
+              state->kPrime, state->rateLoss, state->rateLogSd,
+              state->rateNeo, state->betaScale, dWs);
+      }
     } else {
       newLogLik = partial_eval_dirty(state->nodeCL, *data,
                                       evalParent, evalChild, propEdgeLen,
@@ -4398,10 +4667,17 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       usedPartialCL = true;
 
       // DIAG: compare Dirichlet partial-CL with full eval
-      { double fullLL = cpp_log_likelihood(*data, evalParent, evalChild,
-          propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
-          state->rateNeo, state->betaScale,
-          state->clWs.ready() ? &state->clWs : nullptr);
+      { ClWorkspace* dWs2 = state->clWs.ready() ? &state->clWs : nullptr;
+        double fullLL = state->usePartitioned
+          ? cpp_log_likelihood_partitioned(
+              *data, evalParent, evalChild, propEdgeLen,
+              state->kPrime, state->rateLoss,
+              state->classRateLogSd, state->classRate,
+              state->etaNeo, state->betaScale, dWs2)
+          : cpp_log_likelihood(
+              *data, evalParent, evalChild, propEdgeLen,
+              state->kPrime, state->rateLoss, state->rateLogSd,
+              state->rateNeo, state->betaScale, dWs2);
         double diff = std::abs(newLogLik - fullLL);
         state->diagDirPartialCount++;
         if (diff > state->diagMaxDiff) state->diagMaxDiff = diff;
@@ -4444,10 +4720,18 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     if ((int)dirty.size() > (int)(0.8 * (nInternal + data->nTip))) {
       // Dirty set too large — fall back to full eval
       // (TreeNav already updated; will be reversed on rejection)
-      newLogLik = cpp_log_likelihood(*data, sprParent, sprChild,
-        propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
-        state->rateNeo, state->betaScale,
-        state->clWs.ready() ? &state->clWs : nullptr);
+      { ClWorkspace* sWs = state->clWs.ready() ? &state->clWs : nullptr;
+        newLogLik = state->usePartitioned
+          ? cpp_log_likelihood_partitioned(
+              *data, sprParent, sprChild, propEdgeLen,
+              state->kPrime, state->rateLoss,
+              state->classRateLogSd, state->classRate,
+              state->etaNeo, state->betaScale, sWs)
+          : cpp_log_likelihood(
+              *data, sprParent, sprChild, propEdgeLen,
+              state->kPrime, state->rateLoss, state->rateLogSd,
+              state->rateNeo, state->betaScale, sWs);
+      }
     } else {
       // 4. Partial CL evaluation
       newLogLik = partial_eval_dirty(state->nodeCL, *data,
@@ -4462,10 +4746,18 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     NumericVector propEdgeLen(nEdge);
     for (int i = 0; i < nEdge; ++i)
       propEdgeLen[i] = state->treeLength * evalRelBr[i];
-    newLogLik = cpp_log_likelihood(*data, evalParent, evalChild,
-      propEdgeLen, state->kPrime, state->rateLoss, state->rateLogSd,
-      state->rateNeo, state->betaScale,
-      state->clWs.ready() ? &state->clWs : nullptr);
+    { ClWorkspace* pWs = state->clWs.ready() ? &state->clWs : nullptr;
+      newLogLik = state->usePartitioned
+        ? cpp_log_likelihood_partitioned(
+            *data, evalParent, evalChild, propEdgeLen,
+            state->kPrime, state->rateLoss,
+            state->classRateLogSd, state->classRate,
+            state->etaNeo, state->betaScale, pWs)
+        : cpp_log_likelihood(
+            *data, evalParent, evalChild, propEdgeLen,
+            state->kPrime, state->rateLoss, state->rateLogSd,
+            state->rateNeo, state->betaScale, pWs);
+    }
   } else {
     int nParts = (int)data->parts.size();
     int nEdge  = evalRelBr.size();
@@ -4591,6 +4883,18 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   }
   // OPP-6b: in-place NNI rollback — restore 2 parent values
   if (nniInPlace) { state->parent[nniCRow] = nniSavedP_cRow; state->parent[nniWRow] = nniSavedP_wRow; }
+  // Per-class rollback (cases 31, 32)
+  if (classIdx31 >= 0) state->classRateLogSd[classIdx31] = oldClassRLS;
+  if (moveType == 32 && !classWSnapshot.isNULL()) {
+    state->classW = classWSnapshot;
+    // Restore classRate from snapshot
+    int nChar = 0;
+    for (int k = 0; k < (int)state->nCharPerClass.size(); ++k) nChar += state->nCharPerClass[k];
+    for (int k = 0; k < (int)state->classW.size(); ++k) {
+      int nk = (k < (int)state->nCharPerClass.size()) ? state->nCharPerClass[k] : 1;
+      state->classRate[k] = (nk > 0) ? state->classW[k] * nChar / nk : 1.0;
+    }
+  }
 
   // M-121: rollback node CL cache on rejection of partial-eval moves
   if (usedPartialCL) {
@@ -4724,12 +5028,26 @@ List run_mcmc_batch_cpp(
   bool includeP  = !data->kPriorLogseries && !includeBG;
   int nKpHyperCols = includeBG ? 2 : (includeP ? 1 : 0);
   bool includeBS = data->qHeterogeneity;  // M-052: beta_scale column
+  // Per-class partition columns (Layer 1).
+  // Emit classRateLogSd columns iff any move in the schedule has type 31
+  // (scale_class_rate_log_sd), which indicates shape is unlinked.
+  // Emit classW columns iff any move has type 32 (dirichlet_simplex_class_w).
+  bool hasMove31 = false, hasMove32 = false;
+  for (int m = 0; m < nMoves; ++m) {
+    if (moveTypeCodes[m] == 31) hasMove31 = true;
+    if (moveTypeCodes[m] == 32) hasMove32 = true;
+  }
+  int nClassRLS = (hasMove31 && nChains > 0 && states[0]->usePartitioned)
+                  ? (int)states[0]->classRateLogSd.size() : 0;
+  int nClassW   = (hasMove32 && nChains > 0 && states[0]->usePartitioned)
+                  ? (int)states[0]->classW.size() : 0;
   // Base columns: log_post, log_lik, tree_length, rate_log_sd (4).
   // rate_loss included only when hasNeo (like rate_neo, p, beta_scale).
   // +2 diagnostic columns: swap_cold (cold-chain swaps since last sample),
   // topo_hash (topology fingerprint for change detection).
   int nScalarCols = 4 + (hasNeo ? 2 : 0) + nKpHyperCols +
-                    (includeBS ? 1 : 0) + 2 + nTrans + nEdge;
+                    (includeBS ? 1 : 0) + 2 + nTrans + nEdge +
+                    nClassRLS + nClassW;
   int maxSaved    = nBatch / thin + 2;
   std::vector<std::vector<double>> scalarRows;
   scalarRows.reserve(maxSaved);
@@ -4778,7 +5096,8 @@ List run_mcmc_batch_cpp(
 
       int moveType = moveTypeCodes[moveIdx];
 
-      // charIdx: for int_walk → random trans character; for slice → paramIdx
+      // charIdx: for int_walk → random trans character; for slice → paramIdx;
+      //          for scale_class_rate_log_sd (31) → 1-based classIdx from moveIntParams.
       int charIdx = 0;
       if (moveType == 7 && nTrans > 0) {
         int r = static_cast<int>(R::unif_rand() * nTrans);
@@ -4786,6 +5105,8 @@ List run_mcmc_batch_cpp(
         charIdx = transIdxCpp[r];
       } else if (moveType == 19) {
         charIdx = sliceParamCodes[moveIdx];
+      } else if (moveType == 31) {
+        charIdx = moveIntParams[moveIdx];  // 1-based classIdx
       }
 
       auto t0 = std::chrono::steady_clock::now();
@@ -4881,6 +5202,11 @@ List run_mcmc_batch_cpp(
         row[col++] = static_cast<double>(s0->kPrime[transIdxCpp[j]]);
       for (int k = 0; k < nEdge; ++k)
         row[col++] = s0->relBrLengths[k];
+      // Per-class partition columns (Layer 1)
+      for (int k = 0; k < nClassRLS; ++k)
+        row[col++] = s0->classRateLogSd[k];
+      for (int k = 0; k < nClassW; ++k)
+        row[col++] = s0->classW[k];
       scalarRows.push_back(row);
 
       // Edge matrix for tree reconstruction in R

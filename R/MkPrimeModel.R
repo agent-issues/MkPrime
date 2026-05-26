@@ -124,7 +124,8 @@ MkPrimeModel <- function(
     qHeterogeneity = FALSE,
     nBetaCat = 4L,
     betaScaleShape = 1,
-    betaScaleRate = 1
+    betaScaleRate = 1,
+    classRateConcentration = 1
 ) {
   coding <- match.arg(coding, c("variable", "informative", "none"))
   kPrimePrior <- match.arg(
@@ -220,7 +221,8 @@ MkPrimeModel <- function(
       qHeterogeneity = qHeterogeneity,
       nBetaCat = as.integer(nBetaCat),
       betaScaleShape = betaScaleShape,
-      betaScaleRate = betaScaleRate
+      betaScaleRate = betaScaleRate,
+      classRateConcentration = classRateConcentration
     ),
     class = "MkPrimeModel"
   )
@@ -526,6 +528,44 @@ LogPrior <- function(state, model, mkd) {
                        shape = model$betaScaleShape,
                        rate = model$betaScaleRate,
                        log = TRUE)
+  }
+
+  # Partition-API (plan v4 §5.1 + §5.4): per-class priors.
+  # Only computed when the state carries per-class fields (class_w, etc.).
+  # The trivial spec (class_w = 1, length 1) produces zero extra contribution
+  # so that the partitioned prior equals the legacy prior (§7b analogue).
+
+  classW <- state$class_w
+  if (!is.null(classW)) {
+    K <- length(classW)
+
+    # 1. Dirichlet(alpha) on class_w (§5.1)
+    #    K == 1: degenerate Dirichlet — contribution is 0.
+    if (K > 1) {
+      if (any(classW <= 0)) return(-Inf)
+      alpha <- model$classRateConcentration %||% 1.0
+      logDirConst <- lgamma(K * alpha) - K * lgamma(alpha)
+      lp <- lp + logDirConst + (alpha - 1) * sum(log(classW))
+    }
+
+    # 2. Gamma i.i.d. on class_rate_log_sd[c] for c > 1 (§5.4).
+    #    class_rate_log_sd[1] == rate_log_sd: already counted by the scalar
+    #    rate_log_sd prior above. Only add for extra classes (indices 2..K).
+    classRLS <- state$class_rate_log_sd
+    if (!is.null(classRLS) && length(classRLS) > 1L) {
+      extra_sds <- classRLS[-1L]   # classes 2..K
+      for (sd_c in extra_sds) {
+        if (sd_c < 0) return(-Inf)
+        if (sd_c > 0) {
+          lp <- lp + dgamma(sd_c,
+                             shape = model$rateLogSdShape,
+                             rate = model$rateLogSdRate,
+                             log = TRUE)
+        } else if (model$rateLogSdShape > 1) {
+          return(-Inf)
+        }
+      }
+    }
   }
 
   lp

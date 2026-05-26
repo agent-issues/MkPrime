@@ -73,8 +73,8 @@ fitch_score_r <- function(parent, child, tipStates, nTip, kStates) {
     .Call(`_MkPrime_fitch_score_r`, parent, child, tipStates, nTip, kStates)
 }
 
-init_mcmc_state <- function(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale = 1.0, kprimeAlpha = 1.0, kprimeBeta = 1.0) {
-    .Call(`_MkPrime_init_mcmc_state`, parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta)
+init_mcmc_state <- function(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale = 1.0, kprimeAlpha = 1.0, kprimeBeta = 1.0, classRateLogSd = numeric(0), classW = numeric(0), classRate = numeric(0), nCharPerClass = integer(0), etaNeo = 1.0) {
+    .Call(`_MkPrime_init_mcmc_state`, parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta, classRateLogSd, classW, classRate, nCharPerClass, etaNeo)
 }
 
 fill_partition_cache <- function(dataPtr, statePtr) {
@@ -99,6 +99,14 @@ get_state_log_lik <- function(statePtr) {
 
 eval_log_prior_cpp <- function(dataPtr, statePtr) {
     .Call(`_MkPrime_eval_log_prior_cpp`, dataPtr, statePtr)
+}
+
+eval_log_prior_partitioned_cpp <- function(dataPtr, statePtr, classRateLogSd, classW, etaNeo) {
+    .Call(`_MkPrime_eval_log_prior_partitioned_cpp`, dataPtr, statePtr, classRateLogSd, classW, etaNeo)
+}
+
+set_class_rate_concentration <- function(dataPtr, concentration) {
+    invisible(.Call(`_MkPrime_set_class_rate_concentration`, dataPtr, concentration))
 }
 
 eval_full_loglik_cpp <- function(dataPtr, statePtr) {
@@ -151,6 +159,18 @@ prepare_mcmc_data <- function(partitions_r, kObs_r, charTypes_r, hasNeo, nCat, c
 
 set_branch_bins <- function(dataPtr, nBins) {
     invisible(.Call(`_MkPrime_set_branch_bins`, dataPtr, nBins))
+}
+
+cpp_log_likelihood_xptr <- function(dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, betaScale = 1.0) {
+    .Call(`_MkPrime_cpp_log_likelihood_xptr`, dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, betaScale)
+}
+
+cpp_log_likelihood_partitioned_xptr <- function(dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, classRate, etaNeo, betaScale = 1.0) {
+    .Call(`_MkPrime_cpp_log_likelihood_partitioned_xptr`, dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, classRate, etaNeo, betaScale)
+}
+
+cpp_data_nclasses <- function(dataPtr) {
+    .Call(`_MkPrime_cpp_data_nclasses`, dataPtr)
 }
 
 spr_proposal <- function(edge, nTip, treeLength, relBrLengths) {

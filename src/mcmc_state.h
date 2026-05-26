@@ -13,6 +13,9 @@
 struct PartInfo {
   int type;          // 0 = neomorphic, 1 = transformational, 2 = known
   int k;             // state space for known partitions; else 0
+  int classIdx = 1;  // partition-API user class membership (1-based);
+                     // 1 for everything when partition = NULL (legacy path).
+                     // Read from the R-side partitions list by prepare_mcmc_data.
   Rcpp::IntegerMatrix tipStates; // nTip x nChar (0-indexed, -1 = missing)
   Rcpp::IntegerVector kObsLocal; // kObs per character in partition (for relabelling)
   Rcpp::IntegerVector globalCharIdx; // 0-based map: local char → global kPrime index
@@ -97,6 +100,17 @@ struct McmcData {
   // Weighted-move configuration (M-090)
   int nBranchBins = 10;     // number of branch-fraction bins for weighted moves
   BranchBins branchBins;    // precomputed bin breakpoints (init by set_branch_bins)
+
+  // Partition-API state (Layer 1, plan v4).
+  // nClasses == 1 corresponds to the legacy partition = NULL path: every
+  // PartInfo carries classIdx = 1 and the user-class layer collapses into a
+  // no-op. nClasses > 1 only when a user partition was supplied; in that
+  // case classIdx on each PartInfo is read from the R-side partitions list.
+  int nClasses = 1;
+
+  // Partition-API (plan v4 §5.1): Dirichlet(α) concentration on class_w.
+  // Default 1.0 = flat Dirichlet. Tunable via MkPrimeModel(classRateConcentration).
+  double classRateConcentration = 1.0;
 
   // Q-matrix heterogeneity (M-052): Dirichlet-marginal discretization.
   // When enabled, characters evolve under a mixture of F81 Q-matrices with
@@ -186,6 +200,35 @@ double cpp_log_likelihood(
     double rateLoss,
     double rateLogSd,
     double rateNeo,
+    double betaScale = 1.0,
+    ClWorkspace* ws = nullptr);
+
+
+// Partition-aware sibling (plan v4 §6, Layer 1). Adds per-class state for
+// the "shape" (rateLogSd) and "ratemultiplier" (classRate) unlink tokens.
+// Length-1 inputs collapse to the legacy scalar path; passing
+// rateLogSd = NumericVector::create(rateLogSdScalar) and
+// classRate  = NumericVector::create(1.0) reproduces cpp_log_likelihood
+// to within fp tolerance (the §7b contract).
+//
+// Layer 1 only handles brlens-LINKED partitions (edgeLen is one vector
+// shared across all classes); Layer 2 widens to nEdge × nClasses for the
+// "brlens" unlink token (T3 treatment).
+//
+// etaNeo is the geometric-mean asymmetry parameter (plan §5.2) that
+// replaces rate_neo in the partitioned path. It is only consulted when
+// data.hasNeo; at etaNeo = 1 (default) the per-partition call matches
+// the legacy rateNeo = 1 path bit-for-bit.
+double cpp_log_likelihood_partitioned(
+    const McmcData& data,
+    Rcpp::IntegerVector parent,
+    Rcpp::IntegerVector child,
+    Rcpp::NumericVector edgeLen,
+    const Rcpp::IntegerVector& kPrime,
+    double rateLoss,
+    Rcpp::NumericVector rateLogSd,    // length 1 (linked) or data.nClasses
+    Rcpp::NumericVector classRate,    // length 1 (linked) or data.nClasses
+    double etaNeo,
     double betaScale = 1.0,
     ClWorkspace* ws = nullptr);
 

@@ -2758,6 +2758,72 @@ double cpp_log_likelihood(
 }
 
 
+// Partition-aware sibling (plan v4 §6, Layer 1).
+//
+// Strategy: reuse cpp_partition_log_likelihood per partition, threading
+// per-class scalars looked up by classIdx. Branch lengths for every
+// partition are pre-scaled by classRate[classIdx - 1] so the per-partition
+// function (which only knows about its scalar inputs) sees the right
+// effective rate for both transformational/known chars (where edgeLen is
+// used directly) and neomorphic chars (where it is further scaled by
+// rateNeo internally). With rateNeo = 1.0 the per-partition function's
+// internal neoEl = edgeLen * 1.0 path collapses cleanly.
+//
+// Length-1 inputs collapse to the legacy scalar path. The §7b
+// numeric-equivalence contract holds at:
+//   rateLogSd = c(rateLogSdScalar), classRate = c(1.0), etaNeo = 1.0
+// where the per-partition call reduces to the legacy cpp_log_likelihood
+// with rateNeo = 1.0 — the default state.
+//
+// Layer 1 does NOT yet honour etaNeo != 1 for neomorphic chars: the
+// Q-matrix asymmetry semantics of §5.2 are deferred. The Casali driver
+// has hasNeo == false everywhere so this restriction does not bite the
+// production workload. Callers with neomorphic data must keep etaNeo = 1
+// until the eta_neo-aware path lands.
+double cpp_log_likelihood_partitioned(
+    const McmcData& data,
+    IntegerVector parent,
+    IntegerVector child,
+    NumericVector edgeLen,
+    const IntegerVector& kPrime,
+    double rateLoss,
+    NumericVector rateLogSd,
+    NumericVector classRate,
+    double /* etaNeo */,
+    double betaScale,
+    ClWorkspace* ws) {
+
+  const int rlsLen = rateLogSd.size();
+  const int crLen  = classRate.size();
+  const int nEdge  = edgeLen.size();
+
+  // Per-partition scaled-edge buffer (reused across partitions to avoid
+  // re-allocating). Size matches the linked-brlens case (Layer 1).
+  NumericVector scaledEdge(nEdge);
+
+  double totalLoglik = 0.0;
+  for (int pi = 0; pi < (int)data.parts.size(); ++pi) {
+    const PartInfo& part = data.parts[pi];
+    const int cls = part.classIdx;  // 1-based
+    const int ci  = cls - 1;        // 0-based
+
+    const double rls_c = (rlsLen == 1) ? rateLogSd[0] : rateLogSd[ci];
+    const double cr_c  = (crLen  == 1) ? classRate[0] : classRate[ci];
+
+    // Pre-scale edgeLen by classRate[cls-1] so cpp_partition_log_likelihood
+    // sees the class-scaled time axis. For neo partitions, the internal
+    // neoEl = edgeLen * rateNeo computation then sees edgeLen already
+    // pre-scaled and we pass rateNeo = 1.0.
+    for (int e = 0; e < nEdge; ++e) scaledEdge[e] = edgeLen[e] * cr_c;
+
+    totalLoglik += cpp_partition_log_likelihood(
+      data, pi, parent, child, scaledEdge, kPrime,
+      rateLoss, rls_c, /* rateNeo */ 1.0, betaScale, ws);
+  }
+  return totalLoglik;
+}
+
+
 // ---------------------------------------------------------------------------
 // prepare_mcmc_data: convert R mkd + model -> XPtr<McmcData>
 // ---------------------------------------------------------------------------
@@ -2865,6 +2931,18 @@ SEXP prepare_mcmc_data(List partitions_r,
     for (int ci = 0; ci < nCharPart; ++ci) {
       pinfo.kObsLocal[ci] = kObs_r[pinfo.globalCharIdx[ci]];
     }
+
+    // Partition-API (Layer 1, plan v4 §4.1). When the R-side partitions list
+    // carries a classIdx field, read it; otherwise default to 1 (legacy).
+    // .BuildPartitions emits classIdx unconditionally as of feature/partition-api,
+    // but the defensive default keeps any external caller producing legacy-
+    // shape partitions working without the new field.
+    if (p_r.containsElementNamed("classIdx")) {
+      pinfo.classIdx = as<int>(p_r["classIdx"]);
+    } else {
+      pinfo.classIdx = 1;
+    }
+    if (pinfo.classIdx > d->nClasses) d->nClasses = pinfo.classIdx;
   }
 
   // Initialize branchBins with the default so weighted/block-Gibbs moves
@@ -2903,4 +2981,49 @@ void set_branch_bins(SEXP dataPtr, int nBins) {
   McmcData* d = Rcpp::XPtr<McmcData>(dataPtr);
   d->nBranchBins = nBins;
   d->branchBins.init(nBins);
+}
+
+
+// Partition-API: R-callable thin wrapper around cpp_log_likelihood (legacy
+// scalar surface). Exposed so tests can compare the two surfaces directly.
+// [[Rcpp::export]]
+double cpp_log_likelihood_xptr(SEXP dataPtr,
+                               Rcpp::IntegerVector parent,
+                               Rcpp::IntegerVector child,
+                               Rcpp::NumericVector edgeLen,
+                               Rcpp::IntegerVector kPrime,
+                               double rateLoss,
+                               double rateLogSd,
+                               double rateNeo,
+                               double betaScale = 1.0) {
+  McmcData* d = Rcpp::XPtr<McmcData>(dataPtr);
+  return cpp_log_likelihood(*d, parent, child, edgeLen, kPrime,
+                            rateLoss, rateLogSd, rateNeo, betaScale, nullptr);
+}
+
+
+// Partition-API: R-callable wrapper around cpp_log_likelihood_partitioned.
+// [[Rcpp::export]]
+double cpp_log_likelihood_partitioned_xptr(SEXP dataPtr,
+                                           Rcpp::IntegerVector parent,
+                                           Rcpp::IntegerVector child,
+                                           Rcpp::NumericVector edgeLen,
+                                           Rcpp::IntegerVector kPrime,
+                                           double rateLoss,
+                                           Rcpp::NumericVector rateLogSd,
+                                           Rcpp::NumericVector classRate,
+                                           double etaNeo,
+                                           double betaScale = 1.0) {
+  McmcData* d = Rcpp::XPtr<McmcData>(dataPtr);
+  return cpp_log_likelihood_partitioned(*d, parent, child, edgeLen, kPrime,
+                                        rateLoss, rateLogSd, classRate,
+                                        etaNeo, betaScale, nullptr);
+}
+
+
+// Partition-API: expose data.nClasses for sanity-checking from R.
+// [[Rcpp::export]]
+int cpp_data_nclasses(SEXP dataPtr) {
+  McmcData* d = Rcpp::XPtr<McmcData>(dataPtr);
+  return d->nClasses;
 }
