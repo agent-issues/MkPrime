@@ -230,4 +230,50 @@ First rotation visit. Opus agent, ~30 min. Scratch-file rule honoured (`claude_r
 
 ---
 
+## Campaign 2026-05-26 — watertight maths & MCMC diagnostics (13 lanes, three waves)
+
+Not a rotation round. Multi-agent orchestrated campaign using three new agent profiles
+(`math-prover`, `mcmc-diagnostician`, `numerical-auditor`) at `~/.claude/agents/`.
+Plan: `~/.claude/plans/we-need-to-do-frolicking-sutherland.md`.
+Full per-lane log: `dev/red-team/campaign-2026-05-26.md`.
+
+**Lanes (13):**
+
+| Wave | Lane | Role | Verdict | Patch? |
+|---|---|---|---|---|
+| 1 | L1 F81-Het collapse | math-prover | watertight w/ caveats (JC(k) only; F81-Het deferred per commits) | — |
+| 1 | L2 Hastings continuous | math-prover | watertight (all 6 proposal families) | — |
+| 1 | L3 Hastings tree moves | math-prover | 5 watertight, 2 w/ caveats, **2 OPEN** (SWAP-001/002) | — |
+| 1 | L4 Mk' relabelling | math-prover | watertight w/ caveats | — |
+| 1 | L7 ACRV discretisation | math-prover | watertight | — |
+| 2 | L5 Ascertainment | math-prover | watertight; closes L4 caveat; gives closed-form fix for LIKE-001 | `L5-ascertainment.patch` (7 LOC) |
+| 2 | L6 k'-priors | math-prover | EG-001 confirmed; **NEW LS-001** (latent); R5-4 out-of-lane | — (non-trivial) |
+| 2 | N1 fast_exp + eigendecomp | numerical-auditor | primitive stable; **NEW FAST-EXP-001** ε_rel=0.39 at rt=1e-15 | `N1-fast-exp.patch` (24 sites, expm1) |
+| 2 | N2 Felsenstein underflow | numerical-auditor | stable-w-caveats; **brief refuted empirically** | `N2-pruning-underflow.patch` (cosmetic, not applied) |
+| 3 | D1 SBC MkNT+Mk' | mcmc-diagnostician | harness ready, 6 arms, quick PASS | — |
+| 3 | D2 TreeESS rooting + SWAP empirical | mcmc-diagnostician | TreeESS bit-exact root-invariant; SWAP quick chi² **inconclusive** | — |
+| 3 | D3 ESS/R-hat stress | mcmc-diagnostician | 14/15 quick PASS; **CONV-002 confirmed live** | `D3-ess-rhat-stress.patch` (13 LOC) |
+| 3 | N3 Partial-CL cache coherence | numerical-auditor | empirically reproduces LIKE-001 (94/94 mismatch under informative) | — (fix owned by L5) |
+
+**Headline outputs:**
+
+- **7 formal proofs** in `dev/red-team/proofs/`. All material mathematical claims in the
+  current codebase now have written derivations.
+- **4 patches awaiting human review** in `dev/red-team/patches/`: L5 (LIKE-001 root cause,
+  7 LOC), N1 (FAST-EXP-001, 24 sites), D3 (CONV-002, 13 LOC), N2 (cosmetic, do not apply).
+- **6 heavy-test harnesses** in `dev/red-team/heavy-tests/` and `dev/red-team/numerical/`:
+  SBC (6 arms), TreeESS root-invariance, subtree-swap β=0 chi², ESS/R-hat stress,
+  fast-exp stress, pruning underflow, cache coherence. All have `--quick` modes that
+  execute under their stated budgets locally; full-scale runs queued for Hamilton.
+- **3 still-open empirical follow-ups**: SWAP-001/002 (need full-scale 1M iter to
+  confirm or refute the math-prover concern), R5-4 (needs sim3 rerun against corrected
+  HasBipartSplits), ESS-CAP-INFO-1 (needs drill-down).
+
+**Patch-readiness summary** for the follow-up apply session:
+
+- HIGH severity, ready: LIKE-001 (patch L5; partial-CL sites need analogous one-liner), FAST-EXP-001 (patch N1).
+- MED severity, ready: CONV-002 (patch D3).
+- MED-latent: LS-001 (no patch; fix requires runtime Z_i summation — non-trivial).
+- Empirical follow-ups: SWAP-001/002 (needs Hamilton run before deciding on fix).
+
 last_focus: 9
