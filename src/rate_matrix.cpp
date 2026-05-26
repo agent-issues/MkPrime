@@ -29,9 +29,12 @@ Rcpp::NumericMatrix jc_transition_probs(int k, double t) {
 
   Rcpp::NumericMatrix P(k, k);
   double inv_k = 1.0 / k;
-  double exp_term = MKP_EXP(-k * t / (k - 1.0));
+  // FAST-EXP-001: use expm1 to avoid catastrophic cancellation in (1-exp) at small kt.
+  double arg = -k * t / (k - 1.0);
+  double neg_expm1 = -std::expm1(arg);     // = 1 - exp(arg)
+  double exp_term  = 1.0 - neg_expm1;       // = exp(arg)
   double diag = inv_k + (1.0 - inv_k) * exp_term;
-  double off_diag = inv_k - inv_k * exp_term;
+  double off_diag = inv_k * neg_expm1;
 
   for (int i = 0; i < k; ++i) {
     for (int j = 0; j < k; ++j) {
@@ -75,15 +78,18 @@ Rcpp::NumericMatrix mkn_transition_probs(double rate_loss, double t) {
   double rate01 = 2.0 / sum_rl;      // gain
   double rate10 = 2.0 * rate_loss / sum_rl;  // loss
   double lambda = rate01 + rate10;    // = 2.0 always (by construction)
-  double exp_term = MKP_EXP(-lambda * t);
+  // FAST-EXP-001: expm1 form avoids cancellation in P01/P10 at small lambda*t.
+  double arg = -lambda * t;
+  double neg_expm1 = -std::expm1(arg);
+  double exp_term  = 1.0 - neg_expm1;
 
   double inv_lambda_01 = rate01 / lambda;
   double inv_lambda_10 = rate10 / lambda;
 
   Rcpp::NumericMatrix P(2, 2);
   P(0, 0) = inv_lambda_10 + inv_lambda_01 * exp_term;  // P_00
-  P(0, 1) = inv_lambda_01 - inv_lambda_01 * exp_term;  // P_01
-  P(1, 0) = inv_lambda_10 - inv_lambda_10 * exp_term;  // P_10
+  P(0, 1) = inv_lambda_01 * neg_expm1;                 // P_01
+  P(1, 0) = inv_lambda_10 * neg_expm1;                 // P_10
   P(1, 1) = inv_lambda_01 + inv_lambda_10 * exp_term;  // P_11
 
   return P;

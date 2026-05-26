@@ -81,9 +81,12 @@ double pruning_jc(Rcpp::IntegerVector parent,
 
     // Compute JC transition probabilities for this branch
     double inv_k = 1.0 / kStates;
-    double exp_term = MKP_EXP(-kStates * t / (kStates - 1.0));
+    // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
+    double arg = -kStates * t / (kStates - 1.0);
+    double neg_expm1 = -std::expm1(arg);
+    double exp_term  = 1.0 - neg_expm1;
     double p_same = inv_k + (1.0 - inv_k) * exp_term;
-    double p_diff = inv_k - inv_k * exp_term;
+    double p_diff = inv_k * neg_expm1;
 
     // OPP-1: JC symmetry → O(k) product: new_cl[i] = p_diff*sum + (p_same-p_diff)*cl[i]
     double diff_coeff = p_same - p_diff;
@@ -210,9 +213,12 @@ double pruning_jc_collapsed(Rcpp::IntegerVector parent,
     double t = edge_length[e];
 
     double inv_k = 1.0 / kFull;
-    double exp_term = MKP_EXP(-kFull * t / (kFull - 1.0));
+    // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
+    double arg = -kFull * t / (kFull - 1.0);
+    double neg_expm1 = -std::expm1(arg);
+    double exp_term  = 1.0 - neg_expm1;
     double p_same = inv_k + (1.0 - inv_k) * exp_term;
-    double p_diff = inv_k - inv_k * exp_term;
+    double p_diff = inv_k * neg_expm1;
     double diff_coeff = p_same - p_diff;
 
     if (!initialized[par]) {
@@ -309,18 +315,21 @@ double pruning_mkn(Rcpp::IntegerVector parent,
     int ch = child[e];
     double t = edge_length[e];
 
-    double exp_term = MKP_EXP(-lambda * t);
+    // FAST-EXP-001: expm1 form avoids cancellation in P01/P10 at small lambda*t.
+    double arg = -lambda * t;
+    double neg_expm1 = -std::expm1(arg);
+    double exp_term  = 1.0 - neg_expm1;
     double inv_lam_01 = rate01 / lambda;
     double inv_lam_10 = rate10 / lambda;
 
     // P matrix:
     // P[0][0] = inv_lam_10 + inv_lam_01 * exp
-    // P[0][1] = inv_lam_01 - inv_lam_01 * exp
-    // P[1][0] = inv_lam_10 - inv_lam_10 * exp
+    // P[0][1] = inv_lam_01 * (1 - exp)
+    // P[1][0] = inv_lam_10 * (1 - exp)
     // P[1][1] = inv_lam_01 + inv_lam_10 * exp
     double P00 = inv_lam_10 + inv_lam_01 * exp_term;
-    double P01 = inv_lam_01 - inv_lam_01 * exp_term;
-    double P10 = inv_lam_10 - inv_lam_10 * exp_term;
+    double P01 = inv_lam_01 * neg_expm1;
+    double P10 = inv_lam_10 * neg_expm1;
     double P11 = inv_lam_01 + inv_lam_10 * exp_term;
 
     if (!initialized[par]) {

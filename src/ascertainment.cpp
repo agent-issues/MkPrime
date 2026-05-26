@@ -68,9 +68,12 @@ double constant_site_prob_jc(Rcpp::IntegerVector parent,
       const int par = parent[e];
       const int ch  = child[e];
       const double t          = edge_length[e] * rate;
-      const double exp_term   = MKP_EXP(-kStates * t / km1);
+      // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
+      const double arg        = -kStates * t / km1;
+      const double neg_expm1  = -std::expm1(arg);
+      const double exp_term   = 1.0 - neg_expm1;
       const double p_same     = inv_k + (1.0 - inv_k) * exp_term;
-      const double p_diff     = inv_k - inv_k * exp_term;
+      const double p_diff     = inv_k * neg_expm1;
       const double diff_coeff = p_same - p_diff;  // OPP-1
       double* clPar = cl_flat.data() + par * stride;
       double* clCh  = cl_flat.data() + ch  * stride;
@@ -157,9 +160,12 @@ double singleton_site_prob_jc(Rcpp::IntegerVector parent,
       const int par = parent[e];
       const int ch  = child[e];
       const double t        = edge_length[e] * rate;
-      const double exp_term = MKP_EXP(-kStates * t / km1);
+      // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
+      const double arg      = -kStates * t / km1;
+      const double neg_expm1 = -std::expm1(arg);
+      const double exp_term = 1.0 - neg_expm1;
       const double p_same   = inv_k + (1.0 - inv_k) * exp_term;
-      const double p_diff   = inv_k - inv_k * exp_term;
+      const double p_diff   = inv_k * neg_expm1;
       const double diff_coeff = p_same - p_diff;  // OPP-1
       double* clPar = cl_flat.data() + par * stride;
       double* clCh  = cl_flat.data() + ch  * stride;
@@ -251,9 +257,12 @@ double constant_site_prob_jc_collapsed(Rcpp::IntegerVector parent,
       const int par = parent[e];
       const int ch  = child[e];
       const double t          = edge_length[e] * rate;
-      const double exp_term   = MKP_EXP(-kFull * t / km1);
+      // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
+      const double arg        = -kFull * t / km1;
+      const double neg_expm1  = -std::expm1(arg);
+      const double exp_term   = 1.0 - neg_expm1;
       const double p_same     = inv_k + (1.0 - inv_k) * exp_term;
-      const double p_diff     = inv_k - inv_k * exp_term;
+      const double p_diff     = inv_k * neg_expm1;
       const double diff_coeff = p_same - p_diff;
       double* clPar = cl_flat.data() + par * stride;
       double* clCh  = cl_flat.data() + ch  * stride;
@@ -355,9 +364,12 @@ double singleton_site_prob_jc_collapsed(Rcpp::IntegerVector parent,
       const int par = parent[e];
       const int ch  = child[e];
       const double t        = edge_length[e] * rate;
-      const double exp_term = MKP_EXP(-kFull * t / km1);
+      // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
+      const double arg      = -kFull * t / km1;
+      const double neg_expm1 = -std::expm1(arg);
+      const double exp_term = 1.0 - neg_expm1;
       const double p_same   = inv_k + (1.0 - inv_k) * exp_term;
-      const double p_diff   = inv_k - inv_k * exp_term;
+      const double p_diff   = inv_k * neg_expm1;
       const double diff_coeff = p_same - p_diff;
       double* clPar = cl_flat.data() + par * stride;
       double* clCh  = cl_flat.data() + ch  * stride;
@@ -459,10 +471,13 @@ double constant_site_prob_mkn(Rcpp::IntegerVector parent,
       const int par = parent[e];
       const int ch  = child[e];
       const double t        = edge_length[e] * rate;
-      const double exp_term = MKP_EXP(-lambda * t);
+      // FAST-EXP-001: expm1 form avoids cancellation in P01/P10 at small lambda*t.
+      const double arg      = -lambda * t;
+      const double neg_expm1 = -std::expm1(arg);
+      const double exp_term = 1.0 - neg_expm1;
       const double P00 = inv_lam_10 + inv_lam_01 * exp_term;
-      const double P01 = inv_lam_01 - inv_lam_01 * exp_term;
-      const double P10 = inv_lam_10 - inv_lam_10 * exp_term;
+      const double P01 = inv_lam_01 * neg_expm1;
+      const double P10 = inv_lam_10 * neg_expm1;
       const double P11 = inv_lam_01 + inv_lam_10 * exp_term;
       double* clPar = cl_flat.data() + par * stride;
       double* clCh  = cl_flat.data() + ch  * stride;
@@ -557,10 +572,13 @@ double singleton_site_prob_mkn(Rcpp::IntegerVector parent,
       const int par = parent[e];
       const int ch  = child[e];
       const double t        = edge_length[e] * rate;
-      const double exp_term = MKP_EXP(-lambda * t);
+      // FAST-EXP-001: expm1 form avoids cancellation in P01/P10 at small lambda*t.
+      const double arg      = -lambda * t;
+      const double neg_expm1 = -std::expm1(arg);
+      const double exp_term = 1.0 - neg_expm1;
       const double P00 = inv_lam_10 + inv_lam_01 * exp_term;
-      const double P01 = inv_lam_01 - inv_lam_01 * exp_term;
-      const double P10 = inv_lam_10 - inv_lam_10 * exp_term;
+      const double P01 = inv_lam_01 * neg_expm1;
+      const double P10 = inv_lam_10 * neg_expm1;
       const double P11 = inv_lam_01 + inv_lam_10 * exp_term;
       double* clPar = cl_flat.data() + par * stride;
       double* clCh  = cl_flat.data() + ch  * stride;

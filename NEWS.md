@@ -1,5 +1,29 @@
 # MkPrime (development version)
 
+## Numerical & ascertainment corrections (red-team campaign 2026-05-26)
+
+* **FAST-EXP-001 fix.** Closed-form JC / MkN / F81 transition probabilities
+  now use `std::expm1` to compute `1 − exp(arg)`, avoiding catastrophic
+  cancellation when `rate × branch` is tiny. Worst observed relative error
+  on the audit grid dropped from ~0.39 (at rt = 1e-15) to ≤ 2.4e-16.
+  Touches 27 call sites across `rate_matrix.cpp`, `likelihood.cpp`,
+  `acrv.cpp`, `ascertainment.cpp`, `mcmc_likelihood.cpp`,
+  `gibbs_partial_cl.h`, and `node_cl_cache.h`. Sampled values change at
+  ULP scale on every iteration — the §7a bit-identity reference was
+  regenerated (commit accompanying this entry).
+* **LIKE-001 fix.** Under `coding = "informative"`, the singleton-site
+  ascertainment term is now added in `const_site_prob_for_k`
+  (`mcmc_likelihood.cpp`) and at the three partial-CL sites in
+  `node_cl_cache.h::cache_total_loglik` (type 0 / 1 / 2 branches).
+  Previously the Gibbs k′ sweep and cache-accelerated MH moves dropped
+  the singleton term, producing a chain that did not target the desired
+  posterior under informative coding. Default `coding = "variable"`
+  unaffected.
+* **CONV-002 fix.** `R/Convergence.R::.ComputeRhat` now tail-equalises
+  per-run sample matrices to the minimum nrow before `cbind`,
+  eliminating a latent silent-recycle bug exposed by adaptive truncation
+  or partial run drops.
+
 ## Partition API — Layer 1 complete
 
 The `feature/partition-api` branch adds per-character user-class

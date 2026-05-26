@@ -33,6 +33,14 @@ double constant_site_prob_mkn(IntegerVector parent, IntegerVector child,
                               NumericVector edge_length, int nTip,
                               double rate_loss, NumericVector root_freqs,
                               NumericVector rate_multipliers);
+double singleton_site_prob_jc(IntegerVector parent, IntegerVector child,
+                              NumericVector edge_length, int nTip,
+                              int kStates, NumericVector root_freqs,
+                              NumericVector rate_multipliers);
+double singleton_site_prob_mkn(IntegerVector parent, IntegerVector child,
+                               NumericVector edge_length, int nTip,
+                               double rate_loss, NumericVector root_freqs,
+                               NumericVector rate_multipliers);
 double mk_prime_relabel_log(int kPrime, int kObs);
 
 // ---------------------------------------------------------------------------
@@ -194,8 +202,11 @@ static inline void jc_transition(
     const double* src, double* out, int kStates, double t) {
   double inv_k = 1.0 / kStates;
   double km1   = kStates - 1.0;
-  double exp_term = MKP_EXP(-kStates * t / km1);
-  double p_diff   = inv_k - inv_k * exp_term;
+  // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small kt.
+  double arg = -kStates * t / km1;
+  double neg_expm1 = -std::expm1(arg);
+  double exp_term  = 1.0 - neg_expm1;
+  double p_diff   = inv_k * neg_expm1;
   double diff_coeff = (inv_k + (1.0 - inv_k) * exp_term) - p_diff;
 
   // For each character block (kStates values):
@@ -217,10 +228,13 @@ static inline void mkn_transition(
   double rate01 = 2.0 / sum_rl;
   double rate10 = 2.0 * rateLoss / sum_rl;
   double lambda = rate01 + rate10;
-  double exp_term = MKP_EXP(-lambda * t);
+  // FAST-EXP-001: expm1 form avoids cancellation in P01/P10 at small lambda*t.
+  double arg = -lambda * t;
+  double neg_expm1 = -std::expm1(arg);
+  double exp_term  = 1.0 - neg_expm1;
   double P00 = rate10 / lambda + rate01 / lambda * exp_term;
-  double P01 = rate01 / lambda - rate01 / lambda * exp_term;
-  double P10 = rate10 / lambda - rate10 / lambda * exp_term;
+  double P01 = rate01 / lambda * neg_expm1;
+  double P10 = rate10 / lambda * neg_expm1;
   double P11 = rate01 / lambda + rate10 / lambda * exp_term;
   out[0] = P00 * src[0] + P01 * src[1];
   out[1] = P10 * src[0] + P11 * src[1];
@@ -696,12 +710,22 @@ static double cache_total_loglik(
         rootFreqs[1] = 1.0 / (1.0 + rateLoss);
         p = constant_site_prob_mkn(parent, child, neoEl, nTip,
                                     rateLoss, rootFreqs, rates);
+        // LIKE-001 fix: informative coding adds the MkN singleton probability.
+        if (cache.coding == 2) {
+          p += singleton_site_prob_mkn(parent, child, neoEl, nTip,
+                                        rateLoss, rootFreqs, rates);
+        }
       } else if (part.type == 2) {
         // Known state space: single k for entire partition
         int kStates = part.k;
         NumericVector rootFreqs(kStates, 1.0 / kStates);
         p = constant_site_prob_jc(parent, child, absEdgeLen, nTip,
                                    kStates, rootFreqs, rates);
+        // LIKE-001 fix: informative coding adds the JC singleton probability.
+        if (cache.coding == 2) {
+          p += singleton_site_prob_jc(parent, child, absEdgeLen, nTip,
+                                       kStates, rootFreqs, rates);
+        }
       } else {
         // Transformational (type 1): per-unit ascertainment correction.
         // Each CacheUnit may have a different kStates (from kPrime grouping),
@@ -715,6 +739,11 @@ static double cache_total_loglik(
           NumericVector rootFreqs(k, 1.0 / k);
           double pu = constant_site_prob_jc(parent, child, absEdgeLen,
                                              nTip, k, rootFreqs, rates);
+          // LIKE-001 fix: informative coding adds the JC singleton probability.
+          if (cache.coding == 2) {
+            pu += singleton_site_prob_jc(parent, child, absEdgeLen,
+                                          nTip, k, rootFreqs, rates);
+          }
           if (pu > 0.0 && pu < 1.0)
             ll -= unit.nChar * std::log(1.0 - pu);
         }

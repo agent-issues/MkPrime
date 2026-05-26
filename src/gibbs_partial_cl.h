@@ -205,8 +205,11 @@ inline NumericVector gibbs_acrv_rates(double rateLogSd, int nCat,
 inline void jc_trans_params(int k, double t,
                             double& p_diff, double& diff_coeff) {
   double inv_k = 1.0 / k;
-  double exp_term = MKP_EXP(-k * t / (k - 1.0));
-  p_diff     = inv_k - inv_k * exp_term;     // = (1/k)(1 - exp)
+  // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small kt.
+  double arg = -k * t / (k - 1.0);
+  double neg_expm1 = -std::expm1(arg);
+  double exp_term  = 1.0 - neg_expm1;
+  p_diff     = inv_k * neg_expm1;              // = (1/k)(1 - exp)
   diff_coeff = exp_term;                       // = p_same - p_diff
 }
 
@@ -232,12 +235,15 @@ inline void mkn_trans_params(double rateLoss, double t,
   double rate01 = 2.0 / sum_rl;
   double rate10 = 2.0 * rateLoss / sum_rl;
   double lambda = rate01 + rate10;
-  double exp_t  = MKP_EXP(-lambda * t);
+  // FAST-EXP-001: expm1 form avoids cancellation in P01/P10 at small lambda*t.
+  double arg = -lambda * t;
+  double neg_expm1 = -std::expm1(arg);
+  double exp_t     = 1.0 - neg_expm1;
   double i01    = rate01 / lambda;
   double i10    = rate10 / lambda;
   P00 = i10 + i01 * exp_t;
-  P01 = i01 - i01 * exp_t;
-  P10 = i10 - i10 * exp_t;
+  P01 = i01 * neg_expm1;
+  P10 = i10 * neg_expm1;
   P11 = i01 + i10 * exp_t;
 }
 
@@ -257,8 +263,10 @@ inline void mkn_transition(const double* cl, double* result,
 inline void f81_transition(const double* cl, double* result,
                             int nChar, int kStates,
                             const double* pi, double mu, double t) {
-  double exp_t = MKP_EXP(-mu * t);
-  double one_minus_exp = 1.0 - exp_t;
+  // FAST-EXP-001: expm1 form is exact even at tiny mu*t.
+  double arg = -mu * t;
+  double one_minus_exp = -std::expm1(arg);
+  double exp_t         = 1.0 - one_minus_exp;
   for (int c = 0; c < nChar; ++c) {
     int off = c * kStates;
     double piDotCl = 0.0;

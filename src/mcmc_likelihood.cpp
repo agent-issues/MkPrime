@@ -208,9 +208,12 @@ static double pruning_jc_flat(
     int par = parPtr[e];
     int ch  = chPtr[e];
     double t        = elPtr[e];
-    double exp_term = MKP_EXP(-kStates * t / km1);
+    // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
+    double arg      = -kStates * t / km1;
+    double neg_expm1 = -std::expm1(arg);
+    double exp_term = 1.0 - neg_expm1;
     double p_same   = inv_k + (1.0 - inv_k) * exp_term;
-    double p_diff   = inv_k - inv_k * exp_term;
+    double p_diff   = inv_k * neg_expm1;
     double* clPar   = buf + par * stride;
     double* clCh    = buf + ch  * stride;
 
@@ -375,9 +378,12 @@ static double pruning_jc_acrv_flat(
       int par = parPtr[e];
       int ch  = chPtr[e];
       double t        = elPtr[e] * rate;
-      double exp_term = MKP_EXP(-kStates * t / km1);
+      // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
+      double arg      = -kStates * t / km1;
+      double neg_expm1 = -std::expm1(arg);
+      double exp_term = 1.0 - neg_expm1;
       double p_same   = inv_k + (1.0 - inv_k) * exp_term;
-      double p_diff   = inv_k - inv_k * exp_term;
+      double p_diff   = inv_k * neg_expm1;
       double* clPar   = buf + par * stride;
       double* clCh    = buf + ch  * stride;
 
@@ -508,9 +514,12 @@ static inline void persite_impl(
       int par = parPtr[e];
       int ch  = chPtr[e];
       double t        = elPtr[e] * rate;
-      double exp_term = MKP_EXP(-K * t / km1);
+      // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
+      double arg      = -K * t / km1;
+      double neg_expm1 = -std::expm1(arg);
+      double exp_term = 1.0 - neg_expm1;
       double p_same   = inv_k + (1.0 - inv_k) * exp_term;
-      double p_diff   = inv_k - inv_k * exp_term;
+      double p_diff   = inv_k * neg_expm1;
       double* __restrict__ clPar = buf + par * stride;
       const double* __restrict__ clCh = buf + ch * stride;
       double diff_coeff = p_same - p_diff;
@@ -701,9 +710,12 @@ static inline void persite_collapsed_impl(
       int par = parPtr[e];
       int ch  = chPtr[e];
       double t        = elPtr[e] * rate;
-      double exp_term = MKP_EXP(-kFull * t / km1);
+      // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
+      double arg      = -kFull * t / km1;
+      double neg_expm1 = -std::expm1(arg);
+      double exp_term = 1.0 - neg_expm1;
       double p_same   = inv_k + (1.0 - inv_k) * exp_term;
-      double p_diff   = inv_k - inv_k * exp_term;
+      double p_diff   = inv_k * neg_expm1;
       double* __restrict__ clPar = buf + par * stride;
       const double* __restrict__ clCh = buf + ch * stride;
       double diff_coeff = p_same - p_diff;
@@ -981,9 +993,12 @@ static double pruning_jc_flat_collapsed(
     int par = parPtr[e];
     int ch  = chPtr[e];
     double t        = elPtr[e];
-    double exp_term = MKP_EXP(-kFull * t / km1);
+    // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
+    double arg      = -kFull * t / km1;
+    double neg_expm1 = -std::expm1(arg);
+    double exp_term = 1.0 - neg_expm1;
     double p_same   = inv_k + (1.0 - inv_k) * exp_term;
-    double p_diff   = inv_k - inv_k * exp_term;
+    double p_diff   = inv_k * neg_expm1;
     double diff_coeff = p_same - p_diff;
     double* clPar = buf + par * stride;
     double* clCh  = buf + ch  * stride;
@@ -1147,9 +1162,12 @@ static double pruning_jc_acrv_flat_collapsed(
       int par = parPtr[e];
       int ch  = chPtr[e];
       double t        = elPtr[e] * rate;
-      double exp_term = MKP_EXP(-kFull * t / km1);
+      // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
+      double arg      = -kFull * t / km1;
+      double neg_expm1 = -std::expm1(arg);
+      double exp_term = 1.0 - neg_expm1;
       double p_same   = inv_k + (1.0 - inv_k) * exp_term;
-      double p_diff   = inv_k - inv_k * exp_term;
+      double p_diff   = inv_k * neg_expm1;
       double diff_coeff = p_same - p_diff;
       double* clPar = buf + par * stride;
       double* clCh  = buf + ch  * stride;
@@ -1396,10 +1414,13 @@ static double pruning_mkn_flat(
     int par = parPtr[e];
     int ch  = chPtr[e];
     double t        = elPtr[e];
-    double exp_term = MKP_EXP(-lambda * t);
+    // FAST-EXP-001: expm1 form avoids cancellation in P01/P10 at small lambda*t.
+    double arg      = -lambda * t;
+    double neg_expm1 = -std::expm1(arg);
+    double exp_term = 1.0 - neg_expm1;
     double P00 = inv_lam_10 + inv_lam_01 * exp_term;
-    double P01 = inv_lam_01 - inv_lam_01 * exp_term;
-    double P10 = inv_lam_10 - inv_lam_10 * exp_term;
+    double P01 = inv_lam_01 * neg_expm1;
+    double P10 = inv_lam_10 * neg_expm1;
     double P11 = inv_lam_01 + inv_lam_10 * exp_term;
     double* clPar = buf + par * stride;
     double* clCh  = buf + ch  * stride;
@@ -1571,10 +1592,13 @@ static double pruning_mkn_acrv_flat(
       int par = parPtr[e];
       int ch  = chPtr[e];
       double t        = elPtr[e] * rate;
-      double exp_term = MKP_EXP(-lambda * t);
+      // FAST-EXP-001: expm1 form avoids cancellation in P01/P10 at small lambda*t.
+      double arg      = -lambda * t;
+      double neg_expm1 = -std::expm1(arg);
+      double exp_term = 1.0 - neg_expm1;
       double P00 = inv_lam_10 + inv_lam_01 * exp_term;
-      double P01 = inv_lam_01 - inv_lam_01 * exp_term;
-      double P10 = inv_lam_10 - inv_lam_10 * exp_term;
+      double P01 = inv_lam_01 * neg_expm1;
+      double P10 = inv_lam_10 * neg_expm1;
       double P11 = inv_lam_01 + inv_lam_10 * exp_term;
       double* clPar = buf + par * stride;
       double* clCh  = buf + ch  * stride;
@@ -1864,8 +1888,10 @@ static double pruning_f81_het_acrv_flat(
           int par = parPtr[e];
           int ch  = chPtr[e];
           double t = elPtr[e] * acrvRate;
-          double d = MKP_EXP(-mu * t);
-          double one_minus_d = 1.0 - d;
+          // FAST-EXP-001: expm1 form is exact even at tiny mu*t.
+          double arg = -mu * t;
+          double one_minus_d = -std::expm1(arg);
+          double d = 1.0 - one_minus_d;
 
           double* clPar = buf + par * stride;
           double* clCh  = buf + ch  * stride;
@@ -2048,8 +2074,10 @@ void pruning_f81_het_acrv_persite(
           int par = parPtr[e];
           int ch  = chPtr[e];
           double t = elPtr[e] * acrvRate;
-          double d = MKP_EXP(-mu * t);
-          double one_minus_d = 1.0 - d;
+          // FAST-EXP-001: expm1 form is exact even at tiny mu*t.
+          double arg = -mu * t;
+          double one_minus_d = -std::expm1(arg);
+          double d = 1.0 - one_minus_d;
 
           double* clPar = buf + par * stride;
           double* clCh  = buf + ch  * stride;
@@ -2177,8 +2205,10 @@ static double het_constant_site_prob(
           int par = parPtr[e];
           int ch  = chPtr[e];
           double t = elPtr[e] * acrvRate;
-          double d = MKP_EXP(-mu * t);
-          double one_minus_d = 1.0 - d;
+          // FAST-EXP-001: expm1 form is exact even at tiny mu*t.
+          double arg = -mu * t;
+          double one_minus_d = -std::expm1(arg);
+          double d = 1.0 - one_minus_d;
 
           double* aPar = ascBuf.data() + par * ascStride;
           double* aCh  = ascBuf.data() + ch  * ascStride;
@@ -2270,7 +2300,12 @@ double const_site_prob_for_k(
     NumericVector rootFreqs(kStates, 1.0 / kStates);
     double p = constant_site_prob_jc(parent, child, edgeLen, data.nTip,
                                       kStates, rootFreqs, acrvRates);
-    // Phase 7: add singleton_site_prob_jc when coding == 2
+    // L5-trivial: informative coding adds the JC singleton probability.
+    // Het+informative remains gated upstream (see het_singleton_site_prob).
+    if (data.codingType == 2) {
+      p += singleton_site_prob_jc(parent, child, edgeLen, data.nTip,
+                                   kStates, rootFreqs, acrvRates);
+    }
     return p;
   }
 }
