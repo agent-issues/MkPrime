@@ -1,0 +1,26 @@
+diff --git a/R/Convergence.R b/R/Convergence.R
+index 2fcf41c..741a6b7 100644
+--- a/R/Convergence.R
++++ b/R/Convergence.R
+@@ -244,10 +244,19 @@ print.MkpDiagnostics <- function(x, ...) {
+   paramNames <- colnames(perRun[[1]]$samples[, keyCols, drop = FALSE])
+   nParams <- length(paramNames)
+ 
++  # CONV-002: per-run sample matrices may differ in nrow (e.g. when runs are
++  # truncated at different points by adaptive stopping). cbind() would either
++  # recycle silently or warn "number of rows of result is not a multiple of
++  # vector length"; either is incorrect. Tail-equalise: keep the last `nKeep`
++  # rows of each run, where `nKeep = min(nrow over runs)`.
++  nKeep <- min(vapply(perRun, function(r) nrow(r$samples), integer(1L)))
++
+   rhat <- vapply(seq_len(nParams), function(j) {
+-    # Build nIter x nRuns matrix for this parameter
++    # Build nKeep x nRuns matrix for this parameter (tail-equalised).
+     chainMat <- do.call(cbind, lapply(perRun, function(r) {
+-      r$samples[, keyCols[j]]
++      v <- r$samples[, keyCols[j]]
++      n <- length(v)
++      if (n > nKeep) v[(n - nKeep + 1L):n] else v
+     }))
+     .Rhat(chainMat)
+   }, numeric(1))
