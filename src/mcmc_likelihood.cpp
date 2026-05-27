@@ -2340,6 +2340,19 @@ double cpp_partition_log_likelihood(
   const PartInfo& part = data.parts[partIdx];
   double ll = 0.0;
 
+  // Partition-rate normalisation (audit Issue 1):
+  //   pre-scale edgeLen by neoScale (type 0) or transScale (type 1, 2) so the
+  //   nChar-weighted mean partition rate is 1 (RB-style; tree_length recovers
+  //   its "expected substitutions per character on the average edge"
+  //   interpretation). When nNeo == 0 or nTrans == 0, scales are both 1.0 and
+  //   this collapses to the legacy unscaled edgeLen behaviour.
+  const PartitionScales pScales =
+      compute_partition_scales(rateNeo, data.nNeo, data.nTrans);
+  const double partScale = (part.type == 0) ? pScales.neo : pScales.trans;
+  NumericVector scaledEdge(edgeLen.size());
+  for (int i = 0; i < edgeLen.size(); ++i)
+    scaledEdge[i] = edgeLen[i] * partScale;
+
   // Determine max node index for workspace fitness check
   int maxNode = 2 * data.nTip - 1;  // OPP-2
 
@@ -2368,8 +2381,7 @@ double cpp_partition_log_likelihood(
       }
     }
 
-    NumericVector neoEl(edgeLen.size());
-    for (int i = 0; i < edgeLen.size(); ++i) neoEl[i] = edgeLen[i] * rateNeo;
+    // Audit Issue 1: scaledEdge already carries the RB-style neoScale.
 
     // M-157: fused ascertainment — constProb computed alongside pruning
     double neoConstProb = 0.0;
@@ -2381,7 +2393,7 @@ double cpp_partition_log_likelihood(
       if (!useAcrv) rates = NumericVector(1, 1.0);
       if (useWs) {
         ll = pruning_f81_het_acrv_flat(
-          parent, child, neoEl, part.tipStates,
+          parent, child, scaledEdge, part.tipStates,
           2, rateLoss, hetBins, nBC, rates,
           ws->buf.data(), ws->init.data(), ws->strideMax, neoCPtr,
           scrAsc, scrAscI, scrSite);
@@ -2391,14 +2403,14 @@ double cpp_partition_log_likelihood(
         std::vector<double> tmpBuf((nNode + 1) * tmpStride, 0.0);
         std::vector<uint8_t> tmpInit(nNode + 1, 0);
         ll = pruning_f81_het_acrv_flat(
-          parent, child, neoEl, part.tipStates,
+          parent, child, scaledEdge, part.tipStates,
           2, rateLoss, hetBins, nBC, rates,
           tmpBuf.data(), tmpInit.data(), tmpStride, neoCPtr);
       }
       if (coding != 0) {
         double p = neoConstProb;
         if (coding == 2) p += het_singleton_site_prob(
-          parent, child, neoEl, nTip, 2, rateLoss, hetBins, nBC, rates);
+          parent, child, scaledEdge, nTip, 2, rateLoss, hetBins, nBC, rates);
         ll -= part.tipStates.ncol() * std::log(1.0 - p);
       }
     } else {
@@ -2406,27 +2418,27 @@ double cpp_partition_log_likelihood(
       NumericVector rootFreqs = mkn_stationary(rateLoss);
       if (useWs) {
         ll = useAcrv
-          ? pruning_mkn_acrv_flat(parent, child, neoEl, part.tipStates,
+          ? pruning_mkn_acrv_flat(parent, child, scaledEdge, part.tipStates,
                                    rateLoss, rootFreqs, rates,
                                    ws->buf.data(), ws->init.data(), ws->strideMax,
                                    neoCPtr, scrAsc, scrAscI, scrSite)
-          : pruning_mkn_flat(parent, child, neoEl, part.tipStates,
+          : pruning_mkn_flat(parent, child, scaledEdge, part.tipStates,
                               rateLoss, rootFreqs,
                               ws->buf.data(), ws->init.data(), ws->strideMax,
                               neoCPtr, scrAsc, scrAscI);
       } else {
-        ll = useAcrv ? pruning_mkn_acrv(parent, child, neoEl, part.tipStates,
+        ll = useAcrv ? pruning_mkn_acrv(parent, child, scaledEdge, part.tipStates,
                                          rateLoss, rootFreqs, rates)
-                     : pruning_mkn(parent, child, neoEl, part.tipStates,
+                     : pruning_mkn(parent, child, scaledEdge, part.tipStates,
                                     rateLoss, rootFreqs);
         // M-157: non-flat fallback — compute ascertainment separately
         if (coding != 0)
-          neoConstProb = constant_site_prob_mkn(parent, child, neoEl, nTip,
+          neoConstProb = constant_site_prob_mkn(parent, child, scaledEdge, nTip,
                                                  rateLoss, rootFreqs, rates);
       }
       if (coding != 0) {
         double p = neoConstProb;
-        if (coding == 2) p += singleton_site_prob_mkn(parent, child, neoEl, nTip,
+        if (coding == 2) p += singleton_site_prob_mkn(parent, child, scaledEdge, nTip,
                                                        rateLoss, rootFreqs, rates);
         ll -= part.tipStates.ncol() * std::log(1.0 - p);
       }
@@ -2462,7 +2474,7 @@ double cpp_partition_log_likelihood(
       if (!useAcrv) rates = NumericVector(1, 1.0);
       if (useWs) {
         ll = pruning_f81_het_acrv_flat(
-          parent, child, edgeLen, part.tipStates,
+          parent, child, scaledEdge, part.tipStates,
           kStates, 1.0, hetBins, nBC, rates,
           ws->buf.data(), ws->init.data(), ws->strideMax, knownCPtr,
           scrAsc, scrAscI, scrSite);
@@ -2471,14 +2483,14 @@ double cpp_partition_log_likelihood(
         std::vector<double> tmpBuf((nNode + 1) * neededStride, 0.0);
         std::vector<uint8_t> tmpInit(nNode + 1, 0);
         ll = pruning_f81_het_acrv_flat(
-          parent, child, edgeLen, part.tipStates,
+          parent, child, scaledEdge, part.tipStates,
           kStates, 1.0, hetBins, nBC, rates,
           tmpBuf.data(), tmpInit.data(), neededStride, knownCPtr);
       }
       if (coding != 0) {
         double p = knownConstProb;
         if (coding == 2) p += het_singleton_site_prob(
-          parent, child, edgeLen, nTip, kStates, 1.0, hetBins, nBC, rates);
+          parent, child, scaledEdge, nTip, kStates, 1.0, hetBins, nBC, rates);
         ll -= part.tipStates.ncol() * std::log(1.0 - p);
       }
     } else {
@@ -2496,38 +2508,38 @@ double cpp_partition_log_likelihood(
       const bool useCollapse = useWs && (kObsMaxLocal + 1 < kStates);
       if (useCollapse) {
         ll = useAcrv
-          ? pruning_jc_acrv_flat_collapsed(parent, child, edgeLen, part.tipStates,
+          ? pruning_jc_acrv_flat_collapsed(parent, child, scaledEdge, part.tipStates,
                                             kStates, kObsMaxLocal, rates,
                                             ws->buf.data(), ws->init.data(),
                                             ws->strideMax, knownCPtr,
                                             scrAsc, scrAscI, scrSite)
-          : pruning_jc_flat_collapsed(parent, child, edgeLen, part.tipStates,
+          : pruning_jc_flat_collapsed(parent, child, scaledEdge, part.tipStates,
                                        kStates, kObsMaxLocal,
                                        ws->buf.data(), ws->init.data(),
                                        ws->strideMax, knownCPtr,
                                        scrAsc, scrAscI);
       } else if (useWs) {
         ll = useAcrv
-          ? pruning_jc_acrv_flat(parent, child, edgeLen, part.tipStates,
+          ? pruning_jc_acrv_flat(parent, child, scaledEdge, part.tipStates,
                                   kStates, rootFreqs, rates,
                                   ws->buf.data(), ws->init.data(), ws->strideMax,
                                   knownCPtr, scrAsc, scrAscI, scrSite)
-          : pruning_jc_flat(parent, child, edgeLen, part.tipStates,
+          : pruning_jc_flat(parent, child, scaledEdge, part.tipStates,
                              kStates, rootFreqs,
                              ws->buf.data(), ws->init.data(), ws->strideMax,
                              knownCPtr, scrAsc, scrAscI);
       } else {
-        ll = useAcrv ? pruning_jc_acrv(parent, child, edgeLen, part.tipStates,
+        ll = useAcrv ? pruning_jc_acrv(parent, child, scaledEdge, part.tipStates,
                                         kStates, rootFreqs, rates)
-                     : pruning_jc(parent, child, edgeLen, part.tipStates,
+                     : pruning_jc(parent, child, scaledEdge, part.tipStates,
                                    kStates, rootFreqs);
         if (coding != 0)
-          knownConstProb = constant_site_prob_jc(parent, child, edgeLen, nTip,
+          knownConstProb = constant_site_prob_jc(parent, child, scaledEdge, nTip,
                                                   kStates, rootFreqs, rates);
       }
       if (coding != 0) {
         double p = knownConstProb;
-        if (coding == 2) p += singleton_site_prob_jc(parent, child, edgeLen, nTip,
+        if (coding == 2) p += singleton_site_prob_jc(parent, child, scaledEdge, nTip,
                                                       kStates, rootFreqs, rates);
         ll -= part.tipStates.ncol() * std::log(1.0 - p);
       }
@@ -2574,7 +2586,7 @@ double cpp_partition_log_likelihood(
         if (!useAcrv) rates = NumericVector(1, 1.0);
         if (wsOk) {
           ll += pruning_f81_het_acrv_flat(
-            parent, child, edgeLen, part.tipStates,
+            parent, child, scaledEdge, part.tipStates,
             kp0, 1.0, hetBinsSub, nBC, rates,
             ws->buf.data(), ws->init.data(), ws->strideMax, transCPtr,
             scrAsc, scrAscI, scrSite);
@@ -2583,14 +2595,14 @@ double cpp_partition_log_likelihood(
           std::vector<double> tmpBuf((maxNode + 1) * tmpStride, 0.0);
           std::vector<uint8_t> tmpInit(maxNode + 1, 0);
           ll += pruning_f81_het_acrv_flat(
-            parent, child, edgeLen, part.tipStates,
+            parent, child, scaledEdge, part.tipStates,
             kp0, 1.0, hetBinsSub, nBC, rates,
             tmpBuf.data(), tmpInit.data(), tmpStride, transCPtr);
         }
         if (coding != 0) {
           double p = transConstProb;
           if (coding == 2) p += het_singleton_site_prob(
-            parent, child, edgeLen, nTip, kp0, 1.0, hetBinsSub, nBC, rates);
+            parent, child, scaledEdge, nTip, kp0, 1.0, hetBinsSub, nBC, rates);
           ll -= nCharPart * std::log(1.0 - p);
         }
       } else {
@@ -2603,38 +2615,38 @@ double cpp_partition_log_likelihood(
         const bool useCollapse = wsOk && (kObsMaxLocal + 1 < kp0);
         if (useCollapse) {
           ll += useAcrv
-            ? pruning_jc_acrv_flat_collapsed(parent, child, edgeLen, part.tipStates,
+            ? pruning_jc_acrv_flat_collapsed(parent, child, scaledEdge, part.tipStates,
                                               kp0, kObsMaxLocal, rates,
                                               ws->buf.data(), ws->init.data(),
                                               ws->strideMax, transCPtr,
                                               scrAsc, scrAscI, scrSite)
-            : pruning_jc_flat_collapsed(parent, child, edgeLen, part.tipStates,
+            : pruning_jc_flat_collapsed(parent, child, scaledEdge, part.tipStates,
                                          kp0, kObsMaxLocal,
                                          ws->buf.data(), ws->init.data(),
                                          ws->strideMax, transCPtr,
                                          scrAsc, scrAscI);
         } else if (wsOk) {
           ll += useAcrv
-            ? pruning_jc_acrv_flat(parent, child, edgeLen, part.tipStates,
+            ? pruning_jc_acrv_flat(parent, child, scaledEdge, part.tipStates,
                                     kp0, rootFreqs, rates,
                                     ws->buf.data(), ws->init.data(), ws->strideMax,
                                     transCPtr, scrAsc, scrAscI, scrSite)
-            : pruning_jc_flat(parent, child, edgeLen, part.tipStates,
+            : pruning_jc_flat(parent, child, scaledEdge, part.tipStates,
                                kp0, rootFreqs,
                                ws->buf.data(), ws->init.data(), ws->strideMax,
                                transCPtr, scrAsc, scrAscI);
         } else {
-          ll += useAcrv ? pruning_jc_acrv(parent, child, edgeLen, part.tipStates,
+          ll += useAcrv ? pruning_jc_acrv(parent, child, scaledEdge, part.tipStates,
                                            kp0, rootFreqs, rates)
-                        : pruning_jc(parent, child, edgeLen, part.tipStates,
+                        : pruning_jc(parent, child, scaledEdge, part.tipStates,
                                       kp0, rootFreqs);
           if (coding != 0)
-            transConstProb = constant_site_prob_jc(parent, child, edgeLen, nTip,
+            transConstProb = constant_site_prob_jc(parent, child, scaledEdge, nTip,
                                                     kp0, rootFreqs, rates);
         }
         if (coding != 0) {
           double p = transConstProb;
-          if (coding == 2) p += singleton_site_prob_jc(parent, child, edgeLen, nTip,
+          if (coding == 2) p += singleton_site_prob_jc(parent, child, scaledEdge, nTip,
                                                         kp0, rootFreqs, rates);
           ll -= nCharPart * std::log(1.0 - p);
         }
@@ -2689,7 +2701,7 @@ double cpp_partition_log_likelihood(
           if (!useAcrv) rates = NumericVector(1, 1.0);
           if (wsOk) {
             subLl = pruning_f81_het_acrv_flat(
-              parent, child, edgeLen, sub,
+              parent, child, scaledEdge, sub,
               kp, 1.0, hetBinsSub, nBC, rates,
               ws->buf.data(), ws->init.data(), ws->strideMax, subCPtr,
               scrAsc, scrAscI, scrSite);
@@ -2698,14 +2710,14 @@ double cpp_partition_log_likelihood(
             std::vector<double> tmpBuf((maxNode + 1) * tmpStride, 0.0);
             std::vector<uint8_t> tmpInit(maxNode + 1, 0);
             subLl = pruning_f81_het_acrv_flat(
-              parent, child, edgeLen, sub,
+              parent, child, scaledEdge, sub,
               kp, 1.0, hetBinsSub, nBC, rates,
               tmpBuf.data(), tmpInit.data(), tmpStride, subCPtr);
           }
           if (coding != 0) {
             double p = subConstProb;
             if (coding == 2) p += het_singleton_site_prob(
-              parent, child, edgeLen, nTip, kp, 1.0, hetBinsSub, nBC, rates);
+              parent, child, scaledEdge, nTip, kp, 1.0, hetBinsSub, nBC, rates);
             subLl -= nSub * std::log(1.0 - p);
           }
         } else {
@@ -2720,38 +2732,38 @@ double cpp_partition_log_likelihood(
           const bool useCollapse = wsOk && (kObsMaxSub + 1 < kp);
           if (useCollapse) {
             subLl = useAcrv
-              ? pruning_jc_acrv_flat_collapsed(parent, child, edgeLen, sub,
+              ? pruning_jc_acrv_flat_collapsed(parent, child, scaledEdge, sub,
                                                 kp, kObsMaxSub, rates,
                                                 ws->buf.data(), ws->init.data(),
                                                 ws->strideMax, subCPtr,
                                                 scrAsc, scrAscI, scrSite)
-              : pruning_jc_flat_collapsed(parent, child, edgeLen, sub,
+              : pruning_jc_flat_collapsed(parent, child, scaledEdge, sub,
                                            kp, kObsMaxSub,
                                            ws->buf.data(), ws->init.data(),
                                            ws->strideMax, subCPtr,
                                            scrAsc, scrAscI);
           } else if (wsOk) {
             subLl = useAcrv
-              ? pruning_jc_acrv_flat(parent, child, edgeLen, sub,
+              ? pruning_jc_acrv_flat(parent, child, scaledEdge, sub,
                                       kp, rootFreqs, rates,
                                       ws->buf.data(), ws->init.data(), ws->strideMax,
                                       subCPtr, scrAsc, scrAscI, scrSite)
-              : pruning_jc_flat(parent, child, edgeLen, sub,
+              : pruning_jc_flat(parent, child, scaledEdge, sub,
                                  kp, rootFreqs,
                                  ws->buf.data(), ws->init.data(), ws->strideMax,
                                  subCPtr, scrAsc, scrAscI);
           } else {
-            subLl = useAcrv ? pruning_jc_acrv(parent, child, edgeLen, sub,
+            subLl = useAcrv ? pruning_jc_acrv(parent, child, scaledEdge, sub,
                                                kp, rootFreqs, rates)
-                            : pruning_jc(parent, child, edgeLen, sub,
+                            : pruning_jc(parent, child, scaledEdge, sub,
                                           kp, rootFreqs);
             if (coding != 0)
-              subConstProb = constant_site_prob_jc(parent, child, edgeLen, nTip,
+              subConstProb = constant_site_prob_jc(parent, child, scaledEdge, nTip,
                                                     kp, rootFreqs, rates);
           }
           if (coding != 0) {
             double p = subConstProb;
-            if (coding == 2) p += singleton_site_prob_jc(parent, child, edgeLen, nTip,
+            if (coding == 2) p += singleton_site_prob_jc(parent, child, scaledEdge, nTip,
                                                           kp, rootFreqs, rates);
             subLl -= nSub * std::log(1.0 - p);
           }
@@ -2799,10 +2811,13 @@ double cpp_log_likelihood(
 // per-class scalars looked up by classIdx. Branch lengths for every
 // partition are pre-scaled by classRate[classIdx - 1] so the per-partition
 // function (which only knows about its scalar inputs) sees the right
-// effective rate for both transformational/known chars (where edgeLen is
-// used directly) and neomorphic chars (where it is further scaled by
-// rateNeo internally). With rateNeo = 1.0 the per-partition function's
-// internal neoEl = edgeLen * 1.0 path collapses cleanly.
+// effective rate for both transformational/known chars and neomorphic
+// chars (where it is further scaled by RB-style neoScale/transScale
+// internally — audit Issue 1). With rateNeo = 1.0 the per-partition
+// function still applies its RB-style partition-rate normalisation so the
+// nChar-weighted mean partition rate is 1; when hasNeo == false (Casali
+// production workload) the normalisation reduces to multiplication by 1.0
+// and there is no behaviour change.
 //
 // Length-1 inputs collapse to the legacy scalar path. The §7b
 // numeric-equivalence contract holds at:
@@ -2965,6 +2980,15 @@ SEXP prepare_mcmc_data(List partitions_r,
     pinfo.kObsLocal = IntegerVector(nCharPart);
     for (int ci = 0; ci < nCharPart; ++ci) {
       pinfo.kObsLocal[ci] = kObs_r[pinfo.globalCharIdx[ci]];
+    }
+
+    // Partition-rate normalisation (audit Issue 1): accumulate per-partition
+    // character counts so compute_partition_scales() can build RB-style
+    // mean-1 partition rates from rateNeo.
+    if (pinfo.type == 0) {
+      d->nNeo += nCharPart;
+    } else {
+      d->nTrans += nCharPart;
     }
 
     // Partition-API (Layer 1, plan v4 §4.1). When the R-side partitions list

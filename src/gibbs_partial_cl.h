@@ -93,7 +93,10 @@ struct CLGroup {
   int stride;       // nChar * kStates
   bool isMkN;       // true → asymmetric binary model (uses rateLoss)
   double rateLoss;  // only for isMkN
-  double rateScale; // for neo: rateNeo; for others: 1.0
+  double rateScale; // partition-rate scale (audit Issue 1):
+                    //   neoScale = r/(1+r) * (n_neo+n_trans)/n_neo  for neo
+                    //   transScale = 1/(1+r) * (n_neo+n_trans)/n_trans  for others
+                    // Reduces to 1.0 when n_neo == 0 or n_trans == 0.
 
   // M-114: F81 transitions for Q-heterogeneity
   bool useF81 = false;

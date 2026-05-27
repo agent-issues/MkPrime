@@ -60,6 +60,13 @@ struct McmcData {
   int nTip;
   int nChar;
   bool hasNeo;
+  // Character counts per partition type (populated by prepare_mcmc_data).
+  //   nNeo   = total chars in type==0 (neomorphic) partitions
+  //   nTrans = total chars in type==1 (transformational) + type==2 (known) partitions
+  // Used by compute_partition_scales() to apply RB-style partition-rate
+  // normalisation so the nChar-weighted mean rate is 1 (audit Issue 1).
+  int nNeo   = 0;
+  int nTrans = 0;
   std::vector<PartInfo> parts;
   Rcpp::IntegerVector kObs;           // global kObs, length nChar
   Rcpp::IntegerVector transIdxGlobal; // 0-based indices of trans chars in kPrime
@@ -126,6 +133,43 @@ struct McmcData {
   // Used to precompute per-k bins when beta_scale changes.
   std::vector<int> hetKValues;  // e.g., {2, 3, 5}
 };
+
+// ---------------------------------------------------------------------------
+// Partition-rate scales (audit Issue 1: RB-style nChar-weighted-mean-1)
+//
+// MkPrime's rate_neo originally entered only as a one-sided neo multiplier:
+//   neoEl = edgeLen * rate_neo;  transEl = edgeLen
+// which gave nChar-weighted mean partition rate (n_neo * r + n_trans) / nChar
+// ≠ 1 unless r = 1. This made `tree_length` lose its "expected substitutions
+// per character" interpretation under data asymmetry.
+//
+// Symmetric RB-style formula (Mk' on RB side; identity-1 by construction):
+//   neoScale   = r/(1+r) * nTotal / nNeo
+//   transScale = 1/(1+r) * nTotal / nTrans
+// Weighted mean: (nNeo*neoScale + nTrans*transScale)/nTotal == 1 exactly.
+//
+// Degenerate cases (no free parameter): if nNeo == 0 or nTrans == 0, the
+// rate_neo parameter has no effect on the likelihood and both scales are 1.
+struct PartitionScales {
+  double neo;    // multiplier for type==0 (neomorphic) edge lengths
+  double trans;  // multiplier for type==1 / type==2 edge lengths
+};
+
+static inline PartitionScales compute_partition_scales(
+    double rateNeo, int nNeo, int nTrans) {
+  PartitionScales s;
+  if (nNeo == 0 || nTrans == 0) {
+    s.neo = 1.0;
+    s.trans = 1.0;
+    return s;
+  }
+  const double denom = 1.0 + rateNeo;
+  const double nTotal = static_cast<double>(nNeo + nTrans);
+  s.neo   = rateNeo / denom * nTotal / static_cast<double>(nNeo);
+  s.trans = 1.0     / denom * nTotal / static_cast<double>(nTrans);
+  return s;
+}
+
 
 // Pre-allocated flat CL workspace (M-063): eliminates per-call heap
 // allocations inside the pruning hot path.

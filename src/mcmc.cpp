@@ -979,6 +979,13 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
   int coding = data->codingType;
   int maxNode = topo.maxNode;
 
+  // Audit Issue 1: RB-style partition-rate normalisation (nChar-weighted
+  // mean rate = 1). Both neo and trans/known unit rateScales are derived
+  // from rate_neo + per-partition character counts; legacy "rateScale = 1
+  // for trans" behaviour is recovered when nNeo == 0 or nTrans == 0.
+  const PartitionScales pScales =
+      compute_partition_scales(state->rateNeo, data->nNeo, data->nTrans);
+
   // Build CLGroups: one per (partition, kStates) evaluation unit
   std::vector<CLGroup> groups;
   // Track which groups belong to which partition (for ascertainment)
@@ -993,7 +1000,7 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
       CLGroup g;
       g.isMkN     = true;
       g.rateLoss  = state->rateLoss;
-      g.rateScale = state->rateNeo;
+      g.rateScale = pScales.neo;
       g.tipData   = part.tipStates;
       g.allocate(maxNode, nCat, part.tipStates.ncol(), 2);
       groups.push_back(std::move(g));
@@ -1004,7 +1011,7 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
       CLGroup g;
       g.isMkN     = false;
       g.rateLoss  = 1.0;
-      g.rateScale = 1.0;
+      g.rateScale = pScales.trans;
       g.tipData   = part.tipStates;
       g.allocate(maxNode, nCat, part.tipStates.ncol(), part.k);
       groups.push_back(std::move(g));
@@ -1033,7 +1040,7 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
         CLGroup g;
         g.isMkN     = false;
         g.rateLoss  = 1.0;
-        g.rateScale = 1.0;
+        g.rateScale = pScales.trans;
         g.tipData   = sub;
         g.allocate(maxNode, nCat, nSub, kp);
         groups.push_back(std::move(g));
@@ -1250,6 +1257,10 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
   int maxNode = topo.maxNode;
   int nBC     = data->nBetaCat;
 
+  // Audit Issue 1: partition-rate normalisation (see comment at first call site).
+  const PartitionScales pScales =
+      compute_partition_scales(state->rateNeo, data->nNeo, data->nTrans);
+
   // Build CLGroups (same structure as non-het, but with useF81 flag)
   std::vector<CLGroup> groups;
   struct GroupMeta { int partIdx; int nCharInPart; };
@@ -1261,7 +1272,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
       CLGroup g;
       g.isMkN     = true;
       g.rateLoss  = state->rateLoss;
-      g.rateScale = state->rateNeo;
+      g.rateScale = pScales.neo;
       g.tipData   = part.tipStates;
       g.allocate(maxNode, nCat, part.tipStates.ncol(), 2);
       groups.push_back(std::move(g));
@@ -1270,7 +1281,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
       CLGroup g;
       g.isMkN     = false;
       g.rateLoss  = 1.0;
-      g.rateScale = 1.0;
+      g.rateScale = pScales.trans;
       g.tipData   = part.tipStates;
       g.allocate(maxNode, nCat, part.tipStates.ncol(), part.k);
       groups.push_back(std::move(g));
@@ -1294,7 +1305,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
         CLGroup g;
         g.isMkN     = false;
         g.rateLoss  = 1.0;
-        g.rateScale = 1.0;
+        g.rateScale = pScales.trans;
         g.tipData   = sub;
         g.allocate(maxNode, nCat, nSub, kp);
         groups.push_back(std::move(g));
@@ -1689,6 +1700,10 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
   int coding = data->codingType;
   int maxNode = topo.maxNode;
 
+  // Audit Issue 1: partition-rate normalisation (see comment at first call site).
+  const PartitionScales pScales =
+      compute_partition_scales(state->rateNeo, data->nNeo, data->nTrans);
+
   // Build CLGroups: one per (partition, kStates) evaluation unit
   std::vector<CLGroup> groups;
   struct GroupMeta { int partIdx; int nCharInPart; };
@@ -1701,7 +1716,7 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
       CLGroup g;
       g.isMkN     = true;
       g.rateLoss  = state->rateLoss;
-      g.rateScale = state->rateNeo;
+      g.rateScale = pScales.neo;
       g.tipData   = part.tipStates;
       g.allocate(maxNode, nCat, part.tipStates.ncol(), 2);
       groups.push_back(std::move(g));
@@ -1711,7 +1726,7 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
       CLGroup g;
       g.isMkN     = false;
       g.rateLoss  = 1.0;
-      g.rateScale = 1.0;
+      g.rateScale = pScales.trans;
       g.tipData   = part.tipStates;
       g.allocate(maxNode, nCat, part.tipStates.ncol(), part.k);
       groups.push_back(std::move(g));
@@ -1739,7 +1754,7 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
         CLGroup g;
         g.isMkN     = false;
         g.rateLoss  = 1.0;
-        g.rateScale = 1.0;
+        g.rateScale = pScales.trans;
         g.tipData   = sub;
         g.allocate(maxNode, nCat, nSub, kp);
         groups.push_back(std::move(g));
@@ -1912,6 +1927,10 @@ static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
   int maxNode = topo.maxNode;
   int nBC     = data->nBetaCat;
 
+  // Audit Issue 1: partition-rate normalisation (see comment at first call site).
+  const PartitionScales pScales =
+      compute_partition_scales(state->rateNeo, data->nNeo, data->nTrans);
+
   // Build CLGroups (same as gibbs_spr_impl_het)
   std::vector<CLGroup> groups;
   struct GroupMeta { int partIdx; int nCharInPart; };
@@ -1923,7 +1942,7 @@ static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
       CLGroup g;
       g.isMkN     = true;
       g.rateLoss  = state->rateLoss;
-      g.rateScale = state->rateNeo;
+      g.rateScale = pScales.neo;
       g.tipData   = part.tipStates;
       g.allocate(maxNode, nCat, part.tipStates.ncol(), 2);
       groups.push_back(std::move(g));
@@ -1932,7 +1951,7 @@ static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
       CLGroup g;
       g.isMkN     = false;
       g.rateLoss  = 1.0;
-      g.rateScale = 1.0;
+      g.rateScale = pScales.trans;
       g.tipData   = part.tipStates;
       g.allocate(maxNode, nCat, part.tipStates.ncol(), part.k);
       groups.push_back(std::move(g));
@@ -1956,7 +1975,7 @@ static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
         CLGroup g;
         g.isMkN     = false;
         g.rateLoss  = 1.0;
-        g.rateScale = 1.0;
+        g.rateScale = pScales.trans;
         g.tipData   = sub;
         g.allocate(maxNode, nCat, nSub, kp);
         groups.push_back(std::move(g));
@@ -3171,8 +3190,14 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
       // M-145/M-161: Invalidate node CL cache — slice changed a model
       // parameter.  Granular: only invalidate affected units.
       switch (paramIdx) {
-        case 1: case 3:  // rate_loss, rate_neo: only neomorphic units
+        case 1:  // rate_loss: only neomorphic units (enters mkn stationary
+                 // freqs + Q-matrix; trans/known unchanged)
           state->nodeCL.invalidate_neo_cls();
+          break;
+        case 3:  // rate_neo: audit Issue 1 — RB-style partition-rate
+                 // normalisation makes rateNeo affect BOTH neo and trans
+                 // unit rateScales, so all CLs must be invalidated.
+          state->nodeCL.invalidate_all_cls();
           break;
         case 2:  // rateLogSd: ACRV rates change, all units
           state->nodeCL.invalidate_all_cls();
@@ -4854,9 +4879,16 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     // Other moves: granular invalidation by move type.
     if (!usedPartialCL && likChanges) {
       switch (moveType) {
-        case 1: case 3: case 18:
-          // rate_loss, rate_neo, neo_joint: only neomorphic units affected
+        case 1:
+          // rate_loss: only neomorphic units affected (mkn stationary +
+          // Q-matrix; trans/known unchanged)
           state->nodeCL.invalidate_neo_cls();
+          break;
+        case 3: case 18:
+          // rate_neo, neo_joint: audit Issue 1 — partition-rate
+          // normalisation makes rateNeo affect BOTH neo and trans unit
+          // rateScales, so all CLs are stale.
+          state->nodeCL.invalidate_all_cls();
           break;
         case 2:
           // rateLogSd: ACRV rates change, all units stale
@@ -5359,6 +5391,10 @@ DataFrame validate_swap_partial_cl(SEXP dataPtr, SEXP statePtr, int nodeA) {
   int coding  = data->codingType;
   int maxNode = topo.maxNode;
 
+  // Audit Issue 1: partition-rate normalisation (see comment at first call site).
+  const PartitionScales pScales =
+      compute_partition_scales(state->rateNeo, data->nNeo, data->nTrans);
+
   std::vector<CLGroup> groups;
   struct GroupMeta { int partIdx; int nCharInPart; };
   std::vector<GroupMeta> groupMeta;
@@ -5367,14 +5403,14 @@ DataFrame validate_swap_partial_cl(SEXP dataPtr, SEXP statePtr, int nodeA) {
     const PartInfo& part = data->parts[pi];
     if (part.type == 0) {
       CLGroup g;
-      g.isMkN = true; g.rateLoss = state->rateLoss; g.rateScale = state->rateNeo;
+      g.isMkN = true; g.rateLoss = state->rateLoss; g.rateScale = pScales.neo;
       g.tipData = part.tipStates;
       g.allocate(maxNode, nCat, part.tipStates.ncol(), 2);
       groups.push_back(std::move(g));
       groupMeta.push_back({pi, part.tipStates.ncol()});
     } else if (part.type == 2) {
       CLGroup g;
-      g.isMkN = false; g.rateLoss = 1.0; g.rateScale = 1.0;
+      g.isMkN = false; g.rateLoss = 1.0; g.rateScale = pScales.trans;
       g.tipData = part.tipStates;
       g.allocate(maxNode, nCat, part.tipStates.ncol(), part.k);
       groups.push_back(std::move(g));
@@ -5396,7 +5432,7 @@ DataFrame validate_swap_partial_cl(SEXP dataPtr, SEXP statePtr, int nodeA) {
           for (int t = 0; t < nTip; ++t)
             sub(t, c) = part.tipStates(t, cols[c]);
         CLGroup g;
-        g.isMkN = false; g.rateLoss = 1.0; g.rateScale = 1.0;
+        g.isMkN = false; g.rateLoss = 1.0; g.rateScale = pScales.trans;
         g.tipData = sub;
         g.allocate(maxNode, nCat, nSub, kp);
         groups.push_back(std::move(g));

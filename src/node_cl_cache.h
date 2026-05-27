@@ -577,17 +577,19 @@ static void populate_cache_full(
   // Build cache units
   build_cache_units(cache, data, kPrime, rateLoss, nCat);
 
+  // Audit Issue 1: RB-style partition-rate normalisation. Both neo (MkN)
+  // and trans/known units are scaled symmetrically so the nChar-weighted
+  // mean partition rate equals 1.
+  const PartitionScales pScales =
+      compute_partition_scales(rateNeo, data.nNeo, data.nTrans);
+
   // Allocate and populate each unit
   for (auto& unit : cache.units) {
     unit.allocate(maxNode, nCat);
     init_tips(unit, nTip);
 
-    // For neomorphic partitions, edge lengths need rateNeo scaling.
-    // We handle this via rateScale in apply_transition, but TreeNav
-    // stores unscaled edge lengths. Set rateScale here.
-    if (unit.isMkN) {
-      unit.rateScale = rateNeo;
-    }
+    // Per-unit rateScale (applied to edge lengths in apply_transition).
+    unit.rateScale = unit.isMkN ? pScales.neo : pScales.trans;
 
     full_downpass(unit, cache.topo, cache.rates, rateLoss);
     unit.clValid = true;
@@ -631,6 +633,10 @@ static void populate_cache(
     cache.cachedRateLogSd = rateLogSd;
   }
 
+  // Audit Issue 1: re-derive partition scales (rateNeo may have changed).
+  const PartitionScales pScales =
+      compute_partition_scales(rateNeo, data.nNeo, data.nTrans);
+
   // Repopulate only invalid units
   for (auto& unit : cache.units) {
     if (unit.clValid) continue;
@@ -639,8 +645,8 @@ static void populate_cache(
     if (unit.isMkN) {
       unit.rootFreqs = { rateLoss / (1.0 + rateLoss),
                          1.0 / (1.0 + rateLoss) };
-      unit.rateScale = rateNeo;
     }
+    unit.rateScale = unit.isMkN ? pScales.neo : pScales.trans;
 
     // Rerun full downpass — tip CLs are still valid (character data never
     // changes), so only internal-node CLs are recomputed.
@@ -695,6 +701,19 @@ static double cache_total_loglik(
     rates = NumericVector(1, 1.0);
   }
 
+  // Audit Issue 1: partition-rate normalisation also applies to
+  // ascertainment correction — the constant-site probability must use the
+  // same effective edge lengths as the pruning, so pre-scale by neoScale
+  // (type 0) or transScale (type 1 / type 2).
+  const PartitionScales pScales =
+      compute_partition_scales(rateNeo, data.nNeo, data.nTrans);
+  NumericVector neoAscEl(absEdgeLen.size());
+  NumericVector transAscEl(absEdgeLen.size());
+  for (int i = 0; i < absEdgeLen.size(); ++i) {
+    neoAscEl[i]   = absEdgeLen[i] * pScales.neo;
+    transAscEl[i] = absEdgeLen[i] * pScales.trans;
+  }
+
   for (int pi = 0; pi < nParts; ++pi) {
     double ll = partRawLL[pi];
     if (cache.coding != 0 && partNChar[pi] > 0) {
@@ -702,28 +721,25 @@ static double cache_total_loglik(
       double p = 0.0;
 
       if (part.type == 0) {
-        NumericVector neoEl(absEdgeLen.size());
-        for (int i = 0; i < absEdgeLen.size(); ++i)
-          neoEl[i] = absEdgeLen[i] * rateNeo;
         NumericVector rootFreqs(2);
         rootFreqs[0] = rateLoss / (1.0 + rateLoss);
         rootFreqs[1] = 1.0 / (1.0 + rateLoss);
-        p = constant_site_prob_mkn(parent, child, neoEl, nTip,
+        p = constant_site_prob_mkn(parent, child, neoAscEl, nTip,
                                     rateLoss, rootFreqs, rates);
         // LIKE-001 fix: informative coding adds the MkN singleton probability.
         if (cache.coding == 2) {
-          p += singleton_site_prob_mkn(parent, child, neoEl, nTip,
+          p += singleton_site_prob_mkn(parent, child, neoAscEl, nTip,
                                         rateLoss, rootFreqs, rates);
         }
       } else if (part.type == 2) {
         // Known state space: single k for entire partition
         int kStates = part.k;
         NumericVector rootFreqs(kStates, 1.0 / kStates);
-        p = constant_site_prob_jc(parent, child, absEdgeLen, nTip,
+        p = constant_site_prob_jc(parent, child, transAscEl, nTip,
                                    kStates, rootFreqs, rates);
         // LIKE-001 fix: informative coding adds the JC singleton probability.
         if (cache.coding == 2) {
-          p += singleton_site_prob_jc(parent, child, absEdgeLen, nTip,
+          p += singleton_site_prob_jc(parent, child, transAscEl, nTip,
                                        kStates, rootFreqs, rates);
         }
       } else {
@@ -737,11 +753,11 @@ static double cache_total_loglik(
           int k = unit.kStates;
           if (k <= 0) continue;
           NumericVector rootFreqs(k, 1.0 / k);
-          double pu = constant_site_prob_jc(parent, child, absEdgeLen,
+          double pu = constant_site_prob_jc(parent, child, transAscEl,
                                              nTip, k, rootFreqs, rates);
           // LIKE-001 fix: informative coding adds the JC singleton probability.
           if (cache.coding == 2) {
-            pu += singleton_site_prob_jc(parent, child, absEdgeLen,
+            pu += singleton_site_prob_jc(parent, child, transAscEl,
                                           nTip, k, rootFreqs, rates);
           }
           if (pu > 0.0 && pu < 1.0)
