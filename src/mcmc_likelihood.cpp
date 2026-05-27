@@ -2813,11 +2813,20 @@ double cpp_log_likelihood(
 // function (which only knows about its scalar inputs) sees the right
 // effective rate for both transformational/known chars and neomorphic
 // chars (where it is further scaled by RB-style neoScale/transScale
-// internally — audit Issue 1). With rateNeo = 1.0 the per-partition
-// function still applies its RB-style partition-rate normalisation so the
-// nChar-weighted mean partition rate is 1; when hasNeo == false (Casali
-// production workload) the normalisation reduces to multiplication by 1.0
-// and there is no behaviour change.
+// internally — audit Issue 1).
+//
+// rateNeo is hard-coded to 1.0 in the call below. Two regimes:
+//   - hasNeo == false (Casali production workload): nNeo == 0, so
+//     compute_partition_scales returns (1.0, 1.0) — partition normalisation
+//     is a no-op and behaviour is bit-identical to the pre-audit-Issue-1
+//     legacy path.
+//   - hasNeo == true (theoretical, not currently a production code path):
+//     scales are (0.5 · n/n_neo, 0.5 · n/n_trans) ≠ 1.0. The nChar-weighted
+//     mean is still 1 by construction, but tree_length is now split
+//     unequally between neo and trans partitions. Callers exercising the
+//     partition-API with hasNeo must keep etaNeo = 1 (existing constraint)
+//     and accept this implicit asymmetry, OR an eta_neo-aware partitioned
+//     path must be added (§5.2 of plan v4, currently deferred).
 //
 // Length-1 inputs collapse to the legacy scalar path. The §7b
 // numeric-equivalence contract holds at:

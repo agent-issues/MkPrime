@@ -3079,8 +3079,10 @@ static double eval_slice_target(McmcData* data, McmcState* state,
   bool hasPLC = !state->partLogLik.empty();
   ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
 
-  // rate_loss (1), rate_neo (3): only neomorphic partitions change
-  if (hasPLC && (paramIdx == 1 || paramIdx == 3)) {
+  // rate_loss (1): only neomorphic partitions change. (rate_neo / paramIdx 3
+  // no longer qualifies — audit Issue 1: rate_neo now shifts transScale too,
+  // so trans partitions are stale and we must fall through to full eval.)
+  if (hasPLC && paramIdx == 1) {
     logLik = state->logLik;
     for (size_t ni = 0; ni < data->neoPartIndices.size(); ++ni) {
       int pi = data->neoPartIndices[ni];
@@ -3161,8 +3163,10 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
       ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
 
       bool hasPLC = !state->partLogLik.empty();
-      if (hasPLC && (paramIdx == 1 || paramIdx == 3)) {
-        // Update only neo partitions in cache
+      if (hasPLC && paramIdx == 1) {
+        // rate_loss: only neo partitions change. Partial cache update.
+        // (paramIdx == 3 / rate_neo intentionally excluded — audit Issue 1:
+        // rate_neo now shifts transScale and so makes every partition stale.)
         for (size_t ni = 0; ni < data->neoPartIndices.size(); ++ni) {
           int pi = data->neoPartIndices[ni];
           state->partLogLik[pi] = cpp_partition_log_likelihood(
@@ -4813,9 +4817,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       propEdgeLen[i] = state->treeLength * evalRelBr[i];
     newPC = state->partLogLik;
     switch (moveType) {
-      case 1:
-      case 3:
-      case 18: {
+      case 1: {
+        // rate_loss: enters mkn stationary frequencies + Q-matrix; only
+        // neomorphic partitions change. Partial recompute is safe.
         ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
         newLogLik = state->logLik;
         for (size_t ni = 0; ni < data->neoPartIndices.size(); ++ni) {
@@ -4829,6 +4833,11 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         }
         break;
       }
+      // case 3 (rate_neo scale) and case 18 (neo_joint = rate_loss + rate_neo)
+      // intentionally fall through to the default full-recompute branch:
+      // under the RB-style partition-rate normalisation (audit Issue 1),
+      // rate_neo now shifts BOTH neoScale AND transScale, so every
+      // partition's log-likelihood is stale — not just neo.
       case 7: {
         ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
         int ap = data->charToPartition[charIdx];

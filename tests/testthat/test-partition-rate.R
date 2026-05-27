@@ -288,3 +288,88 @@ test_that("trans-only datasets: likelihood is rate_neo-independent (degenerate)"
   expect_equal(ll1, ll2, tolerance = 1e-10)
   expect_equal(ll2, ll3, tolerance = 1e-10)
 })
+
+
+# ---- F1 regression: partLogLik partial cache must stay in sync after a
+#      rate_neo move on mixed data.
+#
+# Pre-audit-Issue-1, do_move_impl case 3 (rate_neo scale) and case 18
+# (neo_joint) refreshed only `data->neoPartIndices` in `state->partLogLik`,
+# on the rationale that rate_neo touched only neo edges. Under the new
+# RB-style normalisation rate_neo *also* shifts transScale, so trans
+# partition log-likelihoods are stale after an accepted rate_neo move.
+# This test drives a sequence of rate_neo moves and asserts the cached
+# state->logLik matches a fresh direct full evaluation at every step.
+# Caught by the external-reviewer agent as a blocker for this branch.
+
+test_that("partLogLik stays in sync after rate_neo / neo_joint moves (F1)", {
+  set.seed(20260527L)
+  ntax <- 6L
+  mat <- matrix(sample.int(2, ntax * 12, replace = TRUE) - 1L,
+                nrow = ntax, ncol = 12,
+                dimnames = list(paste0("t", 1:ntax), NULL))
+  pd  <- MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd, neomorphic = c(1L, 2L, 3L, 4L))  # 4 neo, 8 trans
+
+  tree <- TreeTools::Preorder(
+    ape::rtree(ntax, br = function(n) runif(n, 0.05, 0.3))
+  )
+  parent  <- tree$edge[, 1]
+  child   <- tree$edge[, 2]
+  edgeLen <- tree$edge.length
+  treeLen <- sum(edgeLen)
+  relBr   <- edgeLen / treeLen
+
+  dataPtr <- .make_data_ptr(mkd)
+  kPrime <- mkd$kObs
+
+  # Initial full-eval log_lik (no cache yet).
+  init_ll <- cpp_log_likelihood_xptr(
+    dataPtr, parent, child, edgeLen, as.integer(kPrime),
+    rateLoss = 1.3, rateLogSd = 0.5, rateNeo = 1.0
+  )
+
+  # Two-stage init: first state to compute logPrior properly, then re-init
+  # with the correct logPrior so MH ratios are realistic (otherwise prior
+  # mismatch trivially rejects every move and the test never exercises the
+  # accept path where the F1 bug bites).
+  statePtr0 <- init_mcmc_state(
+    parent, child, relBr, treeLen,
+    rateLoss = 1.3, rateLogSd = 0.5, rateNeo = 1.0, p = 0.5,
+    kPrime = as.integer(kPrime),
+    logLik = init_ll, logPrior = 0.0
+  )
+  init_lp <- eval_log_prior_cpp(dataPtr, statePtr0)
+  statePtr <- init_mcmc_state(
+    parent, child, relBr, treeLen,
+    rateLoss = 1.3, rateLogSd = 0.5, rateNeo = 1.0, p = 0.5,
+    kPrime = as.integer(kPrime),
+    logLik = init_ll, logPrior = init_lp
+  )
+  fill_partition_cache(dataPtr, statePtr)
+
+  # Drive a sequence of rate_neo + neo_joint moves at beta = 1. The cached
+  # state->logLik must stay in sync with a fresh direct eval at every step;
+  # pre-fix (audit Issue 1) the cache only refreshed neo partitions on
+  # case 3 / case 18, so accepted moves left trans contribution stale and
+  # `cached - fresh` diverged by O(1) within ~25 accepted moves.
+  set.seed(99L)
+  n_acc <- 0L
+  for (step in 1:50) {
+    moveType <- sample(c(3L, 18L), 1L)  # 3 = rate_neo, 18 = neo_joint
+    ok <- do_move_cpp(dataPtr, statePtr,
+                     moveType = moveType, charIdx = 0L,
+                     scaleTuning = 0.4, betaSimplexTuning = 1.0,
+                     intWalkWindow = 1L, beta = 1.0)
+    if (ok) n_acc <- n_acc + 1L
+
+    cached <- get_state_log_lik(statePtr)
+    fresh  <- eval_full_loglik_cpp(dataPtr, statePtr)
+    expect_equal(cached, fresh, tolerance = 1e-9,
+      label = sprintf("step %d (moveType=%d, accepted=%d)", step, moveType, ok))
+  }
+  # Sanity: the test only catches the bug on accepted moves; if nothing
+  # accepts, the test is vacuous. Empirically this RNG produces ~47/50
+  # acceptances on this dataset; require >= 20 as a soft lower bound.
+  expect_gt(n_acc, 20L)
+})
