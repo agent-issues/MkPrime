@@ -1,5 +1,87 @@
 # MkPrime (development version)
 
+## Pooled half-normal hyperprior on per-class `class_rate_log_sd`
+
+Per-class ACRV-shape parameters `σ_c = class_rate_log_sd[c]` now share
+information across user classes via a half-normal hyperprior on a
+population scale τ. The structure (default for `unlink = "shape"` with
+two or more classes) is
+
+```
+σ_c | τ  ~ HalfNormal(τ)    # per-class scale
+τ        ~ HalfNormal(1)    # population scale
+```
+
+implemented in **non-centred** parameterisation `σ_c = τ · z_c` with
+`z_c ~ HalfNormal(1)` i.i.d. to avoid the small-τ funnel that the
+centred form induces. `σ_c` is what the likelihood consumes; `z_c` and
+`τ` are the parameters sampled by the chain. Trace plots and ESS now
+include `hyper_tau` and `class<c>_rate_log_sd_z` columns in
+`result$samples` (appended after the existing `class<c>_rate_log_sd`
+columns; downstream readers index by name and so are unaffected).
+
+**Rationale.** AutoPart Casali pilot runs (95 cells in the first batch)
+showed `class*_rate_log_sd` as the dominant ESS bottleneck on multi-class
+cells. The smallest class in a cell carries little likelihood signal on
+within-class rate dispersion, so its independent `Gamma` prior leaves
+σ_c diffusing across orders of magnitude. Pooling σ_c through τ uses the
+larger classes to anchor the population scale, dramatically lifting
+mixing on the small class.
+
+**Deviation from the literal `σ_c | τ ~ HN(τ)` prior.** The
+non-centred parameterisation samples `z_c ~ HN(1)` and reconstructs
+`σ_c = τ · z_c`. The resulting marginal on σ_c IS half-normal with scale
+τ; the deviation is purely in the sampling representation, not in the
+prior support or density.
+
+**Selection / opt-out.** The new prior is the default. The legacy
+independent `Gamma(rateLogSdShape, rateLogSdRate)` prior on each σ_c
+remains selectable via
+`MkPrimeModel(priorOnClassRateLogSd = "gamma_independent")` for
+backward-compatibility or prior-sensitivity analyses.
+
+**Move set under `unlink = "shape"`.** The legacy scalar `rate_log_sd`
+moves (`rate_log_sd`, `slice_rate_log_sd`, `joint_tl_rls`) are dropped
+from the partitioned move list — they would break the lockstep between
+the scalar `state->rateLogSd` and `state->classRateLogSd[0]` that the
+partial-CL fallback paths rely on. σ_0 is moved via case 31 with
+`classIdx = 1` (i.e. `scale_class_rate_log_sd_1`). Under the new prior
+a single global `scale_hyper_tau` Bactrian move on τ is also added.
+
+The symmetric concern in the **shape-linked** partitioned regime
+(`partition != NULL` but `"shape" %notin% unlink`) — where the scalar
+`state->rateLogSd` is the only σ but the partition-aware likelihood
+path still reads from `state->classRateLogSd[0]` — predates this change
+and is not addressed here. A future tidy-up should either fold the
+shape-linked case through the same move filter or update case 2 / case
+19-slice to keep both fields in lockstep when `state->usePartitioned`
+is true.
+
+**Funnel-stress benchmark.** `dev/red-team/heavy-tests/funnel-stress-hyperprior-sigma.R`
+is a smoke test of the plumbing: it runs a 5-class fixture
+(sizes 5, 50, 50, 50, 50) under both priors at nGen = 20000 and prints
+per-class ESS on σ_c. The fixture uses random-binary data with weak
+per-class signal so the pooling effect is modest; representative ESS
+gains need to be measured against the Casali production cells that
+motivated this change, where σ_small mixes catastrophically under the
+old prior.
+
+**Move-sampler validation.** `tests/testthat/test-partition-hyperprior.R`
+group (F) runs the per-class and `scale_hyper_tau` MH moves at β = 0
+(likelihood disabled) and verifies the empirical (τ, z_c) moments match
+`HalfNormal(1)` to within 15 %/20 % (mean/sd). This catches Hastings-
+ratio bugs or prior-aware acceptance regressions in the move dispatcher
+that the analytic R↔C++ density tests would miss.
+
+**Degenerate cases.**
+* `unlink` without `"shape"`, or `nClasses == 1` (silently coerced by
+  `.ValidatePartitionArgs` when the user passes `unlink = "shape"` at
+  `nClasses == 1`): the legacy single-σ Gamma prior remains in effect.
+  Numerical equivalence with `eval_log_prior_cpp` to ~1e-10 is
+  guaranteed (`test-partition-hyperprior.R` (A)).
+* `partition = NULL` (§7a): bit-identical to the unchanged legacy code
+  path. Reference test `test-partition-bitcompat-null.R` still green.
+
 ## Partition API — Layer 1 complete
 
 The `feature/partition-api` branch adds per-character user-class

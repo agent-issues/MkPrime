@@ -18,6 +18,25 @@
 #'   on `rate_loss` (neomorphic asymmetry). Defaults: meanlog = 0, sdlog = 2.
 #' @param rateLogSdShape,rateLogSdRate Shape and rate for the Gamma prior
 #'   on `rate_log_sd` (ACRV dispersion). Defaults: shape = 1, rate = 1.
+#'   Used as-is in the legacy single-σ path and as the legacy
+#'   `priorOnClassRateLogSd = "gamma_independent"` per-class prior.
+#'   Not consulted by the default pooled hyperprior (see
+#'   `priorOnClassRateLogSd`).
+#' @param priorOnClassRateLogSd Prior structure on per-class ACRV
+#'   dispersion `σ_c = class_rate_log_sd[c]` when `unlink = "shape"` is
+#'   active with two or more user classes. One of:
+#'   * `"hyperprior_pooled"` (default): non-centred half-normal hierarchy
+#'     `σ_c = τ · z_c`, with `z_c ~ HalfNormal(1)` i.i.d. and
+#'     `τ ~ HalfNormal(1)`. Pools information about within-class rate
+#'     dispersion across classes; designed for cells where some classes
+#'     have few characters and so carry little likelihood signal on σ_c.
+#'   * `"gamma_independent"`: each `σ_c` independently
+#'     `Gamma(rateLogSdShape, rateLogSdRate)`. Legacy behaviour, kept for
+#'     backward compatibility and prior-sensitivity comparisons.
+#'
+#'   Ignored when `unlink` does not include `"shape"` or when only one
+#'   user class is present (the structure is degenerate at K = 1; the
+#'   single σ uses the `rateLogSdShape` / `rateLogSdRate` Gamma prior).
 #' @param kPrimePrior Prior distribution for the true number of character states
 #'   (`k'`) for transformational characters. One of `"empirical_geometric"`
 #'   (default; convolution of an empirical pmf on the number of observed
@@ -125,13 +144,15 @@ MkPrimeModel <- function(
     nBetaCat = 4L,
     betaScaleShape = 1,
     betaScaleRate = 1,
-    classRateConcentration = 1
+    classRateConcentration = 1,
+    priorOnClassRateLogSd = c("hyperprior_pooled", "gamma_independent")
 ) {
   coding <- match.arg(coding, c("variable", "informative", "none"))
   kPrimePrior <- match.arg(
     kPrimePrior,
     c("empirical_geometric", "geometric", "beta_geometric", "logseries")
   )
+  priorOnClassRateLogSd <- match.arg(priorOnClassRateLogSd)
 
   # empiricalNObs is only relevant under the empirical_geometric prior; warn
   # if supplied for other priors so the user knows it will be ignored.
@@ -222,7 +243,8 @@ MkPrimeModel <- function(
       nBetaCat = as.integer(nBetaCat),
       betaScaleShape = betaScaleShape,
       betaScaleRate = betaScaleRate,
-      classRateConcentration = classRateConcentration
+      classRateConcentration = classRateConcentration,
+      priorOnClassRateLogSd = priorOnClassRateLogSd
     ),
     class = "MkPrimeModel"
   )
@@ -548,21 +570,68 @@ LogPrior <- function(state, model, mkd) {
       lp <- lp + logDirConst + (alpha - 1) * sum(log(classW))
     }
 
-    # 2. Gamma i.i.d. on class_rate_log_sd[c] for c > 1 (§5.4).
+    # 2. Per-class ACRV-shape prior (§5.4 / hyperprior extension).
     #    class_rate_log_sd[1] == rate_log_sd: already counted by the scalar
-    #    rate_log_sd prior above. Only add for extra classes (indices 2..K).
+    #    rate_log_sd prior above. Two prior options:
+    #
+    #      (a) "hyperprior_pooled" (default, K >= 2): non-centred half-normal
+    #          hierarchy σ_c = τ · z_c with z_c ~ HN(1) i.i.d. and τ ~ HN(1).
+    #          The legacy Gamma(rateLogSdShape, rateLogSdRate) on σ_0 added
+    #          above is the wrong prior for the new structure, so we
+    #          subtract it and add HN(1) on each z_c (c = 1..K) and on τ.
+    #
+    #      (b) "gamma_independent" (legacy, K >= 2): each σ_c
+    #          independently ~ Gamma. σ_0 prior already counted; loop adds
+    #          σ_1..σ_{K-1} contributions.
+    #
+    #    For K == 1 (linked shape, or unreachable "shape unlinked at K=1"
+    #    coerced by .ValidatePartitionArgs): no extra contribution — the
+    #    scalar rate_log_sd prior added above covers the single σ.
     classRLS <- state$class_rate_log_sd
     if (!is.null(classRLS) && length(classRLS) > 1L) {
-      extra_sds <- classRLS[-1L]   # classes 2..K
-      for (sd_c in extra_sds) {
-        if (sd_c < 0) return(-Inf)
-        if (sd_c > 0) {
-          lp <- lp + dgamma(sd_c,
+      useHyperprior <-
+        identical(model$priorOnClassRateLogSd, "hyperprior_pooled")
+      if (useHyperprior) {
+        # Subtract legacy Gamma on σ_0 (== rate_log_sd) added above.
+        if (state$rate_log_sd > 0) {
+          lp <- lp - dgamma(state$rate_log_sd,
                              shape = model$rateLogSdShape,
                              rate = model$rateLogSdRate,
                              log = TRUE)
-        } else if (model$rateLogSdShape > 1) {
-          return(-Inf)
+        }
+        # HN(1) on every z_c (c = 1..K): log p(z) = log 2 + dnorm(z;0,1) for z>=0.
+        z <- state$class_rate_log_sd_z
+        if (is.null(z) || length(z) != length(classRLS)) {
+          cli::cli_abort(
+            "Hyperprior on {.field class_rate_log_sd} requires
+             {.field class_rate_log_sd_z} of matching length."
+          )
+        }
+        if (any(z < 0)) return(-Inf)
+        lp <- lp + sum(log(2) + dnorm(z, mean = 0, sd = 1, log = TRUE))
+        # HN(1) on τ.
+        tau <- state$hyper_tau
+        if (is.null(tau)) {
+          cli::cli_abort(
+            "Hyperprior on {.field class_rate_log_sd} requires
+             {.field hyper_tau} scalar."
+          )
+        }
+        if (tau < 0) return(-Inf)
+        lp <- lp + log(2) + dnorm(tau, mean = 0, sd = 1, log = TRUE)
+      } else {
+        # Legacy independent Gamma on each σ_c for c = 2..K.
+        extra_sds <- classRLS[-1L]   # classes 2..K
+        for (sd_c in extra_sds) {
+          if (sd_c < 0) return(-Inf)
+          if (sd_c > 0) {
+            lp <- lp + dgamma(sd_c,
+                               shape = model$rateLogSdShape,
+                               rate = model$rateLogSdRate,
+                               log = TRUE)
+          } else if (model$rateLogSdShape > 1) {
+            return(-Inf)
+          }
         }
       }
     }

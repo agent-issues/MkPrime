@@ -73,8 +73,8 @@ fitch_score_r <- function(parent, child, tipStates, nTip, kStates) {
     .Call(`_MkPrime_fitch_score_r`, parent, child, tipStates, nTip, kStates)
 }
 
-init_mcmc_state <- function(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale = 1.0, kprimeAlpha = 1.0, kprimeBeta = 1.0, classRateLogSd = numeric(0), classW = numeric(0), classRate = numeric(0), nCharPerClass = integer(0), etaNeo = 1.0) {
-    .Call(`_MkPrime_init_mcmc_state`, parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta, classRateLogSd, classW, classRate, nCharPerClass, etaNeo)
+init_mcmc_state <- function(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale = 1.0, kprimeAlpha = 1.0, kprimeBeta = 1.0, classRateLogSd = numeric(0), classW = numeric(0), classRate = numeric(0), nCharPerClass = integer(0), etaNeo = 1.0, useHyperpriorOnSigma = FALSE, hyperTau = 1.0, classZ = numeric(0)) {
+    .Call(`_MkPrime_init_mcmc_state`, parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta, classRateLogSd, classW, classRate, nCharPerClass, etaNeo, useHyperpriorOnSigma, hyperTau, classZ)
 }
 
 fill_partition_cache <- function(dataPtr, statePtr) {
@@ -101,8 +101,8 @@ eval_log_prior_cpp <- function(dataPtr, statePtr) {
     .Call(`_MkPrime_eval_log_prior_cpp`, dataPtr, statePtr)
 }
 
-eval_log_prior_partitioned_cpp <- function(dataPtr, statePtr, classRateLogSd, classW, etaNeo) {
-    .Call(`_MkPrime_eval_log_prior_partitioned_cpp`, dataPtr, statePtr, classRateLogSd, classW, etaNeo)
+eval_log_prior_partitioned_cpp <- function(dataPtr, statePtr, classRateLogSd, classW, etaNeo, useHyperpriorOnSigma = FALSE, hyperTau = 1.0, classZ = as.numeric( c())) {
+    .Call(`_MkPrime_eval_log_prior_partitioned_cpp`, dataPtr, statePtr, classRateLogSd, classW, etaNeo, useHyperpriorOnSigma, hyperTau, classZ)
 }
 
 set_class_rate_concentration <- function(dataPtr, concentration) {

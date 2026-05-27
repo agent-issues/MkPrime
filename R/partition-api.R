@@ -261,10 +261,26 @@
   # class_rate_log_sd is per-class only when "shape" is unlinked. Each c
   # starts at the legacy value 0.5 so the partition-aware path collapses
   # to the legacy LL at initial state regardless of unlink-shape choice.
-  if ("shape" %in% partitionSpec$unlink) {
+  shapeUnlinked <- "shape" %in% partitionSpec$unlink
+  if (shapeUnlinked) {
     state$class_rate_log_sd <- rep(state$rate_log_sd, nClasses)
   } else {
     state$class_rate_log_sd <- state$rate_log_sd
+  }
+
+  # Half-normal hyperprior on σ_c (non-centred): σ_c = hyper_tau · z_c.
+  # Active only when shape is unlinked AND the model selects the pooled
+  # hyperprior AND nClasses >= 2 (the structure is degenerate at K = 1;
+  # the legacy single-σ Gamma prior covers that case). With τ = 1 and
+  # z_c = rate_log_sd (= 0.5 by default), the derived σ_c equals the
+  # legacy initial value, preserving the initial-state likelihood
+  # equivalence to the legacy single-σ path.
+  state$use_hyperprior_on_sigma <- shapeUnlinked &&
+    nClasses >= 2L &&
+    identical(model$priorOnClassRateLogSd, "hyperprior_pooled")
+  if (state$use_hyperprior_on_sigma) {
+    state$hyper_tau           <- 1.0
+    state$class_rate_log_sd_z <- rep(state$rate_log_sd, nClasses)
   }
 
   # eta_neo is the per-§5.2 asymmetry parameter; only sampled when hasNeo.
@@ -352,7 +368,8 @@
                                    fixTopology   = FALSE,
                                    kPrimePrior   = "geometric",
                                    qHeterogeneity = FALSE,
-                                   joint2d       = TRUE) {
+                                   joint2d       = TRUE,
+                                   priorOnClassRateLogSd = "hyperprior_pooled") {
   # Always build the legacy spec first; trivial partition is a no-op.
   moves <- .BuildMoves(nEdge, nTrans, hasNeo, mcmc,
                        fixTopology   = fixTopology,
@@ -367,8 +384,29 @@
 
   nClasses <- partitionSpec$nClasses
 
+  # "shape" unlinked: drop the legacy scalar rate_log_sd moves (case 2,
+  # case 19-slice on rate_log_sd, and the joint_tl_rls 2D move). The
+  # scalar `state->rateLogSd` only stays meaningful as the lockstep
+  # mirror of `classRateLogSd[0]`; an independent scalar move would
+  # break that lockstep and the partial-CL fallbacks in the C++ hot
+  # path that consume state->rateLogSd would return wrong (or NaN)
+  # log-likelihoods. Per-class moves (cases 31, 33) target σ_0
+  # explicitly via classIdx = 1.
+  if ("shape" %in% partitionSpec$unlink) {
+    keep <- vapply(moves, function(mv) {
+      !(identical(mv$target, "rate_log_sd") ||
+        identical(mv$name, "rate_log_sd") ||
+        identical(mv$name, "slice_rate_log_sd") ||
+        identical(mv$name, "joint_tl_rls"))
+    }, logical(1))
+    moves <- moves[keep]
+  }
+
   # "shape" unlinked: one MH scale move per class on class_rate_log_sd[c].
   # Each move targets a single component of a length-nClasses state vector.
+  # Under the pooled hyperprior the C++ dispatch internally rescales z_c
+  # (not σ_c) and derives σ_c = τ·z_c; the same move spec drives both
+  # arms.
   if ("shape" %in% partitionSpec$unlink) {
     for (c in seq_len(nClasses)) {
       moves <- c(moves, list(
@@ -379,6 +417,20 @@
           weight    = 1,
           dim       = 1L,
           classIdx  = as.integer(c)
+        )
+      ))
+    }
+
+    # Single global Bactrian scale on τ (only meaningful when the pooled
+    # hyperprior is active; rescaling τ moves every σ_c together).
+    if (identical(priorOnClassRateLogSd, "hyperprior_pooled")) {
+      moves <- c(moves, list(
+        list(
+          name   = "scale_hyper_tau",
+          type   = "scale_hyper_tau",
+          target = "hyper_tau",
+          weight = 1,
+          dim    = 1L
         )
       ))
     }
@@ -411,7 +463,8 @@
 # convention is `class<c>_rate_log_sd`, `w_<c>` (mirroring plan v4 §8 row 6).
 .ParamNamesPartitioned <- function(mkd, nEdge, partitionSpec,
                                     kPrimePrior   = "geometric",
-                                    qHeterogeneity = FALSE) {
+                                    qHeterogeneity = FALSE,
+                                    priorOnClassRateLogSd = "hyperprior_pooled") {
   nms <- .ParamNames(mkd, nEdge, kPrimePrior = kPrimePrior,
                      qHeterogeneity = qHeterogeneity)
 
@@ -428,6 +481,17 @@
   }
   if ("ratemultiplier" %in% partitionSpec$unlink) {
     extra <- c(extra, paste0("w_", seq_len(nClasses)))
+  }
+
+  # Hyperprior columns: hyper_tau + per-class z_c. Appended last to keep
+  # the legacy column order stable for AutoPart-style readers that index
+  # by name and rely on prior column positions.
+  if ("shape" %in% partitionSpec$unlink &&
+      nClasses >= 2L &&
+      identical(priorOnClassRateLogSd, "hyperprior_pooled")) {
+    extra <- c(extra,
+               "hyper_tau",
+               paste0("class", seq_len(nClasses), "_rate_log_sd_z"))
   }
 
   # Order: legacy columns first, then per-class additions appended.

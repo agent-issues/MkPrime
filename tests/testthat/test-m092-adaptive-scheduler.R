@@ -428,7 +428,8 @@ test_that("All move names in .kMoveTypes are valid moveWeights names", {
     "kprime_alpha", "kprime_beta",
     "slice_kprime_alpha", "slice_kprime_beta",
     "mh_p", "mh_logit_p",
-    "scale_class_rate_log_sd", "dirichlet_simplex_class_w"
+    "scale_class_rate_log_sd", "dirichlet_simplex_class_w",
+    "scale_hyper_tau"
   )
   expect_true(all(names(MkPrime:::.kMoveTypes) %in% validInMcmc))
 })

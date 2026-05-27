@@ -19,7 +19,8 @@ library("TreeTools")
 # Helper
 # ---------------------------------------------------------------------------
 
-.setup_prior <- function(partition = NULL, nChar = 8L, nTip = 6L, seed = 42L) {
+.setup_prior <- function(partition = NULL, nChar = 8L, nTip = 6L, seed = 42L,
+                          priorOnClassRateLogSd = "gamma_independent") {
   set.seed(seed)
   mat <- matrix(sample(0:1, nTip * nChar, replace = TRUE),
                 nrow = nTip, ncol = nChar,
@@ -47,7 +48,14 @@ library("TreeTools")
   # cpp_log_prior use the same prior path. The empirical_geometric default
   # requires passing the full empirical body to prepare_mcmc_data, which adds
   # complexity orthogonal to what this test file validates.
-  model <- MkPrimeModel(kPrimePrior = "geometric")
+  #
+  # Default to `gamma_independent` because the tests here build state lists
+  # by hand; the pooled hyperprior path requires `hyper_tau` and
+  # `class_rate_log_sd_z` fields whose Gamma-difference identity (group C)
+  # doesn't apply. The hyperprior path is exercised directly in
+  # test-partition-hyperprior.R.
+  model <- MkPrimeModel(kPrimePrior = "geometric",
+                         priorOnClassRateLogSd = priorOnClassRateLogSd)
   # Finalise so treeLengthRate is set (needed by LogPrior)
   model <- .FinalizeModel(model, tree, mkd)
 

@@ -53,7 +53,7 @@ test_that(".ParamNamesPartitioned with NULL partition is identical to .ParamName
 
 # ---- non-trivial spec: per-class moves and columns appended ----
 
-test_that("'shape' unlink emits one scale move per class", {
+test_that("'shape' unlink + hyperprior emits per-class scale moves + scale_hyper_tau", {
   mcmc <- MkPrimeMCMC(nIter = 100L, autoTune = FALSE, nRuns = 1L,
                       minWarmup = 50L, maxWarmup = 50L)
   spec <- list(partition = c(1L, 1L, 1L, 1L, 2L, 2L, 2L, 2L),
@@ -62,17 +62,47 @@ test_that("'shape' unlink emits one scale move per class", {
   legacy <- .BuildMoves(nEdge = 9L, nTrans = 8L, hasNeo = FALSE, mcmc = mcmc)
   part   <- .BuildMovesPartitioned(nEdge = 9L, nTrans = 8L, hasNeo = FALSE,
                                    mcmc = mcmc, partitionSpec = spec)
-  # Should be legacy + 2 new per-class moves
-  expect_identical(length(part), length(legacy) + 2L)
-  newNames <- setdiff(vapply(part, `[[`, character(1), "name"),
-                      vapply(legacy, `[[`, character(1), "name"))
-  expect_identical(newNames, c("scale_class_rate_log_sd_1",
-                               "scale_class_rate_log_sd_2"))
-  # All new moves carry the classIdx field
-  newMoves <- part[(length(legacy) + 1L):length(part)]
-  expect_identical(vapply(newMoves, `[[`, integer(1), "classIdx"), 1:2)
-  expect_identical(unique(vapply(newMoves, `[[`, character(1), "type")),
+  # When "shape" is unlinked the partitioned move list drops the legacy
+  # scalar rate_log_sd / slice_rate_log_sd / joint_tl_rls moves (they would
+  # break the lockstep with classRateLogSd[0]) and appends per-class moves
+  # plus a scale_hyper_tau move (pooled hyperprior is the default).
+  partNames   <- vapply(part,   `[[`, character(1), "name")
+  legacyNames <- vapply(legacy, `[[`, character(1), "name")
+  dropped <- setdiff(legacyNames, partNames)
+  expect_setequal(dropped,
+                  c("rate_log_sd", "slice_rate_log_sd", "joint_tl_rls"))
+  added <- setdiff(partNames, legacyNames)
+  expect_identical(added, c("scale_class_rate_log_sd_1",
+                            "scale_class_rate_log_sd_2",
+                            "scale_hyper_tau"))
+  # Per-class moves carry the classIdx field; scale_hyper_tau does not.
+  perClass <- part[grep("^scale_class_rate_log_sd_", partNames)]
+  expect_identical(vapply(perClass, `[[`, integer(1), "classIdx"), 1:2)
+  expect_identical(unique(vapply(perClass, `[[`, character(1), "type")),
                    "scale_class_rate_log_sd")
+  tauMove <- part[[which(partNames == "scale_hyper_tau")]]
+  expect_identical(tauMove$type, "scale_hyper_tau")
+  expect_identical(tauMove$target, "hyper_tau")
+  expect_null(tauMove$classIdx)
+})
+
+
+test_that("'shape' unlink with gamma_independent prior emits no scale_hyper_tau", {
+  mcmc <- MkPrimeMCMC(nIter = 100L, autoTune = FALSE, nRuns = 1L,
+                      minWarmup = 50L, maxWarmup = 50L)
+  spec <- list(partition = c(1L, 1L, 1L, 1L, 2L, 2L, 2L, 2L),
+               unlink    = "shape",
+               nClasses  = 2L)
+  legacy <- .BuildMoves(nEdge = 9L, nTrans = 8L, hasNeo = FALSE, mcmc = mcmc)
+  part   <- .BuildMovesPartitioned(nEdge = 9L, nTrans = 8L, hasNeo = FALSE,
+                                   mcmc = mcmc, partitionSpec = spec,
+                                   priorOnClassRateLogSd = "gamma_independent")
+  partNames   <- vapply(part,   `[[`, character(1), "name")
+  legacyNames <- vapply(legacy, `[[`, character(1), "name")
+  added <- setdiff(partNames, legacyNames)
+  expect_identical(added, c("scale_class_rate_log_sd_1",
+                            "scale_class_rate_log_sd_2"))
+  expect_false("scale_hyper_tau" %in% partNames)
 })
 
 
@@ -103,19 +133,19 @@ test_that("both 'shape' and 'ratemultiplier' unlinked emits both move kinds", {
   legacy <- .BuildMoves(nEdge = 9L, nTrans = 8L, hasNeo = FALSE, mcmc = mcmc)
   part   <- .BuildMovesPartitioned(nEdge = 9L, nTrans = 8L, hasNeo = FALSE,
                                    mcmc = mcmc, partitionSpec = spec)
-  # Legacy + 2 shape moves + 1 ratemultiplier move = legacy + 3
-  expect_identical(length(part), length(legacy) + 3L)
-  newNames <- vapply(part, `[[`, character(1), "name")[
-    (length(legacy) + 1L):length(part)]
-  expect_identical(newNames, c("scale_class_rate_log_sd_1",
-                               "scale_class_rate_log_sd_2",
-                               "dirichlet_simplex_class_w"))
+  partNames   <- vapply(part,   `[[`, character(1), "name")
+  legacyNames <- vapply(legacy, `[[`, character(1), "name")
+  added <- setdiff(partNames, legacyNames)
+  expect_identical(added, c("scale_class_rate_log_sd_1",
+                            "scale_class_rate_log_sd_2",
+                            "scale_hyper_tau",
+                            "dirichlet_simplex_class_w"))
 })
 
 
 # ---- ParamNames extensions ----
 
-test_that(".ParamNamesPartitioned appends class<c>_rate_log_sd columns when 'shape' unlinked", {
+test_that(".ParamNamesPartitioned appends shape + hyperprior columns by default", {
   mkd  <- .dummy_mkd(nChar = 8L)
   spec <- list(partition = c(1L, 1L, 1L, 1L, 2L, 2L, 2L, 2L),
                unlink    = "shape",
@@ -123,9 +153,25 @@ test_that(".ParamNamesPartitioned appends class<c>_rate_log_sd columns when 'sha
   legacy <- .ParamNames(mkd, nEdge = 9L)
   part   <- .ParamNamesPartitioned(mkd, nEdge = 9L, partitionSpec = spec)
   appended <- setdiff(part, legacy)
-  expect_identical(appended, c("class1_rate_log_sd", "class2_rate_log_sd"))
+  expect_identical(appended,
+                   c("class1_rate_log_sd", "class2_rate_log_sd",
+                     "hyper_tau",
+                     "class1_rate_log_sd_z", "class2_rate_log_sd_z"))
   # Legacy columns appear first, in unchanged order
   expect_identical(part[seq_along(legacy)], legacy)
+})
+
+
+test_that(".ParamNamesPartitioned skips hyperprior columns under gamma_independent", {
+  mkd  <- .dummy_mkd(nChar = 8L)
+  spec <- list(partition = c(1L, 1L, 1L, 1L, 2L, 2L, 2L, 2L),
+               unlink    = "shape",
+               nClasses  = 2L)
+  legacy <- .ParamNames(mkd, nEdge = 9L)
+  part   <- .ParamNamesPartitioned(mkd, nEdge = 9L, partitionSpec = spec,
+                                   priorOnClassRateLogSd = "gamma_independent")
+  appended <- setdiff(part, legacy)
+  expect_identical(appended, c("class1_rate_log_sd", "class2_rate_log_sd"))
 })
 
 
@@ -149,8 +195,11 @@ test_that(".ParamNamesPartitioned appends both column families when both unlinke
   legacy <- .ParamNames(mkd, nEdge = 9L)
   part   <- .ParamNamesPartitioned(mkd, nEdge = 9L, partitionSpec = spec)
   appended <- setdiff(part, legacy)
-  # shape columns appended first, then ratemultiplier columns (per the
-  # function's order of token handling)
+  # shape columns appended first, then ratemultiplier columns, then
+  # hyperprior columns (hyper_tau + per-class z).
   expect_identical(appended, c("class1_rate_log_sd", "class2_rate_log_sd",
-                               "w_1", "w_2"))
+                               "w_1", "w_2",
+                               "hyper_tau",
+                               "class1_rate_log_sd_z",
+                               "class2_rate_log_sd_z"))
 })

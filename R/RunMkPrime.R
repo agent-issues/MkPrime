@@ -234,7 +234,9 @@ RunMkPrime <- function(data, tree = NULL,
                        fixTopology = fixTopology,
                        kPrimePrior = model$kPrimePrior %||% "geometric",
                        qHeterogeneity = qHet,
-                       joint2d = isTRUE(mcmc$joint2d))
+                       joint2d = isTRUE(mcmc$joint2d),
+                       priorOnClassRateLogSd =
+                         model$priorOnClassRateLogSd %||% "hyperprior_pooled")
 
   mcmc$thinWasAuto <- identical(mcmc$thin, "auto")
   if (mcmc$thinWasAuto) {
@@ -265,7 +267,10 @@ RunMkPrime <- function(data, tree = NULL,
 
   paramNames  <- .ParamNamesPartitioned(mkd, nEdge, partitionSpec,
                              kPrimePrior = model$kPrimePrior %||% "geometric",
-                             qHeterogeneity = qHet)
+                             qHeterogeneity = qHet,
+                             priorOnClassRateLogSd =
+                               model$priorOnClassRateLogSd %||%
+                               "hyperprior_pooled")
 
   # --- Log file setup ---
   # Always stream to a log file for interrupt recovery.  When the user
@@ -658,6 +663,14 @@ RunMkPrime <- function(data, tree = NULL,
       ch_list$class_rate        <- as.numeric(s$class_rate)
       ch_list$nChar_c           <- as.integer(s$nChar_c)
       ch_list$eta_neo           <- s$eta_neo
+      # Hyperprior on σ_c — present only when the pooled hyperprior is
+      # active. Detected via the flag stored on `state` by
+      # `.InitStatePartitioned`.
+      if (isTRUE(s$use_hyperprior_on_sigma)) {
+        ch_list$use_hyperprior_on_sigma <- TRUE
+        ch_list$hyper_tau               <- as.numeric(s$hyper_tau)
+        ch_list$class_rate_log_sd_z     <- as.numeric(s$class_rate_log_sd_z)
+      }
     }
     chains[[ch]] <- ch_list
   }
@@ -752,7 +765,10 @@ RunMkPrime <- function(data, tree = NULL,
       classW         = as.numeric(ch_r$class_w %||% numeric(0)),
       classRate      = as.numeric(ch_r$class_rate %||% numeric(0)),
       nCharPerClass  = as.integer(ch_r$nChar_c %||% integer(0)),
-      etaNeo         = ch_r$eta_neo %||% 1.0
+      etaNeo         = ch_r$eta_neo %||% 1.0,
+      useHyperpriorOnSigma = isTRUE(ch_r$use_hyperprior_on_sigma),
+      hyperTau       = ch_r$hyper_tau %||% 1.0,
+      classZ         = as.numeric(ch_r$class_rate_log_sd_z %||% numeric(0))
     )
   }
   for (ch in seq_len(nChains)) {
@@ -3178,7 +3194,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   for (ch in seq_len(nChains)) {
     tun <- chainTuning[[ch]]
     for (m in seq_along(moves)) {
-      mat[ch, m] <- switch(moves[[m]]$name,
+      mv <- moves[[m]]
+      mat[ch, m] <- switch(mv$name,
         tree_length = tun$scale_tree_length,
         rate_loss   = tun$scale_rate_loss,
         rate_log_sd = tun$scale_rate_log_sd,
@@ -3194,7 +3211,18 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         p           = 0.5,  # Gibbs move: scale ignored by C++; placeholder
         mh_p        = tun$scale_p %||% 0.5,
         mh_logit_p  = tun$scale_logit_p %||% 1.0,
-        0.5
+        scale_hyper_tau = tun$scale_hyper_tau %||% 0.5,
+        # Per-class moves carry name = "<type>_<c>" so they fall through to
+        # the default; honour `tun$scale_class_rate_log_sd` by looking at
+        # the move type instead.
+        {
+          if (!is.null(mv$type) &&
+              mv$type == "scale_class_rate_log_sd") {
+            tun$scale_class_rate_log_sd %||% 0.5
+          } else {
+            0.5
+          }
+        }
       )
     }
   }
@@ -3620,8 +3648,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 # 25=gibbs_kprime_sweep, 26=block_kprime_shift,
 # 27=scale_kprime_alpha, 28=scale_kprime_beta,
 # 30=mh_logit_p (logit-scale MH on p, for empirical_geometric),
-# 31=scale_class_rate_log_sd (per-class shape; charIdx carries 1-based classIdx),
-# 32=dirichlet_simplex_class_w (Dirichlet simplex on class_w)
+# 31=scale_class_rate_log_sd (per-class shape; charIdx carries 1-based classIdx;
+#    acts on z_c when the half-normal hyperprior on σ_c is active, else on σ_c),
+# 32=dirichlet_simplex_class_w (Dirichlet simplex on class_w),
+# 33=scale_hyper_tau (Bactrian scale on the population scale τ of the
+#    half-normal hyperprior σ_c = τ · z_c)
 .kMoveTypes <- c(
   tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
   rate_neo = 3L, branch_lengths = 4L,
@@ -3652,7 +3683,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   slice_kprime_alpha = 29L,
   slice_kprime_beta = 29L,
   scale_class_rate_log_sd = 31L,
-  dirichlet_simplex_class_w = 32L
+  dirichlet_simplex_class_w = 32L,
+  scale_hyper_tau = 33L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)
@@ -3753,6 +3785,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       mh_p        = tuning$scale_p %||% 0.5,
       mh_logit_p  = tuning$scale_logit_p %||% 1.0,
       dirichlet_simplex_class_w = tuning$dirichlet_class_w_alpha %||% 10,
+      scale_hyper_tau = tuning$scale_hyper_tau %||% 0.5,
       {
         # Per-class moves: switch on type rather than instance name
         if (!is.null(move$type) && move$type == "scale_class_rate_log_sd") {

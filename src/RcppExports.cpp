@@ -284,8 +284,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // init_mcmc_state
-SEXP init_mcmc_state(IntegerVector parent, IntegerVector child, NumericVector relBrLengths, double treeLength, double rateLoss, double rateLogSd, double rateNeo, double p, IntegerVector kPrime, double logLik, double logPrior, double betaScale, double kprimeAlpha, double kprimeBeta, NumericVector classRateLogSd, NumericVector classW, NumericVector classRate, IntegerVector nCharPerClass, double etaNeo);
-RcppExport SEXP _MkPrime_init_mcmc_state(SEXP parentSEXP, SEXP childSEXP, SEXP relBrLengthsSEXP, SEXP treeLengthSEXP, SEXP rateLossSEXP, SEXP rateLogSdSEXP, SEXP rateNeoSEXP, SEXP pSEXP, SEXP kPrimeSEXP, SEXP logLikSEXP, SEXP logPriorSEXP, SEXP betaScaleSEXP, SEXP kprimeAlphaSEXP, SEXP kprimeBetaSEXP, SEXP classRateLogSdSEXP, SEXP classWSEXP, SEXP classRateSEXP, SEXP nCharPerClassSEXP, SEXP etaNeoSEXP) {
+SEXP init_mcmc_state(IntegerVector parent, IntegerVector child, NumericVector relBrLengths, double treeLength, double rateLoss, double rateLogSd, double rateNeo, double p, IntegerVector kPrime, double logLik, double logPrior, double betaScale, double kprimeAlpha, double kprimeBeta, NumericVector classRateLogSd, NumericVector classW, NumericVector classRate, IntegerVector nCharPerClass, double etaNeo, bool useHyperpriorOnSigma, double hyperTau, NumericVector classZ);
+RcppExport SEXP _MkPrime_init_mcmc_state(SEXP parentSEXP, SEXP childSEXP, SEXP relBrLengthsSEXP, SEXP treeLengthSEXP, SEXP rateLossSEXP, SEXP rateLogSdSEXP, SEXP rateNeoSEXP, SEXP pSEXP, SEXP kPrimeSEXP, SEXP logLikSEXP, SEXP logPriorSEXP, SEXP betaScaleSEXP, SEXP kprimeAlphaSEXP, SEXP kprimeBetaSEXP, SEXP classRateLogSdSEXP, SEXP classWSEXP, SEXP classRateSEXP, SEXP nCharPerClassSEXP, SEXP etaNeoSEXP, SEXP useHyperpriorOnSigmaSEXP, SEXP hyperTauSEXP, SEXP classZSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -308,7 +308,10 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< NumericVector >::type classRate(classRateSEXP);
     Rcpp::traits::input_parameter< IntegerVector >::type nCharPerClass(nCharPerClassSEXP);
     Rcpp::traits::input_parameter< double >::type etaNeo(etaNeoSEXP);
-    rcpp_result_gen = Rcpp::wrap(init_mcmc_state(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta, classRateLogSd, classW, classRate, nCharPerClass, etaNeo));
+    Rcpp::traits::input_parameter< bool >::type useHyperpriorOnSigma(useHyperpriorOnSigmaSEXP);
+    Rcpp::traits::input_parameter< double >::type hyperTau(hyperTauSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type classZ(classZSEXP);
+    rcpp_result_gen = Rcpp::wrap(init_mcmc_state(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta, classRateLogSd, classW, classRate, nCharPerClass, etaNeo, useHyperpriorOnSigma, hyperTau, classZ));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -380,8 +383,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // eval_log_prior_partitioned_cpp
-double eval_log_prior_partitioned_cpp(SEXP dataPtr, SEXP statePtr, Rcpp::NumericVector classRateLogSd, Rcpp::NumericVector classW, double etaNeo);
-RcppExport SEXP _MkPrime_eval_log_prior_partitioned_cpp(SEXP dataPtrSEXP, SEXP statePtrSEXP, SEXP classRateLogSdSEXP, SEXP classWSEXP, SEXP etaNeoSEXP) {
+double eval_log_prior_partitioned_cpp(SEXP dataPtr, SEXP statePtr, Rcpp::NumericVector classRateLogSd, Rcpp::NumericVector classW, double etaNeo, bool useHyperpriorOnSigma, double hyperTau, Rcpp::NumericVector classZ);
+RcppExport SEXP _MkPrime_eval_log_prior_partitioned_cpp(SEXP dataPtrSEXP, SEXP statePtrSEXP, SEXP classRateLogSdSEXP, SEXP classWSEXP, SEXP etaNeoSEXP, SEXP useHyperpriorOnSigmaSEXP, SEXP hyperTauSEXP, SEXP classZSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -390,7 +393,10 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< Rcpp::NumericVector >::type classRateLogSd(classRateLogSdSEXP);
     Rcpp::traits::input_parameter< Rcpp::NumericVector >::type classW(classWSEXP);
     Rcpp::traits::input_parameter< double >::type etaNeo(etaNeoSEXP);
-    rcpp_result_gen = Rcpp::wrap(eval_log_prior_partitioned_cpp(dataPtr, statePtr, classRateLogSd, classW, etaNeo));
+    Rcpp::traits::input_parameter< bool >::type useHyperpriorOnSigma(useHyperpriorOnSigmaSEXP);
+    Rcpp::traits::input_parameter< double >::type hyperTau(hyperTauSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type classZ(classZSEXP);
+    rcpp_result_gen = Rcpp::wrap(eval_log_prior_partitioned_cpp(dataPtr, statePtr, classRateLogSd, classW, etaNeo, useHyperpriorOnSigma, hyperTau, classZ));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -883,14 +889,14 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_bactrian_draws", (DL_FUNC) &_MkPrime_bactrian_draws, 1},
     {"_MkPrime_bactrian_2d_draws", (DL_FUNC) &_MkPrime_bactrian_2d_draws, 2},
     {"_MkPrime_fitch_score_r", (DL_FUNC) &_MkPrime_fitch_score_r, 5},
-    {"_MkPrime_init_mcmc_state", (DL_FUNC) &_MkPrime_init_mcmc_state, 19},
+    {"_MkPrime_init_mcmc_state", (DL_FUNC) &_MkPrime_init_mcmc_state, 22},
     {"_MkPrime_fill_partition_cache", (DL_FUNC) &_MkPrime_fill_partition_cache, 2},
     {"_MkPrime_allocate_cl_workspace", (DL_FUNC) &_MkPrime_allocate_cl_workspace, 2},
     {"_MkPrime_get_mcmc_state", (DL_FUNC) &_MkPrime_get_mcmc_state, 1},
     {"_MkPrime_compute_topo_hash", (DL_FUNC) &_MkPrime_compute_topo_hash, 1},
     {"_MkPrime_get_state_log_lik", (DL_FUNC) &_MkPrime_get_state_log_lik, 1},
     {"_MkPrime_eval_log_prior_cpp", (DL_FUNC) &_MkPrime_eval_log_prior_cpp, 2},
-    {"_MkPrime_eval_log_prior_partitioned_cpp", (DL_FUNC) &_MkPrime_eval_log_prior_partitioned_cpp, 5},
+    {"_MkPrime_eval_log_prior_partitioned_cpp", (DL_FUNC) &_MkPrime_eval_log_prior_partitioned_cpp, 8},
     {"_MkPrime_set_class_rate_concentration", (DL_FUNC) &_MkPrime_set_class_rate_concentration, 2},
     {"_MkPrime_eval_full_loglik_cpp", (DL_FUNC) &_MkPrime_eval_full_loglik_cpp, 2},
     {"_MkPrime_eval_full_loglik_at_cpp", (DL_FUNC) &_MkPrime_eval_full_loglik_at_cpp, 5},
