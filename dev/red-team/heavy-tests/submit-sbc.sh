@@ -47,10 +47,13 @@ echo "  R_LIBS=${R_LIBS}"
 # so that any package-relative file paths in sbc.R resolve correctly.
 cd "${SRC}"
 
-Rscript "${RT}/heavy-tests/sbc.R" \
+# Use the source-controlled sbc.R, NOT the stale out-of-tree
+# ${RT}/heavy-tests/sbc.R (which is not updated when the source tree changes).
+# All v6/v7 runs prior to 2026-05-27 silently used that stale copy.
+Rscript "${SRC}/dev/red-team/heavy-tests/sbc.R" \
   --full \
   --arm "${ARM_NAME}" \
-  --out "${RT}/results/sbc-v7" \
+  --out "${RT}/results/sbc-v8" \
   --seed $((20260526 + SLURM_ARRAY_TASK_ID))
 
 du -hs "${TMPDIR}" > "${RT}/logs/sbc_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}_tmpdir.log" || true
