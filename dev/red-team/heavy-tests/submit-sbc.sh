@@ -50,7 +50,7 @@ cd "${SRC}"
 Rscript "${RT}/heavy-tests/sbc.R" \
   --full \
   --arm "${ARM_NAME}" \
-  --out "${RT}/results/sbc" \
+  --out "${RT}/results/sbc-v7" \
   --seed $((20260526 + SLURM_ARRAY_TASK_ID))
 
 du -hs "${TMPDIR}" > "${RT}/logs/sbc_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}_tmpdir.log" || true
