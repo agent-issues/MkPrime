@@ -136,9 +136,13 @@ TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
   states[rootIdx] <- sample.int(kTrue, 1L) - 1L
   edges <- tree$edge
   el    <- tree$edge.length
-  for (e in rev(seq_len(nrow(edges)))) {
+  for (e in seq_len(nrow(edges))) {
     pa <- edges[e, 1L]; ch <- edges[e, 2L]; t <- el[e]
-    # JC: P(same) = 1/k + (1-1/k) exp(-k * t / (k-1))
+    # Forward (root→tip) iteration on a Preorder edge list: parents are
+    # always introduced before their children, so states[pa] is valid when
+    # we reach edge e. `rev()` here would give postorder traversal, reading
+    # uninitialised states[pa] = 0 for every non-root edge — destroying
+    # phylogenetic signal and biasing inference MLE downward. See SBC-TL-MIX-001.
     # Rate convention must match inference (`src/likelihood.cpp:85`:
     # arg = -kStates * t / (kStates - 1)); naive exp(-k*t) diverges from
     # inference for k > 2, biasing tree_length ranks. See SBC-HARNESS-003.

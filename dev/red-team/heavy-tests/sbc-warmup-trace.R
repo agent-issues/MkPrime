@@ -82,7 +82,7 @@ cat(sprintf("[warmup-trace] N_WARM=%d  sim=%d  seed=%d\n", nWarm, simIdx, seed))
   states[rootIdx] <- sample.int(kTrue, 1L) - 1L
   edges <- tree$edge
   el    <- tree$edge.length
-  for (e in rev(seq_len(nrow(edges)))) {
+  for (e in seq_len(nrow(edges))) {
     pa <- edges[e, 1L]; ch <- edges[e, 2L]; t <- el[e]
     pSame <- 1 / kTrue + (1 - 1 / kTrue) * exp(-kTrue * t / (kTrue - 1))
     if (runif(1L) < pSame) {
