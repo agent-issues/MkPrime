@@ -59,7 +59,7 @@ ALL_ARMS <- list(
   list(name = "Mkp_beta_geometric",      model = "Mkp",  prior = "beta_geometric",
        expect = "PASS"),
   list(name = "Mkp_empirical_geometric", model = "Mkp",  prior = "empirical_geometric",
-       expect = "FAIL"),  # EG-001 — missing Z_i normaliser
+       expect = "PASS"),  # EG-001 not visible at kObs=2 (option α); L6 closes the math
   list(name = "Mkp_logseries",           model = "Mkp",  prior = "logseries",
        expect = "PASS"),  # LS-001 latent because c is fixed
   list(name = "MkNT_logseries",          model = "MkNT", prior = "logseries",
@@ -256,15 +256,25 @@ TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
   true_tree <- .simTree(N_TIP)
   tl_true <- sum(true_tree$edge.length)
 
-  # Step 3. Draw kTrue per character from untruncated prior.
+  # Step 3. Draw kTrue per character from the inference prior (tracked
+  # as the SBC "truth" for kPrime ranks). Simulation is forced to k=2.
   kTrue <- .drawKPrime(arm, p_true, model_hp, N_CHAR)
 
-  # Step 4. Simulate each character.
+  # SBC-PRIOR-CONFOUND-001 (option α): simulate every character as binary
+  # so realised kObs == 2 deterministically. With kObs == 2, the
+  # forward draw `kTrue ~ kFloor + prior` matches the inference per-char
+  # prior `kPrime ~ kObs + Geo(p) = 2 + Geo(p)` at the prior level —
+  # eliminating the joint mismatch that contaminated all v4 ranks.
+  # Cost: EG-001 cannot be demonstrated by SBC at kObs=2 (Z_i(p)
+  # missing-normaliser bug cancels there); L6 closes the math.
+  kSim <- rep(2L, N_CHAR)
+
+  # Step 4. Simulate each character with k=2.
   sim_mat <- matrix(NA_integer_, N_TIP, N_CHAR,
                     dimnames = list(true_tree$tip.label, NULL))
   kObs <- integer(N_CHAR)
   for (j in seq_len(N_CHAR)) {
-    raw <- .simJCchar(true_tree, kTrue[j])
+    raw <- .simJCchar(true_tree, kSim[j])
     canon <- .canonicaliseLabels(raw)
     sim_mat[, j] <- canon
     kObs[j] <- attr(canon, "kObs")
@@ -382,12 +392,10 @@ TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
   }
   if (arm$model == "Mkp") {
     # Per-character k' ranks. Pool across characters under exchangeability.
-    # Restrict to kObs == 2 chars: forward draws kTrue = u + 2 with u ~ Geo(p),
-    # but inference's per-char prior is kPrime = kObs + Geo(p). The two
-    # coincide only when kObs == 2, so SBC rank uniformity is only guaranteed
-    # for that subset (SBC-MASS-FAIL-001, option (b), advisor-confirmed).
-    # Drops ~47% of chars; with N_CHAR=100, N_SIM=200, leaves ~10k ranks —
-    # plenty for AD.
+    # SBC-PRIOR-CONFOUND-001 option α: with binary sim every kept char has
+    # kObs == 2 by construction, so the prior match `kTrue = 2 + Geo(p)`
+    # ⇔ `kPrime = kObs + Geo(p) = 2 + Geo(p)` is exact. The kObs == 2
+    # filter below is therefore a no-op safety net.
     kpCols <- grep("^kPrime_", colnames(samples), value = TRUE)
     if (length(kpCols)) {
       idx <- as.integer(sub("kPrime_", "", kpCols))
