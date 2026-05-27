@@ -1,5 +1,39 @@
 # MkPrime (development version)
 
+## Partition-rate parameterisation fix (audit Issue 1, 2026-05-27)
+
+* **RB-style partition-rate normalisation.** `rate_neo` used to enter the
+  likelihood as a one-sided neo-only multiplier (`neoEl = edgeLen *
+  rate_neo`), giving an nChar-weighted mean partition rate `(n_neo·r +
+  n_trans) / nChar` that equals 1 only when `r = 1`. `tree_length` thus
+  lost its "expected substitutions per character on the average edge"
+  interpretation on mixed (neo + trans) datasets — implicit inflation
+  factor ~1.31 at the 635 `by_nt_9v` posterior median. Now uses the
+  symmetric two-sided RevBayes formula
+
+      neoScale   = r / (1+r) · (n_neo + n_trans) / n_neo
+      transScale = 1 / (1+r) · (n_neo + n_trans) / n_trans
+
+  so `n_neo·neoScale + n_trans·transScale ≡ n_neo + n_trans` identically.
+  When `n_neo == 0` or `n_trans == 0`, rate_neo has no identifiable effect
+  and both scales collapse to 1.0 — **trans-only and neo-only datasets
+  are bit-identical pre-/post-patch**, and the existing §7a bit-identity
+  reference (Casali production workload, `hasNeo == false`) is unchanged.
+* **Mixed-dataset posteriors will shift.** On any dataset with both neo and
+  trans characters, posterior samples of `tree_length` and `rate_neo` are
+  not directly comparable pre- and post-patch (the marginal on each
+  shifts by a deterministic rescaling). The shape of the posterior on
+  `rate_loss`, `kPrime`, topology, and branch lengths is unaffected to
+  first order; check before reusing any pre-patch chains.
+* **F1: partial-cache invalidation widened.** `do_move_impl` case 3
+  (rate_neo scale) and case 18 (neo_joint = rate_loss + rate_neo), plus
+  the `paramIdx == 3` branch of `eval_slice_target` / `slice_scalar_impl`,
+  used to refresh only `data->neoPartIndices` after a rate_neo change.
+  Under the new normalisation rate_neo also shifts `transScale`, so all
+  partitions go stale — these paths now fall through to full
+  recomputation. Node-CL cache invalidation widened analogously
+  (`invalidate_all_cls` instead of `invalidate_neo_cls`).
+
 ## Numerical & ascertainment corrections (red-team campaign 2026-05-26)
 
 * **FAST-EXP-001 fix.** Closed-form JC / MkN / F81 transition probabilities

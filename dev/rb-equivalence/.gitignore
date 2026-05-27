@@ -1,0 +1,6 @@
+out/
+rev/
+*.rds
+*.log
+# Generated RB cells live under rev/<pid>/, gitignored.
+# Templates live under templates/ and are tracked.

@@ -87,6 +87,29 @@ MkpLogLikelihood <- function(tree, mkd,
   # ACRV rate multipliers
   rates <- DiscreteLognormalRates(rate_log_sd, nCat)
 
+  # Audit Issue 1: RB-style partition-rate normalisation. neoScale and
+  # transScale make the nChar-weighted mean partition rate equal 1; this
+  # gives tree_length a sampler-independent "expected substitutions per
+  # character on the average edge" interpretation that matches RevBayes.
+  # Degenerate cases (nNeo == 0 or nTrans == 0): rate_neo has no effect,
+  # both scales collapse to 1.0.
+  partTypes <- vapply(mkd$partitions, function(p) p$type, character(1))
+  nCharByPart <- vapply(mkd$partitions, function(p) as.integer(p$nChar),
+                        integer(1))
+  nNeo   <- sum(nCharByPart[partTypes == "neomorphic"])
+  nTrans <- sum(nCharByPart) - nNeo
+  if (nNeo == 0L || nTrans == 0L) {
+    neoScale   <- 1.0
+    transScale <- 1.0
+  } else {
+    denom <- 1.0 + rate_neo
+    nTotal <- as.numeric(nNeo + nTrans)
+    neoScale   <- rate_neo / denom * nTotal / nNeo
+    transScale <- 1.0       / denom * nTotal / nTrans
+  }
+  neoEdge   <- edgeLength * neoScale
+  transEdge <- edgeLength * transScale
+
   totalLoglik <- 0.0
 
   for (part in mkd$partitions) {
@@ -98,8 +121,8 @@ MkpLogLikelihood <- function(tree, mkd,
     nCharPart <- part$nChar
 
     if (part$type == "neomorphic") {
-      # MkN model — apply partition rate scalar
-      neoEl <- edgeLength * rate_neo
+      # MkN model — apply RB-style neo partition scale (audit Issue 1)
+      neoEl <- neoEdge
       rootFreqs <- as.numeric(mkn_stationary_freqs(rate_loss))
 
       if (rate_log_sd > 0) {
@@ -134,20 +157,20 @@ MkpLogLikelihood <- function(tree, mkd,
       kObsMax <- max(part$kObsPerChar)
       if (kObsMax < kStates) {
         if (rate_log_sd > 0) {
-          ll <- pruning_jc_acrv_collapsed(parent, child, edgeLength,
+          ll <- pruning_jc_acrv_collapsed(parent, child, transEdge,
                                           tipStates, kStates, kObsMax, rates)
         } else {
-          ll <- pruning_jc_collapsed(parent, child, edgeLength,
+          ll <- pruning_jc_collapsed(parent, child, transEdge,
                                      tipStates, kStates, kObsMax)
         }
 
         if (coding != "none") {
           puninf <- constant_site_prob_jc_collapsed(
-            parent, child, edgeLength, nTip, kStates, kObsMax, rates
+            parent, child, transEdge, nTip, kStates, kObsMax, rates
           )
           if (coding == "informative") {
             puninf <- puninf + singleton_site_prob_jc_collapsed(
-              parent, child, edgeLength, nTip, kStates, kObsMax, rates
+              parent, child, transEdge, nTip, kStates, kObsMax, rates
             )
           }
           ll <- ll - nCharPart * log(1 - puninf)
@@ -155,19 +178,19 @@ MkpLogLikelihood <- function(tree, mkd,
       } else {
         rootFreqs <- rep(1.0 / kStates, kStates)
         if (rate_log_sd > 0) {
-          ll <- pruning_jc_acrv(parent, child, edgeLength,
+          ll <- pruning_jc_acrv(parent, child, transEdge,
                                 tipStates, kStates, rootFreqs, rates)
         } else {
-          ll <- pruning_jc(parent, child, edgeLength,
+          ll <- pruning_jc(parent, child, transEdge,
                            tipStates, kStates, rootFreqs)
         }
 
         if (coding != "none") {
-          puninf <- constant_site_prob_jc(parent, child, edgeLength,
+          puninf <- constant_site_prob_jc(parent, child, transEdge,
                                           nTip, kStates, rootFreqs, rates)
           if (coding == "informative") {
             puninf <- puninf + singleton_site_prob_jc(
-              parent, child, edgeLength, nTip, kStates, rootFreqs, rates
+              parent, child, transEdge, nTip, kStates, rootFreqs, rates
             )
           }
           ll <- ll - nCharPart * log(1 - puninf)
@@ -192,20 +215,20 @@ MkpLogLikelihood <- function(tree, mkd,
         if (kObsMaxSub < kp) {
           # State-collapse path: kEff = kObsMaxSub + 1.
           if (rate_log_sd > 0) {
-            subLl <- pruning_jc_acrv_collapsed(parent, child, edgeLength,
+            subLl <- pruning_jc_acrv_collapsed(parent, child, transEdge,
                                                subStates, kp, kObsMaxSub, rates)
           } else {
-            subLl <- pruning_jc_collapsed(parent, child, edgeLength,
+            subLl <- pruning_jc_collapsed(parent, child, transEdge,
                                           subStates, kp, kObsMaxSub)
           }
 
           if (coding != "none") {
             puninf <- constant_site_prob_jc_collapsed(
-              parent, child, edgeLength, nTip, kp, kObsMaxSub, rates
+              parent, child, transEdge, nTip, kp, kObsMaxSub, rates
             )
             if (coding == "informative") {
               puninf <- puninf + singleton_site_prob_jc_collapsed(
-                parent, child, edgeLength, nTip, kp, kObsMaxSub, rates
+                parent, child, transEdge, nTip, kp, kObsMaxSub, rates
               )
             }
             subLl <- subLl - nCharSub * log(1 - puninf)
@@ -213,19 +236,19 @@ MkpLogLikelihood <- function(tree, mkd,
         } else {
           rootFreqs <- rep(1.0 / kp, kp)
           if (rate_log_sd > 0) {
-            subLl <- pruning_jc_acrv(parent, child, edgeLength,
+            subLl <- pruning_jc_acrv(parent, child, transEdge,
                                       subStates, kp, rootFreqs, rates)
           } else {
-            subLl <- pruning_jc(parent, child, edgeLength,
+            subLl <- pruning_jc(parent, child, transEdge,
                                  subStates, kp, rootFreqs)
           }
 
           if (coding != "none") {
-            puninf <- constant_site_prob_jc(parent, child, edgeLength,
+            puninf <- constant_site_prob_jc(parent, child, transEdge,
                                             nTip, kp, rootFreqs, rates)
             if (coding == "informative") {
               puninf <- puninf + singleton_site_prob_jc(
-                parent, child, edgeLength, nTip, kp, rootFreqs, rates
+                parent, child, transEdge, nTip, kp, rootFreqs, rates
               )
             }
             subLl <- subLl - nCharSub * log(1 - puninf)
