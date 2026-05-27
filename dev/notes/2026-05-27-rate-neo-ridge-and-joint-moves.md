@@ -3,7 +3,7 @@
 **Status:**
 - **A1 (`joint_tl_rn`) — DONE.** Implemented in `src/mcmc.cpp` (case 33) and fully wired in R (commit `e08d328`, main, 2026-05-27). See task checklist below.
 - **A2 (neo_joint fate) — DONE.** Correlations measured from pid 635 smoke run (2026-05-27): all weak (|ρ| < 0.15). Outcome 3: drop `neo_joint`. Verdict in `dev/notes/2026-05-27-neo-joint-fate.md`.
-- **A3 (SBC on mixed data) — OPEN.** SBC harness with mixed-partition simulations has not yet been run against the patched chain. Planned for Hamilton.
+- **A3 (SBC on mixed data) — IN PROGRESS.** Harness written (`dev/red-team/heavy-tests/sbc-mixed.R`); submit script `submit-sbc-mixed.sh`. Quick smoke test passed (2026-05-27): all 5 sims completed, `rate_neo`/`rate_loss`/`rate_log_sd` all appear in samples (hasNeo=TRUE confirmed). Submitted to Hamilton; awaiting full results in `${RT}/results/sbc-mixed/`.
 - **B (deterministic trans-invariant move) — DEFERRED.** Profile first.
 
 **rb-equivalence smoke results (Hamilton, 2026-05-27):**
