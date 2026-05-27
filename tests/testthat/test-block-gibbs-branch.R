@@ -183,7 +183,7 @@ test_that(".BuildMoves sets dim = 1 for all standard moves", {
   dims  <- vapply(moves, function(m) m$dim %||% 1L, integer(1L))
   names(dims) <- vapply(moves, `[[`, character(1), "name")
   # Joint moves have dim=2; dirichlet_branch has dim=nCats; rest are dim=1
-  multi_dim_moves <- c("neo_joint", "joint_tl_rls", "joint_tl_rl",
+  multi_dim_moves <- c("joint_tl_rls", "joint_tl_rl",
                         "joint_tl_rn",
                         "dirichlet_branch", "local_dirichlet",
                         "gibbs_kPrime")

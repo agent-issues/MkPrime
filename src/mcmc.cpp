@@ -4053,7 +4053,7 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
 //           9=gibbs_p, 10=gibbs_spr, 11=gibbs_subtree_swap,
 //           12=weighted_br_scale, 13=weighted_spr, 14=weighted_subtree_swap,
 //           15=block_gibbs_branch, 16=beta_scale, 17=tbr,
-//           18=neo_joint_scale, 19=slice_scalar, 20=pspr,
+//           19=slice_scalar, 20=pspr,
 //           21=joint_tl_rls, 22=joint_tl_rl,
 //           23=dirichlet_branch, 24=local_dirichlet,
 //           25=gibbs_kprime_sweep, 26=block_kprime_shift,
@@ -4361,13 +4361,6 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       double mult = std::exp(scaleTuning * bactrian_perturbation());
       state->betaScale = oldBS * mult;
       logHastings = std::log(mult);
-      break;
-    }
-    case 18: { // neo_joint_scale (Bactrian, M-118)
-      double mult = std::exp(scaleTuning * bactrian_perturbation());
-      state->rateLoss = oldRL * mult;
-      state->rateNeo  = oldRN * mult;
-      logHastings = 2.0 * std::log(mult);
       break;
     }
     case 20: { // pSPR — M-119: parsimony-guided SPR
@@ -4847,11 +4840,10 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         }
         break;
       }
-      // case 3 (rate_neo scale) and case 18 (neo_joint = rate_loss + rate_neo)
-      // intentionally fall through to the default full-recompute branch:
-      // under the RB-style partition-rate normalisation (audit Issue 1),
-      // rate_neo now shifts BOTH neoScale AND transScale, so every
-      // partition's log-likelihood is stale — not just neo.
+      // case 3 (rate_neo scale) intentionally falls through to the default
+      // full-recompute branch: under the RB-style partition-rate normalisation
+      // (audit Issue 1), rate_neo shifts BOTH neoScale AND transScale, so
+      // every partition's log-likelihood is stale — not just neo.
       case 7: {
         ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
         int ap = data->charToPartition[charIdx];
@@ -4907,10 +4899,10 @@ static bool do_move_impl(McmcData* data, McmcState* state,
           // Q-matrix; trans/known unchanged)
           state->nodeCL.invalidate_neo_cls();
           break;
-        case 3: case 18:
-          // rate_neo, neo_joint: audit Issue 1 — partition-rate
-          // normalisation makes rateNeo affect BOTH neo and trans unit
-          // rateScales, so all CLs are stale.
+        case 3:
+          // rate_neo: audit Issue 1 — partition-rate normalisation makes
+          // rateNeo affect BOTH neo and trans unit rateScales, so all CLs
+          // are stale.
           state->nodeCL.invalidate_all_cls();
           break;
         case 2:

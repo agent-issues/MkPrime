@@ -268,16 +268,16 @@ test_that("trans-only datasets: likelihood is rate_neo-independent (degenerate)"
 # ---- F1 regression: partLogLik partial cache must stay in sync after a
 #      rate_neo move on mixed data.
 #
-# Pre-audit-Issue-1, do_move_impl case 3 (rate_neo scale) and case 18
-# (neo_joint) refreshed only `data->neoPartIndices` in `state->partLogLik`,
-# on the rationale that rate_neo touched only neo edges. Under the new
-# RB-style normalisation rate_neo *also* shifts transScale, so trans
-# partition log-likelihoods are stale after an accepted rate_neo move.
-# This test drives a sequence of rate_neo moves and asserts the cached
-# state->logLik matches a fresh direct full evaluation at every step.
+# Pre-audit-Issue-1, do_move_impl case 3 (rate_neo scale) refreshed only
+# `data->neoPartIndices` in `state->partLogLik`, on the rationale that
+# rate_neo touched only neo edges. Under the RB-style normalisation
+# rate_neo also shifts transScale, so trans partition log-likelihoods are
+# stale after an accepted rate_neo move. This test drives a sequence of
+# rate_neo moves and asserts the cached state->logLik matches a fresh
+# direct full evaluation at every step.
 # Caught by the external-reviewer agent as a blocker for this branch.
 
-test_that("partLogLik stays in sync after rate_neo / neo_joint moves (F1)", {
+test_that("partLogLik stays in sync after rate_neo moves (F1)", {
   set.seed(20260527L)
   ntax <- 6L
   mat <- matrix(sample.int(2, ntax * 12, replace = TRUE) - 1L,
@@ -323,15 +323,15 @@ test_that("partLogLik stays in sync after rate_neo / neo_joint moves (F1)", {
   )
   fill_partition_cache(dataPtr, statePtr)
 
-  # Drive a sequence of rate_neo + neo_joint moves at beta = 1. The cached
+  # Drive a sequence of rate_neo moves at beta = 1. The cached
   # state->logLik must stay in sync with a fresh direct eval at every step;
   # pre-fix (audit Issue 1) the cache only refreshed neo partitions on
-  # case 3 / case 18, so accepted moves left trans contribution stale and
+  # case 3, so accepted moves left trans contribution stale and
   # `cached - fresh` diverged by O(1) within ~25 accepted moves.
   set.seed(99L)
   n_acc <- 0L
   for (step in 1:50) {
-    moveType <- sample(c(3L, 18L), 1L)  # 3 = rate_neo, 18 = neo_joint
+    moveType <- 3L  # rate_neo
     ok <- do_move_cpp(dataPtr, statePtr,
                      moveType = moveType, charIdx = 0L,
                      scaleTuning = 0.4, betaSimplexTuning = 1.0,

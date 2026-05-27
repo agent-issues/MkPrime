@@ -51,7 +51,7 @@ test_that("moveWeights validNames covers all .BuildMoves() move names (M-167)", 
     "kPrime", "gibbs_kPrime", "block_kPrime", "p",
     "kprime_alpha", "kprime_beta",
     "slice_kprime_alpha", "slice_kprime_beta",
-    "rate_loss", "rate_neo", "neo_joint", "rate_log_sd", "beta_scale",
+    "rate_loss", "rate_neo", "rate_log_sd", "beta_scale",
     "slice_rate_loss", "slice_rate_neo", "slice_rate_log_sd",
     "slice_beta_scale",
     "joint_tl_rls", "joint_tl_rl", "joint_tl_rn"
@@ -521,7 +521,7 @@ test_that(".BuildMoves produces weights that normalize to 1", {
 test_that("All move names in .kMoveTypes are valid moveWeights names", {
   validInMcmc <- c(
     "tree_length", "branch_lengths", "nni", "spr", "tbr", "kPrime", "p",
-    "rate_loss", "rate_log_sd", "rate_neo", "neo_joint",
+    "rate_loss", "rate_log_sd", "rate_neo",
     "gibbs_spr", "gibbs_subtree_swap",
     "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
     "block_gibbs_branch", "dirichlet_branch", "local_dirichlet",

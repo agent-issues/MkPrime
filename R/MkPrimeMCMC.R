@@ -504,7 +504,7 @@ MkPrimeMCMC <- function(
     validNames <- c(
       # Continuous parameter moves
       "tree_length", "branch_lengths", "rate_loss", "rate_log_sd", "rate_neo",
-      "beta_scale", "neo_joint",
+      "beta_scale",
       # Topology moves
       "nni", "spr", "tbr", "pspr",
       "gibbs_spr", "gibbs_subtree_swap",
@@ -545,7 +545,6 @@ MkPrimeMCMC <- function(
     scale_p = 0.5,
     scale_logit_p = 1.0,
     scale_rate_neo = 0.5,
-    scale_neo_joint = 0.5,
     scale_beta_scale = 0.5,
     scale_kprime_alpha = 0.3,
     scale_kprime_beta = 0.5,
