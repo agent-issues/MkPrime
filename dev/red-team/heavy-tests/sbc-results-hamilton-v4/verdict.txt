@@ -1,0 +1,8 @@
+SBC harness top-level summary
+mode:     full
+seedBase: 20260529
+wall:     1097.8s
+N_sim:    200  L:100  thin:60
+
+arms:
+  Mkp_empirical_geometric        FAIL (good=200)

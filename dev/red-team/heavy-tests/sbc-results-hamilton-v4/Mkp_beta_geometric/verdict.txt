@@ -1,0 +1,15 @@
+arm:        Mkp_beta_geometric
+model:      Mkp
+prior:      beta_geometric
+expect:     PASS
+mode:       full
+N_sim:      200 (good = 200)
+L_samples:  nominal=100 actual=67
+K_arm:      3  (Bonferroni threshold p > 0.00033333)
+
+per-parameter AD p-values:
+  tree_length         p=3e-06  n=200  FAIL
+  rate_log_sd         p=0.3205  n=200  PASS
+  kPrime_pooled       p=1.868e-07  n=3212  FAIL
+
+ARM VERDICT: FAIL
