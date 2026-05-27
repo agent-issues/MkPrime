@@ -138,8 +138,11 @@ TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
   el    <- tree$edge.length
   for (e in rev(seq_len(nrow(edges)))) {
     pa <- edges[e, 1L]; ch <- edges[e, 2L]; t <- el[e]
-    # JC: P(same) = 1/k + (1-1/k) exp(-k * t)
-    pSame <- 1 / kTrue + (1 - 1 / kTrue) * exp(-kTrue * t)
+    # JC: P(same) = 1/k + (1-1/k) exp(-k * t / (k-1))
+    # Rate convention must match inference (`src/likelihood.cpp:85`:
+    # arg = -kStates * t / (kStates - 1)); naive exp(-k*t) diverges from
+    # inference for k > 2, biasing tree_length ranks. See SBC-HARNESS-003.
+    pSame <- 1 / kTrue + (1 - 1 / kTrue) * exp(-kTrue * t / (kTrue - 1))
     if (runif(1L) < pSame) {
       states[ch] <- states[pa]
     } else {
@@ -379,13 +382,23 @@ TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
   }
   if (arm$model == "Mkp") {
     # Per-character k' ranks. Pool across characters under exchangeability.
+    # Restrict to kObs == 2 chars: forward draws kTrue = u + 2 with u ~ Geo(p),
+    # but inference's per-char prior is kPrime = kObs + Geo(p). The two
+    # coincide only when kObs == 2, so SBC rank uniformity is only guaranteed
+    # for that subset (SBC-MASS-FAIL-001, option (b), advisor-confirmed).
+    # Drops ~47% of chars; with N_CHAR=100, N_SIM=200, leaves ~10k ranks —
+    # plenty for AD.
     kpCols <- grep("^kPrime_", colnames(samples), value = TRUE)
     if (length(kpCols)) {
       idx <- as.integer(sub("kPrime_", "", kpCols))
       ord <- order(idx)
       kpCols <- kpCols[ord]
-      kp_ranks <- mapply(.rankOf, kTrue, asplit(samples[, kpCols, drop = FALSE], 2L))
-      ranks$kPrime_pooled <- kp_ranks
+      kObsEq2 <- which(kObs == 2L)
+      if (length(kObsEq2)) {
+        kp_ranks <- mapply(.rankOf, kTrue[kObsEq2],
+                           asplit(samples[, kpCols[kObsEq2], drop = FALSE], 2L))
+        ranks$kPrime_pooled <- kp_ranks
+      }
     }
     if ("p" %in% colnames(samples) &&
         arm$prior %in% c("geometric", "empirical_geometric")) {
