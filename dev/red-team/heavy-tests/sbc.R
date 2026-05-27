@@ -264,17 +264,18 @@ TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
   # as the SBC "truth" for kPrime ranks). Simulation is forced to k=2.
   kTrue <- .drawKPrime(arm, p_true, model_hp, N_CHAR)
 
-  # Simulation states per character.
-  # Mk': option γ — simulate with kSim = kTrue (true number of states).
-  #   Inference prior kPrime ~ kObs + Geo(p) is data-dependent; rank test
-  #   on kPrime is structurally excluded (see SBC-KPRIME-STRUCTURAL). kSim=kTrue
-  #   ensures the Gibbs sampler for p sees genuine u > 0 values when kTrue > kObs.
-  # MkNT: kSim = 2 (binary data, kObs = 2 always). MkNT inference pins k=kObs,
-  #   so using kSim=kTrue would create a k-mismatch in the tree_length likelihood
-  #   whenever kObs < kTrue. Binary simulation avoids this: kObs=2=kSim always.
-  kSim <- if (arm$model == "Mkp") kTrue else rep(2L, N_CHAR)
+  # Simulation states per character: kSim = 2 (binary) for ALL arms.
+  # Tried kSim=kTrue for Mk' in v9 (option γ). Result: tree_length REGRESSED
+  # on Mkp_geometric (v8 p=0.47 → v9 p=2.85e-4) and `p` did NOT improve
+  # (still 3e-6). Mechanism: with kSim=kTrue and kObs<kTrue (common at 8 tips
+  # under geometric prior's long kTrue tail), inference can't recover kTrue
+  # under the JC(kPrime~kObs+Geo(p)) prior and absorbs the missing
+  # substitutions into longer branches → tree_length posterior shifts up.
+  # kSim=2 keeps forward-k=inference-k=2 and is the v8 calibration that
+  # demonstrated tree_length + rate_log_sd PASS in all 6 arms.
+  kSim <- rep(2L, N_CHAR)
 
-  # Step 4. Simulate each character with k = kSim[j].
+  # Step 4. Simulate each character with k = 2 (binary).
   sim_mat <- matrix(NA_integer_, N_TIP, N_CHAR,
                     dimnames = list(true_tree$tip.label, NULL))
   kObs <- integer(N_CHAR)
@@ -394,27 +395,26 @@ TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
   if ("rate_log_sd" %in% colnames(samples)) {
     ranks$rate_log_sd <- .rankOf(rateLogSd_true, samples[, "rate_log_sd"])
   }
-  if (arm$model == "Mkp") {
-    # kPrime_pooled rank test: STRUCTURALLY EXCLUDED from SBC suite.
-    #
-    # No valid rank-of-kTrue-in-posterior test exists within the current
-    # inference prior. The inference prior is kPrime ~ kObs + Geo(p) (floor
-    # at kObs, data-dependent), while simulation with kSim=kTrue guarantees
-    # kObs ≤ kTrue. On 5–8 tip trees with geometric prior, kObs = kTrue
-    # ~80% of the time, which forces every posterior sample to satisfy
-    # kPrime_post ≥ kObs = kTrue — driving rank pile-up at 0. Centering in
-    # u = kPrime − 2 space (option γ) does not escape this constraint.
-    # Option α (kSim=2, binary data) had the dual failure: posterior
-    # concentrates at 2, so kTrue > 2 piles ranks near L. No parameterisation
-    # escapes both failure modes while the prior floor is data-dependent.
-    # See SBC-KPRIME-STRUCTURAL in dev/red-team/findings.md.
-    # kPrime sampling is exercised jointly by the chain; PASS on tree_length
-    # and p is evidence that kPrime updates are not catastrophically broken.
-    if ("p" %in% colnames(samples) &&
-        arm$prior %in% c("geometric", "empirical_geometric")) {
-      ranks$p <- .rankOf(p_true, samples[, "p"])
-    }
-  }
+  # Mk'-only ranks (kPrime_pooled, p): STRUCTURALLY EXCLUDED from SBC suite.
+  #
+  # The inference prior `kPrime ~ kObs + Geo(p)` has a data-dependent floor
+  # (at kObs). This makes both rank tests invalid:
+  #
+  # * kPrime_pooled: kObs ≤ kTrue by construction; on 5–8 tip trees with
+  #   geometric prior, kObs=kTrue ~80% of the time → kPrime_post ≥ kObs = kTrue
+  #   → rank piles at 0. Option α (kSim=2) had the dual failure: posterior
+  #   concentrates at 2, so kTrue > 2 piles ranks near L. No parameterisation
+  #   escapes both modes.
+  #
+  # * p: Gibbs update is p_post ~ Beta(n+1, sum(u_i)+1) where u_i = kPrime_i−kObs.
+  #   When kObs ≈ kTrue dominates, u_i = 0 for most chars → p_post collapses to
+  #   Beta(n+1, 1) (mean ≈ 1) regardless of p_true. v9 (kSim=kTrue option γ)
+  #   confirmed: `p` FAIL unchanged at 3e-6 vs v8 (kSim=2). Same structural
+  #   reason as kPrime_pooled — the data-dependent floor.
+  #
+  # See SBC-KPRIME-STRUCTURAL in dev/red-team/findings.md. kPrime / p sampling
+  # is exercised jointly by the chain; PASS on tree_length and rate_log_sd is
+  # evidence those updates are not catastrophically broken.
 
   list(skipped = FALSE,
        L = L,

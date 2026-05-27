@@ -10,8 +10,14 @@
 #SBATCH --error=/nobackup/%u/mkp-study/red-team/logs/sbc_%A_%a.err
 #
 # Red-team Lane D1 SBC heavy test — 6 arms in parallel array tasks.
-# Authored 2026-05-26; updated 2026-05-27 (sbc-v9, Option γ kPrime fix).
-# See dev/red-team/heavy-tests/sbc.md for design.
+# Authored 2026-05-26; v10 (2026-05-27): reverted Option γ — kSim=2 for all
+# arms; kPrime_pooled and p both excluded as structural. See sbc.md +
+# dev/red-team/findings.md::SBC-KPRIME-STRUCTURAL.
+#
+# IMPORTANT: pre-build the package once before submitting this script:
+#   cd ${SRC} && Rscript -e 'devtools::load_all(".")'
+# Otherwise 6 array tasks race-compile in the shared src/ directory and
+# half die with "MkPrime.so: file too short" (v9 lost 3/6 to this race).
 
 set -euo pipefail
 
@@ -54,8 +60,8 @@ cd "${SRC}"
 Rscript "${SRC}/dev/red-team/heavy-tests/sbc.R" \
   --full \
   --arm "${ARM_NAME}" \
-  --out "${RT}/results/sbc-v9" \
-  --seed $((20260527 + SLURM_ARRAY_TASK_ID))
+  --out "${RT}/results/sbc-v10" \
+  --seed $((20260528 + SLURM_ARRAY_TASK_ID))
 
 du -hs "${TMPDIR}" > "${RT}/logs/sbc_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}_tmpdir.log" || true
 
