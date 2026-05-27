@@ -554,6 +554,7 @@ MkPrimeMCMC <- function(
     dirichlet_alpha = 0.1,
     local_dirichlet_alpha = 0.1,
     scale_class_rate_log_sd = 0.5,
+    scale_hyper_tau         = 0.5,
     dirichlet_class_w_alpha = 10,
     int_walk_window = 1L,
     slice_width_rate_loss = 1.0,

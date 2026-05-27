@@ -196,6 +196,19 @@ struct McmcState {
   IntegerVector nCharPerClass;    // length nClasses
   double etaNeo = 1.0;           // frozen at 1.0 in Layer 1
 
+  // Pooled half-normal hyperprior on per-class σ_c (plan: hyperprior task).
+  // Active iff useHyperpriorOnSigma is true. Under the non-centred
+  // parameterisation σ_c = hyperTau * classZ[c]; classZ holds the sampled
+  // z_c values, hyperTau holds the sampled population scale.
+  // classRateLogSd is the derived σ_c that the likelihood consumes; it is
+  // kept in sync after every move that touches classZ or hyperTau.
+  //
+  // When useHyperpriorOnSigma is false, classZ is empty and hyperTau is
+  // unused; classRateLogSd is sampled directly via the legacy Gamma path.
+  bool          useHyperpriorOnSigma = false;
+  double        hyperTau = 1.0;
+  NumericVector classZ;           // length classRateLogSd.size() when active
+
 };
 
 
@@ -384,6 +397,9 @@ static double cpp_log_prior_partitioned(
     const NumericVector& classRateLogSd,  // length 1 (linked) or nClasses
     const NumericVector& classW,          // length 1 or nClasses (simplex)
     double etaNeo,
+    bool useHyperpriorOnSigma,
+    double hyperTau,
+    const NumericVector& classZ,
     double betaScale = 1.0,
     double kprimeAlpha = 1.0, double kprimeBeta = 1.0) {
 
@@ -414,25 +430,50 @@ static double cpp_log_prior_partitioned(
     lp += logDirConst + (alpha - 1.0) * sumLogW;
   }
 
-  // 3. Gamma i.i.d. on classRateLogSd — per-class shape contribution (§5.4).
-  //    Length-1 means LINKED: the scalar rateLogSd prior is already counted
-  //    by cpp_log_prior above — no extra terms needed.
-  //    When UNLINKED (size > 1), classRateLogSd[0] == rateLogSd (maintained
-  //    by init_mcmc_state), so c == 0 is already covered by the legacy prior.
-  //    Add Gamma densities only for c == 1 .. K-1 to avoid double-counting.
+  // 3. Per-class ACRV-shape prior. Two regimes:
+  //    K == 1 (length-1 classRateLogSd): linked or degenerate; the scalar
+  //      rateLogSd prior in cpp_log_prior already covers it — nothing extra.
+  //    K >= 2: branch on the hyperprior flag.
+  //      (a) hyperprior_pooled (default): non-centred half-normal hierarchy
+  //          σ_c = τ · z_c, z_c ~ HN(1) i.i.d., τ ~ HN(1). The Gamma on σ_0
+  //          added by cpp_log_prior is the WRONG prior for this regime, so
+  //          we SUBTRACT it and ADD HN(1) terms on each z_c (c = 0..K-1)
+  //          and on τ.
+  //      (b) gamma_independent (legacy): each σ_c independently ~ Gamma;
+  //          σ_0 already counted, loop adds σ_1..σ_{K-1}.
   if (classRateLogSd.size() > 1) {
-    for (int c = 1; c < classRateLogSd.size(); ++c) {
-      double sd_c = classRateLogSd[c];
-      if (sd_c < 0.0) return R_NegInf;
-      if (sd_c > 0.0) {
-        lp += R::dgamma(sd_c, data.rateLogSdShape,
+    if (useHyperpriorOnSigma) {
+      // Subtract legacy Gamma on σ_0 added by cpp_log_prior. Boundary
+      // semantics mirror cpp_log_prior (rateLogSd == 0 with shape > 1 has
+      // already short-circuited via cpp_log_prior returning -Inf).
+      if (rateLogSd > 0.0) {
+        lp -= R::dgamma(rateLogSd, data.rateLogSdShape,
                          1.0 / data.rateLogSdRate, 1);
-      } else if (data.rateLogSdShape > 1.0) {
-        return R_NegInf;
       }
-      // sd_c == 0, shape == 1: dgamma at 0 = rateLogSdRate; the density is
-      // finite and is added here. Consistent with the legacy boundary treatment
-      // in cpp_log_prior.
+      // HN(1) on every z_c: log p(z; 1) = log(2) + log φ(z; 0, 1) for z>=0.
+      // Boundary z == 0 is finite (HN density at 0 equals √(2/π)).
+      if (classZ.size() != classRateLogSd.size()) return R_NegInf;
+      for (int c = 0; c < classZ.size(); ++c) {
+        if (classZ[c] < 0.0) return R_NegInf;
+        lp += std::log(2.0) + R::dnorm(classZ[c], 0.0, 1.0, 1);
+      }
+      // HN(1) on τ.
+      if (hyperTau < 0.0) return R_NegInf;
+      lp += std::log(2.0) + R::dnorm(hyperTau, 0.0, 1.0, 1);
+    } else {
+      for (int c = 1; c < classRateLogSd.size(); ++c) {
+        double sd_c = classRateLogSd[c];
+        if (sd_c < 0.0) return R_NegInf;
+        if (sd_c > 0.0) {
+          lp += R::dgamma(sd_c, data.rateLogSdShape,
+                           1.0 / data.rateLogSdRate, 1);
+        } else if (data.rateLogSdShape > 1.0) {
+          return R_NegInf;
+        }
+        // sd_c == 0, shape == 1: dgamma at 0 = rateLogSdRate; the density is
+        // finite and is added here. Consistent with the legacy boundary
+        // treatment in cpp_log_prior.
+      }
     }
   }
 
@@ -466,7 +507,10 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
                      NumericVector classW         = NumericVector(0),
                      NumericVector classRate      = NumericVector(0),
                      IntegerVector nCharPerClass  = IntegerVector(0),
-                     double etaNeo = 1.0) {
+                     double etaNeo = 1.0,
+                     bool useHyperpriorOnSigma   = false,
+                     double hyperTau             = 1.0,
+                     NumericVector classZ        = NumericVector(0)) {
   McmcState* s = new McmcState();
   s->parent       = clone(parent);
   s->child        = clone(child);
@@ -498,6 +542,15 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
     if (classRateLogSd.size() > 0)
       s->rateLogSd = classRateLogSd[0];
     // Layer 1 freezes etaNeo at 1.0 → rateNeo stays 1.0 (no change needed).
+
+    // Hyperprior on per-class σ_c: only activates when there is more than
+    // one σ (i.e. shape unlinked with K >= 2). Degenerate at K == 1, in
+    // which case the legacy single-σ Gamma prior applies via cpp_log_prior.
+    if (useHyperpriorOnSigma && classRateLogSd.size() >= 2) {
+      s->useHyperpriorOnSigma = true;
+      s->hyperTau             = hyperTau;
+      s->classZ               = clone(classZ);
+    }
   }
   return Rcpp::XPtr<McmcState>(s, true);
 }
@@ -640,7 +693,17 @@ List get_mcmc_state(SEXP statePtr) {
     _["diagBsPartial"]  = s->diagBsPartialCount,
     _["diagDriftCount"] = s->diagDriftCount,
     _["diagMaxDiff"]    = s->diagMaxDiff,
-    _["diagSelectivePop"] = s->nodeCL.diagSelectivePopCount
+    _["diagSelectivePop"] = s->nodeCL.diagSelectivePopCount,
+    // Partition-API extras (zero-length / scalar defaults on legacy state).
+    _["usePartitioned"]     = s->usePartitioned,
+    _["classRateLogSd"]     = s->classRateLogSd,
+    _["classW"]             = s->classW,
+    _["classRate"]          = s->classRate,
+    _["nCharPerClass"]      = s->nCharPerClass,
+    _["etaNeo"]             = s->etaNeo,
+    _["useHyperpriorOnSigma"] = s->useHyperpriorOnSigma,
+    _["hyperTau"]           = s->hyperTau,
+    _["classZ"]             = s->classZ
   );
 }
 
@@ -691,7 +754,10 @@ double eval_log_prior_partitioned_cpp(
     SEXP dataPtr, SEXP statePtr,
     Rcpp::NumericVector classRateLogSd,
     Rcpp::NumericVector classW,
-    double etaNeo) {
+    double etaNeo,
+    bool useHyperpriorOnSigma = false,
+    double hyperTau = 1.0,
+    Rcpp::NumericVector classZ = Rcpp::NumericVector::create()) {
   McmcData*  d = Rcpp::XPtr<McmcData>(dataPtr);
   McmcState* s = Rcpp::XPtr<McmcState>(statePtr);
   return cpp_log_prior_partitioned(
@@ -699,6 +765,7 @@ double eval_log_prior_partitioned_cpp(
     s->rateLoss, s->rateLogSd, s->rateNeo,
     s->p, s->kPrime,
     classRateLogSd, classW, etaNeo,
+    useHyperpriorOnSigma, hyperTau, classZ,
     s->betaScale, s->kprimeAlpha, s->kprimeBeta);
 }
 
@@ -738,6 +805,7 @@ static double compute_log_prior_at(
       state.rateLoss, state.rateLogSd, state.rateNeo,
       state.p, state.kPrime,
       state.classRateLogSd, state.classW, state.etaNeo,
+      state.useHyperpriorOnSigma, state.hyperTau, state.classZ,
       state.betaScale, state.kprimeAlpha, state.kprimeBeta);
   }
   return cpp_log_prior(
@@ -4060,10 +4128,14 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
 //           27=scale_kprime_alpha, 28=scale_kprime_beta,
 //           29=slice_kprime_hyper,
 //           30=mh_logit_p (logit-scale MH on p for empirical_geometric prior)
-//           31=scale_class_rate_log_sd (per-class ACRV shape; charIdx=1-based classIdx)
+//           31=scale_class_rate_log_sd (per-class ACRV shape; charIdx=1-based classIdx;
+//              acts on z_c when state->useHyperpriorOnSigma, else on σ_c directly)
 //           32=dirichlet_simplex_class_w (Dirichlet simplex on class_w)
 //           33=joint_tl_rn (tree_length × rate_neo 2D Bactrian; partition-rate
 //              ridge from Issue 1 fix — see dev/notes/2026-05-27-rate-neo-ridge-and-joint-moves.md)
+//           34=scale_hyper_tau (Bactrian scale on the population scale τ of
+//              the half-normal hyperprior on σ_c = τ·z_c; only fired when
+//              state->useHyperpriorOnSigma)
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -4090,10 +4162,16 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   int oldKPrimeVal = 0;     // single-element rollback for case 7 (kPrime)
   int kPrimeCharIdx = -1;   // which character was changed
 
-  // Rollback storage for per-class moves (cases 31, 32)
+  // Rollback storage for per-class moves (cases 31, 32, 33)
   int    classIdx31   = -1;   // 0-based class index for case 31 rollback
   double oldClassRLS  = 0.0;  // old classRateLogSd[classIdx31]
+  double oldClassZ    = 0.0;  // old classZ[classIdx31] (hyperprior path)
   NumericVector classWSnapshot;  // full classW snapshot for case 32 rollback
+  // Case 33 (scale_hyper_tau) rollback: all σ_c change together with τ.
+  bool             case34Active   = false;
+  double           oldTau34       = 0.0;
+  NumericVector    oldClassRLS34;  // snapshot of classRateLogSd (all entries)
+  double           oldRateLogSd34 = 0.0;
 
   // Lockstep invariant: classRateLogSd[0] == rateLogSd when partitioned.
   // Cases 2 / 21 mirror writes to classRateLogSd[0]; this snapshot lets the
@@ -4477,26 +4555,42 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                   - std::log(oldP) - std::log1p(-oldP);
       break;
     }
-    case 31: { // scale_class_rate_log_sd - Bactrian scale on classRateLogSd[c-1]
+    case 31: { // scale_class_rate_log_sd - Bactrian multiplicative move.
       // charIdx carries the 1-based class index supplied by run_mcmc_batch_cpp.
+      // Two arms:
+      //   - useHyperpriorOnSigma: scale z_c by mult, recompute σ_c = τ · z_c.
+      //   - legacy: scale σ_c directly.
       int cIdx0 = charIdx - 1;  // convert to 0-based
       if (cIdx0 < 0 || cIdx0 >= (int)state->classRateLogSd.size()) return false;
       classIdx31  = cIdx0;
       oldClassRLS = state->classRateLogSd[cIdx0];
       double mult = std::exp(scaleTuning * bactrian_perturbation());
-      state->classRateLogSd[cIdx0] = oldClassRLS * mult;
-      if (state->classRateLogSd[cIdx0] <= 0.0) {
-        state->classRateLogSd[cIdx0] = oldClassRLS;
-        return false;
+      if (state->useHyperpriorOnSigma) {
+        if (cIdx0 >= (int)state->classZ.size()) return false;
+        oldClassZ = state->classZ[cIdx0];
+        state->classZ[cIdx0]         = oldClassZ * mult;
+        state->classRateLogSd[cIdx0] = state->hyperTau * state->classZ[cIdx0];
+        if (state->classZ[cIdx0] <= 0.0 ||
+            state->classRateLogSd[cIdx0] <= 0.0) {
+          state->classZ[cIdx0]         = oldClassZ;
+          state->classRateLogSd[cIdx0] = oldClassRLS;
+          return false;
+        }
+        // Lockstep: keep scalar rateLogSd in sync with σ_0 for partial-CL paths.
+        if (cIdx0 == 0) state->rateLogSd = state->classRateLogSd[0];
+      } else {
+        state->classRateLogSd[cIdx0] = oldClassRLS * mult;
+        if (state->classRateLogSd[cIdx0] <= 0.0) {
+          state->classRateLogSd[cIdx0] = oldClassRLS;
+          return false;
+        }
+        if (cIdx0 == 0) state->rateLogSd = state->classRateLogSd[0];
       }
       // Lockstep: keep state->rateLogSd in sync with classRateLogSd[0] so
       // the legacy prior term and the trace's `rate_log_sd` column stay
       // coherent with the value the partitioned likelihood actually uses.
       if (cIdx0 == 0) state->rateLogSd = state->classRateLogSd[0];
       logHastings = std::log(mult);
-      // NOTE: cpp_log_prior handles only the scalar rateLogSd; the per-class
-      // Gamma prior contribution is pending the parallel agent cpp_log_prior
-      // extension. Acceptance is LL-ratio only until reconciled.
       break;
     }
     case 32: { // dirichlet_simplex_class_w - Dirichlet proposal on classW simplex
@@ -4535,6 +4629,34 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       logHastings = std::log(mult1) + std::log(mult2);
       break;
     }
+    case 34: { // scale_hyper_tau — Bactrian scale on the population scale τ.
+      // Only fired when state->useHyperpriorOnSigma is true. Scaling τ
+      // rescales every σ_c = τ · z_c, so all per-class likelihoods need a
+      // full reeval (CL cache invalidation handled in the accept block).
+      if (!state->useHyperpriorOnSigma) return false;
+      if (state->classZ.size() != state->classRateLogSd.size()) return false;
+      case34Active   = true;
+      oldTau34       = state->hyperTau;
+      oldClassRLS34  = clone(state->classRateLogSd);
+      oldRateLogSd34 = state->rateLogSd;
+      double mult = std::exp(scaleTuning * bactrian_perturbation());
+      double newTau = oldTau34 * mult;
+      if (newTau <= 0.0) return false;
+      state->hyperTau = newTau;
+      for (int k = 0; k < state->classRateLogSd.size(); ++k) {
+        state->classRateLogSd[k] = newTau * state->classZ[k];
+        if (state->classRateLogSd[k] <= 0.0) {
+          // Roll back partial update before reporting rejection.
+          state->hyperTau     = oldTau34;
+          state->classRateLogSd = oldClassRLS34;
+          state->rateLogSd    = oldRateLogSd34;
+          return false;
+        }
+      }
+      state->rateLogSd = state->classRateLogSd[0];
+      logHastings = std::log(mult);
+      break;
+    }
     default:
       return false;
   }
@@ -4553,10 +4675,24 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       for (int i = 0; i < nE; ++i) state->relBrLengths[i] = state->brSnapshot[i];
     }
     if (nniInPlace) { state->parent[nniCRow] = nniSavedP_cRow; state->parent[nniWRow] = nniSavedP_wRow; }
-    if (classIdx31 >= 0) state->classRateLogSd[classIdx31] = oldClassRLS;
-    // Lockstep rollback: cases 2/21 mirror rateLogSd → classRateLogSd[0].
-    if (state->usePartitioned && state->classRateLogSd.size() > 0)
+    if (classIdx31 >= 0) {
+      state->classRateLogSd[classIdx31] = oldClassRLS;
+      if (state->useHyperpriorOnSigma &&
+          classIdx31 < (int)state->classZ.size()) {
+        state->classZ[classIdx31] = oldClassZ;
+      }
+    }
+    if (case34Active) {
+      // case 34 (scale_hyper_tau) full restore — supersedes the
+      // oldClassRLS0 lockstep mirror since this case rebuilds the entire
+      // classRateLogSd vector.
+      state->hyperTau     = oldTau34;
+      state->classRateLogSd = oldClassRLS34;
+      state->rateLogSd    = oldRateLogSd34;
+    } else if (state->usePartitioned && state->classRateLogSd.size() > 0) {
+      // Lockstep rollback: cases 2/21 mirror rateLogSd → classRateLogSd[0].
       state->classRateLogSd[0] = oldClassRLS0;
+    }
     if (moveType == 32 && !classWSnapshot.isNULL()) {
       state->classW = classWSnapshot;
       int nChar32 = 0;
@@ -4591,10 +4727,22 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       for (int i = 0; i < nE; ++i) state->relBrLengths[i] = state->brSnapshot[i];
     }
     if (nniInPlace) { state->parent[nniCRow] = nniSavedP_cRow; state->parent[nniWRow] = nniSavedP_wRow; }
-    if (classIdx31 >= 0) state->classRateLogSd[classIdx31] = oldClassRLS;
-    // Lockstep rollback: cases 2/21 mirror rateLogSd → classRateLogSd[0].
-    if (state->usePartitioned && state->classRateLogSd.size() > 0)
+    if (classIdx31 >= 0) {
+      state->classRateLogSd[classIdx31] = oldClassRLS;
+      if (state->useHyperpriorOnSigma &&
+          classIdx31 < (int)state->classZ.size()) {
+        state->classZ[classIdx31] = oldClassZ;
+      }
+    }
+    if (case34Active) {
+      // case 34 (scale_hyper_tau) full restore — supersedes oldClassRLS0.
+      state->hyperTau     = oldTau34;
+      state->classRateLogSd = oldClassRLS34;
+      state->rateLogSd    = oldRateLogSd34;
+    } else if (state->usePartitioned && state->classRateLogSd.size() > 0) {
+      // Lockstep rollback: cases 2/21 mirror rateLogSd → classRateLogSd[0].
       state->classRateLogSd[0] = oldClassRLS0;
+    }
     if (moveType == 32 && !classWSnapshot.isNULL()) {
       state->classW = classWSnapshot;
       int nChar32 = 0;
@@ -4906,6 +5054,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
           state->nodeCL.invalidate_all_cls();
           break;
         case 2:
+        case 31:  // scale_class_rate_log_sd: σ_c change → ACRV rates change
+        case 34:  // scale_hyper_tau: rescales all σ_c → ACRV rates change
           // rateLogSd: ACRV rates change, all units stale
           state->nodeCL.invalidate_all_cls();
           break;
@@ -4952,11 +5102,23 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   }
   // OPP-6b: in-place NNI rollback — restore 2 parent values
   if (nniInPlace) { state->parent[nniCRow] = nniSavedP_cRow; state->parent[nniWRow] = nniSavedP_wRow; }
-  // Per-class rollback (cases 31, 32)
-  if (classIdx31 >= 0) state->classRateLogSd[classIdx31] = oldClassRLS;
-  // Lockstep rollback: cases 2/21 mirror rateLogSd → classRateLogSd[0].
-  if (state->usePartitioned && state->classRateLogSd.size() > 0)
+  // Per-class rollback (cases 31, 32, 34) + lockstep mirror for cases 2/21.
+  if (classIdx31 >= 0) {
+    state->classRateLogSd[classIdx31] = oldClassRLS;
+    if (state->useHyperpriorOnSigma &&
+        classIdx31 < (int)state->classZ.size()) {
+      state->classZ[classIdx31] = oldClassZ;
+    }
+  }
+  if (case34Active) {
+    // case 34 (scale_hyper_tau) full restore — supersedes oldClassRLS0.
+    state->hyperTau     = oldTau34;
+    state->classRateLogSd = oldClassRLS34;
+    state->rateLogSd    = oldRateLogSd34;
+  } else if (state->usePartitioned && state->classRateLogSd.size() > 0) {
+    // Lockstep rollback: cases 2/21 mirror rateLogSd → classRateLogSd[0].
     state->classRateLogSd[0] = oldClassRLS0;
+  }
   if (moveType == 32 && !classWSnapshot.isNULL()) {
     state->classW = classWSnapshot;
     // Restore classRate from snapshot
@@ -5104,6 +5266,8 @@ List run_mcmc_batch_cpp(
   // Emit classRateLogSd columns iff any move in the schedule has type 31
   // (scale_class_rate_log_sd), which indicates shape is unlinked.
   // Emit classW columns iff any move has type 32 (dirichlet_simplex_class_w).
+  // Emit hyper_tau + class_z columns iff state->useHyperpriorOnSigma
+  // (move 33 is the τ move; state flag drives column emission).
   bool hasMove31 = false, hasMove32 = false;
   for (int m = 0; m < nMoves; ++m) {
     if (moveTypeCodes[m] == 31) hasMove31 = true;
@@ -5113,13 +5277,17 @@ List run_mcmc_batch_cpp(
                   ? (int)states[0]->classRateLogSd.size() : 0;
   int nClassW   = (hasMove32 && nChains > 0 && states[0]->usePartitioned)
                   ? (int)states[0]->classW.size() : 0;
+  bool hyperOn = (nChains > 0 && states[0]->usePartitioned &&
+                  states[0]->useHyperpriorOnSigma);
+  int nHyperTauCol = hyperOn ? 1 : 0;
+  int nClassZ      = hyperOn ? (int)states[0]->classZ.size() : 0;
   // Base columns: log_post, log_lik, tree_length, rate_log_sd (4).
   // rate_loss included only when hasNeo (like rate_neo, p, beta_scale).
   // +2 diagnostic columns: swap_cold (cold-chain swaps since last sample),
   // topo_hash (topology fingerprint for change detection).
   int nScalarCols = 4 + (hasNeo ? 2 : 0) + nKpHyperCols +
                     (includeBS ? 1 : 0) + 2 + nTrans + nEdge +
-                    nClassRLS + nClassW;
+                    nClassRLS + nClassW + nHyperTauCol + nClassZ;
   int maxSaved    = nBatch / thin + 2;
   std::vector<std::vector<double>> scalarRows;
   scalarRows.reserve(maxSaved);
@@ -5279,6 +5447,10 @@ List run_mcmc_batch_cpp(
         row[col++] = s0->classRateLogSd[k];
       for (int k = 0; k < nClassW; ++k)
         row[col++] = s0->classW[k];
+      // Hyperprior columns (hyper_tau and per-class z_c).
+      if (nHyperTauCol > 0) row[col++] = s0->hyperTau;
+      for (int k = 0; k < nClassZ; ++k)
+        row[col++] = s0->classZ[k];
       scalarRows.push_back(row);
 
       // Edge matrix for tree reconstruction in R
