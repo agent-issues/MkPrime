@@ -1,0 +1,14 @@
+arm:        MkNT_geometric
+model:      MkNT
+prior:      geometric
+expect:     PASS
+mode:       full
+N_sim:      200 (good = 200)
+L_samples:  nominal=100 actual=67
+K_arm:      2  (Bonferroni threshold p > 0.0005)
+
+per-parameter AD p-values:
+  tree_length         p=0.005508  n=200  PASS
+  rate_log_sd         p=0.4033  n=200  PASS
+
+ARM VERDICT: PASS

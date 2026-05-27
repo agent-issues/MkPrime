@@ -1,0 +1,16 @@
+arm:        Mkp_empirical_geometric
+model:      Mkp
+prior:      empirical_geometric
+expect:     FAIL
+mode:       full
+N_sim:      200 (good = 200)
+L_samples:  nominal=100 actual=67
+K_arm:      4  (Bonferroni threshold p > 0.00025)
+
+per-parameter AD p-values:
+  tree_length         p=3e-06  n=200  FAIL
+  rate_log_sd         p=0.9875  n=200  PASS
+  kPrime_pooled       p=1.01e-07  n=5941  FAIL
+  p                   p=0.0115  n=200  PASS
+
+ARM VERDICT: FAIL
