@@ -1,0 +1,14 @@
+arm:        MkNT_logseries
+model:      MkNT
+prior:      logseries
+expect:     PASS
+mode:       full
+N_sim:      200 (good = 200)
+L_samples:  nominal=100 actual=67
+K_arm:      2  (Bonferroni threshold p > 0.0005)
+
+per-parameter AD p-values:
+  tree_length         p=3.105e-05  n=200  FAIL
+  rate_log_sd         p=3e-06  n=200  FAIL
+
+ARM VERDICT: FAIL

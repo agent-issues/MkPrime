@@ -69,6 +69,16 @@ suppressPackageStartupMessages({
 
 args <- commandArgs(trailingOnly = TRUE)
 quick <- "--quick" %in% args
+.nFromArgs <- {
+  ix <- which(args == "--n")
+  if (length(ix) && length(args) >= ix + 1L) as.integer(args[ix + 1L]) else 5L
+}
+N_TIP_CFG <- .nFromArgs
+# Unrooted binary topologies on n tips = (2n - 5)!! = double-factorial of (2n-5)
+.dfact_odd <- function(m) if (m <= 1L) 1L else prod(seq.int(m, 1L, by = -2L))
+N_TOPOS_EXPECTED <- .dfact_odd(2L * N_TIP_CFG - 5L)
+cat(sprintf("[D2b] n_tip=%d  expected_buckets=%d  quick=%s\n",
+            N_TIP_CFG, N_TOPOS_EXPECTED, quick))
 
 if (requireNamespace("pkgload", quietly = TRUE)) {
   pkgload::load_all(file.path(getwd()), quiet = TRUE)
@@ -329,8 +339,7 @@ dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 # Pass criterion
 # ---------------------------------------------------------------------------
 
-# 15 unrooted binary topologies on 5 tips.
-.expected_buckets <- 15L
+.expected_buckets <- N_TOPOS_EXPECTED
 .alpha            <- 0.005
 
 .assess_uniform <- function(freq, label) {
@@ -391,7 +400,7 @@ for (arm in arms) {
                                  n_iter = cfg$n_iter,
                                  thin   = cfg$thin,
                                  seed   = arm$seed,
-                                 n_tip  = 5L)
+                                 n_tip  = N_TIP_CFG)
   dt <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
   assess <- .assess_uniform(freq, arm$name)
   results[[arm$name]] <- list(arm = arm$name,
@@ -444,7 +453,7 @@ fmt_arm <- function(r) {
   paste(
     sprintf("  %s:", r$arm),
     sprintf("    elapsed         = %.1f s", r$elapsed_sec),
-    sprintf("    distinct topos  = %d / 15", a$n_buckets),
+    sprintf("    distinct topos  = %d / %d", a$n_buckets, N_TOPOS_EXPECTED),
     sprintf("    chi2 statistic  = %.3f", a$chi2_stat),
     sprintf("    p-value         = %.4g", a$p_value),
     sprintf("    max/min         = %.2f", a$max_over_min),

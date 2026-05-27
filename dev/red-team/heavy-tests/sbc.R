@@ -106,10 +106,24 @@ if (!requireNamespace("goftest", quietly = TRUE)) {
 }
 
 # ----------------- Forward simulation helpers ------------------
-# Generate a true tree with positive branch lengths.
-.simTree <- function(nTip, rngBranchLo = 0.05, rngBranchHi = 0.30) {
+# SBC requires forward-prior == inference-prior. Inference uses
+# tree_length ~ Gamma(shape = TREE_SHAPE, rate = TREE_SHAPE / EXPSTEPS_FIXED)
+# (see MkPrimeModel(): treeLengthShape, treeLengthRate). We pin expSteps
+# to a fixed constant across all sims and inference (no data-derived
+# leak), draw total tree length from that exact Gamma, then partition
+# across edges with a Dirichlet(1,...,1) (uniform-simplex). The
+# inference uses beta-simplex / Dirichlet-simplex moves on the same
+# parameterisation, so the forward and inferred priors agree.
+EXPSTEPS_FIXED <- 50         # treeLengthRate = TREE_SHAPE / EXPSTEPS_FIXED
+TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
+.simTree <- function(nTip) {
   tr <- ape::rtree(nTip, tip.label = paste0("t", seq_len(nTip)))
-  tr$edge.length <- runif(nrow(tr$edge), rngBranchLo, rngBranchHi)
+  nEdge <- nrow(tr$edge)
+  tl <- stats::rgamma(1, shape = TREE_SHAPE,
+                      rate = TREE_SHAPE / EXPSTEPS_FIXED)
+  # Dirichlet(1,...,1) on edge-fraction simplex = normalised iid Exp(1)
+  w <- stats::rexp(nEdge, rate = 1)
+  tr$edge.length <- tl * w / sum(w)
   TreeTools::Preorder(tr)
 }
 
@@ -229,10 +243,13 @@ if (!requireNamespace("goftest", quietly = TRUE)) {
     model_hp$empiricalNObs <- e$empiricalNObs
   }
 
+  # rateLogSd: must match inference prior exactly. Inference defaults
+  # to Gamma(shape = 1, rate = 1) (MkPrimeModel(): rateLogSdShape,
+  # rateLogSdRate). No truncation — the earlier `min(.., 3.0)` clamp
+  # broke the SBC prior-equality requirement.
   rateLogSd_true <- stats::rgamma(1, shape = 1, rate = 1)
-  rateLogSd_true <- min(rateLogSd_true, 3.0)  # clamp to keep simulation tractable
 
-  # Step 2. Tree draw — use a Gamma prior on tree length matching defaults.
+  # Step 2. Tree draw — Gamma(2, 2/EXPSTEPS_FIXED) × Dirichlet(1,..1) on edges.
   true_tree <- .simTree(N_TIP)
   tl_true <- sum(true_tree$edge.length)
 
@@ -283,10 +300,21 @@ if (!requireNamespace("goftest", quietly = TRUE)) {
 
   # Step 6. Build the matched inference model. Hyperparameter draws above
   # are matched to inference defaults (Beta(1,1) on p, etc).
+  #
+  # Two earlier mismatches now closed:
+  #   - expSteps fixed to EXPSTEPS_FIXED, not derived from tl_true
+  #     (data-derived expSteps leaks ground truth into the inference
+  #     prior on tree_length).
+  #   - nCat = 1L: disable ACRV. The forward simulator does NOT add
+  #     per-character rate variation; matching nCat = 1L in the
+  #     inference satisfies SBC's forward==inference requirement.
+  #     L7 already proved ACRV correct analytically, so we don't need
+  #     SBC to re-exercise that path.
   modelArgs <- list(
     coding = "variable",
+    nCat = 1L,
     kPrimePrior = if (arm$model == "MkNT") "geometric" else arm$prior,
-    expSteps = max(2, tl_true * N_CHAR)
+    expSteps = EXPSTEPS_FIXED
   )
   if (arm$model == "MkNT") {
     # MkNT: kPrime is fixed by knownStates; the prior on k' is degenerate.

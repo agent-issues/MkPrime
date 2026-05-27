@@ -1,0 +1,10 @@
+Lane N3 — partial-CL cache coherence — coding="informative"
+mode=quick  moves/cell=200  datasets=1
+
+partial-CL moves total : 83
+mismatch count (>1e-6) : 0
+max |partial - full|   : 4.260000e-14
+periodic drift events  : 0
+
+Verdict:
+NO DRIFT under coding="informative" — LIKE-001 may already be patched. Confirm by inspecting src/node_cl_cache.h:697-720 for singleton_site_prob_jc calls.

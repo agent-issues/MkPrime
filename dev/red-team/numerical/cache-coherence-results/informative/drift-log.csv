@@ -1,0 +1,2 @@
+"dataset","coding","n_moves","nni_partial","nni_mismatch","bs_partial","bs_mismatch","dir_partial","dir_mismatch","dir_fullback","drift","max_diff"
+1,"informative",200,24,0,25,0,34,0,0,0,4.26e-14

@@ -1,0 +1,10 @@
+Lane N3 — partial-CL cache coherence — coding="variable"
+mode=quick  moves/cell=200  datasets=1
+
+partial-CL moves total : 88
+mismatch count (>1e-6) : 0
+max |partial - full|   : 4.260000e-14
+periodic drift events  : 0
+
+Verdict:
+STABLE: no partial-vs-full mismatches detected under coding="variable".

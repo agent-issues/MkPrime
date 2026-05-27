@@ -1,0 +1,34 @@
+VERDICT: PASS
+
+Sub-harness:    D2(b) — subtree-swap β=0 detailed-balance
+Mode:           full
+n_iter:         1000000
+thin:           200
+alpha (chi2):   0.0050
+
+  nni_control:
+    elapsed         = 47.0 s
+    distinct topos  = 15 / 15
+    chi2 statistic  = 19.132
+    p-value         = 0.16
+    max/min         = 1.29
+    PASS?           = TRUE
+
+  gibbs_subtree_swap:
+    elapsed         = 57.4 s
+    distinct topos  = 15 / 15
+    chi2 statistic  = 12.250
+    p-value         = 0.5862
+    max/min         = 1.24
+    PASS?           = TRUE
+
+  weighted_subtree_swap:
+    elapsed         = 102.3 s
+    distinct topos  = 15 / 15
+    chi2 statistic  = 9.376
+    p-value         = 0.8062
+    max/min         = 1.17
+    PASS?           = TRUE
+
+Interpretation:
+  Control passes; both swap arms pass. SWAP-001/SWAP-002 not detected.
