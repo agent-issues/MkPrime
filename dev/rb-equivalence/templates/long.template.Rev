@@ -1,0 +1,44 @@
+# Driver wrapper: read split data, source the model block, set monitors,
+# run MCMC with srMaxTime as the only stopping rule.
+# Substitutions performed by render_rev.R:
+#   ${PID}, ${MODEL}, ${NEO_PATH}, ${TRANS_PATH}, ${TARGET_ESS}, ${MAX_TIME_SEC}
+#
+# NOTE: srMinESS is intentionally NOT used. Adding `srMinESS(N, "X.log",
+# FALSE)` triggers SIGFPE at iter 0 on every cell we tried (job 17296889 pid
+# 950, job 17297082 pid 635); both crashed with "Floating point exception"
+# immediately after printing "Iter 0". The verbatim m9-long template uses
+# only srMaxTime and runs fine. Hypothesis: srMinESS tries to parse the
+# log file before any rows are written, divides by zero. ESS is computed
+# post-hoc in compare.R; if a cell hasn't converged, increase MAX_TIME and
+# resume.
+
+print("RB cell starting: pid=${PID} model=${MODEL} at", time("year"), time("day"), time("seconds") / 60 / 60)
+seed(0)
+
+neo <- readDiscreteCharacterData("${NEO_PATH}")
+trans <- readDiscreteCharacterData("${TRANS_PATH}")
+
+source("${MODEL}.Rev")
+
+# Per-run monitors. Tree file gets ALL post-burnin trees (we'll thin post-hoc).
+monitors.append( mnModel(filename = "${MODEL}.log", printgen = 18) )
+monitors.append( mnModel(filename = "${MODEL}.p.log", printgen = 6, stochasticOnly = TRUE, exclude = ["rel_br_lengths"]) )
+monitors.append( mnFile(filename = "${MODEL}.trees", printgen = 12, phylogeny) )
+
+mymc3 = mcmcmc(mymodel, monitors, moves,
+               nruns = 2, nchains = 4,
+               tuneHeat = TRUE,
+               swapMethod = "both",
+               swapMode = "multiple",
+               combine = "none")
+
+mymc3.burnin(generations = 200, tuningInterval = 25)
+
+stopping_rules[1] = srMaxTime(${MAX_TIME_SEC} / 60.0, "minutes")
+
+mymc3.run(generations = 1000000, rules = stopping_rules,
+          checkpointFile = "${MODEL}.ckp",
+          checkpointInterval = 1000)
+
+print("RB cell done: pid=${PID} model=${MODEL} at", time("year"), time("day"), time("seconds") / 60 / 60)
+q()

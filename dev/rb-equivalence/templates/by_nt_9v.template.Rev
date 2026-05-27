@@ -1,0 +1,92 @@
+# by_nt_9v model template (verbatim from /nobackup/pjjg18/m9-long/syab07200/by_nt_9v.Rev)
+# Asymmetric neomorphic Q + single fnJC(9) on all transformational chars.
+# Loaded by long.template.Rev after `neo` and `trans` have been read.
+
+# Separate Neomorphic partition
+partitioned[1] <- neo
+partitioned[2] <- trans
+nChar <- v(neo.nchar(), trans.nchar())
+
+# Dataset properties
+taxa <- neo.names()
+nTaxa <- neo.size()
+nEdge <- 2 * nTaxa - 3
+
+moves = VectorMoves()
+
+# Uniform prior on tree topologies
+topology ~ dnUniformTopology(taxa)
+moves.append( mvNNI(topology, weight = nEdge / 2.0) )
+moves.append( mvSPR(topology, weight = nEdge / 8.0) )
+
+
+# Compound dirichlet prior on edge length variability
+gamma_shape <- 2
+exp_steps <- 1
+tree_length ~ dnGamma(shape = gamma_shape, rate = gamma_shape / exp_steps)
+moves.append( mvScale(tree_length, weight = 1.0) )
+
+rel_br_lengths ~ dnDirichlet( rep(1.0, nEdge) )
+moves.append( mvBetaSimplex(rel_br_lengths, weight = nEdge / 3.0) )
+moves.append( mvDirichletSimplex(rel_br_lengths, weight = nEdge / 20.0) )
+br_lengths := rel_br_lengths * tree_length
+
+phylogeny := treeAssembly(topology, br_lengths)
+
+
+# Log-normal distributed rate variation (Harrison & Larsson 2014 eq. 2)
+# μ = −σ²/2 makes the continuous lognormal have mean = 1; explicit
+# renormalisation by the empirical mean of the 6 quantile-median bins
+# forces the discrete mean to exactly 1 as well. Matches MkPrime's
+# acrv.R::ACRV implementation; see
+# dev/rb-equivalence/notes/partition-rate-and-acrv-audit.md Issue 2.
+rate_log_sd ~ dnGamma( 1, 1 )
+moves.append( mvScale(rate_log_sd, weight = 1.5) )
+
+rate_categories_raw := fnDiscretizeDistribution( dnLognormal( -rate_log_sd * rate_log_sd / 2, rate_log_sd ), 6 )
+rate_categories := rate_categories_raw / mean(rate_categories_raw)
+
+
+# Neomorphic partition may have different rate to transformational
+rate_neo ~ dnLognormal(mean = 0, sd = 2)
+moves.append( mvScale(rate_neo, weight = 0.5) )
+partition_rate := [ rate_neo / (1 + rate_neo), (1 / (1 + rate_neo)) ] / nChar * sum(nChar)
+
+# Forward (gain) and reverse (loss) rates differ for neomorphic chars
+rate_loss ~ dnLognormal(mean = 0, sd = 2)
+moves.append( mvScale(rate_loss, lambda = 1, weight = 0.5) )
+
+rate01 := 2 / (1 + rate_loss)
+rate10 := 2 * rate_loss / (1 + rate_loss)
+rates := [ [0.0, rate01],
+           [rate10, 0.0] ]
+neoQ := fnFreeK(rates)
+stationaryDist := Simplex( rate10, rate01 )
+
+m_morph[1] ~ dnPhyloCTMC(
+  tree = phylogeny,
+  branchRates = partition_rate[1],
+  siteRates = rate_categories,
+  Q = neoQ,
+  rootFrequencies = stationaryDist,
+  type = "Standard",
+  coding = "variable"
+)
+m_morph[1].clamp(neo)
+
+# Transformational partition: all chars together under fnJC(9)
+transQ := fnJC(9)
+m_morph[2] ~ dnPhyloCTMC(
+  tree = phylogeny,
+  branchRates = partition_rate[2],
+  siteRates = rate_categories,
+  Q = transQ,
+  type = "Standard",
+  coding = "variable"
+)
+m_morph[2].clamp(trans)
+
+mymodel = model(phylogeny)
+
+monitors = VectorMonitors()
+monitors.append( mnScreen(printgen = 1000, prior = FALSE, posterior = FALSE, rate_neo, rate_loss) )
