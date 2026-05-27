@@ -519,7 +519,7 @@ MkPrimeMCMC <- function(
       "slice_rate_loss", "slice_rate_neo", "slice_rate_log_sd",
       "slice_beta_scale",
       # Joint 2D moves
-      "joint_tl_rls", "joint_tl_rl"
+      "joint_tl_rls", "joint_tl_rl", "joint_tl_rn"
     )
     bad <- setdiff(names(moveWeights), validNames)
     if (length(bad) > 0L) {
@@ -551,6 +551,7 @@ MkPrimeMCMC <- function(
     scale_kprime_beta = 0.5,
     scale_joint_tl_rls = 0.5,
     scale_joint_tl_rl = 0.5,
+    scale_joint_tl_rn = 0.5,
     dirichlet_alpha = 0.1,
     local_dirichlet_alpha = 0.1,
     scale_class_rate_log_sd = 0.5,

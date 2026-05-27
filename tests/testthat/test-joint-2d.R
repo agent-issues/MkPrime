@@ -111,27 +111,46 @@ test_that(".EstimateJointRhos recovers known correlation", {
   expect_gt(rhos$rho_tl_rls, 0.3)
   # Capped at 0.95
   expect_lte(rhos$rho_tl_rls, 0.95)
-  # No neo → rate_loss rho stays 0
+  # No neo → rate_loss and rate_neo rhos stay 0
   expect_equal(rhos$rho_tl_rl, 0.0)
+  expect_equal(rhos$rho_tl_rn, 0.0)
+})
+
+test_that(".EstimateJointRhos recovers (tree_length, rate_neo) correlation", {
+  set.seed(2271)
+  n <- 200
+  tl <- rlnorm(n, 0, 0.3)
+  rn <- exp(0.6 * log(tl) + rnorm(n, 0, 0.2))
+  samples <- cbind(tree_length = tl, rate_neo = rn)
+  rhos <- MkPrime:::.EstimateJointRhos(samples, hasNeo = TRUE)
+
+  expect_gt(rhos$rho_tl_rn, 0.3)
+  expect_lte(rhos$rho_tl_rn, 0.95)
+
+  # Without hasNeo, rho_tl_rn stays 0 even if rate_neo column exists
+  rhos_no_neo <- MkPrime:::.EstimateJointRhos(samples, hasNeo = FALSE)
+  expect_equal(rhos_no_neo$rho_tl_rn, 0.0)
 })
 
 test_that(".BuildJointRhoMatrix fills correctly", {
   chainRhos <- list(
-    list(rho_tl_rls = 0.5, rho_tl_rl = 0.3),
-    list(rho_tl_rls = 0.5, rho_tl_rl = 0.3)
+    list(rho_tl_rls = 0.5, rho_tl_rl = 0.3, rho_tl_rn = -0.2),
+    list(rho_tl_rls = 0.5, rho_tl_rl = 0.3, rho_tl_rn = -0.2)
   )
   moves <- list(
     list(name = "tree_length", type = "scale"),
     list(name = "joint_tl_rls", type = "joint_2d"),
     list(name = "joint_tl_rl", type = "joint_2d"),
+    list(name = "joint_tl_rn", type = "joint_2d"),
     list(name = "nni", type = "nni")
   )
   mat <- MkPrime:::.BuildJointRhoMatrix(chainRhos, moves, 2L)
-  expect_equal(dim(mat), c(2, 4))
-  expect_equal(mat[1, 2], 0.5)  # joint_tl_rls
-  expect_equal(mat[1, 3], 0.3)  # joint_tl_rl
-  expect_equal(mat[1, 1], 0.0)  # non-joint
-  expect_equal(mat[1, 4], 0.0)  # non-joint
+  expect_equal(dim(mat), c(2, 5))
+  expect_equal(mat[1, 2], 0.5)   # joint_tl_rls
+  expect_equal(mat[1, 3], 0.3)   # joint_tl_rl
+  expect_equal(mat[1, 4], -0.2)  # joint_tl_rn
+  expect_equal(mat[1, 1], 0.0)   # non-joint
+  expect_equal(mat[1, 5], 0.0)   # non-joint
 })
 
 
@@ -180,4 +199,31 @@ test_that("joint2d = FALSE excludes joint moves", {
   expect_s3_class(res, "MkPosterior")
   expect_false("joint_tl_rls" %in% names(res$acceptance))
   expect_false("joint_tl_rl" %in% names(res$acceptance))
+  expect_false("joint_tl_rn" %in% names(res$acceptance))
+})
+
+test_that("joint_tl_rn runs and produces acceptance on mixed data", {
+  skip_on_cran()
+
+  # Force a binary character to be neomorphic so hasNeo gates joint_tl_rn in.
+  nexFile <- system.file("datasets/Sun2018.nex", package = "TreeSearch")
+  pd <- TreeTools::ReadAsPhyDat(nexFile)
+  mkdBase <- MkPrimeData(pd)
+  binaryChars <- which(mkdBase$kObs == 2L)
+  skip_if(length(binaryChars) == 0L, "no binary characters to mark neomorphic")
+  mkd <- MkPrimeData(pd, neomorphic = binaryChars[1])
+
+  cfg <- MkPrimeMCMC(
+    nIter = 3000L, nRuns = 1L, nChains = 1L,
+    minWarmup = 500L, maxWarmup = 1000L,
+    autoTune = FALSE, thin = 10L,
+    joint2d = TRUE
+  )
+
+  set.seed(4719)
+  res <- RunMkPrime(mkd, mcmc = cfg)
+
+  expect_s3_class(res, "MkPosterior")
+  expect_true("joint_tl_rn" %in% names(res$acceptance))
+  expect_gt(res$acceptance[["joint_tl_rn"]], 0)
 })

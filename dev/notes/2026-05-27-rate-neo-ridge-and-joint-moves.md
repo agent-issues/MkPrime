@@ -1,9 +1,13 @@
 # Rate_neo / tree_length ridge & joint moves after audit Issue 1 fix
 
-**Status:** Design note, no patch attached. Ready for another agent to pick up.
+**Status:**
+- **A1 (`joint_tl_rn`) — DONE.** Implemented in `src/mcmc.cpp` (case 33) and fully wired in R (commit on main, 2026-05-27). See task checklist below.
+- **A2 (neo_joint fate) — OPEN.** Needs a 5–10k-iter warmup on a mixed dataset to measure `cor(log rate_loss, log rate_neo)`, `cor(log T, log rate_neo)`, `cor(log T, log rate_loss)`. Harvest from the A3 Hamilton smoke run.
+- **A3 (SBC on mixed data) — OPEN.** SBC harness with mixed-partition simulations has not yet been run against the patched chain. Planned for Hamilton.
+- **B (deterministic trans-invariant move) — DEFERRED.** Profile first.
 
 **Context:** Branch `fix/partition-rate-normalisation` (commits `c739d0c`,
-`9e68cad`, `4a38326`) landed RB-style partition-rate normalisation. Audit
+`9e68cad`, `4a38326`), now merged, landed RB-style partition-rate normalisation. Audit
 at `dev/rb-equivalence/notes/partition-rate-and-acrv-audit.md` Issue 1.
 NEWS.md has the user-facing summary. Quick recap:
 
@@ -291,20 +295,65 @@ is close to the local posterior gradient direction).
 | The audit document | `dev/rb-equivalence/notes/partition-rate-and-acrv-audit.md` |
 | The original M-120 design note (joint Bactrian infrastructure) | `dev/plans/2026-03-29-1716-m-120-*.md` |
 
-## What I'd want from the agent picking this up
+## Task status
 
-- A1: a patch implementing `joint_tl_rn`, plus a short empirical check
-  that on a smoke dataset the new move has higher ESS-per-second on
-  `rate_neo` than the existing independent Bactrian.
-- A2: a short note (under `dev/notes/`) reporting the measured posterior
-  correlations and proposing the disposition of `neo_joint`. Don't change
-  case 18 without committing to one of the three outcomes I listed.
-- A3: an SBC verdict file (`dev/red-team/sbc-results-.../verdict.txt`)
-  using the existing harness, with mixed-partition simulations.
-- B: only if A1+A3 have landed and a measured profile shows rate_neo is
-  the bottleneck.
+### A1 — DONE (2026-05-27)
 
-If anything in the ridge-rotation framing under Item A looks wrong, push
-back before implementing — I've inferred the geometry from the formula
-algebraically but haven't run a warmup to confirm. The empirical
-correlations from A2 are the ground truth.
+`joint_tl_rn` implemented and wired end-to-end:
+
+| Concern | What was done |
+|---|---|
+| C++ move | `src/mcmc.cpp` case 33: 2D Bactrian on (log T, log r), `logHastings = log(mult1) + log(mult2)` |
+| Cache invalidation | Falls to `default: invalidate_all` — correct (both T and r changed) |
+| PLC (partLogLik) | Falls to `default: full recompute` — correct (rate_neo invalidates all partitions per Issue 1 fix) |
+| Move type map | `joint_tl_rn = 33L` in `.moveTypes` |
+| R BuildMoves | Added gated on `hasNeo && joint2d` with `weight = 1, dim = 2L` |
+| rho estimation | `rho_tl_rn` tracked in `.EstimateJointRhos`; uses `cor(log T, log rate_neo)` |
+| rho initialisation | `chainRhos` initialised with `rho_tl_rn = 0.0` |
+| rho pass-through | `.BuildChainRhoMatrix` passes `rho_tl_rn` for `joint_tl_rn` moves |
+| Allowlist | Added to `.ValidateMoveWeights` valid-name vector |
+| Default scale | `scale_joint_tl_rn = 0.5` in `MkPrimeMCMC` defaults |
+| Default MH tuning | `joint_tl_rn = 0.25` in `.defaultMhTargets` |
+| Tuning-name map | `joint_tl_rn = "scale_joint_tl_rn"` in `.scaleTuningParam` |
+| Move category | Added to `.moveCategories` under "Rates" |
+| ResumeMkPrime | `scale_joint_tl_rn` tuning restored on resume |
+
+Smoke-test ESS comparison vs independent Bactrian: **pending A3 Hamilton run**.
+
+### A2 — OPEN: neo_joint fate
+
+Run a 5–10k-iter warmup on a representative mixed dataset (pid 635 or pid
+3832 from the rb-equivalence matrix set). Extract and report:
+
+    cor(log rate_loss, log rate_neo)
+    cor(log T,         log rate_neo)
+    cor(log T,         log rate_loss)
+
+Use the `rhoSampleBuf` dump from `RunMkPrime` or a short standalone warmup.
+Three outcomes govern neo_joint's fate (see Item A above). Record verdict as
+`dev/notes/YYYY-MM-DD-neo-joint-fate.md`. **Do not change case 18 without
+committing to one of the three outcomes.**
+
+Harvest these correlations from the A3 Hamilton smoke warmup — they come
+for free from the same run.
+
+### A3 — OPEN: SBC on mixed-partition data
+
+Run the existing SBC harness (`dev/red-team/heavy-tests/sbc.R`) with a
+mixed-partition dataset (neo + trans chars). Confirm:
+- All scalar parameters pass rank-histogram uniformity (p > 0.05 after
+  Bonferroni or FDR correction at the campaign's standard 5% level).
+- `rate_neo` and `tree_length` are not correlated failures.
+
+If A3 passes, the partition-rate fix is fully validated end-to-end for
+mixed datasets. Write verdict to `dev/red-team/sbc-results-mixed/verdict.txt`.
+
+**Note:** the rb-equivalence smoke run (Hamilton, pid 950/635 × by_nt_9v)
+is a *cross-sampler* equivalence check — not SBC. Both are needed;
+they answer different questions.
+
+### B — DEFERRED
+
+Profile first. Only implement the deterministic trans-invariant move if
+`rate_neo` moves exceed 5% of wall-clock and the trans share exceeds 50%
+of CL work in that budget. See Item B above for the full decision criterion.

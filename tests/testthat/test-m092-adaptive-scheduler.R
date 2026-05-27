@@ -54,7 +54,7 @@ test_that("moveWeights validNames covers all .BuildMoves() move names (M-167)", 
     "rate_loss", "rate_neo", "neo_joint", "rate_log_sd", "beta_scale",
     "slice_rate_loss", "slice_rate_neo", "slice_rate_log_sd",
     "slice_beta_scale",
-    "joint_tl_rls", "joint_tl_rl"
+    "joint_tl_rls", "joint_tl_rl", "joint_tl_rn"
   )
   for (nm in allMoveNames) {
     w <- setNames(0.01, nm)
@@ -526,7 +526,7 @@ test_that("All move names in .kMoveTypes are valid moveWeights names", {
     "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
     "block_gibbs_branch", "dirichlet_branch", "local_dirichlet",
     "beta_scale", "pspr",
-    "joint_tl_rls", "joint_tl_rl",
+    "joint_tl_rls", "joint_tl_rl", "joint_tl_rn",
     "slice_rate_loss", "slice_rate_neo", "slice_rate_log_sd",
     "slice_tree_length", "slice_beta_scale",
     "gibbs_kPrime", "block_kPrime",

@@ -16,6 +16,8 @@
   tStart = 2,
   tEnd = 0.5,
   wMin = 0.01,
+  wMinScalar = 0.02,
+  scalarFloorMoves = character(0L),
   minProposals = 20L
 )
 }
@@ -43,6 +45,18 @@ parameters updated per call). Default: all 1s.}
 \item{tEnd}{Ending softmax temperature (default 0.5).}
 
 \item{wMin}{Floor per free move as fraction of 1 (default 0.01).}
+
+\item{wMinScalar}{Floor for scalar-target moves named in
+\code{scalarFloorMoves} (default 0.02). SBC-WARMUP-002: dim=1 scale moves
+on singleton scalar parameters (e.g. \code{tree_length}) need a higher
+floor than topology moves because \code{log(dim)} in the softmax score
+gives multi-parameter moves a structural advantage; without this
+floor an essential scalar move is annealed to \code{wMin} despite
+healthy acceptance, freezing its target parameter.}
+
+\item{scalarFloorMoves}{Character vector of move names to which the
+\code{wMinScalar} floor applies. Mirrors the init-time scalar floor in
+\code{.BuildMoves}. Default empty (back-compat).}
 
 \item{minProposals}{Minimum proposals before adapting (default 20).}
 }

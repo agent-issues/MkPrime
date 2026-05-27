@@ -685,7 +685,7 @@ RunMkPrime <- function(data, tree = NULL,
   # M-120: Per-chain rho estimates for 2D joint Bactrian (start at 0)
   chainRhos <- vector("list", nChains)
   for (ch in seq_len(nChains)) {
-    chainRhos[[ch]] <- list(rho_tl_rls = 0.0, rho_tl_rl = 0.0)
+    chainRhos[[ch]] <- list(rho_tl_rls = 0.0, rho_tl_rl = 0.0, rho_tl_rn = 0.0)
   }
 
   list(
@@ -3212,6 +3212,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         kprime_beta  = tun$scale_kprime_beta %||% 0.5,
         joint_tl_rls = tun$scale_joint_tl_rls %||% 0.5,
         joint_tl_rl  = tun$scale_joint_tl_rl %||% 0.5,
+        joint_tl_rn  = tun$scale_joint_tl_rn %||% 0.5,
         dirichlet_branch = tun$dirichlet_alpha %||% 10,
         local_dirichlet  = tun$local_dirichlet_alpha %||% 10,
         p           = 0.5,  # Gibbs move: scale ignored by C++; placeholder
@@ -3267,6 +3268,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       mat[ch, m] <- switch(moves[[m]]$name,
         joint_tl_rls = rhos$rho_tl_rls %||% 0.0,
         joint_tl_rl  = rhos$rho_tl_rl  %||% 0.0,
+        joint_tl_rn  = rhos$rho_tl_rn  %||% 0.0,
         0.0
       )
     }
@@ -3300,7 +3302,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' Estimate posterior correlations for 2D joint proposals from recent samples
 #' @keywords internal
 .EstimateJointRhos <- function(samples, hasNeo) {
-  rhos <- list(rho_tl_rls = 0.0, rho_tl_rl = 0.0)
+  rhos <- list(rho_tl_rls = 0.0, rho_tl_rl = 0.0, rho_tl_rn = 0.0)
   if (is.null(samples) || nrow(samples) < 50) return(rhos)
 
   # tree_length x rate_log_sd
@@ -3326,6 +3328,19 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       rho <- suppressWarnings(cor(log(tl[ok]), log(rl[ok])))
       if (is.finite(rho)) {
         rhos$rho_tl_rl <- max(-0.95, min(0.95, rho))
+      }
+    }
+  }
+
+  # tree_length x rate_neo (Issue-1 partition-rate ridge)
+  if (hasNeo && all(c("tree_length", "rate_neo") %in% colnames(samples))) {
+    tl <- samples[, "tree_length"]
+    rn <- samples[, "rate_neo"]
+    ok <- tl > 0 & rn > 0
+    if (sum(ok) >= 30) {
+      rho <- suppressWarnings(cor(log(tl[ok]), log(rn[ok])))
+      if (is.finite(rho)) {
+        rhos$rho_tl_rn <- max(-0.95, min(0.95, rho))
       }
     }
   }
@@ -3610,6 +3625,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         list(name = "joint_tl_rl", type = "joint_2d",
              target = "tree_length", weight = 1, dim = 2L)
       ))
+      # Issue-1 partition-rate ridge: rate_neo now couples to tree_length
+      # via the joint-weighted-mean constraint. See
+      # dev/notes/2026-05-27-rate-neo-ridge-and-joint-moves.md Item A1.
+      moves <- c(moves, list(
+        list(name = "joint_tl_rn", type = "joint_2d",
+             target = "tree_length", weight = 1, dim = 2L)
+      ))
     }
   }
 
@@ -3666,6 +3688,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   pspr = 20L,
   joint_tl_rls = 21L,
   joint_tl_rl = 22L,
+  joint_tl_rn = 33L,
   dirichlet_branch = 23L,
   local_dirichlet = 24L,
   gibbs_kPrime = 25L,
@@ -4456,7 +4479,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   beta_scale = "Rates", neo_joint = "Rates",
   slice_rate_loss = "Rates", slice_rate_neo = "Rates",
   slice_rate_log_sd = "Rates", slice_beta_scale = "Rates",
-  joint_tl_rls = "Rates", joint_tl_rl = "Rates"
+  joint_tl_rls = "Rates", joint_tl_rl = "Rates", joint_tl_rn = "Rates"
 )
 
 .moveCategoryOrder <- c("Topology", "Branches", "Characters", "Rates")
@@ -4551,7 +4574,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     pspr = 0.10,
     dirichlet_branch = 0.234,
     local_dirichlet = 0.234,
-    joint_tl_rls = 0.25, joint_tl_rl = 0.25,
+    joint_tl_rls = 0.25, joint_tl_rl = 0.25, joint_tl_rn = 0.25,
     kprime_alpha = 0.35, kprime_beta = 0.35,
     # Gibbs/weighted/block/kPrime/slice moves: no MH tuning to adapt
     gibbs_kPrime = NA_real_, block_kPrime = 0.234,
@@ -4581,6 +4604,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     pspr = NA_character_,
     joint_tl_rls = "scale_joint_tl_rls",
     joint_tl_rl = "scale_joint_tl_rl",
+    joint_tl_rn = "scale_joint_tl_rn",
     dirichlet_branch = "dirichlet_alpha",
     local_dirichlet = "local_dirichlet_alpha",
     # Gibbs/weighted/block/kPrime/slice moves: no tuning to adapt

@@ -4062,6 +4062,8 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
 //           30=mh_logit_p (logit-scale MH on p for empirical_geometric prior)
 //           31=scale_class_rate_log_sd (per-class ACRV shape; charIdx=1-based classIdx)
 //           32=dirichlet_simplex_class_w (Dirichlet simplex on class_w)
+//           33=joint_tl_rn (tree_length × rate_neo 2D Bactrian; partition-rate
+//              ridge from Issue 1 fix — see dev/notes/2026-05-27-rate-neo-ridge-and-joint-moves.md)
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -4526,6 +4528,18 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       }
       // NOTE: Dirichlet prior on classW is pending the parallel agent
       // cpp_log_prior extension. Acceptance is LL-ratio only until reconciled.
+      break;
+    }
+    case 33: { // joint_tl_rn (tree_length × rate_neo): partition-rate ridge
+      // from Issue 1 fix. r' = r·exp(σ z2), T' = T·exp(σ z1) with correlated
+      // 2D Bactrian; ρ adapted from warmup posterior cor(log T, log r).
+      double z1, z2;
+      bactrian_2d_perturbation(jointRho, z1, z2);
+      double mult1 = std::exp(scaleTuning * z1);
+      double mult2 = std::exp(scaleTuning * z2);
+      state->treeLength = oldTL * mult1;
+      state->rateNeo    = oldRN * mult2;
+      logHastings = std::log(mult1) + std::log(mult2);
       break;
     }
     default:
