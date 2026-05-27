@@ -49,6 +49,7 @@ data-raw/smoke_eg.log
 data-raw/slow_recovery.log
 data-raw/full_test.log
 data-raw/diagnose_eg_res.rds
+data-raw/step6-profile*
 hyoliths_prod*
 hyoliths_diag*
 hyoliths_posterior*
@@ -95,6 +96,9 @@ dev/pilots/*/analysis/*.png
 
 # M9 real-data pilot: tree samples pulled from Hamilton, reproducible
 dev/m9-pilot/syab*/
+
+# Hamilton study result archives (pulled from HPC, reproducible, too large for git)
+inst/hamilton/mkp-study-*/
 
 # Profiling: VTune result dirs are huge and stale-dangerous; rebuild each round
 dev/profiling/result_*/
