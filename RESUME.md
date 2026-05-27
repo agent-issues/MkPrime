@@ -1,4 +1,4 @@
-# mkp — hand-off 2026-05-20 (prior-vs-fixed-k report patched to n=260 mk_tlshrink)
+# mkp — hand-off 2026-05-27 (M9 long-form collect)
 
 ## What this repo is
 
@@ -13,7 +13,37 @@ well-corroborated reference trees.
 
 ## Where we left off
 
-This session (continuation):
+This session (2026-05-27, COLLECT mode):
+
+- **Collected M9 long-form results** for syab07200/07202/07204/07205/07206
+  (job batch 17217093–17217107 + 17217660–17217662). Outcomes: 1 COMPLETED,
+  9 TIMEOUT at 3-day walltime (still produced usable tree samples),
+  4 OUT_OF_MEMORY (syab07204/07205 9v variants — consistent with the
+  prior-known ≥64 G OOM threshold for trans-only ≥214-line matrices).
+  Trees scp'd from `/nobackup/pjjg18/m9-long/<matrix>/` to local
+  `dev/m9-pilot/syab*/` (gitignored). `process_pilot.R` run per matrix;
+  combined 6-matrix × 3-model table saved at
+  `dev/m9-pilot/cid_summary_all.rds` via new
+  `dev/m9-pilot/combine_summaries.R`.
+
+  Headline (mean CID-to-WCT, 6-matrix × 3-model):
+
+  | matrix | by_nt_9v | t_9v   | t_kv   |
+  |--------|---------:|-------:|-------:|
+  | 07200  | **0.2376** | 0.2624 | 0.3986 |
+  | 07202  | **0.2887** | 0.3007 | 0.3182 |
+  | 07203  | **0.5691** | 0.5729 | 0.5929 |
+  | 07204  | — (OOM)  | — (OOM)| 0.5134 |
+  | 07205  | — (OOM)  | — (OOM)| 0.4886 |
+  | 07206  | **0.3041** | 0.3344 | 0.2999 |
+
+  `by_nt_9v` (data-aware 9v) wins on 3 of 4 matrices where 9v variants
+  converged; on 07206, t_kv ties (Δ=0.004). t_kv is uniformly the worst
+  model on the simpler matrices, but is the only signal we have for the
+  larger matrices (07204/07205) until the 9v OOM is resolved (would need
+  128 G+ for those at 9v).
+
+Previous (2026-05-20) session:
 
 - **Completed mk_tlshrink array** (Hamilton job 17234909, all 260 tasks).
   Submitted summariser job 17245451 for the 205 outstanding indices; rebuilt
@@ -85,12 +115,6 @@ variants except mkp_eg. Its mean posterior TL (0.775) is the shortest of any
 arm — about half of truth (1.40) and well below mk_k40's 1.19 — yet that
 shrinkage buys almost nothing on CID. Saturation does the work.
 
-## Pending jobs
-
-| Type | ID | Status | ETA | On completion |
-|------|----|--------|-----|---------------|
-| HPC | 17217093-17217107 + 17217660-17217662 | 14 M9 long-form jobs, RUNNING (2d 5h of 3d walltime) | ~20 h (~04:30 BST 2026-05-21) | scp `.trees` from `/nobackup/pjjg18/m9-long/<matrix>/`; run `dev/m9-pilot/process_pilot.R <pid>` per matrix; build 6-matrix × 3-model CID table. Compare against 07203 (asher). |
-
 ## Open items / next steps
 
 1. ~~**Patch mk-prime-prior-vs-fixed-k.qmd when mk_tlshrink finishes.**~~
@@ -118,11 +142,12 @@ shrinkage buys almost nothing on CID. Saturation does the work.
    mk_tlshrink. Verify on the next array submission that tasks show
    COMPLETED rather than FAILED; if not, the diagnosis is wrong.
 
-5. **Long-form M9 collect** (~2026-05-21 morning local): scp `.trees`, run
-   `process_pilot.R <pid>` for 07200, 07202, 07204, 07205, 07206; build the
-   full 6-matrix × 3-model CID table. Compare against 07203 (asher).
+5. ~~**Long-form M9 collect**~~ **Done 2026-05-27**. See "Where we left off"
+   for the 6-matrix × 3-model table. Trees in `dev/m9-pilot/syab*/`
+   (gitignored); aggregate at `dev/m9-pilot/cid_summary_all.rds`.
 
-6. **Decide on 17217659 retry** at 128 G vs skip syab07204 by_nt_9v.
+6. **Decide on 17217659 retry** at 128 G vs skip syab07204/07205 by_nt_9v
+   and t_9v (currently we have no 9v signal at all for those two matrices).
 
 7. **Re-frame the paper around regularisation-via-saturation** — the new
    findings invalidate the original "high-k beats kObs because the data have
@@ -242,11 +267,13 @@ shrinkage buys almost nothing on CID. Saturation does the work.
 
 ## Suggested first action
 
-Items #2, #4, #8 cleared 2026-05-20 by parallel subagents. Remaining
-priorities: #3 (flip AI-callout to reviewed once the user has read
-the report); #7 (re-frame paper around regularisation-via-saturation);
-#5 (M9 long-form collect when the 14 RUNNING jobs land, ~04:30 BST
-2026-05-21); #9 (direct saturation test — mk_k40 with very tight TL
-prior pinning TL = 1.4). #7 is the heaviest piece; #3 is a one-line
-edit; #9 needs a new Hamilton array but is the cleanest mechanism
-confirmation.
+Items #2, #4, #5, #8 cleared. Remaining priorities: #3 (flip AI-callout
+to reviewed once the user has read the report); #7 (re-frame paper
+around regularisation-via-saturation, now informed by the M9 real-data
+result that `by_nt_9v` beats `t_kv` on every matrix where it converged);
+#9 (direct saturation test — mk_k40 with very tight TL prior pinning
+TL = 1.4); #6 (decide whether to resubmit syab07204/07205 9v jobs at
+128 G). #7 is the heaviest piece; #9 is the cleanest mechanism
+confirmation. Note: a lot of unrelated red-team work landed on this
+branch since 2026-05-20 (commits a521e0d, f9ea652, 8e4e370, 59276ad,
+61369db) — separate effort, doesn't affect the prior-vs-fixed-k story.
