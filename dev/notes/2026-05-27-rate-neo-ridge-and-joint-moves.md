@@ -2,9 +2,13 @@
 
 **Status:**
 - **A1 (`joint_tl_rn`) — DONE.** Implemented in `src/mcmc.cpp` (case 33) and fully wired in R (commit `e08d328`, main, 2026-05-27). See task checklist below.
-- **A2 (neo_joint fate) — OPEN.** Needs a 5–10k-iter warmup on a mixed dataset to measure `cor(log rate_loss, log rate_neo)`, `cor(log T, log rate_neo)`, `cor(log T, log rate_loss)`. Harvest from the A3 Hamilton smoke run.
+- **A2 (neo_joint fate) — DONE.** Correlations measured from pid 635 smoke run (2026-05-27): all weak (|ρ| < 0.15). Outcome 3: drop `neo_joint`. Verdict in `dev/notes/2026-05-27-neo-joint-fate.md`.
 - **A3 (SBC on mixed data) — OPEN.** SBC harness with mixed-partition simulations has not yet been run against the patched chain. Planned for Hamilton.
 - **B (deterministic trans-invariant move) — DEFERRED.** Profile first.
+
+**rb-equivalence smoke results (Hamilton, 2026-05-27):**
+- pid 950 `by_nt_9v` (trans-only): scalar params all PASS (max rhat 1.008, min ESS 624). Tree topology marginal (cid_to_median rhat 1.09, hardcoded exception in compare.R — known pre-existing).
+- pid 635 `by_nt_9v` (mixed): scalar params all PASS (max rhat 1.014, min ESS 321). Tree topology cid_to_median ESS 115 < 128 threshold — short-run artefact; estimated ~59 min MkPrime needed to hit tree ESS target (only 29 min ran).
 
 **Context:** Branch `fix/partition-rate-normalisation` (commits `c739d0c`,
 `9e68cad`, `4a38326`), now merged, landed RB-style partition-rate normalisation. Audit
@@ -320,22 +324,17 @@ is close to the local posterior gradient direction).
 
 Smoke-test ESS comparison vs independent Bactrian: **pending A3 Hamilton run**.
 
-### A2 — OPEN: neo_joint fate
+### A2 — DONE: neo_joint fate
 
-Run a 5–10k-iter warmup on a representative mixed dataset (pid 635 or pid
-3832 from the rb-equivalence matrix set). Extract and report:
+Correlations measured from pid 635 `by_nt_9v` smoke run (n=850):
 
-    cor(log rate_loss, log rate_neo)
-    cor(log T,         log rate_neo)
-    cor(log T,         log rate_loss)
+    cor(log T,         log rate_neo)  = +0.072
+    cor(log T,         log rate_loss) = −0.140
+    cor(log rate_neo,  log rate_loss) = −0.124
 
-Use the `rhoSampleBuf` dump from `RunMkPrime` or a short standalone warmup.
-Three outcomes govern neo_joint's fate (see Item A above). Record verdict as
-`dev/notes/YYYY-MM-DD-neo-joint-fate.md`. **Do not change case 18 without
-committing to one of the three outcomes.**
-
-Harvest these correlations from the A3 Hamilton smoke warmup — they come
-for free from the same run.
+All weak (outcome 3). **Verdict: drop `neo_joint` (case 18).** See
+`dev/notes/2026-05-27-neo-joint-fate.md` for full decision record and
+removal checklist.
 
 ### A3 — OPEN: SBC on mixed-partition data
 
