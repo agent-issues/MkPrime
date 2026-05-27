@@ -120,6 +120,45 @@ stay.
   SBC-MASS-FAIL-001 (kPrime parameterisation, partially fixed in v3/v4)
   remain valid harness defects independent of this one.
 
+## Update 2026-05-27 — SBC-HARNESS-005: rev() fix was necessary but not sufficient
+
+v6 (job with the rev() fix; `sbc.R` now iterates forward) still showed
+`tree_length` FAIL with mean rank ~52/67 (expected 33.5) across 4 arms
+where results were collected.
+
+**Root cause of the residual bias:** the start-tree topology, not the
+simulator. With `fixTopology = TRUE`, the harness conditions MCMC on the
+starting tree's *topology*. A valid SBC test of continuous parameters under
+fixed topology requires the starting topology to equal the true topology.
+The harness was using `AdditionTree(pd)` as the start, which is parsimony-
+based. At `tl_true ~ Gamma(2, 0.04)` (mean=50), near-saturation makes data
+nearly uninformative about topology:
+
+* 10/10 sampled sims: RF(AdditionTree, true_tree) ≥ 8 (maximum = 10 for 8 taxa)
+* 8/10 sims: RF = 10 (completely wrong topology)
+* sbc-warmup-trace sim 1, RF=10 start: rank = 67/67 (worst case)
+* sbc-warmup-trace sim 1, `--true-topo` (RF=0): rank = 61/67 (plausible under H0)
+
+The MCMC with the wrong topology samples `p(tree_length | y, T_wrong)`;
+the wrong topology forces a shorter tree to explain the data, pushing
+the TL posterior systematically below truth → ranks pile HIGH.
+
+**Claim in this document that "v1-v5 results are explained by the rev() bug"
+is now understood to be incomplete.** The rev() bug (SBC-HARNESS-004)
+contributed to bias in both the simulator and the likelihood surface, but
+the topology conditioning was also wrong in every v1–v6 run — and was the
+dominant driver of the HIGH rank signal seen in v6 after the rev() fix.
+
+**Fix (SBC-HARNESS-005, applied 2026-05-27):** sbc.R start-tree block
+replaced with:
+```r
+start_tree <- true_tree
+start_tree$edge.length <- rep_len(0.1, nrow(true_tree$edge))
+```
+This makes the harness explicitly test `p(θ|y, T_true)`, which is the
+correct and unambiguous SBC target for continuous parameters under a
+fixed-topology MCMC. v7 is the first run with both fixes applied.
+
 ## Out-of-lane (ruled out)
 
 * Sampler stuck (mechanism 1 in the brief): refuted by Part B — acceptance

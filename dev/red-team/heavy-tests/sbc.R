@@ -306,14 +306,13 @@ TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
   }
 
   # Step 5. Choose a starting tree.
-  start_tree <- tryCatch(
-    {
-      st <- TreeSearch::AdditionTree(pd)
-      st$edge.length <- rep_len(0.1, nrow(st$edge))
-      st
-    },
-    error = function(e) TreeTools::NJTree(pd, edgeLengths = TRUE)
-  )
+  # SBC-HARNESS-005: use the true topology. AdditionTree on near-saturated
+  # JC data (tl_true ~ Gamma(2,0.04), mean=50) returns RF=10/10 (maximum
+  # for 8 taxa) in nearly every sim, making fixTopology=TRUE condition on
+  # the wrong tree. With correct topology the harness tests p(θ|y,T_true),
+  # which is the valid SBC target for continuous params under fixed topology.
+  start_tree <- true_tree
+  start_tree$edge.length <- rep_len(0.1, nrow(true_tree$edge))
 
   # Step 6. Build the matched inference model. Hyperparameter draws above
   # are matched to inference defaults (Beta(1,1) on p, etc).
