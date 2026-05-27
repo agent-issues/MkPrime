@@ -4714,15 +4714,6 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         if (diff > state->diagMaxDiff) state->diagMaxDiff = diff;
         if (diff > 1e-6) {
           state->diagDirMismatchCount++;
-          if (state->diagDirMismatchCount <= 5) {
-            FILE* f2 = std::fopen("C:/Users/pjjg18/GitHub/mkp/pcl_diag.txt", "a");
-            if (f2) {
-              std::fprintf(f2, "  DIR_MM #%d: partial=%.6f full=%.6f diff=%.6f dirty=%d nEdges=%d mt=%d\n",
-                      state->diagDirMismatchCount, newLogLik, fullLL, diff,
-                      (int)dirty.size(), nEdge, moveType);
-              std::fclose(f2);
-            }
-          }
         }
       }
     }
@@ -5269,20 +5260,6 @@ List run_mcmc_batch_cpp(
     _["bs_partial"] = states[0]->diagBsPartialCount,
     _["drift"] = states[0]->diagDriftCount
   );
-  // DIAG: write summary to file (Rprintf is swallowed in RStudio batch loops)
-  {
-    FILE* f = std::fopen("pcl_diag.txt", "a");
-    if (f) {
-      std::fprintf(f, "cachePop=%d nni=%d(mm=%d) bs=%d(mm=%d) dir=%d(mm=%d,fb=%d) drift=%d maxD=%.2e\n",
-              states[0]->diagCachePopCount,
-              states[0]->diagNniPartialCount, states[0]->diagNniMismatchCount,
-              states[0]->diagBsPartialCount, states[0]->diagBsMismatchCount,
-              states[0]->diagDirPartialCount, states[0]->diagDirMismatchCount,
-              states[0]->diagDirFullbackCount, states[0]->diagDriftCount,
-              states[0]->diagMaxDiff);
-      std::fclose(f);
-    }
-  }
 
   return List::create(
     _["accept_counts"]    = acceptCounts,
