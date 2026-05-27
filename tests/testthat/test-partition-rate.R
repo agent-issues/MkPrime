@@ -160,37 +160,12 @@ test_that("R and C++ direct-eval likelihoods agree on mixed data, rate_neo != 1"
 })
 
 
-# ---- Parity: cache path agrees with direct eval --------------------------
-#
-# The cache code path (populate_cache → cache_total_loglik) is exercised
-# by every accepted NNI / β-simplex / SPR move. We can't call it directly
-# from R, but a short MCMC chain that uses partial-CL moves and reports
-# log_lik must produce the same likelihood as direct evaluation when both
-# are computed at the final state.
-
-test_that("cache (via short MCMC) and direct-eval agree at chain end", {
-  skip_on_cran()
-  skip_if_not(Sys.getenv("MKPRIME_SLOW_TESTS", "false") == "true" ||
-              !nzchar(Sys.getenv("CI", "")),
-              "Slow MCMC parity test")
-
-  set.seed(20260527L)
-  ntax <- 5L
-  mat <- matrix(sample.int(2, ntax * 6, replace = TRUE) - 1L,
-                nrow = ntax, ncol = 6,
-                dimnames = list(paste0("t", 1:ntax), NULL))
-  pd  <- MatrixToPhyDat(mat)
-  mkd <- MkPrimeData(pd, neomorphic = c(1L, 2L))
-
-  res <- RunMkPrime(mkd, nRuns = 1L, nIter = 20L, maxWarmup = 5L,
-                    minWarmup = 5L, treeThin = 1L, paramThin = 1L,
-                    quiet = TRUE, verbose = FALSE)
-
-  # The recovered final-iter log_lik from streaming output should equal
-  # MkpLogLikelihood evaluated at the same state.  If the cache path
-  # drifts from direct eval, this assertion fails.
-  expect_true(all(is.finite(res$samples[, "log_post"])))
-})
+# NOTE: a soft MCMC-driven `cache vs direct` parity test was deleted in
+# favour of the F1 regression at the bottom of this file, which drives
+# `do_move_cpp` directly and asserts cached vs fresh log-likelihoods
+# match at every step. The MCMC-driven version used obsolete RunMkPrime
+# arguments and only checked `is.finite` — both flaws called out by the
+# external-reviewer agent (finding F2, 2026-05-27).
 
 
 # ---- Behavioural test: rate_neo materially affects likelihood ------------
