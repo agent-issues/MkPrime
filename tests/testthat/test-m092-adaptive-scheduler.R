@@ -311,6 +311,79 @@ test_that(".AdaptMoveWeights temperature annealing works", {
   expect_gt(max(late) - min(late), max(early) - min(early))
 })
 
+# ==========================================================================
+# SBC-WARMUP-002 regression: scalar-target moves must not be annealed to
+# the global floor by the softmax `log(dim)` advantage of multi-parameter
+# competitors.
+# ==========================================================================
+
+test_that(".AdaptMoveWeights honours wMinScalar for scalar-target moves", {
+  # Reproduce the SBC-WARMUP-002 trace: a dim=1 scale move on a singleton
+  # scalar parameter (`tree_length`) competes against high-dim moves
+  # (`kPrime` with dim ~ nTrans) whose log(dim) term in the softmax score
+  # crushes the singleton to `wMin` even when its acceptance rate is
+  # healthy. Without the scalar floor the scheduler freezes that parameter.
+  moveNames <- c("tree_length", "branch_lengths", "kPrime", "nni")
+  current <- setNames(c(0.10, 0.30, 0.30, 0.30), moveNames)
+  accept  <- setNames(c(35L, 86L, 94L, 23L) * 10L, moveNames)
+  propose <- setNames(rep(1000L, 4L), moveNames)
+  timeNs  <- setNames(c(1.4e10, 4.5e10, 1.4e10, 5e10), moveNames)
+  moveDim <- setNames(c(1L, 1L, 30L, 1L), moveNames)
+
+  # Without scalar floor: tree_length drops to global wMin = 0.01.
+  res0 <- MkPrime:::.AdaptMoveWeights(
+    current, accept, propose, timeNs, moveNames,
+    moveDim = moveDim, pinnedWeights = NULL,
+    warmupProgress = 1.0
+  )
+  expect_equal(res0[["tree_length"]], 0.01, tolerance = 1e-10)
+
+  # With scalar floor: tree_length pinned at wMinScalar = 0.02.
+  res1 <- MkPrime:::.AdaptMoveWeights(
+    current, accept, propose, timeNs, moveNames,
+    moveDim = moveDim, pinnedWeights = NULL,
+    scalarFloorMoves = c("tree_length"),
+    warmupProgress = 1.0
+  )
+  expect_gte(res1[["tree_length"]], 0.02 - 1e-10)
+  expect_equal(sum(res1), 1.0, tolerance = 1e-10)
+})
+
+test_that("SBC-WARMUP-002: scalar moves keep ≥wMinScalar through warmup", {
+  # End-to-end check that the scalar floor is wired through RunMkPrime
+  # and stored in the final adapted weights. Uses a small simulated
+  # dataset matching the SBC-WARMUP-002 reproducer dimensions. Kept fast
+  # by limiting nIter; the key invariant is the weight floor, not the
+  # trace.
+  skip_on_cran()
+  skip_if_not_installed("TreeTools")
+  skip_if_not_installed("ape")
+
+  set.seed(20262527L)
+  nTip <- 8L
+  tr <- ape::rtree(nTip, tip.label = paste0("t", seq_len(nTip)))
+  tr$edge.length <- rep_len(0.1, nrow(tr$edge))
+  tr <- TreeTools::Preorder(tr)
+  mat <- matrix(sample.int(2L, nTip * 20L, replace = TRUE) - 1L,
+                nTip, 20L, dimnames = list(tr$tip.label, NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd)
+  model <- MkPrimeModel(coding = "variable", kPrimePrior = "geometric",
+                         expSteps = 50)
+  mcmc <- MkPrimeMCMC(nIter = 3500L, thin = 50L,
+                       minWarmup = 3000L, maxWarmup = 3000L,
+                       autoTune = FALSE, nRuns = 1L, nChains = 1L)
+
+  res <- suppressMessages(suppressWarnings(
+    RunMkPrime(mkd, tr, model = model, mcmc = mcmc,
+                fixTopology = TRUE, overwrite = TRUE)
+  ))
+
+  expect_true("tree_length" %in% names(res$moveWeights))
+  expect_gte(res$moveWeights[["tree_length"]], 0.02 - 1e-6)
+  expect_gte(res$moveWeights[["rate_log_sd"]], 0.02 - 1e-6)
+})
+
 
 # ==========================================================================
 # .FormatMoveWeights()

@@ -836,6 +836,19 @@ RunMkPrime <- function(data, tree = NULL,
 
   moveDim       <- vapply(moves, function(m) m$dim %||% 1L, integer(1L))
   names(moveDim) <- moveNames
+  # SBC-WARMUP-002: identify scalar-target moves whose adapted weight must
+  # not be driven to the global floor by the softmax scheduler. The
+  # log(dim) term in the score formula gives multi-parameter moves an
+  # arithmetic advantage (e.g. kPrime dim=nTrans ~30 -> +3.4 nats); at
+  # temp=0.5 this is enough to crush dim=1 scale moves to wMin even when
+  # their acceptance rate is healthy. Mirrors the init-time scalar floor
+  # at .BuildMoves; same set of types.
+  .kScalarFloorTypes <- c("scale", "int_walk", "gibbs_p", "scale_p",
+                           "logit_scale_p", "slice", "kprime_alpha",
+                           "kprime_beta")
+  moveTypes <- vapply(moves, function(m) m$type %||% m$name, character(1))
+  scalarFloorMoves <- moveNames[(moveDim == 1L & moveTypes %in% .kScalarFloorTypes) |
+                                  moveTypes == "joint_2d"]
   # M-171: index for warmup-phase sweep frequency reduction (NA = no trans chars)
   gibbsKpIdx <- match("gibbs_kPrime", moveNames)
   moveTypeCodes <- vapply(moves, function(m) {
@@ -1164,6 +1177,7 @@ RunMkPrime <- function(data, tree = NULL,
         moveWeights, r$chain_accept[[1L]], r$chain_propose[[1L]],
         r$chain_time_ns[[1L]], moveNames, moveDim = moveDim,
         pinnedWeights = pinnedWeights,
+        scalarFloorMoves = scalarFloorMoves,
         warmupProgress = min(1, batchEnd / warmupHorizon)
       )
 
@@ -2443,7 +2457,10 @@ RunMkPrime <- function(data, tree = NULL,
       samples    = if (isStreaming) NULL else r$samples,
       trees      = r$tree_samples,
       acceptance = coldAcc,
-      saved_idx  = r$saved_idx
+      saved_idx  = r$saved_idx,
+      # SBC-WARMUP-002: surface final adapted weights for diagnostics
+      # (also used as ground truth in the scalar-floor regression test).
+      moveWeights = r$moveWeights
     )
     if (mcmc$nChains > 1L) {
       result$betas      <- r$betas
@@ -2474,6 +2491,8 @@ RunMkPrime <- function(data, tree = NULL,
     )
     result$logFile  <- logFilePaths
     result$nSamples <- totalSaved
+    # SBC-WARMUP-002: surface final adapted weights (cold chain of run 1)
+    result$moveWeights <- perRunSummaries[[1]]$moveWeights
 
     if (nRuns > 1L) {
       result$nRuns   <- nRuns
@@ -2508,6 +2527,8 @@ RunMkPrime <- function(data, tree = NULL,
         warmup = mcmc$warmup, tuning = runs[[1]]$chain_tuning[[1]],
         warmup_trace = list(runs[[1]]$logPostHistory)
       )
+      # SBC-WARMUP-002: surface final adapted weights for diagnostics
+      result$moveWeights <- r$moveWeights
       if (!is.null(r$betas)) {
         result$betas <- r$betas
         result$swap_rates <- r$swap_rates
@@ -2532,6 +2553,8 @@ RunMkPrime <- function(data, tree = NULL,
       )
       result$nRuns   <- nRuns
       result$per_run <- perRunSummaries
+      # SBC-WARMUP-002: surface final adapted weights of run 1 cold chain
+      result$moveWeights <- perRunSummaries[[1]]$moveWeights
 
       if (mcmc$nChains > 1L) {
         result$betas <- runs[[1]]$betas
@@ -4142,6 +4165,16 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' @param tStart Starting softmax temperature (default 2.0).
 #' @param tEnd Ending softmax temperature (default 0.5).
 #' @param wMin Floor per free move as fraction of 1 (default 0.01).
+#' @param wMinScalar Floor for scalar-target moves named in
+#'   `scalarFloorMoves` (default 0.02). SBC-WARMUP-002: dim=1 scale moves
+#'   on singleton scalar parameters (e.g. `tree_length`) need a higher
+#'   floor than topology moves because `log(dim)` in the softmax score
+#'   gives multi-parameter moves a structural advantage; without this
+#'   floor an essential scalar move is annealed to `wMin` despite
+#'   healthy acceptance, freezing its target parameter.
+#' @param scalarFloorMoves Character vector of move names to which the
+#'   `wMinScalar` floor applies. Mirrors the init-time scalar floor in
+#'   `.BuildMoves`. Default empty (back-compat).
 #' @param minProposals Minimum proposals before adapting (default 20).
 #'
 #' @return Updated weight vector (sums to 1).
@@ -4151,7 +4184,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                                moveDim = rep(1L, length(currentWeights)),
                                pinnedWeights,
                                warmupProgress, tStart = 2.0, tEnd = 0.5,
-                               wMin = 0.01, minProposals = 20L) {
+                               wMin = 0.01, wMinScalar = 0.02,
+                               scalarFloorMoves = character(0L),
+                               minProposals = 20L) {
   nMoves <- length(currentWeights)
   stopifnot(length(acceptCount) == nMoves,
             length(proposeCount) == nMoves,
@@ -4203,17 +4238,23 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
   softmaxWeights <- rawWeights / sum(rawWeights) * scoreableBudget
 
-  # Apply floor: each free move gets at least wMin of the total budget
-  nFree <- length(freeIdx)
-  floorVal <- wMin
-  nScoreable <- length(scoreableIdx)
-  floored <- softmaxWeights < floorVal
+  # Apply per-move floor: scoreable moves named in scalarFloorMoves get
+  # `wMinScalar`, others get the global `wMin`. SBC-WARMUP-002: an
+  # essential scalar-target move whose final weight drops to `wMin` cannot
+  # mix its target parameter; the scoreable scalar moves get a slightly
+  # higher floor to guarantee enough proposals in the sample phase.
+  floorVec <- rep(wMin, length(softmaxWeights))
+  if (length(scalarFloorMoves) > 0L) {
+    scoreableNames <- moveNames[scoreableIdx]
+    floorVec[scoreableNames %in% scalarFloorMoves] <-
+      max(wMin, wMinScalar)
+  }
+  floored <- softmaxWeights < floorVec
   if (any(floored) && !all(floored)) {
-    nFloored <- sum(floored)
-    floorTotal <- nFloored * floorVal
+    floorTotal <- sum(floorVec[floored])
     freeTotal <- scoreableBudget - floorTotal
     if (freeTotal > 0) {
-      softmaxWeights[floored] <- floorVal
+      softmaxWeights[floored] <- floorVec[floored]
       softmaxWeights[!floored] <- softmaxWeights[!floored] /
         sum(softmaxWeights[!floored]) * freeTotal
     }
