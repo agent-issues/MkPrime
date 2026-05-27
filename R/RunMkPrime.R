@@ -845,7 +845,7 @@ RunMkPrime <- function(data, tree = NULL,
   # at .BuildMoves; same set of types.
   .kScalarFloorTypes <- c("scale", "int_walk", "gibbs_p", "scale_p",
                            "logit_scale_p", "slice", "kprime_alpha",
-                           "kprime_beta")
+                           "kprime_beta", "beta_simplex")
   moveTypes <- vapply(moves, function(m) m$type %||% m$name, character(1))
   scalarFloorMoves <- moveNames[(moveDim == 1L & moveTypes %in% .kScalarFloorTypes) |
                                   moveTypes == "joint_2d"]
@@ -3620,7 +3620,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   # Joint 2D moves also get the floor so they're comparable to individual
   # scalar moves they complement.
   scalarTypes <- c("scale", "int_walk", "gibbs_p", "scale_p", "logit_scale_p",
-                    "slice", "kprime_alpha", "kprime_beta")
+                    "slice", "kprime_alpha", "kprime_beta", "beta_simplex")
   totalWeight <- sum(vapply(moves, `[[`, numeric(1), "weight"))
   floorVal <- totalWeight * 0.02
   for (i in seq_along(moves)) {

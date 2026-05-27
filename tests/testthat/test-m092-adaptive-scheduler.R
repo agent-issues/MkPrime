@@ -349,6 +349,37 @@ test_that(".AdaptMoveWeights honours wMinScalar for scalar-target moves", {
   expect_equal(sum(res1), 1.0, tolerance = 1e-10)
 })
 
+test_that("SBC-WARMUP-002-BRANCH: beta_simplex move stays ≥wMinScalar against high-dim competitor", {
+  # Reproduce the branch_lengths symptom: dim=1 beta_simplex with 86%
+  # acceptance is crushed to wMin=0.01 by kPrime (dim=30). After adding
+  # "beta_simplex" to .kScalarFloorTypes, the scalarFloorMoves vector
+  # must include "branch_lengths" and its floor must be wMinScalar=0.02.
+  moveNames <- c("branch_lengths", "kPrime", "nni")
+  current  <- setNames(c(0.30, 0.40, 0.30), moveNames)
+  accept   <- setNames(c(860L, 940L, 230L), moveNames)
+  propose  <- setNames(rep(1000L, 3L), moveNames)
+  timeNs   <- setNames(c(4.5e10, 1.4e10, 5.0e10), moveNames)
+  moveDim  <- setNames(c(1L, 30L, 1L), moveNames)
+
+  # Without floor: branch_lengths drops to global wMin = 0.01.
+  res0 <- MkPrime:::.AdaptMoveWeights(
+    current, accept, propose, timeNs, moveNames,
+    moveDim = moveDim, pinnedWeights = NULL,
+    warmupProgress = 1.0
+  )
+  expect_equal(res0[["branch_lengths"]], 0.01, tolerance = 1e-10)
+
+  # With floor: branch_lengths stays at ≥wMinScalar = 0.02.
+  res1 <- MkPrime:::.AdaptMoveWeights(
+    current, accept, propose, timeNs, moveNames,
+    moveDim = moveDim, pinnedWeights = NULL,
+    scalarFloorMoves = c("branch_lengths"),
+    warmupProgress = 1.0
+  )
+  expect_gte(res1[["branch_lengths"]], 0.02 - 1e-10)
+  expect_equal(sum(res1), 1.0, tolerance = 1e-10)
+})
+
 test_that("SBC-WARMUP-002: scalar moves keep ≥wMinScalar through warmup", {
   # End-to-end check that the scalar floor is wired through RunMkPrime
   # and stored in the final adapted weights. Uses a small simulated
@@ -382,6 +413,7 @@ test_that("SBC-WARMUP-002: scalar moves keep ≥wMinScalar through warmup", {
   expect_true("tree_length" %in% names(res$moveWeights))
   expect_gte(res$moveWeights[["tree_length"]], 0.02 - 1e-6)
   expect_gte(res$moveWeights[["rate_log_sd"]], 0.02 - 1e-6)
+  expect_gte(res$moveWeights[["branch_lengths"]], 0.02 - 1e-6)
 })
 
 
