@@ -1,7 +1,7 @@
 # Rate_neo / tree_length ridge & joint moves after audit Issue 1 fix
 
 **Status:**
-- **A1 (`joint_tl_rn`) — DONE.** Implemented in `src/mcmc.cpp` (case 33) and fully wired in R (commit on main, 2026-05-27). See task checklist below.
+- **A1 (`joint_tl_rn`) — DONE.** Implemented in `src/mcmc.cpp` (case 33) and fully wired in R (commit `e08d328`, main, 2026-05-27). See task checklist below.
 - **A2 (neo_joint fate) — OPEN.** Needs a 5–10k-iter warmup on a mixed dataset to measure `cor(log rate_loss, log rate_neo)`, `cor(log T, log rate_neo)`, `cor(log T, log rate_loss)`. Harvest from the A3 Hamilton smoke run.
 - **A3 (SBC on mixed data) — OPEN.** SBC harness with mixed-partition simulations has not yet been run against the patched chain. Planned for Hamilton.
 - **B (deterministic trans-invariant move) — DEFERRED.** Profile first.
