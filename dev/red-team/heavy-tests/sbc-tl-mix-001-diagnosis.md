@@ -120,7 +120,7 @@ stay.
   SBC-MASS-FAIL-001 (kPrime parameterisation, partially fixed in v3/v4)
   remain valid harness defects independent of this one.
 
-## Update 2026-05-27 — SBC-HARNESS-005: rev() fix was necessary but not sufficient
+## Update 2026-05-27 (retracted, see follow-up below) — SBC-HARNESS-005: rev() fix was necessary but not sufficient
 
 v6 (job with the rev() fix; `sbc.R` now iterates forward) still showed
 `tree_length` FAIL with mean rank ~52/67 (expected 33.5) across 4 arms
@@ -158,6 +158,41 @@ start_tree$edge.length <- rep_len(0.1, nrow(true_tree$edge))
 This makes the harness explicitly test `p(θ|y, T_true)`, which is the
 correct and unambiguous SBC target for continuous parameters under a
 fixed-topology MCMC. v7 is the first run with both fixes applied.
+
+## Update 2026-05-27 (follow-up — retracts the SBC-HARNESS-005 stanza)
+
+The SBC-HARNESS-005 stanza above is **incorrect** and is retracted. v7 also
+failed for the same reason v6 failed: **SBC-HARNESS-006** — the Hamilton
+SLURM submit script invoked an out-of-tree stale copy of `sbc.R` at
+`/nobackup/pjjg18/mkp-study/red-team/heavy-tests/sbc.R` (last touched
+2026-05-27 13:16, before SBC-HARNESS-003/004/005 were committed). Every
+SLURM SBC run since that point silently used the buggy rev()-postorder
+simulator and the AdditionTree start. The in-tree fixes (this document's
+"Recommended fix" + SBC-HARNESS-005) were correct, but the SLURM jobs
+never loaded them.
+
+**Discriminator (decisive):** sim 1 (seed 20261527) under the buggy
+simulator gives `n_var = 27`, kObs after filtering matches v7's saved
+`summary.rds`; the in-tree simulator gives `n_var = 30`. The v7 forward
+sim matches the buggy version exactly.
+
+**Local re-run with in-tree sbc.R:** MkNT_geometric, 200 sims, same seeds
+as v7 — `tree_length` AD p = 0.9860. Clean PASS. So:
+
+* The rev() bug WAS the dominant driver of `tree_length` HIGH rank pile
+  in every run from v1 onward (consistent with this document's original
+  analysis).
+* The "needs topology fix" stanza was based on v7 results that came from
+  a code path that didn't include the rev() fix — so the v7 failure
+  doesn't constrain whether the topology fix is needed independently.
+* Whether the topology fix is *necessary* (vs nice-to-have) is now
+  testable empirically: v8 will run with both fixes and the correct path.
+
+**Lesson:** trust the smoking-gun discriminator (`n_var` per sim, kObs
+pattern) over rank-pattern interpretation. The MLE flat-likelihood check
+at TL=25..500 was decisive: it said "data carries no info, posterior
+must be ≈ prior; v7's posterior wasn't" — pointing at the simulator/data,
+not the MCMC. The path bug was upstream of both.
 
 ## Out-of-lane (ruled out)
 
