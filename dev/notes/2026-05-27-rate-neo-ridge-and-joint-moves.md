@@ -68,15 +68,15 @@ proportional to how tight the ridge is.
 
 ### What to do (urgent)
 
-**A1. Add `joint_tl_rn` (suggested moveType 25): 2D Bactrian on (log T, log r)
-with adaptive ρ.** Mechanics mirror `joint_tl_rls` exactly; the
+**A1. Add `joint_tl_rn` (implemented as moveType 33 — case 25 was already
+taken by `gibbs_kprime_sweep`): 2D Bactrian on (log T, log r) with adaptive ρ.** Mechanics mirror `joint_tl_rls` exactly; the
 infrastructure already exists in `bactrian_2d_perturbation` and the
 `jointRhos` matrix plumbing from M-120 (`dev/plans/2026-03-29-1716-m-120-...`).
 Concretely:
 
 - New case in `do_move_impl` at `src/mcmc.cpp:~4350` (next to cases 21, 22):
   ```cpp
-  case 25: { // joint_tl_rn: 2D Bactrian on (log T, log r)
+  case 33: { // joint_tl_rn: 2D Bactrian on (log T, log r)
     double z1, z2;
     bactrian_2d_perturbation(jointRho, z1, z2);
     double multT = std::exp(scaleTuning * z1);
