@@ -1,0 +1,9 @@
+matrix	treatment	prior	seed	tag
+Burns2011	T4	hyperprior_pooled	2026052801	rep2
+Burns2011	T4	hyperprior_pooled	2026052802	rep3
+Burns2011	T4	gamma_independent	2026052801	rep2
+Burns2011	T4	gamma_independent	2026052802	rep3
+CarranoSampson2008	T2a	hyperprior_pooled	2026052801	rep2
+CarranoSampson2008	T2a	hyperprior_pooled	2026052802	rep3
+CarranoSampson2008	T2a	gamma_independent	2026052801	rep2
+CarranoSampson2008	T2a	gamma_independent	2026052802	rep3
