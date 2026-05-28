@@ -1,0 +1,6 @@
+SBC mixed-partition summary
+mode:     full
+seedBase: 20260528
+N_sim:    200  L:100  thin:60
+
+  MkNT_mixed                     PASS (good=200)

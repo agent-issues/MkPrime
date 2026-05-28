@@ -1,0 +1,17 @@
+arm:         MkNT_mixed
+model:       MkNT  (hasNeo=TRUE, N_NEO=4, N_TRANS=8)
+neo sim:     MkN lambda=2, pi_0=rl/(1+rl)
+trans sim:   JC k=2, pSame=0.5+0.5*exp(-2t)
+mode:        full
+N_sim:       200 (good = 200)
+N_tip:       8
+L_samples:   nominal=100 actual=67
+K_arm:       4  (Bonferroni threshold p > 0.00025)
+
+per-parameter AD p-values:
+  tree_length         p=0.3569  n=200  PASS
+  rate_neo            p=0.1159  n=200  PASS
+  rate_loss           p=0.6534  n=200  PASS
+  rate_log_sd         p=0.8157  n=200  PASS
+
+ARM VERDICT: PASS

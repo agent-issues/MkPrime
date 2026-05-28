@@ -3,7 +3,13 @@
 **Status:**
 - **A1 (`joint_tl_rn`) — DONE.** Implemented in `src/mcmc.cpp` (case 33) and fully wired in R (commit `e08d328`, main, 2026-05-27). See task checklist below.
 - **A2 (neo_joint fate) — DONE.** Correlations measured from pid 635 smoke run (2026-05-27): all weak (|ρ| < 0.15). Outcome 3: drop `neo_joint`. Verdict in `dev/notes/2026-05-27-neo-joint-fate.md`.
-- **A3 (SBC on mixed data) — IN PROGRESS.** Harness written (`dev/red-team/heavy-tests/sbc-mixed.R`); submit script `submit-sbc-mixed.sh`. Quick smoke test passed (2026-05-27): all 5 sims completed, `rate_neo`/`rate_loss`/`rate_log_sd` all appear in samples (hasNeo=TRUE confirmed). Submitted to Hamilton; awaiting full results in `${RT}/results/sbc-mixed/`.
+- **A3 (SBC on mixed data) — DONE (PASS).** Hamilton job 17302921 (2026-05-27, 2:11 wall, 8-tip × 12-char). All 200/200 sims completed. AD rank-uniformity at Bonferroni/K=4 threshold (p > 0.00025):
+  - `tree_length`: p=0.357 — PASS
+  - **`rate_neo`: p=0.116 — PASS**  ← the parameter introduced by the partition-rate fix
+  - `rate_loss`: p=0.653 — PASS
+  - `rate_log_sd`: p=0.816 — PASS
+
+  Verdict in `dev/red-team/sbc-results-mixed/MkNT_mixed/verdict.txt`. Confirms the partition-rate normalisation fix (`neoScale = r/(1+r)·n/n_neo`, `transScale = 1/(1+r)·n/n_trans`) is correctly implemented in inference. Combined with the RB cross-sampler validation on pid 950 + pid 635, the fix is now backed by both pairwise sampler agreement and forward-prior SBC.
 - **B (deterministic trans-invariant move) — DEFERRED.** Profile first.
 
 **rb-equivalence smoke results (Hamilton, 2026-05-27):**
