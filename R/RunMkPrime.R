@@ -272,6 +272,12 @@ RunMkPrime <- function(data, tree = NULL,
                                model$priorOnClassRateLogSd %||%
                                "hyperprior_pooled")
 
+  # Plan §7.4: under marginal_k mode kPrime_i is pinned to kObs_i throughout
+  # the chain -- emitting those columns bloats the trace and misleads readers.
+  if (identical(model$likelihoodMode, "marginal_k")) {
+    paramNames <- paramNames[!grepl("^kPrime_", paramNames)]
+  }
+
   # --- Log file setup ---
   # Always stream to a log file for interrupt recovery.  When the user
   # didn't supply logFile, write to a temp file and load samples into
@@ -889,6 +895,20 @@ RunMkPrime <- function(data, tree = NULL,
   transIdx0     <- if (length(transIdx) > 0L) transIdx - 1L else integer(0L)
   hasNeo        <- any(mkd$type == "neomorphic")
 
+  # Plan §7.4: under marginal_k mode, kPrime_i columns are pinned to kObs_i
+  # and carry no information.  The raw C++ scalar_samples matrix still emits
+  # them (C++ is unchanged), so we strip them in R before writing to the
+  # trace/buffer.  kPrimeRawIdx is the 1-based column range to drop from the
+  # raw C++ row; it is empty under sampled_k or when nTrans == 0.
+  marginalK <- identical(model$likelihoodMode, "marginal_k")
+  kPrimeRawIdx <- if (marginalK && length(transIdx) > 0L) {
+    # Layout: ..., swap_cold, topo_hash, kPrime_1..nTrans, br_1..nEdge
+    # brColStart is the 1-based index of the first br_ column.
+    seq_len(length(transIdx)) + brColStart - length(transIdx) - 1L
+  } else {
+    integer(0L)
+  }
+
   # Auto-pin always-accept moves (Gibbs, slice) at initial weights.
   # The warmup scheduler's score (accept_rate x dim / cost) gives these
   # astronomical scores because acceptance = 1.0 and cost ~ 0; this inflates
@@ -1081,10 +1101,14 @@ RunMkPrime <- function(data, tree = NULL,
       for (i in seq_len(nSaved)) {
         r$saved_idx <- r$saved_idx + 1L
         row <- result$scalar_samples[i, ]
+        # Plan §7.4: strip no-op kPrime_ columns before writing to the trace.
+        # Keep the raw `row` intact below for tree reconstruction (brColStart
+        # indexes into the unstripped C++ layout).
+        bufRow <- if (length(kPrimeRawIdx) > 0L) row[-kPrimeRawIdx] else row
 
         if (isStreaming) {
           iterNum <- r$samplePhaseStart + r$saved_idx * mcmc$thin
-          r <- .AddToStreamBuffer(r, row, iterNum, logFilePath,
+          r <- .AddToStreamBuffer(r, bufRow, iterNum, logFilePath,
                                   mcmc$bufferSize, convWindowSize)
         } else {
           if (r$saved_idx > nrow(r$samples)) {
@@ -1093,7 +1117,7 @@ RunMkPrime <- function(data, tree = NULL,
                             dimnames = list(NULL, colnames(r$samples)))
             r$samples <- rbind(r$samples, extra)
           }
-          r$samples[r$saved_idx, ] <- row
+          r$samples[r$saved_idx, ] <- bufRow
         }
 
         # Tree storage: only on treeThin boundary
@@ -1127,7 +1151,14 @@ RunMkPrime <- function(data, tree = NULL,
                           dimnames = list(NULL, colnames(tuningBuf)))
           tuningBuf <- rbind(tuningBuf, extra)
         }
-        tuningBuf[tuningBufIdx, ] <- result$scalar_samples[i, ]
+        {
+          rawRow <- result$scalar_samples[i, ]
+          tuningBuf[tuningBufIdx, ] <- if (length(kPrimeRawIdx) > 0L) {
+            rawRow[-kPrimeRawIdx]
+          } else {
+            rawRow
+          }
+        }
 
         # Store trees during tuning for tree-ESS-aware bandit
         if (tuneWithTreeEss) {
