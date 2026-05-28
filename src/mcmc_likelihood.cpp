@@ -2911,7 +2911,8 @@ SEXP prepare_mcmc_data(List partitions_r,
                        int    empBodyLastK = 1,
                        int    empTailStartK = 0,
                        double empTailDecay = 0.0,
-                       double empLogTailStartP = -1e308) {
+                       double empLogTailStartP = -1e308,
+                       bool   marginalK = false) {
   McmcData* d = new McmcData();
   d->hasNeo = hasNeo;
   d->nCat = nCat;
@@ -2944,6 +2945,7 @@ SEXP prepare_mcmc_data(List partitions_r,
   d->empTailDecay      = empTailDecay;
   d->empLogTailStartP  = (empLogTailStartP <= -1e300) ? R_NegInf
                                                        : empLogTailStartP;
+  d->marginalK = marginalK;
   d->kObs = kObs_r;
   d->nChar = kObs_r.size();
   d->nTip = 0;

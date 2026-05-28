@@ -132,6 +132,13 @@ struct McmcData {
   // Distinct k values present in the dataset (populated at init).
   // Used to precompute per-k bins when beta_scale changes.
   std::vector<int> hetKValues;  // e.g., {2, 3, 5}
+
+  // Likelihood mode (v1 marginal-k landing, plan §2). When false, k'_i is
+  // a sampled MCMC state variable (legacy sampled-k path). When true,
+  // k'_i is analytically marginalised out of the likelihood at every
+  // evaluation; the chain only carries (tree, mu, sigma, p). v1 supports
+  // the geometric arm only — prepare_mcmc_data enforces this.
+  bool marginalK = false;
 };
 
 // ---------------------------------------------------------------------------
@@ -381,10 +388,48 @@ struct KprimeCharWeights {
 // Populate `out` with per-(char, ko) Gibbs weights for all transformational
 // characters. Pure (no RNG); see `mcmc.cpp:gibbs_kprime_sweep_impl` for the
 // canonical caller and the phase-2 categorical sampler that consumes `out`.
+//
+// NOTE: state->gibbsWs is grown if needed — that's workspace, not logical
+// state, so callers can treat this as state-non-modifying. Reads
+// state->kPrime / parent / child / betaScale; never writes them.
 void compute_per_kprime_log_lik(
     McmcData* data, McmcState* state, double beta,
     Rcpp::NumericVector edgeLen,
     Rcpp::NumericVector acrvRates,
     KprimeCharWeights& out);
+
+// ---------------------------------------------------------------------------
+// Marginal-k evaluator (v1: geometric arm only).
+//
+// Sums out per-character k'_i analytically:
+//   L_marg(y_i | tree, mu, p) =
+//     logSumExp_{u=0..u_max} [ LL(y_i | tree, mu, kObs_i + u)
+//                              + log P(u | p) ]
+// For neomorphic partitions, falls through to cpp_partition_log_likelihood
+// (those are not marginalised — k is fixed).
+//
+// Reads data->parts, data->kObs, data->transIdxGlobal, data->codingType,
+// data->relabel, plus state->parent/child/p/rateLoss/rateLogSd/rateNeo/
+// betaScale. Does NOT modify state (apart from state->gibbsWs allocation
+// as noted on compute_per_kprime_log_lik).
+//
+// REQUIREMENTS (enforced in MkPrimeModel.R):
+//   - data->marginalK == true
+//   - data->kPriorLogseries / kPriorBetaGeometric / kPriorEmpiricalGeometric
+//     all false (geometric arm only in v1)
+//   - data->qHeterogeneity == false
+//
+// `state` is non-const because the call mutates `state->gibbsWs` (workspace
+// allocation) inside `compute_per_kprime_log_lik`, and may populate
+// `state->charLLCache` if the marginal-k charLL cache is active.
+double cpp_log_likelihood_marginal(
+    McmcData& data, McmcState& state,
+    Rcpp::IntegerVector parent,
+    Rcpp::IntegerVector child,
+    Rcpp::NumericVector edgeLen,
+    double rateLoss,
+    double rateLogSd,
+    double rateNeo,
+    ClWorkspace* ws = nullptr);
 
 #endif  // MKPRIME_MCMC_STATE_H

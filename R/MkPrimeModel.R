@@ -84,6 +84,21 @@
 #' @param betaScaleShape,betaScaleRate Shape and rate for the Gamma prior
 #'   on `beta_scale` (the symmetric Dirichlet concentration parameter).
 #'   Defaults: shape = 1, rate = 1. Ignored when `qHeterogeneity = FALSE`.
+#' @param likelihoodMode How per-character `k'_i` enters the likelihood.
+#'   One of:
+#'   * `"sampled_k"` (default): `k'_i` is a sampled MCMC state variable;
+#'     a per-character integer-walk + Gibbs sweep (case 25) move family
+#'     updates it. The trace carries `kPrime_i...` columns and `LogPrior`
+#'     evaluates the per-character `P(k'_i | hyperparams)` term.
+#'   * `"marginal_k"` (v1 = geometric arm only): `k'_i` is analytically
+#'     marginalised out of the likelihood at every evaluation. The
+#'     posterior is over `(tree, mu, sigma, p)` only; the slow discrete
+#'     coordinate is removed. Required when chain mixing on `k'_i` is
+#'     known to be uninformative (per finding EG-003 in
+#'     `dev/red-team/findings.md`). v1 supports
+#'     `kPrimePrior = "geometric"` only — other arms are §11 follow-ups
+#'     in `dev/notes/2026-05-28-marginal-k-plan.md`. Het + marginal-k and
+#'     partition-API + marginal-k are deferred (§13 of the plan).
 #'
 #' @section Q-matrix heterogeneity:
 #'
@@ -145,7 +160,8 @@ MkPrimeModel <- function(
     betaScaleShape = 1,
     betaScaleRate = 1,
     classRateConcentration = 1,
-    priorOnClassRateLogSd = c("hyperprior_pooled", "gamma_independent")
+    priorOnClassRateLogSd = c("hyperprior_pooled", "gamma_independent"),
+    likelihoodMode = c("sampled_k", "marginal_k")
 ) {
   coding <- match.arg(coding, c("variable", "informative", "none"))
   kPrimePrior <- match.arg(
@@ -153,6 +169,28 @@ MkPrimeModel <- function(
     c("empirical_geometric", "geometric", "beta_geometric", "logseries")
   )
   priorOnClassRateLogSd <- match.arg(priorOnClassRateLogSd)
+  likelihoodMode <- match.arg(likelihoodMode)
+
+  if (identical(likelihoodMode, "marginal_k")) {
+    if (!identical(kPrimePrior, "geometric")) {
+      cli::cli_abort(c(
+        "{.code likelihoodMode = \"marginal_k\"} requires
+         {.code kPrimePrior = \"geometric\"} in v1.",
+        i = "Got {.code kPrimePrior = \"{kPrimePrior}\"}.",
+        i = "Other arms (empirical_geometric / beta_geometric / logseries)
+             are scheduled as §11 follow-ups in
+             {.file dev/notes/2026-05-28-marginal-k-plan.md}."
+      ))
+    }
+    if (isTRUE(qHeterogeneity)) {
+      cli::cli_abort(c(
+        "{.code likelihoodMode = \"marginal_k\"} cannot be combined with
+         {.code qHeterogeneity = TRUE}.",
+        i = "Het + marginal-k is deferred to v1.x (plan §13).",
+        i = "Drop one of the two."
+      ))
+    }
+  }
 
   # empiricalNObs is only relevant under the empirical_geometric prior; warn
   # if supplied for other priors so the user knows it will be ignored.
@@ -244,7 +282,8 @@ MkPrimeModel <- function(
       betaScaleShape = betaScaleShape,
       betaScaleRate = betaScaleRate,
       classRateConcentration = classRateConcentration,
-      priorOnClassRateLogSd = priorOnClassRateLogSd
+      priorOnClassRateLogSd = priorOnClassRateLogSd,
+      likelihoodMode = likelihoodMode
     ),
     class = "MkPrimeModel"
   )
@@ -485,12 +524,21 @@ LogPrior <- function(state, model, mkd) {
   # when shape > 1, density is 0. Handle both:
   if (state$rate_log_sd == 0 && model$rateLogSdShape > 1) return(-Inf)
 
+  marginalK <- identical(model$likelihoodMode, "marginal_k")
+
   if (hasTrans) {
     if (identical(model$kPrimePrior, "geometric")) {
       # k'_i: Geometric(p) shifted by kObs_i
       # P(k'_i = kObs_i + u) = p * (1-p)^u, u = 0, 1, 2, ...
-      u <- state$kPrime[transIdx] - mkd$kObs[transIdx]
-      lp <- lp + length(transIdx) * log(state$p) + sum(u) * log1p(-state$p)
+      #
+      # Under marginal-k mode, the per-character P(u_i | p) mass is consumed
+      # by the marginal-likelihood evaluator (cpp_log_likelihood_marginal),
+      # not the prior. The hyperprior on p is kept here unchanged.
+      if (!marginalK) {
+        u <- state$kPrime[transIdx] - mkd$kObs[transIdx]
+        lp <- lp + length(transIdx) * log(state$p) +
+              sum(u) * log1p(-state$p)
+      }
 
       # p: Beta hyperprior
       lp <- lp + dbeta(state$p,
@@ -664,6 +712,8 @@ print.MkPrimeModel <- function(x, ...) {
     "OFF"
   }
 
+  lik_mode_str <- x$likelihoodMode %||% "sampled_k"
+
   cli::cli_ul(c(
     "Coding: {x$coding}",
     "ACRV categories: {x$nCat}",
@@ -673,7 +723,8 @@ print.MkPrimeModel <- function(x, ...) {
     "rate_log_sd prior: Gamma({x$rateLogSdShape}, {x$rateLogSdRate})",
     paste0("k' prior: ", k_prior_str),
     "rate_neo prior: LogNormal({x$rateNeoMeanlog}, {x$rateNeoSdlog})",
-    paste0("Q-matrix heterogeneity: ", het_str)
+    paste0("Q-matrix heterogeneity: ", het_str),
+    paste0("Likelihood mode: ", lik_mode_str)
   ))
   invisible(x)
 }

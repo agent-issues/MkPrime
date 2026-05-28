@@ -209,6 +209,25 @@ struct McmcState {
   double        hyperTau = 1.0;
   NumericVector classZ;           // length classRateLogSd.size() when active
 
+  // -----------------------------------------------------------------------
+  // Marginal-k (v1) charLL cache (plan §5, sub-option A').
+  //
+  // When data->marginalK is true, the marginal evaluator stores per-(char,
+  // ko) raw log-likelihoods (no prior, no β) flat in `charLLCache` with
+  // stride kMaxKprimeCand. `charLLNCand[ti]` is the number of valid ko
+  // slots for char ti (after early termination). `charLLCacheReady` is
+  // true iff the cache is consistent with the current
+  // (parent, child, edgeLen, rateLoss, rateLogSd, rateNeo) — that is, the
+  // cache is invalidated on every move except case 30 (mh_logit_p), since
+  // a p-move only changes the per-character weights `log P(u | p)`, not
+  // the raw per-(char, k') LLs.
+  //
+  // The cache lets the marginal evaluator skip the helper call inside
+  // case 30, recomputing only the per-character logSumExp against the new
+  // weights — O(nTrans × u_max) ops, no pruning.
+  std::vector<double> charLLCache;
+  std::vector<int>    charLLNCand;
+  bool                charLLCacheReady = false;
 };
 
 
@@ -344,12 +363,18 @@ static double cpp_log_prior(
       lp += R::dbeta(p, data.kprimeHyperA, data.kprimeHyperB, 1);
     } else {
       // Hierarchical geometric: P(k'_i = kObs_i + u) = p*(1-p)^u
-      double sumU = 0.0;
-      for (int i = 0; i < nTrans; ++i) {
-        int gi = data.transIdxGlobal[i];
-        sumU += (kPrime[gi] - data.kObs[gi]);
+      //
+      // Under marginal-k mode, the per-character P(u_i | p) mass is
+      // consumed by cpp_log_likelihood_marginal, not the prior. The
+      // hyperprior on p remains here unchanged.
+      if (!data.marginalK) {
+        double sumU = 0.0;
+        for (int i = 0; i < nTrans; ++i) {
+          int gi = data.transIdxGlobal[i];
+          sumU += (kPrime[gi] - data.kObs[gi]);
+        }
+        lp += nTrans * std::log(p) + sumU * std::log1p(-p);
       }
-      lp += nTrans * std::log(p) + sumU * std::log1p(-p);
       lp += R::dbeta(p, data.kprimeHyperA, data.kprimeHyperB, 1);
     }
   }
@@ -905,6 +930,17 @@ static double compute_full_loglik_at(
     const IntegerVector& parent,
     const IntegerVector& child,
     const NumericVector& edgeLen) {
+  // Marginal-k dispatch (v1: geometric arm only; partition-API + marginal-k
+  // deferred — guard in MkPrimeModel.R). cast away const on data: the
+  // marginal evaluator takes a non-const reference because the underlying
+  // PR-A helper may grow state->gibbsWs and the cache lives on state too.
+  if (data.marginalK) {
+    return cpp_log_likelihood_marginal(
+      const_cast<McmcData&>(data), state,
+      parent, child, edgeLen,
+      state.rateLoss, state.rateLogSd, state.rateNeo,
+      state.clWs.ready() ? &state.clWs : nullptr);
+  }
   if (state.usePartitioned) {
     return cpp_log_likelihood_partitioned(
       data, parent, child, edgeLen,
@@ -4018,6 +4054,178 @@ void compute_per_kprime_log_lik(
 
 
 // ---------------------------------------------------------------------------
+// cpp_log_likelihood_marginal (v1: geometric arm only)
+//
+// Marginal-k evaluator. Replaces per-character k'_i sampling with an
+// analytic sum over u_i ∈ {0, .., kMaxKprimeCand-1} weighted by the
+// geometric pmf P(u_i | p) = p (1-p)^u.
+//
+// For neomorphic partitions, falls through to cpp_partition_log_likelihood
+// (k = kObs is the fixed correct choice — no marginalisation needed).
+//
+// Strategy (plan §3):
+//   1. Call compute_per_kprime_log_lik(beta = 1.0). The returned
+//      charLogW[ti, ko] = LL_ko + log P(ko | p) — i.e. exactly what the
+//      marginal logSumExp wants under geometric. So the result for char ti
+//      is simply logSumExp_ko(charLogW[ti, ko]).
+//   2. Cache strategy: for the charLL cache to accelerate p-only moves,
+//      stash charLL[ti, ko] = charLogW[ti, ko] - log P(ko | p_at_eval).
+//      On a subsequent p-move (case 30) the marginal evaluator can skip
+//      step 1 entirely and recompute the per-character logSumExp against
+//      log P(ko | p_new).
+//
+// State invariant: this is an evaluator, not a sampler. It does not modify
+// state->kPrime, state->logLik, state->logPrior, state->partLogLik, or any
+// MCMC state variable. It MAY write state->gibbsWs (workspace allocation)
+// and state->charLLCache (cache fill — see field comment in McmcState).
+// ---------------------------------------------------------------------------
+
+double cpp_log_likelihood_marginal(
+    McmcData& data, McmcState& state,
+    IntegerVector parent, IntegerVector child,
+    NumericVector edgeLen,
+    double rateLoss, double rateLogSd, double rateNeo,
+    ClWorkspace* ws) {
+
+  // Defensive — v1 enforces these at the R layer in MkPrimeModel(), but
+  // duplicate the check here in case a caller bypasses the constructor.
+  if (data.kPriorLogseries || data.kPriorBetaGeometric ||
+      data.kPriorEmpiricalGeometric) {
+    Rcpp::stop("cpp_log_likelihood_marginal: v1 supports the geometric arm "
+               "only (kPriorLogseries / kPriorBetaGeometric / "
+               "kPriorEmpiricalGeometric must all be false).");
+  }
+  if (data.qHeterogeneity) {
+    Rcpp::stop("cpp_log_likelihood_marginal: Q-matrix heterogeneity is not "
+               "supported in v1 marginal-k mode (plan §13).");
+  }
+
+  const int nTrans = (int)data.transIdxGlobal.size();
+  const int nParts = (int)data.parts.size();
+  double totalLL = 0.0;
+
+  // ---- Neomorphic partitions: fall through, unchanged ----------------------
+  // k = kObs is exact (state->kPrime[ neo char ] == kObs in this code path
+  // — case 25 never touches neo chars; the chain's state->kPrime starts
+  // there and stays there).
+  for (int pi = 0; pi < nParts; ++pi) {
+    if (data.parts[pi].type == 0) {
+      totalLL += cpp_partition_log_likelihood(
+        data, pi, parent, child, edgeLen,
+        state.kPrime, rateLoss, rateLogSd, rateNeo,
+        state.betaScale, ws);
+    }
+  }
+
+  if (nTrans == 0) return totalLL;
+
+  // ---- Transformational partitions: marginal sum --------------------------
+  // Geometric prior weights P(u | p): precompute log P(u | p) for u in
+  // 0..kMaxKprimeCand-1. Same series the helper uses internally.
+  const double p     = state.p;
+  const double logP  = std::log(p);
+  const double log1mP = std::log1p(-p);
+  std::vector<double> logPriorByU(kMaxKprimeCand);
+  for (int ko = 0; ko < kMaxKprimeCand; ++ko) {
+    logPriorByU[ko] = logP + ko * log1mP;
+  }
+
+  // Cache fast-path: if the charLL cache is valid, skip the helper call
+  // and recompute the per-char logSumExp against the current p-weights.
+  bool useCache = data.marginalK && state.charLLCacheReady &&
+                  (int)state.charLLNCand.size() == nTrans &&
+                  (int)state.charLLCache.size() ==
+                    nTrans * kMaxKprimeCand;
+
+  if (!useCache) {
+    // Compute per-(char, ko) Gibbs weights via the PR-A helper at β = 1.
+    // For the geometric arm these weights are LL + log P(u|p) — exactly
+    // what the marginal logSumExp wants.
+    NumericVector acrvRates = (rateLogSd > 0.0)
+      ? cpp_acrv_rates(rateLogSd, data.nCat, data.acrvZ)
+      : NumericVector(1, 1.0);
+
+    // Save state's rateLogSd/etc temporarily? No — helper reads p from
+    // state but does not directly use rateLoss/rateLogSd/rateNeo (those
+    // enter via the per-partition pruning calls inside the helper, which
+    // we feed `edgeLen` to externally). The helper signature passes
+    // edgeLen directly, so we honour the caller's rateLoss/rateLogSd/
+    // rateNeo by pre-scaling edgeLen if the caller did — but the existing
+    // case-25 path uses state's own values. The MCMC chain always
+    // evaluates at state's current scalars, so we mirror that by using
+    // them here (parent/child/edgeLen come from caller; everything else
+    // is read from state inside the helper).
+    KprimeCharWeights kw;
+    compute_per_kprime_log_lik(&data, &state, /*beta=*/1.0,
+                               edgeLen, acrvRates, kw);
+
+    // Allocate cache lazily on first marginal eval.
+    if ((int)state.charLLCache.size() != nTrans * kMaxKprimeCand) {
+      state.charLLCache.assign(
+        static_cast<size_t>(nTrans) * kMaxKprimeCand, R_NegInf);
+      state.charLLNCand.assign(nTrans, 0);
+    }
+
+    // Fill cache: charLL = charLogW - log P(u | p_at_eval).
+    // Per-char logSumExp on charLogW directly == marginal LL for char ti.
+    for (int ti = 0; ti < nTrans; ++ti) {
+      const int nCand = kw.charNCand[ti];
+      state.charLLNCand[ti] = nCand;
+      double mx = R_NegInf;
+      for (int c = 0; c < nCand; ++c) {
+        double w = kw.charLogW[ti * kMaxKprimeCand + c];
+        // Stash raw LL = w - logPriorByU[c] in cache.
+        double rawLL = R_FINITE(w)
+          ? (w - logPriorByU[c])
+          : R_NegInf;
+        state.charLLCache[ti * kMaxKprimeCand + c] = rawLL;
+        if (R_FINITE(w) && w > mx) mx = w;
+      }
+      if (!R_FINITE(mx)) {
+        // No finite candidate — character is unsupportable; total LL is
+        // -Inf and downstream MH ratio will reject.
+        totalLL = R_NegInf;
+        // Continue filling cache for the remaining chars so a subsequent
+        // call (e.g. on rejection rollback) finds a coherent cache.
+        continue;
+      }
+      double s = 0.0;
+      for (int c = 0; c < nCand; ++c) {
+        double w = kw.charLogW[ti * kMaxKprimeCand + c];
+        if (R_FINITE(w)) s += std::exp(w - mx);
+      }
+      if (R_FINITE(totalLL)) totalLL += mx + std::log(s);
+    }
+    state.charLLCacheReady = true;
+    return totalLL;
+  }
+
+  // Cache fast-path: reuse stored raw charLL, only re-do the logSumExp
+  // against the new logPriorByU weights.
+  for (int ti = 0; ti < nTrans; ++ti) {
+    const int nCand = state.charLLNCand[ti];
+    double mx = R_NegInf;
+    // Compute weights into a small local buffer to avoid double-exp cost.
+    double wBuf[kMaxKprimeCand];
+    for (int c = 0; c < nCand; ++c) {
+      double rawLL = state.charLLCache[ti * kMaxKprimeCand + c];
+      double w = R_FINITE(rawLL)
+        ? (rawLL + logPriorByU[c])
+        : R_NegInf;
+      wBuf[c] = w;
+      if (R_FINITE(w) && w > mx) mx = w;
+    }
+    if (!R_FINITE(mx)) { totalLL = R_NegInf; continue; }
+    double s = 0.0;
+    for (int c = 0; c < nCand; ++c)
+      if (R_FINITE(wBuf[c])) s += std::exp(wBuf[c] - mx);
+    if (R_FINITE(totalLL)) totalLL += mx + std::log(s);
+  }
+  return totalLL;
+}
+
+
+// ---------------------------------------------------------------------------
 // Gibbs kPrime sweep (moveType 25)
 //
 // Samples each k'_i from its full conditional in a single random-order scan
@@ -4257,6 +4465,17 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   double oldKpA  = state->kprimeAlpha;
   double oldKpB  = state->kprimeBeta;
 
+  // Marginal-k: the charLL cache holds raw per-(char, k') LLs derived
+  // from (parent, child, edgeLen, rateLoss, rateLogSd, rateNeo, betaScale)
+  // but NOT from p. Only case 30 (mh_logit_p) leaves it valid
+  // post-proposal. Defensively invalidate at the top for every other
+  // move; the marginal evaluator will rebuild on the next call. Cost on
+  // infeasible early-return moves: at most one wasted rebuild on the
+  // next call, which is acceptable.
+  if (data->marginalK && moveType != 30) {
+    state->charLLCacheReady = false;
+  }
+
   double logHastings  = 0.0;
   bool topologyChanged = false;
   int oldKPrimeVal = 0;     // single-element rollback for case 7 (kPrime)
@@ -4306,9 +4525,15 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   // M-121/M-158: pre-proposal cache population for partial CL.
   // Must happen BEFORE the proposal modifies state in-place.
   // Populate for NNI (5), beta_simplex (4), Dirichlet (23, 24), SPR (6).
+  //
+  // Skipped under marginal-k mode: the partial-CL paths assume sampled-k
+  // (they call cpp_partition_log_likelihood which sums over a single
+  // k = state->kPrime). The marginal evaluator dispatches through
+  // compute_full_loglik_at which always recomputes the full marginal sum
+  // from scratch (or from the charLL cache for p-only moves).
   if ((moveType == 5 || moveType == 4 || moveType == 23 || moveType == 24
        || moveType == 6) &&
-      !data->qHeterogeneity && !state->nodeCL.ready()) {
+      !data->qHeterogeneity && !data->marginalK && !state->nodeCL.ready()) {
     state->diagCachePopCount++;
     int nEdge = state->relBrLengths.size();
     NumericVector absLen(nEdge);
@@ -4843,7 +5068,12 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   // Moves that only touch `p` (case 8 legacy multiplicative, case 30 logit MH)
   // leave the likelihood untouched.
   bool likChanges = (moveType != 8 && moveType != 30);
-  bool hasPLC = !state->partLogLik.empty();
+  // Under marginal-k mode the per-partition cache (partLogLik) is built
+  // for sampled-k semantics (cpp_partition_log_likelihood with fixed
+  // state->kPrime). The marginal evaluator does NOT update it. Force
+  // hasPLC=false so we route through compute_full_loglik_at (the
+  // marginal-aware dispatcher).
+  bool hasPLC = !state->partLogLik.empty() && !data->marginalK;
   double newLogLik;
   std::vector<double> newPC;
   bool usedPartialCL = false;
@@ -5030,18 +5260,10 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     NumericVector propEdgeLen(nEdge);
     for (int i = 0; i < nEdge; ++i)
       propEdgeLen[i] = state->treeLength * evalRelBr[i];
-    { ClWorkspace* pWs = state->clWs.ready() ? &state->clWs : nullptr;
-      newLogLik = state->usePartitioned
-        ? cpp_log_likelihood_partitioned(
-            *data, evalParent, evalChild, propEdgeLen,
-            state->kPrime, state->rateLoss,
-            state->classRateLogSd, state->classRate,
-            state->etaNeo, state->betaScale, pWs)
-        : cpp_log_likelihood(
-            *data, evalParent, evalChild, propEdgeLen,
-            state->kPrime, state->rateLoss, state->rateLogSd,
-            state->rateNeo, state->betaScale, pWs);
-    }
+    // Dispatch through compute_full_loglik_at so marginal-k mode routes to
+    // cpp_log_likelihood_marginal automatically.
+    newLogLik = compute_full_loglik_at(
+      *data, *state, evalParent, evalChild, propEdgeLen);
   } else {
     int nParts = (int)data->parts.size();
     int nEdge  = evalRelBr.size();
@@ -5234,6 +5456,16 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     if (usedPartialCL) {
       restore_dirty_cls(state->nodeCL, state->nodeCL.dirtyNodes);
     }
+  }
+
+  // Marginal-k: on rejection of a non-30 move, the cache contents are
+  // stale (they were filled against the proposed parent/child/edgeLen).
+  // Invalidate so the next marginal eval rebuilds against the rolled-
+  // back state. For case 30 (p-only) the cache was not written during
+  // the proposal (cache path skipped re-pruning) and is independent of
+  // p, so leave it valid.
+  if (data->marginalK && moveType != 30) {
+    state->charLLCacheReady = false;
   }
 
   return false;

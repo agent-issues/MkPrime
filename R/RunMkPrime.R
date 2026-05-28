@@ -2946,7 +2946,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   moves <- .BuildMoves(nEdge, nTrans, hasNeo, mcmc, fixTopology = FALSE,
                        kPrimePrior = model$kPrimePrior %||% "geometric",
                        qHeterogeneity = qHet,
-                       joint2d = isTRUE(mcmc$joint2d))
+                       joint2d = isTRUE(mcmc$joint2d),
+                       likelihoodMode = model$likelihoodMode %||% "sampled_k")
 
   if (identical(mcmc$thin, "auto")) {
     mcmc$thin <- length(moves)
@@ -3436,7 +3437,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                         fixTopology = FALSE,
                         kPrimePrior = "geometric",
                         qHeterogeneity = FALSE,
-                        joint2d = TRUE) {
+                        joint2d = TRUE,
+                        likelihoodMode = "sampled_k") {
   moves <- list(
     list(name = "tree_length", type = "scale", target = "tree_length",
          weight = 1, dim = 1L),
@@ -3539,7 +3541,28 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     ))
   }
 
+  marginalK <- identical(likelihoodMode, "marginal_k")
+
   if (nTrans > 0) {
+    # Under marginal-k mode, the per-character k'_i state is no longer
+    # sampled: cpp_log_likelihood_marginal sums over u analytically. The
+    # int_walk / Gibbs sweep / block shift moves on kPrime are no-ops
+    # against the marginal evaluator and would only burn cycles. Drop
+    # them from the schedule entirely (rather than zero-weighting, which
+    # the adaptive scheduler can re-up). Redistribute weight onto
+    # mh_logit_p since p now dominates the chain's exploration of
+    # u_max(p). Plan §4 in dev/notes/2026-05-28-marginal-k-plan.md.
+    if (marginalK) {
+      # Geometric arm under marginal-k: p has Beta hyperprior; the legacy
+      # Gibbs draw on p is no longer correct (conjugacy breaks once the
+      # per-character u_i is marginalised out). Use mh_logit_p with the
+      # weight redistribution mentioned above.
+      kPrimeMoves <- list(
+        list(name = "mh_logit_p", type = "logit_scale_p", target = "p",
+             weight = max(1, nTrans * 2L + 2L), dim = 1L)
+      )
+      moves <- c(moves, kPrimeMoves)
+    } else {
     kPrimeMoves <- list(
       # Univariate integer walk (reduced weight -- Gibbs sweep does heavy lifting)
       list(name = "kPrime", type = "int_walk", target = "kPrime",
@@ -3588,6 +3611,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       ))
     }
     moves <- c(moves, kPrimeMoves)
+    }  # end !marginalK
   }
 
   if (hasNeo) {
@@ -3772,7 +3796,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     empBodyLastK,
     empTailStartK,
     empTailDecay,
-    empLogTailStartP
+    empLogTailStartP,
+    identical(model$likelihoodMode, "marginal_k")
   )
 }
 
