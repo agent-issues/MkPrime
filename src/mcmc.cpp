@@ -283,13 +283,14 @@ static double cpp_log_prior(
       }
       // No p / Beta term
     } else if (data.kPriorBetaGeometric) {
-      // Per-character Beta-Geometric: P(u | α, β) = B(α+1, β+u) / B(α, β)
+      // Model A: Per-char Beta-Geometric on u = k' - 2 (unconditional).
+      // P(u | α, β) = B(α+1, β+u) / B(α, β), u >= 0.
       double a = kprimeAlpha;
       double b = kprimeBeta;
       double lbAB = R::lbeta(a, b);
       for (int i = 0; i < nTrans; ++i) {
         int gi = data.transIdxGlobal[i];
-        int u = kPrime[gi] - data.kObs[gi];
+        int u = kPrime[gi] - 2;
         lp += R::lbeta(a + 1.0, b + static_cast<double>(u)) - lbAB;
       }
       // Hyperprior: Exp(1) on α and β
@@ -343,11 +344,11 @@ static double cpp_log_prior(
       // p: Beta hyperprior (same as plain geometric)
       lp += R::dbeta(p, data.kprimeHyperA, data.kprimeHyperB, 1);
     } else {
-      // Hierarchical geometric: P(k'_i = kObs_i + u) = p*(1-p)^u
+      // Model A hierarchical geometric: P(k'_i = 2 + u) = p*(1-p)^u, u >= 0.
       double sumU = 0.0;
       for (int i = 0; i < nTrans; ++i) {
         int gi = data.transIdxGlobal[i];
-        sumU += (kPrime[gi] - data.kObs[gi]);
+        sumU += (kPrime[gi] - 2);
       }
       lp += nTrans * std::log(p) + sumU * std::log1p(-p);
       lp += R::dbeta(p, data.kprimeHyperA, data.kprimeHyperB, 1);
@@ -3698,19 +3699,26 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   // far below double-precision RNG resolution (~2.2e-16).
   static const double LOG_CUTOFF = -25.0;
 
-  // Beta-Geometric: precompute incremental log-prior for ko = 0..K_MAX_CAND-1
+  // Model A Beta-Geometric: precompute log-prior indexed by u = k' - 2.
   // logPrior(u=0) = log(α) - log(α+β)
-  // logPrior(u=k) = logPrior(u=k-1) + log(β+k-1) - log(α+β+k)
+  // logPrior(u=j) = logPrior(u=j-1) + log(β+j-1) - log(α+β+j)
+  // Max index needed: max_kObs + K_MAX_CAND - 3 (for tp.kObs + ko - 2 where
+  // tp.kObs <= max_kObs and ko <= K_MAX_CAND - 1). Allocate with headroom.
   std::vector<double> bgLogPrior;
   if (isBetaGeometric) {
     double a = state->kprimeAlpha;
     double b = state->kprimeBeta;
-    bgLogPrior.resize(K_MAX_CAND);
+    int max_kObs_bg = 0;
+    for (int gi : data->transIdxGlobal) {
+      if (data->kObs[gi] > max_kObs_bg) max_kObs_bg = data->kObs[gi];
+    }
+    int bg_size = std::max(K_MAX_CAND, max_kObs_bg + K_MAX_CAND);
+    bgLogPrior.resize(bg_size);
     bgLogPrior[0] = std::log(a) - std::log(a + b);
-    for (int ko = 1; ko < K_MAX_CAND; ++ko) {
-      bgLogPrior[ko] = bgLogPrior[ko - 1]
-                      + std::log(b + ko - 1)
-                      - std::log(a + b + ko);
+    for (int u = 1; u < bg_size; ++u) {
+      bgLogPrior[u] = bgLogPrior[u - 1]
+                      + std::log(b + u - 1)
+                      - std::log(a + b + u);
     }
   }
 
@@ -3871,9 +3879,9 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
           int ti0 = pa.patTrans[localPat][0];
           double logPrior_k;
           if (isBetaGeometric) {
-            logPrior_k = bgLogPrior[ko];
+            logPrior_k = bgLogPrior[tp.kObs + ko - 2];  // Model A: u = k'-2
           } else if (isGeometric) {
-            logPrior_k = logP + ko * log1mP;
+            logPrior_k = logP + (tp.kObs + ko - 2) * log1mP;  // Model A
           } else if (isEmpGeom) {
             int k2 = tp.kObs + ko;
             logPrior_k = (k2 >= 0 && k2 < (int)egLogPriorByK.size())
@@ -3970,9 +3978,9 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
       // group and termination can be decided from one representative.
       double logPrior_k;
       if (isBetaGeometric) {
-        logPrior_k = bgLogPrior[ko];
+        logPrior_k = bgLogPrior[tp.kObs + ko - 2];  // Model A: u = k'-2
       } else if (isGeometric) {
-        logPrior_k = logP + ko * log1mP;
+        logPrior_k = logP + (tp.kObs + ko - 2) * log1mP;  // Model A
       } else if (isEmpGeom) {
         logPrior_k = (k >= 0 && k < (int)egLogPriorByK.size())
                      ? egLogPriorByK[k] : R_NegInf;
@@ -4469,7 +4477,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       double sumU = 0.0;
       for (int i = 0; i < nTrans; ++i) {
         int gi = data->transIdxGlobal[i];
-        sumU += static_cast<double>(state->kPrime[gi] - data->kObs[gi]);
+        sumU += static_cast<double>(state->kPrime[gi] - 2);  // Model A
       }
       double shape1 = data->kprimeHyperA + nTrans;
       double shape2 = data->kprimeHyperB + sumU;

@@ -3886,7 +3886,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     gibbs_p = {
       # Conjugate Beta draw; acceptance = 1, no MH step needed
       transIdx <- which(mkd$type == "transformational")
-      sumU <- sum(state$kPrime[transIdx] - mkd$kObs[transIdx])
+      sumU <- sum(state$kPrime[transIdx] - 2L)  # Model A: u = k' - 2
       proposed$p <- rbeta(1L,
         shape1 = model$kprimeHyperA + length(transIdx),
         shape2 = model$kprimeHyperB + sumU)

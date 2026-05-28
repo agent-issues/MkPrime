@@ -487,9 +487,10 @@ LogPrior <- function(state, model, mkd) {
 
   if (hasTrans) {
     if (identical(model$kPrimePrior, "geometric")) {
-      # k'_i: Geometric(p) shifted by kObs_i
-      # P(k'_i = kObs_i + u) = p * (1-p)^u, u = 0, 1, 2, ...
-      u <- state$kPrime[transIdx] - mkd$kObs[transIdx]
+      # Model A: k'_i ~ 2 + Geo(p), unconditional on kObs.
+      # P(k'_i = 2 + u) = p * (1-p)^u, u = 0, 1, 2, ...
+      # Floor k'_i >= kObs_i enforced by likelihood (L = 0 below).
+      u <- state$kPrime[transIdx] - 2L
       lp <- lp + length(transIdx) * log(state$p) + sum(u) * log1p(-state$p)
 
       # p: Beta hyperprior
@@ -520,11 +521,12 @@ LogPrior <- function(state, model, mkd) {
                        shape2 = model$kprimeHyperB,
                        log = TRUE)
     } else if (identical(model$kPrimePrior, "beta_geometric")) {
-      # Per-character p_i marginalized → Beta-Geometric(α, β)
-      # log P(k'_i = kObs_i + u | α, β) = lbeta(α+1, β+u) - lbeta(α, β)
+      # Model A: per-character p_i marginalized → Beta-Geometric(α, β),
+      # unconditional on kObs; u = k' - 2.
+      # log P(k'_i = 2 + u | α, β) = lbeta(α+1, β+u) - lbeta(α, β)
       alpha <- state$kprime_alpha %||% 1.0
       beta_ <- state$kprime_beta %||% 1.0
-      u <- state$kPrime[transIdx] - mkd$kObs[transIdx]
+      u <- state$kPrime[transIdx] - 2L
       lp <- lp + sum(lbeta(alpha + 1, beta_ + u) - lbeta(alpha, beta_))
 
       # Hyperprior on (α, β): Exponential(1)
