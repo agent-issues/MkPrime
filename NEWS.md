@@ -1,5 +1,18 @@
 # MkPrime (development version)
 
+## `likelihoodMode = "marginal_k"`: Rao-Blackwellised k'_i (geometric arm only)
+
+`MkPrimeModel()` gains a `likelihoodMode = c("sampled_k", "marginal_k")`
+option. Under `"marginal_k"` the per-character `k'_i` state is
+analytically marginalised out of the likelihood at every evaluation
+(`logSumExp` over `u ∈ {0, .., u_max}` weighted by `P(u | p)`), so the
+chain carries only `(tree, mu, sigma, p)` — no slow discrete coordinate.
+The geometric arm is the only one supported in v1; the
+`empirical_geometric` / `beta_geometric` / `logseries` arms abort with a
+"§11 follow-up" message. Het + marginal-k and partition-API + marginal-k
+abort similarly (plan §13). See
+`dev/notes/2026-05-28-marginal-k-plan.md` for the full design.
+
 ## Pooled half-normal hyperprior on per-class `class_rate_log_sd`
 
 Per-class ACRV-shape parameters `σ_c = class_rate_log_sd[c]` now share
