@@ -5138,8 +5138,21 @@ static bool do_move_impl(McmcData* data, McmcState* state,
 
   // ---- Likelihood evaluation (M-064: partial, M-065: vectors, M-121: node CL) ----
   // Moves that only touch `p` (case 8 legacy multiplicative, case 30 logit MH)
-  // leave the likelihood untouched.
-  bool likChanges = (moveType != 8 && moveType != 30);
+  // leave the likelihood untouched UNDER SAMPLED-K: there p enters only the
+  // prior, since kPrime is an explicit state and L = L(y | tree, mu, kPrime).
+  //
+  // Under MARGINAL-K (FU-5 fix, 2026-05-28), this is WRONG: p enters the
+  // per-character marginal LL via the P(u | p) = p (1 - p)^u weights
+  // consumed inside the per-character logSumExp. A p-move therefore changes
+  // the marginal LL even though it changes no other state. The marginal
+  // evaluator (compute_full_loglik_at -> cpp_log_likelihood_marginal) is
+  // p-aware; we just need to take the recompute path. Under the buggy
+  // `likChanges = (moveType != 8 && moveType != 30)`, case-30 reused
+  // state->logLik in the MH ratio and the chain random-walked on p
+  // ignoring data (flat-prior + zero-LL → guaranteed acceptance mod
+  // Jacobian). See dev/red-team/heavy-tests/marginal-k-* and the FU-1
+  // side-finding for the diagnostic.
+  bool likChanges = data->marginalK || (moveType != 8 && moveType != 30);
   // Under marginal-k mode the per-partition cache (partLogLik) is built
   // for sampled-k semantics (cpp_partition_log_likelihood with fixed
   // state->kPrime). The marginal evaluator does NOT update it. Force
