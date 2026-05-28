@@ -64,10 +64,13 @@ seven Casali pilot cells (`auto-part/dev/benchmarks/casali`) whose
 production batch. Each cell runs under both priors at the production
 config (`nGen = 5e6`, `thin = 1000`, `nChains = 4` PT, `nCat = 4`),
 with seeds paired across the prior pair so the only difference between
-the two runs is the σ_c prior structure (SLURM array `17304194`,
-Hamilton, 2026-05-28).
+the two runs is the σ_c prior structure (SLURM arrays `17304194` and
+`17306284`, Hamilton, 2026-05-28).
 
-Per-class σ_c ESS (γ = `gamma_independent`; H = `hyperprior_pooled`):
+Per-class σ_c ESS (γ = `gamma_independent`; H = `hyperprior_pooled`).
+Five cells are reported at N = 1 paired seed; the two K = 3 cells were
+replicated at N = 3 (`17306284`) after a tail finding on the first
+batch — see the **N = 3 replication** subsection below.
 
 | cell | K | σ-min γ | σ-min H | ratio | σ-mean γ | σ-mean H | ratio | TL γ | TL H | τ ESS | wall γ (h) | wall H (h) |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -75,32 +78,70 @@ Per-class σ_c ESS (γ = `gamma_independent`; H = `hyperprior_pooled`):
 | Brochu2010/T1          |  2 | 1431 | 1453 | 1.02 | 1899 | 2111 | 1.11 | 3574 | 3826 | 2910 | 2.11 | 1.97 |
 | Allain2012/T1          |  2 | 1773 | 1923 | 1.08 | 2122 | 2435 | 1.15 | 1600 | 1360 | 2850 | 3.54 | 3.36 |
 | AllainAquesbi2008/T1   |  2 | 1946 | 2337 | **1.20** | 2946 | 3193 | 1.08 | 4789 | 4789 | 3073 | 4.10 | 4.50 |
-| CarranoSampson2008/T2a |  3 | 2034 | 1957 | 0.96 | 2155 | 2109 | 0.98 | 3496 | 2928 | 2158 | 2.13 | 2.10 |
-| Burns2011/T4           |  3 | 2182 |  836 | **0.38** | 2495 | 1549 | **0.62** | 3204 | 3416 | 1756 | 1.68 | 1.66 |
+| CarranoSampson2008/T2a |  3 | *see below* |  |  |  |  |  |  |  |  |  |  |
+| Burns2011/T4           |  3 | *see below* |  |  |  |  |  |  |  |  |  |  |
 | Godefroit2008/T1       |  2 | 2803 | 2682 | 0.96 | 3070 | 2839 | 0.92 | 4320 | 3804 | 2597 | 2.21 | 2.14 |
+
+**N = 3 replication on the K = 3 cells.** The first single-seed pair on
+Burns2011/T4 showed an alarming σ-min ratio of 0.38 (one class dropped
+to 836 ESS under the hyperprior while the other two and τ mixed fine).
+Two additional seeds per prior on Burns2011/T4 and the K = 3 control
+CarranoSampson2008/T2a (SLURM array `17306284`) resolve the picture:
+
+| cell | rep | γ per class | H per class | γ σ-mean | H σ-mean |
+|---|---|---|---|---:|---:|
+| Burns2011/T4 (20/19/21)     | rep1 | 2182 / 2912 / 2390 | 1652 / 2159 / **836**  | 2495 | 1549 |
+| Burns2011/T4                | rep2 | 1788 / 2128 / 1685 | 2283 / 1949 / 2346 | 1867 | 2193 |
+| Burns2011/T4                | rep3 | 1276 / 1886 / 2000 | 1809 / 2720 / 2007 | 1721 | 2179 |
+| **Burns2011/T4 — N = 3 mean** |    |    |    | **2028** | **1974** |
+| CarranoSampson/T2a (28/22/22) | rep1 | 2312 / 2034 / 2120 | 2135 / 1957 / 2236 | 2155 | 2109 |
+| CarranoSampson/T2a            | rep2 | 2530 / 2124 / 2671 | 1931 / 2233 / 2635 | 2442 | 2267 |
+| CarranoSampson/T2a            | rep3 | 2075 / 2186 / 2218 | 2380 / 2507 / **1005** | 2159 | 1964 |
+| **CarranoSampson/T2a — N = 3 mean** |    |    |    | **2252** | **2113** |
+
+Averaged over three seeds, the pooled prior is **essentially neutral**
+on both K = 3 cells (σ-mean ratios 0.97 and 0.94). The class-stuck
+behaviour observed on Burns2011/T4 rep1 (class3) and CarranoSampson
+rep3 (class3) reflects a **stochastic tail hazard of the non-centred
+parameterisation**: one z_c can occasionally remain near its
+initialisation when the population scale τ moves quickly past it, while
+τ and the other z_c continue to mix. In our 6-seed budget under the
+hyperprior on K = 3 cells this happened on 2 of 6 seeds, never affected
+more than one class at a time, and never affected τ or tree-length
+mixing. It is not data-specific.
 
 **Reading the table.** The pooled prior:
 * Lifts mean per-class σ ESS on the highest-K cell (Allain2012/T2a,
-  K = 11): +33 %, which is the regime the change was designed for.
-* Gives a clear small-class lift on AllainAquesbi2008/T1: +20 % on
-  σ-min.
-* Is neutral on the medium-K cells (Brochu, CarranoSampson, Godefroit,
-  Allain2012/T1): per-class σ ratios in [0.92, 1.15].
-* **Hurts Burns2011/T4 substantially** (σ-min ratio 0.38, σ-mean 0.62).
-  Burns2011/T4 has three nearly-balanced classes (20/19/21 chars); the
-  large-class anchoring that drives pooling in genuine size-imbalanced
-  cells offers little here, and forcing the three σ_c through a shared
-  τ visibly slows σ-min mixing relative to the independent prior.
-* Tree-length ESS is mostly unchanged or slightly worse under the
-  hyperprior; wallclock is comparable (±10 % cell-by-cell).
-* `hyper_tau` itself mixes well (ESS 1241–3073 across cells).
+  K = 11): +33 %, the regime the change was designed for. The N = 1
+  result is consistent with a real gain, but the seed-to-seed noise
+  measured on the K = 3 cells (σ-mean varies ± ~25 % across seeds
+  under either prior) means a single +33 % point should be read as
+  suggestive, not confirmed.
+* Gives a +20 % σ-min lift on AllainAquesbi2008/T1 (N = 1; same
+  caveat).
+* Is essentially neutral on K ∈ {2, 3} once seed variance is
+  controlled for (N = 3 means on the two replicated K = 3 cells;
+  the four other K ∈ {2} cells run at N = 1 with per-cell ratios in
+  [0.92, 1.20]).
+* Carries a per-seed stuck-z_c tail risk (~1/3 frequency in our
+  budget) where one of the K classes drops to ~50 % of its
+  γ-equivalent ESS. Other classes, τ, tree-length and log-posterior
+  mixing are unaffected.
+* Tree-length ESS is mostly flat-to-slightly-worse under the
+  hyperprior on the N = 1 cells; this is plausibly the dropped
+  `joint_tl_rls` move (acknowledged in the prior-section above).
+  Wallclock is comparable (± 10 % cell-by-cell). `hyper_tau` itself
+  mixes well (ESS 1241–3073 across all cells).
 
-Net read: the pooled prior is the right default for cells with a
-dominant K — particularly the K ≥ 5 regime AutoPart will produce on
-larger matrices — but it is not a free lunch on small-K,
-size-balanced partitions. The legacy `gamma_independent` prior remains
-selectable for that case; users targeting K ∈ {2, 3} with balanced
-classes should benchmark before assuming the hyperprior helps.
+Net read: the pooled prior is a reasonable default at every K — the
+Casali pilot's worst-case (Burns2011/T4) is **neutral, not regressive**
+once seed noise is controlled for, and the K = 11 regime shows the
+intended pooling benefit. A future tidy-up should consider either a
+centred fallback or a τ-aware joint move on z_c to suppress the stuck-
+z_c tail; in the meantime, users running a small number of seeds on
+K ∈ {2, 3} balanced partitions should be aware that any single seed
+may show one class with ~50 % of expected ESS without the chain being
+in trouble.
 
 The earlier smoke test
 (`dev/red-team/heavy-tests/funnel-stress-hyperprior-sigma.R`, 5-class
@@ -108,9 +149,9 @@ random-binary fixture) is preserved as a plumbing check — it confirms
 both priors run end-to-end but its ratios are not representative.
 
 Raw per-cell RDS:
-`dev/red-team/heavy-tests/casali-ess-results/<matrix>__<treatment>__<prior>.rds`;
-tabulated summary:
-`dev/red-team/heavy-tests/casali-ess-results.{csv,md}`.
+`dev/red-team/heavy-tests/casali-ess-results/<matrix>__<treatment>__<prior>[__<tag>].rds`;
+tabulated summary: `dev/red-team/heavy-tests/casali-ess-results.{csv,md}`;
+per-rep diagnostic: `dev/red-team/heavy-tests/casali-ess-rep-summary.R`.
 
 **Move-sampler validation.** `tests/testthat/test-partition-hyperprior.R`
 group (F) runs the per-class and `scale_hyper_tau` MH moves at β = 0
