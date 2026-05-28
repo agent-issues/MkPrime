@@ -114,26 +114,10 @@ test_that("C++ and R LogPrior agree for beta_geometric", {
   expect_equal(cpp_state$logPrior, r_lp, tolerance = 1e-8)
 })
 
-test_that("C++ LogPrior changes with alpha/beta after moves", {
-  f <- make_bg_fixture()
-  state <- MkPrime:::.InitState(f$tree, f$mkd, f$model)
-  mcmcData <- MkPrime:::.InitMcmcData(f$mkd, f$model)
-  statePtr <- MkPrime:::.InitMcmcChain(state)
-  fill_partition_cache(mcmcData, statePtr)
-  allocate_cl_workspace(mcmcData, statePtr)
-
-  lp_before <- get_mcmc_state(statePtr)$logPrior
-
-  # Run many scale_kprime_alpha moves; some should accept and change logPrior
-  set.seed(5821)
-  changed <- FALSE
-  for (i in 1:50) {
-    do_move_cpp(mcmcData, statePtr, 27L, 0L, 0.5, 10.0, 1L, 1.0)
-    lp_now <- get_mcmc_state(statePtr)$logPrior
-    if (abs(lp_now - lp_before) > 1e-12) { changed <- TRUE; break }
-  }
-  expect_true(changed, info = "scale_kprime_alpha should change logPrior")
-})
+# Note: the axis-aligned Bactrian moves on raw α and β (move codes 27, 28)
+# were removed when the BG hyperparameter sampler was reparameterised to
+# (s, r) coordinates. End-to-end coverage that α / β actually move is
+# provided by test-bg-hyperparameter-moves.R.
 
 # --- ParamNames and StateToRow -----------------------------------------------
 
@@ -166,7 +150,7 @@ test_that("StateToRow length matches ParamNames", {
 
 # --- BuildMoves --------------------------------------------------------------
 
-test_that("BuildMoves includes kprime_alpha/kprime_beta, not p/gibbs_p", {
+test_that("BuildMoves registers slice_kprime_s/r for BG, not p/gibbs_p", {
   f <- make_bg_fixture()
   nTrans <- sum(f$mkd$type == "transformational")
   nEdge <- nrow(f$tree$edge)
@@ -174,12 +158,12 @@ test_that("BuildMoves includes kprime_alpha/kprime_beta, not p/gibbs_p", {
   moves <- MkPrime:::.BuildMoves(nEdge, nTrans, hasNeo = FALSE, mcmc = mcmc,
                                   kPrimePrior = "beta_geometric")
   moveNames <- vapply(moves, `[[`, character(1), "name")
-  expect_true("kprime_alpha" %in% moveNames)
-  expect_true("kprime_beta" %in% moveNames)
+  expect_true("slice_kprime_s" %in% moveNames)
+  expect_true("slice_kprime_r" %in% moveNames)
   expect_false("p" %in% moveNames)
 })
 
-test_that("BuildMoves for geometric still has p, not kprime_alpha", {
+test_that("BuildMoves for geometric still has p, not BG slice", {
   f <- make_bg_fixture()
   nTrans <- sum(f$mkd$type == "transformational")
   nEdge <- nrow(f$tree$edge)
@@ -188,7 +172,7 @@ test_that("BuildMoves for geometric still has p, not kprime_alpha", {
                                   kPrimePrior = "geometric")
   moveNames <- vapply(moves, `[[`, character(1), "name")
   expect_true("p" %in% moveNames)
-  expect_false("kprime_alpha" %in% moveNames)
+  expect_false("slice_kprime_s" %in% moveNames)
 })
 
 # --- Gibbs kPrime sweep correctness ------------------------------------------
@@ -241,39 +225,13 @@ test_that("int_walk kPrime achieves nonzero acceptance under beta_geometric", {
 
 # --- Hyperparameter move tests ------------------------------------------------
 
-test_that("scale_kprime_alpha (move 27) achieves reasonable acceptance", {
-  f <- make_bg_fixture()
-  state <- MkPrime:::.InitState(f$tree, f$mkd, f$model)
-  mcmcData <- MkPrime:::.InitMcmcData(f$mkd, f$model)
-  statePtr <- MkPrime:::.InitMcmcChain(state)
-  fill_partition_cache(mcmcData, statePtr)
-  allocate_cl_workspace(mcmcData, statePtr)
+# Acceptance-rate tests for the retired axis-aligned Bactrian moves on raw
+# α / β (move codes 27 / 28) were removed alongside those moves. End-to-end
+# coverage that α and β actually move under the (s, r) slice sampler is in
+# test-bg-hyperparameter-moves.R; logPrior-after-Gibbs consistency is also
+# covered by the existing Gibbs-sweep test above.
 
-  set.seed(2718)
-  nAcc <- 0
-  for (i in 1:100)
-    nAcc <- nAcc + do_move_cpp(mcmcData, statePtr, 27L, 0L, 0.5, 10.0, 1L, 1.0)
-  expect_gt(nAcc, 10, label = "scale_kprime_alpha acceptance")
-  expect_lt(nAcc, 100, label = "not accepting everything")
-})
-
-test_that("scale_kprime_beta (move 28) achieves reasonable acceptance", {
-  f <- make_bg_fixture()
-  state <- MkPrime:::.InitState(f$tree, f$mkd, f$model)
-  mcmcData <- MkPrime:::.InitMcmcData(f$mkd, f$model)
-  statePtr <- MkPrime:::.InitMcmcChain(state)
-  fill_partition_cache(mcmcData, statePtr)
-  allocate_cl_workspace(mcmcData, statePtr)
-
-  set.seed(3141)
-  nAcc <- 0
-  for (i in 1:100)
-    nAcc <- nAcc + do_move_cpp(mcmcData, statePtr, 28L, 0L, 0.5, 10.0, 1L, 1.0)
-  expect_gt(nAcc, 10, label = "scale_kprime_beta acceptance")
-  expect_lt(nAcc, 100, label = "not accepting everything")
-})
-
-test_that("logPrior stays consistent across alpha/beta moves", {
+test_that("logPrior stays consistent across Gibbs kPrime sweeps", {
   f <- make_bg_fixture()
   state <- MkPrime:::.InitState(f$tree, f$mkd, f$model)
   mcmcData <- MkPrime:::.InitMcmcData(f$mkd, f$model)
@@ -283,13 +241,10 @@ test_that("logPrior stays consistent across alpha/beta moves", {
 
   set.seed(9274)
   for (i in 1:50) {
-    do_move_cpp(mcmcData, statePtr, 27L, 0L, 0.5, 10.0, 1L, 1.0)
-    do_move_cpp(mcmcData, statePtr, 28L, 0L, 0.5, 10.0, 1L, 1.0)
     do_move_cpp(mcmcData, statePtr, 25L, 0L, 0.5, 10.0, 1L, 1.0)
   }
 
   st <- get_mcmc_state(statePtr)
-  # Recompute R-side log-prior from current state
   r_state <- list(
     tree_length = st$treeLength,
     rel_br_lengths = st$relBrLengths,
@@ -301,7 +256,7 @@ test_that("logPrior stays consistent across alpha/beta moves", {
   )
   r_lp <- LogPrior(r_state, f$model, f$mkd)
   expect_equal(st$logPrior, r_lp, tolerance = 1e-8,
-               label = "C++ logPrior matches R recomputation after many moves")
+               label = "C++ logPrior matches R recomputation after Gibbs sweeps")
 })
 
 # --- Backward compatibility: geometric prior still works ----------------------

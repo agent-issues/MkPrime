@@ -860,8 +860,7 @@ RunMkPrime <- function(data, tree = NULL,
   # their acceptance rate is healthy. Mirrors the init-time scalar floor
   # at .BuildMoves; same set of types.
   .kScalarFloorTypes <- c("scale", "int_walk", "gibbs_p", "scale_p",
-                           "logit_scale_p", "slice", "kprime_alpha",
-                           "kprime_beta", "beta_simplex")
+                           "logit_scale_p", "slice", "beta_simplex")
   moveTypes <- vapply(moves, function(m) m$type %||% m$name, character(1))
   scalarFloorMoves <- moveNames[(moveDim == 1L & moveTypes %in% .kScalarFloorTypes) |
                                   moveTypes == "joint_2d"]
@@ -895,11 +894,8 @@ RunMkPrime <- function(data, tree = NULL,
   # astronomical scores because acceptance = 1.0 and cost ~ 0; this inflates
   # their weight and starves bottleneck MH moves.  One Gibbs draw or slice
   # sample per cycle is already optimal, so freeze them.
-  # Also pin hyperparameter moves (kprime_alpha/beta): they are cheap but
-
-  # their score gets inflated relative to expensive topology moves.
+  # Also pin BG hyperparameter slice (slice_kprime_hyper): cheap, always-accept.
   alwaysAcceptTypes <- c("gibbs_p", "slice", "gibbs_kprime_sweep",
-                         "kprime_alpha", "kprime_beta",
                          "slice_kprime_hyper")
   moveTypes <- vapply(moves, `[[`, character(1), "type")
   autoPin <- moveWeights[moveTypes %in% alwaysAcceptTypes]
@@ -3224,8 +3220,6 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         rate_log_sd = tun$scale_rate_log_sd,
         rate_neo    = tun$scale_rate_neo %||% 0.5,
         beta_scale  = tun$scale_beta_scale %||% 0.5,
-        kprime_alpha = tun$scale_kprime_alpha %||% 0.3,
-        kprime_beta  = tun$scale_kprime_beta %||% 0.5,
         joint_tl_rls = tun$scale_joint_tl_rls %||% 0.5,
         joint_tl_rl  = tun$scale_joint_tl_rl %||% 0.5,
         joint_tl_rn  = tun$scale_joint_tl_rn %||% 0.5,
@@ -3556,20 +3550,18 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
            target = "kPrime", weight = 2, dim = 1L)
     )
     if (identical(kPrimePrior, "beta_geometric")) {
-      # Scale proposals for shared (alpha, beta) hyperparameters.
-      # Weights must be large enough for adaptation to fire (>=10 proposals
-      # per ~1000-iteration tuning round, so >=1% share of total weight).
+      # (s, r) reparameterised slice samplers for the BG (α, β) hyperparams.
+      #   s = log(α + β)               -- concentration / "size"
+      #   r = log(α / β) = logit(α/(α+β)) -- shape
+      # The α-axis / β-axis univariate moves (slice and Bactrian, both
+      # removed) could not traverse the (log α, log β) ridge of the BG
+      # posterior; (s, r) decorrelates it across the parameter space.
       kPrimeMoves <- c(kPrimeMoves, list(
-        list(name = "kprime_alpha", type = "kprime_alpha",
-             target = "kprime_alpha", weight = 0.5, dim = 1L),
-        list(name = "kprime_beta", type = "kprime_beta",
-             target = "kprime_beta", weight = 0.5, dim = 1L),
-        # Prior-only slice samplers -- robust, tuning-free exploration
-        list(name = "slice_kprime_alpha", type = "slice_kprime_hyper",
-             target = "kprime_alpha", weight = 2, dim = 1L,
+        list(name = "slice_kprime_s", type = "slice_kprime_hyper",
+             target = "kprime_s", weight = 2, dim = 1L,
              sliceParamIdx = 0L),
-        list(name = "slice_kprime_beta", type = "slice_kprime_hyper",
-             target = "kprime_beta", weight = 2, dim = 1L,
+        list(name = "slice_kprime_r", type = "slice_kprime_hyper",
+             target = "kprime_r", weight = 2, dim = 1L,
              sliceParamIdx = 1L)
       ))
     } else if (identical(kPrimePrior, "empirical_geometric")) {
@@ -3667,7 +3659,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   # Joint 2D moves also get the floor so they're comparable to individual
   # scalar moves they complement.
   scalarTypes <- c("scale", "int_walk", "gibbs_p", "scale_p", "logit_scale_p",
-                    "slice", "kprime_alpha", "kprime_beta", "beta_simplex")
+                    "slice", "beta_simplex")
   totalWeight <- sum(vapply(moves, `[[`, numeric(1), "weight"))
   floorVal <- totalWeight * 0.02
   for (i in seq_along(moves)) {
@@ -3688,7 +3680,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 # 12=weighted_br_scale, 13=weighted_spr, 14=weighted_subtree_swap,
 # 15=block_gibbs_branch, 16=beta_scale (M-052), 17=tbr (M-053),
 # 25=gibbs_kprime_sweep, 26=block_kprime_shift,
-# 27=scale_kprime_alpha, 28=scale_kprime_beta,
+# 29=slice_kprime_hyper (paramCode 0=s, 1=r — reparameterised BG hyperparams),
+# 27 and 28 (axis-aligned BG Bactrians) retired alongside the (s, r) move,
 # 30=mh_logit_p (logit-scale MH on p, for empirical_geometric),
 # 31=scale_class_rate_log_sd (per-class shape; charIdx carries 1-based classIdx;
 #    acts on z_c when the half-normal hyperprior on σ_c is active, else on σ_c),
@@ -3721,10 +3714,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   local_dirichlet = 24L,
   gibbs_kPrime = 25L,
   block_kPrime = 26L,
-  kprime_alpha = 27L,
-  kprime_beta = 28L,
-  slice_kprime_alpha = 29L,
-  slice_kprime_beta = 29L,
+  slice_kprime_s = 29L,
+  slice_kprime_r = 29L,
   scale_class_rate_log_sd = 31L,
   dirichlet_simplex_class_w = 32L,
   scale_hyper_tau = 34L
@@ -3820,8 +3811,6 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       rate_log_sd = tuning$scale_rate_log_sd,
       rate_neo    = tuning$scale_rate_neo,
       beta_scale  = tuning$scale_beta_scale,
-      kprime_alpha = tuning$scale_kprime_alpha %||% 0.3,
-      kprime_beta  = tuning$scale_kprime_beta %||% 0.5,
       dirichlet_branch = tuning$dirichlet_alpha %||% 0.1,
       local_dirichlet = tuning$local_dirichlet_alpha %||% 0.1,
       mh_p        = tuning$scale_p %||% 0.5,
@@ -4604,7 +4593,6 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     dirichlet_branch = 0.234,
     local_dirichlet = 0.234,
     joint_tl_rls = 0.25, joint_tl_rl = 0.25, joint_tl_rn = 0.25,
-    kprime_alpha = 0.35, kprime_beta = 0.35,
     # Gibbs/weighted/block/kPrime/slice moves: no MH tuning to adapt
     gibbs_kPrime = NA_real_, block_kPrime = 0.234,
     gibbs_spr = NA_real_, gibbs_subtree_swap = NA_real_,
@@ -4614,7 +4602,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     slice_rate_loss = NA_real_, slice_rate_neo = NA_real_,
     slice_rate_log_sd = NA_real_, slice_tree_length = NA_real_,
     slice_beta_scale = NA_real_,
-    slice_kprime_alpha = NA_real_, slice_kprime_beta = NA_real_
+    slice_kprime_s = NA_real_, slice_kprime_r = NA_real_
   )
 
   tuningKeys <- c(
@@ -4643,8 +4631,6 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     weighted_spr = NA_character_, weighted_subtree_swap = NA_character_,
     block_gibbs_branch = NA_character_,
     beta_scale = "scale_beta_scale",
-    kprime_alpha = "scale_kprime_alpha",
-    kprime_beta = "scale_kprime_beta",
     slice_rate_loss = NA_character_, slice_rate_neo = NA_character_,
     slice_rate_log_sd = NA_character_, slice_tree_length = NA_character_,
     slice_beta_scale = NA_character_
@@ -4699,8 +4685,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     slice_rate_log_sd  = "slice_width_rate_log_sd",
     slice_tree_length  = "slice_width_tree_length",
     slice_beta_scale   = "slice_width_beta_scale",
-    slice_kprime_alpha = "slice_width_kprime_alpha",
-    slice_kprime_beta  = "slice_width_kprime_beta"
+    slice_kprime_s = "slice_width_kprime_s",
+    slice_kprime_r = "slice_width_kprime_r"
   )
   for (move in moves) {
     nm <- move$name

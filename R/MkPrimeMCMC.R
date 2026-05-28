@@ -512,9 +512,8 @@ MkPrimeMCMC <- function(
       "block_gibbs_branch", "dirichlet_branch", "local_dirichlet",
       # k' moves
       "kPrime", "p", "gibbs_kPrime", "block_kPrime",
-      # BG hyperparameter moves
-      "kprime_alpha", "kprime_beta",
-      "slice_kprime_alpha", "slice_kprime_beta",
+      # BG hyperparameter moves (reparameterised to s = log(α+β), r = log(α/β))
+      "slice_kprime_s", "slice_kprime_r",
       # Slice samplers
       "slice_rate_loss", "slice_rate_neo", "slice_rate_log_sd",
       "slice_beta_scale",
@@ -546,8 +545,6 @@ MkPrimeMCMC <- function(
     scale_logit_p = 1.0,
     scale_rate_neo = 0.5,
     scale_beta_scale = 0.5,
-    scale_kprime_alpha = 0.3,
-    scale_kprime_beta = 0.5,
     scale_joint_tl_rls = 0.5,
     scale_joint_tl_rl = 0.5,
     scale_joint_tl_rn = 0.5,
@@ -562,8 +559,11 @@ MkPrimeMCMC <- function(
     slice_width_rate_log_sd = 1.0,
     slice_width_tree_length = 1.0,
     slice_width_beta_scale = 1.0,
-    slice_width_kprime_alpha = 0.3,
-    slice_width_kprime_beta = 0.5
+    # (s, r) reparameterisation: s is on log scale (concentration); r is on
+    # logit scale (shape). A wider initial r-width is sensible because the
+    # logit scale stretches the unit interval to (-∞, ∞).
+    slice_width_kprime_s = 0.5,
+    slice_width_kprime_r = 1.0
   )
   tuning <- modifyList(defaults, tuning)
 

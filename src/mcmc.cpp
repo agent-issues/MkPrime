@@ -3310,44 +3310,90 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
 }
 
 // ---------------------------------------------------------------------------
-// Prior-only slice sampler for Beta-Geometric hyperparameters (M-163)
+// Prior-only slice sampler for Beta-Geometric hyperparameters
+// — reparameterised in (s, r) coordinates.
 //
-// Samples kprimeAlpha (paramCode=0) or kprimeBeta (paramCode=1) using a
-// univariate slice sampler on the log scale.  Target = logPrior + log(x)
-// (the log(x) Jacobian arises from sampling u = log(x) and transforming).
-// No likelihood evaluation needed — α/β only affect the prior.
+// s = log(α + β)            (size / concentration; unconstrained)
+// r = log(α / β) = logit(α / (α + β))   (shape; unconstrained)
+//
+// α = e^s · σ(r),  β = e^s · (1 − σ(r)),  where σ(r) = 1 / (1 + e^{-r}).
+//
+// The α-axis / β-axis univariate slice (the pre-2026-05-28 implementation)
+// was tightly coupled to the (log α, log β) posterior ridge of the BG model
+// — neither axis-aligned slice nor axis-aligned Bactrian could traverse it.
+// (s, r) decorrelates the BG posterior across the whole parameter space.
+//
+// paramCode 0 = sample s with r held fixed
+// paramCode 1 = sample r with s held fixed
+//
+// Target density on (s, r) (change of variables from (α, β) ~ π):
+//   log π_{s,r}(s, r) = log π_{α,β}(α(s,r), β(s,r)) + log|J|
+// where |J| = |∂(α, β) / ∂(s, r)| = α · β.  So target adds
+// `+ log α + log β` to compute_log_prior() at the candidate point.
 // ---------------------------------------------------------------------------
+static inline double bg_sigma_stable(double r) {
+  // numerically stable σ(r) = 1 / (1 + e^{-r})
+  if (r >= 0.0) return 1.0 / (1.0 + std::exp(-r));
+  double e = std::exp(r);
+  return e / (1.0 + e);
+}
+
 static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
                                      int paramCode, double width,
                                      int maxSteps = 10,
                                      int* nExpansionsOut = nullptr) {
-  double x0 = (paramCode == 0) ? state->kprimeAlpha : state->kprimeBeta;
-  if (x0 <= 0.0) return false;
+  double alpha0 = state->kprimeAlpha;
+  double beta0  = state->kprimeBeta;
+  if (alpha0 <= 0.0 || beta0 <= 0.0) return false;
 
-  // Work on log scale: u = log(x)
-  double u0 = std::log(x0);
+  // Current (s, r) and the held-fixed coordinate
+  double s0 = std::log(alpha0 + beta0);
+  double r0 = std::log(alpha0 / beta0);
+  double s_fixed = s0;
+  double ratio_fixed = alpha0 / (alpha0 + beta0);  // = σ(r0)
 
-  // Target: logPrior(current) + u (Jacobian)
-  double logY0 = state->logPrior + u0;
+  // Helper: derive (α, β) from a candidate value of the active coord
+  auto srToAlphaBeta = [&](double v, double& aOut, double& bOut) -> bool {
+    if (paramCode == 0) {
+      // v = candidate s; r fixed → ratio_fixed = σ(r) held constant
+      double ev = std::exp(v);
+      if (!R_FINITE(ev) || ev <= 0.0) return false;
+      aOut = ev * ratio_fixed;
+      bOut = ev * (1.0 - ratio_fixed);
+    } else {
+      // v = candidate r; s fixed
+      double sig = bg_sigma_stable(v);
+      double exp_s = std::exp(s_fixed);
+      if (!R_FINITE(exp_s) || exp_s <= 0.0) return false;
+      aOut = exp_s * sig;
+      bOut = exp_s * (1.0 - sig);
+    }
+    return R_FINITE(aOut) && R_FINITE(bOut) && aOut > 0.0 && bOut > 0.0;
+  };
+
+  // Target at current point: logPrior(α0, β0) + log|J| = logPrior + log α + log β
+  double logY0 = state->logPrior + std::log(alpha0) + std::log(beta0);
   double logZ = logY0 + std::log(R::unif_rand());
 
-  // Helper lambda to evaluate target at a candidate u
-  auto evalTarget = [&](double u) -> double {
-    double xCand = std::exp(u);
-    if (xCand <= 0.0 || !R_FINITE(xCand)) return R_NegInf;
-    double oldVal = (paramCode == 0) ? state->kprimeAlpha : state->kprimeBeta;
-    if (paramCode == 0) state->kprimeAlpha = xCand;
-    else                state->kprimeBeta  = xCand;
+  // Evaluate target at a candidate value of the active coord
+  auto evalTarget = [&](double v) -> double {
+    double aCand, bCand;
+    if (!srToAlphaBeta(v, aCand, bCand)) return R_NegInf;
+    double oldA = state->kprimeAlpha, oldB = state->kprimeBeta;
+    state->kprimeAlpha = aCand;
+    state->kprimeBeta  = bCand;
     double lp = compute_log_prior(*data, *state);
-    // Restore
-    if (paramCode == 0) state->kprimeAlpha = oldVal;
-    else                state->kprimeBeta  = oldVal;
-    return lp + u;  // logPrior + Jacobian
+    state->kprimeAlpha = oldA;
+    state->kprimeBeta  = oldB;
+    if (!R_FINITE(lp)) return R_NegInf;
+    return lp + std::log(aCand) + std::log(bCand);
   };
+
+  double v0 = (paramCode == 0) ? s0 : r0;
 
   // Stepping out
   int nExp = 0;
-  double L = u0 - width * R::unif_rand();
+  double L = v0 - width * R::unif_rand();
   double R_bound = L + width;
   for (int j = 0; j < maxSteps; ++j) {
     if (evalTarget(L) <= logZ) break;
@@ -3363,18 +3409,17 @@ static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
 
   // Shrink in
   for (int iter = 0; iter < 100; ++iter) {
-    double u1 = L + R::unif_rand() * (R_bound - L);
-    double logTarget1 = evalTarget(u1);
+    double v1 = L + R::unif_rand() * (R_bound - L);
+    double logTarget1 = evalTarget(v1);
     if (logTarget1 >= logZ) {
-      // Accept
-      double x1 = std::exp(u1);
-      if (paramCode == 0) state->kprimeAlpha = x1;
-      else                state->kprimeBeta  = x1;
-      // Recompute and cache logPrior
+      double a1, b1;
+      if (!srToAlphaBeta(v1, a1, b1)) return false;
+      state->kprimeAlpha = a1;
+      state->kprimeBeta  = b1;
       state->logPrior = compute_log_prior(*data, *state);
       return true;
     }
-    if (u1 < u0) L = u1; else R_bound = u1;
+    if (v1 < v0) L = v1; else R_bound = v1;
   }
 
   // Fallback: no change
@@ -4525,35 +4570,13 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     case 26: { // block_kprime_shift — shift all k'_i by same delta
       return block_kprime_shift_impl(data, state, intWalkWindow, beta);
     }
-    case 27: { // scale_kprime_alpha — Bactrian scale for Beta-Geometric α
-      double mult = std::exp(scaleTuning * bactrian_perturbation());
-      state->kprimeAlpha = oldKpA * mult;
-      if (state->kprimeAlpha <= 0.0) return false;
-      // Prior-only: likelihood is unchanged, compute prior ratio directly
-      double newLP = compute_log_prior(*data, *state);
-      if (!R_FINITE(newLP)) { state->kprimeAlpha = oldKpA; return false; }
-      double logAlpha = (newLP - state->logPrior) + std::log(mult);
-      if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
-        state->logPrior = newLP;
-        return true;
-      }
-      state->kprimeAlpha = oldKpA;
-      return false;
-    }
-    case 28: { // scale_kprime_beta — Bactrian scale for Beta-Geometric β
-      double mult = std::exp(scaleTuning * bactrian_perturbation());
-      state->kprimeBeta = oldKpB * mult;
-      if (state->kprimeBeta <= 0.0) return false;
-      double newLP = compute_log_prior(*data, *state);
-      if (!R_FINITE(newLP)) { state->kprimeBeta = oldKpB; return false; }
-      double logAlpha = (newLP - state->logPrior) + std::log(mult);
-      if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
-        state->logPrior = newLP;
-        return true;
-      }
-      state->kprimeBeta = oldKpB;
-      return false;
-    }
+    // Move types 27 (scale_kprime_alpha) and 28 (scale_kprime_beta) — the
+    // axis-aligned Bactrian moves on raw α and β — were removed when the
+    // BG hyperparameter sampler was reparameterised to (s, r) coordinates.
+    // The (s, r) univariate slice (move type 29) decorrelates the BG ridge
+    // that those axis moves could not traverse. R-side .BuildMoves no
+    // longer registers either move, so these case labels would be
+    // unreachable if added back.
     case 30: { // mh_logit_p — logit-scale MH on p (for empirical_geometric)
       // Multiplicative MH on p ∈ (0,1) overshoots when p is close to 1, which
       // is the typical posterior region under the empirical_geometric prior.
