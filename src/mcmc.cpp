@@ -969,6 +969,16 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
   if (data->qHeterogeneity)
     return gibbs_spr_impl_het(data, state, beta);
 
+  // LIKE-001 interim (option 3): the pseudo-character partial-CL path below
+  // computes only the constant-site ascertainment term, not the singleton
+  // term. Under coding="informative" (codingType == 2) that omission
+  // biases the Gibbs sampling weights. Fall back to the full evaluator,
+  // which routes through cpp_partition_log_likelihood with the singleton
+  // correction applied. Restore partial-CL once evaluate_singleton_prob
+  // (math-prover option 2) is implemented.
+  if (data->codingType == 2)
+    return gibbs_spr_impl_full(data, state, beta);
+
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
   const int root  = nTip + 1;
@@ -1159,12 +1169,16 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
         groups[gi], topo, residuals[gi], rates,
         v, u, sibNode, lMerge, a, b, lHalf, lPrune);
 
-      // Ascertainment correction via pseudo-character partial CLs
+      // Ascertainment correction via pseudo-character partial CLs.
+      // Note: only the constant-site term is computed here; coding == 2
+      // (informative) additionally requires a singleton-site term that
+      // this partial-CL path does not yet evaluate. The caller short-
+      // circuits to gibbs_spr_impl_full when codingType == 2 (LIKE-001
+      // interim), so we only reach this branch under coding == 1.
       if (coding != 0 && groups[gi].nChar > 0) {
         double constP = evaluate_const_prob(
           pseudoGroups[gi], topo, pseudoResiduals[gi], rates,
           v, u, sibNode, lMerge, a, b, lHalf, lPrune);
-        // TODO: coding == 2 (informative) needs singleton_site_prob too
         if (constP < 1.0)
           grpLL -= groups[gi].nChar * std::log(1.0 - constP);
       }
@@ -1735,6 +1749,12 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
   // M-114: Q-heterogeneity uses streaming partial CL
   if (data->qHeterogeneity)
     return gibbs_subtree_swap_impl_het(data, state, beta);
+
+  // LIKE-001 interim (option 3): see comment in gibbs_spr_impl. The pseudo-
+  // character partial-CL path omits the singleton-site ascertainment term
+  // required under coding="informative"; fall back to the full evaluator.
+  if (data->codingType == 2)
+    return gibbs_subtree_swap_impl_full(data, state, beta);
 
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;

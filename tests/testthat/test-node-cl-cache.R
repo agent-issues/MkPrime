@@ -230,3 +230,103 @@ test_that("slice sampler invalidates CL cache (M-145 regression)", {
   expect_equal(result$diag_counters[["drift"]], 0L,
                info = "slice sampler should invalidate nodeCL after accepting")
 })
+
+
+# ---------------------------------------------------------------------------
+# Regression test (LIKE-002): partial-CL paths under coding="informative".
+#
+# LIKE-001 was that gibbs_spr_impl and gibbs_subtree_swap_impl computed
+# only the constant-site ascertainment term in their pseudo-character
+# partial-CL pipeline, dropping the singleton-site term required by
+# coding="informative".  Fixed by guarding both functions to fall back
+# to their _full variants when codingType == 2.  This test exercises the
+# fallback at the RunMkPrime level (an 8-tip 10-char trans-only dataset)
+# and asserts the chain produces finite log-posteriors with both Gibbs
+# topology moves enabled.  A separate low-level test checks drift==0 on
+# the partial-CL paths that REMAIN under coding="informative" (NNI,
+# beta_simplex via cache_total_loglik — patched earlier).
+# ---------------------------------------------------------------------------
+test_that("LIKE-001: gibbs_spr + gibbs_subtree_swap run under coding=\"informative\"", {
+  set.seed(2618)
+  tree <- ape::rtree(8L, rooted = FALSE)
+  tree <- Preorder(tree)
+  mat <- matrix(sample(0:2, 8L * 10L, replace = TRUE),
+                nrow = 8L,
+                dimnames = list(tree$tip.label, paste0("c", seq_len(10L))))
+  pd <- MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd)
+  model <- MkPrimeModel(coding = "informative")
+
+  mcmc <- MkPrimeMCMC(
+    nIter = 400L, maxWarmup = 100L, minWarmup = 100L, thin = 4L,
+    autoTune = FALSE, nRuns = 1L,
+    gibbsSpr = TRUE, gibbsSubtreeSwap = TRUE
+  )
+  result <- suppressWarnings(RunMkPrime(data = mkd, tree = tree,
+                                         model = model, mcmc = mcmc))
+
+  expect_s3_class(result, "MkPosterior")
+  expect_true(nrow(result$samples) > 0)
+  expect_true(all(is.finite(result$samples[, "log_posterior"])),
+              info = "log_posterior must be finite under coding=informative")
+})
+
+
+test_that("LIKE-001: drift==0 under coding=\"informative\" with Gibbs moves", {
+  set.seed(2619)
+  tree <- ape::rtree(8L, rooted = FALSE)
+  tree <- Preorder(tree)
+  mat <- matrix(sample(0:2, 8L * 10L, replace = TRUE),
+                nrow = 8L,
+                dimnames = list(tree$tip.label, paste0("c", seq_len(10L))))
+  pd <- MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd)
+  model <- MkPrimeModel(coding = "informative")
+  model <- MkPrime:::.FinalizeModel(model, tree, mkd)
+
+  mcmcData <- MkPrime:::.InitMcmcData(mkd, model)
+  state <- MkPrime:::.InitState(tree, mkd, model)
+  chainState <- MkPrime:::.InitMcmcChain(state)
+  fill_partition_cache(mcmcData, chainState)
+  allocate_cl_workspace(mcmcData, chainState)
+
+  hasNeo <- any(mkd$type == "neomorphic")
+  nEdge <- nrow(tree$edge)
+  mcmcCfg <- MkPrimeMCMC(
+    nIter = 500L, minWarmup = 50L,
+    gibbsSpr = TRUE, gibbsSubtreeSwap = TRUE
+  )
+  moves <- MkPrime:::.BuildMoves(nEdge, sum(mkd$type == "transformational"),
+                                  hasNeo, mcmcCfg)
+  moveTypeCodes <- vapply(
+    moves, function(m) MkPrime:::.kMoveTypes[[m$name]], integer(1L)
+  )
+  moveWeights <- vapply(moves, `[[`, numeric(1), "weight")
+  nMoves <- length(moves)
+  transIdx <- which(mkd$type == "transformational")
+  transIdx0 <- if (length(transIdx)) transIdx - 1L else integer(0)
+
+  scaleTunings <- matrix(0.5, 1, nMoves)
+  sliceParamCodes <- vapply(moves, function(m) m$sliceParamIdx %||% 0L,
+                            integer(1L))
+  sliceWidths <- matrix(1.0, 1, nMoves)
+  jointRhos <- matrix(0.0, 1, nMoves)
+  moveIntPars <- integer(nMoves)
+
+  result <- run_mcmc_batch_cpp(
+    mcmcData, list(chainState), 1.0,
+    moveTypeCodes, transIdx0, sliceParamCodes, moveWeights,
+    scaleTunings, 10, 1L, moveIntPars, sliceWidths, jointRhos,
+    500L, 1L, 500L, 10L,
+    hasNeo, nEdge
+  )
+
+  # Before the LIKE-001 fix, gibbs_spr / gibbs_subtree_swap committed
+  # state->logLik computed without the singleton-site ascertainment
+  # term, so the periodic full-eval drift check (every 100 iters)
+  # would tick.
+  expect_equal(result$diag_counters[["drift"]], 0L,
+               info = paste("drift = ", result$diag_counters[["drift"]],
+                            " under coding=informative; gibbs_*_impl",
+                            "should fall back to _full variants"))
+})
