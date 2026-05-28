@@ -228,6 +228,41 @@ struct McmcState {
   std::vector<double> charLLCache;
   std::vector<int>    charLLNCand;
   bool                charLLCacheReady = false;
+
+  // -----------------------------------------------------------------------
+  // Marginal-k Tier 2 cache (Option A — per-(partition, node, ko) partial
+  // Felsenstein CLs). FU-3 structural landing — see mcmc_state.h §Marginal-
+  // k Option A cache for the full contract.
+  //
+  // Field layout matches Tier 1's invalidation rhythm:
+  //   - perKpClSlots[ko] (when allocated) holds a NodeCLCache-style unit
+  //     array for that k-offset. Lazy allocated on first marginal eval
+  //     that touches that slot.
+  //   - perKpClReady[ko] mirrors NodeCLCache::ready() for that slot.
+  //   - perKpClReadyAny is the union — true iff at least one slot has been
+  //     populated and is still valid.
+  //
+  // Invalidation rules: any non-p move (moveType != 30) sets
+  // perKpClReadyAny = false and clears all per-slot ready flags. This
+  // matches charLLCacheReady's invalidation contract (see do_move_impl).
+  // Per-character partial-CL paths (NNI, beta_simplex, Dirichlet, SPR) in
+  // the marginal-k branch would mutate these slots in-place — wiring is
+  // FU-3b; for now this PR lands the structure + contract + tests.
+  //
+  // Memory: enforced via PerKpClCache::ensure_capacity (4 GB ceiling per
+  // kMarginalKCacheMaxBytes in mcmc_state.h).
+  std::vector<NodeCLCache> perKpClSlots;
+  std::vector<bool>        perKpClReady;
+  bool                     perKpClReadyAny = false;
+
+  // Reset all Tier 2 slots to invalid. Cheap O(K_MAX_CAND) flag-flip; the
+  // CL buffers themselves are not freed — lazy reuse keeps the next
+  // populate path allocation-free when the same ko slots come back.
+  void invalidate_per_kp_cl_all() {
+    for (auto& slot : perKpClSlots) slot.invalidate_all();
+    std::fill(perKpClReady.begin(), perKpClReady.end(), false);
+    perKpClReadyAny = false;
+  }
 };
 
 
@@ -752,6 +787,37 @@ double compute_topo_hash(IntegerVector parent) {
 // [[Rcpp::export]]
 double get_state_log_lik(SEXP statePtr) {
   return Rcpp::XPtr<McmcState>(statePtr).get()->logLik;
+}
+
+
+// Inspection helper for the marginal-k cache tiers (FU-3 tests).
+// Exposes per-tier validity flags so tests can assert cache invariance
+// under p-moves and invalidation under tree/branch/rate moves.
+// [[Rcpp::export]]
+List get_marginal_cache_state(SEXP statePtr) {
+  McmcState* s = Rcpp::XPtr<McmcState>(statePtr).get();
+  int nReady = 0;
+  for (auto v : s->perKpClReady) if (v) ++nReady;
+  return List::create(
+    // Tier 1 (per-(char, k') cache shipped in PR-B):
+    _["charLLReady"]   = s->charLLCacheReady,
+    _["charLLSize"]    = static_cast<int>(s->charLLCache.size()),
+    _["charLLNCand"]   = s->charLLNCand,
+    // Tier 2 (per-(partition, node, k_offset) — FU-3 structural landing):
+    _["perKpReadyAny"] = s->perKpClReadyAny,
+    _["perKpSlots"]    = static_cast<int>(s->perKpClSlots.size()),
+    _["perKpReady"]    = static_cast<int>(nReady)
+  );
+}
+
+
+// Force-invalidate both marginal-k cache tiers (FU-3 tests).
+// Useful for "baseline" cache-cold comparisons in the test harness.
+// [[Rcpp::export]]
+void invalidate_marginal_cache(SEXP statePtr) {
+  McmcState* s = Rcpp::XPtr<McmcState>(statePtr).get();
+  s->charLLCacheReady = false;
+  s->invalidate_per_kp_cl_all();
 }
 
 
@@ -4472,8 +4538,14 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   // move; the marginal evaluator will rebuild on the next call. Cost on
   // infeasible early-return moves: at most one wasted rebuild on the
   // next call, which is acceptable.
+  //
+  // FU-3 (Option A Tier 2): the per-(node, ko) Felsenstein CL cache is
+  // governed by the same invariance proof as charLLCache — see
+  // dev/red-team/proofs/marginal-k-geometric.md §5. A p-move preserves
+  // both tiers; any other move invalidates both.
   if (data->marginalK && moveType != 30) {
     state->charLLCacheReady = false;
+    state->invalidate_per_kp_cl_all();
   }
 
   double logHastings  = 0.0;
@@ -5464,8 +5536,14 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   // back state. For case 30 (p-only) the cache was not written during
   // the proposal (cache path skipped re-pruning) and is independent of
   // p, so leave it valid.
+  //
+  // FU-3 Tier 2 mirrors charLLCacheReady on rejection: any subtree CLs
+  // written during partial-CL evaluation (FU-3b future work) are
+  // invalidated together with the per-(char, k') cache, since both were
+  // computed against the proposed (parent, child, edgeLen).
   if (data->marginalK && moveType != 30) {
     state->charLLCacheReady = false;
+    state->invalidate_per_kp_cl_all();
   }
 
   return false;

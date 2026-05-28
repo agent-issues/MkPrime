@@ -97,6 +97,14 @@ get_state_log_lik <- function(statePtr) {
     .Call(`_MkPrime_get_state_log_lik`, statePtr)
 }
 
+get_marginal_cache_state <- function(statePtr) {
+    .Call(`_MkPrime_get_marginal_cache_state`, statePtr)
+}
+
+invalidate_marginal_cache <- function(statePtr) {
+    invisible(.Call(`_MkPrime_invalidate_marginal_cache`, statePtr))
+}
+
 eval_log_prior_cpp <- function(dataPtr, statePtr) {
     .Call(`_MkPrime_eval_log_prior_cpp`, dataPtr, statePtr)
 }

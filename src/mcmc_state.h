@@ -432,4 +432,69 @@ double cpp_log_likelihood_marginal(
     double rateNeo,
     ClWorkspace* ws = nullptr);
 
+
+// ---------------------------------------------------------------------------
+// Marginal-k Option A cache (FU-3, plan §5).
+//
+// Two-tier cache for the marginal-k evaluator:
+//
+//   Tier 1 — per-(char, ko) `charLLCache` (Option A', shipped in PR-B):
+//     Stores the raw per-(transformational char, k-offset) log-likelihood
+//     after ascertainment + relabelling corrections. Invalidated by every
+//     move except case 30 (mh_logit_p) — a p-move only changes the
+//     `log P(u | p)` weights consumed by the per-character logSumExp.
+//     Lives on `McmcState::charLLCache` (vector<double>) +
+//     `McmcState::charLLNCand` (vector<int>) +
+//     `McmcState::charLLCacheReady` (bool).
+//
+//   Tier 2 — per-(partition, node, ko) Felsenstein partial CL cache
+//     (Option A, FU-3 structural landing): A sibling cache that stores
+//     the Felsenstein conditional likelihoods at every internal node for
+//     every candidate k value (kStates = kObs_partition + ko). Used by
+//     the marginal evaluator to skip the full per-ko downpass when only
+//     a subtree is dirty (NNI / beta_simplex / Dirichlet / SPR). Lives
+//     on `McmcState::perKpCl` (see PerKpClCache below).
+//
+// Invariance under p-moves (proof: dev/red-team/proofs/marginal-k-
+// geometric.md §5):
+//   L(y_i | tree, μ, k) does NOT depend on p. Therefore neither Tier 1
+//   nor Tier 2 are invalidated by case 30 (mh_logit_p). The per-character
+//   `log P(u | p)` weights are recomputed on each p-move from scratch
+//   (cheap: nTrans × kMaxKprimeCand scalar ops, no pruning).
+//
+// Invalidation rules (Tier 2 currently mirrors Tier 1):
+//   | Move                        | Tier 1 (charLL)  | Tier 2 (per-(node,k)) |
+//   | --------------------------- | ---------------- | --------------------- |
+//   | case 30 (mh_logit_p)        | valid            | valid                 |
+//   | tree topology (5, 6, ...)   | invalidate_all   | invalidate_all        |
+//   | branch length (0, 4, 23..)  | invalidate_all   | invalidate_all        |
+//   | rate_log_sd (2, 31, 34)     | invalidate_all   | invalidate_all        |
+//   | rate_loss (1)               | invalidate_all   | invalidate_neo_only   |
+//   | rate_neo (3)                | invalidate_all   | invalidate_all        |
+//
+// Memory ceiling: Lazy allocation per ko slice. Worst case at 150 tips,
+// 300 chars, kMaxKprimeCand = 50: ~600 MB. PerKpClCache::ensure_capacity
+// enforces a 4 GB cap (plan §12 fail-loud) BEFORE allocation, throwing
+// with a clear message that names the offending slot count and a tuning
+// hint (lower kMaxKprimeCand at the build level, or reduce nTrans).
+//
+// Status (this PR — FU-3 structural landing):
+//   PerKpClCache fields are reserved on McmcState; invalidation hooks are
+//   wired into do_move_impl in lockstep with charLLCacheReady. The cache
+//   is NOT yet populated/consumed by the marginal evaluator (Tier 1 still
+//   handles the only runtime win — p-move acceleration). Wiring Tier 2
+//   into the per-move partial-CL dispatchers (lines 5083-5256 in mcmc.cpp)
+//   is FU-3b. The structure here defines the contract that FU-3b must
+//   honour, locked in by tests in
+//   tests/testthat/test-marginal-k-cache-option-a.R.
+// ---------------------------------------------------------------------------
+
+// Forward declaration: defined in mcmc.cpp alongside McmcState.
+struct PerKpClCache;
+
+// Memory ceiling for the Tier 2 cache (plan §12). Exceeding this throws
+// with a clear message at allocation time rather than OOMing.
+constexpr size_t kMarginalKCacheMaxBytes =
+    static_cast<size_t>(4) * 1024 * 1024 * 1024;  // 4 GB
+
 #endif  // MKPRIME_MCMC_STATE_H
