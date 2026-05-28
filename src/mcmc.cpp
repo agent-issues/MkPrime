@@ -3628,28 +3628,32 @@ static List pspr_proposal_impl(
 
 
 // ---------------------------------------------------------------------------
-// Gibbs kPrime sweep (moveType 25)
+// compute_per_kprime_log_lik — case-25 phase-1 helper.
 //
-// Samples each k'_i from its full conditional in a single random-order scan
-// of all transformational characters. Always accepts (Gibbs update).
+// Spine of the marginal-k landing (dev/notes/2026-05-28-marginal-k-plan.md §3
+// architectural insight, §14 PR-A). Extracted verbatim from the phase-1 body
+// of gibbs_kprime_sweep_impl: batched per-(char, k') likelihood evaluation
+// with M-155 batching, M-164 prior-ceiling cutoff, and M-172 pattern dedup.
+//
+// Populates `out.charLogW[ti * kMaxKprimeCand + ko]` with
+//   β · LL(y_i | tree, μ, k = kObs_i + ko) + logPrior_k_under_arm
+// for ko ∈ 0..(charNCand[ti] - 1). The prior and β are baked into the
+// weights here so the existing sampled-k phase-2 categorical sampler can
+// consume `out` unchanged. PR-B will add a sibling helper that returns raw
+// LLs (no prior, no β) for the marginal-k logSumExp evaluator.
+//
+// No RNG: caller's `state->kPrime` is read but not written; `state->gibbsWs`
+// is grown if needed (deterministic allocation).
 // ---------------------------------------------------------------------------
 
-static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
-                                     double beta) {
+void compute_per_kprime_log_lik(
+    McmcData* data, McmcState* state, double beta,
+    NumericVector edgeLen,
+    NumericVector acrvRates,
+    KprimeCharWeights& out) {
   int nTrans = (int)data->transIdxGlobal.size();
-  if (nTrans == 0) return false;
-
-  // Pre-compute absolute edge lengths
-  int nEdge = state->relBrLengths.size();
-  NumericVector edgeLen(nEdge);
-  for (int i = 0; i < nEdge; ++i)
-    edgeLen[i] = state->treeLength * state->relBrLengths[i];
-
-  // Pre-compute ACRV rates
-  bool useAcrv = (state->rateLogSd > 0.0);
-  NumericVector acrvRates = useAcrv
-    ? cpp_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ)
-    : NumericVector(1, 1.0);
+  out.resize(nTrans);
+  if (nTrans == 0) return;
 
   // Cache for constant-site probability by kStates (shared across characters)
   std::vector<double> cspCache;
@@ -3692,22 +3696,16 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   // candidate k into a single partition-level pruning call.
   // ---------------------------------------------------------------
 
-  static const int K_MAX_CAND = 50;   // absolute cap (fallback path)
-  // M-164: tightened from -57.5 to -25.0.  exp(-25) ≈ 1.4e-11 relative
-  // probability; even 50 such candidates contribute ~7e-10 total mass,
-  // far below double-precision RNG resolution (~2.2e-16).
-  static const double LOG_CUTOFF = -25.0;
-
-  // Beta-Geometric: precompute incremental log-prior for ko = 0..K_MAX_CAND-1
+  // Beta-Geometric: precompute incremental log-prior for ko = 0..kMaxKprimeCand-1
   // logPrior(u=0) = log(α) - log(α+β)
   // logPrior(u=k) = logPrior(u=k-1) + log(β+k-1) - log(α+β+k)
   std::vector<double> bgLogPrior;
   if (isBetaGeometric) {
     double a = state->kprimeAlpha;
     double b = state->kprimeBeta;
-    bgLogPrior.resize(K_MAX_CAND);
+    bgLogPrior.resize(kMaxKprimeCand);
     bgLogPrior[0] = std::log(a) - std::log(a + b);
-    for (int ko = 1; ko < K_MAX_CAND; ++ko) {
+    for (int ko = 1; ko < kMaxKprimeCand; ++ko) {
       bgLogPrior[ko] = bgLogPrior[ko - 1]
                       + std::log(b + ko - 1)
                       - std::log(a + b + ko);
@@ -3747,7 +3745,7 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   int maxNode = 2 * data->nTip - 1;
   int gibbsMaxStride = 0;
   for (auto& tp : transParts) {
-    int s = tp.nUniq * (tp.kObs + K_MAX_CAND);
+    int s = tp.nUniq * (tp.kObs + kMaxKprimeCand);
     if (s > gibbsMaxStride) gibbsMaxStride = s;
   }
   if (!state->gibbsWs.fits(maxNode, gibbsMaxStride))
@@ -3759,7 +3757,7 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   if (isEmpGeom) {
     int maxKAll = 0;
     for (auto& tp_ : transParts) {
-      int hi = tp_.kObs + K_MAX_CAND - 1;
+      int hi = tp_.kObs + kMaxKprimeCand - 1;
       if (hi > maxKAll) maxKAll = hi;
     }
     egLogPriorByK.assign(maxKAll + 2, R_NegInf);
@@ -3803,14 +3801,13 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   double hetBins[16];
   int nTip = data->nTip;
 
-  // Per-character sampling state
-  // logW stores weights for each candidate; nCand tracks how many
-  std::vector<double> charMaxLogW(nTrans, R_NegInf);
+  // Per-character sampling state. Outputs charLogW / charNCand / charMaxLogW
+  // are written into `out`; charMaxLL / terminated are phase-1 scratch.
+  std::vector<double>& charLogW    = out.charLogW;
+  std::vector<int>&    charNCand   = out.charNCand;
+  std::vector<double>& charMaxLogW = out.charMaxLogW;
   // M-164: track best corrected log-likelihood per character for pre-filter
   std::vector<double> charMaxLL(nTrans, R_NegInf);
-  // Flat: logW[ti * K_MAX_CAND + ko]
-  std::vector<double> charLogW(nTrans * K_MAX_CAND, R_NegInf);
-  std::vector<int> charNCand(nTrans, 0);
   std::vector<bool> terminated(nTrans, false);
   int nActive = nTrans;
 
@@ -3845,7 +3842,7 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   // M-172: operates on unique tip-state patterns within each partition.
   // siteLL[ai] is the likelihood for the ai-th active unique pattern; results
   // are scattered to all characters sharing that pattern after each call.
-  for (int ko = 0; ko < K_MAX_CAND && nActive > 0; ++ko) {
+  for (int ko = 0; ko < kMaxKprimeCand && nActive > 0; ++ko) {
 
     for (int pi = 0; pi < (int)transParts.size(); ++pi) {
       auto& tp = transParts[pi];
@@ -3884,7 +3881,7 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
                        - std::log(static_cast<double>(k2)) - lsLogNorm;
           }
           double optimisticW = beta * charMaxLL[ti0] + logPrior_k;
-          if (optimisticW < charMaxLogW[ti0] + LOG_CUTOFF) {
+          if (optimisticW < charMaxLogW[ti0] + kKprimeLogCutoff) {
             for (int ti : pa.patTrans[localPat]) {
               if (!terminated[ti]) { terminated[ti] = true; nActive--; }
             }
@@ -3905,7 +3902,7 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
       // kEff = kObs + 1; pruning cost scales as kEff/k (~k/3 for typical
       // kObs=2). Het is deferred — JC lumpability holds only under equal
       // stationary frequencies within the lumped class. The workspace stride
-      // gibbsMaxStride is already worst-case (nUniq*(kObs+K_MAX_CAND)) so the
+      // gibbsMaxStride is already worst-case (nUniq*(kObs+kMaxKprimeCand)) so the
       // collapsed kernel always fits without reallocation.
       const bool useCollapse = (!useHet) && (ko >= 2);
       int neededStride = nAct * (useCollapse ? (tp.kObs + 1) : k);
@@ -3997,7 +3994,7 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
         // Update per-character tracking for every character sharing this pattern
         for (int ti : pa.patTrans[localPat]) {
           if (R_FINITE(ll) && ll > charMaxLL[ti]) charMaxLL[ti] = ll;
-          charLogW[ti * K_MAX_CAND + ko] = w;
+          charLogW[ti * kMaxKprimeCand + ko] = w;
           charNCand[ti]++;
           if (w > charMaxLogW[ti]) charMaxLogW[ti] = w;
         }
@@ -4005,7 +4002,7 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
         // Termination check: representative ti0 holds the same charMaxLogW as all
         // others in the group (identical weights throughout), so one check suffices.
         int ti0 = pa.patTrans[localPat][0];
-        if (!R_FINITE(ll) || w < charMaxLogW[ti0] + LOG_CUTOFF) {
+        if (!R_FINITE(ll) || w < charMaxLogW[ti0] + kKprimeLogCutoff) {
           for (int ti : pa.patTrans[localPat]) {
             if (!terminated[ti]) { terminated[ti] = true; nActive--; }
           }
@@ -4017,9 +4014,47 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
       pa.activePatterns = std::move(stillActive);
     }
   }
+}
+
+
+// ---------------------------------------------------------------------------
+// Gibbs kPrime sweep (moveType 25)
+//
+// Samples each k'_i from its full conditional in a single random-order scan
+// of all transformational characters. Always accepts (Gibbs update).
+//
+// Phase 1 (per-(char, k') weight precomputation) lives in
+// compute_per_kprime_log_lik above; phase 2 (categorical sampling + cache
+// rebuild) lives here. Same RNG draws as the pre-refactor monolithic
+// implementation — the permutation Fisher-Yates and per-character categorical
+// inverse-CDF samples consume R::unif_rand in the same order.
+// ---------------------------------------------------------------------------
+
+static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
+                                     double beta) {
+  int nTrans = (int)data->transIdxGlobal.size();
+  if (nTrans == 0) return false;
+
+  // Pre-compute absolute edge lengths
+  int nEdge = state->relBrLengths.size();
+  NumericVector edgeLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    edgeLen[i] = state->treeLength * state->relBrLengths[i];
+
+  // Pre-compute ACRV rates
+  NumericVector acrvRates = (state->rateLogSd > 0.0)
+    ? cpp_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ)
+    : NumericVector(1, 1.0);
+
+  // Phase 1: batched per-(char, k') log-weight precomputation.
+  KprimeCharWeights kw;
+  compute_per_kprime_log_lik(data, state, beta, edgeLen, acrvRates, kw);
+  const std::vector<double>& charLogW    = kw.charLogW;
+  const std::vector<int>&    charNCand   = kw.charNCand;
+  const std::vector<double>& charMaxLogW = kw.charMaxLogW;
 
   // ---------------------------------------------------------------
-  // Sampling phase: for each character, sample k' from the
+  // Phase 2 — sampling phase: for each character, sample k' from the
   // precomputed log-weights in charLogW[].
   // ---------------------------------------------------------------
 
@@ -4040,7 +4075,7 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
     if (nCand == 0) continue;
 
     double maxW = charMaxLogW[ti];
-    double* logW = &charLogW[ti * K_MAX_CAND];
+    const double* logW = &charLogW[ti * kMaxKprimeCand];
 
     // Sample from categorical (log-sum-exp)
     double sumExp = 0.0;

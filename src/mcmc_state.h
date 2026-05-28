@@ -335,4 +335,56 @@ double const_site_prob_for_k(
     int kStates, double betaScale,
     const Rcpp::NumericVector& acrvRates);
 
+
+// ---------------------------------------------------------------------------
+// Case-25 phase-1 helper: batched per-(char, k') log-weight precomputation.
+//
+// Shared across the sampled-k Gibbs path (case 25 in mcmc.cpp) and — once
+// PR-B lands — the marginal-k evaluator in mcmc_likelihood.cpp. The helper
+// owns the M-155 / M-164 / M-172 batching, dedup, JC-lumpability collapse,
+// and prior-ceiling early termination that case 25 used to do inline.
+//
+// Output `charLogW` stores `β · LL(k = kObs_i + ko) + logPrior_k` flat in
+// (ti, ko) with stride `kMaxKprimeCand`. `charNCand[ti]` is the number of
+// evaluated ko slots for char ti before early termination. `charMaxLogW[ti]`
+// is the running max of charLogW[ti, *] (consumed by phase-2 categorical
+// sampling). Phase-2 scratch (`charMaxLL`, `terminated`, the per-partition
+// active-pattern bookkeeping) is internal to the helper.
+//
+// PR-B note: a sibling helper will reuse this infrastructure but return raw
+// per-(char, ko) log-likelihoods (no prior, no β) so the marginal evaluator
+// can do its own logSumExp with arbitrary `P(u | hyperparams)` weights.
+// ---------------------------------------------------------------------------
+
+constexpr int    kMaxKprimeCand   = 50;     // absolute cap on ko candidates
+constexpr double kKprimeLogCutoff = -25.0;  // M-164 prior-ceiling cutoff
+
+struct McmcState;  // defined in mcmc.cpp; forward-declared so the helper
+                   // declaration here only depends on pointer semantics.
+
+struct KprimeCharWeights {
+  // Flat, length nTrans * kMaxKprimeCand. logW[ti * kMaxKprimeCand + ko]
+  // holds β · LL_ko + logPrior_ko (or R_NegInf for un-evaluated slots).
+  std::vector<double> charLogW;
+  // Number of evaluated ko slots per char (≤ kMaxKprimeCand).
+  std::vector<int>    charNCand;
+  // Running max of charLogW[ti, *]; phase-2 subtracts this before exp().
+  std::vector<double> charMaxLogW;
+
+  void resize(int nTrans) {
+    charLogW.assign(static_cast<size_t>(nTrans) * kMaxKprimeCand, R_NegInf);
+    charNCand.assign(nTrans, 0);
+    charMaxLogW.assign(nTrans, R_NegInf);
+  }
+};
+
+// Populate `out` with per-(char, ko) Gibbs weights for all transformational
+// characters. Pure (no RNG); see `mcmc.cpp:gibbs_kprime_sweep_impl` for the
+// canonical caller and the phase-2 categorical sampler that consumes `out`.
+void compute_per_kprime_log_lik(
+    McmcData* data, McmcState* state, double beta,
+    Rcpp::NumericVector edgeLen,
+    Rcpp::NumericVector acrvRates,
+    KprimeCharWeights& out);
+
 #endif  // MKPRIME_MCMC_STATE_H
