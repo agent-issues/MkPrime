@@ -1657,7 +1657,7 @@ RunMkPrime <- function(data, tree = NULL,
   # --- Serialize and return ---
   r$chains <- lapply(r$chainStates, function(ptr) {
     s <- get_mcmc_state(ptr)
-    list(
+    ch <- list(
       log_lik        = s$logLik,
       log_prior      = s$logPrior,
       log_post       = s$logPost,
@@ -1670,6 +1670,20 @@ RunMkPrime <- function(data, tree = NULL,
       kPrime         = s$kPrime,
       edge           = s$edge
     )
+    # Partition-API extras — see matching block in .SaveCheckpoint.
+    if (isTRUE(s$usePartitioned)) {
+      ch$class_rate_log_sd <- as.numeric(s$classRateLogSd)
+      ch$class_w           <- as.numeric(s$classW)
+      ch$class_rate        <- as.numeric(s$classRate)
+      ch$nChar_c           <- as.integer(s$nCharPerClass)
+      ch$eta_neo           <- s$etaNeo
+      if (isTRUE(s$useHyperpriorOnSigma)) {
+        ch$use_hyperprior_on_sigma <- TRUE
+        ch$hyper_tau               <- as.numeric(s$hyperTau)
+        ch$class_rate_log_sd_z     <- as.numeric(s$classZ)
+      }
+    }
+    ch
   })
   r$chainStates  <- NULL
   r$stop_reason  <- stopReason
@@ -2648,7 +2662,7 @@ RunMkPrime <- function(data, tree = NULL,
     if (!is.null(r$chainStates)) {
       r$chains <- lapply(r$chainStates, function(ptr) {
         s <- get_mcmc_state(ptr)
-        list(
+        ch <- list(
           log_lik        = s$logLik,
           log_prior      = s$logPrior,
           log_post       = s$logPost,
@@ -2662,6 +2676,24 @@ RunMkPrime <- function(data, tree = NULL,
           edge           = s$edge,
           beta_scale     = s$betaScale
         )
+        # Partition-API extras — must mirror .InitRun (R/RunMkPrime.R:659-674)
+        # so the round-trip through .RunMkPrimeSingleRun's reconstruction
+        # (R/RunMkPrime.R:754-772) preserves per-class state and the pooled-σ
+        # hyperprior. Without these, a resume silently rebuilds a legacy
+        # single-σ chain.
+        if (isTRUE(s$usePartitioned)) {
+          ch$class_rate_log_sd <- as.numeric(s$classRateLogSd)
+          ch$class_w           <- as.numeric(s$classW)
+          ch$class_rate        <- as.numeric(s$classRate)
+          ch$nChar_c           <- as.integer(s$nCharPerClass)
+          ch$eta_neo           <- s$etaNeo
+          if (isTRUE(s$useHyperpriorOnSigma)) {
+            ch$use_hyperprior_on_sigma <- TRUE
+            ch$hyper_tau               <- as.numeric(s$hyperTau)
+            ch$class_rate_log_sd_z     <- as.numeric(s$classZ)
+          }
+        }
+        ch
       })
       r$chainStates <- NULL
     }  # else: chains already serialized, chainStates already NULL
