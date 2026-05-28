@@ -57,14 +57,60 @@ shape-linked case through the same move filter or update case 2 / case
 19-slice to keep both fields in lockstep when `state->usePartitioned`
 is true.
 
-**Funnel-stress benchmark.** `dev/red-team/heavy-tests/funnel-stress-hyperprior-sigma.R`
-is a smoke test of the plumbing: it runs a 5-class fixture
-(sizes 5, 50, 50, 50, 50) under both priors at nGen = 20000 and prints
-per-class ESS on σ_c. The fixture uses random-binary data with weak
-per-class signal so the pooling effect is modest; representative ESS
-gains need to be measured against the Casali production cells that
-motivated this change, where σ_small mixes catastrophically under the
-old prior.
+**Casali ESS benchmark.**
+`dev/red-team/heavy-tests/casali-ess-hyperprior-vs-gamma.R` runs the
+seven Casali pilot cells (`auto-part/dev/benchmarks/casali`) whose
+`class*_rate_log_sd` were the dominant ESS bottleneck in the first
+production batch. Each cell runs under both priors at the production
+config (`nGen = 5e6`, `thin = 1000`, `nChains = 4` PT, `nCat = 4`),
+with seeds paired across the prior pair so the only difference between
+the two runs is the σ_c prior structure (SLURM array `17304194`,
+Hamilton, 2026-05-28).
+
+Per-class σ_c ESS (γ = `gamma_independent`; H = `hyperprior_pooled`):
+
+| cell | K | σ-min γ | σ-min H | ratio | σ-mean γ | σ-mean H | ratio | TL γ | TL H | τ ESS | wall γ (h) | wall H (h) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Allain2012/T2a         | 11 |  870 |  918 | 1.06 | 1028 | 1368 | **1.33** | 1849 |  997 | 1241 | 5.96 | 5.62 |
+| Brochu2010/T1          |  2 | 1431 | 1453 | 1.02 | 1899 | 2111 | 1.11 | 3574 | 3826 | 2910 | 2.11 | 1.97 |
+| Allain2012/T1          |  2 | 1773 | 1923 | 1.08 | 2122 | 2435 | 1.15 | 1600 | 1360 | 2850 | 3.54 | 3.36 |
+| AllainAquesbi2008/T1   |  2 | 1946 | 2337 | **1.20** | 2946 | 3193 | 1.08 | 4789 | 4789 | 3073 | 4.10 | 4.50 |
+| CarranoSampson2008/T2a |  3 | 2034 | 1957 | 0.96 | 2155 | 2109 | 0.98 | 3496 | 2928 | 2158 | 2.13 | 2.10 |
+| Burns2011/T4           |  3 | 2182 |  836 | **0.38** | 2495 | 1549 | **0.62** | 3204 | 3416 | 1756 | 1.68 | 1.66 |
+| Godefroit2008/T1       |  2 | 2803 | 2682 | 0.96 | 3070 | 2839 | 0.92 | 4320 | 3804 | 2597 | 2.21 | 2.14 |
+
+**Reading the table.** The pooled prior:
+* Lifts mean per-class σ ESS on the highest-K cell (Allain2012/T2a,
+  K = 11): +33 %, which is the regime the change was designed for.
+* Gives a clear small-class lift on AllainAquesbi2008/T1: +20 % on
+  σ-min.
+* Is neutral on the medium-K cells (Brochu, CarranoSampson, Godefroit,
+  Allain2012/T1): per-class σ ratios in [0.92, 1.15].
+* **Hurts Burns2011/T4 substantially** (σ-min ratio 0.38, σ-mean 0.62).
+  Burns2011/T4 has three nearly-balanced classes (20/19/21 chars); the
+  large-class anchoring that drives pooling in genuine size-imbalanced
+  cells offers little here, and forcing the three σ_c through a shared
+  τ visibly slows σ-min mixing relative to the independent prior.
+* Tree-length ESS is mostly unchanged or slightly worse under the
+  hyperprior; wallclock is comparable (±10 % cell-by-cell).
+* `hyper_tau` itself mixes well (ESS 1241–3073 across cells).
+
+Net read: the pooled prior is the right default for cells with a
+dominant K — particularly the K ≥ 5 regime AutoPart will produce on
+larger matrices — but it is not a free lunch on small-K,
+size-balanced partitions. The legacy `gamma_independent` prior remains
+selectable for that case; users targeting K ∈ {2, 3} with balanced
+classes should benchmark before assuming the hyperprior helps.
+
+The earlier smoke test
+(`dev/red-team/heavy-tests/funnel-stress-hyperprior-sigma.R`, 5-class
+random-binary fixture) is preserved as a plumbing check — it confirms
+both priors run end-to-end but its ratios are not representative.
+
+Raw per-cell RDS:
+`dev/red-team/heavy-tests/casali-ess-results/<matrix>__<treatment>__<prior>.rds`;
+tabulated summary:
+`dev/red-team/heavy-tests/casali-ess-results.{csv,md}`.
 
 **Move-sampler validation.** `tests/testthat/test-partition-hyperprior.R`
 group (F) runs the per-class and `scale_hyper_tau` MH moves at β = 0
