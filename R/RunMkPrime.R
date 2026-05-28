@@ -3262,6 +3262,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         slice_rate_log_sd = tun$slice_width_rate_log_sd %||% 1.0,
         slice_tree_length = tun$slice_width_tree_length %||% 1.0,
         slice_beta_scale  = tun$slice_width_beta_scale %||% 1.0,
+        slice_kprime_s    = tun$slice_width_kprime_s %||% 0.5,
+        slice_kprime_r    = tun$slice_width_kprime_r %||% 1.0,
         1.0
       )
     }

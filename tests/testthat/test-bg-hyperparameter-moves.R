@@ -141,16 +141,41 @@ test_that("Short BG run moves kprime_alpha and kprime_beta", {
             label = "kprime_beta is not frozen at a single value")
 })
 
-# --- Integration: β can escape init at 1.0 toward small-β regime -------------
+# --- Integration: β drives down toward small-β posterior under informative data
 #
-# Pre-fix axis-aligned regression: with init at (α, β) = (1, 1) and a posterior
-# that favours small β, the chain could not traverse the (log α, log β) ridge
-# and β remained stuck near 1. Post-fix, the s-slice moves the concentration
-# down, the r-slice moves the shape away from α = β, and β can land
-# significantly below its starting value.
-test_that("β escapes init = 1.0 within a short BG run", {
+# This is the regression detector for the (log α, log β) ridge that the pre-
+# fix axis-aligned slice / Bactrian moves could not traverse.
+#
+# Construction: ~40 fully binary characters on a 10-tip tree. With Gibbs
+# pulling every kPrime to kObs = 2, all u_i = 0, and the BG posterior on β
+# has a likelihood factor ∝ (α / (α + β))^n that — at α ≈ 1, n ≈ 40 — is
+# sharply peaked at β → 0 (modal β ≈ 1/n ≈ 0.025). Posterior mean of log β
+# should land below −1 (β < 0.37) given an Exp(1) prior on β.
+#
+# Init at (α, β) = (1, 1) starts the chain at log β = 0, a factor of ~14×
+# above the posterior mode. The axis-aligned sampler (cases 27/28 + axis-
+# slice) needs O(κ²) iterations to traverse this ridge — at n = 40, κ on
+# (log α, log β) is ~10–15, so 2000 iter is not enough. The (s, r)
+# reparameterised sampler reaches the small-β regime within hundreds.
+test_that("β drives down to small-β regime under informative binary data", {
   set.seed(6148)
-  f <- make_bg_fixture()
+  nTip  <- 10L
+  nChar <- 40L
+  tree <- ape::rtree(nTip)
+  tree$edge.length <- tree$edge.length / sum(tree$edge.length) * 3
+  # Binary characters with mild variation — every column has kObs = 2.
+  mat <- matrix(sample(0:1, nTip * nChar, replace = TRUE), nrow = nTip,
+                dimnames = list(tree$tip.label, NULL))
+  # Force at least one of each state per column (guarantees kObs = 2).
+  for (j in seq_len(nChar)) {
+    if (length(unique(mat[, j])) < 2L) mat[1, j] <- 1L - mat[1, j]
+  }
+  pd <- phangorn::phyDat(mat, type = "USER", levels = as.character(0:1))
+  mkd <- MkPrimeData(pd)
+  model <- MkPrimeModel(kPrimePrior = "beta_geometric", treeLengthRate = 0.5)
+  model <- MkPrime:::.FinalizeModel(model, tree, mkd)
+  tree <- TreeTools::Preorder(tree)
+
   mcmc <- suppressWarnings(MkPrimeMCMC(
     nIter = 2000, thin = 1, nChains = 1L,
     maxWarmup = 500, minWarmup = 200,
@@ -158,11 +183,14 @@ test_that("β escapes init = 1.0 within a short BG run", {
   ))
 
   post <- suppressWarnings(RunMkPrime(
-    f$mkd, f$tree, model = f$model, mcmc = mcmc
+    mkd, tree, model = model, mcmc = mcmc
   ))
   beta_vals <- post$samples[, "kprime_beta"]
-  # log range must span more than 1 unit (factor of e ≈ 2.7) — the pre-fix
-  # axis-aligned sampler typically gives < 0.3 here at the same init.
-  expect_gt(diff(range(log(beta_vals))), 1.0,
-            label = "β log-range too narrow — sampler stuck on ridge")
+  # Drop warmup-tail samples (first 25%) before computing the mean.
+  keep <- beta_vals[round(length(beta_vals) * 0.25):length(beta_vals)]
+
+  expect_lt(mean(log(keep)), -1.0,
+            label = paste0("posterior mean of log β stuck at ",
+                           sprintf("%.2f", mean(log(keep))),
+                           " — sampler not traversing (log α, log β) ridge"))
 })
