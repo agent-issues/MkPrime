@@ -1,0 +1,7 @@
+# Local + Hamilton SBC artefacts are heavy-test outputs, not source.
+# Hamilton results land in sbc-results-hamilton/ and are intended to be
+# committed to a dedicated results branch when validated, not main.
+sbc-results/
+sbc-results-hamilton/
+T-OVL-results.rds
+T-OVL-verdict.txt
