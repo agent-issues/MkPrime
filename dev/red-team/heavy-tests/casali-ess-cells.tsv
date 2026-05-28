@@ -1,0 +1,8 @@
+matrix	treatment	nClasses	notes
+Allain2012	T2a	10	worst pilot ESS (class10_rate_log_sd = 374); unique 10-class structure
+Allain2012	T1	2	pilot ESS class2 = 388
+CarranoSampson2008	T2a	3	pilot ESS class3 = 437
+Godefroit2008	T1	2	pilot ESS class2 = 785
+Burns2011	T4	3	pilot ESS class3 = 788
+Brochu2010	T1	2	pilot ESS class2 mean 867 (range 546-1194 over 4 runs)
+AllainAquesbi2008	T1	2	pilot ESS class2 = 996
