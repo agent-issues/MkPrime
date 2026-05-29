@@ -616,6 +616,10 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
 }
 
 
+// Forward declaration (defined below, M-083) — fill_partition_cache needs it to
+// set a marginal-aware initial logLik under marginal_k (MARGINAL-K-INIT-001).
+static double compute_full_loglik(const McmcData& data, McmcState& state);
+
 // [[Rcpp::export]]
 void fill_partition_cache(SEXP dataPtr, SEXP statePtr) {
   McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
@@ -639,6 +643,21 @@ void fill_partition_cache(SEXP dataPtr, SEXP statePtr) {
   // value may differ (e.g. ascertainment correction edge-cases returning -Inf).
   // A self-consistent logLik is required for the MH acceptance ratio.
   state->logLik = totalLogLik;
+
+  // MARGINAL-K-INIT-001: under marginal_k the partition sum above is the
+  // FIXED-kPrime likelihood (kPrime pinned to kObs), which sits ~+9.68 nats
+  // ABOVE the true marginal-over-k likelihood. Left as the initial MH baseline
+  // it freezes the WHOLE chain at the init tree for datasets where no early move
+  // overcomes the inflation — the residual cause of the post-MARGINAL-K-SLICE-001
+  // whole-chain freeze (~57% of SBC sims pinned at init tl=0.1*nEdge, p=0.5,
+  // sigma=0.5). Recompute the init logLik via the marginal-aware dispatcher so
+  // the baseline is correct. partLogLik stays fixed-k but is unused under
+  // marginal_k (do_move_impl forces hasPLC=false). charLLCacheReady=false so the
+  // marginal evaluator does a full rebuild and leaves a coherent per-char cache.
+  if (data->marginalK) {
+    state->charLLCacheReady = false;
+    state->logLik = compute_full_loglik(*data, *state);
+  }
 }
 
 
