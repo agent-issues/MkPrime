@@ -153,34 +153,28 @@ seedBase       <- 20260528L
   #   u_i   ~ Geo(p_true)         (location-free; full support on u >= 0)
   #   kTrue = pmin(2 + u, K_MAX_PRIOR)
   #
-  # 2026-05-29 ASCERTAINMENT FIX: the previous forward drew a FIXED POOL of
-  # N_CHAR characters and DROPPED the constant ones (keep <- kObs >= 2).
-  # That is a fixed-pool-then-filter design: the retained count m is itself
-  # informative about p (high p ⇒ short/few-state ⇒ more constants dropped),
-  # and that information is discarded with the constants. The inference uses
-  # coding = "variable", whose conditional likelihood ∏ P(y_i | variable, p)
-  # is correct ONLY for a FIXED COUNT of iid variable characters — not for a
-  # filtered pool. The mismatch carries P(constant|p)^(pool−m) on the true
-  # side vs P(variable|p)^(−m) on the inference side: not proportional in p,
-  # so the p (and, via coupling, tree_length) posterior is miscalibrated.
-  # This is a forward/inference ascertainment mismatch (SBC FAIL: p rank
-  # spikes at 0, tree_length spikes), NOT a marginal-k or identifiability
-  # issue — it hits sampled-k identically.
+  # 2026-05-29 LEWIS-MKV FORWARD (Model I-a). Mk' implements the standard
+  # Lewis-Mkv ascertainment: k' ~ w_k(p) UNCONDITIONALLY (intrinsic property),
+  # and each character's likelihood is conditioned on being variable GIVEN its
+  # k, i.e. L(y|k)/a_k with a_k = P(variable|k,tree). Marginalising k gives
+  # Σ_k w_k(p) L(y|k)/a_k (sum-of-ratios), which is exactly what the C++
+  # marginal path computes — so the inference is CORRECT for this model (no
+  # code change). Confirmed: MkPrimeData drops invariant characters
+  # unconditionally, so the data path always conditions on variability.
   #
-  # Fix: condition each character's (kTrue, y) jointly on being variable by
-  # REDRAWING the whole character (fresh kTrue ~ 2 + Geo(p) AND fresh y) until
-  # kObs >= 2. This yields a fixed count of N_CHAR variable characters drawn
-  # from P(kTrue, y | variable) ∝ P(kTrue) P(y|kTrue) 1[variable], which is
-  # exactly what coding = "variable" + the k-marginal denominator
-  # Σ_k w_k(p) P(variable | k, tree) targets. Matches real morphological
-  # practice (matrices report variable characters; the count is fixed by
-  # inclusion, not by post-hoc filtering of a fixed pool).
+  # The MATCHING forward (what earlier runs got wrong by jointly redrawing k
+  # and y, a different "filtered-pool" model giving ratio-of-sums): draw
+  # kTrue_j ONCE from the unconditional prior, then redraw the DATA ONLY
+  # (k held fixed) until the character is variable. This yields k ~ w_k and
+  # y ~ P(y | k, variable) — Model I-a. All characters are variable, so
+  # MkPrimeData drops nothing and the coding="variable" /a_k correction
+  # applies cleanly. SBC must pass if the marginal-k core + Mkv are correct.
+  u_true <- stats::rgeom(N_CHAR, p_true)           # k drawn UNCONDITIONALLY
+  kTrue  <- pmin(2L + u_true, K_MAX_PRIOR)          # ... and held FIXED below
   MAX_REDRAW <- 100000L
   sim_mat <- matrix(NA_integer_, N_TIP, N_CHAR,
                     dimnames = list(tr$tip.label, NULL))
-  kObs   <- integer(N_CHAR)
-  kTrue  <- integer(N_CHAR)
-  u_true <- integer(N_CHAR)
+  kObs <- integer(N_CHAR)
   for (j in seq_len(N_CHAR)) {
     attempt <- 0L
     repeat {
@@ -188,15 +182,11 @@ seedBase       <- 20260528L
       if (attempt > MAX_REDRAW) {
         return(list(skipped = TRUE, reason = "redraw_cap"))
       }
-      u_j <- stats::rgeom(1L, p_true)
-      k_j <- min(2L + u_j, K_MAX_PRIOR)
-      cv  <- .canon(.simJCchar(tr, k_j))
+      cv <- .canon(.simJCchar(tr, kTrue[j]))        # redraw DATA only; k fixed
       if (attr(cv, "kObs") >= 2L) break
     }
     sim_mat[, j] <- cv
-    kObs[j]   <- attr(cv, "kObs")
-    kTrue[j]  <- k_j
-    u_true[j] <- u_j
+    kObs[j] <- attr(cv, "kObs")
   }
   n_char <- N_CHAR
   pd  <- TreeTools::MatrixToPhyDat(sim_mat)
@@ -206,14 +196,15 @@ seedBase       <- 20260528L
   start_tree$edge.length <- rep_len(0.1, nrow(tr$edge))
 
   model <- suppressMessages(MkPrimeModel(
+    # Lewis-Mkv (Model I-a): per-char likelihood conditioned on variable given
+    # k. Matches the redraw-data-only forward; this is the model the C++
+    # marginal path (sum-of-ratios Σ_k w_k L/a_k) actually implements.
     coding         = "variable",
     nCat           = 1L,
     kPrimePrior    = "geometric",
     likelihoodMode = "marginal_k",
-    # Forward simulator draws kTrue_i = 2 + u_i (Model A, unconditional on
-    # kObs_i), so inference must use the unconditional marginal weights
-    # p (1-p)^(k - 2). priorVariant = "conditional" (Model B) would mismatch
-    # the forward and pin p (SBC FAIL: p rank spikes at 0, tree_length U-shape).
+    # Forward draws kTrue_i = 2 + u_i (Model A, unconditional on kObs_i), so
+    # inference uses the unconditional marginal weights p (1-p)^(k - 2).
     priorVariant   = "unconditional",
     kprimeHyperA   = A_PRIOR,
     kprimeHyperB   = B_PRIOR,
@@ -379,10 +370,10 @@ cat(sprintf("Prior:         geometric (k'_i = kObs_i + Geo(p))\n"))
 cat(sprintf("Mode flag:     likelihoodMode = 'marginal_k'\n"))
 cat(sprintf("Prior variant: unconditional (Model A: k' = 2 + Geo(p))\n"))
 cat(sprintf("Hyperprior:    p ~ Beta(%g, %g)\n", A_PRIOR, B_PRIOR))
-cat(sprintf("Forward draw:  per char: redraw (u~Geo(p_true), kTrue=pmin(2+u,%d), y~JC)\n",
+cat(sprintf("Forward draw:  kTrue_i = pmin(2 + Geo(p_true), %d) drawn ONCE (uncond.);\n",
             K_MAX_PRIOR))
-cat("               until variable (kObs>=2) — fixed count of N_CHAR variable\n")
-cat("               chars, matching coding='variable' (ascertainment-consistent).\n")
+cat("               redraw DATA only (k fixed) until variable (Lewis-Mkv,\n")
+cat("               Model I-a). Inference coding='variable' (sum-of-ratios).\n")
 cat("\nAD p-values vs Uniform(0, 1) [full-mode pass gate: > 0.4]:\n")
 for (nm in names(ad)) {
   cat(sprintf("  %-14s: %.4f  %s\n", nm, ad[[nm]], .classify(ad[[nm]])))
