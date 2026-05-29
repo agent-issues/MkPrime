@@ -3283,6 +3283,17 @@ static double eval_slice_target(McmcData* data, McmcState* state,
         state->rateNeo, state->betaScale, wsPtr);
       logLik += (newPart - oldPart);
     }
+  } else if (data->marginalK) {
+    // MARGINAL-K-SLICE-001: under marginal_k the slice target must be the
+    // marginal-over-k likelihood, NOT the fixed-kPrime evaluator (state->kPrime
+    // is pinned to kObs in marginal mode). Reset the charLL cache first so the
+    // marginal evaluator does the full rebuild against the proposed scalar
+    // rather than taking the p-only fast-path on stale rawLL. Routed through
+    // compute_full_loglik_at — the same dispatcher the do_move_impl MH path
+    // uses, which is empirically correct under marginal_k.
+    state->charLLCacheReady = false;
+    logLik = compute_full_loglik_at(
+        *data, *state, state->parent, state->child, edgeLen);
   } else {
     logLik = state->usePartitioned
       ? cpp_log_likelihood_partitioned(
@@ -3367,6 +3378,17 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
         state->logLik = 0.0;
         for (size_t pi = 0; pi < state->partLogLik.size(); ++pi)
           state->logLik += state->partLogLik[pi];
+      } else if (data->marginalK) {
+        // MARGINAL-K-SLICE-001: recompute the accepted logLik via the
+        // marginal-over-k evaluator (not the fixed-kPrime path). Reset the
+        // charLL cache so the rebuild honours the accepted scalar; the rebuild
+        // re-sets charLLCacheReady=true, leaving a coherent cache for the next
+        // p-move fast-path (whose rawLL is independent of p).
+        state->charLLCacheReady = false;
+        state->logLik = compute_full_loglik_at(
+            *data, *state, state->parent, state->child, edgeLen);
+        // Invalidate partition cache (full recompute was done)
+        state->partLogLik.clear();
       } else {
         state->logLik = state->usePartitioned
           ? cpp_log_likelihood_partitioned(

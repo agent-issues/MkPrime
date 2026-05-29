@@ -236,7 +236,8 @@ RunMkPrime <- function(data, tree = NULL,
                        qHeterogeneity = qHet,
                        joint2d = isTRUE(mcmc$joint2d),
                        priorOnClassRateLogSd =
-                         model$priorOnClassRateLogSd %||% "hyperprior_pooled")
+                         model$priorOnClassRateLogSd %||% "hyperprior_pooled",
+                       likelihoodMode = model$likelihoodMode %||% "sampled_k")
 
   mcmc$thinWasAuto <- identical(mcmc$thin, "auto")
   if (mcmc$thinWasAuto) {

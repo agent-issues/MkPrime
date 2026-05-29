@@ -1,0 +1,78 @@
+From: mcmc-diagnostician (red-team marginal-k lane)
+Subject: [PROPOSED, NOT APPLIED] fix(marginal-k): slice sampler must use the
+ marginal-over-k likelihood, not fixed-kPrime; invalidate charLL cache
+
+MARGINAL-K-SLICE-001
+====================
+
+Root cause: under likelihoodMode="marginal_k", both eval_slice_target() and the
+acceptance recompute in slice_scalar_impl() fall through to cpp_log_likelihood()
+(the fixed-kPrime / sampled-k evaluator using state->kPrime, which is pinned to
+kObs in marginal-k mode). They have NO data->marginalK branch. Consequences:
+
+ 1. The slice target is the wrong density (fixed-k, not the marginal sum over k),
+    so slice_rate_log_sd targets the sampled-k posterior.
+ 2. On acceptance, state->logLik is overwritten with the fixed-k value, which is
+    higher than the marginal-over-k value by a constant offset (empirically +9.68
+    on the 16-tip/100-char repro; see findings note exp14). This inflated baseline
+    then makes every subsequent MH move (tree_length=0, beta_simplex=4,
+    dirichlet=23/24, joint_tl_rls=21) reject deterministically, because their
+    proposed marginal logLik is ~9.7 below the inflated baseline.
+ 3. charLLCacheReady is left untouched by the slice path, so a later p-move (case
+    30) fast-path reuses a rawLL built at the pre-slice scalar.
+
+The two-line diff below routes the slice path through cpp_log_likelihood_marginal
+under marginalK and invalidates the charLL cache before evaluating (so the
+marginal evaluator does a full rebuild against the proposed scalar instead of the
+p-only fast-path). The sampled-k path is byte-unchanged.
+
+--- a/src/mcmc.cpp
++++ b/src/mcmc.cpp
+@@ eval_slice_target (~3286)
+   } else {
++    // (insert before the existing else)
++  } else if (data->marginalK) {
++    // MARGINAL-K-SLICE-001: slice target is the marginal-over-k likelihood.
++    // Invalidate charLL cache first so the marginal evaluator rebuilds against
++    // the proposed scalar rather than taking the p-only fast-path on stale rawLL.
++    state->charLLCacheReady = false;
++    logLik = cpp_log_likelihood_marginal(
++        *data, *state, state->parent, state->child, edgeLen,
++        state->rateLoss, state->rateLogSd, state->rateNeo, wsPtr);
++  } else {
+     logLik = state->usePartitioned
+       ? cpp_log_likelihood_partitioned(...)
+       : cpp_log_likelihood(...);
+   }
+
+@@ slice_scalar_impl acceptance recompute (~3370)
+       } else {
++        if (data->marginalK) {
++          state->charLLCacheReady = false;
++          state->logLik = cpp_log_likelihood_marginal(
++              *data, *state, state->parent, state->child, edgeLen,
++              state->rateLoss, state->rateLogSd, state->rateNeo, wsPtr);
++          state->partLogLik.clear();
++        } else {
+         state->logLik = state->usePartitioned
+           ? cpp_log_likelihood_partitioned(...)
+           : cpp_log_likelihood(...);
+         state->partLogLik.clear();
++        }
+       }
+
+Notes / correctness:
+ - cpp_log_likelihood_marginal takes (McmcData&, McmcState&, parent, child,
+   edgeLen, rateLoss, rateLogSd, rateNeo, ClWorkspace*) — same as the call already
+   used in compute_full_loglik_at (mcmc.cpp:1004). It reads state->p for the
+   per-character weights, which is what the marginal density requires.
+ - Setting charLLCacheReady=false before the eval forces the !useCache rebuild
+   branch (mcmc.cpp:4218), which honours the proposed edgeLen / rateLogSd and
+   re-fills the cache. The eval also re-sets charLLCacheReady=true at line 4282,
+   leaving a coherent cache for the next p-move fast-path. No risk to the p-move
+   fast-path: the cache rebuilt here reflects the accepted scalar.
+ - Alternative (simpler but slower) fix: route through compute_full_loglik_at
+   (mcmc.cpp:994), which already dispatches on data.marginalK. That avoids
+   duplicating the call signature but still needs the charLLCacheReady=false reset
+   before each eval, since compute_full_loglik_at -> cpp_log_likelihood_marginal
+   would otherwise hit the fast-path on stale rawLL.

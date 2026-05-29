@@ -369,13 +369,15 @@
                                    kPrimePrior   = "geometric",
                                    qHeterogeneity = FALSE,
                                    joint2d       = TRUE,
-                                   priorOnClassRateLogSd = "hyperprior_pooled") {
+                                   priorOnClassRateLogSd = "hyperprior_pooled",
+                                   likelihoodMode = "sampled_k") {
   # Always build the legacy spec first; trivial partition is a no-op.
   moves <- .BuildMoves(nEdge, nTrans, hasNeo, mcmc,
                        fixTopology   = fixTopology,
                        kPrimePrior   = kPrimePrior,
                        qHeterogeneity = qHeterogeneity,
-                       joint2d       = joint2d)
+                       joint2d       = joint2d,
+                       likelihoodMode = likelihoodMode)
 
   if (is.null(partitionSpec$partition) || partitionSpec$nClasses == 1L) {
     # Return:
