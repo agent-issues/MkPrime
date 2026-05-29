@@ -152,25 +152,53 @@ seedBase       <- 20260528L
   # Pure geometric Model A forward (per proof §2 + §7.4):
   #   u_i   ~ Geo(p_true)         (location-free; full support on u >= 0)
   #   kTrue = pmin(2 + u, K_MAX_PRIOR)
-  u_true <- stats::rgeom(N_CHAR, p_true)
-  kTrue  <- pmin(2L + u_true, K_MAX_PRIOR)
-
+  #
+  # 2026-05-29 ASCERTAINMENT FIX: the previous forward drew a FIXED POOL of
+  # N_CHAR characters and DROPPED the constant ones (keep <- kObs >= 2).
+  # That is a fixed-pool-then-filter design: the retained count m is itself
+  # informative about p (high p ⇒ short/few-state ⇒ more constants dropped),
+  # and that information is discarded with the constants. The inference uses
+  # coding = "variable", whose conditional likelihood ∏ P(y_i | variable, p)
+  # is correct ONLY for a FIXED COUNT of iid variable characters — not for a
+  # filtered pool. The mismatch carries P(constant|p)^(pool−m) on the true
+  # side vs P(variable|p)^(−m) on the inference side: not proportional in p,
+  # so the p (and, via coupling, tree_length) posterior is miscalibrated.
+  # This is a forward/inference ascertainment mismatch (SBC FAIL: p rank
+  # spikes at 0, tree_length spikes), NOT a marginal-k or identifiability
+  # issue — it hits sampled-k identically.
+  #
+  # Fix: condition each character's (kTrue, y) jointly on being variable by
+  # REDRAWING the whole character (fresh kTrue ~ 2 + Geo(p) AND fresh y) until
+  # kObs >= 2. This yields a fixed count of N_CHAR variable characters drawn
+  # from P(kTrue, y | variable) ∝ P(kTrue) P(y|kTrue) 1[variable], which is
+  # exactly what coding = "variable" + the k-marginal denominator
+  # Σ_k w_k(p) P(variable | k, tree) targets. Matches real morphological
+  # practice (matrices report variable characters; the count is fixed by
+  # inclusion, not by post-hoc filtering of a fixed pool).
+  MAX_REDRAW <- 100000L
   sim_mat <- matrix(NA_integer_, N_TIP, N_CHAR,
                     dimnames = list(tr$tip.label, NULL))
-  kObs <- integer(N_CHAR)
+  kObs   <- integer(N_CHAR)
+  kTrue  <- integer(N_CHAR)
+  u_true <- integer(N_CHAR)
   for (j in seq_len(N_CHAR)) {
-    raw <- .simJCchar(tr, kTrue[j])
-    cv  <- .canon(raw)
+    attempt <- 0L
+    repeat {
+      attempt <- attempt + 1L
+      if (attempt > MAX_REDRAW) {
+        return(list(skipped = TRUE, reason = "redraw_cap"))
+      }
+      u_j <- stats::rgeom(1L, p_true)
+      k_j <- min(2L + u_j, K_MAX_PRIOR)
+      cv  <- .canon(.simJCchar(tr, k_j))
+      if (attr(cv, "kObs") >= 2L) break
+    }
     sim_mat[, j] <- cv
-    kObs[j] <- attr(cv, "kObs")
+    kObs[j]   <- attr(cv, "kObs")
+    kTrue[j]  <- k_j
+    u_true[j] <- u_j
   }
-  keep <- kObs >= 2L
-  if (sum(keep) < 3L) return(list(skipped = TRUE, reason = "few_var_chars"))
-  sim_mat <- sim_mat[, keep, drop = FALSE]
-  kTrue   <- kTrue[keep]
-  kObs    <- kObs[keep]
-  u_true  <- u_true[keep]
-  n_char  <- sum(keep)
+  n_char <- N_CHAR
   pd  <- TreeTools::MatrixToPhyDat(sim_mat)
   mkd <- MkPrimeData(pd)
 
@@ -351,8 +379,10 @@ cat(sprintf("Prior:         geometric (k'_i = kObs_i + Geo(p))\n"))
 cat(sprintf("Mode flag:     likelihoodMode = 'marginal_k'\n"))
 cat(sprintf("Prior variant: unconditional (Model A: k' = 2 + Geo(p))\n"))
 cat(sprintf("Hyperprior:    p ~ Beta(%g, %g)\n", A_PRIOR, B_PRIOR))
-cat(sprintf("Forward draw:  u_i ~ Geo(p_true); kTrue_i = pmin(2 + u_i, %d)\n",
+cat(sprintf("Forward draw:  per char: redraw (u~Geo(p_true), kTrue=pmin(2+u,%d), y~JC)\n",
             K_MAX_PRIOR))
+cat("               until variable (kObs>=2) — fixed count of N_CHAR variable\n")
+cat("               chars, matching coding='variable' (ascertainment-consistent).\n")
 cat("\nAD p-values vs Uniform(0, 1) [full-mode pass gate: > 0.4]:\n")
 for (nm in names(ad)) {
   cat(sprintf("  %-14s: %.4f  %s\n", nm, ad[[nm]], .classify(ad[[nm]])))
