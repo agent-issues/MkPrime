@@ -986,4 +986,39 @@ coverage gate).
 (status APPLIED-INFRASTRUCTURE, kind [Refactor], P1, blind-path-only,
 bench deferred).
 
+---
+
+## Round 16 — T-017-IIa integration into worktree-ecology-aware — 2026-05-29
+
+**Target.** Merge `t017-iia-rng-threading-rebased` into `worktree-ecology-aware` and
+run the deferred Phase 2a bench.
+
+**Merge.** `git merge origin/t017-iia-rng-threading-rebased` from ecology-aware
+worktree. Conflicts in `dev/profiling/findings.md` and `dev/profiling/log.md` only
+(both sides added T-017-IIa narrative). Resolved by keeping HEAD (worktree-ecology-aware)
+version — more complete and post-rebase authoritative. C++ files merged with zero
+conflicts: `src/chain_rng.h` (+53 LoC new), `src/mcmc.cpp`, `src/proposals.cpp`,
+`src/tree_moves.cpp` (signature edits), `tests/testthat/test-chain-rng-determinism.R`
+(+119 new), `tests/testthat/test-gibbs-spr.R` (set.seed + n_try fix).
+
+**Build.** `R_MAKEVARS_USER=/tmp/empty_makevars devtools::load_all()` — clean
+(-fopenmp confirmed, no new errors, pre-existing unused-function warnings only).
+
+**Test suite.** `0 failures / 5281 pass / 31 skip` (+3 vs pre-merge: new
+test-chain-rng-determinism.R expects). `test-chain-rng-determinism.R` (29 tests)
+and `test-omp-determinism.R` (5 tests) both pass.
+
+**Bench.** `MKP_TIMING_NCHAINS=4 OMP_NUM_THREADS=1 rodent_aware_timing.R`:
+aware **476.95 s / 500 iter** (31.1 → 1 iter/s aware). Compared against pre-2a
+baseline on same HEAD 98734ea: **481.33 s** — Phase 2a is −1 %, within ±5 % spec.
+Intermediate investigation: aware timing is ~2.7× slower vs T-018 bench (46 s,
+nChains=1), but this regression was pre-existing in 98734ea (123.73 s vs 45.76 s at
+T-018 bench time). Phase 2a introduces zero regression; the older slowdown is
+unrelated (ecology-move set growth between T-018 bench and T-019/ecology-v2 landing).
+
+**Cleanup.** Deleted stale `t017-iia-rng-threading` and merged `t017-iia-rng-threading-rebased`
+from remote. Pre-2a bench worktree (detached HEAD at 98734ea) removed.
+
+**Filed.** T-017-IIa row updated to APPLIED (2026-05-29), bench number added.
+
 last_focus: 17

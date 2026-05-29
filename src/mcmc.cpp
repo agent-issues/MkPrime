@@ -10,6 +10,7 @@
 
 #include "mcmc_state.h"
 #include "gibbs_z_workspace.h"
+#include "chain_rng.h"
 #include "gibbs_partial_cl.h"
 #include "fitch.h"
 #include "node_cl_cache.h"
@@ -138,10 +139,13 @@ NumericVector cpp_acrv_rates(double rateLogSd, int nCat,
 
 // Forward declarations for proposals in other TUs
 // M-065: vector-based _impl versions (no edge matrix)
-List nni_proposal_impl(IntegerVector parent, IntegerVector child,
+// T-017-IIa: all proposal impls take ChainRng& rng as first argument
+List nni_proposal_impl(ChainRng& rng,
+                       IntegerVector parent, IntegerVector child,
                        int nTip, double treeLength,
                        NumericVector relBrLengths);
-List spr_proposal_impl(IntegerVector parent, IntegerVector child,
+List spr_proposal_impl(ChainRng& rng,
+                       IntegerVector parent, IntegerVector child,
                        int nTip, double treeLength,
                        NumericVector relBrLengths);
 // M-084: subtree swap helpers (tree_moves.cpp)
@@ -152,20 +156,24 @@ std::vector<int> get_valid_swap_partners_impl(const IntegerVector& parent,
                                               const IntegerVector& child,
                                               int nTip, int pruneNode);
 // M-053: TBR proposal (tree_moves.cpp)
-List tbr_proposal_impl(IntegerVector parent, IntegerVector child,
-                        int nTip, double treeLength,
-                        NumericVector relBrLengths);
+List tbr_proposal_impl(ChainRng& rng,
+                       IntegerVector parent, IntegerVector child,
+                       int nTip, double treeLength,
+                       NumericVector relBrLengths);
 List beta_simplex_proposal(NumericVector x, int index, double tuning);
-bool beta_simplex_impl(NumericVector& x, int index, double tuning,
+bool beta_simplex_impl(ChainRng& rng,
+                       NumericVector& x, int index, double tuning,
                        double& logHastings, int& outOther,
                        double& outOldIdx, double& outOldOther);  // OPP-5
 
 // M-125: block Dirichlet simplex proposal (defined in proposals.cpp)
-bool dirichlet_simplex_impl(NumericVector& x, int nCats, double alpha,
+bool dirichlet_simplex_impl(ChainRng& rng,
+                            NumericVector& x, int nCats, double alpha,
                             double& logHastings, NumericVector& snapshot,
                             std::vector<int>& modifiedEdges);
 // M-127: localized Dirichlet simplex (neighborhood selection)
-bool local_dirichlet_impl(NumericVector& x,
+bool local_dirichlet_impl(ChainRng& rng,
+                          NumericVector& x,
                           const IntegerVector& parent,
                           const IntegerVector& child,
                           int nCats, double alpha,
@@ -191,6 +199,14 @@ static const     double BACTRIAN_SCALE = 1.0 / std::sqrt(12.0);
 static inline double bactrian_perturbation() {
   double z = R::rnorm(0.0, BACTRIAN_SD);
   double raw = (R::unif_rand() < 0.5) ? (BACTRIAN_M + z) : (-BACTRIAN_M + z);
+  return raw * BACTRIAN_SCALE;
+}
+
+// T-017-IIa: ChainRng overload for in-MCMC callers (15 sites).
+// Zero-arg version above is kept for the R-exported bactrian_draws wrapper.
+static inline double bactrian_perturbation(ChainRng& rng) {
+  double z = rng.rnorm(0.0, BACTRIAN_SD);
+  double raw = (rng.unif() < 0.5) ? (BACTRIAN_M + z) : (-BACTRIAN_M + z);
   return raw * BACTRIAN_SCALE;
 }
 
@@ -221,6 +237,21 @@ static inline void bactrian_2d_perturbation(double rho,
   double s1 = (R::unif_rand() < 0.5) ? BACTRIAN_M : -BACTRIAN_M;
   double pSame = 0.5 * (1.0 + rho);
   double s2 = (R::unif_rand() < pSame) ? s1 : -s1;
+  z1 = (s1 + e1) * BACTRIAN_SCALE;
+  z2 = (s2 + e2) * BACTRIAN_SCALE;
+}
+
+// T-017-IIa: ChainRng overload for in-MCMC callers (4 sites).
+// Zero-arg version above is kept for the R-exported bactrian_2d_draws wrapper.
+static inline void bactrian_2d_perturbation(ChainRng& rng, double rho,
+                                            double& z1, double& z2) {
+  double n1 = rng.rnorm(0.0, 1.0);
+  double n2 = rng.rnorm(0.0, 1.0);
+  double e1 = BACTRIAN_SD * n1;
+  double e2 = BACTRIAN_SD * (rho * n1 + std::sqrt(1.0 - rho * rho) * n2);
+  double s1 = (rng.unif() < 0.5) ? BACTRIAN_M : -BACTRIAN_M;
+  double pSame = 0.5 * (1.0 + rho);
+  double s2 = (rng.unif() < pSame) ? s1 : -s1;
   z1 = (s1 + e1) * BACTRIAN_SCALE;
   z2 = (s2 + e2) * BACTRIAN_SCALE;
 }
@@ -974,14 +1005,14 @@ double eval_full_loglik_at_cpp(SEXP dataPtr, SEXP statePtr,
 // ---------------------------------------------------------------------------
 
 // Old full-evaluation path (used as fallback and for validation)
-static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta);
+static bool gibbs_spr_impl_full(ChainRng& rng, McmcData* data, McmcState* state, double beta);
 // M-114: partial CL path for Q-heterogeneity
-static bool gibbs_spr_impl_het(McmcData* data, McmcState* state, double beta);
+static bool gibbs_spr_impl_het(ChainRng& rng, McmcData* data, McmcState* state, double beta);
 
-static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
+static bool gibbs_spr_impl(ChainRng& rng, McmcData* data, McmcState* state, double beta) {
   // M-114: Q-heterogeneity uses streaming partial CL
   if (data->qHeterogeneity)
-    return gibbs_spr_impl_het(data, state, beta);
+    return gibbs_spr_impl_het(rng, data, state, beta);
 
   // Ecology mode: the partial-CL machinery used to compute candLL below
   // does not include the per-character ecology rate modifiers (phi, z,
@@ -1004,7 +1035,7 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
   if (eligible.empty()) return false;
 
   // 2. Pick random prune edge
-  int pickIdx = (int)(R::unif_rand() * (double)eligible.size());
+  int pickIdx = (int)(rng.unif() * (double)eligible.size());
   if (pickIdx >= (int)eligible.size()) pickIdx = (int)eligible.size() - 1;
   const int pruneRow = eligible[pickIdx];
   const int u = state->parent[pruneRow];
@@ -1222,7 +1253,7 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
   }
 
   // 9. Sample
-  double rnd = R::unif_rand() * sumW;
+  double rnd = rng.unif() * sumW;
   if (rnd < wOrig) return false;
   rnd -= wOrig;
   int chosen = nCand - 1;
@@ -1270,7 +1301,7 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
 // each CLGroup's likelihood under a mixture of F81 components by streaming
 // over (betaBin, rotation) and accumulating per-site raw likelihoods.
 // ---------------------------------------------------------------------------
-static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
+static bool gibbs_spr_impl_het(ChainRng& rng, McmcData* data, McmcState* state,
                                 double beta) {
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
@@ -1283,7 +1314,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
     if (state->parent[i] != root) eligible.push_back(i);
   if (eligible.empty()) return false;
 
-  int pickIdx = (int)(R::unif_rand() * (double)eligible.size());
+  int pickIdx = (int)(rng.unif() * (double)eligible.size());
   if (pickIdx >= (int)eligible.size()) pickIdx = (int)eligible.size() - 1;
   const int pruneRow = eligible[pickIdx];
   const int u = state->parent[pruneRow];
@@ -1534,7 +1565,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
     sumW  += ws[ci];
   }
 
-  double rnd = R::unif_rand() * sumW;
+  double rnd = rng.unif() * sumW;
   if (rnd < wOrig) return false;
   rnd -= wOrig;
   int chosen = nCand - 1;
@@ -1575,7 +1606,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
 
 
 // Old full-evaluation fallback (Q-het or validation), M-109 in-place
-static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta) {
+static bool gibbs_spr_impl_full(ChainRng& rng, McmcData* data, McmcState* state, double beta) {
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
   const int root  = nTip + 1;
@@ -1586,7 +1617,7 @@ static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta) {
     if (state->parent[i] != root) eligible.push_back(i);
   if (eligible.empty()) return false;
 
-  int pickIdx = (int)(R::unif_rand() * (double)eligible.size());
+  int pickIdx = (int)(rng.unif() * (double)eligible.size());
   if (pickIdx >= (int)eligible.size()) pickIdx = (int)eligible.size() - 1;
   const int pruneRow = eligible[pickIdx];
   const int u = state->parent[pruneRow];
@@ -1680,7 +1711,7 @@ static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta) {
     sumW  += ws[ci];
   }
 
-  double rnd = R::unif_rand() * sumW;
+  double rnd = rng.unif() * sumW;
   if (rnd < wOrig) return false;
   rnd -= wOrig;
   int chosen = nCand - 1;
@@ -1742,17 +1773,17 @@ static int find_child_row_gibbs(const IntegerVector& child, int node) {
 }
 
 // Full-evaluation fallback (Q-het or validation)
-static bool gibbs_subtree_swap_impl_full(McmcData* data, McmcState* state,
+static bool gibbs_subtree_swap_impl_full(ChainRng& rng, McmcData* data, McmcState* state,
                                          double beta);
 // M-114: partial CL path for Q-heterogeneity
-static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
+static bool gibbs_subtree_swap_impl_het(ChainRng& rng, McmcData* data, McmcState* state,
                                          double beta);
 
-static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
+static bool gibbs_subtree_swap_impl(ChainRng& rng, McmcData* data, McmcState* state,
                                     double beta) {
   // M-114: Q-heterogeneity uses streaming partial CL
   if (data->qHeterogeneity)
-    return gibbs_subtree_swap_impl_het(data, state, beta);
+    return gibbs_subtree_swap_impl_het(rng, data, state, beta);
 
   // Ecology mode: same reason as gibbs_spr_impl — the partial-CL
   // candidate evaluation does not include phi/z/pi0/gamma_e, so the
@@ -1763,7 +1794,7 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
   const int nTip  = data->nTip;
 
   // 1. Pick a random node (any edge child is a valid non-root candidate)
-  int pickIdx = (int)(R::unif_rand() * (double)nEdge);
+  int pickIdx = (int)(rng.unif() * (double)nEdge);
   if (pickIdx >= nEdge) pickIdx = nEdge - 1;
   const int nodeA = state->child[pickIdx];
 
@@ -1937,7 +1968,7 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
   }
 
   // 5. Sample: self-draw → no-op
-  double rnd = R::unif_rand() * sumW;
+  double rnd = rng.unif() * sumW;
   if (rnd < wOrig) return false;
   rnd -= wOrig;
   int chosen = nPart - 1;
@@ -1985,12 +2016,12 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
 // ---------------------------------------------------------------------------
 // M-114: Gibbs subtree swap with streaming partial CL for Q-heterogeneity.
 // ---------------------------------------------------------------------------
-static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
+static bool gibbs_subtree_swap_impl_het(ChainRng& rng, McmcData* data, McmcState* state,
                                          double beta) {
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
 
-  int pickIdx = (int)(R::unif_rand() * (double)nEdge);
+  int pickIdx = (int)(rng.unif() * (double)nEdge);
   if (pickIdx >= nEdge) pickIdx = nEdge - 1;
   const int nodeA = state->child[pickIdx];
 
@@ -2200,7 +2231,7 @@ static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
     sumW += ws[pi2];
   }
 
-  double rnd = R::unif_rand() * sumW;
+  double rnd = rng.unif() * sumW;
   if (rnd < wOrig) return false;
   rnd -= wOrig;
   int chosen = nPart - 1;
@@ -2241,12 +2272,12 @@ static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
 
 
 // Full-evaluation fallback for Q-heterogeneity (M-109 in-place pattern)
-static bool gibbs_subtree_swap_impl_full(McmcData* data, McmcState* state,
+static bool gibbs_subtree_swap_impl_full(ChainRng& rng, McmcData* data, McmcState* state,
                                          double beta) {
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
 
-  int pickIdx = (int)(R::unif_rand() * (double)nEdge);
+  int pickIdx = (int)(rng.unif() * (double)nEdge);
   if (pickIdx >= nEdge) pickIdx = nEdge - 1;
   const int nodeA = state->child[pickIdx];
 
@@ -2309,7 +2340,7 @@ static bool gibbs_subtree_swap_impl_full(McmcData* data, McmcState* state,
     sumW  += ws[pi];
   }
 
-  double rnd = R::unif_rand() * sumW;
+  double rnd = rng.unif() * sumW;
   if (rnd < wOrig) return false;
   rnd -= wOrig;
   int chosen = nPart - 1;
@@ -2370,7 +2401,7 @@ static bool gibbs_subtree_swap_impl_full(McmcData* data, McmcState* state,
 //             - log(w_chosenBin) - logBeta(f_new|a_new,b_new).
 // ---------------------------------------------------------------------------
 static bool weighted_branch_scale_impl(
-    McmcData* data, McmcState* state, double beta,
+    ChainRng& rng, McmcData* data, McmcState* state, double beta,
     double& logHastings,
     int& outIdx1, int& outIdx2, double& outOld1, double& outOld2) {
 
@@ -2381,9 +2412,9 @@ static bool weighted_branch_scale_impl(
   const int nBins = bins.nBins;
 
   // 1. Pick two branches (same scheme as beta_simplex_impl)
-  int index = static_cast<int>(R::unif_rand() * nEdge);
+  int index = static_cast<int>(rng.unif() * nEdge);
   if (index >= nEdge) index = nEdge - 1;
-  int other = static_cast<int>(R::unif_rand() * (nEdge - 1));
+  int other = static_cast<int>(rng.unif() * (nEdge - 1));
   if (other >= index) ++other;
   if (other >= nEdge) other = nEdge - 1;
   if (other == index) other = (index + 1) % nEdge;
@@ -2431,7 +2462,7 @@ static bool weighted_branch_scale_impl(
   if (sumW <= 0.0) return false;
 
   // 5. Sample a bin
-  double rnd = R::unif_rand() * sumW;
+  double rnd = rng.unif() * sumW;
   int chosenBin = nBins - 1;
   {
     double cum = 0.0;
@@ -2446,7 +2477,7 @@ static bool weighted_branch_scale_impl(
   const double chosenMid = bins.mids[chosenBin];
   const double alphaNew = chosenMid * conc + 1.0;
   const double betaNew  = (1.0 - chosenMid) * conc + 1.0;
-  double newF = R::rbeta(alphaNew, betaNew);
+  double newF = rng.rbeta(alphaNew, betaNew);
   if (newF < 1e-8) newF = 1e-8;
   if (newF > 1.0 - 1e-8) newF = 1.0 - 1e-8;
 
@@ -2491,7 +2522,7 @@ static bool weighted_branch_scale_impl(
 // Cost: nEdge * (nBins + 1) full likelihood evaluations per sweep.
 // ---------------------------------------------------------------------------
 static bool block_gibbs_branch_sweep_impl(
-    McmcData* data, McmcState* state, double beta) {
+    ChainRng& rng, McmcData* data, McmcState* state, double beta) {
 
   const int nEdge = state->relBrLengths.size();
   if (nEdge < 2) return false;
@@ -2504,7 +2535,7 @@ static bool block_gibbs_branch_sweep_impl(
   std::vector<int> perm(nEdge);
   for (int i = 0; i < nEdge; ++i) perm[i] = i;
   for (int i = nEdge - 1; i > 0; --i) {
-    int j = static_cast<int>(R::unif_rand() * (i + 1));
+    int j = static_cast<int>(rng.unif() * (i + 1));
     if (j > i) j = i;
     std::swap(perm[i], perm[j]);
   }
@@ -2527,7 +2558,7 @@ static bool block_gibbs_branch_sweep_impl(
     int index = perm[pi];
 
     // Pick a random partner edge
-    int other = static_cast<int>(R::unif_rand() * (nEdge - 1));
+    int other = static_cast<int>(rng.unif() * (nEdge - 1));
     if (other >= index) ++other;
     if (other >= nEdge) other = nEdge - 1;
     if (other == index) other = (index + 1) % nEdge;
@@ -2567,7 +2598,7 @@ static bool block_gibbs_branch_sweep_impl(
     if (sumW <= 0.0) continue;
 
     // Sample a bin
-    double rnd = R::unif_rand() * sumW;
+    double rnd = rng.unif() * sumW;
     int chosenBin = nBins - 1;
     {
       double cum = 0.0;
@@ -2581,7 +2612,7 @@ static bool block_gibbs_branch_sweep_impl(
     const double chosenMid = bins.mids[chosenBin];
     const double alphaNew = chosenMid * conc + 1.0;
     const double betaNew  = (1.0 - chosenMid) * conc + 1.0;
-    double newF = R::rbeta(alphaNew, betaNew);
+    double newF = rng.rbeta(alphaNew, betaNew);
     if (newF < 1e-8) newF = 1e-8;
     if (newF > 1.0 - 1e-8) newF = 1.0 - 1e-8;
 
@@ -2611,7 +2642,7 @@ static bool block_gibbs_branch_sweep_impl(
     // MH accept/reject (prior is constant for relBrLengths)
     double logAlpha = beta * (proposedLL - currentLL) + logHastings;
 
-    if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+    if (R_FINITE(logAlpha) && std::log(rng.unif()) < logAlpha) {
       state->relBrLengths[index] = newF * relTotal;
       state->relBrLengths[other] = (1.0 - newF) * relTotal;
       absLen[index] = trialAbs[index];
@@ -2658,7 +2689,7 @@ static bool block_gibbs_branch_sweep_impl(
 //
 // Cost: O(N × B) likelihood evaluations + 1 for the final proposed state.
 // ---------------------------------------------------------------------------
-static bool weighted_spr_impl(McmcData* data, McmcState* state,
+static bool weighted_spr_impl(ChainRng& rng, McmcData* data, McmcState* state,
                                double beta) {
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
@@ -2675,7 +2706,7 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
   if (eligible.empty()) return false;
 
   // 2. Pick random prune edge
-  int pickIdx = (int)(R::unif_rand() * (double)eligible.size());
+  int pickIdx = (int)(rng.unif() * (double)eligible.size());
   if (pickIdx >= (int)eligible.size()) pickIdx = (int)eligible.size() - 1;
   const int pruneRow = eligible[pickIdx];
   const int u = state->parent[pruneRow];
@@ -2827,7 +2858,7 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
   if (sumM <= 0.0) return false;
 
   // 10. Sample topology: self or candidate
-  double rnd = R::unif_rand() * sumM;
+  double rnd = rng.unif() * sumM;
   if (rnd < mSelf) return false;  // self-draw → no-op
   rnd -= mSelf;
   int chosen = nCand - 1;
@@ -2839,7 +2870,7 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
   // 11. Sample bin within chosen candidate
   int chosenBin = nBins - 1;
   {
-    double rndBin = R::unif_rand() * mCand[chosen];
+    double rndBin = rng.unif() * mCand[chosen];
     double cum = 0.0;
     for (int b = 0; b < nBins; ++b) {
       cum += candW[chosen][b];
@@ -2852,7 +2883,7 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
   const double chosenMid = bins.mids[chosenBin];
   const double alphaNew = chosenMid * conc + 1.0;
   const double betaNew  = (1.0 - chosenMid) * conc + 1.0;
-  double fNew = R::rbeta(alphaNew, betaNew);
+  double fNew = rng.rbeta(alphaNew, betaNew);
   if (fNew < 1e-8) fNew = 1e-8;
   if (fNew > 1.0 - 1e-8) fNew = 1.0 - 1e-8;
 
@@ -2906,7 +2937,7 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
   // 16. MH acceptance
   double logAlpha = beta * (newLogLik - state->logLik)
                   + (newLogPrior - state->logPrior) + logHR;
-  if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+  if (R_FINITE(logAlpha) && std::log(rng.unif()) < logAlpha) {
     for (int k = 0; k < nEdge; ++k) {
       state->parent[k]       = ordEdge(k, 0);
       state->child[k]        = ordEdge(k, 1);
@@ -2939,7 +2970,7 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
 
 // (Uses find_child_row_gibbs defined above)
 
-static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
+static bool weighted_subtree_swap_impl(ChainRng& rng, McmcData* data, McmcState* state,
                                         double beta) {
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
@@ -2948,7 +2979,7 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
   const int nBins = bins.nBins;
 
   // 1. Pick a random node (any edge child)
-  int pickIdx = (int)(R::unif_rand() * (double)nEdge);
+  int pickIdx = (int)(rng.unif() * (double)nEdge);
   if (pickIdx >= nEdge) pickIdx = nEdge - 1;
   const int nodeA = state->child[pickIdx];
 
@@ -3037,7 +3068,7 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
   if (sumM <= 0.0) return false;
 
   // 7. Sample: self-draw → no-op
-  double rnd = R::unif_rand() * sumM;
+  double rnd = rng.unif() * sumM;
   if (rnd < wOrig) return false;
   rnd -= wOrig;
   int chosen = nPart - 1;
@@ -3050,7 +3081,7 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
   // 8. Sample bin within chosen candidate
   int chosenBin = nBins - 1;
   {
-    double rndBin = R::unif_rand() * mCand[chosen];
+    double rndBin = rng.unif() * mCand[chosen];
     double cum = 0.0;
     for (int b = 0; b < nBins; ++b) {
       cum += candW[chosen][b];
@@ -3063,7 +3094,7 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
   const double chosenMid = bins.mids[chosenBin];
   const double alphaNew = chosenMid * conc + 1.0;
   const double betaNew  = (1.0 - chosenMid) * conc + 1.0;
-  double fNew = R::rbeta(alphaNew, betaNew);
+  double fNew = rng.rbeta(alphaNew, betaNew);
   if (fNew < 1e-8) fNew = 1e-8;
   if (fNew > 1.0 - 1e-8) fNew = 1.0 - 1e-8;
 
@@ -3115,7 +3146,7 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
   // 13. MH acceptance
   double logAlpha = beta * (newLogLik - state->logLik)
                   + (newLogPrior - state->logPrior) + logHR;
-  if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+  if (R_FINITE(logAlpha) && std::log(rng.unif()) < logAlpha) {
     for (int k = 0; k < nEdge; ++k) {
       state->parent[k]       = ordEdge(k, 0);
       state->child[k]        = ordEdge(k, 1);
@@ -3246,7 +3277,7 @@ static double eval_slice_target(McmcData* data, McmcState* state,
 // Univariate stepping-out slice sampler.
 // Returns true on success (always, barring degenerate cases).
 // Updates state in place, including logLik, logPrior, and partLogLik cache.
-static bool slice_scalar_impl(McmcData* data, McmcState* state,
+static bool slice_scalar_impl(ChainRng& rng, McmcData* data, McmcState* state,
                                int paramIdx, double width,
                                double beta, int maxSteps = 10,
                                int* nExpansionsOut = nullptr) {
@@ -3258,11 +3289,11 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
   double logY0 = beta * state->logLik + state->logPrior + u0;
 
   // Slice height
-  double logZ = logY0 + std::log(R::unif_rand());
+  double logZ = logY0 + std::log(rng.unif());
 
   // Stepping out on log scale (count expansions for width adaptation)
   int nExp = 0;
-  double L = u0 - width * R::unif_rand();
+  double L = u0 - width * rng.unif();
   double R_bound = L + width;
 
   for (int j = 0; j < maxSteps; ++j) {
@@ -3282,7 +3313,7 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
 
   // Shrink in on log scale
   for (int iter = 0; iter < 100; ++iter) {
-    double u1 = L + R::unif_rand() * (R_bound - L);
+    double u1 = L + rng.unif() * (R_bound - L);
     double x1 = std::exp(u1);
     set_scalar(state, paramIdx, x1);
     double logTarget1 = eval_slice_target(data, state, paramIdx, beta) + u1;
@@ -3384,7 +3415,7 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
 // (the log(x) Jacobian arises from sampling u = log(x) and transforming).
 // No likelihood evaluation needed — α/β only affect the prior.
 // ---------------------------------------------------------------------------
-static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
+static bool slice_kprime_hyper_impl(ChainRng& rng, McmcData* data, McmcState* state,
                                      int paramCode, double width,
                                      int maxSteps = 10,
                                      int* nExpansionsOut = nullptr) {
@@ -3396,7 +3427,7 @@ static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
 
   // Target: logPrior(current) + u (Jacobian)
   double logY0 = state->logPrior + u0;
-  double logZ = logY0 + std::log(R::unif_rand());
+  double logZ = logY0 + std::log(rng.unif());
 
   // Helper lambda to evaluate target at a candidate u
   auto evalTarget = [&](double u) -> double {
@@ -3419,7 +3450,7 @@ static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
 
   // Stepping out
   int nExp = 0;
-  double L = u0 - width * R::unif_rand();
+  double L = u0 - width * rng.unif();
   double R_bound = L + width;
   for (int j = 0; j < maxSteps; ++j) {
     if (evalTarget(L) <= logZ) break;
@@ -3435,7 +3466,7 @@ static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
 
   // Shrink in
   for (int iter = 0; iter < 100; ++iter) {
-    double u1 = L + R::unif_rand() * (R_bound - L);
+    double u1 = L + rng.unif() * (R_bound - L);
     double logTarget1 = evalTarget(u1);
     if (logTarget1 >= logZ) {
       // Accept
@@ -3480,6 +3511,7 @@ static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
 static constexpr double PSPR_ALPHA = 0.1;  // parsimony bias strength
 
 static List pspr_proposal_impl(
+    ChainRng& rng,
     const IntegerVector& stateParent, const IntegerVector& stateChild,
     int nTip, double treeLength,
     const NumericVector& relBrLengths,
@@ -3502,7 +3534,7 @@ static List pspr_proposal_impl(
   if (eligible.empty())
     return List::create(_["logHastings"] = R_NegInf);
 
-  int pick = (int)(R::unif_rand() * (double)eligible.size());
+  int pick = (int)(rng.unif() * (double)eligible.size());
   if (pick >= (int)eligible.size()) pick = (int)eligible.size() - 1;
   const int pruneRow = eligible[pick];
   const int u = stateParent[pruneRow];
@@ -3595,7 +3627,7 @@ static List pspr_proposal_impl(
   }
 
   // 8. Sample from weighted distribution
-  double rnd = R::unif_rand() * sumW;
+  double rnd = rng.unif() * sumW;
   int chosen = nCand - 1;
   for (int ci = 0; ci < nCand - 1; ++ci) {
     if (rnd < w[ci]) { chosen = ci; break; }
@@ -3605,7 +3637,7 @@ static List pspr_proposal_impl(
   // 9. Apply the chosen SPR
   const int regraftRow = candidates[chosen];
   const int b = stateChild[regraftRow];
-  const double tau = R::unif_rand();
+  const double tau = rng.unif();
 
   NumericVector absLen(nEdge);
   for (int i = 0; i < nEdge; ++i)
@@ -3674,10 +3706,13 @@ static List pspr_proposal_impl(
 // ---------------------------------------------------------------------------
 
 // Forward declaration of the ecology branch.
+// NOTE: ecology branch is Phase 2b scope — still uses R::unif_rand internally.
+// Phase 2a threads ChainRng through the blind path only; aware-mode RNG
+// remains on R's stream until 2b lands.
 static bool gibbs_kprime_sweep_impl_ecology(McmcData* data, McmcState* state,
                                             double beta);
 
-static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
+static bool gibbs_kprime_sweep_impl(ChainRng& rng, McmcData* data, McmcState* state,
                                      double beta) {
   int nTrans = (int)data->transIdxGlobal.size();
   if (nTrans == 0) return false;
@@ -4076,7 +4111,7 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   std::vector<int> perm(nTrans);
   for (int i = 0; i < nTrans; ++i) perm[i] = i;
   for (int i = nTrans - 1; i > 0; --i) {
-    int j = static_cast<int>(R::unif_rand() * (i + 1));
+    int j = static_cast<int>(rng.unif() * (i + 1));
     if (j > i) j = i;
     std::swap(perm[i], perm[j]);
   }
@@ -4096,7 +4131,7 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
     for (int c = 0; c < nCand; ++c)
       sumExp += std::exp(logW[c] - maxW);
 
-    double u = R::unif_rand() * sumExp;
+    double u = rng.unif() * sumExp;
     double cum = 0.0;
     int chosen = nCand - 1;
     for (int c = 0; c < nCand; ++c) {
@@ -4461,14 +4496,14 @@ static bool gibbs_kprime_sweep_impl_ecology(McmcData* data, McmcState* state,
 // Standard MH acceptance with symmetric proposal.
 // ---------------------------------------------------------------------------
 
-static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
+static bool block_kprime_shift_impl(ChainRng& rng, McmcData* data, McmcState* state,
                                      int intWalkWindow, double beta) {
   int nTrans = (int)data->transIdxGlobal.size();
   if (nTrans == 0) return false;
 
   // Propose delta ~ Uniform({-W, ..., W})
   int range = 2 * intWalkWindow + 1;
-  int delta = static_cast<int>(R::unif_rand() * range) - intWalkWindow;
+  int delta = static_cast<int>(rng.unif() * range) - intWalkWindow;
   if (delta == 0) return false;
 
   // Feasibility: all k'_i + delta >= kObs_i
@@ -4586,7 +4621,7 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
   double logAlpha = beta * (newLogLik - state->logLik) +
                     (newLogPrior - state->logPrior);
 
-  if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+  if (R_FINITE(logAlpha) && std::log(rng.unif()) < logAlpha) {
     state->logLik = newLogLik;
     state->logPrior = newLogPrior;
     state->partLogLik = std::move(newPC);
@@ -4776,7 +4811,7 @@ static bool gibbs_z_sweep_impl(McmcData* data, McmcState* state, double beta) {
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
 // ---------------------------------------------------------------------------
 
-static bool do_move_impl(McmcData* data, McmcState* state,
+static bool do_move_impl(ChainRng& rng, McmcData* data, McmcState* state,
                          int moveType, int charIdx,
                          double scaleTuning, double betaSimplexTuning,
                          int intWalkWindow, double beta,
@@ -4902,35 +4937,35 @@ static bool do_move_impl(McmcData* data, McmcState* state,
 
   switch (moveType) {
     case 0: { // scale tree_length (Bactrian, M-118)
-      double mult = std::exp(scaleTuning * bactrian_perturbation());
+      double mult = std::exp(scaleTuning * bactrian_perturbation(rng));
       state->treeLength = oldTL * mult;
       logHastings = std::log(mult);
       break;
     }
     case 1: { // scale rate_loss (Bactrian, M-118)
-      double mult = std::exp(scaleTuning * bactrian_perturbation());
+      double mult = std::exp(scaleTuning * bactrian_perturbation(rng));
       state->rateLoss = oldRL * mult;
       logHastings = std::log(mult);
       break;
     }
     case 2: { // scale rate_log_sd (Bactrian, M-118)
-      double mult = std::exp(scaleTuning * bactrian_perturbation());
+      double mult = std::exp(scaleTuning * bactrian_perturbation(rng));
       state->rateLogSd = oldRLSD * mult;
       logHastings = std::log(mult);
       break;
     }
     case 3: { // scale rate_neo (Bactrian, M-118)
-      double mult = std::exp(scaleTuning * bactrian_perturbation());
+      double mult = std::exp(scaleTuning * bactrian_perturbation(rng));
       state->rateNeo = oldRN * mult;
       logHastings = std::log(mult);
       break;
     }
     case 4: { // beta_simplex — O(1) rollback: save 2 modified elements
       int n_br = state->relBrLengths.size();
-      int idx = static_cast<int>(R::unif_rand() * n_br);
+      int idx = static_cast<int>(rng.unif() * n_br);
       if (idx >= n_br) idx = n_br - 1;
       bsIdx1 = idx;
-      if (!beta_simplex_impl(state->relBrLengths, idx,
+      if (!beta_simplex_impl(rng, state->relBrLengths, idx,
                              betaSimplexTuning, logHastings,
                              bsIdx2, bsOldVal1, bsOldVal2))
         return false;
@@ -4956,7 +4991,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
           intRows.push_back(i);
       if (intRows.empty()) return false;
 
-      int pick = (int)(R::unif_rand() * (double)intRows.size());
+      int pick = (int)(rng.unif() * (double)intRows.size());
       if (pick >= (int)intRows.size()) pick = intRows.size() - 1;
       const int edgeRow = intRows[pick];
       const int u = state->parent[edgeRow];
@@ -4972,9 +5007,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       }
       if (vCh.empty() || uSib.empty()) return false;
 
-      int pV = (int)(R::unif_rand() * (double)vCh.size());
+      int pV = (int)(rng.unif() * (double)vCh.size());
       if (pV >= (int)vCh.size()) pV = vCh.size() - 1;
-      int pU = (int)(R::unif_rand() * (double)uSib.size());
+      int pU = (int)(rng.unif() * (double)uSib.size());
       if (pU >= (int)uSib.size()) pU = uSib.size() - 1;
       const int cRow = vCh[pV];
       const int wRow = uSib[pU];
@@ -5027,7 +5062,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         // TreeNav is updated + partial eval happens in the evaluation section
       } else {
         // Fallback: full eval path (original OPP-6 pattern)
-        List prop = spr_proposal_impl(state->parent, state->child,
+        List prop = spr_proposal_impl(rng, state->parent, state->child,
                                       data->nTip, state->treeLength,
                                       state->relBrLengths);
         logHastings = as<double>(prop["logHastings"]);
@@ -5040,7 +5075,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       break;
     }
     case 17: { // TBR — M-053: OPP-6 pattern (defer topology commit)
-      List prop = tbr_proposal_impl(state->parent, state->child,
+      List prop = tbr_proposal_impl(rng, state->parent, state->child,
                                     data->nTip, state->treeLength,
                                     state->relBrLengths);
       logHastings = as<double>(prop["logHastings"]);
@@ -5057,7 +5092,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       int oldK      = oldKPrimeVal;
       int lowerK = data->kObs[charIdx];
       int range  = 2 * intWalkWindow + 1;
-      int delta  = static_cast<int>(R::unif_rand() * range) - intWalkWindow;
+      int delta  = static_cast<int>(rng.unif() * range) - intWalkWindow;
       int newK   = oldK + delta;
       if (newK < lowerK) return false;
       state->kPrime[charIdx] = newK;
@@ -5065,7 +5100,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       break;
     }
     case 8: { // scale p (legacy MH — kept for backward compat, not used by default)
-      double mult = std::exp(scaleTuning * bactrian_perturbation());
+      double mult = std::exp(scaleTuning * bactrian_perturbation(rng));
       state->p = oldP * mult;
       logHastings = std::log(mult);
       break;
@@ -5086,7 +5121,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       }
       double shape1 = data->kprimeHyperA + nTrans;
       double shape2 = data->kprimeHyperB + sumU;
-      state->p = R::rbeta(shape1, shape2);
+      state->p = rng.rbeta(shape1, shape2);
       // Recompute prior (p changed; likelihood unchanged)
       state->logPrior = cpp_log_prior(
         *data, state->treeLength, state->relBrLengths,
@@ -5098,41 +5133,41 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       return true;  // Gibbs: always accept
     }
     case 10: { // gibbs_spr — M-085
-      return gibbs_spr_impl(data, state, beta);
+      return gibbs_spr_impl(rng, data, state, beta);
     }
     case 11: { // gibbs_subtree_swap — M-086
-      return gibbs_subtree_swap_impl(data, state, beta);
+      return gibbs_subtree_swap_impl(rng, data, state, beta);
     }
     case 12: { // weighted_branch_scale — M-087, O(1) rollback
-      if (!weighted_branch_scale_impl(data, state, beta, logHastings,
+      if (!weighted_branch_scale_impl(rng, data, state, beta, logHastings,
                                        bsIdx1, bsIdx2, bsOldVal1, bsOldVal2))
         return false;
       break;
     }
     case 13: { // weighted_spr — M-088
-      return weighted_spr_impl(data, state, beta);
+      return weighted_spr_impl(rng, data, state, beta);
     }
     case 14: { // weighted_subtree_swap — M-089
-      return weighted_subtree_swap_impl(data, state, beta);
+      return weighted_subtree_swap_impl(rng, data, state, beta);
     }
     case 15: { // block_gibbs_branch — M-054 reframed
-      return block_gibbs_branch_sweep_impl(data, state, beta);
+      return block_gibbs_branch_sweep_impl(rng, data, state, beta);
     }
     case 16: { // M-052: scale beta_scale (Bactrian, M-118)
-      double mult = std::exp(scaleTuning * bactrian_perturbation());
+      double mult = std::exp(scaleTuning * bactrian_perturbation(rng));
       state->betaScale = oldBS * mult;
       logHastings = std::log(mult);
       break;
     }
     case 18: { // neo_joint_scale (Bactrian, M-118)
-      double mult = std::exp(scaleTuning * bactrian_perturbation());
+      double mult = std::exp(scaleTuning * bactrian_perturbation(rng));
       state->rateLoss = oldRL * mult;
       state->rateNeo  = oldRN * mult;
       logHastings = 2.0 * std::log(mult);
       break;
     }
     case 20: { // pSPR — M-119: parsimony-guided SPR
-      List prop = pspr_proposal_impl(state->parent, state->child,
+      List prop = pspr_proposal_impl(rng, state->parent, state->child,
                                      data->nTip, state->treeLength,
                                      state->relBrLengths, data);
       logHastings = as<double>(prop["logHastings"]);
@@ -5145,7 +5180,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     }
     case 21: { // M-120: joint_tl_rls (tree_length × rate_log_sd)
       double z1, z2;
-      bactrian_2d_perturbation(jointRho, z1, z2);
+      bactrian_2d_perturbation(rng, jointRho, z1, z2);
       double mult1 = std::exp(scaleTuning * z1);
       double mult2 = std::exp(scaleTuning * z2);
       state->treeLength = oldTL * mult1;
@@ -5155,7 +5190,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     }
     case 22: { // M-120: joint_tl_rl (tree_length × rate_loss)
       double z1, z2;
-      bactrian_2d_perturbation(jointRho, z1, z2);
+      bactrian_2d_perturbation(rng, jointRho, z1, z2);
       double mult1 = std::exp(scaleTuning * z1);
       double mult2 = std::exp(scaleTuning * z2);
       state->treeLength = oldTL * mult1;
@@ -5167,7 +5202,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       // nCats passed via intWalkWindow for this move type (repurposed)
       int nCats = intWalkWindow;
       if (nCats < 2) nCats = 2;
-      if (!dirichlet_simplex_impl(state->relBrLengths, nCats,
+      if (!dirichlet_simplex_impl(rng, state->relBrLengths, nCats,
                                   scaleTuning, logHastings,
                                   state->brSnapshot,
                                   state->dirEdges)) {
@@ -5178,7 +5213,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     case 24: { // M-127: local_dirichlet (neighborhood Dirichlet on relBrLengths)
       int nCats = intWalkWindow;
       if (nCats < 2) nCats = 2;
-      if (!local_dirichlet_impl(state->relBrLengths,
+      if (!local_dirichlet_impl(rng, state->relBrLengths,
                                 state->parent, state->child,
                                 nCats, scaleTuning, logHastings,
                                 state->brSnapshot,
@@ -5188,13 +5223,13 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       break;
     }
     case 25: { // gibbs_kprime_sweep — Gibbs update of all k'_i
-      return gibbs_kprime_sweep_impl(data, state, beta);
+      return gibbs_kprime_sweep_impl(rng, data, state, beta);
     }
     case 26: { // block_kprime_shift — shift all k'_i by same delta
-      return block_kprime_shift_impl(data, state, intWalkWindow, beta);
+      return block_kprime_shift_impl(rng, data, state, intWalkWindow, beta);
     }
     case 27: { // scale_kprime_alpha — Bactrian scale for Beta-Geometric α
-      double mult = std::exp(scaleTuning * bactrian_perturbation());
+      double mult = std::exp(scaleTuning * bactrian_perturbation(rng));
       state->kprimeAlpha = oldKpA * mult;
       if (state->kprimeAlpha <= 0.0) return false;
       // Prior-only: likelihood is unchanged, compute prior ratio directly
@@ -5206,7 +5241,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     &state->phi, state->pi0, &state->zMatrix, &state->theta);
       if (!R_FINITE(newLP)) { state->kprimeAlpha = oldKpA; return false; }
       double logAlpha = (newLP - state->logPrior) + std::log(mult);
-      if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+      if (R_FINITE(logAlpha) && std::log(rng.unif()) < logAlpha) {
         state->logPrior = newLP;
         return true;
       }
@@ -5214,7 +5249,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       return false;
     }
     case 28: { // scale_kprime_beta — Bactrian scale for Beta-Geometric β
-      double mult = std::exp(scaleTuning * bactrian_perturbation());
+      double mult = std::exp(scaleTuning * bactrian_perturbation(rng));
       state->kprimeBeta = oldKpB * mult;
       if (state->kprimeBeta <= 0.0) return false;
       double newLP = cpp_log_prior(
@@ -5225,7 +5260,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     &state->phi, state->pi0, &state->zMatrix, &state->theta);
       if (!R_FINITE(newLP)) { state->kprimeBeta = oldKpB; return false; }
       double logAlpha = (newLP - state->logPrior) + std::log(mult);
-      if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+      if (R_FINITE(logAlpha) && std::log(rng.unif()) < logAlpha) {
         state->logPrior = newLP;
         return true;
       }
@@ -5239,7 +5274,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       // boundary violations. Jacobian is |dp/dlogit(p)| = p (1 − p).
       if (oldP <= 0.0 || oldP >= 1.0) return false;
       double logitP = std::log(oldP / (1.0 - oldP));
-      double logitPnew = logitP + scaleTuning * bactrian_perturbation();
+      double logitPnew = logitP + scaleTuning * bactrian_perturbation(rng);
       double newP;
       if (logitPnew >= 0.0) {
         newP = 1.0 / (1.0 + std::exp(-logitPnew));
@@ -5847,7 +5882,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
 
   double logAlpha = beta * (newLogLik - state->logLik) +
                     (newLogPrior - state->logPrior) + logHastings;
-  if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+  if (R_FINITE(logAlpha) && std::log(rng.unif()) < logAlpha) {
     state->logLik   = newLogLik;
     state->logPrior = newLogPrior;
     if (!newPC.empty()) state->partLogLik = std::move(newPC);
@@ -6017,7 +6052,11 @@ bool do_move_cpp(SEXP dataPtr, SEXP statePtr,
                  int intWalkWindow, double beta) {
   McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
   McmcState* state = Rcpp::XPtr<McmcState>(statePtr).get();
-  return do_move_impl(data, state, moveType, charIdx,
+  // T-017-IIa: R-exported wrapper uses one R-RNG draw to seed a ChainRng
+  uint64_t seed = static_cast<uint64_t>(
+    R::unif_rand() * static_cast<double>(std::numeric_limits<uint32_t>::max()));
+  ChainRng rng(seed);
+  return do_move_impl(rng, data, state, moveType, charIdx,
                       scaleTuning, betaSimplexTuning, intWalkWindow, beta);
 }
 
@@ -6178,6 +6217,27 @@ List run_mcmc_batch_cpp(
   if (nChains > 0) particleState[0] = PS_AT_COLD;
   int roundTripCount = 0;
 
+  // T-017-IIa: Per-chain RNG instances (one per chain, indexed by ch).
+  std::vector<ChainRng> rngs;
+  rngs.reserve(nChains);
+
+  // T-017-IIa: Per-chain RNG seed stream.
+  // Draw exactly ONE R-RNG value to establish the base seed, then use
+  // Weyl-mix to spread nChains seeds far apart in the mt19937_64 state space.
+  // This is the ONLY R-RNG draw consumed inside run_mcmc_batch_cpp; all
+  // other random draws within the per-chain loop go through ChainRng.
+  {
+    uint64_t base_seed = static_cast<uint64_t>(
+      R::unif_rand() * static_cast<double>(std::numeric_limits<uint32_t>::max()));
+    // Weyl-mix constant: 2^64 / phi (golden ratio). Spreads chain seeds
+    // to avoid low-bit correlation between adjacent-index seeds.
+    constexpr uint64_t WEYL_MIX = 0x9E3779B97F4A7C15ULL;
+    for (int ch = 0; ch < nChains; ++ch) {
+      uint64_t chain_seed = base_seed ^ (static_cast<uint64_t>(ch) * WEYL_MIX);
+      rngs.emplace_back(chain_seed);
+    }
+  }
+
   // Main iteration loop
   for (int i = 0; i < nBatch; ++i) {
     // Check for user interrupt every 10 iterations (expensive moves can take
@@ -6195,7 +6255,7 @@ List run_mcmc_batch_cpp(
       const auto& cw = useBoost ? cumWeightsCached : cumWeights;
       if (useBoost) ++cacheHits; else ++cacheMisses;
 
-      double u = R::unif_rand() * tw;
+      double u = rngs[ch].unif() * tw;
       int moveIdx = 0;
       while (moveIdx < nMoves - 1 && u > cw[moveIdx]) ++moveIdx;
 
@@ -6206,7 +6266,7 @@ List run_mcmc_batch_cpp(
       // charIdx: for int_walk → random trans character; for slice → paramIdx
       int charIdx = 0;
       if (moveType == 7 && nTrans > 0) {
-        int r = static_cast<int>(R::unif_rand() * nTrans);
+        int r = static_cast<int>(rngs[ch].unif() * nTrans);
         if (r >= nTrans) r = nTrans - 1;
         charIdx = transIdxCpp[r];
       } else if (moveType == 19) {
@@ -6220,14 +6280,14 @@ List run_mcmc_batch_cpp(
         // Slice sampling — self-contained, no MH accept/reject
         int nExp = 0;
         accepted = slice_scalar_impl(
-          data, states[ch], charIdx,
+          rngs[ch], data, states[ch], charIdx,
           sliceWidths(ch, moveIdx), betas[ch], 10, &nExp);
         sliceExpansions(ch, moveIdx) += nExp;
       } else if (moveType == 29) {
         // Prior-only slice sampler for BG hyperparameters (M-163)
         int nExp = 0;
         accepted = slice_kprime_hyper_impl(
-          data, states[ch], sliceParamCodes[moveIdx],
+          rngs[ch], data, states[ch], sliceParamCodes[moveIdx],
           sliceWidths(ch, moveIdx), 10, &nExp);
         sliceExpansions(ch, moveIdx) += nExp;
       } else {
@@ -6236,7 +6296,7 @@ List run_mcmc_batch_cpp(
                     ? moveIntParams[moveIdx]
                     : chainIntWalkWins[ch];
         accepted = do_move_impl(
-          data, states[ch],
+          rngs[ch], data, states[ch],
           moveType, charIdx,
           chainScaleTunings(ch, moveIdx),
           chainBsmpTunings[ch],
