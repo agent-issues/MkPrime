@@ -3828,7 +3828,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     empTailStartK,
     empTailDecay,
     empLogTailStartP,
-    identical(model$likelihoodMode, "marginal_k")
+    identical(model$likelihoodMode, "marginal_k"),
+    identical(model$priorVariant %||% "conditional", "unconditional")
   )
 }
 

@@ -34,6 +34,7 @@
 # Inference:
 #   MkPrimeModel(kPrimePrior = "geometric",
 #                likelihoodMode = "marginal_k",
+#                priorVariant = "unconditional",   # Model A — matches forward
 #                expSteps = EXPSTEPS_FIXED,
 #                kprimeHyperA = 1, kprimeHyperB = 1)
 #
@@ -171,6 +172,11 @@ seedBase       <- 20260528L
     nCat           = 1L,
     kPrimePrior    = "geometric",
     likelihoodMode = "marginal_k",
+    # Forward simulator draws kTrue_i = 2 + u_i (Model A, unconditional on
+    # kObs_i), so inference must use the unconditional marginal weights
+    # p (1-p)^(k - 2). priorVariant = "conditional" (Model B) would mismatch
+    # the forward and pin p (SBC FAIL: p rank spikes at 0, tree_length U-shape).
+    priorVariant   = "unconditional",
     kprimeHyperA   = A_PRIOR,
     kprimeHyperB   = B_PRIOR,
     expSteps       = EXPSTEPS_FIXED
@@ -333,6 +339,7 @@ cat(sprintf("N_TIP:         %d  N_CHAR (target): %d\n", N_TIP, N_CHAR))
 cat(sprintf("N_ITER:        %d  N_WARM: %d  N_THIN: %d\n", N_ITER, N_WARM, N_THIN))
 cat(sprintf("Prior:         geometric (k'_i = kObs_i + Geo(p))\n"))
 cat(sprintf("Mode flag:     likelihoodMode = 'marginal_k'\n"))
+cat(sprintf("Prior variant: unconditional (Model A: k' = 2 + Geo(p))\n"))
 cat(sprintf("Hyperprior:    p ~ Beta(%g, %g)\n", A_PRIOR, B_PRIOR))
 cat(sprintf("Forward draw:  u_i ~ Geo(p_true); kTrue_i = pmin(2 + u_i, %d)\n",
             K_MAX_PRIOR))

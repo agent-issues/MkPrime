@@ -4196,6 +4196,18 @@ double cpp_log_likelihood_marginal(
     logPriorByU[ko] = logP + ko * log1mP;
   }
 
+  // Model A (unconditional) vs Model B (conditional) differ only by a
+  // per-character constant factor (1-p)^(kObs_i - 2). Under Model B the
+  // marginal weight for state count k is p (1-p)^(k - kObs_i); under Model A
+  // it is p (1-p)^(k - 2). Since k = kObs_i + ko, the Model A weight equals
+  // the Model B weight times (1-p)^(kObs_i - 2), and that factor is constant
+  // across all candidates ko of a given character, so it factors straight out
+  // of the per-character logSumExp. We therefore keep logPriorByU (and the
+  // cached raw LL) as Model B and add (kObs_i - 2)·log(1-p) to each
+  // character's marginal contribution when unconditionalPrior is true. The
+  // sum range is unchanged and there is NO renormalisation of the tail.
+  const bool uncond = data.unconditionalPrior;
+
   // Cache fast-path: if the charLL cache is valid, skip the helper call
   // and recompute the per-char logSumExp against the current p-weights.
   bool useCache = data.marginalK && state.charLLCacheReady &&
@@ -4260,7 +4272,12 @@ double cpp_log_likelihood_marginal(
         double w = kw.charLogW[ti * kMaxKprimeCand + c];
         if (R_FINITE(w)) s += std::exp(w - mx);
       }
-      if (R_FINITE(totalLL)) totalLL += mx + std::log(s);
+      double charLL = mx + std::log(s);
+      if (uncond) {
+        int kObs_ti = data.kObs[data.transIdxGlobal[ti]];
+        charLL += (kObs_ti - 2) * log1mP;
+      }
+      if (R_FINITE(totalLL)) totalLL += charLL;
     }
     state.charLLCacheReady = true;
     return totalLL;
@@ -4285,7 +4302,12 @@ double cpp_log_likelihood_marginal(
     double s = 0.0;
     for (int c = 0; c < nCand; ++c)
       if (R_FINITE(wBuf[c])) s += std::exp(wBuf[c] - mx);
-    if (R_FINITE(totalLL)) totalLL += mx + std::log(s);
+    double charLL = mx + std::log(s);
+    if (uncond) {
+      int kObs_ti = data.kObs[data.transIdxGlobal[ti]];
+      charLL += (kObs_ti - 2) * log1mP;
+    }
+    if (R_FINITE(totalLL)) totalLL += charLL;
   }
   return totalLL;
 }

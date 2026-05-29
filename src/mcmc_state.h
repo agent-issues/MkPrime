@@ -139,6 +139,18 @@ struct McmcData {
   // evaluation; the chain only carries (tree, mu, sigma, p). v1 supports
   // the geometric arm only — prepare_mcmc_data enforces this.
   bool marginalK = false;
+
+  // Prior parameterisation for the geometric k' prior under marginal-k.
+  //   false (default) = Model B (conditional): k'_i ~ kObs_i + Geometric(p),
+  //                     marginal weight p (1-p)^(k - kObs_i).
+  //   true            = Model A (unconditional): k'_i ~ 2 + Geometric(p),
+  //                     marginal weight p (1-p)^(k - 2). The sum range
+  //                     (k from max(2, kObs) upward) is unchanged; only the
+  //                     weight exponent base shifts from kObs to 2, with NO
+  //                     renormalisation of the truncated tail. Model A and
+  //                     Model B differ by a per-character factor
+  //                     (1-p)^(kObs_i - 2).
+  bool unconditionalPrior = false;
 };
 
 // ---------------------------------------------------------------------------

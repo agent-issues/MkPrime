@@ -191,3 +191,59 @@ test_that("LogPrior under marginal_k omits the per-character P(u | p) term", {
                    sum(u_vec) * log1p(-state$p)
   expect_equal(lp_s - lp_m, expected_diff, tolerance = 1e-12)
 })
+
+
+# ---------------------------------------------------------------------------
+# Model A (unconditional) vs Model B (conditional) marginal-weight factor
+#
+# Model B weight for state count k is p (1-p)^(k - kObs_i); Model A weight is
+# p (1-p)^(k - 2). The two differ by a per-character constant (1-p)^(kObs_i-2)
+# that factors out of the per-character logSumExp, so the total marginal LL
+# under priorVariant="unconditional" exceeds the "conditional" total by
+# Σ_i (kObs_i - 2) · log(1-p). Characters with kObs == 2 contribute nothing.
+# ---------------------------------------------------------------------------
+
+test_that("priorVariant='unconditional' shifts marginal LL by (kObs-2)log(1-p)", {
+  tips <- paste0("t", 1:8)
+  tree <- TreeTools::Preorder(.marg_make_tree())
+  # Two characters with kObs > 2 (one 3-state, one 4-state) plus two binary,
+  # so the factor (1-p)^(kObs-2) is non-trivial.
+  mat <- matrix(
+    c(0, 1, 2, 0, 1, 2, 0, 1,   # kObs = 3
+      0, 1, 2, 3, 0, 1, 2, 3,   # kObs = 4
+      0, 0, 1, 1, 0, 1, 0, 1,   # kObs = 2
+      1, 0, 1, 0, 1, 1, 0, 0),  # kObs = 2
+    nrow = 8, ncol = 4, dimnames = list(tips, NULL)
+  )
+  pd  <- MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd)
+  p_test <- 0.6
+
+  build <- function(variant) {
+    model <- MkPrimeModel(kPrimePrior = "geometric",
+                          likelihoodMode = "marginal_k",
+                          priorVariant = variant,
+                          coding = "none", relabel = FALSE)
+    model <- MkPrime:::.FinalizeModel(model, tree, mkd)
+    state0 <- MkPrime:::.InitState(tree, mkd, model)
+    state0$p <- p_test
+    state0$rate_log_sd <- 0
+    state0$tree_length <- sum(tree$edge.length)
+    state0$rel_br_lengths <- tree$edge.length / state0$tree_length
+    dataPtr  <- MkPrime:::.InitMcmcData(mkd, model)
+    statePtr <- MkPrime:::.InitMcmcChain(state0)
+    fill_partition_cache(dataPtr, statePtr)
+    eval_full_loglik_cpp(dataPtr, statePtr)
+  }
+
+  L_cond   <- build("conditional")
+  L_uncond <- build("unconditional")
+  expect_true(is.finite(L_cond) && is.finite(L_uncond))
+
+  trans_idx <- which(mkd$type == "transformational")
+  expected_diff <- sum((mkd$kObs[trans_idx] - 2) * log1p(-p_test))
+  expect_equal(L_uncond - L_cond, expected_diff, tolerance = 1e-9)
+
+  # Default (no priorVariant) must equal "conditional" (Model B).
+  expect_equal(L_cond, build("conditional"), tolerance = 1e-12)
+})

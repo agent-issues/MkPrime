@@ -99,6 +99,22 @@
 #'     `kPrimePrior = "geometric"` only — other arms are §11 follow-ups
 #'     in `dev/notes/2026-05-28-marginal-k-plan.md`. Het + marginal-k and
 #'     partition-API + marginal-k are deferred (§13 of the plan).
+#' @param priorVariant Parameterisation of the geometric `k'` prior under
+#'   `likelihoodMode = "marginal_k"`. One of:
+#'   * `"conditional"` (default, Model B): `k'_i ~ kObs_i + Geometric(p)`;
+#'     the marginal weight for state count `k` is `p (1-p)^(k - kObs_i)`.
+#'     This is the shipped marginal-k behaviour.
+#'   * `"unconditional"` (Model A): `k'_i ~ 2 + Geometric(p)`, unconditional
+#'     on `kObs_i`; the marginal weight for state count `k` is
+#'     `p (1-p)^(k - 2)`. The marginal sum still starts at `k = max(2, kObs_i)`
+#'     (you cannot have fewer states than observed) but the weight exponent
+#'     base is 2 rather than `kObs_i`, with no renormalisation of the truncated
+#'     tail. Model A and Model B differ by a per-character factor
+#'     `(1-p)^(kObs_i - 2)`. Use `"unconditional"` to match a Model A forward
+#'     simulator (e.g. the marginal-k SBC harness).
+#'
+#'   Only consulted under `likelihoodMode = "marginal_k"` with
+#'   `kPrimePrior = "geometric"`; ignored otherwise.
 #'
 #' @section Q-matrix heterogeneity:
 #'
@@ -161,7 +177,8 @@ MkPrimeModel <- function(
     betaScaleRate = 1,
     classRateConcentration = 1,
     priorOnClassRateLogSd = c("hyperprior_pooled", "gamma_independent"),
-    likelihoodMode = c("sampled_k", "marginal_k")
+    likelihoodMode = c("sampled_k", "marginal_k"),
+    priorVariant = c("conditional", "unconditional")
 ) {
   coding <- match.arg(coding, c("variable", "informative", "none"))
   kPrimePrior <- match.arg(
@@ -170,6 +187,7 @@ MkPrimeModel <- function(
   )
   priorOnClassRateLogSd <- match.arg(priorOnClassRateLogSd)
   likelihoodMode <- match.arg(likelihoodMode)
+  priorVariant <- match.arg(priorVariant)
 
   if (identical(likelihoodMode, "marginal_k")) {
     if (!identical(kPrimePrior, "geometric")) {
@@ -283,7 +301,8 @@ MkPrimeModel <- function(
       betaScaleRate = betaScaleRate,
       classRateConcentration = classRateConcentration,
       priorOnClassRateLogSd = priorOnClassRateLogSd,
-      likelihoodMode = likelihoodMode
+      likelihoodMode = likelihoodMode,
+      priorVariant = priorVariant
     ),
     class = "MkPrimeModel"
   )
