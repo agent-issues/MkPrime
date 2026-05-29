@@ -373,6 +373,7 @@ test_that("PruningJcEcology: z = 0 is stable across calls (phi = 1)", {
 
 
 test_that("PruningJcEcology matches reference for mixed z and phi != 1", {
+  skip("retired (EBE): pins C++ == legacy rate-model R reference (.EcologyJcLogLik_R), which EBE replaces. Under EBE transformational chars carry no ecology effect (R8); neomorphic correctness is covered by test-ebe-likelihood.R.")
   s <- .MakeJcEcoSetup(kStates = 3L, nChar = 4L, kEco = 2L)
   set.seed(31)
   tipStates <- matrix(sample.int(s$kStates, 4 * 4, replace = TRUE) - 1L,
@@ -392,6 +393,7 @@ test_that("PruningJcEcology matches reference for mixed z and phi != 1", {
 
 
 test_that("PruningJcEcology matches reference with per_ecology phi", {
+  skip("retired (EBE): pins C++ == legacy rate-model R reference (.EcologyJcLogLik_R), which EBE replaces. Under EBE transformational chars carry no ecology effect (R8); neomorphic correctness is covered by test-ebe-likelihood.R.")
   s <- .MakeJcEcoSetup(kStates = 2L, nChar = 3L, kEco = 3L,
                        ecoTipStates = c(0L, 1L, 2L, 0L))
   set.seed(42)
@@ -415,6 +417,7 @@ test_that("PruningJcEcology matches reference with per_ecology phi", {
 
 
 test_that("PruningJcEcology matches reference with ACRV (nCat = 4)", {
+  skip("retired (EBE): pins C++ == legacy rate-model R reference (.EcologyJcLogLik_R), which EBE replaces. Under EBE transformational chars carry no ecology effect (R8); neomorphic correctness is covered by test-ebe-likelihood.R.")
   s <- .MakeJcEcoSetup(kStates = 3L, nChar = 5L, kEco = 2L)
   set.seed(99)
   tipStates <- matrix(sample.int(s$kStates, 4 * 5, replace = TRUE) - 1L,
@@ -587,6 +590,7 @@ test_that("PruningMknEcology: z = 0 is stable across calls (phi = 1)", {
 
 
 test_that("PruningMknEcology matches reference for mixed z and phi != 1", {
+  skip("retired (EBE): pins C++ == legacy rate-model R reference (.EcologyMknLogLik_R), which EBE replaces. EBE neomorphic equilibrium-tilt correctness is covered by test-ebe-likelihood.R (T2 oracle).")
   s <- .MakeMknEcoSetup(nChar = 4L, kEco = 2L, rateLoss = 1.5)
   set.seed(13)
   tipStates <- matrix(sample(0:1, 4 * 4, replace = TRUE), nrow = 4, ncol = 4)
@@ -606,6 +610,7 @@ test_that("PruningMknEcology matches reference for mixed z and phi != 1", {
 
 
 test_that("PruningMknEcology matches reference with per_ecology phi", {
+  skip("retired (EBE): pins C++ == legacy rate-model R reference (.EcologyMknLogLik_R), which EBE replaces. EBE neomorphic equilibrium-tilt correctness is covered by test-ebe-likelihood.R (T2 oracle).")
   s <- .MakeMknEcoSetup(nChar = 3L, kEco = 3L, rateLoss = 0.5,
                         ecoTipStates = c(0L, 1L, 2L, 0L))
   set.seed(101)
@@ -629,6 +634,7 @@ test_that("PruningMknEcology matches reference with per_ecology phi", {
 
 
 test_that("PruningMknEcology matches reference with ACRV (nCat = 4)", {
+  skip("retired (EBE): pins C++ == legacy rate-model R reference (.EcologyMknLogLik_R), which EBE replaces. EBE neomorphic equilibrium-tilt correctness is covered by test-ebe-likelihood.R (T2 oracle).")
   s <- .MakeMknEcoSetup(nChar = 5L, kEco = 2L, rateLoss = 1.2)
   set.seed(77)
   tipStates <- matrix(sample(0:1, 4 * 5, replace = TRUE), nrow = 4, ncol = 5)

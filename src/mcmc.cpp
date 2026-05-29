@@ -599,14 +599,26 @@ static double cpp_log_prior(
 
     double logPi0     = std::log(pi0);
     double log1mPi0   = std::log1p(-pi0);
+    // EBE: z is meaningful only for NEOMORPHIC characters (type 0).  Trans/known
+    // z rows are inert in the likelihood (R8) and must NOT count toward the
+    // shared pi0/theta prior, else each such row injects a phantom z observation
+    // that biases the sparsity posterior.  Mirror of LogPrior (R) and
+    // gibbs_z_sweep_impl.  Validate every cell (matching the R-side
+    // any(!z %in% 0:2) guard) but count only neomorphic rows.
+    std::vector<char> isNeoZ(nCharZ, 0);
+    for (int c = 0; c < nCharZ; ++c) {
+      int pic = (c < (int)data.charToPartition.size()) ? data.charToPartition[c] : -1;
+      if (pic >= 0 && data.parts[pic].type == 0) isNeoZ[c] = 1;
+    }
     for (int e = 0; e < kEcoZ; ++e) {
       long nNone = 0, nEnc = 0, nDisc = 0;
       for (int c = 0; c < nCharZ; ++c) {
         int zv = zMat(c, e);
+        if (zv < 0 || zv > 2) return R_NegInf;
+        if (!isNeoZ[c]) continue;
         if      (zv == 0) ++nNone;
         else if (zv == 1) ++nEnc;
-        else if (zv == 2) ++nDisc;
-        else return R_NegInf;
+        else              ++nDisc;
       }
       double logTheta   = std::log(theta[e]);
       double log1mTheta = std::log1p(-theta[e]);
@@ -4664,7 +4676,7 @@ static bool gibbs_z_sweep_impl(McmcData* data, McmcState* state, double beta) {
   int nChar = data->nChar;
   int kEco  = data->ecology.kEcology;
   int refE  = data->ecology.refEcology;
-  int mode  = data->magnitudeMode;
+  // EBE §4: magnitudeMode no longer consulted here (gammaE forced to identity).
   int nEdge = state->relBrLengths.size();
   int zCols = kEco - 1;
   if (zCols <= 0) return false;
@@ -4682,16 +4694,9 @@ static bool gibbs_z_sweep_impl(McmcData* data, McmcState* state, double beta) {
     ? cpp_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ)
     : NumericVector(1, 1.0);
 
-  // v2: gammaE depends on theta and pi0; constant across z choices for fixed cell.
+  // EBE (ebe-spec.md §4): gammaE forced to identity under equilibrium
+  // semantics (no rate-mean normalisation).  Plumbing kept; value neutralised.
   std::vector<double> gammaE(kEco, 1.0);
-  for (int s = 0; s < kEco; ++s) {
-    if (s == refE) { gammaE[s] = 1.0; continue; }
-    int j = (s < refE) ? s : (s - 1);
-    double phi_s = (mode == 0) ? state->phi[0] : state->phi[s];
-    double th = (j < state->theta.size()) ? state->theta[j] : 0.5;
-    gammaE[s] = state->pi0 + (1.0 - state->pi0) *
-                (th * phi_s + (1.0 - th) / phi_s);
-  }
 
   // Allocate ONE workspace for the whole sweep — eliminates per-call heap allocs.
   // Size to the maximum stride (= kStates) needed across all partitions.
@@ -4722,7 +4727,12 @@ static bool gibbs_z_sweep_impl(McmcData* data, McmcState* state, double beta) {
   for (int c = 0; c < nChar; ++c) {
     int pi = data->charToPartition[c];
     if (pi < 0) continue;
-    int kp = (data->parts[pi].type == 1) ? state->kPrime[c] : 2;
+    // EBE: z is meaningful only for neomorphic chars (type 0); trans/known z
+    // rows are inert in the likelihood (R8) and must not be sampled (they would
+    // draw from the prior -> spurious flags + pi0/theta pollution).  Mirror of
+    // the neomorphic mask in cpp_log_prior / LogPrior.
+    if (data->parts[pi].type != 0) continue;
+    int kp = 2;
 
     for (int j = 0; j < zCols; ++j) zRow[j] = state->zMatrix(c, j);
 

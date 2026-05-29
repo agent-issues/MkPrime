@@ -143,6 +143,18 @@
 #'   `"neomorphic"`.  Recycled to nChar if length 1.
 #' @param rateLoss Positive scalar; loss/gain ratio for neomorphic
 #'   characters.  `rateLoss = 1` gives symmetric gain/loss.
+#' @param ecoEquilMode Logical scalar (default `FALSE`).  When `TRUE`,
+#'   the **neomorphic** path uses an **equilibrium-tilt** parameterisation
+#'   instead of the default rate-modifier parameterisation.
+#'   `z` is reinterpreted as a tilt on the stationary distribution:
+#'   \code{pi1_ce = plogis(qlogis(pi1_base) + s_z * log(phi))}, where
+#'   \code{s_z = +1} for \code{z = 1} (toward present), \code{-1} for
+#'   \code{z = 2} (toward absent), and \code{0} for \code{z = 0} or the
+#'   reference ecology.  The total decay rate is **fixed at** \eqn{\lambda
+#'   = 2} (unchanged from the base process), so only the attractor is
+#'   tilted, not the tempo.  The transformational path and the
+#'   rate-modifier neomorphic path (`ecoEquilMode = FALSE`) are
+#'   unaffected.
 #' @return A character matrix nTip x nChar; rownames = tip labels;
 #'   states encoded as "0".."(k-1)".
 #'
@@ -153,7 +165,8 @@
                                     rateLoss = 1,
                                     normalize = FALSE,
                                     pi0 = NULL, theta = NULL,
-                                    refEcology = 0L) {
+                                    refEcology = 0L,
+                                    ecoEquilMode = FALSE) {
   stopifnot(phi > 0, baseRate > 0, rateLoss > 0)
   edge   <- tree$edge
   brLen  <- tree$edge.length
@@ -211,24 +224,47 @@
       zce <- z[c, e]
       parentSt <- stateMat[parent, c]
       if (type[c] == "neomorphic") {
-        # Asymmetric two-state CTMC with per-edge (rate01, rate10).
-        if (zce == 0L) {
-          a <- rate01Base / gE; b <- rate10Base / gE
-        } else if (zce == 1L) {
-          a <- rate01Base * phi / gE; b <- rate10Base / phi / gE
+        if (ecoEquilMode) {
+          # Equilibrium-tilt branch (ebe-spec.md §2).
+          # pi1_base = 1/(1+rateLoss); λ fixed at 2.
+          # s_z: +1 (z=1), −1 (z=2), 0 (z=0 or refEcology).
+          sZ <- if ((e - 1L) == refEcology || zce == 0L) {
+            0L
+          } else if (zce == 1L) {
+            1L
+          } else {
+            -1L
+          }
+          pi1ce <- stats::plogis(stats::qlogis(pi1Root) + sZ * log(phi))
+          pi0ce <- 1 - pi1ce
+          ee <- exp(-2 * t)
+          if (parentSt == 0L) {
+            pTo1 <- pi1ce * (1 - ee)
+            stateMat[child, c] <- as.integer(stats::runif(1) < pTo1)
+          } else {
+            pTo0 <- pi0ce * (1 - ee)
+            stateMat[child, c] <- 1L - as.integer(stats::runif(1) < pTo0)
+          }
         } else {
-          a <- rate01Base / phi / gE; b <- rate10Base * phi / gE
-        }
-        denom <- a + b
-        pi1 <- a / denom
-        pi0 <- b / denom
-        ee  <- exp(-denom * t)
-        if (parentSt == 0L) {
-          pTo1 <- pi1 * (1 - ee)
-          stateMat[child, c] <- as.integer(stats::runif(1) < pTo1)
-        } else {
-          pTo0 <- pi0 * (1 - ee)
-          stateMat[child, c] <- 1L - as.integer(stats::runif(1) < pTo0)
+          # Rate-modifier branch (default): per-edge (rate01, rate10) scaled by phi.
+          if (zce == 0L) {
+            a <- rate01Base / gE; b <- rate10Base / gE
+          } else if (zce == 1L) {
+            a <- rate01Base * phi / gE; b <- rate10Base / phi / gE
+          } else {
+            a <- rate01Base / phi / gE; b <- rate10Base * phi / gE
+          }
+          denom <- a + b
+          pi1 <- a / denom
+          pi0 <- b / denom
+          ee  <- exp(-denom * t)
+          if (parentSt == 0L) {
+            pTo1 <- pi1 * (1 - ee)
+            stateMat[child, c] <- as.integer(stats::runif(1) < pTo1)
+          } else {
+            pTo0 <- pi0 * (1 - ee)
+            stateMat[child, c] <- 1L - as.integer(stats::runif(1) < pTo0)
+          }
         }
       } else {
         k <- kStates[c]

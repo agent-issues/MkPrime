@@ -589,10 +589,87 @@ struct EcoCLCache {
   }
 }
 
+// ===========================================================================
+// EBE (Ecology-Biased Equilibrium) shared P-helper — the ONE source of truth
+// for the equilibrium-tilt math (ebe-spec.md §3).
+//
+// NOTE ON PLACEMENT (spec §3 deviation, justified):
+//   The spec asks for `ebe_mkn_P` in src/mcmc_ecology.cpp.  However
+//   ecology_cl_cache.h is #included by BOTH mcmc_ecology.cpp and mcmc.cpp,
+//   and eco_compute_mkn_factors (below, same header) must call the helper.
+//   A `static` definition in the .cpp would not be visible to the header in
+//   mcmc.cpp's translation unit.  Defining it `static inline` here — the
+//   single header both call sites already share, which already includes
+//   fast_exp.h and holds an MkN-P call site — keeps it as the sole source of
+//   truth.  mcmc_ecology.cpp sees it via the L25 include.
+//
+// For a neomorphic binary character (state 0 = absent, 1 = present) with
+// influence category z on an edge of ecology `ecoState`, the tilted
+// equilibrium is (spec §2):
+//   s_z = +1 (z==1, toward present), -1 (z==2, toward absent),
+//          0 (z==0 OR ecoState==refEcology)
+//   logit(pi1) = logit(pi1_base) + s_z * log(phi_s)
+//   pi1 = expit(logit(pi1_base) + s_z * log phi_s),  pi0 = 1 - pi1
+// The decay rate is FIXED at the base lambda = 2 (tilt the attractor, not the
+// tempo).  With ex = exp(-2 * tEff):
+//   P00 = pi0 + pi1*ex   P01 = pi1 - pi1*ex
+//   P10 = pi0 - pi0*ex    P11 = pi1 + pi0*ex
+//
+// Graceful degradation (spec §2, Test T1): when s_z == 0 we SHORT-CIRCUIT to
+// pi1 = pi1_base directly (no expit(logit(.)) round-trip), so at z=0 the
+// result is byte-identical to the base MkN P matrix regardless of phi — which
+// is the EBE guarantee the retired rate model failed.  (Up to MKP_EXP, the
+// C++ kernel is ~1e-15 from std::exp; the test gate is 1e-10.)
+//
+// P-form note (spec §3 deviation, justified): the spec writes P01 = pi1*(1-ex)
+// etc.; we use the algebraically identical `pi1 - pi1*ex` to match the FP
+// op-order of the base pruner (pruning_mkn_acrv_flat, mcmc_likelihood.cpp).
+//
+// `phi`        : length 1 (magnitudeMode==0, use phi[0]) or kEco (==1, phi[s]).
+// `pi1_base`   : 1/(1+rate_loss), computed once by the caller.
+// `tEff`       : edge_length * rate_neo * ACRV_rate (already scaled; "neoEl").
+// `P`          : output, length 4 — {P00, P01, P10, P11}.
+// ---------------------------------------------------------------------------
+static inline void ebe_mkn_P(
+    int z, int ecoState, int refEcology,
+    double pi1_base, const double* phi, int magnitudeMode,
+    double tEff, double* P /* len 4: P00,P01,P10,P11 */) {
+  // s_z: +1 toward present (z==1), -1 toward absent (z==2), 0 otherwise.
+  int s_z = (ecoState == refEcology) ? 0 : (z == 1 ? 1 : (z == 2 ? -1 : 0));
+  double pi1;
+  if (s_z == 0) {
+    // Short-circuit: exact graceful degradation, no expit(logit(.)) round-trip.
+    pi1 = pi1_base;
+  } else {
+    double phi_s = (magnitudeMode == 0) ? phi[0] : phi[ecoState];
+    double logitBase = std::log(pi1_base / (1.0 - pi1_base));
+    double logitTilt = logitBase + s_z * std::log(phi_s);
+    // expit, computed in the numerically stable branch.
+    if (logitTilt >= 0.0) {
+      double e = MKP_EXP(-logitTilt);
+      pi1 = 1.0 / (1.0 + e);
+    } else {
+      double e = MKP_EXP(logitTilt);   // logitTilt < 0 => argument <= 0, MKP_EXP ok
+      pi1 = e / (1.0 + e);
+    }
+  }
+  double pi0 = 1.0 - pi1;
+  double ex  = MKP_EXP(-2.0 * tEff);   // lambda FIXED at base 2
+  P[0] = pi0 + pi1 * ex;   // P00
+  P[1] = pi1 - pi1 * ex;   // P01
+  P[2] = pi0 - pi0 * ex;   // P10
+  P[3] = pi1 + pi0 * ex;   // P11
+}
+
 // ---------------------------------------------------------------------------
 // eco_compute_jc_factors: fill psFactor / pdFactor (length 3*kEco each) for
-// a single (cat, edge) cell.  Mirrors the corresponding block in
-// pruning_jc_acrv_flat_ecology, so the values are bit-identical.
+// a single (cat, edge) cell.
+//
+// EBE (ebe-spec.md §8/R8): transformational and known-state characters carry
+// NO ecology effect — z is IGNORED.  The retired rate model applied a phi
+// rate-factor (mu = phi^{±1}/gammaE) here; under EBE that is removed, so the
+// JC P matrix is identical across all (z, ecology) and the per-edge mixture
+// collapses to the plain base JC transition.  factor is fixed at 1.0.
 // ---------------------------------------------------------------------------
 [[maybe_unused]] static void eco_compute_jc_factors(
     int kStates, int kEco, int refEcology, int mode,
@@ -601,29 +678,26 @@ struct EcoCLCache {
     double tBase,
     double* psFactor, double* pdFactor
 ) {
+  (void)refEcology; (void)mode; (void)phiPtr; (void)gammaE;
   double inv_k = 1.0 / kStates;
   double km1 = (double)kStates - 1.0;
+  // z ignored: a single base JC transition replicated across all (z, s).
+  double exV = MKP_EXP(-kStates * tBase / km1);
+  double ps  = inv_k + (1.0 - inv_k) * exV;
+  double pd  = inv_k - inv_k * exV;
   for (int s = 0; s < kEco; ++s) {
-    double gE = gammaE[s];
     for (int z = 0; z < 3; ++z) {
-      double factor;
-      if (s == refEcology) factor = 1.0;
-      else {
-        double p = (mode == 0) ? phiPtr[0] : phiPtr[s];
-        double mu = (z == 0) ? 1.0 : (z == 1) ? p : 1.0 / p;
-        factor = mu / gE;
-      }
-      double tEff = tBase * factor;
-      double exV = MKP_EXP(-kStates * tEff / km1);
-      psFactor[z * kEco + s] = inv_k + (1.0 - inv_k) * exV;
-      pdFactor[z * kEco + s] = inv_k - inv_k * exV;
+      psFactor[z * kEco + s] = ps;
+      pdFactor[z * kEco + s] = pd;
     }
   }
 }
 
 // ---------------------------------------------------------------------------
 // eco_compute_mkn_factors: fill Pfactor (length 3*kEco*4) for one (cat, edge)
-// cell.  Mirrors the corresponding block in pruning_mkn_acrv_flat_ecology.
+// cell, via the single shared EBE helper (entries 7 & 8 of ebe-spec.md §5).
+// Bit-identical to the main kernel's per-(z,s) loop (both call ebe_mkn_P).
+// gammaE is unused under equilibrium semantics (forced to 1; spec §4).
 // ---------------------------------------------------------------------------
 [[maybe_unused]] static void eco_compute_mkn_factors(
     int kEco, int refEcology, int mode,
@@ -633,34 +707,12 @@ struct EcoCLCache {
     double tBase,
     double* Pfactor
 ) {
-  double sum_rl = 1.0 + rateLoss;
-  double r01_base = 2.0 / sum_rl;
-  double r10_base = 2.0 * rateLoss / sum_rl;
+  (void)gammaE;
+  double pi1_base = 1.0 / (1.0 + rateLoss);
   for (int s = 0; s < kEco; ++s) {
-    double gE = gammaE[s];
     for (int z = 0; z < 3; ++z) {
-      double mu01, mu10;
-      if (s == refEcology) {
-        mu01 = 1.0; mu10 = 1.0;
-      } else {
-        double p = (mode == 0) ? phiPtr[0] : phiPtr[s];
-        if (z == 0) { mu01 = 1.0; mu10 = 1.0; }
-        else if (z == 1) { mu01 = p; mu10 = 1.0 / p; }
-        else { mu01 = 1.0 / p; mu10 = p; }
-      }
-      double r01, r10;
-      if (s == refEcology) { r01 = r01_base; r10 = r10_base; }
-      else { r01 = r01_base * mu01 / gE; r10 = r10_base * mu10 / gE; }
-      double lam = r01 + r10;
-      double pi0_ = r10 / lam;
-      double pi1_ = r01 / lam;
-      double ex = MKP_EXP(-lam * tBase);
-      double P00 = pi0_ + pi1_ * ex;
-      double P01 = pi1_ - pi1_ * ex;
-      double P10 = pi0_ - pi0_ * ex;
-      double P11 = pi1_ + pi0_ * ex;
-      double* P = Pfactor + (z * kEco + s) * 4;
-      P[0] = P00; P[1] = P01; P[2] = P10; P[3] = P11;
+      ebe_mkn_P(z, s, refEcology, pi1_base, phiPtr, mode, tBase,
+                Pfactor + (z * kEco + s) * 4);
     }
   }
 }

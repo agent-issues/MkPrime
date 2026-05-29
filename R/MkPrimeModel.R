@@ -82,13 +82,20 @@
 #'   Defaults: shape = 1, rate = 1. Ignored when `qHeterogeneity = FALSE`.
 #' @param ecologyAware Logical. Enable the ecology-aware NT model? Default
 #'   `FALSE`. When `TRUE`, the supplied [MkPrimeData] must carry an `ecology`
-#'   component (see [MkPrimeData()]). Per-character substitution rates then
-#'   depend on the ecology assigned to each edge through a marginal-mixture
-#'   over edge ecology probabilities. See `vignette("ecology-details",
-#'   package = "MkPrime")` for the mathematical specification.
-#' @param magnitudeMode How the rate-modifier magnitude is shared across
-#'   ecologies: `"global"` (default; single `phi`) or `"per_ecology"` (one
-#'   `phi_e` per ecology state). Ignored when `ecologyAware = FALSE`.
+#'   component (see [MkPrimeData()]). Ecology then tilts the **equilibrium**
+#'   (stationary distribution) of **neomorphic** binary characters toward
+#'   "present" or "absent" on edges of a given ecology, via a logit shift
+#'   `logit(pi1) += s_z * log(phi)` (the decay rate is held fixed; only the
+#'   attractor moves, not the tempo). Transformational characters are
+#'   unaffected. Per-edge ecology is a marginal-mixture over edge ecology
+#'   probabilities. The tilt makes the process non-stationary, so the rooted
+#'   tree is identifiable (the root is inferred jointly with the topology).
+#'   See `vignette("ecology-details", package = "MkPrime")` for the
+#'   mathematical specification.
+#' @param magnitudeMode How the equilibrium-tilt magnitude (the log-odds shift
+#'   `log(phi)`) is shared across ecologies: `"global"` (default; single `phi`)
+#'   or `"per_ecology"` (one `phi_e` per ecology state). Ignored when
+#'   `ecologyAware = FALSE`.
 #' @param rho0Alpha,rho0Beta Shape parameters for the Beta hyperprior on
 #'   `pi_0`, the prior probability that a (character, ecology) pair has
 #'   no ecology effect. Defaults: 360, 120 (mode 0.75, effective sample
@@ -131,22 +138,27 @@
 #'
 #' @section Ecology-aware NT model:
 #'
-#' When `ecologyAware = TRUE`, the model adds a per-edge, per-character rate
-#' modifier whose value depends on the inferred ecology of each edge. Edge
-#' ecology is reconstructed as a marginal under a standard Mk(K) process on
-#' the same tree, and the per-edge mixture weight `w_{e}(s)` for ecology
-#' state `s` is taken from this marginal at the parent node.
+#' When `ecologyAware = TRUE` (the Ecology-Biased Equilibrium, EBE, model), the
+#' model tilts the F81 **equilibrium** of each **neomorphic** binary character
+#' toward "present" or "absent" on edges of a given ecology — it biases the
+#' *attractor* of change, not its *rate*. Edge ecology is reconstructed as a
+#' marginal under a standard Mk(K) process on the same tree, and the per-edge
+#' mixture weight `w_{e}(s)` for ecology state `s` is taken from this marginal
+#' at the parent node. Transformational characters carry no ecology effect.
 #'
-#' For each pair `(c, e)` of (character, ecology state) a latent influence
-#' category `z_{c,e}` is sampled with three values:
+#' For each pair `(c, e)` of (neomorphic character, ecology state) a latent
+#' influence category `z_{c,e}` is sampled with three values:
 #' \describe{
-#'   \item{`none`}{character `c`'s rate is unchanged in ecology `e`}
-#'   \item{`encouraged`}{rate scaled by `phi` (asymmetric for neomorphic)}
-#'   \item{`discouraged`}{rate scaled by `1 / phi` (asymmetric for neomorphic)}
+#'   \item{`none`}{character `c`'s equilibrium is unchanged in ecology `e`}
+#'   \item{`encouraged`}{equilibrium tilted toward "present": `logit(pi1) += log(phi)`}
+#'   \item{`discouraged`}{equilibrium tilted toward "absent": `logit(pi1) -= log(phi)`}
 #' }
-#' The prior on `z` is sparse: `P(z = none) = pi_0`, with `pi_0 ~ Beta(360, 120)`
-#' by default (mode 0.75, ESS 480) so most characters are *a priori* unaffected
-#' by ecology.
+#' The decay rate (total substitution tempo) is held fixed, so at `z = none` the
+#' process is exactly the baseline neomorphic Mk. The prior on `z` is sparse:
+#' `P(z = none) = pi_0`, with `pi_0 ~ Beta(360, 120)` by default (mode 0.75,
+#' ESS 480) so most characters are *a priori* unaffected by ecology. Because the
+#' equilibrium varies across edges the process is non-stationary, and the root
+#' placement is identifiable (inferred jointly with the topology).
 #'
 #' @section Q-matrix heterogeneity:
 #'
@@ -747,10 +759,16 @@ LogPrior <- function(state, model, mkd) {
     #   P(z = disc) = (1 - pi0) * (1 - theta[j])
     # theta_e ~ Beta(thetaAlpha, thetaBeta).
     if (is.matrix(z) && ncol(z) > 0L) {
+      # EBE: z is meaningful only for NEOMORPHIC characters; transformational /
+      # known rows are inert in the likelihood (R8) and must NOT count toward the
+      # shared pi0/theta prior (else each injects a phantom z observation that
+      # biases the sparsity posterior). Mirror of the C++ neomorphic mask in
+      # cpp_log_prior / gibbs_z_sweep_impl. (z validity was already checked above.)
+      neoRows  <- which(mkd$type == "neomorphic")
       logPi0   <- log(pi0)
       log1mPi0 <- log1p(-pi0)
       for (j in seq_len(ncol(z))) {
-        zCol <- z[, j]
+        zCol <- z[neoRows, j]
         nNone <- sum(zCol == 0L)
         nEnc  <- sum(zCol == 1L)
         nDisc <- sum(zCol == 2L)
@@ -837,7 +855,7 @@ print.MkPrimeModel <- function(x, ...) {
     paste0("k' prior: ", k_prior_str),
     "rate_neo prior: LogNormal({x$rateNeoMeanlog}, {x$rateNeoSdlog})",
     paste0("Q-matrix heterogeneity: ", het_str),
-    paste0("Ecology-aware NT: ", eco_str)
+    paste0("Ecology-aware NT (EBE, neomorphic equilibrium tilt): ", eco_str)
   ))
   invisible(x)
 }

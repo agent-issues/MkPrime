@@ -712,14 +712,21 @@ for (case in .PerCharCases) {
 # ===== Phase 3f: z Gibbs sweep =====
 
 
-test_that("gibbs_z sweep updates z and syncs logLik/logPrior to fresh eval", {
+test_that("gibbs_z sweep operates on neomorphic z, leaves transformational z untouched", {
+  # EBE: ecology acts only on neomorphic characters, so gibbs_z sweeps only
+  # neomorphic rows (mcmc.cpp gibbs_z_sweep_impl, type==0 guard).  Seed a slab
+  # cell on a neomorphic row (swept) AND a transformational row (must be left
+  # exactly as initialised), then check the invariants.
   f <- .MakeEcologyFixture()
   model <- MkPrimeModel(ecologyAware = TRUE, expSteps = 10,
                         kPrimePrior = "geometric", coding = "none")
   dataPtr <- .MakeEcoDataPtr(f$mkd, model)
   state    <- MkPrime:::.InitState(f$tree, f$mkd, model)
-  state$z[1, 1] <- 1L
-  state$z[2, 2] <- 2L
+  neoRows   <- which(f$mkd$type == "neomorphic")
+  transRows <- which(f$mkd$type == "transformational")
+  expect_gt(length(neoRows), 0L); expect_gt(length(transRows), 0L)
+  state$z[neoRows[1], 1] <- 1L      # neomorphic slab cell (will be swept)
+  state$z[transRows[1], 2] <- 2L    # transformational slab cell (must NOT move)
   storage.mode(state$z) <- "integer"
   state$log_prior <- MkPrime:::LogPrior(state, model, f$mkd)
   statePtr <- MkPrime:::.InitMcmcChain(state)
@@ -737,6 +744,10 @@ test_that("gibbs_z sweep updates z and syncs logLik/logPrior to fresh eval", {
   # All z entries are valid spike-and-slab values.
   expect_true(all(post$zMatrix %in% 0:2))
 
+  # EBE invariant: transformational z rows are NOT swept (stay at pre-sweep).
+  expect_identical(post$zMatrix[transRows, , drop = FALSE],
+                   pre$zMatrix[transRows, , drop = FALSE])
+
   # logLik / logPrior match a fresh evaluation at the post-sweep state.
   ll_fresh <- MkPrime:::.CppLogLikelihoodEcology(
     dataPtr,
@@ -747,25 +758,23 @@ test_that("gibbs_z sweep updates z and syncs logLik/logPrior to fresh eval", {
     phi = post$phi, zMatrix = post$zMatrix,
     pi0 = post$pi0, theta = post$theta)
   expect_equal(post$logLik, ll_fresh, tolerance = 1e-10)
-
-  # Some cells likely changed (sanity — not strictly required, but the
-  # sweep should not leave z untouched given the spike-and-slab prior
-  # and finite data on the small fixture).
-  expect_true(!identical(post$zMatrix, pre$zMatrix))
 })
 
 
-test_that("gibbs_z sweep collapses z to the spike at large pi0 + no data weight", {
+test_that("gibbs_z sweep collapses neomorphic z to the spike at large pi0 + no data weight", {
   # Test: with pi0 ~ 1 and beta = 0 (so the likelihood is ignored), the
-  # Gibbs full conditional is dominated by the spike and almost every
-  # cell should land in z = 0.  This isolates the prior-side logic.
+  # Gibbs full conditional is dominated by the spike and almost every swept
+  # cell should land in z = 0.  This isolates the prior-side logic.  EBE sweeps
+  # only neomorphic rows, so seed and check those (transformational rows are
+  # never touched by the sweep).
   f <- .MakeEcologyFixture()
   model <- MkPrimeModel(ecologyAware = TRUE, expSteps = 10,
                         kPrimePrior = "geometric", coding = "none")
   dataPtr <- .MakeEcoDataPtr(f$mkd, model)
   state    <- MkPrime:::.InitState(f$tree, f$mkd, model)
-  state$pi0 <- 0.999  # spike dominates
-  state$z[] <- 1L     # everything starts in encouraged
+  neoRows <- which(f$mkd$type == "neomorphic")
+  state$pi0 <- 0.999          # spike dominates
+  state$z[neoRows, ] <- 1L    # neomorphic cells start in encouraged
   storage.mode(state$z) <- "integer"
   state$log_prior <- MkPrime:::LogPrior(state, model, f$mkd)
   statePtr <- MkPrime:::.InitMcmcChain(state)
@@ -779,10 +788,10 @@ test_that("gibbs_z sweep collapses z to the spike at large pi0 + no data weight"
   expect_true(accepted)
   post <- get_mcmc_state(statePtr)
 
-  # With beta = 0, P(z = 0) = pi0 = 0.999.  Out of nChar*kEco = 18 cells,
-  # essentially all should be 0; allow at most 2 slabs (≈ 2% tail).
-  nSlab <- sum(post$zMatrix != 0L)
-  expect_lt(nSlab, 3L)
+  # With beta = 0, P(z = 0) = pi0 = 0.999, so the swept neomorphic cells
+  # (length(neoRows) * (kEco - 1)) should essentially all collapse to 0.
+  nSlabNeo <- sum(post$zMatrix[neoRows, , drop = FALSE] != 0L)
+  expect_lt(nSlabNeo, 2L)
 })
 
 

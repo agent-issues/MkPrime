@@ -264,7 +264,7 @@ static inline double gamma_e_compute(double pi0, double theta_e, double phi_e) {
 //   z == 2 (discouraged): factor = (1/phi) / gamma_e
 // phi_e is the per-ecology phi (or the global phi under mode 0).
 // gamma_e is precomputed.
-static inline double trans_rate_factor(int z, int ecoState, int refEcology,
+[[maybe_unused]] static inline double trans_rate_factor(int z, int ecoState, int refEcology,
                                        const double* phi, int mode,
                                        double gamma_e) {
   if (ecoState == refEcology) return 1.0;
@@ -319,8 +319,8 @@ static double pruning_jc_acrv_flat_ecology_raw(
   int maxNode = 2 * nTip - 1;
   int root    = nTip + 1;
   int clCols  = nChar * kStates;
-  double inv_k = 1.0 / kStates;
-  double km1   = static_cast<double>(kStates) - 1.0;
+  // EBE §8/R8: inv_k/km1 no longer needed here — JC factors come from
+  // eco_compute_jc_factors (z ignored, collapses to base JC).
 
   std::vector<double> siteLik(nChar, 0.0);
 
@@ -361,28 +361,12 @@ static double pruning_jc_acrv_flat_ecology_raw(
       int ch  = chPtr[e];
       double tBase = elPtr[e] * rate;
 
-      // v2: per-(z, s) rate factor incorporates phi and gamma_e normalisation.
-      //   ref ecology: factor = 1 for all z (rate unchanged).
-      //   non-ref:     z=0 -> 1/gamma_e; z=1 -> phi/gamma_e; z=2 -> (1/phi)/gamma_e.
-      {
-        for (int s = 0; s < kEco; ++s) {
-          double gE = gammaE[s];
-          for (int z = 0; z < 3; ++z) {
-            double factor;
-            if (s == refEcology) {
-              factor = 1.0;
-            } else {
-              double p = (mode == 0) ? phiPtr[0] : phiPtr[s];
-              double mu = (z == 0) ? 1.0 : (z == 1) ? p : 1.0 / p;
-              factor = mu / gE;
-            }
-            double tEff = tBase * factor;
-            double exV  = MKP_EXP(-kStates * tEff / km1);
-            psFactor[z * kEco + s] = inv_k + (1.0 - inv_k) * exV;
-            pdFactor[z * kEco + s] = inv_k - inv_k * exV;
-          }
-        }
-      }
+      // EBE (ebe-spec.md §8/R8): transformational/known characters carry NO
+      // ecology effect — z is ignored.  Single source of truth in
+      // eco_compute_jc_factors (which fixes factor = 1 for all z, s, so the
+      // mixture collapses to base JC).
+      eco_compute_jc_factors(kStates, kEco, refEcology, mode, phiPtr,
+                             gammaE, tBase, psFactor.data(), pdFactor.data());
 
       double* clPar = buf + par * stride;
       double* clCh  = buf + ch  * stride;
@@ -569,7 +553,7 @@ static inline double pruning_jc_acrv_flat_ecology(
 // v2: reference ecology has rate factor = 1 (base rates unchanged).
 // Non-reference: scale both directions by 1/gamma_e (z = 0), phi/gamma_e on
 // rate01 and (1/phi)/gamma_e on rate10 (z = 1), or vice versa (z = 2).
-static inline void mkn_rates_for_state(
+[[maybe_unused]] static inline void mkn_rates_for_state(
     int z, int ecoState, int refEcology,
     double rate01_base, double rate10_base,
     const double* phi, int mode,
@@ -621,15 +605,17 @@ static double pruning_mkn_acrv_flat_ecology_raw(
     double* buf, uint8_t* initFlg, int stride) {
 
   const int kStates = 2;
+  (void)gammaE;  // EBE: gammaE unused under equilibrium semantics (forced to 1).
 
   int maxNode = 2 * nTip - 1;
   int root    = nTip + 1;
   int clCols  = nChar * kStates;
 
-  // Base rates (unmodified MkN with stationary pi_0 = rate_loss/(1+rate_loss)).
+  // EBE: base equilibrium pi1 = 1/(1+rate_loss).  The tilt (ebe_mkn_P) moves
+  // the attractor (pi0,pi1) per (z, ecology) and keeps the decay rate fixed at
+  // lambda = 2.  Base rates retained only for documentation of the z=0 limit.
   double sum_rl = 1.0 + rate_loss;
-  double r01_base = 2.0 / sum_rl;
-  double r10_base = 2.0 * rate_loss / sum_rl;
+  double pi1_base = 1.0 / sum_rl;
 
   std::vector<double> siteLik(nChar, 0.0);
 
@@ -660,25 +646,14 @@ static double pruning_mkn_acrv_flat_ecology_raw(
       int ch  = chPtr[e];
       double tBase = elPtr[e] * rate;
 
-      // v2: precompute P matrices for each (z, s). Reference ecology uses base
-      // rates (no scaling); non-reference uses (r01 * mu01, r10 * mu10) / gamma_e
-      // per mkn_rates_for_state.
+      // EBE: precompute the tilted-equilibrium P matrix for each (z, s) via the
+      // single shared helper.  Reference ecology and z=0 short-circuit to the
+      // base equilibrium (byte-identical base MkN).  gammaE is unused under
+      // equilibrium semantics (forced to 1; see ebe-spec.md §4).
       for (int s = 0; s < kEco; ++s) {
-        double gE = gammaE[s];
         for (int z = 0; z < 3; ++z) {
-          double r01, r10;
-          mkn_rates_for_state(z, s, refEcology, r01_base, r10_base,
-                              phiPtr, mode, gE, r01, r10);
-          double lam = r01 + r10;
-          double pi0_ = r10 / lam;
-          double pi1_ = r01 / lam;
-          double ex  = MKP_EXP(-lam * tBase);
-          double P00 = pi0_ + pi1_ * ex;
-          double P01 = pi1_ - pi1_ * ex;
-          double P10 = pi0_ - pi0_ * ex;
-          double P11 = pi1_ + pi0_ * ex;
-          double* P = Pfactor.data() + (z * kEco + s) * 4;
-          P[0] = P00; P[1] = P01; P[2] = P10; P[3] = P11;
+          ebe_mkn_P(z, s, refEcology, pi1_base, phiPtr, mode, tBase,
+                    Pfactor.data() + (z * kEco + s) * 4);
         }
       }
 
@@ -1443,17 +1418,12 @@ void compute_gamma_e_ecology(
     double pi0,
     const Rcpp::NumericVector& theta,
     std::vector<double>& gammaE) {
+  // EBE (ebe-spec.md §4): gammaE is a rate-mean normaliser with no meaning
+  // under equilibrium semantics.  Forced to identity (all 1.0).  Plumbing /
+  // signature kept; only the value is neutralised.
+  (void)phi; (void)pi0; (void)theta;
   int kEco = data.ecology.kEcology;
-  int mode = data.magnitudeMode;
-  int refE = data.ecology.refEcology;
   gammaE.assign(kEco, 1.0);
-  for (int s = 0; s < kEco; ++s) {
-    if (s == refE) { gammaE[s] = 1.0; continue; }
-    int j = (s < refE) ? s : (s - 1);
-    double phi_s = (mode == 0) ? phi[0] : phi[s];
-    double th = (j >= 0 && j < theta.size()) ? theta[j] : 0.5;
-    gammaE[s] = gamma_e_compute(pi0, th, phi_s);
-  }
 }
 
 
