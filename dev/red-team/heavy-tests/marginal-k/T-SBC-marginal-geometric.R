@@ -74,19 +74,29 @@ if (mode == "quick") {
   N_THIN    <- 10L
   N_WARM    <- 500L
 } else {
-  # Hamilton full config — mirrors geometric Model A precedent
-  # (T-EG-C-modelA-sbc.R; plan §7.3).
+  # Hamilton full config.
+  #
+  # 2026-05-29: regime moved off the saturated 8-tip / expSteps=50 toy
+  # (mean tree length ~50 over 8 tips ⇒ mean edge ~3.6 ⇒ every character
+  # randomised to noise). At saturation the chain cannot mix in
+  # tree_length/p and SBC ranks spike at the extremes — a non-convergence
+  # artefact, NOT a calibration defect (priors provably match: tree-length
+  # Gamma(2, 2/expSteps) and the JC rate convention exp(−K/(K−1)·rate·t)).
+  # Realistic low-homoplasy morphology (mean tree length ~1.4, 16 tips)
+  # is both more relevant AND a more valid SBC test because the chain
+  # actually mixes. N_CHAR raised to 100 to offset constant-character
+  # (kObs<2) filtering at short branch lengths.
   N_SIM     <- 200L
-  N_TIP     <- 8L
-  N_CHAR    <- 30L
+  N_TIP     <- 16L
+  N_CHAR    <- 100L
   N_ITER    <- 12000L
   N_THIN    <- 60L     # → ~133 retained / chain; well under 30k thin budget
   N_WARM    <- 4000L
 }
 
-EXPSTEPS_FIXED <- 50
+EXPSTEPS_FIXED <- 1.4          # mean tree length (forward + inference prior)
 TREE_SHAPE     <- 2
-K_MAX_PRIOR    <- 30L          # cap on kTrue (matches T0/T4/T-EG-C)
+K_MAX_PRIOR    <- 30L          # cap on kTrue
 A_PRIOR        <- 1
 B_PRIOR        <- 1
 seedBase       <- 20260528L
