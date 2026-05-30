@@ -4245,9 +4245,21 @@ double cpp_log_likelihood_marginal(
   // across all candidates ko of a given character, so it factors straight out
   // of the per-character logSumExp. We therefore keep logPriorByU (and the
   // cached raw LL) as Model B and add (kObs_i - 2)·log(1-p) to each
-  // character's marginal contribution when unconditionalPrior is true. The
-  // sum range is unchanged and there is NO renormalisation of the tail.
+  // character's marginal contribution when unconditionalPrior is true.
+  //
+  // MARGINAL-K-TRUNC-001 (geometric truncation normaliser; proof
+  // dev/red-team/proofs/marginal-k-truncation-normaliser.md). The geometric
+  // prior is truncated at the declared cap K = data.kprimeTruncK (matching the
+  // forward). The marginal is therefore BOTH (a) summed only over candidates
+  // with k = kObs_i + c <= K, AND (b) renormalised by the truncated-tail mass
+  //   Model A: logZA      = log(1 - (1-p)^(K-1))            [shared]
+  //   Model B: logZB(kObs) = log(1 - (1-p)^(K - kObs_i + 1)) [per kObs]
+  // subtracted once per character. Both are required: -logZ alone over-corrects
+  // (biases p low at small p); the cap alone leaves the p-high bias. (Proof §5.3
+  // as corrected 2026-05-30; R spec-check cap-z-spec-check.R.)
   const bool uncond = data.unconditionalPrior;
+  const int    K     = data.kprimeTruncK;
+  const double logZA = std::log1p(-std::exp((K - 1) * log1mP));
 
   // Cache fast-path: if the charLL cache is valid, skip the helper call
   // and recompute the per-char logSumExp against the current p-weights.
@@ -4288,35 +4300,41 @@ double cpp_log_likelihood_marginal(
     // Fill cache: charLL = charLogW - log P(u | p_at_eval).
     // Per-char logSumExp on charLogW directly == marginal LL for char ti.
     for (int ti = 0; ti < nTrans; ++ti) {
+      const int kObs_ti = data.kObs[data.transIdxGlobal[ti]];
       const int nCand = kw.charNCand[ti];
-      state.charLLNCand[ti] = nCand;
+      // MARGINAL-K-TRUNC-001 cap: candidate c has k = kObs_ti + c; keep only
+      // k <= K. nEff <= 0 means kObs_ti > K (empty support) -> -Inf char.
+      const int nEff = std::min(nCand, K - kObs_ti + 1);
+      state.charLLNCand[ti] = (nEff > 0) ? nEff : 0;
       double mx = R_NegInf;
       for (int c = 0; c < nCand; ++c) {
         double w = kw.charLogW[ti * kMaxKprimeCand + c];
-        // Stash raw LL = w - logPriorByU[c] in cache.
+        // Stash raw LL = w - logPriorByU[c] in cache (all candidates, so a
+        // later K change or audit can re-derive; only c < nEff are summed).
         double rawLL = R_FINITE(w)
           ? (w - logPriorByU[c])
           : R_NegInf;
         state.charLLCache[ti * kMaxKprimeCand + c] = rawLL;
-        if (R_FINITE(w) && w > mx) mx = w;
+        if (c < nEff && R_FINITE(w) && w > mx) mx = w;   // cap: only k <= K
       }
       if (!R_FINITE(mx)) {
-        // No finite candidate — character is unsupportable; total LL is
-        // -Inf and downstream MH ratio will reject.
+        // No finite candidate (incl. kObs_ti > K) — character unsupportable;
+        // total LL is -Inf and downstream MH ratio will reject.
         totalLL = R_NegInf;
         // Continue filling cache for the remaining chars so a subsequent
         // call (e.g. on rejection rollback) finds a coherent cache.
         continue;
       }
       double s = 0.0;
-      for (int c = 0; c < nCand; ++c) {
+      for (int c = 0; c < nEff; ++c) {
         double w = kw.charLogW[ti * kMaxKprimeCand + c];
         if (R_FINITE(w)) s += std::exp(w - mx);
       }
       double charLL = mx + std::log(s);
       if (uncond) {
-        int kObs_ti = data.kObs[data.transIdxGlobal[ti]];
-        charLL += (kObs_ti - 2) * log1mP;
+        charLL += (kObs_ti - 2) * log1mP - logZA;                       // Model A
+      } else {
+        charLL -= std::log1p(-std::exp((K - kObs_ti + 1) * log1mP));    // Model B
       }
       if (R_FINITE(totalLL)) totalLL += charLL;
     }
@@ -4343,10 +4361,15 @@ double cpp_log_likelihood_marginal(
     double s = 0.0;
     for (int c = 0; c < nCand; ++c)
       if (R_FINITE(wBuf[c])) s += std::exp(wBuf[c] - mx);
+    // MARGINAL-K-TRUNC-001: the k<=K cap is INHERITED here via charLLNCand[ti]
+    // (= nEff, set capped during the fill above), so the loops already stop at
+    // k=K; only the -logZ renormaliser is applied here.
     double charLL = mx + std::log(s);
+    const int kObs_ti = data.kObs[data.transIdxGlobal[ti]];
     if (uncond) {
-      int kObs_ti = data.kObs[data.transIdxGlobal[ti]];
-      charLL += (kObs_ti - 2) * log1mP;
+      charLL += (kObs_ti - 2) * log1mP - logZA;                       // Model A
+    } else {
+      charLL -= std::log1p(-std::exp((K - kObs_ti + 1) * log1mP));    // Model B
     }
     if (R_FINITE(totalLL)) totalLL += charLL;
   }

@@ -99,7 +99,13 @@ TREE_SHAPE     <- 2
 K_MAX_PRIOR    <- 30L          # cap on kTrue
 A_PRIOR        <- 1
 B_PRIOR        <- 1
-seedBase       <- 20260528L
+# seedBase override (MARGINAL_K_SBC_SEEDBASE) lets an independent second batch
+# run on disjoint seeds for the pre-registered 2-batch confirmation; default
+# unchanged so the canonical run is reproducible.
+seedBase       <- {
+  sb_env <- Sys.getenv("MARGINAL_K_SBC_SEEDBASE", unset = "")
+  if (nzchar(sb_env)) as.integer(sb_env) else 20260528L
+}
 
 # -------- Forward sim helpers ------------------------------------------
 .simTree <- function(nTip) {
@@ -169,8 +175,17 @@ seedBase       <- 20260528L
   # y ~ P(y | k, variable) — Model I-a. All characters are variable, so
   # MkPrimeData drops nothing and the coding="variable" /a_k correction
   # applies cleanly. SBC must pass if the marginal-k core + Mkv are correct.
-  u_true <- stats::rgeom(N_CHAR, p_true)           # k drawn UNCONDITIONALLY
-  kTrue  <- pmin(2L + u_true, K_MAX_PRIOR)          # ... and held FIXED below
+  # MARGINAL-K-TRUNC-001: draw k' from a TRUNCATED geometric on [2, K_MAX_PRIOR]
+  # by rejection-redraw — NOT pmin(2+Geom, K) which piles a point mass at K.
+  # The inference (cpp_log_likelihood_marginal) caps its marginal sum at k<=K
+  # AND renormalises by Z(p)=1-(1-p)^(K-1); the forward must match for SBC
+  # validity (proof dev/red-team/proofs/marginal-k-truncation-normaliser.md).
+  kTrue <- integer(N_CHAR)
+  for (jj in seq_len(N_CHAR)) {
+    repeat { kk <- 2L + stats::rgeom(1L, p_true); if (kk <= K_MAX_PRIOR) break }
+    kTrue[jj] <- kk
+  }
+  u_true <- kTrue - 2L                             # offset (k held FIXED below)
   MAX_REDRAW <- 100000L
   sim_mat <- matrix(NA_integer_, N_TIP, N_CHAR,
                     dimnames = list(tr$tip.label, NULL))
@@ -437,10 +452,12 @@ cat(sprintf("Prior:         geometric (k'_i = kObs_i + Geo(p))\n"))
 cat(sprintf("Mode flag:     likelihoodMode = 'marginal_k'\n"))
 cat(sprintf("Prior variant: unconditional (Model A: k' = 2 + Geo(p))\n"))
 cat(sprintf("Hyperprior:    p ~ Beta(%g, %g)\n", A_PRIOR, B_PRIOR))
-cat(sprintf("Forward draw:  kTrue_i = pmin(2 + Geo(p_true), %d) drawn ONCE (uncond.);\n",
+cat(sprintf("Forward draw:  kTrue_i ~ TRUNCATED Geo(p_true) on [2, %d] via rejection\n",
             K_MAX_PRIOR))
-cat("               redraw DATA only (k fixed) until variable (Lewis-Mkv,\n")
-cat("               Model I-a). Inference coding='variable' (sum-of-ratios).\n")
+cat("               redraw (NOT pmin-cap; MARGINAL-K-TRUNC-001), drawn ONCE\n")
+cat("               (uncond.); then redraw DATA only (k fixed) until variable\n")
+cat("               (Lewis-Mkv, Model I-a). Inference coding='variable',\n")
+cat(sprintf("               marginal sum capped at k<=%d + renormalised by Z(p).\n", K_MAX_PRIOR))
 cat("\nAD p-values vs Uniform(0, 1) [full-mode pass gate: > 0.4]:\n")
 for (nm in names(ad)) {
   cat(sprintf("  %-14s: %.4f  %s\n", nm, ad[[nm]], .classify(ad[[nm]])))
