@@ -256,24 +256,84 @@ seedBase       <- 20260528L
        ranks = rk)
 }
 
-# -------- Driver -------------------------------------------------------
-sims <- vector("list", N_SIM)
-for (i in seq_len(N_SIM)) {
-  seed <- seedBase + i
-  cat(sprintf("[T-SBC-marginal-geometric] sim %3d/%d ... ", i, N_SIM))
-  s <- tryCatch(.runOneSim(i, seed),
-                error = function(e) list(skipped = TRUE,
-                                          reason = paste0("trycatch:",
-                                                          conditionMessage(e))))
-  if (isTRUE(s$skipped)) {
-    cat(sprintf("SKIP (%s)\n", s$reason))
-  } else {
-    cat(sprintf("L=%d wall=%.1fs\n", s$L, s$wall))
+# -------- Sharding / aggregation control (backfill-friendly array job) --
+# The full monolith needs ~N_SIM * per-sim-wall seconds; at ~3 min/sim that is
+# ~10 h for N_SIM=200 — OVER the 8 h single-job walltime, and the verdict only
+# computes after the whole loop, so a monolith was doomed to time out with NO
+# verdict. Splitting into NSHARD array tasks (each a contiguous block of sims
+# written to shards/) + one AGGREGATE pass also makes each task short enough to
+# backfill under fair-share depression.
+#
+# Three execution paths, selected by env vars (all default to the monolith):
+#   * AGGREGATE (MARGINAL_K_SBC_AGGREGATE=1): skip sims, merge shard files into
+#     the full `sims` list, then run the identical AD/verdict code below.
+#   * SHARD     (MARGINAL_K_SBC_NSHARD>1):    run this task's contiguous block
+#     of sims -> shards/sims-shard-<id>.rds, then exit BEFORE aggregation.
+#   * MONOLITH  (default):                    original behaviour, unchanged.
+# Seeds are seedBase + i regardless of path, so the sharded run reproduces the
+# monolith's sims EXACTLY; L_used and .normRanks are computed over all good
+# sims in both, so the verdict is identical-by-construction.
+nshard         <- max(1L, as.integer(Sys.getenv("MARGINAL_K_SBC_NSHARD", "1")))
+shard_id       <- as.integer(Sys.getenv("MARGINAL_K_SBC_SHARD", "0"))   # 0-indexed
+aggregate_mode <- identical(Sys.getenv("MARGINAL_K_SBC_AGGREGATE", ""), "1")
+SHARD_DIR      <- file.path(OUT_DIR, "shards")
+.shardFile     <- function(k) file.path(SHARD_DIR, sprintf("sims-shard-%03d.rds", k))
+
+if (aggregate_mode) {
+  # ---- AGGREGATE: reconstruct the full sims list from shard files --------
+  sims <- vector("list", N_SIM)
+  for (i in seq_len(N_SIM)) sims[[i]] <- list(skipped = TRUE, reason = "missing_shard")
+  filled <- 0L
+  for (k in 0:(nshard - 1L)) {
+    f <- .shardFile(k)
+    if (!file.exists(f)) { cat(sprintf("[aggregate] shard %03d MISSING\n", k)); next }
+    sh <- readRDS(f)
+    if (length(sh$idx)) { sims[sh$idx] <- sh$results; filled <- filled + length(sh$idx) }
   }
-  sims[[i]] <- s
-  # Defensive: save partial sims rds every 10 sims so a Hamilton timeout
-  # doesn't lose everything.
-  if (i %% 10L == 0L) saveRDS(sims, file.path(OUT_DIR, "sims.rds"))
+  cat(sprintf("[aggregate] merged %d shards; %d / %d sim slots filled\n", nshard, filled, N_SIM))
+} else if (nshard > 1L) {
+  # ---- SHARD: run my contiguous block, checkpoint, exit pre-aggregation --
+  dir.create(SHARD_DIR, recursive = TRUE, showWarnings = FALSE)
+  chunk   <- as.integer(ceiling(N_SIM / nshard))
+  my_from <- shard_id * chunk + 1L
+  my_to   <- min((shard_id + 1L) * chunk, N_SIM)
+  my_idx  <- if (my_from <= N_SIM) seq.int(my_from, my_to) else integer(0)
+  cat(sprintf("[shard %03d/%d] sims %s\n", shard_id, nshard,
+              if (length(my_idx)) sprintf("%d..%d", my_from, my_to) else "(none)"))
+  results <- vector("list", length(my_idx))
+  for (j in seq_along(my_idx)) {
+    i <- my_idx[j]; seed <- seedBase + i
+    cat(sprintf("[shard %03d] sim %3d/%d ... ", shard_id, i, N_SIM))
+    s <- tryCatch(.runOneSim(i, seed),
+                  error = function(e) list(skipped = TRUE,
+                            reason = paste0("trycatch:", conditionMessage(e))))
+    if (isTRUE(s$skipped)) cat(sprintf("SKIP (%s)\n", s$reason)) else cat(sprintf("L=%d wall=%.1fs\n", s$L, s$wall))
+    results[[j]] <- s
+    # Checkpoint every sim so a per-task timeout keeps completed sims.
+    saveRDS(list(idx = my_idx[seq_len(j)], results = results[seq_len(j)]), .shardFile(shard_id))
+  }
+  saveRDS(list(idx = my_idx, results = results), .shardFile(shard_id))
+  cat(sprintf("[shard %03d/%d] done (%d sims)\n", shard_id, nshard, length(my_idx)))
+  quit(save = "no", status = 0L)
+} else {
+  # ---- MONOLITH: original path (behaviour unchanged) ---------------------
+  sims <- vector("list", N_SIM)
+  for (i in seq_len(N_SIM)) {
+    seed <- seedBase + i
+    cat(sprintf("[T-SBC-marginal-geometric] sim %3d/%d ... ", i, N_SIM))
+    s <- tryCatch(.runOneSim(i, seed),
+                  error = function(e) list(skipped = TRUE,
+                            reason = paste0("trycatch:", conditionMessage(e))))
+    if (isTRUE(s$skipped)) {
+      cat(sprintf("SKIP (%s)\n", s$reason))
+    } else {
+      cat(sprintf("L=%d wall=%.1fs\n", s$L, s$wall))
+    }
+    sims[[i]] <- s
+    # Defensive: save partial sims rds every 10 sims so a Hamilton timeout
+    # doesn't lose everything.
+    if (i %% 10L == 0L) saveRDS(sims, file.path(OUT_DIR, "sims.rds"))
+  }
 }
 
 good <- sapply(sims, function(s) !isTRUE(s$skipped))
@@ -347,6 +407,13 @@ ad_finite <- vapply(ad, function(x) is.finite(x), logical(1L))
 all_finite <- all(ad_finite)
 all_marg_or_better <- all_finite && all(unlist(ad) > 0.01)
 any_full_pass      <- all_finite && any(unlist(ad) > 0.4)
+# STRICT gate = the real acceptance bar (plan §7.3 full mode): EVERY continuous
+# parameter must individually clear AD > 0.4. This is STRICTER than the lenient
+# "headline verdict" below, which prints PASS on any-one > 0.4 (e.g. AD =
+# {tl 0.5, rls 0.02, p 0.02} prints "PASS" but is a strict FAIL). A cold-resume
+# poll reads verdict.txt, so emit the strict result explicitly and unambiguously.
+strict_pass <- all_finite && all(unlist(ad) > 0.4)
+strict_gate <- if (mode == "quick") "QUICK_SANITY_ONLY" else if (!all_finite) "ERROR" else if (strict_pass) "PASS" else "FAIL"
 verdict <- if (!all_finite) {
   "ERROR"
 } else if (mode == "quick") {
@@ -378,7 +445,11 @@ cat("\nAD p-values vs Uniform(0, 1) [full-mode pass gate: > 0.4]:\n")
 for (nm in names(ad)) {
   cat(sprintf("  %-14s: %.4f  %s\n", nm, ad[[nm]], .classify(ad[[nm]])))
 }
-cat(sprintf("\nHeadline verdict: %s\n", verdict))
+cat(sprintf("\nHeadline verdict: %s  (lenient: all AD>0.01 AND any AD>0.4)\n", verdict))
+cat(sprintf("STRICT gate:      %s  [the real bar: AD>0.4 on tree_length AND rate_log_sd AND p]\n", strict_gate))
+if (all_finite && !strict_pass && mode != "quick") {
+  cat(sprintf("  params below 0.4: %s\n", paste(names(ad)[unlist(ad) <= 0.4], collapse = ", ")))
+}
 if (mode == "quick") {
   cat("\nNote: QUICK mode (N_SIM=20) is INSUFFICIENT for AD power.\n")
   cat("Quick-mode AD numbers are noise; do not interpret as PASS/FAIL.\n")
@@ -391,6 +462,7 @@ cat("bar applies to tree_length, rate_log_sd, p only.\n")
 sink()
 
 writeLines(verdict, file.path(OUT_DIR, "verdict-headline.txt"))
+writeLines(strict_gate, file.path(OUT_DIR, "verdict-strict.txt"))
 
 cat(sprintf("\n[T-SBC-marginal-geometric] verdict: %s\n", verdict))
 cat(sprintf("[T-SBC-marginal-geometric] artefacts in %s\n", OUT_DIR))

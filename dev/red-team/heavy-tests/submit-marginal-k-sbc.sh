@@ -1,36 +1,44 @@
 #!/bin/bash
 #SBATCH --job-name=rt-marg-k-sbc
 #SBATCH --partition=shared
-#SBATCH --time=08:00:00
+#SBATCH --array=0-39
+#SBATCH --time=00:15:00
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=8G
-#SBATCH --gres=tmp:4G
-#SBATCH --output=/nobackup/%u/mkp-study/red-team/logs/marg-k-sbc_%j.out
-#SBATCH --error=/nobackup/%u/mkp-study/red-team/logs/marg-k-sbc_%j.err
+#SBATCH --mem=4G
+#SBATCH --gres=tmp:2G
+#SBATCH --output=/nobackup/%u/mkp-study/red-team/logs/marg-k-sbc_%A_%a.out
+#SBATCH --error=/nobackup/%u/mkp-study/red-team/logs/marg-k-sbc_%A_%a.err
 #
 # PR-C / plan §7.3 — Hamilton SBC for the marginal-k geometric arm.
-# Mirrors `submit-sbc.sh` but single-task (v1 = geometric arm only).
 #
-# IMPORTANT — PRE-BUILD ON THE LOGIN NODE BEFORE sbatch:
+# ARRAY (40 shards x 5 sims = 200) — replaces the single 8 h task. Rationale:
+# under fair-share depression (many of the user's own jobs running) a single
+# long job sits at (Priority) and cannot be backfilled into idle CPUs that the
+# scheduler reserves for higher-priority jobs. A ~3-min/task array backfills
+# into those gaps. Each task runs a contiguous block of sims via the harness'
+# MARGINAL_K_SBC_NSHARD / _SHARD env vars (seeds seedBase+i unchanged, so the
+# sharded run reproduces the monolith's 200 sims EXACTLY). A separate
+# aggregate job (submit-marginal-k-agg.sh, afterany dependency) merges the
+# shards and computes the verdict.
+#
+# IMPORTANT — PRE-BUILD ON THE LOGIN NODE BEFORE sbatch (per
+# feedback_pkgload_prebuild): the Rscript below runs pkgload::load_all(),
+# which recompiles MkPrime if src/MkPrime.so is stale/missing. With 40 tasks
+# that recompile races and clobbers the shared src/ (sbc v9 lost 3/6 exactly
+# this way). Pre-build once so the .so is fresh:
 #
 #     cd /nobackup/${USER}/mkp-study/red-team/mkp-source
-#     module load r/4.5.1
-#     module load gcc/14.2 || true
-#     R_LIBS_USER=/nobackup/${USER}/mkp-study/red-team/lib \
-#       Rscript -e 'devtools::load_all(".")'
+#     git pull
+#     module load r/4.5.1 gcc/14.2
+#     R_LIBS_USER=/nobackup/${USER}/mkp-study/red-team/lib:/nobackup/${USER}/mkp-study/lib \
+#       Rscript -e 'pkgload::load_all(getwd())'   # NOT devtools (not installed)
+#     mkdir -p dev/red-team/heavy-tests/marginal-k/sbc-results/shards
 #
-# Per `feedback_pkgload_prebuild`: pkgload::load_all() inside the Rscript
-# this script invokes will re-compile MkPrime if a stale src/MkPrime.so is
-# missing — and for an array job this races between tasks and half die
-# with "file too short" (sbc v9 lost 3/6 to exactly this). Single-task
-# jobs avoid the race but a stale .so still wastes an 8h walltime window
-# rebuilding. Pre-build once on the login node so the worktree's src/ has
-# a fresh .so before sbatch.
+# The stale-.so guard below is belt-and-braces: if the pre-build did not take,
+# every task refuses to run rather than 40 of them racing to recompile.
 #
-# Per `feedback_slurm_inscript_path`: the Rscript path below is
-# ${SRC}/dev/red-team/heavy-tests/marginal-k/T-SBC-marginal-geometric.R
-# — NOT ${RT}/heavy-tests/... which was the stale-script bug that silently
-# bit sbc v6/v7 (running an out-of-tree old copy of sbc.R).
+# Per feedback_slurm_inscript_path: the Rscript path is ${SRC}/dev/red-team/...
+# NOT ${RT}/heavy-tests/... (the stale out-of-tree copy that bit sbc v6/v7).
 
 set -euo pipefail
 
@@ -48,31 +56,29 @@ export R_LIBS_USER="${RT}/lib:${PROJECT}/lib"
 export R_LIBS="${RT}/lib:${PROJECT}/lib"
 
 mkdir -p "${RT}/logs"
-mkdir -p "${SRC}/dev/red-team/heavy-tests/marginal-k/sbc-results-hamilton"
+# Submit-side shard dir (idempotent; harness also dir.create()s defensively).
+mkdir -p "${SRC}/dev/red-team/heavy-tests/marginal-k/sbc-results/shards"
 
-echo "[$(date)] marginal-k SBC (geometric arm)"
-echo "  job_id=${SLURM_JOB_ID}"
-echo "  TMPDIR=${TMPDIR}"
-echo "  R_LIBS=${R_LIBS}"
-echo "  SRC=${SRC}"
-
-# Run from the worktree root so pkgload::load_all(".") works AND so the
-# in-script OUT_DIR path resolves correctly (it's relative).
-cd "${SRC}"
-
-# Use the source-controlled driver — NOT ${RT}/heavy-tests/... (stale copy
-# bug — feedback_slurm_inscript_path).
-Rscript "${SRC}/dev/red-team/heavy-tests/marginal-k/T-SBC-marginal-geometric.R"
-
-# Mirror artefacts into the Hamilton-results dir for easier collection
-# (the driver writes to sbc-results/; we copy to sbc-results-hamilton/ so
-# the SRC tree stays clean if re-run interactively).
-RESULTS_SRC="${SRC}/dev/red-team/heavy-tests/marginal-k/sbc-results"
-RESULTS_DST="${SRC}/dev/red-team/heavy-tests/marginal-k/sbc-results-hamilton"
-if [ -d "${RESULTS_SRC}" ]; then
-  cp -r "${RESULTS_SRC}"/* "${RESULTS_DST}/" || true
+# ---- Stale-/missing-.so guard (advisor): never recompile in array context --
+SO="${SRC}/src/MkPrime.so"
+if [ ! -f "${SO}" ]; then
+  echo "[shard ${SLURM_ARRAY_TASK_ID:-?}] MkPrime.so MISSING — pre-build on the login node first; refusing to run."
+  exit 1
+fi
+if find "${SRC}/src" \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -newer "${SO}" | grep -q .; then
+  echo "[shard ${SLURM_ARRAY_TASK_ID:-?}] STALE .so vs src sources — refusing to recompile in a 40-way array; pre-build on the login node first."
+  exit 1
 fi
 
-du -hs "${TMPDIR}" > "${RT}/logs/marg-k-sbc_${SLURM_JOB_ID}_tmpdir.log" || true
+echo "[$(date)] marginal-k SBC shard ${SLURM_ARRAY_TASK_ID} (geometric arm)"
+echo "  array_job=${SLURM_ARRAY_JOB_ID} task=${SLURM_ARRAY_TASK_ID}"
+echo "  TMPDIR=${TMPDIR}  R_LIBS=${R_LIBS}  SRC=${SRC}"
 
-echo "[$(date)] marginal-k SBC complete"
+cd "${SRC}"
+
+export MARGINAL_K_SBC_NSHARD=40
+export MARGINAL_K_SBC_SHARD=${SLURM_ARRAY_TASK_ID}
+Rscript "${SRC}/dev/red-team/heavy-tests/marginal-k/T-SBC-marginal-geometric.R"
+
+du -hs "${TMPDIR}" > "${RT}/logs/marg-k-sbc_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}_tmpdir.log" || true
+echo "[$(date)] marginal-k SBC shard ${SLURM_ARRAY_TASK_ID} complete"
