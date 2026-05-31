@@ -51,8 +51,34 @@ deferred to v1.x — not in v1.
   PASS as of feat/marginal-k landing.
 - Posterior overlap vs sampled-k (§7.2): driver at
   `dev/red-team/heavy-tests/marginal-k/T-OVL-sampled-vs-marginal.R`.
-  Not yet run; companion sbatch script is PR-C work.
-- Model A SBC (§7.3): PR-C work (Hamilton).
+  Not yet run; companion sbatch script is Stage 2 work.
+- Model A SBC on p (§7.3): **VALIDATED CLEAN (2026-05-31).** Two bugs were
+  found and fixed en route: MARGINAL-K-INIT-001 (init-logLik freeze, 8a26872)
+  and MARGINAL-K-TRUNC-001 (geometric truncation normaliser, e5ebf90). Post-fix
+  local N=400 SBC: pooled Anderson-Darling rank-uniformity p = 0.862 (p),
+  0.711 (tree_length), 0.517 (rate_log_sd); low-p (<0.10) gross frac rank<=2
+  0.92 -> 0.05. The residual low-p *conditional* rank deflation is a
+  CORRECT-posterior shrinkage artifact (conditional sub-binning of SBC ranks is
+  not a valid calibration test — SBC guarantees only marginal uniformity), NOT a
+  forward/inference mismatch; established by independent review + the C-i check
+  below.
+- C-i truncation guard (`tests/testthat/test-marginal-k-truncation.R`,
+  "marginal-k LL == full uncapped/uncutoff reference at low p"): **PASS.** The
+  package marginal-k summation (candidate cap + log-cutoff + analytic Z_A)
+  equals the explicit full logSumExp over k' in [kObs,K] to <= 7.3e-12 across
+  kObs {2..6} x p {0.005..0.5}; the -25 log-cutoff drops <= 1.9e-11 mass. So
+  p < 0.05 is a weakly-identified regime, not a calibration defect. (Caveat:
+  this is a forward/inference *consistency* check; a shared-wrong truncation
+  model would need a large-data recovery check.)
+
+**Known limit / Stage 1b watch-item.** The C++ candidate cap
+`kMaxKprimeCand = 50` (mcmc_state.h) currently exceeds the SBC truncation
+`K = 30`, so it does not bite. Raising the model's `K` (e.g. the intended
+K = 200 real-data default) ABOVE `kMaxKprimeCand` would silently cap the
+marginal numerator while `Z_A` normalises the full [2,K] — reintroducing
+MARGINAL-K-TRUNC-001 across a wide p range. Stage 1b must wire `kprimeTruncK`
+from the model AND couple `kMaxKprimeCand >= K` (plus a loud `K >= max(kObs)`
+guard). The C-i guard test above would catch a regression of this kind.
 
 **Empirical performance.** Hyperparameter-level identity vs sampled-k:
 heavy-test PENDING (T-OVL). Per-character u not sampled — explicit

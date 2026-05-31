@@ -87,3 +87,63 @@ test_that("marginal-k LL responds to the truncation cap K (live-binary guard)", 
   r <- .trunc_eval(p, K = 30L)
   expect_true(is.finite(r$LL))
 })
+
+# ---------------------------------------------------------------------------
+# C-i REGRESSION GUARD (the deterministic check behind the "low-p SBC residual is
+# a correct-posterior shrinkage artifact, not a forward/inference mismatch"
+# verdict). The package marginal-k summation (candidate cap kMaxKprimeCand +
+# log-cutoff kKprimeLogCutoff + analytic truncation normaliser Z_A) MUST equal the
+# explicit full logSumExp over k' in [kObs, K], at low p (heavy geometric tail),
+# for every kObs including high-kObs. If a future change drops/garbles the cap,
+# cutoff, or Z_A -- or the .so goes stale -- this FAILS loudly.
+#
+# Two internal guards prevent a *vacuous* pass (the bug that once made a broken
+# harness look like it passed): G1 asserts the fixed-k' reference truly varies
+# with k' (k'-pinning is live), G2 anchors the fixed-k' path to the package's own
+# default-init likelihood. NB: this is a forward/inference *consistency* check; it
+# cannot detect a shared-wrong truncation model (that needs a recovery check).
+test_that("marginal-k LL == full uncapped/uncutoff reference at low p (C-i guard)", {
+  set.seed(2026); ntip <- 8L; K <- 30L
+  tr <- ape::rtree(ntip, tip.label = paste0("t", seq_len(ntip)))
+  tr$edge.length <- rep_len(0.15, nrow(tr$edge))
+  trp <- TreeTools::Preorder(tr); TL <- sum(tr$edge.length); RBL <- tr$edge.length / TL
+  lse <- function(x) { x <- x[is.finite(x)]; if (!length(x)) return(-Inf); m <- max(x); m + log(sum(exp(x - m))) }
+  logZA <- function(p) log1p(-(1 - p)^(K - 1))            # Model A truncation normaliser, support k' in [2,K]
+
+  mkChar <- function(v) MkPrimeData(TreeTools::MatrixToPhyDat(
+    matrix(v, ncol = 1, dimnames = list(tr$tip.label, "char1"))))
+  cases <- list(kObs2 = mkChar(c(0,0,1,1,0,1,0,1)),       # low-kObs
+                kObs6 = mkChar(c(0,1,2,3,4,5,0,1)))        # high-kObs
+
+  mk <- function(mode) suppressMessages(MkPrimeModel(
+    coding = "variable", nCat = 1L, kPrimePrior = "geometric", likelihoodMode = mode,
+    priorVariant = "unconditional", kprimeHyperA = 1, kprimeHyperB = 1, expSteps = 1.4))
+  modM <- mk("marginal_k"); modS <- mk("sampled_k")
+
+  evalLL <- function(model, mkd, mutate) {
+    modf <- MkPrime:::.FinalizeModel(model, trp, mkd); st0 <- MkPrime:::.InitState(trp, mkd, modf)
+    st0$rate_log_sd <- 0; st0$tree_length <- TL; st0$rel_br_lengths <- RBL; st0 <- mutate(st0)
+    dp <- MkPrime:::.InitMcmcData(mkd, modf); sp <- MkPrime:::.InitMcmcChain(st0)
+    fill_partition_cache(dp, sp); eval_full_loglik_cpp(dp, sp)
+  }
+  evalMarg <- function(mkd, p)   evalLL(modM, mkd, function(s) { s$p <- p; s })
+  LLfixed  <- function(mkd, kp)  evalLL(modS, mkd, function(s) { s$p <- 0.1
+                                    s$kPrime <- rep_len(as.integer(kp), length(s$kPrime)); s })
+  defaultLL <- function(mkd)     evalLL(modS, mkd, function(s) { s$p <- 0.1; s })   # default init kPrime == kObs
+
+  for (nm in names(cases)) {
+    mkd <- cases[[nm]]; kobs <- mkd$kObs[1]; ks <- kobs:K
+    FX <- vapply(ks, function(kp) LLfixed(mkd, kp), numeric(1)); names(FX) <- ks
+    # G1: k'-pinning is live (reference is non-trivial, not collapsed to a constant)
+    expect_gt(stats::sd(FX), 1e-6, label = sprintf("[%s] G1 sd(FX) across k' (k'-pinning live)", nm))
+    # G2: fixed-k' path anchored to the package default-init likelihood at k'=kObs
+    expect_equal(unname(FX[as.character(kobs)]), defaultLL(mkd), tolerance = 1e-9,
+                 label = sprintf("[%s] G2 LLfixed(kObs) == package default-init LL", nm))
+    # MAIN: package marginal == full uncapped/uncutoff reference, at low p (heavy tail)
+    for (p in c(0.01, 0.05)) {
+      ref <- lse((ks - 2) * log1p(-p) + log(p) + FX) - logZA(p)
+      expect_equal(evalMarg(mkd, p), ref, tolerance = 1e-7,
+                   label = sprintf("[%s] package marginal == full reference at p=%.2f", nm, p))
+    }
+  }
+})
