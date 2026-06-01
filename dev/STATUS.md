@@ -174,7 +174,14 @@ dropped from the `.BuildMoves` schedule. Case 30 (`mh_logit_p`) gets the
 redistributed weight since `p` now dominates `u_max(p)`.
 
 **Open follow-ups.**
-- PR-C: T-OVL + SBC validation on Hamilton.
+- PR-C: T-OVL + SBC validation on Hamilton (Stage 2 SBC driver
+  `T-SBC-sampled-geometric.R` ready; full N=200 run pending).
+- Stage 2 residual: the R-fallback `.DoMove` `gibbs_p` (`R/RunMkPrime.R`) still
+  does an UNtruncated `Beta(a+nTrans, b+sumU)` draw — wrong for the truncated
+  geometric, but currently UNREACHABLE (the `.BuildMoves` scheduler emits
+  `mh_logit_p` for the geometric, and the C++ engine case 9 is guarded). Mirror
+  the C++ non-conjugacy guard in the R-fallback if `gibbs_p` is ever
+  re-scheduled, so a misrouted call can't silently sample the wrong p.
 - v1.x: full per-(node, k') CL cache (plan Option A) once T-OVL passes
   and a 150-tip benchmark identifies the cache as the bottleneck.
 - v1.x: marginal-k port to `empirical_geometric` /
