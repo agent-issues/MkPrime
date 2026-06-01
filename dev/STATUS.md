@@ -71,14 +71,37 @@ deferred to v1.x — not in v1.
   this is a forward/inference *consistency* check; a shared-wrong truncation
   model would need a large-data recovery check.)
 
-**Known limit / Stage 1b watch-item.** The C++ candidate cap
-`kMaxKprimeCand = 50` (mcmc_state.h) currently exceeds the SBC truncation
-`K = 30`, so it does not bite. Raising the model's `K` (e.g. the intended
-K = 200 real-data default) ABOVE `kMaxKprimeCand` would silently cap the
-marginal numerator while `Z_A` normalises the full [2,K] — reintroducing
-MARGINAL-K-TRUNC-001 across a wide p range. Stage 1b must wire `kprimeTruncK`
-from the model AND couple `kMaxKprimeCand >= K` (plus a loud `K >= max(kObs)`
-guard). The C-i guard test above would catch a regression of this kind.
+**Stage 1b — truncation cap K wired from the model (DONE 2026-06-01).**
+`MkPrimeModel(kprimeTruncK = K)` (default **200** real-data; SBC pins **30**)
+now flows through `.InitMcmcData` → `set_kprime_trunc_k()` (a setter mirroring
+`set_branch_bins`, so the 30-arg `prepare_mcmc_data` signature is untouched)
+into `McmcData.kprimeTruncK`. The C++ candidate cap `kMaxKprimeCand` was raised
+**50 → 256** so the marginal numerator can sum the full support `[2, K]` at the
+K = 200 default; `set_kprime_trunc_k` enforces `2 <= K <= 256` and
+`.InitMcmcData` enforces `K >= max(kObs)` (friendly abort, else a character has
+empty truncated support → −Inf). Cost: `charLogW`/`charLLCache` grow to
+`nTrans·256` doubles (~0.6 MB at 300 chars); the heavy per-(node,k′)
+`PerKpClCache` is dormant in v1 (forward-decl only), so this does NOT scale that
+allocation. Any `K <= 30` result is bit-identical to the old cap (the per-char
+cap `nEff = min(nCand, K − kObs + 1)` is unchanged), so SBC at K = 30 is
+unaffected. Verified end-to-end:
+- New guard `test-marginal-k-truncation.R` ("numerator reaches the full support
+  at K=200"): the package marginal at K = 200 equals the explicit logSumExp over
+  the full `[2, 200]` (diff 0; a cap-50 numerator would land on the `[2,51]`
+  reference, off by ~1.3e-3 ≫ 1e-7 tol → FAIL), with G1/G2 anti-vacuity guards
+  and a live-K contrast (K = 200 vs 30 moves the LL ~0.80 nats).
+- Finding: the numerator's `k′ > 51` tail is **likelihood-suppressed**
+  (`P(data|k′)` decays ~1 nat / 10 states), so the cap's practical impact is
+  small for low-kObs characters even though the *prior* mass there is large — a
+  useful bound. K matters chiefly via `Z_A(p)` at small p (real-data headroom).
+- `RunMkPrime` end-to-end smoke at K = 200 (fixed-topology, marginal_k): PASS.
+
+**Out-of-scope red test (pre-existing).** `test-marginal-k-cache-option-a.R`
+"NNI (case 5) refreshes the cache" FAILS (warm − cold = 0.164 nats). Proven
+**not** a Stage 1b regression: the failure is bit-for-bit IDENTICAL at K = 30 and
+K = 200, so the K-wiring did not cause it. This is the tracked Tier-2 partial-CL
+warm≠cold bug (a topology move does not refresh the per-(node,k′) cache);
+SBC-irrelevant because SBC runs `fixTopology = TRUE`. Tracked separately.
 
 **Empirical performance.** Hyperparameter-level identity vs sampled-k:
 heavy-test PENDING (T-OVL). Per-character u not sampled — explicit

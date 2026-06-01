@@ -670,6 +670,17 @@ BEGIN_RCPP
     return R_NilValue;
 END_RCPP
 }
+// set_kprime_trunc_k
+void set_kprime_trunc_k(SEXP dataPtr, int K);
+RcppExport SEXP _MkPrime_set_kprime_trunc_k(SEXP dataPtrSEXP, SEXP KSEXP) {
+BEGIN_RCPP
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type dataPtr(dataPtrSEXP);
+    Rcpp::traits::input_parameter< int >::type K(KSEXP);
+    set_kprime_trunc_k(dataPtr, K);
+    return R_NilValue;
+END_RCPP
+}
 // cpp_log_likelihood_xptr
 double cpp_log_likelihood_xptr(SEXP dataPtr, Rcpp::IntegerVector parent, Rcpp::IntegerVector child, Rcpp::NumericVector edgeLen, Rcpp::IntegerVector kPrime, double rateLoss, double rateLogSd, double rateNeo, double betaScale);
 RcppExport SEXP _MkPrime_cpp_log_likelihood_xptr(SEXP dataPtrSEXP, SEXP parentSEXP, SEXP childSEXP, SEXP edgeLenSEXP, SEXP kPrimeSEXP, SEXP rateLossSEXP, SEXP rateLogSdSEXP, SEXP rateNeoSEXP, SEXP betaScaleSEXP) {
@@ -936,6 +947,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_test_flat_jc_constprob_pair", (DL_FUNC) &_MkPrime_test_flat_jc_constprob_pair, 8},
     {"_MkPrime_prepare_mcmc_data", (DL_FUNC) &_MkPrime_prepare_mcmc_data, 32},
     {"_MkPrime_set_branch_bins", (DL_FUNC) &_MkPrime_set_branch_bins, 2},
+    {"_MkPrime_set_kprime_trunc_k", (DL_FUNC) &_MkPrime_set_kprime_trunc_k, 2},
     {"_MkPrime_cpp_log_likelihood_xptr", (DL_FUNC) &_MkPrime_cpp_log_likelihood_xptr, 9},
     {"_MkPrime_cpp_log_likelihood_partitioned_xptr", (DL_FUNC) &_MkPrime_cpp_log_likelihood_partitioned_xptr, 10},
     {"_MkPrime_cpp_data_nclasses", (DL_FUNC) &_MkPrime_cpp_data_nclasses, 1},

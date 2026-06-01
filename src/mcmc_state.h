@@ -382,7 +382,19 @@ double const_site_prob_for_k(
 // can do its own logSumExp with arbitrary `P(u | hyperparams)` weights.
 // ---------------------------------------------------------------------------
 
-constexpr int    kMaxKprimeCand   = 50;     // absolute cap on ko candidates
+// Stage 1b (MARGINAL-K-TRUNC-001 coupling): the marginal numerator sums
+// candidates ko with k' = kObs_i + ko, capped at min(nCand, K - kObs_i + 1)
+// where K = McmcData.kprimeTruncK. For the sum to actually reach K the
+// candidate cap must satisfy kMaxKprimeCand >= K - 1 (worst case kObs = 2);
+// otherwise the numerator caps below K while Z_A renormalises [2, K],
+// reintroducing the truncation bias. set_kprime_trunc_k() enforces
+// K <= kMaxKprimeCand at the boundary. Raised 50 -> 256 to admit the
+// real-data default K = 200 with margin. Cost: charLogW/charLLCache grow to
+// nTrans * 256 doubles (~0.6 MB at 300 chars) and wBuf to 256 doubles (2 KB
+// stack); the heavy per-(node, k') PerKpClCache is dormant in v1 (forward
+// decl only), so this does NOT scale that allocation. Any K <= 30 result is
+// bit-identical to the old cap (nEff = min(nCand, K - kObs + 1) is unchanged).
+constexpr int    kMaxKprimeCand   = 256;    // absolute cap on ko candidates
 constexpr double kKprimeLogCutoff = -25.0;  // M-164 prior-ceiling cutoff
 
 struct McmcState;  // defined in mcmc.cpp; forward-declared so the helper

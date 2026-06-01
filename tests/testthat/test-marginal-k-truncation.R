@@ -38,6 +38,8 @@ library("TreeTools")
   mod <- suppressMessages(MkPrimeModel(
     coding = "variable", nCat = 1L, kPrimePrior = "geometric",
     likelihoodMode = "marginal_k", priorVariant = "unconditional",
+    kprimeTruncK = 30L,   # Stage 1b: model default is now 200; pin to the
+                          # forward K_MAX_PRIOR (30) these references assume.
     kprimeHyperA = 1, kprimeHyperB = 1, expSteps = 1.4))
   modf <- MkPrime:::.FinalizeModel(mod, trp, mkd)
   st0 <- MkPrime:::.InitState(trp, mkd, modf)
@@ -117,7 +119,8 @@ test_that("marginal-k LL == full uncapped/uncutoff reference at low p (C-i guard
 
   mk <- function(mode) suppressMessages(MkPrimeModel(
     coding = "variable", nCat = 1L, kPrimePrior = "geometric", likelihoodMode = mode,
-    priorVariant = "unconditional", kprimeHyperA = 1, kprimeHyperB = 1, expSteps = 1.4))
+    priorVariant = "unconditional", kprimeTruncK = 30L,   # pin to this test's K
+    kprimeHyperA = 1, kprimeHyperB = 1, expSteps = 1.4))
   modM <- mk("marginal_k"); modS <- mk("sampled_k")
 
   evalLL <- function(model, mkd, mutate) {
@@ -146,4 +149,81 @@ test_that("marginal-k LL == full uncapped/uncutoff reference at low p (C-i guard
                    label = sprintf("[%s] package marginal == full reference at p=%.2f", nm, p))
     }
   }
+})
+
+# ---------------------------------------------------------------------------
+# STAGE 1b CAP-COUPLING GUARD. The whole point of Stage 1b is that the model's
+# truncation cap K is wired through to the C++ evaluator AND that the candidate
+# cap kMaxKprimeCand (raised 50 -> 256) is large enough for the marginal
+# numerator to sum the FULL support [2, K] when K is large (the real-data
+# default K = 200). If the numerator silently capped below K (the old cap = 50)
+# while Z_A normalised [2, K], it would reintroduce MARGINAL-K-TRUNC-001 across
+# a wide p range.
+#
+# This test runs at K = 200, p = 0.02 (heavy geometric tail, so prior mass well
+# beyond k' = 51 is substantial), and proves TWO things:
+#   (1) DISCRIMINATION: the full [2,200] reference differs materially from a
+#       [2,51]-capped reference (same Z_A(200)) -> the >k'=51 tail is real, so
+#       matching the full one is a genuine test of the coupling (not vacuous).
+#   (2) IDENTITY: the package marginal at model K = 200 equals the full [2,200]
+#       reference. With the old cap = 50 the numerator would stop at k' ~ 51 and
+#       match (2)'s capped reference instead -> this assertion FAILS.
+# G1/G2 guard against a vacuous pass exactly as in the C-i test above.
+test_that("marginal-k numerator reaches the full support at K=200 (Stage 1b cap coupling)", {
+  set.seed(2026); ntip <- 8L; K <- 200L; p <- 0.02
+  tr <- ape::rtree(ntip, tip.label = paste0("t", seq_len(ntip)))
+  tr$edge.length <- rep_len(0.15, nrow(tr$edge))
+  trp <- TreeTools::Preorder(tr); TL <- sum(tr$edge.length); RBL <- tr$edge.length / TL
+  lse <- function(x) { x <- x[is.finite(x)]; if (!length(x)) return(-Inf); m <- max(x); m + log(sum(exp(x - m))) }
+  logZA <- function(pp, KK) log1p(-(1 - pp)^(KK - 1))
+
+  mkChar <- function(v) MkPrimeData(TreeTools::MatrixToPhyDat(
+    matrix(v, ncol = 1, dimnames = list(tr$tip.label, "char1"))))
+  mkd <- mkChar(c(0, 0, 1, 1, 0, 1, 0, 1))            # kObs = 2 (heaviest tail)
+
+  mk <- function(mode, KK) suppressMessages(MkPrimeModel(
+    coding = "variable", nCat = 1L, kPrimePrior = "geometric", likelihoodMode = mode,
+    priorVariant = "unconditional", kprimeTruncK = KK,
+    kprimeHyperA = 1, kprimeHyperB = 1, expSteps = 1.4))
+  modM <- mk("marginal_k", K); modS <- mk("sampled_k", K)
+
+  evalLL <- function(model, mutate) {
+    modf <- MkPrime:::.FinalizeModel(model, trp, mkd); st0 <- MkPrime:::.InitState(trp, mkd, modf)
+    st0$rate_log_sd <- 0; st0$tree_length <- TL; st0$rel_br_lengths <- RBL; st0 <- mutate(st0)
+    dp <- MkPrime:::.InitMcmcData(mkd, modf); sp <- MkPrime:::.InitMcmcChain(st0)
+    fill_partition_cache(dp, sp); eval_full_loglik_cpp(dp, sp)
+  }
+  evalMarg <- function() evalLL(modM, function(s) { s$p <- p; s })
+  LLfixed  <- function(kp) evalLL(modS, function(s) { s$p <- 0.1
+                              s$kPrime <- rep_len(as.integer(kp), length(s$kPrime)); s })
+  defaultLL <- evalLL(modS, function(s) { s$p <- 0.1; s })
+
+  kobs <- mkd$kObs[1]; ks <- kobs:K
+  FX <- vapply(ks, LLfixed, numeric(1)); names(FX) <- ks
+  # G1/G2: reference is live and anchored (not a collapsed constant).
+  expect_gt(stats::sd(FX), 1e-6, label = "G1 sd(FX) across k' (k'-pinning live)")
+  expect_equal(unname(FX[as.character(kobs)]), defaultLL, tolerance = 1e-9,
+               label = "G2 LLfixed(kObs) == package default-init LL")
+
+  logw    <- (ks - 2) * log1p(-p) + log(p) + FX
+  refFull <- lse(logw)            - logZA(p, K)   # numerator over the full [2,200]
+  refCap  <- lse(logw[ks <= 51])  - logZA(p, K)   # what an old cap=50 numerator gives
+  # The likelihood P(data | k') DECAYS in k' (FX: -5.87 at k'=2 down to -16.9 at
+  # k'=200), so the numerator's >k'=51 tail is small in absolute terms
+  # (refFull - refCap ~ 1.3e-3 nats here) even though the *prior* mass there is
+  # large -- a useful bound on the cap's practical impact for low-kObs chars.
+  # It is still ~1e4x the identity tolerance below, so the identity check is a
+  # genuine (non-vacuous) test that the numerator includes k' in (51, 200].
+  expect_gt(abs(refFull - refCap), 1e-5,
+            label = ">k'=51 numerator tail is resolvable above the 1e-7 identity tol")
+  # IDENTITY: the package marginal at K=200 sums the FULL support, not a capped
+  # one. With the old cap=50 it would equal refCap, off by ~1.3e-3 >> 1e-7 -> FAIL.
+  expect_equal(evalMarg(), refFull, tolerance = 1e-7,
+               label = "package marginal at K=200 == full [2,200] reference")
+  # LIVE-K: the model's K is wired end-to-end -- changing it materially moves the
+  # marginal LL (here ~0.80 nats, via -logZ_A(0.02,30) vs -logZ_A(0.02,200)).
+  modM30 <- mk("marginal_k", 30L)
+  em30 <- evalLL(modM30, function(s) { s$p <- p; s })
+  expect_gt(abs(evalMarg() - em30), 0.1,
+            label = "model kprimeTruncK 200 vs 30 materially changes the binary LL")
 })

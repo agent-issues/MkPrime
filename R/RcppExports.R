@@ -169,6 +169,10 @@ set_branch_bins <- function(dataPtr, nBins) {
     invisible(.Call(`_MkPrime_set_branch_bins`, dataPtr, nBins))
 }
 
+set_kprime_trunc_k <- function(dataPtr, K) {
+    invisible(.Call(`_MkPrime_set_kprime_trunc_k`, dataPtr, K))
+}
+
 cpp_log_likelihood_xptr <- function(dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, betaScale = 1.0) {
     .Call(`_MkPrime_cpp_log_likelihood_xptr`, dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, betaScale)
 }

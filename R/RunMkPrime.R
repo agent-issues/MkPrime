@@ -3807,7 +3807,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     empTailDecay <- as.numeric(emp$tail_decay)
     empLogTailStartP <- if (emp$tail_start_p > 0) log(emp$tail_start_p) else -Inf
   }
-  prepare_mcmc_data(
+  dp <- prepare_mcmc_data(
     parts, as.integer(mkd$kObs), mkd$type,
     any(mkd$type == "neomorphic"),
     model$nCat, model$coding, model$relabel,
@@ -3832,6 +3832,27 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     identical(model$likelihoodMode, "marginal_k"),
     identical(model$priorVariant %||% "conditional", "unconditional")
   )
+  # Stage 1b: wire the marginal-k truncation cap K from the model into the
+  # McmcData (set_kprime_trunc_k; mirrors set_branch_bins, avoiding a
+  # prepare_mcmc_data signature change). K MUST equal the SBC forward's
+  # K_MAX_PRIOR for calibration. Guard K >= max(kObs) here for a friendly
+  # message; otherwise a character has empty truncated support [2, K] and the
+  # evaluator returns a -Inf likelihood. (sampled_k leaves the C++ default 30,
+  # which K never consults, so the setter is gated on marginal_k.)
+  if (identical(model$likelihoodMode, "marginal_k")) {
+    K <- as.integer(model$kprimeTruncK %||% 200L)
+    maxKObs <- max(as.integer(mkd$kObs))
+    if (K < maxKObs) {
+      cli::cli_abort(c(
+        "{.arg kprimeTruncK} = {.val {K}} is below the largest observed
+         state count max(kObs) = {.val {maxKObs}}.",
+        i = "That character would have empty truncated support [2, K] and a
+             -Inf likelihood. Raise {.arg kprimeTruncK} to >= {maxKObs}."
+      ))
+    }
+    set_kprime_trunc_k(dp, K)
+  }
+  dp
 }
 
 #' Convert an R state to a C++ XPtr<McmcState>

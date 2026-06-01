@@ -3056,6 +3056,32 @@ void set_branch_bins(SEXP dataPtr, int nBins) {
 }
 
 
+// Stage 1b: setter for the marginal-k truncation cap K (same pattern as
+// set_branch_bins — avoids re-threading the 30-arg prepare_mcmc_data
+// signature). K is the declared truncation cap on k' under marginal-k; it
+// MUST equal the SBC forward's K_MAX_PRIOR for calibration. Enforces
+// 2 <= K <= kMaxKprimeCand so the marginal numerator can sum the full
+// support [2, K] (MARGINAL-K-TRUNC-001); exceeding kMaxKprimeCand would cap
+// the numerator below K while Z_A normalises [2, K]. The per-character
+// K >= kObs_i check is done R-side in .InitMcmcData (where kObs is to hand)
+// for a friendlier message; a missed case degrades to a -Inf character here.
+// [[Rcpp::export]]
+void set_kprime_trunc_k(SEXP dataPtr, int K) {
+  McmcData* d = Rcpp::XPtr<McmcData>(dataPtr);
+  if (K < 2) {
+    Rcpp::stop("kprimeTruncK must be >= 2 (got %d).", K);
+  }
+  if (K > kMaxKprimeCand) {
+    Rcpp::stop("kprimeTruncK (%d) exceeds the compile-time candidate cap "
+               "kMaxKprimeCand (%d): the marginal numerator would be capped "
+               "below K while Z_A renormalises [2, K] (MARGINAL-K-TRUNC-001). "
+               "Raise kMaxKprimeCand in src/mcmc_state.h and rebuild.",
+               K, kMaxKprimeCand);
+  }
+  d->kprimeTruncK = K;
+}
+
+
 // Partition-API: R-callable thin wrapper around cpp_log_likelihood (legacy
 // scalar surface). Exposed so tests can compare the two surfaces directly.
 // [[Rcpp::export]]

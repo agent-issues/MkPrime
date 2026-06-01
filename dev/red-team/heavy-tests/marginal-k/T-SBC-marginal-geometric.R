@@ -221,6 +221,9 @@ seedBase       <- {
     # Forward draws kTrue_i = 2 + u_i (Model A, unconditional on kObs_i), so
     # inference uses the unconditional marginal weights p (1-p)^(k - 2).
     priorVariant   = "unconditional",
+    # Stage 1b: the model default truncation cap is now 200; the inference K
+    # MUST equal the forward's K_MAX_PRIOR for calibration, so pin it here.
+    kprimeTruncK   = K_MAX_PRIOR,
     kprimeHyperA   = A_PRIOR,
     kprimeHyperB   = B_PRIOR,
     expSteps       = EXPSTEPS_FIXED

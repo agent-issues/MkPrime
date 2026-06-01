@@ -178,7 +178,8 @@ MkPrimeModel <- function(
     classRateConcentration = 1,
     priorOnClassRateLogSd = c("hyperprior_pooled", "gamma_independent"),
     likelihoodMode = c("sampled_k", "marginal_k"),
-    priorVariant = c("conditional", "unconditional")
+    priorVariant = c("conditional", "unconditional"),
+    kprimeTruncK = 200L
 ) {
   coding <- match.arg(coding, c("variable", "informative", "none"))
   kPrimePrior <- match.arg(
@@ -206,6 +207,21 @@ MkPrimeModel <- function(
          {.code qHeterogeneity = TRUE}.",
         i = "Het + marginal-k is deferred to v1.x (plan §13).",
         i = "Drop one of the two."
+      ))
+    }
+    # Stage 1b: kprimeTruncK is the declared truncation cap K on k' under
+    # marginal-k (prior is a truncated geometric on [2, K], renormalised by
+    # Z(p); MARGINAL-K-TRUNC-001). It MUST equal the SBC forward's K_MAX_PRIOR
+    # for calibration. The C++ candidate cap kMaxKprimeCand = 256 bounds it
+    # above (set_kprime_trunc_k enforces K <= 256 so the numerator can reach
+    # the full support); K >= max(kObs) is enforced data-side in .InitMcmcData.
+    kprimeTruncK <- as.integer(kprimeTruncK)
+    if (is.na(kprimeTruncK) || kprimeTruncK < 2L || kprimeTruncK > 256L) {
+      cli::cli_abort(c(
+        "{.arg kprimeTruncK} must be an integer in [2, 256] (got
+         {.val {kprimeTruncK}}).",
+        i = "256 is the compile-time candidate cap {.code kMaxKprimeCand}
+             in {.file src/mcmc_state.h}; raise it there to go higher."
       ))
     }
   }
@@ -302,7 +318,8 @@ MkPrimeModel <- function(
       classRateConcentration = classRateConcentration,
       priorOnClassRateLogSd = priorOnClassRateLogSd,
       likelihoodMode = likelihoodMode,
-      priorVariant = priorVariant
+      priorVariant = priorVariant,
+      kprimeTruncK = as.integer(kprimeTruncK)
     ),
     class = "MkPrimeModel"
   )
