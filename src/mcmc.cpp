@@ -297,9 +297,20 @@ static double cpp_log_prior(
     // kprimeAlpha, kprimeBeta must be positive for beta_geometric
     if (data.kPriorBetaGeometric &&
         (kprimeAlpha <= 0.0 || kprimeBeta <= 0.0)) return R_NegInf;
+    // The (plain) geometric arm is truncated at K (k' in [2, K],
+    // MARGINAL-K-TRUNC-001): k' > K carries zero prior mass under sampled_k so
+    // the joint marginalises to the marginal-k value (RB-consistency). Other
+    // arms (logseries / beta_geometric / empirical_geometric) are NOT
+    // K-truncated; under marginal_k k'_i is pinned to kObs_i and the evaluator
+    // applies the cap itself, so the upper guard is scoped to sampled_k.
+    const bool isPlainGeom = !data.kPriorLogseries &&
+                             !data.kPriorBetaGeometric &&
+                             !data.kPriorEmpiricalGeometric;
     for (int i = 0; i < data.transIdxGlobal.size(); ++i) {
       int gi = data.transIdxGlobal[i];
       if (kPrime[gi] < data.kObs[gi]) return R_NegInf;
+      if (isPlainGeom && !data.marginalK && kPrime[gi] > data.kprimeTruncK)
+        return R_NegInf;
     }
   }
 
@@ -397,18 +408,41 @@ static double cpp_log_prior(
       // p: Beta hyperprior (same as plain geometric)
       lp += R::dbeta(p, data.kprimeHyperA, data.kprimeHyperB, 1);
     } else {
-      // Hierarchical geometric: P(k'_i = kObs_i + u) = p*(1-p)^u
+      // Hierarchical geometric, TRUNCATED at the declared cap K (k' in [2, K])
+      // and renormalised by Z(p) — MARGINAL-K-TRUNC-001. This is the sampled-k
+      // counterpart of the marginal-k normaliser (cpp_log_likelihood_marginal,
+      // ~lines 4334-4338 and 4369-4373): summing exp(this per-character prior
+      // term + that character's LL) over k'_i in [kObs_i, K] reproduces the
+      // marginal-k per-character value, so likelihoodMode "sampled_k" and
+      // "marginal_k" target the SAME posterior (Rao-Blackwell consistency).
+      // The two Model A/B branches and the exact log1p/exp forms below mirror
+      // the marginal evaluator so the deterministic logSumExp bit-check matches.
       //
-      // Under marginal-k mode, the per-character P(u_i | p) mass is
-      // consumed by cpp_log_likelihood_marginal, not the prior. The
-      // hyperprior on p remains here unchanged.
+      // Under marginal-k mode the per-character P(k'_i | p) mass (incl. the
+      // truncation normaliser) is consumed by cpp_log_likelihood_marginal, so
+      // only the hyperprior on p is added here in that mode.
       if (!data.marginalK) {
-        double sumU = 0.0;
-        for (int i = 0; i < nTrans; ++i) {
-          int gi = data.transIdxGlobal[i];
-          sumU += (kPrime[gi] - data.kObs[gi]);
+        const int    K      = data.kprimeTruncK;
+        const double logP   = std::log(p);
+        const double log1mP = std::log1p(-p);
+        if (data.unconditionalPrior) {
+          // Model A: P(k'_i = k | p) propto p (1-p)^(k-2), k in [2, K].
+          // logZA = log(1 - (1-p)^(K-1)) is shared across all characters.
+          const double logZA = std::log1p(-std::exp((K - 1) * log1mP));
+          for (int i = 0; i < nTrans; ++i) {
+            int gi = data.transIdxGlobal[i];
+            lp += logP + (kPrime[gi] - 2) * log1mP - logZA;
+          }
+        } else {
+          // Model B: P(k'_i = kObs_i + u | p) propto p (1-p)^u,
+          // u in [0, K - kObs_i]; logZB_i = log(1 - (1-p)^(K - kObs_i + 1)).
+          for (int i = 0; i < nTrans; ++i) {
+            int gi = data.transIdxGlobal[i];
+            int u  = kPrime[gi] - data.kObs[gi];
+            lp += logP + u * log1mP
+                - std::log1p(-std::exp((K - data.kObs[gi] + 1) * log1mP));
+          }
         }
-        lp += nTrans * std::log(p) + sumU * std::log1p(-p);
       }
       lp += R::dbeta(p, data.kprimeHyperA, data.kprimeHyperB, 1);
     }
@@ -4418,6 +4452,17 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   // precomputed log-weights in charLogW[].
   // ---------------------------------------------------------------
 
+  // MARGINAL-K-TRUNC-001: for the (plain) geometric arm the prior is truncated
+  // at K, so candidates with k' = kObs_i + c > K carry zero mass and must be
+  // dropped from the Gibbs draw. This move always-accepts, so an out-of-support
+  // draw would NOT be MH-rejected downstream; the cap must happen here. Mirrors
+  // the marginal evaluator's nEff cap (compute over [0, nEff), nEff = min(nCand,
+  // K - kObs_i + 1)). Other arms are not K-truncated and keep the full range.
+  const bool isPlainGeom = !data->kPriorLogseries &&
+                           !data->kPriorBetaGeometric &&
+                           !data->kPriorEmpiricalGeometric;
+  const int  truncK = data->kprimeTruncK;
+
   // Random permutation of transformational character indices
   std::vector<int> perm(nTrans);
   for (int i = 0; i < nTrans; ++i) perm[i] = i;
@@ -4436,6 +4481,23 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
 
     double maxW = charMaxLogW[ti];
     const double* logW = &charLogW[ti * kMaxKprimeCand];
+
+    // MARGINAL-K-TRUNC-001 cap (geometric only). When truncation actually bites
+    // (nEff < nCand), recompute maxW over the retained range: the cached
+    // charMaxLogW is the max over the FULL pre-cap range and may sit above K,
+    // which would skew the logSumExp toward an empty tail. Untruncated and
+    // not-geometric paths keep the original maxW for bit-reproducibility.
+    if (isPlainGeom) {
+      int nEff = truncK - kObs_i + 1;
+      if (nEff <= 0) continue;            // empty support: kObs_i > K
+      if (nEff < nCand) {
+        nCand = nEff;
+        maxW = R_NegInf;
+        for (int c = 0; c < nCand; ++c)
+          if (R_FINITE(logW[c]) && logW[c] > maxW) maxW = logW[c];
+        if (!R_FINITE(maxW)) continue;
+      }
+    }
 
     // Sample from categorical (log-sum-exp)
     double sumExp = 0.0;
@@ -4882,6 +4944,19 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       // convolution, so the full conditional is no longer Beta.  Reject
       // any misrouted call rather than silently producing wrong samples.
       if (data->kPriorEmpiricalGeometric) return false;
+      // MARGINAL-K-TRUNC-001: the plain geometric prior is now truncated at K,
+      // whose normaliser Z(p) = 1 - (1-p)^(K - kObs_i + 1) (Model B) or
+      // 1 - (1-p)^(K-1) (Model A) is p-dependent, so the p full-conditional is
+      // likewise non-Beta. p is sampled via case 30 (mh_logit_p) instead; reject
+      // any misrouted gibbs_p call. (logseries / beta_geometric carry no scalar
+      // p and never schedule gibbs_p, so the plain geometric is the only arm
+      // that can reach here past the empirical guard above.)
+      {
+        const bool isPlainGeom = !data->kPriorLogseries &&
+                                 !data->kPriorBetaGeometric &&
+                                 !data->kPriorEmpiricalGeometric;
+        if (isPlainGeom) return false;
+      }
       int nTrans = (int)data->transIdxGlobal.size();
       if (nTrans == 0) return false;  // no transformational chars: skip
       double sumU = 0.0;

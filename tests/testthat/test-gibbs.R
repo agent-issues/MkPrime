@@ -26,16 +26,25 @@ library("TreeTools")
 # M-082: Gibbs update for p
 # ---------------------------------------------------------------------------
 
-test_that("gibbs_p move is listed for transformational data", {
+test_that("geometric arm schedules mh_logit_p for p (truncated geometric is non-conjugate)", {
+  # Stage 2 (MARGINAL-K-TRUNC-001): the geometric prior is truncated at K, whose
+  # p-normaliser Z(p) breaks Beta conjugacy, so p is sampled via mh_logit_p
+  # (case 30), NOT the legacy gibbs_p (case 9) -- mirroring marginal_k and
+  # empirical_geometric. .BuildMoves defaults to the geometric, sampled_k arm.
   pd <- .small_trans_pd()
   mkd <- MkPrimeData(pd)
   nEdge <- 2 * length(.small_trans_tree()$tip.label) - 3L
   nTrans <- sum(mkd$type == "transformational")
   moves <- MkPrime:::.BuildMoves(nEdge, nTrans, hasNeo = FALSE,
                                  mcmc = MkPrimeMCMC(), fixTopology = FALSE)
-  p_move <- Filter(function(m) m$name == "p", moves)
-  expect_length(p_move, 1L)
-  expect_equal(p_move[[1L]]$type, "gibbs_p")
+  types   <- vapply(moves, `[[`, character(1L), "type")
+  targets <- vapply(moves, function(m) if (is.null(m$target)) "" else m$target,
+                    character(1L))
+  p_moves <- moves[targets == "p"]
+  expect_length(p_moves, 1L)
+  expect_equal(p_moves[[1L]]$type, "logit_scale_p")
+  expect_equal(p_moves[[1L]]$name, "mh_logit_p")
+  expect_false("gibbs_p" %in% types)
 })
 
 test_that("gibbs_p move is absent when there are no transformational chars", {
@@ -50,81 +59,46 @@ test_that("gibbs_p move is absent when there are no transformational chars", {
   expect_false("p" %in% p_names)
 })
 
-test_that("gibbs_p samples p from the correct Beta full conditional", {
-  # With known k' values, the full conditional for p is exactly
-  # Beta(a + nTrans, b + sumU) where sumU = sum(k'_i - kObs_i).
-  # We verify this by drawing many samples from the Gibbs move and
-  # comparing the empirical mean/variance to the theoretical Beta moments.
-  set.seed(3817)
+# The legacy conjugate-Beta-draw tests for gibbs_p (empirical Beta moments and
+# acceptance == 1) validated a full conditional that holds ONLY for the
+# UNtruncated geometric. Stage 2 (MARGINAL-K-TRUNC-001) truncates the geometric
+# prior -- Z(p) is p-dependent -- so that conjugacy no longer holds for any
+# active model, and the move is no longer scheduled. Those mechanism tests have
+# been retired. What matters now is (a) the C++ engine REFUSES a misrouted
+# gibbs_p so it cannot silently emit wrong samples, and (b) RunMkPrime samples p
+# via mh_logit_p. Both are pinned below.
 
-  pd <- .small_trans_pd()
-  mkd <- MkPrimeData(pd)
-  model <- MkPrimeModel()
-  tree  <- .small_trans_tree()
+test_that("C++ engine rejects gibbs_p under the truncated geometric (non-conjugate guard)", {
+  skip_if_not(requireNamespace("ape", quietly = TRUE))
+  set.seed(2194)
 
-  # Fix k' so sumU is known
-  transIdx <- which(mkd$type == "transformational")
-  fixedKPrime <- mkd$kObs
-  fixedKPrime[transIdx] <- mkd$kObs[transIdx] + 1L  # each k'_i = kObs_i + 1
-  sumU <- sum(fixedKPrime[transIdx] - mkd$kObs[transIdx])
-  nTrans <- length(transIdx)
+  pd   <- .small_trans_pd()
+  mkd  <- MkPrimeData(pd)
+  model <- MkPrimeModel(kPrimePrior = "geometric")   # truncated at K (Stage 2)
+  tree <- .small_trans_tree()
 
-  # Expected posterior parameters
-  a_post <- model$kprimeHyperA + nTrans
-  b_post <- model$kprimeHyperB + sumU
-  expected_mean <- a_post / (a_post + b_post)
-  expected_var  <- a_post * b_post / ((a_post + b_post)^2 * (a_post + b_post + 1))
+  model  <- MkPrime:::.FinalizeModel(model, tree, mkd)
+  state0 <- MkPrime:::.InitState(tree, mkd, model)
+  mcmcData <- MkPrime:::.InitMcmcData(mkd, model)
+  statePtr <- MkPrime:::.InitMcmcChain(state0)
+  fill_partition_cache(mcmcData, statePtr)
+  allocate_cl_workspace(mcmcData, statePtr)
 
-  # Use R-fallback .DoMove() to collect samples
-  state <- list(
-    tree = tree, tree_length = 0.5, rel_br_lengths = rep(1/5, 5),
-    rate_loss = 1.0, rate_log_sd = 0.5, rate_neo = NULL,
-    kPrime = fixedKPrime, p = 0.5
-  )
-  state$log_prior <- LogPrior(state, model, mkd)
-  state$log_lik   <- 0.0   # placeholder; not used by gibbs_p
-  state$log_post  <- state$log_lik + state$log_prior
+  s_before <- get_mcmc_state(statePtr)
+  # Route a gibbs_p (case 9) call directly to the engine: it MUST be refused,
+  # because the truncated geometric's p full conditional is not Beta.
+  accepted <- do_move_cpp(mcmcData, statePtr,
+    moveType = 9L, charIdx = 0L,
+    scaleTuning = 0.5, betaSimplexTuning = 10.0,
+    intWalkWindow = 1L, beta = 1.0)
+  s_after <- get_mcmc_state(statePtr)
 
-  moves <- list(list(name = "p", type = "gibbs_p", target = "p", weight = 1))
-  tuning <- list(beta_simplex = 10, int_walk_window = 1L)
-
-  nDraw <- 2000L
-  p_samples <- numeric(nDraw)
-  for (i in seq_len(nDraw)) {
-    res <- MkPrime:::.DoMove(moves[[1L]], state, mkd, model, tuning = tuning)
-    state <- res$state
-    p_samples[i] <- state$p
-  }
-
-  expect_equal(mean(p_samples), expected_mean, tolerance = 0.05)
-  expect_equal(var(p_samples),  expected_var,  tolerance = 0.01)
+  expect_false(accepted)                            # non-conjugate -> rejected
+  expect_equal(s_after$p, s_before$p)                # p untouched
+  expect_equal(s_after$logPrior, s_before$logPrior)  # prior untouched
 })
 
-test_that("gibbs_p always accepts (acceptance rate = 1)", {
-  set.seed(5021)
-
-  pd <- .small_trans_pd()
-  mkd <- MkPrimeData(pd)
-  model <- MkPrimeModel()
-  tree  <- .small_trans_tree()
-
-  moves <- list(list(name = "p", type = "gibbs_p", target = "p", weight = 1))
-  tuning <- list(beta_simplex = 10, int_walk_window = 1L)
-
-  state <- list(
-    tree = tree, tree_length = 0.5, rel_br_lengths = rep(1/5, 5),
-    rate_loss = 1.0, rate_log_sd = 0.5, rate_neo = NULL,
-    kPrime = mkd$kObs, p = 0.5
-  )
-  state$log_prior <- LogPrior(state, model, mkd)
-
-  for (i in seq_len(50L)) {
-    res <- MkPrime:::.DoMove(moves[[1L]], state, mkd, model, tuning = tuning)
-    expect_true(res$accept)
-  }
-})
-
-test_that("RunMkPrime with gibbs_p produces valid posterior for transformational data", {
+test_that("RunMkPrime samples p via mh_logit_p under the geometric prior (valid posterior)", {
   set.seed(7342)
   tree <- .small_trans_tree()
   pd   <- .small_trans_pd()
@@ -139,49 +113,9 @@ test_that("RunMkPrime with gibbs_p produces valid posterior for transformational
   p_vals <- result$samples[, "p"]
   expect_true(all(p_vals > 0 & p_vals < 1))
 
-  # p acceptance should be ~100% (all accepts from Gibbs)
-  p_acc <- result$acceptance[["p"]]
-  expect_gt(p_acc, 0.99)
-})
-
-test_that("gibbs_p updates logPrior correctly in C++ engine", {
-  skip_if_not(requireNamespace("ape", quietly = TRUE))
-  set.seed(2194)
-
-  pd   <- .small_trans_pd()
-  mkd  <- MkPrimeData(pd)
-  # `gibbs_p` is only valid under priors where p has a Beta full conditional
-  # (geometric, beta_geometric).  Under `empirical_geometric` (the default)
-  # the C++ engine refuses the move and `mh_logit_p` is used instead.
-  model <- MkPrimeModel(kPrimePrior = "geometric")
-  tree <- .small_trans_tree()
-
-  # Initialize C++ state
-  model  <- MkPrime:::.FinalizeModel(model, tree, mkd)
-  state0 <- MkPrime:::.InitState(tree, mkd, model)
-  mcmcData <- MkPrime:::.InitMcmcData(mkd, model)
-  statePtr <- MkPrime:::.InitMcmcChain(state0)
-  fill_partition_cache(mcmcData, statePtr)
-  allocate_cl_workspace(mcmcData, statePtr)
-
-  # Record initial log-posterior
-  s_before <- get_mcmc_state(statePtr)
-  lp_before <- s_before$logLik + s_before$logPrior
-
-  # Execute one gibbs_p move via C++
-  accepted <- do_move_cpp(mcmcData, statePtr,
-    moveType = 9L, charIdx = 0L,
-    scaleTuning = 0.5, betaSimplexTuning = 10.0,
-    intWalkWindow = 1L, beta = 1.0)
-
-  expect_true(accepted)  # Gibbs always accepts
-
-  s_after <- get_mcmc_state(statePtr)
-  # logLik must be unchanged; p must have changed; logPrior recomputed
-  expect_equal(s_after$logLik, s_before$logLik)
-  # p is in (0, 1)
-  expect_true(s_after$p > 0 && s_after$p < 1)
-  # logPrior recomputed — may differ from before
-  # (just check it's finite and consistent)
-  expect_true(is.finite(s_after$logPrior))
+  # p is now driven by mh_logit_p (case 30), not gibbs_p. The acceptance table is
+  # keyed by move name: mh_logit_p must be present and gibbs_p ("p") absent.
+  expect_true("mh_logit_p" %in% names(result$acceptance))
+  expect_false("p" %in% names(result$acceptance))
+  expect_gt(stats::sd(p_vals), 0)                    # p actually explores
 })

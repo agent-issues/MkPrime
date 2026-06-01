@@ -209,12 +209,17 @@ MkPrimeModel <- function(
         i = "Drop one of the two."
       ))
     }
-    # Stage 1b: kprimeTruncK is the declared truncation cap K on k' under
-    # marginal-k (prior is a truncated geometric on [2, K], renormalised by
-    # Z(p); MARGINAL-K-TRUNC-001). It MUST equal the SBC forward's K_MAX_PRIOR
-    # for calibration. The C++ candidate cap kMaxKprimeCand = 256 bounds it
-    # above (set_kprime_trunc_k enforces K <= 256 so the numerator can reach
-    # the full support); K >= max(kObs) is enforced data-side in .InitMcmcData.
+  }
+  # kprimeTruncK is the truncation cap K on k' for the GEOMETRIC arm: the prior
+  # is a truncated geometric on [2, K] renormalised by Z(p)
+  # (MARGINAL-K-TRUNC-001). Stage 2 applies the truncation under sampled_k as
+  # well as marginal_k (RB-consistency), so validate [2, 256] whenever the
+  # geometric arm is in use (marginal_k requires it). The C++ candidate cap
+  # kMaxKprimeCand = 256 bounds it above (set_kprime_trunc_k enforces K <= 256
+  # so the numerator can reach the full support); K MUST equal the SBC forward's
+  # K_MAX_PRIOR for calibration, and K >= max(kObs) is enforced data-side in
+  # .InitMcmcData.
+  if (identical(kPrimePrior, "geometric")) {
     kprimeTruncK <- as.integer(kprimeTruncK)
     if (is.na(kprimeTruncK) || kprimeTruncK < 2L || kprimeTruncK > 256L) {
       cli::cli_abort(c(
@@ -564,16 +569,30 @@ LogPrior <- function(state, model, mkd) {
 
   if (hasTrans) {
     if (identical(model$kPrimePrior, "geometric")) {
-      # k'_i: Geometric(p) shifted by kObs_i
-      # P(k'_i = kObs_i + u) = p * (1-p)^u, u = 0, 1, 2, ...
-      #
-      # Under marginal-k mode, the per-character P(u_i | p) mass is consumed
-      # by the marginal-likelihood evaluator (cpp_log_likelihood_marginal),
-      # not the prior. The hyperprior on p is kept here unchanged.
+      # k'_i: TRUNCATED Geometric(p) on [2, K], renormalised by Z(p)
+      # (MARGINAL-K-TRUNC-001). This MUST mirror cpp_log_prior (src/mcmc.cpp,
+      # the plain-geometric branch) bit-for-bit -- same log1p(-exp(.)) forms --
+      # so the R and C++ priors agree (test-partition-prior / -hyperprior compare
+      # them to 1e-10). Under sampled_k both likelihoodModes then target the same
+      # posterior (RB-consistency). Under marginal_k the per-character mass is
+      # consumed by the marginal evaluator; only the p hyperprior is added here.
       if (!marginalK) {
-        u <- state$kPrime[transIdx] - mkd$kObs[transIdx]
-        lp <- lp + length(transIdx) * log(state$p) +
-              sum(u) * log1p(-state$p)
+        K      <- as.integer(model$kprimeTruncK %||% 200L)
+        kp     <- state$kPrime[transIdx]
+        kobs   <- mkd$kObs[transIdx]
+        if (any(kp > K)) return(-Inf)            # truncated support: k' in [.., K]
+        logP   <- log(state$p)
+        log1mP <- log1p(-state$p)
+        if (identical(model$priorVariant %||% "conditional", "unconditional")) {
+          # Model A: P(k' = k | p) propto p (1-p)^(k-2), k in [2, K].
+          logZA <- log1p(-exp((K - 1) * log1mP))
+          lp <- lp + sum(logP + (kp - 2) * log1mP - logZA)
+        } else {
+          # Model B: P(k' = kObs + u | p) propto p (1-p)^u, u in [0, K - kObs].
+          u     <- kp - kobs
+          logZB <- log1p(-exp((K - kobs + 1) * log1mP))   # per-character
+          lp <- lp + sum(logP + u * log1mP - logZB)
+        }
       }
 
       # p: Beta hyperprior

@@ -151,13 +151,19 @@ struct McmcData {
   //                     a per-character factor (1-p)^(kObs_i - 2).
   bool unconditionalPrior = false;
 
-  // MARGINAL-K-TRUNC-001: declared truncation cap K on k' for the marginal-k
-  // geometric prior. The prior is a truncated geometric on k' in [2, K]; the
-  // marginal sum is capped at k <= K AND renormalised by log Z(p) (Model A:
-  // Z = 1-(1-p)^(K-1), shared; Model B: Z_i = 1-(1-p)^(K-kObs_i+1), per kObs).
-  // MUST equal the SBC forward's K_MAX_PRIOR for calibration. Setup must
-  // enforce K >= max(kObs) (else a character has empty support -> -Inf).
-  int kprimeTruncK = 30;
+  // MARGINAL-K-TRUNC-001: declared truncation cap K on k' for the geometric
+  // prior under BOTH likelihoodModes (sampled_k truncates the prior; marginal_k
+  // truncates the marginal sum). The prior is a truncated geometric on
+  // k' in [2, K], renormalised by log Z(p) (Model A: Z = 1-(1-p)^(K-1), shared;
+  // Model B: Z_i = 1-(1-p)^(K-kObs_i+1), per kObs). MUST equal the SBC forward's
+  // K_MAX_PRIOR for calibration. Setup must enforce K >= max(kObs) (else a
+  // character has empty support -> -Inf).
+  //
+  // The compile-time default MATCHES the MkPrimeModel default (200L) so that a
+  // dataPtr built directly via prepare_mcmc_data (bypassing .InitMcmcData, which
+  // wires the model's K via set_kprime_trunc_k) still agrees with the R-side
+  // LogPrior. SBC and the truncation tests pin K=30 explicitly via the model.
+  int kprimeTruncK = 200;
 };
 
 // ---------------------------------------------------------------------------

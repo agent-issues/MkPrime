@@ -163,7 +163,7 @@ test_that("BuildMoves registers slice_kprime_s/r for BG, not p/gibbs_p", {
   expect_false("p" %in% moveNames)
 })
 
-test_that("BuildMoves for geometric still has p, not BG slice", {
+test_that("BuildMoves for geometric registers mh_logit_p, not gibbs_p or BG slice", {
   f <- make_bg_fixture()
   nTrans <- sum(f$mkd$type == "transformational")
   nEdge <- nrow(f$tree$edge)
@@ -171,7 +171,11 @@ test_that("BuildMoves for geometric still has p, not BG slice", {
   moves <- MkPrime:::.BuildMoves(nEdge, nTrans, hasNeo = FALSE, mcmc = mcmc,
                                   kPrimePrior = "geometric")
   moveNames <- vapply(moves, `[[`, character(1), "name")
-  expect_true("p" %in% moveNames)
+  # Stage 2 (MARGINAL-K-TRUNC-001): the truncated geometric samples p via
+  # mh_logit_p (case 30), not the legacy conjugate gibbs_p (named "p"); and it
+  # does not use the beta_geometric (s, r) slice samplers.
+  expect_true("mh_logit_p" %in% moveNames)
+  expect_false("p" %in% moveNames)
   expect_false("slice_kprime_s" %in% moveNames)
 })
 

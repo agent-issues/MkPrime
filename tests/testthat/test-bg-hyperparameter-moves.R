@@ -79,7 +79,10 @@ test_that(".BuildMoves does NOT include BG slice for geometric prior", {
 
   expect_false("slice_kprime_s" %in% moveNames)
   expect_false("slice_kprime_r" %in% moveNames)
-  expect_true("p" %in% moveNames)
+  # Stage 2 (MARGINAL-K-TRUNC-001): the truncated geometric samples p via
+  # mh_logit_p (case 30), not the legacy conjugate gibbs_p (named "p").
+  expect_true("mh_logit_p" %in% moveNames)
+  expect_false("p" %in% moveNames)
 })
 
 # --- Slice width adaptation ---------------------------------------------------

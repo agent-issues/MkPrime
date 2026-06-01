@@ -3636,10 +3636,17 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
              weight = 3, dim = 1L)
       ))
     } else if (!identical(kPrimePrior, "logseries")) {
-      # Conjugate Gibbs draw: p | k' ~ Beta(a + nTrans, b + sum(k' - kObs))
+      # Plain geometric. The prior is truncated at K (MARGINAL-K-TRUNC-001) so
+      # its p-normaliser Z(p) makes the p full-conditional non-Beta: the legacy
+      # conjugate Gibbs draw (gibbs_p) is no longer valid. Sample p on the
+      # unbounded logit scale (case 30, mh_logit_p) instead — the same vehicle
+      # the marginal_k and empirical_geometric arms use for the same
+      # conjugacy-breaking reason. Weight 3 mirrors the empirical_geometric
+      # sibling (k' still moves via the Gibbs sweep above; the scheduler adapts
+      # this weight during warmup).
       kPrimeMoves <- c(kPrimeMoves, list(
-        list(name = "p", type = "gibbs_p", target = "p", weight = 1,
-             dim = 1L)
+        list(name = "mh_logit_p", type = "logit_scale_p", target = "p",
+             weight = 3, dim = 1L)
       ))
     }
     moves <- c(moves, kPrimeMoves)
@@ -3832,14 +3839,20 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     identical(model$likelihoodMode, "marginal_k"),
     identical(model$priorVariant %||% "conditional", "unconditional")
   )
-  # Stage 1b: wire the marginal-k truncation cap K from the model into the
-  # McmcData (set_kprime_trunc_k; mirrors set_branch_bins, avoiding a
-  # prepare_mcmc_data signature change). K MUST equal the SBC forward's
-  # K_MAX_PRIOR for calibration. Guard K >= max(kObs) here for a friendly
-  # message; otherwise a character has empty truncated support [2, K] and the
-  # evaluator returns a -Inf likelihood. (sampled_k leaves the C++ default 30,
-  # which K never consults, so the setter is gated on marginal_k.)
-  if (identical(model$likelihoodMode, "marginal_k")) {
+  # Wire the truncation cap K from the model into the McmcData
+  # (set_kprime_trunc_k; mirrors set_branch_bins, avoiding a prepare_mcmc_data
+  # signature change). K is the declared cap for the GEOMETRIC arm: the prior
+  # is a truncated geometric on [2, K] renormalised by Z(p)
+  # (MARGINAL-K-TRUNC-001). It MUST equal the SBC forward's K_MAX_PRIOR for
+  # calibration. Stage 2 extends the truncation from marginal_k to sampled_k so
+  # the two likelihoodModes target the same posterior (RB-consistency); the
+  # setter therefore fires for the geometric arm under BOTH modes. (marginal_k
+  # requires geometric; sampled_k geometric previously left the C++ default in
+  # place, which would now over-truncate at K=30.) Guard K >= max(kObs) for a
+  # friendly message; otherwise a character has empty truncated support [2, K]
+  # and a -Inf prior/likelihood. Non-geometric arms (empirical_geometric /
+  # beta_geometric / logseries) are not truncated and never consult K.
+  if (identical(model$kPrimePrior, "geometric")) {
     K <- as.integer(model$kprimeTruncK %||% 200L)
     maxKObs <- max(as.integer(mkd$kObs))
     if (K < maxKObs) {

@@ -18,6 +18,8 @@ Also confirm `src/mcmc.cpp` contains `cpp_log_prior` with a geometric branch
 (`grep -n "Hierarchical geometric" src/mcmc.cpp` → ~line 400). If your tree is
 on `main` / lacks the feature, **STOP and report** — do not "recreate" it.
 
+Then - push the branch so it exists on the remote.
+
 ## 1. Goal
 
 Make `likelihoodMode = "sampled_k"` target the SAME posterior as `"marginal_k"`
@@ -74,15 +76,17 @@ sampled_k geometric too → **broaden that gate** to also fire for
 `sampled_k` + `kPrimePrior == "geometric"` (and keep the `K >= max(kObs)`
 guard). The model already carries `kprimeTruncK` (default 200; SBC pins 30).
 
-## 4. BLAST RADIUS — flag to the user before committing
+## 4. BLAST RADIUS
 
-Truncating the sampled-k prior **changes the model for every existing geometric
-sampled_k run** (posteriors on p and k′ shift, esp. at small p). This is a
-larger blast radius than Stage 1b. Decide WITH THE USER whether truncation is
-(a) the new canonical sampled_k behaviour, or (b) gated behind
-`priorVariant`/a flag so legacy sampled_k is preserved. Existing sampled_k
-tests asserting the untruncated prior WILL need updating either way — inventory
-them first (`grep -rn "sampled_k" tests/`).
+Truncating the sampled-k prior changes the model for historic geometric
+sampled_k runs (posteriors on p and k′ shift, esp. at small p).
+The user not need to reconstruct previous behaviour.
+
+However, existing sampled_k tests asserting the untruncated prior WILL need 
+updating — inventory them first (`grep -rn "sampled_k" tests/`).
+
+(Tests that represent historical artefacts and do not serve a role in
+ demonstrating the performance of actively relevant models can be excised.)
 
 ## 5. Verification plan (do NOT skip; this is a correctness change)
 

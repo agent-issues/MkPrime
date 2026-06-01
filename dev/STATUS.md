@@ -96,6 +96,63 @@ unaffected. Verified end-to-end:
   useful bound. K matters chiefly via `Z_A(p)` at small p (real-data headroom).
 - `RunMkPrime` end-to-end smoke at K = 200 (fixed-topology, marginal_k): PASS.
 
+**Stage 2 — sampled_k geometric prior truncated to match marginal_k (DONE 2026-06-01).**
+`likelihoodMode = "sampled_k"` now targets the SAME posterior as `"marginal_k"`
+(Rao-Blackwell consistency): the sampled-k geometric **prior** is truncated at K
+and renormalised by Z(p), exactly matching the marginal-k normaliser (Model A:
+−logZ_A = −log(1−(1−p)^(K−1)), shared across chars; Model B: per-character
+−logZ_B,i = −log(1−(1−p)^(K−kObs_i+1))). Changes:
+- **Prior** (`src/mcmc.cpp cpp_log_prior` plain-geometric branch + R
+  `MkPrimeModel.R LogPrior`): add the truncated renormalised per-character mass
+  under both Model A/B (was untruncated, Model-B-only); support guard rejects
+  k′ > K under sampled_k. The R and C++ priors mirror each other bit-for-bit.
+- **Gibbs conjugacy** (`src/mcmc.cpp` case 9 `gibbs_p`): the truncated geometric
+  is no longer Beta-conjugate (Z(p) is p-dependent), so case 9 is guarded to
+  return false for the plain geometric; p is sampled via case 30 `mh_logit_p`
+  instead (the `.BuildMoves` scheduler switched gibbs_p → mh_logit_p, weight 3,
+  mirroring empirical_geometric). The legacy conjugate-Beta gibbs_p tests were
+  retired in favour of a non-conjugacy guard test.
+- **Gibbs sweep cap** (`src/mcmc.cpp` case 25 `gibbs_kprime_sweep`): the
+  always-accept sweep caps its candidate range at `nEff = min(nCand, K−kObs+1)`
+  (recomputing maxW over the retained range) so it never draws k′ > K. Cases
+  7/26 (MH) reject k′ > K via the −Inf prior — no explicit cap needed.
+- **K wiring** (`R/RunMkPrime.R .InitMcmcData`, `R/MkPrimeModel.R`):
+  `set_kprime_trunc_k` now fires for the geometric arm under BOTH modes (was
+  marginal_k only), with the `K >= max(kObs)` guard and `[2,256]` validation
+  broadened to the geometric arm. The C++ struct default `kprimeTruncK` was
+  aligned **30 → 200** to match the `MkPrimeModel` default, so a dataPtr built
+  directly via `prepare_mcmc_data` (bypassing `.InitMcmcData`) still agrees with
+  the R prior; SBC and the truncation tests pin K = 30 explicitly via the model.
+
+Verified:
+- **Proof** (`dev/red-team/proofs/marginal-k-sampled-rb-consistency.md`,
+  math-prover, rated "Watertight"): summing the truncated sampled-k joint over
+  k′ ∈ [kObs,K] equals the marginal-k value per character, both models; every
+  formula checked line-by-line against source (no discrepancies); algebra
+  confirmed to machine precision in R. Caveat: the multi-character lift is by the
+  product-of-sums factorisation (now also checked empirically, below).
+- **Deterministic bit-check** (`test-marginal-k-truncation.R`, Stage-2 RB +
+  multi-char RB): logSumExp over k′ of the full sampled-k JOINT
+  (`eval_log_prior_cpp` + `eval_full_loglik_cpp`) == marginal-k joint to 1e-7,
+  single-char (Model A/B × kObs {2,6} × p {0.02,0.08}) AND a 2-character (k′_1,
+  k′_2) grid; with G1/G2 anti-vacuity + stale-binary (K-sensitivity) +
+  support-cap (k′ = K+1 → −Inf) guards.
+- **R/C++ prior parity** (`test-partition-prior.R`, `test-partition-hyperprior.R`):
+  R `LogPrior` == C++ `eval_log_prior_cpp` to 1e-10 on the geometric arm.
+- **Scheduling / guard** (`test-gibbs.R`, `test-beta-geometric-prior.R`,
+  `test-bg-hyperparameter-moves.R`): geometric schedules mh_logit_p not gibbs_p;
+  C++ refuses a misrouted gibbs_p under the truncated geometric.
+- Full `testthat` suite green except the pre-existing out-of-scope red test below.
+
+**SBC on sampled_k (Stage 2, PENDING Hamilton).** Driver
+`dev/red-team/heavy-tests/marginal-k/T-SBC-sampled-geometric.R` (mirrors the
+marginal-k SBC with `likelihoodMode = "sampled_k"`; forward truncates at
+K_MAX_PRIOR = 30 by rejection-redraw, inference pins kprimeTruncK = 30; pass bar
+AD > 0.4 on tree_length / rate_log_sd / p — k′_pooled excluded as a Talts
+boundary artefact, project memory `project_sbc_kprime_structural`). Full run is a
+Hamilton array job (pre-build on the login node first per `feedback_pkgload_prebuild`);
+the posterior-overlap heavy test (T-OVL) is the same class of follow-up.
+
 **Out-of-scope red test (pre-existing).** `test-marginal-k-cache-option-a.R`
 "NNI (case 5) refreshes the cache" FAILS (warm − cold = 0.164 nats). Proven
 **not** a Stage 1b regression: the failure is bit-for-bit IDENTICAL at K = 30 and
