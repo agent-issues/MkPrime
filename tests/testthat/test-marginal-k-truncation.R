@@ -393,3 +393,68 @@ test_that("sampled_k 2-character joint marginalises to marginal_k (multi-char RB
     }
   }
 })
+
+# ---------------------------------------------------------------------------
+# STAGE 2 — the case-25 (gibbs_kprime_sweep) K-CAP actually FIRES. The
+# deterministic RB checks above exercise the PRIOR + marginal evaluator, never
+# the Gibbs sweep; SBC runs the sweep only at K=30, where the M-164 prior-ceiling
+# cutoff is tighter than the cap (nEff >= nCand, so the new `nCand = nEff;
+# recompute maxW` branch is a no-op). This test FORCES nEff < nCand (tiny K=4,
+# kObs=2 => nEff=3) so the cap branch is genuinely exercised. gibbs_kprime_sweep
+# ALWAYS accepts, so a cap bug (off-by-one, or a draw of k' > K) would set
+# logPrior=-Inf on an accepted move and silently corrupt the chain -- something
+# a 10-h Hamilton SBC would only reveal after the fact. Non-vacuity: a K=100
+# contrast shows the un-capped sweep demonstrably samples k' > 4, so the K=4 cap
+# has real work to do.
+test_that("gibbs_kprime_sweep respects the truncation cap K (case-25 cap fires)", {
+  skip_if_not(requireNamespace("ape", quietly = TRUE))
+  set.seed(20260601); ntip <- 8L
+  tr <- ape::rtree(ntip, tip.label = paste0("t", seq_len(ntip)))
+  tr$edge.length <- rep_len(0.06, nrow(tr$edge))     # short branches: flat LL in k'
+  tr <- TreeTools::Preorder(tr)
+  # Six variable binary characters (kObs = 2). At low p the geometric prior
+  # drives k' up (P(k' >= 5) = (1-p)^3 = 0.729 at p=0.1); flat LL keeps the high
+  # candidates un-pruned, so the un-capped conditional reaches well past k'=4.
+  set.seed(7L); mat <- matrix(0L, ntip, 6L, dimnames = list(tr$tip.label, NULL))
+  for (j in seq_len(6L)) {
+    repeat { v <- sample(0:1, ntip, replace = TRUE); if (length(unique(v)) == 2L) break }
+    mat[, j] <- v
+  }
+  mkd <- MkPrimeData(TreeTools::MatrixToPhyDat(mat))
+  transIdx <- which(mkd$type == "transformational")
+
+  sweep_kprimes <- function(K, p, nIter = 400L, seed = 99L) {
+    model <- suppressMessages(MkPrimeModel(
+      coding = "variable", nCat = 1L, kPrimePrior = "geometric",
+      likelihoodMode = "sampled_k", priorVariant = "unconditional",
+      kprimeTruncK = K, kprimeHyperA = 1, kprimeHyperB = 1, expSteps = 1.4))
+    modf <- MkPrime:::.FinalizeModel(model, tr, mkd)
+    st0  <- MkPrime:::.InitState(tr, mkd, modf)
+    st0$p <- p; st0$rate_log_sd <- 0
+    dp <- MkPrime:::.InitMcmcData(mkd, modf); sp <- MkPrime:::.InitMcmcChain(st0)
+    fill_partition_cache(dp, sp); allocate_cl_workspace(dp, sp)
+    set.seed(seed)
+    kp <- matrix(0L, nIter, length(transIdx)); lp <- numeric(nIter)
+    for (i in seq_len(nIter)) {
+      do_move_cpp(dp, sp, 25L, 0L, 0.5, 10.0, 1L, 1.0)   # case 25 = gibbs_kprime_sweep
+      s <- get_mcmc_state(sp)
+      kp[i, ] <- s$kPrime[transIdx]; lp[i] <- s$logPrior
+    }
+    list(kp = as.integer(kp), lp = lp)
+  }
+
+  # NON-VACUITY: at K=100 the un-capped sweep reaches k' > 4, so the K=4 cap
+  # genuinely truncates (it is not a no-op).
+  loose <- sweep_kprimes(K = 100L, p = 0.1)
+  expect_gt(max(loose$kp), 4L,
+            label = "K=100: un-capped sweep samples k' > 4 (the K=4 cap is non-vacuous)")
+
+  # CAP CORRECTNESS at K=4 (nEff = 3 < un-capped nCand -> the cap branch fires):
+  tight <- sweep_kprimes(K = 4L, p = 0.1)
+  expect_true(all(tight$kp >= 2L) && all(tight$kp <= 4L),
+              label = "K=4: every swept k' stays in [kObs, K] (cap holds)")
+  expect_true(any(tight$kp == 4L),
+              label = "K=4: the cap boundary k'=K is reached (cap is binding, not collapsed)")
+  expect_true(all(is.finite(tight$lp)),
+              label = "K=4: logPrior finite after every always-accept sweep (no -Inf corruption)")
+})
