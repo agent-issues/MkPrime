@@ -210,7 +210,8 @@ a Gibbs move corrupts. Precise escape dynamics a follow-up.
   reads rerouted), so a topology-changing MH proposal is evaluated on the
   PROPOSED tree, not `state`'s old one. `gibbs_kprime_sweep_impl` (case 25)
   passes `state`'s own tree -> bit-identical (sampled_k path unchanged).
-- **Bug A + cache-coherence audit (6 moves gated).** Six moves write an incoherent
+- **Bug A + cache-coherence audit (6 moves gated; 4 since RE-ENABLED — see Phase 2).**
+  Six moves write an incoherent
   committed `state->logLik` under marginal_k and are disabled in `.BuildMoves`: the
   gibbs pair (`gibbs_spr`/`gibbs_subtree_swap`, fixed-k') plus four multi-eval moves
   (`weighted_spr`/`weighted_subtree_swap`/`weighted_branch_scale`/`block_gibbs_branch`)
@@ -240,6 +241,25 @@ a Gibbs move corrupts. Precise escape dynamics a follow-up.
   data + over-powered per-cell KS are why it false-FAILed); local-smoke + Hamilton-prep
   item. **marginal_k free topology: freeze fixed, schedule coherent, RB-equivalence
   validated at the likelihood level.**
+- **Phase 2 — 4 weighted/block moves RE-ENABLED (2026-06-02 eve).** Candidate-weight
+  classification (advisor-driven): `weighted_branch_scale`(12)/`weighted_spr`(13)/
+  `weighted_subtree_swap`(14)/`block_gibbs_branch`(15) all select candidates via the
+  MARGINAL evaluator `compute_full_loglik_at` + a full MH accept (prior+Hastings) →
+  pure cache-coherence (Bug B); the gibbs pair (10/11) select via the fixed-kPrime
+  partial-CL path (wrong target) → stay deferred. Fix = a **scratch-eval** flag
+  `fillCharLLCache` (default true) on `cpp_log_likelihood_marginal`/
+  `compute_full_loglik_at`: when false the per-(char,k') `charLLCache` is neither READ
+  (forced cold) nor WRITTEN. Threaded `false` into all 8 intra-move evals; tier-1-only
+  suffices (tier-2 `perKpCl` cache is dormant — grep-proven never read). Case-12 commits
+  via the generic MH path (coherent ready cache on accept); 13/14/15 self-accept leaving
+  it cold; the next mh_logit_p reads a coherent cache either way (tested as warm==cold).
+  `.BuildMoves` drops `&& !marginalK` for the four (all default-OFF/opt-in → production
+  schedule unchanged); cli_inform now lists only the 2 deferred gibbs moves. VERIFIED:
+  gap-sweep 12/13/14/15 baseline_gap & warm_gap → **0.000** (were -1.26/-0.90/-2.26/-1.60);
+  `test-marginal-k-free-topology.R` Test 3 (300 accept/reject fires/move: committed==cold
+  & warm==cold) + Test 4 (mh_p-after-weighted committed==cold) PASS. **DEFERRED:**
+  marginal-aware gibbs candidate eval (10/11). [Pending at commit: full-suite regression +
+  moves-on overlap behavioral equivalence; gated-baseline p d_sd=3.18 longer-chain recheck.]
 
 **Deploy note (Hamilton).** GitHub auth is dead on the cluster (SSH publickey
 denied; HTTPS creds empty) and `/nobackup` had purged the stale `mkp-source`

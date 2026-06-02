@@ -1048,17 +1048,24 @@ static double compute_full_loglik_at(
     const McmcData& data, McmcState& state,
     const IntegerVector& parent,
     const IntegerVector& child,
-    const NumericVector& edgeLen) {
+    const NumericVector& edgeLen,
+    bool fillCharLLCache = true) {
   // Marginal-k dispatch (v1: geometric arm only; partition-API + marginal-k
   // deferred — guard in MkPrimeModel.R). cast away const on data: the
   // marginal evaluator takes a non-const reference because the underlying
   // PR-A helper may grow state->gibbsWs and the cache lives on state too.
+  //
+  // fillCharLLCache=false => SCRATCH eval (no charLLCache read/write): required
+  // by multi-config moves so per-config marginal LLs are recomputed coherently
+  // and the cache is left cold (FREEZE-003 follow-up). Ignored by the
+  // non-marginal branches (they do not use charLLCache).
   if (data.marginalK) {
     return cpp_log_likelihood_marginal(
       const_cast<McmcData&>(data), state,
       parent, child, edgeLen,
       state.rateLoss, state.rateLogSd, state.rateNeo,
-      state.clWs.ready() ? &state.clWs : nullptr);
+      state.clWs.ready() ? &state.clWs : nullptr,
+      fillCharLLCache);
   }
   if (state.usePartitioned) {
     return cpp_log_likelihood_partitioned(
@@ -2566,7 +2573,8 @@ static bool weighted_branch_scale_impl(
     trialAbs[index] = mid * absTotal;
     trialAbs[other] = (1.0 - mid) * absTotal;
     midLL[b] = compute_full_loglik_at(*data, *state,
-                                       state->parent, state->child, trialAbs);
+                                       state->parent, state->child, trialAbs,
+                                       /*fillCharLLCache=*/false);  // FREEZE-003
   }
 
   // 4. Compute weights: exp(beta * LL), offset for numerical stability
@@ -2703,7 +2711,8 @@ static bool block_gibbs_branch_sweep_impl(
       trialAbs[index] = mid * absTotal;
       trialAbs[other] = (1.0 - mid) * absTotal;
       midLL[b] = compute_full_loglik_at(*data, *state,
-                                         state->parent, state->child, trialAbs);
+                                         state->parent, state->child, trialAbs,
+                                         /*fillCharLLCache=*/false);  // FREEZE-003
     }
 
     // Weight bins: exp(beta * (LL - maxLL))
@@ -2759,7 +2768,8 @@ static bool block_gibbs_branch_sweep_impl(
     trialAbs[index] = newF * absTotal;
     trialAbs[other] = (1.0 - newF) * absTotal;
     double proposedLL = compute_full_loglik_at(
-      *data, *state, state->parent, state->child, trialAbs);
+      *data, *state, state->parent, state->child, trialAbs,
+      /*fillCharLLCache=*/false);  // FREEZE-003 scratch eval
     if (!R_FINITE(proposedLL)) continue;
 
     // MH accept/reject (prior is constant for relBrLengths)
@@ -2890,7 +2900,8 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
       trialAbs[sibRow]    = (1.0 - bins.mids[b]) * lMerge;
       selfLL[b] = compute_full_loglik_at(*data, *state,
                                           state->parent, state->child,
-                                          trialAbs);
+                                          trialAbs,
+                                          /*fillCharLLCache=*/false);  // FREEZE-003
       if (R_FINITE(selfLL[b]) && selfLL[b] > selfMax) selfMax = selfLL[b];
     }
   }
@@ -2932,7 +2943,8 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
       preorder_into(workPar, workCh, absLen, nTip,
                     INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
       candLL[ci][b] = compute_full_loglik_at(*data, *state,
-                                              ordPar, ordCh, ordAbs);
+                                              ordPar, ordCh, ordAbs,
+                                              /*fillCharLLCache=*/false);  // FREEZE-003
       if (R_FINITE(candLL[ci][b]) && candLL[ci][b] > candMax[ci])
         candMax[ci] = candLL[ci][b];
     }
@@ -3025,7 +3037,8 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
 
   IntegerVector op = ordEdge(_, 0);
   IntegerVector oc = ordEdge(_, 1);
-  double newLogLik = compute_full_loglik_at(*data, *state, op, oc, ordAbsFinal);
+  double newLogLik = compute_full_loglik_at(*data, *state, op, oc, ordAbsFinal,
+                                             /*fillCharLLCache=*/false);  // FREEZE-003
   if (!R_FINITE(newLogLik)) return false;
 
   // 14. Hastings ratio (branch-fraction component only; topology cancels)
@@ -3147,7 +3160,8 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
       preorder_into(workPar, state->child, absLen, nTip,
                     INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
       candLL[pi][b] = compute_full_loglik_at(*data, *state,
-                                              ordPar, ordCh, ordAbs);
+                                              ordPar, ordCh, ordAbs,
+                                              /*fillCharLLCache=*/false);  // FREEZE-003
       if (R_FINITE(candLL[pi][b]) && candLL[pi][b] > candMax[pi])
         candMax[pi] = candLL[pi][b];
     }
@@ -3225,7 +3239,8 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
   NumericVector ordAbsFinal = po.second;
   IntegerVector op = ordEdge(_, 0);
   IntegerVector oc = ordEdge(_, 1);
-  double newLogLik = compute_full_loglik_at(*data, *state, op, oc, ordAbsFinal);
+  double newLogLik = compute_full_loglik_at(*data, *state, op, oc, ordAbsFinal,
+                                             /*fillCharLLCache=*/false);  // FREEZE-003
   if (!R_FINITE(newLogLik)) return false;
 
   // 11. Hastings ratio
@@ -4232,7 +4247,7 @@ double cpp_log_likelihood_marginal(
     IntegerVector parent, IntegerVector child,
     NumericVector edgeLen,
     double rateLoss, double rateLogSd, double rateNeo,
-    ClWorkspace* ws) {
+    ClWorkspace* ws, bool fillCharLLCache) {
 
   // Defensive — v1 enforces these at the R layer in MkPrimeModel(), but
   // duplicate the check here in case a caller bypasses the constructor.
@@ -4303,7 +4318,7 @@ double cpp_log_likelihood_marginal(
 
   // Cache fast-path: if the charLL cache is valid, skip the helper call
   // and recompute the per-char logSumExp against the current p-weights.
-  bool useCache = data.marginalK && state.charLLCacheReady &&
+  bool useCache = fillCharLLCache && data.marginalK && state.charLLCacheReady &&
                   (int)state.charLLNCand.size() == nTrans &&
                   (int)state.charLLCache.size() ==
                     nTrans * kMaxKprimeCand;
@@ -4332,8 +4347,10 @@ double cpp_log_likelihood_marginal(
     compute_per_kprime_log_lik(&data, &state, /*beta=*/1.0,
                                parent, child, edgeLen, acrvRates, kw);
 
-    // Allocate cache lazily on first marginal eval.
-    if ((int)state.charLLCache.size() != nTrans * kMaxKprimeCand) {
+    // Allocate cache lazily on first marginal eval (skip entirely for scratch
+    // evals, which never write the cache).
+    if (fillCharLLCache &&
+        (int)state.charLLCache.size() != nTrans * kMaxKprimeCand) {
       state.charLLCache.assign(
         static_cast<size_t>(nTrans) * kMaxKprimeCand, R_NegInf);
       state.charLLNCand.assign(nTrans, 0);
@@ -4347,16 +4364,18 @@ double cpp_log_likelihood_marginal(
       // MARGINAL-K-TRUNC-001 cap: candidate c has k = kObs_ti + c; keep only
       // k <= K. nEff <= 0 means kObs_ti > K (empty support) -> -Inf char.
       const int nEff = std::min(nCand, K - kObs_ti + 1);
-      state.charLLNCand[ti] = (nEff > 0) ? nEff : 0;
+      if (fillCharLLCache) state.charLLNCand[ti] = (nEff > 0) ? nEff : 0;
       double mx = R_NegInf;
       for (int c = 0; c < nCand; ++c) {
         double w = kw.charLogW[ti * kMaxKprimeCand + c];
         // Stash raw LL = w - logPriorByU[c] in cache (all candidates, so a
         // later K change or audit can re-derive; only c < nEff are summed).
-        double rawLL = R_FINITE(w)
-          ? (w - logPriorByU[c])
-          : R_NegInf;
-        state.charLLCache[ti * kMaxKprimeCand + c] = rawLL;
+        // Scratch evals (fillCharLLCache=false) skip the write but still need
+        // mx, so the loop body otherwise runs unchanged.
+        if (fillCharLLCache) {
+          double rawLL = R_FINITE(w) ? (w - logPriorByU[c]) : R_NegInf;
+          state.charLLCache[ti * kMaxKprimeCand + c] = rawLL;
+        }
         if (c < nEff && R_FINITE(w) && w > mx) mx = w;   // cap: only k <= K
       }
       if (!R_FINITE(mx)) {
@@ -4380,7 +4399,10 @@ double cpp_log_likelihood_marginal(
       }
       if (R_FINITE(totalLL)) totalLL += charLL;
     }
-    state.charLLCacheReady = true;
+    // Scratch evals leave the cache cold (charLLCacheReady stays whatever the
+    // entry invalidation set — false for every non-p move), so no rejected or
+    // self-accepting multi-config move can poison a subsequent mh_logit_p.
+    if (fillCharLLCache) state.charLLCacheReady = true;
     return totalLL;
   }
 

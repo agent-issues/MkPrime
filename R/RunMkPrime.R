@@ -3500,20 +3500,31 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     # reach them. Disable under marginal_k; topology is still searched by
     # nni/spr/pspr/tbr (marginal-correct after the Bug-B fix). A marginal-aware
     # Gibbs candidate eval is a deferred optimisation.
+    # FREEZE-003 efficiency follow-up (2026-06-02): the four WEIGHTED/BLOCK moves
+    # (weighted_branch_scale, weighted_spr, weighted_subtree_swap,
+    # block_gibbs_branch) are now marginal-correct and RE-ENABLED under
+    # marginal_k. Each selects candidates via the marginal evaluator
+    # (compute_full_loglik_at) with a full MH accept (prior + Hastings); the only
+    # FREEZE-003 defect was the shared per-(char,k') charLLCache going stale
+    # across the multiple configs each move evaluates. Fixed in C++ by passing
+    # fillCharLLCache=false (SCRATCH eval: no cache read/write) to every intra-
+    # move eval, so per-config marginal LLs are recomputed coherently and the
+    # cache is left cold for the next mh_logit_p. The two GIBBS moves
+    # (gibbs_spr/gibbs_subtree_swap) stay disabled: they select candidates via
+    # the fixed-kPrime partial-CL path (no marginal sum, no P(u|p) weight), so a
+    # cache fix alone does not make them target-correct -- a marginal-aware
+    # candidate eval is the deferred item.
     marginalK <- identical(likelihoodMode, "marginal_k")
     if (marginalK) {
       droppedByMargK <- c(
         if (isTRUE(mcmc$gibbsSpr))            "gibbs_spr",
-        if (isTRUE(mcmc$gibbsSubtreeSwap))    "gibbs_subtree_swap",
-        if (isTRUE(mcmc$weightedBranchScale)) "weighted_branch_lengths",
-        if (isTRUE(mcmc$weightedSpr))         "weighted_spr",
-        if (isTRUE(mcmc$weightedSubtreeSwap)) "weighted_subtree_swap",
-        if (isTRUE(mcmc$blockGibbsBranch))    "block_gibbs_branch"
+        if (isTRUE(mcmc$gibbsSubtreeSwap))    "gibbs_subtree_swap"
       )
       if (length(droppedByMargK) > 0L) {
         cli::cli_inform(
           "{length(droppedByMargK)} requested move{?s} not used under \\
-           {.code likelihoodMode = \"marginal_k\"}: {.val {droppedByMargK}}."
+           {.code likelihoodMode = \"marginal_k\"} (fixed-kPrime candidate \\
+           selection; marginal-aware re-enable deferred): {.val {droppedByMargK}}."
         )
       }
     }
@@ -3531,34 +3542,26 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
              weight = max(1L, min(nEdge / 6, gibbsCap)), dim = 1L)
       ))
     }
-    # Weighted moves (M-090)
-    # MARGINAL-K-FREEZE-003 cache-coherence audit: weighted_branch_scale (case 12)
-    # evaluates B branch-fraction bins per candidate via compute_full_loglik_at,
-    # which does NOT force the marginal charLLCache cold between evals. The
-    # useCache gate has no topology/branch fingerprint, so after the first eval
-    # fills the cache every subsequent bin/commit reads it stale -> committed
-    # state->logLik is the first-bin value (sweep: gap = -1.26 nat,
-    # state==warm!=cold). Disable under marginal_k (default-off, so latent, but a
-    # user enabling it would silently corrupt the chain). A force-cold-per-eval
-    # fix that preserves caching is the deferred efficiency item.
-    if (isTRUE(mcmc$weightedBranchScale) && !marginalK) {
+    # Weighted moves (M-090). FREEZE-003: re-enabled under marginal_k now that the
+    # scratch-eval (fillCharLLCache=false) fix makes their multi-config evals
+    # cache-coherent (see the block comment above). weighted_branch_scale (case
+    # 12) evaluates B branch-fraction bins per candidate; weighted_spr/
+    # weighted_subtree_swap evaluate a self + candidate-topology grid. All now
+    # recompute each config's marginal LL cold and leave the charLLCache
+    # invalidated for the next mh_logit_p.
+    if (isTRUE(mcmc$weightedBranchScale)) {
       moves <- c(moves, list(
         list(name = "weighted_branch_lengths", type = "weighted_branch_scale",
              target = "rel_br_lengths", weight = max(1, nEdge / 6), dim = 1L)
       ))
     }
-    # MARGINAL-K-FREEZE-003: weighted_spr / weighted_subtree_swap also leave an
-    # incoherent state->logLik under marginal_k (gap-sweep: weighted_spr 0.17,
-    # weighted_subtree_swap 1.5 nat AFTER the Bug-B threading fix — a residual
-    # commit/edge-bookkeeping issue not pinned in v1). Default-off anyway;
-    # disable under marginal_k. Re-enable once root-caused + verified clean.
-    if (isTRUE(mcmc$weightedSpr) && !marginalK) {
+    if (isTRUE(mcmc$weightedSpr)) {
       moves <- c(moves, list(
         list(name = "weighted_spr", type = "weighted_spr", target = NULL,
              weight = max(1, nEdge / 8), dim = 1L)
       ))
     }
-    if (isTRUE(mcmc$weightedSubtreeSwap) && !marginalK) {
+    if (isTRUE(mcmc$weightedSubtreeSwap)) {
       moves <- c(moves, list(
         list(name = "weighted_subtree_swap", type = "weighted_subtree_swap",
              target = NULL, weight = max(1, nEdge / 8), dim = 1L)
@@ -3578,13 +3581,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
              weight = max(1, nEdge / 4), dim = 1L)
       ))
     }
-    # Block Gibbs branch-length sweep (M-054 reframed)
-    # MARGINAL-K-FREEZE-003 cache-coherence audit: same multi-eval-without-force-
-    # cold bug as weighted_branch_scale (block_gibbs_branch_sweep_impl calls
-    # compute_full_loglik_at across bins/proposal; sweep: gap = -1.60 nat,
-    # state==warm!=cold). Disable under marginal_k (default-off; latent). Deferred
-    # efficiency fix: force the charLLCache cold per intermediate eval.
-    if (isTRUE(mcmc$blockGibbsBranch) && !marginalK) {
+    # Block Gibbs branch-length sweep (M-054 reframed). FREEZE-003: re-enabled
+    # under marginal_k via the same scratch-eval fix — block_gibbs_branch_sweep_impl
+    # now evaluates each bin/proposal config with fillCharLLCache=false, so the
+    # in-place accepted-pair chaining (currentLL) accumulates coherent marginal LLs.
+    if (isTRUE(mcmc$blockGibbsBranch)) {
       moves <- c(moves, list(
         list(name = "block_gibbs_branch", type = "block_gibbs_branch",
              target = "rel_br_lengths",

@@ -463,6 +463,17 @@ void compute_per_kprime_log_lik(
 // `state` is non-const because the call mutates `state->gibbsWs` (workspace
 // allocation) inside `compute_per_kprime_log_lik`, and may populate
 // `state->charLLCache` if the marginal-k charLL cache is active.
+//
+// fillCharLLCache (MARGINAL-K-FREEZE-003 follow-up): when false, this is a
+// SCRATCH eval — the per-(char,k') charLLCache is neither READ (forced cold,
+// raw LLs always recomputed) nor WRITTEN (no fill, charLLCacheReady left
+// untouched). Multi-config moves (weighted_*/block_gibbs_branch, which evaluate
+// many topology/branch configs per call) MUST pass false: the cache is valid
+// only across a pure-p change, so reusing it across configs reads stale LLs.
+// Scratch evals also leave the cache exactly as do_move_impl's entry
+// invalidation left it (cold), so no rejected/self-accepting move can poison a
+// later mh_logit_p. (Tier-2 perKpCl cache is dormant — never read — so tier-1
+// is the only persistent cache the cold path touches.)
 double cpp_log_likelihood_marginal(
     McmcData& data, McmcState& state,
     Rcpp::IntegerVector parent,
@@ -471,7 +482,8 @@ double cpp_log_likelihood_marginal(
     double rateLoss,
     double rateLogSd,
     double rateNeo,
-    ClWorkspace* ws = nullptr);
+    ClWorkspace* ws = nullptr,
+    bool fillCharLLCache = true);
 
 
 // ---------------------------------------------------------------------------

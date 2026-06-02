@@ -305,3 +305,75 @@ topology-proposal correctness.
 A defensive **assertion** (`|state->logLik − compute_full_loglik| < tol` after
 each accepted move under marginal_k, in a debug build) would have caught both
 bugs immediately and is cheap insurance for any fix.
+
+---
+
+## PHASE 2 (2026-06-02 eve) — re-enable the cache-fixable moves (the "efficiency" follow-up)
+
+The freeze fix gated SIX moves off under marginal_k. This phase re-enables the
+FOUR that were only ever cache-incoherent (Bug B), and confirms the other two
+must stay deferred.
+
+### Candidate-weight classification (the decision that scoped this 4, not 6)
+The coherence gap-sweep proves a *committed-LL* gap; it does NOT prove a move's
+*proposal* targets the right distribution. So before re-enabling we classified
+how each move SELECTS candidates:
+
+| move | candidate weights from | accept | verdict |
+|------|------------------------|--------|---------|
+| weighted_branch_scale (12) | `compute_full_loglik_at` (marginal) | generic MH (prior+Hastings) | Bug B → fixable |
+| weighted_spr (13)          | `compute_full_loglik_at` (marginal) | self MH (prior+Hastings)    | Bug B → fixable |
+| weighted_subtree_swap (14) | `compute_full_loglik_at` (marginal) | self MH (prior+Hastings)    | Bug B → fixable |
+| block_gibbs_branch (15)    | `compute_full_loglik_at` (marginal) | per-pair MH                 | Bug B → fixable |
+| gibbs_spr (10), gibbs_subtree_swap (11) | fixed-kPrime partial-CL (no Σ_k', no P(u\|p)) | direct write | **wrong target → deferred** |
+
+All four fixable moves are proper MH kernels on the marginal posterior whose
+*only* defect was the shared per-(char,k') `charLLCache` going stale across the
+many topology/branch configs each evaluates per call. The gibbs pair select from
+a fixed-kPrime likelihood — a cache fix cannot make them target-correct; they need
+a marginal-aware candidate eval (deferred).
+
+### Fix: a scratch-eval flag (no cache read, no cache write)
+`cpp_log_likelihood_marginal` / `compute_full_loglik_at` gained
+`bool fillCharLLCache = true`. When false (a SCRATCH eval): the `useCache`
+read-path is forced off (raw per-(char,k') LLs recomputed for THIS config), and
+the cache writes (alloc / `charLLNCand` / `charLLCache` / `charLLCacheReady`) are
+all skipped. All 8 intra-move evals in the four moves pass `false`.
+
+Why tier-1-only suffices: the entry invalidation (`do_move_impl` ~4706) clears
+**two** tiers — tier-1 `charLLCacheReady` and tier-2 `invalidate_per_kp_cl_all()`.
+Tier-2 (`perKpClSlots`/`perKpClReady`) is **dormant**: grep-proven the evaluator
+(`compute_per_kprime_log_lik` / `cpp_log_likelihood_marginal`) never reads or
+marks-ready it (FU-3b in-place wiring unlanded). The cold path recomputes node CLs
+fresh via local / `gibbsWs` / `clWs` scratch buffers. So tier-1 is the only
+persistent cache the cold path touches, and the scratch flag closes it.
+
+Post-move cache invariant (the cross-move hazard the advisor flagged): cases
+13/14/15 self-accept and `return` directly, bypassing the generic reject
+invalidation — but because their evals are scratch, the cache simply stays cold
+(as entry-invalidation left it) on every accept/reject/self-draw path, so the
+next `mh_logit_p` (case 30, which does NOT invalidate at entry) recomputes fresh.
+Case 12 `break`s into the generic MH path whose commit eval (mcmc.cpp:5536) is a
+NORMAL eval, so on accept it leaves the cache ready-AND-coherent for the committed
+config. The correct invariant is therefore **"cache coherent with committed
+state" (warm == cold)**, NOT "cache cold" — case 12 accept leaves it ready.
+
+### Verification
+- **Gap-sweep** (`marginal-k-freeze-repro.R`): cases 12/13/14/15 `baseline_gap`
+  AND `warm_gap` → **0.000** (were -1.26 / -0.90 / -2.26 / -1.60). gibbs 10/11 and
+  gibbs_kprime_sweep 25 still ~+10.5 (correctly deferred / excluded).
+- **`test-marginal-k-free-topology.R`** Test 3 (fire each of 12/13/14/15 300×,
+  mix of accept+reject; after EACH assert committed==cold AND warm==cold) + Test 4
+  (fire [weighted move → mh_logit_p]; assert mh_p commits a coherent marginal LL).
+  FAIL=0.
+- **R re-enable**: `.BuildMoves` drops `&& !marginalK` for the four; all are
+  default-OFF (opt-in) so the production schedule is unchanged; `cli_inform` lists
+  only the two deferred gibbs moves.
+- Pending at commit: full-suite regression + a moves-on posterior-overlap
+  (`MARGINAL_K_OVL_EXTRA=`the four) confirming no proposal bias vs sampled_k.
+
+### Still deferred
+Marginal-aware gibbs candidate eval (10/11). Optionally, a topology/branch
+fingerprint on the `useCache` gate (cheaper than scratch for FUTURE multi-eval
+moves; not needed for the four fixed here, whose intra-move cache reuse was never
+valid — recomputing per config IS the correct marginal LL).

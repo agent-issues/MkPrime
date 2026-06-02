@@ -11,16 +11,24 @@
 # under marginal_k, the committed state->logLik equals a fresh COLD marginal
 # recompute of the committed tree (gap ~ 0).
 #
-# Bug A + cache-coherence audit (MITIGATED, R/RunMkPrime.R): six moves write an
-# incoherent committed state->logLik under marginal_k and are disabled in
-# .BuildMoves -- the gibbs pair (gibbs_spr / gibbs_subtree_swap, fixed-k'
-# likelihood) and the four multi-eval moves (weighted_spr / weighted_subtree_swap
-# / weighted_branch_scale / block_gibbs_branch, which read a stale marginal
-# charLLCache because compute_full_loglik_at does not force the cache cold between
-# topology/branch evals). The k'-sampling moves (kPrime / gibbs_kPrime /
-# block_kPrime) are also gated out -- k' is integrated out under marginal_k.
-# Test 2 asserts all are absent from the marginal_k schedule but present under
-# sampled_k.
+# Bug A + cache-coherence audit (R/RunMkPrime.R + src/mcmc.cpp):
+#  * The four MULTI-EVAL moves (weighted_branch_scale / weighted_spr /
+#    weighted_subtree_swap / block_gibbs_branch) select candidates via the
+#    marginal evaluator (compute_full_loglik_at) with a full MH accept; their only
+#    defect was a stale per-(char,k') charLLCache reused across the many configs
+#    each evaluates. FIXED (FREEZE-003 follow-up) by the scratch-eval flag
+#    (fillCharLLCache=false) on every intra-move eval, and RE-ENABLED under
+#    marginal_k. Test 3 asserts each leaves a coherent committed state->logLik AND
+#    a cache coherent with the committed state (warm==cold), on accept and reject.
+#  * The GIBBS pair (gibbs_spr / gibbs_subtree_swap) select candidates via the
+#    fixed-k' partial-CL path (no marginal sum, no P(u|p) weight), so a cache fix
+#    alone does NOT make them target-correct: they stay DISABLED under marginal_k
+#    (marginal-aware candidate eval deferred).
+#  * The k'-sampling moves (kPrime / gibbs_kPrime / block_kPrime) stay gated out --
+#    k' is integrated out under marginal_k.
+# Test 2 asserts the gibbs pair + k'-moves are absent from the marginal_k
+# schedule while the four weighted/block moves + nni/spr/tbr/pspr/mh_logit_p are
+# present; all are present under sampled_k.
 
 library("ape")
 library("TreeTools")
@@ -92,34 +100,31 @@ test_that("marginal-k: accepted topology moves leave state->logLik coherent (FRE
   }
 })
 
-test_that("marginal-k: every cache-incoherent / k'-sampling move is gated out of the schedule (FREEZE-003)", {
+test_that("marginal-k: gibbs pair + k'-moves gated out; weighted/block moves re-enabled (FREEZE-003)", {
   nEdge <- 13L   # 8-tip unrooted binary -> 2*8-3 edges
   nTrans <- 4L
-  # Enable EVERY move that must be gated off under marginal_k, so this test would
-  # FAIL if any were left ungated. suppressWarnings: tiny nIter clamps minWarmup.
+  # Enable every gateable move so the test would FAIL if the gating drifted.
+  # suppressWarnings: tiny nIter clamps minWarmup.
   mcmc <- suppressWarnings(MkPrimeMCMC(
     nIter = 10L, gibbsSpr = TRUE, gibbsSubtreeSwap = TRUE,
     weightedSpr = TRUE, weightedSubtreeSwap = TRUE,
     weightedBranchScale = TRUE, blockGibbsBranch = TRUE))
 
-  # (a) Multi-eval moves that write an incoherent committed state->logLik under
-  #     marginal_k. They call compute_full_loglik_at across topology/branch
-  #     configs without forcing the marginal charLLCache cold per-eval, so they
-  #     read a stale per-(char,k') cache (state==warm!=cold) -- or, for the gibbs
-  #     pair, write a fixed-k' likelihood (state!=warm==cold). Coherence sweep
-  #     (marginal-k-freeze-repro.R) gaps: gibbs_spr +10.7, gibbs_subtree +10.5,
-  #     weighted_branch_scale -1.26, block_gibbs_branch -1.60, weighted_spr -0.90,
-  #     weighted_subtree_swap -2.26 nat.
-  corruptors <- c("gibbs_spr", "gibbs_subtree_swap", "weighted_spr",
-                  "weighted_subtree_swap", "weighted_branch_lengths",
-                  "block_gibbs_branch")
-  # (b) k'-sampling moves: k' is analytically integrated out under marginal_k, so
-  #     sampling it is semantically void AND fires the fixed-k' Bug-A path (sweep:
-  #     gibbs_kprime_sweep gap = +6.85 nat if fired). .BuildMoves replaces them
-  #     with mh_logit_p under marginal_k; this asserts that exclusion is live.
-  kprime_moves <- c("kPrime", "gibbs_kPrime", "block_kPrime")
-  banned <- c(corruptors, kprime_moves)
+  # (a) BANNED under marginal_k:
+  #   gibbs pair -- select candidates via the fixed-k' partial-CL path (no
+  #     marginal sum, no P(u|p) weight): a cache fix cannot make them
+  #     target-correct, so they remain disabled (marginal-aware eval deferred).
+  #   k'-moves   -- k' is analytically integrated out under marginal_k, so
+  #     sampling it is semantically void; .BuildMoves substitutes mh_logit_p.
+  banned <- c("gibbs_spr", "gibbs_subtree_swap",
+              "kPrime", "gibbs_kPrime", "block_kPrime")
+  # (b) PRESENT under marginal_k: the four weighted/block moves are now
+  #     cache-coherent (scratch-eval fix, Test 3) and re-enabled; topology is
+  #     also searched by nni/spr/tbr/pspr; p by mh_logit_p.
+  present <- c("weighted_spr", "weighted_subtree_swap", "weighted_branch_lengths",
+               "block_gibbs_branch", "nni", "spr", "tbr", "pspr", "mh_logit_p")
 
+  # The dropped-move message still fires (gibbs pair was requested).
   expect_message(
     MkPrime:::.BuildMoves(nEdge, nTrans, hasNeo = FALSE, mcmc,
                           fixTopology = FALSE, likelihoodMode = "marginal_k"),
@@ -132,14 +137,73 @@ test_that("marginal-k: every cache-incoherent / k'-sampling move is gated out of
   nm_marg <- vapply(mv_marg, function(m) m$name, character(1))
   for (g in banned)
     expect_false(g %in% nm_marg, info = paste(g, "must be absent under marginal_k"))
-  # Topology is still searched by the marginal-correct MH moves; p by mh_logit_p.
-  for (keep in c("nni", "spr", "tbr", "pspr", "mh_logit_p"))
-    expect_true(keep %in% nm_marg, info = paste(keep, "must remain under marginal_k"))
+  for (keep in present)
+    expect_true(keep %in% nm_marg, info = paste(keep, "must be present under marginal_k"))
 
-  # sampled_k keeps them all (no regression to the legacy path).
+  # sampled_k keeps every move (no regression to the legacy path).
   mv_samp <- MkPrime:::.BuildMoves(nEdge, nTrans, hasNeo = FALSE, mcmc,
                                    fixTopology = FALSE, likelihoodMode = "sampled_k")
   nm_samp <- vapply(mv_samp, function(m) m$name, character(1))
-  for (g in banned)
+  for (g in c("gibbs_spr", "gibbs_subtree_swap", present[1:4]))
     expect_true(g %in% nm_samp, info = paste(g, "must be present under sampled_k"))
+})
+
+test_that("marginal-k: re-enabled weighted/block moves stay cache-coherent (FREEZE-003 scratch-eval)", {
+  # The four moves re-enabled under marginal_k -- weighted_branch_scale(12),
+  # weighted_spr(13), weighted_subtree_swap(14), block_gibbs_branch(15) -- each
+  # evaluate many topology/branch configs per call. The scratch-eval fix
+  # (compute_full_loglik_at(..., fillCharLLCache=false)) recomputes every config's
+  # marginal LL cold. We fire each move many times (mix of accept + reject) and
+  # after EACH fire assert two invariants, on BOTH paths:
+  #   (i)  committed state->logLik == cold marginal recompute  (baseline_gap ~ 0)
+  #   (ii) a warm eval == cold eval                            (warm_gap ~ 0)
+  # (ii) is the cross-move post-condition: eval_full_loglik_cpp uses the
+  # charLLCache exactly as the next mh_logit_p (case 30, no entry-invalidation)
+  # would, so warm==cold proves no stale cache can poison it -- whether the move
+  # left the cache cold (13/14/15) or ready-and-coherent (12, whose generic-MH
+  # commit re-fills it for the accepted config). Pre-fix these gapped by
+  # -1.26/-0.90/-2.26/-1.60 nat respectively.
+  for (mt in c(12L, 13L, 14L, 15L)) {
+    fx <- .ft_build()
+    accepts <- 0L
+    for (i in seq_len(300L)) {
+      ok <- do_move_cpp(fx$dataPtr, fx$statePtr, moveType = mt, charIdx = 0L,
+                        scaleTuning = 0.5, betaSimplexTuning = 0.5,
+                        intWalkWindow = 1L, beta = 1.0)
+      if (isTRUE(ok)) accepts <- accepts + 1L
+      committed <- get_state_log_lik(fx$statePtr)                 # read FIRST
+      warm      <- eval_full_loglik_cpp(fx$dataPtr, fx$statePtr)  # uses cache if ready
+      invalidate_marginal_cache(fx$statePtr)
+      cold      <- eval_full_loglik_cpp(fx$dataPtr, fx$statePtr)  # true marginal LL
+      expect_equal(committed, cold, tolerance = 1e-8,
+                   info = paste("moveType", mt, "committed==cold, iter", i))
+      expect_equal(warm, cold, tolerance = 1e-8,
+                   info = paste("moveType", mt, "warm==cold (no stale cache), iter", i))
+    }
+    expect_gt(accepts, 0L)   # ensure the accept path was actually exercised
+  }
+})
+
+test_that("marginal-k: mh_logit_p after a weighted move reads a coherent cache (FREEZE-003)", {
+  # The pointed cross-move hazard: case 30 (mh_logit_p) does NOT invalidate the
+  # charLLCache at entry (it is the one move that reuses it). If a preceding
+  # weighted move left a stale-ready cache, mh_p would consume it and commit a
+  # wrong marginal LL. Fire [weighted move -> mh_logit_p] and assert mh_p's
+  # committed LL equals a cold recompute at the resulting (topology, p).
+  for (mt in c(12L, 13L, 14L, 15L)) {
+    fx <- .ft_build()
+    for (i in seq_len(60L)) {
+      do_move_cpp(fx$dataPtr, fx$statePtr, moveType = mt, charIdx = 0L,
+                  scaleTuning = 0.5, betaSimplexTuning = 0.5,
+                  intWalkWindow = 1L, beta = 1.0)
+      do_move_cpp(fx$dataPtr, fx$statePtr, moveType = 30L, charIdx = 0L,
+                  scaleTuning = 0.5, betaSimplexTuning = 0.5,
+                  intWalkWindow = 1L, beta = 1.0)
+      committed <- get_state_log_lik(fx$statePtr)
+      cold      <- .ft_cold(fx)
+      expect_equal(committed, cold, tolerance = 1e-8,
+                   info = paste("mh_logit_p after moveType", mt,
+                                "must commit a coherent marginal LL, iter", i))
+    }
+  }
 })
