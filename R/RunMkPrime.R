@@ -3501,6 +3501,22 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     # nni/spr/pspr/tbr (marginal-correct after the Bug-B fix). A marginal-aware
     # Gibbs candidate eval is a deferred optimisation.
     marginalK <- identical(likelihoodMode, "marginal_k")
+    if (marginalK) {
+      droppedByMargK <- c(
+        if (isTRUE(mcmc$gibbsSpr))            "gibbs_spr",
+        if (isTRUE(mcmc$gibbsSubtreeSwap))    "gibbs_subtree_swap",
+        if (isTRUE(mcmc$weightedBranchScale)) "weighted_branch_lengths",
+        if (isTRUE(mcmc$weightedSpr))         "weighted_spr",
+        if (isTRUE(mcmc$weightedSubtreeSwap)) "weighted_subtree_swap",
+        if (isTRUE(mcmc$blockGibbsBranch))    "block_gibbs_branch"
+      )
+      if (length(droppedByMargK) > 0L) {
+        cli::cli_inform(
+          "{length(droppedByMargK)} requested move{?s} not used under \\
+           {.code likelihoodMode = \"marginal_k\"}: {.val {droppedByMargK}}."
+        )
+      }
+    }
     gibbsCap <- 10L
     if (isTRUE(mcmc$gibbsSpr) && !marginalK) {
       moves <- c(moves, list(

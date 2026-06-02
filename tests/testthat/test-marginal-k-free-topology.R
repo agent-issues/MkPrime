@@ -120,8 +120,15 @@ test_that("marginal-k: every cache-incoherent / k'-sampling move is gated out of
   kprime_moves <- c("kPrime", "gibbs_kPrime", "block_kPrime")
   banned <- c(corruptors, kprime_moves)
 
-  mv_marg <- MkPrime:::.BuildMoves(nEdge, nTrans, hasNeo = FALSE, mcmc,
-                                   fixTopology = FALSE, likelihoodMode = "marginal_k")
+  expect_message(
+    MkPrime:::.BuildMoves(nEdge, nTrans, hasNeo = FALSE, mcmc,
+                          fixTopology = FALSE, likelihoodMode = "marginal_k"),
+    regexp = "not used under"
+  )
+  mv_marg <- suppressMessages(
+    MkPrime:::.BuildMoves(nEdge, nTrans, hasNeo = FALSE, mcmc,
+                          fixTopology = FALSE, likelihoodMode = "marginal_k")
+  )
   nm_marg <- vapply(mv_marg, function(m) m$name, character(1))
   for (g in banned)
     expect_false(g %in% nm_marg, info = paste(g, "must be absent under marginal_k"))
