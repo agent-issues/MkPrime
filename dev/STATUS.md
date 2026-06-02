@@ -144,14 +144,31 @@ Verified:
   C++ refuses a misrouted gibbs_p under the truncated geometric.
 - Full `testthat` suite green except the pre-existing out-of-scope red test below.
 
-**SBC on sampled_k (Stage 2, PENDING Hamilton).** Driver
-`dev/red-team/heavy-tests/marginal-k/T-SBC-sampled-geometric.R` (mirrors the
-marginal-k SBC with `likelihoodMode = "sampled_k"`; forward truncates at
-K_MAX_PRIOR = 30 by rejection-redraw, inference pins kprimeTruncK = 30; pass bar
-AD > 0.4 on tree_length / rate_log_sd / p — k′_pooled excluded as a Talts
-boundary artefact, project memory `project_sbc_kprime_structural`). Full run is a
-Hamilton array job (pre-build on the login node first per `feedback_pkgload_prebuild`);
-the posterior-overlap heavy test (T-OVL) is the same class of follow-up.
+**SBC on sampled_k + T-OVL (Stage 2) — SUBMITTED to Hamilton 2026-06-02 (f18a091).**
+Driver `dev/red-team/heavy-tests/marginal-k/T-SBC-sampled-geometric.R`
+(`likelihoodMode = "sampled_k"`; forward truncates at K_MAX_PRIOR = 30 by
+rejection-redraw, inference pins kprimeTruncK = 30; k′_pooled excluded as a Talts
+boundary artefact, `project_sbc_kprime_structural`). Jobs (login-node pre-build
+done; stale-`.so` guard active):
+- `17333100_[0-39]` sampled SBC **batch 1** (seedBase 20260528) → `sbc-results-sampled-b1/`
+- `17333101` batch-1 aggregator (afterany)
+- `17333102_[0-39]` sampled SBC **batch 2** (seedBase 20260901) → `sbc-results-sampled-b2/`
+- `17333103` batch-2 aggregator (afterany)
+- `17333104` T-OVL posterior-overlap grid (§7.2) → `marginal-k/T-OVL-verdict.txt`
+
+**Pass bar = the PRE-REGISTERED 2-batch criterion, NOT the per-run all-3-AD>0.4
+strict gate** (which rejects a perfect sampler ~78% = 0.6³, so it would chase
+tl/rls noise). Apply `marginal-k/pool-sampled-batches.R` once both aggregators
+finish: (a) pooled (N=400) AD>0.05 on each of tl/rls/p AND no batch <0.01;
+(b) low-p (p_true<0.10) frac p-rank≤2 ≤0.15 & mean normRank ∈ [0.30,0.70];
+(c) tl/rls freeze extreme(0|L) ≤~0.03. Given the RB proof ("Watertight") + the
+both-variant prior bit-check, an SBC/T-OVL **miss ⇒ mixing, not target** — do not
+re-litigate the prior.
+
+**Deploy note (Hamilton).** GitHub auth is dead on the cluster (SSH publickey
+denied; HTTPS creds empty) and `/nobackup` had purged the stale `mkp-source`
+worktree — so deploy is **auth-free**: `git archive <sha> | scp | extract` into
+`${SRC}`, then a login-node `pkgload::load_all` to build the `.so`. NOT `git pull`.
 
 **Out-of-scope red test (pre-existing).** `test-marginal-k-cache-option-a.R`
 "NNI (case 5) refreshes the cache" FAILS (warm − cold = 0.164 nats). Proven
@@ -174,8 +191,10 @@ dropped from the `.BuildMoves` schedule. Case 30 (`mh_logit_p`) gets the
 redistributed weight since `p` now dominates `u_max(p)`.
 
 **Open follow-ups.**
-- PR-C: T-OVL + SBC validation on Hamilton (Stage 2 SBC driver
-  `T-SBC-sampled-geometric.R` ready; full N=200 run pending).
+- PR-C: T-OVL + sampled_k SBC validation — SUBMITTED to Hamilton 2026-06-02
+  (jobs `17333100`–`17333104`; see the Stage-2 block above). Collect with
+  `marginal-k/pool-sampled-batches.R` (pre-registered 2-batch criterion) and read
+  `marginal-k/T-OVL-verdict.txt`; flip this arm to the v1 default if both pass.
 - Stage 2 residual: the R-fallback `.DoMove` `gibbs_p` (`R/RunMkPrime.R`) still
   does an UNtruncated `Beta(a+nTrans, b+sumU)` draw — wrong for the truncated
   geometric, but currently UNREACHABLE (the `.BuildMoves` scheduler emits
