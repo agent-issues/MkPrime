@@ -204,13 +204,32 @@ threshold): a self-healing move (mh_p-on-accept / slice, `mcmc.cpp:3441`) fires
 only when the gap is small (high p; at p=0.9 mh_p heals & accepts 0.95) and never
 at low/mid p (≤0.5 → 0%), so a chain locks iff p sits in the large-gap region when
 a Gibbs move corrupts. Precise escape dynamics a follow-up.
-**marginal_k is NOT validated for production** (real analyses do not fix topology;
-it is the intended ≥100-tip default). NEXT: choose a fix fork (diagnosis doc §forks)
-+ add a debug-build post-move `|state->logLik − compute_full_loglik| < tol`
-assertion, then a **free-topology mixing check**; re-run T-OVL after the fix
-(ideally redesigned with model-generated data — the current `sample(0:1)`
-signal-free data + over-powered per-cell KS are secondary weaknesses, not the
-cause of this FAIL).
+**RESOLVED 2026-06-02 (commits `7d34892` fix + `24ad4f2` tbr guard).**
+- **Bug B fixed.** `compute_per_kprime_log_lik` / `cpp_log_likelihood_marginal`
+  now read topology from the passed `parent`/`child` (signature + 7 internal
+  reads rerouted), so a topology-changing MH proposal is evaluated on the
+  PROPOSED tree, not `state`'s old one. `gibbs_kprime_sweep_impl` (case 25)
+  passes `state`'s own tree -> bit-identical (sampled_k path unchanged).
+- **Bug A mitigated.** `gibbs_spr`/`gibbs_subtree_swap`/`weighted_spr`/
+  `weighted_subtree_swap` disabled under marginal_k in `.BuildMoves` (they
+  write a fixed-kPrime `state->logLik`; the residual weighted-move gap
+  -1.26/-0.07 nat is unpinned -> deferred). nni/spr/pspr/tbr still search topology.
+- **Opt-in guard.** Compile `-DMKPRIME_CHECK_MARGINAL_COHERENCE` to warn when a
+  committed marginal `logLik` != a cold recompute; the always-on CI guard is
+  `tests/testthat/test-marginal-k-free-topology.R`.
+- **Per-move coherence VERIFIED.** Gap-sweep `baseline_gap` nni/spr/pspr/tbr
+  3.3/1.3/4.8/(tbr) -> **0.000**; gibbs/weighted still gapped (correctly disabled).
+  End-to-end r02/r03 **unfrozen** (sd tl/rls/p > 0; all moves accept, tbr
+  0.43/0.32; Gibbs absent from schedule). Full testthat **FAIL=0 PASS=5838**; the
+  previously-failing `cache-option-a` NNI warm==cold test now passes.
+- **STILL PENDING (does NOT block the fix; blocks the "validated" label).**
+  Free-topology **posterior-overlap / RB-equivalence** (marginal_k == sampled_k)
+  is NOT yet re-shown -- that is the T-OVL step, ideally redesigned with
+  model-generated (signal-bearing) data (the current `sample(0:1)` signal-free
+  data + over-powered per-cell KS are secondary weaknesses). So: **freeze fixed +
+  per-move likelihood coherence verified; free-topology RB-equivalence
+  re-validation OUTSTANDING.** Coherence is strong mechanism evidence the
+  likelihood is right, but it is not the posterior check.
 
 **Deploy note (Hamilton).** GitHub auth is dead on the cluster (SSH publickey
 denied; HTTPS creds empty) and `/nobackup` had purged the stale `mkp-source`
