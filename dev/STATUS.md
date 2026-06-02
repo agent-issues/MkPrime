@@ -181,31 +181,50 @@ marginal chains EVERY Metropolis + slice move has **0% acceptance** (only the
 Gibbs topology moves "accept"); non-frozen cells accept ~0.6–0.9. This is the
 documented marginal-k `state→logLik`-inconsistency freeze (resume doc: "stuck at
 init 0.5"; "sampled_k NEVER freezes"), firing under FREE topology — which the
-`fixTopology` SBC structurally cannot reach. **Likely trigger:** the tracked
-topology-move cache bug (`test-marginal-k-cache-option-a.R`, warm−cold 0.164 nats:
-a topology move not refreshing the per-(node,k′) cache → corrupted baseline → all
-MH moves reject). **marginal_k is therefore NOT validated for production** (real
-analyses do not fix topology, and it is the intended ≥100-tip default). NEXT: a
-**free-topology SBC** (or a freeze repro + fix), NOT OVL chain-tuning; re-run
-T-OVL after the fix (ideally redesigned with model-generated data — the current
-`sample(0:1)` signal-free data + over-powered per-cell KS are secondary
-weaknesses, but they are NOT what caused this FAIL).
+`fixTopology` SBC structurally cannot reach. **REPRODUCED + LOCALIZED 2026-06-02**
+(`dev/red-team/numerical/marginal-k-freeze-repro.R`; full write-up in
+`dev/red-team/MARGINAL-K-FREEZE-003-diagnosis.md`): under marginal_k, **every
+topology-changing move writes an incorrect `state->logLik`; `mh_logit_p` is the
+only clean move.** A move-type coherence-gap sweep (validated by init + mh_p
+controls reading ≈0) separates **two bugs** via warm-vs-cold: **(A)** the
+**default-ON Gibbs moves** `gibbs_spr`/`gibbs_subtree_swap` write a **fixed-kPrime**
+`state->logLik` (grouping at the single `state->kPrime`, `mcmc.cpp:1254-1282/1410`;
+no marginal-over-k′ sum) — **+10.6 nat** inflated, cache left correct; **(B)** the
+MH/weighted topology moves (`nni`/`spr`/`pspr`/`weighted_*`) leave **both**
+`state->logLik` and the warm cache stale (+1.3–4.8 nat) = the cache-option-a
+warm≠cold bug, now shown **broader than NNI**. Causal close: one `gibbs_spr` drops
+`mh_p` acceptance from **95.3% → 0.0%**. In-situ r02 fingerprint: only `gibbs_spr`
+(0.67) + `gibbs_subtree_swap` (0.56) accept; all 12 other moves at 0.0000. The
+**7/16 incidence is a metastable race** (gibbs gap ~uniform ~10.5 across cells,
+NOT a magnitude threshold): a slice that fires resets `state->logLik` correctly
+(`mcmc.cpp:3441`) and breaks the trap; a chain whose early slices stay stuck locks.
+**marginal_k is NOT validated for production** (real analyses do not fix topology;
+it is the intended ≥100-tip default). NEXT: choose a fix fork (diagnosis doc §forks)
++ add a debug-build post-move `|state->logLik − compute_full_loglik| < tol`
+assertion, then a **free-topology mixing check**; re-run T-OVL after the fix
+(ideally redesigned with model-generated data — the current `sample(0:1)`
+signal-free data + over-powered per-cell KS are secondary weaknesses, not the
+cause of this FAIL).
 
 **Deploy note (Hamilton).** GitHub auth is dead on the cluster (SSH publickey
 denied; HTTPS creds empty) and `/nobackup` had purged the stale `mkp-source`
 worktree — so deploy is **auth-free**: `git archive <sha> | scp | extract` into
 `${SRC}`, then a login-node `pkgload::load_all` to build the `.so`. NOT `git pull`.
 
-**Tracked cache bug — NOW IN SCOPE (pre-existing).** `test-marginal-k-cache-option-a.R`
-"NNI (case 5) refreshes the cache" FAILS (warm − cold = 0.164 nats). Proven
-**not** a Stage 1b regression: the failure is bit-for-bit IDENTICAL at K = 30 and
-K = 200, so the K-wiring did not cause it. This is the partial-CL warm≠cold bug
-(a topology move does not refresh the per-(node,k′) cache). ⚠ Previously filed
-"SBC-irrelevant because SBC runs `fixTopology = TRUE`" — **that dismissal is now
-disproven**: T-OVL (2026-06-02, FREE topology) shows it bites in production —
-marginal_k whole-chain freezes in 7/16 free-topology cells (Stage-2 result above).
-**No longer Tier-2; it blocks the marginal_k production default and is the gating
-bug for v1 marginal-k.**
+**Tracked cache bug — NOW IN SCOPE (pre-existing) = freeze Bug B.**
+`test-marginal-k-cache-option-a.R` "NNI (case 5) refreshes the cache" FAILS
+(warm − cold = 0.164 nats). Proven **not** a Stage 1b regression: the failure is
+bit-for-bit IDENTICAL at K = 30 and K = 200, so the K-wiring did not cause it.
+This is the partial-CL warm≠cold bug (a topology move does not refresh the
+per-(node,k′) cache). ⚠ Previously filed "SBC-irrelevant because SBC runs
+`fixTopology = TRUE`" — **that dismissal is now disproven** (FREEZE-003 repro,
+above). It is **Bug B** of the freeze, and the FREEZE-003 sweep shows it is
+**broader than NNI** (also `spr`/`pspr`/`weighted_*`). NB the *dominant in-situ*
+freeze driver is **Bug A** (the default-ON Gibbs moves' fixed-kPrime
+`state->logLik`, +10.6 nat) — frozen chains accept only Gibbs moves — so a
+cache-option-a fix alone will **not** unfreeze marginal_k; Bug A must be fixed
+too. **No longer Tier-2; together these block the marginal_k production default
+and are the gating bugs for v1 marginal-k.**
 
 **Empirical performance.** Hyperparameter-level identity vs sampled-k:
 heavy-test PENDING (T-OVL). Per-character u not sampled — explicit
