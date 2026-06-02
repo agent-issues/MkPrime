@@ -31,22 +31,34 @@
 #   2. rateLogSd    ~ Gamma(1, 1)
 #   3. tree         ~ rtree(N_TIP) with edge lengths from Gamma · Dirichlet
 #   4. u_i          ~ Geo(p_true)              (i = 1..N_CHAR)
-#   5. kTrue_i      = pmin(2 + u_i, K_MAX_PRIOR)
+#   5. kTrue_i      = 2 + u_i, REJECTION-redrawn until kTrue_i <= K_MAX_PRIOR
+#                    (truncated geometric on [2,K]; NOT pmin-cap, which would
+#                    pile a point mass at K and break SBC calibration)
 #   6. y_i          ~ JC(kTrue_i) on the tree
 #   7. canonicalise y_i → kObs_i (= number of distinct realised states)
 #
 # Inference:
 #   MkPrimeModel(kPrimePrior = "geometric",
-#                likelihoodMode = "marginal_k",
+#                likelihoodMode = "sampled_k",     # explicit-k' arm (Stage 2)
 #                priorVariant = "unconditional",   # Model A — matches forward
+#                kprimeTruncK = K_MAX_PRIOR,        # inference K == forward K
 #                expSteps = EXPSTEPS_FIXED,
 #                kprimeHyperA = 1, kprimeHyperB = 1)
 #
 # Rank statistics (continuous parameters only):
 #   tree_length, rate_log_sd, p.
 #
-# Pass bar (plan §7.3, full mode): AD p > 0.4 on each of tree_length,
-# rate_log_sd, p at N_SIM = 200. MARGINAL between 0.01 and 0.4. FAIL below.
+# Pass bar: the per-run "STRICT" all-3-AD>0.4 gate printed in verdict.txt is a
+# DIAGNOSTIC, NOT the operative criterion — it rejects a PERFECT sampler ~78%
+# of the time (0.6^3), so a lone sub-0.4 on tree_length/rate_log_sd is expected
+# noise (it bit the marginal_k run: tl AD=0.248 was pure noise). The operative
+# bar is the PRE-REGISTERED 2-batch criterion used for marginal_k (see
+# MARGINAL-K-CACHE-002-resume.md §POST-FIX PASS CRITERION): run two disjoint
+# seed-batches via MARGINAL_K_SBC_SEEDBASE (N=400 pooled) and DECLARE PASS iff
+#   (a) pooled AD > 0.05 on each of tree_length, rate_log_sd, p;
+#   (b) no single batch has any param with AD < 0.01;
+#   (c) targeted low-p (p_true<0.10): frac p-rank<=2 <= 0.15, mean in [0.3L,0.7L];
+#   (d) no freeze regression: tl/rls extreme(0|L) fraction <= ~3%.
 #
 # Quick mode (env var): N_SIM=20, N_ITER=1000. Insufficient AD power —
 # diagnostic only; PASS in quick mode is NOT evidence the chain is correct
@@ -456,7 +468,7 @@ cat(sprintf("L_used:        %d\n", L_used))
 cat(sprintf("N_TIP:         %d  N_CHAR (target): %d\n", N_TIP, N_CHAR))
 cat(sprintf("N_ITER:        %d  N_WARM: %d  N_THIN: %d\n", N_ITER, N_WARM, N_THIN))
 cat(sprintf("Prior:         geometric (k'_i = kObs_i + Geo(p))\n"))
-cat(sprintf("Mode flag:     likelihoodMode = 'marginal_k'\n"))
+cat(sprintf("Mode flag:     likelihoodMode = 'sampled_k'  (kprimeTruncK = %d)\n", K_MAX_PRIOR))
 cat(sprintf("Prior variant: unconditional (Model A: k' = 2 + Geo(p))\n"))
 cat(sprintf("Hyperprior:    p ~ Beta(%g, %g)\n", A_PRIOR, B_PRIOR))
 cat(sprintf("Forward draw:  kTrue_i ~ TRUNCATED Geo(p_true) on [2, %d] via rejection\n",
@@ -464,13 +476,14 @@ cat(sprintf("Forward draw:  kTrue_i ~ TRUNCATED Geo(p_true) on [2, %d] via rejec
 cat("               redraw (NOT pmin-cap; MARGINAL-K-TRUNC-001), drawn ONCE\n")
 cat("               (uncond.); then redraw DATA only (k fixed) until variable\n")
 cat("               (Lewis-Mkv, Model I-a). Inference coding='variable',\n")
-cat(sprintf("               marginal sum capped at k<=%d + renormalised by Z(p).\n", K_MAX_PRIOR))
-cat("\nAD p-values vs Uniform(0, 1) [full-mode pass gate: > 0.4]:\n")
+cat(sprintf("               sampled_k geometric PRIOR truncated at k<=%d +\n", K_MAX_PRIOR))
+cat("               renormalised by Z(p) (RB-consistent with marginal_k).\n")
+cat("\nAD p-values vs Uniform(0, 1) [per-run diagnostic; operative bar = 2-batch pooled, see header]:\n")
 for (nm in names(ad)) {
   cat(sprintf("  %-14s: %.4f  %s\n", nm, ad[[nm]], .classify(ad[[nm]])))
 }
 cat(sprintf("\nHeadline verdict: %s  (lenient: all AD>0.01 AND any AD>0.4)\n", verdict))
-cat(sprintf("STRICT gate:      %s  [the real bar: AD>0.4 on tree_length AND rate_log_sd AND p]\n", strict_gate))
+cat(sprintf("STRICT gate:      %s  [per-run DIAGNOSTIC only — fails a perfect sampler ~78%% (0.6^3); operative bar = 2-batch pooled criterion, see header]\n", strict_gate))
 if (all_finite && !strict_pass && mode != "quick") {
   cat(sprintf("  params below 0.4: %s\n", paste(names(ad)[unlist(ad) <= 0.4], collapse = ", ")))
 }
