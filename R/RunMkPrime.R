@@ -3490,14 +3490,25 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     # all candidate regraft/swap positions.  M-113 showed this outweighs the
     # mixing gain on trees with > ~20 tips, so cap the initial weight (M-115).
     # The adaptive scheduler refines from here during warmup.
+    #
+    # MARGINAL-K-FREEZE-003 (Bug A): gibbs_spr / gibbs_subtree_swap evaluate
+    # candidates at the single state->kPrime via the sampled-k partial-CL
+    # machinery (a fixed-kPrime likelihood, no marginal-over-k' sum, no
+    # geometric P(u|p) weight), then write that inflated value into
+    # state->logLik -- freezing the continuous samplers under marginal_k. They
+    # never call the marginal evaluator, so the Bug-B threading fix does not
+    # reach them. Disable under marginal_k; topology is still searched by
+    # nni/spr/pspr/tbr (marginal-correct after the Bug-B fix). A marginal-aware
+    # Gibbs candidate eval is a deferred optimisation.
+    marginalK <- identical(likelihoodMode, "marginal_k")
     gibbsCap <- 10L
-    if (isTRUE(mcmc$gibbsSpr)) {
+    if (isTRUE(mcmc$gibbsSpr) && !marginalK) {
       moves <- c(moves, list(
         list(name = "gibbs_spr", type = "gibbs_spr", target = NULL,
              weight = max(1L, min(nEdge / 4, gibbsCap)), dim = 1L)
       ))
     }
-    if (isTRUE(mcmc$gibbsSubtreeSwap)) {
+    if (isTRUE(mcmc$gibbsSubtreeSwap) && !marginalK) {
       moves <- c(moves, list(
         list(name = "gibbs_subtree_swap", type = "gibbs_subtree_swap",
              target = NULL,
@@ -3511,13 +3522,18 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
              target = "rel_br_lengths", weight = max(1, nEdge / 6), dim = 1L)
       ))
     }
-    if (isTRUE(mcmc$weightedSpr)) {
+    # MARGINAL-K-FREEZE-003: weighted_spr / weighted_subtree_swap also leave an
+    # incoherent state->logLik under marginal_k (gap-sweep: weighted_spr 0.17,
+    # weighted_subtree_swap 1.5 nat AFTER the Bug-B threading fix — a residual
+    # commit/edge-bookkeeping issue not pinned in v1). Default-off anyway;
+    # disable under marginal_k. Re-enable once root-caused + verified clean.
+    if (isTRUE(mcmc$weightedSpr) && !marginalK) {
       moves <- c(moves, list(
         list(name = "weighted_spr", type = "weighted_spr", target = NULL,
              weight = max(1, nEdge / 8), dim = 1L)
       ))
     }
-    if (isTRUE(mcmc$weightedSubtreeSwap)) {
+    if (isTRUE(mcmc$weightedSubtreeSwap) && !marginalK) {
       moves <- c(moves, list(
         list(name = "weighted_subtree_swap", type = "weighted_subtree_swap",
              target = NULL, weight = max(1, nEdge / 8), dim = 1L)

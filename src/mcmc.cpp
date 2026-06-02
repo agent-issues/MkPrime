@@ -3825,9 +3825,15 @@ static List pspr_proposal_impl(
 
 void compute_per_kprime_log_lik(
     McmcData* data, McmcState* state, double beta,
+    IntegerVector parent, IntegerVector child,
     NumericVector edgeLen,
     NumericVector acrvRates,
     KprimeCharWeights& out) {
+  // MARGINAL-K-FREEZE-003 (Bug B): topology comes from the CALLER (parent,
+  // child), NOT from state->parent/child. A topology-changing MH move
+  // evaluates its proposal BEFORE committing, so state->parent still holds the
+  // OLD tree at eval time; reading state here evaluated the wrong topology and
+  // froze / mis-sampled marginal_k under free topology.
   int nTrans = (int)data->transIdxGlobal.size();
   out.resize(nTrans);
   if (nTrans == 0) return;
@@ -3844,7 +3850,7 @@ void compute_per_kprime_log_lik(
     }
     if (cspCache[kStates] < 0.0) {
       cspCache[kStates] = const_site_prob_for_k(
-        *data, state->parent, state->child, edgeLen,
+        *data, parent, child, edgeLen,
         kStates, state->betaScale, acrvRates);
     }
     return cspCache[kStates];
@@ -4090,19 +4096,19 @@ void compute_per_kprime_log_lik(
           NumericVector rates = acrvRates;
           if (rates.size() == 0) rates = NumericVector(1, 1.0);
           pruning_f81_het_acrv_persite(
-            state->parent, state->child, edgeLen, part.uniqueTipStates,
+            parent, child, edgeLen, part.uniqueTipStates,
             k, 1.0, hetBins, nBC, rates,
             state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
             neededStride, siteLL.data());
         } else if (useCollapse) {
           pruning_jc_acrv_persite_collapsed(
-            state->parent, state->child, edgeLen, part.uniqueTipStates,
+            parent, child, edgeLen, part.uniqueTipStates,
             k, tp.kObs, acrvRates,
             state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
             neededStride, siteLL.data());
         } else {
           pruning_jc_acrv_persite(
-            state->parent, state->child, edgeLen, part.uniqueTipStates,
+            parent, child, edgeLen, part.uniqueTipStates,
             k, acrvRates,
             state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
             neededStride, siteLL.data());
@@ -4119,19 +4125,19 @@ void compute_per_kprime_log_lik(
           NumericVector rates = acrvRates;
           if (rates.size() == 0) rates = NumericVector(1, 1.0);
           pruning_f81_het_acrv_persite(
-            state->parent, state->child, edgeLen, sub,
+            parent, child, edgeLen, sub,
             k, 1.0, hetBins, nBC, rates,
             state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
             neededStride, siteLL.data());
         } else if (useCollapse) {
           pruning_jc_acrv_persite_collapsed(
-            state->parent, state->child, edgeLen, sub,
+            parent, child, edgeLen, sub,
             k, tp.kObs, acrvRates,
             state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
             neededStride, siteLL.data());
         } else {
           pruning_jc_acrv_persite(
-            state->parent, state->child, edgeLen, sub,
+            parent, child, edgeLen, sub,
             k, acrvRates,
             state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
             neededStride, siteLL.data());
@@ -4318,11 +4324,13 @@ double cpp_log_likelihood_marginal(
     // rateNeo by pre-scaling edgeLen if the caller did — but the existing
     // case-25 path uses state's own values. The MCMC chain always
     // evaluates at state's current scalars, so we mirror that by using
-    // them here (parent/child/edgeLen come from caller; everything else
-    // is read from state inside the helper).
+    // them here. Topology (parent/child/edgeLen) comes from the caller; the
+    // scalar params (p/rateLoss/rateLogSd/rateNeo/betaScale) are read from
+    // state inside the helper. (MARGINAL-K-FREEZE-003: pass the caller's
+    // parent/child so a proposed topology is evaluated, not state's old tree.)
     KprimeCharWeights kw;
     compute_per_kprime_log_lik(&data, &state, /*beta=*/1.0,
-                               edgeLen, acrvRates, kw);
+                               parent, child, edgeLen, acrvRates, kw);
 
     // Allocate cache lazily on first marginal eval.
     if ((int)state.charLLCache.size() != nTrans * kMaxKprimeCand) {
@@ -4441,8 +4449,11 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
     : NumericVector(1, 1.0);
 
   // Phase 1: batched per-(char, k') log-weight precomputation.
+  // Gibbs kPrime sweep evaluates at state's CURRENT tree, so pass state's
+  // own parent/child (MARGINAL-K-FREEZE-003: helper no longer reads state).
   KprimeCharWeights kw;
-  compute_per_kprime_log_lik(data, state, beta, edgeLen, acrvRates, kw);
+  compute_per_kprime_log_lik(data, state, beta,
+                             state->parent, state->child, edgeLen, acrvRates, kw);
   const std::vector<double>& charLogW    = kw.charLogW;
   const std::vector<int>&    charNCand   = kw.charNCand;
   const std::vector<double>& charMaxLogW = kw.charMaxLogW;
@@ -5582,6 +5593,27 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     // OPP-6b: in-place NNI — state->parent already modified in-place.
     // Partition cache handled by std::move(newPC) above (recomputed via
     // default branch of the partial-lik switch).
+
+    // MARGINAL-K-FREEZE-003 coherence guard (opt-in: compile with
+    // -DMKPRIME_CHECK_MARGINAL_COHERENCE). After an accepted move under
+    // marginal_k the committed state->logLik MUST equal a fresh COLD marginal
+    // recompute of the committed tree; a mismatch is the freeze / wrong-
+    // posterior failure mode (a move left a stale baseline). Off by default
+    // (zero production cost); the testthat free-topology test is the always-on
+    // CI guard. Covers the MH-eval moves that reach this accept block; the
+    // early-return Gibbs moves are disabled under marginal_k (see .BuildMoves).
+#ifdef MKPRIME_CHECK_MARGINAL_COHERENCE
+    if (data->marginalK) {
+      bool savedReady = state->charLLCacheReady;
+      state->charLLCacheReady = false;                       // force cold rebuild
+      double freshLL = compute_full_loglik(*data, *state);
+      state->charLLCacheReady = savedReady;
+      if (std::abs(state->logLik - freshLL) > 1e-6)
+        Rf_warning(
+          "MARGINAL-K coherence: moveType %d logLik %.8g != fresh %.8g (gap %.4g)",
+          moveType, state->logLik, freshLL, state->logLik - freshLL);
+    }
+#endif
 
     // M-121/M-161: cache management on acceptance.
     // Partial CL moves keep the cache valid (already updated).

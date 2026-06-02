@@ -427,10 +427,13 @@ struct KprimeCharWeights {
 // canonical caller and the phase-2 categorical sampler that consumes `out`.
 //
 // NOTE: state->gibbsWs is grown if needed — that's workspace, not logical
-// state, so callers can treat this as state-non-modifying. Reads
-// state->kPrime / parent / child / betaScale; never writes them.
+// state, so callers can treat this as state-non-modifying. Topology is taken
+// from the caller-supplied parent/child/edgeLen (MARGINAL-K-FREEZE-003: a
+// proposed tree must be evaluable before it is committed to state); reads
+// state->kPrime / p / betaScale; never writes them.
 void compute_per_kprime_log_lik(
     McmcData* data, McmcState* state, double beta,
+    Rcpp::IntegerVector parent, Rcpp::IntegerVector child,
     Rcpp::NumericVector edgeLen,
     Rcpp::NumericVector acrvRates,
     KprimeCharWeights& out);
@@ -446,7 +449,8 @@ void compute_per_kprime_log_lik(
 // (those are not marginalised — k is fixed).
 //
 // Reads data->parts, data->kObs, data->transIdxGlobal, data->codingType,
-// data->relabel, plus state->parent/child/p/rateLoss/rateLogSd/rateNeo/
+// data->relabel, the passed parent/child/edgeLen (NOT state's topology —
+// MARGINAL-K-FREEZE-003), plus state->p/rateLoss/rateLogSd/rateNeo/
 // betaScale. Does NOT modify state (apart from state->gibbsWs allocation
 // as noted on compute_per_kprime_log_lik).
 //

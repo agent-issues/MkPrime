@@ -1,9 +1,46 @@
-# MARGINAL-K-FREEZE-003 — free-topology freeze, REPRODUCED + LOCALIZED (2026-06-02)
+# MARGINAL-K-FREEZE-003 — free-topology freeze, REPRODUCED + LOCALIZED + FIXED (2026-06-02)
 
 > Repro driver: `dev/red-team/numerical/marginal-k-freeze-repro.R`
 > Results: `dev/red-team/numerical/marginal-k-freeze-results/` (freeze-repro.log,
 > sweep-r02.rds, dataset-dependence.rds, partA-runmkprime.rds).
-> Scope: REPRO + LOCALIZE only. The fix is NOT applied here (forks at the end).
+> Fix verified 2026-06-02 — see RESOLVED below. (§forks retained for history.)
+
+## RESOLVED (2026-06-02) — fix implemented + verified
+
+Both bugs fixed on `feat/marginal-k`:
+
+- **Bug B fix** (`src/mcmc.cpp`, `src/mcmc_state.h`): `compute_per_kprime_log_lik`
+  now takes `parent`/`child` parameters, and `cpp_log_likelihood_marginal`
+  threads its own `parent`/`child` args through — so a *proposed* topology is
+  evaluated correctly rather than `state`'s pre-commit (old) tree. The 7 internal
+  `state->parent/child` reads in the helper now use the passed topology; the
+  Gibbs-kPrime-sweep caller (case 25) passes `state->parent/child` (unchanged
+  behaviour). **Verified:** the move-type gap-sweep now shows **nni/spr/pspr
+  baseline_gap = 0.000** (was 3.305 / 1.302 / 4.843), and the tracked
+  `test-marginal-k-cache-option-a.R` NNI warm≠cold test now **PASSES**.
+- **Bug A mitigation** (`R/RunMkPrime.R` `.BuildMoves`): `gibbs_spr`,
+  `gibbs_subtree_swap`, `weighted_spr`, `weighted_subtree_swap` are disabled
+  under `marginal_k` (they write a fixed-kPrime `state->logLik` and never call
+  the marginal evaluator, so the Bug-B threading fix does not reach them — the
+  gap-sweep confirmed residuals: gibbs ~10.6, weighted 0.17/1.5 nat). Topology is
+  still searched by the now-correct `nni`/`spr`/`pspr`/`tbr`. A marginal-aware
+  Gibbs candidate eval, and the weighted-move residual root-cause, are deferred.
+- **Guards:** opt-in C++ coherence assertion (`-DMKPRIME_CHECK_MARGINAL_COHERENCE`)
+  + always-on `tests/testthat/test-marginal-k-free-topology.R`.
+
+**End-to-end** (RunMkPrime, free topology, the formerly-frozen `n16_c16_r02`):
+marginal_k **no longer freezes** — sd(tl/rls/p) = 47.4 / 3.79 / 0.059 (was
+0/0/0); all moves accept (nni 0.91, spr 0.45, mh_logit_p 0.84, slice 1.0); Gibbs
+moves absent from the schedule. marginal/loglik/cache testthat: 153 pass / 0 fail.
+
+**Follow-ups (not blockers):** (1) re-run T-OVL with model-generated (signal-
+bearing) data to confirm marginal-vs-sampled posterior agreement (Rao-Blackwell);
+(2) root-cause the weighted-move residual; (3) optional marginal-aware Gibbs for
+large-tree mixing efficiency.
+
+---
+
+(Original diagnosis follows — retained for the record.)
 
 ## TL;DR
 
