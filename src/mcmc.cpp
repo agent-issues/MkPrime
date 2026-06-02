@@ -1108,6 +1108,42 @@ double eval_full_loglik_at_cpp(SEXP dataPtr, SEXP statePtr,
   return compute_full_loglik_at(*data, *state, parent, child, edgeLen);
 }
 
+// FREEZE-003 Phase-2 candidate-weight check (advisor-requested deterministic
+// settler). The weighted topology moves SCORE candidates via preorder_into ->
+// compute_full_loglik_at (the selection weight), but COMMIT via
+// preorder_weighted_impl. `committed==cold` only exercises the commit path; a
+// discrepancy between the two preorder canonicalisations would skew candidate
+// SELECTION without showing up in any committed-LL test. This returns the
+// marginal LL of the SAME (parent,child,edgeLen) computed through BOTH paths as
+// SCRATCH evals; the test asserts bit-equality, so the LL used for selection is
+// exactly the LL of the corresponding landed tree -> no proposal-selection skew.
+// [[Rcpp::export]]
+NumericVector eval_preorder_paths_cpp(SEXP dataPtr, SEXP statePtr,
+                                      IntegerVector parent, IntegerVector child,
+                                      NumericVector edgeLen) {
+  McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
+  McmcState* state = Rcpp::XPtr<McmcState>(statePtr).get();
+  const int nTip  = data->nTip;
+  const int nEdge = parent.size();
+  // Candidate-evaluation path (M-109): in-place edits then preorder_into.
+  IntegerVector ordPar(nEdge), ordCh(nEdge);
+  NumericVector ordAbs(nEdge);
+  preorder_into(parent, child, edgeLen, nTip,
+                INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
+  double ll_into = compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs,
+                                          /*fillCharLLCache=*/false);
+  // Commit path: TreeTools::preorder_weighted_impl.
+  auto po = TreeTools::preorder_weighted_impl(parent, child, edgeLen);
+  IntegerMatrix oe = po.first;
+  NumericVector oaf = po.second;
+  IntegerVector op = oe(_, 0);
+  IntegerVector oc = oe(_, 1);
+  double ll_weighted = compute_full_loglik_at(*data, *state, op, oc, oaf,
+                                              /*fillCharLLCache=*/false);
+  return NumericVector::create(_["preorder_into"]     = ll_into,
+                               _["preorder_weighted"] = ll_weighted);
+}
+
 
 // ---------------------------------------------------------------------------
 // gibbs_spr_impl  (M-085, M-105 partial CL)

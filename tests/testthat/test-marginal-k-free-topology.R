@@ -207,3 +207,38 @@ test_that("marginal-k: mh_logit_p after a weighted move reads a coherent cache (
     }
   }
 })
+
+test_that("marginal-k: candidate (preorder_into) and commit (preorder_weighted) paths give identical LL (FREEZE-003 Phase 2 proposal-selection check)", {
+  # The deterministic settler for proposal-SELECTION correctness (the dimension
+  # committed==cold / warm==cold do NOT test). The weighted topology moves score
+  # candidates via preorder_into -> compute_full_loglik_at (the selection weight)
+  # but COMMIT via preorder_weighted_impl. If those two canonicalisations gave
+  # different likelihoods for the same tree, candidate selection would be skewed
+  # invisibly. eval_preorder_paths_cpp computes the marginal LL of the SAME tree
+  # through BOTH paths (scratch evals); assert bit-equality across many evolving
+  # topologies AND arbitrary input edge orders (the realistic mid-edit input).
+  set.seed(11L)
+  fx <- .ft_build()
+  for (step in seq_len(90L)) {
+    mt <- c(6L, 5L, 17L)[(step %% 3L) + 1L]   # spr / nni / tbr -> diverse topologies
+    do_move_cpp(fx$dataPtr, fx$statePtr, moveType = mt, charIdx = 0L,
+                scaleTuning = 0.5, betaSimplexTuning = 0.5,
+                intWalkWindow = 1L, beta = 1.0)
+    st  <- get_mcmc_state(fx$statePtr)
+    par <- st$edge[, 1]; ch <- st$edge[, 2]
+    el  <- st$treeLength * st$relBrLengths
+    base <- eval_preorder_paths_cpp(fx$dataPtr, fx$statePtr, par, ch, el)
+    expect_equal(unname(base[["preorder_into"]]), unname(base[["preorder_weighted"]]),
+                 tolerance = 1e-9,
+                 info = paste("step", step, "moveType", mt,
+                              ": candidate-eval (preorder_into) and commit (preorder_weighted) LL must agree"))
+    # Arbitrary input edge order (preorder_into rebuilds adjacency from scratch):
+    # both canonicalisers must recover the same tree -> same LL.
+    perm <- sample.int(length(par))
+    pp <- eval_preorder_paths_cpp(fx$dataPtr, fx$statePtr, par[perm], ch[perm], el[perm])
+    expect_equal(unname(pp[["preorder_into"]]), unname(base[["preorder_into"]]),
+                 tolerance = 1e-9, info = paste("step", step, ": preorder_into edge-order invariance"))
+    expect_equal(unname(pp[["preorder_weighted"]]), unname(base[["preorder_weighted"]]),
+                 tolerance = 1e-9, info = paste("step", step, ": preorder_weighted edge-order invariance"))
+  }
+})

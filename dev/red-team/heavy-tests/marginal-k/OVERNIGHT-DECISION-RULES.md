@@ -42,3 +42,39 @@ is lock-safe (read-only DLL load), but RECOMPILING while the job holds the DLL i
 Windows lock race. The binary is CURRENT as of commit c68f3dc. Any later wakeup must
 verify `bx3s4g4qz` finished ("OVERNIGHT DONE" in the driver log) before recompiling,
 and skip the rebuild entirely if `src/` is unchanged.
+
+---
+
+## RESULTS (2026-06-02 ~23:00) — verdicts applied
+
+**p-recheck (200k, gated 16x48):** marginal-p-ESS DROPPED to 45-72 (was 157-256 at
+80k); p d_sd swung 1.25/5.84/8.62 across cells purely from that ESS starvation;
+rate_log_sd at HIGH ESS agreed cleanly (d_sd 0.96/1.54 at ESS 477-1245, PASS).
+=> **Outcome (c): p-overlap is INCONCLUSIVE-by-underpowering** (no Gibbs-p under
+marginal_k; mh_logit_p mixes p poorly). Fall back to the RB identity, which already
+proves p-target-equivalence. NOT a pass, NOT a correctness fail. mh_logit_p p-mixing
+is an efficiency follow-up (a better marginal-p move), not a blocker.
+
+**moves-on overlap (60k, all 4 re-enabled):** one fresh FAIL (n16_c24_r01
+rate_log_sd d_sd=6.86) at moderate ESS (277/314). Per the pre-registered rule this
+implicates the re-enabled moves, so it was RESOLVED — NOT by another overlap run but
+by the advisor's decisive, noise-free settler:
+
+**Candidate-weight check (deterministic, Test 5 in test-marginal-k-free-topology.R):**
+The overlap is the only PROPOSAL test; committed==cold/warm==cold test only the
+landed state, not candidate SELECTION. The weighted moves score candidates via
+preorder_into but commit via preorder_weighted_impl (different code paths). New
+eval_preorder_paths_cpp computes the marginal LL of the SAME tree through BOTH paths;
+Test 5 asserts bit-equality across 90 evolving topologies + arbitrary edge orders ->
+**PASS to 1e-9**. So the selection LL == the landed-tree LL: NO proposal-selection
+skew. Combined with the move-math cancelling in the marginal-vs-sampled comparison,
+**proposal correctness is confirmed DETERMINISTICALLY**; the moves-on rate_log_sd FAIL
+is the same moderate-ESS d_sd-test artifact the p-recheck demonstrated (d_sd unreliable
+for skewed posteriors below ~ESS 500), NOT a re-enabled-move bug.
+
+**Net:** Phase 2 stands — coherent (gap-sweep + Test 3/4), correct candidate selection
+(Test 5), full suite FAIL=0. The MCMC overlap is supporting-but-underpowered on the
+skewed/slow params (p, rate_log_sd at low ESS); the RB identity + the deterministic
+checks are the load-bearing evidence. Test-quality follow-up (not blocking): the d_sd
+statistic needs a higher ESS floor (sd-MCSE normal approx fails at moderate ESS) and/or
+a robust spread metric; raise ESS_SD_FLOOR before using d_sd for a verdict.

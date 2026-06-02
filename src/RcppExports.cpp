@@ -459,6 +459,21 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// eval_preorder_paths_cpp
+NumericVector eval_preorder_paths_cpp(SEXP dataPtr, SEXP statePtr, IntegerVector parent, IntegerVector child, NumericVector edgeLen);
+RcppExport SEXP _MkPrime_eval_preorder_paths_cpp(SEXP dataPtrSEXP, SEXP statePtrSEXP, SEXP parentSEXP, SEXP childSEXP, SEXP edgeLenSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type dataPtr(dataPtrSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type statePtr(statePtrSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type parent(parentSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type child(childSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type edgeLen(edgeLenSEXP);
+    rcpp_result_gen = Rcpp::wrap(eval_preorder_paths_cpp(dataPtr, statePtr, parent, child, edgeLen));
+    return rcpp_result_gen;
+END_RCPP
+}
 // do_move_cpp
 bool do_move_cpp(SEXP dataPtr, SEXP statePtr, int moveType, int charIdx, double scaleTuning, double betaSimplexTuning, int intWalkWindow, double beta);
 RcppExport SEXP _MkPrime_do_move_cpp(SEXP dataPtrSEXP, SEXP statePtrSEXP, SEXP moveTypeSEXP, SEXP charIdxSEXP, SEXP scaleTuningSEXP, SEXP betaSimplexTuningSEXP, SEXP intWalkWindowSEXP, SEXP betaSEXP) {
@@ -936,6 +951,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_set_class_rate_concentration", (DL_FUNC) &_MkPrime_set_class_rate_concentration, 2},
     {"_MkPrime_eval_full_loglik_cpp", (DL_FUNC) &_MkPrime_eval_full_loglik_cpp, 2},
     {"_MkPrime_eval_full_loglik_at_cpp", (DL_FUNC) &_MkPrime_eval_full_loglik_at_cpp, 5},
+    {"_MkPrime_eval_preorder_paths_cpp", (DL_FUNC) &_MkPrime_eval_preorder_paths_cpp, 5},
     {"_MkPrime_do_move_cpp", (DL_FUNC) &_MkPrime_do_move_cpp, 8},
     {"_MkPrime_run_mcmc_batch_cpp", (DL_FUNC) &_MkPrime_run_mcmc_batch_cpp, 20},
     {"_MkPrime_debug_mcmc_data", (DL_FUNC) &_MkPrime_debug_mcmc_data, 1},
