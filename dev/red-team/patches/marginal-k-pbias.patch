@@ -1,0 +1,56 @@
+# marginal-k-pbias.patch
+#
+# STATUS: ILLUSTRATIVE / INCOMPLETE — do NOT apply as-is. See caveats below.
+#
+# FINDING (feat/marginal-k): the geometric-p SBC bias (p_true=0.3 -> p_hat~0.9)
+# is the Model A vs Model B geometric-weighting mismatch, NOT the relabel term
+# (which is correct to 1.8e-15) and NOT the per-k likelihood.
+#
+#   Forward (SBC harness): k'_i = 2 + Geo(p)        -> weight p(1-p)^(k-2)  [Model A]
+#   Inference sampled_k:   k'_i = kObs_i + Geo(p)   -> weight p(1-p)^(k-kObs) [Model B]
+#
+# The `priorVariant="unconditional"` (Model A) correction is applied ONLY in
+# cpp_log_likelihood_marginal (src/mcmc.cpp:4276-4279, 4306-4308). It is NOT
+# applied in:
+#   1. the sampled-k per-k' Gibbs weight  (src/mcmc.cpp:4074, compute_per_kprime_log_lik)
+#   2. the R reference prior              (R/MkPrimeModel.R:556-560, no priorVariant branch)
+#   3. any C++ total-prior accumulation for the kept k' values
+#
+# So marginal_k WITH priorVariant="unconditional" is already correct (proven:
+# the Model-A logSumExp identity = Model-B logSumExp + (kObs-2)log(1-p), which
+# is exactly what the uncond term adds; dev/red-team/numerical/marginal-k-pbias-driver.R
+# E2/E3 confirm Model-A weights recover p_true). The sampled_k path is broken
+# regardless of the flag.
+#
+# WHY THIS PATCH IS INCOMPLETE: the fix must be applied at ALL sampled-k prior
+# sites coherently (the k'-draw weight AND the prior on the retained k'),
+# matching the convention already used for marginal_k. Patching only the draw
+# weight below desynchronises the Gibbs proposal from the prior used in the
+# MH ratio. The full fix touches compute_per_kprime_log_lik, the R/C++ k'-prior
+# accumulators, and must thread `data.unconditionalPrior` + per-partition kObs.
+# Filing as a finding for the orchestrator; this hunk shows the core idea only.
+#
+# Core idea at the per-k' Gibbs weight (src/mcmc.cpp:~4073):
+#
+#   } else if (isGeometric) {
+# -    logPrior_k = logP + ko * log1mP;
+# +    // ko = k - tp.kObs (Model B offset). Under priorVariant="unconditional"
+# +    // (Model A) the weight is p(1-p)^(k-2); add the (kObs-2)log(1-p) shift.
+# +    logPrior_k = logP + ko * log1mP;
+# +    if (data->unconditionalPrior)
+# +      logPrior_k += (tp.kObs - 2) * log1mP;
+#   }
+#
+# and the mirror shift at the prior on retained k' (R/MkPrimeModel.R:556-560):
+#
+#   if (!marginalK) {
+#     u <- state$kPrime[transIdx] - mkd$kObs[transIdx]
+#     lp <- lp + length(transIdx) * log(state$p) + sum(u) * log1p(-state$p)
+# +   if (identical(model$priorVariant %||% "conditional", "unconditional"))
+# +     lp <- lp + sum(mkd$kObs[transIdx] - 2) * log1p(-state$p)
+#   }
+#
+# Note: the (kObs-2)log(1-p) shift cancels in any MH ratio that holds kObs and p
+# fixed (it is a per-character constant in k'), so it does NOT affect k'-moves at
+# fixed p. It MATTERS for p-moves, where it reweights the geometric. This is why
+# the bias is purely in p, and why k'/tree_length SBC ranks look fine.
