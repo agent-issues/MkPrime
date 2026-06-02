@@ -144,7 +144,7 @@ Verified:
   C++ refuses a misrouted gibbs_p under the truncated geometric.
 - Full `testthat` suite green except the pre-existing out-of-scope red test below.
 
-**SBC on sampled_k + T-OVL (Stage 2) — SUBMITTED to Hamilton 2026-06-02 (f18a091).**
+**SBC on sampled_k + T-OVL (Stage 2) — SBC PASS / T-OVL non-convergence (Hamilton 2026-06-02, f18a091).**
 Driver `dev/red-team/heavy-tests/marginal-k/T-SBC-sampled-geometric.R`
 (`likelihoodMode = "sampled_k"`; forward truncates at K_MAX_PRIOR = 30 by
 rejection-redraw, inference pins kprimeTruncK = 30; k′_pooled excluded as a Talts
@@ -164,6 +164,24 @@ finish: (a) pooled (N=400) AD>0.05 on each of tl/rls/p AND no batch <0.01;
 (c) tl/rls freeze extreme(0|L) ≤~0.03. Given the RB proof ("Watertight") + the
 both-variant prior bit-check, an SBC/T-OVL **miss ⇒ mixing, not target** — do not
 re-litigate the prior.
+
+**RESULT 2026-06-02.** SBC: pre-registered 2-batch verdict **PASS** (N=400,
+200/200 good each) — pooled AD tl=0.37 rls=0.21 p=0.76 (all >0.05, no batch
+<0.01); low-p (p_true<0.10, n=39) frac p-rank≤2=0.103, mean normRank=0.366 (the
+truncation corner is calibrated under sampled_k); freeze ≤0.030. The per-run
+strict gates FAIL on lone tl/rls/p dips (the 0.6³ noise) — pooled is clean.
+**⇒ Stage 2 sampled_k arm VALIDATED.** T-OVL: verdict FAIL (42/48 param-cells
+KS≤0.01) but **diagnosed as non-convergence + weak test design, NOT a target
+difference**: (i) the SBC pass proves sampled_k targets the same posterior;
+(ii) the OVL fits SIGNAL-FREE random data (`sample(0:1)`) with single un-tuned
+12k chains → `tree_length` wanders to absurd values (sampled 48–208 vs marginal
+1–3 in several cells) and `rate_log_sd` shows 5–12 transients (should be ≈1);
+(iii) even cells whose means agree (e.g. tl 46.2/48.1) fail KS because the two
+modes thin differently (n=470 vs 572) so KS over-rejects on close short chains.
+sampled_k appears to mix `tree_length` *worse* than marginal_k (systematically
+high) — consistent with marginal_k as the scale default. T-OVL redesign
+(model-generated data + longer/tuned chains, or a coarser agreement metric than
+per-cell KS) is a follow-up; **the SBC is the decisive validation.**
 
 **Deploy note (Hamilton).** GitHub auth is dead on the cluster (SSH publickey
 denied; HTTPS creds empty) and `/nobackup` had purged the stale `mkp-source`
