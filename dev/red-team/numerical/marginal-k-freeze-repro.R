@@ -123,10 +123,11 @@ fire_until_accept <- function(fx, moveType, maxTries = 2000L,
 }
 
 MOVE_NAMES <- c(`5`  = "nni (MH)",        `6`  = "spr (MH)",
-                `20` = "pspr (MH)",       `30` = "mh_p (MH)",
+                `17` = "tbr (MH)",        `20` = "pspr (MH)",
+                `30` = "mh_p (MH)",
                 `10` = "gibbs_spr",       `11` = "gibbs_subtree_swap",
                 `13` = "weighted_spr",    `14` = "weighted_subtree_swap")
-SWEEP_ORDER <- c(30L, 5L, 6L, 20L, 10L, 11L, 13L, 14L)  # controls first, gibbs after
+SWEEP_ORDER <- c(30L, 5L, 6L, 20L, 17L, 10L, 11L, 13L, 14L)  # MH first (incl tbr 17), gibbs after
 
 # =========================================================================
 # PART B -- discriminating move-type coherence-gap sweep (the smoking gun)

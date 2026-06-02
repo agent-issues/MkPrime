@@ -61,9 +61,13 @@ library("TreeTools")
 }
 
 test_that("marginal-k: accepted topology moves leave state->logLik coherent (FREEZE-003 Bug B)", {
-  # nni (case 5) and spr (case 6) both change topology and route through the
-  # marginal evaluator. Pre-fix these committed an OLD-topology likelihood.
-  for (mt in c(5L, 6L)) {
+  # The MH topology moves enabled under marginal_k -- nni(5), spr(6), tbr(17),
+  # pspr(20) -- all change topology and route through the marginal evaluator.
+  # Pre-fix these committed an OLD-topology likelihood (gap 1.3-4.8 nat). The
+  # gap-sweep (marginal-k-freeze-repro.R) confirms all four read 0.000 post-fix;
+  # this locks every enabled topology move into the always-on guard (tbr/pspr
+  # were gap-swept manually but not previously regression-tested).
+  for (mt in c(5L, 6L, 17L, 20L)) {
     fx <- .ft_build()
     accepted <- FALSE
     for (i in seq_len(2000L)) {
@@ -86,7 +90,10 @@ test_that("marginal-k: accepted topology moves leave state->logLik coherent (FRE
 test_that("marginal-k: Gibbs/weighted topology moves are disabled in the schedule (FREEZE-003 Bug A)", {
   nEdge <- 13L   # 8-tip unrooted binary -> 2*8-3 edges
   nTrans <- 4L
-  mcmc <- MkPrimeMCMC(nIter = 10L, weightedSpr = TRUE, weightedSubtreeSwap = TRUE)
+  # suppressWarnings: tiny nIter clamps minWarmup->maxWarmup (warmup config,
+  # irrelevant to the move-list assertions this test makes).
+  mcmc <- suppressWarnings(MkPrimeMCMC(nIter = 10L, weightedSpr = TRUE,
+                                       weightedSubtreeSwap = TRUE))
   banned <- c("gibbs_spr", "gibbs_subtree_swap", "weighted_spr", "weighted_subtree_swap")
 
   mv_marg <- MkPrime:::.BuildMoves(nEdge, nTrans, hasNeo = FALSE, mcmc,
@@ -94,9 +101,9 @@ test_that("marginal-k: Gibbs/weighted topology moves are disabled in the schedul
   nm_marg <- vapply(mv_marg, function(m) m$name, character(1))
   for (g in banned)
     expect_false(g %in% nm_marg, info = paste(g, "must be absent under marginal_k"))
-  # Topology is still searched by the marginal-correct MH moves.
-  expect_true("nni" %in% nm_marg)
-  expect_true("spr" %in% nm_marg)
+  # Topology is still searched by the marginal-correct MH moves (all four enabled).
+  for (keep in c("nni", "spr", "tbr", "pspr"))
+    expect_true(keep %in% nm_marg, info = paste(keep, "must remain under marginal_k"))
 
   # sampled_k keeps them (no regression to the legacy path).
   mv_samp <- MkPrime:::.BuildMoves(nEdge, nTrans, hasNeo = FALSE, mcmc,
