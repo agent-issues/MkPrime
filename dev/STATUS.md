@@ -220,8 +220,9 @@ a Gibbs move corrupts. Precise escape dynamics a follow-up.
 - **Per-move coherence VERIFIED.** Gap-sweep `baseline_gap` nni/spr/pspr/tbr
   3.3/1.3/4.8/(tbr) -> **0.000**; gibbs/weighted still gapped (correctly disabled).
   End-to-end r02/r03 **unfrozen** (sd tl/rls/p > 0; all moves accept, tbr
-  0.43/0.32; Gibbs absent from schedule). Full testthat **FAIL=0 PASS=5838**; the
-  previously-failing `cache-option-a` NNI warm==cold test now passes.
+  0.43/0.32; Gibbs absent from schedule). Full testthat **FAIL=0 PASS=5858**
+  (800 blocks, incl. the always-on free-topology guard); the previously-failing
+  `cache-option-a` NNI warm==cold test now passes.
 - **STILL PENDING (does NOT block the fix; blocks the "validated" label).**
   Free-topology **posterior-overlap / RB-equivalence** (marginal_k == sampled_k)
   is NOT yet re-shown -- that is the T-OVL step, ideally redesigned with
