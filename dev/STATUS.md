@@ -144,7 +144,7 @@ Verified:
   C++ refuses a misrouted gibbs_p under the truncated geometric.
 - Full `testthat` suite green except the pre-existing out-of-scope red test below.
 
-**SBC on sampled_k + T-OVL (Stage 2) — SBC PASS / T-OVL non-convergence (Hamilton 2026-06-02, f18a091).**
+**SBC on sampled_k + T-OVL (Stage 2) — SBC PASS (fixed-topo); T-OVL EXPOSES a marginal_k FREEZE under free topology (Hamilton 2026-06-02, f18a091).**
 Driver `dev/red-team/heavy-tests/marginal-k/T-SBC-sampled-geometric.R`
 (`likelihoodMode = "sampled_k"`; forward truncates at K_MAX_PRIOR = 30 by
 rejection-redraw, inference pins kprimeTruncK = 30; k′_pooled excluded as a Talts
@@ -170,30 +170,42 @@ re-litigate the prior.
 <0.01); low-p (p_true<0.10, n=39) frac p-rank≤2=0.103, mean normRank=0.366 (the
 truncation corner is calibrated under sampled_k); freeze ≤0.030. The per-run
 strict gates FAIL on lone tl/rls/p dips (the 0.6³ noise) — pooled is clean.
-**⇒ Stage 2 sampled_k arm VALIDATED.** T-OVL: verdict FAIL (42/48 param-cells
-KS≤0.01) but **diagnosed as non-convergence + weak test design, NOT a target
-difference**: (i) the SBC pass proves sampled_k targets the same posterior;
-(ii) the OVL fits SIGNAL-FREE random data (`sample(0:1)`) with single un-tuned
-12k chains → `tree_length` wanders to absurd values (sampled 48–208 vs marginal
-1–3 in several cells) and `rate_log_sd` shows 5–12 transients (should be ≈1);
-(iii) even cells whose means agree (e.g. tl 46.2/48.1) fail KS because the two
-modes thin differently (n=470 vs 572) so KS over-rejects on close short chains.
-sampled_k appears to mix `tree_length` *worse* than marginal_k (systematically
-high) — consistent with marginal_k as the scale default. T-OVL redesign
-(model-generated data + longer/tuned chains, or a coarser agreement metric than
-per-cell KS) is a follow-up; **the SBC is the decisive validation.**
+**⇒ Stage 2 sampled_k *calibration* VALIDATED — but only for the FIXED-topology
+regime the SBC exercises (`fixTopology = TRUE`, driver line 262).**
+
+T-OVL (FREE topology): verdict FAIL (42/48 param-cells KS≤0.01), and the cause is
+a **real bug, not test noise** (*correcting an earlier note here that had it
+backwards*). **marginal_k whole-chain FREEZES in 7/16 cells** — `sd = 0` on tl,
+rls AND p, stuck at init — while **sampled_k freezes in 0/16**. In the frozen
+marginal chains EVERY Metropolis + slice move has **0% acceptance** (only the
+Gibbs topology moves "accept"); non-frozen cells accept ~0.6–0.9. This is the
+documented marginal-k `state→logLik`-inconsistency freeze (resume doc: "stuck at
+init 0.5"; "sampled_k NEVER freezes"), firing under FREE topology — which the
+`fixTopology` SBC structurally cannot reach. **Likely trigger:** the tracked
+topology-move cache bug (`test-marginal-k-cache-option-a.R`, warm−cold 0.164 nats:
+a topology move not refreshing the per-(node,k′) cache → corrupted baseline → all
+MH moves reject). **marginal_k is therefore NOT validated for production** (real
+analyses do not fix topology, and it is the intended ≥100-tip default). NEXT: a
+**free-topology SBC** (or a freeze repro + fix), NOT OVL chain-tuning; re-run
+T-OVL after the fix (ideally redesigned with model-generated data — the current
+`sample(0:1)` signal-free data + over-powered per-cell KS are secondary
+weaknesses, but they are NOT what caused this FAIL).
 
 **Deploy note (Hamilton).** GitHub auth is dead on the cluster (SSH publickey
 denied; HTTPS creds empty) and `/nobackup` had purged the stale `mkp-source`
 worktree — so deploy is **auth-free**: `git archive <sha> | scp | extract` into
 `${SRC}`, then a login-node `pkgload::load_all` to build the `.so`. NOT `git pull`.
 
-**Out-of-scope red test (pre-existing).** `test-marginal-k-cache-option-a.R`
+**Tracked cache bug — NOW IN SCOPE (pre-existing).** `test-marginal-k-cache-option-a.R`
 "NNI (case 5) refreshes the cache" FAILS (warm − cold = 0.164 nats). Proven
 **not** a Stage 1b regression: the failure is bit-for-bit IDENTICAL at K = 30 and
-K = 200, so the K-wiring did not cause it. This is the tracked Tier-2 partial-CL
-warm≠cold bug (a topology move does not refresh the per-(node,k′) cache);
-SBC-irrelevant because SBC runs `fixTopology = TRUE`. Tracked separately.
+K = 200, so the K-wiring did not cause it. This is the partial-CL warm≠cold bug
+(a topology move does not refresh the per-(node,k′) cache). ⚠ Previously filed
+"SBC-irrelevant because SBC runs `fixTopology = TRUE`" — **that dismissal is now
+disproven**: T-OVL (2026-06-02, FREE topology) shows it bites in production —
+marginal_k whole-chain freezes in 7/16 free-topology cells (Stage-2 result above).
+**No longer Tier-2; it blocks the marginal_k production default and is the gating
+bug for v1 marginal-k.**
 
 **Empirical performance.** Hyperparameter-level identity vs sampled-k:
 heavy-test PENDING (T-OVL). Per-character u not sampled — explicit
