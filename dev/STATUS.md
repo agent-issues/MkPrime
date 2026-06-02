@@ -258,10 +258,15 @@ a Gibbs move corrupts. Precise escape dynamics a follow-up.
   gap-sweep 12/13/14/15 baseline_gap & warm_gap → **0.000** (were -1.26/-0.90/-2.26/-1.60);
   `test-marginal-k-free-topology.R` Test 3 (300 accept/reject fires/move: committed==cold
   & warm==cold) + Test 4 (mh_p-after-weighted committed==cold) PASS. **DEFERRED:**
-  marginal-aware gibbs candidate eval (10/11). PROPOSAL-SELECTION confirmed
-  deterministically: Test 5 (`eval_preorder_paths_cpp`) asserts the candidate-eval
-  (`preorder_into`) and commit (`preorder_weighted_impl`) paths give bit-identical marginal
-  LL (1e-9) over 90 topologies + arbitrary edge orders -> selection LL == landed-tree LL.
+  marginal-aware gibbs candidate eval (10/11). **No marginal-SPECIFIC proposal error
+  (mode-relative correctness):** Test 5 (`eval_preorder_paths_cpp`) proves the candidate-eval
+  (`preorder_into`) and commit (`preorder_weighted_impl`) canonicalisers are equivalent
+  (bit-identical marginal LL 1e-9 over 90 topologies + arbitrary edge orders); Test 3 proves
+  committed LL coherent across 300 fires/move; and all weighted-move CONSTRUCTION (rewiring,
+  Hastings) is shared with the validated sampled_k path (so the re-enable adds no
+  mode-specific error). Absolute rewiring/Hastings correctness is INHERITED from sampled_k,
+  not re-proven here; the thin residual (non-chosen bin-midpoint candidates never
+  independently recomputed) is mode-independent and non-blocking.
   Full suite FAIL=0. **Overnight overlap (confirmatory):** structurally UNDERPOWERED on
   marginal_k's skewed/slow params -- marginal-p-ESS fell to 45-72 at 200k (no Gibbs-p;
   mh_logit_p mixes p poorly), p d_sd swung 1.25-8.62 on ESS noise; one moves-on rate_log_sd

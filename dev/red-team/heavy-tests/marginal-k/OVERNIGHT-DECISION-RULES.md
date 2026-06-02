@@ -68,9 +68,16 @@ eval_preorder_paths_cpp computes the marginal LL of the SAME tree through BOTH p
 Test 5 asserts bit-equality across 90 evolving topologies + arbitrary edge orders ->
 **PASS to 1e-9**. So the selection LL == the landed-tree LL: NO proposal-selection
 skew. Combined with the move-math cancelling in the marginal-vs-sampled comparison,
-**proposal correctness is confirmed DETERMINISTICALLY**; the moves-on rate_log_sd FAIL
-is the same moderate-ESS d_sd-test artifact the p-recheck demonstrated (d_sd unreliable
-for skewed posteriors below ~ESS 500), NOT a re-enabled-move bug.
+this establishes **no marginal-SPECIFIC proposal error (mode-relative correctness)** --
+the honest bar (advisor-calibrated): Test 5 proves the two canonicalisers equivalent,
+Test 3 proves committed LL coherent across 300 fires/move, and all weighted-move
+construction (rewiring, Hastings) is SHARED with the validated sampled_k path, so the
+re-enable adds no mode-specific error. Absolute rewiring/Hastings correctness is
+INHERITED from sampled_k (mode-independent code), not re-proven here; the thin residual
+(non-chosen bin-midpoint candidates never independently recomputed) is mode-independent
+and non-blocking. The moves-on rate_log_sd FAIL is the same moderate-ESS d_sd-test
+artifact the p-recheck demonstrated (d_sd unreliable for skewed posteriors below
+~ESS 500), NOT a re-enabled-move bug.
 
 **Net:** Phase 2 stands — coherent (gap-sweep + Test 3/4), correct candidate selection
 (Test 5), full suite FAIL=0. The MCMC overlap is supporting-but-underpowered on the
