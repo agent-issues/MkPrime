@@ -189,15 +189,21 @@ only clean move.** A move-type coherence-gap sweep (validated by init + mh_p
 controls reading ≈0) separates **two bugs** via warm-vs-cold: **(A)** the
 **default-ON Gibbs moves** `gibbs_spr`/`gibbs_subtree_swap` write a **fixed-kPrime**
 `state->logLik` (grouping at the single `state->kPrime`, `mcmc.cpp:1254-1282/1410`;
-no marginal-over-k′ sum) — **+10.6 nat** inflated, cache left correct; **(B)** the
-MH/weighted topology moves (`nni`/`spr`/`pspr`/`weighted_*`) leave **both**
-`state->logLik` and the warm cache stale (+1.3–4.8 nat) = the cache-option-a
-warm≠cold bug, now shown **broader than NNI**. Causal close: one `gibbs_spr` drops
-`mh_p` acceptance from **95.3% → 0.0%**. In-situ r02 fingerprint: only `gibbs_spr`
-(0.67) + `gibbs_subtree_swap` (0.56) accept; all 12 other moves at 0.0000. The
-**7/16 incidence is a metastable race** (gibbs gap ~uniform ~10.5 across cells,
-NOT a magnitude threshold): a slice that fires resets `state->logLik` correctly
-(`mcmc.cpp:3441`) and breaks the trap; a chain whose early slices stay stuck locks.
+no marginal-over-k′ sum), cache left invalid (warm recomputes cold). The inflation
+**= the omitted geometric weight `−n_char·log p`**: the gibbs gap tracks `−16·log p`
+across p with **corr 1.0** (+10.6 nat at init p=0.5), nailing the mechanism.
+**(B)** the MH/weighted topology moves (`nni`/`spr`/`pspr`/`weighted_*`) write a
+**wrong accepted-move likelihood** (+1.3–4.8 nat; warm==state≠cold) = the
+cache-option-a warm≠cold bug, now shown **broader than NNI**; root unpinned
+(cache-invalidation gap vs proposal/commit edge bookkeeping — fix-stage). Causal
+close: one `gibbs_spr` drops `mh_p` acceptance **95.3% → 0.0%**. In-situ r02
+fingerprint: only `gibbs_spr` (0.67) + `gibbs_subtree_swap` (0.56) accept; all 12
+other moves at 0.0000. The **7/16 incidence is p-gated bistability** (gap is
+p-gated, ~uniform ~10.5 at the shared init p=0.5 — NOT a cross-cell magnitude
+threshold): a self-healing move (mh_p-on-accept / slice, `mcmc.cpp:3441`) fires
+only when the gap is small (high p; at p=0.9 mh_p heals & accepts 0.95) and never
+at low/mid p (≤0.5 → 0%), so a chain locks iff p sits in the large-gap region when
+a Gibbs move corrupts. Precise escape dynamics a follow-up.
 **marginal_k is NOT validated for production** (real analyses do not fix topology;
 it is the intended ≥100-tip default). NEXT: choose a fix fork (diagnosis doc §forks)
 + add a debug-build post-move `|state->logLik − compute_full_loglik| < tol`

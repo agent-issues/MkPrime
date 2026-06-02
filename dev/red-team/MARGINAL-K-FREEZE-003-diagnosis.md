@@ -59,13 +59,17 @@ warm_gap     = warm eval (cache fast-path) − cold marginal LL
 | moveType | name | baseline_gap (nat) | warm_gap (nat) | reading |
 |---------:|------|-------------------:|---------------:|---------|
 | 30 | mh_p (MH) | 4e-11 | 4e-11 | **clean** (control) |
-| 5  | nni (MH) | **3.305** | 3.305 | stale: state==cache, both wrong |
-| 6  | spr (MH) | **1.302** | 1.302 | stale: state==cache, both wrong |
-| 20 | pspr (MH) | **4.843** | 4.843 | stale: state==cache, both wrong |
-| 13 | weighted_spr | **0.168** | 0.168 | stale: state==cache, both wrong |
-| 14 | weighted_subtree_swap | **2.862** | 2.862 | stale: state==cache, both wrong |
-| 10 | **gibbs_spr** | **+10.65** | **0.000** | fixed-kPrime baseline; cache OK |
-| 11 | **gibbs_subtree_swap** | **+10.59** | **0.000** | fixed-kPrime baseline; cache OK |
+| 5  | nni (MH) | **3.305** | 3.305 | state==warm ≠ cold (wrong) |
+| 6  | spr (MH) | **1.302** | 1.302 | state==warm ≠ cold (wrong) |
+| 20 | pspr (MH) | **4.843** | 4.843 | state==warm ≠ cold (wrong) |
+| 13 | weighted_spr | **0.168** | 0.168 | state==warm ≠ cold (wrong) |
+| 14 | weighted_subtree_swap | **2.862** | 2.862 | state==warm ≠ cold (wrong) |
+| 10 | **gibbs_spr** | **+10.65** | **0.000** | fixed-kPrime baseline; cache invalid→warm=cold |
+| 11 | **gibbs_subtree_swap** | **+10.59** | **0.000** | fixed-kPrime baseline; cache invalid→warm=cold |
+
+(`warm_gap=0` for the Gibbs rows means the cache is left **invalid**, so the warm
+eval recomputes cold — i.e. the *cache* is fine; the bug is purely the wrong
+`state->logLik` the move left behind, not a cache that holds a wrong value.)
 
 The `warm_gap` column cleanly separates **two distinct bugs**:
 
@@ -77,23 +81,50 @@ sampled-k partial-CL machinery, producing a **fixed-kPrime** likelihood — no
 marginal-over-k′ logsumexp, no geometric `P(u|p)` weight. They then write
 `state->logLik = candLL[chosen]` (`mcmc.cpp:1410`, `:2132`) and **return early**
 from the dispatch (`:4976`, `:4979`), before any marginal re-eval. `do_move_impl`
-invalidates the cache at its top (`:4694`) — so the **cache is correct**
-(`warm_gap=0`) — but nothing restores the correct **marginal** baseline. Result:
-`state->logLik` inflated by ~+10.6 nat (the same INIT-001 inflation, now
-recurring on every accepted Gibbs move). This is the dominant in-situ driver:
-the frozen r02 chain accepts ONLY gibbs moves, so it re-inflates every iteration.
+invalidates the cache at its top (`:4694`) — so the cache is left **invalid**
+and the next warm eval simply recomputes cold (`warm_gap=0`; the cache never
+holds a wrong value) — but nothing restores the correct **marginal** baseline.
+Result: `state->logLik` inflated (the same INIT-001 inflation, now recurring on
+every accepted Gibbs move). This is the dominant in-situ driver: the frozen r02
+chain accepts ONLY gibbs moves, so it re-inflates every iteration.
 
-### Bug B — MH/weighted topology moves leave `state->logLik` AND the cache stale
+**The inflation magnitude is the missing geometric weight — confirmed
+quantitatively.** The omitted term is `−Σ_char log P(u_char | p)`; with all
+`u=0` (k′=kObs) that is `−n_char·log(p)`. Sweeping p (PART B.4) the gibbs gap
+tracks this prediction with correlation **1.0000**:
+
+| p | gibbs_gap (nat) | −n_char·log(p) | mh_p accept after one gibbs_spr |
+|---:|---------------:|---------------:|--------------------------------:|
+| 0.30 | 18.71 | 19.26 | 0.000 |
+| 0.50 | 10.67 | 11.09 | 0.000 |
+| 0.70 | 5.45 | 5.71 | 0.073 |
+| 0.90 | 1.60 | 1.69 | **0.950** |
+| 0.97 | 0.46 | 0.49 | **0.950** |
+
+(n_char=16; measured gap sits just below the all-`u=0` bound because realized
+u>0 characters contribute slightly less than `−log p` each.) This is independent
+confirmation that Bug A is exactly "fixed-k likelihood with the geometric `P(u|p)`
+normalization dropped," and it explains why the B.2 gap is ~uniform across cells
+(shared n_char and shared init p=0.5).
+
+### Bug B — MH/weighted topology moves leave the accepted-move likelihood wrong
 For `nni`(5), `spr`(6), `pspr`(20), `weighted_spr`(13), `weighted_subtree_swap`(14),
-`baseline_gap == warm_gap` ≠ 0: after an accepted move, `state->logLik` equals
-the **warm** cache value, and **both disagree with a cold rebuild** of the
-committed tree (by 1.3–4.8 nat here). I.e. the marginal proposal-evaluation /
-cache populated against the proposed move does not match a from-scratch eval of
-the resulting tree. This is the already-tracked **cache-option-a** warm≠cold NNI
-failure (`tests/testthat/test-marginal-k-cache-option-a.R` Test 3) — now shown
-to span SPR / pSPR / weighted moves too, not just NNI. (In a chain already
-corrupted by a Gibbs move, these MH moves also reject — see the r02 fingerprint
-— so Bug B compounds rather than rescues.)
+`baseline_gap == warm_gap` ≠ 0 (1.3–4.8 nat here): after an accepted move,
+`state->logLik` equals the **warm** eval, and **both disagree with a cold rebuild**
+of the committed tree. So the likelihood written on accept is simply **wrong** for
+the resulting tree. **Measured facts (solid, and new):** warm ≠ cold after an
+accepted MH/weighted topology move, and the failure spans SPR / pSPR / weighted —
+not just the already-tracked NNI case
+(`tests/testthat/test-marginal-k-cache-option-a.R` Test 3, warm−cold 0.164 nat).
+**Root NOT pinned:** `do_move_impl` invalidates *both* cache tiers at its top for
+non-p moves (`:4694`), so the proposal eval *should* be fully cold — which is in
+tension with a pure "stale-cache" story. Two cold recomputes of the same committed
+tree disagreeing by ~3 nat points instead to an **eval-time-vs-commit-time tree /
+edge-length bookkeeping** mismatch (the proposal is evaluated against a
+(parent,child,edgeLen) that differs from what gets committed). Could also be a
+cache-invalidation gap. Localizing this is fix-stage work. (In a chain already
+corrupted by a Gibbs move these MH moves also reject — r02 fingerprint — so Bug B
+compounds the freeze rather than rescuing it.)
 
 ### Causal close
 On the frozen dataset: `mh_logit_p` accepts **95.3%** from a clean baseline;
@@ -102,17 +133,26 @@ fixed-kPrime topology move freezes the continuous sampler. (`probe()` invalidate
 the cache and does not touch `state->logLik`, so the only changed quantity is the
 baseline.)
 
-## Why ~7/16 freeze and not 16/16 (the metastable race)
+## Why ~7/16 freeze and not 16/16 (p-gated bistability)
 
-The `gibbs_spr` gap is ~**uniform** (~10.5 nat) across r01–r04, so the freeze is
-**not** a gap-magnitude threshold. It is a **metastable race**: a successful
-slice move recomputes `state->logLik` correctly (`slice_scalar_impl` sets
-`state->logLik = compute_full_loglik_at(...)`, the marginal value,
-`src/mcmc.cpp:3441`), which **breaks** the inflation; but a slice whose `logY0`
-is already inflated can fail-and-restore and never escape. Whether a chain enters
-the locked state depends on the early move order (RNG × data). r02 entered the
-trap (slices stuck at 0%); r03 did not (slice_rate_log_sd 0.68). Hence a
-data/seed-dependent freeze incidence (~7/16 observed in T-OVL), not all-or-none.
+The freeze is **gated by p**, via the Bug-A gap `≈ −n_char·log(p)` (PART B.4
+above). A "self-healing" move — `mh_logit_p` on accept, or a slice on completion
+— rewrites `state->logLik` to the correct marginal (e.g. `slice_scalar_impl`,
+`src/mcmc.cpp:3441`); its accept probability is `~exp(−gap)`. So self-healing
+fires readily when the gap is small (high p: at p=0.90 mh_p heals and accepts
+0.95) and essentially never when the gap is large (low/mid p: p≤0.5 → 0%). The
+chain is therefore **bistable**: if p sits in the large-gap (low/mid) region when
+a Gibbs move corrupts the baseline, no self-healing move can fire and the chain
+locks; if p has drifted into the small-gap (high-p) region, a self-healing move
+breaks the inflation and the chain mixes. r02 froze with p stuck at init
+(sd(p)=0); r03 mixed with p moving (sd(p)=0.068). Which basin a chain lands in is
+seed/data-dependent (the gap is ~uniform ~10.5 at the shared init p=0.5, so it is
+**not** a gap-magnitude threshold across cells) → a ~7/16 incidence, not all-or-
+none. ⚠ The exact escape dynamics (how a chain reaches high p before locking,
+given that p-moves are themselves gap-suppressed) are **not** fully pinned —
+plausibly an escape during the brief uncorrupted window before the first accepted
+Gibbs move. Stated as: tested **p-gated bistability**; precise tipping dynamics a
+follow-up.
 
 ## Why the SBC missed it
 `fixTopology=TRUE` ⇒ no topology moves ⇒ `state->logLik` stays correct after the

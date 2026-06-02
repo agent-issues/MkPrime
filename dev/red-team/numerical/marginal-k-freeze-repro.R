@@ -95,8 +95,9 @@ build_ptrs <- function(sim, p = 0.5, coding = "variable") {
 
 # Coherence probe. Reads state->logLik (what the LAST move left as the MH/slice
 # baseline) BEFORE touching the cache, then a warm eval, then a COLD eval (the
-# true marginal LL). baseline_gap is the freeze signal; warm_gap is the (Tier-2)
-# cache-staleness signal of the separately-tracked cache-option-a NNI bug.
+# true marginal LL). baseline_gap is the freeze signal; warm_gap (warm != cold)
+# is the separately-tracked cache-option-a anomaly (root unpinned: cache-
+# invalidation gap vs proposal/commit edge bookkeeping).
 probe <- function(fx) {
   Lstate <- get_state_log_lik(fx$statePtr)                  # read FIRST
   Lwarm  <- eval_full_loglik_cpp(fx$dataPtr, fx$statePtr)   # warm (cache if ready)
@@ -162,7 +163,7 @@ sweep_rows <- lapply(SWEEP_ORDER, function(mt) {
 })
 sweep <- do.call(rbind, sweep_rows)
 cat("\nbaseline_gap = state->logLik (LEFT by move) - cold marginal LL\n")
-cat("warm_after   = warm eval - cold eval (Tier-2 cache-staleness, cache-option-a)\n\n")
+cat("warm_after   = warm eval - cold eval (warm!=cold = cache-option-a anomaly)\n\n")
 print(sweep, row.names = FALSE, digits = 4)
 saveRDS(sweep, file.path(OUT_DIR, "sweep-r02.rds"))
 
@@ -219,6 +220,39 @@ cat(sprintf("   corrupted state->logLik baseline -> mh_p accept rate = %.3f\n", 
 cat(sprintf(">> %s\n", if (rateU > 0.02 && rateC < 0.01)
             "CAUSAL CHAIN CONFIRMED: one fixed-kPrime topology move freezes mh_p"
             else "INCONCLUSIVE -- inspect rates above"))
+
+# =========================================================================
+# PART B.4 -- p-gating: is the Bug-A gap the omitted geometric weight,
+#            gap(p) ~= -n_char * log(p)?  (advisor's discriminating test)
+# If yes, the freeze is gated by p (gap large at low p, ->0 as p->1), which
+# explains the seed/data-dependent 7/16 incidence WITHOUT the (circular)
+# "a slice rescues the baseline" story.
+# =========================================================================
+cat("\n========================================================\n")
+cat("PART B.4: p-gating -- gibbs_spr gap vs -n_char*log(p)\n")
+cat("========================================================\n")
+nChar <- length(st0$kPrime)
+pgate_rows <- lapply(c(0.3, 0.5, 0.7, 0.9, 0.97), function(pp) {
+  fxC <- build_ptrs(sim_r02, p = pp)
+  tC  <- fire_until_accept(fxC, 10L)
+  gap <- if (is.na(tC)) NA else unname(probe(fxC)["baseline_gap"])
+  rateC <- { fxD <- build_ptrs(sim_r02, p = pp); fire_until_accept(fxD, 10L)
+             count_mh_p(fxD) }
+  data.frame(p = pp,
+             gibbs_gap        = gap,
+             predicted_neglogp = -nChar * log(pp),
+             mh_p_accept_after_corrupt = rateC,
+             stringsAsFactors = FALSE)
+})
+pgate <- do.call(rbind, pgate_rows)
+cat(sprintf("(n_char = %d; predicted gap = -n_char*log(p) = missing geometric weight)\n\n", nChar))
+print(pgate, row.names = FALSE, digits = 4)
+saveRDS(pgate, file.path(OUT_DIR, "p-gating.rds"))
+trk <- with(pgate, cor(gibbs_gap, predicted_neglogp))
+cat(sprintf("\n>> gap-vs-(-n_char*log p) correlation = %.4f %s\n", trk,
+            if (!is.na(trk) && trk > 0.99)
+              "=> Bug-A gap IS the omitted geometric weight; freeze is p-gated"
+            else "=> relationship weaker than expected; inspect"))
 
 # =========================================================================
 # PART A -- end-to-end RunMkPrime (free topology): marginal_k vs sampled_k
