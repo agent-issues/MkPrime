@@ -179,7 +179,7 @@ topology-proposal correctness.
 3. **Recompute `state->logLik = compute_full_loglik` (marginal) after every
    topology move.** Fixes the freeze (Bug A baseline) cheaply, but leaves the
    Gibbs topology *proposal* using fixed-k weights (wrong target) and does not
-   touch Bug B's stale-cache root.
+   touch Bug B (the wrong accepted-move LL on the MH/weighted topology path).
 4. **Bug B must be fixed regardless** (the cache-option-a warm≠cold root on the
    MH/weighted topology path): a cold recompute after the move, or fixing the
    proposal-eval/commit edge-length bookkeeping so warm == cold.
