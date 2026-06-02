@@ -126,8 +126,21 @@ MOVE_NAMES <- c(`5`  = "nni (MH)",        `6`  = "spr (MH)",
                 `17` = "tbr (MH)",        `20` = "pspr (MH)",
                 `30` = "mh_p (MH)",
                 `10` = "gibbs_spr",       `11` = "gibbs_subtree_swap",
-                `13` = "weighted_spr",    `14` = "weighted_subtree_swap")
-SWEEP_ORDER <- c(30L, 5L, 6L, 20L, 17L, 10L, 11L, 13L, 14L)  # MH first (incl tbr 17), gibbs after
+                `12` = "weighted_branch_scale", `15` = "block_gibbs_branch",
+                `13` = "weighted_spr",    `14` = "weighted_subtree_swap",
+                `25` = "gibbs_kprime_sweep", `26` = "block_kprime_shift")
+# FREEZE-003 cache-coherence audit: sweep EVERY move type that can corrupt the
+# marginal charLLCache. The multi-eval moves that call compute_full_loglik_at in
+# a topology/branch loop WITHOUT forcing the cache cold per-eval read a stale
+# per-(char,k') cache after the first fill (no topology/branch fingerprint in the
+# useCache gate) -> state==warm!=cold. Beyond the four gated topology moves, this
+# adds 12 (weighted_branch_scale) + 15 (block_gibbs_branch) -- both UNGATED under
+# marginal_k pre-this-audit -- plus the k'-moves 25/26 (k' is integrated out under
+# marginal_k; expect coherent-or-no-op). MH moves (5/6/17/20) eval once -> gap 0.
+SWEEP_ORDER <- c(30L, 5L, 6L, 20L, 17L,           # MH (single eval -> expect gap 0)
+                 12L, 15L,                          # multi-eval BRANCH moves (audit)
+                 10L, 11L, 13L, 14L,                # gibbs/weighted topology (gated)
+                 25L, 26L)                          # k'-moves (integrated under marginal_k)
 
 # =========================================================================
 # PART B -- discriminating move-type coherence-gap sweep (the smoking gun)
@@ -149,18 +162,25 @@ cat(sprintf("INIT coherence (post fill_partition_cache, INIT-001 fix in effect):
 cat(sprintf("  state->logLik=%.4f  cold=%.4f  baseline_gap=%.4f  warm_gap=%.4g\n",
             b0["Lstate"], b0["Lcold"], b0["baseline_gap"], b0["warm_gap"]))
 
+na_row <- function(mt) data.frame(
+  moveType = mt, name = unname(MOVE_NAMES[as.character(mt)]),
+  accepted_on = NA_integer_, gap_before = NA_real_, gap_after = NA_real_,
+  warm_after = NA_real_, stringsAsFactors = FALSE)
 sweep_rows <- lapply(SWEEP_ORDER, function(mt) {
-  fx <- build_ptrs(sim_r02)              # FRESH state per move type (isolate)
-  gB <- probe(fx)                        # baseline (must be ~0 after INIT-001)
-  tries <- fire_until_accept(fx, mt)     # fire that move until it accepts
-  gA <- if (is.na(tries)) c(baseline_gap = NA, warm_gap = NA) else probe(fx)
-  data.frame(moveType    = mt,
-             name        = unname(MOVE_NAMES[as.character(mt)]),
-             accepted_on = tries,
-             gap_before  = unname(gB["baseline_gap"]),
-             gap_after   = unname(gA["baseline_gap"]),
-             warm_after  = unname(gA["warm_gap"]),
-             stringsAsFactors = FALSE)
+  tryCatch({
+    fx <- build_ptrs(sim_r02)              # FRESH state per move type (isolate)
+    gB <- probe(fx)                        # baseline (must be ~0 after INIT-001)
+    tries <- fire_until_accept(fx, mt)     # fire that move until it accepts
+    gA <- if (is.na(tries)) c(baseline_gap = NA, warm_gap = NA) else probe(fx)
+    data.frame(moveType    = mt,
+               name        = unname(MOVE_NAMES[as.character(mt)]),
+               accepted_on = tries,
+               gap_before  = unname(gB["baseline_gap"]),
+               gap_after   = unname(gA["baseline_gap"]),
+               warm_after  = unname(gA["warm_gap"]),
+               stringsAsFactors = FALSE)
+  }, error = function(e) { message(sprintf("  [sweep] moveType %d threw: %s",
+                                           mt, conditionMessage(e))); na_row(mt) })
 })
 sweep <- do.call(rbind, sweep_rows)
 cat("\nbaseline_gap = state->logLik (LEFT by move) - cold marginal LL\n")

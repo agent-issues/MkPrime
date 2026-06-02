@@ -33,10 +33,91 @@ marginal_k **no longer freezes** — sd(tl/rls/p) = 47.4 / 3.79 / 0.059 (was
 0/0/0); all moves accept (nni 0.91, spr 0.45, mh_logit_p 0.84, slice 1.0); Gibbs
 moves absent from the schedule. marginal/loglik/cache testthat: 153 pass / 0 fail.
 
-**Follow-ups (not blockers):** (1) re-run T-OVL with model-generated (signal-
-bearing) data to confirm marginal-vs-sampled posterior agreement (Rao-Blackwell);
-(2) root-cause the weighted-move residual; (3) optional marginal-aware Gibbs for
-large-tree mixing efficiency.
+**Follow-ups:** (1) RB-equivalence VALIDATED deterministically and (2) the
+weighted-move residual ROOT-CAUSED, with the audit extended to every move — see the
+FOLLOW-UP section immediately below. (3) re-enabling the disabled moves efficiently
+(force-cold-per-eval / cache fingerprint) remains deferred ("efficiency tomorrow").
+
+---
+
+## FOLLOW-UP (2026-06-02) — RB-equivalence validation + exhaustive cache-coherence audit
+
+Two correctness follow-ups closed ("validate; explore the gap").
+
+### (A) Free-topology RB-equivalence — VALIDATED deterministically
+
+The freeze fix changed *which* topology the marginal evaluator reads, so the decisive
+correctness check is the Rao-Blackwell likelihood identity generalised across topology
+space — not a noisy MCMC overlap:
+
+    lse_{k' in [kObs, K]} [ logPrior_S(k') + logLik_S(k') ] == logPrior_M + logLik_M
+
+`tests/testthat/test-marginal-k-rb-free-topology.R` checks this to 1e-7 on 8 random
+topologies x p in {0.1, 0.4} x rate_log_sd in {0, 0.6} (nCat = 4, exercising BOTH the
+homogeneous and the ACRV pruning paths the fix rerouted). **64 assertions PASS.** This
+proves the marginal evaluator is RB-correct on *arbitrary* trees: target-equivalence
+with sampled_k is established deterministically, with no MCMC noise. The complementary
+"an accepted topology MH move commits the correct marginal LL" facet is guarded by
+`test-marginal-k-free-topology.R` (committed `state->logLik` == cold recompute after
+nni/spr/tbr/pspr). A signal-bearing MCMC posterior-overlap run is *confirmatory* (the
+existing T-OVL uses signal-free data + an over-powered KS bar); given the deterministic
+identity it is not load-bearing, and remains a local-smoke + Hamilton-prep item.
+
+### (B) The weighted-move residual — a marginal-cache-coherence bug
+
+`compute_full_loglik_at` does NOT force the marginal `charLLCache` cold: under
+marginal_k it calls `cpp_log_likelihood_marginal`, which uses the fast-path when
+`state.charLLCacheReady` is true and sets it true after filling. The `useCache` gate
+(mcmc.cpp:4306) has **no topology/branch fingerprint** — the per-(char,k') raw LLs it
+stores depend on topology, branches, and rate, so the cache is valid ONLY across a
+pure-`p` change. A move that evaluates multiple topology/branch configs per call
+without forcing the cache cold between them reads the FIRST config's cache for every
+subsequent eval (state==warm!=cold).
+
+Every `compute_full_loglik_at` multi-eval site (mcmc.cpp):
+
+| move (type)                | sites              | gated under marginal_k? |
+|----------------------------|--------------------|-------------------------|
+| gibbs_spr (10)             | 1816               | yes (Bug A)             |
+| gibbs_subtree_swap (11)    | 2447               | yes (Bug A)             |
+| weighted_branch_scale (12) | 2568               | **NOW (this audit)**    |
+| block_gibbs_branch (15)    | 2705, 2761         | **NOW (this audit)**    |
+| weighted_spr (13)          | 2891, 2934, 3028   | yes                     |
+| weighted_subtree_swap (14) | 3149, 3228         | yes                     |
+
+The exhaustive coherence sweep (`marginal-k-freeze-repro.R`, SWEEP_ORDER extended to
+every move type) on the frozen cell confirms the committed-gap signatures:
+
+    nni/spr/pspr/tbr/mh_p ......  0.000    single eval / cache-by-design  -> SAFE
+    weighted_branch_scale (12) . -1.261    state==warm!=cold  (cache)  -> was UNGATED
+    block_gibbs_branch (15) .... -1.604    state==warm!=cold  (cache)  -> was UNGATED
+    gibbs_spr/subtree (10/11) .. +10.5     state!=warm==cold  (fixed-k')
+    weighted_spr/subtree (13/14) -0.9/-2.3 state==warm!=cold  (cache)
+    gibbs_kprime_sweep (25) .... +6.848    state!=warm==cold  (fixed-k')
+
+**Action:** `weighted_branch_scale` (12) and `block_gibbs_branch` (15) were UNGATED
+under marginal_k (default-off, so latent — but a user enabling either would silently
+corrupt the chain). Both now gated in `.BuildMoves`. The complete set of six
+incoherent moves is now disabled under marginal_k.
+
+**k'-sampling moves (kPrime 7, gibbs_kprime_sweep 25, block_kprime_shift 26):** the
+sweep fires case 25 via the low-level `do_move_cpp` and it shows the +6.85 fixed-k'
+gap — but `.BuildMoves` ALREADY excludes every k'-sampling move under marginal_k (k'
+is integrated out; only `mh_logit_p` is added; RunMkPrime.R:3603). The sweep result
+confirms that exclusion is *load-bearing* (those moves would corrupt if scheduled),
+not redundant; `test-marginal-k-free-topology.R` Test 2 now also asserts it.
+
+**Enabled marginal_k schedule is coherent.** After gating 12 + 15, every move that can
+appear under marginal_k either evaluates the proposal exactly once (the MH topology /
+branch / rate / joint moves, after the `do_move_impl` entry invalidation at
+mcmc.cpp:4706), forces the cache cold per eval (the slice sampler,
+`eval_slice_target`:3347), or uses the cache by design (`mh_logit_p`, valid across a
+pure-`p` change). The coherence sweep reads 0.000 for every such move.
+
+**Deferred (efficiency, "tomorrow"):** re-enable the six moves under marginal_k by
+forcing the `charLLCache` cold per intermediate eval (NOT a blanket force-cold in
+`compute_full_loglik_at` — `mh_logit_p` needs the warm fast-path), and/or add a
+topology/branch fingerprint to the `useCache` gate.
 
 ---
 

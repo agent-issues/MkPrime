@@ -3516,7 +3516,16 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       ))
     }
     # Weighted moves (M-090)
-    if (isTRUE(mcmc$weightedBranchScale)) {
+    # MARGINAL-K-FREEZE-003 cache-coherence audit: weighted_branch_scale (case 12)
+    # evaluates B branch-fraction bins per candidate via compute_full_loglik_at,
+    # which does NOT force the marginal charLLCache cold between evals. The
+    # useCache gate has no topology/branch fingerprint, so after the first eval
+    # fills the cache every subsequent bin/commit reads it stale -> committed
+    # state->logLik is the first-bin value (sweep: gap = -1.26 nat,
+    # state==warm!=cold). Disable under marginal_k (default-off, so latent, but a
+    # user enabling it would silently corrupt the chain). A force-cold-per-eval
+    # fix that preserves caching is the deferred efficiency item.
+    if (isTRUE(mcmc$weightedBranchScale) && !marginalK) {
       moves <- c(moves, list(
         list(name = "weighted_branch_lengths", type = "weighted_branch_scale",
              target = "rel_br_lengths", weight = max(1, nEdge / 6), dim = 1L)
@@ -3554,7 +3563,12 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       ))
     }
     # Block Gibbs branch-length sweep (M-054 reframed)
-    if (isTRUE(mcmc$blockGibbsBranch)) {
+    # MARGINAL-K-FREEZE-003 cache-coherence audit: same multi-eval-without-force-
+    # cold bug as weighted_branch_scale (block_gibbs_branch_sweep_impl calls
+    # compute_full_loglik_at across bins/proposal; sweep: gap = -1.60 nat,
+    # state==warm!=cold). Disable under marginal_k (default-off; latent). Deferred
+    # efficiency fix: force the charLLCache cold per intermediate eval.
+    if (isTRUE(mcmc$blockGibbsBranch) && !marginalK) {
       moves <- c(moves, list(
         list(name = "block_gibbs_branch", type = "block_gibbs_branch",
              target = "rel_br_lengths",

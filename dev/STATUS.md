@@ -210,27 +210,36 @@ a Gibbs move corrupts. Precise escape dynamics a follow-up.
   reads rerouted), so a topology-changing MH proposal is evaluated on the
   PROPOSED tree, not `state`'s old one. `gibbs_kprime_sweep_impl` (case 25)
   passes `state`'s own tree -> bit-identical (sampled_k path unchanged).
-- **Bug A mitigated.** `gibbs_spr`/`gibbs_subtree_swap`/`weighted_spr`/
-  `weighted_subtree_swap` disabled under marginal_k in `.BuildMoves` (they
-  write a fixed-kPrime `state->logLik`; the residual weighted-move gap
-  -1.26/-0.07 nat is unpinned -> deferred). nni/spr/pspr/tbr still search topology.
+- **Bug A + cache-coherence audit (6 moves gated).** Six moves write an incoherent
+  committed `state->logLik` under marginal_k and are disabled in `.BuildMoves`: the
+  gibbs pair (`gibbs_spr`/`gibbs_subtree_swap`, fixed-k') plus four multi-eval moves
+  (`weighted_spr`/`weighted_subtree_swap`/`weighted_branch_scale`/`block_gibbs_branch`)
+  that read a STALE marginal `charLLCache` — `compute_full_loglik_at` does not force
+  it cold between topology/branch evals and the `useCache` gate has no fingerprint
+  (valid only across a pure-`p` change). `weighted_branch_scale`+`block_gibbs_branch`
+  were UNGATED before this audit (default-off, so latent — a user enabling either
+  would have silently corrupted the chain). k'-sampling moves (kPrime/gibbs_kPrime/
+  block_kPrime) are likewise excluded under marginal_k (k' is integrated out).
+  nni/spr/pspr/tbr still search topology.
 - **Opt-in guard.** Compile `-DMKPRIME_CHECK_MARGINAL_COHERENCE` to warn when a
   committed marginal `logLik` != a cold recompute; the always-on CI guard is
   `tests/testthat/test-marginal-k-free-topology.R`.
-- **Per-move coherence VERIFIED.** Gap-sweep `baseline_gap` nni/spr/pspr/tbr
-  3.3/1.3/4.8/(tbr) -> **0.000**; gibbs/weighted still gapped (correctly disabled).
-  End-to-end r02/r03 **unfrozen** (sd tl/rls/p > 0; all moves accept, tbr
-  0.43/0.32; Gibbs absent from schedule). Full testthat **FAIL=0 PASS=5858**
-  (800 blocks, incl. the always-on free-topology guard); the previously-failing
-  `cache-option-a` NNI warm==cold test now passes.
-- **STILL PENDING (does NOT block the fix; blocks the "validated" label).**
-  Free-topology **posterior-overlap / RB-equivalence** (marginal_k == sampled_k)
-  is NOT yet re-shown -- that is the T-OVL step, ideally redesigned with
-  model-generated (signal-bearing) data (the current `sample(0:1)` signal-free
-  data + over-powered per-cell KS are secondary weaknesses). So: **freeze fixed +
-  per-move likelihood coherence verified; free-topology RB-equivalence
-  re-validation OUTSTANDING.** Coherence is strong mechanism evidence the
-  likelihood is right, but it is not the posterior check.
+- **Per-move coherence VERIFIED (exhaustive sweep).** Coherence gap-sweep over
+  EVERY move type: nni/spr/pspr/tbr/mh_p -> **0.000**; the six gated moves show the
+  corruption (weighted_branch_scale -1.26, block_gibbs_branch -1.60, gibbs +10.5,
+  weighted_spr/subtree -0.9/-2.3; gibbs_kprime_sweep +6.85 if force-fired). Every
+  move that CAN appear under marginal_k reads 0.000. End-to-end r02/r03 **unfrozen**
+  (sd > 0; tbr accepts 0.43/0.32). Full testthat **FAIL=0 PASS=5858**.
+- **RB-equivalence VALIDATED (deterministic, free topology).** The decisive check is
+  the Rao-Blackwell likelihood identity `lse_k'[joint_S] == joint_M`, now generalised
+  across topology space: `tests/testthat/test-marginal-k-rb-free-topology.R` holds it
+  to 1e-7 on 8 random topologies x p x rate-heterogeneity (64 assertions PASS). This
+  establishes marginal_k == sampled_k TARGET-equivalence on arbitrary trees
+  deterministically (no MCMC noise). A signal-bearing MCMC posterior-overlap run is
+  now **confirmatory, not load-bearing** (the legacy T-OVL's signal-free `sample(0:1)`
+  data + over-powered per-cell KS are why it false-FAILed); local-smoke + Hamilton-prep
+  item. **marginal_k free topology: freeze fixed, schedule coherent, RB-equivalence
+  validated at the likelihood level.**
 
 **Deploy note (Hamilton).** GitHub auth is dead on the cluster (SSH publickey
 denied; HTTPS creds empty) and `/nobackup` had purged the stale `mkp-source`
