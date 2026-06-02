@@ -74,7 +74,14 @@ suppressPackageStartupMessages({
   library(TreeTools)
 })
 
-OUT_DIR <- "dev/red-team/heavy-tests/marginal-k/sbc-results-sampled"
+# OUT_DIR override (MARGINAL_K_SBC_OUTDIR): lets the two pre-registered seed
+# batches write to disjoint dirs so their shards/ (sims-shard-NNN.rds) do not
+# collide when both arrays run concurrently. Default unchanged.
+OUT_DIR <- {
+  od_env <- Sys.getenv("MARGINAL_K_SBC_OUTDIR", unset = "")
+  if (nzchar(od_env)) od_env else
+    "dev/red-team/heavy-tests/marginal-k/sbc-results-sampled"
+}
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
 quick_env <- Sys.getenv("MARGINAL_K_SBC_QUICK", unset = "")

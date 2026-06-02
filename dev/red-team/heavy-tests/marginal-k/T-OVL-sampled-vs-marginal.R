@@ -17,7 +17,9 @@
 # pattern and the `feedback_pkgload_prebuild` memory file before running.
 
 suppressPackageStartupMessages({
-  library("MkPrime")
+  # load_all the in-tree build (uses the pre-built src/MkPrime.so on Hamilton,
+  # matching the SBC drivers) rather than a separately-installed MkPrime.
+  pkgload::load_all(".", quiet = TRUE)
   library("ape")
   library("TreeTools")
 })
@@ -32,6 +34,15 @@ N_REP      <- 4L          # replicate datasets per cell
 N_ITER     <- 12000L
 N_WARM     <- 4000L
 KS_BAR     <- 0.01
+
+# Quick smoke (env MARGINAL_K_OVL_QUICK=1): 1 small cell, short chains — verifies
+# the driver runs end-to-end on the current binary before a Hamilton submission.
+# NOT a calibration check (KS power is meaningless at this size).
+if (identical(Sys.getenv("MARGINAL_K_OVL_QUICK", unset = ""), "1")) {
+  GRID_NTIP <- 8L; GRID_NCHAR <- 16L; N_REP <- 1L
+  N_ITER <- 800L; N_WARM <- 300L
+  message("[T-OVL] QUICK smoke: 1 cell (8x16), N_ITER=800 — end-to-end check only")
+}
 
 OUT_DIR <- "dev/red-team/heavy-tests/marginal-k"
 dir.create(OUT_DIR, showWarnings = FALSE, recursive = TRUE)
@@ -64,17 +75,18 @@ run_cell <- function(nTip, nChar, rep) {
   message("[T-OVL] running ", cell_name, " ...")
 
   run_one <- function(mode) {
-    model <- MkPrimeModel(kPrimePrior  = "geometric",
-                          likelihoodMode = mode,
-                          coding = "variable")
-    RunMkPrime(
-      sim$tree, sim$mkd, model,
-      mcmc = list(nIter   = N_ITER,
-                  warmup  = N_WARM,
-                  thin    = "auto",
-                  nChains = 1L),
-      seed = seed
-    )
+    model <- suppressMessages(MkPrimeModel(kPrimePrior     = "geometric",
+                                           likelihoodMode  = mode,
+                                           coding          = "variable"))
+    mcmc <- MkPrimeMCMC(nIter = N_ITER, thin = "auto",
+                        minWarmup = N_WARM, maxWarmup = N_WARM,
+                        autoTune = FALSE, nRuns = 1L, nChains = 1L)
+    # Matched seed: both modes start from an identical RNG stream so the only
+    # difference is the likelihood mode (Rao-Blackwell => same target posterior).
+    set.seed(seed)
+    suppressMessages(suppressWarnings(
+      RunMkPrime(sim$mkd, sim$tree, model = model, mcmc = mcmc, overwrite = TRUE)
+    ))
   }
 
   fit_s <- run_one("sampled_k")
