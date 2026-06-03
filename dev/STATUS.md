@@ -306,10 +306,21 @@ a Gibbs move corrupts. Precise escape dynamics a follow-up.
   **OPEN before promoting to default:** (i) the deferred **p-independent full-support marginal
   cache** (no early-termination cap) makes the warm path exact for any p ⇒ removes force-cold ⇒
   the prerequisite for the move being cheap enough to win on ESS/sec; (ii) a production overlap
-  measuring **ESS/second** at the target tree size + p-regime; (iii) DIAGNOSE the overlap p-ESS
-  45-256 first — since `mh_logit_p` mixes p fine per update on a fixed tree, that low number is
-  likely p-move FREQUENCY or coupling to slow tree mixing, NOT per-update mixing, in which case
-  neither p-move is the remedy and the fix lies elsewhere (move-weight / blocked tree+p update).
+  measuring **ESS/second** at the target tree size + p-regime.
+- **DIAGNOSED — the overlap p-ESS 45-256 is NOT a p-kernel problem (so neither this Gibbs-p nor
+  mh_logit_p tuning is the remedy).** Three facts triangulate it: (a) `mh_logit_p` is **42-57% of
+  the marginal_k schedule** (computed: n16/c24=42%, n16/c48=57%, n40/c100=52%), so in the 200k-iter
+  overlap the p-move fired tens of thousands of times — NOT frequency-starved; (b) on a FIXED tree
+  `mh_logit_p` mixes p well per update (~0.66 ESS/iter, `gibbs-p-ess-bench.R`) — per-update mixing
+  is fine; (c) yet the overlap p-ESS was 45-256, 2-3 orders below what (a)×(b) predict (tens of
+  thousands). The remaining explanation is **coupling to the slowly-mixing JOINT chain**: p's
+  conditional target shifts as the tree/branch/rate modes move, and those mix slowly, so the
+  p-marginal trace inherits their long autocorrelation. (Why p is hit harder than rate_log_sd,
+  ESS 477-1245: p interacts per-character with topology via the geometric state-count prior, so it
+  is more tree-coupled than a global ACRV nuisance; a direct joint-ESS decomposition would nail the
+  mechanism.) **Implication:** the lever for marginal_k p-ESS is better JOINT/TREE mixing —
+  parallel tempering, blocked tree+p updates, or stronger topology moves — NOT a better p-kernel.
+  The Gibbs-p (Phase 3) is correct and available but targets a non-bottleneck; keep it default-off.
 
 **Deploy note (Hamilton).** GitHub auth is dead on the cluster (SSH publickey
 denied; HTTPS creds empty) and `/nobackup` had purged the stale `mkp-source`
