@@ -284,3 +284,53 @@ test_that("empirical_geometric posterior on u beats geometric when true k' > kOb
   # robust proxy: empirical should give a larger total inferred u.
   expect_gt(sum(uMedEmp), sum(uMedGeo))
 })
+
+
+test_that("EG-001: per-character truncation normaliser Z_i(p) is correct", {
+  # Regression guard for EG-001 (proofs/kprime-priors.md s4.3). LogPrior
+  # enforces k'_i >= kObs_i, so the empirical_geometric density must be
+  # renormalised by Z_i(p) = sum_{k>=kObs_i} P(k|p) = 1 - sum_{m=2}^{kObs_i-1}
+  # P(m|p). No-op at kObs = 2.
+  emp <- MkPrimeEmpiricalPrior(body = c(0.6, 0.3, 0.1), tail_decay = 0)
+  p <- 0.7
+  eg <- function(k, kObs) MkPrime:::.LogPriorEmpiricalGeometric(k, emp, p, kObs)
+
+  # Untruncated convolution pmf (kObs = 2 => Z_i = 1).
+  P2 <- exp(eg(2L, 2L)); P3 <- exp(eg(3L, 2L)); P4 <- exp(eg(4L, 2L))
+  expect_equal(P2, 0.42,   tolerance = 1e-12)   # 0.6 * 0.7
+  expect_equal(P3, 0.336,  tolerance = 1e-12)
+  expect_equal(P4, 0.1708, tolerance = 1e-12)
+
+  # kObs = 2 is a strict no-op vs the (default-arg) untruncated form.
+  for (k in 2:6) {
+    expect_equal(eg(k, 2L), MkPrime:::.LogPriorEmpiricalGeometric(k, emp, p),
+                 tolerance = 1e-14)
+  }
+
+  # Hand-verified Z_i at kObs = 3 and 4.
+  Z3 <- 1 - P2            # 0.58
+  Z4 <- 1 - P2 - P3       # 0.244
+  expect_equal(eg(3L, 3L), log(P3) - log(Z3), tolerance = 1e-12)
+  expect_equal(eg(4L, 3L), log(P4) - log(Z3), tolerance = 1e-12)
+  expect_equal(eg(4L, 4L), log(P4) - log(Z4), tolerance = 1e-12)
+
+  # Truncating raises the per-state density (mass redistributed; Z_i <= 1).
+  expect_gte(eg(5L, 4L), eg(5L, 2L))
+
+  # The renormalised prior integrates to 1 over its support k >= kObs.
+  for (kObs in c(2L, 3L, 4L, 5L)) {
+    mass <- sum(vapply(kObs:300L, function(k) exp(eg(k, kObs)), numeric(1)))
+    expect_equal(mass, 1, tolerance = 1e-8,
+                 info = sprintf("renormalised mass at kObs=%d", kObs))
+  }
+
+  # Vectorised per-character kObs.
+  expect_equal(
+    MkPrime:::.LogPriorEmpiricalGeometric(c(3L, 4L), emp, p, c(3L, 4L)),
+    (log(P3) - log(Z3)) + (log(P4) - log(Z4)), tolerance = 1e-12)
+
+  # Boundary: if mass below kObs is ~1 (Z_i -> 0), prior is -Inf, not NaN.
+  empLow <- MkPrimeEmpiricalPrior(body = c(0.999, 0.001), tail_decay = 0)
+  v <- MkPrime:::.LogPriorEmpiricalGeometric(8L, empLow, 0.999, 8L)
+  expect_true(is.finite(v) || v == -Inf)   # never NaN
+})

@@ -373,13 +373,11 @@ static double cpp_log_prior(
       double logQ    = (data.empTailDecay > 0.0) ? std::log(data.empTailDecay)
                                                  : R_NegInf;
       int    bodyLen = static_cast<int>(data.empLogBody.size());
-      // Scratch buffer for logSumExp (reused per character)
+      // Scratch buffer for logSumExp (reused per call)
       std::vector<double> terms;
       terms.reserve(64);
-      for (int i = 0; i < nTrans; ++i) {
-        int gi = data.transIdxGlobal[i];
-        int m = kPrime[gi];
-        if (m < 2) return R_NegInf;
+      // log P(k' = m | p) = logSumExp_{j=2..m} [ logP_emp(j) + logP + (m-j) log1mP ]
+      auto logPconv = [&](int m) -> double {
         terms.clear();
         double mx = R_NegInf;
         for (int j = 2; j <= m; ++j) {
@@ -403,7 +401,31 @@ static double cpp_log_prior(
         if (terms.empty() || !std::isfinite(mx)) return R_NegInf;
         double sumExp = 0.0;
         for (double t : terms) sumExp += std::exp(t - mx);
-        lp += mx + std::log(sumExp);
+        return mx + std::log(sumExp);
+      };
+      for (int i = 0; i < nTrans; ++i) {
+        int gi = data.transIdxGlobal[i];
+        int m = kPrime[gi];
+        if (m < 2) return R_NegInf;
+        double numer = logPconv(m);             // untruncated convolution log-pmf
+        if (!std::isfinite(numer)) return R_NegInf;
+        lp += numer;
+        // EG-001: LogPrior enforces k'_i >= kObs_i, so renormalise over that
+        // truncated support. Z_i(p) = sum_{k>=kObs_i} P(k|p)
+        //                           = 1 - sum_{m'=2}^{kObs_i-1} P(m'|p)
+        // (total mass over k>=2 is 1; proofs/kprime-priors.md s4.3). No-op when
+        // kObs_i <= 2. Z_i depends on p, so it is NOT absorbed by p-varying MH.
+        int kobs_i = data.kObs[gi];
+        if (kobs_i > 2) {
+          double belowMass = 0.0;
+          for (int mm = 2; mm < kobs_i; ++mm) {
+            double lpmm = logPconv(mm);
+            if (std::isfinite(lpmm)) belowMass += std::exp(lpmm);
+          }
+          double Zi = 1.0 - belowMass;
+          if (!(Zi > 0.0) || !std::isfinite(Zi)) return R_NegInf;
+          lp -= std::log(Zi);
+        }
       }
       // p: Beta hyperprior (same as plain geometric)
       lp += R::dbeta(p, data.kprimeHyperA, data.kprimeHyperB, 1);

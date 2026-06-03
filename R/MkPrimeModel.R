@@ -449,7 +449,7 @@ MkPrimeModel <- function(
 #' @return Scalar log density `sum_i log P(k'_i)`. Returns `-Inf` if any
 #'   `k'_i < 2`.
 #' @keywords internal
-.LogPriorEmpiricalGeometric <- function(kPrime, emp, p) {
+.LogPriorEmpiricalGeometric <- function(kPrime, emp, p, kObs = 2L) {
   if (p <= 0 || p >= 1) {
     # Return:
     return(-Inf)
@@ -458,23 +458,55 @@ MkPrimeModel <- function(
     # Return:
     return(-Inf)
   }
+  kObs <- rep_len(as.integer(kObs), length(kPrime))
   logP <- log(p)
   log1mP <- log1p(-p)
 
+  # kObs_i <= kPrime_i (truncation enforced in LogPrior), so the pmf table
+  # built to max(kPrime) also covers every m' < kObs_i needed by the
+  # normaliser below.
   kMaxOverall <- max(kPrime)
   logEmp <- .LogPemp(kMaxOverall, emp)
 
-  total <- 0.0
-  for (m in kPrime) {
+  # log P(k' = m | p) = logSumExp_{j=2..m} [ logP_emp(j) + log p + (m-j) log(1-p) ]
+  .logPconv <- function(m) {
     iVals <- seq.int(2L, m)
     logTerms <- logEmp[iVals - 1L] + logP + (m - iVals) * log1mP
     finite <- is.finite(logTerms)
-    if (!any(finite)) {
+    if (!any(finite)) return(-Inf)
+    mx <- max(logTerms[finite])
+    mx + log(sum(exp(logTerms[finite] - mx)))
+  }
+
+  total <- 0.0
+  for (idx in seq_along(kPrime)) {
+    m <- kPrime[idx]
+    lpm <- .logPconv(m)                       # untruncated convolution log-pmf
+    if (!is.finite(lpm)) {
       # Return:
       return(-Inf)
     }
-    mx <- max(logTerms[finite])
-    total <- total + mx + log(sum(exp(logTerms[finite] - mx)))
+    # EG-001: LogPrior enforces k'_i >= kObs_i (returns -Inf below), so the
+    # density must be renormalised over that truncated support. The truncation
+    # normaliser is Z_i(p) = sum_{k >= kObs_i} P(k | p) = 1 - sum_{m'=2}^{kObs_i-1}
+    # P(m' | p) (total mass over k >= 2 is 1; see proofs/kprime-priors.md s4.3).
+    # No-op when kObs_i <= 2 (empty below-sum => Z_i = 1 => log Z_i = 0). Z_i
+    # depends on p, so this term is NOT absorbed by MH ratios that vary p.
+    logZ <- 0.0
+    ko <- kObs[idx]
+    if (ko > 2L) {
+      belowMass <- 0.0
+      for (mm in seq.int(2L, ko - 1L)) {
+        belowMass <- belowMass + exp(.logPconv(mm))
+      }
+      Zi <- 1.0 - belowMass
+      if (!is.finite(Zi) || Zi <= 0) {
+        # Return:
+        return(-Inf)
+      }
+      logZ <- log(Zi)
+    }
+    total <- total + lpm - logZ
   }
   # Return:
   total
@@ -614,7 +646,7 @@ LogPrior <- function(state, model, mkd) {
         emp <- e$empiricalNObs
       }
       lp <- lp + .LogPriorEmpiricalGeometric(
-        state$kPrime[transIdx], emp, state$p
+        state$kPrime[transIdx], emp, state$p, mkd$kObs[transIdx]
       )
 
       # p: Beta hyperprior

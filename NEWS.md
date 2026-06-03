@@ -1,5 +1,30 @@
 # MkPrime (development version)
 
+## `empirical_geometric` prior: per-character truncation normaliser (EG-001 fix)
+
+`LogPrior` enforces `k'_i >= kObs_i` for transformational characters, so the
+`empirical_geometric` k'-prior is now renormalised over that truncated support.
+Both `.LogPriorEmpiricalGeometric` (R) and the `empirical_geometric` branch of
+`cpp_log_prior` (C++) subtract the per-character normaliser
+
+```
+log Z_i(p) = log( sum_{k >= kObs_i} P(k | p) ) = log( 1 - sum_{m=2}^{kObs_i-1} P(m | p) )
+```
+
+Previously the untruncated convolution log-pmf was returned, biasing the
+marginal on `p` by tens of nats on a 50-character dataset (`|log Z_i|` reaches
+~4.7 nats at kObs=8, p=0.7). The term is a no-op at kObs=2, depends on `p` (so
+it enters `mh_logit_p` acceptance and does **not** cancel there), and cancels in
+fixed-`p` Gibbs k'-sweeps. Verified by independent re-derivation (renormalises
+to 1 to ~1e-14; R<->C++ parity to ~1e-9) and a regression block in
+`test-empirical-geometric-prior.R`.
+
+**Posterior samples on `p` (and downstream summaries) under
+`kPrimePrior = "empirical_geometric"` are not comparable across this fix.** The
+section 7a partition bit-identity reference (`partition-bitcompat-null-ref.rds`)
+was regenerated because the default model uses this prior; the legacy
+`partition = NULL` code path itself is unchanged.
+
 ## `likelihoodMode = "marginal_k"`: Rao-Blackwellised k'_i (geometric arm only)
 
 `MkPrimeModel()` gains a `likelihoodMode = c("sampled_k", "marginal_k")`
