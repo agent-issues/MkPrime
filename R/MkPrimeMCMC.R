@@ -128,16 +128,18 @@
 #'   mixing on difficult tree spaces at the cost of slower iterations.
 #' @param weightedSubtreeSwap Logical; include the weighted subtree-swap
 #'   move (default `FALSE`). Cost: O(N * B) likelihood evaluations.
-#' @param gibbsPMarginal Logical; include the data-augmentation
-#'   Metropolis-within-Gibbs `p`-update for `likelihoodMode = "marginal_k"`
-#'   (default `FALSE`; no effect under `sampled_k`). EXPERIMENTAL / opt-in: the
-#'   move is correctness-verified (`dev/red-team/proofs/marginal-k-gibbs-p.md`),
-#'   but on the smoke fixture it does **not** out-mix the random-walk
-#'   `mh_logit_p` per update, and it forces a cold (full-pruning) likelihood
-#'   evaluation on every accepted update, so it is plausibly net-negative on
-#'   ESS/second at the >=100-tip scale where `marginal_k` is the default. Left
-#'   off until a production overlap (and a p-independent full-support marginal
-#'   cache that removes the force-cold cost) justify defaulting it on.
+#' @param gibbsPMarginal Logical; use the data-augmentation
+#'   Metropolis-within-Gibbs `p`-update as the PRIMARY `p`-move for
+#'   `likelihoodMode = "marginal_k"` (default `FALSE`; no effect under
+#'   `sampled_k`). Correctness-verified (`dev/red-team/proofs/marginal-k-gibbs-p.md`,
+#'   math-prover). When enabled it improves `p`-mixing by ~3.2x over the
+#'   random-walk `mh_logit_p` in the production regime (narrow, near the p->1
+#'   boundary), measured apples-to-apples on an n16_c48 free-topology run
+#'   (p-ESS 295 -> 956). OPT-IN / default-`FALSE` because the gain is moderate
+#'   and the move forces a cold (full-pruning) likelihood evaluation on every
+#'   accepted update, so ESS/second at the >=100-tip scale is unproven and may
+#'   erode the per-iteration gain. A `p`-independent full-support marginal cache
+#'   (deferred) would remove that cost and justify defaulting it on.
 #' @param tbr Logical; include the TBR (Tree Bisection and Reconnection)
 #'   topology move (default `TRUE`). TBR is a superset of SPR: it additionally
 #'   re-roots the pruned subtree at a random internal edge before regrafting,
@@ -524,6 +526,8 @@ MkPrimeMCMC <- function(
       "block_gibbs_branch", "dirichlet_branch", "local_dirichlet",
       # k' moves
       "kPrime", "p", "gibbs_kPrime", "block_kPrime",
+      # marginal_k opt-in data-augmentation Gibbs-p (case 35)
+      "gibbs_p_marginal",
       # BG hyperparameter moves (reparameterised to s = log(α+β), r = log(α/β))
       "slice_kprime_s", "slice_kprime_r",
       # Slice samplers

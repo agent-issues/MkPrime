@@ -293,34 +293,28 @@ a Gibbs move corrupts. Precise escape dynamics a follow-up.
   grid-tabulated analytic `π(p|θ,tree)` to 0.02; a dedicated **multistate (kObs=3) fixture**
   exercises the Model-A `c_A`>0 branch (the disabled case-9 bug — binary fixtures have c_A=0 so
   A≡B and never test it); opt-in gating asserted. Full marginal-k + scheduling regression FAIL=0.
-  **NOT A DEMONSTRATED WIN (the honest verdict):** on the smoke fixture the move does **NOT**
-  out-mix `mh_logit_p` per update — p-ESS ratio ~**0.6×** (case-35 12.7k vs case-30 21.2k over
-  40k iters; `dev/red-team/heavy-tests/marginal-k/gibbs-p-ess-bench.R`). A DA-Gibbs carries
-  autocorrelation through the u-imputation (high-p ⇒ small imputed u ⇒ proposal favours high p),
-  so a well-tuned logit-RW matches/beats it on an easy unimodal target. And the force-cold =
-  a full pruning eval per accept (≈ every iter at K=200), so on the ≥100-tip trees where
-  marginal_k is the default it is plausibly **net-negative on ESS/second**. **Therefore
-  default-OFF:** `mh_logit_p` (case 30) restored as the sole default marginal-k p-move (its
-  per-update mixing is ~0.66 ESS/iter — fine); `gibbs_p_marginal` added only under the new
-  `MkPrimeMCMC(gibbsPMarginal = TRUE)` flag (low pinned weight 3). Production schedule UNCHANGED.
-  **OPEN before promoting to default:** (i) the deferred **p-independent full-support marginal
-  cache** (no early-termination cap) makes the warm path exact for any p ⇒ removes force-cold ⇒
-  the prerequisite for the move being cheap enough to win on ESS/sec; (ii) a production overlap
-  measuring **ESS/second** at the target tree size + p-regime.
-- **DIAGNOSED — the overlap p-ESS 45-256 is NOT a p-kernel problem (so neither this Gibbs-p nor
-  mh_logit_p tuning is the remedy).** Three facts triangulate it: (a) `mh_logit_p` is **42-57% of
-  the marginal_k schedule** (computed: n16/c24=42%, n16/c48=57%, n40/c100=52%), so in the 200k-iter
-  overlap the p-move fired tens of thousands of times — NOT frequency-starved; (b) on a FIXED tree
-  `mh_logit_p` mixes p well per update (~0.66 ESS/iter, `gibbs-p-ess-bench.R`) — per-update mixing
-  is fine; (c) yet the overlap p-ESS was 45-256, 2-3 orders below what (a)×(b) predict (tens of
-  thousands). The remaining explanation is **coupling to the slowly-mixing JOINT chain**: p's
-  conditional target shifts as the tree/branch/rate modes move, and those mix slowly, so the
-  p-marginal trace inherits their long autocorrelation. (Why p is hit harder than rate_log_sd,
-  ESS 477-1245: p interacts per-character with topology via the geometric state-count prior, so it
-  is more tree-coupled than a global ACRV nuisance; a direct joint-ESS decomposition would nail the
-  mechanism.) **Implication:** the lever for marginal_k p-ESS is better JOINT/TREE mixing —
-  parallel tempering, blocked tree+p updates, or stronger topology moves — NOT a better p-kernel.
-  The Gibbs-p (Phase 3) is correct and available but targets a non-bottleneck; keep it default-off.
+  **MEASURED VERDICT (corrected — supersedes two earlier mis-reads).** Apples-to-apples on an
+  n16_c48 free-topology run (12k iter, robust batch-means ESS, same data/length/estimator across
+  configs; `gibbs-p-fullchain-check.R`): marginal `mh_logit_p` p-ESS=**295** vs `gibbs_p_marginal`
+  as PRIMARY p-ESS=**956 (3.2×)**, with E[p] identical (0.970) ⇒ correct target and tree-ESS
+  unchanged (~53) ⇒ tree mixing unharmed. So the Gibbs-p IS a real p-ESS improvement, and is the
+  best p-move available (sampled_k p-ESS=235 — its case-9 conjugate Gibbs is truncation-DISABLED,
+  so sampled_k ALSO uses mh_logit_p). **RETRACTIONS:** (1) an earlier "0.6× / no win" reading was
+  `spec.pgram` estimator noise on the WRONG (easy, broad-p) regime — the production p-posterior is
+  NARROW near the p→1 boundary (p~0.97, sd~0.03; n16_c48 has ~48 chars mostly at u=0 ⇒ Beta(~49,1))
+  where a logit-RW struggles and a conjugate-style draw helps. (2) The T-OVL "sampled p-ESS ~2000
+  vs marginal ~60" 30× gap was NOT reproduced (here sampled≈marginal≈250) and came from chains
+  flagged INCONCLUSIVE on every parameter — an underpowered artifact, NOT a real p-kernel gap;
+  the earlier "joint/tree-coupling, not a p-kernel problem" diagnostic built on it is WITHDRAWN.
+  **STILL OPT-IN / default-off — for the RIGHT reasons now:** the gain is MODERATE (~3.2×, not
+  dramatic) and the force-cold = a full pruning eval per accept ⇒ ESS/SECOND at the ≥100-tip scale
+  is unproven and may erode the per-iter gain. When ENABLED (`MkPrimeMCMC(gibbsPMarginal = TRUE)`)
+  it is the PRIMARY p-move (that is what delivers the 3.2×); `mh_logit_p` is kept at low weight for
+  small-p-tail irreducibility. Production schedule UNCHANGED by default; the opt-in path is verified
+  end-to-end (RunMkPrime runs, E[p] correct, the R→C++ moveTypeCodes/tuning/scalar-floor plumbing
+  exercised). **Promote to default once** the deferred **p-independent full-support marginal cache**
+  (no early-termination cap) removes the force-cold ⇒ warm path exact for any p ⇒ the 3.2× becomes
+  a clear ESS/second win; a production ESS/second measurement at the target scale would confirm.
 
 **Deploy note (Hamilton).** GitHub auth is dead on the cluster (SSH publickey
 denied; HTTPS creds empty) and `/nobackup` had purged the stale `mkp-source`

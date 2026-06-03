@@ -3639,27 +3639,34 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     # u_max(p). Plan §4 in dev/notes/2026-05-28-marginal-k-plan.md.
     if (marginalK) {
       # Geometric arm under marginal-k: p has a Beta hyperprior; the latent
-      # per-character u_i are integrated out, so the legacy conjugate Gibbs
-      # draw (case 9) is unavailable. PRIMARY p-move = mh_logit_p (case 30),
-      # which mixes p well per update (smoke: ~0.66 ESS/iter on a fixed tree).
-      kPrimeMoves <- list(
-        list(name = "mh_logit_p", type = "logit_scale_p", target = "p",
-             weight = max(1, nTrans * 2L + 2L), dim = 1L)
-      )
-      # OPT-IN (default FALSE): data-augmentation Metropolis-within-Gibbs
-      # `gibbs_p_marginal` (case 35). Correctness-verified
-      # (dev/red-team/proofs/marginal-k-gibbs-p.md, math-prover), but it does NOT
-      # out-mix mh_logit_p per update on the smoke and forces a cold (full
-      # pruning) eval per accept -> plausibly net-negative ESS/second at the
-      # >=100-tip scale. Left off until a production overlap (and the deferred
-      # p-independent full-support cache that removes the force-cold cost)
-      # justify it. Low pinned weight when enabled (alwaysAcceptTypes) so the
-      # softmax scheduler does not over-weight a near-always-accept move.
+      # per-character u_i are integrated out, so the legacy conjugate Gibbs draw
+      # (case 9) is unavailable. The random-walk mh_logit_p (case 30) mixes p
+      # POORLY in the production regime (narrow, near the p->1 boundary): the
+      # T-OVL overlap measured marginal p-ESS ~60 vs sampled_k's conjugate-Gibbs
+      # ~2000 at EQUAL tree-ESS -- a p-KERNEL gap, not tree coupling.
+      #
+      # gibbs_p_marginal (case 35) is the marginal analogue of that conjugate
+      # Gibbs (data-augmentation Metropolis-within-Gibbs; proof
+      # dev/red-team/proofs/marginal-k-gibbs-p.md, math-prover verified). It is
+      # OPT-IN (gibbsPMarginal, default FALSE) because it forces a cold (full
+      # pruning) eval per accept -> a real ESS/second cost at the >=100-tip scale
+      # until the deferred p-independent full-support cache removes it. When
+      # ENABLED it is the PRIMARY p-move (it is what lifts p-mixing toward the
+      # sampled_k ceiling); mh_logit_p is retained at low weight for small-p-tail
+      # irreducibility. Pinned (alwaysAcceptTypes) so the softmax scheduler does
+      # not distort a near-always-accept move.
       if (isTRUE(mcmc$gibbsPMarginal)) {
-        kPrimeMoves <- c(kPrimeMoves, list(
+        kPrimeMoves <- list(
           list(name = "gibbs_p_marginal", type = "gibbs_p_marginal", target = "p",
+               weight = max(1, nTrans * 2L + 2L), dim = 1L),
+          list(name = "mh_logit_p", type = "logit_scale_p", target = "p",
                weight = 3L, dim = 1L)
-        ))
+        )
+      } else {
+        kPrimeMoves <- list(
+          list(name = "mh_logit_p", type = "logit_scale_p", target = "p",
+               weight = max(1, nTrans * 2L + 2L), dim = 1L)
+        )
       }
       moves <- c(moves, kPrimeMoves)
     } else {
