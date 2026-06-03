@@ -410,21 +410,26 @@ static double cpp_log_prior(
         double numer = logPconv(m);             // untruncated convolution log-pmf
         if (!std::isfinite(numer)) return R_NegInf;
         lp += numer;
-        // EG-001: LogPrior enforces k'_i >= kObs_i, so renormalise over that
-        // truncated support. Z_i(p) = sum_{k>=kObs_i} P(k|p)
-        //                           = 1 - sum_{m'=2}^{kObs_i-1} P(m'|p)
+        // EG-001: under the conditional variant (Model B), LogPrior enforces
+        // k'_i >= kObs_i, so renormalise over that truncated support.
+        //   Z_i(p) = sum_{k>=kObs_i} P(k|p) = 1 - sum_{m'=2}^{kObs_i-1} P(m'|p)
         // (total mass over k>=2 is 1; proofs/kprime-priors.md s4.3). No-op when
         // kObs_i <= 2. Z_i depends on p, so it is NOT absorbed by p-varying MH.
-        int kobs_i = data.kObs[gi];
-        if (kobs_i > 2) {
-          double belowMass = 0.0;
-          for (int mm = 2; mm < kobs_i; ++mm) {
-            double lpmm = logPconv(mm);
-            if (std::isfinite(lpmm)) belowMass += std::exp(lpmm);
+        // Under the unconditional variant (Model A) the prior lives on the full
+        // support k' >= 2 with Z_i == 1; the likelihood enforces the k' >= kObs
+        // floor. Mirrors the geometric arm's Model A/B split above.
+        if (!data.unconditionalPrior) {
+          int kobs_i = data.kObs[gi];
+          if (kobs_i > 2) {
+            double belowMass = 0.0;
+            for (int mm = 2; mm < kobs_i; ++mm) {
+              double lpmm = logPconv(mm);
+              if (std::isfinite(lpmm)) belowMass += std::exp(lpmm);
+            }
+            double Zi = 1.0 - belowMass;
+            if (!(Zi > 0.0) || !std::isfinite(Zi)) return R_NegInf;
+            lp -= std::log(Zi);
           }
-          double Zi = 1.0 - belowMass;
-          if (!(Zi > 0.0) || !std::isfinite(Zi)) return R_NegInf;
-          lp -= std::log(Zi);
         }
       }
       // p: Beta hyperprior (same as plain geometric)

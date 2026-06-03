@@ -446,10 +446,21 @@ MkPrimeModel <- function(
 #' @param emp `MkPrimeEmpiricalPrior` object.
 #' @param p Scalar success probability of the geometric on `N_unobs`,
 #'   `0 < p < 1`.
+#' @param kObs Integer vector of observed state counts (one per character;
+#'   recycled to `length(kPrime)`). Defaults to `2L`, giving `Z_i = 1`
+#'   (untruncated). Only consulted under the conditional (Model B) variant.
+#' @param unconditional Logical. `FALSE` (default; Model B, the production
+#'   prior) subtracts the per-character truncation normaliser
+#'   `log Z_i(p) = log sum_{k >= kObs_i} P(k | p)`. `TRUE` (Model A, used by
+#'   the SBC harness) places the prior on the full support `k' >= 2` with no
+#'   `Z_i` correction; the `k' >= kObs` floor is then enforced by the
+#'   likelihood, not the prior. The two agree whenever every `kObs == 2`. See
+#'   `dev/notes/2026-05-28-kprime-viability.md`.
 #' @return Scalar log density `sum_i log P(k'_i)`. Returns `-Inf` if any
 #'   `k'_i < 2`.
 #' @keywords internal
-.LogPriorEmpiricalGeometric <- function(kPrime, emp, p, kObs = 2L) {
+.LogPriorEmpiricalGeometric <- function(kPrime, emp, p, kObs = 2L,
+                                        unconditional = FALSE) {
   if (p <= 0 || p >= 1) {
     # Return:
     return(-Inf)
@@ -486,15 +497,18 @@ MkPrimeModel <- function(
       # Return:
       return(-Inf)
     }
-    # EG-001: LogPrior enforces k'_i >= kObs_i (returns -Inf below), so the
-    # density must be renormalised over that truncated support. The truncation
-    # normaliser is Z_i(p) = sum_{k >= kObs_i} P(k | p) = 1 - sum_{m'=2}^{kObs_i-1}
-    # P(m' | p) (total mass over k >= 2 is 1; see proofs/kprime-priors.md s4.3).
-    # No-op when kObs_i <= 2 (empty below-sum => Z_i = 1 => log Z_i = 0). Z_i
-    # depends on p, so this term is NOT absorbed by MH ratios that vary p.
+    # EG-001: under the conditional variant (Model B) LogPrior enforces
+    # k'_i >= kObs_i (returns -Inf below), so the density must be renormalised
+    # over that truncated support. The truncation normaliser is
+    # Z_i(p) = sum_{k >= kObs_i} P(k | p) = 1 - sum_{m'=2}^{kObs_i-1} P(m' | p)
+    # (total mass over k >= 2 is 1; see proofs/kprime-priors.md s4.3). No-op
+    # when kObs_i <= 2 (empty below-sum => Z_i = 1 => log Z_i = 0). Z_i depends
+    # on p, so this term is NOT absorbed by MH ratios that vary p.
+    # Under the unconditional variant (Model A) the prior lives on the full
+    # support k' >= 2 with Z_i = 1; the likelihood enforces the k' >= kObs floor.
     logZ <- 0.0
     ko <- kObs[idx]
-    if (ko > 2L) {
+    if (!unconditional && ko > 2L) {
       belowMass <- 0.0
       for (mm in seq.int(2L, ko - 1L)) {
         belowMass <- belowMass + exp(.logPconv(mm))
@@ -510,6 +524,41 @@ MkPrimeModel <- function(
   }
   # Return:
   total
+}
+
+
+#' Sample `N_obs` from an `MkPrimeEmpiricalPrior`
+#'
+#' Forward-draw helper for SBC under the Model A (`priorVariant =
+#' "unconditional"`) `empirical_geometric` prior. Draws from the body + the
+#' geometric tail, truncated at `tailMax` (default 200 — far beyond any
+#' plausible state count and beyond the packaged body). Mirrors the pmf
+#' convention of [.LogPemp()] (entry `i` is `P(N_obs = i + 1)`).
+#' @param n Integer; number of draws.
+#' @param emp `MkPrimeEmpiricalPrior` object.
+#' @param tailMax Integer; truncate the tail at this `k` (lost mass is
+#'   negligible for any realistic `tail_decay`).
+#' @return Integer vector of length `n`, each entry `>= 2`.
+#' @keywords internal
+.SampleNObsEmpirical <- function(n, emp, tailMax = 200L) {
+  bodyLen <- length(emp$body)
+  ks <- seq.int(2L, max(bodyLen + 1L, tailMax))
+  pmf <- numeric(length(ks))
+  pmf[seq_len(bodyLen)] <- as.numeric(emp$body)
+  if (emp$tail_decay > 0 && emp$tail_start_p > 0) {
+    tailIdx <- which(ks >= emp$tail_start_k)
+    if (length(tailIdx) > 0L) {
+      kt <- ks[tailIdx]
+      pmf[tailIdx] <- emp$tail_start_p *
+        emp$tail_decay ^ (kt - emp$tail_start_k)
+    }
+  }
+  totalMass <- sum(pmf)
+  if (totalMass <= 0) {
+    cli::cli_abort(".SampleNObsEmpirical: empirical pmf has no mass.")
+  }
+  pmf <- pmf / totalMass
+  sample(ks, size = n, replace = TRUE, prob = pmf)
 }
 
 
@@ -646,7 +695,9 @@ LogPrior <- function(state, model, mkd) {
         emp <- e$empiricalNObs
       }
       lp <- lp + .LogPriorEmpiricalGeometric(
-        state$kPrime[transIdx], emp, state$p, mkd$kObs[transIdx]
+        state$kPrime[transIdx], emp, state$p, mkd$kObs[transIdx],
+        unconditional = identical(model$priorVariant %||% "conditional",
+                                  "unconditional")
       )
 
       # p: Beta hyperprior

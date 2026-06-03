@@ -1,5 +1,19 @@
 # MkPrime (development version)
 
+## `empirical_geometric` honours `priorVariant = "unconditional"` (Model A)
+
+The `empirical_geometric` arm now respects the model's `priorVariant`. Under
+`"unconditional"` (Model A, used by the SBC harness) the prior is placed on the
+full support `k' >= 2` with no per-character `Z_i(p)` truncation correction; the
+`k' >= kObs` floor is enforced by the likelihood. Under `"conditional"` (Model B,
+the default production prior) the EG-001 `Z_i(p)` normaliser is applied as before
+(behaviour unchanged). The two agree whenever every `kObs == 2`, and differ by
+exactly `sum_i log Z_i(p)` otherwise. Reuses the existing `unconditionalPrior`
+McmcData field already honoured by the plain-`geometric` arm; both
+`.LogPriorEmpiricalGeometric` (R) and the `empirical_geometric` branch of
+`cpp_log_prior` (C++) gate the correction on it (R<->C++ parity tested). A
+`.SampleNObsEmpirical` forward-draw helper is added for Model A SBC.
+
 ## `empirical_geometric` prior: per-character truncation normaliser (EG-001 fix)
 
 `LogPrior` enforces `k'_i >= kObs_i` for transformational characters, so the

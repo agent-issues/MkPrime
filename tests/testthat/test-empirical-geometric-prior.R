@@ -334,3 +334,78 @@ test_that("EG-001: per-character truncation normaliser Z_i(p) is correct", {
   v <- MkPrime:::.LogPriorEmpiricalGeometric(8L, empLow, 0.999, 8L)
   expect_true(is.finite(v) || v == -Inf)   # never NaN
 })
+
+
+test_that("EG-001 Model A: priorVariant='unconditional' drops the Z_i correction", {
+  # Model A (unconditional) places the empirical_geometric prior on the full
+  # support k' >= 2 with no per-character Z_i(p) truncation correction; the
+  # likelihood enforces the k' >= kObs floor. It must therefore equal the
+  # untruncated convolution for every kObs, and differ from the conditional
+  # (Model B) variant by exactly + sum_i log Z_i(p).
+  emp <- MkPrimeEmpiricalPrior(body = c(0.6, 0.3, 0.1), tail_decay = 0)
+  p <- 0.7
+  egC <- function(k, kObs)
+    MkPrime:::.LogPriorEmpiricalGeometric(k, emp, p, kObs)
+  egA <- function(k, kObs)
+    MkPrime:::.LogPriorEmpiricalGeometric(k, emp, p, kObs, unconditional = TRUE)
+
+  # Model A == untruncated convolution (kObs = 2 default => Z_i = 1) for any kObs.
+  for (kObs in 2:5) {
+    for (k in kObs:6) {
+      expect_equal(egA(k, kObs),
+                   MkPrime:::.LogPriorEmpiricalGeometric(k, emp, p),
+                   tolerance = 1e-14,
+                   info = sprintf("Model A k=%d kObs=%d", k, kObs))
+    }
+  }
+
+  # The two variants coincide at kObs = 2 (Z_i = 1 either way).
+  for (k in 2:6) expect_equal(egA(k, 2L), egC(k, 2L), tolerance = 1e-14)
+
+  # At kObs > 2 they differ by exactly + log Z_i (Model B subtracts log Z_i).
+  P2 <- exp(egC(2L, 2L)); P3 <- exp(egC(3L, 2L))
+  Z3 <- 1 - P2; Z4 <- 1 - P2 - P3
+  expect_equal(egA(3L, 3L) - egC(3L, 3L), log(Z3), tolerance = 1e-12)
+  expect_equal(egA(4L, 4L) - egC(4L, 4L), log(Z4), tolerance = 1e-12)
+
+  # Vectorised: difference == sum of per-character log Z_i.
+  expect_equal(
+    MkPrime:::.LogPriorEmpiricalGeometric(c(3L, 4L), emp, p, c(3L, 4L),
+                                          unconditional = TRUE) -
+      MkPrime:::.LogPriorEmpiricalGeometric(c(3L, 4L), emp, p, c(3L, 4L)),
+    log(Z3) + log(Z4), tolerance = 1e-12)
+})
+
+
+test_that("EG-001 Model A: R and C++ EG priors agree under priorVariant='unconditional'", {
+  library("ape")
+  tree <- TreeTools::Preorder(
+    read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);"))
+  # Two transformational chars, kObs = 2 and 3 (the second exercises Z_i).
+  mat <- matrix(c(0, 1, 0, 1,
+                  0, 1, 2, 0), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd)
+  model <- suppressMessages(
+    MkPrimeModel(expSteps = 10, kPrimePrior = "empirical_geometric",
+                 priorVariant = "unconditional"))
+  model <- MkPrime:::.FinalizeModel(model, tree, mkd)
+  dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
+
+  for (p in c(0.2, 0.5, 0.8)) {
+    for (kp in list(c(2L, 3L), c(3L, 5L), c(4L, 8L))) {
+      state <- list(
+        tree = tree, tree_length = 0.5,
+        rel_br_lengths = tree$edge.length / sum(tree$edge.length),
+        rate_loss = 1.0, rate_log_sd = 0.2, rate_neo = 1.0,
+        kPrime = kp, p = p, log_lik = 0.0, log_prior = 0.0
+      )
+      lp_r   <- MkPrime:::LogPrior(state, model, mkd)
+      lp_cpp <- eval_log_prior_cpp(dataPtr, MkPrime:::.InitMcmcChain(state))
+      expect_equal(lp_cpp, lp_r, tolerance = 1e-9,
+                   info = sprintf("Model A R vs C++ at p=%.2f, kp=%s",
+                                  p, paste(kp, collapse = ",")))
+    }
+  }
+})
