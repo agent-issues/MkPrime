@@ -302,10 +302,14 @@ a Gibbs move corrupts. Precise escape dynamics a follow-up.
   so sampled_k ALSO uses mh_logit_p). **RETRACTIONS:** (1) an earlier "0.6× / no win" reading was
   `spec.pgram` estimator noise on the WRONG (easy, broad-p) regime — the production p-posterior is
   NARROW near the p→1 boundary (p~0.97, sd~0.03; n16_c48 has ~48 chars mostly at u=0 ⇒ Beta(~49,1))
-  where a logit-RW struggles and a conjugate-style draw helps. (2) The T-OVL "sampled p-ESS ~2000
-  vs marginal ~60" 30× gap was NOT reproduced (here sampled≈marginal≈250) and came from chains
-  flagged INCONCLUSIVE on every parameter — an underpowered artifact, NOT a real p-kernel gap;
-  the earlier "joint/tree-coupling, not a p-kernel problem" diagnostic built on it is WITHDRAWN.
+  where a logit-RW struggles and a conjugate-style draw helps. (2) The earlier "joint/tree-coupling,
+  not a p-kernel problem" diagnostic — which inferred a better p-kernel COULD NOT help — is
+  WITHDRAWN: the 3.2× Gibbs-primary win above directly refutes it. The T-OVL "sampled p-ESS ~2000 vs
+  marginal ~60" 30× gap it was built on is UNRESOLVED (not an established artifact): CONSISTENT
+  across 3 200k-iter cells but NOT reproduced in this single 12k-iter run (sampled≈marginal≈250),
+  and 12k-vs-200k is unreconciled (INCONCLUSIVE there was a d_sd-test status, not a claim the ESS
+  numbers are noise). The actionable conclusion is identical at 3.2× or 30× — ship opt-in,
+  full-support cache before default-on — so the magnitude is deliberately NOT chased.
   **STILL OPT-IN / default-off — for the RIGHT reasons now:** the gain is MODERATE (~3.2×, not
   dramatic) and the force-cold = a full pruning eval per accept ⇒ ESS/SECOND at the ≥100-tip scale
   is unproven and may erode the per-iter gain. When ENABLED (`MkPrimeMCMC(gibbsPMarginal = TRUE)`)
