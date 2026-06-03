@@ -867,7 +867,8 @@ RunMkPrime <- function(data, tree = NULL,
   # their acceptance rate is healthy. Mirrors the init-time scalar floor
   # at .BuildMoves; same set of types.
   .kScalarFloorTypes <- c("scale", "int_walk", "gibbs_p", "scale_p",
-                           "logit_scale_p", "slice", "beta_simplex")
+                           "logit_scale_p", "slice", "beta_simplex",
+                           "gibbs_p_marginal")
   moveTypes <- vapply(moves, function(m) m$type %||% m$name, character(1))
   scalarFloorMoves <- moveNames[(moveDim == 1L & moveTypes %in% .kScalarFloorTypes) |
                                   moveTypes == "joint_2d"]
@@ -916,8 +917,12 @@ RunMkPrime <- function(data, tree = NULL,
   # their weight and starves bottleneck MH moves.  One Gibbs draw or slice
   # sample per cycle is already optimal, so freeze them.
   # Also pin BG hyperparameter slice (slice_kprime_hyper): cheap, always-accept.
+  # gibbs_p_marginal (case 35) is near-always-accept and cheap (cache reads +
+  # one rbeta + Z evals, no pruning); pin it so the score = accept x dim / cost
+  # formula does not inflate its weight and starve bottleneck MH moves. It can
+  # reject in the small-p tail, but one draw per cycle is optimal regardless.
   alwaysAcceptTypes <- c("gibbs_p", "slice", "gibbs_kprime_sweep",
-                         "slice_kprime_hyper")
+                         "slice_kprime_hyper", "gibbs_p_marginal")
   moveTypes <- vapply(moves, `[[`, character(1), "type")
   autoPin <- moveWeights[moveTypes %in% alwaysAcceptTypes]
 
@@ -3259,6 +3264,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         dirichlet_branch = tun$dirichlet_alpha %||% 10,
         local_dirichlet  = tun$local_dirichlet_alpha %||% 10,
         p           = 0.5,  # Gibbs move: scale ignored by C++; placeholder
+        gibbs_p_marginal = 0.5,  # data-aug Gibbs: scale ignored by C++
         mh_p        = tun$scale_p %||% 0.5,
         mh_logit_p  = tun$scale_logit_p %||% 1.0,
         scale_hyper_tau = tun$scale_hyper_tau %||% 0.5,
@@ -3632,14 +3638,29 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     # mh_logit_p since p now dominates the chain's exploration of
     # u_max(p). Plan §4 in dev/notes/2026-05-28-marginal-k-plan.md.
     if (marginalK) {
-      # Geometric arm under marginal-k: p has Beta hyperprior; the legacy
-      # Gibbs draw on p is no longer correct (conjugacy breaks once the
-      # per-character u_i is marginalised out). Use mh_logit_p with the
-      # weight redistribution mentioned above.
+      # Geometric arm under marginal-k: p has a Beta hyperprior; the latent
+      # per-character u_i are integrated out, so the legacy conjugate Gibbs
+      # draw (case 9) is unavailable. PRIMARY p-move = mh_logit_p (case 30),
+      # which mixes p well per update (smoke: ~0.66 ESS/iter on a fixed tree).
       kPrimeMoves <- list(
         list(name = "mh_logit_p", type = "logit_scale_p", target = "p",
              weight = max(1, nTrans * 2L + 2L), dim = 1L)
       )
+      # OPT-IN (default FALSE): data-augmentation Metropolis-within-Gibbs
+      # `gibbs_p_marginal` (case 35). Correctness-verified
+      # (dev/red-team/proofs/marginal-k-gibbs-p.md, math-prover), but it does NOT
+      # out-mix mh_logit_p per update on the smoke and forces a cold (full
+      # pruning) eval per accept -> plausibly net-negative ESS/second at the
+      # >=100-tip scale. Left off until a production overlap (and the deferred
+      # p-independent full-support cache that removes the force-cold cost)
+      # justify it. Low pinned weight when enabled (alwaysAcceptTypes) so the
+      # softmax scheduler does not over-weight a near-always-accept move.
+      if (isTRUE(mcmc$gibbsPMarginal)) {
+        kPrimeMoves <- c(kPrimeMoves, list(
+          list(name = "gibbs_p_marginal", type = "gibbs_p_marginal", target = "p",
+               weight = 3L, dim = 1L)
+        ))
+      }
       moves <- c(moves, kPrimeMoves)
     } else {
     kPrimeMoves <- list(
@@ -3801,6 +3822,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 # 33=joint_tl_rn (tree_length × rate_neo 2D Bactrian; partition-rate ridge),
 # 34=scale_hyper_tau (Bactrian scale on the population scale τ of the
 #    half-normal hyperprior σ_c = τ · z_c)
+# 35=gibbs_p_marginal (data-augmentation Metropolis-within-Gibbs p-update for
+#    the marginal_k geometric arm; dev/red-team/proofs/marginal-k-gibbs-p.md)
 .kMoveTypes <- c(
   tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
   rate_neo = 3L, branch_lengths = 4L,
@@ -3830,7 +3853,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   slice_kprime_r = 29L,
   scale_class_rate_log_sd = 31L,
   dirichlet_simplex_class_w = 32L,
-  scale_hyper_tau = 34L
+  scale_hyper_tau = 34L,
+  gibbs_p_marginal = 35L
 )
 
 #' Initialize the C++ MCMC data structure (call once before loop)

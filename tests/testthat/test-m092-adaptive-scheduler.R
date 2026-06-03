@@ -530,7 +530,7 @@ test_that("All move names in .kMoveTypes are valid moveWeights names", {
     "slice_tree_length", "slice_beta_scale",
     "gibbs_kPrime", "block_kPrime",
     "slice_kprime_s", "slice_kprime_r",
-    "mh_p", "mh_logit_p",
+    "mh_p", "mh_logit_p", "gibbs_p_marginal",
     "scale_class_rate_log_sd", "dirichlet_simplex_class_w",
     "scale_hyper_tau"
   )

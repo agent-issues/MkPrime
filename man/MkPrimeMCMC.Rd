@@ -38,6 +38,7 @@ MkPrimeMCMC(
   weightedSpr = FALSE,
   weightedSubtreeSwap = FALSE,
   blockGibbsBranch = FALSE,
+  gibbsPMarginal = FALSE,
   dirichletBranch = TRUE,
   dirichletK = NULL,
   localDirichlet = TRUE,
@@ -239,6 +240,17 @@ Useful when single-edge moves (BetaSimplex, weighted branch scale)
 mix slowly through the branch-length space. The adaptive scheduler
 accounts for the multi-dimensional nature of this move via its \code{dim}
 field.}
+
+\item{gibbsPMarginal}{Logical; include the data-augmentation
+Metropolis-within-Gibbs \code{p}-update for \code{likelihoodMode = "marginal_k"}
+(default \code{FALSE}; no effect under \code{sampled_k}). EXPERIMENTAL / opt-in: the
+move is correctness-verified (\code{dev/red-team/proofs/marginal-k-gibbs-p.md}),
+but on the smoke fixture it does \strong{not} out-mix the random-walk
+\code{mh_logit_p} per update, and it forces a cold (full-pruning) likelihood
+evaluation on every accepted update, so it is plausibly net-negative on
+ESS/second at the >=100-tip scale where \code{marginal_k} is the default. Left
+off until a production overlap (and a p-independent full-support marginal
+cache that removes the force-cold cost) justify defaulting it on.}
 
 \item{dirichletBranch}{Logical; include the block Dirichlet simplex
 branch-length move (default \code{TRUE}). Each proposal selects K random

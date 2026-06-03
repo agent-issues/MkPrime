@@ -128,6 +128,16 @@
 #'   mixing on difficult tree spaces at the cost of slower iterations.
 #' @param weightedSubtreeSwap Logical; include the weighted subtree-swap
 #'   move (default `FALSE`). Cost: O(N * B) likelihood evaluations.
+#' @param gibbsPMarginal Logical; include the data-augmentation
+#'   Metropolis-within-Gibbs `p`-update for `likelihoodMode = "marginal_k"`
+#'   (default `FALSE`; no effect under `sampled_k`). EXPERIMENTAL / opt-in: the
+#'   move is correctness-verified (`dev/red-team/proofs/marginal-k-gibbs-p.md`),
+#'   but on the smoke fixture it does **not** out-mix the random-walk
+#'   `mh_logit_p` per update, and it forces a cold (full-pruning) likelihood
+#'   evaluation on every accepted update, so it is plausibly net-negative on
+#'   ESS/second at the >=100-tip scale where `marginal_k` is the default. Left
+#'   off until a production overlap (and a p-independent full-support marginal
+#'   cache that removes the force-cold cost) justify defaulting it on.
 #' @param tbr Logical; include the TBR (Tree Bisection and Reconnection)
 #'   topology move (default `TRUE`). TBR is a superset of SPR: it additionally
 #'   re-roots the pruned subtree at a random internal edge before regrafting,
@@ -350,6 +360,7 @@ MkPrimeMCMC <- function(
     weightedSpr = FALSE,
     weightedSubtreeSwap = FALSE,
     blockGibbsBranch = FALSE,
+    gibbsPMarginal = FALSE,
     dirichletBranch = TRUE,
     dirichletK = NULL,
     localDirichlet = TRUE,
@@ -474,6 +485,7 @@ MkPrimeMCMC <- function(
   weightedSpr <- as.logical(weightedSpr)
   weightedSubtreeSwap <- as.logical(weightedSubtreeSwap)
   blockGibbsBranch <- as.logical(blockGibbsBranch)
+  gibbsPMarginal <- as.logical(gibbsPMarginal)
   dirichletBranch <- as.logical(dirichletBranch)
   if (!is.null(dirichletK)) {
     dirichletK <- as.integer(dirichletK)
@@ -648,6 +660,7 @@ MkPrimeMCMC <- function(
          weightedSpr = weightedSpr,
          weightedSubtreeSwap = weightedSubtreeSwap,
          blockGibbsBranch = blockGibbsBranch,
+         gibbsPMarginal = gibbsPMarginal,
          dirichletBranch = dirichletBranch,
          dirichletK = dirichletK,
          localDirichlet = localDirichlet,

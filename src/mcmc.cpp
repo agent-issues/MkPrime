@@ -4727,6 +4727,13 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
 //           34=scale_hyper_tau (Bactrian scale on the population scale τ of
 //              the half-normal hyperprior on σ_c = τ·z_c; only fired when
 //              state->useHyperpriorOnSigma)
+//           35=gibbs_p_marginal (data-augmentation Metropolis-within-Gibbs
+//              p-update for the marginal_k geometric arm: imputes latent u_i
+//              from the cached per-(char,k') weights, proposes p* from the
+//              untruncated conjugate Beta, accepts with the truncation-
+//              normaliser ratio. Like case 30, a p-only move that PRESERVES
+//              the charLL cache. Derivation + math-prover verification:
+//              dev/red-team/proofs/marginal-k-gibbs-p.md)
 //
 // M-065: NNI/SPR now call _impl versions directly with parent/child vectors.
 // Likelihood calls use vectors directly (no IntegerMatrix construction).
@@ -4760,7 +4767,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   // governed by the same invariance proof as charLLCache — see
   // dev/red-team/proofs/marginal-k-geometric.md §5. A p-move preserves
   // both tiers; any other move invalidates both.
-  if (data->marginalK && moveType != 30) {
+  if (data->marginalK && moveType != 30 && moveType != 35) {
     state->charLLCacheReady = false;
     state->invalidate_per_kp_cl_all();
   }
@@ -5159,6 +5166,131 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       logHastings = std::log(newP) + std::log1p(-newP)
                   - std::log(oldP) - std::log1p(-oldP);
       break;
+    }
+    case 35: { // gibbs_p_marginal — data-augmentation Metropolis-within-Gibbs
+      // p-update for the marginal_k geometric arm. Self-contained (does its own
+      // accept/reject and returns), like the Gibbs cases — it does NOT fall
+      // through to the generic MH machinery, because the accept ratio is the
+      // truncation-normaliser ratio Σ_i[logZ_i(p) − logZ_i(p*)], not the
+      // marginal-LL ratio. Derivation + math-prover verification + numerical
+      // invariance check: dev/red-team/proofs/marginal-k-gibbs-p.md and
+      // dev/red-team/numerical/gibbs-p-identity-check.R.
+      if (!data->marginalK) return false;
+      // Geometric arm only (the other priors carry no scalar conjugate p).
+      {
+        const bool isPlainGeom = !data->kPriorLogseries &&
+                                 !data->kPriorBetaGeometric &&
+                                 !data->kPriorEmpiricalGeometric;
+        if (!isPlainGeom) return false;
+      }
+      const int nTrans = (int)data->transIdxGlobal.size();
+      if (nTrans == 0) return false;
+      // Precondition: a WARM cache (raw per-(char,k') LLs against the committed
+      // tree/rates). If a preceding non-p move left it cold, skip this iteration
+      // and let mh_logit_p (case 30) move p; never impute from a stale cache.
+      if (!state->charLLCacheReady ||
+          (int)state->charLLNCand.size() != nTrans ||
+          (int)state->charLLCache.size() != nTrans * kMaxKprimeCand)
+        return false;
+      if (!(oldP > 0.0 && oldP < 1.0)) return false;
+
+      const double logP   = std::log(oldP);
+      const double log1mP = std::log1p(-oldP);
+      const bool   uncond = data->unconditionalPrior;
+      const int    K      = data->kprimeTruncK;
+
+      // --- Step 1: impute u_i ~ Categorical(charLogW[i,·]) over the cached
+      //     support {0..nEff_i-1}; accumulate S = Σ u_i and (Model A) the shift
+      //     c_A = Σ (kObs_i - 2). charLogW[i,c] = charLLCache[i,c] + logP +
+      //     c·log1mP (the evaluator's per-char logSumExp argument); g_i(p) and
+      //     Z_i(p) are u-independent and cancel out of the categorical.
+      double sumU = 0.0;
+      double cA   = 0.0;
+      for (int i = 0; i < nTrans; ++i) {
+        const int gi    = data->transIdxGlobal[i];
+        const int kObsi = data->kObs[gi];
+        const int nEff  = state->charLLNCand[i];
+        if (nEff <= 0) return false;  // empty support (kObs_i > K): degenerate
+        const double* rawRow =
+          &state->charLLCache[(size_t)i * kMaxKprimeCand];
+        double mx = R_NegInf;
+        for (int c = 0; c < nEff; ++c) {
+          if (R_FINITE(rawRow[c])) {
+            const double w = rawRow[c] + logP + c * log1mP;
+            if (w > mx) mx = w;
+          }
+        }
+        if (!R_FINITE(mx)) return false;  // no finite candidate for this char
+        double sum = 0.0;
+        for (int c = 0; c < nEff; ++c) {
+          if (R_FINITE(rawRow[c]))
+            sum += std::exp(rawRow[c] + logP + c * log1mP - mx);
+        }
+        const double targ = R::unif_rand() * sum;
+        int ui = -1;  // chosen candidate; tracks the last FINITE one as fallback
+        double acc = 0.0;
+        for (int c = 0; c < nEff; ++c) {
+          if (!R_FINITE(rawRow[c])) continue;   // zero-prob candidate: never select
+          acc += std::exp(rawRow[c] + logP + c * log1mP - mx);
+          ui = c;                                // last finite candidate (FP fallback)
+          if (acc >= targ) break;                // inverse-CDF selection
+        }
+        // ui >= 0 guaranteed: mx finite => at least one finite candidate exists,
+        // and only finite candidates are ever assigned to ui.
+        sumU += (double)ui;
+        if (uncond) cA += (double)(kObsi - 2);
+      }
+
+      // --- Step 2: propose p* from the untruncated conjugate Beta.
+      const double shape1 = data->kprimeHyperA + (double)nTrans;
+      const double shape2 = data->kprimeHyperB + sumU + cA;
+      const double pStar  = R::rbeta(shape1, shape2);
+      if (!(pStar > 0.0 && pStar < 1.0)) return false;  // boundary draw → reject
+
+      // --- Accept ratio: log α = Σ_i[ logZ_i(oldP) − logZ_i(pStar) ].
+      const double log1mPstar = std::log1p(-pStar);
+      double sumLogZ_old, sumLogZ_new;
+      if (uncond) {
+        // Model A: Z = 1 − (1−p)^(K−1), shared across all trans chars.
+        sumLogZ_old =
+          (double)nTrans * std::log1p(-std::exp((K - 1) * log1mP));
+        sumLogZ_new =
+          (double)nTrans * std::log1p(-std::exp((K - 1) * log1mPstar));
+      } else {
+        // Model B: Z_i = 1 − (1−p)^(K − kObs_i + 1), per character.
+        sumLogZ_old = 0.0;
+        sumLogZ_new = 0.0;
+        for (int i = 0; i < nTrans; ++i) {
+          const int kObsi = data->kObs[data->transIdxGlobal[i]];
+          const int e     = K - kObsi + 1;
+          sumLogZ_old += std::log1p(-std::exp(e * log1mP));
+          sumLogZ_new += std::log1p(-std::exp(e * log1mPstar));
+        }
+      }
+      // Deep small-p tail: Z → 0, logZ → −∞. The non-finite guard is symmetric
+      // in (oldP, pStar) so detailed balance is preserved; mh_logit_p covers
+      // that region. (See proof §6.4.)
+      if (!R_FINITE(sumLogZ_old) || !R_FINITE(sumLogZ_new)) return false;
+      const double logAlpha = sumLogZ_old - sumLogZ_new;
+
+      if (std::log(R::unif_rand()) < logAlpha) {
+        state->p = pStar;
+        // The charLL cache's candidate SUPPORT (nEff per char) is p-dependent:
+        // it is the early-termination set chosen at FILL-TIME p. The raw LLs are
+        // p-independent, but a large downward p-jump fattens the geometric tail
+        // P(u|p)=p(1-p)^u, moving non-negligible mass onto candidates the warm
+        // cache never stored — so the warm fast-path would UNDERCOUNT. Force a
+        // COLD re-fill at p* (re-derives the support via pruning + M-164
+        // early-termination at p*): this gives a correct committed logLik AND
+        // leaves the cache appropriate for the NEXT move's imputation. Same
+        // force-cold idiom as the FREEZE-003 weighted-move re-enable. (The warm
+        // shortcut is only valid for mh_logit_p's small steps; case 30 keeps it.)
+        state->charLLCacheReady = false;
+        state->logLik   = compute_full_loglik(*data, *state);
+        state->logPrior = compute_log_prior(*data, *state);
+        return true;   // accept
+      }
+      return false;    // reject: p, logLik, logPrior, cache all untouched
     }
     case 31: { // scale_class_rate_log_sd - Bactrian multiplicative move.
       // charIdx carries the 1-based class index supplied by run_mcmc_batch_cpp.
@@ -5805,7 +5937,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   // written during partial-CL evaluation (FU-3b future work) are
   // invalidated together with the per-(char, k') cache, since both were
   // computed against the proposed (parent, child, edgeLen).
-  if (data->marginalK && moveType != 30) {
+  if (data->marginalK && moveType != 30 && moveType != 35) {
     state->charLLCacheReady = false;
     state->invalidate_per_kp_cl_all();
   }

@@ -275,6 +275,42 @@ a Gibbs move corrupts. Precise escape dynamics a follow-up.
   RB identity + deterministic checks; overlap is supporting. Follow-ups (non-blocking): raise
   the harness sd-test ESS floor; a better marginal-p move.
 
+- **Phase 3 — data-augmentation Gibbs-p for marginal_k: BUILT & CORRECTNESS-VERIFIED, but
+  OPT-IN / DEFAULT-OFF (2026-06-03, `gibbs_p_marginal` case 35).** Under marginal_k the latent
+  `u_i` are integrated out, so the `sampled_k` conjugate Gibbs-p (case 9) is unavailable. NEW
+  Metropolis-within-Gibbs move: (1) impute `u_i ~ Categorical` from the cached per-(char,k')
+  weights, (2) propose `p* ~ Beta(a+nTrans, b+Σu+c_A)` [untruncated conjugate;
+  `c_A = Σ(kObs_i-2)` Model A, `0` Model B], (3) accept with the truncation-normaliser ratio
+  `log α = Σ_i[logZ_i(p) − logZ_i(p*)]`. **Derivation** `dev/red-team/proofs/marginal-k-gibbs-p.md`
+  — **math-prover VERIFIED watertight** (8/8; numerical controls in
+  `dev/red-team/numerical/gibbs-p-identity-check.R` discriminate a sign-flip 150× and a dropped
+  `c_A` 200×; marginalisation identity exact 4e-15; untruncated reduction == case-9 shapes).
+  **Force-cold on accept** (`src/mcmc.cpp` case 35): the cached candidate SUPPORT (`nEff`) is
+  p-dependent (M-164 early-termination at fill-p), so a large downward p-jump would make the
+  warm fast-path UNDERCOUNT the now-relevant geometric tail — accept refills the cache COLD at
+  p* (Phase-2 scratch-eval idiom). **Tests** (`test-marginal-k-free-topology.R`):
+  committed==cold & warm==cold to 1e-8 after every fire; case-35 chain `E[p]` matches the
+  grid-tabulated analytic `π(p|θ,tree)` to 0.02; a dedicated **multistate (kObs=3) fixture**
+  exercises the Model-A `c_A`>0 branch (the disabled case-9 bug — binary fixtures have c_A=0 so
+  A≡B and never test it); opt-in gating asserted. Full marginal-k + scheduling regression FAIL=0.
+  **NOT A DEMONSTRATED WIN (the honest verdict):** on the smoke fixture the move does **NOT**
+  out-mix `mh_logit_p` per update — p-ESS ratio ~**0.6×** (case-35 12.7k vs case-30 21.2k over
+  40k iters; `dev/red-team/heavy-tests/marginal-k/gibbs-p-ess-bench.R`). A DA-Gibbs carries
+  autocorrelation through the u-imputation (high-p ⇒ small imputed u ⇒ proposal favours high p),
+  so a well-tuned logit-RW matches/beats it on an easy unimodal target. And the force-cold =
+  a full pruning eval per accept (≈ every iter at K=200), so on the ≥100-tip trees where
+  marginal_k is the default it is plausibly **net-negative on ESS/second**. **Therefore
+  default-OFF:** `mh_logit_p` (case 30) restored as the sole default marginal-k p-move (its
+  per-update mixing is ~0.66 ESS/iter — fine); `gibbs_p_marginal` added only under the new
+  `MkPrimeMCMC(gibbsPMarginal = TRUE)` flag (low pinned weight 3). Production schedule UNCHANGED.
+  **OPEN before promoting to default:** (i) the deferred **p-independent full-support marginal
+  cache** (no early-termination cap) makes the warm path exact for any p ⇒ removes force-cold ⇒
+  the prerequisite for the move being cheap enough to win on ESS/sec; (ii) a production overlap
+  measuring **ESS/second** at the target tree size + p-regime; (iii) DIAGNOSE the overlap p-ESS
+  45-256 first — since `mh_logit_p` mixes p fine per update on a fixed tree, that low number is
+  likely p-move FREQUENCY or coupling to slow tree mixing, NOT per-update mixing, in which case
+  neither p-move is the remedy and the fix lies elsewhere (move-weight / blocked tree+p update).
+
 **Deploy note (Hamilton).** GitHub auth is dead on the cluster (SSH publickey
 denied; HTTPS creds empty) and `/nobackup` had purged the stale `mkp-source`
 worktree — so deploy is **auth-free**: `git archive <sha> | scp | extract` into
