@@ -244,6 +244,6 @@ test_that("priorVariant='unconditional' shifts marginal LL by (kObs-2)log(1-p)",
   expected_diff <- sum((mkd$kObs[trans_idx] - 2) * log1p(-p_test))
   expect_equal(L_uncond - L_cond, expected_diff, tolerance = 1e-9)
 
-  # Default (no priorVariant) must equal "conditional" (Model B).
+  # Default (no priorVariant) now equals "unconditional" (Model A).
   expect_equal(L_cond, build("conditional"), tolerance = 1e-12)
 })

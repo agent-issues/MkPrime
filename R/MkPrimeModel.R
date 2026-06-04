@@ -117,12 +117,12 @@
 #'     fails SBC on `p` (see `project_sbc_kprime_structural`); retained only for
 #'     backward comparison.
 #'
-#'   Default (`NULL`): `"unconditional"` for
-#'   `kPrimePrior = "empirical_geometric"` (the correct pre-data prior);
-#'   `"conditional"` for `geometric` (the shipped marginal-k behaviour, whose
-#'   Model A/B choice is tracked separately). Consulted for `empirical_geometric`
-#'   and for `geometric` under `likelihoodMode = "marginal_k"`; ignored for
-#'   `beta_geometric` / `logseries`.
+#'   Default (`NULL`): `"unconditional"` for both `"empirical_geometric"` and
+#'   `"geometric"` (the correct pre-data prior; the geometric SBC harness uses
+#'   `k' ~ 2 + Geo(p)`, so the default aligns inference with the validated SBC
+#'   forward model). Consulted for `empirical_geometric` and for `geometric`
+#'   under `likelihoodMode = "marginal_k"`; ignored for `beta_geometric` and
+#'   `logseries`.
 #'
 #' @section Q-matrix heterogeneity:
 #'
@@ -197,12 +197,12 @@ MkPrimeModel <- function(
   priorOnClassRateLogSd <- match.arg(priorOnClassRateLogSd)
   likelihoodMode <- match.arg(likelihoodMode)
   if (is.null(priorVariant)) {
-    # A prior is pre-data: kObs_i is an observation and must not enter it, so
-    # empirical_geometric defaults to the unconditional (Model A, pre-data)
-    # prior. The geometric arm's default is unchanged ("conditional", Model B);
-    # its Model A/B choice is tracked separately (project_sbc_kprime_structural
-    # / the shipped marginal-k behaviour).
-    priorVariant <- if (identical(kPrimePrior, "empirical_geometric"))
+    # A prior is pre-data: kObs_i is an observation and must not enter it. Both
+    # empirical_geometric and geometric default to the unconditional (Model A)
+    # prior. The geometric SBC harness draws k' ~ 2 + Geo(p) (Model A), so this
+    # aligns inference with the validated SBC forward model (cf.
+    # project_sbc_kprime_structural: Model A passes SBC on p, Model B fails).
+    priorVariant <- if (kPrimePrior %in% c("empirical_geometric", "geometric"))
       "unconditional" else "conditional"
   } else {
     priorVariant <- match.arg(priorVariant, c("conditional", "unconditional"))

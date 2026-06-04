@@ -69,15 +69,16 @@ test_that("MkPrimeModel(kPrimePrior='empirical_geometric') is the default", {
 })
 
 
-test_that("empirical_geometric defaults to the unconditional (Model A) prior", {
-  # A prior is pre-data: kObs is an observation and must not enter it, so the
-  # default empirical_geometric prior is unconditional (Model A). The geometric
-  # arm's default is unchanged (conditional, Model B). Explicit values honoured.
+test_that("both geometric arms default to the unconditional (Model A) prior", {
+  # A prior is pre-data: kObs is an observation and must not enter it.  Both
+  # empirical_geometric and geometric therefore default to unconditional (Model A).
+  # The geometric SBC harness draws k' ~ 2 + Geo(p), so the default aligns
+  # inference with the validated SBC forward model. Explicit values are honoured.
   expect_identical(MkPrimeModel(kPrimePrior = "empirical_geometric")$priorVariant,
                    "unconditional")
   expect_identical(MkPrimeModel()$priorVariant, "unconditional")  # default arm
   expect_identical(MkPrimeModel(kPrimePrior = "geometric")$priorVariant,
-                   "conditional")
+                   "unconditional")
   expect_identical(
     MkPrimeModel(kPrimePrior = "empirical_geometric",
                  priorVariant = "conditional")$priorVariant,

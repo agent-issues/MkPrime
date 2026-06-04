@@ -1,5 +1,16 @@
 # MkPrime (development version)
 
+## `geometric` arm's `marginal_k` default is now the unconditional (Model A) prior
+
+The default `priorVariant` for `kPrimePrior = "geometric"` is now `"unconditional"`
+(Model A): the prior lives on the full support `k' >= 2 + Geo(p)` unconditional on
+`kObs_i`. This is consistent with the `empirical_geometric` flip (below) and aligns
+inference with the validated SBC forward model, which already draws `k' ~ 2 + Geo(p)`
+(Model A). Model B (`"conditional"`, `k'_i ~ kObs_i + Geometric(p)`) is retained via
+`MkPrimeModel(priorVariant = "conditional")` for backward comparison.
+**Posterior samples on `p` under `geometric` + `marginal_k` with default settings
+are not comparable to pre-flip (Model B) runs.**
+
 ## `empirical_geometric` default is now the unconditional (Model A) prior
 
 The default `priorVariant` for `kPrimePrior = "empirical_geometric"` is now
@@ -16,9 +27,8 @@ correction below) — is **data-dependent and fails SBC on `p`** (see
 `MkPrimeModel(priorVariant = "conditional")` for backward comparison.
 **Posterior samples on `p` under the default `empirical_geometric` are not
 comparable to pre-flip (Model B / "EG-001") runs.** The `geometric` arm's default
-is unchanged (`"conditional"`, the shipped marginal-k behaviour); its Model A/B
-choice is tracked separately. The §7a partition bit-identity reference was
-regenerated under the new default.
+has now also been flipped to `"unconditional"` (see entry above). The §7a
+partition bit-identity reference was regenerated under the new default.
 
 ## `empirical_geometric` honours `priorVariant = "unconditional"` (Model A)
 
