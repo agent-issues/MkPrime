@@ -1,5 +1,25 @@
 # MkPrime (development version)
 
+## `empirical_geometric` default is now the unconditional (Model A) prior
+
+The default `priorVariant` for `kPrimePrior = "empirical_geometric"` is now
+`"unconditional"` (Model A): the prior lives on the full support `k' >= 2` and
+does **not** condition on the observed state count `kObs_i`. A prior is pre-data
+and `kObs_i` is an observation, so it must not enter the prior; the `k' >= kObs_i`
+floor is enforced by the likelihood. This is the forward-model-consistent prior
+the SBC harness draws from.
+
+The previous `"conditional"` (Model B) prior — which renormalised the convolution
+by the `kObs`- and `p`-dependent factor `Z_i(p)` (the so-called "EG-001"
+correction below) — is **data-dependent and fails SBC on `p`** (see
+`project_sbc_kprime_structural`); it is retained only via
+`MkPrimeModel(priorVariant = "conditional")` for backward comparison.
+**Posterior samples on `p` under the default `empirical_geometric` are not
+comparable to pre-flip (Model B / "EG-001") runs.** The `geometric` arm's default
+is unchanged (`"conditional"`, the shipped marginal-k behaviour); its Model A/B
+choice is tracked separately. The §7a partition bit-identity reference was
+regenerated under the new default.
+
 ## `empirical_geometric` honours `priorVariant = "unconditional"` (Model A)
 
 The `empirical_geometric` arm now respects the model's `priorVariant`. Under

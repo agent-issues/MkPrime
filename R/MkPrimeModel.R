@@ -99,22 +99,30 @@
 #'     `kPrimePrior = "geometric"` only — other arms are §11 follow-ups
 #'     in `dev/notes/2026-05-28-marginal-k-plan.md`. Het + marginal-k and
 #'     partition-API + marginal-k are deferred (§13 of the plan).
-#' @param priorVariant Parameterisation of the geometric `k'` prior under
-#'   `likelihoodMode = "marginal_k"`. One of:
-#'   * `"conditional"` (default, Model B): `k'_i ~ kObs_i + Geometric(p)`;
-#'     the marginal weight for state count `k` is `p (1-p)^(k - kObs_i)`.
-#'     This is the shipped marginal-k behaviour.
-#'   * `"unconditional"` (Model A): `k'_i ~ 2 + Geometric(p)`, unconditional
-#'     on `kObs_i`; the marginal weight for state count `k` is
-#'     `p (1-p)^(k - 2)`. The marginal sum still starts at `k = max(2, kObs_i)`
-#'     (you cannot have fewer states than observed) but the weight exponent
-#'     base is 2 rather than `kObs_i`, with no renormalisation of the truncated
-#'     tail. Model A and Model B differ by a per-character factor
-#'     `(1-p)^(kObs_i - 2)`. Use `"unconditional"` to match a Model A forward
-#'     simulator (e.g. the marginal-k SBC harness).
+#' @param priorVariant Whether the `k'` prior conditions on the observed state
+#'   count `kObs_i`. One of `"unconditional"` (Model A) or `"conditional"`
+#'   (Model B), or `NULL` (default) to select per `kPrimePrior` (see below).
+#'   A prior is pre-data, so `kObs_i` — an observation — should not enter it:
+#'   * `"unconditional"` (Model A): the prior lives on the full support
+#'     `k' >= 2`, unconditional on `kObs_i`. For `empirical_geometric` the
+#'     convolution is used with no per-character `Z_i(p)` truncation; for
+#'     `geometric` the marginal weight for state count `k` is `p (1-p)^(k - 2)`.
+#'     The `k' >= kObs_i` floor (you cannot have fewer states than observed) is
+#'     enforced by the likelihood, not the prior. This is the correct pre-data
+#'     prior and matches the forward simulator used by the SBC harness.
+#'   * `"conditional"` (Model B): the prior conditions on `kObs_i` —
+#'     `k'_i ~ kObs_i + Geometric(p)` for `geometric`, and for
+#'     `empirical_geometric` the convolution is renormalised by
+#'     `Z_i(p) = sum_{k >= kObs_i} P(k | p)`. Model B is data-dependent and
+#'     fails SBC on `p` (see `project_sbc_kprime_structural`); retained only for
+#'     backward comparison.
 #'
-#'   Only consulted under `likelihoodMode = "marginal_k"` with
-#'   `kPrimePrior = "geometric"`; ignored otherwise.
+#'   Default (`NULL`): `"unconditional"` for
+#'   `kPrimePrior = "empirical_geometric"` (the correct pre-data prior);
+#'   `"conditional"` for `geometric` (the shipped marginal-k behaviour, whose
+#'   Model A/B choice is tracked separately). Consulted for `empirical_geometric`
+#'   and for `geometric` under `likelihoodMode = "marginal_k"`; ignored for
+#'   `beta_geometric` / `logseries`.
 #'
 #' @section Q-matrix heterogeneity:
 #'
@@ -178,7 +186,7 @@ MkPrimeModel <- function(
     classRateConcentration = 1,
     priorOnClassRateLogSd = c("hyperprior_pooled", "gamma_independent"),
     likelihoodMode = c("sampled_k", "marginal_k"),
-    priorVariant = c("conditional", "unconditional"),
+    priorVariant = NULL,
     kprimeTruncK = 200L
 ) {
   coding <- match.arg(coding, c("variable", "informative", "none"))
@@ -188,7 +196,17 @@ MkPrimeModel <- function(
   )
   priorOnClassRateLogSd <- match.arg(priorOnClassRateLogSd)
   likelihoodMode <- match.arg(likelihoodMode)
-  priorVariant <- match.arg(priorVariant)
+  if (is.null(priorVariant)) {
+    # A prior is pre-data: kObs_i is an observation and must not enter it, so
+    # empirical_geometric defaults to the unconditional (Model A, pre-data)
+    # prior. The geometric arm's default is unchanged ("conditional", Model B);
+    # its Model A/B choice is tracked separately (project_sbc_kprime_structural
+    # / the shipped marginal-k behaviour).
+    priorVariant <- if (identical(kPrimePrior, "empirical_geometric"))
+      "unconditional" else "conditional"
+  } else {
+    priorVariant <- match.arg(priorVariant, c("conditional", "unconditional"))
+  }
 
   if (identical(likelihoodMode, "marginal_k")) {
     if (!identical(kPrimePrior, "geometric")) {

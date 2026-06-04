@@ -69,6 +69,22 @@ test_that("MkPrimeModel(kPrimePrior='empirical_geometric') is the default", {
 })
 
 
+test_that("empirical_geometric defaults to the unconditional (Model A) prior", {
+  # A prior is pre-data: kObs is an observation and must not enter it, so the
+  # default empirical_geometric prior is unconditional (Model A). The geometric
+  # arm's default is unchanged (conditional, Model B). Explicit values honoured.
+  expect_identical(MkPrimeModel(kPrimePrior = "empirical_geometric")$priorVariant,
+                   "unconditional")
+  expect_identical(MkPrimeModel()$priorVariant, "unconditional")  # default arm
+  expect_identical(MkPrimeModel(kPrimePrior = "geometric")$priorVariant,
+                   "conditional")
+  expect_identical(
+    MkPrimeModel(kPrimePrior = "empirical_geometric",
+                 priorVariant = "conditional")$priorVariant,
+    "conditional")
+})
+
+
 test_that("LogPrior under empirical_geometric prior is finite for valid state", {
   library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
