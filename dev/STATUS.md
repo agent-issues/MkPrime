@@ -62,6 +62,15 @@ deferred to v1.x — not in v1.
   not a valid calibration test — SBC guarantees only marginal uniformity), NOT a
   forward/inference mismatch; established by independent review + the C-i check
   below.
+- Hamilton Model A SBC (`marginal_k + geometric`, post-freeze-fix code, 2026-06-04,
+  `T-SBC-marginal-geometric.R`, N=200, 40-shard array, commit `5f12d9c`):
+  p AD = **0.8617 PASS** — the decisive diagnostic (Model B fails SBC on p via
+  the Z_i renormaliser bias; Model A passes). tree_length AD = 0.3264 MARGINAL;
+  rate_log_sd AD = 0.2577 MARGINAL. Strict gate (all > 0.4): FAIL on tl/rls.
+  Lenient gate (all > 0.01 + any > 0.4): **PASS**. The tl/rls MARGINAL is a
+  pre-existing regime/mixing issue independent of priorVariant (present under
+  both Model A and B); p calibration is the parameter that specifically validates
+  Model A over Model B. Results in `sbc-results-hamilton/` on the cluster.
 - C-i truncation guard (`tests/testthat/test-marginal-k-truncation.R`,
   "marginal-k LL == full uncapped/uncutoff reference at low p"): **PASS.** The
   package marginal-k summation (candidate cap + log-cutoff + analytic Z_A)
@@ -320,6 +329,17 @@ a Gibbs move corrupts. Precise escape dynamics a follow-up.
   (no early-termination cap) removes the force-cold ⇒ warm path exact for any p ⇒ the 3.2× becomes
   a clear ESS/second win; a production ESS/second measurement at the target scale would confirm.
 
+**priorVariant default — both arms now Model A (2026-06-04, `2b3c054` + `5f12d9c`).**
+`kPrimePrior = "geometric"` and `"empirical_geometric"` now both default
+`priorVariant = "unconditional"` (Model A: k′ drawn from full support k′ ≥ 2,
+unconditional on `kObs_i`). Martin's principle: a prior is pre-data; `kObs_i` is an
+observation and must not enter it. The geometric SBC harness already drew k′ ~ 2 +
+Geo(p) (Model A forward); inference now matches. Model B (`"conditional"`) is retained
+as opt-in for backward comparison. **Posterior samples on `p` under `geometric` +
+`marginal_k` with default settings from before 2026-06-04 are not comparable to
+post-flip runs** (see NEWS.md). EG-002 simultaneously reclassified NOT-A-BUG by the
+same principle; see `findings.md`.
+
 **Deploy note (Hamilton).** GitHub auth is dead on the cluster (SSH publickey
 denied; HTTPS creds empty) and `/nobackup` had purged the stale `mkp-source`
 worktree — so deploy is **auth-free**: `git archive <sha> | scp | extract` into
@@ -344,9 +364,12 @@ and are the gating bugs for v1 marginal-k.**
 heavy-test PENDING (T-OVL). Per-character u not sampled — explicit
 non-feature; sampled-k mode remains for users who need per-char u_post.
 
-**Evaluation.** Default mode for the geometric arm at scale (≥ 100 tips)
-once T-OVL and SBC validate. Sampled-k retained as a callable mode for
-comparability, backwards-compat, and the per-char-u use case.
+**Evaluation.** Default mode for the geometric arm at scale (≥ 100 tips).
+Validation complete: sampled_k SBC 2-batch PASS (2026-06-02); free-topology
+freeze fixed + RB-equivalence deterministically verified (2026-06-02); Hamilton
+SBC for `marginal_k + geometric` Model A default p AD = 0.862 PASS (2026-06-04).
+Sampled-k retained as a callable mode for comparability, backwards-compat, and
+the per-char-u use case.
 
 **Disabled moves under marginal-k.** Case 25 (`gibbs_kprime_sweep`),
 case 26 (`block_kprime_shift`), and case 7 (`int_walk` on `kPrime`) are
@@ -354,10 +377,11 @@ dropped from the `.BuildMoves` schedule. Case 30 (`mh_logit_p`) gets the
 redistributed weight since `p` now dominates `u_max(p)`.
 
 **Open follow-ups.**
-- PR-C: T-OVL + sampled_k SBC validation — SUBMITTED to Hamilton 2026-06-02
-  (jobs `17333100`–`17333104`; see the Stage-2 block above). Collect with
-  `marginal-k/pool-sampled-batches.R` (pre-registered 2-batch criterion) and read
-  `marginal-k/T-OVL-verdict.txt`; flip this arm to the v1 default if both pass.
+- PR-C: T-OVL + sampled_k SBC validation — **DONE 2026-06-02.** 2-batch PASS
+  (see Stage-2 RESULT block above); T-OVL unblocked by freeze-fix, RB-equivalence
+  load-bearing. Hamilton Model A SBC for `marginal_k + geometric` **DONE
+  2026-06-04** (p AD = 0.862 PASS; see Hamilton Model A SBC bullet above).
+  `marginal_k` is production-ready for the geometric arm as of 2026-06-04.
 - Stage 2 residual: the R-fallback `.DoMove` `gibbs_p` (`R/RunMkPrime.R`) still
   does an UNtruncated `Beta(a+nTrans, b+sumU)` draw — wrong for the truncated
   geometric, but currently UNREACHABLE (the `.BuildMoves` scheduler emits
