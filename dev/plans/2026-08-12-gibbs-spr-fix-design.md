@@ -152,6 +152,68 @@ the normaliser does not cancel. The free `state->logLik` is exactly the
 shortcut that breaks it — the same shape of error as `weighted_spr`'s
 `lMerge`-bins-versus-`lReg`-bins asymmetry (§3).
 
+### Two symmetry conditions, checked against the code
+
+**Prune-edge count: symmetric, no correction needed.** `eligible` is every edge
+with `parent != root` (`src/mcmc.cpp:1211–1215`). The root is always
+trifurcating in this representation, so exactly 3 edges have `parent == root`
+and `|eligible| = nEdge − 3` **independently of topology**. The prune edge
+`(u → v)` has `parent = u ≠ root` in both `x` and `y`, so it is eligible in
+both, and the subtree `S` ↔ edge correspondence is 1–1. Probability `1/|eligible|`
+cancels exactly. (TBR argues the same thing for itself at
+`src/tree_moves.cpp:245–247`.)
+
+**Candidate set: NOT symmetric as written — this is a second defect.**
+`src/mcmc.cpp:1255–1259` excludes the three edges incident to `u`:
+
+```cpp
+if (isDesc[state->child[i]]) continue;                            // S's edges
+if (state->parent[i] == u || state->child[i] == u) continue;      // incident to u
+```
+
+In `R` those three collapse to the single merged edge, so from `x` the candidate
+set is `E(R) \ {e_x}`. Apply the same filter from `y`, where `u` sits on `e_y`,
+and it is `E(R) \ {e_y}`. **Each direction excludes its own current position.**
+The two sets have equal size but different membership, so
+
+```
+Σ_{e ≠ e_x} w_e   ≠   Σ_{e ≠ e_y} w_e
+```
+
+and the normaliser does not cancel. The §3a cancellation fails under the filter
+as written.
+
+**Fix: include the merged edge as a candidate**, making the set exactly `E(R)`
+from both directions. In unpruned indexing the merged edge is the
+`(parentRow, sibRow)` pair, so it needs a small special case evaluated at ½ of
+`lMerge` — which is the *same* evaluation §3a already requires for the self
+weight. So including self is not a tidiness choice: **it is what makes the
+normaliser cancel**, and it and the `state->logLik` correction are one change,
+not two.
+
+### The gate cannot validate the selection term — a real limitation
+
+`spr_fixed_surrogate` is "R-level MH on `spr_proposal` accepting at
+`log U < logHastings`", i.e. uniform τ + Jacobian + MH, with **no** likelihood
+weighting. At the gate's β = 0 every weight is `exp(0) = 1`, so:
+
+- the selection ratio `log w_{e_x} − log w_{e_y}` is identically 0, and
+- the set asymmetry above is invisible, because both sets have size
+  `|E(R)| − 1` and uniform weights.
+
+At β = 0 the fixed kernel therefore *reduces exactly to*
+`spr_fixed_surrogate` — reassuring, since it means a correct implementation is
+guaranteed to pass and any red gate indicates an implementation bug rather than
+a design flaw. But it also means **the gate is necessary and not sufficient**:
+it certifies the Jacobian, τ and MH machinery while being structurally blind to
+the two things §3a and this section actually add.
+
+Those need their own test, and it can be deterministic rather than statistical:
+assert that the enumerated candidate set from `x` and from `y` are the **same
+set of edges of `R`**, and that `w_{e_x}` is computed by the identical code path
+as every `w_{e_y}`. A fixture that prunes both endpoints and compares the two
+enumerations settles it without any sampling.
+
 ### Net cost
 
 | | evaluations |
