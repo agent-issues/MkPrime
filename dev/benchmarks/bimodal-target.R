@@ -28,7 +28,6 @@
 # VERDICT, 2026-08-12: NOT FIT for benchmarking sampler mixing. The operative
 # failure is that the two islands do not hold comparable mass -- island A drains
 # into B -- and the barrier is also only two thirds of the depth asked for.
-# Committed as a working harness plus the measurements.
 #
 # On the balanced default design (proxy dlogL = +0.11 after 44 rejection draws),
 # a `fixTopology` chain at each of the 25 distinct clade placements gives
