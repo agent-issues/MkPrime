@@ -234,12 +234,17 @@ startup. Exactness comes from tiny trees, not long chains.
 * **Small-N (execution check):**
   `Rscript dev/red-team/heavy-tests/gibbs-spr-db.R --quick`
   n = 6, 600 replicates, 40 sweeps, 4 800 exact reference draws.
-  **Measured: 36 s** single-threaded (i7-10700), and already decisive on Q1.
-* **Headline configuration (what the committed results were produced with):**
+  **Measured: 36 s** single-threaded (i7-10700). Already decisive on Q1, and
+  its power ladder still establishes a floor (c = 0.50), so quick mode returns
+  PASS rather than INCONCLUSIVE on a corrected kernel — it is a usable
+  post-fix gate on its own.
+* **Headline configuration (what the committed `verdict.txt` was produced with):**
   `Rscript dev/red-team/heavy-tests/gibbs-spr-db.R --reps 5000 --sweeps 150`
-  **Estimated ~19 min** by linear scaling from the measured quick run
-  (state construction 1.6 ms/replicate; 0.016–0.036 ms per C++ move;
-  0.28 ms per `weighted_spr` move).
+  Estimated ~19 min by linear scaling from the quick run (state construction
+  1.6 ms/replicate; 0.016–0.036 ms per C++ move; 0.28 ms per `weighted_spr`
+  move); **measured 18.8 min** of arm time plus 14 s reference generation.
+  The two most expensive arms are `gibbs_spr+br_1to30` (466 s) and
+  `weighted_spr` (212 s); dropping those halves the run.
 * **Full default:** `Rscript dev/red-team/heavy-tests/gibbs-spr-db.R`
   (20 000 replicates, 150 sweeps) — **estimated ~75 min** local, single-threaded.
   Adds nothing to the Q1 verdict; it buys a lower power floor and tighter
@@ -252,6 +257,36 @@ startup. Exactness comes from tiny trees, not long chains.
   16-task array (one seed per task, `--reps 200000 --sweeps 150`, ~2 h/task),
   each task writing only its per-replicate statistic matrix (~20 MB), so the
   `feedback_no_oversample` /nobackup budget is untouched.
+
+## Measured result (headline run, n = 6, 5 000 replicates, 150 sweeps)
+
+`VERDICT: FAIL`. All four reference kernels are indistinguishable from the exact
+target (`spr` p = 0.093, `branch_lengths` p = 0.284, `tbr` p = 0.103,
+`spr_fixed_surrogate` p = 0.15 — all far above α = 2.08e-4), and every one of
+them puts **zero** mass on the π-null set. The detection floor for a *smooth*
+violation is c = 0.75, i.e. |relBias| ≈ 0.09.
+
+| Arm | π-null mass | E[`int_frac`] bias | min KS p |
+|---|---|---|---|
+| `gibbs_spr` | **1.0000** | **−31.4 %** | 0 |
+| `gibbs_spr+br_1to1` | 0.6314 | −26.2 % | 0 |
+| `gibbs_spr+br_1to10` | 0.0082 | −6.8 % | 2.3e-21 |
+| `gibbs_spr+br_1to30` | 0.0000 | −0.7 % | not detected |
+| `weighted_spr` (GSPR-003) | 0.0000 | −29.3 % | 0 |
+| `spr` / `branch_lengths` / `tbr` / `spr_fixed_surrogate` | 0.0000 | ≤ 1.2 % | ≥ 0.093 |
+
+Two things to read carefully:
+
+* **The topology marginal is clean for every arm**, including `gibbs_spr`
+  (χ² p = 0.53; TV 0.058 against an H0 baseline of 0.064). A harness that
+  checked only topology frequencies would have reported no problem. The defect
+  is entirely in the continuous part — exactly the concession `hastings-tree-moves.md`
+  §5 made, which is why that concession was not a defence.
+* **`br_1to30` being "not detected" is not a certificate.** Its residual bias
+  (−0.7 %) is simply below this configuration's floor (9 %). Non-invariance is
+  proven analytically and does not go away with dose; heavy branch-move mixing
+  only dilutes it. Read that row as a dose-response measurement, not as an
+  exemption.
 
 ## Output interpretation
 
