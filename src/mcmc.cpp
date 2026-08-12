@@ -3104,7 +3104,21 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
                                              /*fillCharLLCache=*/false);  // FREEZE-003
   if (!R_FINITE(newLogLik)) return false;
 
-  // 14. Hastings ratio (branch-fraction component only; topology cancels)
+  // 14. Hastings ratio: proposal-density ratio + the SPR Jacobian.
+  //     Topology cancels by candidate-set symmetry, and the shared normaliser
+  //     sumM cancels because both directions enumerate the same configuration
+  //     set, leaving the selected configuration's weight.
+  //
+  //     The Jacobian is not optional. The move merges (l_parent, l_sib) into
+  //     lMerge and splits lReg into (f * lReg, (1 - f) * lReg), a bijection
+  //     (l_parent, l_sib, lReg, fNew) <-> (lMerge, a, b, fOld) with fOld =
+  //     l_parent / lMerge (:2952). It is block diagonal:
+  //       |d(lMerge, fOld) / d(l_parent, l_sib)| = 1 / lMerge
+  //       |d(a, b) / d(lReg, fNew)|              = lReg
+  //     so |J| = lReg / lMerge. Scale-invariant, hence identical in relative
+  //     or absolute coordinates (treeLength is untouched by this move).
+  //     Same term as spr_proposal_impl (proposals.cpp:161),
+  //     tbr_proposal_impl (tree_moves.cpp:492) and pspr (:3871).
   int oldBin = nBins - 1;
   for (int b = 0; b < nBins; ++b) {
     if (fOld <= bins.breaks[b + 1]) { oldBin = b; break; }
@@ -3116,7 +3130,8 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
   double logHR = std::log(std::max(selfW[oldBin], 1e-300))
                + R::dbeta(fOld, alphaOld, betaOld, 1)
                - std::log(std::max(candW[chosen][chosenBin], 1e-300))
-               - R::dbeta(fNew, alphaNew, betaNew, 1);
+               - R::dbeta(fNew, alphaNew, betaNew, 1)
+               + std::log(lReg) - std::log(lMerge);
 
   // 15. Prior at proposed state
   NumericVector propRelBr(nEdge);
