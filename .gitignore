@@ -71,6 +71,10 @@ bench_*.R
 test_gibbs_*.R
 project3832*
 benchmarks/
+# ...but dev/benchmarks/ is tracked source (ESJD S0 harness); its run outputs are not
+!dev/benchmarks/
+!dev/benchmarks/**
+dev/benchmarks/*-results/
 /vtune*
 MkPrime_*.tar.gz
 MkPrime_*.gz
