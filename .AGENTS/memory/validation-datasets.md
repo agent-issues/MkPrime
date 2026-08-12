@@ -32,9 +32,13 @@ conflicting-signal simulation (18 taxa, 300 characters; a focal clade grafted
 into the left or right arm of a symmetric backbone, half the characters
 simulated on each), intended as the ESJD proposal-scheduling benchmark.
 
-**Its `valley` stage FAILS: 7.2 nats against a 10-nat bar.** The islands are
-real but shallow — on the balanced default, peak A -4541.3, peak B -4535.0, best
-crossing topology -4548.4 (MCMC over all 25 clade placements). The barrier comes
+**It is NOT fit for purpose.** `valley` FAILS at 7.2 nats against a 10-nat bar
+(balanced default: peak A -4541.3, peak B -4535.0, best crossing -4548.4, MCMC
+over all 25 clade placements) — separation is real but shallow. `hops` FAILS
+fatally: across 8 free-topology runs of 20k iterations, *no* run ended in island
+A, and both plain-MH chains started in A drained into B and stayed (fracA 0.000
+and 0.022). The mode-level split is near 1:500, so island A is not viable. The
+barrier comes
 almost entirely from the constructor's rejection-sampling balance step: drawn
 without it, the pooled matrix is fitted *best* by the compromise topology
 (-14.7 nats one-spine MCMC; -10.0 / -23.9 two-arm MCMC; negative in 20 of 21

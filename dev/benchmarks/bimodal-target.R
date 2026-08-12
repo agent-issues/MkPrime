@@ -2,126 +2,128 @@
 # Topology-multimodal benchmark target for the ESJD proposal-scheduling
 # campaign (stage S0 of dev/plans/2026-08-12-esjd-implementation-plan.md).
 #
-# `BimodalTarget()` constructs a conflicting-signal morphological matrix whose
-# topology posterior has two well-separated islands with (by construction)
-# comparable mass; `VerifyBimodalTarget()` establishes that claim with
-# measurements rather than assertion.  Nothing here touches R/ or src/, and
-# nothing here belongs in tests/testthat/.
+# `BimodalTarget()` constructs a conflicting-signal morphological matrix intended
+# to give the topology posterior two well-separated islands of comparable mass;
+# `VerifyBimodalTarget()` tests that intention. It does not hold -- see VERDICT.
+# Nothing here touches R/ or src/, and nothing belongs in tests/testthat/.
 #
 # Usage
 #   Rscript dev/benchmarks/bimodal-target.R --quick
 #   Rscript dev/benchmarks/bimodal-target.R --stage classifier,valley
 #   Rscript dev/benchmarks/bimodal-target.R           # full local verification
 #
+# Redirect stdin (`< /dev/null`), or Rscript parses leftover stdin as code and
+# exits non-zero after a complete run.
+#
 # `--quick` is an *execution* check (~4 min) and always reports WARN: at
 # 40 characters per tree the posterior has no islands to find, so none of the
 # thresholds below is powered. The full run is ~2 h on one core and writes
 # `summary.rds` / `verdict.txt` (and `summary-merged.rds` across staged
-# invocations) to `dev/benchmarks/bimodal-target-results/`.
+# invocations) to `dev/benchmarks/bimodal-target-results/`. Stages are
+# independent and the target is cached, so a stage can be rerun on its own.
 #
 # `source()` it instead to get the constructor without running anything.
 #
 # ---------------------------------------------------------------------------
-# VERDICT, 2026-08-12: the islands are real but SHALLOW. The `valley` stage
-# measures 7.2 nats against a pre-registered 10-nat bar, so the target FAILS its
-# own gate and is not a confirmed mixing benchmark. Committed as a working
-# harness plus the measurements.
+# VERDICT, 2026-08-12: NOT FIT for benchmarking sampler mixing. The operative
+# failure is that the two islands do not hold comparable mass -- island A drains
+# into B -- and the barrier is also only two thirds of the depth asked for.
+# Committed as a working harness plus the measurements.
 #
 # On the balanced default design (proxy dlogL = +0.11 after 44 rejection draws),
 # a `fixTopology` chain at each of the 25 distinct clade placements gives
 #
-#   peak A -4541.3, peak B -4535.0, best crossing -4548.4
+#   peak A -4541.3   peak B -4535.0   best crossing topology -4548.4
 #
-# so both generating trees beat the crossing topology, which holds ~7e-4 of the
-# weaker island's mass. That is separation, but a tenth of what was asked for.
-# Two caveats: the peaks differ by 6.3 nats, so the balance achieved on the cheap
-# proxy did not fully transfer to the canonical model; and max-logL over 90
-# samples is noisy (per-candidate sd ~10 nats).
+# so `valley` = 7.2 nats against a pre-registered 10-nat bar, and the two peaks
+# differ by 6.3 nats: a mode-level split near 1:500. The barrier is therefore
+# 7.1 nats leaving A but 13.4 leaving B, i.e. one-way. `hops` confirms it: of 8
+# free-topology runs of 20k iterations (2 seeds x 2 starts x plain-MH/defaults),
+# *no* run ended in island A, and both plain-MH chains started in A drained into
+# B and stayed (fracA 0.000 and 0.022 against fracB 1.000 and 0.978), while both
+# started in B stayed. The direction is systematic across seeds and starts, so
+# asymmetry -- not stochastic leakage -- is what kills it: a 1:500 split is
+# useless as a mixing benchmark whatever the barrier. Under package defaults
+# chains sit at the crossing topology up to 78% of the time, independently
+# confirming the barrier is shallow.
 #
-# The balance step is doing most of the work, and that is the interesting
-# finding. Drawn *without* rejection, the raw design does the opposite of what
-# the S0 plan assumes -- the pooled matrix is fitted best by neither generating
-# tree but by the compromise topology, the clade attached to the central edge:
+# Why the target cannot simply be retuned. Balance and depth trade off against
+# each other. Drawn *without* the rejection step, the pooled matrix is fitted
+# best by neither generating tree but by the compromise topology: valley -14.7
+# nats (one caterpillar spine, MCMC over 25 placements); -10.0 and -23.9 (two
+# mirror arms, MCMC); negative in 20 of 21 proxy cells spanning internalLength
+# 0.05-0.70, stateCounts {2,3,4} to {5,6,8}, cladeSize 4-8, arms 5-7, and a
+# capped focal stem. Decomposed on one such draw, committing to the supported
+# island gained only +3.0 nats across its own 150 characters while costing +28.1
+# on the 150 conflicting ones. So a 50/50 mixture of two trees is generally
+# explained better by one intermediate tree than by either component; only draws
+# that happen to be sharply peaked at *both* trees escape that, and rejection on
+# the balance criterion is what selects them. The barrier that does exist is thus
+# a selected property of one draw in 44 -- and the criterion can only be enforced
+# on a cheap nCat=1 proxy, whose +0.11 did not transfer to the canonical model's
+# 6.3-nat gap. That is the structural problem: the symmetry needed for equal mass
+# is the same symmetry that makes the compromise competitive, and the balance
+# knob is not accurate enough to thread the gap that remains.
 #
-#   * one caterpillar spine, MCMC over 25 placements: valley -14.7 nats;
-#   * two mirror arms, MCMC at A/B/centre in three regimes: -10.0, -23.9,
-#     and +8.9 on max-logL but -0.1 on mean-logL;
-#   * two mirror arms, proxy scan of 21 cells (internalLength 0.05-0.70,
-#     stateCounts {2,3,4} to {5,6,8}, cladeSize 4-8, arms 5-7, focal stem free
-#     or capped): negative in 20, the exception a degenerate cell whose two
-#     "islands" are not actually distant.
-#
-# Decomposed on one such draw, committing to the supported island gained only
-# +3.0 nats across its own 150 characters while costing +28.1 nats on the 150
-# conflicting ones. The focal clade also goes rogue -- fitted stem pinned at the
-# top of the search grid, 1.6-3.2 against a generating 0.35 -- but capping the
-# stem makes the barrier *more* negative (-54.7 against -46.4), so the rogue stem
-# is a symptom, not the cause. The cause is that a 50/50 mixture of two trees is
-# generally better explained by one intermediate tree than by either component;
-# only draws that happen to be sharply peaked at *both* trees escape that, and
-# rejection sampling on the balance criterion is what selects them. The barrier
-# is therefore partly a selected property of one draw in 44, and `seeds` is the
-# stage that tests whether it generalises.
+# Recommended next step: use an empirical matrix already known to be peaky rather
+# than any simulation under the inference model (see
+# .AGENTS/memory/validation-datasets.md). Real posteriors are multimodal largely
+# because the model is misspecified for the data; a simulation under the very
+# model being fitted cannot reproduce that, and the one mechanism it can offer --
+# balanced conflicting signal -- is self-defeating for the reason above.
 #
 # Two design choices are settled, and worth keeping if anyone revisits this:
 #
 #  * Two arms, not one caterpillar. On a single spine the candidate placements
 #    are nested, so a character uniting the clade with the *large* sister group
 #    is equally happy with the clade anywhere deeper, and the conflict is
-#    one-sided. With two arms the two positions are mutually exclusive, both
+#    one-sided. With two arms the positions are mutually exclusive, both
 #    character sets discriminate, and every crossing runs through exactly one
-#    topology (clade on the central edge) -- which makes the barrier a single
-#    measurable number.
+#    topology -- which makes the barrier a single measurable number.
 #  * A clade, not a rogue tip. Several tips sharing a marker make the focal
 #    unit's state reliable per character; a single rogue tip is also trivially
 #    relocated by one SPR.
 #
-# Recommended next step is in the report, not here: prefer an empirical matrix
-# already known to be peaky over any simulation under the inference model.
+# Open, not chased: the `split` stage (stepping-stone dlogZ) did not complete
+# inside its guard, so the mass split is evidenced by max-logL and by the hop
+# directions rather than by marginal likelihoods; `seeds` was not run, so the
+# barrier's dependence on the draw is argued rather than measured; and crossings
+# that rearrange the backbone instead of moving the focal clade are unexamined.
 #
 # What each stage claims, and what makes it PASS
 #
-#   classifier  Island labelling is correct and root-independent. Hand-built
-#               placements must get their hand-derived labels; a tree with the
-#               clade broken up must be "other"; and rooting the same unrooted
-#               tree three ways must not change its label. PASS = all of these.
-#               (`ape::prop.part` is root-dependent and has caused a real
-#               scoring bug here before -- project_scoring_bug -- hence the
-#               rooting check.)
-#   valley      The islands are separated by a deep log-likelihood valley. A
-#               `fixTopology` chain at each of the 25 distinct placements of the
-#               clade gives its best fit *with branch lengths adapted*, so the
-#               escape above is available and priced in. PASS = min(peak A,
-#               peak B) - best non-island placement >= 10 nats, i.e. the
-#               crossing topology holds < e^-10 ~ 5e-5 of either island's mass.
-#               Also asserts `RunMkPrime(tree = )` is honoured.
-#   split       Both islands hold non-trivial mass. Stepping-stone log marginal
-#               likelihood under `fixTopology` at A and at B; with a flat
-#               topology prior p(T | y) is proportional to p(y | T). PASS =
-#               |dlogZ| <= 3, a mode-level split no worse than 95:5. The
-#               constructor targets <= 1.5 on a cheaper proxy.
-#   hops        The target discriminates samplers. Free-topology chains started
-#               in each island, under plain-MH topology moves and under package
-#               defaults. PASS = zero island switches under plain MH, so no
+#   classifier  Island labels are correct and root-independent. PASS = every
+#               hand-built placement gets its hand-derived label, a tree with the
+#               clade broken up is "other", and rooting one unrooted tree three
+#               ways never changes its label. (`ape::prop.part` is root-dependent
+#               and has caused a real scoring bug here -- project_scoring_bug --
+#               hence the rooting check.)
+#   valley      A `fixTopology` chain at each of the 25 distinct clade placements
+#               gives its best fit *with branch lengths adapted*, so the rogue
+#               stem is priced in. PASS = min(peak A, peak B) - best non-island
+#               placement >= 10 nats, i.e. the crossing topology holds < 5e-5 of
+#               either island's mass. Also asserts `RunMkPrime(tree = )` is
+#               honoured.
+#   split       Stepping-stone log marginal likelihood under `fixTopology` at A
+#               and B; under a flat topology prior p(T | y) is proportional to
+#               p(y | T). PASS = |dlogZ| <= 3, a split no worse than 95:5.
+#   hops        PASS = zero island switches under plain-MH topology moves, so no
 #               chain crosses by NNI/SPR/TBR walking alone within the budget.
-#               Switches under defaults are reported, not required: they are the
-#               signal the ESJD A/B is meant to resolve.
-#   reach       The target is a benchmark, not a trap: both islands must be
-#               reachable. Metropolis-coupled runs from random starting trees.
-#               PASS = both islands occupied somewhere in the set.
-#   seeds       The construction generalises. Further data seeds must all reach
-#               the balance tolerance with a positive proxy barrier.
+#               Switches under package defaults are reported, not required: they
+#               are the signal the ESJD A/B is meant to resolve.
+#   reach       Not a trap: PASS = both islands occupied somewhere across
+#               Metropolis-coupled runs from random starting trees.
+#   seeds       PASS = further data seeds all reach the balance tolerance with a
+#               positive proxy barrier.
 #
-# `gibbs_spr` is not pi-invariant (it commits a deterministic 0.5 edge split
-# with no MH step), so any stage running package defaults -- `hops` in its
-# non-plainMh rows, and `reach` -- measures against a slightly wrong target.
-# That is fine for relative discrimination, which is all this target needs to
-# provide, but every exact claim should come from the plain-MH rows, where
-# `nni`/`spr`/`pspr`/`tbr` are correct.
+# `gibbs_spr` is not pi-invariant (deterministic 0.5 edge split, no MH step), so
+# stages running package defaults -- `hops`'s non-plainMh rows, and `reach` --
+# measure against a slightly wrong target. Adequate for relative discrimination,
+# but take exact claims from the plain-MH rows, where `nni`/`spr`/`pspr`/`tbr`
+# are correct.
 #
-# Not covered: neomorphic characters (the target is all-transformational, so
-# `rate_loss`/`rate_neo` moves are inert), and crossings that rearrange the
-# backbone instead of moving the focal clade.
+# Neomorphic characters are not covered: the target is all-transformational, so
+# `rate_loss`/`rate_neo` moves are inert.
 #
 # The A/B driver (`dev/benchmarks/proposal-schedule-ab.R`) is a separate
 # deliverable; keep scheduling logic out of this file.
