@@ -26,17 +26,22 @@ analogue. There is nothing to fix by direct transfer.
 ## 2. But acceptance is uninformative here for a different reason
 
 MkPrime also runs `.AdaptTuning()` (`R/RunMkPrime.R:4787`), which drives each
-tunable MH move's step size to a **fixed per-move acceptance target**:
+MH move **that has a step-size knob** to a fixed per-move acceptance target:
 
-| target | moves |
-|---|---|
-| 0.35 | `tree_length`, `kPrime`, `rate_loss`, `rate_neo`, `rate_log_sd`, `beta_scale`, `mh_logit_p` |
-| 0.23–0.234 | `branch_lengths`, `nni`, `dirichlet_branch`, `local_dirichlet`, `block_kPrime` |
-| 0.10 | `spr`, `pspr` |
+| target | tuning key | moves |
+|---|---|---|
+| 0.35 | `scale_*` / `int_walk_window` | `tree_length`, `kPrime`, `rate_loss`, `rate_neo`, `rate_log_sd`, `beta_scale`, `mh_logit_p` |
+| 0.23–0.234 | `beta_simplex`, `*dirichlet_alpha`, `int_walk_window` | `branch_lengths`, `dirichlet_branch`, `local_dirichlet`, `block_kPrime` |
+| 0.25 | `scale_joint_*` | `joint_tl_rls`, `joint_tl_rl`, `joint_tl_rn` |
 
-Once scale adaptation has converged, `accept_rate` is pinned at its target
-**by construction**, independent of how well the move mixes. The weight score
-then collapses to
+Note what is **absent**: `nni`, `spr` and `pspr` appear in the `targets`
+vector but map to `NA_character_` in `tuningKeys`, and `tbr` is in neither.
+Topology MH moves have no step size to adapt, so their acceptance is *not*
+driven anywhere — the entries are expected rates, not enforced ones.
+
+For everything in the table above, once scale adaptation has converged
+`accept_rate` is pinned at its target **by construction**, independent of how
+well the move mixes. The weight score then collapses to
 
 ```
 score ≈ target_p × dim / cost
@@ -51,6 +56,19 @@ jobs. Acceptance is the right target for **scale** (Roberts, Gelman & Gilks
 1997), and using it again for **weights** buys nothing once scale has
 converged.
 
+### The three move classes fail three different ways
+
+Taking §2, §3 and §5 together, no class of MkPrime move is well served by an
+acceptance-based weight criterion, but for three unrelated reasons:
+
+| class | acceptance signal | why the weight score fails |
+|---|---|---|
+| tunable scalar MH (`scale`, `beta_simplex`, `dirichlet_simplex`, `int_walk`, joint) | driven to a fixed target by `.AdaptTuning` | signal *destroyed* — score → `target × dim / cost` |
+| topology MH (`nni`, `spr`, `pspr`, `tbr`) | free, not adapted | signal alive but measures *frequency* of movement, never *magnitude* |
+| always-accept (Gibbs, weighted, slice) | accept by construction | signal never existed — score is exactly `dim / cost` |
+
+All three point the same way: the quantity the criterion needs is displacement.
+
 ## 3. Always-accept kernels are structurally unscoreable
 
 The `.AdaptTuning` target table lists `NA_real_` for every Gibbs, weighted,
@@ -62,7 +80,8 @@ block and slice move — because they accept by construction:
 `slice_rate_log_sd`, `slice_tree_length`, `slice_beta_scale`,
 `slice_kprime_s`, `slice_kprime_r`
 
-For all of these, `accept_rate ≡ 1`, so the score is exactly `dim / cost`. A
+These accept by construction, so `accept_rate` carries no information and the
+score is effectively `dim / cost` for all of them. A
 `gibbs_kPrime` sweep that leaves every k'ᵢ unchanged scores **identically** to
 one that resamples the whole vector. A slice sampler that never leaves its
 bracket scores identically to one that traverses the marginal. That is a large
@@ -81,10 +100,11 @@ kernels, and acceptance is not.
 
 Where #767 rewarded cheap failure, this punishes expensive success. A `tbr`
 move on a large tree can genuinely sit below 2% while being the only kernel
-that crosses topology islands; per acceptance it displaces far more than `nni`
-at 23%. Note also that `spr`/`pspr` have an acceptance *target* of 0.10 — only
-5× the decay floor — so the rule is one bad dataset away from firing on a move
-that is behaving as designed.
+that crosses topology islands; per acceptance it displaces far more than `nni`.
+And because topology moves have no step size to adapt (§2), nothing pulls their
+acceptance back up when a dataset drives it down — the registry's own expected
+rate for `spr`/`pspr` is 0.10, only 5× the decay floor, so the rule is one hard
+dataset away from firing on a move that is behaving exactly as designed.
 
 Currently latent rather than active, but it is the same category error:
 acceptance rate used as a mixing proxy across heterogeneous kernels.
