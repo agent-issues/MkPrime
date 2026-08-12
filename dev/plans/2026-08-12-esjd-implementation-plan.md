@@ -43,6 +43,30 @@ block of its *primary* target and let its jump be measured over that block
 only — a joint move earns its keep by moving its primary parameter more
 efficiently than the marginal move does.
 
+### The auto-pin is in scope, and is a decision for S3
+
+`R/RunMkPrime.R:914–928` auto-pins the truly always-accept types (`gibbs_p`,
+`slice`, `gibbs_kprime_sweep`, `slice_kprime_hyper`, `gibbs_p_marginal`) at
+their initial weights, because `accept × dim / cost` would otherwise hand them
+astronomical scores. They are therefore **outside the current criterion
+entirely**, and `gibbs_kPrime` needs a bespoke warmup throttle
+(`.WarmupGibbsCap`, `M-171`, ~200 ms/call) and a matching restore step on top.
+
+Under a measured criterion these could be **unpinned and scheduled**, which is
+the most tangible prize in this work: it would retire a hand-tuned cap and an
+assumption ("one draw per cycle is already optimal") in favour of a
+measurement. But it also widens the blast radius well beyond a scoring change.
+
+**Decision: keep the auto-pin through S1/S2, and treat unpinning as a separate
+flag in S3, evaluated on its own.** S1 must nonetheless *instrument* the pinned
+moves — measuring `gibbs_kPrime`'s actual ESJD/s is the evidence that decides
+whether unpinning is worth attempting, and it costs nothing to collect while
+the moves stay frozen.
+
+Note the auto-pin does **not** cover `gibbs_spr`, `gibbs_subtree_swap`,
+`weighted_*` or `block_gibbs_branch`; those are scored today and sit in the
+topology and branch blocks above.
+
 ## 1. `dim` comes out of the score
 
 Non-negotiable and easy to miss in review. ESJD sums over coordinates, so a

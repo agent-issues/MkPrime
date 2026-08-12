@@ -65,32 +65,50 @@ acceptance-based weight criterion, but for three unrelated reasons:
 |---|---|---|
 | tunable scalar MH (`scale`, `beta_simplex`, `dirichlet_simplex`, `int_walk`, joint) | driven to a fixed target by `.AdaptTuning` | signal *destroyed* — score → `target × dim / cost` |
 | topology MH (`nni`, `spr`, `pspr`, `tbr`) | free, not adapted | signal alive but measures *frequency* of movement, never *magnitude* |
-| always-accept (Gibbs, weighted, slice) | accept by construction | signal never existed — score is exactly `dim / cost` |
+| Gibbs/weighted tree + `block_gibbs_branch` | genuine "did it move" (`src/mcmc.cpp:1449`) | same as above — frequency, not magnitude |
+| truly always-accept (`slice_*`, `gibbs_kPrime`, `gibbs_p*`) | none | **not scored at all** — auto-pinned at initial weights (`R/RunMkPrime.R:914`) and hand-capped by `.WarmupGibbsCap` |
 
-All three point the same way: the quantity the criterion needs is displacement.
+Three of the four classes need *magnitude*, which acceptance cannot supply. The
+fourth has been removed from the criterion's reach entirely, and is managed by
+assumption plus a bespoke throttle instead.
 
-## 3. Always-accept kernels are structurally unscoreable
+## 3. Always-accept kernels are excluded from scoring, not mis-scored
 
-The `.AdaptTuning` target table lists `NA_real_` for every Gibbs, weighted,
-block and slice move — because they accept by construction:
+**Correction to an earlier draft of this section.** The always-accept moves are
+not scored badly — they are *not scored at all*. `R/RunMkPrime.R:914–928`
+auto-pins them:
 
-`gibbs_kPrime`, `gibbs_p_marginal`, `gibbs_spr`, `gibbs_subtree_swap`,
-`block_gibbs_branch`, `weighted_branch_lengths`, `weighted_spr`,
-`weighted_subtree_swap`, `slice_rate_loss`, `slice_rate_neo`,
-`slice_rate_log_sd`, `slice_tree_length`, `slice_beta_scale`,
-`slice_kprime_s`, `slice_kprime_r`
+```r
+alwaysAcceptTypes <- c("gibbs_p", "slice", "gibbs_kprime_sweep",
+                       "slice_kprime_hyper", "gibbs_p_marginal")
+```
 
-These accept by construction, so `accept_rate` carries no information and the
-score is effectively `dim / cost` for all of them. A
-`gibbs_kPrime` sweep that leaves every k'ᵢ unchanged scores **identically** to
-one that resamples the whole vector. A slice sampler that never leaves its
-bracket scores identically to one that traverses the marginal. That is a large
-and growing fraction of the registry, and it is precisely the set of moves the
-`marginal_k` audit has been chasing.
+and the code comment there gives exactly the reason argued above — that
+`accept × dim / cost` "gives these astronomical scores because acceptance = 1.0
+and cost ~ 0; this inflates their weight and starves bottleneck MH moves". So
+the problem was found already and worked around by freezing these moves at
+their initial weights.
 
-This is a **stronger** argument for ESJD in MkPrime than anything in #767's own
-context: ESJD measures displacement, which is defined for always-accept
-kernels, and acceptance is not.
+That reframes the argument rather than weakening it. **Pinning is an admitted
+workaround that hard-codes an assumption** — the comment's "one Gibbs draw or
+slice sample per cycle is already optimal" — in place of a measurement. It is a
+reasonable guess, and for a pure Gibbs sweep on a scalar it is probably right;
+but it is asserted for `gibbs_kPrime` too, whose cost is ~200 ms/call and
+already needs a bespoke warmup throttle (`.WarmupGibbsCap`, `M-171`) plus a
+restore step to manage. A criterion that can measure displacement per second
+would let these moves be *scheduled* rather than *frozen and hand-capped*.
+
+**Which moves are actually scored.** The auto-pin list omits `gibbs_spr`,
+`gibbs_subtree_swap`, `weighted_branch_lengths`, `weighted_spr`,
+`weighted_subtree_swap` and `block_gibbs_branch`, so those **are** scored by
+the acceptance formula. Their `accepted` flag is not identically 1 either: a
+Gibbs tree move that draws the *original* attachment point returns `false`
+(`src/mcmc.cpp:1449` and six sibling sites), so acceptance for these is a
+genuine "did it move at all" indicator.
+
+That is informative — and still the wrong quantity. It reports the *frequency*
+of movement and never its *magnitude*, which puts these moves in the same class
+as the topology MH moves below, not in a class of their own.
 
 ## 4. `.DecayLowAcceptMoves` is #767's error with the sign flipped
 
