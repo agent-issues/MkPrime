@@ -468,6 +468,7 @@ fixedTopoArms <- c("branch_lengths")
     savedSeed <- get(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
     set.seed(917L)
     subTab <- table(factor(sample(refS$topo, n), levels = names(refTab)))
+    # nolint next: object_name_linter. `.Random.seed` is a base R name.
     assign(".Random.seed", savedSeed, envir = .GlobalEnv)
     0.5 * sum(abs(as.numeric(subTab) / n - 1 / nTopos))
   }
