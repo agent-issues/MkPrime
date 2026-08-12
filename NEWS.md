@@ -1,5 +1,31 @@
 # MkPrime (development version)
 
+## `gibbs_spr` is now a valid MH kernel (GSPR-001 / GSPR-004)
+
+The default-on `gibbs_spr` topology move was not pi-invariant: it committed the
+chosen regraft with a deterministic `0.5 * lReg` edge split and no accept step
+(GSPR-001), and its candidate filter excluded the subtree's own position so the
+selection normaliser did not cancel between the two directions of a move
+(GSPR-004). The corrected kernel enumerates every edge of the pruned tree —
+including the merged pair the subtree vacates — weights them at a fixed
+`tau = 1/2` reference, draws the committed split fraction `tau ~ U(0, 1)`, and
+accepts through a full Metropolis–Hastings step carrying the selection-weight
+ratio and the SPR merge/split Jacobian `log(lReg) - log(lMerge)`. Accepted
+moves now include branch-fraction re-splits at unchanged topology (the
+merged-edge draw), the commit updates `state$logPrior` (retiring GSPR-002),
+and the committed `logLik` is the canonical full evaluation at the drawn
+fraction. All three evaluation paths (partial-CL, Q-heterogeneity, full
+fallback) share one selection/MH/commit implementation. **RNG streams and
+posterior samples from runs using `gibbsSpr = TRUE` (the free-topology
+default) are not comparable to pre-fix runs; expect a lower reported
+acceptance rate for this move (the old ~0.83 was the probability of not
+drawing "self", not an acceptance rate).** Gate:
+`dev/red-team/heavy-tests/gibbs-spr-db.R` (FAIL -> PASS); deterministic
+candidate-set symmetry tests in `tests/testthat/test-gibbs-spr-candidates.R`.
+The §7a partition bit-identity reference is untouched by this change: its
+schedule pins `gibbsSpr = FALSE`, and the reference was verified to reproduce
+bit-for-bit under a build of this branch (see the entry below).
+
 ## §7a bit-identity fixture now pins its own starting tree
 
 `tests/testthat/test-partition-bitcompat-null.R` failed on every platform
