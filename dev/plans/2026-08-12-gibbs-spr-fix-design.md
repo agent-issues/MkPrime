@@ -95,6 +95,80 @@ with its severity unchanged, now recording a *second* defect beyond the
 Jacobian. Verifying the §2 cancellation is the next step there, but it is not on
 this fix's critical path.
 
+## 3a. The construction — and why it needs no second evaluation pass
+
+§3 accepted that computing `q(x|y)` honestly might cost a second pass. It does
+not. The reason is a structural fact neither existing routine exploits
+explicitly:
+
+> **`x` and `y` have a common pruned intermediate.** Pruning subtree `S` at the
+> same edge from `x` and from `y` yields the *identical* tree `R` — same
+> topology, same edge lengths, with the vacated pair merged. Regrafting is the
+> inverse of pruning, so both endpoints prune to one shared `R`.
+
+Hence the candidate edge set is the edges of `R`, identical from both
+directions, and `x`'s own position is simply one of those edges (the `lMerge`
+one). So a selection distribution that is **a function of `R` alone** has the
+same normaliser in both directions, and it cancels exactly — no assumption
+required, unlike §2's unverified appeal to bin-grid symmetry.
+
+The one condition: the candidate weights must not depend on the drawn fraction.
+Write `w_e` for the likelihood of regrafting `S` at edge `e` of `R` **at a fixed
+reference fraction of ½**. Then with `τ ~ U(0,1)` drawn independently:
+
+```
+q(y|x) = p(τ_y) · w_{e_y} / Σ_e w_e
+q(x|y) = p(τ_x) · w_{e_x} / Σ_e w_e
+```
+
+`Σ_e w_e` cancels because the weights are shared; `p(τ_y) = p(τ_x) = 1` because
+`τ` is uniform. What survives is
+
+```
+logHR = log w_{e_x} − log w_{e_y} + log(lReg) − log(lMerge)
+```
+
+plus the usual `β·(logLik_y − logLik_x)` and prior ratio in the MH step.
+
+**Had the weights been evaluated at the drawn `τ` instead of a fixed ½, the
+normalisers would be `Σ_e w_e(τ_y)` versus `Σ_e w_e(τ_x)` and would not
+cancel** — that is what would have forced a second pass. Fixing the reference
+fraction is what buys the cancellation, and it costs nothing in proposal quality
+because `τ` is drawn afterwards.
+
+### Where the current code goes wrong, precisely
+
+The existing weights are already `w_e` at ½ for the candidates — those
+evaluations are reusable as-is. The defect is the **self** weight:
+
+```cpp
+double wOrig = std::exp(beta * (llOrig - maxLL));   // llOrig = state->logLik
+```
+
+`state->logLik` is `x` evaluated at **its own** branch fractions, while every
+candidate is evaluated at ½. Self is scored on a different footing from the
+alternatives, so the selection distribution is not a function of `R` alone and
+the normaliser does not cancel. The free `state->logLik` is exactly the
+shortcut that breaks it — the same shape of error as `weighted_spr`'s
+`lMerge`-bins-versus-`lReg`-bins asymmetry (§3).
+
+### Net cost
+
+| | evaluations |
+|---|---|
+| now | `nCand` at ½ (self is free but wrong) |
+| fixed | `nCand` at ½, **+1** for self at ½, **+1** for the chosen candidate at the drawn `τ` |
+
+Two extra likelihood evaluations per move. Cheap, and far cheaper than the
+`2·nCand` a naive reverse pass would cost.
+
+### What changes semantically
+
+Drawing the original position is **no longer a guaranteed no-op**: `τ` will
+generally differ from `x`'s current fraction, so that outcome is a legitimate
+branch-fraction move at unchanged topology. The current `if (rnd < wOrig) return
+false` early-out must go.
+
 ## 4. Cost and behaviour changes to expect
 
 - **Acceptance falls from ~0.833 to below 1.** The measured 0.833 ≈
