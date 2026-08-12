@@ -32,7 +32,7 @@ machinery.
 
 | block | moves | metric |
 |---|---|---|
-| topology | `nni`, `spr`, `pspr`, `tbr`, `gibbs_spr`, `gibbs_subtree_swap`, `weighted_spr`, `weighted_subtree_swap` | tree distance² (metric TBD — §3) |
+| topology | `nni`, `spr`, `pspr`, `tbr`, `gibbs_spr`, `gibbs_subtree_swap`, `weighted_spr`, `weighted_subtree_swap` | RF distance² (§3) |
 | branch lengths | `branch_lengths`, `dirichlet_branch`, `local_dirichlet`, `weighted_branch_lengths`, `block_gibbs_branch`, `tree_length`, `slice_tree_length` | whitened log-scale jump², summed over edges |
 | k′ | `kPrime`, `block_kPrime`, `gibbs_kPrime` | integer jump², summed over trans characters |
 | p / hyper | `mh_logit_p`, `gibbs_p_marginal`, `slice_kprime_s`, `slice_kprime_r` | whitened jump² |
@@ -91,24 +91,32 @@ that mechanism for per-coordinate scales. A coordinate with no usable scale
 contributes 0 — reads as zero jump, which closes the gate rather than
 inventing a rate.
 
-## 3. The one empirically-open choice: the tree metric
+## 3. The tree metric: RF, decided
 
-RF vs `TreeDist::ClusteringInfoDistance`. The tension:
+**Robinson–Foulds.** Settled on MS's `treess`/`TreeDist` experience: for tree
+ESS, RF outperforms clustering-information distance because its behaviour
+*corresponds to the nature of tree autocorrelation* — the very property an
+ESJD numerator needs. CID's better-behaved geometry is an advantage for
+summarising tree-to-tree *dissimilarity*, not for measuring how far a Markov
+chain has travelled in tree space. `TreeESS()` already defaults to
+`RobinsonFoulds` for the same reason.
 
-- For `nni`, an accepted move changes exactly one bipartition, so RF jump is
-  deterministic (= 2). No information beyond acceptance.
+So the earlier saturation worry is deprioritised, but note what it implies
+about signal, which S1 should confirm rather than assume:
+
+- For `nni`, an accepted move changes exactly one bipartition, so the RF jump
+  is deterministic (= 2) and carries no information beyond acceptance.
 - For `spr`/`tbr`/`pspr`, the jump scales with reattachment distance — **this
-  is precisely the signal worth measuring**, and precisely what
-  `accept × dim / cost` throws away.
+  is the signal worth measuring**, and precisely what `accept × dim / cost`
+  throws away.
 - `gibbs_spr` can "accept" the current attachment point, i.e. move nowhere.
   ESJD scores that honestly at 0; acceptance cannot see it at all.
 
-RF is cheap but saturating, which is worst for exactly the large-jump moves the
-criterion is meant to reward. Clustering-information distance is better behaved
-and `TreeESS()` already uses a pluggable `dist_fn`. **Settle this on S1's
-measured data**, not by argument: compare, per topology move type, the
-distributions of both metrics per accepted move, and check whether either
-ranks the moves differently from `accept × dim / cost`.
+**S1 records both metrics anyway** — it is one extra accumulator over a run
+that is being done regardless, and it converts "RF suffices here too" from an
+expectation into a measurement. RF is the default and the tie-break; CID is
+recorded only as a cross-check, and would only be revisited if RF's per-move
+distribution turns out degenerate for `tbr` specifically.
 
 ## 4. Reproducibility — offer an ESJD-per-iteration mode
 
@@ -190,7 +198,8 @@ path, including the always-accept ones); full testthat FAIL = 0.
 ### S2 — the empirical question
 
 On Sun2018 and the S0 target: does ESJD/s rank moves differently from
-`accept × dim / cost`? Settle the §3 tree metric here.
+`accept × dim / cost`? Confirm RF's per-move distribution is non-degenerate
+for `tbr` (§3).
 
 **Gate — this is the real decision point.** If the rankings agree, stop:
 the answer is "no change", and S1's diagnostics are still worth keeping. Only
@@ -230,7 +239,7 @@ return — they inherit main HEAD, not this worktree.
 
 ## 8. Open items
 
-- Tree metric (§3) — deliberately deferred to S2 data.
+- ~~Tree metric~~ — closed: RF (§3). CID recorded as a cross-check only.
 - The M-159 cache-aware weight boost (`src/mcmc.cpp:6136`) multiplies weights
   *outside* the score. Its interaction with a measured criterion needs stating:
   the boost changes which moves are drawn, hence what gets measured.

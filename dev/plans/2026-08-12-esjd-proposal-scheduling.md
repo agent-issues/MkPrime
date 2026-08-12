@@ -141,8 +141,8 @@ floors, which is strictly worse than the status quo.
 Two workable designs:
 
 **(a) Single commensurate metric.** Accumulate a tree-space jump (Robinson–
-Foulds or SPR distance) alongside the whitened parameter jump, paid only on
-acceptance, normalised by a running mean pairwise RF to make it dimensionless.
+Foulds) alongside the whitened parameter jump, paid only on acceptance,
+normalised by a running mean pairwise RF to make it dimensionless.
 `src/tree_ess.cpp` + `TreeDist` already provide the machinery. Risk: RF² and
 whitened σ² are being added in units nothing justifies.
 
