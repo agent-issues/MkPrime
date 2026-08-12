@@ -22,36 +22,48 @@
 # `source()` it instead to get the constructor without running anything.
 #
 # ---------------------------------------------------------------------------
-# VERDICT, 2026-08-12: this construction does NOT yield a bimodal topology
-# posterior, and must not be used as a mixing benchmark until the `valley`
-# stage passes. It is committed as a working harness plus the refutation.
+# VERDICT, 2026-08-12: the islands are real but SHALLOW. The `valley` stage
+# measures 7.2 nats against a pre-registered 10-nat bar, so the target FAILS its
+# own gate and is not a confirmed mixing benchmark. Committed as a working
+# harness plus the measurements.
 #
-# Conflicting-signal simulation is the S0 plan's sketch (~60 characters on tree
-# A, ~60 on tree B, separated by a distant SPR). Measured, the pooled matrix is
-# fitted best by neither generating tree but by the *compromise* topology, with
-# the focal clade attached to the central edge between the two contested
-# positions:
+# On the balanced default design (proxy dlogL = +0.11 after 44 rejection draws),
+# a `fixTopology` chain at each of the 25 distinct clade placements gives
 #
-#   * one caterpillar spine, MCMC over 25 placements: valley depth -14.7 nats;
+#   peak A -4541.3, peak B -4535.0, best crossing -4548.4
+#
+# so both generating trees beat the crossing topology, which holds ~7e-4 of the
+# weaker island's mass. That is separation, but a tenth of what was asked for.
+# Two caveats: the peaks differ by 6.3 nats, so the balance achieved on the cheap
+# proxy did not fully transfer to the canonical model; and max-logL over 90
+# samples is noisy (per-candidate sd ~10 nats).
+#
+# The balance step is doing most of the work, and that is the interesting
+# finding. Drawn *without* rejection, the raw design does the opposite of what
+# the S0 plan assumes -- the pooled matrix is fitted best by neither generating
+# tree but by the compromise topology, the clade attached to the central edge:
+#
+#   * one caterpillar spine, MCMC over 25 placements: valley -14.7 nats;
 #   * two mirror arms, MCMC at A/B/centre in three regimes: -10.0, -23.9,
-#     and +8.9 on max-logL but -0.1 on mean-logL, i.e. no barrier;
+#     and +8.9 on max-logL but -0.1 on mean-logL;
 #   * two mirror arms, proxy scan of 21 cells (internalLength 0.05-0.70,
 #     stateCounts {2,3,4} to {5,6,8}, cladeSize 4-8, arms 5-7, focal stem free
 #     or capped): negative in 20, the exception a degenerate cell whose two
 #     "islands" are not actually distant.
 #
-# Decomposed on the default design, committing to the supported island gains
-# only +3.0 nats across its own 150 characters while costing +28.1 nats on the
-# 150 conflicting ones. The focal clade also goes rogue -- its fitted stem pins
-# at the top of the search grid, 1.6-3.2 against a generating 0.35 -- but
-# capping the stem makes the barrier *more* negative (-54.7 against -46.4), so
-# the rogue stem is a symptom, not the cause. The cause is that a 50/50 mixture
-# of two trees is better explained by one intermediate tree than by either
-# component. Balance and bimodality pull against each other: the symmetry that
-# equalises the two islands is what makes the compromise competitive.
+# Decomposed on one such draw, committing to the supported island gained only
+# +3.0 nats across its own 150 characters while costing +28.1 nats on the 150
+# conflicting ones. The focal clade also goes rogue -- fitted stem pinned at the
+# top of the search grid, 1.6-3.2 against a generating 0.35 -- but capping the
+# stem makes the barrier *more* negative (-54.7 against -46.4), so the rogue stem
+# is a symptom, not the cause. The cause is that a 50/50 mixture of two trees is
+# generally better explained by one intermediate tree than by either component;
+# only draws that happen to be sharply peaked at *both* trees escape that, and
+# rejection sampling on the balance criterion is what selects them. The barrier
+# is therefore partly a selected property of one draw in 44, and `seeds` is the
+# stage that tests whether it generalises.
 #
-# Two design choices are nonetheless settled, and worth keeping if anyone
-# revisits this:
+# Two design choices are settled, and worth keeping if anyone revisits this:
 #
 #  * Two arms, not one caterpillar. On a single spine the candidate placements
 #    are nested, so a character uniting the clade with the *large* sister group
