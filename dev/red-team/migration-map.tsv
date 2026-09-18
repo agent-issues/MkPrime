@@ -1,0 +1,80 @@
+legacy_id	destination	note
+EG-001	archive	NOT-A-BUG / RESOLVED 2026-06-03 — Model A (unconditional) prior is correct
+EG-002	archive	NOT-A-BUG / RESOLVED 2026-06-04 — kObs must not enter a pre-data prior
+EG-003	archive	CONFIRMED model property, not a defect; u unidentified at 50 chars
+EG-004	#1	verified open at 86885d6
+EG-005	#2	verified open at 86885d6
+EG-006	#3	verified open at 86885d6
+EG-007	#4	verified open at 86885d6
+EG-008	#5	verified open at 86885d6
+EG-009	#6	merged with TREEMOVE-003 (one root cause)
+EG-010	#7	verified open at 86885d6
+EG-INFO-1	archive	INFO record
+PAR-001	archive	FIXED 1fd87f9
+PAR-002	archive	DOCUMENTED 1fd87f9 (deferred design limitation)
+PAR-003	archive	FIXED 1fd87f9
+PAR-004	archive	FIXED 1fd87f9
+PAR-005	archive	FIXED 1fd87f9
+PAR-006	archive	FIXED 01ebca8
+PAR-007	archive	FIXED 01ebca8
+PAR-008	archive	FIXED dae4652
+PAR-009	archive	FIXED dae4652
+PAR-010	archive	FIXED dae4652
+PAR-011	archive	FIXED dae4652
+PAR-012	archive	FIXED dae4652
+STREAM-001	archive	FIXED Round 4 (PARTIAL: Hamilton empty-tree symptom never reproduced locally)
+STREAM-002	archive	FIXED Round 4; serial-path checkpointFile=NULL re-observed at migration, see #14
+STREAM-003	archive	FIXED Round 6 (Round-4 fix was never written to disk)
+STREAM-004	archive	FIXED Round 6
+HARNESS-001	#13	verified open at 86885d6 (root-caused, unfixed)
+TREEMOVE-001	#8	verified open at 86885d6; severity HIGH -> sev:med (structural, not live)
+TREEMOVE-002	#9	verified open at 86885d6
+TREEMOVE-003	#6	merged with EG-009; guard test found tautological
+TREEMOVE-004	#10	verified open at 86885d6
+LIKE-001	archive	FIXED 2026-05-28 — the duplicate OPEN row was stale
+LIKE-002	archive	FIXED — informative-coding regression tests present
+LIKE-003	#11	location confirmed; predicted cost not yet measured
+LIKE-004	archive	INFO record
+CONV-001	#12	verified open at 86885d6
+CONV-002	archive	FIXED — R/Convergence.R:247-260 tail-equalises, cites CONV-002
+SWAP-001	archive	REFUTED at n=6 / 1M iter / 48 samples
+SWAP-002	archive	REFUTED at n=6 / 1M iter / 48 samples
+MOVE-INFO-1	archive	INFO record
+ACRV-INFO-1	archive	INFO record
+LS-001	archive	NOT-A-BUG — same pre-data-prior argument as EG-001/EG-002
+R5-4	archive	OUT-OF-LANE — ecology/EBE workstream; needs re-derivation vs corrected scoring
+FAST-EXP-001	archive	APPLIED — ~30 expm1 sites; no raw 1 - std::exp( remains
+N2-INFO-1	archive	INFO record
+N2-INFO-2	archive	INFO record
+TREE-ESS-INFO-1	archive	INFO record
+ESS-CAP-INFO-1	archive	INFO record — open empirical follow-up, no code site
+SBC-MASS-FAIL-001	archive	CLOSED — harness forward/inference mismatch, not a sampler bug
+SBC-KPRIME-STRUCTURAL	archive	CLOSED — see project memory: Model A validated, p AD=0.86 PASS
+SBC-BUILD-RACE-001	#15	verified open; pre-build workaround is convention, not enforcement
+SBC-HARNESS-001	archive	FIXED 2026-05-28 (2493e7a)
+SBC-HARNESS-002	#16	verified open at 86885d6
+SBC-HARNESS-003	archive	FIXED 2026-05-27
+SBC-HARNESS-004	archive	FIXED 2026-05-27
+SBC-HARNESS-005	archive	FIXED 2026-05-27
+SBC-HARNESS-006	archive	FIXED 2026-05-27 (v8, job 17301890)
+SBC-PRIOR-CONFOUND-001	archive	WITHDRAWN 2026-05-27
+SBC-WARMUP-001	archive	REFUTED 2026-05-27
+SBC-WARMUP-002	archive	FIXED 2026-05-27
+SBC-TL-MIX-001	archive	FIXED via SBC-HARNESS-006 path bug
+T-001	#17	profiling — baselines stale (four months at migration)
+T-002	#18	profiling — candidate, measurement owed
+T-003	archive	profiling — PARTIALLY-OPTIMISED 2026-05-19
+T-004	archive	profiling — REFUTED 2026-05-19
+T-005	archive	profiling — APPLIED, 5.4 percent
+T-006	archive	profiling — APPLIED, 26.6 percent on top of T-005
+T-007	archive	profiling — ecology-aware branch workstream, not on main
+T-008	archive	profiling — ecology-aware branch workstream, not on main
+T-009	archive	profiling — ecology-aware branch workstream, not on main
+T-010	archive	profiling — ecology-aware branch workstream, not on main
+T-011	archive	profiling — ecology-aware branch workstream, not on main
+T-012	archive	profiling — ecology-aware branch workstream, not on main
+T-013	archive	profiling — ecology-aware branch workstream, not on main
+T-014	archive	profiling — ecology-aware branch workstream, not on main
+T-015	archive	profiling — REFUTED-AS-PHRASED 2026-05-21
+T-018	archive	profiling — APPLIED 2026-05-21
+(new)	#14	lead surfaced at migration: .RunSerialRuns passes checkpointFile = NULL

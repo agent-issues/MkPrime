@@ -2,6 +2,52 @@
 
 You MUST read the `r-conventions` skill before writing any code.
 
+## GitHub: the `agent-issues` mirror
+
+Set up 2026-09-18, matching `../TreeSearch`. Two remotes, and they are not
+interchangeable:
+
+| Remote | Repo | Role |
+|--------|------|------|
+| `origin` | `agent-issues/MkPrime` (private fork) | **All agent work.** Branches, PRs, issues, Discussions, CI. |
+| `upstream` | `Mk-prime/r` (private) | Release/reference repo. Fetch only — push URL is `no-push-use-gha`. |
+
+Both repos use `main`; there is no intermediate integration branch. The fork's
+default branch is `main`, so `Fixes #N` in a PR body closes the issue on merge.
+
+**Never push to `upstream`, under any identity.** Work reaches `Mk-prime/r`
+only when the human syncs the fork — that sync *is* the "everything on
+`Mk-prime/r` is human-cleared" gate. One direct commit upstream turns every
+later sync into a real merge, with conflicts on `DESCRIPTION`, `NAMESPACE` and
+the append-only `src/` files.
+
+**Everything you create on GitHub must be authored by `ms609-agent`**, not by
+the human — GitHub will not let an account approve its own PR, so an object
+filed under the human's account is unreviewable by them. `~/.claude/CLAUDE.md`
+holds the mechanism and the token table; for this repo the token is
+`CLAUDE_GH_TOKEN_MS609`:
+
+```bash
+GH_TOKEN=$CLAUDE_GH_TOKEN_MS609 gh pr create --base main --head <branch> --reviewer ms609 ...
+```
+
+Reads need no prefix. `gh repo set-default` already points at the fork, so bare
+`gh issue`/`gh pr`/`gh run` commands hit `agent-issues/MkPrime`.
+
+**Where things live now:**
+
+| Record | Home |
+|--------|------|
+| Red-team findings | GitHub issues, `red-team` + `sev:*` + `area:N` |
+| Profiling findings | GitHub issues, `profiling` |
+| Red-team round records | GitHub Discussions, one category per focus area |
+| Scope, tiers, drivers, proofs, harnesses | `dev/red-team/`, `dev/profiling/` |
+
+No file anywhere carries a status column — `Fixes #N` observes the merge, a
+markdown table cannot. `dev/red-team/findings-archive.md` and
+`dev/profiling/findings-archive.md` are **frozen** anti-duplication memory, not
+work lists.
+
 ## Dispatcher
 
 Run `bash dispatch.sh <subcommand>` from the repo root. `dispatch.sh` is a

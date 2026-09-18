@@ -1,7 +1,32 @@
 # Red-team log — mkp
 
-Per-round notes. Each entry: `## Round N — area #M (<name>) — <date>` then the agent's report.
+Per-round notes. Each entry: `## Round N — area #M (<name>) — <date>` then the agent report.
 The bottom of this file holds `last_focus:` pointing to the last area reviewed.
+
+**Round records for rounds after 2026-09-18 are GitHub Discussions**, one post per
+round in that area category on `agent-issues/MkPrime` — see
+`discussion-categories.md`. Rounds 1-N below predate that move and stay here.
+
+## Model-version legend
+
+A tier is a rung, not a model: `opus` and `fable` are Agent-tool aliases whose
+resolved version changes under you. Backward-looking verdicts (`ran dry`,
+`dormant`) are **version-scoped**; forward-looking routing ("escalate to opus")
+stays unversioned. Reconcile this table at the start of every round, and if the
+alias has moved, add a row and fire the version-bump revisit trigger **before**
+dispatching.
+
+| Alias | Resolved version | As of |
+|-------|------------------|-------|
+| `opus` | Opus 4.8 | rounds dated on or before 2026-07-26 (retroactive: entries below that say only "Opus") |
+| `opus` | Opus 5 | 2026-09-18 |
+| `fable` | Fable 5.1 | 2026-09-18 |
+
+**A version bump reopens dormancy.** Every area in `focus-areas.md` was last
+visited at `opus-4.8`; the alias has since moved to Opus 5, so no area is dormant
+on current evidence.
+
+---
 
 ---
 

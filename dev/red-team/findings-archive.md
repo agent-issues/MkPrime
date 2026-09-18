@@ -1,3 +1,48 @@
+# FROZEN 2026-09-18 — red-team findings archive (mkp)
+
+**This file is not a work list.** It was frozen when findings moved to GitHub
+issues on [`agent-issues/MkPrime`](https://github.com/agent-issues/MkPrime/issues)
+(label `red-team` + `sev:*` + `area:N`). It is kept as **anti-duplication
+memory**: a finder should search it before filing, so a bug that was already
+investigated — especially one closed as not-reproducible or not-a-bug — is not
+re-hunted at Opus or Fable prices.
+
+Rows below are **as they read at the freeze**, including rows whose status was
+wrong. Do not edit them; `migration-map.tsv` records where each id went.
+
+## The status column was lying — corrections found at migration
+
+Every row reading OPEN was re-verified against `main` @ `86885d6`. Six were stale:
+
+| Row | Recorded | Actually, at `86885d6` |
+|---|---|---|
+| `LIKE-001` | listed twice: once OPEN, once FIXED 2026-05-28 | **FIXED.** `src/node_cl_cache.h:729-760` adds the singleton term under `cache.coding == 2` for the neo, known and trans branches; `src/mcmc.cpp:1199-1204,1981` short-circuits the Gibbs paths. The OPEN row is superseded. |
+| `LIKE-002` | OPEN (test gap) | **FIXED.** `tests/testthat/test-node-cl-cache.R:236-330` exercises `coding="informative"` with drift assertions. |
+| `CONV-002` | listed twice: OPEN and PATCH-READY | **FIXED.** `R/Convergence.R:247-260` tail-equalises to `nKeep = min(nrow)` and cites CONV-002 by name. |
+| `FAST-EXP-001` | PATCH-READY | **APPLIED.** ~30 annotated `expm1` sites across `acrv.cpp`, `ascertainment.cpp`, `likelihood.cpp`, `mcmc_likelihood.cpp`, `rate_matrix.cpp`, `gibbs_partial_cl.h`, `node_cl_cache.h`; no raw `1 - std::exp(` remains. |
+| `SWAP-001`, `SWAP-002` | HIGH OPEN (superseded lower down by REFUTED rows) | **REFUTED** at n=6 / 1M iter / 48 samples. |
+| `TREEMOVE-003` | OPEN (test gap) | **Still open, and worse than recorded.** The guard test exists (`test-m092-adaptive-scheduler.R:520`) but asserts against a hand-copied literal list, not `MkPrimeMCMC()`s real `validNames` — it cannot detect the drift it was written to catch. Migrated into issue #6 together with EG-009. |
+
+This is the same failure mode TreeSearch hit at its own migration (23 of 49 rows
+read as open when their fixes had landed). It is the reason status now lives in
+GitHub, where `Fixes #N` observes the merge, and not in a file.
+
+## Not migrated
+
+- `EG-003` (prior shape determines `u_post`) — a **confirmed property of the
+  model**, not a defect: with 50-character data `u` is not identified and the
+  posterior follows the prior. Recorded, not actionable. See
+  `dev/pilots/2026-05-12-prior-validation/analysis/eg001_upost_compare.{R,rds,png}`.
+- `LS-001` (logseries missing `Z_i`) — **not a defect**, by the same argument
+  that resolved EG-001/EG-002: the prior is pre-data, so `kObs` must not enter
+  it. The logseries prior is correctly untruncated.
+- `R5-4` — belongs to the ecology-aware / EBE workstream, not to any of the 11
+  focus areas, and its empirical claims need re-deriving against the corrected
+  `HasBipartSplits` scoring. Tracked in project memory, not here.
+- All `*-INFO-*` rows — records, never work.
+
+---
+
 # Red-team findings — mkp
 
 Non-trivial bugs / perf issues filed by red-team rounds. Trivial fixes are applied inline and not recorded here.

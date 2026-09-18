@@ -1,3 +1,29 @@
+# FROZEN 2026-09-18 — profiling findings archive (mkp)
+
+**This file is not a work list.** Profiling findings are now GitHub issues on
+[`agent-issues/MkPrime`](https://github.com/agent-issues/MkPrime/issues), label
+`profiling`, and the issue number is the id. It is kept as **anti-duplication
+memory**: search it before filing so a lever already measured and rejected is
+not re-proposed.
+
+Rows below read as they did at the freeze. `migration-map.tsv` in
+`../red-team/` records where each `T-nnn` went.
+
+## Not migrated: the ecology-aware rows
+
+`T-007` through `T-014` were measured against the **ecology-aware / EBE
+workstream**, which lives on feature branches — there is no `ecology` code in
+`src/` at `main` @ `86885d6`. Filing them against `main` would produce issues
+that `Fixes #N` can never close. They stay here until that workstream merges,
+at which point they should be re-verified and filed then, not before.
+
+`T-003` through `T-006`, `T-018`, `T-015`, `T-012` and `T-013` reached terminal
+states (applied, refuted, at-limit) and are records, not work.
+
+Migrated: `T-001` -> #17, `T-002` -> #18.
+
+---
+
 # Profiling findings — mkp
 
 Tagged `[Port]` (move R loop to C++), `[Optimise]` (algorithmic / cache / vectorisation fix inside C++), or `[AT-LIMIT]` (no further wins; skip in future rotations).
