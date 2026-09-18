@@ -2264,7 +2264,7 @@ RunMkPrime <- function(data, tree = NULL,
   # kPrime are discrete nuisance parameters -- exclude from convergence criteria
   # (M-098). They remain in the `ess` vector for display in .PrintProgressTable.
   isConvParam <- !grepl("^kPrime_", names(ess)) & names(ess) != "log_likelihood"
-  minEss <- min(ess[isConvParam], na.rm = TRUE)
+  minEss <- .MinOrNA(ess[isConvParam])
 
   # R-hat (requires >= 2 runs)
   rhat    <- NULL
@@ -2276,8 +2276,7 @@ RunMkPrime <- function(data, tree = NULL,
       .Rhat(chainMat)
     }, numeric(1))
     names(rhat) <- paramNms
-    maxRhat <- max(rhat[isConvParam[names(rhat) %in% names(ess)]],
-                   na.rm = TRUE)
+    maxRhat <- .MaxOrNA(rhat[isConvParam[names(rhat) %in% names(ess)]])
   }
 
   # --- Adaptive tree ESS ---
@@ -2291,11 +2290,11 @@ RunMkPrime <- function(data, tree = NULL,
   if (!is.null(mcmc$minTreeEss) &&
       requireNamespace("TreeDist", quietly = TRUE)) {
 
-    scalarsFarOff <- !is.null(mcmc$minEss) && minEss < 0.5 * mcmc$minEss
+    scalarsFarOff <- !is.null(mcmc$minEss) && isTRUE(minEss < 0.5 * mcmc$minEss)
     scalarsConverged <-
-      (is.null(mcmc$minEss)  || minEss >= mcmc$minEss) &&
-      (is.null(mcmc$maxRhat) || (nRuns >= 2L && !is.na(maxRhat) &&
-                                  maxRhat <= mcmc$maxRhat))
+      (is.null(mcmc$minEss)  || isTRUE(minEss >= mcmc$minEss)) &&
+      (is.null(mcmc$maxRhat) || (nRuns >= 2L &&
+                                  isTRUE(maxRhat <= mcmc$maxRhat)))
 
     treeEssPrecision <- if (scalarsFarOff) "skip"
                         else if (scalarsConverged) "fine"
@@ -2319,9 +2318,9 @@ RunMkPrime <- function(data, tree = NULL,
   hasCriteria <- !is.null(mcmc$minEss) || !is.null(mcmc$maxRhat) ||
                  !is.null(mcmc$minTreeEss)
   converged   <- hasCriteria &&
-    (is.null(mcmc$minEss)     || minEss >= mcmc$minEss) &&
-    (is.null(mcmc$maxRhat)    || (nRuns >= 2L && !is.na(maxRhat) &&
-                                   maxRhat <= mcmc$maxRhat)) &&
+    (is.null(mcmc$minEss)     || isTRUE(minEss >= mcmc$minEss)) &&
+    (is.null(mcmc$maxRhat)    || (nRuns >= 2L &&
+                                   isTRUE(maxRhat <= mcmc$maxRhat))) &&
     (is.null(mcmc$minTreeEss) || (!is.na(treeEss) &&
                                    treeEss >= mcmc$minTreeEss))
 
@@ -2367,7 +2366,7 @@ RunMkPrime <- function(data, tree = NULL,
 
   # Exclude kPrime nuisance parameters from convergence criteria (M-098)
   isConvParam <- !grepl("^kPrime_", names(ess)) & names(ess) != "log_likelihood"
-  minEss <- min(ess[isConvParam], na.rm = TRUE)
+  minEss <- .MinOrNA(ess[isConvParam])
 
   rhat    <- NULL
   maxRhat <- NA_real_
@@ -2378,17 +2377,16 @@ RunMkPrime <- function(data, tree = NULL,
       .Rhat(chainMat)
     }, numeric(1))
     names(rhat) <- paramNms
-    maxRhat <- max(rhat[isConvParam[names(rhat) %in% names(ess)]],
-                   na.rm = TRUE)
+    maxRhat <- .MaxOrNA(rhat[isConvParam[names(rhat) %in% names(ess)]])
   }
 
   # Tree ESS not available in log-based mode (scalar logs don't contain trees).
   # minTreeEss is only enforced by .CheckConvergence() which has in-memory trees.
   hasCriteria <- !is.null(mcmc$minEss) || !is.null(mcmc$maxRhat)
   converged   <- hasCriteria &&
-    (is.null(mcmc$minEss)  || minEss >= mcmc$minEss) &&
-    (is.null(mcmc$maxRhat) || (nRuns >= 2L && !is.na(maxRhat) &&
-                                maxRhat <= mcmc$maxRhat))
+    (is.null(mcmc$minEss)  || isTRUE(minEss >= mcmc$minEss)) &&
+    (is.null(mcmc$maxRhat) || (nRuns >= 2L &&
+                                isTRUE(maxRhat <= mcmc$maxRhat)))
 
   list(converged = converged, minEss = minEss, maxRhat = maxRhat,
        treeEss = NA_real_, treeEssPrecision = "skip",

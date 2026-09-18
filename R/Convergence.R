@@ -4,6 +4,19 @@
 # Replaced coda-based PSRF with native rank-normalized R-hat
 # (Vehtari et al. 2021) and native ESS (Geyer 1992).
 
+# Reductions that report "nothing to assess" rather than a passing value.
+#
+# `max(x, na.rm = TRUE)` on an all-NA vector returns `-Inf`, and `min()`
+# returns `Inf`. Both satisfy any `maxRhat <= threshold` / `minEss >= threshold`
+# stopping rule, so an unassessable window reads as a converged one. That is
+# the worst possible direction for the error: R-hat and ESS are `NA` precisely
+# when a chain is constant over the window, which is the signature of a stuck
+# sampler, so the bug turns the worst mixing outcome into a green light exactly
+# where the user is trusting the automatic stopping rule instead of the traces.
+.MaxOrNA <- function(x) if (all(is.na(x))) NA_real_ else max(x, na.rm = TRUE)
+
+.MinOrNA <- function(x) if (all(is.na(x))) NA_real_ else min(x, na.rm = TRUE)
+
 #' Compute convergence diagnostics for an MkPosterior
 #'
 #' Calculates effective sample size (ESS) per parameter and, when
@@ -62,18 +75,31 @@ ConvergenceDiagnostics <- function(posterior, trees = FALSE,
 
   if (nRuns >= 2L && !is.null(posterior$per_run)) {
     rhat <- .ComputeRhat(pb$per_run, keyCols)
-    maxRhat <- max(rhat[isConvParam[names(rhat) %in% names(ess)]],
-                   na.rm = TRUE)
+    maxRhat <- .MaxOrNA(rhat[isConvParam[names(rhat) %in% names(ess)]])
   }
 
   # --- Tree ESS ---
   if (isTRUE(frechetESS)) trees <- TRUE
   treeEss <- .ComputeTreeEss(pb, trees, frechet = isTRUE(frechetESS))
 
+  minEss <- .MinOrNA(ess[isConvParam])
+
+  # A window in which every monitored scalar is constant is the signature of a
+  # stuck chain. Saying so is worth more than the NA it now reports, because
+  # the NA is easy to read as "diagnostic unavailable" rather than "the sampler
+  # did not move".
+  if (is.na(minEss)) {
+    cli::cli_warn(c(
+      "Convergence cannot be assessed: every monitored parameter is constant
+       over the retained samples.",
+      i = "This is the signature of a stuck chain, not of convergence."
+    ))
+  }
+
   structure(
     list(
       ess = ess,
-      minEss = min(ess[isConvParam], na.rm = TRUE),
+      minEss = minEss,
       rhat = rhat,
       maxRhat = maxRhat,
       treeEss = treeEss,
