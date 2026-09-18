@@ -44,6 +44,10 @@
 # difference early in the chain flips one accept/reject and the trajectory
 # diverges wholesale. Generate and check it with the same installed build
 # (build-agent.sh / test-agent.sh), never devtools::load_all().
+#
+# It is also bound to the CPU architecture that generated it, which is why the
+# value assertion is bit-exact only on a matching arch and tolerant elsewhere.
+# See .PartitionBitcompatReferenceArch() in helper-partition-ref.R.
 
 test_that("§7a bit-identity: partition = NULL reproduces stored reference", {
   ref_path <- .PartitionBitcompatReferencePath()
@@ -69,6 +73,13 @@ test_that("§7a bit-identity: partition = NULL reproduces stored reference", {
   expect_identical(result$actual_iter,        ref$actual_iter)
   expect_identical(result$treeThin,           ref$treeThin)
 
-  # The load-bearing assertion: every sampled value must match bit-for-bit.
-  expect_identical(result$samples, ref$samples)
+  # The load-bearing assertion. Bit-identity is asserted only on the
+  # architecture that generated the reference; see
+  # .PartitionBitcompatReferenceArch() in helper-partition-ref.R for why the
+  # two cannot both hold, and why the tolerant branch still detects drift.
+  if (identical(R.version$arch, .PartitionBitcompatReferenceArch())) {
+    expect_identical(result$samples, ref$samples)
+  } else {
+    expect_equal(result$samples, ref$samples, tolerance = 1e-9)
+  }
 })

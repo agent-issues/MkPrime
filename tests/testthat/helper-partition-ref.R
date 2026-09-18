@@ -34,6 +34,28 @@
 # bit-identity guarantee is robust under both readings of the rate_neo ->
 # eta_neo reparameterisation (§7c).
 
+
+# The CPU architecture the stored reference was generated on.
+#
+# Bit-identity across architectures is not something this fixture can promise.
+# arm64 toolchains contract `a * b + c` into a fused multiply-add, which rounds
+# once instead of twice; baseline x86-64 has no FMA in its instruction set and
+# cannot, so the same source produces last-bit differences between the two. It
+# is not an optimisation level or a library version: it is the arithmetic.
+# Observed on 2026-09-18 across `macOS-latest` and `ubuntu-24.04-arm`, most
+# legibly as the pinned starting tree's own total length, 9.4 summed over 94
+# edges of 0.1, coming back as 9.399999999999980 rather than 9.400000000000000.
+#
+# On a matching architecture the fixture asserts bit-identity, which is what
+# makes it a drift comparator. Elsewhere it asserts a tight tolerance instead.
+# That retains the power the comparator is for: the chain is chaotic, so any
+# genuine change to the legacy path flips an accept/reject within a few
+# iterations and diverges by whole nats, thousands of times the ~2e-15 spread
+# that separates the architectures.
+#
+# Update this only when regenerating the reference on a different machine.
+.PartitionBitcompatReferenceArch <- function() "x86_64"
+
 # Path of the pinned starting tree, relative to tests/testthat/.
 .PartitionBitcompatStartTreePath <- function() {
   testthat::test_path("_reference", "partition-bitcompat-null-start.nwk")

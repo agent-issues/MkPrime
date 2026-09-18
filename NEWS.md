@@ -47,6 +47,17 @@ The generator now builds against the same installed package the suite tests
 compiles without `-O2` and so could disagree in the last bits with the binary
 the comparison then runs against.
 
+Finally, the value assertion is now bit-exact only on the architecture that
+generated the reference, and tolerant (`1e-9`) elsewhere. Cross-architecture
+bit-identity was never achievable: arm64 toolchains contract multiply-add into
+a fused instruction that rounds once where baseline x86-64 rounds twice, so
+`macOS-latest` and `ubuntu-24.04-arm` disagreed with the reference in the last
+bits — visibly so in the pinned tree's own total length, 9.4 over 94 edges of
+0.1, arriving as 9.399999999999980. Nothing is lost by tolerating that: the
+chain is chaotic, so a genuine change to the legacy path flips an accept/reject
+within a few iterations and diverges by whole nats, thousands of times the
+~2e-15 spread between architectures.
+
 ## `geometric` arm's `marginal_k` default is now the unconditional (Model A) prior
 
 The default `priorVariant` for `kPrimePrior = "geometric"` is now `"unconditional"`
