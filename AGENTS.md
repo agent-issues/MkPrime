@@ -34,6 +34,25 @@ GH_TOKEN=$CLAUDE_GH_TOKEN gh pr create --base main --head <branch> --reviewer ms
 Reads need no prefix. `gh repo set-default` already points at the fork, so bare
 `gh issue`/`gh pr`/`gh run` commands hit `agent-issues/MkPrime`.
 
+**`git push` must also go out as `ms609-agent` here — this repo is the exception to the
+rule in `~/.claude/CLAUDE.md` that push identity does not matter.** `main` carries the
+"Green to merge" ruleset (pull request required, 3 status checks). `ms609` can bypass it,
+so a push under the human's credentials silently lands on `main` unreviewed and unchecked
+— it prints `Bypassed rule violations` and succeeds anyway. `ms609-agent` cannot bypass,
+so pushing as the agent is what makes the protection real. Pull the token into a shell
+variable and hand it to a one-shot credential helper, so the value never reaches the
+transcript:
+
+```bash
+TOKEN=$(powershell.exe -NoProfile -Command   "[Environment]::GetEnvironmentVariable('CLAUDE_GH_TOKEN','User')" | tr -d '')
+git -c credential.helper='!f() { echo username=ms609-agent; echo "password=$TOKEN"; }; f'   push -u origin <branch>
+```
+
+**Never commit in `C:/Users/pjjg18/GitHub/mkp` itself.** That checkout is shared, sits on
+`main`, and is where a "quick doc fix" turns into a direct push to a protected branch. Every
+change — including documentation — goes on a branch in a worktree under
+`../worktrees/<name>` and reaches `main` through a PR.
+
 **Where things live now:**
 
 | Record | Home |
