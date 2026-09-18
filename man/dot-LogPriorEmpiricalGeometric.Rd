@@ -4,7 +4,7 @@
 \alias{.LogPriorEmpiricalGeometric}
 \title{Log convolution prior on \verb{k'} for the \code{"empirical_geometric"} option}
 \usage{
-.LogPriorEmpiricalGeometric(kPrime, emp, p)
+.LogPriorEmpiricalGeometric(kPrime, emp, p, kObs = 2L, unconditional = FALSE)
 }
 \arguments{
 \item{kPrime}{Integer vector of proposed \verb{k'} values (one per
@@ -14,6 +14,18 @@ transformational character).}
 
 \item{p}{Scalar success probability of the geometric on \code{N_unobs},
 \verb{0 < p < 1}.}
+
+\item{kObs}{Integer vector of observed state counts (one per character;
+recycled to \code{length(kPrime)}). Defaults to \code{2L}, giving \code{Z_i = 1}
+(untruncated). Only consulted under the conditional (Model B) variant.}
+
+\item{unconditional}{Logical. \code{FALSE} (default; Model B, the production
+prior) subtracts the per-character truncation normaliser
+\verb{log Z_i(p) = log sum_\{k >= kObs_i\} P(k | p)}. \code{TRUE} (Model A, used by
+the SBC harness) places the prior on the full support \verb{k' >= 2} with no
+\code{Z_i} correction; the \verb{k' >= kObs} floor is then enforced by the
+likelihood, not the prior. The two agree whenever every \code{kObs == 2}. See
+\code{dev/notes/2026-05-28-kprime-viability.md}.}
 }
 \value{
 Scalar log density \verb{sum_i log P(k'_i)}. Returns \code{-Inf} if any
