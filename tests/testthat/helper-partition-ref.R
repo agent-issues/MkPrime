@@ -87,6 +87,16 @@
     # emerges at longer chains (≥1000 iter / ≥200 warmup) even with both
     # gibbsSubtreeSwap and joint2d off. The §7a reference accordingly uses
     # the short (100 iter / 50 warmup) regime where bit-identity holds.
+    #
+    # gibbsSpr is pinned off because this reference guards the legacy path as
+    # a whole, not any one move. It is also the one move on main known to be
+    # incorrect (issue #19: no MH step, so not pi-invariant), and its fix is
+    # in flight (PR #30). Leaving it on would make the reference hostage to
+    # that fix, forcing a regeneration indistinguishable from evading the
+    # guard. gibbs_spr correctness is covered by test-gibbs-spr.R,
+    # test-gibbs-spr-candidates.R and the detailed-balance gate at
+    # dev/red-team/heavy-tests/gibbs-spr-db.R.
+    gibbsSpr         = FALSE,
     gibbsSubtreeSwap = FALSE,
     joint2d          = FALSE
   )

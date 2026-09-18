@@ -20,6 +20,33 @@ fixture under each gives byte-identical output, so the comparator's
 discriminating power over the MkPrime sources is intact across every commit it
 has ever spanned; only its unpinned input changed.
 
+It also pins `gibbsSpr = FALSE`, for two reasons. `gibbs_spr` is the one move
+in the schedule known to be incorrect on `main` (issue #19: it commits a
+deterministic edge split with no Metropolis-Hastings step, so it is not
+pi-invariant), and its replacement is in flight, so leaving it in the schedule
+would make the comparator hostage to that fix and force a second regeneration
+indistinguishable from evading the guard.
+
+The pin was validated rather than assumed: the fixture was run under two
+independently compiled `-O2` builds — this branch, and the 21-commit
+`fix/gspr-pi-invariance` branch that rewrites `gibbs_spr` — and the payloads are
+bit-identical (`identical()` TRUE on the whole object; final
+`log_posterior = -897.10858033586601` on both). The gibbs_spr fix can therefore
+land without touching this reference, which is the comparator doing its job
+instead of being rewritten.
+
+What the pinned schedule no longer covers: `gibbs_spr`, `gibbs_subtree_swap`,
+`joint2d`, and the default-off weighted / block-Gibbs moves. `gibbs_spr`
+correctness is covered instead by `test-gibbs-spr.R`,
+`test-gibbs-spr-candidates.R` and the detailed-balance gate at
+`dev/red-team/heavy-tests/gibbs-spr-db.R`. Everything else in the legacy path
+is still asserted bit-for-bit.
+
+The generator now builds against the same installed package the suite tests
+(`MKP_REF_LIB` / `MKP_REF_PKG`) instead of `devtools::load_all()`, which
+compiles without `-O2` and so could disagree in the last bits with the binary
+the comparison then runs against.
+
 ## `geometric` arm's `marginal_k` default is now the unconditional (Model A) prior
 
 The default `priorVariant` for `kPrimePrior = "geometric"` is now `"unconditional"`
