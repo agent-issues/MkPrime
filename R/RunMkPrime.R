@@ -148,6 +148,7 @@ RunMkPrime <- function(data, tree = NULL,
   # legacy code path (§7a bit-identity contract).
   partitionSpec <- .ValidatePartitionArgs(partition, unlink, mkd)
   .RequirePartitionImplemented(partitionSpec)
+  .RequireMarginalKSupported(model, mkd, partitionSpec)
 
   # When a user partition is supplied, rebuild mkd$partitions with classIdx
   # populated for each PartInfo. The C++ McmcData uses classIdx to map each
@@ -3899,6 +3900,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' Initialize the C++ MCMC data structure (call once before loop)
 #' @keywords internal
 .InitMcmcData <- function(mkd, model) {
+  .RequireMarginalKSupported(model, mkd)
   # Replace NA with -1 in tip states for C++
   parts <- lapply(mkd$partitions, function(p) {
     ts <- p$tip_states

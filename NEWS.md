@@ -1,5 +1,35 @@
 # MkPrime (development version)
 
+## Per-`k'` likelihoods now honour the partition rate scale
+
+`compute_per_kprime_log_lik()` pruned at raw branch lengths, never applying the
+RB-style partition rate scale that `cpp_partition_log_likelihood()` applies to
+transformational partitions. On data containing both neomorphic and
+transformational characters this had two consequences
+([#25](https://github.com/agent-issues/MkPrime/issues/25)):
+
+* `likelihoodMode = "marginal_k"` targeted a different posterior from
+  `"sampled_k"` — the RB identity failed by whole nats, growing with the
+  neomorphic/transformational rate separation;
+* the `gibbs_kPrime` sweep (on by default under `"sampled_k"`) sampled the
+  *unscaled* full conditional and always accepted it, so the move was not
+  `pi`-invariant.
+
+The scale is now applied inside the helper, so both callers get it.
+**Posterior samples from mixed neomorphic + transformational datasets are not
+comparable across this change**; trans-only and neo-only analyses are
+bit-identical, since both partition scales are 1 there.
+
+## `marginal_k` now rejects known-state characters and the partition API
+
+Neither is implemented by the marginal evaluator: known-state (`knownStates`)
+characters were dropped from the likelihood entirely, and `partition` / `unlink`
+were ignored by the likelihood while still entering the prior. Both were meant
+to be gated, but the guard did not exist
+([#26](https://github.com/agent-issues/MkPrime/issues/26)). They now abort at
+`RunMkPrime()`. Use `likelihoodMode = "sampled_k"` for either.
+**Any `marginal_k` run that used `knownStates` or a partition spec produced a
+posterior that ignored them, and needs repeating.**
 ## §7a bit-identity fixture now pins its own starting tree
 
 `tests/testthat/test-partition-bitcompat-null.R` failed on every platform

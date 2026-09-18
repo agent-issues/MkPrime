@@ -1077,10 +1077,11 @@ static double compute_full_loglik_at(
     const IntegerVector& child,
     const NumericVector& edgeLen,
     bool fillCharLLCache = true) {
-  // Marginal-k dispatch (v1: geometric arm only; partition-API + marginal-k
-  // deferred — guard in MkPrimeModel.R). cast away const on data: the
-  // marginal evaluator takes a non-const reference because the underlying
-  // PR-A helper may grow state->gibbsWs and the cache lives on state too.
+  // Marginal-k dispatch (v1: geometric arm only; known-k partitions and the
+  // partition API are deferred and rejected by .RequireMarginalKSupported()).
+  // cast away const on data: the marginal evaluator takes a non-const reference
+  // because the underlying PR-A helper may grow state->gibbsWs and the cache
+  // lives on state too.
   //
   // fillCharLLCache=false => SCRATCH eval (no charLLCache read/write): required
   // by multi-config moves so per-config marginal LLs are recomputed coherently
@@ -3915,6 +3916,22 @@ void compute_per_kprime_log_lik(
   int nTrans = (int)data->transIdxGlobal.size();
   out.resize(nTrans);
   if (nTrans == 0) return;
+
+  // Partition-rate normalisation (issue #25). Every partition this helper
+  // prunes is transformational, so cpp_partition_log_likelihood would scale its
+  // edges by compute_partition_scales(...).trans; pruning at the caller's raw
+  // lengths made marginal_k target a different posterior from sampled_k, and
+  // made the case-25 Gibbs sweep sample the unscaled conditional and always
+  // accept it. Applied here rather than at the two call sites so they cannot
+  // diverge again. Both scales are 1 when nNeo == 0 or nTrans == 0.
+  const double transScale =
+      compute_partition_scales(state->rateNeo, data->nNeo, data->nTrans).trans;
+  if (transScale != 1.0) {
+    NumericVector scaledEdge(edgeLen.size());
+    for (int i = 0; i < edgeLen.size(); ++i)
+      scaledEdge[i] = edgeLen[i] * transScale;
+    edgeLen = scaledEdge;   // rebinds the local only; caller's vector untouched
+  }
 
   // Cache for constant-site probability by kStates (shared across characters)
   std::vector<double> cspCache;
