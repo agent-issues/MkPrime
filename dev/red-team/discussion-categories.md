@@ -5,8 +5,9 @@ Round records live in GitHub Discussions on `agent-issues/MkPrime` (private repo
 `StratoBayes/StratoBayes-R-package`: the name is `NN · <area name>`, the separator
 is a middle dot (U+00B7), and **GitHub derives the slug automatically** — dropping
 `&`, `:`, `+` and parentheses. **The leading `NN` is the only part the tooling
-depends on**; treat the slugs below as predicted, and read the real ones back with
-the query at the bottom of this file before the first post.
+depends on.** The slugs in the table below were **read back from the live board on
+2026-09-18** and are confirmed, not predicted; re-read them with the query at the
+bottom of this file if a category is ever renamed.
 
 **Format must be "Open-ended discussion"** for every area category. *Announcement*
 format restricts posting to maintainers; `ms609-agent` is a collaborator, so its
@@ -19,11 +20,15 @@ costs manual UI work and cannot be scripted or reviewed in a diff.
 
 ## ⚠️ GitHub caps a repository at 25 discussion categories
 
-12 area categories + 6 GitHub defaults = 18/25. **Delete the spare defaults while
-they are still empty**: GitHub makes you re-home every post in a category before it
-can be deleted, so an empty `General`, `Ideas`, `Polls`, `Q&A` or `Show and tell` is
-free to remove today and expensive to remove later. `Announcements` is the one
-default worth keeping (maintainer notices). Doing that leaves 12 free slots.
+**Live as of 2026-09-18: 16 of 25.** 12 area categories plus four retained defaults
+(`Announcements`, `General`, `Ideas`, `Q&A`); `Polls` and `Show and tell` were
+deleted at setup. That leaves **9 free slots**.
+
+The cap bites late and hurts: GitHub makes you re-home every post in a category
+before it can be deleted, so a spare default is free to remove while empty and
+expensive later. StratoBayes hit 25/25 and can no longer add a focus area at all.
+If the headroom here drops below about three, drop `Ideas` and `Q&A` before they
+accumulate posts.
 
 Adding a row to `focus-areas.md` later means creating its `area:N` label **and** its
 category — the label half is scriptable, the category half is not, and an issue
@@ -31,7 +36,7 @@ filed against a missing label simply fails.
 
 ## The categories
 
-| # | Category name | Predicted slug |
+| # | Category name | Slug (confirmed) |
 |---|---|---|
 | 1 | `01 · Empirical-geometric prior math & normalisation` | `01-empirical-geometric-prior-math-normalisation` |
 | 2 | `02 · EG p-sampler: case 30 logit-MH` | `02-eg-p-sampler-case-30-logit-mh` |
