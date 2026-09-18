@@ -1577,23 +1577,12 @@ RunMkPrime <- function(data, tree = NULL,
 
       diagCheck <- .CheckConvergence(list(r), paramNames, mcmc, isStreaming)
       if (!is.null(diagCheck)) {
-        # M-141: ETA from worst-case ESS accumulation rate.
-        # Use whichever criterion (scalar ESS or tree ESS) has the
-        # worst current/target ratio -- that's the binding constraint.
         elapsedSample <- proc.time()["elapsed"] - sampleWallStart
-        etaCurrent <- diagCheck$minEss
-        etaTarget  <- mcmc$minEss
-        if (!is.null(mcmc$minTreeEss) && !is.na(diagCheck$treeEss) &&
-            is.finite(diagCheck$treeEss) && !is.null(mcmc$minEss) &&
-            is.finite(diagCheck$minEss)) {
-          scalarRatio <- diagCheck$minEss / mcmc$minEss
-          treeRatio   <- diagCheck$treeEss / mcmc$minTreeEss
-          if (treeRatio < scalarRatio) {
-            etaCurrent <- diagCheck$treeEss
-            etaTarget  <- mcmc$minTreeEss
-          }
-        }
-        etaStr <- .EstimateEta(etaCurrent, etaTarget, elapsedSample)
+
+        # M-141: ETA from worst-case ESS accumulation rate, projected against
+        # whichever criterion is currently binding. See .EtaCriterion().
+        etaCrit <- .EtaCriterion(diagCheck, mcmc)
+        etaStr <- .EstimateEta(etaCrit$current, etaCrit$target, elapsedSample)
         # Refresh ticker pages from latest diagnostics (M-097)
         tickerPages <- .BuildTickerPages(diagCheck, etaStr)
         if (diagCheck$converged) {
@@ -2027,7 +2016,8 @@ RunMkPrime <- function(data, tree = NULL,
     if (!is.null(diagCheck)) {
       elStr  <- .FormatElapsed(elapsed)
       essStr <- round(diagCheck$minEss)
-      etaStr <- .EstimateEta(diagCheck$minEss, mcmc$minEss, elapsed)
+      etaCrit <- .EtaCriterion(diagCheck, mcmc)
+      etaStr <- .EstimateEta(etaCrit$current, etaCrit$target, elapsed)
       pollStatus <- paste0(
         elStr, " | min ESS = ", essStr,
         if (!is.null(mcmc$minEss)) paste0(" / ", mcmc$minEss) else "",
@@ -2335,6 +2325,12 @@ RunMkPrime <- function(data, tree = NULL,
 #' Reads each run's log file via [ReadMkLog()], extracts key parameters,
 #' and computes ESS (all runs combined) and R-hat (when `nRuns >= 2`).
 #' Returns `NULL` if any log is missing or has fewer than 10 rows.
+#'
+#' Tree ESS is deliberately absent: trees are not written to the log files, so
+#' this path cannot evaluate `minTreeEss` and returns `treeEss = NA_real_`. The
+#' criterion is enforced per run by [.CheckConvergence()] instead. Documented
+#' on `minTreeEss` in [MkPrimeMCMC()]; whether the silent non-enforcement also
+#' deserves a warning is a maintainer call, not settled here.
 #' @keywords internal
 .CheckConvergenceFromLogs <- function(logFilePaths, paramNames, mcmc) {
   nRuns   <- length(logFilePaths)

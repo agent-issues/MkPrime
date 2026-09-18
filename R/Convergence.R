@@ -503,6 +503,34 @@ print.MkpDiagnostics <- function(x, ...) {
 }
 
 
+# Choose the criterion the ETA should be projected against.
+#
+# Whichever of the scalar-ESS and tree-ESS targets has the worse
+# current/target ratio is the binding constraint, so it governs the estimate.
+# Either may be unconfigured, in which case the other is the only criterion
+# there is; both unconfigured (or not yet computable) yields NULL, which
+# .EstimateEta() renders as no ETA rather than a wrong one.
+#
+# Defaulting the target to `mcmc$minEss` is what broke this: with only
+# `minTreeEss` set, the target was NULL and the tree branch that should have
+# supplied the fallback was itself gated on `minEss` being set.
+.EtaCriterion <- function(diagCheck, mcmc) {
+  scalarOk <- !is.null(mcmc$minEss) && isTRUE(is.finite(diagCheck$minEss))
+  treeOk <- !is.null(mcmc$minTreeEss) && isTRUE(is.finite(diagCheck$treeEss))
+
+  out <- list(current = NULL, target = NULL)
+  if (scalarOk) {
+    out <- list(current = diagCheck$minEss, target = mcmc$minEss)
+  }
+  if (treeOk && (!scalarOk ||
+                 diagCheck$treeEss / mcmc$minTreeEss <
+                   diagCheck$minEss / mcmc$minEss)) {
+    out <- list(current = diagCheck$treeEss, target = mcmc$minTreeEss)
+  }
+  out
+}
+
+
 #' Estimate remaining wall-clock time to reach target minESS (M-141).
 #'
 #' Uses a conservative linear extrapolation: ESS grows roughly linearly with
@@ -518,8 +546,9 @@ print.MkpDiagnostics <- function(x, ...) {
 #' @keywords internal
 .EstimateEta <- function(currentMinEss, targetMinEss, elapsedSampleSec,
                          safetyFactor = 1.5) {
-  if (!is.finite(currentMinEss) || currentMinEss <= 0 ||
-      is.null(targetMinEss) || !is.finite(targetMinEss) ||
+  if (is.null(currentMinEss) || is.null(targetMinEss) ||
+      !is.finite(currentMinEss) || currentMinEss <= 0 ||
+      !is.finite(targetMinEss) ||
       targetMinEss <= 0 || !is.finite(elapsedSampleSec) ||
       elapsedSampleSec <= 0) {
     return(NULL)

@@ -136,7 +136,15 @@ skipped when scalar ESS is far from \code{minEss}, coarse (500-tree
 subsample) when approaching, and fine (1000-tree subsample) when
 tree ESS is the binding constraint.  Requires \strong{TreeDist}.
 Also used in the tuning-phase bandit: topology moves receive credit
-for improving tree ESS, preventing underallocation.}
+for improving tree ESS, preventing underallocation.
+
+\strong{Enforced per run, not across runs.} Trees are not written to the log
+files, so the log-based convergence check used for parallel runs and for
+the serial Phase 2 cross-run check cannot evaluate tree ESS: only the
+per-run check does. With \code{nRuns > 1} the criterion therefore governs each
+run's own stopping, and the cross-run decision rests on \code{minEss} and
+\code{maxRhat} alone. Set at least one of those when running more than one run,
+or the cross-run phase has no criterion to apply.}
 
 \item{checkEvery}{Check convergence every this many iterations
 (default 1000). Only used when stopping criteria are set.}

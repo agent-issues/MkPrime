@@ -70,6 +70,14 @@
 #'   tree ESS is the binding constraint.  Requires **TreeDist**.
 #'   Also used in the tuning-phase bandit: topology moves receive credit
 #'   for improving tree ESS, preventing underallocation.
+#'
+#'   **Enforced per run, not across runs.** Trees are not written to the log
+#'   files, so the log-based convergence check used for parallel runs and for
+#'   the serial Phase 2 cross-run check cannot evaluate tree ESS: only the
+#'   per-run check does. With `nRuns > 1` the criterion therefore governs each
+#'   run's own stopping, and the cross-run decision rests on `minEss` and
+#'   `maxRhat` alone. Set at least one of those when running more than one run,
+#'   or the cross-run phase has no criterion to apply.
 #' @param checkEvery Check convergence every this many iterations
 #'   (default 1000). Only used when stopping criteria are set.
 #' @param cancelFile Path to a cancel-signal file. `NULL` (default) disables
