@@ -38,8 +38,8 @@ filed against a missing label simply fails.
 
 | # | Category name | Slug (confirmed) |
 |---|---|---|
-| 1 | `01 · Empirical-geometric prior math & normalisation` | `01-empirical-geometric-prior-math-normalisation` |
-| 2 | `02 · EG p-sampler: case 30 logit-MH` | `02-eg-p-sampler-case-30-logit-mh` |
+| 1 | `01 · k′ prior families & normalisation` | `01-k-prior-families-normalisation` |
+| 2 | `02 · k′ marginalisation & the p-samplers` | `02-k-marginalisation-the-p-samplers` |
 | 3 | `03 · Logseries prior & LogPrior semantics` | `03-logseries-prior-logprior-semantics` |
 | 4 | `04 · Hamilton harness: combine, recovery, ETAs` | `04-hamilton-harness-combine-recovery-etas` |
 | 5 | `05 · Move scheduler & adaptive weights` | `05-move-scheduler-adaptive-weights` |
@@ -50,6 +50,12 @@ filed against a missing label simply fails.
 | 10 | `10 · Test-suite health` | `10-test-suite-health` |
 | 11 | `11 · RB-oracle equivalence` | `11-rb-oracle-equivalence` |
 | 12 | `12 · Red-team process meta-review` | `12-red-team-process-meta-review` |
+
+**Categories 1 and 2 are pending a rename on the live board.** They still read
+`01 · Empirical-geometric prior math & normalisation` and `02 · EG p-sampler: case 30
+logit-MH`, from before those areas were rescoped on 2026-09-18. The table above is the
+target. Nothing is broken meanwhile — only the leading `NN` is read by tooling, and a
+rename does not move existing posts (discussion #28 sits in category 2).
 
 Profiling does **not** get a category: the `/profile` skill keeps round records in
 `dev/profiling/log.md` by design (one serial rotation, and `log.md` doubles as the
