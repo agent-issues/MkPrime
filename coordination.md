@@ -281,3 +281,15 @@ workstreams.
 | `neotrans/` | Best-practice RevBayes phylogenetics — model specification reference |
 | `StratoBayes/` | Architectural template — MCMC engine, tempering, progress display |
 | `TreeSearch` | Future GUI integration via `Suggests: MkPrime` |
+
+
+---
+
+## Recovered from `to-do.md` (2026-09-18)
+
+`to-do.md` was retired: its specific tasks became GitHub issues, and its
+standing-task rows were rotation records, not work. The accumulated round
+history of the **Coordination review** standing task is preserved verbatim below. It predates
+the Discussions migration and is history, not a queue.
+
+**Standing: Coordination review.** Review to-do.md and completed-tasks.md for consistency. Check agent logs and u.nnn files. When completed, record round number and actions in Notes and reset to OPEN. Priority: same dynamic rule as S-RED. | Last run: 2026-05-13 round 11 (d3). Actions: (1) No orphan Rscript processes. (2) No u.* or a.* files. (3) Remote jobs: SLURM 17140607 (mkp-study eg-arm) tarballs retrieved to `inst/hamilton/mkp-study-17140607/`; unpacked sample in `mkp-study-17140607-17141180/`; active analysis in `data-raw/step1–7`; second job 17141180 referenced in dir name but absent from remote-jobs.md — flag for cleanup when analysis complete. SLURM 16632292 (M-131, owner B, 2026-03-31) is 43 days old with no local results dir — check if results still needed. (4) Task counts: 13 OPEN specific + 3 ASSIGNED (M-175 d1, M-177 d2, M-080 C); standing tasks at P3 (≥6 open). New tasks since round 10: M-173 through M-186 (14 new, across Bugs/MCMC/Features/Documentation sections). Prev: round 10 (B).

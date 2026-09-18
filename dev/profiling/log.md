@@ -1,6 +1,12 @@
 # Profiling log — mkp
 
-Per-round notes from the `/profile` rotation. Each round profiles ONE focus area, verifies with a micro-bench, files at most one finding into `findings.md`, and refreshes `baselines.md`.
+Per-round notes from the `/profile` rotation. Each round profiles ONE focus area,
+verifies with a micro-bench, files at most one finding as a **GitHub issue**
+(label `profiling`; the issue number is the id), and refreshes `baselines.md`.
+
+**Findings are never written to a file.** `findings-archive.md` is frozen
+anti-duplication memory, not a work list. Round records, `[AT-LIMIT]` verdicts and
+same-round fixes stay here — they are records, not work.
 
 ## Round 0 — scaffolding — 2026-05-18
 
@@ -768,3 +774,15 @@ then a fresh implementation agent works against a concrete design.
 t018-adaptive-moves`). Salvaged files in /tmp left for now (small).
 
 last_focus: 18
+
+
+---
+
+## Recovered from `to-do.md` (2026-09-18)
+
+`to-do.md` was retired: its specific tasks became GitHub issues, and its
+standing-task rows were rotation records, not work. The accumulated round
+history of the **Performance profiling** standing task is preserved verbatim below. It predates
+the Discussions migration and is history, not a queue.
+
+**Standing: Performance profiling.** Profile the compiled MCMC hot path using VTune (see `r-package-profiling` skill) or `bench::mark()` microbenchmarks. Identify the current top hotspot after OPP-1–6. Check whether `pruning_jc_flat` / `pruning_jc_acrv_flat` show further vectorisation opportunities, whether chain-swap overhead is visible at scale, or whether R↔C++ boundary crossings dominate for small datasets. File any actionable findings as new `M-nnn` tasks. When completed, record the focus and key finding in Notes and reset to OPEN. Priority: same dynamic rule as S-RED. | Last run: 2026-03-31 round 5 (B, M-166). Focus: **VTune re-profile post M-156/M-157/M-158/M-164 optimizations.** Sun2018 (54 taxa, 225 all-trans, nCat=6), 5000 iters, 337s CPU. SW sampling (no admin). Compared to round 4 baseline (`vtune-out/`). **Key findings:** (1) `exp()` → `fast_neg_exp` (M-156): `_expl_internal` dropped from 11.7% to 0.1%; `fast_neg_exp` at 1.8% total — net ~10% CPU savings, the dominant improvement. (2) `pruning_jc_acrv_persite` share rose 59.1%→75.7% (absorbs ex-exp time). (3) `constant_site_prob_jc` (ascertainment) rose 6.6%→15.2% — now the clear #2 bottleneck. (4) `pruning_jc_acrv_flat` dropped 3.9%→0.6% (M-157 fused ascertainment, M-158 SPR partial CL, M-159 cache-aware scheduling). (5) M-164 pre-filter effect not separately quantifiable — multiple changes between baseline and current; per-iteration sweep cost roughly unchanged (pre-filter overhead may offset savings at this dataset scale). (6) Combined Gibbs sweep (persite+ascertainment+exp-like) = 92.7% of CPU (up from 77.4%). **Next bottleneck: `constant_site_prob_jc` at 15.2%** — batched ascertainment would give biggest remaining improvement. Results saved in `vtune-out-m166/`. Prev: round 4 (B) — baseline profile; filed M-156 fast_exp opportunity.
