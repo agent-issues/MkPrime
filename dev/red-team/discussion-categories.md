@@ -19,11 +19,11 @@ costs manual UI work and cannot be scripted or reviewed in a diff.
 
 ## ⚠️ GitHub caps a repository at 25 discussion categories
 
-11 area categories + 6 GitHub defaults = 17/25. **Delete the spare defaults while
+12 area categories + 6 GitHub defaults = 18/25. **Delete the spare defaults while
 they are still empty**: GitHub makes you re-home every post in a category before it
 can be deleted, so an empty `General`, `Ideas`, `Polls`, `Q&A` or `Show and tell` is
 free to remove today and expensive to remove later. `Announcements` is the one
-default worth keeping (maintainer notices). Doing that leaves 13 free slots.
+default worth keeping (maintainer notices). Doing that leaves 12 free slots.
 
 Adding a row to `focus-areas.md` later means creating its `area:N` label **and** its
 category — the label half is scriptable, the category half is not, and an issue
@@ -44,6 +44,7 @@ filed against a missing label simply fails.
 | 9 | `09 · Convergence diagnostics & ESS` | `09-convergence-diagnostics-ess` |
 | 10 | `10 · Test-suite health` | `10-test-suite-health` |
 | 11 | `11 · RB-oracle equivalence` | `11-rb-oracle-equivalence` |
+| 12 | `12 · Red-team process meta-review` | `12-red-team-process-meta-review` |
 
 Profiling does **not** get a category: the `/profile` skill keeps round records in
 `dev/profiling/log.md` by design (one serial rotation, and `log.md` doubles as the
