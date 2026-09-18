@@ -27,6 +27,31 @@ This is the same failure mode TreeSearch hit at its own migration (23 of 49 rows
 read as open when their fixes had landed). It is the reason status now lives in
 GitHub, where `Fixes #N` observes the merge, and not in a file.
 
+## The freeze missed a whole block, because it lived on a branch
+
+`GSPR-001` to `GSPR-005` were filed into `dev/red-team/findings.md` on
+`claude/esjd-proposal-scheduling-13cf5b`, which was never pushed. The copy of the
+file on `main` never carried them, so the freeze could not see them. They were
+found on 2026-09-18 by scanning every local and remote branch for ids absent from
+`main`; that scan found **no other** branch-only rows, so this block was the only
+gap. Filed as #19 (the pi-invariance defect and its stranded fix), #20 (GSPR-003)
+and #21 (GSPR-005); GSPR-002 and GSPR-004 are closed by the same stranded commit
+and are covered inside #19.
+
+**Generalise the lesson, not the fix.** A per-branch findings file is a store that
+can silently diverge, and a HIGH defect in a default-on move sat invisible to
+`main` for five weeks because of it. Issues live in one place per repo and cannot
+fork like this — which is the strongest single argument for the move off file mode.
+
+To re-run the check after any branch merges:
+
+```bash
+git show main:dev/red-team/findings-archive.md | awk -F'|' 'NF>5{print $2}' | tr -d ' ' | sort -u > /tmp/main-ids
+for b in $(git for-each-ref --format='%(refname:short)' refs/heads refs/remotes/origin); do
+  git show "$b:dev/red-team/findings.md" 2>/dev/null | awk -F'|' 'NF>5{print $2}' | tr -d ' ' | sort -u     | comm -23 - /tmp/main-ids | sed "s|^|$b: |"
+done
+```
+
 ## Not migrated
 
 - `EG-003` (prior shape determines `u_post`) — a **confirmed property of the

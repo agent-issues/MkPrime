@@ -80,7 +80,7 @@ the query above, and **must** carry the agent token — a discussion posted unde
 maintainer's account cannot be re-attributed, only deleted and rewritten:
 
 ```bash
-GH_TOKEN=$CLAUDE_GH_TOKEN_MS609 gh api graphql -F query=@/tmp/post.graphql
+GH_TOKEN=$CLAUDE_GH_TOKEN gh api graphql -F query=@/tmp/post.graphql
 ```
 
 Title format stamps the rung **and the version that ran**, per the skill:

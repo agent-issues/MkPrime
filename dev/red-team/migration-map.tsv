@@ -78,3 +78,8 @@ T-014	archive	profiling — ecology-aware branch workstream, not on main
 T-015	archive	profiling — REFUTED-AS-PHRASED 2026-05-21
 T-018	archive	profiling — APPLIED 2026-05-21
 (new)	#14	lead surfaced at migration: .RunSerialRuns passes checkpointFile = NULL
+GSPR-001	#19	branch-only row (claude/esjd-proposal-scheduling-13cf5b); defect live on main, fix stranded in fa821c0
+GSPR-002	#19	branch-only row; closed by the same stranded commit, covered inside #19
+GSPR-003	#20	branch-only row; CONFIRMED, weighted_spr HR unverified (default-off)
+GSPR-004	#19	branch-only row; closed by the same stranded commit, covered inside #19
+GSPR-005	#21	branch-only row; OPEN, gibbs_subtree_swap normaliser (default-on, untested)

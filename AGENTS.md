@@ -25,10 +25,10 @@ the append-only `src/` files.
 the human — GitHub will not let an account approve its own PR, so an object
 filed under the human's account is unreviewable by them. `~/.claude/CLAUDE.md`
 holds the mechanism and the token table; for this repo the token is
-`CLAUDE_GH_TOKEN_MS609`:
+`CLAUDE_GH_TOKEN`:
 
 ```bash
-GH_TOKEN=$CLAUDE_GH_TOKEN_MS609 gh pr create --base main --head <branch> --reviewer ms609 ...
+GH_TOKEN=$CLAUDE_GH_TOKEN gh pr create --base main --head <branch> --reviewer ms609 ...
 ```
 
 Reads need no prefix. `gh repo set-default` already points at the fork, so bare

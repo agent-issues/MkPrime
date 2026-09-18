@@ -21,8 +21,10 @@ to `Mk-prime/r`, so every PR is reviewable by the maintainer (GitHub will not le
 an account approve its own PR) and nothing reaches the release repo until the
 human syncs the fork. See the mirror table in `../../AGENTS.md`.
 
-Token for every write here is `CLAUDE_GH_TOKEN_MS609` — not `CLAUDE_GH_TOKEN`,
-whose fine-grained repository selection does not include this repo. The prefix
+Token for every write here is `CLAUDE_GH_TOKEN`. It is fine-grained and
+repository-*selected*, so a newly created repo in the org is invisible to it
+until it is both added to the selection **and** approved by an org owner — see
+`~/.claude/CLAUDE.md`. The prefix
 goes on `gh api graphql` for **Discussions** too, not just issues and PRs: a
 discussion posted under the wrong account must be deleted and rewritten, there is
 no re-attribution.
