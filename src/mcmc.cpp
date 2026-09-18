@@ -1928,7 +1928,8 @@ static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta) {
 
     preorder_into(workPar, workCh, workAbs, nTip,
                   INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
-    candLL[ci] = compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs);
+    candLL[ci] = compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs,
+                                        /*fillCharLLCache=*/false);  // FREEZE-003
 
     // Restore
     if (merged) {
@@ -3113,11 +3114,30 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
   if (!R_FINITE(newLogLik)) return false;
 
   // 14. Hastings ratio: proposal-density ratio + the SPR Jacobian.
-  //     Topology cancels by candidate-set symmetry, and the shared normaliser
-  //     sumM cancels because both directions enumerate the same configuration
-  //     set, leaving the selected configuration's weight.
   //
-  //     The Jacobian is not optional. The move merges (l_parent, l_sib) into
+  //     !! INCOMPLETE -- weightedSpr is default-off and must stay that way
+  //     until the cancellation below is verified (GSPR-003). The Jacobian
+  //     added here is necessary and correctly signed, but it is NOT
+  //     sufficient: adding it improved every statistic in
+  //     dev/red-team/heavy-tests/gibbs-spr-db.R by 2x-19x (int_frac relBias
+  //     -0.293 -> -0.015, ord_min -0.744 -> -0.379, simpson +0.460 -> +0.118)
+  //     yet residual biases of 9-38% REMAIN, so this move carries at least
+  //     one further defect.
+  //
+  //     Prime suspect, stated as the open question it is: the selfW / sumM
+  //     cancellation is ASSERTED, NOT VERIFIED. "Self" is enumerated over
+  //     bins of lMerge (:2962-2963) while candidates are enumerated over
+  //     bins of lReg, so the claim that both directions enumerate the same
+  //     configuration set with the same weights -- and hence that the shared
+  //     normaliser cancels -- does not obviously hold, and the measured
+  //     residual bias suggests it does not. Do not treat this comment as a
+  //     correctness argument; see issue #20.
+  //
+  //     (This is the hastings-tree-moves.md §5 trap: a confident comment
+  //     standing in for a verification that was never done cleared gibbs_spr
+  //     while it was not pi-invariant. Do not repeat it here.)
+  //
+  //     The Jacobian itself is not optional. The move merges (l_parent, l_sib) into
   //     lMerge and splits lReg into (f * lReg, (1 - f) * lReg), a bijection
   //     (l_parent, l_sib, lReg, fNew) <-> (lMerge, a, b, fOld) with fOld =
   //     l_parent / lMerge (:2952). It is block diagonal:
