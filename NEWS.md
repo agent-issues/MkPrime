@@ -1,5 +1,25 @@
 # MkPrime (development version)
 
+## §7a bit-identity fixture now pins its own starting tree
+
+`tests/testthat/test-partition-bitcompat-null.R` failed on every platform
+because its fixture called `RunMkPrime(tree = NULL)`. That delegates the
+starting topology to `TreeSearch::AdditionTree()` whenever `TreeSearch` is
+installed, so the entire chain depended on the installed version of a
+*Suggests* package that nothing pins. The stored reference could not be
+reproduced even by building `2b3c054`, the commit that generated it; CI, which
+resolves `TreeSearch` from CRAN, never reproduced it at all.
+
+The fixture now reads a pinned starting tree from
+`tests/testthat/_reference/partition-bitcompat-null-start.nwk` (a greedy
+parsimony addition tree over `Lobo.phy`, every edge 0.1), and the reference RDS
+has been regenerated against it.
+
+**No package behaviour changed.** Building `2b3c054` and `main` and running the
+fixture under each gives byte-identical output, so the comparator's
+discriminating power over the MkPrime sources is intact across every commit it
+has ever spanned; only its unpinned input changed.
+
 ## `geometric` arm's `marginal_k` default is now the unconditional (Model A) prior
 
 The default `priorVariant` for `kPrimePrior = "geometric"` is now `"unconditional"`

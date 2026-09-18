@@ -11,12 +11,34 @@
 # without regenerating the RDS AND updating NEWS.md to record the behavioural
 # change to the legacy partition = NULL code path (which the §7a contract
 # forbids except in the rate_neo -> eta_neo case noted in §7c).
+#
+# HERMETICITY (2026-09-18). The fixture pins its own starting tree, read from
+# _reference/partition-bitcompat-null-start.nwk. It must never call
+# RunMkPrime(tree = NULL): that delegates the starting topology to
+# TreeSearch::AdditionTree() when TreeSearch is installed, so the whole chain
+# then depends on the version of a *Suggests* package that nothing pins. That
+# is what invalidated the previous reference — it became unreproducible from
+# the very commit that generated it (2b3c054) as soon as the installed
+# TreeSearch moved on, and CI, which resolves TreeSearch from CRAN, could
+# never reproduce it at all. A comparator whose inputs are not pinned is not
+# a comparator.
+#
+# The MCMC itself is bit-identical given a pinned tree: the same values arise
+# on x86_64 Linux, aarch64 Linux, macOS and Windows, under both R release and
+# R devel.
 
 # Dataset: Lobo.phy via TreeTools::data(Lobo.phy). 48 tips, 110 chars after
-# invariant drop, all transformational (verified 2026-05-20). No neomorphic
+# invariant drop, all transformational (verified 2026-05-20; the same five
+# columns 17, 48, 106, 109, 115 are dropped in CI and locally). No neomorphic
 # chars => rate_neo / eta_neo code path is never exercised, so the §7a
 # bit-identity guarantee is robust under both readings of the rate_neo ->
 # eta_neo reparameterisation (§7c).
+
+# Path of the pinned starting tree, relative to tests/testthat/.
+.PartitionBitcompatStartTreePath <- function() {
+  testthat::test_path("_reference", "partition-bitcompat-null-start.nwk")
+}
+
 .RunPartitionBitcompatReference <- function() {
   # Lobo.phy is exported as an object from TreeTools (not a data() dataset).
   pd <- TreeTools::Lobo.phy
@@ -69,10 +91,15 @@
     joint2d          = FALSE
   )
 
+  # The pinned starting tree: a greedy parsimony addition tree over Lobo.phy
+  # with every edge set to 0.1 (total length 9.4), captured once to Newick so
+  # that no installed package decides it. ape::read.tree is deterministic for
+  # a fixed string, which is the only property the fixture needs — the edge
+  # ordering need not match whatever produced the string.
+  tree <- ape::read.tree(.PartitionBitcompatStartTreePath())
+
   set.seed(20260520L)
-  # tree = NULL: RunMkPrime builds a starting tree from the data
-  # (NJ with branch lengths). Same code path every time given the same seed.
-  RunMkPrime(data = mkd, tree = NULL, model = model, mcmc = mcmc,
+  RunMkPrime(data = mkd, tree = tree, model = model, mcmc = mcmc,
              fixTopology = FALSE, overwrite = TRUE)
 }
 

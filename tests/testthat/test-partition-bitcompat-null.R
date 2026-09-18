@@ -13,14 +13,28 @@
 #   (3) If unintentional, the failure indicates drift in the legacy code
 #       path that the partition API was contracted not to introduce — fix.
 #
-# The reference (samples matrix) was generated on 2026-05-20 from the
-# pre-partition-API state of feature/partition-api (commit 6f7d36f).
+# Before concluding (2), check that the difference really is the package and
+# not the environment: build the commit that generated the reference and run
+# the fixture under it. If that also fails to reproduce the stored values,
+# the fixture has an unpinned input and regenerating would hide nothing —
+# fix the input instead. That is how the 2026-09-18 breakage was diagnosed.
+#
+# The reference (samples matrix) was regenerated on 2026-09-18 against a
+# pinned starting tree (_reference/partition-bitcompat-null-start.nwk). The
+# previous reference dated from 2b3c054 and delegated its starting topology
+# to TreeSearch::AdditionTree(), so it silently depended on the installed
+# version of a Suggests package; see helper-partition-ref.R.
 
 test_that("§7a bit-identity: partition = NULL reproduces stored reference", {
   ref_path <- .PartitionBitcompatReferencePath()
   testthat::skip_if_not(file.exists(ref_path),
     paste("Reference RDS not found at", ref_path,
           "— regenerate via tests/testthat/_reference/generate-partition-bitcompat-null.R."))
+
+  tree_path <- .PartitionBitcompatStartTreePath()
+  testthat::skip_if_not(file.exists(tree_path),
+    paste("Pinned starting tree not found at", tree_path,
+          "— the fixture cannot be reproduced without it."))
 
   ref <- readRDS(ref_path)
 
