@@ -77,9 +77,9 @@ test_that("§7a bit-identity: partition = NULL reproduces stored reference", {
   expect_identical(result$actual_iter,        ref$actual_iter)
   expect_identical(result$treeThin,           ref$treeThin)
 
-  # The load-bearing assertion. 1e-9 is relative, so it sits some seven orders
-  # of magnitude above the largest inter-platform spread measured (~1e-15 on
-  # arm64) and many more below the whole-nat divergence a genuine change to the
-  # legacy path produces. See helper-partition-ref.R.
+  # The load-bearing assertion. 1e-9 is relative, so it sits six to seven
+  # orders of magnitude above the inter-platform spread measured (~2e-16 on
+  # x86_64, ~2e-15 on arm64) and six below the ~1e-3 divergence a genuine
+  # change to the legacy path produces. See helper-partition-ref.R.
   expect_equal(result$samples, ref$samples, tolerance = 1e-9)
 })

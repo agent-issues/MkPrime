@@ -69,8 +69,9 @@
 #
 # The tolerance retains the power the comparator is for. The chain is
 # chaotic: any genuine change to the legacy path flips an accept/reject
-# within a few iterations and diverges by whole nats, some twelve orders of
-# magnitude above the ~1e-16 relative spread seen between platforms. What a
+# within a few iterations and diverges by whole nats -- a relative difference
+# near 1e-3, thirteen orders of magnitude above the ~2e-16 relative spread
+# seen between platforms, with the 1e-9 tolerance six orders below it. What a
 # tolerant comparison cannot catch is a drift smaller than that spread, which
 # no comparator run on more than one machine could catch either.
 #

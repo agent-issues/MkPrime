@@ -61,11 +61,11 @@ of 0.1, arriving as 9.399999999999980.
 
 Nothing is lost by tolerating that. The chain is chaotic, so a genuine change
 to the legacy path flips an accept/reject within a few iterations and diverges
-by whole nats — a relative difference near `1e-3`. The tolerance sits seven
-orders of magnitude above the platform spread and six below that, so it catches
-everything the bit-exact comparison caught except a drift smaller than the
-noise between two machines, which no comparator run on more than one machine
-could catch either. The schema assertions remain exact on every platform, and
+by whole nats — a relative difference near `1e-3`. The tolerance sits six to
+seven orders of magnitude above the platform spread and six below that, so it
+catches everything the bit-exact comparison caught except a drift smaller than
+the noise between two machines, which no comparator run on more than one
+machine could catch either. The schema assertions remain exact on every platform, and
 bit-identity where it is a real property — two runs of one build in one process
 under one seed — is asserted by `test-determinism-gibbs-subtree-swap.R`.
 
