@@ -8,9 +8,10 @@
 # the stored RDS via expect_identical().
 #
 # Any change to this helper invalidates the stored reference. Do not modify
-# without regenerating the RDS AND updating NEWS.md to record the behavioural
-# change to the legacy partition = NULL code path (which the §7a contract
-# forbids except in the rate_neo -> eta_neo case noted in §7c).
+# without regenerating the RDS AND setting out, in the pull request that does
+# it, the behavioural change to the legacy partition = NULL code path (which
+# the §7a contract forbids except in the rate_neo -> eta_neo case noted in
+# §7c). The PR is the record; NEWS.md is not written to (see AGENTS.md).
 #
 # HERMETICITY (2026-09-18). The fixture pins its own starting tree, read from
 # _reference/partition-bitcompat-null-start.nwk. It must never call

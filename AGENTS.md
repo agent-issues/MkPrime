@@ -4,27 +4,21 @@ You MUST read the `r-conventions` skill before writing any code.
 
 ## GitHub: the `agent-issues` mirror
 
-Set up 2026-09-18, matching `../TreeSearch`. Two remotes, and they are not
-interchangeable:
+Two remotes, which are not interchangeable:
 
 | Remote | Repo | Role |
 |--------|------|------|
-| `origin` | `agent-issues/MkPrime` (private fork) | **All agent work.** Branches, PRs, issues, Discussions, CI. |
-| `upstream` | `Mk-prime/r` (private) | Release/reference repo. Fetch only — push URL is `no-push-use-gha`. |
+| `origin` | `agent-issues/MkPrime` (fork) | **All agent work.** Branches, PRs, issues, Discussions, CI. |
+| `upstream` | `Mk-prime/r` | Release/reference repo. Fetch only — push URL is `no-push-use-gha`. |
 
-Both repos use `main`; there is no intermediate integration branch. The fork's
-default branch is `main`, so `Fixes #N` in a PR body closes the issue on merge.
+The fork's default branch is `main`, so `Fixes #N` in a PR body closes the issue on merge.
 
 **Never push to `upstream`, under any identity.** Work reaches `Mk-prime/r`
 only when the human syncs the fork — that sync *is* the "everything on
-`Mk-prime/r` is human-cleared" gate. One direct commit upstream turns every
-later sync into a real merge, with conflicts on `DESCRIPTION`, `NAMESPACE` and
-the append-only `src/` files.
+`Mk-prime/r` is human-cleared" gate.
 
-**Everything you create on GitHub must be authored by `ms609-agent`**, not by
-the human — GitHub will not let an account approve its own PR, so an object
-filed under the human's account is unreviewable by them. `~/.claude/CLAUDE.md`
-holds the mechanism and the token table; for this repo the token is
+**Everything you create on GitHub must be authored by `ms609-agent`**.
+`~/.claude/CLAUDE.md` holds the mechanism and the token table; for this repo the token is
 `CLAUDE_GH_TOKEN`:
 
 ```bash
@@ -35,25 +29,22 @@ Reads need no prefix. `gh repo set-default` already points at the fork, so bare
 `gh issue`/`gh pr`/`gh run` commands hit `agent-issues/MkPrime`.
 
 **`git push` must also go out as `ms609-agent` here — this repo is the exception to the
-rule in `~/.claude/CLAUDE.md` that push identity does not matter.** `main` carries the
-"Green to merge" ruleset (pull request required, 3 status checks). `ms609` can bypass it,
-so a push under the human's credentials silently lands on `main` unreviewed and unchecked
-— it prints `Bypassed rule violations` and succeeds anyway. `ms609-agent` cannot bypass,
-so pushing as the agent is what makes the protection real. Pull the token into a shell
-variable and hand it to a one-shot credential helper, so the value never reaches the
-transcript:
+rule in `~/.claude/CLAUDE.md` that push identity does not matter.**
+`ms609-agent` cannot bypass branch protection, so pushing as the agent is what makes the protection real.
+Pull the token into a shell variable and hand it to a one-shot credential helper,
+so the value never reaches the transcript:
 
 ```bash
-TOKEN=$(powershell.exe -NoProfile -Command   "[Environment]::GetEnvironmentVariable('CLAUDE_GH_TOKEN','User')" | tr -d '')
+TOKEN=$(powershell.exe -NoProfile -Command   "[Environment]::GetEnvironmentVariable('CLAUDE_GH_TOKEN','User')" | tr -d '
+')
 git -c credential.helper='!f() { echo username=ms609-agent; echo "password=$TOKEN"; }; f'   push -u origin <branch>
 ```
 
-**Never commit in `C:/Users/pjjg18/GitHub/mkp` itself.** That checkout is shared, sits on
-`main`, and is where a "quick doc fix" turns into a direct push to a protected branch. Every
-change — including documentation — goes on a branch in a worktree under
+**Never commit in `C:/Users/pjjg18/GitHub/mkp` itself.**
+Every change — including documentation — goes on a branch in a worktree under
 `../worktrees/<name>` and reaches `main` through a PR.
 
-**Where things live now:**
+**Where things live:**
 
 | Record | Home |
 |--------|------|
@@ -62,10 +53,14 @@ change — including documentation — goes on a branch in a worktree under
 | Red-team round records | GitHub Discussions, one category per focus area |
 | Scope, tiers, drivers, proofs, harnesses | `dev/red-team/`, `dev/profiling/` |
 
-No file anywhere carries a status column — `Fixes #N` observes the merge, a
-markdown table cannot. `dev/red-team/findings-archive.md` and
-`dev/profiling/findings-archive.md` are **frozen** anti-duplication memory, not
-work lists.
+No file carries a status column. 
+`dev/red-team/findings-archive.md` and `dev/profiling/findings-archive.md` are
+**frozen** anti-duplication memory.
+
+## `NEWS.md` is empty, and stays empty
+
+**Do not write to `NEWS.md`.** 
+This overrides the `r-conventions` default.
 
 ## Dispatcher
 
