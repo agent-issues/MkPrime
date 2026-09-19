@@ -655,6 +655,15 @@ LogPrior <- function(state, model, mkd) {
   hasTrans <- length(transIdx) > 0L
 
   if (hasTrans) {
+    # A bare any() on an NA-bearing vector makes the if() below raise, blaming
+    # the prior for what is a data-ingestion or state-corruption bug upstream.
+    naIdx <- transIdx[is.na(state$kPrime[transIdx]) | is.na(mkd$kObs[transIdx])]
+    if (length(naIdx) > 0L) {
+      cli::cli_abort(
+        "{cli::qty(length(naIdx))}Missing {.field kPrime} or {.field kObs} at
+         character{?s} {naIdx}."
+      )
+    }
     if (any(state$kPrime[transIdx] < mkd$kObs[transIdx])) return(-Inf)
 
     if (identical(model$kPrimePrior, "geometric") ||

@@ -3918,14 +3918,12 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   isEmpGeom <- identical(model$kPrimePrior, "empirical_geometric")
   emp <- model$empiricalNObs
   empLogBody <- numeric(0)
-  empBodyLastK <- 1L
   empTailStartK <- 0L
   empTailDecay <- 0.0
   empLogTailStartP <- -Inf
   if (isEmpGeom && !is.null(emp)) {
     body <- as.numeric(emp$body)
     empLogBody <- ifelse(body > 0, log(body), -Inf)
-    empBodyLastK <- 1L + length(body)
     empTailStartK <- as.integer(emp$tail_start_k)
     empTailDecay <- as.numeric(emp$tail_decay)
     empLogTailStartP <- if (emp$tail_start_p > 0) log(emp$tail_start_p) else -Inf
@@ -3948,7 +3946,6 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     model$betaScaleRate %||% 1.0,
     isEmpGeom,
     empLogBody,
-    empBodyLastK,
     empTailStartK,
     empTailDecay,
     empLogTailStartP,
