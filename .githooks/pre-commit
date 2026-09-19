@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Enforce the r-conventions style rules on each contribution.
+#
+# The global Stop hooks (lint-changed.R, terseness-check.R) resolve the tree to
+# inspect from the session's working directory. Here that is the shared `main`
+# checkout, which agents must never edit -- every contribution lands in a
+# sibling worktree, so those hooks diff a tree that never changes and enforce
+# nothing. A pre-commit hook runs in the worktree being committed to, which is
+# exactly the tree that changed, so it needs no heuristic to find the work.
+#
+# Both linters scope themselves to the lines this branch changed, so legacy
+# code is never flagged. Set MKP_SKIP_LINT=1 to bypass for one commit.
+
+set -u
+
+[ "${MKP_SKIP_LINT:-0}" = "1" ] && exit 0
+
+HOOKDIR="$HOME/.claude/hooks"
+command -v Rscript >/dev/null 2>&1 || exit 0   # fail open: no R, no opinion
+
+Run() {  # $1 = linter filename; echoes its report, returns its exit status
+  [ -f "$HOOKDIR/$1" ] || return 0
+  echo '{}' | Rscript --default-packages=NULL "$HOOKDIR/$1" 2>&1
+}
+
+status=0
+
+# lintr findings are objective, so they gate the commit.
+out=$(Run lint-changed.R); rc=$?
+if [ "$rc" = "2" ] && [ -n "$out" ]; then
+  echo "$out"
+  status=1
+fi
+
+# The terseness check asks whether a comment narrates the diff -- a judgement
+# it cannot make for you, and it reports every changed comment line to prompt
+# that review. Advisory here: printed, never blocking.
+out=$(Run terseness-check.R); rc=$?
+if [ "$rc" = "2" ] && [ -n "$out" ]; then
+  echo "$out"
+  echo "(advisory -- not blocking this commit)"
+fi
+
+if [ "$status" != "0" ]; then
+  echo ""
+  echo "Commit blocked by r-conventions. Fix the lines above, or annotate a"
+  echo "genuine exception (# nolint: <linter>. # reason). To bypass once:"
+  echo "  MKP_SKIP_LINT=1 git commit ..."
+fi
+
+exit $status

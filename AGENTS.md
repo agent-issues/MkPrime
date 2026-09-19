@@ -88,6 +88,29 @@ before starting work in that area:
 
 ---
 
+## Style enforcement: enable the pre-commit hook
+
+One-time, per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+This is required, not optional. The global `r-conventions` Stop hooks
+(`lint-changed.R`, `terseness-check.R`) find the tree to inspect with
+`git rev-parse --show-toplevel` from the session's working directory — which
+in this repo is the shared `main` checkout that agents must never edit. Every
+real contribution lands in a sibling worktree, so those hooks diff a tree that
+never changes, pass, and enforce nothing. `.githooks/pre-commit` runs inside
+the worktree being committed to, so it sees exactly the changed files.
+
+`lintr` findings block the commit; the diff-narration check is advisory and
+only prints. Both scope themselves to the lines the branch changed, so legacy
+code is never flagged. `MKP_SKIP_LINT=1 git commit ...` bypasses for one
+commit. The config is repo-local and shared by every worktree of this clone.
+
+---
+
 ## Worktree note
 
 No active worktrees. Active feature branches: `feature/het-dirichlet-marginal`,
