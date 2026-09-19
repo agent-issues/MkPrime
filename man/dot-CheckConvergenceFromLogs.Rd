@@ -11,4 +11,11 @@ Reads each run's log file via \code{\link[=ReadMkLog]{ReadMkLog()}}, extracts ke
 and computes ESS (all runs combined) and R-hat (when \code{nRuns >= 2}).
 Returns \code{NULL} if any log is missing or has fewer than 10 rows.
 }
+\details{
+Tree ESS is deliberately absent: trees are not written to the log files, so
+this path cannot evaluate \code{minTreeEss} and returns \code{treeEss = NA_real_}. The
+criterion is enforced per run by \code{\link[=.CheckConvergence]{.CheckConvergence()}} instead. Documented
+on \code{minTreeEss} in \code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}}; whether the silent non-enforcement also
+deserves a warning is a maintainer call, not settled here.
+}
 \keyword{internal}
