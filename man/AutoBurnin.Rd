@@ -7,7 +7,7 @@
 AutoBurnin(posterior, rhatThreshold = 1.05, fractions = seq(0, 0.5, by = 0.05))
 }
 \arguments{
-\item{posterior}{An \code{MkPosterior} object (typically with \code{nRuns >= 2}).}
+\item{posterior}{\code{MkPosterior} object whose burnin to set.}
 
 \item{rhatThreshold}{Maximum acceptable R-hat. Default 1.05.}
 

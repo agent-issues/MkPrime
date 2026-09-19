@@ -49,7 +49,9 @@
 #'   without constructing a separate object. Cannot be combined with an
 #'   explicit `mcmc` argument.
 #'
-#' @return An `MkPosterior` object.
+#' @return An `MkPosterior` object. Each run adapts its move schedule
+#'   independently, so `$moveWeights` holds run 1's frozen schedule;
+#'   `$runMoveWeights` lists every run's.
 #'
 #' @section Inline MCMC options:
 #'
@@ -2632,6 +2634,7 @@ RunMkPrime <- function(data, tree = NULL,
   result$treeThin        <- mcmc$treeThin
   result$requested_nRuns <- requestedRuns    # PAR-009
   result$dropped_runs    <- drops            # PAR-008
+  result$runMoveWeights <- lapply(perRunSummaries, `[[`, "moveWeights")
   result
 }
 
@@ -4646,8 +4649,15 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   freeSum   <- sum(weights[freeIdx])
 
   weights[[gibbsKpIdx]] <- gibbsTarget
-  if (length(freeIdx) > 0L && freeSum > 1e-12)
+  if (length(freeIdx) > 0L && freeSum > 1e-12) {
     weights[freeIdx] <- weights[freeIdx] + delta * weights[freeIdx] / freeSum
+  } else {
+    # No free move can absorb the freed weight. Renormalizing yields the
+    # schedule mcmc.cpp samples from anyway, so the cap still binds -- but
+    # the vector printed, logged, checkpointed and returned as
+    # `MkPosterior$moveWeights` stays a probability vector.
+    weights <- weights / sum(weights)
+  }
   weights
 }
 
@@ -4671,8 +4681,12 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   freeSum   <- sum(weights[freeIdx])
 
   weights[[gibbsKpIdx]] <- gibbsPin
-  if (length(freeIdx) > 0L && freeSum > delta)
+  if (length(freeIdx) > 0L && freeSum > delta) {
     weights[freeIdx] <- weights[freeIdx] * (freeSum - delta) / freeSum
+  } else {
+    # As in .WarmupGibbsCap: the free moves cannot fund the restoration.
+    weights <- weights / sum(weights)
+  }
   weights
 }
 

@@ -159,23 +159,20 @@ print.MkpDiagnostics <- function(x, ...) {
   # kPrime summary row (min / median / max) -- compact numbers, no fixed width
   if (length(kPrimeNms) > 0L) {
     kpEss <- x$ess[kPrimeNms]
-    kpMin <- min(kpEss, na.rm = TRUE)
-    kpMed <- median(kpEss, na.rm = TRUE)
-    kpMax <- max(kpEss, na.rm = TRUE)
     essRange <- paste0(
-      .ColorEss(kpMin), " / ",
-      .ColorEss(kpMed), " / ",
-      .ColorEss(kpMax),
+      .ColorEss(.MinOrNA(kpEss)), " / ",
+      .ColorEss(median(kpEss, na.rm = TRUE)), " / ",
+      .ColorEss(.MaxOrNA(kpEss)),
       "  (min/med/max)"
     )
     label <- sprintf("kPrime (%d)", length(kPrimeNms))
-    if (hasRhat && any(kPrimeNms %in% names(x$rhat))) {
-      kpRhat <- x$rhat[kPrimeNms[kPrimeNms %in% names(x$rhat)]]
-      rhatRange <- sprintf("%.3f\u2013%.3f",
-        min(kpRhat, na.rm = TRUE), max(kpRhat, na.rm = TRUE))
-      cat(sprintf("  %-20s  %s  Rhat %s\n", label, essRange, rhatRange))
-    } else {
+    kpRhat <- if (hasRhat) x$rhat[intersect(kPrimeNms, names(x$rhat))]
+    rhatMin <- if (length(kpRhat) > 0L) .MinOrNA(kpRhat) else NA_real_
+    if (is.na(rhatMin)) {
       cat(sprintf("  %-20s  %s\n", label, essRange))
+    } else {
+      rhatRange <- sprintf("%.3f\u2013%.3f", rhatMin, .MaxOrNA(kpRhat))
+      cat(sprintf("  %-20s  %s  Rhat %s\n", label, essRange, rhatRange))
     }
   }
 

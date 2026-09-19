@@ -61,3 +61,47 @@ test_that("a mixing window is still assessed normally", {
   expect_true(is.finite(res$maxRhat))
   expect_true(res$converged)
 })
+
+
+# --- #128: all-NA diagnostics must display as NA ---
+#
+# `.MinOrNA`/`.MaxOrNA` guard the computation. The print path reduces the
+# k' rows separately and needs the same guards: a bare `min`/`max` over an
+# all-NA vector warns, and yields `-Inf` for the display to render.
+
+test_that("all-NA k' diagnostics print as NA, not Inf (#128)", {
+  diag <- structure(
+    list(ess = c(log_posterior = NA_real_, tree_length = NA_real_,
+                 kPrime_1 = NA_real_, kPrime_2 = NA_real_),
+         minEss = NA_real_,
+         rhat = c(log_posterior = NA_real_,
+                  kPrime_1 = NA_real_, kPrime_2 = NA_real_),
+         maxRhat = NA_real_, treeEss = NULL,
+         nRuns = 2L, nSamples = 0L, burnin = 0L),
+    class = "MkpDiagnostics")
+
+  expect_no_warning(out <- capture.output(print(diag)))
+  expect_false(any(grepl("Inf", out, fixed = TRUE)))
+  expect_true(any(grepl("kPrime (2)", out, fixed = TRUE)))
+})
+
+
+test_that("print on a zero-run MkPosterior is quiet and says so (#128)", {
+  paramNames <- c("log_posterior", "log_likelihood", "tree_length")
+  post <- MkPosterior(
+    samples = matrix(numeric(0), 0L, length(paramNames),
+                     dimnames = list(NULL, paramNames)),
+    trees = list(), acceptance = numeric(0),
+    model = NULL, data = NULL, mcmc = list(thin = 1L),
+    warmup = 0L, tuning = list()
+  )
+  post$nRuns <- 0L
+  post$nSamples <- 0L
+  post$stop_reason <- "maxTime"
+
+  # cli writes its alerts to the message stream, not to stdout.
+  expect_no_warning(
+    msgs <- capture.output(print(post), type = "message")
+  )
+  expect_true(any(grepl("No runs completed", cli::ansi_strip(msgs))))
+})
