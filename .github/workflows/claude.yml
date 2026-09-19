@@ -1,0 +1,72 @@
+# Respond to @claude mentions on issues, pull requests and reviews.
+#
+# Interactive mode: no `prompt` input, so the action waits for the trigger
+# phrase rather than running a fixed task. Claude replies in a comment on the
+# triggering issue or PR and updates it as it works.
+#
+# Requires the CLAUDE_CODE_OAUTH_TOKEN repository secret (generate with
+# `claude setup-token`). That authenticates against the Max subscription, so
+# runs draw on subscription usage rather than API billing. GitHub Actions
+# minutes are billed separately either way.
+#
+# This file has to be on `main` to do anything: GitHub runs `issue_comment`
+# and review-event workflows from the default branch only, never from the
+# branch of the PR being commented on.
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  # Review *bodies* -- the "Request changes" / "Approve" text box -- are a
+  # `pull_request_review` event, not a comment event. The upstream starter
+  # workflow omits this, so an @claude left in a review summary is silently
+  # dropped. Included here because that is how reviews get left on this repo.
+  pull_request_review:
+    types: [submitted]
+  issues:
+    types: [opened, assigned]
+
+name: Claude
+
+# One Claude run per issue/PR at a time; a second mention supersedes the
+# first rather than racing it. Not `cancel-in-progress` on the *workflow*,
+# because two different PRs must be able to run concurrently.
+concurrency:
+  group: claude-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  claude:
+    # Keeps a runner from starting on the many comments that don't mention
+    # Claude. The action re-checks the trigger phrase itself; this is purely
+    # to avoid paying for a runner that would immediately exit.
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: write        # push branches
+      pull-requests: write   # open PRs, comment
+      issues: write          # comment on issues
+      id-token: write        # required for the action's GitHub App auth
+      actions: read          # read CI results on PRs
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # `github_token` deliberately unset: the action then authenticates
+          # as the Claude GitHub App, whose pushes DO trigger R-CMD-check and
+          # the sanitisers. Passing the default GITHUB_TOKEN instead would
+          # leave Claude's commits with no CI at all.
+          claude_args: |
+            --max-turns 30
