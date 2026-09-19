@@ -14,7 +14,7 @@ mkp_stepping_stone(
   warmup = 200L,
   alpha = 0.3,
   fixTopology = FALSE,
-  verbose = .Loud()
+  verbose = MkPrimeVerbosity() > 0L
 )
 }
 \arguments{

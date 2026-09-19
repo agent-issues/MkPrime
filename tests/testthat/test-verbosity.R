@@ -9,6 +9,66 @@ test_that("MkPrimeVerbosity() reads the option", {
   expect_equal(MkPrimeVerbosity(), 2L)
 })
 
+test_that("MkPrimeVerbosity(n) sets the option and returns the old level", {
+  withr::local_options(MkPrime.verbosity = 1)
+
+  # Returns the level in force BEFORE the call, not the one it installs.
+  expect_equal(MkPrimeVerbosity(0), 1L)
+  expect_equal(getOption("MkPrime.verbosity"), 0L)
+  expect_equal(MkPrimeVerbosity(), 0L)
+
+  expect_equal(MkPrimeVerbosity(2), 0L)
+  expect_equal(MkPrimeVerbosity(), 2L)
+
+  # The option is stored as an integer, whatever was passed.
+  expect_identical(getOption("MkPrime.verbosity"), 2L)
+  MkPrimeVerbosity(1.9)
+  expect_identical(getOption("MkPrime.verbosity"), 1L)
+})
+
+test_that("MkPrimeVerbosity(n) returns invisibly, and reads visibly", {
+  withr::local_options(MkPrime.verbosity = 1)
+  expect_invisible(MkPrimeVerbosity(0))
+  expect_visible(MkPrimeVerbosity())
+})
+
+test_that("MkPrimeVerbosity(old) restores the previous level", {
+  withr::local_options(MkPrime.verbosity = 2)
+
+  Quiet <- function() {
+    old <- MkPrimeVerbosity(0)
+    on.exit(MkPrimeVerbosity(old), add = TRUE)
+    MkPrimeVerbosity()
+  }
+
+  expect_equal(Quiet(), 0L)
+  expect_equal(MkPrimeVerbosity(), 2L)
+})
+
+test_that("MkPrimeVerbosity(n) rejects a bad n without touching the option", {
+  withr::local_options(MkPrime.verbosity = 2)
+
+  expect_error(MkPrimeVerbosity("loud"), "must be a single number")
+  expect_equal(getOption("MkPrime.verbosity"), 2)
+
+  expect_error(MkPrimeVerbosity(NA), "must be a single number")
+  expect_error(MkPrimeVerbosity(1:2), "must be a single number")
+  expect_equal(getOption("MkPrime.verbosity"), 2)
+})
+
+test_that("MkPrimeVerbosity(n) reports the fallback when the option is junk", {
+  withr::local_options(MkPrime.verbosity = "loud")
+
+  # The level in force was effectively the 1 fallback, so that is what a set
+  # returns -- restoring it repairs the option instead of reinstating junk.
+  expect_warning(old <- MkPrimeVerbosity(0), "must be a single number")
+  expect_equal(old, 1L)
+  expect_equal(getOption("MkPrime.verbosity"), 0L)
+
+  expect_silent(MkPrimeVerbosity(old))
+  expect_equal(getOption("MkPrime.verbosity"), 1L)
+})
+
 test_that("MkPrimeVerbosity() warns on a nonsense option", {
   withr::local_options(MkPrime.verbosity = "loud")
   expect_warning(v <- MkPrimeVerbosity(), "must be a single number")

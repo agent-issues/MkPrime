@@ -7,8 +7,8 @@
 .Loud(level = 1L)
 }
 \arguments{
-\item{level}{Integer giving the verbosity level at which a message becomes
-visible.}
+\item{level}{Integer giving the verbosity level at which a message
+becomes visible.}
 }
 \value{
 Logical; \code{TRUE} when the message should be printed.

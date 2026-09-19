@@ -4,10 +4,26 @@
 \alias{MkPrimeVerbosity}
 \title{Control MkPrime's console output}
 \usage{
-MkPrimeVerbosity()
+MkPrimeVerbosity(n)
+}
+\arguments{
+\item{n}{Integer giving the level to set. When missing, the level is read
+rather than changed.}
 }
 \value{
-\code{MkPrimeVerbosity()} returns the current level as an integer.
+The level in force \emph{before} the call, as an integer -- whether or not \code{n}
+was supplied. Returned invisibly when \code{n} sets a new level, and visibly
+when the level is only read. That is the \code{options()} idiom, and it is what
+makes a level change restorable:
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{old <- MkPrimeVerbosity(0)
+on.exit(MkPrimeVerbosity(old), add = TRUE)
+}\if{html}{\out{</div>}}
+
+A malformed \code{MkPrime.verbosity} option warns and reads as \code{1}, so that is
+also what a call returns for it -- restoring the returned value repairs the
+option rather than reinstating the malformed one. An invalid \code{n} aborts and
+leaves the option untouched.
 }
 \description{
 MkPrime narrates a run as it goes: phase transitions, adapted tuning
@@ -15,8 +31,9 @@ settings, a progress bar, and notes about files it has written or rewound.
 \code{verbosity} selects how much of that narration reaches the console.
 }
 \details{
-The option \code{MkPrime.verbosity} sets the level globally; functions that take
-a \code{verbosity} argument override it for the duration of that call.
+\code{MkPrimeVerbosity(n)} sets the level globally, as does setting the option
+\code{MkPrime.verbosity} directly; functions that take a \code{verbosity} argument
+override it for the duration of that call.
 
 Levels are cumulative:
 \itemize{
@@ -27,12 +44,16 @@ to see (chain stabilisation, frozen move weights, files written).
 \item \code{2}: tuning and adaptation diagnostics, e.g. per-move weight decay.
 }
 
-Set \code{options(MkPrime.verbosity = 0)} in a test setup file to keep the
-testthat log clean; a test that asserts on a message should raise the level
-for itself with \code{\link[withr:local_options]{withr::local_options()}} and set an expectation.
+The package's own test suite sets \code{0}, so a test that asserts on console
+output must raise the level for itself.
 }
 \examples{
 MkPrimeVerbosity()
+
+# Silence MkPrime for one block, then put the level back.
+old <- MkPrimeVerbosity(0)
+MkPrimeVerbosity()
+MkPrimeVerbosity(old)
 }
 \seealso{
 \code{\link[=RunMkPrime]{RunMkPrime()}}, which takes a \code{verbosity} argument.

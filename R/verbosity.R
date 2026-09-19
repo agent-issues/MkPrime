@@ -5,8 +5,9 @@
 #' `verbosity` selects how much of that narration reaches the console.
 #'
 #' @details
-#' The option `MkPrime.verbosity` sets the level globally; functions that take
-#' a `verbosity` argument override it for the duration of that call.
+#' `MkPrimeVerbosity(n)` sets the level globally, as does setting the option
+#' `MkPrime.verbosity` directly; functions that take a `verbosity` argument
+#' override it for the duration of that call.
 #'
 #' Levels are cumulative:
 #'
@@ -19,25 +20,55 @@
 #' The package's own test suite sets `0`, so a test that asserts on console
 #' output must raise the level for itself.
 #'
+#' @param n Integer giving the level to set. When missing, the level is read
+#'   rather than changed.
+#'
 #' @return
-#' `MkPrimeVerbosity()` returns the current level as an integer.
+#' The level in force *before* the call, as an integer -- whether or not `n`
+#' was supplied. Returned invisibly when `n` sets a new level, and visibly
+#' when the level is only read. That is the `options()` idiom, and it is what
+#' makes a level change restorable:
+#'
+#' ```r
+#' old <- MkPrimeVerbosity(0)
+#' on.exit(MkPrimeVerbosity(old), add = TRUE)
+#' ```
+#'
+#' A malformed `MkPrime.verbosity` option warns and reads as `1`, so that is
+#' also what a call returns for it -- restoring the returned value repairs the
+#' option rather than reinstating the malformed one. An invalid `n` aborts and
+#' leaves the option untouched.
 #'
 #' @examples
 #' MkPrimeVerbosity()
+#'
+#' # Silence MkPrime for one block, then put the level back.
+#' old <- MkPrimeVerbosity(0)
+#' MkPrimeVerbosity()
+#' MkPrimeVerbosity(old)
 #' @seealso [RunMkPrime()], which takes a `verbosity` argument.
 #' @export
-MkPrimeVerbosity <- function() {
+MkPrimeVerbosity <- function(n) {
   v <- getOption("MkPrime.verbosity", 1L)
-  if (!is.numeric(v) || length(v) != 1L || is.na(v)) {
+  before <- if (!is.numeric(v) || length(v) != 1L || is.na(v)) {
     cli::cli_warn(c(
       "Option {.code MkPrime.verbosity} must be a single number.",
       "i" = "Falling back to {.val 1}."
     ))
-    # Return:
     1L
   } else {
-    # Return:
     as.integer(v)
+  }
+
+  if (missing(n)) {
+    # Return:
+    before
+  } else {
+    # .CheckVerbosity() aborts on a malformed `n`, so the option is only
+    # touched once `n` is known to be good.
+    options(MkPrime.verbosity = .CheckVerbosity(n))
+    # Return:
+    invisible(before)
   }
 }
 
