@@ -40,11 +40,19 @@ jobs:
     # Keeps a runner from starting on the many comments that don't mention
     # Claude. The action re-checks the trigger phrase itself; this is purely
     # to avoid paying for a runner that would immediately exit.
+    # ms609-agent is a user account, not a bot, so the action's own
+    # bot-actor loop guard does not cover it. Claude now posts *as*
+    # ms609-agent, and its progress comments quote the request that
+    # summoned it -- including the literal "@claude". Without this line
+    # that is an unbounded self-trigger loop, billed to the subscription
+    # and to Actions minutes. Cost: other agent sessions cannot summon
+    # Claude; they must ask via ms609.
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      github.actor != 'ms609-agent' &&
+      ((github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude'))))
 
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -64,9 +72,10 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # `github_token` deliberately unset: the action then authenticates
-          # as the Claude GitHub App, whose pushes DO trigger R-CMD-check and
-          # the sanitisers. Passing the default GITHUB_TOKEN instead would
-          # leave Claude's commits with no CI at all.
+          # Act as ms609-agent, per the repo's identity rule, rather than as
+          # the Claude GitHub App. A PAT-authenticated push still triggers
+          # R-CMD-check and the sanitisers; the default GITHUB_TOKEN would
+          # not, which is why that is never the right value here.
+          github_token: ${{ secrets.CLAUDE_GH_TOKEN }}
           claude_args: |
             --max-turns 30
