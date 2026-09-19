@@ -35,8 +35,7 @@ Pull the token into a shell variable and hand it to a one-shot credential helper
 so the value never reaches the transcript:
 
 ```bash
-TOKEN=$(powershell.exe -NoProfile -Command   "[Environment]::GetEnvironmentVariable('CLAUDE_GH_TOKEN','User')" | tr -d '
-')
+TOKEN=$(powershell.exe -NoProfile -Command   "[Environment]::GetEnvironmentVariable('CLAUDE_GH_TOKEN','User')" | tr -d '\r')
 git -c credential.helper='!f() { echo username=ms609-agent; echo "password=$TOKEN"; }; f'   push -u origin <branch>
 ```
 
