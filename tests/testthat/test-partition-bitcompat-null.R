@@ -21,7 +21,7 @@
 #       showing, on a build of the merge base and a build of your branch,
 #       that the pinned schedule gives bit-identical payloads; then run
 #       `Rscript tests/testthat/_reference/generate-partition-bitcompat-null.R`
-#       once and add a NEWS.md entry recording the change.
+#       once, and record the change in the pull request that carries it.
 #   (4) If unintentional, the failure indicates drift in the legacy code
 #       path that the partition API was contracted not to introduce — fix.
 #

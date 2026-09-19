@@ -355,6 +355,49 @@ MkPrimeModel <- function(
 }
 
 
+# Implementation gate for marginal_k, mirroring .RequirePartitionImplemented.
+#
+# MkPrimeModel() rejects the marginal_k combinations visible from the model
+# alone (non-geometric kPrimePrior, qHeterogeneity). Known-state characters and
+# the partition API need the data and the partition spec, so they are checked
+# here, from whichever caller holds them: `mkd` or `partitionSpec` may be NULL
+# to skip the corresponding check. Both are deferred rather than implemented
+# (dev/notes/2026-05-28-marginal-k-plan.md sections 11 and 13); until this gate
+# existed the marginal evaluator silently dropped known-state characters from
+# the likelihood and ignored partition / unlink.
+.RequireMarginalKSupported <- function(model, mkd = NULL,
+                                       partitionSpec = NULL) {
+  if (!identical(model$likelihoodMode, "marginal_k")) {
+    # Return:
+    return(invisible(NULL))
+  }
+  known <- if (is.null(mkd)) integer(0) else which(mkd$type == "known")
+  if (length(known)) {
+    cli::cli_abort(c(
+      "{.code likelihoodMode = \"marginal_k\"} cannot be combined with
+       known-state characters.",
+      i = "Character{?s} {known} {?is/are} pinned by {.arg knownStates}.",
+      i = "Known-k partitions are deferred (plan section 11); the marginal
+           evaluator would drop them from the likelihood entirely.",
+      i = "Use {.code likelihoodMode = \"sampled_k\"}, or drop
+           {.arg knownStates}."
+    ))
+  }
+  if (!is.null(partitionSpec$partition)) {
+    cli::cli_abort(c(
+      "{.code likelihoodMode = \"marginal_k\"} cannot be combined with the
+       partition API.",
+      i = "Partitioned marginal-k is deferred (plan section 13); the marginal
+           evaluator ignores {.arg partition} and {.arg unlink}.",
+      i = "Use {.code likelihoodMode = \"sampled_k\"}, or drop
+           {.arg partition}."
+    ))
+  }
+  # Return:
+  invisible(NULL)
+}
+
+
 #' Finalize model with data-derived defaults
 #'
 #' Sets `expSteps` and `treeLengthRate` if not user-specified.
