@@ -366,8 +366,8 @@ static double cpp_log_prior(
       //   log P(k'_i = m) = logSumExp_{j=2..m} [ log P_emp(j) + log p
       //                                          + (m - j) * log(1 - p) ]
       // Body of P_emp has explicit log values in data.empLogBody[];
-      // beyond data.empBodyLastK the pmf decays geometrically with
-      // log-mass `empLogTailStartP + (k - empTailStartK) * log(empTailDecay)`.
+      // beyond it the pmf decays geometrically with log-mass
+      // `empLogTailStartP + (k - empTailStartK) * log(empTailDecay)`.
       double logP    = std::log(p);
       double log1mP  = std::log1p(-p);
       double logQ    = (data.empTailDecay > 0.0) ? std::log(data.empTailDecay)
