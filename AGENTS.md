@@ -61,13 +61,23 @@ No file carries a status column.
 **Do not write to `NEWS.md`.** 
 This overrides the `r-conventions` default.
 
-## Dispatcher
+## Clearing the issue queue
 
-Run `bash dispatch.sh <subcommand>` from the repo root. `dispatch.sh` is a
-thin wrapper that delegates to `~/.claude/skills/dispatch/dispatch.sh`;
-`todo-lock.sh` is used internally by that global script. The skill
-auto-detects per-repo overrides in `dev/dispatch/agent-brief.md` and
-`dev/dispatch/ranker.txt` and falls back to the bundled defaults otherwise.
+Use the global `/next-issue` skill. It reads open GitHub issues, groups them
+into conflict-safe tranches, writes a self-contained brief per tranche and
+dispatches a background fix chip for each. Per-repo settings — base branch, hot
+files, identity, build commands — live in `dev/next-issue/config.md`.
+
+**Build isolation:** each concurrent chip needs its own agent id, or two builds
+collide in `.builds/`. Derive it from the branch so it survives a chip restart:
+
+```bash
+ID="a$(printf %s "$BRANCH" | sha1sum | cut -c1-5)"
+bash build-agent.sh mkp "$ID"
+```
+
+The `/dispatch` dispatcher was retired on 2026-09-18 along with `to-do.md`: the
+session layer tracks background agents, and GitHub issues are the queue.
 
 ---
 
@@ -117,7 +127,7 @@ No active worktrees. Active feature branches: `feature/het-dirichlet-marginal`,
 `../AGENTS.md` → **Worktree discipline**.
 
 When working in a worktree, always read/write coordination files
-(`to-do.md`, `completed-tasks.md`, `coordination.md`, `u.nnn`,
+(`completed-tasks.md`, `coordination.md`, `u.nnn`,
 `remote-jobs.md`, `dev/plans/`) from `../mkp/` (the `main` worktree),
 not from the feature worktree.
 
@@ -216,7 +226,7 @@ mkp/
 ├── man/
 ├── dev/
 │   ├── plans/               # Plan files (active + archive/)
-│   └── dispatch/            # Per-repo overrides for global /dispatch skill (agent-brief.md, ranker.txt)
+│   └── next-issue/          # Per-repo config for the global /next-issue skill
 ├── .AGENTS/memory/          # Domain memory files (load on demand)
 └── vignettes/
     └── hyoliths.qmd         # Full worked example (Sun2018, 54 taxa)

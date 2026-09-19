@@ -1,5 +1,14 @@
 # MkPrime — Completed Tasks
 
+> **FROZEN 2026-09-18 — history, not a work list.** The `to-do.md` queue this
+> archived was retired: specific tasks became GitHub issues (`agent-issues/MkPrime`
+> #31–#43), and the standing-task rotation records moved to `dev/red-team/log.md`,
+> `dev/profiling/log.md` and `coordination.md`. Nothing is appended here again —
+> a merged PR closes its issue via `Fixes #N`, which a markdown table cannot
+> observe. Kept as anti-duplication memory: search it before filing so work
+> already done is not re-filed.
+
+
 | ID | Description | Agent | Date | Notes |
 |----|-------------|-------|------|-------|
 | M-001 | Package skeleton (DESCRIPTION, Rcpp stub, testthat harness) | A | 2026-03-26 | `693c6ee` |
