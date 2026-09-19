@@ -149,6 +149,12 @@ RunMkPrime <- function(data, tree = NULL,
   partitionSpec <- .ValidatePartitionArgs(partition, unlink, mkd)
   .RequirePartitionImplemented(partitionSpec)
 
+  # Persisted with the checkpoint, so a resume rebuilds the move set the run
+  # was using rather than the default one. `mcmc` is what .SaveCheckpoint()
+  # writes wholesale, which reaches every save site without an extra argument.
+  mcmc$fixTopology <- isTRUE(fixTopology)
+  mcmc$partitionSpec <- partitionSpec
+
   # When a user partition is supplied, rebuild mkd$partitions with classIdx
   # populated for each PartInfo. The C++ McmcData uses classIdx to map each
   # partition to its user class; without this, nClasses stays 1 regardless.
@@ -325,18 +331,9 @@ RunMkPrime <- function(data, tree = NULL,
     for (p in treeFilePaths) writeLines(character(0), p)
   }
 
-  # Column indices for tree reconstruction in scalar_samples (1-based R).
-  # Layout: log_post, log_lik, tree_length, [rate_loss -- if hasNeo],
-  #         rate_log_sd, [p -- geometric/eg only / kprime_alpha+beta -- if BG],
-  #         [rate_neo -- if hasNeo], [beta_scale -- if qHet],
-  #         swap_cold, topo_hash, kPrime_i..., br_j...
-  # STREAM-003: the 2 diagnostic cols (swap_cold, topo_hash) MUST be counted.
-  isBetaGeometric <- identical(model$kPrimePrior, "beta_geometric")
-  isLogseries     <- identical(model$kPrimePrior, "logseries")
-  pCols           <- if (isLogseries) 0L else if (isBetaGeometric) 2L else 1L
-  neoCols         <- if (hasNeo) 2L else 0L   # rate_loss + rate_neo
-  diagCols        <- 2L                        # swap_cold, topo_hash
-  brColStart      <- 4L + neoCols + pCols + qHet + diagCols + nTrans + 1L
+  # Column index for tree reconstruction in scalar_samples (1-based R).
+  # The layout itself lives in .ParamNames(); do not restate it here.
+  brColStart      <- .BrColStart(paramNames)
 
   # --- Execute MCMC (with interrupt recovery) ---
   execResult <- .RunWithRecovery(
@@ -1687,6 +1684,19 @@ RunMkPrime <- function(data, tree = NULL,
 
 # --- Serial multi-run orchestration (M-146) ---
 
+# Remaining wall-clock budget for a job that started at `startTime`
+# (a `proc.time()["elapsed"]` reading).
+#
+# `maxTime` bounds the job, not each run within it: a serial job handed the
+# full budget per run has a true ceiling of nRuns * maxTime, which overruns
+# any external wall clock it was sized for. NULL when no budget is set, 0 once
+# it is spent.
+.RemainingBudget <- function(maxTime, startTime) {
+  if (is.null(maxTime) || !is.finite(maxTime)) return(maxTime)
+  unname(max(0, maxTime - (proc.time()["elapsed"] - startTime)))
+}
+
+
 #' Run multiple serial MCMC runs with cross-run R-hat convergence
 #'
 #' Called by [.RunWithRecovery()] when `nCore == 1`, `nRuns >= 2`, and
@@ -1707,7 +1717,6 @@ RunMkPrime <- function(data, tree = NULL,
   startTime <- proc.time()["elapsed"]
 
   if (is.null(startIters)) startIters <- rep(1L, nRuns)
-
   # --- Phase 1: first pass (ESS-based stopping per run) ---
   if (startPhase <= 1L) {
     # Strip maxRhat so it doesn't block ESS-based stopping inside each run.
@@ -1715,6 +1724,25 @@ RunMkPrime <- function(data, tree = NULL,
     innerMcmc$maxRhat <- NULL
 
     for (run in seq_len(nRuns)) {
+      # maxTime bounds the job, not each run: without this the true ceiling
+      # is nRuns * maxTime, which overruns an external wall clock.
+      innerMcmc$maxTime <- .RemainingBudget(mcmc$maxTime, startTime)
+      if (!is.null(innerMcmc$maxTime) && innerMcmc$maxTime <= 0) {
+        # A run that never started has no buffers, and downstream assembly
+        # dereferences them; `requested_nRuns` records the shortfall.
+        cli::cli_warn(c(
+          "{.arg maxTime} reached after {run - 1L} of {nRuns} runs.",
+          i = "Returning the completed runs; {.arg maxTime} bounds the job,
+               not each run."
+        ))
+        return(list(runs = runs[seq_len(run - 1L)],
+                    stopReason = "max_time",
+                    actualIter = if (run > 1L) {
+                      max(vapply(runs[seq_len(run - 1L)],
+                                 function(r) r$actual_iter %||% 0L, numeric(1)))
+                    } else 0L))
+      }
+
       runs[[run]] <- .RunMkPrimeSingleRun(
         mkd, model, innerMcmc, runs[[run]], moves, tipLabels, run,
         paramNames, nEdge, brColStart,
@@ -1734,6 +1762,18 @@ RunMkPrime <- function(data, tree = NULL,
                     actualIter = runs[[run]]$actual_iter))
       }
       startIters[run] <- runs[[run]]$actual_iter + 1L
+
+      # The budget is spent; remaining runs would each start a fresh one.
+      if (identical(runs[[run]]$stop_reason, "max_time") && run < nRuns) {
+        cli::cli_warn(c(
+          "{.arg maxTime} reached during run {run} of {nRuns}.",
+          i = "Returning the completed runs; {.arg maxTime} bounds the job,
+               not each run."
+        ))
+        return(list(runs = runs[seq_len(run)],
+                    stopReason = "max_time",
+                    actualIter = runs[[run]]$actual_iter))
+      }
     }
 
     # No cross-run convergence needed when nRuns < 2 or no maxRhat
@@ -1800,6 +1840,11 @@ RunMkPrime <- function(data, tree = NULL,
       epochEnd <- startIters[run] + epochSize - 1L
       if (is.finite(mcmc$nIter)) epochEnd <- min(epochEnd, mcmc$nIter)
       epochMcmc$nIter <- epochEnd
+
+      # Same job-wide budget as Phase 1 (#13): the outer check below bounds
+      # each epoch, but a single run inside one must not be handed the whole
+      # of maxTime over again.
+      epochMcmc$maxTime <- .RemainingBudget(mcmc$maxTime, startTime)
 
       runs[[run]] <- .RunMkPrimeSingleRun(
         mkd, model, epochMcmc, runs[[run]], moves, tipLabels, run,
@@ -3006,11 +3051,48 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   nTrans <- sum(mkd$type == "transformational")
 
   qHet <- isTRUE(model$qHeterogeneity)
-  moves <- .BuildMoves(nEdge, nTrans, hasNeo, mcmc, fixTopology = FALSE,
-                       kPrimePrior = model$kPrimePrior %||% "geometric",
-                       qHeterogeneity = qHet,
-                       joint2d = isTRUE(mcmc$joint2d),
-                       likelihoodMode = model$likelihoodMode %||% "sampled_k")
+  # The move set must be the one the run was using, so both inputs that decide
+  # it travel in the checkpoint's `mcmc`. A checkpoint that predates them has
+  # neither, and falls back to an unpartitioned, free-topology schedule.
+  resumeFixTopology <- isTRUE(mcmc$fixTopology)
+  resumePartition   <- mcmc$partitionSpec
+
+  moves <- if (is.null(resumePartition)) {
+    .BuildMoves(nEdge, nTrans, hasNeo, mcmc,
+                fixTopology = resumeFixTopology,
+                kPrimePrior = model$kPrimePrior %||% "geometric",
+                qHeterogeneity = qHet,
+                joint2d = isTRUE(mcmc$joint2d),
+                likelihoodMode = model$likelihoodMode %||% "sampled_k")
+  } else {
+    .BuildMovesPartitioned(nEdge, nTrans, hasNeo, mcmc,
+                partitionSpec = resumePartition,
+                fixTopology = resumeFixTopology,
+                kPrimePrior = model$kPrimePrior %||% "geometric",
+                qHeterogeneity = qHet,
+                joint2d = isTRUE(mcmc$joint2d),
+                priorOnClassRateLogSd =
+                  model$priorOnClassRateLogSd %||% "hyperprior_pooled",
+                likelihoodMode = model$likelihoodMode %||% "sampled_k")
+  }
+
+  # Self-check against the run being resumed. The checkpoint records the move
+  # weights by name, so a rebuild that has drifted is detectable even for
+  # checkpoints written before the two fields above existed -- which is the
+  # only warning those older files can be given.
+  storedMoveNames <- names(checkpoint$moveWeights)
+  rebuiltMoveNames <- vapply(moves, function(m) m$name, character(1))
+  if (length(storedMoveNames) && !setequal(rebuiltMoveNames, storedMoveNames)) {
+    added   <- setdiff(rebuiltMoveNames, storedMoveNames)
+    dropped <- setdiff(storedMoveNames, rebuiltMoveNames)
+    cli::cli_warn(c(
+      "Resumed move set differs from the one this checkpoint was written with.",
+      i = if (length(added)) "Gained: {.val {added}}." else NULL,
+      i = if (length(dropped)) "Lost: {.val {dropped}}." else NULL,
+      i = "The resumed segment is sampled by a different kernel from the
+           segment before it; treat the combined output with care."
+    ))
+  }
 
   if (identical(mcmc$thin, "auto")) {
     mcmc$thin <- length(moves)
@@ -3051,13 +3133,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   }
 
   tipLabels       <- tree$tip.label %||% rownames(mkd$matrix)
-  # STREAM-003 + STREAM-004: count diagnostic cols, and 2 cols for BG prior.
-  isBetaGeometric <- identical(model$kPrimePrior, "beta_geometric")
-  isLogseries     <- identical(model$kPrimePrior, "logseries")
-  pCols           <- if (isLogseries) 0L else if (isBetaGeometric) 2L else 1L
-  diagCols        <- 2L                          # swap_cold, topo_hash
-  brColStart      <- 5L + pCols + (any(mkd$type == "neomorphic")) + qHet +
-                     diagCols + nTrans + 1L
+  # Column index for tree reconstruction; the layout lives in .ParamNames().
+  brColStart      <- .BrColStart(paramNames)
 
   # --- Sequential per-run execution ---
   stopReason <- "max_iter"
@@ -4233,6 +4310,28 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   }
 
   newBetas
+}
+
+
+#' Index of the first `br_*` column in a sample row
+#'
+#' Takes the row's own column names rather than recomputing the layout, which
+#' is hand-maintainable in two places and has drifted silently: a wrong offset
+#' still yields a parseable tree, so nothing downstream fails (#8, #64).
+#'
+#' `paramNames` is authoritative where a re-derivation is not: the run path
+#' builds its names with [.ParamNamesPartitioned()] and strips the `kPrime_`
+#' columns under `marginal_k`.
+#'
+#' @param paramNames Character vector of column names for a sample row.
+#' @return Integer 1-based column index of `br_1`.
+#' @keywords internal
+.BrColStart <- function(paramNames) {
+  idx <- match("br_1", paramNames)
+  if (is.na(idx)) {
+    cli::cli_abort("No {.field br_1} column in the sample layout.")
+  }
+  idx
 }
 
 
