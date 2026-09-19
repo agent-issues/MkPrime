@@ -164,6 +164,10 @@ jobs:
 
       - name: Code coverage
         if: runner.os == 'Windows'
+        # quiet = FALSE streams the instrumented test run to the job log. The
+        # default swallows it, so a test that fails only under covr reports as
+        # `Error: Failure in <tempdir>/testthat.Rout.fail` — a path that no
+        # longer exists by the time anyone reads the log.
         run: |
-          covr::codecov()
+          covr::codecov(quiet = FALSE)
         shell: Rscript {0}
