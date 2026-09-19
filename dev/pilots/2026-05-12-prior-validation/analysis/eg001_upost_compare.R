@@ -9,10 +9,47 @@ EG_POST     <- "C:/Users/pjjg18/GitHub/mkprime/report-data/mkp-eg-260/post_means
 GT_ROOT     <- "C:/Users/pjjg18/GitHub/mkprime/tree-inference"
 OUT_DIR     <- "dev/pilots/2026-05-12-prior-validation/analysis"
 
+# Ground truth, reordered into the character order the sampler actually used.
+#
+# CORRECTED 2026-09-19 (#54). `run_one.R` builds its matrix from
+# `sort(list.files(..., "^chr[0-9]+\\.nex$"))`, which is LEXICAL --
+# chr1, chr10, chr11, ..., chr2 -- so `kPrime_i` is the i-th lexically sorted
+# file. `ground_truth.csv` is in NUMERIC order. This function used to return
+# the numeric-order rows and every caller below paired them positionally
+# against lexical-order posteriors, so each character's posterior was compared
+# against a different character's truth.
+#
+# The published rho of -0.11 was therefore a permutation null by construction:
+# the analysis could not have detected tracking had there been any. Corrected,
+# both arms track at about +0.31. Marginal statistics -- mean, median, the
+# whole u_post distribution -- are exactly invariant, because the error permutes
+# a multiset; only anything paired per character changes.
 gt_for <- function(task) {
-  tr  <- sprintf("tree_%02d", as.integer(sub("^t([0-9]+).*", "\\1", task)))
-  rep <- sprintf("rep_%02d", as.integer(sub(".*_r([0-9]+)$", "\\1", task)))
-  read.csv(file.path(GT_ROOT, tr, rep, "ground_truth.csv"))
+  tree <- as.integer(sub("^t([0-9]+).*", "\\1", task))
+  rep  <- as.integer(sub(".*_r([0-9]+)$", "\\1", task))
+  tr   <- sprintf("tree_%02d", tree)
+  rp   <- sprintf("rep_%02d",  rep)
+  gt   <- read.csv(file.path(GT_ROOT, tr, rp, "ground_truth.csv"))
+
+  files <- list.files(file.path(GT_ROOT, tr, rp), "^chr[0-9]+\\.nex$")
+  lex   <- as.integer(sub("^chr([0-9]+)\\.nex$", "\\1", sort(files)))
+  stopifnot(setequal(lex, gt$char_idx), !anyDuplicated(lex))
+  gt[match(lex, gt$char_idx), , drop = FALSE]
+}
+
+# k' >= kObs holds by construction, so u_post < 0 is impossible for a correctly
+# aligned pair. Counting impossible values is a falsifier that needs no
+# modelling assumption: it was 115 (EG) and 248 (geo) of 1300 char-tasks under
+# the old pairing, and 0 under this one. Asserting it here means the pairing
+# cannot silently regress.
+check_alignment <- function(d) {
+  bad <- sum(d$u_post < -1e-9)
+  if (bad > 0L) {
+    stop(sprintf(
+      "%d impossible u_post < 0 values: characters are misaligned (see #54)",
+      bad))
+  }
+  d
 }
 
 # --- geo arm: read all mkp_geo_*.rds ---
@@ -55,6 +92,9 @@ eg_per_full <- do.call(rbind, lapply(seq_along(eg_post), function(i) {
   )
 }))
 eg_per_r01 <- eg_per_full[grepl("_r01$", eg_per_full$task), ]
+
+geo_per    <- check_alignment(geo_per)
+eg_per_r01 <- check_alignment(eg_per_r01)
 
 # Combined
 both <- rbind(geo_per, eg_per_r01)

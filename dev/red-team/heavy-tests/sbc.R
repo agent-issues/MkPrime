@@ -19,11 +19,10 @@
 # with per-arm verdict.txt, summary.rds, and rank-matrix.csv.
 
 suppressPackageStartupMessages({
-  if (requireNamespace("pkgload", quietly = TRUE)) {
-    pkgload::load_all(".", quiet = TRUE)
-  } else {
-    library(MkPrime)
-  }
+  # Race-safe loader: pkgload compiles into src/ in place, so concurrent
+  # array tasks corrupt each other's objects unless the tree is pre-built (#15).
+  source("dev/red-team/heavy-tests/load-mkprime.R")
+  LoadMkPrime(".")
   library(ape)
   library(TreeTools)
 })
@@ -577,7 +576,27 @@ for (arm in arms) {
 dt <- as.numeric(difftime(Sys.time(), t_start, units = "secs"))
 
 # ----------------- Top-level verdict ---------------------------
-top_verdict_path <- file.path(outRoot, "verdict.txt")
+# Name the file after what this process actually covered.
+#
+# Every arm used to write `verdict.txt` into the shared `outRoot`, so when the
+# arms run as concurrent SLURM array tasks the last one to finish overwrote the
+# aggregate — and whoever read `outRoot/verdict.txt` got a single arm presented
+# as the run-level result, with nothing to say it was partial (#16). An SBC
+# verdict is what gates a sampler-correctness claim, so a silently partial one
+# is worse than none.
+#
+# `verdict.txt` now means "every arm, from one process"; `verdict-<arm>.txt` is
+# one task's contribution. `aggregate-verdicts.R` reduces the latter into the
+# former once the array has finished.
+top_verdict_path <- file.path(
+  outRoot,
+  if (length(arms) == length(ALL_ARMS)) {
+    "verdict.txt"
+  } else {
+    sprintf("verdict-%s.txt",
+            paste(vapply(arms, `[[`, "", "name"), collapse = "+"))
+  }
+)
 lines <- c(
   sprintf("SBC harness top-level summary"),
   sprintf("mode:     %s", mode),

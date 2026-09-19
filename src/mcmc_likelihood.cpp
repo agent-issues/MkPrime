@@ -2908,7 +2908,6 @@ SEXP prepare_mcmc_data(List partitions_r,
                        double betaScaleRate = 1.0,
                        bool   kPriorEmpiricalGeometric = false,
                        NumericVector empLogBody = NumericVector(),
-                       int    empBodyLastK = 1,
                        int    empTailStartK = 0,
                        double empTailDecay = 0.0,
                        double empLogTailStartP = -1e308,
@@ -2941,7 +2940,6 @@ SEXP prepare_mcmc_data(List partitions_r,
 
   // Empirical prior body + tail (pre-computed log P_emp(k))
   d->empLogBody.assign(empLogBody.begin(), empLogBody.end());
-  d->empBodyLastK      = empBodyLastK;
   d->empTailStartK     = empTailStartK;
   d->empTailDecay      = empTailDecay;
   d->empLogTailStartP  = (empLogTailStartP <= -1e300) ? R_NegInf
