@@ -301,7 +301,7 @@ Full per-lane log: `dev/red-team/campaign-2026-05-26.md`.
 - MED-latent: LS-001 (no patch; fix requires runtime Z_i summation — non-trivial).
 - Empirical follow-ups: SWAP-001/002 (needs Hamilton run before deciding on fix).
 
-last_focus: 2
+last_focus: 6
 
 
 ---
