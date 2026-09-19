@@ -1,5 +1,6 @@
 ^.*\.Rproj$
 ^\.Rproj\.user$
+^\.githooks$
 ^\.gitignore$
 ^AGENTS\.md$
 ^to-do\.md$
