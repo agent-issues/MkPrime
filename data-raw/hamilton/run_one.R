@@ -192,6 +192,28 @@ file.remove(tmp_nex)
 
 cat(sprintf("  Loaded %d characters, %d taxa\n", n_char_raw, n_taxa_raw))
 
+# Record the character order this task actually used.
+#
+# `sort()` above is LEXICAL -- chr1, chr10, chr11, ..., chr2 -- so column i of
+# every `kPrime_i` log column is the i-th lexically sorted file, not character
+# i. `ground_truth.csv` is in numeric order, and a downstream script that pairs
+# the two positionally compares each character's posterior against a different
+# character's truth. That is EG-003 (#54): it turned a real rho of +0.31 into a
+# published -0.11, because the pairing was a permutation null by construction.
+#
+# Emitting the order removes the guess: a consumer can join on char_idx instead
+# of assuming an order that was never written down.
+write.csv(
+  data.frame(
+    lex_position = seq_along(nex_files),
+    file         = basename(nex_files),
+    char_idx     = as.integer(sub("^chr([0-9]+)\\.nex$", "\\1",
+                                  basename(nex_files)))
+  ),
+  file.path(ckp_dir, sprintf("%s_char_order.csv", arm)),
+  row.names = FALSE
+)
+
 # ---- Starting tree: NJ ------------------------------------------------------
 start_tree <- NJTree(pd, edgeLengths = TRUE)
 

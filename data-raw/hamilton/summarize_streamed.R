@@ -327,6 +327,11 @@ summary_list <- list(
   # Both are in lex-sorted chr*.nex order (matching run_one.R's plain sort()).
   # Do NOT use natural-sort kObs vectors from raw nexus files to align kp_means.
   kObs          = kObs_lex,
+  # The numeric character index behind each lex position, so a consumer can
+  # join on char_idx rather than assume an order. Pairing lex-ordered posteriors
+  # against numeric-ordered ground_truth.csv is EG-003 (#54).
+  char_idx      = as.integer(sub("^chr([0-9]+)\\.nex$", "\\1",
+                                 basename(nex_files_lex))),
   p_mean        = p_mean,
   last_row      = last_row,
   log_files     = log_files,

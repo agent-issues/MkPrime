@@ -116,6 +116,8 @@ ok("kPrime_ columns summarised for mkp_highk", length(s$kp_means) == nChar)
 ok("p summarised for mkp_highk", !is.na(s$p_mean))
 ok("burnin_frac recorded", identical(s$burnin_frac, 0.25))
 ok("CID computed for every kept tree", length(s$cid) == s$n_trees_kept)
+ok("char_idx recorded for the lex order",
+   identical(s$char_idx, seq_len(nChar)))
 
 ## ---- Cleanup behaviour -------------------------------------------------------
 ok("tree streams removed",
