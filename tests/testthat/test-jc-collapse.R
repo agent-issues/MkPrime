@@ -155,7 +155,6 @@ test_that("MkpLogLikelihood (auto-dispatched) matches uncollapsed reference", {
   # End-to-end: MkpLogLikelihood now silently routes kPrime > kObs through
   # the collapsed kernels. Compare against the value obtained by calling
   # the uncollapsed C++ pruning directly on the same partition tip states.
-  library("ape")
   tr <- mk_test_tree(8L, seed = 7L)
   nTip <- length(tr$tip.label)
 
@@ -196,7 +195,6 @@ test_that("Mk (known partition) mixed-kObs: collapse matches uncollapsed", {
   # kEff = max(kObs) + 1 must still give identical likelihood — by JC
   # lumpability, chars with small kObs simply never light up the upper
   # observed columns, and that is still a valid (finer) state partition.
-  library("ape")
   tr <- mk_test_tree(7L, seed = 11L)
   nTip <- length(tr$tip.label)
   parent <- tr$edge[, 1L]
@@ -233,7 +231,6 @@ test_that("Mk (known partition) mixed-kObs: collapse matches uncollapsed", {
 
 
 test_that("MkpLogLikelihood collapse-path informative coding matches uncollapsed", {
-  library("ape")
   tr <- mk_test_tree(6L, seed = 9L)
   nTip <- length(tr$tip.label)
 

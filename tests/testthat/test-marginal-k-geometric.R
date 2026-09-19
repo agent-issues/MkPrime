@@ -10,9 +10,6 @@
 # We validate by direct comparison against a brute-force sum-of-products on
 # a tiny synthetic dataset, where we can enumerate the full u-grid.
 
-library("ape")
-library("TreeTools")
-
 # ---------------------------------------------------------------------------
 # Tiny fixture: 4 transformational chars, 8 tips, all kObs == 2 (binary).
 # ---------------------------------------------------------------------------
@@ -127,7 +124,6 @@ test_that("marginal-k LL equals brute-force sum-of-products at small nTrans", {
   expect_equal(L_marg, L_naive, tolerance = 1e-6)
 })
 
-
 # ---------------------------------------------------------------------------
 # Mode-switching guards
 # ---------------------------------------------------------------------------
@@ -158,7 +154,6 @@ test_that("likelihoodMode='marginal_k' aborts under qHeterogeneity", {
     regexp = "qHeterogeneity"
   )
 })
-
 
 # ---------------------------------------------------------------------------
 # LogPrior drops the geometric u-term under marginal_k
@@ -191,7 +186,6 @@ test_that("LogPrior under marginal_k omits the per-character P(u | p) term", {
                    sum(u_vec) * log1p(-state$p)
   expect_equal(lp_s - lp_m, expected_diff, tolerance = 1e-12)
 })
-
 
 # ---------------------------------------------------------------------------
 # Model A (unconditional) vs Model B (conditional) marginal-weight factor

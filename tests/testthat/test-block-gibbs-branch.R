@@ -11,8 +11,6 @@
 #   - Statistical: reasonable within-sweep acceptance (not 0%, not 100%)
 #   - Scheduler: dim field plumbed through correctly
 
-library("ape")
-library("TreeTools")
 
 
 # ---------------------------------------------------------------------------

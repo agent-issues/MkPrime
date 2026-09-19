@@ -15,7 +15,6 @@
 #   (b) The chain runs to completion and produces all-finite LLs.
 #   (c) The run-start logLik from .InitStatePartitioned equals .InitState to ~1e-10.
 
-library("TreeTools")
 
 
 # Build a small mkd (8 chars, 6 tips, no neomorphic for Casali parity).
@@ -44,18 +43,21 @@ library("TreeTools")
 test_that("trivial partition gate opens (no error)", {
   d <- .setup_runmkprime_data()
   expect_no_error(
-    RunMkPrime(
-      data       = d$mkd,
-      tree       = d$tree,
-      mcmc       = MkPrimeMCMC(
-        nIter    = 10L,
-        maxWarmup = 5L,
-        minWarmup = 5L,
-        nChains  = 1L,
-        thin     = 1L
+    allow_warning(
+      RunMkPrime(
+        data       = d$mkd,
+        tree       = d$tree,
+        mcmc       = MkPrimeMCMC(
+          nIter    = 10L,
+          maxWarmup = 5L,
+          minWarmup = 5L,
+          nChains  = 1L,
+          thin     = 1L
+        ),
+        partition  = rep(1L, d$mkd$nChar),
+        unlink     = character(0)
       ),
-      partition  = rep(1L, d$mkd$nChar),
-      unlink     = character(0)
+      "without stabilisation"
     )
   )
 })
@@ -65,18 +67,21 @@ test_that("trivial partition gate opens (no error)", {
 test_that("trivial partition chain produces all-finite LL", {
   d <- .setup_runmkprime_data()
   set.seed(17L)
-  result <- RunMkPrime(
-    data       = d$mkd,
-    tree       = d$tree,
-    mcmc       = MkPrimeMCMC(
-      nIter    = 30L,
-      maxWarmup = 15L,
-      minWarmup = 15L,
-      nChains  = 1L,
-      thin     = 1L
+  result <- allow_warning(
+    RunMkPrime(
+      data       = d$mkd,
+      tree       = d$tree,
+      mcmc       = MkPrimeMCMC(
+        nIter    = 30L,
+        maxWarmup = 15L,
+        minWarmup = 15L,
+        nChains  = 1L,
+        thin     = 1L
+      ),
+      partition  = rep(1L, d$mkd$nChar),
+      unlink     = character(0)
     ),
-    partition  = rep(1L, d$mkd$nChar),
-    unlink     = character(0)
+    "without stabilisation"
   )
   ll <- result$samples[, "log_likelihood"]
   expect_true(all(is.finite(ll)))

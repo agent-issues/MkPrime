@@ -6,9 +6,6 @@
 # dev/red-team/proofs/marginal-k-truncation-normaliser.md). These tests pin the
 # K-dependence so a stale binary or a regression that ignores K fails loudly.
 
-library("ape")
-library("TreeTools")
-
 # Build a marginal-k state at a given p and truncation cap K, return its
 # full marginal log-likelihood. K is injected via the model's kprimeTruncK.
 .trunc_eval <- function(p, K, seed = 11L, nTip = 10L, nChar = 40L) {

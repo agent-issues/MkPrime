@@ -13,9 +13,6 @@
 #   - Chain: multi-move chain stays valid
 #   - Acceptance: non-trivial acceptance rate
 
-library("ape")
-library("TreeTools")
-
 # ---------------------------------------------------------------------------
 # Shared fixture
 # ---------------------------------------------------------------------------

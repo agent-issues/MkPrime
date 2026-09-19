@@ -1,5 +1,3 @@
-library("TreeTools")
-library("ape")
 
 # Audit Issue 1: RB-style partition-rate normalisation.
 # See dev/rb-equivalence/notes/partition-rate-and-acrv-audit.md

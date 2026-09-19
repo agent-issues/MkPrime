@@ -44,6 +44,9 @@
 #'   coerced to `character(0)` with an info-level alert when `partition`
 #'   is `NULL` or `nClasses == 1` so the AutoPart dispatcher can pass
 #'   `unlink` uniformly across treatments.
+#' @param verbosity Integer from `0` (silent) to `2` (tuning diagnostics)
+#'   controlling console output for the duration of the call; see
+#'   [MkPrimeVerbosity()].
 #' @param ... Additional arguments forwarded to [MkPrimeMCMC()]. Allows
 #'   passing MCMC configuration inline (e.g. `nIter`, `logFile`, `nChains`)
 #'   without constructing a separate object. Cannot be combined with an
@@ -99,7 +102,11 @@ RunMkPrime <- function(data, tree = NULL,
                        overwrite = FALSE,
                        partition = NULL,
                        unlink = character(0),
+                       verbosity = MkPrimeVerbosity(),
                        ...) {
+
+  oldOpts <- options(MkPrime.verbosity = .CheckVerbosity(verbosity))
+  on.exit(options(oldOpts), add = TRUE)
 
   # --- Build or validate MCMC config ---
   dots <- list(...)
@@ -117,7 +124,7 @@ RunMkPrime <- function(data, tree = NULL,
   # --- Auto-resume from checkpoint ---
   cpFile <- mcmc$checkpointFile
   if (!overwrite && !is.null(cpFile) && file.exists(cpFile)) {
-    cli::cli_alert_info("Resuming from checkpoint {.file {cpFile}}.")
+    .AlertInfo("Resuming from checkpoint {.file {cpFile}}.")
     return(ResumeMkPrime(
       checkpointFile = cpFile,
       data = data,
@@ -162,11 +169,11 @@ RunMkPrime <- function(data, tree = NULL,
     if (requireNamespace("TreeSearch", quietly = TRUE)) {
       tree <- TreeSearch::AdditionTree(startInput)
       tree$edge.length <- rep(0.1, nrow(tree$edge))
-      cli::cli_alert_info(
+      .AlertInfo(
         "No starting tree supplied; using greedy parsimony addition tree.")
     } else {
       tree <- TreeTools::NJTree(startInput, edgeLengths = TRUE)
-      cli::cli_alert_info(c(
+      .AlertInfo(c(
         "No starting tree supplied; using neighbour-joining tree.",
         "i" = "Install {.pkg TreeSearch} to use the preferred parsimony \\
                addition tree."))
@@ -346,8 +353,9 @@ RunMkPrime <- function(data, tree = NULL,
 
   # If interrupted, on.exit cleanup is cancelled and we return early
   if (identical(execResult, "interrupted")) {
-    # Cancel the on.exit cleanup -- temp logs must survive for recovery
-    on.exit(NULL, add = FALSE)
+    # Cancel the temp-log cleanup -- the logs must survive for recovery --
+    # but keep restoring the verbosity option.
+    on.exit(options(oldOpts), add = FALSE)
     return(invisible(NULL))
   }
 
@@ -1036,7 +1044,7 @@ RunMkPrime <- function(data, tree = NULL,
   }
   logPWidth   <- 5L
 
-  cli::cli_progress_bar(
+  .ProgressBar(
     progressLabel,
     total  = progressTotal,
     format = "{tickerPage}",
@@ -1291,7 +1299,7 @@ RunMkPrime <- function(data, tree = NULL,
               "Warmup reached {.arg maxWarmup} ({mcmc$warmup}) without stabilisation."
             )
           } else {
-            cli::cli_alert_success(
+            .AlertSuccess(
               "Chain stabilised at iteration {batchEnd}."
             )
           }
@@ -1430,7 +1438,7 @@ RunMkPrime <- function(data, tree = NULL,
               .LogMoveWeights(moveWeights, moveNames, logFilePath)
             .PrintMoveWeights(moveWeights, moveNames)
             if (bestMinEssPerSec > 0) {
-              cli::cli_alert_info(
+              .AlertInfo(
                 "Tuning complete ({tuningRoundsDone} round{?s}). Best minESS/s: {sprintf('%.2f', bestMinEssPerSec)}"
               )
             }
@@ -1513,7 +1521,7 @@ RunMkPrime <- function(data, tree = NULL,
       sep, tickerPages
     )
 
-    cli::cli_progress_update(
+    .ProgressUpdate(
       set = if (startIter == 1L) batchEnd else batchEnd - startIter + 1L
     )
     if (hasProgressFn &&
@@ -1627,7 +1635,7 @@ RunMkPrime <- function(data, tree = NULL,
                 mcmc$treeThin <- newThin * ceiling(mcmc$treeThin / newThin)
               treeEvery <- as.integer(mcmc$treeThin / newThin)
             }
-            cli::cli_alert_info(
+            .AlertInfo(
               "Adapted thin: {oldThin} \u2192 {newThin} (max ACT \u2248 {round(newThin / log(2))} iter)"
             )
           }
@@ -1643,7 +1651,7 @@ RunMkPrime <- function(data, tree = NULL,
     cli::col_silver(paste(phaseLabel, batchEnd)),
     cli::col_silver("\u2502"), cli::col_green("done \u2714")
   )
-  cli::cli_progress_done()
+  .ProgressDone()
 
   # Flush any remaining streaming buffer (belt-and-suspenders; .BuildResult
 
@@ -1775,7 +1783,7 @@ RunMkPrime <- function(data, tree = NULL,
 
     # Report R-hat status
     if (!is.null(diagCheck) && !is.na(diagCheck$maxRhat)) {
-      cli::cli_alert_info(
+      .AlertInfo(
         "Cross-run max R-hat = {round(diagCheck$maxRhat, 3)} \\
          (target: {mcmc$maxRhat}). Extending runs\u2026"
       )
@@ -1886,7 +1894,7 @@ RunMkPrime <- function(data, tree = NULL,
   # safety net for any direct callers.
   if (!isStreaming) {
     tmpLog <- tempfile(fileext = ".log")
-    cli::cli_alert_info(c(
+    .AlertInfo(c(
       "Parallel mode requires {.arg logFile} (workers share samples via disk).",
       "i" = "Auto-assigning: {.file {tmpLog}}"
     ))
@@ -1929,7 +1937,8 @@ RunMkPrime <- function(data, tree = NULL,
     callr::r_bg(
       func = function(mkd, model, mcmc, runState, moves, tipLabels, run,
                       paramNames, nEdge, brColStart, logPath, cfPath,
-                      ckpPath, treePath, convWindowSize, seed) {
+                      ckpPath, treePath, convWindowSize, seed, verbosity) {
+        options(MkPrime.verbosity = verbosity)
         assign(".Random.seed", seed, envir = globalenv())
         .RunMkPrimeSingleRun(
           mkd, model, mcmc, runState, moves, tipLabels, run,
@@ -1959,7 +1968,8 @@ RunMkPrime <- function(data, tree = NULL,
         ckpPath        = if (is.null(perRunCkpPaths)) NULL else perRunCkpPaths[run],
         treePath       = if (is.null(treeFilePaths))  NULL else treeFilePaths[run],
         convWindowSize = convWindowSize,
-        seed           = streams[[run]]
+        seed           = streams[[run]],
+        verbosity      = MkPrimeVerbosity()
       ),
       supervise = TRUE,
       package   = TRUE
@@ -1982,7 +1992,7 @@ RunMkPrime <- function(data, tree = NULL,
   # Progress display and live trace plot
   hasProgressFn <- !is.null(mcmc$progressFn) && is.function(mcmc$progressFn)
   pollStatus <- "Waiting for workers..."
-  cli::cli_progress_bar(
+  .ProgressBar(
     "Parallel MCMC ({nRuns} runs)",
     format       = "{cli::pb_spin} {pollStatus}",
     format_done  = "{pollStatus}",
@@ -2038,7 +2048,7 @@ RunMkPrime <- function(data, tree = NULL,
         else "",
         if (!is.null(etaStr)) paste0(" | ETA: ", etaStr) else ""
       )
-      cli::cli_progress_update()
+      .ProgressUpdate()
 
       # Live trace plot from log-file samples
       if (hasProgressFn) {
@@ -2075,7 +2085,7 @@ RunMkPrime <- function(data, tree = NULL,
     "Parallel MCMC (", nRuns, " runs) -- ",
     stopReason, " [", .FormatElapsed(proc.time()["elapsed"] - startTime), "]"
   )
-  cli::cli_progress_done()
+  .ProgressDone()
 
   # Collect results. Shrink the result list to only runs that produced
   # output: an early break via cancel/maxTime when nRuns > nCore can leave
@@ -2572,7 +2582,7 @@ RunMkPrime <- function(data, tree = NULL,
       })
     }
     if (!isTempLog) {
-      cli::cli_alert_info(c(
+      .AlertInfo(c(
         "Streaming mode: {totalSaved} sample{?s} written to \\
          {.file {logFilePaths}}.",
         "i" = "Load with: {.code result$samples <- ReadMkLog(result$logFile)}"
@@ -2861,13 +2871,17 @@ RunMkPrime <- function(data, tree = NULL,
 #'   a finalized model (all checkpoints since M-149).
 #' @param neomorphic,knownStates Passed to [MkPrimeData()] if `data`
 #'   is a `phyDat` object.
+#' @inheritParams RunMkPrime
 #'
 #' @return An `MkPosterior` object with combined samples.
 #' @export
 ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                            neomorphic = integer(0),
                            knownStates = integer(0),
-                           model = NULL) {
+                           model = NULL,
+                           verbosity = MkPrimeVerbosity()) {
+  oldOpts <- options(MkPrime.verbosity = .CheckVerbosity(verbosity))
+  on.exit(options(oldOpts), add = TRUE)
   # Parallel-mode recovery: if the parent process did not exit cleanly
   # (SIGKILL / SLURM walltime overrun), the master .ckp is stale or
   # missing but each callr worker wrote its own per-run .ckp.  Rebuild
@@ -2994,7 +3008,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       }
     }
     if (logsRecreated) {
-      cli::cli_alert_info(
+      .AlertInfo(
         "Original log files not found (temp files cleaned up). \\
          Resuming from checkpoint state; previous samples unavailable."
       )
@@ -3198,7 +3212,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         "i" = "Re-run the same {.fn RunMkPrime} call to resume."
       ))
     } else {
-      cli::cli_alert_warning("Run interrupted.")
+      .AlertWarning("Run interrupted.")
     }
     .BuildResult(runs, model, mkd, mcmc, paramNames, logFilePaths,
                  max(bestIter, 0L), "interrupted")
@@ -3559,7 +3573,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         if (isTRUE(mcmc$gibbsSubtreeSwap))    "gibbs_subtree_swap"
       )
       if (length(droppedByMargK) > 0L) {
-        cli::cli_inform(
+        .Inform(
           "{length(droppedByMargK)} requested move{?s} not used under \\
            {.code likelihoodMode = \"marginal_k\"} (fixed-kPrime candidate \\
            selection; marginal-aware re-enable deferred): {.val {droppedByMargK}}."
@@ -4532,8 +4546,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' This adaptation is designed to run during warmup only; the caller is
 #' responsible for not invoking it after the warmup-to-sampling transition.
 #'
-#' Diagnostic output (per-move before/after) is emitted to stderr when the
-#' environment variable `MKPRIME_ADAPT_DIAG=1` is set.
+#' Diagnostic output (per-move before/after) is emitted to stderr at
+#' verbosity 2, or when `MKPRIME_ADAPT_DIAG=1` is set.
 #'
 #' @param currentWeights Numeric vector (current move probabilities, sums to 1).
 #' @param batchAccept  Integer vector of **per-batch** accept counts (cold chain).
@@ -4581,7 +4595,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   }
   if (budget < 1e-12) return(currentWeights)
 
-  verbose <- identical(Sys.getenv("MKPRIME_ADAPT_DIAG"), "1")
+  verbose <- .Loud(2L) || identical(Sys.getenv("MKPRIME_ADAPT_DIAG"), "1")
   decayFired <- FALSE
 
   newWeights <- currentWeights
@@ -4764,8 +4778,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' @keywords internal
 .PrintMoveWeights <- function(weights, moveNames) {
   lines <- .FormatMoveWeights(weights, moveNames)
-  cli::cli_alert_info("Move weights frozen:")
-  for (line in lines) cli::cli_text("
+  .AlertInfo("Move weights frozen:")
+  for (line in lines) .Text("
  {line}")
 }
 

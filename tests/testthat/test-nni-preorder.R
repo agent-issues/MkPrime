@@ -6,8 +6,6 @@
 # likelihoods because a node's CL was propagated before all children
 # contributed.
 
-library("testthat")
-
 test_that("NNI moves always produce valid preorder", {
   skip_if_not_installed("TreeTools")
 
@@ -42,7 +40,6 @@ test_that("NNI moves always produce valid preorder", {
   expect_equal(n_bad, 0L,
                label = "Number of NNI proposals with invalid preorder")
 })
-
 
 test_that("In-place NNI likelihood matches full-reorder NNI likelihood", {
   skip_if_not_installed("TreeTools")

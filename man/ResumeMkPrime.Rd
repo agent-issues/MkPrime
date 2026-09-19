@@ -10,7 +10,8 @@ ResumeMkPrime(
   tree = NULL,
   neomorphic = integer(0),
   knownStates = integer(0),
-  model = NULL
+  model = NULL,
+  verbosity = MkPrimeVerbosity()
 )
 }
 \arguments{
@@ -28,6 +29,10 @@ is a \code{phyDat} object.}
 \item{model}{An \code{MkPrimeModel} object.  If \code{NULL} (the default),
 the model stored in the checkpoint is used; otherwise it is finalized
 using \code{tree} or re-derived from data.}
+
+\item{verbosity}{Integer from \code{0} (silent) to \code{2} (tuning diagnostics)
+controlling console output for the duration of the call; see
+\code{\link[=MkPrimeVerbosity]{MkPrimeVerbosity()}}.}
 }
 \value{
 An \code{MkPosterior} object with combined samples.

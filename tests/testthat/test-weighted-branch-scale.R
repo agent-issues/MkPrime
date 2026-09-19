@@ -12,9 +12,6 @@
 #   - Statistical: accepted moves shift branch proportions toward
 #     likelihood-improving fractions
 
-library("ape")
-library("TreeTools")
-
 # ---------------------------------------------------------------------------
 # Shared fixture (reuses pattern from test-gibbs-spr.R)
 # ---------------------------------------------------------------------------

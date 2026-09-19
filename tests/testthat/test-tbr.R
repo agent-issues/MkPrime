@@ -1,7 +1,6 @@
 # Tests for TBR (Tree Bisection and Reconnection) proposal (M-053)
 
 test_that("TBR produces valid binary tree", {
-  library("ape")
   set.seed(4917)
   tree <- rtree(12)
   tree <- unroot(tree)
@@ -33,7 +32,6 @@ test_that("TBR produces valid binary tree", {
 
 
 test_that("TBR preserves total tree length", {
-  library("ape")
   set.seed(3156)
   tree <- rtree(8)
   tree <- unroot(tree)
@@ -50,7 +48,6 @@ test_that("TBR preserves total tree length", {
 
 
 test_that("TBR changes topology on medium tree", {
-  library("ape")
   set.seed(7294)
   tree <- rtree(10)
   tree <- unroot(tree)
@@ -70,7 +67,6 @@ test_that("TBR changes topology on medium tree", {
 
 
 test_that("TBR Hastings ratio is finite", {
-  library("ape")
   set.seed(5283)
   tree <- rtree(15)
   tree <- unroot(tree)
@@ -88,7 +84,6 @@ test_that("TBR Hastings ratio is finite", {
 
 
 test_that("TBR on small tree (5 tips) works", {
-  library("ape")
   tree <- read.tree(text = "(t1:1,(t2:2,(t3:3,(t4:4,t5:5):6):7):8);")
   tree <- TreeTools::Preorder(tree)
   nTip <- length(tree$tip.label)
@@ -112,7 +107,6 @@ test_that("TBR on small tree (5 tips) works", {
 
 
 test_that("TBR chain explores tree space", {
-  library("ape")
   set.seed(2850)
   tree <- rtree(8)
   tree <- unroot(tree)
@@ -139,7 +133,6 @@ test_that("TBR chain explores tree space", {
 test_that("TBR degenerates to SPR-like behavior for tip prune", {
   # When v is a tip, no subtree re-rooting occurs.
   # The move should still produce valid trees.
-  library("ape")
   tree <- read.tree(text = "(t1:0.1,t2:0.2,t3:0.3);")
   tree <- TreeTools::Preorder(tree)
   tl <- sum(tree$edge.length)
@@ -154,7 +147,6 @@ test_that("TBR degenerates to SPR-like behavior for tip prune", {
 
 
 test_that("TBR preserves node set", {
-  library("ape")
   set.seed(1397)
   tree <- rtree(20)
   tree <- unroot(tree)
@@ -175,7 +167,6 @@ test_that("TBR preserves node set", {
 
 
 test_that("TBR on larger tree (30 tips) preserves structure", {
-  library("ape")
   set.seed(9463)
   tree <- rtree(30)
   tree <- unroot(tree)

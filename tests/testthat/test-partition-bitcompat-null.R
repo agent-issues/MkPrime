@@ -66,7 +66,10 @@ test_that("§7a bit-identity: partition = NULL reproduces stored reference", {
 
   ref <- readRDS(ref_path)
 
-  result <- .RunPartitionBitcompatReference()
+  # Lobo.phy carries invariant characters, and the 50-iteration warmup never
+  # stabilises; both are properties of the fixture, not results to assert on.
+  result <- allow_warning(.RunPartitionBitcompatReference(),
+                          "without stabilisation|invariant character")
 
   # Schema first: a column-name or dimension diff is easier to read than a
   # value diff. Catch schema drift in .ParamNames() / .StateToRow() early.

@@ -1,9 +1,6 @@
 # tests/testthat/test-node-cl-cache.R
 # M-121: Validate node-level CL cache for NNI and beta_simplex
 
-library("MkPrime")
-library("TreeTools")
-
 # ---------------------------------------------------------------------------
 # Helper: small dataset for testing
 # ---------------------------------------------------------------------------
@@ -20,7 +17,6 @@ make_test_setup <- function(nTip = 12L, nChar = 15L, kMax = 3L,
   model <- MkPrimeModel()
   list(tree = tree, mkd = mkd, model = model)
 }
-
 
 # ---------------------------------------------------------------------------
 # Test: MCMC with NNI produces valid posteriors (node CL cache active)
@@ -40,7 +36,6 @@ test_that("MCMC with NNI + node CL cache produces valid log posteriors", {
   expect_true(all(is.finite(result$samples[, "log_posterior"])))
 })
 
-
 # ---------------------------------------------------------------------------
 # Test: MCMC with beta_simplex produces valid posteriors
 # ---------------------------------------------------------------------------
@@ -57,7 +52,6 @@ test_that("MCMC with beta_simplex + node CL cache produces valid posteriors", {
   expect_true(nrow(result$samples) > 0)
   expect_true(all(is.finite(result$samples[, "log_posterior"])))
 })
-
 
 # ---------------------------------------------------------------------------
 # Test: MCMC with ACRV + node CL cache produces valid posteriors
@@ -76,7 +70,6 @@ test_that("MCMC with ACRV and node CL cache produces valid posteriors", {
   expect_s3_class(result, "MkPosterior")
   expect_true(all(is.finite(result$samples[, "log_posterior"])))
 })
-
 
 # ---------------------------------------------------------------------------
 # Test: mixed moves (NNI + SPR + beta_simplex) with node CL cache
@@ -99,7 +92,6 @@ test_that("mixed NNI + SPR + beta_simplex with cache invalidation works", {
   lp <- result$samples[, "log_posterior"]
   expect_true(diff(range(lp)) > 0)
 })
-
 
 # ---------------------------------------------------------------------------
 # Test: node CL cache disabled for Q-heterogeneity (falls back to full eval)
@@ -124,7 +116,6 @@ test_that("Q-heterogeneity bypasses node CL cache without errors", {
   expect_s3_class(result, "MkPosterior")
   expect_true(all(is.finite(result$samples[, "log_posterior"])))
 })
-
 
 # ---------------------------------------------------------------------------
 # Regression test: partial-CL ascertainment correction matches full eval.
@@ -167,7 +158,6 @@ test_that("partial-CL path does not freeze tree_length (ascertainment fix)", {
               info = paste("tree_length has only", n_unique,
                            "unique values; expected >= 5"))
 })
-
 
 # ---------------------------------------------------------------------------
 # Regression test M-145: slice sampler must invalidate node CL cache.
@@ -231,7 +221,6 @@ test_that("slice sampler invalidates CL cache (M-145 regression)", {
                info = "slice sampler should invalidate nodeCL after accepting")
 })
 
-
 # ---------------------------------------------------------------------------
 # Regression test (LIKE-002): partial-CL paths under coding="informative".
 #
@@ -270,7 +259,6 @@ test_that("LIKE-001: gibbs_spr + gibbs_subtree_swap run under coding=\"informati
   expect_true(all(is.finite(result$samples[, "log_posterior"])),
               info = "log_posterior must be finite under coding=informative")
 })
-
 
 test_that("LIKE-001: drift==0 under coding=\"informative\" with Gibbs moves", {
   set.seed(2619)

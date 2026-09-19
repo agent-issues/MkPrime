@@ -15,7 +15,6 @@
 #   (D) R LogPrior <-> C++ eval_log_prior_partitioned_cpp agree to 1e-10
 #       at non-degenerate (τ, z) under the new prior.
 
-library("TreeTools")
 
 
 .setup_hyper <- function(partition = c(1L, 1L, 1L, 1L, 2L, 2L, 2L, 2L),

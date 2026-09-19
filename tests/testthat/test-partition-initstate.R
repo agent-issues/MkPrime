@@ -4,7 +4,6 @@
 # with the correct shape and the §7b numeric-equivalence property at
 # initial state.
 
-library("TreeTools")
 
 
 .setup_init <- function(partition = NULL, unlink = character(0),

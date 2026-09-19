@@ -4,9 +4,6 @@
 # eval_full_loglik_at_cpp(dataPtr, statePtr,     — arbitrary-topology path
 #                         parent, child, edgeLen)
 
-library("ape")
-library("TreeTools")
-
 # ---------------------------------------------------------------------------
 # Shared fixture helpers
 # ---------------------------------------------------------------------------
@@ -50,7 +47,6 @@ library("TreeTools")
        treeLen  = s$treeLength)
 }
 
-
 # ---------------------------------------------------------------------------
 # Test: current-topology path matches cached logLik
 # ---------------------------------------------------------------------------
@@ -73,7 +69,6 @@ test_that("eval_full_loglik_cpp matches cached logLik (with workspace)", {
   expect_true(is.finite(evaled))
 })
 
-
 # ---------------------------------------------------------------------------
 # Test: eval_full_loglik_at_cpp with same topology == eval_full_loglik_cpp
 # ---------------------------------------------------------------------------
@@ -88,7 +83,6 @@ test_that("eval_full_loglik_at_cpp with current topology == eval_full_loglik_cpp
 
   expect_equal(at_val, full_val, tolerance = 1e-10)
 })
-
 
 # ---------------------------------------------------------------------------
 # Test: scaled edge lengths produce a different likelihood
@@ -108,7 +102,6 @@ test_that("eval_full_loglik_at_cpp detects different edge lengths", {
   expect_true(is.finite(mod_val))
   expect_false(isTRUE(all.equal(orig_val, mod_val, tolerance = 1e-6)))
 })
-
 
 # ---------------------------------------------------------------------------
 # Test: NNI-proposed topology evaluates without error
@@ -135,7 +128,6 @@ test_that("eval_full_loglik_at_cpp with NNI topology gives finite result", {
   expect_true(is.finite(nni_ll))
 })
 
-
 # ---------------------------------------------------------------------------
 # Test: calling _at_ does NOT mutate state's cached logLik
 # ---------------------------------------------------------------------------
@@ -151,7 +143,6 @@ test_that("eval_full_loglik_at_cpp does not mutate state logLik", {
   after <- get_state_log_lik(pts$statePtr)
   expect_equal(before, after, tolerance = 1e-14)
 })
-
 
 # ---------------------------------------------------------------------------
 # Test: workspace vs. no-workspace give identical results
@@ -169,7 +160,6 @@ test_that("workspace and no-workspace paths give identical results", {
 
   expect_equal(ws_val, nws_val, tolerance = 1e-10)
 })
-
 
 # ---------------------------------------------------------------------------
 # Test: repeated calls are deterministic (no side effects)

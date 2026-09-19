@@ -20,7 +20,8 @@
 #'   changes fastest. Default 0.3 (Xie et al. recommendation).
 #' @param fixTopology If `TRUE`, fix the tree topology and only sample
 #'   continuous parameters + branch lengths. Default `FALSE`.
-#' @param verbose Print progress? Default `TRUE`.
+#' @param verbose Logical specifying whether to report per-stone progress;
+#'   see [MkPrimeVerbosity()].
 #'
 #' @return A list with components:
 #'   \describe{
@@ -65,7 +66,7 @@ mkp_stepping_stone <- function(data, tree = NULL,
                               warmup = 200L,
                               alpha = 0.3,
                               fixTopology = FALSE,
-                              verbose = TRUE) {
+                              verbose = MkPrimeVerbosity() > 0L) {
 
   # --- Input processing ---
   if (inherits(data, "MkPrimeData")) {

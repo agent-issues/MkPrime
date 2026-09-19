@@ -20,8 +20,6 @@
 #   - T1/T2a/T2b/T4 with "shape":         class<c>_rate_log_sd > 0 every row
 #   - T1/T2a/T2b/T4 with "ratemultiplier": w_<c> columns sum to 1 (tol 1e-6)
 
-library("TreeTools")
-
 # ---- shared helpers ----------------------------------------------------------
 
 .casali_data <- function(seed = 99L, nChar = 20L, nTip = 10L) {
@@ -63,12 +61,15 @@ library("TreeTools")
 # Run one treatment and return result invisibly.  Asserts chain health inline.
 .run_treatment <- function(d, part, unlink, label) {
   set.seed(123L)
-  result <- RunMkPrime(
-    data      = d$mkd,
-    tree      = d$tree,
-    mcmc      = .casali_mcmc(),
-    partition = part,
-    unlink    = unlink
+  result <- allow_warning(
+    RunMkPrime(
+      data      = d$mkd,
+      tree      = d$tree,
+      mcmc      = .casali_mcmc(),
+      partition = part,
+      unlink    = unlink
+    ),
+    "without stabilisation"
   )
 
   samp      <- result$samples

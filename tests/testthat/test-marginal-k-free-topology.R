@@ -30,9 +30,6 @@
 # schedule while the four weighted/block moves + nni/spr/tbr/pspr/mh_logit_p are
 # present; all are present under sampled_k.
 
-library("ape")
-library("TreeTools")
-
 # --- shared 8-tip / 4-trans-char fixture (mirrors test-marginal-k-cache-*.R) --
 .ft_make_tree <- function() {
   read.tree(text = paste0(
@@ -101,6 +98,7 @@ test_that("marginal-k: accepted topology moves leave state->logLik coherent (FRE
 })
 
 test_that("marginal-k: gibbs pair + k'-moves gated out; weighted/block moves re-enabled (FREEZE-003)", {
+  local_mkp_verbosity()
   nEdge <- 13L   # 8-tip unrooted binary -> 2*8-3 edges
   nTrans <- 4L
   # Enable every gateable move so the test would FAIL if the gating drifted.

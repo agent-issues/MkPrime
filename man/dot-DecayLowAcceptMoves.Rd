@@ -59,7 +59,7 @@ completely eliminated.
 This adaptation is designed to run during warmup only; the caller is
 responsible for not invoking it after the warmup-to-sampling transition.
 
-Diagnostic output (per-move before/after) is emitted to stderr when the
-environment variable \code{MKPRIME_ADAPT_DIAG=1} is set.
+Diagnostic output (per-move before/after) is emitted to stderr at
+verbosity 2, or when \code{MKPRIME_ADAPT_DIAG=1} is set.
 }
 \keyword{internal}

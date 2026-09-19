@@ -14,8 +14,6 @@ skip_if_not_installed("phangorn")
 # and by checking that results haven't changed relative to a reference computed
 # before the optimisation (stored inline below).
 
-library(MkPrime)
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

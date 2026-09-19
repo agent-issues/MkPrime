@@ -22,9 +22,6 @@
 # homogeneous and the ACRV-heterogeneous pruning paths (the fix rerouted the
 # parent/child argument in both).
 
-library("ape")
-library("TreeTools")
-
 .rb_lse <- function(x) {
   x <- x[is.finite(x)]
   if (!length(x)) return(-Inf)

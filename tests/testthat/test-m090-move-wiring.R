@@ -197,7 +197,6 @@ test_that("All new move names resolve to valid integer codes", {
 # ── nBranchBins reaches C++ ───────────────────────────────────────────────
 
 test_that("set_branch_bins sets nBranchBins on McmcData", {
-  library("TreeTools")
   set.seed(4821L)
   tree <- ape::rtree(6L, rooted = FALSE)
   tree <- TreeTools::Preorder(tree)
@@ -214,7 +213,6 @@ test_that("set_branch_bins sets nBranchBins on McmcData", {
 })
 
 test_that("Weighted move works with custom nBranchBins via McmcData", {
-  library("TreeTools")
   set.seed(7193L)
   tree <- ape::rtree(6L, rooted = FALSE)
   tree <- TreeTools::Preorder(tree)
@@ -276,7 +274,6 @@ test_that(".AdaptTuning skips Gibbs/Weighted moves (NA tuning keys)", {
 
 test_that("Full MCMC run with Gibbs moves produces valid MkPosterior", {
   skip_slow_tests()
-  library("TreeTools")
   tree <- BalancedTree(8)
   mat <- matrix(sample(0:2, 8 * 5, replace = TRUE), nrow = 8,
                 dimnames = list(tree$tip.label, NULL))
@@ -294,7 +291,6 @@ test_that("Full MCMC run with Gibbs moves produces valid MkPosterior", {
 
 test_that("Full MCMC run with all moves produces valid MkPosterior", {
   skip_slow_tests()
-  library("TreeTools")
   tree <- BalancedTree(8)
   mat <- matrix(sample(0:2, 8 * 5, replace = TRUE), nrow = 8,
                 dimnames = list(tree$tip.label, NULL))

@@ -12,7 +12,6 @@
 # All tests use the same helper .setup_prior() which builds a minimal mkd,
 # tree, model, and McmcData XPtr in one call.
 
-library("TreeTools")
 
 
 # ---------------------------------------------------------------------------

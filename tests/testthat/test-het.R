@@ -7,9 +7,6 @@
 #   4. Binary backward compatibility: Het with k=2 matches expected behaviour
 #   5. beta_scale prior density correctness
 
-library("ape")
-library("TreeTools")
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -62,7 +59,6 @@ library("TreeTools")
   read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
 }
 
-
 # ===========================================================================
 # 1. JC recovery: Het with large alpha ≈ non-Het
 # ===========================================================================
@@ -90,7 +86,6 @@ test_that("Het with large beta_scale recovers JC likelihood (binary chars)", {
                label = "Het with large alpha should recover JC likelihood")
 })
 
-
 test_that("Het with large beta_scale recovers JC likelihood (multistate chars)", {
   tree <- .four_taxon_tree()
   mat <- matrix(c(0, 1, 2, 0,
@@ -116,7 +111,6 @@ test_that("Het with large beta_scale recovers JC likelihood (multistate chars)",
   expect_equal(llHet, llJC, tolerance = 1e-3,
                label = "Het with large alpha should recover JC(3) likelihood")
 })
-
 
 # ===========================================================================
 # 2. Rotation symmetry: relabelling states → same likelihood
@@ -151,7 +145,6 @@ test_that("Relabelling k=3 states gives identical Het likelihood", {
                label = "Rotation symmetry: state relabelling must not change likelihood")
 })
 
-
 test_that("Relabelling binary states gives identical Het likelihood", {
   tree <- .four_taxon_tree()
   mat_a <- matrix(c(0, 1, 0, 1), nrow = 4, ncol = 1,
@@ -171,7 +164,6 @@ test_that("Relabelling binary states gives identical Het likelihood", {
   expect_equal(ll_a, ll_b, tolerance = 1e-10,
                label = "Binary state swap must not change Het likelihood")
 })
-
 
 # ===========================================================================
 # 3. Hand-computed 3-taxon Het likelihood (k=2, 1 character)
@@ -267,7 +259,6 @@ test_that("3-taxon Het likelihood matches hand computation (k=2)", {
                label = "3-taxon Het likelihood must match hand computation")
 })
 
-
 # ===========================================================================
 # 4. Het affects likelihood (non-trivial heterogeneity)
 # ===========================================================================
@@ -297,7 +288,6 @@ test_that("Het produces different likelihood than JC at moderate alpha", {
                label = "Het at moderate alpha should differ from JC")
 })
 
-
 # ===========================================================================
 # 5. Het with ACRV (composition)
 # ===========================================================================
@@ -326,7 +316,6 @@ test_that("Het + ACRV produces finite likelihood and differs from Het alone", {
   expect_false(isTRUE(all.equal(llHet, llHA, tolerance = 1e-6)),
                label = "Het+ACRV should differ from Het without ACRV")
 })
-
 
 # ===========================================================================
 # 6. Het with neomorphic rate_loss composition
@@ -372,7 +361,6 @@ test_that("Het + rate_loss=1 on neomorphic ≈ Het on transformational (k=2)", {
                label = "Symmetric neomorphic Het should equal transformational Het")
 })
 
-
 # ===========================================================================
 # 7. Het with ascertainment correction
 # ===========================================================================
@@ -400,7 +388,6 @@ test_that("Het with variable coding gives different (larger abs) likelihood", {
   # Variable coding conditions out constant sites → log-lik should increase
   expect_gt(llVar, llNone)
 })
-
 
 # ===========================================================================
 # 8. beta_scale prior density
@@ -440,7 +427,6 @@ test_that("LogPrior includes Gamma prior for beta_scale when Het is enabled", {
                label = "LogPrior should add Gamma(shape,rate) for beta_scale")
 })
 
-
 test_that("LogPrior returns -Inf for beta_scale <= 0", {
   tree <- .four_taxon_tree()
   mat <- matrix(c(0, 1, 0, 1), nrow = 4, ncol = 1,
@@ -465,7 +451,6 @@ test_that("LogPrior returns -Inf for beta_scale <= 0", {
   expect_equal(MkPrime:::LogPrior(state, model, mkd), -Inf)
 })
 
-
 # ===========================================================================
 # 9. Determinism: repeated Het evaluations are identical
 # ===========================================================================
@@ -488,7 +473,6 @@ test_that("Het likelihood evaluation is deterministic", {
 
   expect_equal(ll1, ll2, tolerance = 1e-14)
 })
-
 
 # ===========================================================================
 # 10. Regression: checkpoint round-trip preserves beta_scale
@@ -540,7 +524,6 @@ test_that("Checkpoint serialization includes beta_scale", {
   expect_equal(s2$betaScale, 7.5)
 })
 
-
 # ===========================================================================
 # 11. Regression: nBetaCat validation prevents buffer overrun
 # ===========================================================================
@@ -565,7 +548,6 @@ test_that("MkPrimeModel rejects nBetaCat > 16", {
   )
 })
 
-
 # ===========================================================================
 # 12. Regression: small alpha produces finite Het likelihood (no NaN bins)
 # ===========================================================================
@@ -588,7 +570,6 @@ test_that("Het with very small beta_scale produces finite likelihood", {
               label = "Small beta_scale should not produce NaN likelihood")
 })
 
-
 # ===========================================================================
 # 13. Het with nBetaCat = 1 (single bin, edge case)
 # ===========================================================================
@@ -605,7 +586,6 @@ test_that("Het with nBetaCat = 1 produces finite likelihood", {
   ll <- eval_full_loglik_cpp(pts$dataPtr, pts$statePtr)
   expect_true(is.finite(ll))
 })
-
 
 # ===========================================================================
 # 14. M-100: Het + informative coding rejected at model construction time

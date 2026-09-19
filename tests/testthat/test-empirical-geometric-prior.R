@@ -87,7 +87,6 @@ test_that("both geometric arms default to the unconditional (Model A) prior", {
 
 
 test_that("LogPrior under empirical_geometric prior is finite for valid state", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1), 4, 1,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -112,7 +111,6 @@ test_that("LogPrior under empirical_geometric prior is finite for valid state", 
 
 
 test_that("user-supplied empiricalNObs overrides package default", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1), 4, 1,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -156,7 +154,6 @@ test_that("convolution prior remains positive in the tail (no hard cutoff)", {
 
 
 test_that("R and C++ log priors agree numerically under empirical_geometric", {
-  library("ape")
   set.seed(42)
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   tree <- TreeTools::Preorder(tree)
@@ -196,7 +193,6 @@ test_that("R and C++ log priors agree numerically under empirical_geometric", {
 
 
 test_that("empirical_geometric prior runs short MCMC end-to-end", {
-  library("ape")
   set.seed(11)
   tree <- rtree(5, tip.label = paste0("t", 1:5))
   tree$edge.length <- runif(nrow(tree$edge), 0.05, 0.25)
@@ -207,11 +203,14 @@ test_that("empirical_geometric prior runs short MCMC end-to-end", {
   pd <- TreeTools::MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
   model <- MkPrimeModel(kPrimePrior = "empirical_geometric")
-  res <- RunMkPrime(
-    mkd, tree,
-    model = model,
-    mcmc = MkPrimeMCMC(nIter = 200L, thin = 10L,
-                       maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE)
+  res <- allow_warning(
+    RunMkPrime(
+      mkd, tree,
+      model = model,
+      mcmc = MkPrimeMCMC(nIter = 200L, thin = 10L,
+                         maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE)
+    ),
+    "without stabilisation"
   )
   expect_true("p" %in% colnames(res$samples))
   p_samples <- res$samples[, "p"]
@@ -229,7 +228,6 @@ test_that("empirical_geometric prior runs short MCMC end-to-end", {
 
 test_that("empirical_geometric posterior on u beats geometric when true k' > kObs", {
   skip_slow_tests()
-  library("ape")
   # Construct a scenario where the true number of states (k' = 5) exceeds
   # the typically observed count: with only 6 tips on a short tree, JC(5)
   # rarely realises all 5 states in a single character.  The empirical
@@ -395,7 +393,6 @@ test_that("EG-001 Model A: priorVariant='unconditional' drops the Z_i correction
 
 
 test_that("EG-001 Model A: R and C++ EG priors agree under priorVariant='unconditional'", {
-  library("ape")
   tree <- TreeTools::Preorder(
     read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);"))
   # Two transformational chars, kObs = 2 and 3 (the second exercises Z_i).

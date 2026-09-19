@@ -2,7 +2,6 @@
 skip_slow_tests()
 
 test_that("RunMkPrime reports stop_reason = 'max_iter' by default", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -18,7 +17,6 @@ test_that("RunMkPrime reports stop_reason = 'max_iter' by default", {
 
 
 test_that("maxTime stops MCMC early", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -47,7 +45,6 @@ test_that("MkPrimeMCMC stores stopping parameters", {
 
 
 test_that("Convergence-based stopping works", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -204,7 +201,6 @@ test_that(".PrintProgressTable single-run omits R-hat column", {
 
 
 test_that("nIter = Inf with maxTime stopping works", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -235,7 +231,6 @@ test_that("MkPrimeMCMC rejects non-string cancelFile", {
 
 
 test_that("cancelFile causes early exit with stop_reason 'cancelled'", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -257,7 +252,6 @@ test_that("cancelFile causes early exit with stop_reason 'cancelled'", {
 
 
 test_that("cancelFile + checkpointFile saves checkpoint on cancel", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -299,7 +293,6 @@ test_that("MkPrimeMCMC nIter = Inf default and warmup default", {
 
 
 test_that("Early stopping produces fewer samples", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -326,7 +319,6 @@ test_that("Early stopping produces fewer samples", {
 # --- M-146: serial mode R-hat convergence ---
 
 test_that("serial nRuns=2 + maxRhat converges via .RunSerialRuns", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -350,7 +342,6 @@ test_that("serial nRuns=2 + maxRhat converges via .RunSerialRuns", {
 
 
 test_that("serial nRuns=2 + maxRhat + nIter=Inf stops via maxTime", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -376,7 +367,6 @@ test_that("serial nRuns=2 + maxRhat does not block minEss stopping", {
   # Regression test for M-146 conjunction bug:
   # Before the fix, setting maxRhat blocked ESS-based convergence
   # even within individual runs because the conjunction was always FALSE.
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))

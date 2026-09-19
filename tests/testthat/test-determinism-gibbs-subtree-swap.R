@@ -10,9 +10,6 @@
 # diverging the RNG stream.  Fix: remove both DIAG static blocks.
 skip_slow_tests()
 
-library("ape")
-library("TreeTools")
-
 # ---------------------------------------------------------------------------
 # Shared fixture: 6-tip transformational data + starting tree
 # ---------------------------------------------------------------------------
@@ -46,7 +43,6 @@ library("TreeTools")
   )
 }
 
-
 # ---------------------------------------------------------------------------
 # Test: identical samples across two RunMkPrime calls (same seed, same session)
 # ---------------------------------------------------------------------------
@@ -71,7 +67,6 @@ test_that("gibbsSubtreeSwap=TRUE produces identical samples across calls", {
     )
   )
 })
-
 
 # ---------------------------------------------------------------------------
 # Test: gibbsSubtreeSwap=FALSE baseline (must also be deterministic)

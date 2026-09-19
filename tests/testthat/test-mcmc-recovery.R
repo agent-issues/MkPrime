@@ -6,7 +6,6 @@ skip_slow_tests()
 
 test_that("MCMC recovers tree_length from binary data (fixed topology)", {
   skip_on_cran()
-  library("ape")
 
   # True parameters — 8 tips for reasonable signal
   set.seed(3847)
@@ -70,7 +69,6 @@ test_that("MCMC recovers tree_length from binary data (fixed topology)", {
 
 test_that("MCMC recovers rate_log_sd = 0 (no ACRV)", {
   skip_on_cran()
-  library("ape")
 
   # Simulate data with no rate variation
   true_tree <- read.tree(
@@ -123,7 +121,6 @@ test_that("MCMC recovers rate_log_sd = 0 (no ACRV)", {
 
 test_that("MCMC: k' stays near kObs for simple binary data", {
   skip_on_cran()
-  library("ape")
 
   # Simulate binary (k=2) characters — k' should stay at 2
   true_tree <- read.tree(
@@ -181,7 +178,6 @@ test_that("MCMC: k' stays near kObs for simple binary data", {
 
 test_that("MCMC with topology moves recovers true tree from simulated data", {
   skip_on_cran()
-  library("ape")
 
   # True tree with clear structure: ((t1,t2),(t3,(t4,t5)))
   true_tree <- read.tree(

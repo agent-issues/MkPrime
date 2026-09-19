@@ -6,7 +6,6 @@
 # in the Gibbs sweep — direct per-site comparison is.
 
 test_that("flat-CL persite collapsed kernel matches uncollapsed at <1e-12", {
-  library("ape")
 
   one_case <- function(seed, nTip, nChar, kFull, kObs, useAcrv) {
     set.seed(seed)
@@ -57,7 +56,6 @@ test_that("flat-CL persite collapsed kernel matches uncollapsed at <1e-12", {
 test_that("flat-CL collapsed pruning_jc_flat & pruning_jc_acrv_flat match at <1e-12", {
   # Stage 2 kernels: pruning_jc_flat_collapsed + pruning_jc_acrv_flat_collapsed
   # with fused asc. Both log_likelihood AND outConstProb must match.
-  library("ape")
 
   cases <- expand.grid(
     seed   = c(1L, 7L, 19L, 42L),
@@ -103,7 +101,6 @@ test_that("flat-CL collapsed pruning_jc_flat & pruning_jc_acrv_flat match at <1e
 
 test_that("collapsed kernel handles kObs=1 (singleton observed) cleanly", {
   set.seed(2026)
-  library("ape")
   tree <- ape::rtree(8, br = function(n) runif(n, 0.05, 0.5))
   tree$tip.label <- paste0("t", seq_len(8))
   parent <- as.integer(tree$edge[, 1])

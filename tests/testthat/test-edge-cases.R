@@ -1,4 +1,3 @@
-library("TreeTools")
 
 test_that("Invariant characters are dropped with warning", {
   # Char 1: all state 0 (invariant); Char 2: variable

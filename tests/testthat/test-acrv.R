@@ -21,7 +21,6 @@ test_that("DiscreteLognormalRates are sorted ascending", {
 
 
 test_that("ACRV with uniform rates (all 1) matches non-ACRV", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   tree <- TreeTools::Preorder(tree)
   root_freqs <- rep(1 / 3, 3)
@@ -42,7 +41,6 @@ test_that("ACRV with uniform rates (all 1) matches non-ACRV", {
 
 
 test_that("ACRV with single rate category matches non-ACRV", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   tree <- TreeTools::Preorder(tree)
   root_freqs <- c(0.5, 0.5)
@@ -63,7 +61,6 @@ test_that("ACRV with single rate category matches non-ACRV", {
 
 
 test_that("ACRV produces different likelihood than non-ACRV for variable rates", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   tree <- TreeTools::Preorder(tree)
   root_freqs <- rep(1 / 3, 3)
@@ -89,7 +86,6 @@ test_that("ACRV produces different likelihood than non-ACRV for variable rates",
 
 
 test_that("MkN ACRV matches non-ACRV with uniform rates", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   tree <- TreeTools::Preorder(tree)
   rate_loss <- 2.0

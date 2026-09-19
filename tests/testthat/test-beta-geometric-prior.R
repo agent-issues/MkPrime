@@ -154,7 +154,7 @@ test_that("BuildMoves registers slice_kprime_s/r for BG, not p/gibbs_p", {
   f <- make_bg_fixture()
   nTrans <- sum(f$mkd$type == "transformational")
   nEdge <- nrow(f$tree$edge)
-  mcmc <- MkPrimeMCMC(nIter = 100)
+  mcmc <- MkPrimeMCMC(nIter = 100, minWarmup = 50L)
   moves <- MkPrime:::.BuildMoves(nEdge, nTrans, hasNeo = FALSE, mcmc = mcmc,
                                   kPrimePrior = "beta_geometric")
   moveNames <- vapply(moves, `[[`, character(1), "name")
@@ -167,7 +167,7 @@ test_that("BuildMoves for geometric registers mh_logit_p, not gibbs_p or BG slic
   f <- make_bg_fixture()
   nTrans <- sum(f$mkd$type == "transformational")
   nEdge <- nrow(f$tree$edge)
-  mcmc <- MkPrimeMCMC(nIter = 100)
+  mcmc <- MkPrimeMCMC(nIter = 100, minWarmup = 50L)
   moves <- MkPrime:::.BuildMoves(nEdge, nTrans, hasNeo = FALSE, mcmc = mcmc,
                                   kPrimePrior = "geometric")
   moveNames <- vapply(moves, `[[`, character(1), "name")

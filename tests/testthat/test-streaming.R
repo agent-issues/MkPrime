@@ -289,6 +289,7 @@ test_that("Resume in streaming mode appends without gaps or duplicates", {
 # --- .TruncateLogToN unit tests ---
 
 test_that(".TruncateLogToN removes excess rows", {
+  local_mkp_verbosity()
   tf <- tempfile(fileext = ".log")
   on.exit(unlink(tf), add = TRUE)
   writeLines(c("Sample\tA\tB",

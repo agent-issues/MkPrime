@@ -3,7 +3,6 @@
 # Layer 1 plumbing. Trivial spec collapses to the legacy spec/columns;
 # non-trivial spec appends per-class moves and column names.
 
-library("TreeTools")
 
 
 .dummy_mkd <- function(nChar = 8L, nTip = 6L, seed = 17L) {

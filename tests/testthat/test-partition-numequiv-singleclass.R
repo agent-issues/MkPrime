@@ -11,7 +11,6 @@
 # These tests exercise the C++ surface directly via the [[Rcpp::export]]
 # wrappers, before the RunMkPrime gate opens.
 
-library("TreeTools")
 
 
 # Helper: build mkd + a simple tree + the C++ McmcData XPtr ready for both

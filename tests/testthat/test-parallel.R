@@ -43,7 +43,6 @@ test_that("nCore defaults to getOption('mc.cores', 1L)", {
 })
 
 test_that("nCore = 1 runs serially", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
                  dimnames = list(paste0("t", 1:4), NULL))
@@ -56,7 +55,6 @@ test_that("nCore = 1 runs serially", {
 })
 
 test_that("nCore > 1 with nRuns = 1 silently runs serially", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
                  dimnames = list(paste0("t", 1:4), NULL))
@@ -72,7 +70,6 @@ test_that("parallel orchestration with nCore = 2 returns valid MkPosterior", {
   skip_if_not_installed("callr")
   skip_if_not(.is_mkprime_installed(),
               "MkPrime not installed — callr workers need installed package")
-  library("ape")
 
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
@@ -98,7 +95,6 @@ test_that("mc.cores option triggers parallel mode", {
   skip_if_not_installed("callr")
   skip_if_not(.is_mkprime_installed(),
               "MkPrime not installed — callr workers need installed package")
-  library("ape")
 
   old <- getOption("mc.cores")
   on.exit(options(mc.cores = old), add = TRUE)
@@ -130,7 +126,6 @@ test_that("pool dispatch: nRuns > nCore launches in waves", {
   skip_if_not_installed("callr")
   skip_if_not(.is_mkprime_installed(),
               "MkPrime not installed — callr workers need installed package")
-  library("ape")
 
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
@@ -187,7 +182,6 @@ test_that("pool dispatch: wave behaviour confirmed by launch times (PAR-004)", {
   skip_if_not_installed("callr")
   skip_if_not(.is_mkprime_installed(),
               "MkPrime not installed — callr workers need installed package")
-  library("ape")
 
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
@@ -227,7 +221,6 @@ test_that("maxTime fires mid-pool with nRuns > nCore returns valid result (PAR-0
   skip_if_not_installed("callr")
   skip_if_not(.is_mkprime_installed(),
               "MkPrime not installed — callr workers need installed package")
-  library("ape")
 
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
@@ -236,17 +229,22 @@ test_that("maxTime fires mid-pool with nRuns > nCore returns valid result (PAR-0
 
   # nRuns = 6, nCore = 2 → 3 waves. maxTime = 3L fires before the queue
   # drains, leaving some pool slots unlaunched.
-  result <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(
-      nRuns        = 6L,
-      nCore        = 2L,
-      nIter        = Inf,
-      maxWarmup    = 1000L,
-      minWarmup    = 1000L,
-      autoTune     = FALSE,
-      pollInterval = 1L,
-      maxTime      = 3L
-    ))
+  # Some pool slots are deliberately left unlaunched, which warns; whether
+  # they are depends on how fast callr starts the workers.
+  result <- allow_warning(
+    RunMkPrime(pd, tree,
+      mcmc = MkPrimeMCMC(
+        nRuns        = 6L,
+        nCore        = 2L,
+        nIter        = Inf,
+        maxWarmup    = 1000L,
+        minWarmup    = 1000L,
+        autoTune     = FALSE,
+        pollInterval = 1L,
+        maxTime      = 3L
+      )),
+    "never launched"
+  )
 
   expect_s3_class(result, "MkPosterior")
   # The primary regression check is that the code does not crash when maxTime
@@ -262,7 +260,6 @@ test_that("parallel mode auto-assigns logFile when logFile = NULL", {
   skip_if_not_installed("callr")
   skip_if_not(.is_mkprime_installed(),
               "MkPrime not installed — callr workers need installed package")
-  library("ape")
 
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
@@ -285,7 +282,6 @@ test_that("parallel mode saves checkpoint when checkpointFile is set", {
   skip_if_not_installed("callr")
   skip_if_not(.is_mkprime_installed(),
               "MkPrime not installed — callr workers need installed package")
-  library("ape")
 
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
@@ -338,7 +334,6 @@ test_that("dropped_runs populated when workers are killed by short cancelGrace (
   skip_if_not_installed("callr")
   skip_if_not(.is_mkprime_installed(),
               "MkPrime not installed — callr workers need installed package")
-  library("ape")
 
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
@@ -375,5 +370,5 @@ test_that("dropped_runs populated when workers are killed by short cancelGrace (
   expect_equal(result$requested_nRuns, nCompleted + nrow(result$dropped_runs))
   # print() must not error when dropped_runs is populated (covers the new
   # print.MkPosterior branch for PAR-009 display)
-  expect_no_error(capture.output(print(result)))
+  expect_prints(print(result))
 })

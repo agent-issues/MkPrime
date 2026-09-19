@@ -11,9 +11,6 @@
 #   - Statistical: on a tree with one clearly better topology, GibbsSPR
 #     selects it far more often than random (binomial test)
 
-library("ape")
-library("TreeTools")
-
 # ---------------------------------------------------------------------------
 # Shared fixture
 # ---------------------------------------------------------------------------

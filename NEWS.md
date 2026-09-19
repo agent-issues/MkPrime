@@ -1,5 +1,21 @@
 # MkPrime (development version)
 
+## Console output is now under a `verbosity` switch
+
+`RunMkPrime()` and `ResumeMkPrime()` gain a `verbosity` argument, and the
+option `MkPrime.verbosity` sets the level globally:
+
+ - `0` silences everything MkPrime prints (progress bar, phase milestones,
+   adapted-thin and frozen-move-weight reports, streaming-mode notes).
+   Warnings and errors are conditions, not output, and still propagate.
+ - `1` (the default) is the previous behaviour.
+ - `2` adds the move-weight decay diagnostics previously reachable only via
+   `MKPRIME_ADAPT_DIAG=1`; that environment variable still works.
+
+`mkp_stepping_stone(verbose = )` now defaults to the same switch. The test
+suite sets `MkPrime.verbosity = 0`, so `test_check("MkPrime")` reports test
+outcomes and nothing else.
+
 ## §7a bit-identity fixture now pins its own starting tree
 
 `tests/testthat/test-partition-bitcompat-null.R` failed on every platform

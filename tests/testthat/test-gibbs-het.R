@@ -1,9 +1,6 @@
 # tests/testthat/test-gibbs-het.R
 # M-114: Validate partial CL for Gibbs moves under Q-heterogeneity
 
-library("MkPrime")
-library("TreeTools")
-
 # ---------------------------------------------------------------------------
 # Helper: create a small dataset + model with qHeterogeneity
 # ---------------------------------------------------------------------------
@@ -20,7 +17,6 @@ make_het_setup <- function(nTip = 8L, nChar = 10L, kMax = 3L,
   model <- MkPrimeModel(qHeterogeneity = TRUE)
   list(tree = tree, mkd = mkd, model = model)
 }
-
 
 # ---------------------------------------------------------------------------
 # Test: F81 transition unit test
@@ -56,7 +52,6 @@ test_that("f81_transition matches analytical formula", {
   expect_equal(as.vector(result), expected, tolerance = 1e-14)
 })
 
-
 # ---------------------------------------------------------------------------
 # Test: Q-het Gibbs SPR partial CL matches full evaluation
 # ---------------------------------------------------------------------------
@@ -76,7 +71,6 @@ test_that("Q-het Gibbs SPR runs and produces reasonable results", {
   expect_true(mean(is.finite(lp)) >= 0.95)
 })
 
-
 # ---------------------------------------------------------------------------
 # Test: Q-het Gibbs subtree swap runs and produces reasonable results
 # ---------------------------------------------------------------------------
@@ -93,7 +87,6 @@ test_that("Q-het Gibbs subtree swap runs and produces reasonable results", {
   expect_true(nrow(result$samples) > 0)
   expect_true(all(is.finite(result$samples[, "log_posterior"])))
 })
-
 
 # ---------------------------------------------------------------------------
 # Test: Q-het Gibbs SPR + swap together

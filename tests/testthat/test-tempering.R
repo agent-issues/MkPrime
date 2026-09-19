@@ -152,7 +152,6 @@ test_that("Chain swap acceptance follows correct formula", {
 
 test_that("Heated .DoMove is more permissive than cold", {
   # Use real data to test that heated chains accept more proposals
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -198,7 +197,6 @@ test_that("Heated .DoMove is more permissive than cold", {
 
 test_that(".DoMove with beta=1 is identical to unheated", {
   # Verify that beta=1 gives same MH ratio as the old formula
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -235,7 +233,6 @@ test_that(".DoMove with beta=1 is identical to unheated", {
 # --- Multi-chain MCMC integration ---
 
 test_that("RunMkPrime with nChains=1 matches Phase 4 behavior", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -256,7 +253,6 @@ test_that("RunMkPrime with nChains=1 matches Phase 4 behavior", {
 
 
 test_that("RunMkPrime with nChains=4 runs successfully", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -284,7 +280,6 @@ test_that("RunMkPrime with nChains=4 runs successfully", {
 
 
 test_that("RunMkPrime with nChains=2 and topology moves works", {
-  library("ape")
   set.seed(8103)
   tree <- rtree(8)
   tree <- unroot(tree)
@@ -308,7 +303,6 @@ test_that("RunMkPrime with nChains=2 and topology moves works", {
 
 
 test_that("Cold chain samples have valid posteriors under tempering", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -399,7 +393,6 @@ test_that(".AdaptTemperatures respects heat bounds", {
 
 
 test_that("Adaptive temps integrated into MCMC warmup", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -427,7 +420,6 @@ test_that("MkPrimeMCMC validates nRuns", {
 
 
 test_that("RunMkPrime with nRuns=2 runs successfully", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -450,7 +442,6 @@ test_that("RunMkPrime with nRuns=2 runs successfully", {
 
 
 test_that("RunMkPrime with nRuns=1 has no per_run field", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -467,7 +458,6 @@ test_that("RunMkPrime with nRuns=1 has no per_run field", {
 
 
 test_that("Independent runs start from different states", {
-  library("ape")
   set.seed(6334)
   tree <- rtree(6)
   tree <- unroot(tree)
@@ -494,7 +484,6 @@ test_that("Independent runs start from different states", {
 
 
 test_that("Multi-run with tempering works", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -514,7 +503,6 @@ test_that("Multi-run with tempering works", {
 
 
 test_that(".PerturbStart produces valid trees", {
-  library("ape")
   set.seed(3521)
   tree <- rtree(10)
   tree <- unroot(tree)
@@ -530,7 +518,6 @@ test_that(".PerturbStart produces valid trees", {
 
 
 test_that(".PerturbStart handles small trees", {
-  library("ape")
   tree <- read.tree(text = "(t1:0.1,t2:0.2,t3:0.3);")
   perturbed <- MkPrime:::.PerturbStart(tree)
   expect_s3_class(perturbed, "phylo")
@@ -538,7 +525,6 @@ test_that(".PerturbStart handles small trees", {
 
 
 test_that("Heated chains accept at higher rates", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))

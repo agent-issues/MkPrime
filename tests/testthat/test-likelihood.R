@@ -2,7 +2,6 @@ test_that("JC pruning on 3-taxon tree with 1 binary character", {
   # Tree: ((t1:0.1, t2:0.1):0.1, t3:0.2)
   # Tips: t1=0, t2=1, t3=0
   # JC(2), equal root freqs
-  library("ape")
 
   tree <- read.tree(text = "((t1:0.1,t2:0.1):0.1,t3:0.2);")
   tree <- TreeTools::Preorder(tree)
@@ -58,7 +57,6 @@ test_that("JC pruning on 3-taxon tree with 1 binary character", {
 
 
 test_that("JC pruning: all tips same state → higher likelihood than mixed", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.1):0.1,t3:0.1);")
   tree <- TreeTools::Preorder(tree)
   root_freqs <- c(0.5, 0.5)
@@ -82,7 +80,6 @@ test_that("JC pruning: all tips same state → higher likelihood than mixed", {
 
 
 test_that("JC pruning: missing data has higher likelihood than conflicting", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.1):0.1,t3:0.1);")
   tree <- TreeTools::Preorder(tree)
   root_freqs <- c(0.5, 0.5)
@@ -106,7 +103,6 @@ test_that("JC pruning: missing data has higher likelihood than conflicting", {
 
 
 test_that("JC pruning: very long branches → log-lik approaches equiprobable", {
-  library("ape")
   tree <- read.tree(text = "((t1:100,t2:100):100,t3:100);")
   tree <- TreeTools::Preorder(tree)
   root_freqs <- rep(1 / 3, 3)
@@ -128,7 +124,6 @@ test_that("JC pruning: very long branches → log-lik approaches equiprobable", 
 
 
 test_that("JC pruning with multiple characters", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.1):0.1,t3:0.2);")
   tree <- TreeTools::Preorder(tree)
   root_freqs <- c(0.5, 0.5)
@@ -156,7 +151,6 @@ test_that("JC pruning with multiple characters", {
 
 
 test_that("JC pruning with k=3 on 4-taxon tree", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   tree <- TreeTools::Preorder(tree)
   root_freqs <- rep(1 / 3, 3)
@@ -175,7 +169,6 @@ test_that("JC pruning with k=3 on 4-taxon tree", {
 # MkN pruning tests
 
 test_that("MkN pruning with rate_loss=1 matches JC(2)", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   tree <- TreeTools::Preorder(tree)
   root_freqs <- c(0.5, 0.5)
@@ -197,7 +190,6 @@ test_that("MkN pruning with rate_loss=1 matches JC(2)", {
 
 
 test_that("MkN pruning with stationary root freqs", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.1):0.1,t3:0.2);")
   tree <- TreeTools::Preorder(tree)
 
@@ -216,7 +208,6 @@ test_that("MkN pruning with stationary root freqs", {
 
 
 test_that("MkN pruning: asymmetric rate changes likelihood", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.1):0.1,t3:0.2);")
   tree <- TreeTools::Preorder(tree)
 
@@ -245,7 +236,6 @@ test_that("MkN pruning: asymmetric rate changes likelihood", {
 # Regression test for M-144: MkN root frequency swap between R and C++ paths
 test_that("C++ MCMC engine MkN likelihood matches R-side at rate_loss != 1", {
   skip_if_not_installed("phangorn")
-  library("TreeTools")
 
   set.seed(6184)
   tr <- ape::rtree(6)

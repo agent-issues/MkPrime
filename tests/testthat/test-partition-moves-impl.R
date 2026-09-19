@@ -14,8 +14,6 @@
 # Precise posterior correctness is NOT asserted here; the integration commit
 # (third agent) will add the prior terms and a numeric-accuracy test.
 
-library("TreeTools")
-
 # ---- shared data setup -------------------------------------------------------
 
 .setup_2class_data <- function(seed = 77L, nChar = 10L, nTip = 6L) {
@@ -57,7 +55,6 @@ library("TreeTools")
   )
 }
 
-
 # ==============================================================================
 # 1. unlink = "shape"
 # ==============================================================================
@@ -65,12 +62,15 @@ library("TreeTools")
 test_that("unlink=shape chain runs, per-class shape columns present and vary", {
   d <- .setup_2class_data()
   set.seed(42L)
-  result <- RunMkPrime(
-    data      = d$mkd,
-    tree      = d$tree,
-    mcmc      = .short_mcmc(),
-    partition = d$part,
-    unlink    = "shape"
+  result <- allow_warning(
+    RunMkPrime(
+      data      = d$mkd,
+      tree      = d$tree,
+      mcmc      = .short_mcmc(),
+      partition = d$part,
+      unlink    = "shape"
+    ),
+    "without stabilisation"
   )
 
   samp <- result$samples
@@ -93,7 +93,6 @@ test_that("unlink=shape chain runs, per-class shape columns present and vary", {
   expect_gt(length(unique(round(samp[, "class2_rate_log_sd"], 8))), 1L)
 })
 
-
 # ==============================================================================
 # 2. unlink = "ratemultiplier"
 # ==============================================================================
@@ -101,12 +100,15 @@ test_that("unlink=shape chain runs, per-class shape columns present and vary", {
 test_that("unlink=ratemultiplier chain runs, w columns present on simplex", {
   d <- .setup_2class_data()
   set.seed(43L)
-  result <- RunMkPrime(
-    data      = d$mkd,
-    tree      = d$tree,
-    mcmc      = .short_mcmc(),
-    partition = d$part,
-    unlink    = "ratemultiplier"
+  result <- allow_warning(
+    RunMkPrime(
+      data      = d$mkd,
+      tree      = d$tree,
+      mcmc      = .short_mcmc(),
+      partition = d$part,
+      unlink    = "ratemultiplier"
+    ),
+    "without stabilisation"
   )
 
   samp <- result$samples
@@ -131,7 +133,6 @@ test_that("unlink=ratemultiplier chain runs, w columns present on simplex", {
   expect_gt(length(unique(round(samp[, "w_1"], 8))), 1L)
 })
 
-
 # ==============================================================================
 # 3. unlink = c("shape", "ratemultiplier")
 # ==============================================================================
@@ -139,12 +140,15 @@ test_that("unlink=ratemultiplier chain runs, w columns present on simplex", {
 test_that("unlink=c(shape,ratemultiplier) chain runs, all per-class columns present", {
   d <- .setup_2class_data()
   set.seed(44L)
-  result <- RunMkPrime(
-    data      = d$mkd,
-    tree      = d$tree,
-    mcmc      = .short_mcmc(),
-    partition = d$part,
-    unlink    = c("shape", "ratemultiplier")
+  result <- allow_warning(
+    RunMkPrime(
+      data      = d$mkd,
+      tree      = d$tree,
+      mcmc      = .short_mcmc(),
+      partition = d$part,
+      unlink    = c("shape", "ratemultiplier")
+    ),
+    "without stabilisation"
   )
 
   samp <- result$samples
@@ -166,7 +170,6 @@ test_that("unlink=c(shape,ratemultiplier) chain runs, all per-class columns pres
   expect_true(all(samp[, "class2_rate_log_sd"] > 0))
 })
 
-
 # ==============================================================================
 # 4. class1_rate_log_sd random-walk regression
 # ==============================================================================
@@ -183,20 +186,23 @@ test_that("unlink=c(shape,ratemultiplier) chain runs, all per-class columns pres
 test_that("class1_rate_log_sd stays in lockstep with rate_log_sd (no slot-0 drift)", {
   d <- .setup_2class_data(seed = 91L, nChar = 12L, nTip = 8L)
   set.seed(91L)
-  result <- RunMkPrime(
-    data      = d$mkd,
-    tree      = d$tree,
-    mcmc      = MkPrimeMCMC(
-      nIter            = 5000L,
-      maxWarmup        = 1000L,
-      minWarmup        = 1000L,
-      nChains          = 1L,
-      thin             = 1L,
-      autoTune         = FALSE,
-      gibbsSubtreeSwap = FALSE
+  result <- allow_warning(
+    RunMkPrime(
+      data      = d$mkd,
+      tree      = d$tree,
+      mcmc      = MkPrimeMCMC(
+        nIter            = 5000L,
+        maxWarmup        = 1000L,
+        minWarmup        = 1000L,
+        nChains          = 1L,
+        thin             = 1L,
+        autoTune         = FALSE,
+        gibbsSubtreeSwap = FALSE
+      ),
+      partition = d$part,
+      unlink    = c("shape", "ratemultiplier")
     ),
-    partition = d$part,
-    unlink    = c("shape", "ratemultiplier")
+    "without stabilisation"
   )
 
   samp <- result$samples

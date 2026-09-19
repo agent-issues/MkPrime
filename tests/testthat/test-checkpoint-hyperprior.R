@@ -26,9 +26,6 @@
 test_that("checkpoint round-trip preserves hyper_tau and class_rate_log_sd_z", {
   skip_on_cran()
 
-  library("ape")
-  library("TreeTools")
-
   # 6 tips, 7 binary chars, all variable (so MkPrimeData keeps every column).
   set.seed(20260528L)
   nTip  <- 6L

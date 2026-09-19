@@ -537,7 +537,7 @@ print.MkpDiagnostics <- function(x, ...) {
   totalTrees <- sum(vapply(perRunTrees, length, integer(1L)))
   if (any(vapply(perRunTrees, length, integer(1L)) > maxPerRun)) {
     if (interactive()) {
-      cli::cli_alert_info(
+      .AlertInfo(
         "Tree ESS: subsampling to {maxPerRun} trees/run \\
          ({totalTrees} total available)."
       )
@@ -548,7 +548,9 @@ print.MkpDiagnostics <- function(x, ...) {
     })
   }
 
-  if (interactive()) cli::cli_progress_message("Computing tree ESS\u2026")
+  if (interactive() && .Loud()) {
+    cli::cli_progress_message("Computing tree ESS\u2026")
+  }
 
   tryCatch({
     chainRows <- lapply(perRunTrees, function(chain) {
