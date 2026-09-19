@@ -446,7 +446,20 @@ test_that("LogPrior reports which character carries a missing k' or kObs", {
                 dimnames = list(paste0("t", 1:4), NULL))
   pd <- TreeTools::MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
-  model <- MkPrimeModel(expSteps = 10, kPrimePrior = "empirical_geometric")
+  # Pinned, not defaulted: the frozen value below is sensitive to
+  # `treeLengthShape` (3.0 nats) and `rateLogSdRate` (0.39 nats), twelve
+  # orders outside its 1e-12 tolerance.
+  model <- MkPrimeModel(
+    expSteps        = 10,
+    kPrimePrior     = "empirical_geometric",
+    priorVariant    = "unconditional",
+    treeLengthShape = 2,
+    rateLossMeanlog = 0,
+    rateLossSdlog   = 2,
+    rateLogSdShape  = 1,
+    rateLogSdRate   = 1,
+    kprimeTruncK    = 200L
+  )
 
   state <- list(
     tree_length = 0.5,
