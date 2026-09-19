@@ -129,6 +129,10 @@ eval_preorder_paths_cpp <- function(dataPtr, statePtr, parent, child, edgeLen) {
     .Call(`_MkPrime_eval_preorder_paths_cpp`, dataPtr, statePtr, parent, child, edgeLen)
 }
 
+gibbs_spr_enumerate_cpp <- function(dataPtr, statePtr, pruneRow) {
+    .Call(`_MkPrime_gibbs_spr_enumerate_cpp`, dataPtr, statePtr, pruneRow)
+}
+
 do_move_cpp <- function(dataPtr, statePtr, moveType, charIdx, scaleTuning, betaSimplexTuning, intWalkWindow, beta) {
     .Call(`_MkPrime_do_move_cpp`, dataPtr, statePtr, moveType, charIdx, scaleTuning, betaSimplexTuning, intWalkWindow, beta)
 }
