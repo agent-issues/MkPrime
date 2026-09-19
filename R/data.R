@@ -45,8 +45,9 @@
 #' @param tail_decay Geometric decay rate `q` for the tail, with
 #'   `0 < q < 1`.  Default `0` (no tail; pmf truncated at `nMax`).  When
 #'   `0`, `body` must sum to 1.
-#' @param tail_start_k Integer.  Smallest `k` value in the tail.  Default
-#'   `length(body) + 2L` (one past the body).
+#' @param tail_start_k Integer specifying the smallest `k` governed by the
+#'   tail; must be `length(body) + 2L`, as the tail is anchored on the last
+#'   `body` entry.
 #' @param nSource Optional integer.  Number of characters from which the
 #'   body was derived (for provenance).
 #'
@@ -79,6 +80,19 @@ MkPrimeEmpiricalPrior <- function(body, tail_decay = 0,
     tail_start_k <- nBody + 2L
   }
   tail_start_k <- as.integer(tail_start_k)
+  # The anchor below is the mass the tail would carry at nBody + 2. Starting
+  # it later still normalises to 1, so nothing downstream errors -- it just
+  # translates that mass outward, giving a pmf neither argument describes.
+  if (is.na(tail_start_k) || tail_start_k != nBody + 2L) {
+    cli::cli_abort(c(
+      "{.arg tail_start_k} must be {.val {nBody + 2L}}, one past {.arg body}.",
+      x = "Got {.val {tail_start_k}}.",
+      i = "The tail's mass is fixed by the last {.arg body} entry and
+           {.arg tail_decay}. Starting it further out shifts that mass to
+           higher {.var k} rather than rescaling it, so the pmf would not be
+           the one {.arg body} and {.arg tail_decay} describe."
+    ))
+  }
 
   bodySum <- sum(body)
   if (tail_decay == 0) {

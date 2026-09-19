@@ -157,6 +157,7 @@ test_that(".BuildJointRhoMatrix fills correctly", {
 # --- Integration test ---
 
 test_that("Joint 2D moves produce valid posterior", {
+  skip_under_memcheck()
   skip_on_cran()
 
   nexFile <- system.file("datasets/Sun2018.nex", package = "TreeSearch")
@@ -180,6 +181,7 @@ test_that("Joint 2D moves produce valid posterior", {
 })
 
 test_that("joint2d = FALSE excludes joint moves", {
+  skip_under_memcheck()
   skip_on_cran()
 
   nexFile <- system.file("datasets/Sun2018.nex", package = "TreeSearch")
@@ -203,6 +205,7 @@ test_that("joint2d = FALSE excludes joint moves", {
 })
 
 test_that("joint_tl_rn runs and produces acceptance on mixed data", {
+  skip_under_memcheck()
   skip_on_cran()
 
   # Force a binary character to be neomorphic so hasNeo gates joint_tl_rn in.
