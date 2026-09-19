@@ -100,6 +100,7 @@ test_that("pSPR Hastings formula includes normalization correction", {
 # --- pSPR integration ---
 
 test_that("pSPR move produces valid trees", {
+  skip_under_memcheck()
   skip_on_cran()
 
   nexFile <- system.file("datasets/Sun2018.nex", package = "TreeSearch")
@@ -127,6 +128,7 @@ test_that("pSPR move produces valid trees", {
 })
 
 test_that("pSPR can be disabled", {
+  skip_under_memcheck()
   skip_on_cran()
 
   nexFile <- system.file("datasets/Sun2018.nex", package = "TreeSearch")
