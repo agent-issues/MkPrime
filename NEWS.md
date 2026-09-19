@@ -1,31 +1,5 @@
 # MkPrime (development version)
 
-## `gibbs_spr` is now a valid MH kernel (GSPR-001 / GSPR-004)
-
-The default-on `gibbs_spr` topology move was not pi-invariant: it committed the
-chosen regraft with a deterministic `0.5 * lReg` edge split and no accept step
-(GSPR-001), and its candidate filter excluded the subtree's own position so the
-selection normaliser did not cancel between the two directions of a move
-(GSPR-004). The corrected kernel enumerates every edge of the pruned tree —
-including the merged pair the subtree vacates — weights them at a fixed
-`tau = 1/2` reference, draws the committed split fraction `tau ~ U(0, 1)`, and
-accepts through a full Metropolis–Hastings step carrying the selection-weight
-ratio and the SPR merge/split Jacobian `log(lReg) - log(lMerge)`. Accepted
-moves now include branch-fraction re-splits at unchanged topology (the
-merged-edge draw), the commit updates `state$logPrior` (retiring GSPR-002),
-and the committed `logLik` is the canonical full evaluation at the drawn
-fraction. All three evaluation paths (partial-CL, Q-heterogeneity, full
-fallback) share one selection/MH/commit implementation. **RNG streams and
-posterior samples from runs using `gibbsSpr = TRUE` (the free-topology
-default) are not comparable to pre-fix runs; expect a lower reported
-acceptance rate for this move (the old ~0.83 was the probability of not
-drawing "self", not an acceptance rate).** Gate:
-`dev/red-team/heavy-tests/gibbs-spr-db.R` (FAIL -> PASS); deterministic
-candidate-set symmetry tests in `tests/testthat/test-gibbs-spr-candidates.R`.
-The §7a partition bit-identity reference is untouched by this change: its
-schedule pins `gibbsSpr = FALSE`, and the reference was verified to reproduce
-bit-for-bit under a build of this branch (see the entry below).
-
 ## §7a bit-identity fixture now pins its own starting tree
 
 `tests/testthat/test-partition-bitcompat-null.R` failed on every platform
@@ -66,23 +40,34 @@ What the pinned schedule no longer covers: `gibbs_spr`, `gibbs_subtree_swap`,
 correctness is covered instead by `test-gibbs-spr.R`,
 `test-gibbs-spr-candidates.R` and the detailed-balance gate at
 `dev/red-team/heavy-tests/gibbs-spr-db.R`. Everything else in the legacy path
-is still asserted bit-for-bit.
+is still asserted against the stored reference.
 
 The generator now builds against the same installed package the suite tests
 (`MKP_REF_LIB` / `MKP_REF_PKG`) instead of `devtools::load_all()`, which
 compiles without `-O2` and so could disagree in the last bits with the binary
 the comparison then runs against.
 
-Finally, the value assertion is now bit-exact only on the architecture that
-generated the reference, and tolerant (`1e-9`) elsewhere. Cross-architecture
-bit-identity was never achievable: arm64 toolchains contract multiply-add into
-a fused instruction that rounds once where baseline x86-64 rounds twice, so
-`macOS-latest` and `ubuntu-24.04-arm` disagreed with the reference in the last
-bits — visibly so in the pinned tree's own total length, 9.4 over 94 edges of
-0.1, arriving as 9.399999999999980. Nothing is lost by tolerating that: the
-chain is chaotic, so a genuine change to the legacy path flips an accept/reject
-within a few iterations and diverges by whole nats, thousands of times the
-~2e-15 spread between architectures.
+Finally, the value assertion compares at a `1e-9` relative tolerance on every
+platform rather than bit-for-bit. Cross-platform bit-identity was never
+achievable, and the architecture is not the axis it varies on: the reference
+was generated on x86_64 Windows, and x86_64 Linux and x86_64 macOS disagree
+with it — in exactly one of the 1055 sample values, `log_posterior` of sample
+2, by one ULP — while sharing its architecture. That is the C library: glibc,
+Apple libm and mingw-w64 do not agree on the last bit of every `log()` and
+`exp()`. On arm64 the spread is wider still, because those toolchains contract
+multiply-add into a fused instruction that rounds once where baseline x86-64
+rounds twice; it shows in the pinned tree's own total length, 9.4 over 94 edges
+of 0.1, arriving as 9.399999999999980.
+
+Nothing is lost by tolerating that. The chain is chaotic, so a genuine change
+to the legacy path flips an accept/reject within a few iterations and diverges
+by whole nats — a relative difference near `1e-3`. The tolerance sits six to
+seven orders of magnitude above the platform spread and six below that, so it
+catches everything the bit-exact comparison caught except a drift smaller than
+the noise between two machines, which no comparator run on more than one
+machine could catch either. The schema assertions remain exact on every platform, and
+bit-identity where it is a real property — two runs of one build in one process
+under one seed — is asserted by `test-determinism-gibbs-subtree-swap.R`.
 
 ## `geometric` arm's `marginal_k` default is now the unconditional (Model A) prior
 
