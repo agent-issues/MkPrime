@@ -4303,8 +4303,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   kp <- if (length(transIdx)) as.numeric(state$kPrime[transIdx]) else numeric(0)
 
 
-  # Topology hash: FNV-1a of parent vector (shared C++ implementation)
-  topoHash <- compute_topo_hash(state$edge[, 1])
+  # Tips are numbered 1..nTip and never appear as a parent.
+  topoHash <- compute_topo_hash(state$edge[, 1], state$edge[, 2],
+                                min(state$edge[, 1]) - 1L)
 
   c(state$logPost, state$logLik, state$treeLength,
     rateLossVal, state$rateLogSd, kpHyperVal,

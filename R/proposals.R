@@ -4,6 +4,13 @@
 # Tree topology proposals return list(tree = ..., rel_br_lengths = ...,
 #   logHastings = ...).
 # The Hastings ratio is log q(current | proposed) - log q(proposed | current).
+#
+# Trees are unrooted binary in ape's rooted encoding: node nTip + 1 is a
+# trifurcation, so nEdge = 2 * nTip - 3.  It is not a biological root -- every
+# model is time-reversible -- but it is not invisible to the moves either:
+# SPR, TBR, pSPR and their Gibbs/weighted variants take prune edges only where
+# parent != nTip + 1, so the three subtrees hanging directly off it are never
+# pruned as units.
 
 #' Scale proposal for positive scalars
 #'
