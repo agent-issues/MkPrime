@@ -22,6 +22,12 @@
 #'   `priorOnClassRateLogSd = "gamma_independent"` per-class prior.
 #'   Not consulted by the default pooled hyperprior (see
 #'   `priorOnClassRateLogSd`).
+#' @param classRateConcentration Numeric specifying the concentration of the
+#'   symmetric Dirichlet prior on per-class relative rate weights; values below
+#'   one favour uneven class rates, values above one pull them together.
+#' @param kprimeTruncK Integer specifying the cap `K` at which the geometric
+#'   arm's `k'` prior is truncated and renormalised over `[2, K]`, bounded
+#'   above by the compile-time candidate cap of 256.
 #' @param priorOnClassRateLogSd Prior structure on per-class ACRV
 #'   dispersion `σ_c = class_rate_log_sd[c]` when `unlink = "shape"` is
 #'   active with two or more user classes. One of:
@@ -215,7 +221,7 @@ MkPrimeModel <- function(
          {.code kPrimePrior = \"geometric\"} in v1.",
         i = "Got {.code kPrimePrior = \"{kPrimePrior}\"}.",
         i = "Other arms (empirical_geometric / beta_geometric / logseries)
-             are scheduled as §11 follow-ups in
+             are scheduled as section 11 follow-ups in
              {.file dev/notes/2026-05-28-marginal-k-plan.md}."
       ))
     }
@@ -223,7 +229,7 @@ MkPrimeModel <- function(
       cli::cli_abort(c(
         "{.code likelihoodMode = \"marginal_k\"} cannot be combined with
          {.code qHeterogeneity = TRUE}.",
-        i = "Het + marginal-k is deferred to v1.x (plan §13).",
+        i = "Het + marginal-k is deferred to v1.x (plan section 13).",
         i = "Drop one of the two."
       ))
     }

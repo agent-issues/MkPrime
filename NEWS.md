@@ -1,5 +1,74 @@
 # MkPrime (development version)
 
+## §7a bit-identity fixture now pins its own starting tree
+
+`tests/testthat/test-partition-bitcompat-null.R` failed on every platform
+because its fixture called `RunMkPrime(tree = NULL)`. That delegates the
+starting topology to `TreeSearch::AdditionTree()` whenever `TreeSearch` is
+installed, so the entire chain depended on the installed version of a
+*Suggests* package that nothing pins. The stored reference could not be
+reproduced even by building `2b3c054`, the commit that generated it; CI, which
+resolves `TreeSearch` from CRAN, never reproduced it at all.
+
+The fixture now reads a pinned starting tree from
+`tests/testthat/_reference/partition-bitcompat-null-start.nwk` (a greedy
+parsimony addition tree over `Lobo.phy`, every edge 0.1), and the reference RDS
+has been regenerated against it.
+
+**No package behaviour changed.** Building `2b3c054` and `main` and running the
+fixture under each gives byte-identical output, so the comparator's
+discriminating power over the MkPrime sources is intact across every commit it
+has ever spanned; only its unpinned input changed.
+
+It also pins `gibbsSpr = FALSE`, for two reasons. `gibbs_spr` is the one move
+in the schedule known to be incorrect on `main` (issue #19: it commits a
+deterministic edge split with no Metropolis-Hastings step, so it is not
+pi-invariant), and its replacement is in flight, so leaving it in the schedule
+would make the comparator hostage to that fix and force a second regeneration
+indistinguishable from evading the guard.
+
+The pin was validated rather than assumed: the fixture was run under two
+independently compiled `-O2` builds — this branch, and the 21-commit
+`fix/gspr-pi-invariance` branch that rewrites `gibbs_spr` — and the payloads are
+bit-identical (`identical()` TRUE on the whole object; final
+`log_posterior = -897.10858033586601` on both). The gibbs_spr fix can therefore
+land without touching this reference, which is the comparator doing its job
+instead of being rewritten.
+
+What the pinned schedule no longer covers: `gibbs_spr`, `gibbs_subtree_swap`,
+`joint2d`, and the default-off weighted / block-Gibbs moves. `gibbs_spr`
+correctness is covered instead by `test-gibbs-spr.R`,
+`test-gibbs-spr-candidates.R` and the detailed-balance gate at
+`dev/red-team/heavy-tests/gibbs-spr-db.R`. Everything else in the legacy path
+is still asserted against the stored reference.
+
+The generator now builds against the same installed package the suite tests
+(`MKP_REF_LIB` / `MKP_REF_PKG`) instead of `devtools::load_all()`, which
+compiles without `-O2` and so could disagree in the last bits with the binary
+the comparison then runs against.
+
+Finally, the value assertion compares at a `1e-9` relative tolerance on every
+platform rather than bit-for-bit. Cross-platform bit-identity was never
+achievable, and the architecture is not the axis it varies on: the reference
+was generated on x86_64 Windows, and x86_64 Linux and x86_64 macOS disagree
+with it — in exactly one of the 1055 sample values, `log_posterior` of sample
+2, by one ULP — while sharing its architecture. That is the C library: glibc,
+Apple libm and mingw-w64 do not agree on the last bit of every `log()` and
+`exp()`. On arm64 the spread is wider still, because those toolchains contract
+multiply-add into a fused instruction that rounds once where baseline x86-64
+rounds twice; it shows in the pinned tree's own total length, 9.4 over 94 edges
+of 0.1, arriving as 9.399999999999980.
+
+Nothing is lost by tolerating that. The chain is chaotic, so a genuine change
+to the legacy path flips an accept/reject within a few iterations and diverges
+by whole nats — a relative difference near `1e-3`. The tolerance sits six to
+seven orders of magnitude above the platform spread and six below that, so it
+catches everything the bit-exact comparison caught except a drift smaller than
+the noise between two machines, which no comparator run on more than one
+machine could catch either. The schema assertions remain exact on every platform, and
+bit-identity where it is a real property — two runs of one build in one process
+under one seed — is asserted by `test-determinism-gibbs-subtree-swap.R`.
+
 ## `geometric` arm's `marginal_k` default is now the unconditional (Model A) prior
 
 The default `priorVariant` for `kPrimePrior = "geometric"` is now `"unconditional"`
