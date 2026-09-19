@@ -1,9 +1,14 @@
 # Tests for GibbsSPR (moveType 10) and GibbsSubtreeSwap (moveType 11)
 # M-085 / M-086
 #
-# Both moves are pure Gibbs updates: they enumerate all valid topology
-# candidates, weight by exp(β × logLik), and accept the chosen candidate
-# unconditionally (self-draw returns false).
+# GibbsSPR (post GSPR-001/GSPR-004 fix): enumerates every edge of the pruned
+# tree — including the subtree's own merged position — weights by
+# exp(β × logLik) at a fixed tau = 1/2 reference, draws the committed split
+# fraction tau ~ U(0,1), and accepts through a full MH step.  An accepted
+# move is therefore either a regraft OR a branch-fraction move at unchanged
+# topology (the merged-edge draw).  See test-gibbs-spr-candidates.R for the
+# deterministic candidate-set symmetry tests.
+# GibbsSubtreeSwap remains a pure Gibbs update (self-draw returns false).
 #
 # Testing strategy:
 #   - Structural: output is valid preorder tree, tree length preserved
@@ -53,12 +58,19 @@
 # ---------------------------------------------------------------------------
 
 test_that("GibbsSPR (moveType 10) can change topology on a 5-tip tree", {
+  # An accepted move may be a merged-edge (branch-fraction) draw that leaves
+  # the topology unchanged, so loop until the edge matrix itself moves.
   pts    <- .gibbs_pts(seed = 101L)
   before <- get_mcmc_state(pts$statePtr)$edge
-  changed <- .try_move(pts, 10L)
-  expect_true(changed)
-  after  <- get_mcmc_state(pts$statePtr)$edge
-  expect_false(identical(before, after))
+  topoChanged <- FALSE
+  for (i in seq_len(200L)) {
+    if (do_move_cpp(pts$dataPtr, pts$statePtr, 10L, 0L, 0.5, 0.5, 1L, 1.0) &&
+        !identical(before, get_mcmc_state(pts$statePtr)$edge)) {
+      topoChanged <- TRUE
+      break
+    }
+  }
+  expect_true(topoChanged)
 })
 
 test_that("GibbsSPR preserves tree length", {
@@ -159,10 +171,10 @@ test_that("GibbsSPR samples better topologies more often than random", {
   n_acc <- sum(vapply(seq_len(n_try), function(i)
     do_move_cpp(dataPtr, statePtr, 10L, 0L, 0.5, 0.5, 1L, 1.0),
     logical(1L)))
-  # At least some proposals should be accepted (not all self-draws)
+  # At least some proposals should be accepted
   expect_gt(n_acc, 0L)
-  # The sampler should not always reject (acceptance rate should be reasonable)
-  expect_lt(n_acc, n_try)  # some self-draws expected
+  # The MH step should reject some proposals
+  expect_lt(n_acc, n_try)
 })
 
 # ---------------------------------------------------------------------------

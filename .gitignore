@@ -71,6 +71,10 @@ bench_*.R
 test_gibbs_*.R
 project3832*
 benchmarks/
+# ...but dev/benchmarks/ is tracked source (ESJD S0 harness); its run outputs are not
+!dev/benchmarks/
+!dev/benchmarks/**
+dev/benchmarks/*-results/
 /vtune*
 MkPrime_*.tar.gz
 MkPrime_*.gz
@@ -107,3 +111,7 @@ dev/profiling/*.vtune-lib/
 dev/profiling/drivers/*-profvis.html
 dev/profiling/drivers/*.Rprof
 
+
+# Heavy-test result payloads: verdict.txt is committed, the per-replicate
+# statistic matrices in summary.rds (~5 MB) are regenerable and are not.
+dev/red-team/heavy-tests/*-results/summary.rds

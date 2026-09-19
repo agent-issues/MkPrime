@@ -1,0 +1,153 @@
+VERDICT: PASS
+
+Harness: gibbs-spr-db -- exact pi-invariance MAGNITUDE + REGRESSION GATE
+Role:    the non-invariance of gibbs_spr is already CONFIRMED analytically
+         (esjd-allocation.md Q4). This harness measures HOW MUCH, and gates
+         the fix. It is not evidence-of-existence.
+Path:    fixture drives the MAIN partial-CL commit path (src/mcmc.cpp:1463-1466)
+Target:  pi = Uniform{105 unrooted topologies} (x) Dirichlet(1,...,1) on 9 fractions
+Design:  x ~ pi exactly -> B sweeps of K -> compare. i.i.d. replicates; no
+         burn-in, no thinning, no mixing assumption.
+Scale:   nTip=6  reps=600  sweeps=40  reference=4800  (quick mode)
+Alpha:   0.000208 per test (Bonferroni 6 gated arms x 8 stats, FWER 0.01)
+Tie gate: fail if P(bit-exact adjacent tie) > 0.001  (exact target 0)
+
+--- REFERENCE GENERATOR SELF-CHECK ---
+  uniform-topology chi2 p=0.8500 over 105/105 buckets; exact ties=0 -> OK
+
+--- CONTROLS (harness validity) ---
+  spr = spr_proposal_impl (src/proposals.cpp:121,161): tau ~ U(0,1) and
+  logHastings = log(lRegraft) - log(lMerge). Exactly correct.
+  spr                    n=600 accept=0.497  indistinguishable from pi
+      int_frac  KS p=0.929      D=0.0235  mean=0.32857   exact=0.33159   relBias= -0.0091 W1=0.00573   ok
+      ord_min   KS p=0.441      D=0.0375  mean=0.01192   exact=0.01278   relBias= -0.0671 W1=0.000882  ok
+      ord_med   KS p=0.169      D=0.0481  mean=0.08352   exact=0.08321   relBias= +0.0037 W1=0.00128   ok
+      ord_max   KS p=0.244      D=0.0444  mean=0.31254   exact=0.31296   relBias= -0.0013 W1=0.00645   ok
+      simpson   KS p=0.651      D=0.0319  mean=0.19684   exact=0.19898   relBias= -0.0108 W1=0.00403   ok
+      bal_min   KS p=0.235      D=0.0448  mean=0.03962   exact=0.03824   relBias= +0.0360 W1=0.002     ok
+      topo      chi2 p=0.696       buckets=105/105  TV=0.16071 (H0 baseline 0.16381)  ok
+      n_tie     P(bit-exact tie)=0.00000  P(rel tie)=0.00000  mean ties/state=0.0000  [exact target: 0]  ok
+  branch_lengths         n=600 accept=0.932  indistinguishable from pi
+      int_frac  KS p=0.546      D=0.0346  mean=0.33779   exact=0.33159   relBias= +0.0187 W1=0.00701   ok
+      ord_min   KS p=0.133      D=0.0504  mean=0.01216   exact=0.01278   relBias= -0.0480 W1=0.000712  ok
+      ord_med   KS p=0.0386     D=0.0608  mean=0.08080   exact=0.08321   relBias= -0.0290 W1=0.00246   ok
+      ord_max   KS p=0.2        D=0.0465  mean=0.31907   exact=0.31296   relBias= +0.0195 W1=0.00598   ok
+      simpson   KS p=0.152      D=0.0492  mean=0.20276   exact=0.19898   relBias= +0.0190 W1=0.00415   ok
+      bal_min   KS p=0.996      D=0.0177  mean=0.03766   exact=0.03824   relBias= -0.0153 W1=0.000989  ok
+      topo      chi2 p=n/a(fixed)  buckets=104/105  TV=0.15095 (H0 baseline 0.16381)  ok
+      n_tie     P(bit-exact tie)=0.00000  P(rel tie)=0.00000  mean ties/state=0.0000  [exact target: 0]  ok
+  tbr = tbr_proposal_impl (src/tree_moves.cpp:492-494): second correct
+  reference; corroborating only (compound move, larger surface).
+  tbr                    n=600 accept=0.501  indistinguishable from pi   [report-only]
+      int_frac  KS p=0.0667     D=0.0565  mean=0.32630   exact=0.33159   relBias= -0.0159 W1=0.0101    ok
+      ord_min   KS p=0.594      D=0.0333  mean=0.01323   exact=0.01278   relBias= +0.0352 W1=0.000589  ok
+      ord_med   KS p=0.387      D=0.0392  mean=0.08248   exact=0.08321   relBias= -0.0088 W1=0.000918  ok
+      ord_max   KS p=0.836      D=0.0269  mean=0.31317   exact=0.31296   relBias= +0.0007 W1=0.00298   ok
+      simpson   KS p=0.815      D=0.0275  mean=0.19894   exact=0.19898   relBias= -0.0002 W1=0.00171   ok
+      bal_min   KS p=0.307      D=0.0419  mean=0.03863   exact=0.03824   relBias= +0.0102 W1=0.00162   ok
+      topo      chi2 p=0.41        buckets=105/105  TV=0.16405 (H0 baseline 0.16381)  ok
+      n_tie     P(bit-exact tie)=0.00000  P(rel tie)=0.00000  mean ties/state=0.0000  [exact target: 0]  ok
+  primary controls PASS -> harness certified
+
+--- GATE VALIDITY: does the gate pass on a CORRECTED kernel? ---
+  spr_fixed_surrogate = uniform tau + Jacobian + MH, i.e. what a fixed
+  gibbs_spr must reduce to. If this passes, a green gate after the fix is
+  meaningful rather than vacuous.
+  spr_fixed_surrogate    n=600 accept=0.507  indistinguishable from pi
+      int_frac  KS p=0.0702     D=0.0560  mean=0.33799   exact=0.33159   relBias= +0.0193 W1=0.00917   ok
+      ord_min   KS p=0.0896     D=0.0540  mean=0.01196   exact=0.01278   relBias= -0.0636 W1=0.000863  ok
+      ord_med   KS p=0.413      D=0.0383  mean=0.08325   exact=0.08321   relBias= +0.0005 W1=0.00106   ok
+      ord_max   KS p=0.124      D=0.0510  mean=0.31524   exact=0.31296   relBias= +0.0073 W1=0.00382   ok
+      simpson   KS p=0.61       D=0.0329  mean=0.20032   exact=0.19898   relBias= +0.0068 W1=0.0022    ok
+      bal_min   KS p=0.017      D=0.0669  mean=0.04298   exact=0.03824   relBias= +0.1237 W1=0.00462   ok
+      topo      chi2 p=0.146       buckets=105/105  TV=0.17286 (H0 baseline 0.16381)  ok
+      n_tie     P(bit-exact tie)=0.00000  P(rel tie)=0.00000  mean ties/state=0.0000  [exact target: 0]  ok
+  gate-on-correct-kernel: PASSES -> gate is meaningful
+
+--- Q1: is the gibbs_spr kernel pi-invariant on its own? ---
+  gibbs_spr              n=600 accept=0.584  indistinguishable from pi
+      int_frac  KS p=0.829      D=0.0271  mean=0.32708   exact=0.33159   relBias= -0.0136 W1=0.00561   ok
+      ord_min   KS p=0.204      D=0.0463  mean=0.01228   exact=0.01278   relBias= -0.0392 W1=0.000537  ok
+      ord_med   KS p=0.815      D=0.0275  mean=0.08345   exact=0.08321   relBias= +0.0029 W1=0.000957  ok
+      ord_max   KS p=0.691      D=0.0308  mean=0.31347   exact=0.31296   relBias= +0.0016 W1=0.0029    ok
+      simpson   KS p=0.715      D=0.0302  mean=0.19987   exact=0.19898   relBias= +0.0045 W1=0.00194   ok
+      bal_min   KS p=0.691      D=0.0308  mean=0.03883   exact=0.03824   relBias= +0.0154 W1=0.00137   ok
+      topo      chi2 p=0.178       buckets=105/105  TV=0.17857 (H0 baseline 0.16381)  ok
+      n_tie     P(bit-exact tie)=0.00000  P(rel tie)=0.00000  mean ties/state=0.0000  [exact target: 0]  ok
+  Q1 = not refuted at this scale
+
+--- Q2: do branch-length moves compensate? (composite chains) ---
+  gibbs_spr+br_1to1      n=600 accept=0.759  indistinguishable from pi
+      int_frac  KS p=0.0756     D=0.0554  mean=0.32259   exact=0.33159   relBias= -0.0271 W1=0.0121    ok
+      ord_min   KS p=0.493      D=0.0360  mean=0.01342   exact=0.01278   relBias= +0.0504 W1=0.000697  ok
+      ord_med   KS p=0.651      D=0.0319  mean=0.08291   exact=0.08321   relBias= -0.0036 W1=0.0012    ok
+      ord_max   KS p=0.95       D=0.0225  mean=0.31098   exact=0.31296   relBias= -0.0063 W1=0.00346   ok
+      simpson   KS p=0.618      D=0.0327  mean=0.19703   exact=0.19898   relBias= -0.0098 W1=0.00269   ok
+      bal_min   KS p=0.715      D=0.0302  mean=0.03762   exact=0.03824   relBias= -0.0162 W1=0.00124   ok
+      topo      chi2 p=0.0576      buckets=105/105  TV=0.19262 (H0 baseline 0.16381)  ok
+      n_tie     P(bit-exact tie)=0.00000  P(rel tie)=0.00000  mean ties/state=0.0000  [exact target: 0]  ok
+  gibbs_spr+br_1to10     n=600 accept=0.901  indistinguishable from pi
+      int_frac  KS p=0.815      D=0.0275  mean=0.33455   exact=0.33159   relBias= +0.0089 W1=0.00566   ok
+      ord_min   KS p=0.407      D=0.0385  mean=0.01214   exact=0.01278   relBias= -0.0496 W1=0.000681  ok
+      ord_med   KS p=0.946      D=0.0227  mean=0.08271   exact=0.08321   relBias= -0.0059 W1=0.000719  ok
+      ord_max   KS p=0.226      D=0.0452  mean=0.31429   exact=0.31296   relBias= +0.0042 W1=0.00514   ok
+      simpson   KS p=0.463      D=0.0369  mean=0.19967   exact=0.19898   relBias= +0.0035 W1=0.0023    ok
+      bal_min   KS p=0.221      D=0.0454  mean=0.04149   exact=0.03824   relBias= +0.0850 W1=0.00307   ok
+      topo      chi2 p=0.313       buckets=105/105  TV=0.17000 (H0 baseline 0.16381)  ok
+      n_tie     P(bit-exact tie)=0.00000  P(rel tie)=0.00000  mean ties/state=0.0000  [exact target: 0]  ok
+  Q2 = composite not distinguished from pi at this scale
+
+--- MAGNITUDE (the point of this harness) ---
+  pi-null mass = fraction of sampled states carrying a bit-exactly equal
+  adjacent edge pair; the exact target puts 0 there. topo TV = total
+  variation from uniform on the topology marginal, shown against the H0
+  baseline (TV of an exact pi subsample of the same size) because TV is
+  noise-dominated at small n/nTopos. relBias / W1 quantify distortion of
+  the continuous part.
+  gibbs_spr              pi-null mass= 0.0000  topo TV=0.17857 (H0 0.16381)  E[int_frac] -0.00451 ( -1.36%)  W1(int_frac)=0.00561
+  gibbs_spr+br_1to1      pi-null mass= 0.0000  topo TV=0.19262 (H0 0.16381)  E[int_frac] -0.00899 ( -2.71%)  W1(int_frac)=0.0121
+  gibbs_spr+br_1to10     pi-null mass= 0.0000  topo TV=0.17000 (H0 0.16381)  E[int_frac] +0.00297 ( +0.89%)  W1(int_frac)=0.00566
+  weighted_spr           pi-null mass= 0.0000  topo TV=0.15524 (H0 0.16381)  E[int_frac] -0.00497 ( -1.50%)  W1(int_frac)=0.022
+  spr_fixed_surrogate    pi-null mass= 0.0000  topo TV=0.17286 (H0 0.16381)  E[int_frac] +0.00640 ( +1.93%)  W1(int_frac)=0.00917
+  spr                    pi-null mass= 0.0000  topo TV=0.16071 (H0 0.16381)  E[int_frac] -0.00301 ( -0.91%)  W1(int_frac)=0.00573
+  branch_lengths         pi-null mass= 0.0000  topo TV=0.15095 (H0 0.16381)  E[int_frac] +0.00620 ( +1.87%)  W1(int_frac)=0.00701
+
+--- POWER LADDER (R-level MH on spr_proposal, accept at c*logHastings) ---
+  c = 1 is exactly correct (that is spr_fixed_surrogate); c < 1 is a smooth,
+  non-atomic bias, so this measures the detection floor for biases that do
+  NOT leave the atomic tie fingerprint.
+    c=0.95  min KS p=0.0142     |relBias|<=0.06450  not detected
+    c=0.90  min KS p=0.0386     |relBias|<=0.06263  not detected
+    c=0.75  min KS p=0.000383   |relBias|<=0.15807  not detected
+    c=0.50  min KS p=3.2e-10    |relBias|<=0.23628  DETECTED
+    c=0.00  min KS p=4.41e-74   |relBias|<=0.58002  DETECTED
+  detection floor: smallest detected smooth violation c= 0.5 at |relBias|=0.236
+
+--- SECOND ACCUSED (report-only): weighted_spr, code 13 = GSPR-003 ---
+  Independently CONFIRMED defective: omits the Jacobian
+  log(lRegraft) - log(lMerge). Reported here as corroboration only; it never
+  enters the gibbs_spr verdict and is not used as a control.
+  weighted_spr           n=600 accept=0.399  DEVIATES from pi   [report-only]
+      int_frac  KS p=0.00131    D=0.0829  mean=0.32661   exact=0.33159   relBias= -0.0150 W1=0.022     ok
+      ord_min   KS p=7.72e-22   D=0.2150  mean=0.00794   exact=0.01278   relBias= -0.3788 W1=0.00485   FAIL
+      ord_med   KS p=9.17e-09   D=0.1342  mean=0.07549   exact=0.08321   relBias= -0.0927 W1=0.00773   FAIL
+      ord_max   KS p=9.47e-10   D=0.1419  mean=0.34166   exact=0.31296   relBias= +0.0917 W1=0.0285    FAIL
+      simpson   KS p=1.56e-18   D=0.1977  mean=0.22247   exact=0.19898   relBias= +0.1180 W1=0.0232    FAIL
+      bal_min   KS p=4.08e-05   D=0.1006  mean=0.04733   exact=0.03824   relBias= +0.2375 W1=0.00895   FAIL
+      topo      chi2 p=0.868       buckets=105/105  TV=0.15524 (H0 baseline 0.16381)  ok
+      n_tie     P(bit-exact tie)=0.00000  P(rel tie)=0.00000  mean ties/state=0.0000  [exact target: 0]  ok
+
+--- LIMITATION ---
+  beta = 0 makes the target exactly known and exactly sampleable, and the
+  branch-length map (merge + 0.5*lReg split) is beta-independent, so a FAIL
+  here is a FAIL at any beta. The converse does not hold: the MAGNITUDE
+  numbers above are distortions of the beta = 0 target and need not equal
+  the beta = 1 posterior distortion. The pi-null mass transfers most
+  directly, since it is set by acceptance rate and branch-move dose rather
+  than by the likelihood.
+
+--- INTERPRETATION ---
+  Controls and the corrected-kernel surrogate pass, and gibbs_spr is
+  indistinguishable from pi at this scale. POWER: smooth violations down
+  to c=0.50 (|relBias| = 0.236) ARE detected here, and any atomic tie mass
+  above 0.001 would be caught, so this null is informative above that floor.

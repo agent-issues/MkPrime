@@ -4,6 +4,19 @@
 # Replaced coda-based PSRF with native rank-normalized R-hat
 # (Vehtari et al. 2021) and native ESS (Geyer 1992).
 
+# Reductions that report "nothing to assess" rather than a passing value.
+#
+# `max(x, na.rm = TRUE)` on an all-NA vector returns `-Inf`, and `min()`
+# returns `Inf`. Both satisfy any `maxRhat <= threshold` / `minEss >= threshold`
+# stopping rule, so an unassessable window reads as a converged one. That is
+# the worst possible direction for the error: R-hat and ESS are `NA` precisely
+# when a chain is constant over the window, which is the signature of a stuck
+# sampler, so the bug turns the worst mixing outcome into a green light exactly
+# where the user is trusting the automatic stopping rule instead of the traces.
+.MaxOrNA <- function(x) if (all(is.na(x))) NA_real_ else max(x, na.rm = TRUE)
+
+.MinOrNA <- function(x) if (all(is.na(x))) NA_real_ else min(x, na.rm = TRUE)
+
 #' Compute convergence diagnostics for an MkPosterior
 #'
 #' Calculates effective sample size (ESS) per parameter and, when
@@ -62,18 +75,31 @@ ConvergenceDiagnostics <- function(posterior, trees = FALSE,
 
   if (nRuns >= 2L && !is.null(posterior$per_run)) {
     rhat <- .ComputeRhat(pb$per_run, keyCols)
-    maxRhat <- max(rhat[isConvParam[names(rhat) %in% names(ess)]],
-                   na.rm = TRUE)
+    maxRhat <- .MaxOrNA(rhat[isConvParam[names(rhat) %in% names(ess)]])
   }
 
   # --- Tree ESS ---
   if (isTRUE(frechetESS)) trees <- TRUE
   treeEss <- .ComputeTreeEss(pb, trees, frechet = isTRUE(frechetESS))
 
+  minEss <- .MinOrNA(ess[isConvParam])
+
+  # A window in which every monitored scalar is constant is the signature of a
+  # stuck chain. Saying so is worth more than the NA it now reports, because
+  # the NA is easy to read as "diagnostic unavailable" rather than "the sampler
+  # did not move".
+  if (is.na(minEss)) {
+    cli::cli_warn(c(
+      "Convergence cannot be assessed: every monitored parameter is constant
+       over the retained samples.",
+      i = "This is the signature of a stuck chain, not of convergence."
+    ))
+  }
+
   structure(
     list(
       ess = ess,
-      minEss = min(ess[isConvParam], na.rm = TRUE),
+      minEss = minEss,
       rhat = rhat,
       maxRhat = maxRhat,
       treeEss = treeEss,
@@ -477,6 +503,34 @@ print.MkpDiagnostics <- function(x, ...) {
 }
 
 
+# Choose the criterion the ETA should be projected against.
+#
+# Whichever of the scalar-ESS and tree-ESS targets has the worse
+# current/target ratio is the binding constraint, so it governs the estimate.
+# Either may be unconfigured, in which case the other is the only criterion
+# there is; both unconfigured (or not yet computable) yields NULL, which
+# .EstimateEta() renders as no ETA rather than a wrong one.
+#
+# Defaulting the target to `mcmc$minEss` is what broke this: with only
+# `minTreeEss` set, the target was NULL and the tree branch that should have
+# supplied the fallback was itself gated on `minEss` being set.
+.EtaCriterion <- function(diagCheck, mcmc) {
+  scalarOk <- !is.null(mcmc$minEss) && isTRUE(is.finite(diagCheck$minEss))
+  treeOk <- !is.null(mcmc$minTreeEss) && isTRUE(is.finite(diagCheck$treeEss))
+
+  out <- list(current = NULL, target = NULL)
+  if (scalarOk) {
+    out <- list(current = diagCheck$minEss, target = mcmc$minEss)
+  }
+  if (treeOk && (!scalarOk ||
+                 diagCheck$treeEss / mcmc$minTreeEss <
+                   diagCheck$minEss / mcmc$minEss)) {
+    out <- list(current = diagCheck$treeEss, target = mcmc$minTreeEss)
+  }
+  out
+}
+
+
 #' Estimate remaining wall-clock time to reach target minESS (M-141).
 #'
 #' Uses a conservative linear extrapolation: ESS grows roughly linearly with
@@ -492,8 +546,9 @@ print.MkpDiagnostics <- function(x, ...) {
 #' @keywords internal
 .EstimateEta <- function(currentMinEss, targetMinEss, elapsedSampleSec,
                          safetyFactor = 1.5) {
-  if (!is.finite(currentMinEss) || currentMinEss <= 0 ||
-      is.null(targetMinEss) || !is.finite(targetMinEss) ||
+  if (is.null(currentMinEss) || is.null(targetMinEss) ||
+      !is.finite(currentMinEss) || currentMinEss <= 0 ||
+      !is.finite(targetMinEss) ||
       targetMinEss <= 0 || !is.finite(elapsedSampleSec) ||
       elapsedSampleSec <= 0) {
     return(NULL)

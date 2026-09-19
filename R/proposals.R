@@ -20,6 +20,22 @@ ProposeScale <- function(x, tuning = 1.0) {
   list(value = x * m, logHastings = log(m))
 }
 
+#' Logit-scale random-walk proposal for a probability
+#'
+#' Proposes logit(x') = logit(x) + tuning * B, where B is the same Bactrian
+#' perturbation the C++ move uses (`bactrian_perturbation()`, sd 1/sqrt(12)),
+#' so the two paths are the same kernel at matched `tuning`. Symmetric, so
+#' the Hastings ratio is the Jacobian |dx/dlogit(x)| = x(1 - x).
+#'
+#' @param x Current value, in (0, 1).
+#' @param tuning Numeric scaling the Bactrian step.
+#' @return `list(value, logHastings)`.
+#' @noRd
+.ProposeLogitScale <- function(x, tuning = 1.0) {
+  newX <- plogis(qlogis(x) + tuning * bactrian_draws(1L))
+  list(value = newX,
+       logHastings = log(newX) + log1p(-newX) - log(x) - log1p(-x))
+}
 
 #' BetaSimplex proposal for simplex vectors
 #'
