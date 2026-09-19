@@ -67,6 +67,29 @@ markdown table cannot. `dev/red-team/findings-archive.md` and
 `dev/profiling/findings-archive.md` are **frozen** anti-duplication memory, not
 work lists.
 
+## `NEWS.md` is empty, and stays empty
+
+**Do not write to `NEWS.md`.** Not a bullet, not a section, not "just this one
+behavioural change". MkPrime is unreleased; `NEWS.md` is an empty file until
+the release, and at that point it will tersely describe the features the
+package implements — not the history of how they got there.
+
+This is the project's changelog process, so it overrides the `r-conventions`
+default (that skill explicitly defers to this file).
+
+The reason is the same one behind the table above. The work is already
+recorded, in the issue that motivated it and the pull request that carried it:
+a reviewed, attributed, diffable record that observes the merge. A changelog
+entry is a second copy of that story, written by the author, reviewed by
+nobody, and true only until the next branch contradicts it. Four branches in
+flight on 2026-09-19 had each appended their own account of their own change,
+and the only thing that produced was a mutual merge conflict in a file no user
+has ever read.
+
+If you think a change needs explaining, explain it in the commit message, in
+the PR body, and in a comment next to the code — where a reader will be
+standing when the question occurs to them.
+
 ## Dispatcher
 
 Run `bash dispatch.sh <subcommand>` from the repo root. `dispatch.sh` is a

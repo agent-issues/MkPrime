@@ -14,9 +14,10 @@
 # fallback below exists only for a single interactive session.
 #
 # Only re-run this script after an INTENTIONAL change to the legacy code
-# path (or to the helper's MCMC config), with reviewer sign-off and a NEWS.md
-# entry. Every value in result$samples must be reproducible bit-for-bit
-# under a re-run with the same seed.
+# path (or to the helper's MCMC config), with reviewer sign-off, and with the
+# change set out in the pull request that carries it (not in NEWS.md, which is
+# not written to — see AGENTS.md). Every value in result$samples must be
+# reproducible bit-for-bit under a re-run with the same seed.
 
 refLib <- Sys.getenv("MKP_REF_LIB", "")
 refPkg <- Sys.getenv("MKP_REF_PKG", "")
