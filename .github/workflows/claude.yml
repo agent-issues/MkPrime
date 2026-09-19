@@ -40,15 +40,20 @@ jobs:
     # Keeps a runner from starting on the many comments that don't mention
     # Claude. The action re-checks the trigger phrase itself; this is purely
     # to avoid paying for a runner that would immediately exit.
-    # ms609-agent is a user account, not a bot, so the action's own
-    # bot-actor loop guard does not cover it. Claude now posts *as*
-    # ms609-agent, and its progress comments quote the request that
-    # summoned it -- including the literal "@claude". Without this line
-    # that is an unbounded self-trigger loop, billed to the subscription
-    # and to Actions minutes. Cost: other agent sessions cannot summon
-    # Claude; they must ask via ms609.
+    # Only ms609 may summon Claude.
+    #
+    # The action's own gate is *write access*, not reviewer status, and it
+    # rejects bot actors to stop them looping. Neither does the job here:
+    # ms609-agent holds write, and is an ordinary user account rather than
+    # a bot, so the loop guard does not cover it. Since Claude now posts
+    # *as* ms609-agent, and its progress comments quote the request that
+    # summoned it -- "@claude" included -- an unbounded self-trigger would
+    # otherwise be billed to both the subscription and Actions minutes.
+    #
+    # Written as an allowlist rather than as `!= 'ms609-agent'` so that
+    # adding a collaborator does not silently hand them the trigger.
     if: |
-      github.actor != 'ms609-agent' &&
+      github.actor == 'ms609' &&
       ((github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
