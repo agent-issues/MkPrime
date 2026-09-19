@@ -4061,6 +4061,17 @@ void compute_per_kprime_log_lik(
     if (nUniq > maxNUniqPart) maxNUniqPart = nUniq;
   }
 
+  // MARGINAL-K-TRUNC-001: the plain geometric prior is truncated at K, so
+  // candidates with k' > K carry zero mass and phase 2 discards them (#66).
+  std::vector<int> partKoMax(transParts.size(), kMaxKprimeCand);
+  if (isGeometric) {
+    for (int pi = 0; pi < (int)transParts.size(); ++pi) {
+      int nEff = data->kprimeTruncK - transParts[pi].kObs + 1;
+      if (nEff < 0) nEff = 0;
+      if (nEff < kMaxKprimeCand) partKoMax[pi] = nEff;
+    }
+  }
+
   // Ensure Gibbs workspace is large enough for the worst-case stride.
   // M-172: stride is nUniq × k (not nChar × k) — savings proportional to redundancy.
   int maxNode = 2 * data->nTip - 1;
@@ -4170,6 +4181,14 @@ void compute_per_kprime_log_lik(
       auto& pa = partAct[pi];
       int nAct = (int)pa.activePatterns.size();
       if (nAct == 0) continue;
+
+      if (ko >= partKoMax[pi]) {
+        for (int localPat : pa.activePatterns)
+          for (int ti : pa.patTrans[localPat])
+            if (!terminated[ti]) { terminated[ti] = true; nActive--; }
+        pa.activePatterns.clear();
+        continue;
+      }
 
       int k = tp.kObs + ko;
       double csp = getCSP(k);
@@ -4561,6 +4580,36 @@ double cpp_log_likelihood_marginal(
     if (R_FINITE(totalLL)) totalLL += charLL;
   }
   return totalLL;
+}
+
+
+// ---------------------------------------------------------------------------
+// kprime_sweep_candidates — how many k' candidates phase 1 evaluates per
+// transformational character at the current state. Diagnostic only: the sweep
+// itself is unaffected. Used to assert that the enumerated range tracks
+// kprimeTruncK (issue #66) without a wall-clock measurement.
+// ---------------------------------------------------------------------------
+
+// [[Rcpp::export]]
+IntegerVector kprime_sweep_candidates(SEXP dataPtr, SEXP statePtr,
+                                      double beta = 1.0) {
+  McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
+  McmcState* state = Rcpp::XPtr<McmcState>(statePtr).get();
+
+  int nEdge = state->relBrLengths.size();
+  NumericVector edgeLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    edgeLen[i] = state->treeLength * state->relBrLengths[i];
+
+  NumericVector acrvRates = (state->rateLogSd > 0.0)
+    ? cpp_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ)
+    : NumericVector(1, 1.0);
+
+  KprimeCharWeights kw;
+  compute_per_kprime_log_lik(data, state, beta,
+                             state->parent, state->child, edgeLen,
+                             acrvRates, kw);
+  return Rcpp::wrap(kw.charNCand);
 }
 
 
@@ -5220,6 +5269,14 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       }
       break;
     }
+    // Slice samplers. run_mcmc_batch_cpp intercepts these before reaching
+    // do_move_impl, so that path carries its own adapted per-move width;
+    // here the caller supplies the width through scaleTuning.
+    case 19:
+      return slice_scalar_impl(data, state, charIdx, scaleTuning, beta);
+    case 29:
+      return slice_kprime_hyper_impl(data, state, charIdx, scaleTuning);
+
     case 25: { // gibbs_kprime_sweep — Gibbs update of all k'_i
       return gibbs_kprime_sweep_impl(data, state, beta);
     }
