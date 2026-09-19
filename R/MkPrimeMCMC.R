@@ -520,28 +520,12 @@ MkPrimeMCMC <- function(
         "{.arg moveWeights} must be a named numeric vector or NULL."
       )
     }
-    validNames <- c(
-      # Continuous parameter moves
-      "tree_length", "branch_lengths", "rate_loss", "rate_log_sd", "rate_neo",
-      "beta_scale",
-      # Topology moves
-      "nni", "spr", "tbr", "pspr",
-      "gibbs_spr", "gibbs_subtree_swap",
-      "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
-      "block_gibbs_branch", "dirichlet_branch", "local_dirichlet",
-      # k' moves
-      "kPrime", "p", "gibbs_kPrime", "block_kPrime",
-      # marginal_k opt-in data-augmentation Gibbs-p (case 35)
-      "gibbs_p_marginal",
-      # BG hyperparameter moves (reparameterised to s = log(α+β), r = log(α/β))
-      "slice_kprime_s", "slice_kprime_r",
-      # Slice samplers
-      "slice_rate_loss", "slice_rate_neo", "slice_rate_log_sd",
-      "slice_beta_scale",
-      # Joint 2D moves
-      "joint_tl_rls", "joint_tl_rl", "joint_tl_rn"
-    )
-    bad <- setdiff(names(moveWeights), validNames)
+    validNames <- .ValidMoveNames()
+    nms <- names(moveWeights)
+    # Per-class moves are instantiated as "<type>_<classIdx>".
+    isPerClass <- grepl("_[0-9]+$", nms) &
+      sub("_[0-9]+$", "", nms) %in% .kPerClassMoveTypes
+    bad <- nms[!(nms %in% validNames | isPerClass)]
     if (length(bad) > 0L) {
       cli::cli_abort(
         "{.arg moveWeights} contains unknown move name{?s}: {.val {bad}}."

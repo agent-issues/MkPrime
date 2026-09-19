@@ -3291,7 +3291,6 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         local_dirichlet  = tun$local_dirichlet_alpha %||% 10,
         p           = 0.5,  # Gibbs move: scale ignored by C++; placeholder
         gibbs_p_marginal = 0.5,  # data-aug Gibbs: scale ignored by C++
-        mh_p        = tun$scale_p %||% 0.5,
         mh_logit_p  = tun$scale_logit_p %||% 1.0,
         scale_hyper_tau = tun$scale_hyper_tau %||% 0.5,
         # Per-class moves carry name = "<type>_<c>" so they fall through to
@@ -3730,8 +3729,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       # adaptive scheduler then crushes the move to its weight floor and p
       # stays stuck.  Instead, propose on the unbounded logit scale (case 30,
       # `mh_logit_p`); the Jacobian appears as the Hastings ratio.  Give it
-      # a higher weight than the legacy `mh_p` move so that even if it
-      # mixes a little less efficiently than gibbs_kPrime it still moves p.
+      # a higher weight than the retired multiplicative scale_p move, so
+      # that even if it mixes less efficiently than gibbs_kPrime it still
+      # moves p.
       kPrimeMoves <- c(kPrimeMoves, list(
         list(name = "mh_logit_p", type = "logit_scale_p", target = "p",
              weight = 3, dim = 1L)
@@ -3860,7 +3860,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 .kMoveTypes <- c(
   tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
   rate_neo = 3L, branch_lengths = 4L,
-  nni = 5L, spr = 6L, kPrime = 7L, p = 9L, mh_p = 8L,
+  nni = 5L, spr = 6L, kPrime = 7L, p = 9L,
   mh_logit_p = 30L,
   gibbs_spr = 10L, gibbs_subtree_swap = 11L,
   weighted_branch_lengths = 12L,
@@ -3889,6 +3889,16 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   scale_hyper_tau = 34L,
   gibbs_p_marginal = 35L
 )
+
+# The single whitelist `MkPrimeMCMC()` validates user `moveWeights` against.
+# Derived from `.kMoveTypes` rather than restated, so the two surfaces cannot
+# drift: a move that is registered is settable, and nothing else is.
+.ValidMoveNames <- function() names(.kMoveTypes)
+
+# Move types that `.BuildMovesPartitioned()` instantiates once per partition
+# class, as "<type>_<classIdx>". The registry holds the type; `MkPrimeMCMC()`
+# accepts both it and its instances.
+.kPerClassMoveTypes <- "scale_class_rate_log_sd"
 
 #' Initialize the C++ MCMC data structure (call once before loop)
 #' @keywords internal
@@ -4011,7 +4021,6 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       beta_scale  = tuning$scale_beta_scale,
       dirichlet_branch = tuning$dirichlet_alpha %||% 0.1,
       local_dirichlet = tuning$local_dirichlet_alpha %||% 0.1,
-      mh_p        = tuning$scale_p %||% 0.5,
       mh_logit_p  = tuning$scale_logit_p %||% 1.0,
       dirichlet_simplex_class_w = tuning$dirichlet_class_w_alpha %||% 10,
       scale_hyper_tau = tuning$scale_hyper_tau %||% 0.5,
@@ -4096,17 +4105,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       logHastings <- prop$logHastings
     },
     logit_scale_p = {
-      # Logit-scale MH on p with Jacobian -- robust near the boundary.
-      # This R fallback uses a normal step on the logit scale; the C++ path
-      # uses a Bactrian perturbation but the proposal kernel is symmetric in
-      # both cases so the Hastings ratio reduces to the Jacobian alone.
-      sigma <- tuning$scale_logit_p %||% 1.0
-      logitP <- qlogis(state$p)
-      logitPnew <- logitP + sigma * (runif(1) - 0.5)
-      newP <- plogis(logitPnew)
-      proposed$p <- newP
-      logHastings <- log(newP) + log1p(-newP) -
-                     log(state$p) - log1p(-state$p)
+      # Logit-scale MH on p -- robust near the boundary. The step is
+      # symmetric, as is the C++ path's Bactrian perturbation, so the
+      # Hastings ratio reduces to the Jacobian alone.
+      prop <- .ProposeLogitScale(state$p,
+                                 tuning = tuning$scale_logit_p %||% 1.0)
+      proposed$p <- prop$value
+      logHastings <- prop$logHastings
     }
   )
 
@@ -4339,14 +4344,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' @keywords internal
 .ResolvePinnedWeights <- function(userMoveWeights, moveNames) {
   if (is.null(userMoveWeights)) return(NULL)
-  keep <- intersect(names(userMoveWeights), moveNames)
-  if (length(keep) == 0L) return(NULL)
   dropped <- setdiff(names(userMoveWeights), moveNames)
   if (length(dropped) > 0L) {
     cli::cli_warn(
       "Pinned move weight{?s} ignored (not in move pool): {.val {dropped}}."
     )
   }
+  keep <- intersect(names(userMoveWeights), moveNames)
+  if (length(keep) == 0L) return(NULL)
   userMoveWeights[keep]
 }
 
@@ -4688,7 +4693,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   block_gibbs_branch = "Branches", weighted_branch_lengths = "Branches",
 
   kPrime = "Characters", gibbs_kPrime = "Characters",
-  block_kPrime = "Characters", p = "Characters", mh_p = "Characters",
+  block_kPrime = "Characters", p = "Characters",
   mh_logit_p = "Characters",
 
   rate_loss = "Rates", rate_neo = "Rates", rate_log_sd = "Rates",
@@ -4783,7 +4788,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     tree_length = 0.35, branch_lengths = 0.23,
     nni = 0.23, spr = 0.10,
     kPrime = 0.35,
-    p = 0.35, mh_p = 0.35, mh_logit_p = 0.35,
+    # 0.35, not the 0.44 Gaussian 1-D optimum: these moves use a Bactrian
+    # kernel, whose 1-D ESS/iteration peaks near 0.30 acceptance (see #5).
+    p = 0.35, mh_logit_p = 0.35,
     rate_loss = 0.35, rate_log_sd = 0.35,
     rate_neo = 0.35,
     beta_scale = 0.35,
@@ -4810,7 +4817,6 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     spr = NA_character_,
     kPrime = "int_walk_window",
     p = NA_character_,       # Gibbs move: no tuning needed
-    mh_p = "scale_p",        # MH move: tune the log-scale step
     mh_logit_p = "scale_logit_p",  # MH move: tune the logit-scale step
     rate_loss = "scale_rate_loss",
     rate_log_sd = "scale_rate_log_sd",
@@ -4853,8 +4859,10 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         tuning[[tk]] <- tuning[[tk]] / adj
         tuning[[tk]] <- max(1.0, min(tuning[[tk]], 1000))
       } else {
-        tuning[[tk]] <- tuning[[tk]] * adj
-        tuning[[tk]] <- max(0.01, tuning[[tk]])
+        # Cap as well as floor: a direction whose acceptance stays high at
+        # any step size otherwise grows the step without limit, eventually
+        # to a value that overflows or proposes non-finite values.
+        tuning[[tk]] <- max(0.01, min(tuning[[tk]] * adj, 10))
       }
     }
   }
