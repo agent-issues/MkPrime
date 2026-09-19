@@ -25,11 +25,10 @@
 #   verdict.txt, summary.rds, rank-matrix.csv
 
 suppressPackageStartupMessages({
-  if (requireNamespace("pkgload", quietly = TRUE)) {
-    pkgload::load_all(".", quiet = TRUE)
-  } else {
-    library(MkPrime)
-  }
+  # Race-safe loader: pkgload compiles into src/ in place, so concurrent
+  # array tasks corrupt each other's objects unless the tree is pre-built (#15).
+  source("dev/red-team/heavy-tests/load-mkprime.R")
+  LoadMkPrime(".")
   library(ape)
   library(TreeTools)
 })
@@ -442,7 +441,10 @@ topLines <- c(
   sprintf("  %-30s %s", "MkNT_mixed",
           paste0(armVerdict, sprintf(" (good=%d)", nGood)))
 )
-writeLines(topLines, file.path(outRoot, "verdict.txt"))
+# Named for the arm, not `verdict.txt`: this script shares `outRoot` with
+# sbc.R, so a bare aggregate name collides both with sbc.R's and with any
+# concurrent array task's (#16).
+writeLines(topLines, file.path(outRoot, "verdict-MkNT_mixed.txt"))
 cat("\n", paste0(topLines, "\n"), sep = "")
 
 status <- if (mode == "quick" || armVerdict %in% c("PASS", "EXEC_OK")) 0L else 1L

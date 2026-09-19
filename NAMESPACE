@@ -33,5 +33,38 @@ export(TreeESS)
 export(mkp_stepping_stone)
 importFrom(Rcpp,sourceCpp)
 importFrom(Rdpack,reprompt)
+importFrom(graphics,
+  abline,
+  lines,
+  mtext,
+  par,
+  plot.new,
+  title
+)
 importFrom(rlang,`%||%`)
+importFrom(stats,
+  cor,
+  dbeta,
+  dexp,
+  dgamma,
+  dlnorm,
+  dnorm,
+  fft,
+  median,
+  na.omit,
+  nextn,
+  plogis,
+  qlogis,
+  qnorm,
+  quantile,
+  rbeta,
+  rnorm,
+  runif,
+  sd,
+  var
+)
+importFrom(utils,
+  modifyList,
+  tail
+)
 useDynLib(MkPrime, .registration = TRUE)

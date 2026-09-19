@@ -14,10 +14,19 @@
 # arms; kPrime_pooled and p both excluded as structural. See sbc.md +
 # dev/red-team/findings.md::SBC-KPRIME-STRUCTURAL.
 #
-# IMPORTANT: pre-build the package once before submitting this script:
-#   cd ${SRC} && Rscript -e 'devtools::load_all(".")'
-# Otherwise 6 array tasks race-compile in the shared src/ directory and
-# half die with "MkPrime.so: file too short" (v9 lost 3/6 to this race).
+# The 6 array tasks share one src/ tree, and pkgload::load_all() compiles into
+# it in place, so an unbuilt tree means 6 concurrent compiles corrupting each
+# other's objects -- v9 lost 3/6 tasks to "MkPrime.so: file too short" (#15).
+#
+# sbc.R now REFUSES to compile inside an array task, so a forgotten pre-build
+# stops the job immediately instead of producing a partial array. Submit the
+# build as a dependency and SLURM enforces the ordering:
+#
+#   BUILD=$(sbatch --parsable dev/red-team/heavy-tests/submit-build.sh)
+#   sbatch --dependency=afterok:$BUILD dev/red-team/heavy-tests/submit-sbc.sh
+#
+# Building by hand on the login node still works:
+#   cd ${SRC} && Rscript -e 'pkgload::load_all(getwd())'
 
 set -euo pipefail
 
@@ -66,3 +75,10 @@ Rscript "${SRC}/dev/red-team/heavy-tests/sbc.R" \
 du -hs "${TMPDIR}" > "${RT}/logs/sbc_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}_tmpdir.log" || true
 
 echo "[$(date)] Arm ${ARM_NAME} complete"
+
+# ---- Aggregate the per-arm verdicts -----------------------------------------
+# Each task writes verdict-<arm>.txt; the run-level verdict.txt is produced
+# only by the reduction below, so it can never be one task's output wearing the
+# aggregate's name (#16). Submit it after the array:
+#
+#   sbatch --dependency=afterany:$ARRAY_JOB_ID --wrap #     "Rscript ${SRC}/dev/red-team/heavy-tests/aggregate-verdicts.R #        ${RT}/results/sbc-v10 ${ARMS[*]}"

@@ -10,6 +10,26 @@ it lands) by adding the §marginal-k section below; pre-existing per-arm
 sections (`geometric`, `empirical_geometric`, `beta_geometric`,
 `logseries`) are not modified here.
 
+## gibbs_spr kernel (cross-arm, default-on under free topology)
+
+**FIXED 2026-08-12** (GSPR-001 + GSPR-004, with GSPR-002 retired as a side
+effect; design `dev/plans/2026-08-12-gibbs-spr-fix-design.md` §3a). The move
+is now a valid MH kernel: candidates are ALL edges of the shared residual
+tree (merged pair included) weighted at a fixed `tau = 1/2` reference, the
+committed split fraction is drawn `tau ~ U(0,1)`, and acceptance carries the
+selection-weight ratio, the prior ratio, and the SPR Jacobian
+`log(lReg) − log(lMerge)`. All three evaluation paths (partial-CL, Q-het,
+full fallback) share one plan/selection/MH/commit implementation. Gate
+`dev/red-team/heavy-tests/gibbs-spr-db.R --quick`: FAIL → PASS (π-null tie
+mass 1.0000 → 0.0000); deterministic candidate-set symmetry test in
+`tests/testthat/test-gibbs-spr-candidates.R`. **Pre-fix free-topology runs
+with `gibbsSpr = TRUE` sampled a distorted branch-fraction/topology joint**
+(adjacent fractions pulled toward equality; magnitude quantified in the gate
+harness); fixed-topology and marginal_k runs are unaffected (move not
+registered there). RNG streams changed; reported gibbs_spr acceptance drops
+from ~0.83 (probability of not drawing self, not an acceptance rate) to a
+real MH rate.
+
 ## marginal-k (likelihood-mode flag)
 
 **Implements.** `MkPrimeModel(likelihoodMode = "marginal_k")` swaps the

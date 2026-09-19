@@ -12,7 +12,8 @@
   fixTopology = FALSE,
   kPrimePrior = "geometric",
   qHeterogeneity = FALSE,
-  joint2d = TRUE
+  joint2d = TRUE,
+  likelihoodMode = "sampled_k"
 )
 }
 \description{

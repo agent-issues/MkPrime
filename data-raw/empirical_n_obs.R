@@ -5,6 +5,7 @@
 #
 # Re-run with:  source("data-raw/empirical_n_obs.R")
 
+stopifnot(requireNamespace("MkPrime", quietly = TRUE))
 stopifnot(requireNamespace("TreeTools", quietly = TRUE))
 stopifnot(requireNamespace("usethis", quietly = TRUE))
 
@@ -85,31 +86,21 @@ message(sprintf("Tail (kObs >= %d): n = %d, decay = %.4f",
                 tailThreshold, length(tailCounts), qDecay))
 
 # Convert raw counts to a probability mass function supported on k >= 2.
-# Step 1: empirical body proportions (sum to <1; tail makes up the rest).
+# `MkPrimeEmpiricalPrior()` takes the body unnormalised: it anchors a
+# geometric tail one past the last body entry and rescales both to sum to 1.
 bodyCounts <- rawCounts[seq.int(2L, nMax)]
 totalChar <- sum(rawCounts)
 bodyProps <- bodyCounts / totalChar
-# Step 2: extend with a geometric tail beyond nMax.  Anchor the tail so the
-# mass at k = nMax + 1 equals (body mass at nMax) * qDecay; sum the geometric
-# series and rescale the whole pmf so it normalises to 1.
-anchor <- bodyProps[length(bodyProps)] * qDecay   # mass at k = nMax + 1
-tailMass <- anchor / (1 - qDecay)                  # sum from k = nMax + 1 to Inf
-total <- sum(bodyProps) + tailMass
-bodyProbs <- bodyProps / total
-tailStartP <- anchor / total
 
-stopifnot(abs(sum(bodyProbs) + tailStartP / (1 - qDecay) - 1) < 1e-12)
-
-empiricalNObs <- structure(
-  list(
-    body = bodyProbs,
-    tail_decay = qDecay,
-    tail_start_k = nMax + 1L,
-    tail_start_p = tailStartP,
-    nSource = totalChar
-  ),
-  class = "MkPrimeEmpiricalPrior"
+empiricalNObs <- MkPrime::MkPrimeEmpiricalPrior(
+  body = bodyProps,
+  tail_decay = qDecay,
+  nSource = totalChar
 )
+
+stopifnot(abs(sum(empiricalNObs$body) +
+                empiricalNObs$tail_start_p / (1 - empiricalNObs$tail_decay) -
+                1) < 1e-12)
 
 message("Body probabilities (kObs -> P):")
 print(round(empiricalNObs$body, 5))

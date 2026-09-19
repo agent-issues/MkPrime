@@ -521,6 +521,16 @@ static void compute_residual_cl(
 // original tree may pass through u (the pruned node), but in the new tree u
 // is at the regraft point and the path skips from sibNode to g via lMerge.
 // We handle this by detecting parNode==u during propagation and jumping to g.
+//
+// mergedEdge (GSPR-004): evaluate the regraft onto the MERGED edge of the
+// residual tree — the (g, sibNode) pair created by detaching v — which is the
+// subtree's own position.  The caller passes a = g, b = sibNode, and
+// lHalfReg = lMerge / 2.  That edge does not exist as a row of the original
+// tree, so the only navigational difference is the slot excluded at a: u's
+// slot (where the reattached u sits in the new tree) instead of
+// topo.childSlot(a, b), which is undefined for the pair.  Everything else —
+// from_b via grp.I(cat, sibNode) (off the residual path), the sibling
+// product at g, and the upward propagation — is the generic code path.
 // ---------------------------------------------------------------------------
 // If siteLikAccum is non-null (M-114 Q-het streaming mode): accumulate
 // per-site raw likelihoods into it (no log, no /nCat) and return 0.0.
@@ -535,7 +545,8 @@ static double evaluate_candidate(
     int a, int b,           // regraft parent and child nodes
     double lHalfReg,        // lReg / 2 (half the regraft edge length)
     double lPrune,          // prune edge length (u→v)
-    double* siteLikAccum = nullptr)
+    double* siteLikAccum = nullptr,
+    bool mergedEdge = false)
 {
   int nChar   = grp.nChar;
   int stride  = grp.stride;
@@ -614,8 +625,9 @@ static double evaluate_candidate(
       }
     };
 
-    // At a: I_cand[a] = from_u_at_a × product_of_siblings(a, exclude b)
-    int bSlot = topo.childSlot(a, b);
+    // At a: I_cand[a] = from_u_at_a × product_of_siblings(a, exclude b).
+    // For the merged edge (a = g, b = sibNode), b occupies u's original slot.
+    int bSlot = mergedEdge ? uSlot : topo.childSlot(a, b);
     siblingProduct(a, bSlot, curI.data());
     for (int i = 0; i < stride; ++i) curI[i] *= contrib[i];
 
@@ -697,7 +709,7 @@ static CLGroup create_const_pseudo_group(const CLGroup& src, int nTip, int maxNo
 
 // Evaluate P_const for a candidate regraft using partial CLs on pseudo-chars.
 // Same algorithm as evaluate_candidate but returns P(constant site) instead
-// of log-likelihood.
+// of log-likelihood.  mergedEdge as in evaluate_candidate.
 // If constProbAccum is non-null (M-114 Q-het streaming), accumulate the raw
 // per-pseudo-character constant-site likelihoods and return 0.0.
 static double evaluate_const_prob(
@@ -707,7 +719,8 @@ static double evaluate_const_prob(
     const NumericVector& rates,
     int v, int u, int sibNode, double lMerge,
     int a, int b, double lHalfReg, double lPrune,
-    double* constProbAccum = nullptr)
+    double* constProbAccum = nullptr,
+    bool mergedEdge = false)
 {
   int nChar   = pg.nChar;  // = kStates
   int stride  = pg.stride;
@@ -761,7 +774,7 @@ static double evaluate_const_prob(
       }
     };
 
-    int bSlot = topo.childSlot(a, b);
+    int bSlot = mergedEdge ? uSlot : topo.childSlot(a, b);
     siblingProduct(a, bSlot, curI.data());
     for (int i = 0; i < stride; ++i) curI[i] *= contrib[i];
 

@@ -41,25 +41,10 @@ test_that("MkPrimeMCMC() rejects unknown move names", {
                "unknown move name")
 })
 
-test_that("moveWeights validNames covers all .BuildMoves() move names (M-167)", {
-  # Every move name that .BuildMoves() can produce must be accepted
-  allMoveNames <- c(
-    "tree_length", "branch_lengths", "nni", "spr", "tbr", "pspr",
-    "gibbs_spr", "gibbs_subtree_swap",
-    "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
-    "block_gibbs_branch", "dirichlet_branch", "local_dirichlet",
-    "kPrime", "gibbs_kPrime", "block_kPrime", "p",
-    "slice_kprime_s", "slice_kprime_r",
-    "rate_loss", "rate_neo", "rate_log_sd", "beta_scale",
-    "slice_rate_loss", "slice_rate_neo", "slice_rate_log_sd",
-    "slice_beta_scale",
-    "joint_tl_rls", "joint_tl_rl", "joint_tl_rn"
-  )
-  for (nm in allMoveNames) {
-    w <- setNames(0.01, nm)
-    expect_no_error(MkPrimeMCMC(moveWeights = w))
-  }
-})
+# M-167: superseded by test-proposal-tuning.R, which derives the buildable
+# move names from .BuildMoves()/.BuildMovesPartitioned() instead of restating
+# them. A hand-copied list here had gone stale in exactly the way it was
+# meant to prevent.
 
 test_that("MkPrimeMCMC() rejects negative moveWeights", {
   expect_error(MkPrimeMCMC(nIter = 100L, minWarmup = 50L, moveWeights = c(nni = -0.1)),
@@ -517,26 +502,8 @@ test_that(".BuildMoves produces weights that normalize to 1", {
   expect_equal(sum(wNorm), 1.0, tolerance = 1e-10)
 })
 
-test_that("All move names in .kMoveTypes are valid moveWeights names", {
-  validInMcmc <- c(
-    "tree_length", "branch_lengths", "nni", "spr", "tbr", "kPrime", "p",
-    "rate_loss", "rate_log_sd", "rate_neo",
-    "gibbs_spr", "gibbs_subtree_swap",
-    "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
-    "block_gibbs_branch", "dirichlet_branch", "local_dirichlet",
-    "beta_scale", "pspr",
-    "joint_tl_rls", "joint_tl_rl", "joint_tl_rn",
-    "slice_rate_loss", "slice_rate_neo", "slice_rate_log_sd",
-    "slice_tree_length", "slice_beta_scale",
-    "gibbs_kPrime", "block_kPrime",
-    "slice_kprime_s", "slice_kprime_r",
-    "mh_p", "mh_logit_p", "gibbs_p_marginal",
-    "scale_class_rate_log_sd", "dirichlet_simplex_class_w",
-    "scale_hyper_tau"
-  )
-  expect_true(all(names(MkPrime:::.kMoveTypes) %in% validInMcmc))
-})
-
+# The real guard against move-name drift lives in test-proposal-tuning.R: it
+# drives MkPrimeMCMC() itself rather than a hand-copied list of names.
 
 # ==========================================================================
 # Slow integration tests

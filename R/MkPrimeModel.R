@@ -22,6 +22,12 @@
 #'   `priorOnClassRateLogSd = "gamma_independent"` per-class prior.
 #'   Not consulted by the default pooled hyperprior (see
 #'   `priorOnClassRateLogSd`).
+#' @param classRateConcentration Numeric specifying the concentration of the
+#'   symmetric Dirichlet prior on per-class relative rate weights; values below
+#'   one favour uneven class rates, values above one pull them together.
+#' @param kprimeTruncK Integer specifying the cap `K` at which the geometric
+#'   arm's `k'` prior is truncated and renormalised over `[2, K]`, bounded
+#'   above by the compile-time candidate cap of 256.
 #' @param priorOnClassRateLogSd Prior structure on per-class ACRV
 #'   dispersion `σ_c = class_rate_log_sd[c]` when `unlink = "shape"` is
 #'   active with two or more user classes. One of:
@@ -215,7 +221,7 @@ MkPrimeModel <- function(
          {.code kPrimePrior = \"geometric\"} in v1.",
         i = "Got {.code kPrimePrior = \"{kPrimePrior}\"}.",
         i = "Other arms (empirical_geometric / beta_geometric / logseries)
-             are scheduled as §11 follow-ups in
+             are scheduled as section 11 follow-ups in
              {.file dev/notes/2026-05-28-marginal-k-plan.md}."
       ))
     }
@@ -223,7 +229,7 @@ MkPrimeModel <- function(
       cli::cli_abort(c(
         "{.code likelihoodMode = \"marginal_k\"} cannot be combined with
          {.code qHeterogeneity = TRUE}.",
-        i = "Het + marginal-k is deferred to v1.x (plan §13).",
+        i = "Het + marginal-k is deferred to v1.x (plan section 13).",
         i = "Drop one of the two."
       ))
     }
@@ -346,6 +352,49 @@ MkPrimeModel <- function(
     ),
     class = "MkPrimeModel"
   )
+}
+
+
+# Implementation gate for marginal_k, mirroring .RequirePartitionImplemented.
+#
+# MkPrimeModel() rejects the marginal_k combinations visible from the model
+# alone (non-geometric kPrimePrior, qHeterogeneity). Known-state characters and
+# the partition API need the data and the partition spec, so they are checked
+# here, from whichever caller holds them: `mkd` or `partitionSpec` may be NULL
+# to skip the corresponding check. Both are deferred rather than implemented
+# (dev/notes/2026-05-28-marginal-k-plan.md sections 11 and 13); until this gate
+# existed the marginal evaluator silently dropped known-state characters from
+# the likelihood and ignored partition / unlink.
+.RequireMarginalKSupported <- function(model, mkd = NULL,
+                                       partitionSpec = NULL) {
+  if (!identical(model$likelihoodMode, "marginal_k")) {
+    # Return:
+    return(invisible(NULL))
+  }
+  known <- if (is.null(mkd)) integer(0) else which(mkd$type == "known")
+  if (length(known)) {
+    cli::cli_abort(c(
+      "{.code likelihoodMode = \"marginal_k\"} cannot be combined with
+       known-state characters.",
+      i = "Character{?s} {known} {?is/are} pinned by {.arg knownStates}.",
+      i = "Known-k partitions are deferred (plan section 11); the marginal
+           evaluator would drop them from the likelihood entirely.",
+      i = "Use {.code likelihoodMode = \"sampled_k\"}, or drop
+           {.arg knownStates}."
+    ))
+  }
+  if (!is.null(partitionSpec$partition)) {
+    cli::cli_abort(c(
+      "{.code likelihoodMode = \"marginal_k\"} cannot be combined with the
+       partition API.",
+      i = "Partitioned marginal-k is deferred (plan section 13); the marginal
+           evaluator ignores {.arg partition} and {.arg unlink}.",
+      i = "Use {.code likelihoodMode = \"sampled_k\"}, or drop
+           {.arg partition}."
+    ))
+  }
+  # Return:
+  invisible(NULL)
 }
 
 
@@ -606,6 +655,15 @@ LogPrior <- function(state, model, mkd) {
   hasTrans <- length(transIdx) > 0L
 
   if (hasTrans) {
+    # A bare any() on an NA-bearing vector makes the if() below raise, blaming
+    # the prior for what is a data-ingestion or state-corruption bug upstream.
+    naIdx <- transIdx[is.na(state$kPrime[transIdx]) | is.na(mkd$kObs[transIdx])]
+    if (length(naIdx) > 0L) {
+      cli::cli_abort(
+        "{cli::qty(length(naIdx))}Missing {.field kPrime} or {.field kObs} at
+         character{?s} {naIdx}."
+      )
+    }
     if (any(state$kPrime[transIdx] < mkd$kObs[transIdx])) return(-Inf)
 
     if (identical(model$kPrimePrior, "geometric") ||

@@ -4,27 +4,21 @@ You MUST read the `r-conventions` skill before writing any code.
 
 ## GitHub: the `agent-issues` mirror
 
-Set up 2026-09-18, matching `../TreeSearch`. Two remotes, and they are not
-interchangeable:
+Two remotes, which are not interchangeable:
 
 | Remote | Repo | Role |
 |--------|------|------|
-| `origin` | `agent-issues/MkPrime` (private fork) | **All agent work.** Branches, PRs, issues, Discussions, CI. |
-| `upstream` | `Mk-prime/r` (private) | Release/reference repo. Fetch only — push URL is `no-push-use-gha`. |
+| `origin` | `agent-issues/MkPrime` (fork) | **All agent work.** Branches, PRs, issues, Discussions, CI. |
+| `upstream` | `Mk-prime/r` | Release/reference repo. Fetch only — push URL is `no-push-use-gha`. |
 
-Both repos use `main`; there is no intermediate integration branch. The fork's
-default branch is `main`, so `Fixes #N` in a PR body closes the issue on merge.
+The fork's default branch is `main`, so `Fixes #N` in a PR body closes the issue on merge.
 
 **Never push to `upstream`, under any identity.** Work reaches `Mk-prime/r`
 only when the human syncs the fork — that sync *is* the "everything on
-`Mk-prime/r` is human-cleared" gate. One direct commit upstream turns every
-later sync into a real merge, with conflicts on `DESCRIPTION`, `NAMESPACE` and
-the append-only `src/` files.
+`Mk-prime/r` is human-cleared" gate.
 
-**Everything you create on GitHub must be authored by `ms609-agent`**, not by
-the human — GitHub will not let an account approve its own PR, so an object
-filed under the human's account is unreviewable by them. `~/.claude/CLAUDE.md`
-holds the mechanism and the token table; for this repo the token is
+**Everything you create on GitHub must be authored by `ms609-agent`**.
+`~/.claude/CLAUDE.md` holds the mechanism and the token table; for this repo the token is
 `CLAUDE_GH_TOKEN`:
 
 ```bash
@@ -34,7 +28,22 @@ GH_TOKEN=$CLAUDE_GH_TOKEN gh pr create --base main --head <branch> --reviewer ms
 Reads need no prefix. `gh repo set-default` already points at the fork, so bare
 `gh issue`/`gh pr`/`gh run` commands hit `agent-issues/MkPrime`.
 
-**Where things live now:**
+**`git push` must also go out as `ms609-agent` here — this repo is the exception to the
+rule in `~/.claude/CLAUDE.md` that push identity does not matter.**
+`ms609-agent` cannot bypass branch protection, so pushing as the agent is what makes the protection real.
+Pull the token into a shell variable and hand it to a one-shot credential helper,
+so the value never reaches the transcript:
+
+```bash
+TOKEN=$(powershell.exe -NoProfile -Command   "[Environment]::GetEnvironmentVariable('CLAUDE_GH_TOKEN','User')" | tr -d '\r')
+git -c credential.helper='!f() { echo username=ms609-agent; echo "password=$TOKEN"; }; f'   push -u origin <branch>
+```
+
+**Never commit in `C:/Users/pjjg18/GitHub/mkp` itself.**
+Every change — including documentation — goes on a branch in a worktree under
+`../worktrees/<name>` and reaches `main` through a PR.
+
+**Where things live:**
 
 | Record | Home |
 |--------|------|
@@ -43,10 +52,14 @@ Reads need no prefix. `gh repo set-default` already points at the fork, so bare
 | Red-team round records | GitHub Discussions, one category per focus area |
 | Scope, tiers, drivers, proofs, harnesses | `dev/red-team/`, `dev/profiling/` |
 
-No file anywhere carries a status column — `Fixes #N` observes the merge, a
-markdown table cannot. `dev/red-team/findings-archive.md` and
-`dev/profiling/findings-archive.md` are **frozen** anti-duplication memory, not
-work lists.
+No file carries a status column. 
+`dev/red-team/findings-archive.md` and `dev/profiling/findings-archive.md` are
+**frozen** anti-duplication memory.
+
+## `NEWS.md` is empty, and stays empty
+
+**Do not write to `NEWS.md`.** 
+This overrides the `r-conventions` default.
 
 ## Clearing the issue queue
 
@@ -81,6 +94,29 @@ before starting work in that area:
 | `validation-datasets.md`  | Picking a dataset for an MCMC test or validation study |
 | `testing.md`              | Adding or modifying `tests/testthat/`, choosing test budgets |
 | `subprocess-runmkprime.md`| Running `RunMkPrime()` from a bash subprocess (triple-guard for runaway) |
+
+---
+
+## Style enforcement: enable the pre-commit hook
+
+One-time, per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+This is required, not optional. The global `r-conventions` Stop hooks
+(`lint-changed.R`, `terseness-check.R`) find the tree to inspect with
+`git rev-parse --show-toplevel` from the session's working directory — which
+in this repo is the shared `main` checkout that agents must never edit. Every
+real contribution lands in a sibling worktree, so those hooks diff a tree that
+never changes, pass, and enforce nothing. `.githooks/pre-commit` runs inside
+the worktree being committed to, so it sees exactly the changed files.
+
+`lintr` findings block the commit; the diff-narration check is advisory and
+only prints. Both scope themselves to the lines the branch changed, so legacy
+code is never flagged. `MKP_SKIP_LINT=1 git commit ...` bypasses for one
+commit. The config is repo-local and shared by every worktree of this clone.
 
 ---
 

@@ -28,7 +28,11 @@ MkPrimeModel(
   nBetaCat = 4L,
   betaScaleShape = 1,
   betaScaleRate = 1,
-  classRateConcentration = 1
+  classRateConcentration = 1,
+  priorOnClassRateLogSd = c("hyperprior_pooled", "gamma_independent"),
+  likelihoodMode = c("sampled_k", "marginal_k"),
+  priorVariant = NULL,
+  kprimeTruncK = 200L
 )
 }
 \arguments{
@@ -51,7 +55,11 @@ of the starting tree).}
 on \code{rate_loss} (neomorphic asymmetry). Defaults: meanlog = 0, sdlog = 2.}
 
 \item{rateLogSdShape, rateLogSdRate}{Shape and rate for the Gamma prior
-on \code{rate_log_sd} (ACRV dispersion). Defaults: shape = 1, rate = 1.}
+on \code{rate_log_sd} (ACRV dispersion). Defaults: shape = 1, rate = 1.
+Used as-is in the legacy single-σ path and as the legacy
+\code{priorOnClassRateLogSd = "gamma_independent"} per-class prior.
+Not consulted by the default pooled hyperprior (see
+\code{priorOnClassRateLogSd}).}
 
 \item{kPrimePrior}{Prior distribution for the true number of character states
 (\verb{k'}) for transformational characters. One of \code{"empirical_geometric"}
@@ -108,6 +116,77 @@ Ignored when \code{qHeterogeneity = FALSE}.}
 \item{betaScaleShape, betaScaleRate}{Shape and rate for the Gamma prior
 on \code{beta_scale} (the symmetric Dirichlet concentration parameter).
 Defaults: shape = 1, rate = 1. Ignored when \code{qHeterogeneity = FALSE}.}
+
+\item{classRateConcentration}{Numeric specifying the concentration of the
+symmetric Dirichlet prior on per-class relative rate weights; values below
+one favour uneven class rates, values above one pull them together.}
+
+\item{priorOnClassRateLogSd}{Prior structure on per-class ACRV
+dispersion \code{σ_c = class_rate_log_sd[c]} when \code{unlink = "shape"} is
+active with two or more user classes. One of:
+\itemize{
+\item \code{"hyperprior_pooled"} (default): non-centred half-normal hierarchy
+\verb{σ_c = τ · z_c}, with \code{z_c ~ HalfNormal(1)} i.i.d. and
+\code{τ ~ HalfNormal(1)}. Pools information about within-class rate
+dispersion across classes; designed for cells where some classes
+have few characters and so carry little likelihood signal on σ_c.
+\item \code{"gamma_independent"}: each \code{σ_c} independently
+\code{Gamma(rateLogSdShape, rateLogSdRate)}. Legacy behaviour, kept for
+backward compatibility and prior-sensitivity comparisons.
+}
+
+Ignored when \code{unlink} does not include \code{"shape"} or when only one
+user class is present (the structure is degenerate at K = 1; the
+single σ uses the \code{rateLogSdShape} / \code{rateLogSdRate} Gamma prior).}
+
+\item{likelihoodMode}{How per-character \verb{k'_i} enters the likelihood.
+One of:
+\itemize{
+\item \code{"sampled_k"} (default): \verb{k'_i} is a sampled MCMC state variable;
+a per-character integer-walk + Gibbs sweep (case 25) move family
+updates it. The trace carries \code{kPrime_i...} columns and \code{LogPrior}
+evaluates the per-character \verb{P(k'_i | hyperparams)} term.
+\item \code{"marginal_k"} (v1 = geometric arm only): \verb{k'_i} is analytically
+marginalised out of the likelihood at every evaluation. The
+posterior is over \verb{(tree, mu, sigma, p)} only; the slow discrete
+coordinate is removed. Required when chain mixing on \verb{k'_i} is
+known to be uninformative (per finding EG-003 in
+\code{dev/red-team/findings.md}). v1 supports
+\code{kPrimePrior = "geometric"} only — other arms are §11 follow-ups
+in \code{dev/notes/2026-05-28-marginal-k-plan.md}. Het + marginal-k and
+partition-API + marginal-k are deferred (§13 of the plan).
+}}
+
+\item{priorVariant}{Whether the \verb{k'} prior conditions on the observed state
+count \code{kObs_i}. One of \code{"unconditional"} (Model A) or \code{"conditional"}
+(Model B), or \code{NULL} (default) to select per \code{kPrimePrior} (see below).
+A prior is pre-data, so \code{kObs_i} — an observation — should not enter it:
+\itemize{
+\item \code{"unconditional"} (Model A): the prior lives on the full support
+\verb{k' >= 2}, unconditional on \code{kObs_i}. For \code{empirical_geometric} the
+convolution is used with no per-character \code{Z_i(p)} truncation; for
+\code{geometric} the marginal weight for state count \code{k} is \code{p (1-p)^(k - 2)}.
+The \verb{k' >= kObs_i} floor (you cannot have fewer states than observed) is
+enforced by the likelihood, not the prior. This is the correct pre-data
+prior and matches the forward simulator used by the SBC harness.
+\item \code{"conditional"} (Model B): the prior conditions on \code{kObs_i} —
+\verb{k'_i ~ kObs_i + Geometric(p)} for \code{geometric}, and for
+\code{empirical_geometric} the convolution is renormalised by
+\verb{Z_i(p) = sum_\{k >= kObs_i\} P(k | p)}. Model B is data-dependent and
+fails SBC on \code{p} (see \code{project_sbc_kprime_structural}); retained only for
+backward comparison.
+}
+
+Default (\code{NULL}): \code{"unconditional"} for both \code{"empirical_geometric"} and
+\code{"geometric"} (the correct pre-data prior; the geometric SBC harness uses
+\verb{k' ~ 2 + Geo(p)}, so the default aligns inference with the validated SBC
+forward model). Consulted for \code{empirical_geometric} and for \code{geometric}
+under \code{likelihoodMode = "marginal_k"}; ignored for \code{beta_geometric} and
+\code{logseries}.}
+
+\item{kprimeTruncK}{Integer specifying the cap \code{K} at which the geometric
+arm's \verb{k'} prior is truncated and renormalised over \verb{[2, K]}, bounded
+above by the compile-time candidate cap of 256.}
 }
 \value{
 An S3 object of class \code{MkPrimeModel}.
