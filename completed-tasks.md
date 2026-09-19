@@ -1,12 +1,22 @@
 # MkPrime — Completed Tasks
 
-> **FROZEN 2026-09-18 — history, not a work list.** The `to-do.md` queue this
-> archived was retired: specific tasks became GitHub issues (`agent-issues/MkPrime`
-> #31–#43), and the standing-task rotation records moved to GitHub Discussions,
-> `dev/profiling/log.md` and `coordination.md`. Nothing is appended here again —
-> a merged PR closes its issue via `Fixes #N`, which a markdown table cannot
-> observe. Kept as anti-duplication memory: search it before filing so work
-> already done is not re-filed.
+> **FROZEN — keep. This is the decoder for `M-nnn` references in the source.**
+>
+> 109 distinct `M-nnn` ids are cited in comments across 145 files under `R/`, `src/`,
+> `tests/`, `man/`, `dev/` and `.AGENTS/`. **12 of them cannot be resolved by
+> `git log --all --grep`** — `M-014`–`M-020`, for instance, all collapse into the single
+> bulk commit `41105eb`, whose message names none of them. For those, the table below is
+> the only link between the id in the comment and the change it describes.
+>
+> A further **53 of the 166 rows carry no commit SHA at all**: VTune profiling results,
+> "verified resolved" records, design notes that never became a commit. Those exist
+> nowhere else.
+>
+> It is **not** a work list and **not** anti-duplication memory for filing — GitHub issues
+> do that job now, and `Fixes #N` observes a merge in a way a markdown table cannot.
+> Nothing is appended here again. The `to-do.md` queue this archived was retired on
+> 2026-09-18: specific tasks became issues (`agent-issues/MkPrime` #31–#43), and the
+> standing-task rotation records moved to GitHub Discussions and `coordination.md`.
 
 
 | ID | Description | Agent | Date | Notes |
