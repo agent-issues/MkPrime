@@ -11,12 +11,82 @@
 # without regenerating the RDS AND updating NEWS.md to record the behavioural
 # change to the legacy partition = NULL code path (which the §7a contract
 # forbids except in the rate_neo -> eta_neo case noted in §7c).
+#
+# HERMETICITY (2026-09-18). The fixture pins its own starting tree, read from
+# _reference/partition-bitcompat-null-start.nwk. It must never call
+# RunMkPrime(tree = NULL): that delegates the starting topology to
+# TreeSearch::AdditionTree() when TreeSearch is installed, so the whole chain
+# then depends on the version of a *Suggests* package that nothing pins. That
+# is what invalidated the previous reference — it became unreproducible from
+# the very commit that generated it (2b3c054) as soon as the installed
+# TreeSearch moved on, and CI, which resolves TreeSearch from CRAN, could
+# never reproduce it at all. A comparator whose inputs are not pinned is not
+# a comparator.
+#
+# The MCMC itself is reproducible given a pinned tree: on every CI platform
+# the 5 x 211 sample matrix comes back identical to the reference save for
+# last-bit noise, and the accept/reject trajectory is the same everywhere.
+# What is NOT reproducible across platforms is the final bit of every sum;
+# see the note on the reference platform below.
 
 # Dataset: Lobo.phy via TreeTools::data(Lobo.phy). 48 tips, 110 chars after
-# invariant drop, all transformational (verified 2026-05-20). No neomorphic
+# invariant drop, all transformational (verified 2026-05-20; the same five
+# columns 17, 48, 106, 109, 115 are dropped in CI and locally). No neomorphic
 # chars => rate_neo / eta_neo code path is never exercised, so the §7a
 # bit-identity guarantee is robust under both readings of the rate_neo ->
 # eta_neo reparameterisation (§7c).
+
+
+# The platform the stored reference was generated on, and why the comparison
+# is by tolerance rather than by bits.
+#
+# The reference RDS was generated on x86_64 Windows (mingw-w64). Run against
+# it on 2026-09-19 the six CI jobs split cleanly, each group internally
+# bit-identical:
+#
+#   x86_64 Linux (release and devel) and x86_64 macOS  ->  one element of
+#     result$samples differs from the reference by exactly one ULP:
+#     log_posterior of sample 2, -878.6662799424009 against ...08. The other
+#     1054 elements are bit-identical, so the trajectory did not diverge: the
+#     difference is one rounding in one transcendental call, not a different
+#     chain. That is the C library, not the package -- glibc, Apple libm and
+#     mingw-w64's msvcrt do not agree on the last bit of log() / exp().
+#
+#   aarch64 Linux and aarch64 macOS  ->  a wider last-bit spread, from FMA
+#     contraction on top of the libm difference: arm64 toolchains contract
+#     `a * b + c` into a fused multiply-add that rounds once where baseline
+#     x86-64 rounds twice. Most legible in the pinned starting tree's own
+#     total length, 9.4 summed over 94 edges of 0.1, coming back as
+#     9.399999999999980. Both jobs pass the 1e-9 tolerance.
+#
+# No pinning can remove either effect, so the fixture does not ask for
+# bit-identity: it asserts a 1e-9 tolerance on every platform, and keeps the
+# schema assertions exact. An earlier attempt to keep a bit-exact branch on a
+# matching CPU architecture (2026-09-18) failed because the architecture is
+# the wrong axis -- x86_64 Linux and x86_64 Windows disagree while sharing an
+# arch, and the toolchain axis would make one CI job hostage to whichever
+# libm its runner image ships.
+#
+# The tolerance retains the power the comparator is for. The chain is
+# chaotic: any genuine change to the legacy path flips an accept/reject
+# within a few iterations and diverges by whole nats -- a relative difference
+# near 1e-3, thirteen orders of magnitude above the ~2e-16 relative spread
+# seen between platforms, with the 1e-9 tolerance six orders below it. What a
+# tolerant comparison cannot catch is a drift smaller than that spread, which
+# no comparator run on more than one machine could catch either.
+#
+# Bit-identity where it IS a real property -- two runs of the same build in
+# the same process under the same seed -- is asserted by
+# test-determinism-gibbs-subtree-swap.R.
+#
+# Update this note only when regenerating the reference on a different
+# machine.
+
+# Path of the pinned starting tree, relative to tests/testthat/.
+.PartitionBitcompatStartTreePath <- function() {
+  testthat::test_path("_reference", "partition-bitcompat-null-start.nwk")
+}
+
 .RunPartitionBitcompatReference <- function() {
   # Lobo.phy is exported as an object from TreeTools (not a data() dataset).
   pd <- TreeTools::Lobo.phy
@@ -65,14 +135,29 @@
     # emerges at longer chains (≥1000 iter / ≥200 warmup) even with both
     # gibbsSubtreeSwap and joint2d off. The §7a reference accordingly uses
     # the short (100 iter / 50 warmup) regime where bit-identity holds.
+    #
+    # gibbsSpr is pinned off because this reference guards the legacy path as
+    # a whole, not any one move. It is also the one move on main known to be
+    # incorrect (issue #19: no MH step, so not pi-invariant), and its fix is
+    # in flight (PR #30). Leaving it on would make the reference hostage to
+    # that fix, forcing a regeneration indistinguishable from evading the
+    # guard. gibbs_spr correctness is covered by test-gibbs-spr.R,
+    # test-gibbs-spr-candidates.R and the detailed-balance gate at
+    # dev/red-team/heavy-tests/gibbs-spr-db.R.
+    gibbsSpr         = FALSE,
     gibbsSubtreeSwap = FALSE,
     joint2d          = FALSE
   )
 
+  # The pinned starting tree: a greedy parsimony addition tree over Lobo.phy
+  # with every edge set to 0.1 (total length 9.4), captured once to Newick so
+  # that no installed package decides it. ape::read.tree is deterministic for
+  # a fixed string, which is the only property the fixture needs — the edge
+  # ordering need not match whatever produced the string.
+  tree <- ape::read.tree(.PartitionBitcompatStartTreePath())
+
   set.seed(20260520L)
-  # tree = NULL: RunMkPrime builds a starting tree from the data
-  # (NJ with branch lengths). Same code path every time given the same seed.
-  RunMkPrime(data = mkd, tree = NULL, model = model, mcmc = mcmc,
+  RunMkPrime(data = mkd, tree = tree, model = model, mcmc = mcmc,
              fixTopology = FALSE, overwrite = TRUE)
 }
 

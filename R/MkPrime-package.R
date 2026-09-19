@@ -5,6 +5,11 @@
 #' @useDynLib MkPrime, .registration = TRUE
 #' @importFrom Rcpp sourceCpp
 #' @importFrom Rdpack reprompt
+#' @importFrom graphics abline lines mtext par plot.new title
+#' @importFrom stats cor dbeta dexp dgamma dlnorm dnorm fft median na.omit
+#' @importFrom stats nextn plogis qlogis qnorm quantile rbeta rnorm runif sd
+#' @importFrom stats var
+#' @importFrom utils modifyList tail
 ## usethis namespace: end
 NULL
 
