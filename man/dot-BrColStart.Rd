@@ -19,7 +19,7 @@ still yields a parseable tree, so nothing downstream fails (#8, #64).
 }
 \details{
 \code{paramNames} is authoritative where a re-derivation is not: the run path
-builds its names with \code{\link[=.ParamNamesPartitioned]{.ParamNamesPartitioned()}} and strips the \code{kPrime_}
+builds its names with \code{.ParamNamesPartitioned()} and strips the \code{kPrime_}
 columns under \code{marginal_k}.
 }
 \keyword{internal}

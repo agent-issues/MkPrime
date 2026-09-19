@@ -4320,7 +4320,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' still yields a parseable tree, so nothing downstream fails (#8, #64).
 #'
 #' `paramNames` is authoritative where a re-derivation is not: the run path
-#' builds its names with [.ParamNamesPartitioned()] and strips the `kPrime_`
+#' builds its names with `.ParamNamesPartitioned()` and strips the `kPrime_`
 #' columns under `marginal_k`.
 #'
 #' @param paramNames Character vector of column names for a sample row.
