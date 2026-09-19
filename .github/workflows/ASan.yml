@@ -1,11 +1,20 @@
 # Address Sanitizer: Replicate CRAN's gcc-ASAN 'Additional Test'
 on:
   workflow_dispatch:
+  schedule:
+    # Weekly full sweep. The pull_request trigger below deliberately ignores
+    # test/vignette-only changes, so this is what eventually exercises a new
+    # test against unchanged C++. Offset from R-CMD-check (Thu 04:00) and from
+    # mem-check (Sun 06:00) so the three don't contend for runners.
+    - cron: '0 3 * * 0'  # Sundays, 3am
   push:
     branches:
       - main
       - master
       - '**asan**'
+    # Wider than the PR trigger on purpose: a test-only change still gets
+    # sanitiser coverage once it lands, where main is linear and a failure
+    # is attributable to a single merge.
     paths:
       - '.github/workflows/ASan.yml'
       - 'src/**'
@@ -14,13 +23,16 @@ on:
       - 'tests/testthat/**.R'
       - 'vignettes/**.qmd'
   pull_request:
+    # C++ only. ASAN's workload *is* the test suite, so a new test is new
+    # coverage -- but that coverage is picked up by the push-to-main and
+    # weekly triggers above, one commit later, rather than costing every
+    # R-side PR a ~40-minute 3-job matrix it cannot block on anyway
+    # (gcc-ASAN is not a required check).
     paths:
       - '.github/workflows/ASan.yml'
       - 'src/**'
       - 'inst/include/**'
       - 'memcheck/**'
-      - 'tests/testthat/**.R'
-      - 'vignettes/**.qmd'
 
 name: gcc-ASAN
 

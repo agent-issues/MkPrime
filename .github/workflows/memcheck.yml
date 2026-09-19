@@ -1,11 +1,21 @@
 # For help debugging build failures open an issue on the RStudio community with the 'github-actions' tag.
 # https://community.rstudio.com/new-topic?category=Package%20development&tags=github-actions
 on:
+  # workflow_dispatch was absent until 2026-09-19: mem-check could not be
+  # launched by hand at all.
+  workflow_dispatch:
+  schedule:
+    # Weekly full sweep -- see the note on the pull_request trigger below.
+    # Offset from gcc-ASAN (Sun 03:00) and R-CMD-check (Thu 04:00).
+    - cron: '0 6 * * 0'  # Sundays, 6am
   push:
     branches:
       - main
       - master
       - '**valgrind**'
+    # Wider than the PR trigger on purpose: a test-only change still gets
+    # valgrind coverage once it lands, where main is linear and a failure
+    # is attributable to a single merge.
     paths:
       - '.github/workflows/memcheck.yml'
       - 'src/**'
@@ -17,13 +27,14 @@ on:
     branches:
       - main
       - master
+    # C++ only -- see the matching note in ASan.yml. mem-check is not a
+    # required check, so it cannot block a PR it runs on; the coverage a
+    # test-only change would have given is picked up on merge and weekly.
     paths:
       - '.github/workflows/memcheck.yml'
       - 'src/**'
       - 'inst/include/**'
       - 'memcheck/**'
-      - 'tests/testthat/**.R'
-      - 'vignettes/**.qmd'
 
 name: mem-check
 
