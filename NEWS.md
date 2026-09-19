@@ -40,23 +40,34 @@ What the pinned schedule no longer covers: `gibbs_spr`, `gibbs_subtree_swap`,
 correctness is covered instead by `test-gibbs-spr.R`,
 `test-gibbs-spr-candidates.R` and the detailed-balance gate at
 `dev/red-team/heavy-tests/gibbs-spr-db.R`. Everything else in the legacy path
-is still asserted bit-for-bit.
+is still asserted against the stored reference.
 
 The generator now builds against the same installed package the suite tests
 (`MKP_REF_LIB` / `MKP_REF_PKG`) instead of `devtools::load_all()`, which
 compiles without `-O2` and so could disagree in the last bits with the binary
 the comparison then runs against.
 
-Finally, the value assertion is now bit-exact only on the architecture that
-generated the reference, and tolerant (`1e-9`) elsewhere. Cross-architecture
-bit-identity was never achievable: arm64 toolchains contract multiply-add into
-a fused instruction that rounds once where baseline x86-64 rounds twice, so
-`macOS-latest` and `ubuntu-24.04-arm` disagreed with the reference in the last
-bits — visibly so in the pinned tree's own total length, 9.4 over 94 edges of
-0.1, arriving as 9.399999999999980. Nothing is lost by tolerating that: the
-chain is chaotic, so a genuine change to the legacy path flips an accept/reject
-within a few iterations and diverges by whole nats, thousands of times the
-~2e-15 spread between architectures.
+Finally, the value assertion compares at a `1e-9` relative tolerance on every
+platform rather than bit-for-bit. Cross-platform bit-identity was never
+achievable, and the architecture is not the axis it varies on: the reference
+was generated on x86_64 Windows, and x86_64 Linux and x86_64 macOS disagree
+with it — in exactly one of the 1055 sample values, `log_posterior` of sample
+2, by one ULP — while sharing its architecture. That is the C library: glibc,
+Apple libm and mingw-w64 do not agree on the last bit of every `log()` and
+`exp()`. On arm64 the spread is wider still, because those toolchains contract
+multiply-add into a fused instruction that rounds once where baseline x86-64
+rounds twice; it shows in the pinned tree's own total length, 9.4 over 94 edges
+of 0.1, arriving as 9.399999999999980.
+
+Nothing is lost by tolerating that. The chain is chaotic, so a genuine change
+to the legacy path flips an accept/reject within a few iterations and diverges
+by whole nats — a relative difference near `1e-3`. The tolerance sits seven
+orders of magnitude above the platform spread and six below that, so it catches
+everything the bit-exact comparison caught except a drift smaller than the
+noise between two machines, which no comparator run on more than one machine
+could catch either. The schema assertions remain exact on every platform, and
+bit-identity where it is a real property — two runs of one build in one process
+under one seed — is asserted by `test-determinism-gibbs-subtree-swap.R`.
 
 ## `geometric` arm's `marginal_k` default is now the unconditional (Model A) prior
 

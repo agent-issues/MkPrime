@@ -23,9 +23,11 @@
 # never reproduce it at all. A comparator whose inputs are not pinned is not
 # a comparator.
 #
-# The MCMC itself is bit-identical given a pinned tree: the same values arise
-# on x86_64 Linux, aarch64 Linux, macOS and Windows, under both R release and
-# R devel.
+# The MCMC itself is reproducible given a pinned tree: on every CI platform
+# the 5 x 211 sample matrix comes back identical to the reference save for
+# last-bit noise, and the accept/reject trajectory is the same everywhere.
+# What is NOT reproducible across platforms is the final bit of every sum;
+# see the note on the reference platform below.
 
 # Dataset: Lobo.phy via TreeTools::data(Lobo.phy). 48 tips, 110 chars after
 # invariant drop, all transformational (verified 2026-05-20; the same five
@@ -35,26 +37,49 @@
 # eta_neo reparameterisation (§7c).
 
 
-# The CPU architecture the stored reference was generated on.
+# The platform the stored reference was generated on, and why the comparison
+# is by tolerance rather than by bits.
 #
-# Bit-identity across architectures is not something this fixture can promise.
-# arm64 toolchains contract `a * b + c` into a fused multiply-add, which rounds
-# once instead of twice; baseline x86-64 has no FMA in its instruction set and
-# cannot, so the same source produces last-bit differences between the two. It
-# is not an optimisation level or a library version: it is the arithmetic.
-# Observed on 2026-09-18 across `macOS-latest` and `ubuntu-24.04-arm`, most
-# legibly as the pinned starting tree's own total length, 9.4 summed over 94
-# edges of 0.1, coming back as 9.399999999999980 rather than 9.400000000000000.
+# The reference RDS was generated on x86_64 Windows (mingw-w64). Run against
+# it on 2026-09-19 the six CI jobs split cleanly, each group internally
+# bit-identical:
 #
-# On a matching architecture the fixture asserts bit-identity, which is what
-# makes it a drift comparator. Elsewhere it asserts a tight tolerance instead.
-# That retains the power the comparator is for: the chain is chaotic, so any
-# genuine change to the legacy path flips an accept/reject within a few
-# iterations and diverges by whole nats, thousands of times the ~2e-15 spread
-# that separates the architectures.
+#   x86_64 Linux (release and devel) and x86_64 macOS  ->  one element of
+#     result$samples differs from the reference by exactly one ULP:
+#     log_posterior of sample 2, -878.6662799424009 against ...08. The other
+#     1054 elements are bit-identical, so the trajectory did not diverge: the
+#     difference is one rounding in one transcendental call, not a different
+#     chain. That is the C library, not the package -- glibc, Apple libm and
+#     mingw-w64's msvcrt do not agree on the last bit of log() / exp().
 #
-# Update this only when regenerating the reference on a different machine.
-.PartitionBitcompatReferenceArch <- function() "x86_64"
+#   aarch64 Linux and aarch64 macOS  ->  a wider last-bit spread, from FMA
+#     contraction on top of the libm difference: arm64 toolchains contract
+#     `a * b + c` into a fused multiply-add that rounds once where baseline
+#     x86-64 rounds twice. Most legible in the pinned starting tree's own
+#     total length, 9.4 summed over 94 edges of 0.1, coming back as
+#     9.399999999999980. Both jobs pass the 1e-9 tolerance.
+#
+# No pinning can remove either effect, so the fixture does not ask for
+# bit-identity: it asserts a 1e-9 tolerance on every platform, and keeps the
+# schema assertions exact. An earlier attempt to keep a bit-exact branch on a
+# matching CPU architecture (2026-09-18) failed because the architecture is
+# the wrong axis -- x86_64 Linux and x86_64 Windows disagree while sharing an
+# arch, and the toolchain axis would make one CI job hostage to whichever
+# libm its runner image ships.
+#
+# The tolerance retains the power the comparator is for. The chain is
+# chaotic: any genuine change to the legacy path flips an accept/reject
+# within a few iterations and diverges by whole nats, some twelve orders of
+# magnitude above the ~1e-16 relative spread seen between platforms. What a
+# tolerant comparison cannot catch is a drift smaller than that spread, which
+# no comparator run on more than one machine could catch either.
+#
+# Bit-identity where it IS a real property -- two runs of the same build in
+# the same process under the same seed -- is asserted by
+# test-determinism-gibbs-subtree-swap.R.
+#
+# Update this note only when regenerating the reference on a different
+# machine.
 
 # Path of the pinned starting tree, relative to tests/testthat/.
 .PartitionBitcompatStartTreePath <- function() {
