@@ -53,12 +53,24 @@ jobs:
           head='${{ github.event.pull_request.head.sha }}'
           git fetch --no-tags origin "$base" >/dev/null 2>&1 || true
 
-          changed=$(git diff --name-only "$base" "$head")
+          # Three dots: diff against the MERGE BASE, not the tip of the
+          # base branch. Two dots would attribute every change made on
+          # main since this branch forked to this pull request, firing
+          # the sanitiser on PRs that touch no compiled code at all.
+          changed=$(git diff --name-only "$base...$head")
           echo "Changed files:"
           printf '  %s\n' $changed
 
-          if printf '%s\n' "$changed" | grep -qE '^(src/|inst/include/|memcheck/|\.github/workflows/ASan\.yml)'; then
-            echo "-> compiled code (or this workflow) changed; running AddressSanitizer."
+          # This workflow's own file is deliberately NOT in the pattern.
+          # Under the gate structure the `pull_request` trigger is
+          # unfiltered, so editing this file no longer needs to appear here
+          # to prove the workflow still dispatches -- `changes` proves that
+          # by running. Listing it would instead make every future CI-config
+          # edit, comment changes included, a blocking 40-minute gate once
+          # these are required checks. Exercise a workflow edit with the
+          # workflow_dispatch button on the branch before merging it.
+          if printf '%s\n' "$changed" | grep -qE '^(src/|inst/include/|memcheck/)'; then
+            echo "-> compiled code changed; running AddressSanitizer."
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "-> no compiled-code change; skipping AddressSanitizer."
