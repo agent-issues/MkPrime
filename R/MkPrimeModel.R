@@ -22,18 +22,12 @@
 #'   `priorOnClassRateLogSd = "gamma_independent"` per-class prior.
 #'   Not consulted by the default pooled hyperprior (see
 #'   `priorOnClassRateLogSd`).
-#' @param classRateConcentration Concentration of the symmetric Dirichlet
-#'   prior on the per-class relative rate weights `class_w`. Consulted only
-#'   when a partition defines more than one class; `1` (the default) is
-#'   uniform on the simplex, values below 1 favour uneven class rates and
-#'   values above 1 pull them together.
-#' @param kprimeTruncK Integer truncation cap `K` on `k'` for the geometric
-#'   arm: the prior is a truncated geometric on `[2, K]`, renormalised by
-#'   `Z(p)`. Applied under both `"sampled_k"` and `"marginal_k"` for
-#'   consistency with RevBayes. Must lie in `[2, 256]`; the upper bound is the
-#'   compile-time candidate cap `kMaxKprimeCand` in `src/mcmc_state.h`.
-#'   Default `200L`. Raise it if a character's observed state count approaches
-#'   it, or the likelihood is `-Inf`.
+#' @param classRateConcentration Numeric specifying the concentration of the
+#'   symmetric Dirichlet prior on per-class relative rate weights; values below
+#'   one favour uneven class rates, values above one pull them together.
+#' @param kprimeTruncK Integer specifying the cap `K` at which the geometric
+#'   arm's `k'` prior is truncated and renormalised over `[2, K]`, bounded
+#'   above by the compile-time candidate cap of 256.
 #' @param priorOnClassRateLogSd Prior structure on per-class ACRV
 #'   dispersion `σ_c = class_rate_log_sd[c]` when `unlink = "shape"` is
 #'   active with two or more user classes. One of:

@@ -117,11 +117,9 @@ Ignored when \code{qHeterogeneity = FALSE}.}
 on \code{beta_scale} (the symmetric Dirichlet concentration parameter).
 Defaults: shape = 1, rate = 1. Ignored when \code{qHeterogeneity = FALSE}.}
 
-\item{classRateConcentration}{Concentration of the symmetric Dirichlet
-prior on the per-class relative rate weights \code{class_w}. Consulted only
-when a partition defines more than one class; \code{1} (the default) is
-uniform on the simplex, values below 1 favour uneven class rates and
-values above 1 pull them together.}
+\item{classRateConcentration}{Numeric specifying the concentration of the
+symmetric Dirichlet prior on per-class relative rate weights; values below
+one favour uneven class rates, values above one pull them together.}
 
 \item{priorOnClassRateLogSd}{Prior structure on per-class ACRV
 dispersion \code{σ_c = class_rate_log_sd[c]} when \code{unlink = "shape"} is
@@ -186,13 +184,9 @@ forward model). Consulted for \code{empirical_geometric} and for \code{geometric
 under \code{likelihoodMode = "marginal_k"}; ignored for \code{beta_geometric} and
 \code{logseries}.}
 
-\item{kprimeTruncK}{Integer truncation cap \code{K} on \verb{k'} for the geometric
-arm: the prior is a truncated geometric on \verb{[2, K]}, renormalised by
-\code{Z(p)}. Applied under both \code{"sampled_k"} and \code{"marginal_k"} for
-consistency with RevBayes. Must lie in \verb{[2, 256]}; the upper bound is the
-compile-time candidate cap \code{kMaxKprimeCand} in \code{src/mcmc_state.h}.
-Default \code{200L}. Raise it if a character's observed state count approaches
-it, or the likelihood is \code{-Inf}.}
+\item{kprimeTruncK}{Integer specifying the cap \code{K} at which the geometric
+arm's \verb{k'} prior is truncated and renormalised over \verb{[2, K]}, bounded
+above by the compile-time candidate cap of 256.}
 }
 \value{
 An S3 object of class \code{MkPrimeModel}.
