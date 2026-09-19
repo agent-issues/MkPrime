@@ -61,6 +61,7 @@ test_that("f81_transition matches analytical formula", {
 # Test: Q-het Gibbs SPR partial CL matches full evaluation
 # ---------------------------------------------------------------------------
 test_that("Q-het Gibbs SPR runs and produces reasonable results", {
+  skip_under_memcheck()
   setup <- make_het_setup(nTip = 8L, nChar = 12L, seed = 3847L)
   mcmc <- MkPrimeMCMC(
     nIter = 500L, maxWarmup = 200L, minWarmup = 200L, thin = 5L,
@@ -81,6 +82,7 @@ test_that("Q-het Gibbs SPR runs and produces reasonable results", {
 # Test: Q-het Gibbs subtree swap runs and produces reasonable results
 # ---------------------------------------------------------------------------
 test_that("Q-het Gibbs subtree swap runs and produces reasonable results", {
+  skip_under_memcheck()
   setup <- make_het_setup(nTip = 8L, nChar = 12L, seed = 6243L)
   mcmc <- MkPrimeMCMC(
     nIter = 500L, maxWarmup = 200L, minWarmup = 200L, thin = 5L,
@@ -99,6 +101,7 @@ test_that("Q-het Gibbs subtree swap runs and produces reasonable results", {
 # Test: Q-het Gibbs SPR + swap together
 # ---------------------------------------------------------------------------
 test_that("Q-het with both Gibbs moves produces valid MCMC", {
+  skip_under_memcheck()
   setup <- make_het_setup(nTip = 8L, nChar = 12L, seed = 9102L)
   mcmc <- MkPrimeMCMC(
     nIter = 600L, maxWarmup = 200L, minWarmup = 200L, thin = 5L,
