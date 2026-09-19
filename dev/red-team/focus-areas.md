@@ -35,26 +35,30 @@ dispatching.
 **A version bump reopens dormancy.** A `dry` or `dormant` verdict is evidence
 about the version that produced it, not about the rung.
 
-## Rotation order
+This table is here rather than in the skill because the skill says it must be:
+the alias-to-version mapping is project-local, and "a dated table baked into
+[the skill] would go stale silently in every project that inherits it". It
+moved here from `log.md` when that file was deleted.
 
-**The rotation is derived, not maintained.** The next area is the one whose
-most recent Discussion has the oldest `createdAt`, an area with no Discussion
-taking precedence. Nothing in this repo records "where the rotation is"; ask
-the boards:
+## Rotation
 
-```bash
-gh api graphql -f query='{repository(owner:"agent-issues",name:"MkPrime"){discussions(first:100){nodes{number createdAt category{slug}}}}}' --jq '[.data.repository.discussions.nodes[] | select(.category.slug | test("^[0-9][0-9]-"))] | group_by(.category.slug) | map(max_by(.createdAt)) | sort_by(.createdAt) | .[] | "\(.createdAt)  #\(.number)  \(.category.slug)"'
-```
+**The rule is not recorded here.** It lives in the `/red-team` skill (Normal
+run, steps 1-2): the next area is the one whose most recent Discussion has the
+oldest `createdAt`, an area with no Discussion taking precedence. The skill
+carries the query too. Restating either here would create a second copy that
+can drift from it -- which is what `last_focus:` was.
 
-The queue was normalised on 2026-09-19 by re-posting all twelve areas in
-sequence, so it now reads 7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 5, 6. Six of those
-posts are **ordering markers** that carry no review; each says so and names the
-real record. Delete a marker once a genuine round record supersedes it.
+Two local facts the skill cannot know:
 
-There is no `last_focus:` and there is no `log.md`. Both were retired on
-2026-09-19: a hand-maintained pointer had gone stale during a CI outage and was
-then used in preference to the boards, which sent a round to the wrong area.
-The pre-Discussions history is archived at discussion #124.
+- The queue was normalised on 2026-09-19 by re-posting all twelve areas in
+  sequence, so `createdAt` order is now area order: 7, 8, 9, 10, 11, 12, 1, 2,
+  3, 4, 5, 6.
+- **Discussions #118-#123 are ordering markers, not round records.** Each says
+  so and names the real record. Delete one as soon as a genuine round record
+  supersedes it.
+
+`dev/red-team/log.md` and its `last_focus:` were retired the same day; the
+pre-Discussions history is archived at discussion #124.
 
 | # | Area | Files | Key questions |
 |---|------|-------|---------------|
