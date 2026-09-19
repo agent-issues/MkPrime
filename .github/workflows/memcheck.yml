@@ -1,45 +1,79 @@
-# For help debugging build failures open an issue on the RStudio community with the 'github-actions' tag.
+# valgrind memcheck.
+#
+# Structure mirrors ASan.yml: `changes` decides whether this PR touches
+# compiled code; `valgrind` runs only if it does; `gate` always runs and
+# reports the single status that branch protection requires. A PR with no
+# C++ change skips the matrix and the gate passes immediately, so the
+# required check can never deadlock on a workflow that did not trigger.
+#
+# For help debugging build failures open an issue on the RStudio community
+# with the 'github-actions' tag.
 # https://community.rstudio.com/new-topic?category=Package%20development&tags=github-actions
 on:
   # workflow_dispatch was absent until 2026-09-19: mem-check could not be
   # launched by hand at all.
   workflow_dispatch:
   schedule:
-    # Weekly full sweep -- see the note on the pull_request trigger below.
-    # Offset from gcc-ASAN (Sun 03:00) and R-CMD-check (Thu 04:00).
+    # Weekly full sweep — see the note in ASan.yml. Offset from gcc-ASAN
+    # (Sun 03:00) and R-CMD-check (Thu 04:00).
     - cron: '0 6 * * 0'  # Sundays, 6am
   push:
     branches:
       - main
       - master
       - '**valgrind**'
-    # Wider than the PR trigger on purpose: a test-only change still gets
-    # valgrind coverage once it lands, where main is linear and a failure
-    # is attributable to a single merge.
-    paths:
-      - '.github/workflows/memcheck.yml'
-      - 'src/**'
-      - 'inst/include/**'
-      - 'memcheck/**'
-      - 'tests/testthat/**.R'
-      - 'vignettes/**.qmd'
+  # Deliberately unfiltered — see ASan.yml. Path filtering happens in
+  # `changes`, where a skip still reports a status.
   pull_request:
     branches:
       - main
       - master
-    # C++ only -- see the matching note in ASan.yml. mem-check is not a
-    # required check, so it cannot block a PR it runs on; the coverage a
-    # test-only change would have given is picked up on merge and weekly.
-    paths:
-      - '.github/workflows/memcheck.yml'
-      - 'src/**'
-      - 'inst/include/**'
-      - 'memcheck/**'
 
 name: mem-check
 
 jobs:
-  mem-check:
+  changes:
+    name: detect compiled-code changes
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "Event is ${{ github.event_name }} -> running valgrind."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          base='${{ github.event.pull_request.base.sha }}'
+          head='${{ github.event.pull_request.head.sha }}'
+          git fetch --no-tags origin "$base" >/dev/null 2>&1 || true
+
+          changed=$(git diff --name-only "$base" "$head")
+          echo "Changed files:"
+          printf '  %s\n' $changed
+
+          if printf '%s\n' "$changed" | grep -qE '^(src/|inst/include/|memcheck/|\.github/workflows/memcheck\.yml)'; then
+            echo "-> compiled code (or this workflow) changed; running valgrind."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "-> no compiled-code change; skipping valgrind."
+            echo "   Coverage for this change arrives on the push to main and in the weekly sweep."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  valgrind:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+
     runs-on: ubuntu-24.04
 
     name: valgrind ${{ matrix.config.test }}
@@ -63,3 +97,42 @@ jobs:
       - uses: ms609/actions/memcheck@main
         with:
           test: ${{ matrix.config.test}}
+
+  gate:
+    # This is the job branch protection should require.
+    #
+    # `if: always()` is what makes it report even when `valgrind` was
+    # skipped. Because always() also runs the job when a dependency failed,
+    # each dependency's result must be inspected explicitly; GitHub will not
+    # fail this job on our behalf.
+    name: valgrind gate
+    needs: [changes, valgrind]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Certify valgrind status
+        shell: bash
+        run: |
+          echo "changes  : ${{ needs.changes.result }} (run=${{ needs.changes.outputs.run }})"
+          echo "valgrind : ${{ needs.valgrind.result }}"
+
+          # Failing to determine whether the sanitiser was needed is not a
+          # pass. Fail closed.
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "::error::Change detection did not succeed, so valgrind status cannot be certified."
+            exit 1
+          fi
+
+          case "${{ needs.valgrind.result }}" in
+            success)
+              echo "valgrind passed."
+              ;;
+            skipped)
+              echo "No compiled-code change in this pull request, so valgrind was not required."
+              echo "It still runs on the push to main and in the weekly sweep."
+              ;;
+            *)
+              echo "::error::valgrind result was '${{ needs.valgrind.result }}'."
+              exit 1
+              ;;
+          esac

@@ -1,43 +1,75 @@
 # Address Sanitizer: Replicate CRAN's gcc-ASAN 'Additional Test'
+#
+# Structure: `changes` decides whether this PR touches compiled code; `asan`
+# runs only if it does; `gate` always runs and reports the single status that
+# branch protection requires. A PR with no C++ change skips the ~40-minute
+# matrix and the gate passes immediately, so the required check can never
+# deadlock on a workflow that did not trigger.
 on:
   workflow_dispatch:
   schedule:
-    # Weekly full sweep. The pull_request trigger below deliberately ignores
-    # test/vignette-only changes, so this is what eventually exercises a new
-    # test against unchanged C++. Offset from R-CMD-check (Thu 04:00) and from
-    # mem-check (Sun 06:00) so the three don't contend for runners.
+    # Weekly full sweep. PRs that touch only tests or vignettes skip the
+    # matrix, so this is what eventually exercises a new test against
+    # unchanged C++. Offset from mem-check (Sun 06:00) and R-CMD-check
+    # (Thu 04:00) so the three do not contend for runners.
     - cron: '0 3 * * 0'  # Sundays, 3am
   push:
     branches:
       - main
       - master
       - '**asan**'
-    # Wider than the PR trigger on purpose: a test-only change still gets
-    # sanitiser coverage once it lands, where main is linear and a failure
-    # is attributable to a single merge.
-    paths:
-      - '.github/workflows/ASan.yml'
-      - 'src/**'
-      - 'inst/include/**'
-      - 'memcheck/**'
-      - 'tests/testthat/**.R'
-      - 'vignettes/**.qmd'
+  # Deliberately unfiltered: the gate job must report on every pull request,
+  # or a required check would sit forever at "Expected — waiting for status".
+  # Path filtering happens in `changes` instead, where a skip still reports.
   pull_request:
-    # C++ only. ASAN's workload *is* the test suite, so a new test is new
-    # coverage -- but that coverage is picked up by the push-to-main and
-    # weekly triggers above, one commit later, rather than costing every
-    # R-side PR a ~40-minute 3-job matrix it cannot block on anyway
-    # (gcc-ASAN is not a required check).
-    paths:
-      - '.github/workflows/ASan.yml'
-      - 'src/**'
-      - 'inst/include/**'
-      - 'memcheck/**'
 
 name: gcc-ASAN
 
 jobs:
-  mem-check:
+  changes:
+    name: detect compiled-code changes
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Anything that is not a pull request (push to main, weekly cron,
+          # manual dispatch) always runs the full matrix.
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "Event is ${{ github.event_name }} -> running AddressSanitizer."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          base='${{ github.event.pull_request.base.sha }}'
+          head='${{ github.event.pull_request.head.sha }}'
+          git fetch --no-tags origin "$base" >/dev/null 2>&1 || true
+
+          changed=$(git diff --name-only "$base" "$head")
+          echo "Changed files:"
+          printf '  %s\n' $changed
+
+          if printf '%s\n' "$changed" | grep -qE '^(src/|inst/include/|memcheck/|\.github/workflows/ASan\.yml)'; then
+            echo "-> compiled code (or this workflow) changed; running AddressSanitizer."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "-> no compiled-code change; skipping AddressSanitizer."
+            echo "   Coverage for this change arrives on the push to main and in the weekly sweep."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  asan:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+
     runs-on: ubuntu-24.04
 
     name: AddressSanitizer ${{ matrix.config.test }}
@@ -105,3 +137,43 @@ jobs:
       - name: ASAN - memcheck ${{ matrix.config.test }}
         run: |
           Rscript memcheck/${{ matrix.config.test }}.R
+
+  gate:
+    # This is the job branch protection should require.
+    #
+    # `if: always()` is what makes it report even when `asan` was skipped —
+    # without it the gate would itself be skipped and a required check would
+    # never arrive. Because always() also runs the job when a dependency
+    # failed, the result of each dependency has to be inspected explicitly;
+    # GitHub will not fail this job on our behalf.
+    name: ASAN gate
+    needs: [changes, asan]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Certify AddressSanitizer status
+        shell: bash
+        run: |
+          echo "changes : ${{ needs.changes.result }} (run=${{ needs.changes.outputs.run }})"
+          echo "asan    : ${{ needs.asan.result }}"
+
+          # A failure to work out whether the sanitiser was needed is not a
+          # pass. Fail closed.
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "::error::Change detection did not succeed, so AddressSanitizer status cannot be certified."
+            exit 1
+          fi
+
+          case "${{ needs.asan.result }}" in
+            success)
+              echo "AddressSanitizer passed."
+              ;;
+            skipped)
+              echo "No compiled-code change in this pull request, so AddressSanitizer was not required."
+              echo "It still runs on the push to main and in the weekly sweep."
+              ;;
+            *)
+              echo "::error::AddressSanitizer result was '${{ needs.asan.result }}'."
+              exit 1
+              ;;
+          esac
