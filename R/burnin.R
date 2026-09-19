@@ -99,12 +99,12 @@ AutoBurnin <- function(posterior,
     if (length(keyCols) == 0L) next
 
     ess <- .ComputeEss(pb$samples[, keyCols, drop = FALSE])
-    results$minEss[i] <- min(ess, na.rm = TRUE)
+    results$minEss[i] <- .MinOrNA(ess)
 
     if (hasRhat && length(pb$per_run) >= 2L) {
       rhat <- .ComputeRhat(pb$per_run, keyCols)
       if (!is.null(rhat) && length(rhat) > 0L) {
-        results$maxRhat[i] <- max(rhat, na.rm = TRUE)
+        results$maxRhat[i] <- .MaxOrNA(rhat)
       }
     }
   }

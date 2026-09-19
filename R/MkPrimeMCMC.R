@@ -62,14 +62,9 @@
 #'   a pragmatic threshold for phylogenetics where mixing is slower.
 #'   Requires `nRuns >= 2`.
 #'   Replaces the classical PSRF (Gelman-Rubin) statistic.
-#' @param minTreeEss Minimum tree-topology ESS (median pseudo-ESS) for
-#'   early stopping.  `NULL` (default) disables tree-ESS-based stopping.
-#'   When set, tree ESS is computed adaptively during convergence checks:
-#'   skipped when scalar ESS is far from `minEss`, coarse (500-tree
-#'   subsample) when approaching, and fine (1000-tree subsample) when
-#'   tree ESS is the binding constraint.  Requires **TreeDist**.
-#'   Also used in the tuning-phase bandit: topology moves receive credit
-#'   for improving tree ESS, preventing underallocation.
+#' @param minTreeEss Numeric specifying the tree-topology ESS (median
+#'   pseudo-ESS, via **TreeDist**) each run must reach before it may stop;
+#'   `NULL` disables tree-ESS-based stopping.
 #' @param checkEvery Check convergence every this many iterations
 #'   (default 1000). Only used when stopping criteria are set.
 #' @param cancelFile Path to a cancel-signal file. `NULL` (default) disables
@@ -265,6 +260,16 @@
 #' - `scale_rate_log_sd`: 0.5
 #' - `scale_p`: 0.5
 #' - `int_walk_window`: 1
+#'
+#' ## Tree ESS is enforced per run
+#'
+#' Trees are not written to the log files, so the log-based convergence check
+#' used for parallel runs and for the serial cross-run phase cannot evaluate
+#' `minTreeEss`; only the per-run check can. With `nRuns > 1` the criterion
+#' therefore governs each run's own stopping, while the cross-run decision
+#' rests on `minEss` and `maxRhat` alone. Set at least one of those when
+#' running more than one run, or the cross-run phase has no criterion to
+#' apply.
 #'
 #' ## Parallel tempering
 #'

@@ -1577,23 +1577,12 @@ RunMkPrime <- function(data, tree = NULL,
 
       diagCheck <- .CheckConvergence(list(r), paramNames, mcmc, isStreaming)
       if (!is.null(diagCheck)) {
-        # M-141: ETA from worst-case ESS accumulation rate.
-        # Use whichever criterion (scalar ESS or tree ESS) has the
-        # worst current/target ratio -- that's the binding constraint.
         elapsedSample <- proc.time()["elapsed"] - sampleWallStart
-        etaCurrent <- diagCheck$minEss
-        etaTarget  <- mcmc$minEss
-        if (!is.null(mcmc$minTreeEss) && !is.na(diagCheck$treeEss) &&
-            is.finite(diagCheck$treeEss) && !is.null(mcmc$minEss) &&
-            is.finite(diagCheck$minEss)) {
-          scalarRatio <- diagCheck$minEss / mcmc$minEss
-          treeRatio   <- diagCheck$treeEss / mcmc$minTreeEss
-          if (treeRatio < scalarRatio) {
-            etaCurrent <- diagCheck$treeEss
-            etaTarget  <- mcmc$minTreeEss
-          }
-        }
-        etaStr <- .EstimateEta(etaCurrent, etaTarget, elapsedSample)
+
+        # M-141: ETA from worst-case ESS accumulation rate, projected against
+        # whichever criterion is currently binding. See .EtaCriterion().
+        etaCrit <- .EtaCriterion(diagCheck, mcmc)
+        etaStr <- .EstimateEta(etaCrit$current, etaCrit$target, elapsedSample)
         # Refresh ticker pages from latest diagnostics (M-097)
         tickerPages <- .BuildTickerPages(diagCheck, etaStr)
         if (diagCheck$converged) {
@@ -2027,7 +2016,8 @@ RunMkPrime <- function(data, tree = NULL,
     if (!is.null(diagCheck)) {
       elStr  <- .FormatElapsed(elapsed)
       essStr <- round(diagCheck$minEss)
-      etaStr <- .EstimateEta(diagCheck$minEss, mcmc$minEss, elapsed)
+      etaCrit <- .EtaCriterion(diagCheck, mcmc)
+      etaStr <- .EstimateEta(etaCrit$current, etaCrit$target, elapsed)
       pollStatus <- paste0(
         elStr, " | min ESS = ", essStr,
         if (!is.null(mcmc$minEss)) paste0(" / ", mcmc$minEss) else "",
@@ -2264,7 +2254,7 @@ RunMkPrime <- function(data, tree = NULL,
   # kPrime are discrete nuisance parameters -- exclude from convergence criteria
   # (M-098). They remain in the `ess` vector for display in .PrintProgressTable.
   isConvParam <- !grepl("^kPrime_", names(ess)) & names(ess) != "log_likelihood"
-  minEss <- min(ess[isConvParam], na.rm = TRUE)
+  minEss <- .MinOrNA(ess[isConvParam])
 
   # R-hat (requires >= 2 runs)
   rhat    <- NULL
@@ -2276,8 +2266,7 @@ RunMkPrime <- function(data, tree = NULL,
       .Rhat(chainMat)
     }, numeric(1))
     names(rhat) <- paramNms
-    maxRhat <- max(rhat[isConvParam[names(rhat) %in% names(ess)]],
-                   na.rm = TRUE)
+    maxRhat <- .MaxOrNA(rhat[isConvParam[names(rhat) %in% names(ess)]])
   }
 
   # --- Adaptive tree ESS ---
@@ -2291,11 +2280,11 @@ RunMkPrime <- function(data, tree = NULL,
   if (!is.null(mcmc$minTreeEss) &&
       requireNamespace("TreeDist", quietly = TRUE)) {
 
-    scalarsFarOff <- !is.null(mcmc$minEss) && minEss < 0.5 * mcmc$minEss
+    scalarsFarOff <- !is.null(mcmc$minEss) && isTRUE(minEss < 0.5 * mcmc$minEss)
     scalarsConverged <-
-      (is.null(mcmc$minEss)  || minEss >= mcmc$minEss) &&
-      (is.null(mcmc$maxRhat) || (nRuns >= 2L && !is.na(maxRhat) &&
-                                  maxRhat <= mcmc$maxRhat))
+      (is.null(mcmc$minEss)  || isTRUE(minEss >= mcmc$minEss)) &&
+      (is.null(mcmc$maxRhat) || (nRuns >= 2L &&
+                                  isTRUE(maxRhat <= mcmc$maxRhat)))
 
     treeEssPrecision <- if (scalarsFarOff) "skip"
                         else if (scalarsConverged) "fine"
@@ -2319,9 +2308,9 @@ RunMkPrime <- function(data, tree = NULL,
   hasCriteria <- !is.null(mcmc$minEss) || !is.null(mcmc$maxRhat) ||
                  !is.null(mcmc$minTreeEss)
   converged   <- hasCriteria &&
-    (is.null(mcmc$minEss)     || minEss >= mcmc$minEss) &&
-    (is.null(mcmc$maxRhat)    || (nRuns >= 2L && !is.na(maxRhat) &&
-                                   maxRhat <= mcmc$maxRhat)) &&
+    (is.null(mcmc$minEss)     || isTRUE(minEss >= mcmc$minEss)) &&
+    (is.null(mcmc$maxRhat)    || (nRuns >= 2L &&
+                                   isTRUE(maxRhat <= mcmc$maxRhat))) &&
     (is.null(mcmc$minTreeEss) || (!is.na(treeEss) &&
                                    treeEss >= mcmc$minTreeEss))
 
@@ -2336,6 +2325,12 @@ RunMkPrime <- function(data, tree = NULL,
 #' Reads each run's log file via [ReadMkLog()], extracts key parameters,
 #' and computes ESS (all runs combined) and R-hat (when `nRuns >= 2`).
 #' Returns `NULL` if any log is missing or has fewer than 10 rows.
+#'
+#' Tree ESS is deliberately absent: trees are not written to the log files, so
+#' this path cannot evaluate `minTreeEss` and returns `treeEss = NA_real_`. The
+#' criterion is enforced per run by [.CheckConvergence()] instead. Documented
+#' on `minTreeEss` in [MkPrimeMCMC()]; whether the silent non-enforcement also
+#' deserves a warning is a maintainer call, not settled here.
 #' @keywords internal
 .CheckConvergenceFromLogs <- function(logFilePaths, paramNames, mcmc) {
   nRuns   <- length(logFilePaths)
@@ -2367,7 +2362,7 @@ RunMkPrime <- function(data, tree = NULL,
 
   # Exclude kPrime nuisance parameters from convergence criteria (M-098)
   isConvParam <- !grepl("^kPrime_", names(ess)) & names(ess) != "log_likelihood"
-  minEss <- min(ess[isConvParam], na.rm = TRUE)
+  minEss <- .MinOrNA(ess[isConvParam])
 
   rhat    <- NULL
   maxRhat <- NA_real_
@@ -2378,17 +2373,16 @@ RunMkPrime <- function(data, tree = NULL,
       .Rhat(chainMat)
     }, numeric(1))
     names(rhat) <- paramNms
-    maxRhat <- max(rhat[isConvParam[names(rhat) %in% names(ess)]],
-                   na.rm = TRUE)
+    maxRhat <- .MaxOrNA(rhat[isConvParam[names(rhat) %in% names(ess)]])
   }
 
   # Tree ESS not available in log-based mode (scalar logs don't contain trees).
   # minTreeEss is only enforced by .CheckConvergence() which has in-memory trees.
   hasCriteria <- !is.null(mcmc$minEss) || !is.null(mcmc$maxRhat)
   converged   <- hasCriteria &&
-    (is.null(mcmc$minEss)  || minEss >= mcmc$minEss) &&
-    (is.null(mcmc$maxRhat) || (nRuns >= 2L && !is.na(maxRhat) &&
-                                maxRhat <= mcmc$maxRhat))
+    (is.null(mcmc$minEss)  || isTRUE(minEss >= mcmc$minEss)) &&
+    (is.null(mcmc$maxRhat) || (nRuns >= 2L &&
+                                isTRUE(maxRhat <= mcmc$maxRhat)))
 
   list(converged = converged, minEss = minEss, maxRhat = maxRhat,
        treeEss = NA_real_, treeEssPrecision = "skip",
