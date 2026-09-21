@@ -1,6 +1,7 @@
-# Invariant: for a FIXED move schedule, RunMkPrime() samples are a
-# deterministic function of set.seed(), including on a repeat call in the
-# same R session (no C++ static state leaks from one call into the next).
+# MkPrime does not offer deterministic run output. This file tests an
+# internal invariant used to detect state leaking between calls: for a
+# FIXED move schedule, RunMkPrime() samples are a deterministic function of
+# set.seed(), including on a repeat call in the same R session.
 #
 # The schedule itself is NOT seed-determined: during warmup
 # .AdaptMoveWeights() scores each move by acceptances per wall-clock second,
