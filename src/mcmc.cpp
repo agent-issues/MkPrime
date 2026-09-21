@@ -12,11 +12,13 @@
 #include "gibbs_partial_cl.h"
 #include "fitch.h"
 #include "node_cl_cache.h"
+#include <TreeTools/edge_to_splits.h>
 #include <TreeTools/renumber_tree.h>
 #include <cmath>
 #include <cstring>
 #include <chrono>
 #include <cstdio>
+#include <algorithm>
 
 using namespace Rcpp;
 
@@ -853,20 +855,18 @@ List get_mcmc_state(SEXP statePtr) {
 }
 
 
-// FNV-1a topology hash of the parent vector.
-// Edges must be in canonical preorder (guaranteed by all tree moves).
-static double fnv_topo_hash(const IntegerVector& parent) {
-  uint64_t h = 0xcbf29ce484222325ULL;
-  for (int k = 0; k < parent.size(); ++k) {
-    h ^= static_cast<uint64_t>(parent[k]);
-    h *= 0x100000001b3ULL;
-  }
-  return static_cast<double>(h >> 11);  // 53 significant bits
+// Fingerprint of the unrooted topology, cut to 53 bits so a double holds it
+// exactly.  TreeTools needs parents ahead of children, which every move
+// preserves even where it leaves the edges out of canonical preorder.
+static double fnv_topo_hash(const IntegerVector& parent,
+                            const IntegerVector& child, int nTip) {
+  return static_cast<double>(TreeTools::topology_hash(
+      parent.begin(), child.begin(), parent.size(), nTip) >> 11);
 }
 
 // [[Rcpp::export]]
-double compute_topo_hash(IntegerVector parent) {
-  return fnv_topo_hash(parent);
+double compute_topo_hash(IntegerVector parent, IntegerVector child, int nTip) {
+  return fnv_topo_hash(parent, child, nTip);
 }
 
 // [[Rcpp::export]]
@@ -1772,7 +1772,6 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
   }
 
 
-
   ResidualCL res;
   ResidualCL pseudoRes;
 
@@ -1957,17 +1956,24 @@ static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta) {
 
 
 // ---------------------------------------------------------------------------
-// gibbs_subtree_swap_impl  (M-086, M-109 in-place, M-111 partial CL)
+// gibbs_subtree_swap_impl  (M-086, M-109 in-place, M-111 partial CL;
+// corrected kernel GSWAP-001)
 //
-// GibbsSubtreeSwap: enumerate all valid subtree-swap partners for a randomly
-// chosen node, weight by exp(β × logLik), sample proportionally, apply.
-// Same Gibbs semantics and design choices as gibbs_spr_impl.
-// Branch lengths swap with their subtrees (Jacobian = 1); see M-084.
+// GibbsSubtreeSwap: anchor on a uniformly chosen non-root node, enumerate
+// every valid swap partner, weight by exp(β × logLik), sample
+// proportionally, then accept by MH at min(1, Z_x / Z_y).  Unlike gibbs_spr,
+// whose two endpoints prune to one shared residual tree, the swap
+// neighbourhood differs between the directions and its selection normaliser
+// does not cancel: proof in
+// dev/red-team/proofs/gibbs-subtree-swap-hastings.md.
 //
-// M-111: Partial CL reuse — cache per-node CLs from one downpass, then
-// evaluate each candidate by updating only the O(depth) affected path
-// (union of paths from pA and pB to root).  Falls back to full evaluation
-// when Q-heterogeneity is enabled.
+// Branch lengths stay with their slots, not their subtrees: the swap
+// transposes two entries of relBrLengths, so the Jacobian is 1 and the
+// exchangeable Dirichlet branch prior is unchanged.
+//
+// Three evaluation paths fill the same neighbourhood and share one driver:
+// partial CL reuse (M-111), streaming Q-heterogeneity (M-114), or full
+// evaluation (also used under coding = "informative" per LIKE-001).
 // ---------------------------------------------------------------------------
 
 // Local helper: find edge row where child[i] == node
@@ -1977,48 +1983,60 @@ static int find_child_row_gibbs(const IntegerVector& child, int node) {
   return -1;
 }
 
-// Full-evaluation fallback (Q-het or validation)
-static bool gibbs_subtree_swap_impl_full(McmcData* data, McmcState* state,
-                                         double beta);
-// M-114: partial CL path for Q-heterogeneity
-static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
-                                         double beta);
+static bool swap_neighbourhood_het(McmcData* data, McmcState* state,
+                                   const IntegerVector& parent,
+                                   const IntegerVector& child,
+                                   const NumericVector& absLen,
+                                   int nodeA,
+                                   std::vector<int>& partners,
+                                   std::vector<double>& candLL);
 
-static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
-                                    double beta) {
-  // M-114: Q-heterogeneity uses streaming partial CL
-  if (data->qHeterogeneity)
-    return gibbs_subtree_swap_impl_het(data, state, beta);
+static bool swap_neighbourhood_full(McmcData* data, McmcState* state,
+                                    const IntegerVector& parent,
+                                    const IntegerVector& child,
+                                    const NumericVector& absLenIn,
+                                    int nodeA,
+                                    std::vector<int>& partners,
+                                    std::vector<double>& candLL);
 
-  // LIKE-001 interim (option 3): see comment in gibbs_spr_impl. The pseudo-
-  // character partial-CL path omits the singleton-site ascertainment term
-  // required under coding="informative"; fall back to the full evaluator.
-  if (data->codingType == 2)
-    return gibbs_subtree_swap_impl_full(data, state, beta);
+// Selection normaliser of the anchored swap neighbourhood: log of the sum of
+// exp(beta * logLik) over {stay} and every swap of nodeA with a valid
+// partner.
+static double swap_neighbourhood_logz(double selfLL, double beta,
+                                      const std::vector<double>& candLL) {
+  double maxLL = selfLL;
+  for (double ll : candLL)
+    if (R_FINITE(ll)) maxLL = std::max(maxLL, ll);
+  if (!R_FINITE(maxLL)) return R_NegInf;
+  double s = std::exp(beta * (selfLL - maxLL));
+  for (double ll : candLL)
+    if (R_FINITE(ll)) s += std::exp(beta * (ll - maxLL));
+  return beta * maxLL + std::log(s);
+}
 
-  const int nEdge = state->parent.size();
-  const int nTip  = data->nTip;
+// Log-likelihood of every swap of nodeA within the tree (parent, child,
+// absLen), by partial CL reuse (M-111): one caching downpass per CLGroup,
+// then an O(depth) update per candidate.  Both directions of the move go
+// through this, so their normalisers rest on an identical footing.
+//
+// Edges need only be in a valid preorder, not the canonical one: the
+// neighbourhood and its likelihoods are properties of the tree, not of the
+// node labelling that canonicalisation permutes.
+static bool swap_neighbourhood_partial(McmcData* data, McmcState* state,
+                                       const IntegerVector& parent,
+                                       const IntegerVector& child,
+                                       const NumericVector& absLen,
+                                       int nodeA,
+                                       std::vector<int>& partners,
+                                       std::vector<double>& candLL) {
+  const int nTip = data->nTip;
 
-  // 1. Pick a random node (any edge child is a valid non-root candidate)
-  int pickIdx = (int)(R::unif_rand() * (double)nEdge);
-  if (pickIdx >= nEdge) pickIdx = nEdge - 1;
-  const int nodeA = state->child[pickIdx];
-
-  // 2. Get valid swap partners
-  std::vector<int> partners = get_valid_swap_partners_impl(
-      state->parent, state->child, nTip, nodeA);
+  partners = get_valid_swap_partners_impl(parent, child, nTip, nodeA);
   if (partners.empty()) return false;
   const int nPart = (int)partners.size();
 
-  // 3. Build absolute edge lengths
-  NumericVector absLen(nEdge);
-  for (int i = 0; i < nEdge; ++i)
-    absLen[i] = state->treeLength * state->relBrLengths[i];
-
-  // ===== M-111: Partial CL cache setup =====
-
   TreeNav topo;
-  topo.build(state->parent, state->child, absLen, nTip);
+  topo.build(parent, child, absLen, nTip);
 
   NumericVector rates = gibbs_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ);
   bool useAcrv = (state->rateLogSd > 0.0);
@@ -2034,8 +2052,6 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
 
   // Build CLGroups: one per (partition, kStates) evaluation unit
   std::vector<CLGroup> groups;
-  struct GroupMeta { int partIdx; int nCharInPart; };
-  std::vector<GroupMeta> groupMeta;
 
   for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
     const PartInfo& part = data->parts[pi];
@@ -2048,7 +2064,6 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
       g.tipData   = part.tipStates;
       g.allocate(maxNode, nCat, part.tipStates.ncol(), 2);
       groups.push_back(std::move(g));
-      groupMeta.push_back({pi, part.tipStates.ncol()});
 
     } else if (part.type == 2) {
       CLGroup g;
@@ -2058,7 +2073,6 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
       g.tipData   = part.tipStates;
       g.allocate(maxNode, nCat, part.tipStates.ncol(), part.k);
       groups.push_back(std::move(g));
-      groupMeta.push_back({pi, part.tipStates.ncol()});
 
     } else {
       int nCharPart = part.tipStates.ncol();
@@ -2086,14 +2100,13 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
         g.tipData   = sub;
         g.allocate(maxNode, nCat, nSub, kp);
         groups.push_back(std::move(g));
-        groupMeta.push_back({pi, nCharPart});
       }
     }
   }
 
   // Run caching downpass for each group
   for (auto& grp : groups)
-    caching_downpass(grp, topo, state->parent, state->child, rates);
+    caching_downpass(grp, topo, parent, child, rates);
 
   // Ascertainment correction: pseudo-character groups
   std::vector<CLGroup> pseudoGroups;
@@ -2102,8 +2115,7 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
     for (size_t gi = 0; gi < groups.size(); ++gi) {
       pseudoGroups[gi] = create_const_pseudo_group(
         groups[gi], nTip, maxNode, nCat);
-      caching_downpass(pseudoGroups[gi], topo, state->parent, state->child,
-                       rates);
+      caching_downpass(pseudoGroups[gi], topo, parent, child, rates);
     }
   }
 
@@ -2121,9 +2133,7 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
   for (int i = 0; i < (int)pathA.size(); ++i)
     pathAIdx[pathA[i]] = i;
 
-  // ===== Evaluate candidates using partial CLs =====
-
-  std::vector<double> candLL(nPart);
+  candLL.assign(nPart, 0.0);
   for (int pi = 0; pi < nPart; ++pi) {
     double totalLL = 0.0;
 
@@ -2163,7 +2173,60 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
       candLL[ci] += relabelCorr;
   }
 
-  // 4. Sampling weights: exp(β × logLik), current state included
+  return true;
+}
+
+// Which evaluator fills the neighbourhood; the kernel is identical for all.
+enum class SwapEval { Partial, Het, Full };
+
+static bool swap_neighbourhood(McmcData* data, McmcState* state, SwapEval ev,
+                               const IntegerVector& parent,
+                               const IntegerVector& child,
+                               const NumericVector& absLen, int nodeA,
+                               std::vector<int>& partners,
+                               std::vector<double>& candLL) {
+  switch (ev) {
+    case SwapEval::Het:
+      return swap_neighbourhood_het(data, state, parent, child, absLen,
+                                    nodeA, partners, candLL);
+    case SwapEval::Full:
+      return swap_neighbourhood_full(data, state, parent, child, absLen,
+                                     nodeA, partners, candLL);
+    default:
+      return swap_neighbourhood_partial(data, state, parent, child, absLen,
+                                        nodeA, partners, candLL);
+  }
+}
+
+static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
+                                    double beta) {
+  // The pseudo-character partial-CL path omits the singleton-site
+  // ascertainment term required under coding = "informative" (LIKE-001).
+  const SwapEval ev = data->qHeterogeneity ? SwapEval::Het
+                    : (data->codingType == 2 ? SwapEval::Full
+                                             : SwapEval::Partial);
+
+  const int nEdge = state->parent.size();
+  const int nTip  = data->nTip;
+
+  // 1. Anchor on a uniformly chosen node (every edge child is non-root)
+  int pickIdx = (int)(R::unif_rand() * (double)nEdge);
+  if (pickIdx >= nEdge) pickIdx = nEdge - 1;
+  const int nodeA = state->child[pickIdx];
+
+  NumericVector absLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    absLen[i] = state->treeLength * state->relBrLengths[i];
+
+  // 2. Evaluate the anchored neighbourhood of the current state
+  std::vector<int> partners;
+  std::vector<double> candLL;
+  if (!swap_neighbourhood(data, state, ev, state->parent, state->child,
+                          absLen, nodeA, partners, candLL))
+    return false;
+  const int nPart = (int)partners.size();
+
+  // 3. Sampling weights: exp(beta * logLik), current state included
   const double llOrig = state->logLik;
   double maxLL = llOrig;
   for (int pi = 0; pi < nPart; ++pi)
@@ -2176,8 +2239,9 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
     ws[pi] = R_FINITE(candLL[pi]) ? std::exp(beta * (candLL[pi] - maxLL)) : 0.0;
     sumW  += ws[pi];
   }
+  if (!(sumW > 0.0)) return false;
 
-  // 5. Sample: self-draw → no-op
+  // 4. Sample; a self-draw is a no-op
   double rnd = R::unif_rand() * sumW;
   if (rnd < wOrig) return false;
   rnd -= wOrig;
@@ -2188,30 +2252,54 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
   }
   if (!R_FINITE(candLL[chosen])) return false;
 
-  // 6. Apply chosen swap: modify in-place then canonical reorder for state
-  {
-    const int rowA = find_child_row_gibbs(state->child, nodeA);
-    const int rowB = find_child_row_gibbs(state->child, partners[chosen]);
-    int swapParA = state->parent[rowB];
-    int swapParB = state->parent[rowA];
-    state->parent[rowA] = swapParA;
-    state->parent[rowB] = swapParB;
-    absLen[rowA] = state->treeLength * state->relBrLengths[rowB];
-    absLen[rowB] = state->treeLength * state->relBrLengths[rowA];
-    double tmpRel = state->relBrLengths[rowA];
-    state->relBrLengths[rowA] = state->relBrLengths[rowB];
-    state->relBrLengths[rowB] = tmpRel;
+  // 5. Build the proposal.  Node labels are preserved so nodeA still anchors
+  //    the reverse neighbourhood; canonicalisation permutes internal labels,
+  //    so it waits until the move is committed.  The evaluator attaches each
+  //    subtree with the stem length of the slot it moves into, so the lengths
+  //    are transposed with the parents.
+  const int rowA = find_child_row_gibbs(state->child, nodeA);
+  const int rowB = find_child_row_gibbs(state->child, partners[chosen]);
+  if (rowA < 0 || rowB < 0) return false;
 
-    // Canonical reorder (needed for NNI in-place invariant)
-    auto po = TreeTools::preorder_weighted_impl(
-        state->parent, state->child, absLen);
-    IntegerMatrix ordEdge = po.first;
-    NumericVector ordAbsFinal = po.second;
-    for (int k = 0; k < nEdge; ++k) {
-      state->parent[k]       = ordEdge(k, 0);
-      state->child[k]        = ordEdge(k, 1);
-      state->relBrLengths[k] = ordAbsFinal[k] / state->treeLength;
-    }
+  IntegerVector propPar = clone(state->parent);
+  NumericVector propAbs = clone(absLen);
+  propPar[rowA] = state->parent[rowB];
+  propPar[rowB] = state->parent[rowA];
+  propAbs[rowA] = absLen[rowB];
+  propAbs[rowB] = absLen[rowA];
+
+  IntegerVector ordPar(nEdge), ordCh(nEdge);
+  NumericVector ordAbs(nEdge);
+  preorder_into(propPar, state->child, propAbs, nTip,
+                INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
+
+  // 6. Accept with min(1, Z_x / Z_y)
+  std::vector<int> revPartners;
+  std::vector<double> revLL;
+  if (!swap_neighbourhood(data, state, ev, ordPar, ordCh, ordAbs,
+                          nodeA, revPartners, revLL))
+    return false;
+
+  const double logAlpha = swap_neighbourhood_logz(llOrig, beta, candLL)
+                        - swap_neighbourhood_logz(candLL[chosen], beta, revLL);
+  if (!(R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha))
+    return false;
+
+  // 7. Commit, in canonical preorder (the in-place NNI invariant needs it)
+  state->parent[rowA] = propPar[rowA];
+  state->parent[rowB] = propPar[rowB];
+  const double tmpRel = state->relBrLengths[rowA];
+  state->relBrLengths[rowA] = state->relBrLengths[rowB];
+  state->relBrLengths[rowB] = tmpRel;
+
+  auto po = TreeTools::preorder_weighted_impl(
+      state->parent, state->child, propAbs);
+  IntegerMatrix ordEdge = po.first;
+  NumericVector ordAbsFinal = po.second;
+  for (int k = 0; k < nEdge; ++k) {
+    state->parent[k]       = ordEdge(k, 0);
+    state->child[k]        = ordEdge(k, 1);
+    state->relBrLengths[k] = ordAbsFinal[k] / state->treeLength;
   }
 
   state->logLik = candLL[chosen];
@@ -2221,29 +2309,22 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
 }
 
 
-// ---------------------------------------------------------------------------
-// M-114: Gibbs subtree swap with streaming partial CL for Q-heterogeneity.
-// ---------------------------------------------------------------------------
-static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
-                                         double beta) {
-  const int nEdge = state->parent.size();
-  const int nTip  = data->nTip;
+// M-114 streaming partial CL: same neighbourhood under Q-heterogeneity.
+static bool swap_neighbourhood_het(McmcData* data, McmcState* state,
+                                   const IntegerVector& parent,
+                                   const IntegerVector& child,
+                                   const NumericVector& absLen,
+                                   int nodeA,
+                                   std::vector<int>& partners,
+                                   std::vector<double>& candLL) {
+  const int nTip = data->nTip;
 
-  int pickIdx = (int)(R::unif_rand() * (double)nEdge);
-  if (pickIdx >= nEdge) pickIdx = nEdge - 1;
-  const int nodeA = state->child[pickIdx];
-
-  std::vector<int> partners = get_valid_swap_partners_impl(
-      state->parent, state->child, nTip, nodeA);
+  partners = get_valid_swap_partners_impl(parent, child, nTip, nodeA);
   if (partners.empty()) return false;
   const int nPart = (int)partners.size();
 
-  NumericVector absLen(nEdge);
-  for (int i = 0; i < nEdge; ++i)
-    absLen[i] = state->treeLength * state->relBrLengths[i];
-
   TreeNav topo;
-  topo.build(state->parent, state->child, absLen, nTip);
+  topo.build(parent, child, absLen, nTip);
 
   NumericVector rates = gibbs_acrv_rates(state->rateLogSd, data->nCat,
                                           data->acrvZ);
@@ -2261,8 +2342,6 @@ static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
 
   // Build CLGroups (same as gibbs_spr_impl_het)
   std::vector<CLGroup> groups;
-  struct GroupMeta { int partIdx; int nCharInPart; };
-  std::vector<GroupMeta> groupMeta;
 
   for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
     const PartInfo& part = data->parts[pi];
@@ -2274,7 +2353,6 @@ static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
       g.tipData   = part.tipStates;
       g.allocate(maxNode, nCat, part.tipStates.ncol(), 2);
       groups.push_back(std::move(g));
-      groupMeta.push_back({pi, part.tipStates.ncol()});
     } else if (part.type == 2) {
       CLGroup g;
       g.isMkN     = false;
@@ -2283,7 +2361,6 @@ static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
       g.tipData   = part.tipStates;
       g.allocate(maxNode, nCat, part.tipStates.ncol(), part.k);
       groups.push_back(std::move(g));
-      groupMeta.push_back({pi, part.tipStates.ncol()});
     } else {
       int nCharPart = part.tipStates.ncol();
       IntegerVector kPrimePart(nCharPart);
@@ -2307,7 +2384,6 @@ static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
         g.tipData   = sub;
         g.allocate(maxNode, nCat, nSub, kp);
         groups.push_back(std::move(g));
-        groupMeta.push_back({pi, nCharPart});
       }
     }
   }
@@ -2357,12 +2433,11 @@ static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
     for (int bi = 0; bi < nBC; ++bi) {
       for (int rot = 0; rot < nRot; ++rot) {
         set_f81_component(grp, hetBins[bi], rot, baseRL);
-        caching_downpass(grp, topo, state->parent, state->child, rates);
+        caching_downpass(grp, topo, parent, child, rates);
 
         if (coding != 0) {
           set_f81_component(pseudoGroups[gi], hetBins[bi], rot, baseRL);
-          caching_downpass(pseudoGroups[gi], topo, state->parent,
-                           state->child, rates);
+          caching_downpass(pseudoGroups[gi], topo, parent, child, rates);
         }
 
         for (int pi2 = 0; pi2 < nPart; ++pi2) {
@@ -2385,7 +2460,7 @@ static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
   }
 
   // Convert accumulators to per-candidate log-likelihoods
-  std::vector<double> candLL(nPart, 0.0);
+  candLL.assign(nPart, 0.0);
   for (size_t gi = 0; gi < groups.size(); ++gi) {
     const CLGroup& grp = groups[gi];
     int k     = grp.kStates;
@@ -2429,81 +2504,33 @@ static bool gibbs_subtree_swap_impl_het(McmcData* data, McmcState* state,
       candLL[pi2] += relabelCorr;
   }
 
-  // Sampling (identical to gibbs_subtree_swap_impl)
-  const double llOrig = state->logLik;
-  double maxLL = llOrig;
-  for (int pi2 = 0; pi2 < nPart; ++pi2)
-    maxLL = std::max(maxLL, candLL[pi2]);
-
-  double wOrig = std::exp(beta * (llOrig - maxLL));
-  std::vector<double> ws(nPart);
-  double sumW = wOrig;
-  for (int pi2 = 0; pi2 < nPart; ++pi2) {
-    ws[pi2] = std::exp(beta * (candLL[pi2] - maxLL));
-    sumW += ws[pi2];
-  }
-
-  double rnd = R::unif_rand() * sumW;
-  if (rnd < wOrig) return false;
-  rnd -= wOrig;
-  int chosen = nPart - 1;
-  for (int pi2 = 0; pi2 < nPart - 1; ++pi2) {
-    if (rnd < ws[pi2]) { chosen = pi2; break; }
-    rnd -= ws[pi2];
-  }
-
-  // Apply swap (same as gibbs_subtree_swap_impl)
-  int nodeB = partners[chosen];
-  int rowA = -1, rowB = -1;
-  for (int i = 0; i < nEdge; ++i) {
-    if (state->child[i] == nodeA) rowA = i;
-    if (state->child[i] == nodeB) rowB = i;
-  }
-  state->child[rowA] = nodeB;
-  state->child[rowB] = nodeA;
-  absLen[rowA] = topo.edgeLen[topo.edgeToPar[nodeB]];
-  absLen[rowB] = topo.edgeLen[topo.edgeToPar[nodeA]];
-
-  auto po = TreeTools::preorder_weighted_impl(
-      state->parent, state->child, absLen);
-  IntegerMatrix ordEdge = po.first;
-  NumericVector ordAbs  = po.second;
-  for (int k2 = 0; k2 < nEdge; ++k2) {
-    state->parent[k2]       = ordEdge(k2, 0);
-    state->child[k2]        = ordEdge(k2, 1);
-    state->relBrLengths[k2] = ordAbs[k2] / state->treeLength;
-  }
-
-  state->logLik = candLL[chosen];
-  state->partLogLik.clear();
-  state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
   return true;
 }
 
 
 // Full-evaluation fallback for Q-heterogeneity (M-109 in-place pattern)
-static bool gibbs_subtree_swap_impl_full(McmcData* data, McmcState* state,
-                                         double beta) {
-  const int nEdge = state->parent.size();
+// Reference evaluator: same neighbourhood without partial CL reuse, for
+// coding = "informative", where the pseudo-character path omits the
+// singleton-site ascertainment term (LIKE-001).
+static bool swap_neighbourhood_full(McmcData* data, McmcState* state,
+                                    const IntegerVector& parent,
+                                    const IntegerVector& child,
+                                    const NumericVector& absLenIn,
+                                    int nodeA,
+                                    std::vector<int>& partners,
+                                    std::vector<double>& candLL) {
+  const int nEdge = parent.size();
   const int nTip  = data->nTip;
 
-  int pickIdx = (int)(R::unif_rand() * (double)nEdge);
-  if (pickIdx >= nEdge) pickIdx = nEdge - 1;
-  const int nodeA = state->child[pickIdx];
-
-  std::vector<int> partners = get_valid_swap_partners_impl(
-      state->parent, state->child, nTip, nodeA);
+  partners = get_valid_swap_partners_impl(parent, child, nTip, nodeA);
   if (partners.empty()) return false;
   const int nPart = (int)partners.size();
 
-  const int rowA = find_child_row_gibbs(state->child, nodeA);
+  const int rowA = find_child_row_gibbs(child, nodeA);
   if (rowA < 0) return false;
 
-  IntegerVector workPar = clone(state->parent);
-
-  NumericVector absLen(nEdge);
-  for (int i = 0; i < nEdge; ++i)
-    absLen[i] = state->treeLength * state->relBrLengths[i];
+  IntegerVector workPar = clone(parent);
+  NumericVector absLen  = clone(absLenIn);
 
   IntegerVector ordPar(nEdge), ordCh(nEdge);
   NumericVector ordAbs(nEdge);
@@ -2511,9 +2538,9 @@ static bool gibbs_subtree_swap_impl_full(McmcData* data, McmcState* state,
   const int origParA = workPar[rowA];
   const double origAbsA = absLen[rowA];
 
-  std::vector<double> candLL(nPart);
+  candLL.assign(nPart, 0.0);
   for (int pi = 0; pi < nPart; ++pi) {
-    int rowB = find_child_row_gibbs(state->child, partners[pi]);
+    int rowB = find_child_row_gibbs(child, partners[pi]);
     if (rowB < 0 || rowA == rowB) {
       candLL[pi] = R_NegInf;
       continue;
@@ -2527,7 +2554,7 @@ static bool gibbs_subtree_swap_impl_full(McmcData* data, McmcState* state,
     absLen[rowA]  = origAbsB;
     absLen[rowB]  = origAbsA;
 
-    preorder_into(workPar, state->child, absLen, nTip,
+    preorder_into(workPar, child, absLen, nTip,
                   INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
     candLL[pi] = compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs);
 
@@ -2537,61 +2564,46 @@ static bool gibbs_subtree_swap_impl_full(McmcData* data, McmcState* state,
     absLen[rowB]  = origAbsB;
   }
 
-  const double llOrig = state->logLik;
-  double maxLL = llOrig;
-  for (int pi = 0; pi < nPart; ++pi)
-    if (R_FINITE(candLL[pi])) maxLL = std::max(maxLL, candLL[pi]);
-
-  double wOrig = std::exp(beta * (llOrig - maxLL));
-  std::vector<double> ws(nPart);
-  double sumW = wOrig;
-  for (int pi = 0; pi < nPart; ++pi) {
-    ws[pi] = R_FINITE(candLL[pi]) ? std::exp(beta * (candLL[pi] - maxLL)) : 0.0;
-    sumW  += ws[pi];
-  }
-
-  double rnd = R::unif_rand() * sumW;
-  if (rnd < wOrig) return false;
-  rnd -= wOrig;
-  int chosen = nPart - 1;
-  for (int pi = 0; pi < nPart - 1; ++pi) {
-    if (rnd < ws[pi]) { chosen = pi; break; }
-    rnd -= ws[pi];
-  }
-  if (!R_FINITE(candLL[chosen])) return false;
-
-  {
-    int rowB = find_child_row_gibbs(state->child, partners[chosen]);
-    int swapParA = state->parent[rowB];
-    int swapParB = state->parent[rowA];
-    state->parent[rowA] = swapParA;
-    state->parent[rowB] = swapParB;
-    absLen[rowA] = state->treeLength * state->relBrLengths[rowB];
-    absLen[rowB] = state->treeLength * state->relBrLengths[rowA];
-    double tmpRel = state->relBrLengths[rowA];
-    state->relBrLengths[rowA] = state->relBrLengths[rowB];
-    state->relBrLengths[rowB] = tmpRel;
-
-    auto po = TreeTools::preorder_weighted_impl(
-        state->parent, state->child, absLen);
-    IntegerMatrix ordEdge = po.first;
-    NumericVector ordAbsFinal = po.second;
-    for (int k = 0; k < nEdge; ++k) {
-      state->parent[k]       = ordEdge(k, 0);
-      state->child[k]        = ordEdge(k, 1);
-      state->relBrLengths[k] = ordAbsFinal[k] / state->treeLength;
-    }
-  }
-
-  state->logLik = candLL[chosen];
-  state->partLogLik.clear();
-  state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
   return true;
 }
 
 
 // BranchBins struct now lives in mcmc_state.h and is precomputed by
 // set_branch_bins() at MCMC init — no static globals or lazy init.
+
+// Log proposal density of a branch fraction drawn by selecting a bin with
+// probability proportional to `weights`, then drawing from the Beta centred
+// on that bin's midpoint.  The bin is auxiliary and not carried in the state,
+// so it is integrated out: the Beta components have full support on (0, 1),
+// so any bin could have produced the fraction drawn.  `weights` need not be
+// normalised; its sum is the same in both directions and cancels.
+static double bin_mixture_logdensity(const std::vector<double>& weights,
+                                     double f, const BranchBins& bins) {
+  const double conc = bins.concentration;
+  double logMax = R_NegInf;
+  std::vector<double> terms(bins.nBins, R_NegInf);
+  for (int b = 0; b < bins.nBins; ++b) {
+    if (!(weights[b] > 0.0)) continue;
+    const double mid = bins.mids[b];
+    terms[b] = std::log(weights[b])
+             + R::dbeta(f, mid * conc + 1.0, (1.0 - mid) * conc + 1.0, 1);
+    if (terms[b] > logMax) logMax = terms[b];
+  }
+  if (!R_FINITE(logMax)) return R_NegInf;
+  double sum = 0.0;
+  for (int b = 0; b < bins.nBins; ++b)
+    if (R_FINITE(terms[b])) sum += std::exp(terms[b] - logMax);
+  return logMax + std::log(sum);
+}
+
+// Validation hook: the same mixture the weighted moves' Hastings ratio uses.
+// [[Rcpp::export]]
+double bin_mixture_log_density(NumericVector weights, double f, int nBins) {
+  BranchBins bins;
+  bins.init(nBins);
+  return bin_mixture_logdensity(
+    std::vector<double>(weights.begin(), weights.end()), f, bins);
+}
 
 
 // ---------------------------------------------------------------------------
@@ -2891,10 +2903,9 @@ static bool block_gibbs_branch_sweep_impl(
 // a fraction from Beta centred on the bin midpoint, construct the final
 // proposed topology, and accept/reject via MH.
 //
-// Hastings ratio: topology selection cancels (Z = Z' by symmetry of the
-// candidate set).  Remaining branch-fraction component:
-//   logHR = log(w_{self,b_old}) + logBeta(f_old | b_old)
-//         - log(w_{chosen,b_new}) - logBeta(f_new | b_new)
+// Hastings ratio: topology selection cancels (both directions enumerate the
+// same residual tree), leaving the branch-fraction mixture density and the
+// SPR Jacobian; see step 14.
 //
 // Cost: O(N × B) likelihood evaluations + 1 for the final proposed state.
 // ---------------------------------------------------------------------------
@@ -3119,53 +3130,18 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
                                              /*fillCharLLCache=*/false);  // FREEZE-003
   if (!R_FINITE(newLogLik)) return false;
 
-  // 14. Hastings ratio: proposal-density ratio + the SPR Jacobian.
-  //
-  //     !! INCOMPLETE -- weightedSpr is default-off and must stay that way
-  //     until the cancellation below is verified (GSPR-003). The Jacobian
-  //     added here is necessary and correctly signed, but it is NOT
-  //     sufficient: adding it improved every statistic in
-  //     dev/red-team/heavy-tests/gibbs-spr-db.R by 2x-19x (int_frac relBias
-  //     -0.293 -> -0.015, ord_min -0.744 -> -0.379, simpson +0.460 -> +0.118)
-  //     yet residual biases of 9-38% REMAIN, so this move carries at least
-  //     one further defect.
-  //
-  //     Prime suspect, stated as the open question it is: the selfW / sumM
-  //     cancellation is ASSERTED, NOT VERIFIED. "Self" is enumerated over
-  //     bins of lMerge (:2962-2963) while candidates are enumerated over
-  //     bins of lReg, so the claim that both directions enumerate the same
-  //     configuration set with the same weights -- and hence that the shared
-  //     normaliser cancels -- does not obviously hold, and the measured
-  //     residual bias suggests it does not. Do not treat this comment as a
-  //     correctness argument; see issue #20.
-  //
-  //     (This is the hastings-tree-moves.md §5 trap: a confident comment
-  //     standing in for a verification that was never done cleared gibbs_spr
-  //     while it was not pi-invariant. Do not repeat it here.)
-  //
-  //     The Jacobian itself is not optional. The move merges (l_parent, l_sib) into
-  //     lMerge and splits lReg into (f * lReg, (1 - f) * lReg), a bijection
-  //     (l_parent, l_sib, lReg, fNew) <-> (lMerge, a, b, fOld) with fOld =
-  //     l_parent / lMerge (:2952). It is block diagonal:
-  //       |d(lMerge, fOld) / d(l_parent, l_sib)| = 1 / lMerge
-  //       |d(a, b) / d(lReg, fNew)|              = lReg
-  //     so |J| = lReg / lMerge. Scale-invariant, hence identical in relative
-  //     or absolute coordinates (treeLength is untouched by this move).
-  //     Same term as spr_proposal_impl (proposals.cpp:161),
-  //     tbr_proposal_impl (tree_moves.cpp:492) and pspr (:3871).
-  int oldBin = nBins - 1;
-  for (int b = 0; b < nBins; ++b) {
-    if (fOld <= bins.breaks[b + 1]) { oldBin = b; break; }
-  }
-  const double oldMid   = bins.mids[oldBin];
-  const double alphaOld = oldMid * conc + 1.0;
-  const double betaOld  = (1.0 - oldMid) * conc + 1.0;
-
-  double logHR = std::log(std::max(selfW[oldBin], 1e-300))
-               + R::dbeta(fOld, alphaOld, betaOld, 1)
-               - std::log(std::max(candW[chosen][chosenBin], 1e-300))
-               - R::dbeta(fNew, alphaNew, betaNew, 1)
+  // 14. Bin-mixture proposal density + the SPR merge/split Jacobian
+  //     lReg / lMerge, the same term as spr_proposal_impl
+  //     (proposals.cpp:161) and tbr_proposal_impl (tree_moves.cpp:492).
+  //     The selection normaliser cancels: both directions prune to the same
+  //     residual tree and enumerate its edges against the same bins.
+  //     Reaching x from y is a CANDIDATE draw onto the merged edge, not y's
+  //     self-draw, which is why selfW carries the reverse weight.  Derivation
+  //     term by term: dev/red-team/proofs/weighted-spr-hastings.md.
+  double logHR = bin_mixture_logdensity(selfW, fOld, bins)
+               - bin_mixture_logdensity(candW[chosen], fNew, bins)
                + std::log(lReg) - std::log(lMerge);
+  if (!R_FINITE(logHR)) return false;
 
   // 15. Prior at proposed state
   NumericVector propRelBr(nEdge);
@@ -6371,8 +6347,8 @@ List run_mcmc_batch_cpp(
       // Diagnostic: cold-chain swaps since last sample
       row[col++] = static_cast<double>(coldSwapsSinceSample);
       coldSwapsSinceSample = 0;
-      // Diagnostic: topology hash (FNV-1a of canonical-preorder parent vector)
-      row[col++] = fnv_topo_hash(s0->parent);
+      // Diagnostic: unrooted topology fingerprint
+      row[col++] = fnv_topo_hash(s0->parent, s0->child, data->nTip);
       for (int j = 0; j < nTrans; ++j)
         row[col++] = static_cast<double>(s0->kPrime[transIdxCpp[j]]);
       for (int k = 0; k < nEdge; ++k)
@@ -6498,128 +6474,21 @@ DataFrame validate_swap_partial_cl(SEXP dataPtr, SEXP statePtr, int nodeA) {
   }
 
   // --- Partial CL evaluation ---
-  // Rebuild absLen (may have been modified)
+  // Through the same entry point the move uses, so this validates the kernel
+  // rather than a copy of it.
   for (int i = 0; i < nEdge; ++i)
     absLen[i] = state->treeLength * state->relBrLengths[i];
 
-  TreeNav topo;
-  topo.build(state->parent, state->child, absLen, nTip);
-
-  NumericVector rates = gibbs_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ);
-  bool useAcrv = (state->rateLogSd > 0.0);
-  int nCat = useAcrv ? data->nCat : 1;
-  if (!useAcrv) rates = NumericVector(1, 1.0);
-
-  int coding  = data->codingType;
-  int maxNode = topo.maxNode;
-
-  // Audit Issue 1: partition-rate normalisation (see comment at first call site).
-  const PartitionScales pScales =
-      compute_partition_scales(state->rateNeo, data->nNeo, data->nTrans);
-
-  std::vector<CLGroup> groups;
-  struct GroupMeta { int partIdx; int nCharInPart; };
-  std::vector<GroupMeta> groupMeta;
-
-  for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
-    const PartInfo& part = data->parts[pi];
-    if (part.type == 0) {
-      CLGroup g;
-      g.isMkN = true; g.rateLoss = state->rateLoss; g.rateScale = pScales.neo;
-      g.tipData = part.tipStates;
-      g.allocate(maxNode, nCat, part.tipStates.ncol(), 2);
-      groups.push_back(std::move(g));
-      groupMeta.push_back({pi, part.tipStates.ncol()});
-    } else if (part.type == 2) {
-      CLGroup g;
-      g.isMkN = false; g.rateLoss = 1.0; g.rateScale = pScales.trans;
-      g.tipData = part.tipStates;
-      g.allocate(maxNode, nCat, part.tipStates.ncol(), part.k);
-      groups.push_back(std::move(g));
-      groupMeta.push_back({pi, part.tipStates.ncol()});
-    } else {
-      int nCharPart = part.tipStates.ncol();
-      IntegerVector kPrimePart(nCharPart);
-      for (int ci = 0; ci < nCharPart; ++ci)
-        kPrimePart[ci] = state->kPrime[part.globalCharIdx[ci]];
-      IntegerVector uniqKp = sort_unique(kPrimePart);
-      for (int ui = 0; ui < uniqKp.size(); ++ui) {
-        int kp = uniqKp[ui];
-        std::vector<int> cols;
-        for (int ci = 0; ci < nCharPart; ++ci)
-          if (kPrimePart[ci] == kp) cols.push_back(ci);
-        int nSub = (int)cols.size();
-        IntegerMatrix sub(nTip, nSub);
-        for (int c = 0; c < nSub; ++c)
-          for (int t = 0; t < nTip; ++t)
-            sub(t, c) = part.tipStates(t, cols[c]);
-        CLGroup g;
-        g.isMkN = false; g.rateLoss = 1.0; g.rateScale = pScales.trans;
-        g.tipData = sub;
-        g.allocate(maxNode, nCat, nSub, kp);
-        groups.push_back(std::move(g));
-        groupMeta.push_back({pi, nCharPart});
-      }
-    }
-  }
-
-  for (auto& grp : groups)
-    caching_downpass(grp, topo, state->parent, state->child, rates);
-
-  std::vector<CLGroup> pseudoGroups;
-  if (coding != 0) {
-    pseudoGroups.resize(groups.size());
-    for (size_t gi = 0; gi < groups.size(); ++gi) {
-      pseudoGroups[gi] = create_const_pseudo_group(
-        groups[gi], nTip, maxNode, nCat);
-      caching_downpass(pseudoGroups[gi], topo, state->parent, state->child,
-                       rates);
-    }
-  }
-
-  int pA    = topo.parentNode[nodeA];
-  int slotA = topo.childSlot(pA, nodeA);
-  double lenA_val = topo.edgeLen[topo.edgeToPar[nodeA]];
-
-  std::vector<int> pathA;
-  pathA.reserve(16);
-  for (int n = pA; n >= 1; n = topo.parentNode[n])
-    pathA.push_back(n);
-  std::vector<int> pathAIdx(maxNode + 1, -1);
-  for (int i = 0; i < (int)pathA.size(); ++i)
-    pathAIdx[pathA[i]] = i;
+  std::vector<int> partialPartners;
+  std::vector<double> partialLL;
+  swap_neighbourhood_partial(data, state, state->parent, state->child,
+                             absLen, nodeA, partialPartners, partialLL);
 
   NumericVector llPartial(nPart);
-  for (int pi = 0; pi < nPart; ++pi) {
-    double totalLL = 0.0;
-    for (size_t gi = 0; gi < groups.size(); ++gi) {
-      double grpLL = evaluate_swap_candidate(
-        groups[gi], topo, rates, nodeA, partners[pi],
-        pA, slotA, lenA_val, pathA, pathAIdx);
-      if (coding != 0 && groups[gi].nChar > 0) {
-        double constP = evaluate_swap_const_prob(
-          pseudoGroups[gi], topo, rates, nodeA, partners[pi],
-          pA, slotA, lenA_val, pathA, pathAIdx);
-        if (constP < 1.0)
-          grpLL -= groups[gi].nChar * std::log(1.0 - constP);
-      }
-      totalLL += grpLL;
-    }
-
-    if (data->relabel) {
-      for (int pii = 0; pii < (int)data->parts.size(); ++pii) {
-        const PartInfo& part = data->parts[pii];
-        if (part.type == 1) {
-          int nCharPart = part.tipStates.ncol();
-          for (int ci = 0; ci < nCharPart; ++ci)
-            totalLL += mk_prime_relabel_log(
-              state->kPrime[part.globalCharIdx[ci]], part.kObsLocal[ci]);
-        }
-      }
-    }
-
-    llPartial[pi] = totalLL;
-  }
+  for (int pi = 0; pi < nPart; ++pi)
+    llPartial[pi] = (pi < (int)partialLL.size() &&
+                     partialPartners[pi] == partners[pi])
+                      ? partialLL[pi] : R_NaReal;
 
   IntegerVector nodeAVec(nPart, nodeA);
   IntegerVector nodeBVec(nPart);
@@ -6632,8 +6501,5 @@ DataFrame validate_swap_partial_cl(SEXP dataPtr, SEXP statePtr, int nodeA) {
     _["ll_full"]    = llFull
   );
 }
-
-
-
 
 

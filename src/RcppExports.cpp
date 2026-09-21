@@ -349,13 +349,15 @@ BEGIN_RCPP
 END_RCPP
 }
 // compute_topo_hash
-double compute_topo_hash(IntegerVector parent);
-RcppExport SEXP _MkPrime_compute_topo_hash(SEXP parentSEXP) {
+double compute_topo_hash(IntegerVector parent, IntegerVector child, int nTip);
+RcppExport SEXP _MkPrime_compute_topo_hash(SEXP parentSEXP, SEXP childSEXP, SEXP nTipSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< IntegerVector >::type parent(parentSEXP);
-    rcpp_result_gen = Rcpp::wrap(compute_topo_hash(parent));
+    Rcpp::traits::input_parameter< IntegerVector >::type child(childSEXP);
+    Rcpp::traits::input_parameter< int >::type nTip(nTipSEXP);
+    rcpp_result_gen = Rcpp::wrap(compute_topo_hash(parent, child, nTip));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -484,6 +486,19 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< SEXP >::type statePtr(statePtrSEXP);
     Rcpp::traits::input_parameter< int >::type pruneRow(pruneRowSEXP);
     rcpp_result_gen = Rcpp::wrap(gibbs_spr_enumerate_cpp(dataPtr, statePtr, pruneRow));
+    return rcpp_result_gen;
+END_RCPP
+}
+// bin_mixture_log_density
+double bin_mixture_log_density(NumericVector weights, double f, int nBins);
+RcppExport SEXP _MkPrime_bin_mixture_log_density(SEXP weightsSEXP, SEXP fSEXP, SEXP nBinsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< NumericVector >::type weights(weightsSEXP);
+    Rcpp::traits::input_parameter< double >::type f(fSEXP);
+    Rcpp::traits::input_parameter< int >::type nBins(nBinsSEXP);
+    rcpp_result_gen = Rcpp::wrap(bin_mixture_log_density(weights, f, nBins));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -985,7 +1000,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_fill_partition_cache", (DL_FUNC) &_MkPrime_fill_partition_cache, 2},
     {"_MkPrime_allocate_cl_workspace", (DL_FUNC) &_MkPrime_allocate_cl_workspace, 2},
     {"_MkPrime_get_mcmc_state", (DL_FUNC) &_MkPrime_get_mcmc_state, 1},
-    {"_MkPrime_compute_topo_hash", (DL_FUNC) &_MkPrime_compute_topo_hash, 1},
+    {"_MkPrime_compute_topo_hash", (DL_FUNC) &_MkPrime_compute_topo_hash, 3},
     {"_MkPrime_get_state_log_lik", (DL_FUNC) &_MkPrime_get_state_log_lik, 1},
     {"_MkPrime_get_marginal_cache_state", (DL_FUNC) &_MkPrime_get_marginal_cache_state, 1},
     {"_MkPrime_invalidate_marginal_cache", (DL_FUNC) &_MkPrime_invalidate_marginal_cache, 1},
@@ -996,6 +1011,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_eval_full_loglik_at_cpp", (DL_FUNC) &_MkPrime_eval_full_loglik_at_cpp, 5},
     {"_MkPrime_eval_preorder_paths_cpp", (DL_FUNC) &_MkPrime_eval_preorder_paths_cpp, 5},
     {"_MkPrime_gibbs_spr_enumerate_cpp", (DL_FUNC) &_MkPrime_gibbs_spr_enumerate_cpp, 3},
+    {"_MkPrime_bin_mixture_log_density", (DL_FUNC) &_MkPrime_bin_mixture_log_density, 3},
     {"_MkPrime_kprime_sweep_candidates", (DL_FUNC) &_MkPrime_kprime_sweep_candidates, 3},
     {"_MkPrime_do_move_cpp", (DL_FUNC) &_MkPrime_do_move_cpp, 8},
     {"_MkPrime_run_mcmc_batch_cpp", (DL_FUNC) &_MkPrime_run_mcmc_batch_cpp, 20},

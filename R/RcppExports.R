@@ -89,8 +89,8 @@ get_mcmc_state <- function(statePtr) {
     .Call(`_MkPrime_get_mcmc_state`, statePtr)
 }
 
-compute_topo_hash <- function(parent) {
-    .Call(`_MkPrime_compute_topo_hash`, parent)
+compute_topo_hash <- function(parent, child, nTip) {
+    .Call(`_MkPrime_compute_topo_hash`, parent, child, nTip)
 }
 
 get_state_log_lik <- function(statePtr) {
@@ -131,6 +131,10 @@ eval_preorder_paths_cpp <- function(dataPtr, statePtr, parent, child, edgeLen) {
 
 gibbs_spr_enumerate_cpp <- function(dataPtr, statePtr, pruneRow) {
     .Call(`_MkPrime_gibbs_spr_enumerate_cpp`, dataPtr, statePtr, pruneRow)
+}
+
+bin_mixture_log_density <- function(weights, f, nBins) {
+    .Call(`_MkPrime_bin_mixture_log_density`, weights, f, nBins)
 }
 
 kprime_sweep_candidates <- function(dataPtr, statePtr, beta = 1.0) {
