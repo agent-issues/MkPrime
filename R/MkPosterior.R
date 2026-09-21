@@ -57,10 +57,12 @@ print.MkPosterior <- function(x, ...) {
   }
 
   if (nRuns > 1L) {
-    perRunN <- nrow(x$per_run[[1]]$samples) %||%
-               x$per_run[[1]]$saved_idx %||%
-               (x$nSamples %/% nRuns)
-    info <- c(info, "Runs: {nRuns} ({perRunN} samples each)")
+    perRunN <- .PerRunSampleCounts(x)
+    info <- c(info, if (length(unique(perRunN)) == 1L) {
+      "Runs: {nRuns} ({perRunN[[1]]} samples each)"
+    } else {
+      "Runs: {nRuns} ({paste(perRunN, collapse = ', ')} samples)"
+    })
   }
 
   # PAR-009: surface run shrinkage when some runs were dropped
@@ -121,6 +123,12 @@ print.MkPosterior <- function(x, ...) {
       "Streaming mode: samples are on disk, not in memory.",
       "i" = "Load with: {.code result$samples <- ReadMkLog(result$logFile)}"
     ))
+  }
+
+  if (nRuns < 1L) {
+    cli::cli_alert_warning(
+      "No runs completed: this posterior carries no samples or diagnostics."
+    )
   }
 
   if (length(x$acceptance) > 0L) {

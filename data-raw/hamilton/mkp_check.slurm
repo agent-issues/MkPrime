@@ -50,8 +50,14 @@ cat(sprintf('\nTotal: %d passed, %d failed, %d skipped\n',
             sum(df\$passed), sum(df\$failed), sum(df\$skipped)))
 q(status = as.integer(sum(df\$failed) > 0))
 "
+# Capture immediately: `$?` is the status of the LAST command run, so the
+# intervening `rm` and `echo` both overwrote it and the reported "exit N" was
+# always 0. The script's own status is its last command's too, and there is no
+# `set -e`, so a failing test suite recorded COMPLETED in sacct (#101).
+rc=$?
 
 rm -rf "$SRC_DIR"
 
 echo ""
-echo "=== Done (exit $?) ==="
+echo "=== Done (exit $rc) ==="
+exit $rc

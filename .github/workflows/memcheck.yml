@@ -104,6 +104,10 @@ jobs:
       RSPM: https://packagemanager.rstudio.com/cran/__linux__/noble/latest
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       ASAN_OPTIONS: verify_asan_link_order=0
+      # Skips long MCMC integration blocks whose C++ paths cheaper tests already
+      # reach: valgrind costs ~30x gcc-ASAN, so the full suite needs ~18 h
+      # against GitHub's 6 h job ceiling. See tests/testthat/helper-slow.R.
+      MKPRIME_MEMCHECK: true
 
     steps:
       - uses: ms609/actions/memcheck@main
