@@ -74,6 +74,19 @@ jobs:
       actions: read          # read CI results on PRs
 
     steps:
+      # An unset secret expands to the empty string, and the action treats an
+      # empty `github_token` as absent: it falls back to the Claude GitHub App
+      # and posts as claude[bot]. Everything would appear to work, under the
+      # wrong identity. Fail loudly instead.
+      - name: Require the agent token
+        env:
+          AGENT_TOKEN: ${{ secrets.CLAUDE_GH_TOKEN }}
+        run: |
+          if [ -z "$AGENT_TOKEN" ]; then
+            echo "::error::CLAUDE_GH_TOKEN secret is not set; refusing to run as claude[bot]."
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
