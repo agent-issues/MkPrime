@@ -3321,19 +3321,26 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   for (ch in seq_len(nChains)) {
     tun <- chainTuning[[ch]]
     for (m in seq_along(moves)) {
-      mat[ch, m] <- switch(moves[[m]]$name,
-        slice_rate_loss   = tun$slice_width_rate_loss %||% 1.0,
-        slice_rate_neo    = tun$slice_width_rate_neo %||% 1.0,
-        slice_rate_log_sd = tun$slice_width_rate_log_sd %||% 1.0,
-        slice_tree_length = tun$slice_width_tree_length %||% 1.0,
-        slice_beta_scale  = tun$slice_width_beta_scale %||% 1.0,
-        slice_kprime_s    = tun$slice_width_kprime_s %||% 0.5,
-        slice_kprime_r    = tun$slice_width_kprime_r %||% 1.0,
-        1.0
-      )
+      mat[ch, m] <- .SliceWidth(moves[[m]]$name, tun)
     }
   }
   mat
+}
+
+
+#' Initial slice-sampling width for one move.
+#' @keywords internal
+.SliceWidth <- function(moveName, tuning) {
+  switch(moveName,
+    slice_rate_loss   = tuning$slice_width_rate_loss %||% 1.0,
+    slice_rate_neo    = tuning$slice_width_rate_neo %||% 1.0,
+    slice_rate_log_sd = tuning$slice_width_rate_log_sd %||% 1.0,
+    slice_tree_length = tuning$slice_width_tree_length %||% 1.0,
+    slice_beta_scale  = tuning$slice_width_beta_scale %||% 1.0,
+    slice_kprime_s    = tuning$slice_width_kprime_s %||% 0.5,
+    slice_kprime_r    = tuning$slice_width_kprime_r %||% 1.0,
+    1.0
+  )
 }
 
 
@@ -4007,11 +4014,15 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   # Detect XPtr mode: mcmcData is provided and stateOrPtr is externalptr
   if (!is.null(mcmcData) && inherits(stateOrPtr, "externalptr")) {
     moveCode <- .kMoveTypes[[move$name]]
+    # charIdx is overloaded: the drawn character for int_walk, and the
+    # parameter selector for the slice samplers (as in run_mcmc_batch_cpp).
     charIdx <- if (moveCode == 7L && length(transIdx) > 0L) {
       sample(transIdx, 1L) - 1L
     } else {
-      0L
+      as.integer(move$sliceParamIdx %||% 0L)
     }
+    # Slice samplers read scaleTuning as their initial width (do_move_impl
+    # cases 19 and 29); every other move reads it as a proposal scale.
     scaleTun <- switch(move$name,
       tree_length = tuning$scale_tree_length,
       rate_loss   = tuning$scale_rate_loss,
@@ -4027,6 +4038,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         # Per-class moves: switch on type rather than instance name
         if (!is.null(move$type) && move$type == "scale_class_rate_log_sd") {
           tuning$scale_class_rate_log_sd %||% 0.5
+        } else if (moveCode %in% c(19L, 29L)) {
+          .SliceWidth(move$name, tuning)
         } else {
           0.5  # default; gibbs_p ignores scaleTun (returns before using it)
         }
