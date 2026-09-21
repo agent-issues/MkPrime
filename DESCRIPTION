@@ -32,7 +32,7 @@ Imports:
     Rcpp,
     rlang,
     stats,
-    TreeTools,
+    TreeTools (>= 2.4.1.9000),
     utils
 Suggests:
     coda,
@@ -53,7 +53,9 @@ Suggests:
 VignetteBuilder: quarto
 LinkingTo:
     Rcpp,
-    TreeTools
+    TreeTools (>= 2.4.1.9000)
+Remotes:
+    ms609/TreeTools
 Config/Needs/check: rcmdcheck, testthat, phangorn
 Config/Needs/coverage: covr
 Config/Needs/memcheck: pkgdown, testthat, phangorn
