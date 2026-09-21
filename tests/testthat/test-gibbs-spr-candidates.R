@@ -16,8 +16,8 @@
 #   3. Accepted moves no longer land in the pi-null set of bit-equal split
 #      halves, and drawing the merged edge is a live branch-fraction move.
 
-library("ape")
-library("TreeTools")
+library("ape", quietly = TRUE)
+library("TreeTools", quietly = TRUE)
 
 # ---------------------------------------------------------------------------
 # Fixture helpers

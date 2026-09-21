@@ -16,8 +16,8 @@
 # No known-k character: marginal_k rejects those outright
 # (test-marginal-k-unsupported.R).
 
-library("ape")
-library("TreeTools")
+library("ape", quietly = TRUE)
+library("TreeTools", quietly = TRUE)
 
 .rbmp_lse <- function(x) {
   x <- x[is.finite(x)]

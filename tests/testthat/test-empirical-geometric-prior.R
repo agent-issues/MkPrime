@@ -437,7 +437,7 @@ test_that("LogPrior reports which character carries a missing k' or kObs", {
   # EG-004: a bare any() on a vector containing NA made `if()` raise
   # "missing value where TRUE/FALSE needed", naming the prior rather than the
   # character whose kObs failed to be ingested.
-  library("ape")
+  library("ape", quietly = TRUE)
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 1, 1, 0), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
