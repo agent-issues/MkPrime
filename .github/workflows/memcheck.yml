@@ -27,7 +27,9 @@ on:
     branches:
       - main
       - master
-      - '**valgrind**'
+      # No '**valgrind**' branch pattern: such a branch's push run posts a
+      # second `valgrind gate` on the PR's head commit, pending for the full
+      # suite's ~3.5 h and failed if cancelled. Dispatch on the branch instead.
   # Deliberately unfiltered — see ASan.yml. Path filtering happens in
   # `changes`, where a skip still reports a status.
   pull_request:
@@ -142,10 +144,7 @@ jobs:
     # fail this job on our behalf.
     name: valgrind gate
     needs: [changes, valgrind]
-    # Not on '**valgrind**' branch pushes: that run's gate lands on the same
-    # commit as the PR run's, so cancelling the branch's full run would fail
-    # the PR's required check.
-    if: always() && (github.event_name != 'push' || github.ref == 'refs/heads/main')
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Certify valgrind status
@@ -181,8 +180,8 @@ jobs:
     name: report full-suite failure
     needs: [changes, valgrind]
     # A timeout reports as 'cancelled', not 'failure', so test both. Only
-    # main: '**valgrind**' branch pushes also run the full suite, and a hand
-    # cancel there is not news.
+    # main: a full run dispatched on a PR branch, or cancelled there by hand,
+    # is not news.
     if: >-
       always() && github.event_name != 'pull_request' &&
       github.ref == 'refs/heads/main' &&
