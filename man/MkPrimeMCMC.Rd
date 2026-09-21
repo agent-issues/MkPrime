@@ -129,14 +129,9 @@ a pragmatic threshold for phylogenetics where mixing is slower.
 Requires \code{nRuns >= 2}.
 Replaces the classical PSRF (Gelman-Rubin) statistic.}
 
-\item{minTreeEss}{Minimum tree-topology ESS (median pseudo-ESS) for
-early stopping.  \code{NULL} (default) disables tree-ESS-based stopping.
-When set, tree ESS is computed adaptively during convergence checks:
-skipped when scalar ESS is far from \code{minEss}, coarse (500-tree
-subsample) when approaching, and fine (1000-tree subsample) when
-tree ESS is the binding constraint.  Requires \strong{TreeDist}.
-Also used in the tuning-phase bandit: topology moves receive credit
-for improving tree ESS, preventing underallocation.}
+\item{minTreeEss}{Numeric specifying the tree-topology ESS (median
+pseudo-ESS, via \strong{TreeDist}) each run must reach before it may stop;
+\code{NULL} disables tree-ESS-based stopping.}
 
 \item{checkEvery}{Check convergence every this many iterations
 (default 1000). Only used when stopping criteria are set.}
@@ -372,6 +367,17 @@ Default tuning values:
 \item \code{scale_p}: 0.5
 \item \code{int_walk_window}: 1
 }
+\subsection{Tree ESS is enforced per run}{
+
+Trees are not written to the log files, so the log-based convergence check
+used for parallel runs and for the serial cross-run phase cannot evaluate
+\code{minTreeEss}; only the per-run check can. With \code{nRuns > 1} the criterion
+therefore governs each run's own stopping, while the cross-run decision
+rests on \code{minEss} and \code{maxRhat} alone. Set at least one of those when
+running more than one run, or the cross-run phase has no criterion to
+apply.
+}
+
 \subsection{Parallel tempering}{
 
 When \code{nChains > 1}, chains run at different temperatures. The cold

@@ -2,12 +2,13 @@
 #SBATCH --job-name=mkp-geo
 #SBATCH --partition=shared
 #SBATCH --time=08:00:00
-# NOTE: 8h SLURM wall is below run_one.R maxTime=10h → R is SIGKILL'd before
-# its graceful-stop fires, so `saveRDS(partial, ...)` cannot run on timeout.
-# Tracked as HARNESS-001 in dev/red-team/findings.md; fix lands separately.
+# run_one.R sets maxTime = 7.5h, below this 8h wall, so the R-level graceful
+# stop fires and `saveRDS(partial, ...)` runs before SIGKILL. (This note used to
+# say maxTime was 10h and pointed at dev/red-team/findings.md; HARNESS-001 was
+# fixed long ago and findings.md is retired in favour of GitHub issues.)
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=2G
+#SBATCH --mem=6G
 #SBATCH --array=0-25
 #SBATCH --output=/nobackup/pjjg18/mkp-study/logs/mkp_geo_%A_%a.out
 #SBATCH --error=/nobackup/pjjg18/mkp-study/logs/mkp_geo_%A_%a.err

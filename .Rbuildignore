@@ -1,5 +1,6 @@
 ^.*\.Rproj$
 ^\.Rproj\.user$
+^\.githooks$
 ^\.gitignore$
 ^AGENTS\.md$
 ^to-do\.md$
@@ -19,3 +20,15 @@
 ^_pkgdown\.yml$
 ^data-raw$
 ^tests/test_hyoliths_run\.R$
+^\.AGENTS$
+^\.github$
+^dev$
+^NOTES$
+^memcheck$
+^KPRIME_POSTERIOR_SHAPE\.md$
+^RED_TEAM_.*\.md$
+^RESUME\.md$
+^TL_HYPOTHESIS_TEST\.md$
+^relabelling-correction-proof\.md$
+^research-mcmc-optimizations\.md$
+^test_m097_demo\.R$

@@ -49,7 +49,9 @@
 #'   without constructing a separate object. Cannot be combined with an
 #'   explicit `mcmc` argument.
 #'
-#' @return An `MkPosterior` object.
+#' @return An `MkPosterior` object. Each run adapts its move schedule
+#'   independently, so `$moveWeights` holds run 1's frozen schedule;
+#'   `$runMoveWeights` lists every run's.
 #'
 #' @section Inline MCMC options:
 #'
@@ -148,6 +150,13 @@ RunMkPrime <- function(data, tree = NULL,
   # legacy code path (§7a bit-identity contract).
   partitionSpec <- .ValidatePartitionArgs(partition, unlink, mkd)
   .RequirePartitionImplemented(partitionSpec)
+  .RequireMarginalKSupported(model, mkd, partitionSpec)
+
+  # Persisted with the checkpoint, so a resume rebuilds the move set the run
+  # was using rather than the default one. `mcmc` is what .SaveCheckpoint()
+  # writes wholesale, which reaches every save site without an extra argument.
+  mcmc$fixTopology <- isTRUE(fixTopology)
+  mcmc$partitionSpec <- partitionSpec
 
   # When a user partition is supplied, rebuild mkd$partitions with classIdx
   # populated for each PartInfo. The C++ McmcData uses classIdx to map each
@@ -325,18 +334,9 @@ RunMkPrime <- function(data, tree = NULL,
     for (p in treeFilePaths) writeLines(character(0), p)
   }
 
-  # Column indices for tree reconstruction in scalar_samples (1-based R).
-  # Layout: log_post, log_lik, tree_length, [rate_loss -- if hasNeo],
-  #         rate_log_sd, [p -- geometric/eg only / kprime_alpha+beta -- if BG],
-  #         [rate_neo -- if hasNeo], [beta_scale -- if qHet],
-  #         swap_cold, topo_hash, kPrime_i..., br_j...
-  # STREAM-003: the 2 diagnostic cols (swap_cold, topo_hash) MUST be counted.
-  isBetaGeometric <- identical(model$kPrimePrior, "beta_geometric")
-  isLogseries     <- identical(model$kPrimePrior, "logseries")
-  pCols           <- if (isLogseries) 0L else if (isBetaGeometric) 2L else 1L
-  neoCols         <- if (hasNeo) 2L else 0L   # rate_loss + rate_neo
-  diagCols        <- 2L                        # swap_cold, topo_hash
-  brColStart      <- 4L + neoCols + pCols + qHet + diagCols + nTrans + 1L
+  # Column index for tree reconstruction in scalar_samples (1-based R).
+  # The layout itself lives in .ParamNames(); do not restate it here.
+  brColStart      <- .BrColStart(paramNames)
 
   # --- Execute MCMC (with interrupt recovery) ---
   execResult <- .RunWithRecovery(
@@ -1594,23 +1594,12 @@ RunMkPrime <- function(data, tree = NULL,
 
       diagCheck <- .CheckConvergence(list(r), paramNames, mcmc, isStreaming)
       if (!is.null(diagCheck)) {
-        # M-141: ETA from worst-case ESS accumulation rate.
-        # Use whichever criterion (scalar ESS or tree ESS) has the
-        # worst current/target ratio -- that's the binding constraint.
         elapsedSample <- proc.time()["elapsed"] - sampleWallStart
-        etaCurrent <- diagCheck$minEss
-        etaTarget  <- mcmc$minEss
-        if (!is.null(mcmc$minTreeEss) && !is.na(diagCheck$treeEss) &&
-            is.finite(diagCheck$treeEss) && !is.null(mcmc$minEss) &&
-            is.finite(diagCheck$minEss)) {
-          scalarRatio <- diagCheck$minEss / mcmc$minEss
-          treeRatio   <- diagCheck$treeEss / mcmc$minTreeEss
-          if (treeRatio < scalarRatio) {
-            etaCurrent <- diagCheck$treeEss
-            etaTarget  <- mcmc$minTreeEss
-          }
-        }
-        etaStr <- .EstimateEta(etaCurrent, etaTarget, elapsedSample)
+
+        # M-141: ETA from worst-case ESS accumulation rate, projected against
+        # whichever criterion is currently binding. See .EtaCriterion().
+        etaCrit <- .EtaCriterion(diagCheck, mcmc)
+        etaStr <- .EstimateEta(etaCrit$current, etaCrit$target, elapsedSample)
         # Refresh ticker pages from latest diagnostics (M-097)
         tickerPages <- .BuildTickerPages(diagCheck, etaStr)
         convVerdict  <- .ConvergenceStreak(convStreak, diagCheck$converged)
@@ -1718,6 +1707,19 @@ RunMkPrime <- function(data, tree = NULL,
 
 # --- Serial multi-run orchestration (M-146) ---
 
+# Remaining wall-clock budget for a job that started at `startTime`
+# (a `proc.time()["elapsed"]` reading).
+#
+# `maxTime` bounds the job, not each run within it: a serial job handed the
+# full budget per run has a true ceiling of nRuns * maxTime, which overruns
+# any external wall clock it was sized for. NULL when no budget is set, 0 once
+# it is spent.
+.RemainingBudget <- function(maxTime, startTime) {
+  if (is.null(maxTime) || !is.finite(maxTime)) return(maxTime)
+  unname(max(0, maxTime - (proc.time()["elapsed"] - startTime)))
+}
+
+
 #' Run multiple serial MCMC runs with cross-run R-hat convergence
 #'
 #' Called by [.RunWithRecovery()] when `nCore == 1`, `nRuns >= 2`, and
@@ -1738,7 +1740,6 @@ RunMkPrime <- function(data, tree = NULL,
   startTime <- proc.time()["elapsed"]
 
   if (is.null(startIters)) startIters <- rep(1L, nRuns)
-
   # --- Phase 1: first pass (ESS-based stopping per run) ---
   if (startPhase <= 1L) {
     # Strip maxRhat so it doesn't block ESS-based stopping inside each run.
@@ -1746,6 +1747,25 @@ RunMkPrime <- function(data, tree = NULL,
     innerMcmc$maxRhat <- NULL
 
     for (run in seq_len(nRuns)) {
+      # maxTime bounds the job, not each run: without this the true ceiling
+      # is nRuns * maxTime, which overruns an external wall clock.
+      innerMcmc$maxTime <- .RemainingBudget(mcmc$maxTime, startTime)
+      if (!is.null(innerMcmc$maxTime) && innerMcmc$maxTime <= 0) {
+        # A run that never started has no buffers, and downstream assembly
+        # dereferences them; `requested_nRuns` records the shortfall.
+        cli::cli_warn(c(
+          "{.arg maxTime} reached after {run - 1L} of {nRuns} runs.",
+          i = "Returning the completed runs; {.arg maxTime} bounds the job,
+               not each run."
+        ))
+        return(list(runs = runs[seq_len(run - 1L)],
+                    stopReason = "max_time",
+                    actualIter = if (run > 1L) {
+                      max(vapply(runs[seq_len(run - 1L)],
+                                 function(r) r$actual_iter %||% 0L, numeric(1)))
+                    } else 0L))
+      }
+
       runs[[run]] <- .RunMkPrimeSingleRun(
         mkd, model, innerMcmc, runs[[run]], moves, tipLabels, run,
         paramNames, nEdge, brColStart,
@@ -1765,6 +1785,18 @@ RunMkPrime <- function(data, tree = NULL,
                     actualIter = runs[[run]]$actual_iter))
       }
       startIters[run] <- runs[[run]]$actual_iter + 1L
+
+      # The budget is spent; remaining runs would each start a fresh one.
+      if (identical(runs[[run]]$stop_reason, "max_time") && run < nRuns) {
+        cli::cli_warn(c(
+          "{.arg maxTime} reached during run {run} of {nRuns}.",
+          i = "Returning the completed runs; {.arg maxTime} bounds the job,
+               not each run."
+        ))
+        return(list(runs = runs[seq_len(run)],
+                    stopReason = "max_time",
+                    actualIter = runs[[run]]$actual_iter))
+      }
     }
 
     # No cross-run convergence needed when nRuns < 2 or no maxRhat
@@ -1836,6 +1868,11 @@ RunMkPrime <- function(data, tree = NULL,
       epochEnd <- startIters[run] + epochSize - 1L
       if (is.finite(mcmc$nIter)) epochEnd <- min(epochEnd, mcmc$nIter)
       epochMcmc$nIter <- epochEnd
+
+      # Same job-wide budget as Phase 1 (#13): the outer check below bounds
+      # each epoch, but a single run inside one must not be handed the whole
+      # of maxTime over again.
+      epochMcmc$maxTime <- .RemainingBudget(mcmc$maxTime, startTime)
 
       runs[[run]] <- .RunMkPrimeSingleRun(
         mkd, model, epochMcmc, runs[[run]], moves, tipLabels, run,
@@ -2053,7 +2090,8 @@ RunMkPrime <- function(data, tree = NULL,
     if (!is.null(diagCheck)) {
       elStr  <- .FormatElapsed(elapsed)
       essStr <- round(diagCheck$minEss)
-      etaStr <- .EstimateEta(diagCheck$minEss, mcmc$minEss, elapsed)
+      etaCrit <- .EtaCriterion(diagCheck, mcmc)
+      etaStr <- .EstimateEta(etaCrit$current, etaCrit$target, elapsed)
       pollStatus <- paste0(
         elStr, " | min ESS = ", essStr,
         if (!is.null(mcmc$minEss)) paste0(" / ", mcmc$minEss) else "",
@@ -2292,7 +2330,7 @@ RunMkPrime <- function(data, tree = NULL,
   # Nuisance columns remain in the `ess` vector for display in
   # .PrintProgressTable, but do not gate the stopping rule.
   isConvParam <- .ConvergenceTier(names(ess)) == "gate"
-  minEss <- min(ess[isConvParam], na.rm = TRUE)
+  minEss <- .MinOrNA(ess[isConvParam])
 
   # R-hat (requires >= 2 runs)
   rhat    <- NULL
@@ -2304,8 +2342,7 @@ RunMkPrime <- function(data, tree = NULL,
       .Rhat(chainMat)
     }, numeric(1))
     names(rhat) <- paramNms
-    maxRhat <- max(rhat[isConvParam[names(rhat) %in% names(ess)]],
-                   na.rm = TRUE)
+    maxRhat <- .MaxOrNA(rhat[isConvParam[names(rhat) %in% names(ess)]])
   }
 
   # --- Adaptive tree ESS ---
@@ -2319,11 +2356,11 @@ RunMkPrime <- function(data, tree = NULL,
   if (!is.null(mcmc$minTreeEss) &&
       requireNamespace("TreeDist", quietly = TRUE)) {
 
-    scalarsFarOff <- !is.null(mcmc$minEss) && minEss < 0.5 * mcmc$minEss
+    scalarsFarOff <- !is.null(mcmc$minEss) && isTRUE(minEss < 0.5 * mcmc$minEss)
     scalarsConverged <-
-      (is.null(mcmc$minEss)  || minEss >= mcmc$minEss) &&
-      (is.null(mcmc$maxRhat) || (nRuns >= 2L && !is.na(maxRhat) &&
-                                  maxRhat <= mcmc$maxRhat))
+      (is.null(mcmc$minEss)  || isTRUE(minEss >= mcmc$minEss)) &&
+      (is.null(mcmc$maxRhat) || (nRuns >= 2L &&
+                                  isTRUE(maxRhat <= mcmc$maxRhat)))
 
     treeEssPrecision <- if (scalarsFarOff) "skip"
                         else if (scalarsConverged) "fine"
@@ -2347,9 +2384,9 @@ RunMkPrime <- function(data, tree = NULL,
   hasCriteria <- !is.null(mcmc$minEss) || !is.null(mcmc$maxRhat) ||
                  !is.null(mcmc$minTreeEss)
   converged   <- hasCriteria &&
-    (is.null(mcmc$minEss)     || minEss >= mcmc$minEss) &&
-    (is.null(mcmc$maxRhat)    || (nRuns >= 2L && !is.na(maxRhat) &&
-                                   maxRhat <= mcmc$maxRhat)) &&
+    (is.null(mcmc$minEss)     || isTRUE(minEss >= mcmc$minEss)) &&
+    (is.null(mcmc$maxRhat)    || (nRuns >= 2L &&
+                                   isTRUE(maxRhat <= mcmc$maxRhat))) &&
     (is.null(mcmc$minTreeEss) || (!is.na(treeEss) &&
                                    treeEss >= mcmc$minTreeEss))
 
@@ -2364,6 +2401,12 @@ RunMkPrime <- function(data, tree = NULL,
 #' Reads each run's log file via [ReadMkLog()], extracts key parameters,
 #' and computes ESS (all runs combined) and R-hat (when `nRuns >= 2`).
 #' Returns `NULL` if any log is missing or has fewer than 10 rows.
+#'
+#' Tree ESS is deliberately absent: trees are not written to the log files, so
+#' this path cannot evaluate `minTreeEss` and returns `treeEss = NA_real_`. The
+#' criterion is enforced per run by [.CheckConvergence()] instead. Documented
+#' on `minTreeEss` in [MkPrimeMCMC()]; whether the silent non-enforcement also
+#' deserves a warning is a maintainer call, not settled here.
 #' @keywords internal
 .CheckConvergenceFromLogs <- function(logFilePaths, paramNames, mcmc) {
   nRuns   <- length(logFilePaths)
@@ -2395,7 +2438,7 @@ RunMkPrime <- function(data, tree = NULL,
 
   # Exclude kPrime nuisance parameters from convergence criteria (M-098)
   isConvParam <- .ConvergenceTier(names(ess)) == "gate"
-  minEss <- min(ess[isConvParam], na.rm = TRUE)
+  minEss <- .MinOrNA(ess[isConvParam])
 
   rhat    <- NULL
   maxRhat <- NA_real_
@@ -2406,17 +2449,16 @@ RunMkPrime <- function(data, tree = NULL,
       .Rhat(chainMat)
     }, numeric(1))
     names(rhat) <- paramNms
-    maxRhat <- max(rhat[isConvParam[names(rhat) %in% names(ess)]],
-                   na.rm = TRUE)
+    maxRhat <- .MaxOrNA(rhat[isConvParam[names(rhat) %in% names(ess)]])
   }
 
   # Tree ESS not available in log-based mode (scalar logs don't contain trees).
   # minTreeEss is only enforced by .CheckConvergence() which has in-memory trees.
   hasCriteria <- !is.null(mcmc$minEss) || !is.null(mcmc$maxRhat)
   converged   <- hasCriteria &&
-    (is.null(mcmc$minEss)  || minEss >= mcmc$minEss) &&
-    (is.null(mcmc$maxRhat) || (nRuns >= 2L && !is.na(maxRhat) &&
-                                maxRhat <= mcmc$maxRhat))
+    (is.null(mcmc$minEss)  || isTRUE(minEss >= mcmc$minEss)) &&
+    (is.null(mcmc$maxRhat) || (nRuns >= 2L &&
+                                isTRUE(maxRhat <= mcmc$maxRhat)))
 
   list(converged = converged, minEss = minEss, maxRhat = maxRhat,
        treeEss = NA_real_, treeEssPrecision = "skip",
@@ -2665,6 +2707,7 @@ RunMkPrime <- function(data, tree = NULL,
   result$treeThin        <- mcmc$treeThin
   result$requested_nRuns <- requestedRuns    # PAR-009
   result$dropped_runs    <- drops            # PAR-008
+  result$runMoveWeights <- lapply(perRunSummaries, `[[`, "moveWeights")
   result
 }
 
@@ -3040,11 +3083,48 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   nTrans <- sum(mkd$type == "transformational")
 
   qHet <- isTRUE(model$qHeterogeneity)
-  moves <- .BuildMoves(nEdge, nTrans, hasNeo, mcmc, fixTopology = FALSE,
-                       kPrimePrior = model$kPrimePrior %||% "geometric",
-                       qHeterogeneity = qHet,
-                       joint2d = isTRUE(mcmc$joint2d),
-                       likelihoodMode = model$likelihoodMode %||% "sampled_k")
+  # The move set must be the one the run was using, so both inputs that decide
+  # it travel in the checkpoint's `mcmc`. A checkpoint that predates them has
+  # neither, and falls back to an unpartitioned, free-topology schedule.
+  resumeFixTopology <- isTRUE(mcmc$fixTopology)
+  resumePartition   <- mcmc$partitionSpec
+
+  moves <- if (is.null(resumePartition)) {
+    .BuildMoves(nEdge, nTrans, hasNeo, mcmc,
+                fixTopology = resumeFixTopology,
+                kPrimePrior = model$kPrimePrior %||% "geometric",
+                qHeterogeneity = qHet,
+                joint2d = isTRUE(mcmc$joint2d),
+                likelihoodMode = model$likelihoodMode %||% "sampled_k")
+  } else {
+    .BuildMovesPartitioned(nEdge, nTrans, hasNeo, mcmc,
+                partitionSpec = resumePartition,
+                fixTopology = resumeFixTopology,
+                kPrimePrior = model$kPrimePrior %||% "geometric",
+                qHeterogeneity = qHet,
+                joint2d = isTRUE(mcmc$joint2d),
+                priorOnClassRateLogSd =
+                  model$priorOnClassRateLogSd %||% "hyperprior_pooled",
+                likelihoodMode = model$likelihoodMode %||% "sampled_k")
+  }
+
+  # Self-check against the run being resumed. The checkpoint records the move
+  # weights by name, so a rebuild that has drifted is detectable even for
+  # checkpoints written before the two fields above existed -- which is the
+  # only warning those older files can be given.
+  storedMoveNames <- names(checkpoint$moveWeights)
+  rebuiltMoveNames <- vapply(moves, function(m) m$name, character(1))
+  if (length(storedMoveNames) && !setequal(rebuiltMoveNames, storedMoveNames)) {
+    added   <- setdiff(rebuiltMoveNames, storedMoveNames)
+    dropped <- setdiff(storedMoveNames, rebuiltMoveNames)
+    cli::cli_warn(c(
+      "Resumed move set differs from the one this checkpoint was written with.",
+      i = if (length(added)) "Gained: {.val {added}}." else NULL,
+      i = if (length(dropped)) "Lost: {.val {dropped}}." else NULL,
+      i = "The resumed segment is sampled by a different kernel from the
+           segment before it; treat the combined output with care."
+    ))
+  }
 
   if (identical(mcmc$thin, "auto")) {
     mcmc$thin <- length(moves)
@@ -3085,13 +3165,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   }
 
   tipLabels       <- tree$tip.label %||% rownames(mkd$matrix)
-  # STREAM-003 + STREAM-004: count diagnostic cols, and 2 cols for BG prior.
-  isBetaGeometric <- identical(model$kPrimePrior, "beta_geometric")
-  isLogseries     <- identical(model$kPrimePrior, "logseries")
-  pCols           <- if (isLogseries) 0L else if (isBetaGeometric) 2L else 1L
-  diagCols        <- 2L                          # swap_cold, topo_hash
-  brColStart      <- 5L + pCols + (any(mkd$type == "neomorphic")) + qHet +
-                     diagCols + nTrans + 1L
+  # Column index for tree reconstruction; the layout lives in .ParamNames().
+  brColStart      <- .BrColStart(paramNames)
 
   # --- Sequential per-run execution ---
   stopReason <- "max_iter"
@@ -3325,7 +3400,6 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         local_dirichlet  = tun$local_dirichlet_alpha %||% 10,
         p           = 0.5,  # Gibbs move: scale ignored by C++; placeholder
         gibbs_p_marginal = 0.5,  # data-aug Gibbs: scale ignored by C++
-        mh_p        = tun$scale_p %||% 0.5,
         mh_logit_p  = tun$scale_logit_p %||% 1.0,
         scale_hyper_tau = tun$scale_hyper_tau %||% 0.5,
         # Per-class moves carry name = "<type>_<c>" so they fall through to
@@ -3355,19 +3429,26 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   for (ch in seq_len(nChains)) {
     tun <- chainTuning[[ch]]
     for (m in seq_along(moves)) {
-      mat[ch, m] <- switch(moves[[m]]$name,
-        slice_rate_loss   = tun$slice_width_rate_loss %||% 1.0,
-        slice_rate_neo    = tun$slice_width_rate_neo %||% 1.0,
-        slice_rate_log_sd = tun$slice_width_rate_log_sd %||% 1.0,
-        slice_tree_length = tun$slice_width_tree_length %||% 1.0,
-        slice_beta_scale  = tun$slice_width_beta_scale %||% 1.0,
-        slice_kprime_s    = tun$slice_width_kprime_s %||% 0.5,
-        slice_kprime_r    = tun$slice_width_kprime_r %||% 1.0,
-        1.0
-      )
+      mat[ch, m] <- .SliceWidth(moves[[m]]$name, tun)
     }
   }
   mat
+}
+
+
+#' Initial slice-sampling width for one move.
+#' @keywords internal
+.SliceWidth <- function(moveName, tuning) {
+  switch(moveName,
+    slice_rate_loss   = tuning$slice_width_rate_loss %||% 1.0,
+    slice_rate_neo    = tuning$slice_width_rate_neo %||% 1.0,
+    slice_rate_log_sd = tuning$slice_width_rate_log_sd %||% 1.0,
+    slice_tree_length = tuning$slice_width_tree_length %||% 1.0,
+    slice_beta_scale  = tuning$slice_width_beta_scale %||% 1.0,
+    slice_kprime_s    = tuning$slice_width_kprime_s %||% 0.5,
+    slice_kprime_r    = tuning$slice_width_kprime_r %||% 1.0,
+    1.0
+  )
 }
 
 
@@ -3764,8 +3845,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       # adaptive scheduler then crushes the move to its weight floor and p
       # stays stuck.  Instead, propose on the unbounded logit scale (case 30,
       # `mh_logit_p`); the Jacobian appears as the Hastings ratio.  Give it
-      # a higher weight than the legacy `mh_p` move so that even if it
-      # mixes a little less efficiently than gibbs_kPrime it still moves p.
+      # a higher weight than the retired multiplicative scale_p move, so
+      # that even if it mixes less efficiently than gibbs_kPrime it still
+      # moves p.
       kPrimeMoves <- c(kPrimeMoves, list(
         list(name = "mh_logit_p", type = "logit_scale_p", target = "p",
              weight = 3, dim = 1L)
@@ -3894,7 +3976,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 .kMoveTypes <- c(
   tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
   rate_neo = 3L, branch_lengths = 4L,
-  nni = 5L, spr = 6L, kPrime = 7L, p = 9L, mh_p = 8L,
+  nni = 5L, spr = 6L, kPrime = 7L, p = 9L,
   mh_logit_p = 30L,
   gibbs_spr = 10L, gibbs_subtree_swap = 11L,
   weighted_branch_lengths = 12L,
@@ -3924,9 +4006,20 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   gibbs_p_marginal = 35L
 )
 
+# The single whitelist `MkPrimeMCMC()` validates user `moveWeights` against.
+# Derived from `.kMoveTypes` rather than restated, so the two surfaces cannot
+# drift: a move that is registered is settable, and nothing else is.
+.ValidMoveNames <- function() names(.kMoveTypes)
+
+# Move types that `.BuildMovesPartitioned()` instantiates once per partition
+# class, as "<type>_<classIdx>". The registry holds the type; `MkPrimeMCMC()`
+# accepts both it and its instances.
+.kPerClassMoveTypes <- "scale_class_rate_log_sd"
+
 #' Initialize the C++ MCMC data structure (call once before loop)
 #' @keywords internal
 .InitMcmcData <- function(mkd, model) {
+  .RequireMarginalKSupported(model, mkd)
   # Replace NA with -1 in tip states for C++
   parts <- lapply(mkd$partitions, function(p) {
     ts <- p$tip_states
@@ -3940,14 +4033,12 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   isEmpGeom <- identical(model$kPrimePrior, "empirical_geometric")
   emp <- model$empiricalNObs
   empLogBody <- numeric(0)
-  empBodyLastK <- 1L
   empTailStartK <- 0L
   empTailDecay <- 0.0
   empLogTailStartP <- -Inf
   if (isEmpGeom && !is.null(emp)) {
     body <- as.numeric(emp$body)
     empLogBody <- ifelse(body > 0, log(body), -Inf)
-    empBodyLastK <- 1L + length(body)
     empTailStartK <- as.integer(emp$tail_start_k)
     empTailDecay <- as.numeric(emp$tail_decay)
     empLogTailStartP <- if (emp$tail_start_p > 0) log(emp$tail_start_p) else -Inf
@@ -3970,7 +4061,6 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     model$betaScaleRate %||% 1.0,
     isEmpGeom,
     empLogBody,
-    empBodyLastK,
     empTailStartK,
     empTailDecay,
     empLogTailStartP,
@@ -4032,11 +4122,15 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   # Detect XPtr mode: mcmcData is provided and stateOrPtr is externalptr
   if (!is.null(mcmcData) && inherits(stateOrPtr, "externalptr")) {
     moveCode <- .kMoveTypes[[move$name]]
+    # charIdx is overloaded: the drawn character for int_walk, and the
+    # parameter selector for the slice samplers (as in run_mcmc_batch_cpp).
     charIdx <- if (moveCode == 7L && length(transIdx) > 0L) {
       sample(transIdx, 1L) - 1L
     } else {
-      0L
+      as.integer(move$sliceParamIdx %||% 0L)
     }
+    # Slice samplers read scaleTuning as their initial width (do_move_impl
+    # cases 19 and 29); every other move reads it as a proposal scale.
     scaleTun <- switch(move$name,
       tree_length = tuning$scale_tree_length,
       rate_loss   = tuning$scale_rate_loss,
@@ -4045,7 +4139,6 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       beta_scale  = tuning$scale_beta_scale,
       dirichlet_branch = tuning$dirichlet_alpha %||% 0.1,
       local_dirichlet = tuning$local_dirichlet_alpha %||% 0.1,
-      mh_p        = tuning$scale_p %||% 0.5,
       mh_logit_p  = tuning$scale_logit_p %||% 1.0,
       dirichlet_simplex_class_w = tuning$dirichlet_class_w_alpha %||% 10,
       scale_hyper_tau = tuning$scale_hyper_tau %||% 0.5,
@@ -4053,6 +4146,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         # Per-class moves: switch on type rather than instance name
         if (!is.null(move$type) && move$type == "scale_class_rate_log_sd") {
           tuning$scale_class_rate_log_sd %||% 0.5
+        } else if (moveCode %in% c(19L, 29L)) {
+          .SliceWidth(move$name, tuning)
         } else {
           0.5  # default; gibbs_p ignores scaleTun (returns before using it)
         }
@@ -4130,17 +4225,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       logHastings <- prop$logHastings
     },
     logit_scale_p = {
-      # Logit-scale MH on p with Jacobian -- robust near the boundary.
-      # This R fallback uses a normal step on the logit scale; the C++ path
-      # uses a Bactrian perturbation but the proposal kernel is symmetric in
-      # both cases so the Hastings ratio reduces to the Jacobian alone.
-      sigma <- tuning$scale_logit_p %||% 1.0
-      logitP <- qlogis(state$p)
-      logitPnew <- logitP + sigma * (runif(1) - 0.5)
-      newP <- plogis(logitPnew)
-      proposed$p <- newP
-      logHastings <- log(newP) + log1p(-newP) -
-                     log(state$p) - log1p(-state$p)
+      # Logit-scale MH on p -- robust near the boundary. The step is
+      # symmetric, as is the C++ path's Bactrian perturbation, so the
+      # Hastings ratio reduces to the Jacobian alone.
+      prop <- .ProposeLogitScale(state$p,
+                                 tuning = tuning$scale_logit_p %||% 1.0)
+      proposed$p <- prop$value
+      logHastings <- prop$logHastings
     }
   )
 
@@ -4265,6 +4356,28 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 }
 
 
+#' Index of the first `br_*` column in a sample row
+#'
+#' Takes the row's own column names rather than recomputing the layout, which
+#' is hand-maintainable in two places and has drifted silently: a wrong offset
+#' still yields a parseable tree, so nothing downstream fails (#8, #64).
+#'
+#' `paramNames` is authoritative where a re-derivation is not: the run path
+#' builds its names with `.ParamNamesPartitioned()` and strips the `kPrime_`
+#' columns under `marginal_k`.
+#'
+#' @param paramNames Character vector of column names for a sample row.
+#' @return Integer 1-based column index of `br_1`.
+#' @keywords internal
+.BrColStart <- function(paramNames) {
+  idx <- match("br_1", paramNames)
+  if (is.na(idx)) {
+    cli::cli_abort("No {.field br_1} column in the sample layout.")
+  }
+  idx
+}
+
+
 #' Parameter names for the sample matrix
 #' @keywords internal
 .ParamNames <- function(mkd, nEdge, kPrimePrior = "geometric",
@@ -4373,14 +4486,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' @keywords internal
 .ResolvePinnedWeights <- function(userMoveWeights, moveNames) {
   if (is.null(userMoveWeights)) return(NULL)
-  keep <- intersect(names(userMoveWeights), moveNames)
-  if (length(keep) == 0L) return(NULL)
   dropped <- setdiff(names(userMoveWeights), moveNames)
   if (length(dropped) > 0L) {
     cli::cli_warn(
       "Pinned move weight{?s} ignored (not in move pool): {.val {dropped}}."
     )
   }
+  keep <- intersect(names(userMoveWeights), moveNames)
+  if (length(keep) == 0L) return(NULL)
   userMoveWeights[keep]
 }
 
@@ -4676,8 +4789,15 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   freeSum   <- sum(weights[freeIdx])
 
   weights[[gibbsKpIdx]] <- gibbsTarget
-  if (length(freeIdx) > 0L && freeSum > 1e-12)
+  if (length(freeIdx) > 0L && freeSum > 1e-12) {
     weights[freeIdx] <- weights[freeIdx] + delta * weights[freeIdx] / freeSum
+  } else {
+    # No free move can absorb the freed weight. Renormalizing yields the
+    # schedule mcmc.cpp samples from anyway, so the cap still binds -- but
+    # the vector printed, logged, checkpointed and returned as
+    # `MkPosterior$moveWeights` stays a probability vector.
+    weights <- weights / sum(weights)
+  }
   weights
 }
 
@@ -4701,8 +4821,12 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   freeSum   <- sum(weights[freeIdx])
 
   weights[[gibbsKpIdx]] <- gibbsPin
-  if (length(freeIdx) > 0L && freeSum > delta)
+  if (length(freeIdx) > 0L && freeSum > delta) {
     weights[freeIdx] <- weights[freeIdx] * (freeSum - delta) / freeSum
+  } else {
+    # As in .WarmupGibbsCap: the free moves cannot fund the restoration.
+    weights <- weights / sum(weights)
+  }
   weights
 }
 
@@ -4722,7 +4846,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   block_gibbs_branch = "Branches", weighted_branch_lengths = "Branches",
 
   kPrime = "Characters", gibbs_kPrime = "Characters",
-  block_kPrime = "Characters", p = "Characters", mh_p = "Characters",
+  block_kPrime = "Characters", p = "Characters",
   mh_logit_p = "Characters",
 
   rate_loss = "Rates", rate_neo = "Rates", rate_log_sd = "Rates",
@@ -4817,7 +4941,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     tree_length = 0.35, branch_lengths = 0.23,
     nni = 0.23, spr = 0.10,
     kPrime = 0.35,
-    p = 0.35, mh_p = 0.35, mh_logit_p = 0.35,
+    # 0.35, not the 0.44 Gaussian 1-D optimum: these moves use a Bactrian
+    # kernel, whose 1-D ESS/iteration peaks near 0.30 acceptance (see #5).
+    p = 0.35, mh_logit_p = 0.35,
     rate_loss = 0.35, rate_log_sd = 0.35,
     rate_neo = 0.35,
     beta_scale = 0.35,
@@ -4844,7 +4970,6 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     spr = NA_character_,
     kPrime = "int_walk_window",
     p = NA_character_,       # Gibbs move: no tuning needed
-    mh_p = "scale_p",        # MH move: tune the log-scale step
     mh_logit_p = "scale_logit_p",  # MH move: tune the logit-scale step
     rate_loss = "scale_rate_loss",
     rate_log_sd = "scale_rate_log_sd",
@@ -4887,8 +5012,10 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         tuning[[tk]] <- tuning[[tk]] / adj
         tuning[[tk]] <- max(1.0, min(tuning[[tk]], 1000))
       } else {
-        tuning[[tk]] <- tuning[[tk]] * adj
-        tuning[[tk]] <- max(0.01, tuning[[tk]])
+        # Cap as well as floor: a direction whose acceptance stays high at
+        # any step size otherwise grows the step without limit, eventually
+        # to a value that overflows or proposes non-finite values.
+        tuning[[tk]] <- max(0.01, min(tuning[[tk]] * adj, 10))
       }
     }
   }

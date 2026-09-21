@@ -2,8 +2,12 @@
 #SBATCH --job-name=mkp-install
 #SBATCH --partition=shared
 #SBATCH --time=0:45:00
-#SBATCH --ntasks=4
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=4
 #SBATCH --mem=8G
+# `Ncpus = 4L` below parallelises one R process, so it needs four CORES.
+# `--ntasks=4` allocated four separate tasks instead, which on the shared
+# partition can leave that one process oversubscribing a single core (#103).
 #SBATCH --output=/nobackup/pjjg18/mkp-study/logs/install_%j.out
 #SBATCH --error=/nobackup/pjjg18/mkp-study/logs/install_%j.err
 
@@ -18,7 +22,11 @@ Rscript - <<'EOF'
 lib <- "/nobackup/pjjg18/mkp-study/lib"
 .libPaths(c(lib, .libPaths()))
 
-pkgs <- c("Rcpp", "rlang", "cli", "Rdpack", "ape", "TreeTools", "TreeDist")
+# data.table is what summarize_streamed.R reads the logs with; it was absent
+# here and installed only by the separate install_dt.R, so a fresh library
+# satisfied every arm and then failed at summarisation (#103).
+pkgs <- c("Rcpp", "rlang", "cli", "Rdpack", "ape", "TreeTools", "TreeDist",
+          "data.table")
 to_install <- pkgs[!sapply(pkgs, requireNamespace, quietly = TRUE)]
 if (length(to_install)) {
   install.packages(to_install,

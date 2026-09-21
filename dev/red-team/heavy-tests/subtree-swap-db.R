@@ -80,13 +80,10 @@ N_TOPOS_EXPECTED <- .dfact_odd(2L * N_TIP_CFG - 5L)
 cat(sprintf("[D2b] n_tip=%d  expected_buckets=%d  quick=%s\n",
             N_TIP_CFG, N_TOPOS_EXPECTED, quick))
 
-if (requireNamespace("pkgload", quietly = TRUE)) {
-  pkgload::load_all(file.path(getwd()), quiet = TRUE)
-} else if (requireNamespace("devtools", quietly = TRUE)) {
-  devtools::load_all(file.path(getwd()), quiet = TRUE)
-} else {
-  stop("Need {pkgload} or {devtools}")
-}
+# Race-safe loader: pkgload compiles into src/ in place, so concurrent array
+# tasks corrupt each other's objects unless the tree is pre-built (#15).
+source("dev/red-team/heavy-tests/load-mkprime.R")
+LoadMkPrime(getwd())
 
 out_dir <- "dev/red-team/heavy-tests/subtree-swap-db-results"
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
