@@ -17,24 +17,62 @@ on:
       - "!**R-CMD-check.yml"
       - "**.R[dD]ata"
       - "**.Rpro*"
+  # Deliberately unfiltered, as in ASan.yml: `changes` applies the `push`
+  # filter above, and `gate` reports on every pull request, so a PR touching
+  # no package files is not left waiting on checks that never start.
   pull_request:
     branches: ["*"]
-    paths-ignore:
-      - "Meta**"
-      - "docs**"
-      - "**.git"
-      - "**.json"
-      - "**.md"
-      - "**.yaml"
-      - "**.yml"
-      - "!**R-CMD-check.yml"
-      - "**.R[dD]ata"
-      - "**.Rpro*"
 
 name: R-CMD-check
 
 jobs:
+  changes:
+    name: detect package changes
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "Event is ${{ github.event_name }} -> running R CMD check."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          base='${{ github.event.pull_request.base.sha }}'
+          head='${{ github.event.pull_request.head.sha }}'
+          git fetch --no-tags origin "$base" >/dev/null 2>&1 || true
+          # Three dots: diff against the merge base; see memcheck.yml.
+          changed=$(git diff --name-only "$base...$head")
+          echo "Changed files:"
+          printf '  %s\n' $changed
+
+          # Mirrors the `push` paths-ignore list, including its exception for
+          # this workflow's own file.
+          relevant=$(printf '%s\n' "$changed" |
+            grep -vE '^(Meta|docs)|\.git$|\.json$|\.md$|\.ya?ml$|\.R[dD]ata$|\.Rpro' || true)
+          if printf '%s\n' "$changed" | grep -q 'R-CMD-check\.yml$'; then
+            relevant="$relevant R-CMD-check.yml"
+          fi
+          if [ -n "$(printf '%s' "$relevant" | tr -d '[:space:]')" ]; then
+            echo "-> package files changed; running R CMD check."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "-> no package files changed; skipping R CMD check."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
   check-release:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-24.04
     name: ubuntu-24.04 (release)
 
@@ -79,6 +117,8 @@ jobs:
 
 
   check-all:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ${{ matrix.config.os }}
     name: ${{ matrix.config.os }} (${{ matrix.config.r }})
 
@@ -171,3 +211,50 @@ jobs:
         run: |
           covr::codecov(quiet = FALSE)
         shell: Rscript {0}
+
+  gate:
+    # The job branch protection should require, in place of the per-OS
+    # checks: a matrix leg skipped by `if:` reports under its unexpanded name,
+    # so it could never satisfy a per-OS required check.
+    #
+    # Certifies exactly the legs that were required before the gate existed;
+    # macos-15-intel, arm and devel stay advisory. `needs` gives only the
+    # matrix's aggregate result, so each leg is read from the API.
+    name: R-CMD-check gate
+    needs: [changes, check-release, check-all]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Certify R CMD check status
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOBS_URL: repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}/jobs
+        run: |
+          set -euo pipefail
+          echo "changes : ${{ needs.changes.result }} (run=${{ needs.changes.outputs.run }})"
+
+          # Failing to work out whether R CMD check was needed is not a pass.
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "::error::Change detection did not succeed, so R CMD check status cannot be certified."
+            exit 1
+          fi
+          if [ "${{ needs.changes.outputs.run }}" != "true" ]; then
+            echo "No package files changed in this pull request, so R CMD check was not required."
+            echo "It still runs on the push to main and in the weekly sweep."
+            exit 0
+          fi
+
+          fail=0
+          for leg in "ubuntu-24.04 (release)" "windows-latest (release)" "macOS-latest (release)"; do
+            result=$(gh api --paginate "$JOBS_URL" \
+              -q ".jobs[] | select(.name == \"$leg\") | .conclusion")
+            echo "$leg : ${result:-missing}"
+            [ "$result" = "success" ] || fail=1
+          done
+          if [ "$fail" != 0 ]; then
+            echo "::error::A required R CMD check leg did not succeed."
+            exit 1
+          fi
