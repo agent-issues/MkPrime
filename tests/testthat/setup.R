@@ -5,8 +5,10 @@
 options(MkPrime.verbosity = 0L)
 
 # `ape` and `TreeTools` are attached once here rather than inside individual
-# test files: repeating `library()` per test re-emits `ape`'s startup banner
-# via TreeTools' Depends, and re-attaching MkPrime itself errors outright.
+# test files, so the search path is the same for every file.  A file that must
+# attach them itself uses `library(quietly = TRUE)`, which suppresses `ape`'s
+# startup banner (re-emitted via TreeTools' Depends); re-attaching MkPrime
+# itself errors outright.
 # `ape` goes last so that it masks `TreeTools`, as it did when each file
 # attached them for itself.
 suppressPackageStartupMessages({
