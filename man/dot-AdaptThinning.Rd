@@ -4,12 +4,7 @@
 \alias{.AdaptThinning}
 \title{Estimate optimal thinning interval from observed autocorrelation}
 \usage{
-.AdaptThinning(
-  sampleMatrix,
-  currentThin,
-  nMoves,
-  excludePattern = "^(kPrime_|br_|log_likelihood)"
-)
+.AdaptThinning(sampleMatrix, currentThin, nMoves)
 }
 \arguments{
 \item{sampleMatrix}{Matrix of posterior samples (rows = draws, cols =
@@ -19,8 +14,6 @@ parameters).}
 sample).}
 
 \item{nMoves}{Number of active MCMC moves (floor for thinning).}
-
-\item{excludePattern}{Regex for columns to exclude from ACT estimation.}
 }
 \value{
 Integer thinning interval.

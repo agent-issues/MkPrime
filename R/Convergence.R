@@ -289,17 +289,35 @@ print.MkpDiagnostics <- function(x, ...) {
 }
 
 
+# Two consecutive checkpoints must agree before a run stops. R-hat and ESS are
+# noisy, and one favourable excursion across many checkpoints and many
+# parameters is the optional-stopping bias this blunts.
+.kConvergenceStreak <- 2L
+
+#' Track consecutive checkpoints meeting the stopping criteria
+#'
+#' @param streak Integer counting the consecutive checkpoints met so far.
+#' @param met Logical giving this checkpoint's verdict.
+#' @return List with the updated `streak` and a logical `stop`.
+#' @keywords internal
+.ConvergenceStreak <- function(streak, met) {
+  streak <- if (isTRUE(met)) streak + 1L else 0L
+  # Return:
+  list(streak = streak, stop = streak >= .kConvergenceStreak)
+}
+
+
 #' Identify key parameter columns (exclude branch lengths)
 #' @keywords internal
 .KeyParamCols <- function(samples) {
-  grep("^(log_|tree_|rate_|p$|kPrime_)", colnames(samples))
+  .ReportCols(colnames(samples))
 }
 
 
 #' Identify scalar parameter columns for plotting (exclude kPrime_ and br_)
 #' @keywords internal
 .PlotParamCols <- function(samples) {
-  grep("^(log_posterior$|tree_|rate_|p$)", colnames(samples))
+  .GateCols(colnames(samples))
 }
 
 

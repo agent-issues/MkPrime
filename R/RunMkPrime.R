@@ -987,7 +987,10 @@ RunMkPrime <- function(data, tree = NULL,
     requireNamespace("TreeDist", quietly = TRUE)
   tuningWindowStart <- NULL
   bestMinEssPerSec <- -Inf
+  bestMinEss       <- NA_real_
   bestWeights      <- moveWeights
+  tuningFreezeStreak <- r$tuningFreezeStreak %||% 0L
+  convStreak       <- r$convStreak %||% 0L
   tuningCandidates <- list()
   tuningCandIdx    <- 0L
   effectiveTuningBudget <- r$effectiveTuningBudget %||% mcmc$tuningBudget
@@ -1341,7 +1344,9 @@ RunMkPrime <- function(data, tree = NULL,
               r$chain_slice_exp[[ch]][] <- 0
             }
             bestMinEssPerSec <- -Inf
+            bestMinEss       <- NA_real_
             bestWeights      <- moveWeights
+            tuningFreezeStreak <- 0L
             tuningCandidates <- .PerturbMoveWeights(
               moveWeights, pinnedWeights, moveNames,
               nPerturbations = 3L
@@ -1381,18 +1386,21 @@ RunMkPrime <- function(data, tree = NULL,
       # Evaluate current weight vector after each tuning window
       if (tuningBufIdx >= 10L) {
         windowTime <- proc.time()["elapsed"] - tuningWindowStart
-        currentEssPerSec <- .MinEssPerSec(
+        currentRate <- .MinEssRate(
           tuningBuf[seq_len(tuningBufIdx), , drop = FALSE],
           windowTime,
           tuningTrees = if (tuneWithTreeEss && tuningBufIdx >= 20L) {
             tuningTreeBuf[seq_len(tuningBufIdx)]
           }
         )
+        currentEssPerSec <- currentRate[["rate"]]
 
         if (!is.na(currentEssPerSec)) {
           tickerPages <- sprintf("minESS/s: %.2f", currentEssPerSec)
-          if (currentEssPerSec > bestMinEssPerSec) {
+          if (.BeatsIncumbent(currentEssPerSec, currentRate[["ess"]],
+                              bestMinEssPerSec, bestMinEss)) {
             bestMinEssPerSec <- currentEssPerSec
+            bestMinEss       <- currentRate[["ess"]]
             bestWeights      <- moveWeights
           }
         }
@@ -1418,8 +1426,16 @@ RunMkPrime <- function(data, tree = NULL,
           r$tuningRoundsDone <- tuningRoundsDone
           moveWeights <- bestWeights
 
+          payback <- .TuningPayback(
+            tuningFreezeStreak, proc.time()["elapsed"] - startTime,
+            bestMinEssPerSec, mcmc$minEss, mcmc$nRuns
+          )
+          tuningFreezeStreak <- payback[["streak"]]
+          r$tuningFreezeStreak <- tuningFreezeStreak
+
           if (tuningRoundsDone >= mcmc$tuningRounds ||
-              tuningIterUsed >= effectiveTuningBudget) {
+              tuningIterUsed >= effectiveTuningBudget ||
+              payback[["freeze"]]) {
             # Transition: Tuning -> Sample
             phase      <- "Sample"
             r$phase    <- phase
@@ -1447,6 +1463,7 @@ RunMkPrime <- function(data, tree = NULL,
             tuningTreeBuf     <- list()
             tuningWindowStart <- proc.time()["elapsed"]
             bestMinEssPerSec  <- -Inf
+            bestMinEss        <- NA_real_
             for (ch in seq_len(nChains)) {
               r$chain_accept[[ch]][]    <- 0L
               r$chain_propose[[ch]][]   <- 0L
@@ -1585,7 +1602,10 @@ RunMkPrime <- function(data, tree = NULL,
         etaStr <- .EstimateEta(etaCrit$current, etaCrit$target, elapsedSample)
         # Refresh ticker pages from latest diagnostics (M-097)
         tickerPages <- .BuildTickerPages(diagCheck, etaStr)
-        if (diagCheck$converged) {
+        convVerdict  <- .ConvergenceStreak(convStreak, diagCheck$converged)
+        convStreak   <- convVerdict[["streak"]]
+        r$convStreak <- convStreak
+        if (convVerdict[["stop"]]) {
           stopReason <- "converged"
           actualIter <- batchEnd
           break
@@ -1797,13 +1817,18 @@ RunMkPrime <- function(data, tree = NULL,
   }
 
   # --- Phase 2: cross-run R-hat loop ---
+  convStreak <- 0L
   repeat {
     diagCheck <- .CheckConvergenceFromLogs(logFilePaths, paramNames, mcmc)
-    if (!is.null(diagCheck) && diagCheck$converged) {
+    convStreak <- .ConvergenceStreak(
+      convStreak, !is.null(diagCheck) && diagCheck$converged
+    )
+    if (convStreak[["stop"]]) {
       return(list(runs = runs,
                   stopReason = "converged",
                   actualIter = max(vapply(runs, `[[`, 0, "actual_iter"))))
     }
+    convStreak <- convStreak[["streak"]]
 
     # Report R-hat status
     if (!is.null(diagCheck) && !is.na(diagCheck$maxRhat)) {
@@ -2013,6 +2038,7 @@ RunMkPrime <- function(data, tree = NULL,
   # Polling loop: sleep -> check stopping criteria -> signal workers if needed.
   startTime    <- proc.time()["elapsed"]
   pollInterval <- mcmc$pollInterval %||% 10L
+  convStreak   <- 0L
   stopReason   <- "max_iter"
   actualIter   <- if (is.finite(mcmc$nIter)) mcmc$nIter else mcmc$warmup
 
@@ -2098,7 +2124,9 @@ RunMkPrime <- function(data, tree = NULL,
         tryCatch(mcmc$progressFn(info), error = function(e) NULL)
       }
 
-      if (diagCheck$converged) {
+      convVerdict <- .ConvergenceStreak(convStreak, diagCheck$converged)
+      convStreak  <- convVerdict[["streak"]]
+      if (convVerdict[["stop"]]) {
         for (cf in cancelFiles) file.create(cf)
         stopReason <- "converged"
         break
@@ -2299,9 +2327,9 @@ RunMkPrime <- function(data, tree = NULL,
   combined <- do.call(rbind, perRunSamples)
   ess <- .EssMatrix(combined)
 
-  # kPrime are discrete nuisance parameters -- exclude from convergence criteria
-  # (M-098). They remain in the `ess` vector for display in .PrintProgressTable.
-  isConvParam <- !grepl("^kPrime_", names(ess)) & names(ess) != "log_likelihood"
+  # Nuisance columns remain in the `ess` vector for display in
+  # .PrintProgressTable, but do not gate the stopping rule.
+  isConvParam <- .ConvergenceTier(names(ess)) == "gate"
   minEss <- .MinOrNA(ess[isConvParam])
 
   # R-hat (requires >= 2 runs)
@@ -2409,7 +2437,7 @@ RunMkPrime <- function(data, tree = NULL,
   ess <- .EssMatrix(combined)
 
   # Exclude kPrime nuisance parameters from convergence criteria (M-098)
-  isConvParam <- !grepl("^kPrime_", names(ess)) & names(ess) != "log_likelihood"
+  isConvParam <- .ConvergenceTier(names(ess)) == "gate"
   minEss <- .MinOrNA(ess[isConvParam])
 
   rhat    <- NULL
@@ -5108,24 +5136,24 @@ if (n < 2L * windowSize) {
 #'
 #' @param sampleMatrix Numeric matrix (rows = samples, columns = parameters).
 #' @param wallTimeSec Wall-clock seconds for the evaluation window.
-#' @param excludePattern Regex pattern for column names to exclude from
-#'   the min-ESS calculation (e.g. `"^kPrime_"`).
+#' @param tuningTrees List of sampled topologies whose tree ESS enters the
+#'   minimum, giving topology moves credit in the bandit (M-152).
 #'
-#' @return Numeric scalar: min(ESS) / wallTimeSec, or `NA` if ESS
-#'   cannot be computed.
+#' @return `.MinEssRate()` a list with the `rate` min(ESS)/`wallTimeSec` and
+#' the `ess` it came from; `.MinEssPerSec()` the rate alone. Both are `NA`
+#' where ESS cannot be computed.
 #' @keywords internal
-.MinEssPerSec <- function(sampleMatrix, wallTimeSec,
-                           excludePattern = "^(kPrime_|br_|log_likelihood)",
-                           tuningTrees = NULL) {
-  if (nrow(sampleMatrix) < 10L || wallTimeSec < 1e-6) return(NA_real_)
+.MinEssRate <- function(sampleMatrix, wallTimeSec, tuningTrees = NULL) {
+  noRate <- list(rate = NA_real_, ess = NA_real_)
+  if (nrow(sampleMatrix) < 10L || wallTimeSec < 1e-6) return(noRate)
 
-  keyCols <- grep(excludePattern, colnames(sampleMatrix), invert = TRUE)
-  if (length(keyCols) == 0L) return(NA_real_)
+  keyCols <- .GateCols(colnames(sampleMatrix))
+  if (length(keyCols) == 0L) return(noRate)
 
   ess <- .EssMatrix(sampleMatrix[, keyCols, drop = FALSE])
 
   minEss <- min(ess, na.rm = TRUE)
-  if (!is.finite(minEss)) return(NA_real_)
+  if (!is.finite(minEss)) return(noRate)
 
   # Include tree ESS in the minimum when topology trees are available.
   # This gives topology moves credit in the bandit, preventing the
@@ -5142,7 +5170,15 @@ if (n < 2L * windowSize) {
     }
   }
 
-  minEss / wallTimeSec
+  # Return:
+  list(rate = minEss / wallTimeSec, ess = minEss)
+}
+
+
+#' @rdname dot-MinEssRate
+#' @keywords internal
+.MinEssPerSec <- function(sampleMatrix, wallTimeSec, tuningTrees = NULL) {
+  .MinEssRate(sampleMatrix, wallTimeSec, tuningTrees)[["rate"]]
 }
 
 
@@ -5158,15 +5194,13 @@ if (n < 2L * windowSize) {
 #' @param currentThin Current thinning interval (iterations per stored
 #'   sample).
 #' @param nMoves Number of active MCMC moves (floor for thinning).
-#' @param excludePattern Regex for columns to exclude from ACT estimation.
 #' @return Integer thinning interval.
 #' @keywords internal
-.AdaptThinning <- function(sampleMatrix, currentThin, nMoves,
-                           excludePattern = "^(kPrime_|br_|log_likelihood)") {
+.AdaptThinning <- function(sampleMatrix, currentThin, nMoves) {
   n <- nrow(sampleMatrix)
   if (n < 50L) return(currentThin)
 
-  keyCols <- grep(excludePattern, colnames(sampleMatrix), invert = TRUE)
+  keyCols <- .GateCols(colnames(sampleMatrix))
   if (length(keyCols) == 0L) return(currentThin)
 
   ess <- .EssMatrix(sampleMatrix[, keyCols, drop = FALSE])
