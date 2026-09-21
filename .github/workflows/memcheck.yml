@@ -177,9 +177,12 @@ jobs:
     # open an issue, or comment on the one already open.
     name: report full-suite failure
     needs: [changes, valgrind]
-    # A timeout reports as 'cancelled', not 'failure', so test both.
+    # A timeout reports as 'cancelled', not 'failure', so test both. Only
+    # main: '**valgrind**' branch pushes also run the full suite, and a hand
+    # cancel there is not news.
     if: >-
       always() && github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main' &&
       contains(fromJSON('["failure", "cancelled"]'), needs.valgrind.result)
     runs-on: ubuntu-latest
     permissions:
@@ -193,7 +196,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          body="The full valgrind suite failed or timed out on \`${GITHUB_REF_NAME}\` @ ${GITHUB_SHA::7} (${{ github.event_name }}): $RUN_URL"
+          body="The full valgrind suite failed or timed out on main @ ${GITHUB_SHA::7} (${{ github.event_name }}): $RUN_URL"
           open=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number -q '.[0].number')
           if [ -n "$open" ]; then
             gh issue comment "$open" --body "$body"
