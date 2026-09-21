@@ -17,6 +17,13 @@
 
 ARM="${1:?usage: sbatch --array=... summarize_array.slurm ARMNAME}"
 
+# This is the only script here with no in-file `#SBATCH --array`; the range has
+# to come from the command line. Submitted without one, SLURM_ARRAY_TASK_ID is
+# unset, the arithmetic below reads the empty string as 0, and the job
+# summarises t01_r01 alone -- then reports success, indistinguishable in sacct
+# from a run that covered all 260 cells (#101).
+: "${SLURM_ARRAY_TASK_ID:?must be submitted as an array job, e.g. sbatch --array=0-259}"
+
 module load r/4.5.1 gcc/14.2
 export OMP_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1

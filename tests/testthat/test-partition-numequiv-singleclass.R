@@ -37,7 +37,9 @@
     mkd$partitions <- .BuildPartitions(mkd, partition = partition)
   }
 
-  model <- MkPrimeModel()
+  # expSteps resolves treeLengthRate; the likelihood never reads it, but the
+  # model must carry a resolved value.
+  model <- MkPrimeModel(expSteps = 10)
   # Build the C++ McmcData XPtr.
   dataPtr <- prepare_mcmc_data(
     partitions_r              = mkd$partitions,
@@ -48,7 +50,7 @@
     codingStr                 = model$coding,
     relabelFlag               = isTRUE(model$relabel),
     treeLengthShape           = model$treeLengthShape,
-    treeLengthRate            = model$treeLengthRate %||% 1,
+    treeLengthRate            = model$treeLengthRate,
     rateLossMeanlog           = model$rateLossMeanlog,
     rateLossSdlog             = model$rateLossSdlog,
     rateLogSdShape            = model$rateLogSdShape,

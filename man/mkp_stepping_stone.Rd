@@ -9,6 +9,7 @@ mkp_stepping_stone(
   tree = NULL,
   neomorphic = integer(0),
   model = NULL,
+  mcmc = NULL,
   nStones = 50L,
   nIter = 1000L,
   warmup = 200L,
@@ -27,6 +28,10 @@ neighbour-joining tree built from the data.}
 is \code{phyDat}). Ignored if \code{data} is \code{MkPrimeData}.}
 
 \item{model}{An \code{MkPrimeModel} object. Default: \code{MkPrimeModel()}.}
+
+\item{mcmc}{\code{MkPrimeMCMC} object supplying the move schedule and proposal
+tuning for each stone; its run-length and stopping-rule settings are
+ignored.}
 
 \item{nStones}{Number of stepping stones (power posterior levels). Default 50.}
 
@@ -62,6 +67,12 @@ posterior (beta = 1), then combines the results into a marginal likelihood
 estimate.
 }
 \details{
+Every stone runs for \code{warmup + nIter} iterations under the schedule \code{model}
+and \code{mcmc} specify, less the 2D joint proposals (which need a correlation
+this function does not adapt) and \code{gibbs_p_marginal} (which is not
+tempered), and with no weight adaptation. An estimate is therefore
+comparable only with others computed under the same \code{model} and \code{mcmc}.
+
 The standard error is computed via the delta method applied to each
 stepping-stone ratio, following Xie et al. (2011) and the implementation in
 the \pkg{mcmc3r} package (dos Reis). For each stone \eqn{k},

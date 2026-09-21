@@ -192,3 +192,52 @@ test_that("Fitch score used for expSteps default", {
   expect_equal(finalized$expSteps, 3)
   expect_equal(finalized$treeLengthRate, 2 / 3)
 })
+
+
+test_that("LogPrior rejects an unresolved treeLengthRate", {
+  tree <- ape::read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1), 4, 1,
+                dimnames = list(paste0("t", 1:4), NULL))
+  mkd <- MkPrimeData(TreeTools::MatrixToPhyDat(mat))
+  state <- list(
+    tree_length    = 0.5,
+    rel_br_lengths = tree$edge.length / sum(tree$edge.length),
+    rate_loss      = 1.0,
+    rate_log_sd    = 0.3,
+    kPrime         = 2L,
+    p              = 0.5
+  )
+  # dgamma(rate = NULL) yields numeric(0), evaporating the whole prior, so an
+  # unresolved rate must abort rather than propagate.
+  expect_error(LogPrior(state, MkPrimeModel(), mkd), "treeLengthRate")
+  expect_length(LogPrior(state, MkPrimeModel(expSteps = 10), mkd), 1L)
+})
+
+
+test_that("print names the tree-length prior's unresolved rate", {
+  unresolved <- capture.output(print(MkPrimeModel()), type = "message")
+  expect_match(paste(unresolved, collapse = " "), "Gamma(2, auto: 2 / expSteps)",
+               fixed = TRUE)
+  resolved <- capture.output(print(MkPrimeModel(expSteps = 10)),
+                             type = "message")
+  expect_match(paste(resolved, collapse = " "), "Gamma(2, 0.2)", fixed = TRUE)
+})
+
+
+test_that(".TreeLengthRate is the only resolution of treeLengthRate", {
+  expect_error(MkPrime:::.TreeLengthRate(MkPrimeModel()), "treeLengthRate")
+  expect_equal(MkPrime:::.TreeLengthRate(MkPrimeModel(expSteps = 8)), 2 / 8)
+  expect_equal(MkPrime:::.TreeLengthRate(MkPrimeModel(treeLengthRate = 3)), 3)
+})
+
+
+test_that("empiricalNObs is read from this build, not a like-named one", {
+  for (fn in list(MkPrime:::.FinalizeModel, MkPrime:::.EmpiricalNObs)) {
+    expect_false(any(grepl('package = "MkPrime"', deparse(fn), fixed = TRUE)))
+  }
+
+  ns <- environment(MkPrime:::.EmpiricalNObs)
+  e <- new.env(parent = emptyenv())
+  utils::data("empiricalNObs", package = environmentName(ns), envir = e)
+  expect_identical(MkPrime:::.EmpiricalNObs(), e$empiricalNObs)
+})

@@ -321,3 +321,57 @@ test_that("Constant site prob works with ACRV", {
   # But it should still be in [0, 1]
   expect_true(pconst_acrv > 0 && pconst_acrv < 1)
 })
+
+
+test_that("het constant-site probability matches a brute-force reference", {
+  tree <- TreeTools::Preorder(
+    ape::read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);"))
+  parent <- tree$edge[, 1]
+  child <- tree$edge[, 2]
+  edgeLength <- tree$edge.length
+  nTip <- 4L
+  baseRL <- 1
+  rates <- c(0.4, 1.0, 1.9)
+
+  # Every spike rotation and every constant pattern, evaluated separately.
+  Reference <- function(k, betaBins) {
+    nRot <- if (k == 2L) 1L else k
+    maxNode <- 2L * nTip - 1L
+    total <- 0
+    for (rate in rates) for (b in betaBins) for (rot in seq_len(nRot)) {
+      stationary <- if (k == 2L) {
+        gain <- 2 * b / (1 + baseRL)
+        loss <- 2 * (1 - b) * baseRL / (1 + baseRL)
+        c(1 - gain / (gain + loss), gain / (gain + loss))
+      } else {
+        f <- rep((1 - b) / (k - 1), k)
+        f[rot] <- b
+        f
+      }
+      mu <- 1 / (1 - sum(stationary^2))
+      for (s in seq_len(k)) {
+        cl <- matrix(0, maxNode, k)
+        cl[seq_len(nTip), s] <- 1
+        seeded <- c(rep(TRUE, nTip), rep(FALSE, maxNode - nTip))
+        for (e in rev(seq_along(parent))) {
+          par <- parent[e]
+          d <- exp(-mu * edgeLength[e] * rate)
+          v <- (1 - d) * sum(stationary * cl[child[e], ]) + d * cl[child[e], ]
+          cl[par, ] <- if (seeded[par]) cl[par, ] * v else v
+          seeded[par] <- TRUE
+        }
+        total <- total + sum(stationary * cl[nTip + 1L, ])
+      }
+    }
+    total / (length(rates) * length(betaBins) * nRot)
+  }
+
+  for (k in c(2L, 3L, 5L, 9L)) {
+    betaBins <- seq(1 / k, 0.9, length.out = 4)
+    expect_equal(
+      MkPrime:::het_const_site_prob(parent, child, edgeLength, nTip, k,
+                                    baseRL, betaBins, rates),
+      Reference(k, betaBins)
+    )
+  }
+})

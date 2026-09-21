@@ -299,36 +299,10 @@
   parent  <- tree_st$edge[, 1]
   child   <- tree_st$edge[, 2]
   edgeLen <- tree_st$edge.length
-  hasNeo  <- any(mkd$type == "neomorphic")
 
-  dataPtr <- prepare_mcmc_data(
-    partitions_r              = mkd$partitions,
-    kObs_r                    = mkd$kObs,
-    charTypes_r               = mkd$type,
-    hasNeo                    = hasNeo,
-    nCat                      = model$nCat,
-    codingStr                 = model$coding,
-    relabelFlag               = isTRUE(model$relabel),
-    treeLengthShape           = model$treeLengthShape,
-    treeLengthRate            = model$treeLengthRate %||% 1,
-    rateLossMeanlog           = model$rateLossMeanlog,
-    rateLossSdlog             = model$rateLossSdlog,
-    rateLogSdShape            = model$rateLogSdShape,
-    rateLogSdRate             = model$rateLogSdRate,
-    rateNeoMeanlog            = model$rateNeoMeanlog,
-    rateNeoSdlog              = model$rateNeoSdlog,
-    kprimeHyperA              = model$kprimeHyperA,
-    kprimeHyperB              = model$kprimeHyperB,
-    kPriorLogseries           = identical(model$kPrimePrior, "logseries"),
-    kprimeLogseriesC          = model$kprimeLogseriesC,
-    kPriorBetaGeometric       = identical(model$kPrimePrior, "beta_geometric"),
-    qHeterogeneity            = isTRUE(model$qHeterogeneity),
-    nBetaCat                  = model$nBetaCat,
-    betaScaleShape            = model$betaScaleShape,
-    betaScaleRate             = model$betaScaleRate,
-    kPriorEmpiricalGeometric  = FALSE,
-    empLogBody                = numeric(0)
-  )
+  # The chain's own builder, so the initial value tracks the model's k'-prior
+  # flags. A second McmcData here would not.
+  dataPtr <- .InitMcmcData(mkd, model)
 
   state$log_lik <- cpp_log_likelihood_partitioned_xptr(
     dataPtr, parent, child, edgeLen, as.integer(state$kPrime),

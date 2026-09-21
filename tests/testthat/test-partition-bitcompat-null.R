@@ -53,6 +53,13 @@
 # is caught many orders of magnitude before it. See the reference-platform
 # note in helper-partition-ref.R for the measurements behind that.
 
+test_that("§7a fixture pins every MkPrimeModel argument", {
+  # A new model argument would enter the fixture through its default and move
+  # the reference silently, which is how ada6bb7 and 2b3c054 rewrote it.
+  expect_identical(names(formals(MkPrimeModel)),
+                   .PartitionBitcompatModelFormals())
+})
+
 test_that("§7a bit-identity: partition = NULL reproduces stored reference", {
   ref_path <- .PartitionBitcompatReferencePath()
   testthat::skip_if_not(file.exists(ref_path),

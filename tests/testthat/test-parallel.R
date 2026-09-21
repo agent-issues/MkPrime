@@ -366,8 +366,29 @@ test_that("dropped_runs populated when workers are killed by short cancelGrace (
   # be dropped (killed mid-batch or unlaunched before the pool drains).
   expect_gt(nrow(result$dropped_runs), 0L)
   # Conservation invariant: completed + dropped == requested (PAR-009)
-  nCompleted <- if (!is.null(result$per_run)) length(result$per_run) else result$nRuns %||% 0L
+  #
+  # The fallback must be 1L, not 0L. `.BuildResult()` sets `$nRuns` and
+  # `$per_run` only when more than one run completed -- per-run diagnostics
+  # need at least two -- and sets `$nRuns <- 0L` explicitly when none did. So
+  # an absent `$nRuns` means exactly one, which is the `%||% 1L` convention
+  # every other consumer uses (`R/burnin.R`, `R/Convergence.R`,
+  # `R/MkPosterior.R`) and which `test-tempering.R` pins directly.
+  #
+  # With `%||% 0L` this counted a lone surviving run as zero, so whenever the
+  # timing left 1 of 4 runs alive the invariant read 0 + 3 != 4. That is not
+  # hypothetical: it is why the Windows `Code coverage` job failed on `main`
+  # and on every open PR. Instrumentation slows the workers enough to change
+  # how many survive the 1s cancel grace, and nothing else in CI runs this
+  # test slowly enough to reach the one-survivor case.
+  nCompleted <- if (!is.null(result$per_run)) {
+    length(result$per_run)
+  } else {
+    result$nRuns %||% 1L
+  }
   expect_equal(result$requested_nRuns, nCompleted + nrow(result$dropped_runs))
+  # Each run is accounted for exactly once.
+  expect_equal(anyDuplicated(result$dropped_runs$run), 0L)
+  expect_true(all(result$dropped_runs$run %in% seq_len(4L)))
   # print() must not error when dropped_runs is populated (covers the new
   # print.MkPosterior branch for PAR-009 display)
   expect_prints(print(result))

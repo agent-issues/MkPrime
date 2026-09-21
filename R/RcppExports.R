@@ -133,6 +133,10 @@ gibbs_spr_enumerate_cpp <- function(dataPtr, statePtr, pruneRow) {
     .Call(`_MkPrime_gibbs_spr_enumerate_cpp`, dataPtr, statePtr, pruneRow)
 }
 
+kprime_sweep_candidates <- function(dataPtr, statePtr, beta = 1.0) {
+    .Call(`_MkPrime_kprime_sweep_candidates`, dataPtr, statePtr, beta)
+}
+
 do_move_cpp <- function(dataPtr, statePtr, moveType, charIdx, scaleTuning, betaSimplexTuning, intWalkWindow, beta) {
     .Call(`_MkPrime_do_move_cpp`, dataPtr, statePtr, moveType, charIdx, scaleTuning, betaSimplexTuning, intWalkWindow, beta)
 }
@@ -169,8 +173,12 @@ test_flat_jc_constprob_pair <- function(parent, child, edge_length, tip_states, 
     .Call(`_MkPrime_test_flat_jc_constprob_pair`, parent, child, edge_length, tip_states, kFull, kObs, acrv, rate_multipliers)
 }
 
-prepare_mcmc_data <- function(partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, kPriorBetaGeometric = FALSE, qHeterogeneity = FALSE, nBetaCat = 4L, betaScaleShape = 1.0, betaScaleRate = 1.0, kPriorEmpiricalGeometric = FALSE, empLogBody = numeric(), empBodyLastK = 1L, empTailStartK = 0L, empTailDecay = 0.0, empLogTailStartP = -1e308, marginalK = FALSE, unconditionalPrior = FALSE) {
-    .Call(`_MkPrime_prepare_mcmc_data`, partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, kPriorBetaGeometric, qHeterogeneity, nBetaCat, betaScaleShape, betaScaleRate, kPriorEmpiricalGeometric, empLogBody, empBodyLastK, empTailStartK, empTailDecay, empLogTailStartP, marginalK, unconditionalPrior)
+het_const_site_prob <- function(parent, child, edgeLength, nTip, kStates, baseRateLoss, betaBins, rateMultipliers) {
+    .Call(`_MkPrime_het_const_site_prob`, parent, child, edgeLength, nTip, kStates, baseRateLoss, betaBins, rateMultipliers)
+}
+
+prepare_mcmc_data <- function(partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, kPriorBetaGeometric = FALSE, qHeterogeneity = FALSE, nBetaCat = 4L, betaScaleShape = 1.0, betaScaleRate = 1.0, kPriorEmpiricalGeometric = FALSE, empLogBody = numeric(), empTailStartK = 0L, empTailDecay = 0.0, empLogTailStartP = -1e308, marginalK = FALSE, unconditionalPrior = FALSE) {
+    .Call(`_MkPrime_prepare_mcmc_data`, partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, kPriorBetaGeometric, qHeterogeneity, nBetaCat, betaScaleShape, betaScaleRate, kPriorEmpiricalGeometric, empLogBody, empTailStartK, empTailDecay, empLogTailStartP, marginalK, unconditionalPrior)
 }
 
 set_branch_bins <- function(dataPtr, nBins) {

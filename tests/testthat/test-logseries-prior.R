@@ -166,7 +166,6 @@ test_that("LogPrior logseries: works correctly with no p in state", {
     rate_log_sd    = 0.3,
     kPrime         = 2L
   )
-  expect_false(is.null(state$p) && FALSE)  # p genuinely absent
   expect_null(state$p)
   lp <- MkPrime:::LogPrior(state, model, mkd)
   expect_true(is.finite(lp))
@@ -250,4 +249,76 @@ test_that("RunMkPrime smoke test: logseries prior runs and produces correct colu
 
   # Branch length columns present
   expect_true(any(grepl("^br_", cols)))
+})
+
+
+# ---------------------------------------------------------------------------
+# 10. R and C++ agree on the logseries prior
+# ---------------------------------------------------------------------------
+test_that("LogPrior logseries agrees with cpp_log_prior", {
+  tree <- TreeTools::Preorder(
+    ape::read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  )
+  # Two transformational characters with different kObs (2 and 3), so a
+  # per-character error would not cancel across the sum.
+  mat <- matrix(c(0, 1, 0, 1,
+                  0, 1, 2, 0), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  mkd <- MkPrimeData(TreeTools::MatrixToPhyDat(mat))
+
+  for (logseriesC in c(0.05, 0.3, 0.7, 0.95, 0.999)) {
+    model <- MkPrimeModel(kPrimePrior = "logseries",
+                          kprimeLogseriesC = logseriesC, expSteps = 10)
+    model <- MkPrime:::.FinalizeModel(model, tree, mkd)
+    dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
+
+    for (kp in list(c(2L, 3L), c(3L, 5L), c(4L, 8L), c(2L, 25L), c(20L, 30L))) {
+      state <- list(
+        tree           = tree,
+        tree_length    = 0.5,
+        rel_br_lengths = tree$edge.length / sum(tree$edge.length),
+        rate_loss      = 1.0,
+        rate_log_sd    = 0.2,
+        rate_neo       = 1.0,
+        kPrime         = kp,
+        log_lik        = 0.0,
+        log_prior      = 0.0
+      )
+      lpR <- MkPrime:::LogPrior(state, model, mkd)
+      lpCpp <- eval_log_prior_cpp(dataPtr, MkPrime:::.InitMcmcChain(state))
+      expect_equal(lpCpp, lpR, tolerance = 1e-10,
+                   info = sprintf("c=%g, kPrime=%s", logseriesC,
+                                  paste(kp, collapse = ",")))
+    }
+  }
+})
+
+
+test_that("LogPrior logseries and cpp_log_prior both reject k' < kObs", {
+  tree <- TreeTools::Preorder(
+    ape::read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  )
+  mat <- matrix(c(0, 1, 0, 1,
+                  0, 1, 2, 0), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  mkd <- MkPrimeData(TreeTools::MatrixToPhyDat(mat))
+  model <- MkPrimeModel(kPrimePrior = "logseries", kprimeLogseriesC = 0.7,
+                        expSteps = 10)
+  model <- MkPrime:::.FinalizeModel(model, tree, mkd)
+  dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
+
+  state <- list(
+    tree           = tree,
+    tree_length    = 0.5,
+    rel_br_lengths = tree$edge.length / sum(tree$edge.length),
+    rate_loss      = 1.0,
+    rate_log_sd    = 0.2,
+    rate_neo       = 1.0,
+    kPrime         = c(2L, 2L),   # second character has kObs = 3
+    log_lik        = 0.0,
+    log_prior      = 0.0
+  )
+  expect_equal(MkPrime:::LogPrior(state, model, mkd), -Inf)
+  expect_equal(eval_log_prior_cpp(dataPtr, MkPrime:::.InitMcmcChain(state)),
+               -Inf)
 })

@@ -169,7 +169,11 @@ test_that("R and C++ log priors agree numerically under empirical_geometric", {
   dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
 
   for (p in c(0.2, 0.5, 0.8)) {
-    for (kp in list(c(2L, 3L), c(3L, 5L), c(4L, 8L))) {
+    # empiricalNObs has a 15-entry body, so its tail starts at k = 17: the
+    # last two pairs carry the convolution past the end of empLogBody and into
+    # the geometric tail, which the body-length cases never reach.
+    for (kp in list(c(2L, 3L), c(3L, 5L), c(4L, 8L),
+                    c(2L, 25L), c(20L, 30L))) {
       state <- list(
         tree = tree,
         tree_length = 0.5,
@@ -408,7 +412,11 @@ test_that("EG-001 Model A: R and C++ EG priors agree under priorVariant='uncondi
   dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
 
   for (p in c(0.2, 0.5, 0.8)) {
-    for (kp in list(c(2L, 3L), c(3L, 5L), c(4L, 8L))) {
+    # empiricalNObs has a 15-entry body, so its tail starts at k = 17: the
+    # last two pairs carry the convolution past the end of empLogBody and into
+    # the geometric tail, which the body-length cases never reach.
+    for (kp in list(c(2L, 3L), c(3L, 5L), c(4L, 8L),
+                    c(2L, 25L), c(20L, 30L))) {
       state <- list(
         tree = tree, tree_length = 0.5,
         rel_br_lengths = tree$edge.length / sum(tree$edge.length),
@@ -422,4 +430,88 @@ test_that("EG-001 Model A: R and C++ EG priors agree under priorVariant='uncondi
                                   p, paste(kp, collapse = ",")))
     }
   }
+})
+
+
+test_that("LogPrior reports which character carries a missing k' or kObs", {
+  # EG-004: a bare any() on a vector containing NA made `if()` raise
+  # "missing value where TRUE/FALSE needed", naming the prior rather than the
+  # character whose kObs failed to be ingested.
+  library("ape")
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 0, 1, 0, 1, 1, 0), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- TreeTools::MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd)
+  # Pinned, not defaulted: the frozen value below is sensitive to
+  # `treeLengthShape` (3.0 nats) and `rateLogSdRate` (0.39 nats), twelve
+  # orders outside its 1e-12 tolerance.
+  model <- MkPrimeModel(
+    expSteps        = 10,
+    kPrimePrior     = "empirical_geometric",
+    priorVariant    = "unconditional",
+    treeLengthShape = 2,
+    rateLossMeanlog = 0,
+    rateLossSdlog   = 2,
+    rateLogSdShape  = 1,
+    rateLogSdRate   = 1,
+    kprimeTruncK    = 200L
+  )
+
+  state <- list(
+    tree_length = 0.5,
+    rel_br_lengths = tree$edge.length / sum(tree$edge.length),
+    rate_loss = 1.5,
+    rate_log_sd = 0.3,
+    kPrime = c(3L, 3L),
+    p = 0.4
+  )
+  # Value measured on origin/main before the guard existed: it must be a
+  # strict no-op on NA-free input, not merely finite.
+  expect_equal(MkPrime:::LogPrior(state, model, mkd), -2.32046728147438,
+               tolerance = 1e-12)
+
+  state$kPrime <- c(3L, NA_integer_)
+  expect_error(MkPrime:::LogPrior(state, model, mkd), "character 2")
+
+  state$kPrime <- c(3L, 3L)
+  mkd$kObs[[1]] <- NA_integer_
+  expect_error(MkPrime:::LogPrior(state, model, mkd), "character 1")
+
+  state$kPrime <- c(3L, NA_integer_)
+  expect_error(MkPrime:::LogPrior(state, model, mkd), "characters 1 and 2")
+})
+
+
+test_that("the packaged empiricalNObs satisfies the tail-join invariant", {
+  expect_identical(as.integer(empiricalNObs$tail_start_k),
+                   length(empiricalNObs$body) + 2L)
+})
+
+
+test_that("MkPrimeEmpiricalPrior rejects a tail detached from the body", {
+  # EG-005: the tail's mass is anchored on body[nBody], so a tail_start_k
+  # beyond nBody + 2 translates that mass outward instead of rescaling it.
+  # The pmf still sums to 1 and no evaluation errors, so the reshaped prior
+  # would reach the posterior silently.
+  expect_error(
+    MkPrimeEmpiricalPrior(body = c(0.6, 0.3), tail_decay = 0.4,
+                          tail_start_k = 10L),
+    "tail_start_k"
+  )
+  # The value one past the body is the only admissible one.
+  expect_s3_class(
+    MkPrimeEmpiricalPrior(body = c(0.6, 0.3), tail_decay = 0.4,
+                          tail_start_k = 4L),
+    "MkPrimeEmpiricalPrior"
+  )
+})
+
+
+test_that("prepare_mcmc_data derives the empirical body length from the body", {
+  # EG-006: empBodyLastK duplicated 2 + length(empLogBody) across the Rcpp
+  # boundary but was never read; a second source of truth that could silently
+  # disagree with the first.
+  expect_false("empBodyLastK" %in%
+                 names(formals(MkPrime:::prepare_mcmc_data)))
 })

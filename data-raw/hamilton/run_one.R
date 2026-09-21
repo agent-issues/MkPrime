@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# Run Mk or Mk' inference on one tree-inference replicate, or combine results.
+# Run Mk or Mk' inference on one tree-inference replicate.
 #
 # Usage:
 #   Rscript run_one.R <tree_idx> <rep_idx> <data_root> <out_dir> <arm>
@@ -9,8 +9,7 @@
 #   rep_idx    integer 1-10 (rep_MM in tree_NN/)
 #   data_root  /nobackup/pjjg18/mkprime-files/tree-inference
 #   out_dir    /nobackup/pjjg18/mkp-study/results
-#   arm        "mk", "mkp", "mkp_eg" (empirical_geometric prior),
-#              "mkp_geo" (geometric prior, EG-001 pilot), or "combine"
+#   arm        one of the fourteen arms listed in `.ARMS` below
 
 .libPaths(c("/nobackup/pjjg18/mkp-study/lib", .libPaths()))
 suppressPackageStartupMessages({
@@ -25,10 +24,10 @@ tree_idx  <- as.integer(args[1])
 rep_idx   <- as.integer(args[2])
 data_root <- args[3]
 out_dir   <- args[4]
-arm       <- match.arg(args[5], c("mk", "mk_kp1", "mk_kp2", "mk_k9",
-                                   "mk_k15", "mk_k24", "mk_k40", "mk_ktrue",
-                                   "mk_tlshrink",
-                                   "mkp", "mkp_eg", "mkp_geo", "mkp_highk", "mkp_logs", "combine"))
+.ARMS <- c("mk", "mk_kp1", "mk_kp2", "mk_k9", "mk_k15", "mk_k24", "mk_k40",
+            "mk_ktrue", "mk_tlshrink",
+            "mkp", "mkp_eg", "mkp_geo", "mkp_highk", "mkp_logs")
+arm       <- match.arg(args[5], .ARMS)
 
 cat(sprintf("tree=%d rep=%d arm=%s\n", tree_idx, rep_idx, arm))
 tag <- sprintf("t%02d_r%02d", tree_idx, rep_idx)
@@ -48,16 +47,45 @@ dir.create(ckp_dir, showWarnings = FALSE)
   }, error = function(e) FALSE)
 }
 
+# Files an arm owns inside the shared `ckp_dir`.
+#
+# `ckp_dir` is per (tree, rep), NOT per arm, so all fourteen arms share one flat
+# namespace. A prefix glob on `paste0("^", arm, "_")` therefore matched every
+# arm whose name extends this one: purging `mk` deleted 40 foreign files across
+# `mk_k9`, `mk_k15`, `mk_k24`, `mk_k40`, `mk_kp1`, `mk_kp2`, `mk_ktrue` and
+# `mk_tlshrink` -- while those arms were still running and appending (#98). On
+# Lustre the victim keeps its handle on the unlinked inode, so it goes on
+# looking healthy and produces nothing recoverable.
+#
+# Anchoring on the suffixes this arm actually writes closes that: after
+# `^mk_` the next characters must be one of the three literals below, which
+# `k9_run_1.log` is not. The `_[0-9]+` groups are optional so the pre-2026-05-20
+# single-file layout is covered too.
+.arm_own_files <- function(arm) {
+  list.files(
+    ckp_dir,
+    pattern = sprintf("^%s_(checkpoint\\.rds|run(_[0-9]+)?\\.log|trees(_[0-9]+)?\\.nwk)$",
+                      arm),
+    full.names = TRUE
+  )
+}
+
 .sentinel  <- file.path(ckp_dir, ".slurm_job_id")
 .cur_job   <- Sys.getenv("SLURM_JOB_ID", "")
-.prev_job  <- if (file.exists(.sentinel)) readLines(.sentinel, warn = FALSE)[1L] else ""
+# A SIGKILL during writeLines() at the foot of this block leaves a zero-byte
+# sentinel, and readLines()[1L] is then NA_character_ -- so `if (.cur_job !=
+# .prev_job)` raised "missing value where TRUE/FALSE needed" on exactly the
+# task that most needed to resume (#103).
+.prev_job  <- if (file.exists(.sentinel)) {
+  .lines <- readLines(.sentinel, warn = FALSE)
+  if (length(.lines) && nzchar(.lines[1L])) .lines[1L] else ""
+} else ""
 
-if (.cur_job != .prev_job && arm != "combine") {
+if (.cur_job != .prev_job) {
   ckp_file <- file.path(ckp_dir, paste0(arm, "_checkpoint.rds"))
   if (file.exists(ckp_file) && !.validate_ckp(ckp_file)) {
     message("Corrupt ", arm, " checkpoint from job ", .prev_job, " — purging")
-    unlink(list.files(ckp_dir, pattern = paste0("^", arm, "_"),
-                      full.names = TRUE))
+    unlink(.arm_own_files(arm))
   } else if (.cur_job != "" && file.exists(ckp_file)) {
     message("Resuming valid ", arm, " checkpoint (prev job ", .prev_job,
             " -> new job ", .cur_job, ")")
@@ -65,68 +93,69 @@ if (.cur_job != .prev_job && arm != "combine") {
   if (.cur_job != "") writeLines(.cur_job, .sentinel)
 }
 
-# ---- Combine mode: read partial results, compute CID, save ------------------
-if (arm == "combine") {
-  suppressPackageStartupMessages(library(TreeDist))
+# ---- Shared helpers ----------------------------------------------------------
 
-  mk_file    <- file.path(out_dir, sprintf("mk_%s.rds", tag))
-  mkp_file   <- file.path(out_dir, sprintf("mkp_%s.rds", tag))
-  mkp_eg_file <- file.path(out_dir, sprintf("mkp_eg_%s.rds", tag))
-  if (!file.exists(mk_file))  stop("Missing Mk result: ", mk_file)
-  if (!file.exists(mkp_file)) stop("Missing Mk' result: ", mkp_file)
+# Observed state count per character column.
+#
+# A polymorphism or uncertainty token -- `{01}`, `(01)` -- is one cell, not an
+# extra state, and `MkPrimeData()` resolves it to NA (R/MkPrimeData.R:94-96).
+# Counting it as a state inflated `knownStates` for the fixed-k arms above the
+# kObs the package itself computes, so the baseline every other arm is measured
+# against was on a different convention from the package (#104).
+.kObsFromMatrix <- function(mat) {
+  apply(mat, 2L, function(col) {
+    length(unique(col[!col %in% c("?", "-") & !grepl("^[{(]", col)]))
+  })
+}
 
-  mk_res  <- readRDS(mk_file)
-  mkp_res <- readRDS(mkp_file)
-  mkp_eg_res <- if (file.exists(mkp_eg_file)) readRDS(mkp_eg_file) else NULL
+# Fraction of each run discarded before any posterior mean is taken.
+#
+# No task converges -- every run is truncated at the wall clock (#13) -- so a
+# mean over the whole stream is a mean that includes the warmup. The fraction
+# is recorded alongside the means so a consumer can tell what it is holding.
+.BURNIN_FRAC <- 0.25
 
-  # True tree
-  tree_file <- file.path(data_root, sprintf("tree_%02d/tree.nwk", tree_idx))
-  true_tree <- read.tree(tree_file)
-  true_tree <- UnrootTree(true_tree)
-  true_tree <- ape::reorder.phylo(true_tree, "cladewise")
-
-  reorder_multiPhylo <- function(trees) {
-    out <- lapply(trees, ape::reorder.phylo, order = "cladewise")
-    class(out) <- "multiPhylo"
-    out
+# Posterior mean of k' - kObs, over the post-burn-in part of EVERY run.
+#
+# `res$logFile` is the vector of per-run paths (R/RunMkPrime.R:2555). The old
+# code took `colMeans(res$samples)`, which is whichever runs the object happened
+# to hold and no burn-in at all (#102). Burn-in is applied per run and then
+# pooled, because the runs are separate chains: a pooled tail can otherwise
+# consist entirely of one run (#99).
+.UPostMeans <- function(res, mkd, burninFrac = .BURNIN_FRAC) {
+  logs <- res$logFile
+  mats <- if (length(logs) && all(file.exists(logs))) {
+    lapply(logs, ReadMkLog)
+  } else if (!is.null(res$samples) && nrow(res$samples) > 0L) {
+    list(res$samples)
+  } else {
+    list()
   }
 
-  cid_mk  <- as.numeric(
-    ClusteringInfoDistance(reorder_multiPhylo(mk_res$trees), true_tree,
-                          normalize = TRUE))
-  cid_mkp <- as.numeric(
-    ClusteringInfoDistance(reorder_multiPhylo(mkp_res$trees), true_tree,
-                          normalize = TRUE))
-  cid_mkp_eg <- if (!is.null(mkp_eg_res)) as.numeric(
-    ClusteringInfoDistance(reorder_multiPhylo(mkp_eg_res$trees), true_tree,
-                          normalize = TRUE)) else NA_real_
+  keep <- lapply(mats, function(m) {
+    n <- nrow(m)
+    if (is.null(n) || n == 0L) return(NULL)
+    m[seq.int(floor(n * burninFrac) + 1L, n), , drop = FALSE]
+  })
+  keep <- keep[!vapply(keep, is.null, logical(1L))]
 
-  result <- list(
-    tree_idx           = tree_idx,
-    rep_idx            = rep_idx,
-    n_char             = mkp_res$n_char,
-    kObs               = mkp_res$kObs,
-    cid_mk             = cid_mk,
-    cid_mkp            = cid_mkp,
-    cid_mkp_eg         = cid_mkp_eg,
-    n_samples_mk       = length(mk_res$trees),
-    n_samples_mkp      = length(mkp_res$trees),
-    n_samples_mkp_eg   = if (!is.null(mkp_eg_res)) length(mkp_eg_res$trees) else 0L,
-    u_post_means       = mkp_res$u_post_means,
-    u_post_means_eg    = if (!is.null(mkp_eg_res)) mkp_eg_res$u_post_means else NULL,
-    stop_reason_mk     = mk_res$stop_reason,
-    stop_reason_mkp    = mkp_res$stop_reason,
-    stop_reason_mkp_eg = if (!is.null(mkp_eg_res)) mkp_eg_res$stop_reason else NA_character_,
-    acceptance_mk      = mk_res$acceptance,
-    acceptance_mkp     = mkp_res$acceptance,
-    acceptance_mkp_eg  = if (!is.null(mkp_eg_res)) mkp_eg_res$acceptance else NULL
-  )
+  nChar <- mkd$nChar
+  if (!length(keep)) {
+    return(list(means = rep(NA_real_, nChar), n = 0L, nRuns = 0L,
+                burninFrac = burninFrac))
+  }
 
-  out_file <- file.path(out_dir, sprintf("result_%s.rds", tag))
-  saveRDS(result, out_file)
-  cat(sprintf("  Combined: %s  (Mk: %d trees, Mk': %d trees)\n",
-              out_file, length(mk_res$trees), length(mkp_res$trees)))
-  quit(save = "no", status = 0L)
+  pooled  <- do.call(rbind, keep)
+  kp_cols <- grep("^kPrime_", colnames(pooled), value = TRUE)
+  if (!length(kp_cols)) {
+    return(list(means = rep(NA_real_, nChar), n = nrow(pooled),
+                nRuns = length(keep), burninFrac = burninFrac))
+  }
+
+  list(means      = colMeans(pooled[, kp_cols, drop = FALSE]) - mkd$kObs,
+       n          = nrow(pooled),
+       nRuns      = length(keep),
+       burninFrac = burninFrac)
 }
 
 # ---- Locate data -------------------------------------------------------------
@@ -141,6 +170,13 @@ nex_files <- sort(list.files(dataset_dir, pattern = "^chr[0-9]+\\.nex$",
 stopifnot(length(nex_files) > 0)
 
 mat_list <- lapply(nex_files, TreeTools::ReadCharacters)
+# cbind joins positionally and keeps the first matrix's rownames, so two files
+# listing the same taxa in different orders would be merged silently. The real
+# data has one writer and a constant order, which is why this has never fired
+# -- the guard is what keeps it that way (#104).
+stopifnot(all(vapply(mat_list,
+                     function(m) identical(rownames(m), rownames(mat_list[[1L]])),
+                     logical(1L))))
 combined_mat <- do.call(cbind, mat_list)
 n_taxa_raw <- nrow(combined_mat)
 n_char_raw <- ncol(combined_mat)
@@ -156,11 +192,42 @@ file.remove(tmp_nex)
 
 cat(sprintf("  Loaded %d characters, %d taxa\n", n_char_raw, n_taxa_raw))
 
+# Record the character order this task actually used.
+#
+# `sort()` above is LEXICAL -- chr1, chr10, chr11, ..., chr2 -- so column i of
+# every `kPrime_i` log column is the i-th lexically sorted file, not character
+# i. `ground_truth.csv` is in numeric order, and a downstream script that pairs
+# the two positionally compares each character's posterior against a different
+# character's truth. That is EG-003 (#54): it turned a real rho of +0.31 into a
+# published -0.11, because the pairing was a permutation null by construction.
+#
+# Emitting the order removes the guess: a consumer can join on char_idx instead
+# of assuming an order that was never written down.
+write.csv(
+  data.frame(
+    lex_position = seq_along(nex_files),
+    file         = basename(nex_files),
+    char_idx     = as.integer(sub("^chr([0-9]+)\\.nex$", "\\1",
+                                  basename(nex_files)))
+  ),
+  file.path(ckp_dir, sprintf("%s_char_order.csv", arm)),
+  row.names = FALSE
+)
+
 # ---- Starting tree: NJ ------------------------------------------------------
 start_tree <- NJTree(pd, edgeLengths = TRUE)
 
 # ---- MCMC config ------------------------------------------------------------
-make_mcmc <- function(prefix, thin_iters = 10L) {
+# `thin_iters` used to default to 10 while every arm added since 2026-05 passed
+# 500, so four arms sampled 50x more densely than the rest -- and, because
+# `checkEvery` was a fixed iteration count, their convergence window was 1000
+# samples against the others' 20. The arms were not being held to the same
+# stopping criterion (#103). The default is now the value the majority already
+# pass, and `checkEvery` is derived from `thin` so the window is the same number
+# of SAMPLES whatever the thinning.
+make_mcmc <- function(prefix, thin_iters = 500L) {
+  checkEveryThin <- 50L                      # samples between convergence checks
+
   MkPrimeMCMC(
     nIter      = Inf,
     thin       = thin_iters,
@@ -178,10 +245,7 @@ make_mcmc <- function(prefix, thin_iters = 10L) {
     maxTime    = 7.5 * 3600,
     minEss     = 200L,
     maxRhat    = 1.1,
-    checkEvery = 2500L,  # keep checkEveryThin = checkEvery / thin >= 5 so the
-                         # convergence window (4 * checkEveryThin samples) stays
-                         # large enough for Rhat/ESS to be stable. If thinning
-                         # changes, scale this proportionally.
+    checkEvery = thin_iters * checkEveryThin,
     checkpointFile = file.path(ckp_dir, paste0(prefix, "_checkpoint.rds")),
     logFile        = file.path(ckp_dir, paste0(prefix, "_run.log")),
     treeFile       = file.path(ckp_dir, paste0(prefix, "_trees.nwk"))
@@ -195,8 +259,7 @@ make_mcmc <- function(prefix, thin_iters = 10L) {
               ignore.case = TRUE)) {
       message(label, " checkpoint error — purging and retrying: ",
               conditionMessage(e))
-      unlink(list.files(ckp_dir, pattern = paste0("^", label, "_"),
-                        full.names = TRUE))
+      unlink(.arm_own_files(label))
       call_fn()
     } else {
       stop(e)
@@ -207,9 +270,7 @@ make_mcmc <- function(prefix, thin_iters = 10L) {
 # ---- Run the requested arm ---------------------------------------------------
 if (arm == "mk") {
   # kObs from character matrix (before phyDat conversion)
-  kobs_raw <- apply(combined_mat, 2L, function(col) {
-    length(unique(col[!col %in% c("?", "-")]))
-  })
+  kobs_raw <- .kObsFromMatrix(combined_mat)
   var_orig <- which(kobs_raw > 1L)
   kObs_for_mk <- setNames(as.integer(kobs_raw[var_orig]),
                            as.character(var_orig))
@@ -238,9 +299,7 @@ if (arm == "mk") {
   # Mk with knownStates = kObs_i + 1 per character (one unobserved state
   # allowed). Reference point for EG vs mk floor: tests whether moving the
   # fixed-k floor up by one shifts tree recovery.
-  kobs_raw <- apply(combined_mat, 2L, function(col) {
-    length(unique(col[!col %in% c("?", "-")]))
-  })
+  kobs_raw <- .kObsFromMatrix(combined_mat)
   var_orig <- which(kobs_raw > 1L)
   kObs_for_mk <- setNames(as.integer(kobs_raw[var_orig]),
                            as.character(var_orig))
@@ -281,17 +340,10 @@ if (arm == "mk") {
               length(res$trees), res$stop_reason))
 
   # Posterior u means
-  if (is.null(res$samples) || nrow(res$samples) == 0L) {
-    res$samples <- ReadMkLog(res$logFile)
-  }
-  kp_cols <- grep("^kPrime_", colnames(res$samples), value = TRUE)
+  up   <- .UPostMeans(res, mkd_mkp)
   kObs <- mkd_mkp$kObs
-  if (length(kp_cols) > 0) {
-    k_post_means <- colMeans(res$samples[, kp_cols, drop = FALSE])
-    u_post_means <- k_post_means - kObs
-  } else {
-    u_post_means <- rep(NA_real_, mkd_mkp$nChar)
-  }
+  cat(sprintf("  u means over %d post-burn-in samples from %d run(s)\n",
+              up$n, up$nRuns))
 
   partial <- list(
     trees        = res$trees,
@@ -299,7 +351,10 @@ if (arm == "mk") {
     acceptance   = res$acceptance,
     n_char       = mkd_mkp$nChar,
     kObs         = as.integer(kObs),
-    u_post_means = u_post_means
+    u_post_means   = up$means,
+    n_post_samples = up$n,
+    n_runs_read    = up$nRuns,
+    burnin_frac    = up$burninFrac
   )
   saveRDS(partial, file.path(out_dir, sprintf("mkp_%s.rds", tag)))
 
@@ -322,17 +377,10 @@ if (arm == "mk") {
   cat(sprintf("  Mk' (empirical_geometric) done: %d trees, stop=%s\n",
               length(res$trees), res$stop_reason))
 
-  if (is.null(res$samples) || nrow(res$samples) == 0L) {
-    res$samples <- ReadMkLog(res$logFile)
-  }
-  kp_cols <- grep("^kPrime_", colnames(res$samples), value = TRUE)
+  up   <- .UPostMeans(res, mkd_mkp)
   kObs <- mkd_mkp$kObs
-  if (length(kp_cols) > 0) {
-    k_post_means <- colMeans(res$samples[, kp_cols, drop = FALSE])
-    u_post_means <- k_post_means - kObs
-  } else {
-    u_post_means <- rep(NA_real_, mkd_mkp$nChar)
-  }
+  cat(sprintf("  u means over %d post-burn-in samples from %d run(s)\n",
+              up$n, up$nRuns))
 
   partial <- list(
     trees        = res$trees,
@@ -340,7 +388,10 @@ if (arm == "mk") {
     acceptance   = res$acceptance,
     n_char       = mkd_mkp$nChar,
     kObs         = as.integer(kObs),
-    u_post_means = u_post_means
+    u_post_means   = up$means,
+    n_post_samples = up$n,
+    n_runs_read    = up$nRuns,
+    burnin_frac    = up$burninFrac
   )
   saveRDS(partial, file.path(out_dir, sprintf("mkp_eg_%s.rds", tag)))
 
@@ -365,17 +416,10 @@ if (arm == "mk") {
   cat(sprintf("  Mk' (geometric) done: %d trees, stop=%s\n",
               length(res$trees), res$stop_reason))
 
-  if (is.null(res$samples) || nrow(res$samples) == 0L) {
-    res$samples <- ReadMkLog(res$logFile)
-  }
-  kp_cols <- grep("^kPrime_", colnames(res$samples), value = TRUE)
+  up   <- .UPostMeans(res, mkd_mkp)
   kObs <- mkd_mkp$kObs
-  if (length(kp_cols) > 0) {
-    k_post_means <- colMeans(res$samples[, kp_cols, drop = FALSE])
-    u_post_means <- k_post_means - kObs
-  } else {
-    u_post_means <- rep(NA_real_, mkd_mkp$nChar)
-  }
+  cat(sprintf("  u means over %d post-burn-in samples from %d run(s)\n",
+              up$n, up$nRuns))
 
   partial <- list(
     trees        = res$trees,
@@ -383,7 +427,10 @@ if (arm == "mk") {
     acceptance   = res$acceptance,
     n_char       = mkd_mkp$nChar,
     kObs         = as.integer(kObs),
-    u_post_means = u_post_means
+    u_post_means   = up$means,
+    n_post_samples = up$n,
+    n_runs_read    = up$nRuns,
+    burnin_frac    = up$burninFrac
   )
   saveRDS(partial, file.path(out_dir, sprintf("mkp_geo_%s.rds", tag)))
 
@@ -391,9 +438,7 @@ if (arm == "mk") {
   # Mk with knownStates = kObs_i + 2 per character (two unobserved states
   # allowed). Companion to mk_kp1: tests whether the +1 advantage persists
   # or reverses as we move further above the observed floor.
-  kobs_raw <- apply(combined_mat, 2L, function(col) {
-    length(unique(col[!col %in% c("?", "-")]))
-  })
+  kobs_raw <- .kObsFromMatrix(combined_mat)
   var_orig <- which(kobs_raw > 1L)
   kObs_for_mk <- setNames(as.integer(kobs_raw[var_orig]),
                            as.character(var_orig))
@@ -418,9 +463,7 @@ if (arm == "mk") {
   # Mk with knownStates = 9 across all variable characters (fixed ceiling
   # comparator). 9 is a natural DNA-ish upper bound; well above observed
   # max kObs ~7 in this dataset.
-  kobs_raw <- apply(combined_mat, 2L, function(col) {
-    length(unique(col[!col %in% c("?", "-")]))
-  })
+  kobs_raw <- .kObsFromMatrix(combined_mat)
   var_orig <- which(kobs_raw > 1L)
   k9_for_mk <- setNames(rep(9L, length(var_orig)),
                          as.character(var_orig))
@@ -445,9 +488,7 @@ if (arm == "mk") {
   # Mk with knownStates = 15 across all variable characters. Tests
   # whether the flexibility advantage of k=9 over kObs+2 continues to
   # climb at higher k.
-  kobs_raw <- apply(combined_mat, 2L, function(col) {
-    length(unique(col[!col %in% c("?", "-")]))
-  })
+  kobs_raw <- .kObsFromMatrix(combined_mat)
   var_orig <- which(kobs_raw > 1L)
   k15_for_mk <- setNames(rep(15L, length(var_orig)),
                           as.character(var_orig))
@@ -471,9 +512,7 @@ if (arm == "mk") {
 } else if (arm == "mk_k24") {
   # Mk with knownStates = 24 across all variable characters. High-k
   # endpoint; tests whether the trend plateaus or keeps climbing.
-  kobs_raw <- apply(combined_mat, 2L, function(col) {
-    length(unique(col[!col %in% c("?", "-")]))
-  })
+  kobs_raw <- .kObsFromMatrix(combined_mat)
   var_orig <- which(kobs_raw > 1L)
   k24_for_mk <- setNames(rep(24L, length(var_orig)),
                           as.character(var_orig))
@@ -496,9 +535,7 @@ if (arm == "mk") {
 } else if (arm == "mk_k40") {
   # Mk with knownStates = 40 across all variable characters. Extended
   # endpoint; tests whether the k-ramp continues past k=24.
-  kobs_raw <- apply(combined_mat, 2L, function(col) {
-    length(unique(col[!col %in% c("?", "-")]))
-  })
+  kobs_raw <- .kObsFromMatrix(combined_mat)
   var_orig <- which(kobs_raw > 1L)
   k40_for_mk <- setNames(rep(40L, length(var_orig)),
                           as.character(var_orig))
@@ -540,17 +577,10 @@ if (arm == "mk") {
   cat(sprintf("  Mk' (geometric, high-k Beta(1,20)) done: %d trees, stop=%s\n",
               length(res$trees), res$stop_reason))
 
-  if (is.null(res$samples) || nrow(res$samples) == 0L) {
-    res$samples <- ReadMkLog(res$logFile)
-  }
-  kp_cols <- grep("^kPrime_", colnames(res$samples), value = TRUE)
+  up   <- .UPostMeans(res, mkd_mkp)
   kObs <- mkd_mkp$kObs
-  if (length(kp_cols) > 0) {
-    k_post_means <- colMeans(res$samples[, kp_cols, drop = FALSE])
-    u_post_means <- k_post_means - kObs
-  } else {
-    u_post_means <- rep(NA_real_, mkd_mkp$nChar)
-  }
+  cat(sprintf("  u means over %d post-burn-in samples from %d run(s)\n",
+              up$n, up$nRuns))
 
   partial <- list(
     trees        = res$trees,
@@ -558,7 +588,10 @@ if (arm == "mk") {
     acceptance   = res$acceptance,
     n_char       = mkd_mkp$nChar,
     kObs         = as.integer(kObs),
-    u_post_means = u_post_means
+    u_post_means   = up$means,
+    n_post_samples = up$n,
+    n_runs_read    = up$nRuns,
+    burnin_frac    = up$burninFrac
   )
   saveRDS(partial, file.path(out_dir, sprintf("mkp_highk_%s.rds", tag)))
 
@@ -583,17 +616,10 @@ if (arm == "mk") {
   cat(sprintf("  Mk' (logseries c=0.95) done: %d trees, stop=%s\n",
               length(res$trees), res$stop_reason))
 
-  if (is.null(res$samples) || nrow(res$samples) == 0L) {
-    res$samples <- ReadMkLog(res$logFile)
-  }
-  kp_cols <- grep("^kPrime_", colnames(res$samples), value = TRUE)
+  up   <- .UPostMeans(res, mkd_mkp)
   kObs <- mkd_mkp$kObs
-  if (length(kp_cols) > 0) {
-    k_post_means <- colMeans(res$samples[, kp_cols, drop = FALSE])
-    u_post_means <- k_post_means - kObs
-  } else {
-    u_post_means <- rep(NA_real_, mkd_mkp$nChar)
-  }
+  cat(sprintf("  u means over %d post-burn-in samples from %d run(s)\n",
+              up$n, up$nRuns))
 
   partial <- list(
     trees        = res$trees,
@@ -601,7 +627,10 @@ if (arm == "mk") {
     acceptance   = res$acceptance,
     n_char       = mkd_mkp$nChar,
     kObs         = as.integer(kObs),
-    u_post_means = u_post_means
+    u_post_means   = up$means,
+    n_post_samples = up$n,
+    n_runs_read    = up$nRuns,
+    burnin_frac    = up$burninFrac
   )
   saveRDS(partial, file.path(out_dir, sprintf("mkp_logs_%s.rds", tag)))
 
@@ -621,12 +650,13 @@ if (arm == "mk") {
   # Extract file-number from each lex-sorted file and look up k_true.
   file_nums <- as.integer(sub("^chr([0-9]+)\\.nex$", "\\1",
                               basename(nex_files)))
+  # match() takes the first hit, so a duplicated char_idx would silently pair
+  # every downstream k_true with the wrong character (#104).
+  stopifnot(!anyDuplicated(gt$char_idx))
   k_true_lex <- gt$k_true[match(file_nums, gt$char_idx)]
   stopifnot(all(!is.na(k_true_lex)))
 
-  kobs_raw <- apply(combined_mat, 2L, function(col) {
-    length(unique(col[!col %in% c("?", "-")]))
-  })
+  kobs_raw <- .kObsFromMatrix(combined_mat)
   var_orig <- which(kobs_raw > 1L)
   # Sanity: k_true must be >= kObs for variable characters
   stopifnot(all(k_true_lex[var_orig] >= kobs_raw[var_orig]))
@@ -668,9 +698,7 @@ if (arm == "mk") {
   # The hypothesis: if regularisation-via-short-TL is what makes mk_k40 win,
   # then a prior pulling TL well below truth should achieve at least
   # mk_k40-level CID — without changing the state-space spec.
-  kobs_raw <- apply(combined_mat, 2L, function(col) {
-    length(unique(col[!col %in% c("?", "-")]))
-  })
+  kobs_raw <- .kObsFromMatrix(combined_mat)
   var_orig <- which(kobs_raw > 1L)
   kObs_for_mk <- setNames(as.integer(kobs_raw[var_orig]),
                            as.character(var_orig))

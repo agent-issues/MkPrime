@@ -20,8 +20,9 @@ remaining mass is assumed to lie in the geometric tail.}
 \verb{0 < q < 1}.  Default \code{0} (no tail; pmf truncated at \code{nMax}).  When
 \code{0}, \code{body} must sum to 1.}
 
-\item{tail_start_k}{Integer.  Smallest \code{k} value in the tail.  Default
-\code{length(body) + 2L} (one past the body).}
+\item{tail_start_k}{Integer specifying the smallest \code{k} governed by the
+tail; must be \code{length(body) + 2L}, as the tail is anchored on the last
+\code{body} entry.}
 
 \item{nSource}{Optional integer.  Number of characters from which the
 body was derived (for provenance).}

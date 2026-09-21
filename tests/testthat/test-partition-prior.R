@@ -67,7 +67,7 @@
     codingStr                = model$coding,
     relabelFlag              = isTRUE(model$relabel),
     treeLengthShape          = model$treeLengthShape,
-    treeLengthRate           = model$treeLengthRate %||% 1,
+    treeLengthRate           = model$treeLengthRate,
     rateLossMeanlog          = model$rateLossMeanlog,
     rateLossSdlog            = model$rateLossSdlog,
     rateLogSdShape           = model$rateLogSdShape,
@@ -278,3 +278,91 @@ test_that("(D) R-side LogPrior agrees with eval_log_prior_partitioned_cpp to 1e-
 # Regression: §7a bit-identity test must stay green (not repeated here —
 # covered by test-partition-bitcompat-null.R which is run at every step).
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# (E) The partitioned initializer shares one McmcData builder with the chain
+# ---------------------------------------------------------------------------
+
+test_that(".InitStatePartitioned builds its McmcData via .InitMcmcData", {
+  src <- deparse(MkPrime:::.InitStatePartitioned)
+  # A second argument list here does not track the model's k'-prior flags.
+  expect_false(any(grepl("prepare_mcmc_data", src, fixed = TRUE)))
+  expect_true(any(grepl("[.]InitMcmcData[(]", src)))
+})
+
+
+test_that(".InitStatePartitioned log_lik still matches the legacy path", {
+  # The trivial class_rate = 1 starting point of a multi-class spec must give
+  # the legacy log_lik (plan v4 section 7b), including for missing tip states,
+  # which .InitMcmcData recodes from NA to -1.
+  set.seed(19)
+  nTip <- 7L
+  nChar <- 10L
+  mat <- matrix(sample(c("0", "1", "?"), nTip * nChar, replace = TRUE,
+                       prob = c(0.45, 0.45, 0.1)), nrow = nTip,
+                dimnames = list(paste0("t", seq_len(nTip)), NULL))
+  mat[1:2, ] <- c("0", "1")
+  pd <- MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd)
+  expect_true(any(vapply(mkd$partitions,
+                         function(p) anyNA(p$tip_states), logical(1))))
+
+  tree <- TreeTools::Preorder(TreeTools::RandomTree(pd, root = TRUE))
+  tree$edge.length <- rep(0.1, nrow(tree$edge))
+  model <- MkPrime:::.FinalizeModel(MkPrimeModel(), tree, mkd)
+  spec <- MkPrime:::.ValidatePartitionArgs(rep(1:2, each = 5L), "shape", mkd)
+
+  legacy <- MkPrime:::.InitState(tree, mkd, model)
+  mkd$partitions <- .BuildPartitions(mkd, partition = spec$partition)
+  partitioned <- MkPrime:::.InitStatePartitioned(tree, mkd, model, spec)
+
+  expect_equal(partitioned$log_lik, legacy$log_lik, tolerance = 1e-10)
+  expect_equal(partitioned$log_post,
+               partitioned$log_lik + partitioned$log_prior, tolerance = 1e-12)
+})
+
+
+test_that("hardcoded kPriorEmpiricalGeometric would change the prior", {
+  s <- .setup_prior()
+  model <- MkPrime:::.FinalizeModel(
+    MkPrimeModel(kPrimePrior = "empirical_geometric"), s$tree, s$mkd
+  )
+  state <- MkPrime:::.InitState(s$tree, s$mkd, model)
+  statePtr <- MkPrime:::.InitMcmcChain(state)
+
+  # The shared builder reflects the model, so C++ and R agree.
+  fromModel <- eval_log_prior_cpp(MkPrime:::.InitMcmcData(s$mkd, model),
+                                  statePtr)
+  expect_equal(fromModel, LogPrior(state, model, s$mkd), tolerance = 1e-10)
+
+  # kPriorEmpiricalGeometric = FALSE describes the plain geometric prior,
+  # which is a different distribution.
+  hardcoded <- prepare_mcmc_data(
+    partitions_r             = s$mkd$partitions,
+    kObs_r                   = s$mkd$kObs,
+    charTypes_r              = s$mkd$type,
+    hasNeo                   = any(s$mkd$type == "neomorphic"),
+    nCat                     = model$nCat,
+    codingStr                = model$coding,
+    relabelFlag              = isTRUE(model$relabel),
+    treeLengthShape          = model$treeLengthShape,
+    treeLengthRate           = model$treeLengthRate,
+    rateLossMeanlog          = model$rateLossMeanlog,
+    rateLossSdlog            = model$rateLossSdlog,
+    rateLogSdShape           = model$rateLogSdShape,
+    rateLogSdRate            = model$rateLogSdRate,
+    rateNeoMeanlog           = model$rateNeoMeanlog,
+    rateNeoSdlog             = model$rateNeoSdlog,
+    kprimeHyperA             = model$kprimeHyperA,
+    kprimeHyperB             = model$kprimeHyperB,
+    kPriorLogseries          = FALSE,
+    kprimeLogseriesC         = model$kprimeLogseriesC,
+    kPriorEmpiricalGeometric = FALSE,
+    empLogBody               = numeric(0),
+    unconditionalPrior       = identical(model$priorVariant, "unconditional")
+  )
+  gap <- eval_log_prior_cpp(hardcoded, statePtr) - fromModel
+  expect_true(is.finite(gap))
+  expect_gt(abs(gap), 1e-6)
+})

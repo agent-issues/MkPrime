@@ -7,11 +7,10 @@
 SetBurnin(posterior, burnin)
 }
 \arguments{
-\item{posterior}{An \code{MkPosterior} object.}
+\item{posterior}{\code{MkPosterior} object whose burnin to set.}
 
-\item{burnin}{Number of per-run samples to discard as burnin.
-If < 1, interpreted as a fraction of per-run sample count.
-If >= 1, interpreted as an absolute count.}
+\item{burnin}{Numeric specifying the number of per-run samples to discard;
+a value < 1 is instead a fraction of the shortest run's sample count.}
 }
 \value{
 A new \code{MkPosterior} with the updated burnin.

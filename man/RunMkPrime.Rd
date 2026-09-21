@@ -72,7 +72,9 @@ without constructing a separate object. Cannot be combined with an
 explicit \code{mcmc} argument.}
 }
 \value{
-An \code{MkPosterior} object.
+An \code{MkPosterior} object. Each run adapts its move schedule
+independently, so \verb{$moveWeights} holds run 1's frozen schedule;
+\verb{$runMoveWeights} lists every run's.
 }
 \description{
 Metropolis-Hastings MCMC sampling tree topology, branch lengths, model
