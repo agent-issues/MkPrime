@@ -586,6 +586,24 @@ test_that("a feasible gibbs cap still caps, and restores (#68)", {
 })
 
 
+test_that("a fully pinned schedule survives the gibbs cap round trip", {
+  pins <- c(nni = 0.3, gibbs_kPrime = 0.07895, spr = 0.42105, slice_p = 0.2)
+  capped <- .WarmupGibbsCap(pins, pins, 2L)
+  expect_lt(capped[["gibbs_kPrime"]], pins[["gibbs_kPrime"]])
+  expect_equal(.RestoreGibbsCap(capped, pins, 2L), pins)
+
+  # Pins exhaust the budget while a free move holds nothing.
+  withFree <- c(pins, tbr = 0)
+  capped <- .WarmupGibbsCap(withFree, pins, 2L)
+  expect_equal(.RestoreGibbsCap(capped, pins, 2L), withFree)
+
+  # Raw pins that do not sum to 1 restore to the normalized schedule.
+  raw <- pins * 5
+  capped <- replace(pins / (1 - 0.05), 2L, 0.02895 / 0.95)
+  expect_equal(.RestoreGibbsCap(capped, raw, 2L), pins)
+})
+
+
 test_that(".BuildResult surfaces every run's frozen schedule (#68)", {
   # Runs adapt independently, so `$moveWeights` -- run 1's -- presents one
   # run's decisions as though they were the analysis's.

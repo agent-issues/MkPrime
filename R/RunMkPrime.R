@@ -4776,7 +4776,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' Restore gibbs_kPrime to its pinned weight at the Warmup->Tuning/Sample transition.
 #'
 #' Undoes the reduction applied by `.WarmupGibbsCap()`. Excess weight is reclaimed
-#' proportionally from non-pinned moves.
+#' proportionally from non-pinned moves; if the pins fill the whole budget, the
+#' pinned schedule is rebuilt exactly.
 #'
 #' @keywords internal
 .RestoreGibbsCap <- function(weights, pinnedWeights, gibbsKpIdx) {
@@ -4792,8 +4793,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   freeIdx   <- setdiff(seq_along(weights), pinnedIdx)
   freeSum   <- sum(weights[freeIdx])
 
+  if (length(freeIdx) == 0L || sum(pinnedWeights) > 1 - 1e-12) {
+    # The pins fill the whole budget, so the cap's renormalization moved every
+    # pin; undoing only gibbs_kPrime's would leave the others displaced.
+    return(.NormalizeMoveWeights(weights, pinnedWeights))
+  }
+
   weights[[gibbsKpIdx]] <- gibbsPin
-  if (length(freeIdx) > 0L && freeSum > delta) {
+  if (freeSum > delta) {
     weights[freeIdx] <- weights[freeIdx] * (freeSum - delta) / freeSum
   } else {
     # As in .WarmupGibbsCap: the free moves cannot fund the restoration.
