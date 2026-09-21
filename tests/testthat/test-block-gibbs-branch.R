@@ -20,7 +20,7 @@
 .bgb_pts <- function(seed = 7711L, nTip = 6L) {
   set.seed(seed)
   tree  <- ape::rtree(nTip, rooted = FALSE)
-  tree  <- TreeTools::Preorder(tree)
+  tree  <- Preorder(tree)
   mat   <- matrix(
     sample(0:2, nTip * 5L, replace = TRUE),
     nrow = nTip, ncol = 5L,
@@ -163,7 +163,7 @@ test_that("BlockGibbsBranch works with heated chain (beta = 0.3)", {
 
 test_that(".BuildMoves sets dim = nEdge for block_gibbs_branch", {
   tree  <- ape::rtree(8L, rooted = FALSE)
-  tree  <- TreeTools::Preorder(tree)
+  tree  <- Preorder(tree)
   nEdge <- nrow(tree$edge)
   mcmc  <- MkPrimeMCMC(nIter = 100L, minWarmup = 50L, blockGibbsBranch = TRUE)
   moves <- MkPrime:::.BuildMoves(nEdge, nTrans = 3L, hasNeo = TRUE, mcmc)
@@ -174,7 +174,7 @@ test_that(".BuildMoves sets dim = nEdge for block_gibbs_branch", {
 
 test_that(".BuildMoves sets dim = 1 for all standard moves", {
   tree  <- ape::rtree(6L, rooted = FALSE)
-  tree  <- TreeTools::Preorder(tree)
+  tree  <- Preorder(tree)
   nEdge <- nrow(tree$edge)
   mcmc  <- MkPrimeMCMC(nIter = 100L, minWarmup = 50L)
   moves <- MkPrime:::.BuildMoves(nEdge, nTrans = 3L, hasNeo = TRUE, mcmc)

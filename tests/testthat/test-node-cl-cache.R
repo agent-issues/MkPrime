@@ -175,7 +175,7 @@ test_that("slice sampler invalidates CL cache (M-145 regression)", {
   mkd <- suppressWarnings(MkPrimeData(dat))
   model <- MkPrimeModel()
   tree <- ape::rtree(length(dat), tip.label = names(dat))
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)
 
   mcmcData <- MkPrime:::.InitMcmcData(mkd, model)

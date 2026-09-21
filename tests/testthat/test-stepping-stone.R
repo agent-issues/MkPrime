@@ -5,7 +5,7 @@ test_that("Stepping-stone returns finite marginal likelihood", {
                   0L, 0L, 1L, 1L),
                 nrow = 4,
                 dimnames = list(c("t1", "t2", "t3", "t4"), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(4719)
   ss <- mkp_stepping_stone(pd, tree, nStones = 8L, nIter = 100L,
@@ -26,7 +26,7 @@ test_that("Beta schedule is monotonically increasing", {
   tree <- read.tree(text = "((t1:0.1,t2:0.1):0.1,t3:0.1);")
   mat <- matrix(c(0L, 1L, 0L), nrow = 3,
                 dimnames = list(c("t1", "t2", "t3"), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(2841)
   ss <- mkp_stepping_stone(pd, tree, nStones = 5L, nIter = 50L,
@@ -43,7 +43,7 @@ test_that("Stepping-stone works with neomorphic characters", {
                   0L, 0L, 1L, 1L),
                 nrow = 4,
                 dimnames = list(c("t1", "t2", "t3", "t4"), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(6103)
   ss <- mkp_stepping_stone(pd, tree, neomorphic = 1L,
@@ -62,7 +62,7 @@ test_that("Stepping-stone works with fixed topology", {
                   0L, 0L, 1L, 1L),
                 nrow = 4,
                 dimnames = list(c("t1", "t2", "t3", "t4"), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(8234)
   ss <- mkp_stepping_stone(pd, tree, nStones = 5L, nIter = 100L,
@@ -82,7 +82,7 @@ test_that("More stones with more iterations gives consistent results", {
                   0L, 1L, 1L, 0L),
                 nrow = 4,
                 dimnames = list(c("t1", "t2", "t3", "t4"), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(1583)
   ss1 <- mkp_stepping_stone(pd, tree, nStones = 15L, nIter = 500L,
@@ -104,7 +104,7 @@ test_that("Stepping-stone accepts MkPrimeData input", {
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   mat <- matrix(c(0L, 1L, 0L, 1L), nrow = 4,
                 dimnames = list(c("t1", "t2", "t3", "t4"), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   set.seed(9428)
@@ -158,7 +158,7 @@ test_that("SE is positive and smaller with more iterations", {
                   0L, 0L, 1L, 1L),
                 nrow = 4,
                 dimnames = list(c("t1", "t2", "t3", "t4"), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(6712)
   ssSmall <- mkp_stepping_stone(pd, tree, nStones = 5L, nIter = 50L,

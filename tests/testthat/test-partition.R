@@ -164,7 +164,7 @@ test_that("unique_tip_states reconstruction matches tip_states via pattern_index
   set.seed(4419)
   mat <- matrix(sample(0:2, 10 * 8, replace = TRUE), 10, 8,
                 dimnames = list(paste0("t", 1:10), NULL))
-  pd  <- TreeTools::MatrixToPhyDat(mat)
+  pd  <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   for (part in mkd$partitions) {

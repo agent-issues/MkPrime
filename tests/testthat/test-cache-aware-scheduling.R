@@ -12,12 +12,12 @@ test_that("cacheBonus increases partial-CL move selection when cache is valid", 
   tipStates <- matrix(sample(0:1, nTip * nChar, replace = TRUE),
                       nrow = nTip, ncol = nChar,
                       dimnames = list(tree$tip.label, NULL))
-  pd <- TreeTools::MatrixToPhyDat(tipStates)
+  pd <- MatrixToPhyDat(tipStates)
   mkd <- MkPrimeData(pd, knownStates = rep(kStates, nChar))
 
   model <- MkPrimeModel(coding = "variable", nCat = 1L)
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)
-  tree0 <- TreeTools::Preorder(tree)
+  tree0 <- Preorder(tree)
 
   state0 <- MkPrime:::.InitState(tree0, mkd, model)
   state0$log_prior <- MkPrime:::LogPrior(state0, model, mkd)
@@ -80,12 +80,12 @@ test_that("cacheBonus = 1 reproduces default behaviour", {
   tipStates <- matrix(sample(0:1, nTip * nChar, replace = TRUE),
                       nrow = nTip, ncol = nChar,
                       dimnames = list(tree$tip.label, NULL))
-  pd <- TreeTools::MatrixToPhyDat(tipStates)
+  pd <- MatrixToPhyDat(tipStates)
   mkd <- MkPrimeData(pd, knownStates = rep(kStates, nChar))
 
   model <- MkPrimeModel(coding = "variable", nCat = 1L)
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)
-  tree0 <- TreeTools::Preorder(tree)
+  tree0 <- Preorder(tree)
 
   state0 <- MkPrime:::.InitState(tree0, mkd, model)
   state0$log_prior <- MkPrime:::LogPrior(state0, model, mkd)

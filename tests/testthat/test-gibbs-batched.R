@@ -240,7 +240,7 @@ test_that("batched Gibbs sweep on Sun2018 subset matches recomputation", {
   skip_if(nexFile == "", message = "TreeSearch not available")
 
   set.seed(9273)
-  pd <- TreeTools::ReadAsPhyDat(nexFile)
+  pd <- ReadAsPhyDat(nexFile)
   # Subset to 20 taxa for speed
   keep <- sample(names(pd), 20)
   pd <- pd[keep]

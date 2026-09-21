@@ -18,7 +18,7 @@ test_that("MCMC recovers tree_length from binary data (fixed topology)", {
   nNode <- 8 + 7  # tips + internals
   sim_mat <- matrix(NA_integer_, 8, nChar,
                     dimnames = list(true_tree$tip.label, NULL))
-  true_tree_po <- TreeTools::Preorder(true_tree)
+  true_tree_po <- Preorder(true_tree)
 
   for (ch in seq_len(nChar)) {
     root_state <- sample(0:1, 1)
@@ -43,7 +43,7 @@ test_that("MCMC recovers tree_length from binary data (fixed topology)", {
   variable <- apply(sim_mat, 2, function(x) length(unique(x)) > 1)
   sim_mat <- sim_mat[, variable, drop = FALSE]
 
-  pd <- TreeTools::MatrixToPhyDat(sim_mat)
+  pd <- MatrixToPhyDat(sim_mat)
   mkd <- MkPrimeData(pd)
 
   # Set expSteps near the true value for a reasonable prior
@@ -79,7 +79,7 @@ test_that("MCMC recovers rate_log_sd = 0 (no ACRV)", {
   nChar <- 40
   sim_mat <- matrix(NA_integer_, 4, nChar,
                     dimnames = list(true_tree$tip.label, NULL))
-  true_tree_po <- TreeTools::Preorder(true_tree)
+  true_tree_po <- Preorder(true_tree)
 
   for (ch in seq_len(nChar)) {
     root_state <- sample(0:1, 1)
@@ -103,7 +103,7 @@ test_that("MCMC recovers rate_log_sd = 0 (no ACRV)", {
   variable <- apply(sim_mat, 2, function(x) length(unique(x)) > 1)
   sim_mat <- sim_mat[, variable, drop = FALSE]
 
-  pd <- TreeTools::MatrixToPhyDat(sim_mat)
+  pd <- MatrixToPhyDat(sim_mat)
 
   set.seed(6614)
   result <- RunMkPrime(
@@ -131,7 +131,7 @@ test_that("MCMC: k' stays near kObs for simple binary data", {
   nChar <- 20
   sim_mat <- matrix(NA_integer_, 4, nChar,
                     dimnames = list(true_tree$tip.label, NULL))
-  true_tree_po <- TreeTools::Preorder(true_tree)
+  true_tree_po <- Preorder(true_tree)
 
   for (ch in seq_len(nChar)) {
     root_state <- sample(0:1, 1)
@@ -155,7 +155,7 @@ test_that("MCMC: k' stays near kObs for simple binary data", {
   variable <- apply(sim_mat, 2, function(x) length(unique(x)) > 1)
   sim_mat <- sim_mat[, variable, drop = FALSE]
 
-  pd <- TreeTools::MatrixToPhyDat(sim_mat)
+  pd <- MatrixToPhyDat(sim_mat)
 
   set.seed(8103)
   result <- RunMkPrime(
@@ -184,7 +184,7 @@ test_that("MCMC with topology moves recovers true tree from simulated data", {
     text = "((t1:0.15,t2:0.15):0.2,(t3:0.1,(t4:0.1,t5:0.1):0.15):0.1);"
   )
   true_tree <- unroot(true_tree)
-  true_tree <- TreeTools::Preorder(true_tree)
+  true_tree <- Preorder(true_tree)
   nTip <- 5L
   nNode <- true_tree$Nnode
   nTotal <- nTip + nNode
@@ -221,7 +221,7 @@ test_that("MCMC with topology moves recovers true tree from simulated data", {
   variable <- apply(sim_mat, 2, function(x) length(unique(x)) > 1)
   sim_mat <- sim_mat[, variable, drop = FALSE]
 
-  pd <- TreeTools::MatrixToPhyDat(sim_mat)
+  pd <- MatrixToPhyDat(sim_mat)
 
   # Start from a DIFFERENT tree to test topology search
   set.seed(7734)

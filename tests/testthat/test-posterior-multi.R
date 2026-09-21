@@ -5,7 +5,7 @@ test_that("print.MkPosterior works for single run", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(5194)
   result <- RunMkPrime(pd, tree,
@@ -21,7 +21,7 @@ test_that("print.MkPosterior works for multi-run", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(2204)
   result <- RunMkPrime(pd, tree,
@@ -38,7 +38,7 @@ test_that("print.MkPosterior shows tempering info", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(6842)
   result <- RunMkPrime(pd, tree,
@@ -55,7 +55,7 @@ test_that("summary.MkPosterior includes ESS and R-hat for multi-run", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(4487)
   result <- RunMkPrime(pd, tree,
@@ -74,7 +74,7 @@ test_that("summary.MkPosterior works for single run (no R-hat)", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(1498)
   result <- RunMkPrime(pd, tree,
@@ -90,7 +90,7 @@ test_that("plot.MkPosterior shows multi-run traces", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(7218)
   result <- RunMkPrime(pd, tree,
@@ -104,7 +104,7 @@ test_that("Result includes stop_reason and actual_iter", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(3382)
   result <- RunMkPrime(pd, tree,

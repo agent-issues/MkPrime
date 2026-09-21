@@ -97,7 +97,7 @@ test_that("Progress callback is invoked correct number of times", {
   tree$edge.length <- rep(0.1, nrow(tree$edge))
 
   set.seed(4817)
-  dat <- TreeTools::StringToPhyDat(
+  dat <- StringToPhyDat(
     setNames(replicate(8, paste(sample(0:1, n, TRUE), collapse = "")),
              tree$tip.label),
     tips = tree
@@ -133,7 +133,7 @@ test_that("Progress info list has correct structure", {
   tree$edge.length <- rep(0.1, nrow(tree$edge))
 
   set.seed(6293)
-  dat <- TreeTools::StringToPhyDat(
+  dat <- StringToPhyDat(
     setNames(replicate(6, paste(sample(0:1, n, TRUE), collapse = "")),
              tree$tip.label),
     tips = tree
@@ -182,7 +182,7 @@ test_that("Progress callback fires during warmup too", {
   tree$edge.length <- rep(0.1, nrow(tree$edge))
 
   set.seed(1438)
-  dat <- TreeTools::StringToPhyDat(
+  dat <- StringToPhyDat(
     setNames(replicate(6, paste(sample(0:1, n, TRUE), collapse = "")),
              tree$tip.label),
     tips = tree

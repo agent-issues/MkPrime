@@ -90,7 +90,7 @@ test_that("LogPrior under empirical_geometric prior is finite for valid state", 
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1), 4, 1,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
   model <- MkPrimeModel(expSteps = 10, kPrimePrior = "empirical_geometric")
 
@@ -114,7 +114,7 @@ test_that("user-supplied empiricalNObs overrides package default", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1), 4, 1,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   customEmp <- MkPrimeEmpiricalPrior(body = c(0.99, 0.01), tail_decay = 0)
@@ -156,12 +156,12 @@ test_that("convolution prior remains positive in the tail (no hard cutoff)", {
 test_that("R and C++ log priors agree numerically under empirical_geometric", {
   set.seed(42)
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   # Two transformational chars with different kObs (2 and 3).
   mat <- matrix(c(0, 1, 0, 1,
                   0, 1, 2, 0), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
   model <- MkPrimeModel(expSteps = 10, kPrimePrior = "empirical_geometric")
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)
@@ -204,7 +204,7 @@ test_that("empirical_geometric prior runs short MCMC end-to-end", {
                 dimnames = list(tree$tip.label, NULL))
   variable <- apply(mat, 2, function(x) length(unique(x)) > 1)
   mat <- mat[, variable, drop = FALSE]
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
   model <- MkPrimeModel(kPrimePrior = "empirical_geometric")
   res <- allow_warning(
@@ -242,7 +242,7 @@ test_that("empirical_geometric posterior on u beats geometric when true k' > kOb
   kTrue <- 5L
   true_tree <- rtree(nTip, tip.label = paste0("t", seq_len(nTip)))
   true_tree$edge.length <- runif(nrow(true_tree$edge), 0.05, 0.2)
-  true_tree <- TreeTools::Preorder(true_tree)
+  true_tree <- Preorder(true_tree)
 
   sim_mat <- matrix(NA_integer_, nTip, nChar,
                      dimnames = list(true_tree$tip.label, NULL))
@@ -267,7 +267,7 @@ test_that("empirical_geometric posterior on u beats geometric when true k' > kOb
   variable <- apply(sim_mat, 2, function(x) length(unique(x)) > 1)
   sim_mat <- sim_mat[, variable, drop = FALSE]
 
-  pd <- TreeTools::MatrixToPhyDat(sim_mat)
+  pd <- MatrixToPhyDat(sim_mat)
   mkd <- MkPrimeData(pd)
   # Restrict to characters where kObs < kTrue — the interesting ones.
   partialObs <- which(mkd$kObs < kTrue)
@@ -397,13 +397,13 @@ test_that("EG-001 Model A: priorVariant='unconditional' drops the Z_i correction
 
 
 test_that("EG-001 Model A: R and C++ EG priors agree under priorVariant='unconditional'", {
-  tree <- TreeTools::Preorder(
+  tree <- Preorder(
     read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);"))
   # Two transformational chars, kObs = 2 and 3 (the second exercises Z_i).
   mat <- matrix(c(0, 1, 0, 1,
                   0, 1, 2, 0), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
   model <- suppressMessages(
     MkPrimeModel(expSteps = 10, kPrimePrior = "empirical_geometric",
@@ -441,7 +441,7 @@ test_that("LogPrior reports which character carries a missing k' or kObs", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 1, 1, 0), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
   # Pinned, not defaulted: the frozen value below is sensitive to
   # `treeLengthShape` (3.0 nats) and `rateLogSdRate` (0.39 nats), twelve

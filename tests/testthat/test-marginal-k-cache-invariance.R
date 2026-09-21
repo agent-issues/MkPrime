@@ -56,7 +56,7 @@
 # Build an initialised marginal-k state at a given p.
 # Returns: list(dataPtr, statePtr, tree, mkd, model, state0)
 .cache_build_ptrs <- function(p) {
-  tree  <- TreeTools::Preorder(.cache_make_tree())
+  tree  <- Preorder(.cache_make_tree())
   pd    <- .cache_make_mkd()
   mkd   <- MkPrimeData(pd)
   model <- MkPrimeModel(kPrimePrior = "geometric",

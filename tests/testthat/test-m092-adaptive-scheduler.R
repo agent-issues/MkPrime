@@ -378,10 +378,10 @@ test_that("SBC-WARMUP-002: scalar moves keep ≥wMinScalar through warmup", {
   nTip <- 8L
   tr <- ape::rtree(nTip, tip.label = paste0("t", seq_len(nTip)))
   tr$edge.length <- rep_len(0.1, nrow(tr$edge))
-  tr <- TreeTools::Preorder(tr)
+  tr <- Preorder(tr)
   mat <- matrix(sample.int(2L, nTip * 20L, replace = TRUE) - 1L,
                 nTip, 20L, dimnames = list(tr$tip.label, NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
   model <- MkPrimeModel(coding = "variable", kPrimePrior = "geometric",
                          expSteps = 50)
@@ -440,7 +440,7 @@ test_that("run_mcmc_batch_cpp returns move_time_ns matrix", {
   mkd <- suppressWarnings(MkPrimeData(dat))
   model <- MkPrimeModel()
   tree <- ape::rtree(length(dat), tip.label = names(dat))
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)
 
   mcmcData <- MkPrime:::.InitMcmcData(mkd, model)
@@ -516,7 +516,7 @@ test_that("Adaptive scheduler runs end-to-end (short MCMC)", {
   mkd <- MkPrimeData(dat)
   model <- MkPrimeModel()
   tree <- ape::rtree(length(dat), tip.label = names(dat))
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
 
   mcmc <- MkPrimeMCMC(
     nIter = 600L, maxWarmup = 400L, minWarmup = 400L, thin = 10L,
@@ -534,7 +534,7 @@ test_that("User-pinned moveWeights preserved end-to-end", {
   mkd <- MkPrimeData(dat)
   model <- MkPrimeModel()
   tree <- ape::rtree(length(dat), tip.label = names(dat))
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
 
   mcmc <- MkPrimeMCMC(
     nIter = 600L, maxWarmup = 400L, minWarmup = 400L, thin = 10L,

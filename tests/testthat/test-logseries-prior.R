@@ -29,7 +29,7 @@ test_that("LogPrior logseries matches manual density calculation", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1), 4, 1,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd  <- TreeTools::MatrixToPhyDat(mat)
+  pd  <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   model <- MkPrimeModel(kPrimePrior = "logseries",
@@ -70,7 +70,7 @@ test_that("LogPrior logseries: higher k' has lower prior density", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat  <- matrix(c(0, 1, 0), 3, 1,
                  dimnames = list(c("t1", "t2", "t3"), NULL))
-  pd   <- TreeTools::MatrixToPhyDat(mat)
+  pd   <- MatrixToPhyDat(mat)
   mkd  <- MkPrimeData(pd)
   model <- MkPrimeModel(kPrimePrior = "logseries",
                         kprimeLogseriesC = 0.7,
@@ -101,7 +101,7 @@ test_that("LogPrior logseries: c out of bounds returns -Inf", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat  <- matrix(c(0, 1, 0), 3, 1,
                  dimnames = list(c("t1", "t2", "t3"), NULL))
-  pd   <- TreeTools::MatrixToPhyDat(mat)
+  pd   <- MatrixToPhyDat(mat)
   mkd  <- MkPrimeData(pd)
 
   base_state <- list(
@@ -129,7 +129,7 @@ test_that("LogPrior logseries: k' < kObs returns -Inf", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat  <- matrix(c(0, 1, 0), 3, 1,
                  dimnames = list(c("t1", "t2", "t3"), NULL))
-  pd   <- TreeTools::MatrixToPhyDat(mat)
+  pd   <- MatrixToPhyDat(mat)
   mkd  <- MkPrimeData(pd)
   model <- MkPrimeModel(kPrimePrior = "logseries",
                         kprimeLogseriesC = 0.7,
@@ -153,7 +153,7 @@ test_that("LogPrior logseries: works correctly with no p in state", {
   tree  <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat   <- matrix(c(0, 1, 0), 3, 1,
                   dimnames = list(c("t1", "t2", "t3"), NULL))
-  pd    <- TreeTools::MatrixToPhyDat(mat)
+  pd    <- MatrixToPhyDat(mat)
   mkd   <- MkPrimeData(pd)
   model <- MkPrimeModel(kPrimePrior = "logseries",
                         kprimeLogseriesC = 0.7, expSteps = 10)
@@ -198,7 +198,7 @@ test_that("print.MkPrimeModel runs without error for default model", {
 test_that(".ParamNames omits p column for logseries prior", {
   mat <- matrix(c(0, 1, 0, 1), 4, 1,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd  <- TreeTools::MatrixToPhyDat(mat)
+  pd  <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   nms_geo <- MkPrime:::.ParamNames(mkd, nEdge = 6L, kPrimePrior = "geometric")
@@ -222,7 +222,7 @@ test_that("RunMkPrime smoke test: logseries prior runs and produces correct colu
   mat  <- matrix(c(0, 1, 0, 1,
                    0, 0, 1, 1), 4, 2,
                  dimnames = list(paste0("t", 1:4), NULL))
-  pd   <- TreeTools::MatrixToPhyDat(mat)
+  pd   <- MatrixToPhyDat(mat)
   mkd  <- MkPrimeData(pd)
 
   model <- MkPrimeModel(
@@ -256,7 +256,7 @@ test_that("RunMkPrime smoke test: logseries prior runs and produces correct colu
 # 10. R and C++ agree on the logseries prior
 # ---------------------------------------------------------------------------
 test_that("LogPrior logseries agrees with cpp_log_prior", {
-  tree <- TreeTools::Preorder(
+  tree <- Preorder(
     ape::read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   )
   # Two transformational characters with different kObs (2 and 3), so a
@@ -264,7 +264,7 @@ test_that("LogPrior logseries agrees with cpp_log_prior", {
   mat <- matrix(c(0, 1, 0, 1,
                   0, 1, 2, 0), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  mkd <- MkPrimeData(TreeTools::MatrixToPhyDat(mat))
+  mkd <- MkPrimeData(MatrixToPhyDat(mat))
 
   for (logseriesC in c(0.05, 0.3, 0.7, 0.95, 0.999)) {
     model <- MkPrimeModel(kPrimePrior = "logseries",
@@ -295,13 +295,13 @@ test_that("LogPrior logseries agrees with cpp_log_prior", {
 
 
 test_that("LogPrior logseries and cpp_log_prior both reject k' < kObs", {
-  tree <- TreeTools::Preorder(
+  tree <- Preorder(
     ape::read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   )
   mat <- matrix(c(0, 1, 0, 1,
                   0, 1, 2, 0), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  mkd <- MkPrimeData(TreeTools::MatrixToPhyDat(mat))
+  mkd <- MkPrimeData(MatrixToPhyDat(mat))
   model <- MkPrimeModel(kPrimePrior = "logseries", kprimeLogseriesC = 0.7,
                         expSteps = 10)
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)

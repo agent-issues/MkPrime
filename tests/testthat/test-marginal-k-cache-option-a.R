@@ -56,7 +56,7 @@
 }
 
 .cache_build <- function(p) {
-  tree  <- TreeTools::Preorder(.cache_make_tree())
+  tree  <- Preorder(.cache_make_tree())
   pd    <- .cache_make_mkd()
   mkd   <- MkPrimeData(pd)
   model <- MkPrimeModel(kPrimePrior = "geometric",

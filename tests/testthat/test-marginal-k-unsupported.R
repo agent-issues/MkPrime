@@ -15,11 +15,11 @@ library("TreeTools", quietly = TRUE)
              t3 = c("1", "1", "2"), t4 = c("1", "0", "2"),
              t5 = c("0", "1", "0"), t6 = c("1", "0", "1"))
   colnames(m) <- c("c1", "c2", "c3")
-  MkPrimeData(TreeTools::MatrixToPhyDat(m), knownStates = knownStates)
+  MkPrimeData(MatrixToPhyDat(m), knownStates = knownStates)
 }
 
 .mku_tree <- function(mkd) {
-  tr <- TreeTools::PectinateTree(rownames(mkd$matrix))
+  tr <- PectinateTree(rownames(mkd$matrix))
   tr$edge.length <- rep(0.1, nrow(tr$edge))
   tr
 }

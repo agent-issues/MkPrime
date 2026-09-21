@@ -161,7 +161,7 @@ test_that("Joint 2D moves produce valid posterior", {
   skip_on_cran()
 
   nexFile <- system.file("datasets/Sun2018.nex", package = "TreeSearch")
-  pd <- TreeTools::ReadAsPhyDat(nexFile)
+  pd <- ReadAsPhyDat(nexFile)
   mkd <- MkPrimeData(pd)
 
   cfg <- MkPrimeMCMC(
@@ -185,7 +185,7 @@ test_that("joint2d = FALSE excludes joint moves", {
   skip_on_cran()
 
   nexFile <- system.file("datasets/Sun2018.nex", package = "TreeSearch")
-  pd <- TreeTools::ReadAsPhyDat(nexFile)
+  pd <- ReadAsPhyDat(nexFile)
   mkd <- MkPrimeData(pd)
 
   cfg <- MkPrimeMCMC(
@@ -210,7 +210,7 @@ test_that("joint_tl_rn runs and produces acceptance on mixed data", {
 
   # Force a binary character to be neomorphic so hasNeo gates joint_tl_rn in.
   nexFile <- system.file("datasets/Sun2018.nex", package = "TreeSearch")
-  pd <- TreeTools::ReadAsPhyDat(nexFile)
+  pd <- ReadAsPhyDat(nexFile)
   mkdBase <- MkPrimeData(pd)
   binaryChars <- which(mkdBase$kObs == 2L)
   skip_if(length(binaryChars) == 0L, "no binary characters to mark neomorphic")

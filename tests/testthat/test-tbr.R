@@ -4,7 +4,7 @@ test_that("TBR produces valid binary tree", {
   set.seed(4917)
   tree <- rtree(12)
   tree <- unroot(tree)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   nTip <- length(tree$tip.label)
   nEdge <- nrow(tree$edge)
   tl <- sum(tree$edge.length)
@@ -35,7 +35,7 @@ test_that("TBR preserves total tree length", {
   set.seed(3156)
   tree <- rtree(8)
   tree <- unroot(tree)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   tl <- sum(tree$edge.length)
   rel_br <- tree$edge.length / tl
 
@@ -51,7 +51,7 @@ test_that("TBR changes topology on medium tree", {
   set.seed(7294)
   tree <- rtree(10)
   tree <- unroot(tree)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   tl <- sum(tree$edge.length)
   rel_br <- tree$edge.length / tl
   originalNewick <- write.tree(tree)
@@ -70,7 +70,7 @@ test_that("TBR Hastings ratio is finite", {
   set.seed(5283)
   tree <- rtree(15)
   tree <- unroot(tree)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   tl <- sum(tree$edge.length)
   rel_br <- tree$edge.length / tl
 
@@ -85,7 +85,7 @@ test_that("TBR Hastings ratio is finite", {
 
 test_that("TBR on small tree (5 tips) works", {
   tree <- read.tree(text = "(t1:1,(t2:2,(t3:3,(t4:4,t5:5):6):7):8);")
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   nTip <- length(tree$tip.label)
   nEdge <- nrow(tree$edge)
   tl <- sum(tree$edge.length)
@@ -110,7 +110,7 @@ test_that("TBR chain explores tree space", {
   set.seed(2850)
   tree <- rtree(8)
   tree <- unroot(tree)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   tl <- sum(tree$edge.length)
   rel_br <- tree$edge.length / tl
 
@@ -134,7 +134,7 @@ test_that("TBR degenerates to SPR-like behavior for tip prune", {
   # When v is a tip, no subtree re-rooting occurs.
   # The move should still produce valid trees.
   tree <- read.tree(text = "(t1:0.1,t2:0.2,t3:0.3);")
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   tl <- sum(tree$edge.length)
   rel_br <- tree$edge.length / tl
 
@@ -150,7 +150,7 @@ test_that("TBR preserves node set", {
   set.seed(1397)
   tree <- rtree(20)
   tree <- unroot(tree)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   nTip <- length(tree$tip.label)
   tl <- sum(tree$edge.length)
   rel_br <- tree$edge.length / tl
@@ -170,7 +170,7 @@ test_that("TBR on larger tree (30 tips) preserves structure", {
   set.seed(9463)
   tree <- rtree(30)
   tree <- unroot(tree)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   nTip <- length(tree$tip.label)
   nEdge <- nrow(tree$edge)
   tl <- sum(tree$edge.length)

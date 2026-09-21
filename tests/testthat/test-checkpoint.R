@@ -5,7 +5,7 @@ test_that("Checkpoint file is written at check intervals", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".rds")
   on.exit(unlink(cp_file), add = TRUE)
@@ -32,7 +32,7 @@ test_that("Checkpoint contains valid run state", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".rds")
   on.exit(unlink(cp_file), add = TRUE)
@@ -58,7 +58,7 @@ test_that("ResumeMkPrime continues from checkpoint", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".rds")
   log_file <- tempfile(fileext = ".log")
@@ -89,7 +89,7 @@ test_that("RunMkPrime auto-resumes from existing checkpoint", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".rds")
   log_file <- tempfile(fileext = ".log")
@@ -118,7 +118,7 @@ test_that("RunMkPrime overwrite = TRUE ignores existing checkpoint", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".rds")
   on.exit(unlink(cp_file), add = TRUE)
@@ -143,7 +143,7 @@ test_that("Checkpoint without checkpointFile does nothing", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(6611)
   # No checkpointFile: should run normally
@@ -162,7 +162,7 @@ test_that("Initial checkpoint is written before first batch", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".ckp")
   log_file <- tempfile(fileext = ".log")
@@ -190,7 +190,7 @@ test_that("Checkpoint model is used on auto-resume (tree = NULL)", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".ckp")
   log_file <- tempfile(fileext = ".log")
@@ -218,7 +218,7 @@ test_that("Warmup state (logPostHistory, nStableConsecutive) persisted in checkp
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".ckp")
   log_file <- tempfile(fileext = ".log")
@@ -249,7 +249,7 @@ test_that("Tuning state persisted and tuningBuf re-allocated on resume", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".ckp")
   log_file <- tempfile(fileext = ".log")
@@ -302,7 +302,7 @@ test_that("Shared env update fires at batch boundaries (multi-run)", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".ckp")
   log_file <- tempfile(fileext = ".log")
@@ -339,7 +339,7 @@ test_that("maxTime break saves checkpoint (not just initial)", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".ckp")
   log_file <- tempfile(fileext = ".log")
@@ -374,7 +374,7 @@ test_that("Move weights stored in run state and checkpoint", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".ckp")
   log_file <- tempfile(fileext = ".log")
@@ -406,7 +406,7 @@ test_that("Resumed run uses checkpointed move weights", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".ckp")
   log_file <- tempfile(fileext = ".log")
@@ -438,7 +438,7 @@ test_that("Serial multi-run checkpoint stores serialPhase", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".ckp")
   log_file <- tempfile(fileext = ".log")
@@ -529,7 +529,7 @@ test_that("Resume preserves pre-checkpoint trees and appends new ones (serial)",
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file   <- tempfile(fileext = ".ckp")
   log_file  <- tempfile(fileext = ".log")
@@ -580,7 +580,7 @@ test_that("Resume truncates post-checkpoint trees written before SIGKILL", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file   <- tempfile(fileext = ".ckp")
   log_file  <- tempfile(fileext = ".log")
@@ -621,7 +621,7 @@ test_that("Per-run tree files separate by run", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   log_base  <- tempfile()
   tree_base <- tempfile()
@@ -663,7 +663,7 @@ test_that("Resume preserves pre-checkpoint trees and appends new ones (nRuns=2 s
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   log_base  <- tempfile()
   tree_base <- tempfile()
@@ -714,7 +714,7 @@ test_that("Resume aborts on tree/log desync (fewer trees than checkpoint)", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file   <- tempfile(fileext = ".ckp")
   log_file  <- tempfile(fileext = ".log")

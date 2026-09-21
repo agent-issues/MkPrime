@@ -24,8 +24,8 @@ test_that("auto thin resolves to number of active moves", {
   nChar <- 10L
   mat <- matrix(sample(0:2, nTip * nChar, replace = TRUE), nTip, nChar,
                 dimnames = list(paste0("t", seq_len(nTip)), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
-  tree <- TreeTools::NJTree(pd, edgeLengths = TRUE)
+  pd <- MatrixToPhyDat(mat)
+  tree <- NJTree(pd, edgeLengths = TRUE)
 
   # Default config: gibbsSpr = TRUE, gibbsSubtreeSwap = TRUE, tbr = TRUE
   mcmc_auto <- suppressWarnings(MkPrimeMCMC(
@@ -57,8 +57,8 @@ test_that("auto thin changes with move configuration", {
   nChar <- 10L
   mat <- matrix(sample(0:2, nTip * nChar, replace = TRUE), nTip, nChar,
                 dimnames = list(paste0("t", seq_len(nTip)), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
-  tree <- TreeTools::NJTree(pd, edgeLengths = TRUE)
+  pd <- MatrixToPhyDat(mat)
+  tree <- NJTree(pd, edgeLengths = TRUE)
 
   # Minimal moves: no Gibbs, no TBR
   # Expected: tree_length, branch_lengths, nni, spr,

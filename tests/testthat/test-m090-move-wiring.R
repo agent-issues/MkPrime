@@ -199,7 +199,7 @@ test_that("All new move names resolve to valid integer codes", {
 test_that("set_branch_bins sets nBranchBins on McmcData", {
   set.seed(4821L)
   tree <- ape::rtree(6L, rooted = FALSE)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   mat <- matrix(sample(0:2, 6L * 5L, replace = TRUE), nrow = 6L,
                 dimnames = list(tree$tip.label, NULL))
   pd    <- MatrixToPhyDat(mat)
@@ -215,7 +215,7 @@ test_that("set_branch_bins sets nBranchBins on McmcData", {
 test_that("Weighted move works with custom nBranchBins via McmcData", {
   set.seed(7193L)
   tree <- ape::rtree(6L, rooted = FALSE)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   nEdge <- nrow(tree$edge)
   mat <- matrix(sample(0:2, 6L * 5L, replace = TRUE), nrow = 6L,
                 dimnames = list(tree$tip.label, NULL))
@@ -273,11 +273,11 @@ test_that(".AdaptTuning skips Gibbs/Weighted moves (NA tuning keys)", {
 # ── Integration tests (slow) ─────────────────────────────────────────────
 
 .WiringFixture <- function() {
-  tree <- TreeTools::BalancedTree(8)
+  tree <- BalancedTree(8)
   tree$edge.length <- rep(0.1, nrow(tree$edge))
   mat <- matrix(sample(0:2, 8 * 5, replace = TRUE), nrow = 8,
                 dimnames = list(tree$tip.label, NULL))
-  list(tree = tree, data = MkPrimeData(TreeTools::MatrixToPhyDat(mat)))
+  list(tree = tree, data = MkPrimeData(MatrixToPhyDat(mat)))
 }
 
 # A 200-iteration warmup is not expected to stabilise.

@@ -46,7 +46,7 @@ test_that("nCore = 1 runs serially", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
                  dimnames = list(paste0("t", 1:4), NULL))
-  pd   <- TreeTools::MatrixToPhyDat(mat)
+  pd   <- MatrixToPhyDat(mat)
 
   result <- suppressWarnings(RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 400L, maxWarmup = 200L,
@@ -58,7 +58,7 @@ test_that("nCore > 1 with nRuns = 1 silently runs serially", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
                  dimnames = list(paste0("t", 1:4), NULL))
-  pd   <- TreeTools::MatrixToPhyDat(mat)
+  pd   <- MatrixToPhyDat(mat)
 
   result <- suppressWarnings(RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 400L, maxWarmup = 200L,
@@ -74,7 +74,7 @@ test_that("parallel orchestration with nCore = 2 returns valid MkPosterior", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
                  dimnames = list(paste0("t", 1:4), NULL))
-  pd   <- TreeTools::MatrixToPhyDat(mat)
+  pd   <- MatrixToPhyDat(mat)
 
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(
@@ -102,7 +102,7 @@ test_that("mc.cores option triggers parallel mode", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
                  dimnames = list(paste0("t", 1:4), NULL))
-  pd   <- TreeTools::MatrixToPhyDat(mat)
+  pd   <- MatrixToPhyDat(mat)
 
   options(mc.cores = 2L)
   result <- RunMkPrime(pd, tree,
@@ -130,7 +130,7 @@ test_that("pool dispatch: nRuns > nCore launches in waves", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
                  dimnames = list(paste0("t", 1:4), NULL))
-  pd   <- TreeTools::MatrixToPhyDat(mat)
+  pd   <- MatrixToPhyDat(mat)
 
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(
@@ -186,7 +186,7 @@ test_that("pool dispatch: wave behaviour confirmed by launch times (PAR-004)", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
                  dimnames = list(paste0("t", 1:4), NULL))
-  pd   <- TreeTools::MatrixToPhyDat(mat)
+  pd   <- MatrixToPhyDat(mat)
 
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(
@@ -225,7 +225,7 @@ test_that("maxTime fires mid-pool with nRuns > nCore returns valid result (PAR-0
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
                  dimnames = list(paste0("t", 1:4), NULL))
-  pd   <- TreeTools::MatrixToPhyDat(mat)
+  pd   <- MatrixToPhyDat(mat)
 
   # nRuns = 6, nCore = 2 → 3 waves. maxTime = 3L fires before the queue
   # drains, leaving some pool slots unlaunched.
@@ -264,7 +264,7 @@ test_that("parallel mode auto-assigns logFile when logFile = NULL", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
                  dimnames = list(paste0("t", 1:4), NULL))
-  pd   <- TreeTools::MatrixToPhyDat(mat)
+  pd   <- MatrixToPhyDat(mat)
 
   # No logFile supplied — samples loaded into memory after temp-log cleanup
   result <- RunMkPrime(pd, tree,
@@ -286,7 +286,7 @@ test_that("parallel mode saves checkpoint when checkpointFile is set", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
                  dimnames = list(paste0("t", 1:4), NULL))
-  pd   <- TreeTools::MatrixToPhyDat(mat)
+  pd   <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".rds")
   on.exit(unlink(cp_file), add = TRUE)
@@ -338,7 +338,7 @@ test_that("dropped_runs populated when workers are killed by short cancelGrace (
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
                  dimnames = list(paste0("t", 1:4), NULL))
-  pd   <- TreeTools::MatrixToPhyDat(mat)
+  pd   <- MatrixToPhyDat(mat)
 
   # Use a long checkEvery so workers are mid-batch when cancelled.
   result <- suppressWarnings(RunMkPrime(pd, tree,

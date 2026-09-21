@@ -1,6 +1,6 @@
 test_that("Constant site prob is in [0, 1]", {
   tree <- read.tree(text = "((t1:0.1,t2:0.1):0.1,t3:0.2);")
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
 
   for (k in c(2, 3, 5)) {
     pconst <- MkPrime:::constant_site_prob_jc(
@@ -16,7 +16,7 @@ test_that("Constant site prob is in [0, 1]", {
 test_that("Constant site prob → 1 with zero-length branches", {
   # Near-zero branch lengths: tips are nearly identical to root
   tree <- read.tree(text = "((t1:1e-10,t2:1e-10):1e-10,t3:1e-10);")
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
 
   pconst <- MkPrime:::constant_site_prob_jc(
     tree$edge[, 1], tree$edge[, 2], tree$edge.length,
@@ -31,7 +31,7 @@ test_that("Constant site prob → 1 with zero-length branches", {
 
 test_that("Constant site prob → 1/k with very long branches", {
   tree <- read.tree(text = "((t1:100,t2:100):100,t3:100);")
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
 
   for (k in c(2, 3, 4)) {
     pconst <- MkPrime:::constant_site_prob_jc(
@@ -49,7 +49,7 @@ test_that("Constant site prob → 1/k with very long branches", {
 
 test_that("Ascertainment correction makes likelihood more negative", {
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   root_freqs <- rep(1 / 3, 3)
   tips <- matrix(c(0L, 1L, 2L, 0L), ncol = 1)
 
@@ -74,7 +74,7 @@ test_that("Ascertainment correction makes likelihood more negative", {
 
 test_that("MkN constant site prob with rate_loss=1 matches JC(2)", {
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   root_freqs <- c(0.5, 0.5)
   rates <- MkPrime:::DiscreteLognormalRates(0.5, 6L)
 
@@ -96,7 +96,7 @@ test_that("MkN constant site prob with rate_loss=1 matches JC(2)", {
 
 test_that("Singleton site prob JC is in (0, 1)", {
   tree <- read.tree(text = "((t1:0.1,t2:0.1):0.1,t3:0.2);")
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
 
   for (k in c(2, 3, 5)) {
     psingle <- MkPrime:::singleton_site_prob_jc(
@@ -111,7 +111,7 @@ test_that("Singleton site prob JC is in (0, 1)", {
 
 test_that("Singleton prob → 0 with zero-length branches", {
   tree <- read.tree(text = "((t1:1e-10,t2:1e-10):1e-10,t3:1e-10);")
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
 
   psingle <- MkPrime:::singleton_site_prob_jc(
     tree$edge[, 1], tree$edge[, 2], tree$edge.length,
@@ -125,7 +125,7 @@ test_that("Singleton prob → 0 with zero-length branches", {
 
 test_that("P(constant) + P(singleton) < 1", {
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
 
   for (k in c(2, 3, 5)) {
     rf <- rep(1 / k, k)
@@ -146,7 +146,7 @@ test_that("P(constant) + P(singleton) < 1", {
 
 test_that("MkN singleton prob with rate_loss=1 matches JC(2)", {
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   root_freqs <- c(0.5, 0.5)
 
   psingle_jc <- MkPrime:::singleton_site_prob_jc(
@@ -165,7 +165,7 @@ test_that("MkN singleton prob with rate_loss=1 matches JC(2)", {
 
 test_that("MkN singleton prob varies with rate_loss", {
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
 
   # Use rate_loss values that aren't reciprocals (avoids state-swap symmetry)
   ps1 <- MkPrime:::singleton_site_prob_mkn(
@@ -184,7 +184,7 @@ test_that("MkN singleton prob varies with rate_loss", {
 
 test_that("Singleton prob works with ACRV", {
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   rf <- rep(1 / 3, 3)
 
   psingle_no_acrv <- MkPrime:::singleton_site_prob_jc(
@@ -205,7 +205,7 @@ test_that("Singleton prob works with ACRV", {
 
 test_that("P(uninf) → 1 with very short branches", {
   tree <- read.tree(text = "((t1:0.001,t2:0.001):0.001,(t3:0.001,t4:0.001):0.001);")
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
 
   for (k in c(2, 3)) {
     rf <- rep(1 / k, k)
@@ -236,7 +236,7 @@ test_that("MkpLogLikelihood accepts coding='informative'", {
                   0L, 0L, 0L, 0L, 0L, 1L),
                 nrow = 6,
                 dimnames = list(tree$tip.label, NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   ll_none <- MkpLogLikelihood(tree, mkd, coding = "none", relabel = FALSE)
@@ -257,14 +257,14 @@ test_that("Informative correction matches manual calculation", {
                   0L, 0L, 1L, 1L),
                 nrow = 4,
                 dimnames = list(c("t1", "t2", "t3", "t4"), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   ll_none <- MkpLogLikelihood(tree, mkd, coding = "none", relabel = FALSE)
   ll_inf  <- MkpLogLikelihood(tree, mkd, coding = "informative", relabel = FALSE)
 
   # Manual calculation
-  tree2 <- TreeTools::Preorder(tree)
+  tree2 <- Preorder(tree)
   p <- tree2$edge[, 1]; ch <- tree2$edge[, 2]; el <- tree2$edge.length
   pconst <- MkPrime:::constant_site_prob_jc(p, ch, el, 4L, 2L, c(0.5, 0.5), 1.0)
   psingle <- MkPrime:::singleton_site_prob_jc(p, ch, el, 4L, 2L, c(0.5, 0.5), 1.0)
@@ -282,7 +282,7 @@ test_that("Informative correction works with neomorphic chars", {
                   0L, 0L, 1L, 1L),
                 nrow = 4,
                 dimnames = list(c("t1", "t2", "t3", "t4"), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd, neomorphic = 1:2)
 
   ll_var <- MkpLogLikelihood(tree, mkd, rate_loss = 1.5,
@@ -302,7 +302,7 @@ test_that("MkPrimeModel accepts coding='informative'", {
 
 test_that("Constant site prob works with ACRV", {
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   root_freqs <- rep(1 / 3, 3)
 
   pconst_no_acrv <- MkPrime:::constant_site_prob_jc(
@@ -324,7 +324,7 @@ test_that("Constant site prob works with ACRV", {
 
 
 test_that("het constant-site probability matches a brute-force reference", {
-  tree <- TreeTools::Preorder(
+  tree <- Preorder(
     ape::read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);"))
   parent <- tree$edge[, 1]
   child <- tree$edge[, 2]

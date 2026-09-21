@@ -15,7 +15,7 @@
 .tiny_fixture <- function() {
   list(
     tree = ape::read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);"),
-    pd   = TreeTools::MatrixToPhyDat(matrix(
+    pd   = MatrixToPhyDat(matrix(
       c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
       dimnames = list(paste0("t", 1:4), NULL)
     ))

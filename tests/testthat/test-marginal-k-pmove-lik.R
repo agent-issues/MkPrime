@@ -66,7 +66,7 @@
 }
 
 .pmove_build_ptrs <- function(p) {
-  tree  <- TreeTools::Preorder(.pmove_make_tree())
+  tree  <- Preorder(.pmove_make_tree())
   pd    <- .pmove_make_mkd()
   mkd   <- MkPrimeData(pd)
   model <- MkPrimeModel(kPrimePrior = "geometric",

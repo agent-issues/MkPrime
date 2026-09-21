@@ -30,7 +30,7 @@
   model <- MkPrimeModel()
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)
   # RunMkPrime reorders to canonical preorder before .InitState; replicate that here.
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
 
   state0   <- MkPrime:::.InitState(tree, mkd, model)
   dataPtr  <- MkPrime:::.InitMcmcData(mkd, model)

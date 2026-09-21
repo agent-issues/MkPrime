@@ -155,12 +155,12 @@ test_that("Heated .DoMove is more permissive than cold", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
   model <- MkPrimeModel()
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)
 
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   state <- MkPrime:::.InitState(tree, mkd, model)
 
   tuning <- list(
@@ -200,11 +200,11 @@ test_that(".DoMove with beta=1 is identical to unheated", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
   model <- MkPrimeModel()
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   state <- MkPrime:::.InitState(tree, mkd, model)
   tuning <- MkPrimeMCMC()$tuning
 
@@ -236,7 +236,7 @@ test_that("RunMkPrime with nChains=1 matches Phase 4 behavior", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(5194)
   result <- RunMkPrime(pd, tree,
@@ -256,7 +256,7 @@ test_that("RunMkPrime with nChains=4 runs successfully", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(6842)
   result <- RunMkPrime(pd, tree,
@@ -288,7 +288,7 @@ test_that("RunMkPrime with nChains=2 and topology moves works", {
   for (j in seq_len(ncol(mat))) {
     if (length(unique(mat[, j])) == 1) mat[1, j] <- 1L - mat[1, j]
   }
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 1000L, thin = 5L, maxWarmup = 500L, minWarmup = 500L, autoTune = FALSE,
@@ -306,7 +306,7 @@ test_that("Cold chain samples have valid posteriors under tempering", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(3319)
   result <- RunMkPrime(pd, tree,
@@ -396,7 +396,7 @@ test_that("Adaptive temps integrated into MCMC warmup", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(5580)
   result <- RunMkPrime(pd, tree,
@@ -423,7 +423,7 @@ test_that("RunMkPrime with nRuns=2 runs successfully", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(7218)
   result <- RunMkPrime(pd, tree,
@@ -445,7 +445,7 @@ test_that("RunMkPrime with nRuns=1 has no per_run field", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(1498)
   result <- RunMkPrime(pd, tree,
@@ -466,7 +466,7 @@ test_that("Independent runs start from different states", {
   for (j in seq_len(ncol(mat))) {
     if (length(unique(mat[, j])) == 1) mat[1, j] <- 1L - mat[1, j]
   }
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(2891)
   result <- RunMkPrime(pd, tree,
@@ -487,7 +487,7 @@ test_that("Multi-run with tempering works", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(8563)
   result <- RunMkPrime(pd, tree,
@@ -528,7 +528,7 @@ test_that("Heated chains accept at higher rates", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(4410)
   result <- RunMkPrime(pd, tree,

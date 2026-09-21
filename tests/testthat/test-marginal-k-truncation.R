@@ -30,8 +30,8 @@
     }
     m[, j] <- cv
   }
-  mkd <- MkPrimeData(TreeTools::MatrixToPhyDat(m))
-  trp <- TreeTools::Preorder(tr)
+  mkd <- MkPrimeData(MatrixToPhyDat(m))
+  trp <- Preorder(tr)
   mod <- suppressMessages(MkPrimeModel(
     coding = "variable", nCat = 1L, kPrimePrior = "geometric",
     likelihoodMode = "marginal_k", priorVariant = "unconditional",
@@ -104,11 +104,11 @@ test_that("marginal-k LL == full uncapped/uncutoff reference at low p (C-i guard
   set.seed(2026); ntip <- 8L; K <- 30L
   tr <- ape::rtree(ntip, tip.label = paste0("t", seq_len(ntip)))
   tr$edge.length <- rep_len(0.15, nrow(tr$edge))
-  trp <- TreeTools::Preorder(tr); TL <- sum(tr$edge.length); RBL <- tr$edge.length / TL
+  trp <- Preorder(tr); TL <- sum(tr$edge.length); RBL <- tr$edge.length / TL
   lse <- function(x) { x <- x[is.finite(x)]; if (!length(x)) return(-Inf); m <- max(x); m + log(sum(exp(x - m))) }
   logZA <- function(p) log1p(-(1 - p)^(K - 1))            # Model A truncation normaliser, support k' in [2,K]
 
-  mkChar <- function(v) MkPrimeData(TreeTools::MatrixToPhyDat(
+  mkChar <- function(v) MkPrimeData(MatrixToPhyDat(
     matrix(v, ncol = 1, dimnames = list(tr$tip.label, "char1"))))
   cases <- list(kObs2 = mkChar(c(0,0,1,1,0,1,0,1)),       # low-kObs
                 kObs6 = mkChar(c(0,1,2,3,4,5,0,1)))        # high-kObs
@@ -169,11 +169,11 @@ test_that("marginal-k numerator reaches the full support at K=200 (Stage 1b cap 
   set.seed(2026); ntip <- 8L; K <- 200L; p <- 0.02
   tr <- ape::rtree(ntip, tip.label = paste0("t", seq_len(ntip)))
   tr$edge.length <- rep_len(0.15, nrow(tr$edge))
-  trp <- TreeTools::Preorder(tr); TL <- sum(tr$edge.length); RBL <- tr$edge.length / TL
+  trp <- Preorder(tr); TL <- sum(tr$edge.length); RBL <- tr$edge.length / TL
   lse <- function(x) { x <- x[is.finite(x)]; if (!length(x)) return(-Inf); m <- max(x); m + log(sum(exp(x - m))) }
   logZA <- function(pp, KK) log1p(-(1 - pp)^(KK - 1))
 
-  mkChar <- function(v) MkPrimeData(TreeTools::MatrixToPhyDat(
+  mkChar <- function(v) MkPrimeData(MatrixToPhyDat(
     matrix(v, ncol = 1, dimnames = list(tr$tip.label, "char1"))))
   mkd <- mkChar(c(0, 0, 1, 1, 0, 1, 0, 1))            # kObs = 2 (heaviest tail)
 
@@ -255,10 +255,10 @@ test_that("sampled_k joint marginalises to marginal_k (Stage 2 RB-consistency)",
   set.seed(2026); ntip <- 8L; K <- 30L
   tr <- ape::rtree(ntip, tip.label = paste0("t", seq_len(ntip)))
   tr$edge.length <- rep_len(0.15, nrow(tr$edge))
-  trp <- TreeTools::Preorder(tr); TL <- sum(tr$edge.length); RBL <- tr$edge.length / TL
+  trp <- Preorder(tr); TL <- sum(tr$edge.length); RBL <- tr$edge.length / TL
   lse <- function(x) { x <- x[is.finite(x)]; if (!length(x)) return(-Inf); m <- max(x); m + log(sum(exp(x - m))) }
 
-  mkChar <- function(v) MkPrimeData(TreeTools::MatrixToPhyDat(
+  mkChar <- function(v) MkPrimeData(MatrixToPhyDat(
     matrix(v, ncol = 1, dimnames = list(tr$tip.label, "char1"))))
   cases <- list(kObs2 = mkChar(c(0, 0, 1, 1, 0, 1, 0, 1)),   # low-kObs (heaviest tail)
                 kObs6 = mkChar(c(0, 1, 2, 3, 4, 5, 0, 1)))    # high-kObs
@@ -342,13 +342,13 @@ test_that("sampled_k 2-character joint marginalises to marginal_k (multi-char RB
   set.seed(4040); ntip <- 7L; K <- 8L
   tr <- ape::rtree(ntip, tip.label = paste0("t", seq_len(ntip)))
   tr$edge.length <- rep_len(0.18, nrow(tr$edge))
-  trp <- TreeTools::Preorder(tr); TL <- sum(tr$edge.length); RBL <- tr$edge.length / TL
+  trp <- Preorder(tr); TL <- sum(tr$edge.length); RBL <- tr$edge.length / TL
   lse <- function(x) { x <- x[is.finite(x)]; if (!length(x)) return(-Inf); m <- max(x); m + log(sum(exp(x - m))) }
 
   # Two transformational characters: kObs = 2 and kObs = 3.
   m2 <- cbind(c(0, 0, 1, 1, 0, 1, 0), c(0, 1, 2, 0, 1, 2, 0))
   rownames(m2) <- tr$tip.label
-  mkd <- MkPrimeData(TreeTools::MatrixToPhyDat(m2))
+  mkd <- MkPrimeData(MatrixToPhyDat(m2))
   ti  <- which(mkd$type == "transformational")
   ko  <- mkd$kObs[ti]
 
@@ -408,7 +408,7 @@ test_that("gibbs_kprime_sweep respects the truncation cap K (case-25 cap fires)"
   set.seed(20260601); ntip <- 8L
   tr <- ape::rtree(ntip, tip.label = paste0("t", seq_len(ntip)))
   tr$edge.length <- rep_len(0.06, nrow(tr$edge))     # short branches: flat LL in k'
-  tr <- TreeTools::Preorder(tr)
+  tr <- Preorder(tr)
   # Six variable binary characters (kObs = 2). At low p the geometric prior
   # drives k' up (P(k' >= 5) = (1-p)^3 = 0.729 at p=0.1); flat LL keeps the high
   # candidates un-pruned, so the un-capped conditional reaches well past k'=4.
@@ -417,7 +417,7 @@ test_that("gibbs_kprime_sweep respects the truncation cap K (case-25 cap fires)"
     repeat { v <- sample(0:1, ntip, replace = TRUE); if (length(unique(v)) == 2L) break }
     mat[, j] <- v
   }
-  mkd <- MkPrimeData(TreeTools::MatrixToPhyDat(mat))
+  mkd <- MkPrimeData(MatrixToPhyDat(mat))
   transIdx <- which(mkd$type == "transformational")
 
   sweep_kprimes <- function(K, p, nIter = 400L, seed = 99L) {

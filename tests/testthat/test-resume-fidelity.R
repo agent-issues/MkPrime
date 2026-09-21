@@ -9,7 +9,7 @@ test_that(".BrColStart selects exactly the br_ columns (#8)", {
   # silently, because the tree still parsed.
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  transOnly <- MkPrimeData(TreeTools::MatrixToPhyDat(mat))
+  transOnly <- MkPrimeData(MatrixToPhyDat(mat))
   expect_false(any(transOnly$type == "neomorphic"))
 
   for (nEdge in c(5L, 6L)) {
@@ -28,7 +28,7 @@ test_that(".BrColStart selects exactly the br_ columns (#8)", {
 test_that(".BrColStart also holds when neomorphic characters are present", {
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  mkd <- MkPrimeData(TreeTools::MatrixToPhyDat(mat), neomorphic = 1L)
+  mkd <- MkPrimeData(MatrixToPhyDat(mat), neomorphic = 1L)
   skip_if_not(any(mkd$type == "neomorphic"),
               "Could not construct a neomorphic character for this check.")
 
@@ -65,7 +65,7 @@ test_that("a fixTopology run resumes with the same move set (#23)", {
   tree <- ape::read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   ckpFile <- tempfile(fileext = ".rds")
   on.exit(unlink(ckpFile), add = TRUE)
@@ -104,7 +104,7 @@ test_that("maxTime bounds the job, not each run (#13)", {
   tree <- ape::read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   budget <- 15
   set.seed(31415)
@@ -148,7 +148,7 @@ test_that("resumed trees have finite edge lengths on neo-free data (#64)", {
                   1, 0, 1, 0, 1, 0),
                 nrow = 6, byrow = TRUE,
                 dimnames = list(paste0("t", 1:6), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
   expect_false(any(mkd$type == "neomorphic"))
 

@@ -50,7 +50,7 @@
   MatrixToPhyDat(mat)
 }
 .ft_build <- function(p = 0.5) {
-  tree  <- TreeTools::Preorder(.ft_make_tree())
+  tree  <- Preorder(.ft_make_tree())
   mkd   <- MkPrimeData(.ft_make_mkd())
   model <- MkPrime:::.FinalizeModel(
     MkPrimeModel(kPrimePrior = "geometric", likelihoodMode = "marginal_k",
@@ -267,10 +267,10 @@ test_that("marginal-k: candidate (preorder_into) and commit (preorder_weighted) 
     0, 0, 1, 1, 0, 1, 0, 1,    # kObs = 2
     1, 1, 0, 1, 0, 0, 1, 0),   # kObs = 2
     nrow = 8, ncol = 4, dimnames = list(tips, NULL))
-  TreeTools::MatrixToPhyDat(m)
+  MatrixToPhyDat(m)
 }
 .gp_build <- function(p = 0.5, variant = "conditional", mkdFn = .ft_make_mkd) {
-  tree  <- TreeTools::Preorder(.ft_make_tree())
+  tree  <- Preorder(.ft_make_tree())
   mkd   <- MkPrimeData(mkdFn())
   model <- MkPrime:::.FinalizeModel(
     MkPrimeModel(kPrimePrior = "geometric", likelihoodMode = "marginal_k",

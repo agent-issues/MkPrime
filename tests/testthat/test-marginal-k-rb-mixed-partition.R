@@ -39,7 +39,7 @@ library("TreeTools", quietly = TRUE)
     if (identical(nStates, c(2L, 2L, 3L))) break
   }
   dimnames(m) <- list(tipLabels, c("c1", "c2", "c3"))
-  MkPrimeData(TreeTools::MatrixToPhyDat(m), neomorphic = 1L)
+  MkPrimeData(MatrixToPhyDat(m), neomorphic = 1L)
 }
 
 # One evaluator closure per (mode, tree, data): build model + data once, then
@@ -86,7 +86,7 @@ test_that("marginal-k RB identity holds on a mixed neo/trans partition (#25)", {
     ntip <- sample(7:9, 1L)
     tr <- ape::rtree(ntip, tip.label = paste0("t", seq_len(ntip)))
     tr$edge.length <- runif(nrow(tr$edge), 0.03, 0.5)
-    trp <- TreeTools::Preorder(tr)
+    trp <- Preorder(tr)
     mkd <- .rbmp_data(tr$tip.label)
     transIdx <- which(mkd$type == "transformational")
     ks <- lapply(transIdx, function(i) mkd$kObs[i]:K)

@@ -29,8 +29,8 @@
   }
   pd  <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)  # hasNeo = FALSE by construction
-  tree <- TreeTools::Preorder(
-    TreeTools::NJTree(pd, edgeLengths = TRUE)
+  tree <- Preorder(
+    NJTree(pd, edgeLengths = TRUE)
   )
   if (is.null(tree$edge.length) || any(tree$edge.length <= 0)) {
     tree$edge.length <- pmax(tree$edge.length %||% rep(0.1, nrow(tree$edge)), 1e-8)

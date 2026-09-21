@@ -12,7 +12,7 @@ make_bg_fixture <- function() {
   mkd <- MkPrimeData(pd)  # all transformational
   model <- MkPrimeModel(kPrimePrior = "beta_geometric", treeLengthRate = 0.5)
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   list(tree = tree, mkd = mkd, model = model)
 }
 

@@ -10,8 +10,8 @@ test_that("NNI moves always produce valid preorder", {
   skip_if_not_installed("TreeTools")
 
   set.seed(8741)
-  tree <- TreeTools::Preorder(TreeTools::BalancedTree(12))
-  nTip <- TreeTools::NTip(tree)
+  tree <- Preorder(BalancedTree(12))
+  nTip <- NTip(tree)
   nEdge <- nrow(tree$edge)
   relBr <- rep(1 / nEdge, nEdge)
   treeLength <- 1.0
@@ -46,8 +46,8 @@ test_that("In-place NNI likelihood matches full-reorder NNI likelihood", {
 
   # Build a small dataset to compute likelihoods
   set.seed(6293)
-  tree <- TreeTools::Preorder(TreeTools::RandomTree(8, root = TRUE))
-  nTip <- TreeTools::NTip(tree)
+  tree <- Preorder(RandomTree(8, root = TRUE))
+  nTip <- NTip(tree)
   nEdge <- nrow(tree$edge)
 
   # Generate random binary tip data (4 characters)

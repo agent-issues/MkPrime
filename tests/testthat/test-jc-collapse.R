@@ -13,7 +13,7 @@ skip_if_not_installed("TreeTools")
 mk_test_tree <- function(nTip = 7L, seed = 1L) {
   set.seed(seed)
   tr <- ape::rtree(nTip, br = function(n) runif(n, 0.05, 0.6))
-  TreeTools::Preorder(tr)
+  Preorder(tr)
 }
 
 mk_test_tipstates <- function(nTip, kObs, seed = 2L,
@@ -161,7 +161,7 @@ test_that("MkpLogLikelihood (auto-dispatched) matches uncollapsed reference", {
   # Transformational character with kObs = 3
   mat <- matrix(c(0, 1, 2, 0, 1, 2, 1, 0), nrow = nTip, ncol = 1,
                 dimnames = list(tr$tip.label, NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   # Reference: manually call uncollapsed kernels
@@ -236,7 +236,7 @@ test_that("MkpLogLikelihood collapse-path informative coding matches uncollapsed
 
   mat <- matrix(c(0, 1, 2, 0, 1, 2), nrow = nTip, ncol = 1,
                 dimnames = list(tr$tip.label, NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   manual_ll <- function(kp, rate_sd, coding) {
