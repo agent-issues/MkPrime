@@ -545,3 +545,72 @@ test_that("User-pinned moveWeights preserved end-to-end", {
   result <- RunMkPrime(dat, tree, model = model, mcmc = mcmc)
   expect_s3_class(result, "MkPosterior")
 })
+
+
+# --- #68: the move schedule a user reads back ---
+
+test_that("the gibbs cap leaves a probability vector (#68)", {
+  # With no free move to absorb the freed weight the vector is renormalized,
+  # which is the schedule mcmc.cpp samples from either way -- so the cap must
+  # still bind, and the total must still be 1.
+  allPinned <- c(gibbs_kPrime = 0.6, nni = 0.4)          # no free move at all
+  capped <- .WarmupGibbsCap(allPinned, allPinned, 1L)
+  expect_equal(sum(capped), 1)
+  expect_equal(capped[["gibbs_kPrime"]], 0.2 / 0.6)      # capped share, not 0.6
+
+  noFreeWeight <- c(gibbs_kPrime = 1, nni = 0)           # free moves hold none
+  onlyGibbs <- .WarmupGibbsCap(noFreeWeight, c(gibbs_kPrime = 1), 1L)
+  expect_equal(sum(onlyGibbs), 1)
+
+  tooLittleFree <- c(gibbs_kPrime = 0.2, nni = 1e-15)    # too little to reclaim
+  restored <- .RestoreGibbsCap(tooLittleFree, c(gibbs_kPrime = 0.8), 1L)
+  expect_equal(sum(restored), 1)
+  expect_equal(restored[["gibbs_kPrime"]], 1, tolerance = 1e-12)
+})
+
+
+test_that("a feasible gibbs cap still caps, and restores (#68)", {
+  weights <- c(gibbs_kPrime = 0.6, nni = 0.3, spr = 0.1)
+  pinned  <- c(gibbs_kPrime = 0.6)
+
+  capped <- .WarmupGibbsCap(weights, pinned, 1L, factor = 1 / 3)
+  expect_equal(capped[["gibbs_kPrime"]], 0.2)
+  expect_equal(sum(capped), 1)
+  # Freed weight is shared in proportion to the free moves' existing weights.
+  expect_equal(capped[["nni"]] / capped[["spr"]], 3)
+
+  restored <- .RestoreGibbsCap(capped, pinned, 1L)
+  expect_equal(restored[["gibbs_kPrime"]], 0.6)
+  expect_equal(sum(restored), 1)
+  expect_equal(unname(restored), unname(weights))
+})
+
+
+test_that(".BuildResult surfaces every run's frozen schedule (#68)", {
+  # Runs adapt independently, so `$moveWeights` -- run 1's -- presents one
+  # run's decisions as though they were the analysis's.
+  paramNames <- c("log_posterior", "log_likelihood", "tree_length")
+  Run <- function(nniWeight) {
+    list(
+      samples = matrix(0, 4L, length(paramNames),
+                       dimnames = list(NULL, paramNames)),
+      tree_samples = vector("list", 4L),
+      saved_idx = 4L, tree_saved_idx = 4L,
+      chain_accept = list(c(nni = 1)), chain_propose = list(c(nni = 2)),
+      chain_tuning = list(list()), logPostHistory = numeric(0),
+      moveWeights = c(nni = nniWeight, spr = 1 - nniWeight)
+    )
+  }
+  mcmc <- list(nChains = 1L, nRuns = 2L, warmup = 0L, thin = 1L, treeThin = 1L)
+
+  result <- .BuildResult(
+    runs = list(Run(0.7), Run(0.4)), model = NULL, mkd = NULL, mcmc = mcmc,
+    paramNames = paramNames, logFilePaths = NULL, actualIter = 4L,
+    stopReason = "nIter"
+  )
+
+  expect_equal(result$moveWeights, c(nni = 0.7, spr = 0.3))
+  expect_length(result$runMoveWeights, 2L)
+  expect_equal(result$runMoveWeights[[1]], c(nni = 0.7, spr = 0.3))
+  expect_equal(result$runMoveWeights[[2]], c(nni = 0.4, spr = 0.6))
+})

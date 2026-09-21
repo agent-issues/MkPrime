@@ -357,6 +357,7 @@ test_that("marginal-k gibbs_p_marginal (case 35): committed==cold & warm==cold (
 }
 
 test_that("marginal-k gibbs_p_marginal (case 35): p-target matches analytic (binary fixture, c_A=0)", {
+  skip_under_memcheck()
   # Binary fixture -> all kObs=2 -> c_A=0 -> Model A == Model B. The case-35 chain
   # (force-cold-on-commit -> correct target, even under large p-jumps) must match
   # the grid oracle within MC error. A flipped Z-sign biases E[p] by ~0.2
@@ -375,6 +376,7 @@ test_that("marginal-k gibbs_p_marginal (case 35): p-target matches analytic (bin
 })
 
 test_that("marginal-k gibbs_p_marginal (case 35): Model-A c_A shift is exercised (multistate fixture)", {
+  skip_under_memcheck()
   # Multistate fixture -> c_A = Sum(kObs_i - 2) = 2 > 0, so Model A's proposal
   # shape2 = b + Sum(u) + c_A differs from Model B's b + Sum(u). This is the ONLY
   # test that executes the c_A branch of case 35 (the disabled case-9 bug).

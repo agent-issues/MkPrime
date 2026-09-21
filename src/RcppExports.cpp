@@ -502,6 +502,19 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// kprime_sweep_candidates
+IntegerVector kprime_sweep_candidates(SEXP dataPtr, SEXP statePtr, double beta);
+RcppExport SEXP _MkPrime_kprime_sweep_candidates(SEXP dataPtrSEXP, SEXP statePtrSEXP, SEXP betaSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type dataPtr(dataPtrSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type statePtr(statePtrSEXP);
+    Rcpp::traits::input_parameter< double >::type beta(betaSEXP);
+    rcpp_result_gen = Rcpp::wrap(kprime_sweep_candidates(dataPtr, statePtr, beta));
+    return rcpp_result_gen;
+END_RCPP
+}
 // do_move_cpp
 bool do_move_cpp(SEXP dataPtr, SEXP statePtr, int moveType, int charIdx, double scaleTuning, double betaSimplexTuning, int intWalkWindow, double beta);
 RcppExport SEXP _MkPrime_do_move_cpp(SEXP dataPtrSEXP, SEXP statePtrSEXP, SEXP moveTypeSEXP, SEXP charIdxSEXP, SEXP scaleTuningSEXP, SEXP betaSimplexTuningSEXP, SEXP intWalkWindowSEXP, SEXP betaSEXP) {
@@ -657,6 +670,24 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< bool >::type acrv(acrvSEXP);
     Rcpp::traits::input_parameter< NumericVector >::type rate_multipliers(rate_multipliersSEXP);
     rcpp_result_gen = Rcpp::wrap(test_flat_jc_constprob_pair(parent, child, edge_length, tip_states, kFull, kObs, acrv, rate_multipliers));
+    return rcpp_result_gen;
+END_RCPP
+}
+// het_const_site_prob
+double het_const_site_prob(IntegerVector parent, IntegerVector child, NumericVector edgeLength, int nTip, int kStates, double baseRateLoss, NumericVector betaBins, NumericVector rateMultipliers);
+RcppExport SEXP _MkPrime_het_const_site_prob(SEXP parentSEXP, SEXP childSEXP, SEXP edgeLengthSEXP, SEXP nTipSEXP, SEXP kStatesSEXP, SEXP baseRateLossSEXP, SEXP betaBinsSEXP, SEXP rateMultipliersSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< IntegerVector >::type parent(parentSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type child(childSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type edgeLength(edgeLengthSEXP);
+    Rcpp::traits::input_parameter< int >::type nTip(nTipSEXP);
+    Rcpp::traits::input_parameter< int >::type kStates(kStatesSEXP);
+    Rcpp::traits::input_parameter< double >::type baseRateLoss(baseRateLossSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type betaBins(betaBinsSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type rateMultipliers(rateMultipliersSEXP);
+    rcpp_result_gen = Rcpp::wrap(het_const_site_prob(parent, child, edgeLength, nTip, kStates, baseRateLoss, betaBins, rateMultipliers));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -981,6 +1012,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_eval_preorder_paths_cpp", (DL_FUNC) &_MkPrime_eval_preorder_paths_cpp, 5},
     {"_MkPrime_gibbs_spr_enumerate_cpp", (DL_FUNC) &_MkPrime_gibbs_spr_enumerate_cpp, 3},
     {"_MkPrime_bin_mixture_log_density", (DL_FUNC) &_MkPrime_bin_mixture_log_density, 3},
+    {"_MkPrime_kprime_sweep_candidates", (DL_FUNC) &_MkPrime_kprime_sweep_candidates, 3},
     {"_MkPrime_do_move_cpp", (DL_FUNC) &_MkPrime_do_move_cpp, 8},
     {"_MkPrime_run_mcmc_batch_cpp", (DL_FUNC) &_MkPrime_run_mcmc_batch_cpp, 20},
     {"_MkPrime_debug_mcmc_data", (DL_FUNC) &_MkPrime_debug_mcmc_data, 1},
@@ -990,6 +1022,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_test_flat_jc_uncollapsed", (DL_FUNC) &_MkPrime_test_flat_jc_uncollapsed, 7},
     {"_MkPrime_test_flat_jc_collapsed", (DL_FUNC) &_MkPrime_test_flat_jc_collapsed, 8},
     {"_MkPrime_test_flat_jc_constprob_pair", (DL_FUNC) &_MkPrime_test_flat_jc_constprob_pair, 8},
+    {"_MkPrime_het_const_site_prob", (DL_FUNC) &_MkPrime_het_const_site_prob, 8},
     {"_MkPrime_prepare_mcmc_data", (DL_FUNC) &_MkPrime_prepare_mcmc_data, 31},
     {"_MkPrime_set_branch_bins", (DL_FUNC) &_MkPrime_set_branch_bins, 2},
     {"_MkPrime_set_kprime_trunc_k", (DL_FUNC) &_MkPrime_set_kprime_trunc_k, 2},
