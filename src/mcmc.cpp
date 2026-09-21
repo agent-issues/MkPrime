@@ -712,12 +712,17 @@ void fill_partition_cache(SEXP dataPtr, SEXP statePtr) {
   // overcomes the inflation — the residual cause of the post-MARGINAL-K-SLICE-001
   // whole-chain freeze (~57% of SBC sims pinned at init tl=0.1*nEdge, p=0.5,
   // sigma=0.5). Recompute the init logLik via the marginal-aware dispatcher so
-  // the baseline is correct. partLogLik stays fixed-k but is unused under
-  // marginal_k (do_move_impl forces hasPLC=false). charLLCacheReady=false so the
-  // marginal evaluator does a full rebuild and leaves a coherent per-char cache.
+  // the baseline is correct; charLLCacheReady=false so that rebuild leaves a
+  // coherent per-char cache.
+  //
+  // partLogLik is emptied because nothing refreshes it under marginal_k: it
+  // would hold fixed-kPrime partition sums, and any `hasPLC` fast path reading
+  // one commits a fixed-kPrime total as the marginal logLik. An empty cache is
+  // what makes that class of fast path unselectable.
   if (data->marginalK) {
     state->charLLCacheReady = false;
     state->logLik = compute_full_loglik(*data, *state);
+    state->partLogLik.clear();
   }
 }
 
@@ -3441,7 +3446,9 @@ static double eval_slice_target(McmcData* data, McmcState* state,
   for (int i = 0; i < nEdge; ++i)
     edgeLen[i] = state->treeLength * state->relBrLengths[i];
 
-  bool hasPLC = !state->partLogLik.empty();
+  // !marginalK mirrors do_move_impl: partLogLik is fixed-kPrime, so the partial
+  // update below would evaluate the wrong target under marginal_k.
+  bool hasPLC = !state->partLogLik.empty() && !data->marginalK;
   ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
 
   // rate_loss (1): only neomorphic partitions change. (rate_neo / paramIdx 3
@@ -3538,7 +3545,7 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
         edgeLen[i] = state->treeLength * state->relBrLengths[i];
       ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
 
-      bool hasPLC = !state->partLogLik.empty();
+      bool hasPLC = !state->partLogLik.empty() && !data->marginalK;
       if (hasPLC && paramIdx == 1) {
         // rate_loss: only neo partitions change. Partial cache update.
         // (paramIdx == 3 / rate_neo intentionally excluded — audit Issue 1:
