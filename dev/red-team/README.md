@@ -36,7 +36,6 @@ dev/red-team/
   README.md                 # this file
   focus-areas.md            # rotation table (11 areas) — start_tier per area, edited rarely
   discussion-categories.md  # round records: category list, posting recipe, identity rules
-  log.md                    # round records pre-Discussions + the model-version legend + last_focus
   findings-archive.md       # FROZEN 2026-09-18 — terminal-state findings; anti-duplication memory only
   migration-map.tsv         # old <PREFIX>-nnn id -> issue number / archive entry
   proofs/                   # analytic derivations backing specific findings
@@ -54,7 +53,7 @@ Legacy per-round investigation files (`MARGINAL-K-*.md`, `harness-001-investigat
 ## Finding ids
 
 Historical ids (`EG-001`, `LIKE-001`, `TREEMOVE-001`, `STREAM-003`, …) are
-**frozen, not retired** — they persist in source comments, `log.md`, plan files
+**frozen, not retired** — they persist in source comments, plan files
 and memory. `migration-map.tsv` resolves each to its issue number or archive
 entry. **Never mint a new prefixed id**: the GitHub issue number is the id from
 now on. When searching for duplicates, do **not** filter on a legacy prefix —
@@ -75,7 +74,7 @@ rung version bump is its own revisit trigger: a seam that ran dry at `opus-4.8` 
 re-visited at `opus-5` *before* escalating to `fable` or being left dormant.
 Backward-looking verdicts (`ran dry`, `dormant`) are version-scoped; forward-looking
 routing text ("escalate to opus") stays unversioned so it resolves to the current
-version at dispatch. The alias-to-version legend is at the top of `log.md` —
+version at dispatch. The alias-to-version legend is at the top of `focus-areas.md` —
 reconcile it at the start of every round.
 
 Run outputs under `heavy-tests/` and `numerical/` (`*-results/`, `*.log`, experiment

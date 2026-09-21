@@ -2135,6 +2135,13 @@ void pruning_f81_het_acrv_persite(
 // over the tree topology.  The previous implementation used a per-edge-product
 // formula π_s × Π_e P_ss(t_e) that ignored topology (parent/child unused),
 // equivalent to a star tree.  Now matches the M-157 fused ascertainment logic.
+// Permuting the kStates - 1 non-spike states is an automorphism of an F81-Het
+// mixture component, and relabelling carries the spike from one state to any
+// other: every rotation contributes the same sum over constant patterns, and
+// within a rotation every non-spike pattern contributes the same term. Two
+// pseudo-characters -- the spike state, and one non-spike state weighted
+// kStates - 1 -- therefore give the exact k x k sum (#66). At kStates == 2
+// there is no rotation and the two pseudo-characters are the two states.
 static double het_constant_site_prob(
     IntegerVector parent, IntegerVector child,
     NumericVector edge_length, int nTip,
@@ -2154,17 +2161,17 @@ static double het_constant_site_prob(
 
   int maxNode = 2 * nTip - 1;
   int root    = nTip + 1;
-  // k pseudo-characters × k states each
-  int ascStride = kStates * kStates;
+  const int nPseudo = 2;
+  int ascStride = nPseudo * kStates;
 
   std::vector<double>  ascBuf((maxNode + 1) * ascStride, 0.0);
   std::vector<uint8_t> ascInit(maxNode + 1, 0);
 
-  // Init tips: pseudo-char s has CL = e_s (constant-state-s pattern)
+  // Init tips: pseudo-char c has CL = e_c (constant-state-c pattern)
   for (int tip = 1; tip <= nTip; ++tip) {
     double* a = ascBuf.data() + tip * ascStride;
-    for (int s = 0; s < kStates; ++s)
-      a[s * kStates + s] = 1.0;
+    for (int c = 0; c < nPseudo; ++c)
+      a[c * kStates + c] = 1.0;
     ascInit[tip] = 1;
   }
 
@@ -2181,7 +2188,7 @@ static double het_constant_site_prob(
     double acrvRate = rmPtr[cat];
     for (int bi = 0; bi < nBetaCat; ++bi) {
       double beta_val = betaBins[bi];
-      for (int rot = 0; rot < nRot; ++rot) {
+      {
         double sumPiSq = 0.0;
         if (kStates == 2) {
           double g = gain_base * 2.0 * beta_val;
@@ -2192,7 +2199,7 @@ static double het_constant_site_prob(
         } else {
           double r = (1.0 - beta_val) / (kStates - 1.0);
           for (int s = 0; s < kStates; ++s) pi[s] = r;
-          pi[rot] = beta_val;
+          pi[0] = beta_val;
           sumPiSq = beta_val*beta_val + (kStates-1.0)*r*r;
         }
         double mu = 1.0 / (1.0 - sumPiSq);
@@ -2215,7 +2222,7 @@ static double het_constant_site_prob(
 
           // OPP-1: hoist Σ_j π_j·cl_j for O(k) per pseudo-char per edge
           if (!ascInit[par]) {
-            for (int c = 0; c < kStates; ++c) {
+            for (int c = 0; c < nPseudo; ++c) {
               int off = c * kStates;
               double sum_pi_a = 0.0;
               for (int j = 0; j < kStates; ++j)
@@ -2226,7 +2233,7 @@ static double het_constant_site_prob(
             }
             ascInit[par] = 1;
           } else {
-            for (int c = 0; c < kStates; ++c) {
+            for (int c = 0; c < nPseudo; ++c) {
               int off = c * kStates;
               double sum_pi_a = 0.0;
               for (int j = 0; j < kStates; ++j)
@@ -2238,18 +2245,35 @@ static double het_constant_site_prob(
           }
         }
 
-        // Accumulate: sum over pseudo-chars of π-weighted root CL
+        // Root: the non-spike pseudo-char stands for all kStates - 1 of its
+        // kind, and the nRot rotations all share this sum.
         double* ascRoot = ascBuf.data() + root * ascStride;
-        for (int c = 0; c < kStates; ++c) {
+        double rotSum = 0.0;
+        for (int c = 0; c < nPseudo; ++c) {
           int off = c * kStates;
           double sl = 0.0;
           for (int s = 0; s < kStates; ++s) sl += pi[s] * ascRoot[off + s];
-          totalP += sl;
+          rotSum += (c == 0) ? sl : (kStates - 1.0) * sl;
         }
+        totalP += nRot * rotSum;
       }
     }
   }
   return totalP / totalComp;
+}
+
+
+// R-visible wrapper on het_constant_site_prob, for the test that checks the
+// symmetry collapse above against a brute-force reference.
+
+// [[Rcpp::export]]
+double het_const_site_prob(IntegerVector parent, IntegerVector child,
+                           NumericVector edgeLength, int nTip, int kStates,
+                           double baseRateLoss, NumericVector betaBins,
+                           NumericVector rateMultipliers) {
+  return het_constant_site_prob(parent, child, edgeLength, nTip, kStates,
+                                baseRateLoss, REAL(betaBins),
+                                (int)betaBins.size(), rateMultipliers);
 }
 
 

@@ -11,6 +11,13 @@
 > note derives a **data-augmentation Metropolis-within-Gibbs** `p`-update that
 > recovers near-Gibbs mixing for `marginal_k` **without changing the target**.
 >
+> **Citation style.** Code is cited by function name plus a distinctive comment
+> or identifier, never by line number, so that re-checking a claim is a grep.
+> A proof whose references no longer resolve cannot be re-checked as written,
+> and an unre-checkable proof keeps its conclusion long after the code has
+> moved: `hastings-tree-moves.md` §5 went on clearing `gibbs_spr` as sound
+> after it had stopped being π-invariant (#19).
+>
 > **Deliverable.** The exact augmented target, the imputation distribution, the
 > proposal, the closed-form Metropolis accept ratio (Model A and Model B), the
 > reduction to the `sampled_k` conjugate Gibbs in the untruncated limit, an
@@ -61,17 +68,20 @@ accelerates the bulk.
 
 Hold the tree $T$, branch lengths, and the other scalars $\theta=(\text{rateLoss},
 \text{rateLogSd},\text{rateNeo},\dots)$ fixed. The shipped marginal evaluator
-`cpp_log_likelihood_marginal` (`src/mcmc.cpp:4445–4476`, cache fast-path) computes,
+`cpp_log_likelihood_marginal` (`src/mcmc.cpp`, the warm branch opened by
+`// Cache fast-path: reuse stored raw charLL, only re-do the logSumExp`) computes,
 per transformational character $i$,
 $$\log m_i(p) \;=\; \operatorname*{logSumExp}_{u\in S_i}\big(\mathrm{charLLCache}[i,u] + \log p + u\log(1-p)\big)\;+\;\Delta^A_i(p)\;-\;\log Z_i(p),$$
 with support $S_i=\{0,\dots,n\mathrm{Eff}_i-1\}$ (set at cache-fill, **fixed**
 during a `p`-move), raw per-(char,$k'$) log-likelihood $\mathrm{charLLCache}[i,u]
 =\log L_i(u)$, the Model-A shift $\Delta^A_i(p)=(k_{\mathrm{obs},i}-2)\log(1-p)$
-under `uncond` (else $0$; `src/mcmc.cpp:4469–4473`), and the truncation normaliser
+under `uncond` (else $0$; the two `charLL += (kObs_ti - 2) * log1mP - logZA;`
+lines in `cpp_log_likelihood_marginal`, one per cache path), and the truncation
+normaliser
 $Z_i(p)$ as in §0.3.
 
 `compute_log_prior` under `marginalK` adds **only** the bare Beta prior on $p$
-(`src/mcmc.cpp:447`, gated by `if (!data.marginalK)` at `:424` which drops every
+(`cpp_log_prior`, outside the `if (!data.marginalK)` gate that drops every
 $k'$-prior and $Z$ term); all $k'$ / truncation mass lives in the likelihood.
 Hence the `p`-conditional target is
 $$\pi(p\mid\theta,T,\text{data}) \;\propto\; \mathrm{Beta}(p;a,b)\,\prod_{i\in\text{trans}} m_i(p),\qquad
@@ -112,7 +122,8 @@ $$P(u_i=u\mid p,\dots) = \frac{L_i(u)\,p(1-p)^u}{\sum_{u'\in S_i}L_i(u')\,p(1-p)
 since $g_i(p)/Z_i(p)$ cancels between numerator and the normalising sum. In log
 weights this is $\mathrm{charLLCache}[i,u] + \log p + u\log(1-p) = \mathrm{charLogW}[i,u]$,
 the **exact** quantity the evaluator already forms in its per-char logSumExp
-(`src/mcmc.cpp:4452–4458`). A standard Gumbel-max / inverse-CDF categorical draw
+(`cpp_log_likelihood_marginal`, `// Per-char logSumExp on charLogW directly ==
+marginal LL for char ti`). A standard Gumbel-max / inverse-CDF categorical draw
 from these weights is an exact conditional sample. $\Rightarrow$ leaves
 $\pi_{\mathrm{aug}}$ invariant.
 
@@ -148,8 +159,9 @@ $\pi_{\mathrm{aug}}$ invariant.
   $\Rightarrow$ $\sum_i\log Z_i(p)=\sum_i\log1p(-\exp((K-k_{\mathrm{obs},i}+1)\log1p(-p)))$.
 
 Both forms are **identical** to the ones the marginal evaluator subtracts
-(`src/mcmc.cpp:4353` and `:4469–4473`) and the `sampled_k` prior adds
-(`src/mcmc.cpp:431, 443`), so the Gibbs-p uses the same arithmetic the rest of
+(the `logZA` / `logZB` block tagged `MARGINAL-K-TRUNC-001` in
+`cpp_log_likelihood_marginal`) and the `sampled_k` prior adds (the block carrying
+the same tag in `cpp_log_prior`), so the Gibbs-p uses the same arithmetic the rest of
 the code is validated against.
 
 ---
@@ -175,13 +187,14 @@ the Beta draw with probability 1:
 $$p \sim \mathrm{Beta}(a+n,\ b+S+c_A).$$
 * **Model B** ($c_A=0$): $p\sim\mathrm{Beta}(a+n,b+S)$ with $S=\sum_i u_i$. With
   $u_i = k'_i - k_{\mathrm{obs},i}$ imputed, this is **identical** to the
-  `sampled_k` case-9 draw (`src/mcmc.cpp:5036–5038`: `shape1=a+nTrans`,
-  `shape2=b+sumU`) and the pure-R reference `gibbs_p` (`R/RunMkPrime.R:4029–4031`).
+  `sampled_k` case-9 draw (`do_move_impl` case 9: `shape1=a+nTrans`,
+  `shape2=b+sumU`) and the pure-R reference `gibbs_p` (the `rbeta` call in
+  `.DoMove`, `R/RunMkPrime.R`).
 * **Model A** ($c_A=\sum_i(k_{\mathrm{obs},i}-2)$): the corrected conjugate
   $p\sim\mathrm{Beta}(a+n,\ b+S+c_A)$. **N.B.** the disabled case-9 used
   `shape2=b+sumU` even under Model A, i.e. it omitted $c_A$. This is a **latent,
   not live**, error: case 9 now executes `return false` for the plain geometric
-  arm (`src/mcmc.cpp:5027`), so the `b+sumU` path (`:5037`) is **unreachable** in
+  arm (case 9's early `return false`), so the `b+sumU` path is **unreachable** in
   shipping `sampled_k`. The omission therefore guards only a *future*
   re-enablement of the `sampled_k` Gibbs (deferred, §7) and must not be copied
   into this new move. The $c_A$ term is mandatory under Model A and follows
@@ -223,7 +236,8 @@ must match the `sampled_k`/R-reference draw exactly.
    the raw LLs and re-run the M-164 early-termination at $p^\star$);
    `state->logPrior = compute_log_prior`. On reject: leave `p`, `logLik`,
    `logPrior`, and the cache untouched. The new move id IS added to the entry/
-   reject carve-outs (`src/mcmc.cpp:4770,5815`, `moveType != 30 && != 35`) so
+   reject carve-outs (the two `moveType != 30 && moveType != 35` guards in
+   `do_move_impl`, one on entry and one on the reject path) so
    that on *entry* the cache (filled by the preceding move at the current $p$) is
    available for the imputation — but on *accept* the move deliberately refills
    it cold. **Why cold and not warm** (see §6.7): the cached candidate *support*
@@ -237,12 +251,13 @@ must match the `sampled_k`/R-reference draw exactly.
 The persisted cache stores, per character, the **raw** per-$(char,k')$
 log-likelihoods $L_i(u)$ (p-independent) over a candidate set
 $S_i=\{0,\dots,n\mathrm{Eff}_i-1\}$ whose *size* $n\mathrm{Eff}_i$ is set by the
-M-164 prior-ceiling early-termination (`src/mcmc.cpp:4118,4239`, cutoff
-$\log = -25$) **at the $p$ in force when the cache was filled**. The geometric
+M-164 prior-ceiling early-termination (the `M-164` pre-filter in the per-$k'$
+pruning loop, cutoff $\log = -25$) **at the $p$ in force when the cache was filled**. The geometric
 weight $p(1-p)^u$ has a heavier upper tail at smaller $p$, so candidates that are
 negligible (dropped) at a fill-$p$ can carry real mass at a much smaller $p$.
 
-Consequence: the warm fast-path (`:4445–4476`) re-weights only the *stored*
+Consequence: the warm fast-path (`// Cache fast-path: reuse stored raw charLL`)
+re-weights only the *stored*
 candidates. After a **large downward $p$-jump** it cannot recover the now-relevant
 high-$u$ tail it never stored, and **undercounts** the marginal (empirically
 $\sim10^{-6}$ nat on the 8-tip fixture; unbounded in principle for an extreme
@@ -299,13 +314,17 @@ grid-tabulated analytic $\pi(p\mid\theta,\text{tree})$ to $0.02$.
 
 ---
 
-## 8. Code sites (for the eventual patch — not applied in this note)
+## 8. Code sites
 
-* New move impl + dispatch case in `src/mcmc.cpp` near the case-30 `mh_logit_p`
-  block (`:5142`); reuse the cache fast-path arithmetic (`:4445–4476`) for the
-  per-char weights and the $Z_i$ forms (`:4353`, `:4469–4473`).
-* Add the new move id to the $p$-only carve-outs: entry invalidation
-  (`:4705`, `moveType != 30`) and the post-move cache note (`:4753`, `:5800`).
+Written against the pre-patch tree, as a plan for the implementation that
+became case 35 (`gibbs_p_marginal`, opt-in via `gibbsPMarginal`). Kept for the
+reasoning, not as a description of the shipped code.
+
+* New move impl + dispatch case in `src/mcmc.cpp` next to the case-30
+  `mh_logit_p` block; reuse the cache fast-path arithmetic for the per-char
+  weights and the `logZA` / `logZB` forms.
+* Add the new move id to the $p$-only carve-outs: the entry invalidation and the
+  post-move cache note, both keyed on `moveType != 30`.
 * Schedule the move in `R/RunMkPrime.R` `.BuildMoves` (geometric arm,
   `marginalK` only), alongside — not replacing — `mh_logit_p`.
 * Oracle/unit test: `tests/testthat/` — untruncated-limit Beta match + a

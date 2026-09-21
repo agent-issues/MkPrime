@@ -274,40 +274,51 @@ test_that(".AdaptTuning skips Gibbs/Weighted moves (NA tuning keys)", {
 
 # ── Integration tests (slow) ─────────────────────────────────────────────
 
-test_that("Full MCMC run with Gibbs moves produces valid MkPosterior", {
-  skip_slow_tests()
-  library("TreeTools")
-  tree <- BalancedTree(8)
+.WiringFixture <- function() {
+  tree <- TreeTools::BalancedTree(8)
+  tree$edge.length <- rep(0.1, nrow(tree$edge))
   mat <- matrix(sample(0:2, 8 * 5, replace = TRUE), nrow = 8,
                 dimnames = list(tree$tip.label, NULL))
-  pd  <- MatrixToPhyDat(mat)
-  mkd <- MkPrimeData(pd)
-  model <- MkPrimeModel()
+  list(tree = tree, data = MkPrimeData(TreeTools::MatrixToPhyDat(mat)))
+}
+
+# A 200-iteration warmup is not expected to stabilise.
+.RunWiring <- function(fx, mcmc) {
+  withCallingHandlers(
+    RunMkPrime(data = fx$data, tree = fx$tree, model = MkPrimeModel(),
+               mcmc = mcmc),
+    warning = function(w) {
+      if (grepl("without stabilisation", conditionMessage(w), fixed = TRUE)) {
+        invokeRestart("muffleWarning")
+      }
+    }
+  )
+}
+
+test_that("Full MCMC run with Gibbs moves produces valid MkPosterior", {
+  skip_slow_tests()
+  fx <- .WiringFixture()
   mcmc <- MkPrimeMCMC(
-    nIter = 600L, warmup = 200L, thin = 10L, nRuns = 1L,
+    nIter = 600L, minWarmup = 200L, maxWarmup = 200L, thin = 10L,
+    nRuns = 1L, maxTime = 60,
     gibbsSpr = TRUE, gibbsSubtreeSwap = TRUE
   )
-  result <- RunMkPrime(data = mkd, tree = tree, model = model, mcmc = mcmc)
+  result <- .RunWiring(fx, mcmc)
   expect_s3_class(result, "MkPosterior")
   expect_true(nrow(result$samples) > 0L)
 })
 
 test_that("Full MCMC run with all moves produces valid MkPosterior", {
   skip_slow_tests()
-  library("TreeTools")
-  tree <- BalancedTree(8)
-  mat <- matrix(sample(0:2, 8 * 5, replace = TRUE), nrow = 8,
-                dimnames = list(tree$tip.label, NULL))
-  pd  <- MatrixToPhyDat(mat)
-  mkd <- MkPrimeData(pd)
-  model <- MkPrimeModel()
+  fx <- .WiringFixture()
   mcmc <- MkPrimeMCMC(
-    nIter = 600L, warmup = 200L, thin = 10L, nRuns = 1L,
+    nIter = 600L, minWarmup = 200L, maxWarmup = 200L, thin = 10L,
+    nRuns = 1L, maxTime = 60,
     gibbsSpr = TRUE, gibbsSubtreeSwap = TRUE,
     weightedBranchScale = TRUE, weightedSpr = TRUE,
-    weightedSubtreeSwap = TRUE, nBranchBins = 5L
+    weightedSubtreeSwap = TRUE, nBranchBins = 5L, blockGibbsBranch = TRUE
   )
-  result <- RunMkPrime(data = mkd, tree = tree, model = model, mcmc = mcmc)
+  result <- .RunWiring(fx, mcmc)
   expect_s3_class(result, "MkPosterior")
   expect_true(nrow(result$samples) > 0L)
 })

@@ -12,6 +12,9 @@
 #' @param neomorphic Integer vector of neomorphic character indices (if `data`
 #'   is `phyDat`). Ignored if `data` is `MkPrimeData`.
 #' @param model An `MkPrimeModel` object. Default: `MkPrimeModel()`.
+#' @param mcmc `MkPrimeMCMC` object supplying the move schedule and proposal
+#'   tuning for each stone; its run-length and stopping-rule settings are
+#'   ignored.
 #' @param nStones Number of stepping stones (power posterior levels). Default 50.
 #' @param nIter Number of MCMC iterations per stone. Default 1000.
 #' @param warmup Warmup iterations per stone (discarded). Default 200.
@@ -32,6 +35,12 @@
 #'   }
 #'
 #' @details
+#' Every stone runs for `warmup + nIter` iterations under the schedule `model`
+#' and `mcmc` specify, less the 2D joint proposals (which need a correlation
+#' this function does not adapt) and `gibbs_p_marginal` (which is not
+#' tempered), and with no weight adaptation. An estimate is therefore
+#' comparable only with others computed under the same `model` and `mcmc`.
+#'
 #' The standard error is computed via the delta method applied to each
 #' stepping-stone ratio, following Xie et al. (2011) and the implementation in
 #' the \pkg{mcmc3r} package (dos Reis). For each stone \eqn{k},
@@ -60,6 +69,7 @@
 mkp_stepping_stone <- function(data, tree = NULL,
                               neomorphic = integer(0),
                               model = NULL,
+                              mcmc = NULL,
                               nStones = 50L,
                               nIter = 1000L,
                               warmup = 200L,
@@ -97,6 +107,17 @@ mkp_stepping_stone <- function(data, tree = NULL,
   }
 
   if (is.null(model)) model <- MkPrimeModel()
+  if (is.null(mcmc)) mcmc <- MkPrimeMCMC()
+  if (isTRUE(mcmc$gibbsPMarginal)) {
+    # gibbs_p_marginal accepts on a truncation-normaliser ratio that carries
+    # no power, so in a stone it would draw p from the beta = 1 conditional.
+    cli::cli_warn(c(
+      "{.arg gibbsPMarginal} is ignored by {.fn mkp_stepping_stone}.",
+      "i" = "{.code gibbs_p_marginal} is not tempered; {.code mh_logit_p}
+             samples {.code p} in each stone instead."
+    ))
+    mcmc$gibbsPMarginal <- FALSE
+  }
   model <- .FinalizeModel(model, tree, mkd)
 
   nStones <- as.integer(nStones)
@@ -120,16 +141,26 @@ mkp_stepping_stone <- function(data, tree = NULL,
   nTrans <- sum(mkd$type == "transformational")
   hasNeo <- any(mkd$type == "neomorphic")
   # joint2d = FALSE: stepping-stone doesn't adapt rho, so joint moves
-
-  # would always run with rho=0 (redundant with individual scale moves)
-  moves <- .BuildMoves(nEdge, nTrans, hasNeo, NULL,
-                       fixTopology = fixTopology, joint2d = FALSE)
+  # would always run with rho = 0 (redundant with individual scale moves).
+  moves <- .BuildMoves(nEdge, nTrans, hasNeo, mcmc,
+                       fixTopology = fixTopology,
+                       kPrimePrior = model$kPrimePrior %||% "geometric",
+                       qHeterogeneity = isTRUE(model$qHeterogeneity),
+                       joint2d = FALSE,
+                       likelihoodMode = model$likelihoodMode %||% "sampled_k")
   moveWeights <- vapply(moves, `[[`, numeric(1), "weight")
+  names(moveWeights) <- vapply(moves, `[[`, character(1), "name")
+  moveWeights <- moveWeights / sum(moveWeights)
+  userPins <- .ResolvePinnedWeights(mcmc$moveWeights, names(moveWeights))
+  if (!is.null(userPins)) {
+    moveWeights <- .NormalizeMoveWeights(moveWeights, userPins)
+  }
 
-  mcmcTuning <- MkPrimeMCMC(nIter = 100L, minWarmup = 50L)$tuning
+  mcmcTuning <- mcmc$tuning
 
   # Build C++ data struct and XPtr state (shared across all stones)
   mcmcData <- .InitMcmcData(mkd, model)
+  set_branch_bins(mcmcData, mcmc$nBranchBins)
   transIdx  <- which(mkd$type == "transformational")
   statePtr  <- .InitMcmcChain(state)
   fill_partition_cache(mcmcData, statePtr)
