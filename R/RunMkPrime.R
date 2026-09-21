@@ -1138,13 +1138,8 @@ RunMkPrime <- function(data, tree = NULL,
           }
           tl    <- row[3L]
           relBr <- row[brColStart:(brColStart + nEdge - 1L)]
-          curTree <- TreeTools::Preorder(structure(
-            list(edge        = result$edge_samples[[i]],
-                 edge.length = tl * relBr,
-                 Nnode       = length(tipLabels) - 1L,
-                 tip.label   = tipLabels),
-            class = "phylo"
-          ))
+          curTree <- .EdgeToTree(result$edge_samples[[i]], tl * relBr,
+                                 tipLabels)
           r$tree_samples[[r$tree_saved_idx]] <- curTree
           if (!is.null(treeFile))
             cat(ape::write.tree(curTree), "\n", file = treeFile, append = TRUE)
@@ -1174,13 +1169,9 @@ RunMkPrime <- function(data, tree = NULL,
           row <- result$scalar_samples[i, ]
           tl    <- row[3L]
           relBr <- row[brColStart:(brColStart + nEdge - 1L)]
-          tuningTreeBuf[[tuningBufIdx]] <- TreeTools::Preorder(structure(
-            list(edge        = result$edge_samples[[i]],
-                 edge.length = tl * relBr,
-                 Nnode       = length(tipLabels) - 1L,
-                 tip.label   = tipLabels),
-            class = "phylo"
-          ))
+          tuningTreeBuf[[tuningBufIdx]] <- .EdgeToTree(
+            result$edge_samples[[i]], tl * relBr, tipLabels
+          )
         }
       }
     }
@@ -4465,13 +4456,20 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' @keywords internal
 .StateToTree <- function(statePtr, tipLabels) {
   state <- get_mcmc_state(statePtr)
+  .EdgeToTree(state$edge, state$treeLength * state$relBrLengths, tipLabels)
+}
+
+#' Build a phylo object from a sampled edge matrix
+#'
+#' The state keeps the input tree's rooting, so `Nnode` must be read from the
+#' edge matrix: a hard-coded count is wrong for one convention or the other,
+#' and a wrong `Nnode` sends `TreeTools`' rerooting into an endless loop.
+#' @keywords internal
+.EdgeToTree <- function(edge, edgeLength, tipLabels) {
   TreeTools::Preorder(structure(
-    list(
-      edge = state$edge,
-      edge.length = state$treeLength * state$relBrLengths,
-      Nnode = length(tipLabels) - 1L,
-      tip.label = tipLabels
-    ),
+    list(edge = edge, edge.length = edgeLength,
+         Nnode = nrow(edge) - length(tipLabels) + 1L,
+         tip.label = tipLabels),
     class = "phylo"
   ))
 }
