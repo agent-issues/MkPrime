@@ -24,3 +24,40 @@
                 dimnames = list(paste0("t", 1:4), NULL))
   TreeTools::MatrixToPhyDat(mat)
 }
+
+# --- Console output -------------------------------------------------------
+
+# Raise MkPrime's verbosity for the calling test block, which setup.R otherwise
+# pins at 0.  Use in any test that asserts on console output.
+local_mkp_verbosity <- function(level = 1L, envir = parent.frame()) {
+  withr::local_options(MkPrime.verbosity = level, .local_envir = envir)
+}
+
+# Allow -- but do not require -- warnings whose message matches `regexp`.
+#
+# A deliberately tiny MCMC budget legitimately warns that the chain never
+# stabilised, so the warning is expected noise rather than a result worth
+# asserting: expect_warning() would fail on the rarer run where the chain does
+# settle.  Warnings that do not match `regexp` still propagate and are reported.
+allow_warning <- function(expr, regexp) {
+  withCallingHandlers(expr, warning = function(w) {
+    if (grepl(regexp, conditionMessage(w))) invokeRestart("muffleWarning")
+  })
+}
+
+# Assert that `expr` prints something, and swallow what it printed.
+#
+# `cli` splits a print method's output across two streams -- headings and
+# `cat()` reach stdout, alerts arrive as messages -- so both are captured.
+# Stronger than expect_no_error(print(x)): a print method that silently stopped
+# printing would pass that and fail this.
+expect_prints <- function(expr) {
+  messages <- character(0)
+  printed <- capture.output(
+    withCallingHandlers(expr, message = function(m) {
+      messages <<- c(messages, conditionMessage(m))
+      invokeRestart("muffleMessage")
+    })
+  )
+  testthat::expect_gt(length(printed) + length(messages), 0L)
+}

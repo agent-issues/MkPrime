@@ -1,8 +1,5 @@
 # Tests for Gibbs kPrime sweep (moveType 25) and block kPrime shift (moveType 26)
 
-library("ape")
-library("TreeTools")
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -31,7 +28,6 @@ library("TreeTools")
   allocate_cl_workspace(dataPtr, statePtr)
   list(mkd = mkd, dataPtr = dataPtr, statePtr = statePtr)
 }
-
 
 # ---------------------------------------------------------------------------
 # .BuildMoves wiring
@@ -65,7 +61,6 @@ test_that(".kMoveTypes maps new kPrime moves", {
   expect_identical(mt[["gibbs_kPrime"]], 25L)
   expect_identical(mt[["block_kPrime"]], 26L)
 })
-
 
 # ---------------------------------------------------------------------------
 # Gibbs kPrime sweep (moveType 25)
@@ -141,7 +136,6 @@ test_that("gibbs_kprime_sweep logLik matches full recomputation", {
   fresh_ll <- eval_full_loglik_cpp(setup$dataPtr, setup$statePtr)
   expect_equal(st$logLik, fresh_ll, tolerance = 1e-10)
 })
-
 
 # ---------------------------------------------------------------------------
 # Block kPrime shift (moveType 26)

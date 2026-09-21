@@ -13,7 +13,7 @@ skip_slow_tests()
                   1, 1, 0, 0, 1,
                   0, 1, 2, 0, 1), 5, 4,
                 dimnames = list(paste0("t", 1:5), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   suppressMessages(RunMkPrime(
     pd, tree,

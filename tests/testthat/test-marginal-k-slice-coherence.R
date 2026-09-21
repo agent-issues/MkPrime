@@ -14,7 +14,7 @@
 # and lives in R so that it costs nothing on the hot path.
 
 .SliceCohTree <- function() {
-  TreeTools::Preorder(ape::read.tree(text = paste0(
+  Preorder(ape::read.tree(text = paste0(
     "(((t1:0.05,t2:0.07):0.04,(t3:0.06,t4:0.05):0.03):0.05,",
     "((t5:0.04,t6:0.06):0.05,(t7:0.05,t8:0.04):0.06):0.04);"
   )))
@@ -35,7 +35,7 @@
       0, 2, 1, 1, 0, 0, 2, 2),
     nrow = 8L, ncol = 6L, dimnames = list(tips, NULL)
   )
-  MkPrimeData(TreeTools::MatrixToPhyDat(mat), neomorphic = 1:2)
+  MkPrimeData(MatrixToPhyDat(mat), neomorphic = 1:2)
 }
 
 .SliceCohFixture <- function(likelihoodMode) {

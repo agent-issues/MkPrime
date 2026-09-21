@@ -490,7 +490,7 @@ MkpWatchLog <- function(logFiles,
   waited <- 0L
   while (!file.exists(logFiles[1L])) {
     if (waited == 0L)
-      cli::cli_alert_info("Waiting for {.file {logFiles[1L]}} to appear\u2026")
+      .AlertInfo("Waiting for {.file {logFiles[1L]}} to appear\u2026")
     Sys.sleep(1)
     waited <- waited + 1L
     if (waited >= 30L)
@@ -530,7 +530,7 @@ MkpWatchLog <- function(logFiles,
         if (is.list(lastData)) sum(vapply(lastData, nrow, integer(1L)))
         else nrow(lastData)
       } else 0L
-      cli::cli_alert_info(
+      .AlertInfo(
         "Stopped watching. {nSamples} sample{?s} read."
       )
     }

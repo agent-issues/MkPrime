@@ -3,9 +3,6 @@
 # swap_subtrees_cpp(edge, nTip, treeLength, relBrLengths, nodeA, nodeB)
 # get_valid_swap_partners_cpp(edge, nTip, pruneNode)
 
-library("ape")
-library("TreeTools")
-
 # ---------------------------------------------------------------------------
 # Fixture helpers
 # ---------------------------------------------------------------------------
@@ -47,7 +44,6 @@ library("TreeTools")
   NA_integer_
 }
 
-
 # ---------------------------------------------------------------------------
 # Test: round-trip swap returns original tree
 # ---------------------------------------------------------------------------
@@ -71,7 +67,6 @@ test_that("double swap is identity", {
   expect_equal(res2$edge, edge)
   expect_equal(res2$rel_br_lengths, relBr, tolerance = 1e-10)
 })
-
 
 # ---------------------------------------------------------------------------
 # Test: tip swap produces correct topology
@@ -98,7 +93,6 @@ test_that("swapping two tip nodes exchanges them in the topology", {
   expect_true(setequal(tips_under_t1_parent, c(1L, 4L, 5L)))
 })
 
-
 # ---------------------------------------------------------------------------
 # Test: tree length preserved after swap
 # ---------------------------------------------------------------------------
@@ -113,7 +107,6 @@ test_that("tree length is preserved after swap", {
   expect_equal(sum(res$rel_br_lengths), sum(relBr), tolerance = 1e-12)
   expect_equal(sum(treeL * res$rel_br_lengths), treeL, tolerance = 1e-12)
 })
-
 
 # ---------------------------------------------------------------------------
 # Test: branch lengths swap with subtrees
@@ -141,7 +134,6 @@ test_that("branch lengths swap when subtrees are exchanged", {
   expect_equal(res$rel_br_lengths[newRowB], origA, tolerance = 1e-14)
 })
 
-
 # ---------------------------------------------------------------------------
 # Test: get_valid_swap_partners excludes descendants
 # ---------------------------------------------------------------------------
@@ -161,7 +153,6 @@ test_that("get_valid_swap_partners excludes descendants of pruneNode", {
   expect_false(8L %in% partners8)
 })
 
-
 # ---------------------------------------------------------------------------
 # Test: get_valid_swap_partners excludes ancestors
 # ---------------------------------------------------------------------------
@@ -178,7 +169,6 @@ test_that("get_valid_swap_partners excludes ancestors of pruneNode", {
   expect_false(9L %in% partners9, label = "9 not its own partner")
 })
 
-
 # ---------------------------------------------------------------------------
 # Test: get_valid_swap_partners excludes siblings
 # ---------------------------------------------------------------------------
@@ -191,7 +181,6 @@ test_that("get_valid_swap_partners excludes siblings", {
   partners7 <- get_valid_swap_partners_cpp(edge, nTip, pruneNode = 7L)
   expect_false(8L %in% partners7, label = "Sibling 8 not a valid partner of 7")
 })
-
 
 # ---------------------------------------------------------------------------
 # Test: get_valid_swap_partners returns non-empty set for typical node
@@ -215,7 +204,6 @@ test_that("get_valid_swap_partners returns valid candidates", {
   expect_setequal(partners7, c(3L, 4L, 5L, 9L))
 })
 
-
 # ---------------------------------------------------------------------------
 # Test: root node returns empty partner list
 # ---------------------------------------------------------------------------
@@ -228,7 +216,6 @@ test_that("get_valid_swap_partners for root returns empty", {
   partners_root <- get_valid_swap_partners_cpp(edge, nTip, pruneNode = root_node)
   expect_equal(length(partners_root), 0L)
 })
-
 
 # ---------------------------------------------------------------------------
 # Test: swap of invalid nodes (root) returns R_NegInf logHastings
@@ -244,7 +231,6 @@ test_that("swap with root node gives logHastings = -Inf", {
   res <- swap_subtrees_cpp(edge, nTip, treeL, relBr, nodeA = root, nodeB = 7L)
   expect_equal(res$logHastings, -Inf)
 })
-
 
 # ---------------------------------------------------------------------------
 # Test: 4-tip tree — verify a concrete swap

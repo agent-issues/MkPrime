@@ -8,7 +8,7 @@ skip_slow_tests()
   )
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   list(tree = tree, pd = pd)
 }
 
@@ -289,6 +289,7 @@ test_that("Resume in streaming mode appends without gaps or duplicates", {
 # --- .TruncateLogToN unit tests ---
 
 test_that(".TruncateLogToN removes excess rows", {
+  local_mkp_verbosity()
   tf <- tempfile(fileext = ".log")
   on.exit(unlink(tf), add = TRUE)
   writeLines(c("Sample\tA\tB",

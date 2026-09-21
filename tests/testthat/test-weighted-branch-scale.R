@@ -12,9 +12,6 @@
 #   - Statistical: accepted moves shift branch proportions toward
 #     likelihood-improving fractions
 
-library("ape")
-library("TreeTools")
-
 # ---------------------------------------------------------------------------
 # Shared fixture (reuses pattern from test-gibbs-spr.R)
 # ---------------------------------------------------------------------------
@@ -22,7 +19,7 @@ library("TreeTools")
 .wbs_pts <- function(seed = 42L, nTip = 6L) {
   set.seed(seed)
   tree  <- ape::rtree(nTip, rooted = FALSE)
-  tree  <- TreeTools::Preorder(tree)
+  tree  <- Preorder(tree)
   mat   <- matrix(
     sample(0:2, nTip * 5L, replace = TRUE),
     nrow = nTip, ncol = 5L,

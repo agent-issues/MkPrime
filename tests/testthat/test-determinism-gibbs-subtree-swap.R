@@ -16,8 +16,6 @@
 # fails the test.
 skip_slow_tests()
 
-library("ape")
-library("TreeTools")
 
 .DetTree <- function() {
   Preorder(read.tree(text =

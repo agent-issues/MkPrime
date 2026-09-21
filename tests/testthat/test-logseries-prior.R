@@ -26,11 +26,10 @@ test_that("MkPrimeModel rejects invalid kPrimePrior", {
 # 2. LogPrior logseries: matches manual density
 # ---------------------------------------------------------------------------
 test_that("LogPrior logseries matches manual density calculation", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1), 4, 1,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd  <- TreeTools::MatrixToPhyDat(mat)
+  pd  <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   model <- MkPrimeModel(kPrimePrior = "logseries",
@@ -68,11 +67,10 @@ test_that("LogPrior logseries matches manual density calculation", {
 # 3. LogPrior logseries: higher k' has lower prior density (for c < 1)
 # ---------------------------------------------------------------------------
 test_that("LogPrior logseries: higher k' has lower prior density", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat  <- matrix(c(0, 1, 0), 3, 1,
                  dimnames = list(c("t1", "t2", "t3"), NULL))
-  pd   <- TreeTools::MatrixToPhyDat(mat)
+  pd   <- MatrixToPhyDat(mat)
   mkd  <- MkPrimeData(pd)
   model <- MkPrimeModel(kPrimePrior = "logseries",
                         kprimeLogseriesC = 0.7,
@@ -100,11 +98,10 @@ test_that("LogPrior logseries: higher k' has lower prior density", {
 # 4. LogPrior logseries: c out of bounds returns -Inf
 # ---------------------------------------------------------------------------
 test_that("LogPrior logseries: c out of bounds returns -Inf", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat  <- matrix(c(0, 1, 0), 3, 1,
                  dimnames = list(c("t1", "t2", "t3"), NULL))
-  pd   <- TreeTools::MatrixToPhyDat(mat)
+  pd   <- MatrixToPhyDat(mat)
   mkd  <- MkPrimeData(pd)
 
   base_state <- list(
@@ -129,11 +126,10 @@ test_that("LogPrior logseries: c out of bounds returns -Inf", {
 # 5. LogPrior logseries: k' < kObs returns -Inf
 # ---------------------------------------------------------------------------
 test_that("LogPrior logseries: k' < kObs returns -Inf", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat  <- matrix(c(0, 1, 0), 3, 1,
                  dimnames = list(c("t1", "t2", "t3"), NULL))
-  pd   <- TreeTools::MatrixToPhyDat(mat)
+  pd   <- MatrixToPhyDat(mat)
   mkd  <- MkPrimeData(pd)
   model <- MkPrimeModel(kPrimePrior = "logseries",
                         kprimeLogseriesC = 0.7,
@@ -154,11 +150,10 @@ test_that("LogPrior logseries: k' < kObs returns -Inf", {
 # 6. LogPrior logseries: works when state has no p field
 # ---------------------------------------------------------------------------
 test_that("LogPrior logseries: works correctly with no p in state", {
-  library("ape")
   tree  <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat   <- matrix(c(0, 1, 0), 3, 1,
                   dimnames = list(c("t1", "t2", "t3"), NULL))
-  pd    <- TreeTools::MatrixToPhyDat(mat)
+  pd    <- MatrixToPhyDat(mat)
   mkd   <- MkPrimeData(pd)
   model <- MkPrimeModel(kPrimePrior = "logseries",
                         kprimeLogseriesC = 0.7, expSteps = 10)
@@ -183,7 +178,7 @@ test_that("LogPrior logseries: works correctly with no p in state", {
 test_that("print.MkPrimeModel runs without error for logseries model", {
   model <- MkPrimeModel(kPrimePrior = "logseries", kprimeLogseriesC = 0.7)
   # cli output goes to the console directly; just verify no error is thrown
-  expect_invisible(print(model))
+  expect_prints(expect_invisible(print(model)))
   # And verify the field values that print would show
   expect_equal(model$kPrimePrior, "logseries")
   expect_equal(model$kprimeLogseriesC, 0.7)
@@ -192,7 +187,7 @@ test_that("print.MkPrimeModel runs without error for logseries model", {
 
 test_that("print.MkPrimeModel runs without error for default model", {
   model <- MkPrimeModel()
-  expect_invisible(print(model))
+  expect_prints(expect_invisible(print(model)))
   expect_equal(model$kPrimePrior, "empirical_geometric")
 })
 
@@ -201,10 +196,9 @@ test_that("print.MkPrimeModel runs without error for default model", {
 # 8. .ParamNames omits p for logseries
 # ---------------------------------------------------------------------------
 test_that(".ParamNames omits p column for logseries prior", {
-  library("ape")
   mat <- matrix(c(0, 1, 0, 1), 4, 1,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd  <- TreeTools::MatrixToPhyDat(mat)
+  pd  <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   nms_geo <- MkPrime:::.ParamNames(mkd, nEdge = 6L, kPrimePrior = "geometric")
@@ -223,13 +217,12 @@ test_that(".ParamNames omits p column for logseries prior", {
 # ---------------------------------------------------------------------------
 test_that("RunMkPrime smoke test: logseries prior runs and produces correct columns", {
   skip_on_cran()
-  library("ape")
 
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat  <- matrix(c(0, 1, 0, 1,
                    0, 0, 1, 1), 4, 2,
                  dimnames = list(paste0("t", 1:4), NULL))
-  pd   <- TreeTools::MatrixToPhyDat(mat)
+  pd   <- MatrixToPhyDat(mat)
   mkd  <- MkPrimeData(pd)
 
   model <- MkPrimeModel(
@@ -263,7 +256,7 @@ test_that("RunMkPrime smoke test: logseries prior runs and produces correct colu
 # 10. R and C++ agree on the logseries prior
 # ---------------------------------------------------------------------------
 test_that("LogPrior logseries agrees with cpp_log_prior", {
-  tree <- TreeTools::Preorder(
+  tree <- Preorder(
     ape::read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   )
   # Two transformational characters with different kObs (2 and 3), so a
@@ -271,7 +264,7 @@ test_that("LogPrior logseries agrees with cpp_log_prior", {
   mat <- matrix(c(0, 1, 0, 1,
                   0, 1, 2, 0), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  mkd <- MkPrimeData(TreeTools::MatrixToPhyDat(mat))
+  mkd <- MkPrimeData(MatrixToPhyDat(mat))
 
   for (logseriesC in c(0.05, 0.3, 0.7, 0.95, 0.999)) {
     model <- MkPrimeModel(kPrimePrior = "logseries",
@@ -302,13 +295,13 @@ test_that("LogPrior logseries agrees with cpp_log_prior", {
 
 
 test_that("LogPrior logseries and cpp_log_prior both reject k' < kObs", {
-  tree <- TreeTools::Preorder(
+  tree <- Preorder(
     ape::read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   )
   mat <- matrix(c(0, 1, 0, 1,
                   0, 1, 2, 0), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  mkd <- MkPrimeData(TreeTools::MatrixToPhyDat(mat))
+  mkd <- MkPrimeData(MatrixToPhyDat(mat))
   model <- MkPrimeModel(kPrimePrior = "logseries", kprimeLogseriesC = 0.7,
                         expSteps = 10)
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)

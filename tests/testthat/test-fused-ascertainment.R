@@ -12,7 +12,7 @@ test_that("fused JC ascertainment matches standalone", {
   tipStates <- matrix(sample(0:(kStates - 1), nTip * nChar, replace = TRUE),
                       nrow = nTip, ncol = nChar,
                       dimnames = list(tree$tip.label, NULL))
-  pd <- TreeTools::MatrixToPhyDat(tipStates)
+  pd <- MatrixToPhyDat(tipStates)
 
   mkd <- MkPrimeData(pd, knownStates = rep(kStates, nChar))
 
@@ -41,7 +41,7 @@ test_that("fused MkN ascertainment matches standalone", {
   tipStates <- matrix(sample(0:1, nTip * nChar, replace = TRUE),
                       nrow = nTip, ncol = nChar,
                       dimnames = list(tree$tip.label, NULL))
-  pd <- TreeTools::MatrixToPhyDat(tipStates)
+  pd <- MatrixToPhyDat(tipStates)
 
   mkd <- MkPrimeData(pd, neomorphic = seq_len(nChar))
 
@@ -75,7 +75,7 @@ test_that("fused JC ACRV ascertainment matches standalone", {
   tipStates <- matrix(sample(0:1, nTip * nChar, replace = TRUE),
                       nrow = nTip, ncol = nChar,
                       dimnames = list(tree$tip.label, NULL))
-  pd <- TreeTools::MatrixToPhyDat(tipStates)
+  pd <- MatrixToPhyDat(tipStates)
 
   mkd <- MkPrimeData(pd, knownStates = rep(kStates, nChar))
 
@@ -120,7 +120,7 @@ test_that("fused Het ascertainment matches R reference (Felsenstein)", {
       if (!s %in% tipStates[, j]) tipStates[s + 1L, j] <- s
     }
   }
-  pd <- TreeTools::MatrixToPhyDat(tipStates)
+  pd <- MatrixToPhyDat(tipStates)
   # knownStates must be a named vector (names = char indices, values = k)
   knownStates <- setNames(rep(kStates, nChar), seq_len(nChar))
   mkd <- MkPrimeData(pd, knownStates = knownStates)
@@ -147,7 +147,7 @@ test_that("fused Het ascertainment matches R reference (Felsenstein)", {
 
   acrvRates <- MkPrime:::DiscreteLognormalRates(rateLogSd, nCat)
 
-  tree0 <- TreeTools::Preorder(tree)
+  tree0 <- Preorder(tree)
   parent <- tree0$edge[, 1]
   child  <- tree0$edge[, 2]
   edgeLen <- tree0$edge.length
@@ -225,7 +225,7 @@ test_that("fused Het ascertainment matches R reference (Felsenstein)", {
 
   .build <- function(model) {
     model <- MkPrime:::.FinalizeModel(model, tree, mkd)
-    tree0 <- TreeTools::Preorder(tree)
+    tree0 <- Preorder(tree)
     state0 <- MkPrime:::.InitState(tree0, mkd, model)
     state0$beta_scale <- betaScale
     state0$rate_log_sd <- rateLogSd

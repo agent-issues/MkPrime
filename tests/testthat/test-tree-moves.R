@@ -1,10 +1,9 @@
 # Tests for tree topology proposals (M-023: NNI, M-024: SPR)
 
 test_that("NNI produces valid binary tree", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   tree <- unroot(tree)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   nTip <- length(tree$tip.label)
   nEdge <- nrow(tree$edge)
   tl <- sum(tree$edge.length)
@@ -35,9 +34,8 @@ test_that("NNI produces valid binary tree", {
 
 
 test_that("NNI changes topology on 4-tip tree", {
-  library("ape")
   tree <- read.tree(text = "(t1:0.1,(t2:0.2,(t3:0.15,t4:0.25):0.1):0.05);")
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   nTip <- length(tree$tip.label)
   tl <- sum(tree$edge.length)
   rel_br <- tree$edge.length / tl
@@ -58,9 +56,8 @@ test_that("NNI changes topology on 4-tip tree", {
 
 
 test_that("NNI returns -Inf logHastings for 3-tip tree", {
-  library("ape")
   tree <- read.tree(text = "(t1:0.1,t2:0.2,t3:0.3);")
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   tl <- sum(tree$edge.length)
   rel_br <- tree$edge.length / tl
 
@@ -70,11 +67,10 @@ test_that("NNI returns -Inf logHastings for 3-tip tree", {
 
 
 test_that("NNI on larger tree preserves structure", {
-  library("ape")
   set.seed(4592)
   tree <- rtree(20)
   tree <- unroot(tree)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   nTip <- length(tree$tip.label)
   nEdge <- nrow(tree$edge)
   tl <- sum(tree$edge.length)
@@ -95,11 +91,10 @@ test_that("NNI on larger tree preserves structure", {
 
 
 test_that("NNI Hastings ratio is zero (symmetric)", {
-  library("ape")
   set.seed(7281)
   tree <- rtree(10)
   tree <- unroot(tree)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   tl <- sum(tree$edge.length)
   rel_br <- tree$edge.length / tl
 
@@ -111,12 +106,11 @@ test_that("NNI Hastings ratio is zero (symmetric)", {
 
 
 test_that("NNI preserves individual edge lengths", {
-  library("ape")
   # Use distinctive edge lengths to verify they follow their edges
   tree <- read.tree(
     text = "(t1:1,(t2:2,(t3:3,(t4:4,t5:5):6):7):8);"
   )
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   tl <- sum(tree$edge.length)
   rel_br <- tree$edge.length / tl
 
@@ -129,9 +123,8 @@ test_that("NNI preserves individual edge lengths", {
 
 
 test_that("NNI explores all 3 topologies on 4-tip tree", {
-  library("ape")
   tree <- read.tree(text = "(t1:0.1,(t2:0.2,(t3:0.15,t4:0.25):0.1):0.05);")
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   tl <- sum(tree$edge.length)
   rel_br <- tree$edge.length / tl
 
@@ -156,11 +149,10 @@ test_that("NNI explores all 3 topologies on 4-tip tree", {
 # --- SPR tests (M-024) ---
 
 test_that("SPR produces valid binary tree", {
-  library("ape")
   set.seed(2847)
   tree <- rtree(12)
   tree <- unroot(tree)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   nTip <- length(tree$tip.label)
   nEdge <- nrow(tree$edge)
   tl <- sum(tree$edge.length)
@@ -185,11 +177,10 @@ test_that("SPR produces valid binary tree", {
 
 
 test_that("SPR preserves total tree length", {
-  library("ape")
   set.seed(6632)
   tree <- rtree(8)
   tree <- unroot(tree)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   tl <- sum(tree$edge.length)
   rel_br <- tree$edge.length / tl
 
@@ -202,11 +193,10 @@ test_that("SPR preserves total tree length", {
 
 
 test_that("SPR changes topology on medium tree", {
-  library("ape")
   set.seed(1459)
   tree <- rtree(10)
   tree <- unroot(tree)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   tl <- sum(tree$edge.length)
   rel_br <- tree$edge.length / tl
   original_newick <- write.tree(tree)
@@ -222,11 +212,10 @@ test_that("SPR changes topology on medium tree", {
 
 
 test_that("SPR Hastings ratio is finite", {
-  library("ape")
   set.seed(3819)
   tree <- rtree(15)
   tree <- unroot(tree)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   tl <- sum(tree$edge.length)
   rel_br <- tree$edge.length / tl
 
@@ -241,9 +230,8 @@ test_that("SPR Hastings ratio is finite", {
 
 
 test_that("SPR on small tree (5 tips) works", {
-  library("ape")
   tree <- read.tree(text = "(t1:1,(t2:2,(t3:3,(t4:4,t5:5):6):7):8);")
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   nTip <- length(tree$tip.label)
   nEdge <- nrow(tree$edge)
   tl <- sum(tree$edge.length)
@@ -266,11 +254,10 @@ test_that("SPR on small tree (5 tips) works", {
 
 
 test_that("SPR chain explores tree space", {
-  library("ape")
   set.seed(7402)
   tree <- rtree(8)
   tree <- unroot(tree)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   tl <- sum(tree$edge.length)
   rel_br <- tree$edge.length / tl
 

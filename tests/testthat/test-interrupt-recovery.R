@@ -8,9 +8,6 @@
 # 4. No-logFile runs produce in-memory samples (temp log transparent to user)
 # 5. Explicit-logFile runs behave as before
 
-library("ape")
-library("TreeTools")
-
 # Minimal test data
 .mkTestData <- function() {
   pd <- MatrixToPhyDat(matrix(
@@ -22,10 +19,10 @@ library("TreeTools")
   list(pd = pd, tree = tree)
 }
 
-
 # --- MkPrimeRecover tests ---
 
 test_that("MkPrimeRecover returns NULL when no interrupted run exists", {
+  local_mkp_verbosity()
   mkp_env <- environment(RunMkPrime)$.mkp_env
   mkp_env$recovery <- NULL
   expect_message(rec <- MkPrimeRecover(), "No interrupted run")
@@ -33,6 +30,7 @@ test_that("MkPrimeRecover returns NULL when no interrupted run exists", {
 })
 
 test_that("MkPrimeRecover retrieves partial results from planted metadata", {
+  local_mkp_verbosity()
   mkp_env <- environment(RunMkPrime)$.mkp_env
 
   # Write a fake temp log with header + 5 data rows
@@ -79,6 +77,7 @@ test_that("MkPrimeRecover retrieves partial results from planted metadata", {
 })
 
 test_that("MkPrimeRecover handles missing log files gracefully", {
+  local_mkp_verbosity()
   mkp_env <- environment(RunMkPrime)$.mkp_env
   mkp_env$recovery <- list(
     logFiles   = tempfile("gone_", fileext = ".log"),
@@ -96,6 +95,7 @@ test_that("MkPrimeRecover handles missing log files gracefully", {
 })
 
 test_that("MkPrimeRecover handles empty log file", {
+  local_mkp_verbosity()
   mkp_env <- environment(RunMkPrime)$.mkp_env
   tmpLog <- tempfile("mkp_empty_", fileext = ".log")
   writeLines("Sample\tlog_posterior", tmpLog)  # header only
@@ -113,7 +113,6 @@ test_that("MkPrimeRecover handles empty log file", {
   expect_message(rec <- MkPrimeRecover(), "no samples")
   expect_null(rec)
 })
-
 
 # --- Temp log cleanup tests ---
 
@@ -146,7 +145,6 @@ test_that(".CleanupStaleTempLogs removes leftover files from prior run", {
   expect_null(mkp_env$active_temp_logs)
   expect_null(mkp_env$recovery)
 })
-
 
 # --- Integration: RunMkPrime with/without logFile ---
 
@@ -198,7 +196,6 @@ test_that("starting a new RunMkPrime cleans up stale temp logs", {
   expect_s3_class(res, "MkPosterior")
 })
 
-
 # --- MkPrimeRecover(logFile = ...) tests ---
 
 # Helper: write a fake log file with header + n data rows
@@ -212,6 +209,7 @@ test_that("starting a new RunMkPrime cleans up stale temp logs", {
 }
 
 test_that("MkPrimeRecover(logFile) reads single log file", {
+  local_mkp_verbosity()
   tmpLog <- tempfile("mkp_recov_", fileext = ".log")
   on.exit(unlink(tmpLog), add = TRUE)
   params <- c("log_posterior", "log_likelihood", "tree_length", "rate_log_sd")
@@ -228,6 +226,7 @@ test_that("MkPrimeRecover(logFile) reads single log file", {
 })
 
 test_that("MkPrimeRecover(logFile) discovers _1/_2 multi-run files", {
+  local_mkp_verbosity()
   tmpDir <- tempfile("mkp_multi_")
   dir.create(tmpDir)
   on.exit(unlink(tmpDir, recursive = TRUE), add = TRUE)
@@ -273,6 +272,7 @@ test_that("MkPrimeRecover(logFile) extracts metadata from checkpoint", {
 })
 
 test_that("MkPrimeRecover(logFile) returns NULL for missing file", {
+  local_mkp_verbosity()
   expect_message(
     rec <- MkPrimeRecover(logFile = tempfile("nonexistent")),
     "No log files found"
@@ -281,6 +281,7 @@ test_that("MkPrimeRecover(logFile) returns NULL for missing file", {
 })
 
 test_that("MkPrimeRecover(logFile) returns NULL for empty log file", {
+  local_mkp_verbosity()
   tmpLog <- tempfile("mkp_empty_", fileext = ".log")
   on.exit(unlink(tmpLog), add = TRUE)
   writeLines("Sample\tlog_posterior", tmpLog)
@@ -305,5 +306,5 @@ test_that("print.MkPosterior works with NULL data and mcmc", {
   result$stop_reason <- "recovered"
 
   # Should not error (cli output goes to messages, not stdout)
-  expect_no_error(print(result))
+  expect_prints(print(result))
 })

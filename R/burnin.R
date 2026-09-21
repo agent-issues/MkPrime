@@ -156,7 +156,7 @@ AutoBurnin <- function(posterior,
     ))
   }
 
-  cli::cli_inform(c(
+  .Inform(c(
     "v" = "Auto burnin: {best$burnin} samples ({round(best$fraction * 100)}% of {nPerRun})",
     "i" = "min(ESS) = {round(best$minEss, 1)}{if (hasRhat) paste0(', max(Rhat) = ', round(best$maxRhat, 3)) else ''}"
   ))

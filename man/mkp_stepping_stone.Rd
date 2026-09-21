@@ -15,7 +15,7 @@ mkp_stepping_stone(
   warmup = 200L,
   alpha = 0.3,
   fixTopology = FALSE,
-  verbose = TRUE
+  verbose = MkPrimeVerbosity() > 0L
 )
 }
 \arguments{
@@ -46,7 +46,8 @@ changes fastest. Default 0.3 (Xie et al. recommendation).}
 \item{fixTopology}{If \code{TRUE}, fix the tree topology and only sample
 continuous parameters + branch lengths. Default \code{FALSE}.}
 
-\item{verbose}{Print progress? Default \code{TRUE}.}
+\item{verbose}{Logical specifying whether to report per-stone progress;
+see \code{\link[=MkPrimeVerbosity]{MkPrimeVerbosity()}}.}
 }
 \value{
 A list with components:

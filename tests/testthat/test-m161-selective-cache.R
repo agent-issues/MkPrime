@@ -5,7 +5,6 @@
 
 test_that("selective cache repopulation used with mixed char types", {
   skip_if_not_installed("TreeTools")
-  library("TreeTools")
   set.seed(7612)
   nTip <- 8L
   tips <- paste0("t", seq_len(nTip))
@@ -15,7 +14,7 @@ test_that("selective cache repopulation used with mixed char types", {
   transMat <- matrix(sample(0:2, nTip * 8, replace = TRUE), nTip, 8)
   mat <- cbind(neoMat, transMat)
   dimnames(mat) <- list(tips, NULL)
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   tree <- ape::rtree(nTip, tip.label = tips)
 
   mkd <- MkPrimeData(pd, neomorphic = 1:4)
@@ -36,7 +35,6 @@ test_that("selective cache repopulation used with mixed char types", {
 
 test_that("selective repopulation matches full rebuild likelihood", {
   skip_if_not_installed("TreeTools")
-  library("TreeTools")
   set.seed(4830)
   nTip <- 6L
   tips <- paste0("t", seq_len(nTip))
@@ -45,7 +43,7 @@ test_that("selective repopulation matches full rebuild likelihood", {
   transMat <- matrix(sample(0:2, nTip * 5, replace = TRUE), nTip, 5)
   mat <- cbind(neoMat, transMat)
   dimnames(mat) <- list(tips, NULL)
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   tree <- ape::rtree(nTip, tip.label = tips)
 
   mkd <- MkPrimeData(pd, neomorphic = 1:3)
@@ -68,7 +66,6 @@ test_that("selective repopulation matches full rebuild likelihood", {
 
 test_that("selective repopulation with fixTopology", {
   skip_if_not_installed("TreeTools")
-  library("TreeTools")
   set.seed(2917)
   nTip <- 6L
   tips <- paste0("t", seq_len(nTip))
@@ -77,7 +74,7 @@ test_that("selective repopulation with fixTopology", {
   transMat <- matrix(sample(0:2, nTip * 4, replace = TRUE), nTip, 4)
   mat <- cbind(neoMat, transMat)
   dimnames(mat) <- list(tips, NULL)
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   tree <- ape::rtree(nTip, tip.label = tips)
   mkd <- MkPrimeData(pd, neomorphic = 1:2)
 

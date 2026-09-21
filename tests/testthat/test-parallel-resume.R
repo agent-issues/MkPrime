@@ -15,7 +15,7 @@
 .tiny_fixture <- function() {
   list(
     tree = ape::read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);"),
-    pd   = TreeTools::MatrixToPhyDat(matrix(
+    pd   = MatrixToPhyDat(matrix(
       c(0L, 1L, 0L, 1L, 0L, 0L, 1L, 1L), 4, 2,
       dimnames = list(paste0("t", 1:4), NULL)
     ))
@@ -53,10 +53,13 @@ test_that(".SaveCheckpoint writes atomically (tmp+rename)", {
   # Minimal valid payload via a real (tiny) RunMkPrime invocation
   fx <- .tiny_fixture()
   set.seed(101)
-  RunMkPrime(fx$pd, fx$tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 200L, thin = 5L,
-                        maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE,
-                        checkEvery = 100L, checkpointFile = ckp))
+  allow_warning(
+    RunMkPrime(fx$pd, fx$tree,
+      mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 200L, thin = 5L,
+                          maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE,
+                          checkEvery = 100L, checkpointFile = ckp)),
+    "without stabilisation"
+  )
 
   expect_true(file.exists(ckp))
   # The .tmp file should not exist after a successful write

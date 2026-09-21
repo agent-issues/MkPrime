@@ -2,9 +2,6 @@
 # Verifies that the batched precomputation + sampling produces the same
 # logLik as full recomputation, across various partition configurations.
 
-library("ape")
-library("TreeTools")
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -33,7 +30,6 @@ library("TreeTools")
   dimnames(m) <- list(labs, NULL)
   MatrixToPhyDat(m)
 }
-
 
 # ---------------------------------------------------------------------------
 # Batched Gibbs sweep — logLik consistency
@@ -72,7 +68,6 @@ test_that("batched Gibbs sweep logLik matches after many sweeps", {
   expect_equal(st$logLik, fresh_ll, tolerance = 1e-10)
 })
 
-
 # ---------------------------------------------------------------------------
 # Interleaving Gibbs sweeps with other moves
 # ---------------------------------------------------------------------------
@@ -95,7 +90,6 @@ test_that("Gibbs sweep + tree moves maintain consistency", {
   expect_equal(st$logLik, fresh_ll, tolerance = 1e-10)
   expect_true(all(st$kPrime >= setup$mkd$kObs))
 })
-
 
 # ---------------------------------------------------------------------------
 # With ACRV (nCat > 1)
@@ -125,7 +119,6 @@ test_that("batched Gibbs sweep correct with ACRV nCat=4", {
   expect_equal(st$logLik, fresh_ll, tolerance = 1e-10)
 })
 
-
 # ---------------------------------------------------------------------------
 # Edge case: single transformational character
 # ---------------------------------------------------------------------------
@@ -147,7 +140,6 @@ test_that("batched Gibbs sweep works with single trans char", {
   fresh_ll <- eval_full_loglik_cpp(setup$dataPtr, setup$statePtr)
   expect_equal(st$logLik, fresh_ll, tolerance = 1e-10)
 })
-
 
 # ---------------------------------------------------------------------------
 # M-172: pattern deduplication in Gibbs sweep
@@ -248,7 +240,7 @@ test_that("batched Gibbs sweep on Sun2018 subset matches recomputation", {
   skip_if(nexFile == "", message = "TreeSearch not available")
 
   set.seed(9273)
-  pd <- TreeTools::ReadAsPhyDat(nexFile)
+  pd <- ReadAsPhyDat(nexFile)
   # Subset to 20 taxa for speed
   keep <- sample(names(pd), 20)
   pd <- pd[keep]
@@ -258,7 +250,8 @@ test_that("batched Gibbs sweep on Sun2018 subset matches recomputation", {
   tree <- Preorder(tree)
 
   neo <- MkPrime::AutoDetectNeomorphic(pd)
-  mkd <- MkPrimeData(pd, neomorphic = neo)
+  mkd <- allow_warning(MkPrimeData(pd, neomorphic = neo),
+                       "invariant character")
   nTrans <- sum(mkd$type == "transformational")
   skip_if(nTrans == 0, "No transformational characters in subset")
 

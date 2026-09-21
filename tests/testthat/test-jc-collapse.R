@@ -13,7 +13,7 @@ skip_if_not_installed("TreeTools")
 mk_test_tree <- function(nTip = 7L, seed = 1L) {
   set.seed(seed)
   tr <- ape::rtree(nTip, br = function(n) runif(n, 0.05, 0.6))
-  TreeTools::Preorder(tr)
+  Preorder(tr)
 }
 
 mk_test_tipstates <- function(nTip, kObs, seed = 2L,
@@ -155,14 +155,13 @@ test_that("MkpLogLikelihood (auto-dispatched) matches uncollapsed reference", {
   # End-to-end: MkpLogLikelihood now silently routes kPrime > kObs through
   # the collapsed kernels. Compare against the value obtained by calling
   # the uncollapsed C++ pruning directly on the same partition tip states.
-  library("ape")
   tr <- mk_test_tree(8L, seed = 7L)
   nTip <- length(tr$tip.label)
 
   # Transformational character with kObs = 3
   mat <- matrix(c(0, 1, 2, 0, 1, 2, 1, 0), nrow = nTip, ncol = 1,
                 dimnames = list(tr$tip.label, NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   # Reference: manually call uncollapsed kernels
@@ -196,7 +195,6 @@ test_that("Mk (known partition) mixed-kObs: collapse matches uncollapsed", {
   # kEff = max(kObs) + 1 must still give identical likelihood — by JC
   # lumpability, chars with small kObs simply never light up the upper
   # observed columns, and that is still a valid (finer) state partition.
-  library("ape")
   tr <- mk_test_tree(7L, seed = 11L)
   nTip <- length(tr$tip.label)
   parent <- tr$edge[, 1L]
@@ -233,13 +231,12 @@ test_that("Mk (known partition) mixed-kObs: collapse matches uncollapsed", {
 
 
 test_that("MkpLogLikelihood collapse-path informative coding matches uncollapsed", {
-  library("ape")
   tr <- mk_test_tree(6L, seed = 9L)
   nTip <- length(tr$tip.label)
 
   mat <- matrix(c(0, 1, 2, 0, 1, 2), nrow = nTip, ncol = 1,
                 dimnames = list(tr$tip.label, NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   manual_ll <- function(kp, rate_sd, coding) {

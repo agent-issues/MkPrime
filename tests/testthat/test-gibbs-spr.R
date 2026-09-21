@@ -16,9 +16,6 @@
 #   - Statistical: on a tree with one clearly better topology, GibbsSPR
 #     selects it far more often than random (binomial test)
 
-library("ape")
-library("TreeTools")
-
 # ---------------------------------------------------------------------------
 # Shared fixture
 # ---------------------------------------------------------------------------
@@ -28,7 +25,7 @@ library("TreeTools")
   # MCMC operates on unrooted trees (2n-3 edges); ape::rtree() defaults to
   # rooted (2n-2 edges), so explicitly request unrooted here.
   tree  <- ape::rtree(nTip, rooted = FALSE)
-  tree  <- TreeTools::Preorder(tree)
+  tree  <- Preorder(tree)
   mat   <- matrix(
     sample(0:2, nTip * 4L, replace = TRUE),
     nrow = nTip, ncol = 4L,
@@ -153,7 +150,7 @@ test_that("GibbsSPR samples better topologies more often than random", {
   # likelihood. Use a star-like character matrix that strongly favours
   # ((t1,t2),(t3,t4)).
   tree_good <- read.tree(text = "((t1:0.1,t2:0.1):0.2,(t3:0.1,t4:0.1):0.2);")
-  tree_good <- TreeTools::Preorder(tree_good)
+  tree_good <- Preorder(tree_good)
   # Characters: t1,t2 share state 1; t3,t4 share state 2
   mat <- matrix(c(1,1,0,0, 1,1,0,0, 0,0,1,1, 0,0,1,1,
                    1,1,0,0, 0,0,1,1),

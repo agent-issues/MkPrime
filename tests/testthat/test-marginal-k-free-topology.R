@@ -30,9 +30,6 @@
 # schedule while the four weighted/block moves + nni/spr/tbr/pspr/mh_logit_p are
 # present; all are present under sampled_k.
 
-library("ape")
-library("TreeTools")
-
 # --- shared 8-tip / 4-trans-char fixture (mirrors test-marginal-k-cache-*.R) --
 .ft_make_tree <- function() {
   read.tree(text = paste0(
@@ -53,7 +50,7 @@ library("TreeTools")
   MatrixToPhyDat(mat)
 }
 .ft_build <- function(p = 0.5) {
-  tree  <- TreeTools::Preorder(.ft_make_tree())
+  tree  <- Preorder(.ft_make_tree())
   mkd   <- MkPrimeData(.ft_make_mkd())
   model <- MkPrime:::.FinalizeModel(
     MkPrimeModel(kPrimePrior = "geometric", likelihoodMode = "marginal_k",
@@ -101,6 +98,7 @@ test_that("marginal-k: accepted topology moves leave state->logLik coherent (FRE
 })
 
 test_that("marginal-k: gibbs pair + k'-moves gated out; weighted/block moves re-enabled (FREEZE-003)", {
+  local_mkp_verbosity()
   nEdge <- 13L   # 8-tip unrooted binary -> 2*8-3 edges
   nTrans <- 4L
   # Enable every gateable move so the test would FAIL if the gating drifted.
@@ -269,10 +267,10 @@ test_that("marginal-k: candidate (preorder_into) and commit (preorder_weighted) 
     0, 0, 1, 1, 0, 1, 0, 1,    # kObs = 2
     1, 1, 0, 1, 0, 0, 1, 0),   # kObs = 2
     nrow = 8, ncol = 4, dimnames = list(tips, NULL))
-  TreeTools::MatrixToPhyDat(m)
+  MatrixToPhyDat(m)
 }
 .gp_build <- function(p = 0.5, variant = "conditional", mkdFn = .ft_make_mkd) {
-  tree  <- TreeTools::Preorder(.ft_make_tree())
+  tree  <- Preorder(.ft_make_tree())
   mkd   <- MkPrimeData(mkdFn())
   model <- MkPrime:::.FinalizeModel(
     MkPrimeModel(kPrimePrior = "geometric", likelihoodMode = "marginal_k",

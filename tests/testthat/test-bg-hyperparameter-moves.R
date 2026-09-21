@@ -19,7 +19,7 @@ make_bg_fixture <- function() {
   mkd <- MkPrimeData(pd)
   model <- MkPrimeModel(kPrimePrior = "beta_geometric", treeLengthRate = 0.5)
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   list(tree = tree, mkd = mkd, model = model)
 }
 
@@ -179,7 +179,7 @@ test_that("β drives down to small-β regime under informative binary data", {
   mkd <- MkPrimeData(pd)
   model <- MkPrimeModel(kPrimePrior = "beta_geometric", treeLengthRate = 0.5)
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
 
   mcmc <- suppressWarnings(MkPrimeMCMC(
     nIter = 2000, thin = 1, nChains = 1L,

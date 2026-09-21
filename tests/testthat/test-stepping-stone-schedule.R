@@ -6,11 +6,11 @@ FourTipData <- function() {
                   0L, 1L, 1L, 0L),
                 nrow = 4,
                 dimnames = list(paste0("t", 1:4), NULL))
-  TreeTools::MatrixToPhyDat(mat)
+  MatrixToPhyDat(mat)
 }
 
 FourTipTree <- function() {
-  TreeTools::Preorder(
+  Preorder(
     ape::read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   )
 }

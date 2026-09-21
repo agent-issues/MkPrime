@@ -15,6 +15,7 @@ RunMkPrime(
   overwrite = FALSE,
   partition = NULL,
   unlink = character(0),
+  verbosity = MkPrimeVerbosity(),
   ...
 )
 }
@@ -60,6 +61,10 @@ token with an \code{agrep}-driven "did you mean" suggestion). Silently
 coerced to \code{character(0)} with an info-level alert when \code{partition}
 is \code{NULL} or \code{nClasses == 1} so the AutoPart dispatcher can pass
 \code{unlink} uniformly across treatments.}
+
+\item{verbosity}{Integer from \code{0} (silent) to \code{2} (tuning diagnostics)
+controlling console output for the duration of the call; see
+\code{\link[=MkPrimeVerbosity]{MkPrimeVerbosity()}}.}
 
 \item{...}{Additional arguments forwarded to \code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}}. Allows
 passing MCMC configuration inline (e.g. \code{nIter}, \code{logFile}, \code{nChains})

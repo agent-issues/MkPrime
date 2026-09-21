@@ -2,8 +2,6 @@
 # These exercise .ValidatePartitionArgs() directly; integration tests
 # against RunMkPrime live alongside the §7a bitcompat test.
 
-library("TreeTools")
-
 # ---- helpers -----------------------------------------------------------
 
 .make_mkd <- function(nChar = 4L, nTip = 5L, seed = 7L) {
@@ -17,7 +15,6 @@ library("TreeTools")
   }
   MkPrimeData(MatrixToPhyDat(mat))
 }
-
 
 # ---- partition validation ---------------------------------------------
 
@@ -81,7 +78,6 @@ test_that("partition with non-contiguous class IDs errors", {
     fixed = FALSE
   )
 })
-
 
 # ---- unlink token resolution ------------------------------------------
 
@@ -161,10 +157,10 @@ test_that("empty-string unlink token errors", {
   )
 })
 
-
 # ---- silent coercion of unlink when partition is trivial --------------
 
 test_that("unlink is coerced to character(0) with cli_alert_info when partition = NULL", {
+  local_mkp_verbosity()
   mkd <- .make_mkd()
   expect_message(
     spec <- .ValidatePartitionArgs(NULL, c("shape", "ratemultiplier"), mkd),
@@ -175,6 +171,7 @@ test_that("unlink is coerced to character(0) with cli_alert_info when partition 
 })
 
 test_that("unlink is coerced to character(0) when nClasses == 1", {
+  local_mkp_verbosity()
   mkd <- .make_mkd()
   expect_message(
     spec <- .ValidatePartitionArgs(
@@ -187,7 +184,6 @@ test_that("unlink is coerced to character(0) when nClasses == 1", {
   expect_identical(spec$unlink, character(0))
   expect_identical(spec$nClasses, 1L)
 })
-
 
 # ---- Layer 1 gate ------------------------------------------------------
 

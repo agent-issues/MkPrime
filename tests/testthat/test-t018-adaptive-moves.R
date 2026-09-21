@@ -146,7 +146,7 @@ test_that("T-018: move weights change during warmup and freeze at sampling", {
   dat <- TreeSearch::inapplicable.phyData[["Vinther2008"]]
   mkd <- suppressWarnings(MkPrimeData(dat))
   model <- MkPrimeModel()
-  tree <- TreeTools::Preorder(ape::rtree(length(dat), tip.label = names(dat)))
+  tree <- Preorder(ape::rtree(length(dat), tip.label = names(dat)))
 
   # Long warmup so adaptation has iterations to fire; short sampling
   mcmc <- MkPrimeMCMC(

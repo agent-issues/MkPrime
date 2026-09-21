@@ -1,5 +1,3 @@
-library("TreeTools")
-library("ape")
 
 # Audit Issue 1: RB-style partition-rate normalisation.
 # See dev/rb-equivalence/notes/partition-rate-and-acrv-audit.md
@@ -127,7 +125,7 @@ test_that("R and C++ direct-eval likelihoods agree on mixed data, rate_neo != 1"
   expect_equal(sum(mkd$type == "neomorphic"), 3L)
   expect_equal(sum(mkd$type != "neomorphic"), 10L)
 
-  tree <- TreeTools::Preorder(
+  tree <- Preorder(
     ape::rtree(ntax, br = function(n) runif(n, 0.05, 0.3))
   )
   parent <- tree$edge[, 1]
@@ -181,7 +179,7 @@ test_that("rate_neo affects likelihood via BOTH partitions (mixed data)", {
                 dimnames = list(paste0("t", 1:ntax), NULL))
   pd  <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd, neomorphic = c(1L, 2L, 3L))  # 3 neo, 5 trans
-  tree <- TreeTools::Preorder(
+  tree <- Preorder(
     ape::rtree(ntax, br = function(n) rep(0.1, n))
   )
 
@@ -223,7 +221,7 @@ test_that("extreme rate_neo: trans pruning sees small effective branches", {
   pd  <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd, neomorphic = 1L)  # 1 neo, 8 trans
 
-  tree <- TreeTools::Preorder(
+  tree <- Preorder(
     ape::rtree(ntax, br = function(n) rep(0.5, n))
   )
 
@@ -253,7 +251,7 @@ test_that("trans-only datasets: likelihood is rate_neo-independent (degenerate)"
   mkd <- MkPrimeData(pd)
   expect_equal(sum(mkd$type == "neomorphic"), 0L)
 
-  tree <- TreeTools::Preorder(
+  tree <- Preorder(
     ape::rtree(5, br = function(n) rep(0.1, n))
   )
 
@@ -286,7 +284,7 @@ test_that("partLogLik stays in sync after rate_neo moves (F1)", {
   pd  <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd, neomorphic = c(1L, 2L, 3L, 4L))  # 4 neo, 8 trans
 
-  tree <- TreeTools::Preorder(
+  tree <- Preorder(
     ape::rtree(ntax, br = function(n) runif(n, 0.05, 0.3))
   )
   parent  <- tree$edge[, 1]

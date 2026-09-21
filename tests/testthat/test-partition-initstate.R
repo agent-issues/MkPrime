@@ -4,7 +4,6 @@
 # with the correct shape and the §7b numeric-equivalence property at
 # initial state.
 
-library("TreeTools")
 
 
 .setup_init <- function(partition = NULL, unlink = character(0),
@@ -18,11 +17,11 @@ library("TreeTools")
   }
   pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
-  tree <- TreeTools::NJTree(pd, edgeLengths = TRUE)
+  tree <- NJTree(pd, edgeLengths = TRUE)
   if (is.null(tree$edge.length) || any(tree$edge.length <= 0)) {
     tree$edge.length <- pmax(tree$edge.length %||% rep(0.1, nrow(tree$edge)), 1e-8)
   }
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
 
   # Apply partition to mkd$partitions for the partition-aware path
   if (!is.null(partition)) {

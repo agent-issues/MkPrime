@@ -1,6 +1,5 @@
 test_that("Standard Mk likelihood matches phangorn (2-state)", {
   skip_if_not_installed("phangorn")
-  library("ape")
 
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat <- matrix(c(0, 1, 0), 3, 1,
@@ -18,7 +17,6 @@ test_that("Standard Mk likelihood matches phangorn (2-state)", {
 
 test_that("Standard Mk likelihood matches phangorn (3-state, multi-char)", {
   skip_if_not_installed("phangorn")
-  library("ape")
 
   set.seed(8832)
   tree <- rtree(6, tip.label = paste0("t", 1:6))
@@ -38,7 +36,6 @@ test_that("Standard Mk likelihood matches phangorn (3-state, multi-char)", {
 
 test_that("Standard Mk likelihood matches phangorn (10 tips, 8 chars)", {
   skip_if_not_installed("phangorn")
-  library("ape")
 
   set.seed(5501)
   tree <- rtree(10, tip.label = paste0("t", 1:10))
@@ -57,12 +54,11 @@ test_that("Standard Mk likelihood matches phangorn (10 tips, 8 chars)", {
 
 
 test_that("Mk' relabelling increases log-likelihood when applied", {
-  library("ape")
 
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat <- matrix(c(0, 1, 0), 3, 1,
                 dimnames = list(c("t1", "t2", "t3"), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   ll_no_relabel <- MkpLogLikelihood(tree, mkd, coding = "none",
@@ -76,12 +72,11 @@ test_that("Mk' relabelling increases log-likelihood when applied", {
 
 
 test_that("Ascertainment correction increases likelihood", {
-  library("ape")
 
   tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   ll_none <- MkpLogLikelihood(tree, mkd, coding = "none",
@@ -95,14 +90,13 @@ test_that("Ascertainment correction increases likelihood", {
 
 
 test_that("ACRV changes likelihood vs no rate variation", {
-  library("ape")
 
   set.seed(3742)
   tree <- rtree(6, tip.label = paste0("t", 1:6))
   tree$edge.length <- runif(length(tree$edge.length), 0.05, 0.5)
   mat <- matrix(sample(0:2, 6 * 6, replace = TRUE), 6, 6,
                 dimnames = list(tree$tip.label, NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   ll_no_acrv <- MkpLogLikelihood(tree, mkd, coding = "none",
@@ -119,14 +113,13 @@ test_that("RunMkPrime warns and clamps non-positive branch lengths", {
   # are very similar. Before this fix, zeros silently propagated to
   # rel_br_lengths = 0, causing LogPrior to return -Inf on every iteration and
   # the chain to freeze permanently with 0% acceptance.
-  library("ape")
 
   tree <- read.tree(text = "((t1:0.1,t2:0.0):0.15,(t3:0.0,t4:0.3):0.2);")
   mat <- matrix(c(0L, 1L, 0L, 1L,
                   0L, 0L, 1L, 1L,
                   1L, 0L, 1L, 0L), 4L, 3L,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   expect_warning(expect_warning(
     result <- RunMkPrime(pd, tree,
@@ -144,7 +137,6 @@ test_that("RunMkPrime warns and clamps non-positive branch lengths", {
 
 
 test_that("MkpLogLikelihood handles mixed partition types", {
-  library("ape")
 
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1,   # binary, neomorphic
@@ -152,7 +144,7 @@ test_that("MkpLogLikelihood handles mixed partition types", {
                   0, 1, 0, 1),   # binary, known k=3
                 4, 3,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd, neomorphic = 1L, knownStates = c("3" = 3L))
 
   ll <- MkpLogLikelihood(tree, mkd, coding = "none",

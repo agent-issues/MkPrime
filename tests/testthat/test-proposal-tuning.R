@@ -49,9 +49,9 @@ test_that(".DoMove routes logit_scale_p through the shared proposal", {
   tree <- ape::read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  mkd <- MkPrimeData(TreeTools::MatrixToPhyDat(mat))
+  mkd <- MkPrimeData(MatrixToPhyDat(mat))
   model <- MkPrime:::.FinalizeModel(MkPrimeModel(), tree, mkd)
-  state <- MkPrime:::.InitState(TreeTools::Preorder(tree), mkd, model)
+  state <- MkPrime:::.InitState(Preorder(tree), mkd, model)
 
   seen <- NULL
   local_mocked_bindings(

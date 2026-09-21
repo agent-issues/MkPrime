@@ -77,7 +77,7 @@ test_that("M-151b: print() works for streaming multi-run (NULL per-run samples)"
   on.exit(unlink(info$logPaths))
 
   # Should not error or produce empty sample counts
-  expect_no_error(print(info$result))
+  expect_prints(print(info$result))
 
   # Verify the per-run count fallback logic directly:
   # nrow(NULL) is NULL, so saved_idx should be used

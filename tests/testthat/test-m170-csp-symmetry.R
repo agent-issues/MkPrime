@@ -14,8 +14,6 @@ skip_if_not_installed("phangorn")
 # and by checking that results haven't changed relative to a reference computed
 # before the optimisation (stored inline below).
 
-library(MkPrime)
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -25,9 +23,9 @@ library(MkPrime)
 # Node numbering: tips 1..4, internal 5..7 (root = nTip+1 = 5)
 make_test_tree <- function() {
   tr <- ape::read.tree(text = "((t1:0.1,t2:0.1):0.1,(t3:0.1,t4:0.1):0.1);")
-  # TreeTools::Preorder matches the invariant required by constant_site_prob_jc:
+  # Preorder matches the invariant required by constant_site_prob_jc:
   # backward scan of a preorder edge matrix is a correct bottom-up traversal.
-  TreeTools::Preorder(tr)
+  Preorder(tr)
 }
 
 tree_vectors <- function(tr) {
@@ -79,7 +77,7 @@ test_that("constant_site_prob_jc decreases as k increases", {
 # ---------------------------------------------------------------------------
 test_that("constant_site_prob_jc decreases with longer branches", {
   tr <- ape::read.tree(text = "((t1:0.1,t2:0.1):0.1,(t3:0.1,t4:0.1):0.1);")
-  tr <- TreeTools::Preorder(tr)
+  tr <- Preorder(tr)
   tr_long <- tr
   tr_long$edge.length <- tr$edge.length * 10
 

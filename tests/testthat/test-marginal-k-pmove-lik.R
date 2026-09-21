@@ -37,9 +37,6 @@
 # state->logLik moved by a non-trivial amount, so the test is not
 # trivially passing on a no-op move.
 
-library("ape")
-library("TreeTools")
-
 # ---------------------------------------------------------------------------
 # Fixture (mirrors test-marginal-k-cache-invariance.R for consistency)
 # ---------------------------------------------------------------------------
@@ -69,7 +66,7 @@ library("TreeTools")
 }
 
 .pmove_build_ptrs <- function(p) {
-  tree  <- TreeTools::Preorder(.pmove_make_tree())
+  tree  <- Preorder(.pmove_make_tree())
   pd    <- .pmove_make_mkd()
   mkd   <- MkPrimeData(pd)
   model <- MkPrimeModel(kPrimePrior = "geometric",
@@ -166,7 +163,6 @@ test_that("marginal-k: case-30 p-move writes the new marginal LL to state->logLi
                               "MH ratio is missing the LL contribution and the ",
                               "chain is random-walking on p."))
 })
-
 
 # ---------------------------------------------------------------------------
 # Belt-and-braces: chain-level check that LL varies with p across iterations

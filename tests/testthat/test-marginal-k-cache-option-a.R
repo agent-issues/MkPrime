@@ -29,9 +29,6 @@
 # See dev/red-team/proofs/marginal-k-geometric.md §5 for the invariance proof.
 # See dev/notes/2026-05-28-marginal-k-plan.md §5 for the cache strategy.
 
-library("ape")
-library("TreeTools")
-
 # ---------------------------------------------------------------------------
 # Tiny fixture (shared with test-marginal-k-geometric.R; duplicated here to
 # keep the file self-contained — both files use 4 trans chars × 8 tips).
@@ -59,7 +56,7 @@ library("TreeTools")
 }
 
 .cache_build <- function(p) {
-  tree  <- TreeTools::Preorder(.cache_make_tree())
+  tree  <- Preorder(.cache_make_tree())
   pd    <- .cache_make_mkd()
   mkd   <- MkPrimeData(pd)
   model <- MkPrimeModel(kPrimePrior = "geometric",

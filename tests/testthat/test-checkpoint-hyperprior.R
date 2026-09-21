@@ -26,9 +26,6 @@
 test_that("checkpoint round-trip preserves hyper_tau and class_rate_log_sd_z", {
   skip_on_cran()
 
-  library("ape")
-  library("TreeTools")
-
   # 6 tips, 7 binary chars, all variable (so MkPrimeData keeps every column).
   set.seed(20260528L)
   nTip  <- 6L
@@ -40,7 +37,7 @@ test_that("checkpoint round-trip preserves hyper_tau and class_rate_log_sd_z", {
     if (length(unique(mat[, j])) < 2L) mat[1L, j] <- 1L - mat[1L, j]
   }
   pd   <- MatrixToPhyDat(mat)
-  tree <- TreeTools::Preorder(TreeTools::NJTree(pd, edgeLengths = TRUE))
+  tree <- Preorder(NJTree(pd, edgeLengths = TRUE))
   if (is.null(tree$edge.length) || any(tree$edge.length <= 0)) {
     tree$edge.length <- rep(0.1, nrow(tree$edge))
   }

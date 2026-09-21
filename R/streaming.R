@@ -187,7 +187,7 @@
 
   if (nTrees == 0L) {
     if (nAvail > 0L) {
-      cli::cli_alert_info(
+      .AlertInfo(
         "Rewinding {.file {treeFile}}: discarding {nAvail} post-checkpoint tree{?s}."
       )
     }
@@ -195,7 +195,7 @@
   } else if (nAvail > nTrees) {
     # Post-checkpoint trees written before SIGKILL: drop them.
     nDropped <- nAvail - nTrees
-    cli::cli_alert_info(
+    .AlertInfo(
       "Rewinding {.file {treeFile}}: discarding {nDropped} post-checkpoint tree{?s}."
     )
     writeLines(lines[treeIdx[seq_len(nTrees)]], treeFile)
@@ -255,7 +255,7 @@
     keepIdx <- c(which(!isData), dataIdx[seq_len(nDataRows)])
     keepIdx <- sort(keepIdx)
     nDropped <- nData - nDataRows
-    cli::cli_alert_info(
+    .AlertInfo(
       "Rewinding {.file {logFile}}: discarding {nDropped} post-checkpoint sample{?s}."
     )
     writeLines(lines[keepIdx], logFile)
@@ -301,14 +301,14 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
   if (!is.null(logFile)) {
     logPaths <- .DiscoverLogFiles(logFile)
     if (is.null(logPaths)) {
-      cli::cli_alert_danger("No log files found for {.file {logFile}}.")
+      .AlertDanger("No log files found for {.file {logFile}}.")
       return(invisible(NULL))
     }
 
     samples <- tryCatch(
       ReadMkLog(logPaths),
       error = function(e) {
-        cli::cli_alert_danger(
+        .AlertDanger(
           "Failed to read log file{?s}: {conditionMessage(e)}"
         )
         return(NULL)
@@ -317,7 +317,7 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
 
     if (is.null(samples) || nrow(samples) == 0L) {
       nLP <- length(logPaths)
-      cli::cli_alert_warning(
+      .AlertWarning(
         "Log {cli::qty(nLP)}file{?s} contain{?s/} no samples \\
          (run may have been interrupted before any were flushed)."
       )
@@ -347,7 +347,7 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
         trees <- tryCatch(
           lapply(treeLines, function(x) ape::read.tree(text = x)),
           error = function(e) {
-            cli::cli_alert_warning(
+            .AlertWarning(
               "Could not parse tree file {.file {treeFile}}: \\
                {conditionMessage(e)}"
             )
@@ -389,7 +389,7 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
       }
     }
 
-    cli::cli_alert_success(
+    .AlertSuccess(
       "Recovered {nrow(samples)} sample{?s} from \\
        {length(logPaths)} log file{?s}."
     )
@@ -399,7 +399,7 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
   # --- Path 2: recover from session-local temp logs (existing behaviour) ---
   rec <- .mkp_env$recovery
   if (is.null(rec)) {
-    cli::cli_alert_info(
+    .AlertInfo(
       "No interrupted run to recover.
        {.emph Tip: pass {.arg logFile} to recover from a named log file.}"
     )
@@ -410,7 +410,7 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
   nFiles <- length(rec$logFiles)
   missing <- !file.exists(rec$logFiles)
   if (all(missing)) {
-    cli::cli_alert_danger(
+    .AlertDanger(
       "Temporary log {cli::qty(nFiles)}file{?s} no longer exist{?s/}. \\
        Cannot recover."
     )
@@ -419,7 +419,7 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
   }
 
   if (any(missing)) {
-    cli::cli_alert_warning(
+    .AlertWarning(
       "Some log files are missing; recovering from {sum(!missing)} of \\
        {nFiles} run{?s}."
     )
@@ -430,7 +430,7 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
   samples <- tryCatch(
     ReadMkLog(rec$logFiles),
     error = function(e) {
-      cli::cli_alert_danger(
+      .AlertDanger(
         "Failed to read log file{?s}: {conditionMessage(e)}"
       )
       return(NULL)
@@ -438,7 +438,7 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
   )
 
   if (is.null(samples) || nrow(samples) == 0L) {
-    cli::cli_alert_warning(
+    .AlertWarning(
       "Log {cli::qty(length(rec$logFiles))}file{?s} contain{?s/} no samples \\
        (run may have been interrupted before any were flushed)."
     )
@@ -464,7 +464,7 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
   # Clean up
   .CleanupTempLogs(rec$logFiles)
 
-  cli::cli_alert_success(
+  .AlertSuccess(
     "Recovered {nrow(samples)} sample{?s} from interrupted run."
   )
   result
