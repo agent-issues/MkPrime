@@ -127,7 +127,7 @@ jobs:
         ^(marginal-k-free-topology|node-cl-cache|stepping-stone|stepping-stone-schedule|partition-moves-impl|partition-casali-smoke|auto-thin|tree-thin|beta-geometric-prior|marginal-k-truncation)$
 
     steps:
-      - uses: ms609/actions/memcheck@memcheck-filter
+      - uses: ms609/actions/memcheck@main
         with:
           test: ${{ matrix.config.test}}
           filter: ${{ needs.changes.outputs.smoke == 'true' && env.PR_SKIP || '' }}
@@ -142,7 +142,10 @@ jobs:
     # fail this job on our behalf.
     name: valgrind gate
     needs: [changes, valgrind]
-    if: always()
+    # Not on '**valgrind**' branch pushes: that run's gate lands on the same
+    # commit as the PR run's, so cancelling the branch's full run would fail
+    # the PR's required check.
+    if: always() && (github.event_name != 'push' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
       - name: Certify valgrind status
