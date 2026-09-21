@@ -21,7 +21,7 @@
 #       showing, on a build of the merge base and a build of your branch,
 #       that the pinned schedule gives bit-identical payloads; then run
 #       `Rscript tests/testthat/_reference/generate-partition-bitcompat-null.R`
-#       once and add a NEWS.md entry recording the change.
+#       once, and record the change in the pull request that carries it.
 #   (4) If unintentional, the failure indicates drift in the legacy code
 #       path that the partition API was contracted not to introduce — fix.
 #
@@ -52,6 +52,13 @@
 # the legacy path — which flips an accept/reject and diverges by whole nats —
 # is caught many orders of magnitude before it. See the reference-platform
 # note in helper-partition-ref.R for the measurements behind that.
+
+test_that("§7a fixture pins every MkPrimeModel argument", {
+  # A new model argument would enter the fixture through its default and move
+  # the reference silently, which is how ada6bb7 and 2b3c054 rewrote it.
+  expect_identical(names(formals(MkPrimeModel)),
+                   .PartitionBitcompatModelFormals())
+})
 
 test_that("§7a bit-identity: partition = NULL reproduces stored reference", {
   ref_path <- .PartitionBitcompatReferencePath()

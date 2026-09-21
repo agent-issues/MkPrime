@@ -41,25 +41,10 @@ test_that("MkPrimeMCMC() rejects unknown move names", {
                "unknown move name")
 })
 
-test_that("moveWeights validNames covers all .BuildMoves() move names (M-167)", {
-  # Every move name that .BuildMoves() can produce must be accepted
-  allMoveNames <- c(
-    "tree_length", "branch_lengths", "nni", "spr", "tbr", "pspr",
-    "gibbs_spr", "gibbs_subtree_swap",
-    "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
-    "block_gibbs_branch", "dirichlet_branch", "local_dirichlet",
-    "kPrime", "gibbs_kPrime", "block_kPrime", "p",
-    "slice_kprime_s", "slice_kprime_r",
-    "rate_loss", "rate_neo", "rate_log_sd", "beta_scale",
-    "slice_rate_loss", "slice_rate_neo", "slice_rate_log_sd",
-    "slice_beta_scale",
-    "joint_tl_rls", "joint_tl_rl", "joint_tl_rn"
-  )
-  for (nm in allMoveNames) {
-    w <- setNames(0.01, nm)
-    expect_no_error(MkPrimeMCMC(moveWeights = w))
-  }
-})
+# M-167: superseded by test-proposal-tuning.R, which derives the buildable
+# move names from .BuildMoves()/.BuildMovesPartitioned() instead of restating
+# them. A hand-copied list here had gone stale in exactly the way it was
+# meant to prevent.
 
 test_that("MkPrimeMCMC() rejects negative moveWeights", {
   expect_error(MkPrimeMCMC(nIter = 100L, minWarmup = 50L, moveWeights = c(nni = -0.1)),
@@ -517,26 +502,8 @@ test_that(".BuildMoves produces weights that normalize to 1", {
   expect_equal(sum(wNorm), 1.0, tolerance = 1e-10)
 })
 
-test_that("All move names in .kMoveTypes are valid moveWeights names", {
-  validInMcmc <- c(
-    "tree_length", "branch_lengths", "nni", "spr", "tbr", "kPrime", "p",
-    "rate_loss", "rate_log_sd", "rate_neo",
-    "gibbs_spr", "gibbs_subtree_swap",
-    "weighted_branch_lengths", "weighted_spr", "weighted_subtree_swap",
-    "block_gibbs_branch", "dirichlet_branch", "local_dirichlet",
-    "beta_scale", "pspr",
-    "joint_tl_rls", "joint_tl_rl", "joint_tl_rn",
-    "slice_rate_loss", "slice_rate_neo", "slice_rate_log_sd",
-    "slice_tree_length", "slice_beta_scale",
-    "gibbs_kPrime", "block_kPrime",
-    "slice_kprime_s", "slice_kprime_r",
-    "mh_p", "mh_logit_p", "gibbs_p_marginal",
-    "scale_class_rate_log_sd", "dirichlet_simplex_class_w",
-    "scale_hyper_tau"
-  )
-  expect_true(all(names(MkPrime:::.kMoveTypes) %in% validInMcmc))
-})
-
+# The real guard against move-name drift lives in test-proposal-tuning.R: it
+# drives MkPrimeMCMC() itself rather than a hand-copied list of names.
 
 # ==========================================================================
 # Slow integration tests
@@ -577,4 +544,73 @@ test_that("User-pinned moveWeights preserved end-to-end", {
   # Just verify it runs without error
   result <- RunMkPrime(dat, tree, model = model, mcmc = mcmc)
   expect_s3_class(result, "MkPosterior")
+})
+
+
+# --- #68: the move schedule a user reads back ---
+
+test_that("the gibbs cap leaves a probability vector (#68)", {
+  # With no free move to absorb the freed weight the vector is renormalized,
+  # which is the schedule mcmc.cpp samples from either way -- so the cap must
+  # still bind, and the total must still be 1.
+  allPinned <- c(gibbs_kPrime = 0.6, nni = 0.4)          # no free move at all
+  capped <- .WarmupGibbsCap(allPinned, allPinned, 1L)
+  expect_equal(sum(capped), 1)
+  expect_equal(capped[["gibbs_kPrime"]], 0.2 / 0.6)      # capped share, not 0.6
+
+  noFreeWeight <- c(gibbs_kPrime = 1, nni = 0)           # free moves hold none
+  onlyGibbs <- .WarmupGibbsCap(noFreeWeight, c(gibbs_kPrime = 1), 1L)
+  expect_equal(sum(onlyGibbs), 1)
+
+  tooLittleFree <- c(gibbs_kPrime = 0.2, nni = 1e-15)    # too little to reclaim
+  restored <- .RestoreGibbsCap(tooLittleFree, c(gibbs_kPrime = 0.8), 1L)
+  expect_equal(sum(restored), 1)
+  expect_equal(restored[["gibbs_kPrime"]], 1, tolerance = 1e-12)
+})
+
+
+test_that("a feasible gibbs cap still caps, and restores (#68)", {
+  weights <- c(gibbs_kPrime = 0.6, nni = 0.3, spr = 0.1)
+  pinned  <- c(gibbs_kPrime = 0.6)
+
+  capped <- .WarmupGibbsCap(weights, pinned, 1L, factor = 1 / 3)
+  expect_equal(capped[["gibbs_kPrime"]], 0.2)
+  expect_equal(sum(capped), 1)
+  # Freed weight is shared in proportion to the free moves' existing weights.
+  expect_equal(capped[["nni"]] / capped[["spr"]], 3)
+
+  restored <- .RestoreGibbsCap(capped, pinned, 1L)
+  expect_equal(restored[["gibbs_kPrime"]], 0.6)
+  expect_equal(sum(restored), 1)
+  expect_equal(unname(restored), unname(weights))
+})
+
+
+test_that(".BuildResult surfaces every run's frozen schedule (#68)", {
+  # Runs adapt independently, so `$moveWeights` -- run 1's -- presents one
+  # run's decisions as though they were the analysis's.
+  paramNames <- c("log_posterior", "log_likelihood", "tree_length")
+  Run <- function(nniWeight) {
+    list(
+      samples = matrix(0, 4L, length(paramNames),
+                       dimnames = list(NULL, paramNames)),
+      tree_samples = vector("list", 4L),
+      saved_idx = 4L, tree_saved_idx = 4L,
+      chain_accept = list(c(nni = 1)), chain_propose = list(c(nni = 2)),
+      chain_tuning = list(list()), logPostHistory = numeric(0),
+      moveWeights = c(nni = nniWeight, spr = 1 - nniWeight)
+    )
+  }
+  mcmc <- list(nChains = 1L, nRuns = 2L, warmup = 0L, thin = 1L, treeThin = 1L)
+
+  result <- .BuildResult(
+    runs = list(Run(0.7), Run(0.4)), model = NULL, mkd = NULL, mcmc = mcmc,
+    paramNames = paramNames, logFilePaths = NULL, actualIter = 4L,
+    stopReason = "nIter"
+  )
+
+  expect_equal(result$moveWeights, c(nni = 0.7, spr = 0.3))
+  expect_length(result$runMoveWeights, 2L)
+  expect_equal(result$runMoveWeights[[1]], c(nni = 0.7, spr = 0.3))
+  expect_equal(result$runMoveWeights[[2]], c(nni = 0.4, spr = 0.6))
 })

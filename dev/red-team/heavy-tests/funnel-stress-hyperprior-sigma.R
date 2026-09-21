@@ -22,14 +22,10 @@
 #   Rscript dev/red-team/heavy-tests/funnel-stress-hyperprior-sigma.R
 
 suppressMessages({
-  # devtools::load_all so the just-built feature branch sources are used,
-  # not whatever MkPrime is installed in the user library.
-  if (requireNamespace("devtools", quietly = TRUE) &&
-      file.exists("DESCRIPTION")) {
-    devtools::load_all(".", quiet = TRUE)
-  } else {
-    library(MkPrime)
-  }
+  # Race-safe loader: pkgload compiles into src/ in place, so concurrent
+  # array tasks corrupt each other's objects unless the tree is pre-built (#15).
+  source("dev/red-team/heavy-tests/load-mkprime.R")
+  LoadMkPrime(".")
   library(TreeTools)
   library(coda)
 })

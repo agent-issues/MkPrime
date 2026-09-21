@@ -53,7 +53,7 @@ library("TreeTools")
     codingStr                = model$coding,
     relabelFlag              = isTRUE(model$relabel),
     treeLengthShape          = model$treeLengthShape,
-    treeLengthRate           = model$treeLengthRate %||% 1,
+    treeLengthRate           = model$treeLengthRate,
     rateLossMeanlog          = model$rateLossMeanlog,
     rateLossSdlog            = model$rateLossSdlog,
     rateLogSdShape           = model$rateLogSdShape,

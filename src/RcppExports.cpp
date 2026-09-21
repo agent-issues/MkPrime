@@ -474,6 +474,32 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// gibbs_spr_enumerate_cpp
+List gibbs_spr_enumerate_cpp(SEXP dataPtr, SEXP statePtr, int pruneRow);
+RcppExport SEXP _MkPrime_gibbs_spr_enumerate_cpp(SEXP dataPtrSEXP, SEXP statePtrSEXP, SEXP pruneRowSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type dataPtr(dataPtrSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type statePtr(statePtrSEXP);
+    Rcpp::traits::input_parameter< int >::type pruneRow(pruneRowSEXP);
+    rcpp_result_gen = Rcpp::wrap(gibbs_spr_enumerate_cpp(dataPtr, statePtr, pruneRow));
+    return rcpp_result_gen;
+END_RCPP
+}
+// kprime_sweep_candidates
+IntegerVector kprime_sweep_candidates(SEXP dataPtr, SEXP statePtr, double beta);
+RcppExport SEXP _MkPrime_kprime_sweep_candidates(SEXP dataPtrSEXP, SEXP statePtrSEXP, SEXP betaSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type dataPtr(dataPtrSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type statePtr(statePtrSEXP);
+    Rcpp::traits::input_parameter< double >::type beta(betaSEXP);
+    rcpp_result_gen = Rcpp::wrap(kprime_sweep_candidates(dataPtr, statePtr, beta));
+    return rcpp_result_gen;
+END_RCPP
+}
 // do_move_cpp
 bool do_move_cpp(SEXP dataPtr, SEXP statePtr, int moveType, int charIdx, double scaleTuning, double betaSimplexTuning, int intWalkWindow, double beta);
 RcppExport SEXP _MkPrime_do_move_cpp(SEXP dataPtrSEXP, SEXP statePtrSEXP, SEXP moveTypeSEXP, SEXP charIdxSEXP, SEXP scaleTuningSEXP, SEXP betaSimplexTuningSEXP, SEXP intWalkWindowSEXP, SEXP betaSEXP) {
@@ -632,9 +658,27 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// het_const_site_prob
+double het_const_site_prob(IntegerVector parent, IntegerVector child, NumericVector edgeLength, int nTip, int kStates, double baseRateLoss, NumericVector betaBins, NumericVector rateMultipliers);
+RcppExport SEXP _MkPrime_het_const_site_prob(SEXP parentSEXP, SEXP childSEXP, SEXP edgeLengthSEXP, SEXP nTipSEXP, SEXP kStatesSEXP, SEXP baseRateLossSEXP, SEXP betaBinsSEXP, SEXP rateMultipliersSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< IntegerVector >::type parent(parentSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type child(childSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type edgeLength(edgeLengthSEXP);
+    Rcpp::traits::input_parameter< int >::type nTip(nTipSEXP);
+    Rcpp::traits::input_parameter< int >::type kStates(kStatesSEXP);
+    Rcpp::traits::input_parameter< double >::type baseRateLoss(baseRateLossSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type betaBins(betaBinsSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type rateMultipliers(rateMultipliersSEXP);
+    rcpp_result_gen = Rcpp::wrap(het_const_site_prob(parent, child, edgeLength, nTip, kStates, baseRateLoss, betaBins, rateMultipliers));
+    return rcpp_result_gen;
+END_RCPP
+}
 // prepare_mcmc_data
-SEXP prepare_mcmc_data(List partitions_r, IntegerVector kObs_r, CharacterVector charTypes_r, bool hasNeo, int nCat, std::string codingStr, bool relabelFlag, double treeLengthShape, double treeLengthRate, double rateLossMeanlog, double rateLossSdlog, double rateLogSdShape, double rateLogSdRate, double rateNeoMeanlog, double rateNeoSdlog, double kprimeHyperA, double kprimeHyperB, bool kPriorLogseries, double kprimeLogseriesC, bool kPriorBetaGeometric, bool qHeterogeneity, int nBetaCat, double betaScaleShape, double betaScaleRate, bool kPriorEmpiricalGeometric, NumericVector empLogBody, int empBodyLastK, int empTailStartK, double empTailDecay, double empLogTailStartP, bool marginalK, bool unconditionalPrior);
-RcppExport SEXP _MkPrime_prepare_mcmc_data(SEXP partitions_rSEXP, SEXP kObs_rSEXP, SEXP charTypes_rSEXP, SEXP hasNeoSEXP, SEXP nCatSEXP, SEXP codingStrSEXP, SEXP relabelFlagSEXP, SEXP treeLengthShapeSEXP, SEXP treeLengthRateSEXP, SEXP rateLossMeanlogSEXP, SEXP rateLossSdlogSEXP, SEXP rateLogSdShapeSEXP, SEXP rateLogSdRateSEXP, SEXP rateNeoMeanlogSEXP, SEXP rateNeoSdlogSEXP, SEXP kprimeHyperASEXP, SEXP kprimeHyperBSEXP, SEXP kPriorLogseriesSEXP, SEXP kprimeLogseriesCSEXP, SEXP kPriorBetaGeometricSEXP, SEXP qHeterogeneitySEXP, SEXP nBetaCatSEXP, SEXP betaScaleShapeSEXP, SEXP betaScaleRateSEXP, SEXP kPriorEmpiricalGeometricSEXP, SEXP empLogBodySEXP, SEXP empBodyLastKSEXP, SEXP empTailStartKSEXP, SEXP empTailDecaySEXP, SEXP empLogTailStartPSEXP, SEXP marginalKSEXP, SEXP unconditionalPriorSEXP) {
+SEXP prepare_mcmc_data(List partitions_r, IntegerVector kObs_r, CharacterVector charTypes_r, bool hasNeo, int nCat, std::string codingStr, bool relabelFlag, double treeLengthShape, double treeLengthRate, double rateLossMeanlog, double rateLossSdlog, double rateLogSdShape, double rateLogSdRate, double rateNeoMeanlog, double rateNeoSdlog, double kprimeHyperA, double kprimeHyperB, bool kPriorLogseries, double kprimeLogseriesC, bool kPriorBetaGeometric, bool qHeterogeneity, int nBetaCat, double betaScaleShape, double betaScaleRate, bool kPriorEmpiricalGeometric, NumericVector empLogBody, int empTailStartK, double empTailDecay, double empLogTailStartP, bool marginalK, bool unconditionalPrior);
+RcppExport SEXP _MkPrime_prepare_mcmc_data(SEXP partitions_rSEXP, SEXP kObs_rSEXP, SEXP charTypes_rSEXP, SEXP hasNeoSEXP, SEXP nCatSEXP, SEXP codingStrSEXP, SEXP relabelFlagSEXP, SEXP treeLengthShapeSEXP, SEXP treeLengthRateSEXP, SEXP rateLossMeanlogSEXP, SEXP rateLossSdlogSEXP, SEXP rateLogSdShapeSEXP, SEXP rateLogSdRateSEXP, SEXP rateNeoMeanlogSEXP, SEXP rateNeoSdlogSEXP, SEXP kprimeHyperASEXP, SEXP kprimeHyperBSEXP, SEXP kPriorLogseriesSEXP, SEXP kprimeLogseriesCSEXP, SEXP kPriorBetaGeometricSEXP, SEXP qHeterogeneitySEXP, SEXP nBetaCatSEXP, SEXP betaScaleShapeSEXP, SEXP betaScaleRateSEXP, SEXP kPriorEmpiricalGeometricSEXP, SEXP empLogBodySEXP, SEXP empTailStartKSEXP, SEXP empTailDecaySEXP, SEXP empLogTailStartPSEXP, SEXP marginalKSEXP, SEXP unconditionalPriorSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -664,13 +708,12 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< double >::type betaScaleRate(betaScaleRateSEXP);
     Rcpp::traits::input_parameter< bool >::type kPriorEmpiricalGeometric(kPriorEmpiricalGeometricSEXP);
     Rcpp::traits::input_parameter< NumericVector >::type empLogBody(empLogBodySEXP);
-    Rcpp::traits::input_parameter< int >::type empBodyLastK(empBodyLastKSEXP);
     Rcpp::traits::input_parameter< int >::type empTailStartK(empTailStartKSEXP);
     Rcpp::traits::input_parameter< double >::type empTailDecay(empTailDecaySEXP);
     Rcpp::traits::input_parameter< double >::type empLogTailStartP(empLogTailStartPSEXP);
     Rcpp::traits::input_parameter< bool >::type marginalK(marginalKSEXP);
     Rcpp::traits::input_parameter< bool >::type unconditionalPrior(unconditionalPriorSEXP);
-    rcpp_result_gen = Rcpp::wrap(prepare_mcmc_data(partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, kPriorBetaGeometric, qHeterogeneity, nBetaCat, betaScaleShape, betaScaleRate, kPriorEmpiricalGeometric, empLogBody, empBodyLastK, empTailStartK, empTailDecay, empLogTailStartP, marginalK, unconditionalPrior));
+    rcpp_result_gen = Rcpp::wrap(prepare_mcmc_data(partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, kPriorBetaGeometric, qHeterogeneity, nBetaCat, betaScaleShape, betaScaleRate, kPriorEmpiricalGeometric, empLogBody, empTailStartK, empTailDecay, empLogTailStartP, marginalK, unconditionalPrior));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -952,6 +995,8 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_eval_full_loglik_cpp", (DL_FUNC) &_MkPrime_eval_full_loglik_cpp, 2},
     {"_MkPrime_eval_full_loglik_at_cpp", (DL_FUNC) &_MkPrime_eval_full_loglik_at_cpp, 5},
     {"_MkPrime_eval_preorder_paths_cpp", (DL_FUNC) &_MkPrime_eval_preorder_paths_cpp, 5},
+    {"_MkPrime_gibbs_spr_enumerate_cpp", (DL_FUNC) &_MkPrime_gibbs_spr_enumerate_cpp, 3},
+    {"_MkPrime_kprime_sweep_candidates", (DL_FUNC) &_MkPrime_kprime_sweep_candidates, 3},
     {"_MkPrime_do_move_cpp", (DL_FUNC) &_MkPrime_do_move_cpp, 8},
     {"_MkPrime_run_mcmc_batch_cpp", (DL_FUNC) &_MkPrime_run_mcmc_batch_cpp, 20},
     {"_MkPrime_debug_mcmc_data", (DL_FUNC) &_MkPrime_debug_mcmc_data, 1},
@@ -961,7 +1006,8 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_test_flat_jc_uncollapsed", (DL_FUNC) &_MkPrime_test_flat_jc_uncollapsed, 7},
     {"_MkPrime_test_flat_jc_collapsed", (DL_FUNC) &_MkPrime_test_flat_jc_collapsed, 8},
     {"_MkPrime_test_flat_jc_constprob_pair", (DL_FUNC) &_MkPrime_test_flat_jc_constprob_pair, 8},
-    {"_MkPrime_prepare_mcmc_data", (DL_FUNC) &_MkPrime_prepare_mcmc_data, 32},
+    {"_MkPrime_het_const_site_prob", (DL_FUNC) &_MkPrime_het_const_site_prob, 8},
+    {"_MkPrime_prepare_mcmc_data", (DL_FUNC) &_MkPrime_prepare_mcmc_data, 31},
     {"_MkPrime_set_branch_bins", (DL_FUNC) &_MkPrime_set_branch_bins, 2},
     {"_MkPrime_set_kprime_trunc_k", (DL_FUNC) &_MkPrime_set_kprime_trunc_k, 2},
     {"_MkPrime_cpp_log_likelihood_xptr", (DL_FUNC) &_MkPrime_cpp_log_likelihood_xptr, 9},

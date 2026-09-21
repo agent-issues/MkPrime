@@ -366,8 +366,8 @@ static double cpp_log_prior(
       //   log P(k'_i = m) = logSumExp_{j=2..m} [ log P_emp(j) + log p
       //                                          + (m - j) * log(1 - p) ]
       // Body of P_emp has explicit log values in data.empLogBody[];
-      // beyond data.empBodyLastK the pmf decays geometrically with
-      // log-mass `empLogTailStartP + (k - empTailStartK) * log(empTailDecay)`.
+      // beyond it the pmf decays geometrically with log-mass
+      // `empLogTailStartP + (k - empTailStartK) * log(empTailDecay)`.
       double logP    = std::log(p);
       double log1mP  = std::log1p(-p);
       double logQ    = (data.empTailDecay > 0.0) ? std::log(data.empTailDecay)
@@ -712,12 +712,17 @@ void fill_partition_cache(SEXP dataPtr, SEXP statePtr) {
   // overcomes the inflation — the residual cause of the post-MARGINAL-K-SLICE-001
   // whole-chain freeze (~57% of SBC sims pinned at init tl=0.1*nEdge, p=0.5,
   // sigma=0.5). Recompute the init logLik via the marginal-aware dispatcher so
-  // the baseline is correct. partLogLik stays fixed-k but is unused under
-  // marginal_k (do_move_impl forces hasPLC=false). charLLCacheReady=false so the
-  // marginal evaluator does a full rebuild and leaves a coherent per-char cache.
+  // the baseline is correct; charLLCacheReady=false so that rebuild leaves a
+  // coherent per-char cache.
+  //
+  // partLogLik is emptied because nothing refreshes it under marginal_k: it
+  // would hold fixed-kPrime partition sums, and any `hasPLC` fast path reading
+  // one commits a fixed-kPrime total as the marginal logLik. An empty cache is
+  // what makes that class of fast path unselectable.
   if (data->marginalK) {
     state->charLLCacheReady = false;
     state->logLik = compute_full_loglik(*data, *state);
+    state->partLogLik.clear();
   }
 }
 
@@ -1077,10 +1082,11 @@ static double compute_full_loglik_at(
     const IntegerVector& child,
     const NumericVector& edgeLen,
     bool fillCharLLCache = true) {
-  // Marginal-k dispatch (v1: geometric arm only; partition-API + marginal-k
-  // deferred — guard in MkPrimeModel.R). cast away const on data: the
-  // marginal evaluator takes a non-const reference because the underlying
-  // PR-A helper may grow state->gibbsWs and the cache lives on state too.
+  // Marginal-k dispatch (v1: geometric arm only; known-k partitions and the
+  // partition API are deferred and rejected by .RequireMarginalKSupported()).
+  // cast away const on data: the marginal evaluator takes a non-const reference
+  // because the underlying PR-A helper may grow state->gibbsWs and the cache
+  // lives on state too.
   //
   // fillCharLLCache=false => SCRATCH eval (no charLLCache read/write): required
   // by multi-config moves so per-config marginal LLs are recomputed coherently
@@ -1173,15 +1179,45 @@ NumericVector eval_preorder_paths_cpp(SEXP dataPtr, SEXP statePtr,
 
 
 // ---------------------------------------------------------------------------
-// gibbs_spr_impl  (M-085, M-105 partial CL)
+// gibbs_spr_impl  (M-085, M-105 partial CL; corrected kernel GSPR-001/004)
 //
-// GibbsSPR with partial CL reuse: enumerate all valid SPR reattachment
-// positions for a randomly chosen subtree.  Instead of running a full-tree
-// pruning per candidate, cache per-node CLs from one downpass and update
-// only the O(depth) affected path per candidate.
+// Likelihood-weighted SPR with a full MH acceptance step.  The original
+// "Gibbs" version committed the chosen regraft with a deterministic
+// tau = 1/2 split and no accept step (GSPR-001: maps positive-measure sets
+// into a pi-null set), and its candidate filter excluded the subtree's own
+// position so the selection normaliser did not cancel (GSPR-004).  The
+// corrected kernel (design: dev/plans/2026-08-12-gibbs-spr-fix-design.md
+// §3a):
 //
-// Falls back to the old full-evaluation path when Q-heterogeneity is
-// enabled (M-052), since that changes the pruning model.
+//   1. Prune a uniformly chosen eligible edge (u -> v).  Both endpoints of
+//      the move prune to the SAME residual tree R, so a selection
+//      distribution that is a function of R alone has the same normaliser
+//      in both directions and it cancels exactly.
+//   2. Enumerate ALL edges of R as regraft candidates: the surviving
+//      original edges PLUS the merged (parentRow, sibRow) pair -- the
+//      subtree's own position.  Weight each by exp(beta * logLik) with the
+//      subtree reattached at a FIXED reference fraction tau = 1/2.  The
+//      fixed reference is load-bearing: weights at a drawn tau would leave
+//      direction-dependent normalisers that do not cancel.
+//   3. Select an edge proportionally to weight, then draw the committed
+//      split fraction tau ~ U(0,1) and evaluate the proposal there.
+//   4. Accept by full MH:
+//        beta * (logLik_y - logLik_x) + (logPrior_y - logPrior_x)
+//          + log w_{e_x} - log w_{e_y} + log(lReg) - log(lMerge)
+//      where the w-ratio is the selection-probability ratio (the shared
+//      normaliser cancelled) and log(lReg) - log(lMerge) is the SPR
+//      merge/split Jacobian, exactly as in spr_proposal_impl
+//      (src/proposals.cpp:161).
+//
+// Drawing the merged edge is a legitimate branch-fraction move at unchanged
+// topology (Jacobian 0), not a no-op: the old `if (rnd < wOrig) return
+// false` early-out is gone.
+//
+// Three evaluation paths share gibbs_spr_plan / gibbs_spr_finish below and
+// differ only in how the tau = 1/2 reference weights are computed: partial
+// CL reuse (M-105), streaming Q-heterogeneity (M-114), or the
+// full-evaluation fallback (M-083/M-109, also used under
+// coding = "informative" per LIKE-001).
 // ---------------------------------------------------------------------------
 
 // Old full-evaluation path (used as fallback and for validation)
@@ -1189,54 +1225,42 @@ static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta);
 // M-114: partial CL path for Q-heterogeneity
 static bool gibbs_spr_impl_het(McmcData* data, McmcState* state, double beta);
 
-static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
-  // M-114: Q-heterogeneity uses streaming partial CL
-  if (data->qHeterogeneity)
-    return gibbs_spr_impl_het(data, state, beta);
+// Shared plan: prune-edge choice and candidate enumeration.
+struct GibbsSprPlan {
+  int pruneRow = -1;             // edge u -> v
+  int parentRow = -1;            // edge g -> u
+  int sibRow = -1;               // edge u -> sibNode
+  int u = -1, v = -1, sibNode = -1;
+  std::vector<int> cands;        // regraft edge rows: E(R) minus the merged edge
+  NumericVector absLen;          // absolute edge lengths of the current tree
+  double lMerge = 0.0;           // absLen[parentRow] + absLen[sibRow]
+  double lPrune = 0.0;           // absLen[pruneRow]
+};
 
-  // LIKE-001 interim (option 3): the pseudo-character partial-CL path below
-  // computes only the constant-site ascertainment term, not the singleton
-  // term. Under coding="informative" (codingType == 2) that omission
-  // biases the Gibbs sampling weights. Fall back to the full evaluator,
-  // which routes through cpp_partition_log_likelihood with the singleton
-  // correction applied. Restore partial-CL once evaluate_singleton_prob
-  // (math-prover option 2) is implemented.
-  if (data->codingType == 2)
-    return gibbs_spr_impl_full(data, state, beta);
-
+// Deterministic part: fill the plan for a GIVEN prune edge.  Returns false
+// when the prune edge is degenerate (malformed rows or no regular
+// candidates).
+static bool gibbs_spr_plan_at(const McmcState* state, int nTip, int pruneRow,
+                              GibbsSprPlan& plan) {
   const int nEdge = state->parent.size();
-  const int nTip  = data->nTip;
-  const int root  = nTip + 1;
+  plan.pruneRow = pruneRow;
+  plan.u = state->parent[pruneRow];
+  plan.v = state->child[pruneRow];
 
-  // 1. Eligible prune edges (parent != root)
-  std::vector<int> eligible;
-  eligible.reserve(nEdge);
-  for (int i = 0; i < nEdge; ++i)
-    if (state->parent[i] != root) eligible.push_back(i);
-  if (eligible.empty()) return false;
-
-  // 2. Pick random prune edge
-  int pickIdx = (int)(R::unif_rand() * (double)eligible.size());
-  if (pickIdx >= (int)eligible.size()) pickIdx = (int)eligible.size() - 1;
-  const int pruneRow = eligible[pickIdx];
-  const int u = state->parent[pruneRow];
-  const int v = state->child[pruneRow];
-
-  // 3. Find parentRow, sibRow, sibNode
-  int parentRow = -1, sibRow = -1, sibNode = -1;
+  plan.parentRow = plan.sibRow = plan.sibNode = -1;
   for (int i = 0; i < nEdge; ++i) {
-    if (state->child[i] == u) parentRow = i;
-    if (state->parent[i] == u && state->child[i] != v) {
-      sibRow = i; sibNode = state->child[i];
+    if (state->child[i] == plan.u) plan.parentRow = i;
+    if (state->parent[i] == plan.u && state->child[i] != plan.v) {
+      plan.sibRow = i; plan.sibNode = state->child[i];
     }
   }
-  if (parentRow < 0 || sibRow < 0) return false;
+  if (plan.parentRow < 0 || plan.sibRow < 0) return false;
 
-  // 4. BFS: mark descendants of v
+  // BFS: mark descendants of v
   std::vector<bool> isDesc(2 * nTip + 2, false);
-  isDesc[v] = true;
-  if (v > nTip) {
-    std::vector<int> queue = {v};
+  isDesc[plan.v] = true;
+  if (plan.v > nTip) {
+    std::vector<int> queue = {plan.v};
     while (!queue.empty()) {
       int cur = queue.back(); queue.pop_back();
       for (int i = 0; i < nEdge; ++i) {
@@ -1249,29 +1273,170 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
     }
   }
 
-  // 5. Collect valid regraft candidate edges
-  std::vector<int> cands;
-  cands.reserve(nEdge);
+  // Regraft candidates: every edge of the residual tree R.  The three edges
+  // incident to u collapse in R to the single merged (parentRow, sibRow)
+  // pair, appended as the extra candidate index nCand by the evaluation
+  // paths; edges within the pruned subtree are not in R.
+  plan.cands.clear();
+  plan.cands.reserve(nEdge);
   for (int i = 0; i < nEdge; ++i) {
     if (isDesc[state->child[i]]) continue;
-    if (state->parent[i] == u || state->child[i] == u) continue;
-    cands.push_back(i);
+    if (state->parent[i] == plan.u || state->child[i] == plan.u) continue;
+    plan.cands.push_back(i);
   }
-  if (cands.empty()) return false;
-  const int nCand = (int)cands.size();
+  if (plan.cands.empty()) return false;
 
-  // 6. Absolute edge lengths
-  NumericVector absLen(nEdge);
+  plan.absLen = NumericVector(nEdge);
   for (int i = 0; i < nEdge; ++i)
-    absLen[i] = state->treeLength * state->relBrLengths[i];
-  const double lMerge = absLen[parentRow] + absLen[sibRow];
-  const double lPrune = absLen[pruneRow];
+    plan.absLen[i] = state->treeLength * state->relBrLengths[i];
+  plan.lMerge = plan.absLen[plan.parentRow] + plan.absLen[plan.sibRow];
+  plan.lPrune = plan.absLen[plan.pruneRow];
+  return true;
+}
+
+// Random part: choose the prune edge uniformly among eligible edges.  The
+// eligible count is nEdge - 3 independent of topology (exactly the root's
+// three edges are excluded), so the choice probability cancels between the
+// two directions of a move and needs no Hastings term.
+static bool gibbs_spr_plan(const McmcData* data, const McmcState* state,
+                           GibbsSprPlan& plan) {
+  const int nEdge = state->parent.size();
+  const int root  = data->nTip + 1;
+
+  std::vector<int> eligible;
+  eligible.reserve(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    if (state->parent[i] != root) eligible.push_back(i);
+  if (eligible.empty()) return false;
+
+  int pickIdx = (int)(R::unif_rand() * (double)eligible.size());
+  if (pickIdx >= (int)eligible.size()) pickIdx = (int)eligible.size() - 1;
+  return gibbs_spr_plan_at(state, data->nTip, eligible[pickIdx], plan);
+}
+
+// Shared selection + MH + commit for the three gibbs_spr evaluation paths.
+//
+// candLL[0 .. nCand-1] hold the log-likelihood of regrafting the pruned
+// subtree at the tau = 1/2 midpoint of each plan.cands edge; candLL[nCand]
+// is the same reference evaluation on the merged edge.  All entries must be
+// produced by the same evaluation machinery (including any relabelling /
+// ascertainment corrections) so the selection weights are a function of the
+// residual tree alone.
+//
+// Deviation from §3a's cost table: the chosen-at-tau evaluation goes
+// through compute_full_loglik_at (one full pruning) rather than the
+// per-path candidate machinery.  That keeps the committed state->logLik
+// canonical and lets all three paths share this finisher unchanged.
+static bool gibbs_spr_finish(McmcData* data, McmcState* state, double beta,
+                             const GibbsSprPlan& plan,
+                             const std::vector<double>& candLL) {
+  const int nCand = (int)plan.cands.size();
+  const int nEdge = state->parent.size();
+
+  double maxLL = R_NegInf;
+  for (double ll : candLL) if (R_FINITE(ll) && ll > maxLL) maxLL = ll;
+  if (!R_FINITE(maxLL)) return false;
+
+  std::vector<double> ws(nCand + 1);
+  double sumW = 0.0;
+  for (int ci = 0; ci <= nCand; ++ci) {
+    ws[ci] = R_FINITE(candLL[ci]) ? std::exp(beta * (candLL[ci] - maxLL)) : 0.0;
+    sumW += ws[ci];
+  }
+  if (sumW <= 0.0) return false;
+
+  // Select an edge of R: plan.cands first, the merged edge last.
+  double rnd = R::unif_rand() * sumW;
+  int chosen = nCand;
+  for (int ci = 0; ci < nCand; ++ci) {
+    if (rnd < ws[ci]) { chosen = ci; break; }
+    rnd -= ws[ci];
+  }
+  const bool ontoMerged = (chosen == nCand);
+
+  // Draw the committed split fraction (the tau = 1/2 reference above is only
+  // for the selection weights).
+  const double tau  = R::unif_rand();
+  const double lReg = ontoMerged ? plan.lMerge
+                                 : plan.absLen[plan.cands[chosen]];
+
+  // Build the proposed tree.  Regrafting onto the merged edge reproduces the
+  // current topology with the (parentRow, sibRow) pair re-split at tau.
+  IntegerVector propPar = clone(state->parent);
+  IntegerVector propCh  = clone(state->child);
+  NumericVector propAbs = clone(plan.absLen);
+  if (ontoMerged) {
+    propAbs[plan.parentRow] = tau * plan.lMerge;
+    propAbs[plan.sibRow]    = (1.0 - tau) * plan.lMerge;
+  } else {
+    const int rr = plan.cands[chosen];
+    const int b  = state->child[rr];
+    propCh[plan.parentRow] = plan.sibNode;
+    propAbs[plan.parentRow] = plan.lMerge;
+    propCh[rr]              = plan.u;
+    propAbs[rr]             = tau * lReg;
+    propPar[plan.sibRow]    = plan.u;
+    propCh[plan.sibRow]     = b;
+    propAbs[plan.sibRow]    = (1.0 - tau) * lReg;
+  }
+
+  auto po = TreeTools::preorder_weighted_impl(propPar, propCh, propAbs);
+  IntegerMatrix ordEdge = po.first;
+  NumericVector ordAbs  = po.second;
+  IntegerVector op = ordEdge(_, 0);
+  IntegerVector oc = ordEdge(_, 1);
+
+  // Evaluate the proposal at the drawn tau (NOT candLL[chosen], which is the
+  // tau = 1/2 selection reference).
+  double newLogLik = compute_full_loglik_at(*data, *state, op, oc, ordAbs,
+                                            /*fillCharLLCache=*/false);
+  if (!R_FINITE(newLogLik)) return false;
+
+  NumericVector propRelBr(nEdge);
+  for (int k = 0; k < nEdge; ++k)
+    propRelBr[k] = ordAbs[k] / state->treeLength;
+  double newLogPrior = compute_log_prior_at(*data, *state, propRelBr);
+  if (!R_FINITE(newLogPrior)) return false;
+
+  // MH: selection ratio (shared normaliser cancelled; reduces to the weight
+  // log-ratio) + SPR merge/split Jacobian.  Both terms vanish when the
+  // merged edge is drawn (lReg == lMerge), leaving a pure branch-fraction
+  // MH step.
+  double logAlpha = beta * (newLogLik - state->logLik)
+                  + (newLogPrior - state->logPrior)
+                  + beta * (candLL[nCand] - candLL[chosen])
+                  + std::log(lReg) - std::log(plan.lMerge);
+  if (!(R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha))
+    return false;
+
+  for (int k = 0; k < nEdge; ++k) {
+    state->parent[k]       = op[k];
+    state->child[k]        = oc[k];
+    state->relBrLengths[k] = propRelBr[k];
+  }
+  state->logLik   = newLogLik;
+  state->logPrior = newLogPrior;
+  state->partLogLik.clear();
+  state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
+  return true;
+}
+
+// tau = 1/2 reference weights via partial CL reuse (M-105): one caching
+// downpass per CLGroup, then an O(depth) update per candidate.  Fills
+// candLL[0 .. nCand] (merged edge last), all through evaluate_candidate /
+// evaluate_const_prob so every weight -- including the subtree's own
+// position -- is computed on an identical footing (GSPR-004).
+static void gibbs_spr_eval_partial(McmcData* data, McmcState* state,
+                                   const GibbsSprPlan& plan,
+                                   std::vector<double>& candLL) {
+  const int nTip  = data->nTip;
+  const int nCand = (int)plan.cands.size();
 
   // ===== M-105: Partial CL cache setup =====
 
   // Build tree navigation from current topology
   TreeNav topo;
-  topo.build(state->parent, state->child, absLen, nTip);
+  topo.build(state->parent, state->child, plan.absLen, nTip);
 
   // Compute ACRV rates
   NumericVector rates = gibbs_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ);
@@ -1291,9 +1456,6 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
 
   // Build CLGroups: one per (partition, kStates) evaluation unit
   std::vector<CLGroup> groups;
-  // Track which groups belong to which partition (for ascertainment)
-  struct GroupMeta { int partIdx; int nCharInPart; };
-  std::vector<GroupMeta> groupMeta;
 
   for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
     const PartInfo& part = data->parts[pi];
@@ -1307,7 +1469,6 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
       g.tipData   = part.tipStates;
       g.allocate(maxNode, nCat, part.tipStates.ncol(), 2);
       groups.push_back(std::move(g));
-      groupMeta.push_back({pi, part.tipStates.ncol()});
 
     } else if (part.type == 2) {
       // Known state space: fixed k
@@ -1318,7 +1479,6 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
       g.tipData   = part.tipStates;
       g.allocate(maxNode, nCat, part.tipStates.ncol(), part.k);
       groups.push_back(std::move(g));
-      groupMeta.push_back({pi, part.tipStates.ncol()});
 
     } else {
       // Transformational: group by kPrime
@@ -1347,7 +1507,6 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
         g.tipData   = sub;
         g.allocate(maxNode, nCat, nSub, kp);
         groups.push_back(std::move(g));
-        groupMeta.push_back({pi, nCharPart});
       }
     }
   }
@@ -1359,7 +1518,8 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
   // Compute residual CLs for each group (detach v from u)
   std::vector<ResidualCL> residuals(groups.size());
   for (size_t gi = 0; gi < groups.size(); ++gi)
-    compute_residual_cl(residuals[gi], groups[gi], topo, rates, u, sibNode, lMerge);
+    compute_residual_cl(residuals[gi], groups[gi], topo, rates,
+                        plan.u, plan.sibNode, plan.lMerge);
 
   // Ascertainment correction: create pseudo-character groups (constant-site
   // patterns) and process through the same partial CL pipeline.
@@ -1373,26 +1533,29 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
         groups[gi], nTip, topo.maxNode, nCat);
       caching_downpass(pseudoGroups[gi], topo, state->parent, state->child, rates);
       compute_residual_cl(pseudoResiduals[gi], pseudoGroups[gi], topo, rates,
-                          u, sibNode, lMerge);
+                          plan.u, plan.sibNode, plan.lMerge);
     }
   }
 
-  // ===== Evaluate candidates using partial CLs =====
+  // ===== Evaluate candidates (merged edge last) using partial CLs =====
 
-  std::vector<double> candLL(nCand);
-  for (int ci = 0; ci < nCand; ++ci) {
-    const int rr = cands[ci];
-    const int a  = state->parent[rr];
-    const int b  = state->child[rr];
-    const double lReg = absLen[rr];
-    const double lHalf = 0.5 * lReg;
+  const int g = topo.parentNode[plan.u];
+
+  candLL.assign(nCand + 1, 0.0);
+  for (int ci = 0; ci <= nCand; ++ci) {
+    const bool merged = (ci == nCand);
+    const int rr = merged ? -1 : plan.cands[ci];
+    const int a  = merged ? g : state->parent[rr];
+    const int b  = merged ? plan.sibNode : state->child[rr];
+    const double lHalf = 0.5 * (merged ? plan.lMerge : plan.absLen[rr]);
 
     double totalLL = 0.0;
 
     for (size_t gi = 0; gi < groups.size(); ++gi) {
       double grpLL = evaluate_candidate(
         groups[gi], topo, residuals[gi], rates,
-        v, u, sibNode, lMerge, a, b, lHalf, lPrune);
+        plan.v, plan.u, plan.sibNode, plan.lMerge, a, b, lHalf, plan.lPrune,
+        nullptr, merged);
 
       // Ascertainment correction via pseudo-character partial CLs.
       // Note: only the constant-site term is computed here; coding == 2
@@ -1403,7 +1566,8 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
       if (coding != 0 && groups[gi].nChar > 0) {
         double constP = evaluate_const_prob(
           pseudoGroups[gi], topo, pseudoResiduals[gi], rates,
-          v, u, sibNode, lMerge, a, b, lHalf, lPrune);
+          plan.v, plan.u, plan.sibNode, plan.lMerge, a, b, lHalf, plan.lPrune,
+          nullptr, merged);
         if (constP < 1.0)
           grpLL -= groups[gi].nChar * std::log(1.0 - constP);
       }
@@ -1416,6 +1580,8 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
 
   // Add relabelling correction to candLL — it's a topology-independent
   // constant that's included in state->logLik but not in evaluate_candidate.
+  // Applied to every entry (including the merged edge) so all selection
+  // weights share the same convention.
   if (data->relabel) {
     double relabelCorr = 0.0;
     for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
@@ -1427,132 +1593,97 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
             state->kPrime[part.globalCharIdx[ci]], part.kObsLocal[ci]);
       }
     }
-    for (int ci = 0; ci < nCand; ++ci)
+    for (int ci = 0; ci <= nCand; ++ci)
       candLL[ci] += relabelCorr;
   }
+}
 
-  // 8. Sampling weights: exp(β × logLik), current state included
-  const double llOrig = state->logLik;
-  double maxLL = llOrig;
-  for (int ci = 0; ci < nCand; ++ci) maxLL = std::max(maxLL, candLL[ci]);
+static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
+  // M-114: Q-heterogeneity uses streaming partial CL
+  if (data->qHeterogeneity)
+    return gibbs_spr_impl_het(data, state, beta);
 
-  double wOrig = std::exp(beta * (llOrig - maxLL));
-  std::vector<double> ws(nCand);
-  double sumW = wOrig;
+  // LIKE-001 interim (option 3): the pseudo-character partial-CL path
+  // computes only the constant-site ascertainment term, not the singleton
+  // term. Under coding="informative" (codingType == 2) that omission
+  // biases the selection weights. Fall back to the full evaluator,
+  // which routes through cpp_partition_log_likelihood with the singleton
+  // correction applied. Restore partial-CL once evaluate_singleton_prob
+  // (math-prover option 2) is implemented.
+  if (data->codingType == 2)
+    return gibbs_spr_impl_full(data, state, beta);
+
+  GibbsSprPlan plan;
+  if (!gibbs_spr_plan(data, state, plan)) return false;
+
+  std::vector<double> candLL;
+  gibbs_spr_eval_partial(data, state, plan, candLL);
+  return gibbs_spr_finish(data, state, beta, plan, candLL);
+}
+
+// Deterministic enumeration hook for the GSPR-004 candidate-set symmetry
+// test (tests/testthat/test-gibbs-spr-candidates.R).  Runs the same plan +
+// tau = 1/2 reference evaluation as gibbs_spr_impl for a GIVEN prune edge
+// (1-based row of the state's edge matrix) and returns the enumerated
+// candidate edges — the merged (g, sibNode) pair last — with their
+// reference log-likelihoods.  No RNG, no state mutation.
+// [[Rcpp::export]]
+List gibbs_spr_enumerate_cpp(SEXP dataPtr, SEXP statePtr, int pruneRow) {
+  McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
+  McmcState* state = Rcpp::XPtr<McmcState>(statePtr).get();
+  if (data->qHeterogeneity || data->codingType == 2)
+    Rcpp::stop("gibbs_spr_enumerate_cpp drives the partial-CL path only");
+  const int nEdge = state->parent.size();
+  if (pruneRow < 1 || pruneRow > nEdge)
+    Rcpp::stop("pruneRow out of range");
+  if (state->parent[pruneRow - 1] == data->nTip + 1)
+    Rcpp::stop("prune edge must not hang off the root");
+
+  GibbsSprPlan plan;
+  if (!gibbs_spr_plan_at(state, data->nTip, pruneRow - 1, plan))
+    Rcpp::stop("degenerate prune edge");  // # nocov: needs nTip < 4, but the root guard above fires first
+
+  std::vector<double> candLL;
+  gibbs_spr_eval_partial(data, state, plan, candLL);
+
+  const int nCand = (int)plan.cands.size();
+  IntegerMatrix edges(nCand + 1, 2);
   for (int ci = 0; ci < nCand; ++ci) {
-    ws[ci] = std::exp(beta * (candLL[ci] - maxLL));
-    sumW  += ws[ci];
+    edges(ci, 0) = state->parent[plan.cands[ci]];
+    edges(ci, 1) = state->child[plan.cands[ci]];
   }
+  edges(nCand, 0) = state->parent[plan.parentRow];  // g
+  edges(nCand, 1) = plan.sibNode;                   // merged edge (g, sibNode)
 
-  // 9. Sample
-  double rnd = R::unif_rand() * sumW;
-  if (rnd < wOrig) return false;
-  rnd -= wOrig;
-  int chosen = nCand - 1;
-  for (int ci = 0; ci < nCand - 1; ++ci) {
-    if (rnd < ws[ci]) { chosen = ci; break; }
-    rnd -= ws[ci];
-  }
-
-  // 10. Apply chosen SPR: modify state in-place, canonical reorder
-  {
-    const int rr      = cands[chosen];
-    const double lReg = absLen[rr];
-    const int b = state->child[rr];
-
-    state->child[parentRow]  = sibNode;  absLen[parentRow] = lMerge;
-    state->child[rr]         = u;        absLen[rr]        = 0.5 * lReg;
-    state->parent[sibRow]    = u;        state->child[sibRow] = b;
-    absLen[sibRow]           = 0.5 * lReg;
-
-    auto po = TreeTools::preorder_weighted_impl(
-        state->parent, state->child, absLen);
-    IntegerMatrix ordEdge = po.first;
-    NumericVector ordAbs  = po.second;
-    for (int k = 0; k < nEdge; ++k) {
-      state->parent[k]       = ordEdge(k, 0);
-      state->child[k]        = ordEdge(k, 1);
-      state->relBrLengths[k] = ordAbs[k] / state->treeLength;
-    }
-  }
-
-  // 11. Commit
-  state->logLik = candLL[chosen];
-  state->partLogLik.clear();
-  state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
-  return true;
+  return List::create(
+    _["edges"]  = edges,
+    _["logLik"] = NumericVector(candLL.begin(), candLL.end()),
+    _["u"]      = plan.u,
+    _["v"]      = plan.v,
+    _["lMerge"] = plan.lMerge,
+    _["lPrune"] = plan.lPrune);
 }
 
 
 // ---------------------------------------------------------------------------
-// M-114: Gibbs SPR with streaming partial CL for Q-heterogeneity.
+// M-114: gibbs_spr with streaming partial CL for Q-heterogeneity.
 //
-// Same prune/candidate/sampling logic as gibbs_spr_impl, but evaluates
-// each CLGroup's likelihood under a mixture of F81 components by streaming
+// Same plan/selection/MH/commit logic as gibbs_spr_impl, but evaluates the
+// tau = 1/2 reference weights under a mixture of F81 components by streaming
 // over (betaBin, rotation) and accumulating per-site raw likelihoods.
 // ---------------------------------------------------------------------------
 static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
                                 double beta) {
-  const int nEdge = state->parent.size();
-  const int nTip  = data->nTip;
-  const int root  = nTip + 1;
+  const int nTip = data->nTip;
 
-  // 1. Eligible prune edges (parent != root)
-  std::vector<int> eligible;
-  eligible.reserve(nEdge);
-  for (int i = 0; i < nEdge; ++i)
-    if (state->parent[i] != root) eligible.push_back(i);
-  if (eligible.empty()) return false;
-
-  int pickIdx = (int)(R::unif_rand() * (double)eligible.size());
-  if (pickIdx >= (int)eligible.size()) pickIdx = (int)eligible.size() - 1;
-  const int pruneRow = eligible[pickIdx];
-  const int u = state->parent[pruneRow];
-  const int v = state->child[pruneRow];
-
-  int parentRow = -1, sibRow = -1, sibNode = -1;
-  for (int i = 0; i < nEdge; ++i) {
-    if (state->child[i] == u) parentRow = i;
-    if (state->parent[i] == u && state->child[i] != v) {
-      sibRow = i; sibNode = state->child[i];
-    }
-  }
-  if (parentRow < 0 || sibRow < 0) return false;
-
-  std::vector<bool> isDesc(2 * nTip + 2, false);
-  isDesc[v] = true;
-  if (v > nTip) {
-    std::vector<int> queue = {v};
-    while (!queue.empty()) {
-      int cur = queue.back(); queue.pop_back();
-      for (int i = 0; i < nEdge; ++i) {
-        if (state->parent[i] == cur) {
-          int c = state->child[i];
-          isDesc[c] = true;
-          if (c > nTip) queue.push_back(c);
-        }
-      }
-    }
-  }
-
-  std::vector<int> cands;
-  cands.reserve(nEdge);
-  for (int i = 0; i < nEdge; ++i) {
-    if (isDesc[state->child[i]]) continue;
-    if (state->parent[i] == u || state->child[i] == u) continue;
-    cands.push_back(i);
-  }
-  if (cands.empty()) return false;
-  const int nCand = (int)cands.size();
-
-  NumericVector absLen(nEdge);
-  for (int i = 0; i < nEdge; ++i)
-    absLen[i] = state->treeLength * state->relBrLengths[i];
-  const double lMerge = absLen[parentRow] + absLen[sibRow];
-  const double lPrune = absLen[pruneRow];
+  GibbsSprPlan plan;
+  if (!gibbs_spr_plan(data, state, plan)) return false;
+  const int nCand = (int)plan.cands.size();
+  // Evaluation slots: plan.cands first, the merged edge last.
+  const int nEval = nCand + 1;
 
   TreeNav topo;
-  topo.build(state->parent, state->child, absLen, nTip);
+  topo.build(state->parent, state->child, plan.absLen, nTip);
 
   NumericVector rates = gibbs_acrv_rates(state->rateLogSd, data->nCat,
                                           data->acrvZ);
@@ -1570,8 +1701,6 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
 
   // Build CLGroups (same structure as non-het, but with useF81 flag)
   std::vector<CLGroup> groups;
-  struct GroupMeta { int partIdx; int nCharInPart; };
-  std::vector<GroupMeta> groupMeta;
 
   for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
     const PartInfo& part = data->parts[pi];
@@ -1583,7 +1712,6 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
       g.tipData   = part.tipStates;
       g.allocate(maxNode, nCat, part.tipStates.ncol(), 2);
       groups.push_back(std::move(g));
-      groupMeta.push_back({pi, part.tipStates.ncol()});
     } else if (part.type == 2) {
       CLGroup g;
       g.isMkN     = false;
@@ -1592,7 +1720,6 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
       g.tipData   = part.tipStates;
       g.allocate(maxNode, nCat, part.tipStates.ncol(), part.k);
       groups.push_back(std::move(g));
-      groupMeta.push_back({pi, part.tipStates.ncol()});
     } else {
       int nCharPart = part.tipStates.ncol();
       IntegerVector kPrimePart(nCharPart);
@@ -1616,7 +1743,6 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
         g.tipData   = sub;
         g.allocate(maxNode, nCat, nSub, kp);
         groups.push_back(std::move(g));
-        groupMeta.push_back({pi, nCharPart});
       }
     }
   }
@@ -1630,6 +1756,8 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
         groups[gi], nTip, maxNode, nCat);
   }
 
+  const int g = topo.parentNode[plan.u];
+
   // ===== M-114: Streaming evaluation over (betaBin, rotation) =====
   //
   // Per-group, per-candidate accumulators for raw site likelihoods
@@ -1637,10 +1765,10 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
   std::vector<std::vector<double>> siteLikAccums(groups.size());
   std::vector<std::vector<double>> constProbAccums(groups.size());
   for (size_t gi = 0; gi < groups.size(); ++gi) {
-    siteLikAccums[gi].assign((size_t)nCand * groups[gi].nChar, 0.0);
+    siteLikAccums[gi].assign((size_t)nEval * groups[gi].nChar, 0.0);
     if (coding != 0)
       constProbAccums[gi].assign(
-        (size_t)nCand * pseudoGroups[gi].nChar, 0.0);
+        (size_t)nEval * pseudoGroups[gi].nChar, 0.0);
   }
 
 
@@ -1665,7 +1793,8 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
 
         // Caching downpass + residual
         caching_downpass(grp, topo, state->parent, state->child, rates);
-        compute_residual_cl(res, grp, topo, rates, u, sibNode, lMerge);
+        compute_residual_cl(res, grp, topo, rates,
+                            plan.u, plan.sibNode, plan.lMerge);
 
         // Same for pseudo-group (ascertainment)
         if (coding != 0) {
@@ -1673,27 +1802,31 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
           caching_downpass(pseudoGroups[gi], topo, state->parent,
                            state->child, rates);
           compute_residual_cl(pseudoRes, pseudoGroups[gi], topo, rates,
-                              u, sibNode, lMerge);
+                              plan.u, plan.sibNode, plan.lMerge);
         }
 
-        // Evaluate all candidates for this component
-        for (int ci = 0; ci < nCand; ++ci) {
-          const int rr = cands[ci];
-          const int a  = state->parent[rr];
-          const int b  = state->child[rr];
-          const double lHalf = 0.5 * absLen[rr];
+        // Evaluate all candidates (merged edge last) for this component
+        for (int ci = 0; ci < nEval; ++ci) {
+          const bool merged = (ci == nCand);
+          const int rr = merged ? -1 : plan.cands[ci];
+          const int a  = merged ? g : state->parent[rr];
+          const int b  = merged ? plan.sibNode : state->child[rr];
+          const double lHalf =
+            0.5 * (merged ? plan.lMerge : plan.absLen[rr]);
 
           evaluate_candidate(
             grp, topo, res, rates,
-            v, u, sibNode, lMerge, a, b, lHalf, lPrune,
-            siteLikAccums[gi].data() + (size_t)ci * grp.nChar);
+            plan.v, plan.u, plan.sibNode, plan.lMerge, a, b, lHalf,
+            plan.lPrune,
+            siteLikAccums[gi].data() + (size_t)ci * grp.nChar, merged);
 
           if (coding != 0) {
             evaluate_const_prob(
               pseudoGroups[gi], topo, pseudoRes, rates,
-              v, u, sibNode, lMerge, a, b, lHalf, lPrune,
+              plan.v, plan.u, plan.sibNode, plan.lMerge, a, b, lHalf,
+              plan.lPrune,
               constProbAccums[gi].data() +
-                (size_t)ci * pseudoGroups[gi].nChar);
+                (size_t)ci * pseudoGroups[gi].nChar, merged);
           }
         }
       }
@@ -1701,7 +1834,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
   }
 
   // Convert accumulators to per-candidate log-likelihoods
-  std::vector<double> candLL(nCand, 0.0);
+  std::vector<double> candLL(nEval, 0.0);
   for (size_t gi = 0; gi < groups.size(); ++gi) {
     const CLGroup& grp = groups[gi];
     int k     = grp.kStates;
@@ -1709,7 +1842,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
     int totalComp = nCat * nBC * nRot;
     int nChar_gi  = grp.nChar;
 
-    for (int ci = 0; ci < nCand; ++ci) {
+    for (int ci = 0; ci < nEval; ++ci) {
       double grpLL = siteLikAccum_to_logLik(
         siteLikAccums[gi].data() + (size_t)ci * nChar_gi,
         nChar_gi, totalComp);
@@ -1729,7 +1862,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
     }
   }
 
-  // Relabelling correction
+  // Relabelling correction (every entry, merged edge included)
   if (data->relabel) {
     double relabelCorr = 0.0;
     for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
@@ -1741,203 +1874,85 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
             state->kPrime[part.globalCharIdx[ci]], part.kObsLocal[ci]);
       }
     }
-    for (int ci = 0; ci < nCand; ++ci)
+    for (int ci = 0; ci < nEval; ++ci)
       candLL[ci] += relabelCorr;
   }
 
-  // Sampling and commit (identical to gibbs_spr_impl)
-  const double llOrig = state->logLik;
-  double maxLL = llOrig;
-  for (int ci = 0; ci < nCand; ++ci)
-    maxLL = std::max(maxLL, candLL[ci]);
-
-  double wOrig = std::exp(beta * (llOrig - maxLL));
-  std::vector<double> ws(nCand);
-  double sumW = wOrig;
-  for (int ci = 0; ci < nCand; ++ci) {
-    ws[ci] = std::exp(beta * (candLL[ci] - maxLL));
-    sumW  += ws[ci];
-  }
-
-  double rnd = R::unif_rand() * sumW;
-  if (rnd < wOrig) return false;
-  rnd -= wOrig;
-  int chosen = nCand - 1;
-  for (int ci = 0; ci < nCand - 1; ++ci) {
-    if (rnd < ws[ci]) { chosen = ci; break; }
-    rnd -= ws[ci];
-  }
-
-  // Apply chosen SPR
-  {
-    const int rr      = cands[chosen];
-    const double lReg = absLen[rr];
-    const int b = state->child[rr];
-
-    state->child[parentRow]  = sibNode;  absLen[parentRow] = lMerge;
-    state->child[rr]         = u;        absLen[rr]        = 0.5 * lReg;
-    state->parent[sibRow]    = u;        state->child[sibRow] = b;
-    absLen[sibRow]           = 0.5 * lReg;
-
-    auto po = TreeTools::preorder_weighted_impl(
-        state->parent, state->child, absLen);
-    IntegerMatrix ordEdge = po.first;
-    NumericVector ordAbs  = po.second;
-    for (int k = 0; k < nEdge; ++k) {
-      state->parent[k]       = ordEdge(k, 0);
-      state->child[k]        = ordEdge(k, 1);
-      state->relBrLengths[k] = ordAbs[k] / state->treeLength;
-    }
-  }
-
-  state->logLik = candLL[chosen];
-  state->partLogLik.clear();
-  state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
-  return true;
+  return gibbs_spr_finish(data, state, beta, plan, candLL);
 }
 
 
-// Old full-evaluation fallback (Q-het or validation), M-109 in-place
+// Old full-evaluation fallback (coding="informative" or validation), M-109
+// in-place: tau = 1/2 reference weights via one full pruning per candidate.
 static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta) {
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
-  const int root  = nTip + 1;
 
-  std::vector<int> eligible;
-  eligible.reserve(nEdge);
-  for (int i = 0; i < nEdge; ++i)
-    if (state->parent[i] != root) eligible.push_back(i);
-  if (eligible.empty()) return false;
+  GibbsSprPlan plan;
+  if (!gibbs_spr_plan(data, state, plan)) return false;
+  const int nCand = (int)plan.cands.size();
 
-  int pickIdx = (int)(R::unif_rand() * (double)eligible.size());
-  if (pickIdx >= (int)eligible.size()) pickIdx = (int)eligible.size() - 1;
-  const int pruneRow = eligible[pickIdx];
-  const int u = state->parent[pruneRow];
-  const int v = state->child[pruneRow];
-
-  int parentRow = -1, sibRow = -1, sibNode = -1;
-  for (int i = 0; i < nEdge; ++i) {
-    if (state->child[i] == u) parentRow = i;
-    if (state->parent[i] == u && state->child[i] != v) {
-      sibRow = i; sibNode = state->child[i];
-    }
-  }
-  if (parentRow < 0 || sibRow < 0) return false;
-
-  std::vector<bool> isDesc(2 * nTip + 2, false);
-  isDesc[v] = true;
-  if (v > nTip) {
-    std::vector<int> queue = {v};
-    while (!queue.empty()) {
-      int cur = queue.back(); queue.pop_back();
-      for (int i = 0; i < nEdge; ++i) {
-        if (state->parent[i] == cur) {
-          int c = state->child[i];
-          isDesc[c] = true;
-          if (c > nTip) queue.push_back(c);
-        }
-      }
-    }
-  }
-
-  std::vector<int> cands;
-  cands.reserve(nEdge);
-  for (int i = 0; i < nEdge; ++i) {
-    if (isDesc[state->child[i]]) continue;
-    if (state->parent[i] == u || state->child[i] == u) continue;
-    cands.push_back(i);
-  }
-  if (cands.empty()) return false;
-  const int nCand = (int)cands.size();
-
-  NumericVector absLen(nEdge);
-  for (int i = 0; i < nEdge; ++i)
-    absLen[i] = state->treeLength * state->relBrLengths[i];
-  const double lMerge = absLen[parentRow] + absLen[sibRow];
-
-  // Working copies: cloned ONCE, reused for all candidates
+  // Working copies: cloned ONCE, reused for all candidates (plan.absLen is
+  // left pristine for gibbs_spr_finish)
   IntegerVector workPar = clone(state->parent);
   IntegerVector workCh  = clone(state->child);
+  NumericVector workAbs = clone(plan.absLen);
   // Save original values for the 3 modified rows
-  const int origPar_sibRow = workPar[sibRow];
-  const int origCh_parentRow = workCh[parentRow];
-  const int origCh_sibRow = workCh[sibRow];
-  const double origAbs_parentRow = absLen[parentRow];
-  const double origAbs_sibRow = absLen[sibRow];
+  const int origPar_sibRow = workPar[plan.sibRow];
+  const int origCh_parentRow = workCh[plan.parentRow];
+  const int origCh_sibRow = workCh[plan.sibRow];
+  const double origAbs_parentRow = workAbs[plan.parentRow];
+  const double origAbs_sibRow = workAbs[plan.sibRow];
 
   // Pre-allocate output buffers for preorder_into
   IntegerVector ordPar(nEdge), ordCh(nEdge);
   NumericVector ordAbs(nEdge);
 
-  std::vector<double> candLL(nCand);
-  for (int ci = 0; ci < nCand; ++ci) {
-    const int rr      = cands[ci];
-    const double lReg = absLen[rr];
-    const int bNode   = workCh[rr];  // original child of regraft edge
+  // Evaluate candidates (merged edge last).  Regrafting onto the merged
+  // edge at tau = 1/2 is the current topology with the (parentRow, sibRow)
+  // pair split evenly.
+  std::vector<double> candLL(nCand + 1);
+  for (int ci = 0; ci <= nCand; ++ci) {
+    const bool merged = (ci == nCand);
+    const int rr    = merged ? -1 : plan.cands[ci];
+    const double lReg = merged ? plan.lMerge : workAbs[rr];
+    const int bNode = merged ? -1 : workCh[rr];  // original child of regraft edge
 
     // Apply SPR in-place
-    workCh[parentRow] = sibNode;   absLen[parentRow] = lMerge;
-    workCh[rr]        = u;         absLen[rr]        = 0.5 * lReg;
-    workPar[sibRow]   = u;         workCh[sibRow]    = bNode;
-    absLen[sibRow]    = 0.5 * lReg;
+    if (merged) {
+      workAbs[plan.parentRow] = 0.5 * plan.lMerge;
+      workAbs[plan.sibRow]    = 0.5 * plan.lMerge;
+    } else {
+      workCh[plan.parentRow] = plan.sibNode;
+      workAbs[plan.parentRow] = plan.lMerge;
+      workCh[rr]              = plan.u;
+      workAbs[rr]             = 0.5 * lReg;
+      workPar[plan.sibRow]    = plan.u;
+      workCh[plan.sibRow]     = bNode;
+      workAbs[plan.sibRow]    = 0.5 * lReg;
+    }
 
-    preorder_into(workPar, workCh, absLen, nTip,
+    preorder_into(workPar, workCh, workAbs, nTip,
                   INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
-    candLL[ci] = compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs);
+    candLL[ci] = compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs,
+                                        /*fillCharLLCache=*/false);  // FREEZE-003
 
     // Restore
-    workCh[parentRow] = origCh_parentRow;  absLen[parentRow] = origAbs_parentRow;
-    workCh[rr]        = bNode;             absLen[rr]        = lReg;
-    workPar[sibRow]   = origPar_sibRow;    workCh[sibRow]    = origCh_sibRow;
-    absLen[sibRow]    = origAbs_sibRow;
-  }
-
-  const double llOrig = state->logLik;
-  double maxLL = llOrig;
-  for (int ci = 0; ci < nCand; ++ci) maxLL = std::max(maxLL, candLL[ci]);
-  double wOrig = std::exp(beta * (llOrig - maxLL));
-  std::vector<double> ws(nCand);
-  double sumW = wOrig;
-  for (int ci = 0; ci < nCand; ++ci) {
-    ws[ci] = std::exp(beta * (candLL[ci] - maxLL));
-    sumW  += ws[ci];
-  }
-
-  double rnd = R::unif_rand() * sumW;
-  if (rnd < wOrig) return false;
-  rnd -= wOrig;
-  int chosen = nCand - 1;
-  for (int ci = 0; ci < nCand - 1; ++ci) {
-    if (rnd < ws[ci]) { chosen = ci; break; }
-    rnd -= ws[ci];
-  }
-
-  // Apply chosen SPR: modify state in-place, canonical reorder
-  {
-    const int rr      = cands[chosen];
-    const double lReg = absLen[rr];  // absLen already restored to original
-    const int bNode   = state->child[rr];
-
-    state->child[parentRow]  = sibNode;  absLen[parentRow] = lMerge;
-    state->child[rr]         = u;        absLen[rr]        = 0.5 * lReg;
-    state->parent[sibRow]    = u;        state->child[sibRow] = bNode;
-    absLen[sibRow]           = 0.5 * lReg;
-
-    auto po = TreeTools::preorder_weighted_impl(
-        state->parent, state->child, absLen);
-    IntegerMatrix ordEdge = po.first;
-    NumericVector ordAbsFinal = po.second;
-    for (int k = 0; k < nEdge; ++k) {
-      state->parent[k]       = ordEdge(k, 0);
-      state->child[k]        = ordEdge(k, 1);
-      state->relBrLengths[k] = ordAbsFinal[k] / state->treeLength;
+    if (merged) {
+      workAbs[plan.parentRow] = origAbs_parentRow;
+      workAbs[plan.sibRow]    = origAbs_sibRow;
+    } else {
+      workCh[plan.parentRow] = origCh_parentRow;
+      workAbs[plan.parentRow] = origAbs_parentRow;
+      workCh[rr]              = bNode;
+      workAbs[rr]             = lReg;
+      workPar[plan.sibRow]    = origPar_sibRow;
+      workCh[plan.sibRow]     = origCh_sibRow;
+      workAbs[plan.sibRow]    = origAbs_sibRow;
     }
   }
 
-  state->logLik = candLL[chosen];
-  state->partLogLik.clear();
-  state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
-  return true;
+  return gibbs_spr_finish(data, state, beta, plan, candLL);
 }
 
 
@@ -3104,7 +3119,40 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
                                              /*fillCharLLCache=*/false);  // FREEZE-003
   if (!R_FINITE(newLogLik)) return false;
 
-  // 14. Hastings ratio (branch-fraction component only; topology cancels)
+  // 14. Hastings ratio: proposal-density ratio + the SPR Jacobian.
+  //
+  //     !! INCOMPLETE -- weightedSpr is default-off and must stay that way
+  //     until the cancellation below is verified (GSPR-003). The Jacobian
+  //     added here is necessary and correctly signed, but it is NOT
+  //     sufficient: adding it improved every statistic in
+  //     dev/red-team/heavy-tests/gibbs-spr-db.R by 2x-19x (int_frac relBias
+  //     -0.293 -> -0.015, ord_min -0.744 -> -0.379, simpson +0.460 -> +0.118)
+  //     yet residual biases of 9-38% REMAIN, so this move carries at least
+  //     one further defect.
+  //
+  //     Prime suspect, stated as the open question it is: the selfW / sumM
+  //     cancellation is ASSERTED, NOT VERIFIED. "Self" is enumerated over
+  //     bins of lMerge (:2962-2963) while candidates are enumerated over
+  //     bins of lReg, so the claim that both directions enumerate the same
+  //     configuration set with the same weights -- and hence that the shared
+  //     normaliser cancels -- does not obviously hold, and the measured
+  //     residual bias suggests it does not. Do not treat this comment as a
+  //     correctness argument; see issue #20.
+  //
+  //     (This is the hastings-tree-moves.md §5 trap: a confident comment
+  //     standing in for a verification that was never done cleared gibbs_spr
+  //     while it was not pi-invariant. Do not repeat it here.)
+  //
+  //     The Jacobian itself is not optional. The move merges (l_parent, l_sib) into
+  //     lMerge and splits lReg into (f * lReg, (1 - f) * lReg), a bijection
+  //     (l_parent, l_sib, lReg, fNew) <-> (lMerge, a, b, fOld) with fOld =
+  //     l_parent / lMerge (:2952). It is block diagonal:
+  //       |d(lMerge, fOld) / d(l_parent, l_sib)| = 1 / lMerge
+  //       |d(a, b) / d(lReg, fNew)|              = lReg
+  //     so |J| = lReg / lMerge. Scale-invariant, hence identical in relative
+  //     or absolute coordinates (treeLength is untouched by this move).
+  //     Same term as spr_proposal_impl (proposals.cpp:161),
+  //     tbr_proposal_impl (tree_moves.cpp:492) and pspr (:3871).
   int oldBin = nBins - 1;
   for (int b = 0; b < nBins; ++b) {
     if (fOld <= bins.breaks[b + 1]) { oldBin = b; break; }
@@ -3116,7 +3164,8 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
   double logHR = std::log(std::max(selfW[oldBin], 1e-300))
                + R::dbeta(fOld, alphaOld, betaOld, 1)
                - std::log(std::max(candW[chosen][chosenBin], 1e-300))
-               - R::dbeta(fNew, alphaNew, betaNew, 1);
+               - R::dbeta(fNew, alphaNew, betaNew, 1)
+               + std::log(lReg) - std::log(lMerge);
 
   // 15. Prior at proposed state
   NumericVector propRelBr(nEdge);
@@ -3397,7 +3446,9 @@ static double eval_slice_target(McmcData* data, McmcState* state,
   for (int i = 0; i < nEdge; ++i)
     edgeLen[i] = state->treeLength * state->relBrLengths[i];
 
-  bool hasPLC = !state->partLogLik.empty();
+  // !marginalK mirrors do_move_impl: partLogLik is fixed-kPrime, so the partial
+  // update below would evaluate the wrong target under marginal_k.
+  bool hasPLC = !state->partLogLik.empty() && !data->marginalK;
   ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
 
   // rate_loss (1): only neomorphic partitions change. (rate_neo / paramIdx 3
@@ -3494,7 +3545,7 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
         edgeLen[i] = state->treeLength * state->relBrLengths[i];
       ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
 
-      bool hasPLC = !state->partLogLik.empty();
+      bool hasPLC = !state->partLogLik.empty() && !data->marginalK;
       if (hasPLC && paramIdx == 1) {
         // rate_loss: only neo partitions change. Partial cache update.
         // (paramIdx == 3 / rate_neo intentionally excluded — audit Issue 1:
@@ -3916,6 +3967,22 @@ void compute_per_kprime_log_lik(
   out.resize(nTrans);
   if (nTrans == 0) return;
 
+  // Partition-rate normalisation (issue #25). Every partition this helper
+  // prunes is transformational, so cpp_partition_log_likelihood would scale its
+  // edges by compute_partition_scales(...).trans; pruning at the caller's raw
+  // lengths made marginal_k target a different posterior from sampled_k, and
+  // made the case-25 Gibbs sweep sample the unscaled conditional and always
+  // accept it. Applied here rather than at the two call sites so they cannot
+  // diverge again. Both scales are 1 when nNeo == 0 or nTrans == 0.
+  const double transScale =
+      compute_partition_scales(state->rateNeo, data->nNeo, data->nTrans).trans;
+  if (transScale != 1.0) {
+    NumericVector scaledEdge(edgeLen.size());
+    for (int i = 0; i < edgeLen.size(); ++i)
+      scaledEdge[i] = edgeLen[i] * transScale;
+    edgeLen = scaledEdge;   // rebinds the local only; caller's vector untouched
+  }
+
   // Cache for constant-site probability by kStates (shared across characters)
   std::vector<double> cspCache;
   int cspCacheSize = 0;
@@ -3999,6 +4066,17 @@ void compute_per_kprime_log_lik(
     int nUniq  = p.nUniquePatterns;
     transParts.push_back({pi, kObs_p, nCh, nUniq});
     if (nUniq > maxNUniqPart) maxNUniqPart = nUniq;
+  }
+
+  // MARGINAL-K-TRUNC-001: the plain geometric prior is truncated at K, so
+  // candidates with k' > K carry zero mass and phase 2 discards them (#66).
+  std::vector<int> partKoMax(transParts.size(), kMaxKprimeCand);
+  if (isGeometric) {
+    for (int pi = 0; pi < (int)transParts.size(); ++pi) {
+      int nEff = data->kprimeTruncK - transParts[pi].kObs + 1;
+      if (nEff < 0) nEff = 0;
+      if (nEff < kMaxKprimeCand) partKoMax[pi] = nEff;
+    }
   }
 
   // Ensure Gibbs workspace is large enough for the worst-case stride.
@@ -4110,6 +4188,14 @@ void compute_per_kprime_log_lik(
       auto& pa = partAct[pi];
       int nAct = (int)pa.activePatterns.size();
       if (nAct == 0) continue;
+
+      if (ko >= partKoMax[pi]) {
+        for (int localPat : pa.activePatterns)
+          for (int ti : pa.patTrans[localPat])
+            if (!terminated[ti]) { terminated[ti] = true; nActive--; }
+        pa.activePatterns.clear();
+        continue;
+      }
 
       int k = tp.kObs + ko;
       double csp = getCSP(k);
@@ -4501,6 +4587,36 @@ double cpp_log_likelihood_marginal(
     if (R_FINITE(totalLL)) totalLL += charLL;
   }
   return totalLL;
+}
+
+
+// ---------------------------------------------------------------------------
+// kprime_sweep_candidates — how many k' candidates phase 1 evaluates per
+// transformational character at the current state. Diagnostic only: the sweep
+// itself is unaffected. Used to assert that the enumerated range tracks
+// kprimeTruncK (issue #66) without a wall-clock measurement.
+// ---------------------------------------------------------------------------
+
+// [[Rcpp::export]]
+IntegerVector kprime_sweep_candidates(SEXP dataPtr, SEXP statePtr,
+                                      double beta = 1.0) {
+  McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
+  McmcState* state = Rcpp::XPtr<McmcState>(statePtr).get();
+
+  int nEdge = state->relBrLengths.size();
+  NumericVector edgeLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    edgeLen[i] = state->treeLength * state->relBrLengths[i];
+
+  NumericVector acrvRates = (state->rateLogSd > 0.0)
+    ? cpp_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ)
+    : NumericVector(1, 1.0);
+
+  KprimeCharWeights kw;
+  compute_per_kprime_log_lik(data, state, beta,
+                             state->parent, state->child, edgeLen,
+                             acrvRates, kw);
+  return Rcpp::wrap(kw.charNCand);
 }
 
 
@@ -5160,6 +5276,14 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       }
       break;
     }
+    // Slice samplers. run_mcmc_batch_cpp intercepts these before reaching
+    // do_move_impl, so that path carries its own adapted per-move width;
+    // here the caller supplies the width through scaleTuning.
+    case 19:
+      return slice_scalar_impl(data, state, charIdx, scaleTuning, beta);
+    case 29:
+      return slice_kprime_hyper_impl(data, state, charIdx, scaleTuning);
+
     case 25: { // gibbs_kprime_sweep — Gibbs update of all k'_i
       return gibbs_kprime_sweep_impl(data, state, beta);
     }

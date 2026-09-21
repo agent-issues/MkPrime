@@ -355,6 +355,49 @@ MkPrimeModel <- function(
 }
 
 
+# Implementation gate for marginal_k, mirroring .RequirePartitionImplemented.
+#
+# MkPrimeModel() rejects the marginal_k combinations visible from the model
+# alone (non-geometric kPrimePrior, qHeterogeneity). Known-state characters and
+# the partition API need the data and the partition spec, so they are checked
+# here, from whichever caller holds them: `mkd` or `partitionSpec` may be NULL
+# to skip the corresponding check. Both are deferred rather than implemented
+# (dev/notes/2026-05-28-marginal-k-plan.md sections 11 and 13); until this gate
+# existed the marginal evaluator silently dropped known-state characters from
+# the likelihood and ignored partition / unlink.
+.RequireMarginalKSupported <- function(model, mkd = NULL,
+                                       partitionSpec = NULL) {
+  if (!identical(model$likelihoodMode, "marginal_k")) {
+    # Return:
+    return(invisible(NULL))
+  }
+  known <- if (is.null(mkd)) integer(0) else which(mkd$type == "known")
+  if (length(known)) {
+    cli::cli_abort(c(
+      "{.code likelihoodMode = \"marginal_k\"} cannot be combined with
+       known-state characters.",
+      i = "Character{?s} {known} {?is/are} pinned by {.arg knownStates}.",
+      i = "Known-k partitions are deferred (plan section 11); the marginal
+           evaluator would drop them from the likelihood entirely.",
+      i = "Use {.code likelihoodMode = \"sampled_k\"}, or drop
+           {.arg knownStates}."
+    ))
+  }
+  if (!is.null(partitionSpec$partition)) {
+    cli::cli_abort(c(
+      "{.code likelihoodMode = \"marginal_k\"} cannot be combined with the
+       partition API.",
+      i = "Partitioned marginal-k is deferred (plan section 13); the marginal
+           evaluator ignores {.arg partition} and {.arg unlink}.",
+      i = "Use {.code likelihoodMode = \"sampled_k\"}, or drop
+           {.arg partition}."
+    ))
+  }
+  # Return:
+  invisible(NULL)
+}
+
+
 #' Finalize model with data-derived defaults
 #'
 #' Sets `expSteps` and `treeLengthRate` if not user-specified.
@@ -374,13 +417,54 @@ MkPrimeModel <- function(
   }
   if (identical(model$kPrimePrior, "empirical_geometric") &&
       is.null(model$empiricalNObs)) {
-    # Lazy-load package data; copy to model so MCMC code can consume it
-    # without referencing the package namespace.
-    e <- new.env(parent = emptyenv())
-    utils::data("empiricalNObs", package = "MkPrime", envir = e)
-    model$empiricalNObs <- e$empiricalNObs
+    # Copy to the model so MCMC code can consume it without reaching into the
+    # package namespace.
+    model$empiricalNObs <- .EmpiricalNObs()
   }
   model
+}
+
+
+# Resolves the package name at run time: the build harness installs renamed
+# copies (MkPrime.<id>), so a literal "MkPrime" would read a different build's
+# data, or fail outright where no unrenamed build is installed. environment()
+# rather than the parent frame, so a call from outside the namespace still
+# resolves to this package.
+.EmpiricalNObs <- function() {
+  pkg <- utils::packageName(environment())
+  e <- new.env(parent = emptyenv())
+  # package = NULL would search every attached package rather than erroring.
+  if (!is.null(pkg)) {
+    utils::data("empiricalNObs", package = pkg, envir = e)
+  }
+  if (is.null(e$empiricalNObs)) {
+    # nocov start -- needs a build with data/ stripped
+    cli::cli_abort(
+      "Data set {.val empiricalNObs} is missing from {.pkg {pkg}}."
+    )
+    # nocov end
+  }
+  # Return:
+  e$empiricalNObs
+}
+
+
+# model$treeLengthRate is resolvable only once the data are in hand (its
+# default is 2 / expSteps, and expSteps defaults to the data's Fitch score), so
+# .FinalizeModel is the one place that resolves it. Read it through here rather
+# than defaulting it: any `%||%` is a silently different prior.
+.TreeLengthRate <- function(model) {
+  if (is.null(model$treeLengthRate)) {
+    cli::cli_abort(c(
+      "{.field treeLengthRate} is unresolved.",
+      i = "It defaults to {.code 2 / expSteps}, which needs the data.",
+      i = "Pass {.arg treeLengthRate} or {.arg expSteps} to
+           {.fun MkPrimeModel}, or finalize the model against a tree and an
+           {.cls MkPrimeData} first."
+    ))
+  }
+  # Return:
+  model$treeLengthRate
 }
 
 
@@ -612,6 +696,15 @@ LogPrior <- function(state, model, mkd) {
   hasTrans <- length(transIdx) > 0L
 
   if (hasTrans) {
+    # A bare any() on an NA-bearing vector makes the if() below raise, blaming
+    # the prior for what is a data-ingestion or state-corruption bug upstream.
+    naIdx <- transIdx[is.na(state$kPrime[transIdx]) | is.na(mkd$kObs[transIdx])]
+    if (length(naIdx) > 0L) {
+      cli::cli_abort(
+        "{cli::qty(length(naIdx))}Missing {.field kPrime} or {.field kObs} at
+         character{?s} {naIdx}."
+      )
+    }
     if (any(state$kPrime[transIdx] < mkd$kObs[transIdx])) return(-Inf)
 
     if (identical(model$kPrimePrior, "geometric") ||
@@ -633,7 +726,7 @@ LogPrior <- function(state, model, mkd) {
   # Tree length: Gamma prior
   lp <- lp + dgamma(state$tree_length,
                      shape = model$treeLengthShape,
-                     rate = model$treeLengthRate,
+                     rate = .TreeLengthRate(model),
                      log = TRUE)
 
   # Relative branch lengths: Dirichlet(1, ..., 1) = uniform on simplex
@@ -710,14 +803,9 @@ LogPrior <- function(state, model, mkd) {
       # Prior on k' is the convolution; truncation k'_i >= kObs_i already
       # enforced above.  N_obs and N_unobs are latent components that sum to
       # k'; we marginalise over their split.
-      emp <- model$empiricalNObs
-      if (is.null(emp)) {
-        # Allow LogPrior to be called on a non-finalised model (e.g. from
-        # tests).  Fall back to the package empirical distribution.
-        e <- new.env(parent = emptyenv())
-        utils::data("empiricalNObs", package = "MkPrime", envir = e)
-        emp <- e$empiricalNObs
-      }
+      # A model built with an explicit expSteps or treeLengthRate reaches
+      # here without empiricalNObs; fall back to the packaged distribution.
+      emp <- model$empiricalNObs %||% .EmpiricalNObs()
       lp <- lp + .LogPriorEmpiricalGeometric(
         state$kPrime[transIdx], emp, state$p, mkd$kObs[transIdx],
         unconditional = identical(model$priorVariant %||% "conditional",
@@ -876,11 +964,15 @@ print.MkPrimeModel <- function(x, ...) {
 
   lik_mode_str <- x$likelihoodMode %||% "sampled_k"
 
+  # treeLengthRate is unresolved until .FinalizeModel sees the data.
+  tlPriorStr <- paste0("Gamma(", x$treeLengthShape, ", ",
+                       x$treeLengthRate %||% "auto: 2 / expSteps", ")")
+
   cli::cli_ul(c(
     "Coding: {x$coding}",
     "ACRV categories: {x$nCat}",
     "Relabelling correction: {x$relabel}",
-    "Tree length prior: Gamma({x$treeLengthShape}, {x$treeLengthRate %||% 'auto'})",
+    paste0("Tree length prior: ", tlPriorStr),
     "rate_loss prior: LogNormal({x$rateLossMeanlog}, {x$rateLossSdlog})",
     "rate_log_sd prior: Gamma({x$rateLogSdShape}, {x$rateLogSdRate})",
     paste0("k' prior: ", k_prior_str),

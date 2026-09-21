@@ -122,6 +122,7 @@ test_that("MkPrimeMCMC defaults expose slice_width_kprime_s/r", {
 # --- Integration: short BG run produces non-constant α, β --------------------
 
 test_that("Short BG run moves kprime_alpha and kprime_beta", {
+  skip_under_memcheck()
   set.seed(6147)
   f <- make_bg_fixture()
   mcmc <- suppressWarnings(MkPrimeMCMC(
@@ -161,6 +162,7 @@ test_that("Short BG run moves kprime_alpha and kprime_beta", {
 # (log α, log β) is ~10–15, so 2000 iter is not enough. The (s, r)
 # reparameterised sampler reaches the small-β regime within hundreds.
 test_that("β drives down to small-β regime under informative binary data", {
+  skip_under_memcheck()
   set.seed(6148)
   nTip  <- 10L
   nChar <- 40L
