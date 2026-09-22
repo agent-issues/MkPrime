@@ -61,6 +61,10 @@ pruning_mkn <- function(parent, child, edge_length, tip_states, rate_loss, root_
     .Call(`_MkPrime_pruning_mkn`, parent, child, edge_length, tip_states, rate_loss, root_freqs)
 }
 
+f81_transition_cpp <- function(cl, pi, mu, t) {
+    .Call(`_MkPrime_f81_transition_cpp`, cl, pi, mu, t)
+}
+
 bactrian_draws <- function(n) {
     .Call(`_MkPrime_bactrian_draws`, n)
 }

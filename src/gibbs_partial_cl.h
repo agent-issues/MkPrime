@@ -19,6 +19,7 @@
 #include <array>
 #include <cmath>
 #include "fast_exp.h"
+#include "f81.h"
 
 using namespace Rcpp;
 
@@ -258,26 +259,6 @@ inline void mkn_transition(const double* cl, double* result,
     double c0 = cl[off], c1 = cl[off + 1];
     result[off]     = P00 * c0 + P01 * c1;
     result[off + 1] = P10 * c0 + P11 * c1;
-  }
-}
-
-// F81 transition: (P × cl)_i = (1 - e^{-μt}) × dot(π, cl) + e^{-μt} × cl_i
-// M-114: used by Q-heterogeneity partial CL
-inline void f81_transition(const double* cl, double* result,
-                            int nChar, int kStates,
-                            const double* pi, double mu, double t) {
-  // FAST-EXP-001: expm1 form is exact even at tiny mu*t.
-  double arg = -mu * t;
-  double one_minus_exp = -std::expm1(arg);
-  double exp_t         = 1.0 - one_minus_exp;
-  for (int c = 0; c < nChar; ++c) {
-    int off = c * kStates;
-    double piDotCl = 0.0;
-    for (int s = 0; s < kStates; ++s)
-      piDotCl += pi[s] * cl[off + s];
-    double baseTerm = one_minus_exp * piDotCl;
-    for (int s = 0; s < kStates; ++s)
-      result[off + s] = baseTerm + exp_t * cl[off + s];
   }
 }
 

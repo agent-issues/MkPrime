@@ -389,10 +389,11 @@ test_that("SBC-WARMUP-002: scalar moves keep ≥wMinScalar through warmup", {
                        minWarmup = 3000L, maxWarmup = 3000L,
                        autoTune = FALSE, nRuns = 1L, nChains = 1L)
 
-  res <- suppressMessages(suppressWarnings(
+  res <- allow_warning(
     RunMkPrime(mkd, tr, model = model, mcmc = mcmc,
-                fixTopology = TRUE, overwrite = TRUE)
-  ))
+               fixTopology = TRUE, overwrite = TRUE),
+    "without stabilisation"
+  )
 
   expect_true("tree_length" %in% names(res$moveWeights))
   expect_gte(res$moveWeights[["tree_length"]], 0.02 - 1e-6)
@@ -494,12 +495,139 @@ test_that("run_mcmc_batch_cpp returns move_time_ns matrix", {
 # Integration: moveWeights adapt during warmup (via .BuildMoves + .AdaptMoveWeights)
 # ==========================================================================
 
-test_that(".BuildMoves produces weights that normalize to 1", {
-  mcmc <- MkPrimeMCMC(nIter = 200L, minWarmup = 100L)
-  moves <- MkPrime:::.BuildMoves(20, 5, TRUE, mcmc)
+# Types that .BuildMoves' init-time scalar floor covers, and the schedule
+# fields the tests below read back.
+.moveWeights <- function(moves) {
   w <- vapply(moves, `[[`, numeric(1), "weight")
-  wNorm <- w / sum(w)
-  expect_equal(sum(wNorm), 1.0, tolerance = 1e-10)
+  names(w) <- vapply(moves, `[[`, character(1), "name")
+  w
+}
+.scalarFloored <- function(moves) {
+  scalarTypes <- c("scale", "int_walk", "gibbs_p", "scale_p", "logit_scale_p",
+                   "slice", "beta_simplex", "gibbs_p_marginal")
+  type <- vapply(moves, function(m) if (is.null(m$type)) m$name else m$type,
+                 character(1))
+  dim <- vapply(moves, `[[`, numeric(1), "dim")
+  (dim == 1 & type %in% scalarTypes) | type == "joint_2d"
+}
+
+test_that(".BuildMoves floors scalar moves against a growing schedule", {
+  # Normalising a vector and checking it sums to 1 constrains nothing.  What
+  # the schedule must guarantee is that no scalar move is starved as the
+  # topology and branch moves grow with nEdge.
+  mcmc <- MkPrimeMCMC(nIter = 200L, minWarmup = 100L)
+  small <- MkPrime:::.BuildMoves(20L, 5L, TRUE, mcmc)
+  big   <- MkPrime:::.BuildMoves(200L, 5L, TRUE, mcmc)
+
+  for (moves in list(small, big)) {
+    w <- .moveWeights(moves)
+    expect_true(all(is.finite(w)))
+    expect_true(all(w > 0))
+    # Without the floor the smallest scalar weight stays at its raw value
+    # while the total grows with nEdge, so this share collapses.
+    expect_gt(min(w[.scalarFloored(moves)]) / sum(w), 0.01)
+  }
+
+  # The floor is a share of the schedule, so it tracks the schedule's size.
+  expect_gt(min(.moveWeights(big)[.scalarFloored(big)]),
+            3 * min(.moveWeights(small)[.scalarFloored(small)]))
+})
+
+test_that(".BuildMoves builds a usable schedule for every k' arm", {
+  # No test drove the empirical_geometric arm at all, so nothing asserted
+  # that it schedules mh_logit_p -- the move that samples p there.
+  mcmc <- MkPrimeMCMC(nIter = 200L, minWarmup = 100L)
+  arms <- expand.grid(
+    kPrimePrior = c("geometric", "empirical_geometric", "beta_geometric",
+                    "logseries"),
+    likelihoodMode = c("sampled_k", "marginal_k"),
+    qHeterogeneity = c(FALSE, TRUE),
+    fixTopology = c(FALSE, TRUE),
+    stringsAsFactors = FALSE
+  )
+
+  for (i in seq_len(nrow(arms))) {
+    arm <- arms[i, ]
+    label <- paste(unlist(arm), collapse = "/")
+    moves <- suppressMessages(MkPrime:::.BuildMoves(
+      20L, 5L, TRUE, mcmc,
+      fixTopology = arm$fixTopology,
+      kPrimePrior = arm$kPrimePrior,
+      qHeterogeneity = arm$qHeterogeneity,
+      likelihoodMode = arm$likelihoodMode
+    ))
+    w <- .moveWeights(moves)
+    expect_true(all(is.finite(w) & w > 0), label = label)
+    expect_false(anyDuplicated(names(w)) > 0L, label = label)
+    expect_true(all(c("tree_length", "branch_lengths") %in% names(w)),
+                label = label)
+    expect_identical(any(c("nni", "spr") %in% names(w)), !arm$fixTopology,
+                     label = label)
+  }
+
+  # p is sampled by mh_logit_p on both geometric arms; the beta_geometric arm
+  # marginalises p away and must not schedule it.
+  pMove <- function(prior) {
+    "mh_logit_p" %in% names(.moveWeights(suppressMessages(
+      MkPrime:::.BuildMoves(20L, 5L, TRUE, mcmc, kPrimePrior = prior))))
+  }
+  expect_true(pMove("empirical_geometric"))
+  expect_true(pMove("geometric"))
+  expect_false(pMove("beta_geometric"))
+})
+
+test_that("composed warmup adaptation keeps a positive, floored schedule", {
+  # .AdaptMoveWeights, .DecayLowAcceptMoves and the gibbs cap were each
+  # tested alone; the schedule the chain actually samples from is their
+  # composition, applied batch after batch.
+  mcmc <- MkPrimeMCMC(nIter = 200L, minWarmup = 100L)
+  moves <- MkPrime:::.BuildMoves(20L, 5L, TRUE, mcmc)
+  moveNames <- vapply(moves, `[[`, character(1), "name")
+  moveDim <- as.integer(vapply(moves, `[[`, numeric(1), "dim"))
+  floorMoves <- moveNames[.scalarFloored(moves)]
+  gibbsKpIdx <- match("gibbs_kPrime", moveNames)
+
+  initial <- .moveWeights(moves) / sum(.moveWeights(moves))
+  # RunMkPrime auto-pins the always-accepting Gibbs and slice moves.
+  pinned <- initial[c("gibbs_kPrime", "slice_rate_log_sd")]
+  budget <- 1 - sum(pinned)
+
+  starved <- "spr"
+  propose <- initial
+  propose[] <- 100
+  accept <- propose * 0.4
+  accept[[starved]] <- 0
+  moveTimeNs <- propose
+  moveTimeNs[] <- 1e6
+
+  w <- initial
+  for (batch in seq_len(6L)) {
+    w <- MkPrime:::.AdaptMoveWeights(
+      w, accept, propose, moveTimeNs, moveNames, moveDim,
+      pinnedWeights = pinned, warmupProgress = batch / 6,
+      scalarFloorMoves = floorMoves
+    )
+    w <- MkPrime:::.DecayLowAcceptMoves(
+      w, accept, propose, initial, moveNames, pinnedWeights = pinned
+    )
+    expect_equal(sum(w), 1, tolerance = 1e-12)
+    expect_true(all(w > 0))
+    expect_equal(w[names(pinned)], pinned, tolerance = 1e-12)
+    # wMinScalar (0.02) applies within the unpinned budget.
+    expect_gte(min(w[floorMoves]), 0.02 * budget - 1e-9)
+
+    capped <- MkPrime:::.WarmupGibbsCap(w, pinned, gibbsKpIdx)
+    expect_equal(sum(capped), 1, tolerance = 1e-12)
+    expect_true(all(capped > 0))
+    expect_equal(capped[["gibbs_kPrime"]], pinned[["gibbs_kPrime"]] / 3,
+                 tolerance = 1e-12)
+    expect_equal(MkPrime:::.RestoreGibbsCap(capped, pinned, gibbsKpIdx), w,
+                 tolerance = 1e-12)
+  }
+
+  # A move that never accepts must end below where it started, and must not
+  # have been promoted along the way.
+  expect_lt(w[[starved]], initial[[starved]])
 })
 
 # The real guard against move-name drift lives in test-proposal-tuning.R: it

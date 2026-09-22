@@ -115,13 +115,19 @@ test_that("gibbs_kprime_sweep can explore k' > kObs with long branches", {
   setup <- .setup_cpp(tree, pd)
 
   kp_init <- get_mcmc_state(setup$statePtr)$kPrime
+  expect_equal(kp_init, setup$mkd$kObs)
 
-  for (i in seq_len(100L))
+  # Gibbs samples from the full conditional, so k' need not still be above
+  # kObs at the end: track the running maximum across the sweep instead.
+  kp_max <- kp_init
+  for (i in seq_len(100L)) {
     do_move_cpp(setup$dataPtr, setup$statePtr, 25L, 0L, 0.5, 0.5, 1L, 1.0)
+    kp_max <- pmax(kp_max, get_mcmc_state(setup$statePtr)$kPrime)
+  }
 
-  kp_after <- get_mcmc_state(setup$statePtr)$kPrime
-  # At least some k' should have been explored above kObs
-  # (not necessarily still there — Gibbs samples from the full conditional)
+  # Every character must have been visited above its observed state count;
+  # a sweep pinned at k' == kObs would leave kp_max at kp_init.
+  expect_true(all(kp_max > setup$mkd$kObs))
   expect_true(is.finite(get_mcmc_state(setup$statePtr)$logLik))
 })
 
