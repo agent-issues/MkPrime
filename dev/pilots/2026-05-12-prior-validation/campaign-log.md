@@ -99,7 +99,7 @@ All tasks RUNNING. Trees streaming normally across the board. **STREAM-001 statu
 
 ## 2026-05-15 (evening) — Streaming bugs investigated; fixes integrated; HARNESS-001 closed
 
-**Opus subagent (worktree `agent-ab5d3f56687d5fa3e`) report integrated into main.** Round 4 entry in `dev/red-team/log.md` has the full diagnostic narrative; finding-status updates:
+**Opus subagent (worktree `agent-ab5d3f56687d5fa3e`) report integrated into main.** Round 4 entry in the red-team log archive (discussion #124) has the full diagnostic narrative; finding-status updates:
 
 - STREAM-002 → **FIXED**. Root cause: `.RunSerialRuns` was passing `checkpointFile = NULL` to `.RunMkPrimeSingleRun` at `R/RunMkPrime.R:1486` and `:1572`, suppressing every per-batch save under the standard `nRuns >= 2 && maxRhat` orchestrator. Only the iter=0 init snapshot and post-Phase-1/per-epoch saves ever fired. Fix passes `mcmc$checkpointFile` through and rewrites the in-batch save call sites to checkpoint `shared$runs` (all runs' coherent state) rather than `list(r)` (current run only). Regression: `tests/testthat/test-checkpoint.R::"Cross-run R-hat orchestrator saves checkpoint mid-run"`.
 - STREAM-003 **NEW + FIXED**. `brColStart` calc in both `RunMkPrime` (:277) and `ResumeMkPrime` (:2369) omitted the two diagnostic columns C++ inserts at every saved row (`swap_cold` and `topo_hash`, written at `src/mcmc.cpp:4864-4867`). Reconstructed trees had 1–2 garbage edge lengths (one of them `topo_hash`, ~1e16) and dropped the last 1–2 true `br_*` values. Affects **both** arms, not just mk. Trees on disk were parseable Newick but unusable for any branch-length-dependent analysis. Regression: `tests/testthat/test-tree-thin.R::"mk arm ... writes trees with finite edge lengths"`.
@@ -183,7 +183,7 @@ Commit 9332a54: empirical_geometric prior on k' made default. Campaign design: t
 ## Cross-references
 
 - Red-team findings table: [dev/red-team/findings.md](../../red-team/findings.md)
-- Red-team session log: [dev/red-team/log.md](../../red-team/log.md)
+- Red-team session log: [discussion #124](https://github.com/agent-issues/MkPrime/discussions/124) (archive of the retired `dev/red-team/log.md`)
 - Red-team focus rotation: [dev/red-team/focus-areas.md](../../red-team/focus-areas.md)
 - Hamilton HPC conventions: `~/.claude/skills/hamilton-hpc/SKILL.md`
 - Posterior summaries (EG, complete): `report-data/mkp-eg-260/` in the sister `mkprime` repo

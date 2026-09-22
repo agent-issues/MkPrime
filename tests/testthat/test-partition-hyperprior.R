@@ -15,7 +15,6 @@
 #   (D) R LogPrior <-> C++ eval_log_prior_partitioned_cpp agree to 1e-10
 #       at non-degenerate (τ, z) under the new prior.
 
-library("TreeTools")
 
 
 .setup_hyper <- function(partition = c(1L, 1L, 1L, 1L, 2L, 2L, 2L, 2L),
@@ -32,9 +31,9 @@ library("TreeTools")
   mkd <- MkPrimeData(pd)
   mkd$partitions <- .BuildPartitions(mkd, partition = partition)
 
-  tree <- TreeTools::Preorder(
-    TreeTools::NJTree(pd, edgeLengths = TRUE) %||%
-    TreeTools::RandomTree(pd, root = TRUE)
+  tree <- Preorder(
+    NJTree(pd, edgeLengths = TRUE) %||%
+    RandomTree(pd, root = TRUE)
   )
   if (is.null(tree$edge.length) || any(tree$edge.length <= 0)) {
     tree$edge.length <- rep(0.1, nrow(tree$edge))

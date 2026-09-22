@@ -7,30 +7,30 @@
 # topology across several values.  The multiset of non-trivial splits is
 # immune to both.
 
-library("ape")
-library("TreeTools")
-
 .Hash <- function(tree) {
-  tree <- Preorder(tree)
-  compute_topo_hash(tree$edge[, 1], tree$edge[, 2], NTip(tree))
+  tree <- TreeTools::Preorder(tree)
+  compute_topo_hash(tree$edge[, 1], tree$edge[, 2], TreeTools::NTip(tree))
 }
 
 
 test_that("topo_hash separates topologies that share a shape", {
   lab <- paste0("t", 1:5)
-  a <- RenumberTips(read.tree(text = "((t1,t2),(t3,t4),t5);"), lab)
-  b <- RenumberTips(read.tree(text = "((t1,t3),(t2,t4),t5);"), lab)
+  a <- TreeTools::RenumberTips(
+    ape::read.tree(text = "((t1,t2),(t3,t4),t5);"), lab)
+  b <- TreeTools::RenumberTips(
+    ape::read.tree(text = "((t1,t3),(t2,t4),t5);"), lab)
 
   # These two share a canonical parent vector, so a hash of it cannot tell
   # them apart.
-  expect_identical(Preorder(a)$edge[, 1], Preorder(b)$edge[, 1])
+  expect_identical(TreeTools::Preorder(a)$edge[, 1],
+                   TreeTools::Preorder(b)$edge[, 1])
   expect_false(.Hash(a) == .Hash(b))
 })
 
 
 test_that("topo_hash is invariant to edge order and node labelling", {
   set.seed(91L)
-  tree <- Preorder(ape::rtree(8L, rooted = FALSE))
+  tree <- TreeTools::Preorder(ape::rtree(8L, rooted = FALSE))
   h <- .Hash(tree)
 
   # An in-place NNI keeps parents ahead of children but abandons canonical
@@ -50,11 +50,23 @@ test_that("topo_hash is invariant to edge order and node labelling", {
 })
 
 
+test_that("topo_hash ignores where a two-child root sits", {
+  # A rooted input tree stays rooted in the state, and the moves carry the
+  # root about the topology; each position adds a trivial or duplicate split.
+  set.seed(2L)
+  tree <- TreeTools::RandomTree(10L, root = FALSE)
+  rootings <- list(TreeTools::RootTree(tree, 1L), TreeTools::RootTree(tree, 5L),
+                   TreeTools::RootTree(tree, c(2L, 3L)))
+  expect_identical(vapply(rootings, .Hash, double(1)),
+                   rep(.Hash(tree), length(rootings)))
+})
+
+
 test_that("topo_hash counts the topologies a chain actually visits", {
   skip_slow_tests()
   set.seed(11L)
   nTip <- 8L
-  tree <- Preorder(UnrootTree(
+  tree <- TreeTools::Preorder(TreeTools::UnrootTree(
     ape::rtree(nTip, tip.label = paste0("t", seq_len(nTip)))))
   mat <- matrix(sample(0:1, nTip * 40L, replace = TRUE), nrow = nTip,
                 dimnames = list(tree$tip.label, NULL))
@@ -69,8 +81,8 @@ test_that("topo_hash counts the topologies a chain actually visits", {
   # on the saved trees, against Robinson-Foulds distance as the reference.
   lab <- res$trees[[1L]]$tip.label
   trees <- lapply(res$trees, function(tr) {
-    tr$Nnode <- nrow(tr$edge) - NTip(tr) + 1L
-    RenumberTips(tr, lab)
+    tr$Nnode <- nrow(tr$edge) - TreeTools::NTip(tr) + 1L
+    TreeTools::RenumberTips(tr, lab)
   })
   hashes <- vapply(trees, .Hash, numeric(1L))
   expect_gt(length(unique(hashes)), 20L)

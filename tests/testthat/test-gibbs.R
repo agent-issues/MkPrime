@@ -3,9 +3,6 @@
 # M-082: Gibbs update for p
 # M-084: Gibbs update for k'_i (added here when implemented)
 
-library("ape")
-library("TreeTools")
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -20,7 +17,6 @@ library("TreeTools")
                 dimnames = list(paste0("t", 1:4), NULL))
   MatrixToPhyDat(mat)
 }
-
 
 # ---------------------------------------------------------------------------
 # M-082: Gibbs update for p

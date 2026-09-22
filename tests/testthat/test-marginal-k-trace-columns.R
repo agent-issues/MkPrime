@@ -7,9 +7,6 @@
 #   3. ConvergenceDiagnostics on a marginal_k result returns without error
 #      and does not include a kPrime summary row (empty group is silent).
 
-library("ape")
-library("TreeTools")
-
 # ---------------------------------------------------------------------------
 # Tiny fixture: 8 tips × 4 transformational chars (all binary, kObs = 2).
 # Shared by all three subtests.
@@ -42,20 +39,22 @@ library("TreeTools")
               autoTune = FALSE)
 }
 
-
 # ---------------------------------------------------------------------------
 # Subtest 1: marginal_k produces no kPrime_* columns
 # ---------------------------------------------------------------------------
 
 test_that("marginal-k mode produces a trace with no kPrime_* columns", {
   set.seed(7421L)
-  result <- RunMkPrime(
-    .mktc_mkd(), .mktc_tree(),
-    model = MkPrimeModel(kPrimePrior = "geometric",
-                         likelihoodMode = "marginal_k",
-                         coding = "none",
-                         relabel = FALSE),
-    mcmc = .mktc_mcmc()
+  result <- allow_warning(
+    RunMkPrime(
+      .mktc_mkd(), .mktc_tree(),
+      model = MkPrimeModel(kPrimePrior = "geometric",
+                           likelihoodMode = "marginal_k",
+                           coding = "none",
+                           relabel = FALSE),
+      mcmc = .mktc_mcmc()
+    ),
+    "without stabilisation"
   )
 
   cn <- colnames(result$samples)
@@ -63,20 +62,22 @@ test_that("marginal-k mode produces a trace with no kPrime_* columns", {
   expect_length(kp_cols, 0L)
 })
 
-
 # ---------------------------------------------------------------------------
 # Subtest 2: sampled_k still emits kPrime_* columns (regression guard)
 # ---------------------------------------------------------------------------
 
 test_that("sampled-k mode still emits kPrime_* columns (regression guard)", {
   set.seed(7422L)
-  result <- RunMkPrime(
-    .mktc_mkd(), .mktc_tree(),
-    model = MkPrimeModel(kPrimePrior = "geometric",
-                         likelihoodMode = "sampled_k",
-                         coding = "none",
-                         relabel = FALSE),
-    mcmc = .mktc_mcmc()
+  result <- allow_warning(
+    RunMkPrime(
+      .mktc_mkd(), .mktc_tree(),
+      model = MkPrimeModel(kPrimePrior = "geometric",
+                           likelihoodMode = "sampled_k",
+                           coding = "none",
+                           relabel = FALSE),
+      mcmc = .mktc_mcmc()
+    ),
+    "without stabilisation"
   )
 
   cn <- colnames(result$samples)
@@ -85,7 +86,6 @@ test_that("sampled-k mode still emits kPrime_* columns (regression guard)", {
   expect_true(length(kp_cols) > 0L)
 })
 
-
 # ---------------------------------------------------------------------------
 # Subtest 3: ConvergenceDiagnostics on marginal_k result is error-free
 # (empty kPrime group should be silently absent, not crash or print "kPrime 0")
@@ -93,13 +93,16 @@ test_that("sampled-k mode still emits kPrime_* columns (regression guard)", {
 
 test_that("ConvergenceDiagnostics handles empty kPrime group under marginal-k", {
   set.seed(7423L)
-  result <- RunMkPrime(
-    .mktc_mkd(), .mktc_tree(),
-    model = MkPrimeModel(kPrimePrior = "geometric",
-                         likelihoodMode = "marginal_k",
-                         coding = "none",
-                         relabel = FALSE),
-    mcmc = .mktc_mcmc()
+  result <- allow_warning(
+    RunMkPrime(
+      .mktc_mkd(), .mktc_tree(),
+      model = MkPrimeModel(kPrimePrior = "geometric",
+                           likelihoodMode = "marginal_k",
+                           coding = "none",
+                           relabel = FALSE),
+      mcmc = .mktc_mcmc()
+    ),
+    "without stabilisation"
   )
 
   # Must complete without error

@@ -8,6 +8,7 @@
 }
 \description{
 Undoes the reduction applied by \code{.WarmupGibbsCap()}. Excess weight is reclaimed
-proportionally from non-pinned moves.
+proportionally from non-pinned moves; if the pins fill the whole budget, the
+pinned schedule is rebuilt exactly.
 }
 \keyword{internal}

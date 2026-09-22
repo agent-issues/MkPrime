@@ -13,7 +13,7 @@
 # Canonical topology key: sorted non-trivial splits identified by tip names.
 # Invariant under root placement and node renumbering.
 .topo_key <- function(tr) {
-  splits <- TreeTools::as.Splits(tr)
+  splits <- as.Splits(tr)
   mat <- as.logical(splits)
   tip_names <- colnames(mat)
   row_keys <- apply(mat, 1, function(r) {
@@ -34,7 +34,7 @@
   set.seed(seed)
   tree <- ape::rtree(n_tip)
   tree <- ape::unroot(tree)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   tl <- sum(tree$edge.length)
 
   current <- tree

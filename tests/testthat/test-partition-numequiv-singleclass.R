@@ -11,7 +11,6 @@
 # These tests exercise the C++ surface directly via the [[Rcpp::export]]
 # wrappers, before the RunMkPrime gate opens.
 
-library("TreeTools")
 
 
 # Helper: build mkd + a simple tree + the C++ McmcData XPtr ready for both
@@ -26,8 +25,8 @@ library("TreeTools")
   }
   pd  <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
-  tree <- TreeTools::Preorder(TreeTools::NJTree(pd, edgeLengths = TRUE) %||%
-                              TreeTools::RandomTree(pd, root = TRUE))
+  tree <- Preorder(NJTree(pd, edgeLengths = TRUE) %||%
+                              RandomTree(pd, root = TRUE))
   if (is.null(tree$edge.length) || any(tree$edge.length <= 0)) {
     tree$edge.length <- rep(0.1, nrow(tree$edge))
   }

@@ -17,7 +17,9 @@ on:
     branches:
       - main
       - master
-      - '**asan**'
+      # No '**asan**' branch pattern: such a branch's push run posts a second
+      # `ASAN gate` on the PR's head commit, pending until the full matrix
+      # finishes and failed if cancelled. Dispatch on the branch instead.
   # Deliberately unfiltered: the gate job must report on every pull request,
   # or a required check would sit forever at "Expected — waiting for status".
   # Path filtering happens in `changes` instead, where a skip still reports.

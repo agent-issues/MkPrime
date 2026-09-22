@@ -22,9 +22,6 @@
 # homogeneous and the ACRV-heterogeneous pruning paths (the fix rerouted the
 # parent/child argument in both).
 
-library("ape")
-library("TreeTools")
-
 .rb_lse <- function(x) {
   x <- x[is.finite(x)]
   if (!length(x)) return(-Inf)
@@ -58,9 +55,9 @@ test_that("marginal-k RB identity holds across random topologies (FREEZE-003 val
     ntip <- sample(6:11, 1L)
     tr <- ape::rtree(ntip, tip.label = paste0("t", seq_len(ntip)))
     tr$edge.length <- runif(nrow(tr$edge), 0.03, 0.5)   # varied (non-degenerate) branches
-    trp <- TreeTools::Preorder(tr)
+    trp <- Preorder(tr)
     repeat { v <- sample(0:1, ntip, replace = TRUE); if (length(unique(v)) == 2L) break }
-    mkd  <- MkPrimeData(TreeTools::MatrixToPhyDat(
+    mkd  <- MkPrimeData(MatrixToPhyDat(
       matrix(v, ncol = 1, dimnames = list(tr$tip.label, "c1"))))
     kobs <- mkd$kObs[1]; ks <- kobs:K
 

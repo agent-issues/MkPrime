@@ -2,11 +2,10 @@
 skip_slow_tests()
 
 test_that("Checkpoint file is written at check intervals", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".rds")
   on.exit(unlink(cp_file), add = TRUE)
@@ -30,11 +29,10 @@ test_that("Checkpoint file is written at check intervals", {
 
 
 test_that("Checkpoint contains valid run state", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".rds")
   on.exit(unlink(cp_file), add = TRUE)
@@ -57,11 +55,10 @@ test_that("Checkpoint contains valid run state", {
 
 
 test_that("ResumeMkPrime continues from checkpoint", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".rds")
   log_file <- tempfile(fileext = ".log")
@@ -89,11 +86,10 @@ test_that("ResumeMkPrime continues from checkpoint", {
 
 
 test_that("RunMkPrime auto-resumes from existing checkpoint", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".rds")
   log_file <- tempfile(fileext = ".log")
@@ -119,11 +115,10 @@ test_that("RunMkPrime auto-resumes from existing checkpoint", {
 
 
 test_that("RunMkPrime overwrite = TRUE ignores existing checkpoint", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".rds")
   on.exit(unlink(cp_file), add = TRUE)
@@ -145,11 +140,10 @@ test_that("RunMkPrime overwrite = TRUE ignores existing checkpoint", {
 
 
 test_that("Checkpoint without checkpointFile does nothing", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(6611)
   # No checkpointFile: should run normally
@@ -165,11 +159,10 @@ test_that("Checkpoint without checkpointFile does nothing", {
 # --- M-149: Interrupt-safe checkpointing tests ---
 
 test_that("Initial checkpoint is written before first batch", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".ckp")
   log_file <- tempfile(fileext = ".log")
@@ -194,11 +187,10 @@ test_that("Initial checkpoint is written before first batch", {
 
 
 test_that("Checkpoint model is used on auto-resume (tree = NULL)", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".ckp")
   log_file <- tempfile(fileext = ".log")
@@ -223,11 +215,10 @@ test_that("Checkpoint model is used on auto-resume (tree = NULL)", {
 
 
 test_that("Warmup state (logPostHistory, nStableConsecutive) persisted in checkpoint", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".ckp")
   log_file <- tempfile(fileext = ".log")
@@ -255,11 +246,10 @@ test_that("Warmup state (logPostHistory, nStableConsecutive) persisted in checkp
 
 
 test_that("Tuning state persisted and tuningBuf re-allocated on resume", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".ckp")
   log_file <- tempfile(fileext = ".log")
@@ -309,11 +299,10 @@ test_that("Tuning state persisted and tuningBuf re-allocated on resume", {
 
 
 test_that("Shared env update fires at batch boundaries (multi-run)", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".ckp")
   log_file <- tempfile(fileext = ".log")
@@ -347,11 +336,10 @@ test_that("Shared env update fires at batch boundaries (multi-run)", {
 # --- M-150: maxTime break saves checkpoint ---
 
 test_that("maxTime break saves checkpoint (not just initial)", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".ckp")
   log_file <- tempfile(fileext = ".log")
@@ -383,11 +371,10 @@ test_that("maxTime break saves checkpoint (not just initial)", {
 # --- M-149 #2: move weights persisted and restored ---
 
 test_that("Move weights stored in run state and checkpoint", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".ckp")
   log_file <- tempfile(fileext = ".log")
@@ -416,11 +403,10 @@ test_that("Move weights stored in run state and checkpoint", {
 
 
 test_that("Resumed run uses checkpointed move weights", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".ckp")
   log_file <- tempfile(fileext = ".log")
@@ -449,11 +435,10 @@ test_that("Resumed run uses checkpointed move weights", {
 # --- M-149 #6-7: serial orchestrator phase and per-run startIters ---
 
 test_that("Serial multi-run checkpoint stores serialPhase", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file <- tempfile(fileext = ".ckp")
   log_file <- tempfile(fileext = ".log")
@@ -541,11 +526,10 @@ test_that(".TruncateTreeToN is a no-op when treeFile is NULL or missing", {
 # --- Tree file preserved and extended across resume (serial path) ---
 
 test_that("Resume preserves pre-checkpoint trees and appends new ones (serial)", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file   <- tempfile(fileext = ".ckp")
   log_file  <- tempfile(fileext = ".log")
@@ -593,11 +577,10 @@ test_that("Resume preserves pre-checkpoint trees and appends new ones (serial)",
 # --- Resume discards post-checkpoint trees from a torn write ---
 
 test_that("Resume truncates post-checkpoint trees written before SIGKILL", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file   <- tempfile(fileext = ".ckp")
   log_file  <- tempfile(fileext = ".log")
@@ -635,11 +618,10 @@ test_that("Resume truncates post-checkpoint trees written before SIGKILL", {
 # --- Per-run tree files: nRuns=2 writes to separate streams ---
 
 test_that("Per-run tree files separate by run", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   log_base  <- tempfile()
   tree_base <- tempfile()
@@ -678,11 +660,10 @@ test_that("Per-run tree files separate by run", {
 # --- Resume preserves per-run tree files across nRuns=2 ---
 
 test_that("Resume preserves pre-checkpoint trees and appends new ones (nRuns=2 serial)", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   log_base  <- tempfile()
   tree_base <- tempfile()
@@ -730,11 +711,10 @@ test_that("Resume preserves pre-checkpoint trees and appends new ones (nRuns=2 s
 # --- Sync-invariant aborts ---
 
 test_that("Resume aborts on tree/log desync (fewer trees than checkpoint)", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   cp_file   <- tempfile(fileext = ".ckp")
   log_file  <- tempfile(fileext = ".log")

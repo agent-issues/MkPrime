@@ -3,8 +3,6 @@
 # partition = NULL path; these cover the partition-aware path before any of
 # the consuming machinery (eta_neo, unlink, sibling C++) lands.
 
-library("TreeTools")
-
 # Helper: 5 tips × N chars, no invariants.
 .make_mkd_nchar <- function(nChar, seed = 17L, neoIdx = integer(0)) {
   set.seed(seed)
@@ -18,7 +16,6 @@ library("TreeTools")
   MkPrimeData(MatrixToPhyDat(mat), neomorphic = neoIdx)
 }
 
-
 test_that("partition = NULL gives every partition classIdx = 1L", {
   mkd <- .make_mkd_nchar(6L)
   parts <- mkd$partitions  # built by MkPrimeData via .BuildPartitions(mkd)
@@ -26,7 +23,6 @@ test_that("partition = NULL gives every partition classIdx = 1L", {
     expect_identical(p$classIdx, 1L)
   }
 })
-
 
 test_that("partition assignment splits a single (type, kObs) group across classes", {
   mkd <- .make_mkd_nchar(6L)
@@ -42,7 +38,6 @@ test_that("partition assignment splits a single (type, kObs) group across classe
   unioned <- sort(unlist(lapply(parts, `[[`, "char_indices")))
   expect_identical(unioned, seq_len(mkd$nChar))
 })
-
 
 test_that("a user class spanning multiple kObs values yields one PartInfo per kObs", {
   # Construct a matrix with mixed kObs in one class
@@ -62,7 +57,6 @@ test_that("a user class spanning multiple kObs values yields one PartInfo per kO
   expect_setequal(vapply(parts, `[[`, integer(1), "kObs"), c(2L, 3L))
   expect_identical(unique(vapply(parts, `[[`, integer(1), "classIdx")), 1L)
 })
-
 
 test_that("mixed-type class (neomorphic + transformational) yields multiple PartInfos with same classIdx", {
   # 4 chars: chars 1 and 2 are neomorphic; chars 3 and 4 are transformational.
@@ -86,7 +80,6 @@ test_that("mixed-type class (neomorphic + transformational) yields multiple Part
   expect_identical(pf("nChar"), c(1L, 1L, 1L, 1L))
 })
 
-
 test_that("an empty class is omitted (no PartInfo emitted for missing class IDs)", {
   # 4 chars, partition = c(1, 1, 1, 1) but caller passes class indices that
   # span 1:3 with class 2 empty? — actually the validator forbids this and
@@ -101,7 +94,6 @@ test_that("an empty class is omitted (no PartInfo emitted for missing class IDs)
   expect_setequal(vapply(parts, `[[`, integer(1), "classIdx"), c(1L, 3L))
 })
 
-
 test_that("partition-aware tip_states subset matches the original matrix columns", {
   mkd <- .make_mkd_nchar(6L)
   partition <- c(1L, 2L, 1L, 2L, 1L, 2L)
@@ -112,7 +104,6 @@ test_that("partition-aware tip_states subset matches the original matrix columns
     expect_true(all(partition[p$char_indices] == p$classIdx))
   }
 })
-
 
 test_that("MkPrimeData still produces classIdx = 1L on every partition", {
   # Ensure existing MkPrimeData construction (which calls .BuildPartitions

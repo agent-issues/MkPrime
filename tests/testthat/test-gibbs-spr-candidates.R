@@ -16,8 +16,8 @@
 #   3. Accepted moves no longer land in the pi-null set of bit-equal split
 #      halves, and drawing the merged edge is a live branch-fraction move.
 
-library("ape")
-library("TreeTools")
+library("ape", quietly = TRUE)
+library("TreeTools", quietly = TRUE)
 
 # ---------------------------------------------------------------------------
 # Fixture helpers
@@ -26,7 +26,7 @@ library("TreeTools")
 .CandContext <- function(seed = 7L, nTip = 6L, nChar = 5L,
                          model = MkPrimeModel()) {
   set.seed(seed)
-  tree <- TreeTools::Preorder(ape::rtree(nTip, rooted = FALSE))
+  tree <- Preorder(ape::rtree(nTip, rooted = FALSE))
   mat  <- matrix(sample(0:2, nTip * nChar, replace = TRUE), nrow = nTip,
                  dimnames = list(tree$tip.label, NULL))
   mkd   <- suppressWarnings(MkPrimeData(MatrixToPhyDat(mat)))
@@ -82,7 +82,7 @@ library("TreeTools")
   len[sibRow]         <- (1 - tau) * lReg
   tree$edge        <- edge
   tree$edge.length <- len
-  TreeTools::Preorder(tree)
+  Preorder(tree)
 }
 
 # ---------------------------------------------------------------------------

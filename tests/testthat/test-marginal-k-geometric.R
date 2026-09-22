@@ -10,9 +10,6 @@
 # We validate by direct comparison against a brute-force sum-of-products on
 # a tiny synthetic dataset, where we can enumerate the full u-grid.
 
-library("ape")
-library("TreeTools")
-
 # ---------------------------------------------------------------------------
 # Tiny fixture: 4 transformational chars, 8 tips, all kObs == 2 (binary).
 # ---------------------------------------------------------------------------
@@ -43,7 +40,7 @@ library("TreeTools")
 .marg_build_ptrs <- function(p, mode = c("sampled_k", "marginal_k"),
                               kPrime = NULL) {
   mode <- match.arg(mode)
-  tree  <- TreeTools::Preorder(.marg_make_tree())
+  tree  <- Preorder(.marg_make_tree())
   pd    <- .marg_make_mkd()
   mkd   <- MkPrimeData(pd)
   model <- MkPrimeModel(kPrimePrior = "geometric",
@@ -127,7 +124,6 @@ test_that("marginal-k LL equals brute-force sum-of-products at small nTrans", {
   expect_equal(L_marg, L_naive, tolerance = 1e-6)
 })
 
-
 # ---------------------------------------------------------------------------
 # Mode-switching guards
 # ---------------------------------------------------------------------------
@@ -159,13 +155,12 @@ test_that("likelihoodMode='marginal_k' aborts under qHeterogeneity", {
   )
 })
 
-
 # ---------------------------------------------------------------------------
 # LogPrior drops the geometric u-term under marginal_k
 # ---------------------------------------------------------------------------
 
 test_that("LogPrior under marginal_k omits the per-character P(u | p) term", {
-  tree  <- TreeTools::Preorder(.marg_make_tree())
+  tree  <- Preorder(.marg_make_tree())
   pd    <- .marg_make_mkd()
   mkd   <- MkPrimeData(pd)
   model_s <- MkPrimeModel(kPrimePrior = "geometric",
@@ -192,7 +187,6 @@ test_that("LogPrior under marginal_k omits the per-character P(u | p) term", {
   expect_equal(lp_s - lp_m, expected_diff, tolerance = 1e-12)
 })
 
-
 # ---------------------------------------------------------------------------
 # Model A (unconditional) vs Model B (conditional) marginal-weight factor
 #
@@ -205,7 +199,7 @@ test_that("LogPrior under marginal_k omits the per-character P(u | p) term", {
 
 test_that("priorVariant='unconditional' shifts marginal LL by (kObs-2)log(1-p)", {
   tips <- paste0("t", 1:8)
-  tree <- TreeTools::Preorder(.marg_make_tree())
+  tree <- Preorder(.marg_make_tree())
   # Two characters with kObs > 2 (one 3-state, one 4-state) plus two binary,
   # so the factor (1-p)^(kObs-2) is non-trivial.
   mat <- matrix(

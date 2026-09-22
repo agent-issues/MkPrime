@@ -44,6 +44,9 @@
 #'   coerced to `character(0)` with an info-level alert when `partition`
 #'   is `NULL` or `nClasses == 1` so the AutoPart dispatcher can pass
 #'   `unlink` uniformly across treatments.
+#' @param verbosity Integer from `0` (silent) to `2` (tuning diagnostics)
+#'   controlling console output for the duration of the call; see
+#'   [MkPrimeVerbosity()].
 #' @param ... Additional arguments forwarded to [MkPrimeMCMC()]. Allows
 #'   passing MCMC configuration inline (e.g. `nIter`, `logFile`, `nChains`)
 #'   without constructing a separate object. Cannot be combined with an
@@ -101,7 +104,11 @@ RunMkPrime <- function(data, tree = NULL,
                        overwrite = FALSE,
                        partition = NULL,
                        unlink = character(0),
+                       verbosity = MkPrimeVerbosity(),
                        ...) {
+
+  oldOpts <- options(MkPrime.verbosity = .CheckVerbosity(verbosity))
+  on.exit(options(oldOpts), add = TRUE)
 
   # --- Build or validate MCMC config ---
   dots <- list(...)
@@ -119,7 +126,7 @@ RunMkPrime <- function(data, tree = NULL,
   # --- Auto-resume from checkpoint ---
   cpFile <- mcmc$checkpointFile
   if (!overwrite && !is.null(cpFile) && file.exists(cpFile)) {
-    cli::cli_alert_info("Resuming from checkpoint {.file {cpFile}}.")
+    .AlertInfo("Resuming from checkpoint {.file {cpFile}}.")
     return(ResumeMkPrime(
       checkpointFile = cpFile,
       data = data,
@@ -171,11 +178,11 @@ RunMkPrime <- function(data, tree = NULL,
     if (requireNamespace("TreeSearch", quietly = TRUE)) {
       tree <- TreeSearch::AdditionTree(startInput)
       tree$edge.length <- rep(0.1, nrow(tree$edge))
-      cli::cli_alert_info(
+      .AlertInfo(
         "No starting tree supplied; using greedy parsimony addition tree.")
     } else {
       tree <- TreeTools::NJTree(startInput, edgeLengths = TRUE)
-      cli::cli_alert_info(c(
+      .AlertInfo(c(
         "No starting tree supplied; using neighbour-joining tree.",
         "i" = "Install {.pkg TreeSearch} to use the preferred parsimony \\
                addition tree."))
@@ -346,8 +353,9 @@ RunMkPrime <- function(data, tree = NULL,
 
   # If interrupted, on.exit cleanup is cancelled and we return early
   if (identical(execResult, "interrupted")) {
-    # Cancel the on.exit cleanup -- temp logs must survive for recovery
-    on.exit(NULL, add = FALSE)
+    # Cancel the temp-log cleanup -- the logs must survive for recovery --
+    # but keep restoring the verbosity option.
+    on.exit(options(oldOpts), add = FALSE)
     return(invisible(NULL))
   }
 
@@ -987,7 +995,10 @@ RunMkPrime <- function(data, tree = NULL,
     requireNamespace("TreeDist", quietly = TRUE)
   tuningWindowStart <- NULL
   bestMinEssPerSec <- -Inf
+  bestMinEss       <- NA_real_
   bestWeights      <- moveWeights
+  tuningFreezeStreak <- r$tuningFreezeStreak %||% 0L
+  convStreak       <- r$convStreak %||% 0L
   tuningCandidates <- list()
   tuningCandIdx    <- 0L
   effectiveTuningBudget <- r$effectiveTuningBudget %||% mcmc$tuningBudget
@@ -1036,7 +1047,7 @@ RunMkPrime <- function(data, tree = NULL,
   }
   logPWidth   <- 5L
 
-  cli::cli_progress_bar(
+  .ProgressBar(
     progressLabel,
     total  = progressTotal,
     format = "{tickerPage}",
@@ -1135,13 +1146,8 @@ RunMkPrime <- function(data, tree = NULL,
           }
           tl    <- row[3L]
           relBr <- row[brColStart:(brColStart + nEdge - 1L)]
-          curTree <- TreeTools::Preorder(structure(
-            list(edge        = result$edge_samples[[i]],
-                 edge.length = tl * relBr,
-                 Nnode       = length(tipLabels) - 1L,
-                 tip.label   = tipLabels),
-            class = "phylo"
-          ))
+          curTree <- .EdgeToTree(result$edge_samples[[i]], tl * relBr,
+                                 tipLabels)
           r$tree_samples[[r$tree_saved_idx]] <- curTree
           if (!is.null(treeFile))
             cat(ape::write.tree(curTree), "\n", file = treeFile, append = TRUE)
@@ -1171,13 +1177,9 @@ RunMkPrime <- function(data, tree = NULL,
           row <- result$scalar_samples[i, ]
           tl    <- row[3L]
           relBr <- row[brColStart:(brColStart + nEdge - 1L)]
-          tuningTreeBuf[[tuningBufIdx]] <- TreeTools::Preorder(structure(
-            list(edge        = result$edge_samples[[i]],
-                 edge.length = tl * relBr,
-                 Nnode       = length(tipLabels) - 1L,
-                 tip.label   = tipLabels),
-            class = "phylo"
-          ))
+          tuningTreeBuf[[tuningBufIdx]] <- .EdgeToTree(
+            result$edge_samples[[i]], tl * relBr, tipLabels
+          )
         }
       }
     }
@@ -1291,7 +1293,7 @@ RunMkPrime <- function(data, tree = NULL,
               "Warmup reached {.arg maxWarmup} ({mcmc$warmup}) without stabilisation."
             )
           } else {
-            cli::cli_alert_success(
+            .AlertSuccess(
               "Chain stabilised at iteration {batchEnd}."
             )
           }
@@ -1341,7 +1343,9 @@ RunMkPrime <- function(data, tree = NULL,
               r$chain_slice_exp[[ch]][] <- 0
             }
             bestMinEssPerSec <- -Inf
+            bestMinEss       <- NA_real_
             bestWeights      <- moveWeights
+            tuningFreezeStreak <- 0L
             tuningCandidates <- .PerturbMoveWeights(
               moveWeights, pinnedWeights, moveNames,
               nPerturbations = 3L
@@ -1381,18 +1385,21 @@ RunMkPrime <- function(data, tree = NULL,
       # Evaluate current weight vector after each tuning window
       if (tuningBufIdx >= 10L) {
         windowTime <- proc.time()["elapsed"] - tuningWindowStart
-        currentEssPerSec <- .MinEssPerSec(
+        currentRate <- .MinEssRate(
           tuningBuf[seq_len(tuningBufIdx), , drop = FALSE],
           windowTime,
           tuningTrees = if (tuneWithTreeEss && tuningBufIdx >= 20L) {
             tuningTreeBuf[seq_len(tuningBufIdx)]
           }
         )
+        currentEssPerSec <- currentRate[["rate"]]
 
         if (!is.na(currentEssPerSec)) {
           tickerPages <- sprintf("minESS/s: %.2f", currentEssPerSec)
-          if (currentEssPerSec > bestMinEssPerSec) {
+          if (.BeatsIncumbent(currentEssPerSec, currentRate[["ess"]],
+                              bestMinEssPerSec, bestMinEss)) {
             bestMinEssPerSec <- currentEssPerSec
+            bestMinEss       <- currentRate[["ess"]]
             bestWeights      <- moveWeights
           }
         }
@@ -1418,8 +1425,16 @@ RunMkPrime <- function(data, tree = NULL,
           r$tuningRoundsDone <- tuningRoundsDone
           moveWeights <- bestWeights
 
+          payback <- .TuningPayback(
+            tuningFreezeStreak, proc.time()["elapsed"] - startTime,
+            bestMinEssPerSec, mcmc$minEss, mcmc$nRuns
+          )
+          tuningFreezeStreak <- payback[["streak"]]
+          r$tuningFreezeStreak <- tuningFreezeStreak
+
           if (tuningRoundsDone >= mcmc$tuningRounds ||
-              tuningIterUsed >= effectiveTuningBudget) {
+              tuningIterUsed >= effectiveTuningBudget ||
+              payback[["freeze"]]) {
             # Transition: Tuning -> Sample
             phase      <- "Sample"
             r$phase    <- phase
@@ -1430,7 +1445,7 @@ RunMkPrime <- function(data, tree = NULL,
               .LogMoveWeights(moveWeights, moveNames, logFilePath)
             .PrintMoveWeights(moveWeights, moveNames)
             if (bestMinEssPerSec > 0) {
-              cli::cli_alert_info(
+              .AlertInfo(
                 "Tuning complete ({tuningRoundsDone} round{?s}). Best minESS/s: {sprintf('%.2f', bestMinEssPerSec)}"
               )
             }
@@ -1447,6 +1462,7 @@ RunMkPrime <- function(data, tree = NULL,
             tuningTreeBuf     <- list()
             tuningWindowStart <- proc.time()["elapsed"]
             bestMinEssPerSec  <- -Inf
+            bestMinEss        <- NA_real_
             for (ch in seq_len(nChains)) {
               r$chain_accept[[ch]][]    <- 0L
               r$chain_propose[[ch]][]   <- 0L
@@ -1513,7 +1529,7 @@ RunMkPrime <- function(data, tree = NULL,
       sep, tickerPages
     )
 
-    cli::cli_progress_update(
+    .ProgressUpdate(
       set = if (startIter == 1L) batchEnd else batchEnd - startIter + 1L
     )
     if (hasProgressFn &&
@@ -1585,7 +1601,10 @@ RunMkPrime <- function(data, tree = NULL,
         etaStr <- .EstimateEta(etaCrit$current, etaCrit$target, elapsedSample)
         # Refresh ticker pages from latest diagnostics (M-097)
         tickerPages <- .BuildTickerPages(diagCheck, etaStr)
-        if (diagCheck$converged) {
+        convVerdict  <- .ConvergenceStreak(convStreak, diagCheck$converged)
+        convStreak   <- convVerdict[["streak"]]
+        r$convStreak <- convStreak
+        if (convVerdict[["stop"]]) {
           stopReason <- "converged"
           actualIter <- batchEnd
           break
@@ -1616,7 +1635,7 @@ RunMkPrime <- function(data, tree = NULL,
                 mcmc$treeThin <- newThin * ceiling(mcmc$treeThin / newThin)
               treeEvery <- as.integer(mcmc$treeThin / newThin)
             }
-            cli::cli_alert_info(
+            .AlertInfo(
               "Adapted thin: {oldThin} \u2192 {newThin} (max ACT \u2248 {round(newThin / log(2))} iter)"
             )
           }
@@ -1632,7 +1651,7 @@ RunMkPrime <- function(data, tree = NULL,
     cli::col_silver(paste(phaseLabel, batchEnd)),
     cli::col_silver("\u2502"), cli::col_green("done \u2714")
   )
-  cli::cli_progress_done()
+  .ProgressDone()
 
   # Flush any remaining streaming buffer (belt-and-suspenders; .BuildResult
 
@@ -1797,17 +1816,22 @@ RunMkPrime <- function(data, tree = NULL,
   }
 
   # --- Phase 2: cross-run R-hat loop ---
+  convStreak <- 0L
   repeat {
     diagCheck <- .CheckConvergenceFromLogs(logFilePaths, paramNames, mcmc)
-    if (!is.null(diagCheck) && diagCheck$converged) {
+    convStreak <- .ConvergenceStreak(
+      convStreak, !is.null(diagCheck) && diagCheck$converged
+    )
+    if (convStreak[["stop"]]) {
       return(list(runs = runs,
                   stopReason = "converged",
                   actualIter = max(vapply(runs, `[[`, 0, "actual_iter"))))
     }
+    convStreak <- convStreak[["streak"]]
 
     # Report R-hat status
     if (!is.null(diagCheck) && !is.na(diagCheck$maxRhat)) {
-      cli::cli_alert_info(
+      .AlertInfo(
         "Cross-run max R-hat = {round(diagCheck$maxRhat, 3)} \\
          (target: {mcmc$maxRhat}). Extending runs\u2026"
       )
@@ -1923,7 +1947,7 @@ RunMkPrime <- function(data, tree = NULL,
   # safety net for any direct callers.
   if (!isStreaming) {
     tmpLog <- tempfile(fileext = ".log")
-    cli::cli_alert_info(c(
+    .AlertInfo(c(
       "Parallel mode requires {.arg logFile} (workers share samples via disk).",
       "i" = "Auto-assigning: {.file {tmpLog}}"
     ))
@@ -1966,7 +1990,8 @@ RunMkPrime <- function(data, tree = NULL,
     callr::r_bg(
       func = function(mkd, model, mcmc, runState, moves, tipLabels, run,
                       paramNames, nEdge, brColStart, logPath, cfPath,
-                      ckpPath, treePath, convWindowSize, seed) {
+                      ckpPath, treePath, convWindowSize, seed, verbosity) {
+        options(MkPrime.verbosity = verbosity)
         assign(".Random.seed", seed, envir = globalenv())
         .RunMkPrimeSingleRun(
           mkd, model, mcmc, runState, moves, tipLabels, run,
@@ -1996,7 +2021,8 @@ RunMkPrime <- function(data, tree = NULL,
         ckpPath        = if (is.null(perRunCkpPaths)) NULL else perRunCkpPaths[run],
         treePath       = if (is.null(treeFilePaths))  NULL else treeFilePaths[run],
         convWindowSize = convWindowSize,
-        seed           = streams[[run]]
+        seed           = streams[[run]],
+        verbosity      = MkPrimeVerbosity()
       ),
       supervise = TRUE,
       package   = TRUE
@@ -2013,13 +2039,14 @@ RunMkPrime <- function(data, tree = NULL,
   # Polling loop: sleep -> check stopping criteria -> signal workers if needed.
   startTime    <- proc.time()["elapsed"]
   pollInterval <- mcmc$pollInterval %||% 10L
+  convStreak   <- 0L
   stopReason   <- "max_iter"
   actualIter   <- if (is.finite(mcmc$nIter)) mcmc$nIter else mcmc$warmup
 
   # Progress display and live trace plot
   hasProgressFn <- !is.null(mcmc$progressFn) && is.function(mcmc$progressFn)
   pollStatus <- "Waiting for workers..."
-  cli::cli_progress_bar(
+  .ProgressBar(
     "Parallel MCMC ({nRuns} runs)",
     format       = "{cli::pb_spin} {pollStatus}",
     format_done  = "{pollStatus}",
@@ -2076,7 +2103,7 @@ RunMkPrime <- function(data, tree = NULL,
         else "",
         if (!is.null(etaStr)) paste0(" | ETA: ", etaStr) else ""
       )
-      cli::cli_progress_update()
+      .ProgressUpdate()
 
       # Live trace plot from log-file samples
       if (hasProgressFn) {
@@ -2098,7 +2125,9 @@ RunMkPrime <- function(data, tree = NULL,
         tryCatch(mcmc$progressFn(info), error = function(e) NULL)
       }
 
-      if (diagCheck$converged) {
+      convVerdict <- .ConvergenceStreak(convStreak, diagCheck$converged)
+      convStreak  <- convVerdict[["streak"]]
+      if (convVerdict[["stop"]]) {
         for (cf in cancelFiles) file.create(cf)
         stopReason <- "converged"
         break
@@ -2113,7 +2142,7 @@ RunMkPrime <- function(data, tree = NULL,
     "Parallel MCMC (", nRuns, " runs) -- ",
     stopReason, " [", .FormatElapsed(proc.time()["elapsed"] - startTime), "]"
   )
-  cli::cli_progress_done()
+  .ProgressDone()
 
   # Collect results. Shrink the result list to only runs that produced
   # output: an early break via cancel/maxTime when nRuns > nCore can leave
@@ -2299,9 +2328,9 @@ RunMkPrime <- function(data, tree = NULL,
   combined <- do.call(rbind, perRunSamples)
   ess <- .EssMatrix(combined)
 
-  # kPrime are discrete nuisance parameters -- exclude from convergence criteria
-  # (M-098). They remain in the `ess` vector for display in .PrintProgressTable.
-  isConvParam <- !grepl("^kPrime_", names(ess)) & names(ess) != "log_likelihood"
+  # Nuisance columns remain in the `ess` vector for display in
+  # .PrintProgressTable, but do not gate the stopping rule.
+  isConvParam <- .ConvergenceTier(names(ess)) == "gate"
   minEss <- .MinOrNA(ess[isConvParam])
 
   # R-hat (requires >= 2 runs)
@@ -2409,7 +2438,7 @@ RunMkPrime <- function(data, tree = NULL,
   ess <- .EssMatrix(combined)
 
   # Exclude kPrime nuisance parameters from convergence criteria (M-098)
-  isConvParam <- !grepl("^kPrime_", names(ess)) & names(ess) != "log_likelihood"
+  isConvParam <- .ConvergenceTier(names(ess)) == "gate"
   minEss <- .MinOrNA(ess[isConvParam])
 
   rhat    <- NULL
@@ -2614,7 +2643,7 @@ RunMkPrime <- function(data, tree = NULL,
       })
     }
     if (!isTempLog) {
-      cli::cli_alert_info(c(
+      .AlertInfo(c(
         "Streaming mode: {totalSaved} sample{?s} written to \\
          {.file {logFilePaths}}.",
         "i" = "Load with: {.code result$samples <- ReadMkLog(result$logFile)}"
@@ -2904,13 +2933,17 @@ RunMkPrime <- function(data, tree = NULL,
 #'   a finalized model (all checkpoints since M-149).
 #' @param neomorphic,knownStates Passed to [MkPrimeData()] if `data`
 #'   is a `phyDat` object.
+#' @inheritParams RunMkPrime
 #'
 #' @return An `MkPosterior` object with combined samples.
 #' @export
 ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                            neomorphic = integer(0),
                            knownStates = integer(0),
-                           model = NULL) {
+                           model = NULL,
+                           verbosity = MkPrimeVerbosity()) {
+  oldOpts <- options(MkPrime.verbosity = .CheckVerbosity(verbosity))
+  on.exit(options(oldOpts), add = TRUE)
   # Parallel-mode recovery: if the parent process did not exit cleanly
   # (SIGKILL / SLURM walltime overrun), the master .ckp is stale or
   # missing but each callr worker wrote its own per-run .ckp.  Rebuild
@@ -3037,7 +3070,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       }
     }
     if (logsRecreated) {
-      cli::cli_alert_info(
+      .AlertInfo(
         "Original log files not found (temp files cleaned up). \\
          Resuming from checkpoint state; previous samples unavailable."
       )
@@ -3273,7 +3306,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         "i" = "Re-run the same {.fn RunMkPrime} call to resume."
       ))
     } else {
-      cli::cli_alert_warning("Run interrupted.")
+      .AlertWarning("Run interrupted.")
     }
     .BuildResult(runs, model, mkd, mcmc, paramNames, logFilePaths,
                  max(bestIter, 0L), "interrupted")
@@ -3640,7 +3673,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         if (isTRUE(mcmc$gibbsSubtreeSwap))    "gibbs_subtree_swap"
       )
       if (length(droppedByMargK) > 0L) {
-        cli::cli_inform(
+        .Inform(
           "{length(droppedByMargK)} requested move{?s} not used under \\
            {.code likelihoodMode = \"marginal_k\"} (fixed-kPrime candidate \\
            selection; marginal-aware re-enable deferred): {.val {droppedByMargK}}."
@@ -4438,13 +4471,20 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' @keywords internal
 .StateToTree <- function(statePtr, tipLabels) {
   state <- get_mcmc_state(statePtr)
+  .EdgeToTree(state$edge, state$treeLength * state$relBrLengths, tipLabels)
+}
+
+#' Build a phylo object from a sampled edge matrix
+#'
+#' The state keeps the input tree's rooting, so `Nnode` must be read from the
+#' edge matrix: a hard-coded count is wrong for one convention or the other,
+#' and a wrong `Nnode` sends `TreeTools`' rerooting into an endless loop.
+#' @keywords internal
+.EdgeToTree <- function(edge, edgeLength, tipLabels) {
   TreeTools::Preorder(structure(
-    list(
-      edge = state$edge,
-      edge.length = state$treeLength * state$relBrLengths,
-      Nnode = length(tipLabels) - 1L,
-      tip.label = tipLabels
-    ),
+    list(edge = edge, edge.length = edgeLength,
+         Nnode = nrow(edge) - length(tipLabels) + 1L,
+         tip.label = tipLabels),
     class = "phylo"
   ))
 }
@@ -4646,8 +4686,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' This adaptation is designed to run during warmup only; the caller is
 #' responsible for not invoking it after the warmup-to-sampling transition.
 #'
-#' Diagnostic output (per-move before/after) is emitted to stderr when the
-#' environment variable `MKPRIME_ADAPT_DIAG=1` is set.
+#' Diagnostic output (per-move before/after) is emitted to stderr at
+#' verbosity 2, or when `MKPRIME_ADAPT_DIAG=1` is set.
 #'
 #' @param currentWeights Numeric vector (current move probabilities, sums to 1).
 #' @param batchAccept  Integer vector of **per-batch** accept counts (cold chain).
@@ -4695,7 +4735,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   }
   if (budget < 1e-12) return(currentWeights)
 
-  verbose <- identical(Sys.getenv("MKPRIME_ADAPT_DIAG"), "1")
+  verbose <- .Loud(2L) || identical(Sys.getenv("MKPRIME_ADAPT_DIAG"), "1")
   decayFired <- FALSE
 
   newWeights <- currentWeights
@@ -4777,7 +4817,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' Restore gibbs_kPrime to its pinned weight at the Warmup->Tuning/Sample transition.
 #'
 #' Undoes the reduction applied by `.WarmupGibbsCap()`. Excess weight is reclaimed
-#' proportionally from non-pinned moves.
+#' proportionally from non-pinned moves; if the pins fill the whole budget, the
+#' pinned schedule is rebuilt exactly.
 #'
 #' @keywords internal
 .RestoreGibbsCap <- function(weights, pinnedWeights, gibbsKpIdx) {
@@ -4793,8 +4834,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   freeIdx   <- setdiff(seq_along(weights), pinnedIdx)
   freeSum   <- sum(weights[freeIdx])
 
+  if (length(freeIdx) == 0L || sum(pinnedWeights) > 1 - 1e-12) {
+    # The pins fill the whole budget, so the cap's renormalization moved every
+    # pin; undoing only gibbs_kPrime's would leave the others displaced.
+    return(.NormalizeMoveWeights(weights, pinnedWeights))
+  }
+
   weights[[gibbsKpIdx]] <- gibbsPin
-  if (length(freeIdx) > 0L && freeSum > delta) {
+  if (freeSum > delta) {
     weights[freeIdx] <- weights[freeIdx] * (freeSum - delta) / freeSum
   } else {
     # As in .WarmupGibbsCap: the free moves cannot fund the restoration.
@@ -4889,8 +4936,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' @keywords internal
 .PrintMoveWeights <- function(weights, moveNames) {
   lines <- .FormatMoveWeights(weights, moveNames)
-  cli::cli_alert_info("Move weights frozen:")
-  for (line in lines) cli::cli_text("
+  .AlertInfo("Move weights frozen:")
+  for (line in lines) .Text("
  {line}")
 }
 
@@ -5102,24 +5149,24 @@ if (n < 2L * windowSize) {
 #'
 #' @param sampleMatrix Numeric matrix (rows = samples, columns = parameters).
 #' @param wallTimeSec Wall-clock seconds for the evaluation window.
-#' @param excludePattern Regex pattern for column names to exclude from
-#'   the min-ESS calculation (e.g. `"^kPrime_"`).
+#' @param tuningTrees List of sampled topologies whose tree ESS enters the
+#'   minimum, giving topology moves credit in the bandit (M-152).
 #'
-#' @return Numeric scalar: min(ESS) / wallTimeSec, or `NA` if ESS
-#'   cannot be computed.
+#' @return `.MinEssRate()` a list with the `rate` min(ESS)/`wallTimeSec` and
+#' the `ess` it came from; `.MinEssPerSec()` the rate alone. Both are `NA`
+#' where ESS cannot be computed.
 #' @keywords internal
-.MinEssPerSec <- function(sampleMatrix, wallTimeSec,
-                           excludePattern = "^(kPrime_|br_|log_likelihood)",
-                           tuningTrees = NULL) {
-  if (nrow(sampleMatrix) < 10L || wallTimeSec < 1e-6) return(NA_real_)
+.MinEssRate <- function(sampleMatrix, wallTimeSec, tuningTrees = NULL) {
+  noRate <- list(rate = NA_real_, ess = NA_real_)
+  if (nrow(sampleMatrix) < 10L || wallTimeSec < 1e-6) return(noRate)
 
-  keyCols <- grep(excludePattern, colnames(sampleMatrix), invert = TRUE)
-  if (length(keyCols) == 0L) return(NA_real_)
+  keyCols <- .GateCols(colnames(sampleMatrix))
+  if (length(keyCols) == 0L) return(noRate)
 
   ess <- .EssMatrix(sampleMatrix[, keyCols, drop = FALSE])
 
   minEss <- min(ess, na.rm = TRUE)
-  if (!is.finite(minEss)) return(NA_real_)
+  if (!is.finite(minEss)) return(noRate)
 
   # Include tree ESS in the minimum when topology trees are available.
   # This gives topology moves credit in the bandit, preventing the
@@ -5136,7 +5183,15 @@ if (n < 2L * windowSize) {
     }
   }
 
-  minEss / wallTimeSec
+  # Return:
+  list(rate = minEss / wallTimeSec, ess = minEss)
+}
+
+
+#' @rdname dot-MinEssRate
+#' @keywords internal
+.MinEssPerSec <- function(sampleMatrix, wallTimeSec, tuningTrees = NULL) {
+  .MinEssRate(sampleMatrix, wallTimeSec, tuningTrees)[["rate"]]
 }
 
 
@@ -5152,15 +5207,13 @@ if (n < 2L * windowSize) {
 #' @param currentThin Current thinning interval (iterations per stored
 #'   sample).
 #' @param nMoves Number of active MCMC moves (floor for thinning).
-#' @param excludePattern Regex for columns to exclude from ACT estimation.
 #' @return Integer thinning interval.
 #' @keywords internal
-.AdaptThinning <- function(sampleMatrix, currentThin, nMoves,
-                           excludePattern = "^(kPrime_|br_|log_likelihood)") {
+.AdaptThinning <- function(sampleMatrix, currentThin, nMoves) {
   n <- nrow(sampleMatrix)
   if (n < 50L) return(currentThin)
 
-  keyCols <- grep(excludePattern, colnames(sampleMatrix), invert = TRUE)
+  keyCols <- .GateCols(colnames(sampleMatrix))
   if (length(keyCols) == 0L) return(currentThin)
 
   ess <- .EssMatrix(sampleMatrix[, keyCols, drop = FALSE])

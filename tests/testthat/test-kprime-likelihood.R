@@ -2,11 +2,10 @@
 # M-013: verify MkpLogLikelihood correctly handles kPrime > kObs
 
 test_that("kPrime = kObs gives same result as default (no kPrime arg)", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat <- matrix(c(0, 1, 0), 3, 1,
                 dimnames = list(c("t1", "t2", "t3"), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   ll_default <- MkpLogLikelihood(tree, mkd, coding = "none",
@@ -19,11 +18,10 @@ test_that("kPrime = kObs gives same result as default (no kPrime arg)", {
 
 
 test_that("kPrime > kObs gives different likelihood than kPrime = kObs", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat <- matrix(c(0, 1, 0), 3, 1,
                 dimnames = list(c("t1", "t2", "t3"), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   ll_k2 <- MkpLogLikelihood(tree, mkd, kPrime = 2L,
@@ -41,11 +39,10 @@ test_that("kPrime > kObs gives different likelihood than kPrime = kObs", {
 test_that("kPrime > kObs: likelihood decreases with larger k (no relabel)", {
   # With more states but same data, the model has more "wasted" probability
   # on unobserved states, so the raw likelihood decreases
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1), 4, 1,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   ll_k2 <- MkpLogLikelihood(tree, mkd, kPrime = 2L,
@@ -68,13 +65,12 @@ test_that("kPrime > kObs: likelihood decreases with larger k (no relabel)", {
 
 
 test_that("Per-character kPrime: different k' per character", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   # Two transformational characters, both kObs = 2
   mat <- matrix(c(0, 1, 0, 1,
                   0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   # Char 1: k'=2, Char 2: k'=4
@@ -105,11 +101,10 @@ test_that("Per-character kPrime: different k' per character", {
 
 
 test_that("kPrime with relabelling: k'=kObs has correction, k'>kObs smaller", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat <- matrix(c(0, 1, 0), 3, 1,
                 dimnames = list(c("t1", "t2", "t3"), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   # With relabelling: higher k' adds a correction that decreases with k'
@@ -130,11 +125,10 @@ test_that("kPrime with relabelling: k'=kObs has correction, k'>kObs smaller", {
 
 
 test_that("kPrime with ascertainment correction and k' > kObs", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1), 4, 1,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   ll <- MkpLogLikelihood(tree, mkd, kPrime = 4L,
@@ -151,11 +145,10 @@ test_that("kPrime with ascertainment correction and k' > kObs", {
 
 
 test_that("kPrime with ACRV and k' > kObs", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1), 4, 1,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   ll <- MkpLogLikelihood(tree, mkd, kPrime = 3L,
@@ -172,11 +165,10 @@ test_that("kPrime with ACRV and k' > kObs", {
 
 
 test_that("Large kPrime still produces finite likelihood", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat <- matrix(c(0, 1, 0), 3, 1,
                 dimnames = list(c("t1", "t2", "t3"), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
   ll <- MkpLogLikelihood(tree, mkd, kPrime = 50L,

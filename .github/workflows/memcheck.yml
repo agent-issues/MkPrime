@@ -6,6 +6,12 @@
 # C++ change skips the matrix and the gate passes immediately, so the
 # required check can never deadlock on a workflow that did not trigger.
 #
+# Pull requests run a *smoke* test suite: every test file except the MCMC
+# integration files in PR_SKIP (~50 min instead of ~3.5 h). Pushes to main,
+# the weekly sweep and workflow_dispatch run the full suite; a failure there
+# opens (or comments on) an issue. To run the full suite on a PR branch before
+# merging, dispatch this workflow on that branch.
+#
 # For help debugging build failures open an issue on the RStudio community
 # with the 'github-actions' tag.
 # https://community.rstudio.com/new-topic?category=Package%20development&tags=github-actions
@@ -21,7 +27,9 @@ on:
     branches:
       - main
       - master
-      - '**valgrind**'
+      # No '**valgrind**' branch pattern: such a branch's push run posts a
+      # second `valgrind gate` on the PR's head commit, pending for the full
+      # suite's ~3.5 h and failed if cancelled. Dispatch on the branch instead.
   # Deliberately unfiltered — see ASan.yml. Path filtering happens in
   # `changes`, where a skip still reports a status.
   pull_request:
@@ -37,6 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       run: ${{ steps.check.outputs.run }}
+      smoke: ${{ github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -90,6 +99,9 @@ jobs:
 
     name: valgrind ${{ matrix.config.test }}
 
+    # Fail a runaway smoke run long before the 6 h ceiling.
+    timeout-minutes: ${{ needs.changes.outputs.smoke == 'true' && 120 || 360 }}
+
     strategy:
       fail-fast: false
       matrix:
@@ -108,11 +120,20 @@ jobs:
       # reach: valgrind costs ~30x gcc-ASAN, so the full suite needs ~18 h
       # against GitHub's 6 h job ceiling. See tests/testthat/helper-slow.R.
       MKPRIME_MEMCHECK: true
+      # Test files skipped on pull requests. Each costs over a minute under
+      # valgrind and drives the C++ through MCMC runs rather than unit calls;
+      # together they are ~150 of the full suite's ~200 min (2026-09-21).
+      # C++ unit files stay in, however slow. Add a file here only on the
+      # same grounds; the full suite still runs it after merge.
+      PR_SKIP: >-
+        ^(marginal-k-free-topology|node-cl-cache|stepping-stone|stepping-stone-schedule|partition-moves-impl|partition-casali-smoke|auto-thin|tree-thin|beta-geometric-prior|marginal-k-truncation)$
 
     steps:
       - uses: ms609/actions/memcheck@main
         with:
           test: ${{ matrix.config.test}}
+          filter: ${{ needs.changes.outputs.smoke == 'true' && env.PR_SKIP || '' }}
+          invert: ${{ needs.changes.outputs.smoke }}
 
   gate:
     # This is the job branch protection should require.
@@ -152,3 +173,35 @@ jobs:
               exit 1
               ;;
           esac
+
+  report:
+    # A full-suite failure after merge blocks nothing, so make it visible:
+    # open an issue, or comment on the one already open.
+    name: report full-suite failure
+    needs: [changes, valgrind]
+    # A timeout reports as 'cancelled', not 'failure', so test both. Only
+    # main: a full run dispatched on a PR branch, or cancelled there by hand,
+    # is not news.
+    if: >-
+      always() && github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main' &&
+      contains(fromJSON('["failure", "cancelled"]'), needs.valgrind.result)
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TITLE: "valgrind: full suite failed"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          body="The full valgrind suite failed or timed out on main @ ${GITHUB_SHA::7} (${{ github.event_name }}): $RUN_URL"
+          open=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number -q '.[0].number')
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --body "$body"
+          else
+            gh issue create --title "$TITLE" --body "$body"
+          fi

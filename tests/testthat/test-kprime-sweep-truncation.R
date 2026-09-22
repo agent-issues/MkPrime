@@ -7,10 +7,10 @@ SweepFixture <- function() {
                   0L, 1L, 1L, 0L),
                 nrow = 4,
                 dimnames = list(paste0("t", 1:4), NULL))
-  tree <- TreeTools::Preorder(
+  tree <- Preorder(
     ape::read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
   )
-  list(tree = tree, mkd = MkPrimeData(TreeTools::MatrixToPhyDat(mat)))
+  list(tree = tree, mkd = MkPrimeData(MatrixToPhyDat(mat)))
 }
 
 

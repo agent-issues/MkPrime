@@ -128,7 +128,7 @@
     } else {
       "only one user class in {.arg partition}"
     }
-    cli::cli_alert_info(
+    .AlertInfo(
       "{.arg unlink} ignored ({why}; nothing to unlink across)."
     )
     unlink <- character(0)

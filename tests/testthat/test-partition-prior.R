@@ -12,7 +12,6 @@
 # All tests use the same helper .setup_prior() which builds a minimal mkd,
 # tree, model, and McmcData XPtr in one call.
 
-library("TreeTools")
 
 
 # ---------------------------------------------------------------------------
@@ -36,9 +35,9 @@ library("TreeTools")
     mkd$partitions <- .BuildPartitions(mkd, partition = partition)
   }
 
-  tree <- TreeTools::Preorder(
-    TreeTools::NJTree(pd, edgeLengths = TRUE) %||%
-    TreeTools::RandomTree(pd, root = TRUE)
+  tree <- Preorder(
+    NJTree(pd, edgeLengths = TRUE) %||%
+    RandomTree(pd, root = TRUE)
   )
   if (is.null(tree$edge.length) || any(tree$edge.length <= 0)) {
     tree$edge.length <- rep(0.1, nrow(tree$edge))
@@ -309,7 +308,7 @@ test_that(".InitStatePartitioned log_lik still matches the legacy path", {
   expect_true(any(vapply(mkd$partitions,
                          function(p) anyNA(p$tip_states), logical(1))))
 
-  tree <- TreeTools::Preorder(TreeTools::RandomTree(pd, root = TRUE))
+  tree <- Preorder(RandomTree(pd, root = TRUE))
   tree$edge.length <- rep(0.1, nrow(tree$edge))
   model <- MkPrime:::.FinalizeModel(MkPrimeModel(), tree, mkd)
   spec <- MkPrime:::.ValidatePartitionArgs(rep(1:2, each = 5L), "shape", mkd)

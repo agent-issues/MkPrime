@@ -28,9 +28,6 @@
 #   Assert: L_cached == L_fresh to 1e-12.
 #   Guard:  L_init != L_cached  (proves p changed and marginal LL is p-sensitive).
 
-library("ape")
-library("TreeTools")
-
 # ---------------------------------------------------------------------------
 # Fixture helpers (shared with test-marginal-k-geometric.R via reference copy)
 # ---------------------------------------------------------------------------
@@ -59,7 +56,7 @@ library("TreeTools")
 # Build an initialised marginal-k state at a given p.
 # Returns: list(dataPtr, statePtr, tree, mkd, model, state0)
 .cache_build_ptrs <- function(p) {
-  tree  <- TreeTools::Preorder(.cache_make_tree())
+  tree  <- Preorder(.cache_make_tree())
   pd    <- .cache_make_mkd()
   mkd   <- MkPrimeData(pd)
   model <- MkPrimeModel(kPrimePrior = "geometric",
@@ -85,7 +82,6 @@ library("TreeTools")
        model    = model,
        state0   = state0)
 }
-
 
 # ---------------------------------------------------------------------------
 # Main invariance test
@@ -181,7 +177,6 @@ test_that("marginal-k charLL cache is bit-identical to fresh recompute after p-m
                               "cold-cache recompute at p_new = ",
                               round(p_new, 8), " to 1e-9"))
 })
-
 
 # ---------------------------------------------------------------------------
 # Sanity check: non-p move invalidates the cache (cache IS stale after case 0)

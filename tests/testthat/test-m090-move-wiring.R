@@ -197,10 +197,9 @@ test_that("All new move names resolve to valid integer codes", {
 # ── nBranchBins reaches C++ ───────────────────────────────────────────────
 
 test_that("set_branch_bins sets nBranchBins on McmcData", {
-  library("TreeTools")
   set.seed(4821L)
   tree <- ape::rtree(6L, rooted = FALSE)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   mat <- matrix(sample(0:2, 6L * 5L, replace = TRUE), nrow = 6L,
                 dimnames = list(tree$tip.label, NULL))
   pd    <- MatrixToPhyDat(mat)
@@ -214,10 +213,9 @@ test_that("set_branch_bins sets nBranchBins on McmcData", {
 })
 
 test_that("Weighted move works with custom nBranchBins via McmcData", {
-  library("TreeTools")
   set.seed(7193L)
   tree <- ape::rtree(6L, rooted = FALSE)
-  tree <- TreeTools::Preorder(tree)
+  tree <- Preorder(tree)
   nEdge <- nrow(tree$edge)
   mat <- matrix(sample(0:2, 6L * 5L, replace = TRUE), nrow = 6L,
                 dimnames = list(tree$tip.label, NULL))
@@ -274,40 +272,51 @@ test_that(".AdaptTuning skips Gibbs/Weighted moves (NA tuning keys)", {
 
 # ── Integration tests (slow) ─────────────────────────────────────────────
 
-test_that("Full MCMC run with Gibbs moves produces valid MkPosterior", {
-  skip_slow_tests()
-  library("TreeTools")
+.WiringFixture <- function() {
   tree <- BalancedTree(8)
+  tree$edge.length <- rep(0.1, nrow(tree$edge))
   mat <- matrix(sample(0:2, 8 * 5, replace = TRUE), nrow = 8,
                 dimnames = list(tree$tip.label, NULL))
-  pd  <- MatrixToPhyDat(mat)
-  mkd <- MkPrimeData(pd)
-  model <- MkPrimeModel()
+  list(tree = tree, data = MkPrimeData(MatrixToPhyDat(mat)))
+}
+
+# A 200-iteration warmup is not expected to stabilise.
+.RunWiring <- function(fx, mcmc) {
+  withCallingHandlers(
+    RunMkPrime(data = fx$data, tree = fx$tree, model = MkPrimeModel(),
+               mcmc = mcmc),
+    warning = function(w) {
+      if (grepl("without stabilisation", conditionMessage(w), fixed = TRUE)) {
+        invokeRestart("muffleWarning")
+      }
+    }
+  )
+}
+
+test_that("Full MCMC run with Gibbs moves produces valid MkPosterior", {
+  skip_slow_tests()
+  fx <- .WiringFixture()
   mcmc <- MkPrimeMCMC(
-    nIter = 600L, warmup = 200L, thin = 10L, nRuns = 1L,
+    nIter = 600L, minWarmup = 200L, maxWarmup = 200L, thin = 10L,
+    nRuns = 1L, maxTime = 60,
     gibbsSpr = TRUE, gibbsSubtreeSwap = TRUE
   )
-  result <- RunMkPrime(data = mkd, tree = tree, model = model, mcmc = mcmc)
+  result <- .RunWiring(fx, mcmc)
   expect_s3_class(result, "MkPosterior")
   expect_true(nrow(result$samples) > 0L)
 })
 
 test_that("Full MCMC run with all moves produces valid MkPosterior", {
   skip_slow_tests()
-  library("TreeTools")
-  tree <- BalancedTree(8)
-  mat <- matrix(sample(0:2, 8 * 5, replace = TRUE), nrow = 8,
-                dimnames = list(tree$tip.label, NULL))
-  pd  <- MatrixToPhyDat(mat)
-  mkd <- MkPrimeData(pd)
-  model <- MkPrimeModel()
+  fx <- .WiringFixture()
   mcmc <- MkPrimeMCMC(
-    nIter = 600L, warmup = 200L, thin = 10L, nRuns = 1L,
+    nIter = 600L, minWarmup = 200L, maxWarmup = 200L, thin = 10L,
+    nRuns = 1L, maxTime = 60,
     gibbsSpr = TRUE, gibbsSubtreeSwap = TRUE,
     weightedBranchScale = TRUE, weightedSpr = TRUE,
-    weightedSubtreeSwap = TRUE, nBranchBins = 5L
+    weightedSubtreeSwap = TRUE, nBranchBins = 5L, blockGibbsBranch = TRUE
   )
-  result <- RunMkPrime(data = mkd, tree = tree, model = model, mcmc = mcmc)
+  result <- .RunWiring(fx, mcmc)
   expect_s3_class(result, "MkPosterior")
   expect_true(nrow(result$samples) > 0L)
 })

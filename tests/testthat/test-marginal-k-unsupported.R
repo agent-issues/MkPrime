@@ -8,18 +8,18 @@
 # (dev/notes/2026-05-28-marginal-k-plan.md sections 11 and 13) -- so both must
 # abort rather than silently produce a posterior that ignores them.
 
-library("TreeTools")
+library("TreeTools", quietly = TRUE)
 
 .mku_data <- function(knownStates = integer(0)) {
   m <- rbind(t1 = c("0", "0", "0"), t2 = c("0", "1", "1"),
              t3 = c("1", "1", "2"), t4 = c("1", "0", "2"),
              t5 = c("0", "1", "0"), t6 = c("1", "0", "1"))
   colnames(m) <- c("c1", "c2", "c3")
-  MkPrimeData(TreeTools::MatrixToPhyDat(m), knownStates = knownStates)
+  MkPrimeData(MatrixToPhyDat(m), knownStates = knownStates)
 }
 
 .mku_tree <- function(mkd) {
-  tr <- TreeTools::PectinateTree(rownames(mkd$matrix))
+  tr <- PectinateTree(rownames(mkd$matrix))
   tr$edge.length <- rep(0.1, nrow(tr$edge))
   tr
 }

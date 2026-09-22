@@ -12,13 +12,13 @@
 #include "gibbs_partial_cl.h"
 #include "fitch.h"
 #include "node_cl_cache.h"
+#include <TreeTools/edge_to_splits.h>
 #include <TreeTools/renumber_tree.h>
 #include <cmath>
 #include <cstring>
 #include <chrono>
 #include <cstdio>
 #include <algorithm>
-#include <cstdint>
 
 using namespace Rcpp;
 
@@ -855,61 +855,13 @@ List get_mcmc_state(SEXP statePtr) {
 }
 
 
-// FNV-1a fingerprint of the unrooted topology: its multiset of non-trivial
-// splits.  Independent of edge order, of node labelling, and of where the
-// storage root sits, none of which a fingerprint of the edge list would be.
+// Fingerprint of the unrooted topology, cut to 53 bits so a double holds it
+// exactly.  TreeTools needs parents ahead of children, which every move
+// preserves even where it leaves the edges out of canonical preorder.
 static double fnv_topo_hash(const IntegerVector& parent,
                             const IntegerVector& child, int nTip) {
-  const int nEdge = parent.size();
-  const int nWord = (nTip + 63) / 64;
-
-  int maxNode = nTip;
-  for (int i = 0; i < nEdge; ++i) {
-    if (parent[i] > maxNode) maxNode = parent[i];
-    if (child[i]  > maxNode) maxNode = child[i];
-  }
-
-  std::vector<uint64_t> mask((size_t)(maxNode + 1) * nWord, 0);
-  for (int t = 1; t <= nTip && t <= maxNode; ++t)
-    mask[(size_t)t * nWord + (t - 1) / 64] |= 1ULL << ((t - 1) % 64);
-
-  // Every move leaves a parent ahead of its child, so one reverse sweep
-  // completes each child before its parent even when the order is not
-  // canonical preorder.
-  for (int i = nEdge - 1; i >= 0; --i) {
-    uint64_t* p = &mask[(size_t)parent[i] * nWord];
-    const uint64_t* c = &mask[(size_t)child[i] * nWord];
-    for (int w = 0; w < nWord; ++w) p[w] |= c[w];
-  }
-
-  const uint64_t tailMask = (nTip % 64 == 0)
-    ? ~0ULL : ((1ULL << (nTip % 64)) - 1ULL);
-
-  std::vector<uint64_t> splits;
-  splits.reserve(nEdge);
-  for (int i = 0; i < nEdge; ++i) {
-    if (child[i] <= nTip) continue;          // trivial split, same in every tree
-    const uint64_t* c = &mask[(size_t)child[i] * nWord];
-    // Orient each split by the side excluding tip 1, so the two halves of an
-    // edge give one value however the tree is rooted.
-    const bool flip = (c[0] & 1ULL) != 0;
-    uint64_t h = 0xcbf29ce484222325ULL;
-    for (int w = 0; w < nWord; ++w) {
-      uint64_t v = flip ? ~c[w] : c[w];
-      if (w == nWord - 1) v &= tailMask;
-      h ^= v;
-      h *= 0x100000001b3ULL;
-    }
-    splits.push_back(h);
-  }
-
-  std::sort(splits.begin(), splits.end());
-  uint64_t h = 0xcbf29ce484222325ULL;
-  for (uint64_t s : splits) {
-    h ^= s;
-    h *= 0x100000001b3ULL;
-  }
-  return static_cast<double>(h >> 11);  // 53 significant bits
+  return static_cast<double>(TreeTools::topology_hash(
+      parent.begin(), child.begin(), parent.size(), nTip) >> 11);
 }
 
 // [[Rcpp::export]]

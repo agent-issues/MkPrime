@@ -2,11 +2,10 @@
 skip_slow_tests()
 
 test_that("RunMkPrime runs on simple transformational data", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(5194)
   result <- RunMkPrime(pd, tree,
@@ -20,11 +19,10 @@ test_that("RunMkPrime runs on simple transformational data", {
 
 
 test_that("RunMkPrime handles neomorphic characters", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(4781)
   result <- RunMkPrime(pd, tree, neomorphic = 1L,
@@ -39,11 +37,10 @@ test_that("RunMkPrime handles neomorphic characters", {
 
 
 test_that("RunMkPrime handles known state-space characters", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1), 4, 1,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(2837)
   result <- RunMkPrime(pd, tree, knownStates = c("1" = 4L),
@@ -56,13 +53,12 @@ test_that("RunMkPrime handles known state-space characters", {
 
 
 test_that("RunMkPrime handles mixed character types", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1,
                   0, 1, 2, 0,
                   0, 1, 0, 1), 4, 3,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(9201)
   result <- RunMkPrime(pd, tree, neomorphic = 1L,
@@ -76,17 +72,16 @@ test_that("RunMkPrime handles mixed character types", {
 
 
 test_that("MkPosterior print, summary, plot methods work", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
   mat <- matrix(c(0, 1, 0), 3, 1,
                 dimnames = list(c("t1", "t2", "t3"), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(7712)
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 300L, thin = 3L, maxWarmup = 150L, minWarmup = 150L, autoTune = FALSE))
 
-  expect_no_error(print(result))
+  expect_prints(print(result))
   s <- summary(result)
   expect_true(is.data.frame(s))
   expect_true(all(c("parameter", "mean", "median") %in% names(s)))
@@ -101,11 +96,10 @@ test_that("MkPosterior print, summary, plot methods work", {
 
 
 test_that("Acceptance rates are non-degenerate (fixed topology)", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   set.seed(2946)
   result <- RunMkPrime(pd, tree, fixTopology = TRUE,
@@ -130,7 +124,6 @@ test_that("Acceptance rates are non-degenerate (fixed topology)", {
 
 
 test_that("MCMC with topology moves runs on 8-tip tree", {
-  library("ape")
   set.seed(4523)
   tree <- rtree(8)
   tree <- unroot(tree)
@@ -140,7 +133,7 @@ test_that("MCMC with topology moves runs on 8-tip tree", {
   for (j in seq_len(ncol(mat))) {
     if (length(unique(mat[, j])) == 1) mat[1, j] <- 1L - mat[1, j]
   }
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 1000L, thin = 5L, maxWarmup = 500L, minWarmup = 500L, autoTune = FALSE))
@@ -161,11 +154,10 @@ test_that("MCMC with topology moves runs on 8-tip tree", {
 
 
 test_that("Tree file logging writes Newick trees", {
-  library("ape")
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   tf <- tempfile(fileext = ".trees")
   on.exit(unlink(tf), add = TRUE)
@@ -188,7 +180,6 @@ test_that("Tree file logging writes Newick trees", {
 
 
 test_that("Topology moves explore different topologies", {
-  library("ape")
   set.seed(9317)
   tree <- rtree(8)
   tree <- unroot(tree)
@@ -199,7 +190,7 @@ test_that("Topology moves explore different topologies", {
   for (j in seq_len(ncol(mat))) {
     if (length(unique(mat[, j])) == 1) mat[1, j] <- 1L - mat[1, j]
   }
-  pd <- TreeTools::MatrixToPhyDat(mat)
+  pd <- MatrixToPhyDat(mat)
 
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 5000L, thin = 10L, maxWarmup = 2500L, minWarmup = 2500L, autoTune = FALSE))

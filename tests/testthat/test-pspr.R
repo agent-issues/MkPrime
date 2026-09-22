@@ -104,7 +104,7 @@ test_that("pSPR move produces valid trees", {
   skip_on_cran()
 
   nexFile <- system.file("datasets/Sun2018.nex", package = "TreeSearch")
-  pd <- TreeTools::ReadAsPhyDat(nexFile)
+  pd <- ReadAsPhyDat(nexFile)
   mkd <- MkPrimeData(pd)
 
   # pSPR only (disable other topology moves); long enough that acceptance = 0
@@ -132,7 +132,7 @@ test_that("pSPR can be disabled", {
   skip_on_cran()
 
   nexFile <- system.file("datasets/Sun2018.nex", package = "TreeSearch")
-  pd <- TreeTools::ReadAsPhyDat(nexFile)
+  pd <- ReadAsPhyDat(nexFile)
   mkd <- MkPrimeData(pd)
 
   cfg <- MkPrimeMCMC(

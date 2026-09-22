@@ -19,14 +19,13 @@ test_that("MkPrimeMCMC() rejects invalid thin values", {
 
 test_that("auto thin resolves to number of active moves", {
   skip_if_not_installed("TreeTools")
-  library("TreeTools")
   set.seed(4271)
   nTip <- 8L
   nChar <- 10L
   mat <- matrix(sample(0:2, nTip * nChar, replace = TRUE), nTip, nChar,
                 dimnames = list(paste0("t", seq_len(nTip)), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
-  tree <- TreeTools::NJTree(pd, edgeLengths = TRUE)
+  pd <- MatrixToPhyDat(mat)
+  tree <- NJTree(pd, edgeLengths = TRUE)
 
   # Default config: gibbsSpr = TRUE, gibbsSubtreeSwap = TRUE, tbr = TRUE
   mcmc_auto <- suppressWarnings(MkPrimeMCMC(
@@ -53,14 +52,13 @@ test_that("auto thin resolves to number of active moves", {
 
 test_that("auto thin changes with move configuration", {
   skip_if_not_installed("TreeTools")
-  library("TreeTools")
   set.seed(6183)
   nTip <- 8L
   nChar <- 10L
   mat <- matrix(sample(0:2, nTip * nChar, replace = TRUE), nTip, nChar,
                 dimnames = list(paste0("t", seq_len(nTip)), NULL))
-  pd <- TreeTools::MatrixToPhyDat(mat)
-  tree <- TreeTools::NJTree(pd, edgeLengths = TRUE)
+  pd <- MatrixToPhyDat(mat)
+  tree <- NJTree(pd, edgeLengths = TRUE)
 
   # Minimal moves: no Gibbs, no TBR
   # Expected: tree_length, branch_lengths, nni, spr,
