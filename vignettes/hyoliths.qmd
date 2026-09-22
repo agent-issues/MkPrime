@@ -368,3 +368,64 @@ plot(consensus, cex = 0.6, main = consTitle)
 saveRDS(posterior, "hyoliths_posterior.rds") # Save results to file
 posterior <- readRDS("hyoliths_posterior.rds") # Load results from file
 ```
+
+### Log files written during a run
+
+Setting `logFile` in `MkPrimeMCMC()` (as in the production configuration
+above) makes `RunMkPrime()` write, per run (`_1`, `_2`, ... for `nRuns > 1`;
+suffix omitted for a single run):
+
+| File | Format | Contents |
+|------|--------|----------|
+| `hyoliths_1.log` | Tab-separated, one header row | `Sample` (MCMC iteration) plus one column per scalar and vector parameter, flushed in batches of `bufferSize` rows (default 500) |
+| `hyoliths_trees_1.nwk` | One Newick tree string per line | The sampled topology and branch lengths at each `treeThin`-boundary iteration |
+| `hyoliths_1.ckp` | R serialized object (`saveRDS`) | This run's chain state, written by its worker process |
+
+A single master checkpoint, `hyoliths.ckp`, is also written from the
+combined state of all runs; it is what `ResumeMkPrime()` reads by default.
+If the parent process dies abnormally, `ResumeMkPrime()` falls back to
+synthesising it from the per-run `.ckp` files above.
+
+Lines in the `.log` file beginning `#` record move-weight diagnostics
+written periodically during tuning; `ReadMkLog()` and external TSV readers
+that treat `#` as a comment character skip them automatically.
+
+The `.log` file's column names are Tracer-compatible: `Sample` is the
+iteration number, and the remaining columns open with scalars
+(`log_posterior`, `log_likelihood`, `tree_length`, `rate_log_sd`, `p`, ...)
+followed by one `kPrime_<i>` column per transformational character and one
+`br_<i>` column per edge, so the file can be opened directly in
+[Tracer](https://github.com/beast-dev/tracer) or any other MCMC-diagnostic
+tool that reads tab-separated trace files. `swap_cold` and `topo_hash` are
+sampler diagnostics rather than model parameters, and can be ignored.
+
+### Reading partial results from a run in progress
+
+Because samples are streamed to disk as they are collected, a separate R
+session can read `hyoliths_1.log` while the run that is writing it is still
+going — without interrupting it:
+
+```{r read-log-live}
+#| eval: false
+partial <- ReadMkLog("hyoliths_1.log")
+```
+
+`ReadMkLog()` returns a numeric matrix with one row per sample already
+flushed to disk; it can be combined across runs by passing a vector of
+paths (or the `$logFile` field of an in-progress `MkPosterior`, once one is
+available).
+
+This is usually safe because each flush writes a whole block of rows in one
+`cat()` call, so a torn row at a block boundary is rare; if `ReadMkLog()`
+does hit one mid-write, retry after a moment. The main trade-off is latency,
+not corruption — samples still sitting in the in-memory buffer (up to
+`bufferSize - 1` of them) are invisible until the next flush. The
+`hyoliths_trees_1.nwk` file is written one tree per sample rather than in
+batches, so its final line is more likely to be incomplete if read at
+exactly the wrong moment; discard a trailing line that does not end in
+`);`. The `.ckp` checkpoint files are always safe to `readRDS()`, because
+each is written to a temporary file and only renamed into place once the
+save is complete.
+
+For a quick look at a run's current state without writing any R yourself,
+`MkpWatchLog()` polls the log file(s) and redraws trace plots live.
