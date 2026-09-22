@@ -1502,6 +1502,12 @@ RunMkPrime <- function(data, tree = NULL,
     # Persist move weights in run state so checkpoints capture them (M-149 #2).
     r$moveWeights <- moveWeights
 
+    # This run's own position, so a checkpoint taken mid-run resumes it here
+    # rather than at the job-wide maximum -- which for a run that lagged
+    # behind is a sibling's iteration, past `warmup`, with no warmup at all.
+    r$actual_iter <- batchEnd
+    r$phase       <- phase
+
     # Update shared state for interrupt-safe checkpointing (M-149).
     # The interrupt handler in .RunWithRecovery() reads from this env.
     if (!is.null(shared)) {
@@ -1778,6 +1784,9 @@ RunMkPrime <- function(data, tree = NULL,
         shared         = shared,
         resumeMoveWeights = runs[[run]]$moveWeights
       )
+      # The in-loop publication carries no `stop_reason` or final `phase`, so
+      # republish the returned state: this is what the interrupt handler reads.
+      if (!is.null(shared)) shared$runs[[run]] <- runs[[run]]
       if (runs[[run]]$stop_reason == "cancelled") {
         return(list(runs = runs,
                     stopReason = "cancelled",
@@ -1886,6 +1895,7 @@ RunMkPrime <- function(data, tree = NULL,
         shared         = shared,
         resumeMoveWeights = runs[[run]]$moveWeights
       )
+      if (!is.null(shared)) shared$runs[[run]] <- runs[[run]]
       if (runs[[run]]$stop_reason == "cancelled") {
         return(list(runs = runs,
                     stopReason = "cancelled",
@@ -1932,8 +1942,10 @@ RunMkPrime <- function(data, tree = NULL,
 #' @keywords internal
 .RunParallelRuns <- function(mkd, model, mcmc, runs, moves, tipLabels,
                               paramNames, nEdge, brColStart, treeFilePaths,
-                              isStreaming, logFilePaths, convWindowSize) {
+                              isStreaming, logFilePaths, convWindowSize,
+                              startIters = NULL) {
   nRuns <- mcmc$nRuns
+  if (is.null(startIters)) startIters <- rep(1L, nRuns)
 
   if (!requireNamespace("callr", quietly = TRUE)) {
     cli::cli_abort(c(
@@ -1990,7 +2002,8 @@ RunMkPrime <- function(data, tree = NULL,
     callr::r_bg(
       func = function(mkd, model, mcmc, runState, moves, tipLabels, run,
                       paramNames, nEdge, brColStart, logPath, cfPath,
-                      ckpPath, treePath, convWindowSize, seed, verbosity) {
+                      ckpPath, treePath, convWindowSize, seed, verbosity,
+                      startIter) {
         options(MkPrime.verbosity = verbosity)
         assign(".Random.seed", seed, envir = globalenv())
         .RunMkPrimeSingleRun(
@@ -1999,10 +2012,11 @@ RunMkPrime <- function(data, tree = NULL,
           logFilePath    = logPath,
           cancelFile     = cfPath,
           checkpointFile = ckpPath,
-          startIter      = 1L,
+          startIter      = startIter,
           isStreaming    = TRUE,
           convWindowSize = convWindowSize,
-          treeFile       = treePath
+          treeFile       = treePath,
+          resumeMoveWeights = runState$moveWeights
         )
       },
       args = list(
@@ -2022,7 +2036,8 @@ RunMkPrime <- function(data, tree = NULL,
         treePath       = if (is.null(treeFilePaths))  NULL else treeFilePaths[run],
         convWindowSize = convWindowSize,
         seed           = streams[[run]],
-        verbosity      = MkPrimeVerbosity()
+        verbosity      = MkPrimeVerbosity(),
+        startIter      = startIters[run]
       ),
       supervise = TRUE,
       package   = TRUE
@@ -2242,9 +2257,12 @@ RunMkPrime <- function(data, tree = NULL,
     ))
   }
 
-  # Take actualIter from the first launched run, if any survived.
+  # Take the furthest iteration any surviving run reached: run 1 may have been
+  # dropped, and on resume each run starts from its own recorded position.
   if (length(completedRuns) > 0L) {
-    actualIter <- completedRuns[[1L]]$actual_iter %||% actualIter
+    furthest <- max(vapply(completedRuns,
+                           function(r) r$actual_iter %||% 0, numeric(1L)))
+    if (furthest > 0) actualIter <- furthest
   }
 
   list(
@@ -2529,8 +2547,32 @@ RunMkPrime <- function(data, tree = NULL,
                          actualIter, stopReason, isTempLog = FALSE,
                          drops = NULL) {
   if (is.null(drops)) drops <- .EmptyDrops()
-  nRuns         <- length(runs)
-  requestedRuns <- mcmc$nRuns %||% nRuns   # PAR-009: original requested count
+  requestedRuns <- mcmc$nRuns %||% length(runs)  # PAR-009: requested count
+
+  # A run that stopped before its first batch is still the bare `.InitRun`
+  # structure -- no `saved_idx`, `flush_idx` or `tree_samples` -- and every
+  # consumer below dereferences those.  Four call sites can hand one over, so
+  # the test belongs here rather than in each of them (PAR-001).
+  usable <- vapply(runs, function(r) !is.null(r$saved_idx), logical(1L))
+  if (!all(usable)) {
+    unstarted <- which(!usable)
+    cli::cli_warn(c(
+      "Run{?s} {unstarted} never started sampling, and {?is/are} omitted.",
+      "i" = "The job stopped ({.val {stopReason}}) before the first batch."
+    ))
+    drops <- rbind(drops, data.frame(
+      run     = unstarted,
+      reason  = "unstarted",
+      message = "",
+      wait_s  = 0,
+      stringsAsFactors = FALSE
+    ))
+    if (length(logFilePaths) == length(runs)) {
+      logFilePaths <- logFilePaths[usable]
+    }
+    runs <- runs[usable]
+  }
+  nRuns <- length(runs)
 
   # PAR-006: when every parallel worker is hard-killed (PAR-003's 30s
   # timeout fires before any batch boundary), .RunParallelRuns returns
@@ -2805,6 +2847,27 @@ RunMkPrime <- function(data, tree = NULL,
   tmpFile <- paste0(file, ".tmp")
   saveRDS(payload, tmpFile)
   file.rename(tmpFile, file)
+}
+
+
+# First iteration for each run when resuming.
+#
+# A run carries its own position in `actual_iter`.  One that has neither that
+# nor a `phase` never entered the batch loop, so it starts at 1: `fallback` is
+# a job-wide maximum, and inheriting it would place the run past `mcmc$warmup`,
+# so it would enter the Sample phase having had no warmup at all.
+#
+# @keywords internal
+.ResumeStartIters <- function(runs, fallback) {
+  vapply(runs, function(r) {
+    if (!is.null(r$actual_iter)) {
+      as.integer(r$actual_iter) + 1L
+    } else if (is.null(r$phase)) {
+      1L
+    } else {
+      as.integer(fallback)
+    }
+  }, integer(1L))
 }
 
 
@@ -3178,62 +3241,29 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   actualIter <- if (is.finite(mcmc$nIter)) mcmc$nIter else startIter - 1L
 
   # M-149 #7: per-run startIters from individual actual_iter
-  perRunStarts <- vapply(
-    runs,
-    function(r) as.integer((r$actual_iter %||% (startIter - 1L)) + 1L),
-    integer(1L)
-  )
+  perRunStarts <- .ResumeStartIters(runs, startIter)
+
+  # Live run state for the interrupt handler, mirroring `.RunWithRecovery`.
+  # The local `runs` is refreshed only on normal return, so it is the state
+  # the resume began from for as long as the resume is still running.
+  shared <- new.env(parent = emptyenv())
+  shared$runs <- runs
 
   tryCatch({
     if (isStreaming && mcmc$nCore > 1L && nRuns > 1L) {
-      # Parallel resume: mirror the RunMkPrime parallel branch.  Workers
-      # cannot share a treeFile (interleaved cat() calls corrupt newick),
-      # so they accumulate trees in r$tree_samples and the coordinator
-      # appends them after all workers complete.  Capture the pre-resume
-      # tree_saved_idx per run so we only write the *new* tail, not the
-      # trees already present in treeFile from the previous session.
-      preIdx <- vapply(runs, function(r) {
-        as.integer(r$tree_saved_idx %||% 0L)
-      }, integer(1L))
-
-      # Strip already-saved trees from carried-over tree_samples so the
-      # coordinator write loop below (and .BuildResult's tree trim) emit
-      # only the new tail.  The trimmed entries are already on disk in
-      # treeFile (verified above by .TruncateTreeToN).
-      for (run in seq_len(nRuns)) {
-        if (preIdx[run] > 0L && !is.null(runs[[run]]$tree_samples)) {
-          ts <- runs[[run]]$tree_samples
-          keep <- min(preIdx[run], length(ts))
-          runs[[run]]$tree_samples <- if (keep < length(ts)) {
-            ts[(keep + 1L):length(ts)]
-          } else {
-            vector("list", 0L)
-          }
-          runs[[run]]$tree_saved_idx <- 0L
-        }
-      }
-
+      # Parallel resume: mirror the RunMkPrime parallel branch.  Each worker
+      # has its own treeFile and streams to it, appending to the tail this
+      # session's rewind left in place, so `tree_saved_idx` carries forward
+      # and nothing is written coordinator-side.
       parResult    <- .RunParallelRuns(mkd, model, mcmc, runs, moves,
                                         tipLabels, paramNames, nEdge,
                                         brColStart, treeFilePaths,
-                                        TRUE, logFilePaths, convWindowSize)
+                                        TRUE, logFilePaths, convWindowSize,
+                                        startIters = perRunStarts)
       runs         <- parResult$runs
       logFilePaths <- parResult$logFilePaths
       stopReason   <- parResult$stopReason
       actualIter   <- parResult$actualIter
-
-      # Append the new trees produced by this resume session, per run.
-      if (!is.null(treeFilePaths)) {
-        for (run in seq_along(runs)) {
-          treePath <- treeFilePaths[run]
-          if (!is.null(treePath)) {
-            for (tr in runs[[run]]$tree_samples) {
-              if (!is.null(tr)) cat(ape::write.tree(tr), "\n",
-                                    file = treePath, append = TRUE)
-            }
-          }
-        }
-      }
 
       if (!is.null(mcmc$checkpointFile)) {
         .SaveCheckpoint(runs, mcmc, actualIter, paramNames,
@@ -3248,6 +3278,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                                       convWindowSize,
                                       treeFilePaths = treeFilePaths,
                                       startIters = perRunStarts,
+                                      shared = shared,
                                       startPhase = checkpoint$serialPhase %||% 1L)
       runs       <- serialResult$runs
       stopReason <- serialResult$stopReason
@@ -3264,8 +3295,10 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
           isStreaming    = isStreaming,
           convWindowSize = convWindowSize,
           treeFile       = if (is.null(treeFilePaths)) NULL else treeFilePaths[run],
+          shared         = shared,
           resumeMoveWeights = runs[[run]]$moveWeights %||% checkpoint$moveWeights
         )
+        shared$runs[[run]] <- runs[[run]]
         stopReason <- runs[[run]]$stop_reason
         actualIter <- runs[[run]]$actual_iter
         if (stopReason == "cancelled") break
@@ -3276,22 +3309,35 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   },
   interrupt = function(cond) {
     # M-175: interrupt handler missing from resume path -- mirror .RunWithRecovery.
-    # `runs` here reflects the last successfully completed batch state.
-    bestIter <- max(c(0L, vapply(runs,
-                                  function(r) r$actual_iter %||% 0L,
-                                  integer(1L))))
-    ckpSaved <- FALSE
-    if (!is.null(mcmc$checkpointFile) && bestIter > 0L) {
+    liveRuns <- shared$runs
+    bestIter <- max(c(0, vapply(liveRuns,
+                                function(r) r$actual_iter %||% 0,
+                                numeric(1L))))
+    # The master must never move backwards.  Epoch checkpoints written during
+    # this session record work `liveRuns` need not cover -- the parallel arm
+    # shares no state with this handler at all -- and overwriting one with an
+    # earlier iteration silently discards every sample beyond it on the next
+    # resume, which truncates the logs to the older `saved_idx`.
+    diskIter <- if (!is.null(mcmc$checkpointFile) &&
+                    file.exists(mcmc$checkpointFile)) {
+      tryCatch(as.numeric(readRDS(mcmc$checkpointFile)$iter %||% 0),
+               error = function(e) 0)
+    } else {
+      0
+    }
+    ckpSaved <- diskIter > 0
+    if (!is.null(mcmc$checkpointFile) && bestIter > diskIter) {
       tryCatch({
-        .SaveCheckpoint(runs, mcmc, bestIter, paramNames,
+        .SaveCheckpoint(liveRuns, mcmc, bestIter, paramNames,
                         mcmc$checkpointFile, model = model)
         ckpSaved <- TRUE
       }, error = function(e) NULL)
     }
+    ckpIter <- max(bestIter, diskIter)
     if (!is.null(logFilePaths)) {
       for (i in seq_along(logFilePaths)) {
         tryCatch({
-          r <- runs[[i]]
+          r <- liveRuns[[i]]
           if (!is.null(r$flush_idx) && r$flush_idx > 0L) {
             .FlushBuffer(r$flush_buf, r$flush_idx, r$flush_iter, logFilePaths[i])
           }
@@ -3301,15 +3347,15 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     if (ckpSaved) {
       # PAR-007: cli_warn (not cli_alert_warning) renders bullet items.
       cli::cli_warn(c(
-        "Run interrupted at iteration {bestIter}.",
+        "Run interrupted at iteration {ckpIter}.",
         "i" = "Checkpoint saved to {.file {mcmc$checkpointFile}}.",
         "i" = "Re-run the same {.fn RunMkPrime} call to resume."
       ))
     } else {
       .AlertWarning("Run interrupted.")
     }
-    .BuildResult(runs, model, mkd, mcmc, paramNames, logFilePaths,
-                 max(bestIter, 0L), "interrupted")
+    .BuildResult(liveRuns, model, mkd, mcmc, paramNames, logFilePaths,
+                 ckpIter, "interrupted")
   })
 }
 

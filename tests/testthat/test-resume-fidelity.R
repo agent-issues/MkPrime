@@ -57,6 +57,59 @@ test_that(".RemainingBudget spends one budget across the job (#13)", {
   expect_null(names(.RemainingBudget(60, now - 10)))
 })
 
+test_that(".BuildResult returns a partial posterior when a run never started (#93)", {
+  # Cancelling during run 1 of a multi-run job leaves runs 2..n as the bare
+  # `.InitRun` structure: chain counters, but no `saved_idx`, `flush_idx` or
+  # `tree_samples`.  Every consumer below dereferences those, so `NULL > 0L`
+  # reached `if ()` as `logical(0)` and the job died instead of returning the
+  # partial posterior that cancellation exists to produce.
+  paramNames <- c("log_posterior", "log_likelihood", "tree_length")
+  started <- list(
+    tree_samples = vector("list", 4L),
+    saved_idx = 4L, tree_saved_idx = 4L, flush_idx = 0L,
+    chain_accept = list(c(nni = 1)), chain_propose = list(c(nni = 2)),
+    chain_tuning = list(list()), logPostHistory = numeric(0),
+    moveWeights = c(nni = 0.5, spr = 0.5)
+  )
+  neverStarted <- started[c("chain_accept", "chain_propose", "chain_tuning")]
+
+  logs <- vapply(1:2, function(i) tempfile(fileext = ".log"), character(1L))
+  on.exit(unlink(logs), add = TRUE)
+  for (f in logs) {
+    writeLines(paste(c("Sample", paramNames), collapse = "	"), f)
+  }
+
+  mcmc <- list(nChains = 1L, nRuns = 2L, warmup = 0L, thin = 1L, treeThin = 1L,
+               logFile = logs[[1]])
+
+  expect_warning(
+    result <- .BuildResult(list(started, neverStarted), model = NULL,
+                          mkd = NULL, mcmc = mcmc, paramNames = paramNames,
+                          logFilePaths = logs, actualIter = 4L,
+                          stopReason = "cancelled"),
+    "never started"
+  )
+  expect_s3_class(result, "MkPosterior")
+  expect_identical(result$nSamples, 4L)
+  expect_identical(result$requested_nRuns, 2L)
+  expect_identical(result$dropped_runs$run, 2L)
+})
+
+
+test_that("a run with no recorded position resumes from iteration 1 (#94)", {
+  # `checkpoint$iter` is a job-wide maximum.  Handing it to a run that never
+  # launched starts it at the fastest run's iteration -- past `warmup`, so it
+  # samples with none.  Only a run's own position may be inherited.
+  runs <- list(
+    list(actual_iter = 60000L, phase = "Sample"),   # finished
+    list(actual_iter =  5000L, phase = "Warmup"),   # stopped mid-warmup
+    list()                                          # never launched
+  )
+  expect_identical(.ResumeStartIters(runs, fallback = 60001L),
+                   c(60001L, 5001L, 1L))
+})
+
+
 skip_slow_tests()
 
 test_that("a fixTopology run resumes with the same move set (#23)", {
@@ -179,4 +232,105 @@ test_that("resumed trees have finite edge lengths on neo-free data (#64)", {
   written <- ape::read.tree(treeFile)
   if (inherits(written, "phylo")) written <- list(written)
   expect_false(anyNA(unlist(lapply(written, `[[`, "edge.length"))))
+})
+
+
+test_that("a never-started run resumes into Warmup, not mid-Sample (#94)", {
+  tree <- .mkp_test_tree()
+  pd   <- .mkp_test_pd()
+
+  ckpFile  <- tempfile(fileext = ".ckp")
+  logFile  <- tempfile(fileext = ".log")
+  logPaths <- .LogFilePaths(logFile, 2L)
+  on.exit(unlink(c(ckpFile, logPaths)), add = TRUE)
+
+  set.seed(94)
+  setTimeLimit(elapsed = 300, transient = TRUE)
+  on.exit(setTimeLimit(elapsed = Inf, transient = TRUE), add = TRUE)
+
+  warmup <- 200L
+  thin   <- 5L
+  RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 600L, thin = thin,
+                       maxWarmup = warmup, minWarmup = warmup,
+                       autoTune = FALSE, maxTime = 120, checkEvery = 200L,
+                       checkpointFile = ckpFile, logFile = logFile))
+
+  # Recast run 2 as one that never launched: exactly the field set `.InitRun`
+  # returns, with no position, phase or sample count.  Its chain state is run
+  # 2's own final state, which is immaterial -- what is under test is the
+  # iteration the resume hands it.
+  cp <- readRDS(ckpFile)
+  cp$runs[[2]] <- cp$runs[[2]][c(
+    "chains", "betas", "chain_accept", "chain_propose", "chain_time_ns",
+    "chain_slice_exp", "chain_tuning", "chain_rhos", "swap_accept",
+    "swap_propose"
+  )]
+  cp$mcmc$nIter <- 1200L
+  saveRDS(cp, ckpFile)
+
+  ResumeMkPrime(ckpFile, pd)
+
+  nRows <- vapply(logPaths, function(f) length(readLines(f)) - 1L,
+                  integer(1L), USE.NAMES = FALSE)
+  # Run 2 warmed from scratch, so it covers the whole post-warmup budget.
+  # Inheriting run 1's position put it at iteration 601 in the Sample phase
+  # with `cppWarmup = 0`: it covered only the tail, and every draw it did take
+  # was un-warmed, pooled into the posterior and into the cross-run R-hat.
+  expect_gt(nRows[[1]], 0L)
+  expect_gte(nRows[[2]], (1200L - warmup) %/% thin)
+})
+
+
+test_that("interrupting a resumed run does not rewind the checkpoint (#96)", {
+  # `.RunSerialRuns` writes an epoch checkpoint carrying real `actual_iter`
+  # values, but `ResumeMkPrime`'s own `runs` is refreshed only on normal
+  # return.  The interrupt handler therefore held the pre-resume state, and
+  # wrote it back over the master -- destroying exactly the work it exists to
+  # preserve, and silently, since the next resume reports the log rewind as
+  # routine post-checkpoint cleanup.
+  tree <- .mkp_test_tree()
+  pd   <- .mkp_test_pd()
+
+  ckpFile  <- tempfile(fileext = ".ckp")
+  logFile  <- tempfile(fileext = ".log")
+  logPaths <- .LogFilePaths(logFile, 2L)
+  on.exit(unlink(c(ckpFile, logPaths)), add = TRUE)
+
+  set.seed(96)
+  setTimeLimit(elapsed = 600, transient = TRUE)
+  on.exit(setTimeLimit(elapsed = Inf, transient = TRUE), add = TRUE)
+
+  # An unreachable maxRhat routes both segments through `.RunSerialRuns` and
+  # keeps its Phase 2 epoch loop running.
+  RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 600L, thin = 5L,
+                       maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
+                       maxRhat = 1 + 1e-12, maxTime = 240, checkEvery = 200L,
+                       checkpointFile = ckpFile, logFile = logFile))
+  before <- readRDS(ckpFile)$iter
+  expect_equal(before, 600)
+
+  # Simulated Ctrl-C.  `progressFn` is the only user hook inside the batch
+  # loop, and it fires after the batch has published its state.  Injecting it
+  # into the checkpoint leaves the first segment unhooked; its environment is
+  # rooted at `baseenv()` so the checkpoint carries a closure, not the test
+  # frame.  Phase 2 epochs are 1000 iterations, so the first epoch (both runs
+  # to 1600) completes and is checkpointed before the second one trips this.
+  Interrupter <- function(info) {
+    if (info$iter > stopAt) {
+      stop(structure(class = c("interrupt", "condition"),
+                     list(message = "simulated Ctrl-C", call = NULL)))
+    }
+  }
+  environment(Interrupter) <- list2env(list(stopAt = 1600), parent = baseenv())
+
+  cp <- readRDS(ckpFile)
+  cp$mcmc$nIter      <- 6000L
+  cp$mcmc$plotEvery  <- 100L
+  cp$mcmc$progressFn <- Interrupter
+  saveRDS(cp, ckpFile)
+
+  allow_warning(ResumeMkPrime(ckpFile, pd), "interrupted")
+  expect_gt(readRDS(ckpFile)$iter, before)
 })
