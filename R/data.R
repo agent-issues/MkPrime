@@ -95,6 +95,9 @@ MkPrimeEmpiricalPrior <- function(body, tail_decay = 0,
   }
 
   bodySum <- sum(body)
+  if (bodySum <= 0) {
+    cli::cli_abort("{.arg body} must have positive total mass.")
+  }
   if (tail_decay == 0) {
     if (abs(bodySum - 1) > 1e-8) {
       cli::cli_abort(

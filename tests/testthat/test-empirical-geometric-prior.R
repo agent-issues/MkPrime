@@ -20,6 +20,18 @@ test_that("MkPrimeEmpiricalPrior rejects invalid inputs", {
 })
 
 
+test_that("MkPrimeEmpiricalPrior rejects body with zero total mass", {
+  # body = c(0, 0) with tail_decay = 0 sums to 0, which is already caught by
+  # the "must sum to 1" check -- but with tail_decay > 0 the old code divided
+  # by a zero total (anchor = 0, tailMass = 0, total = 0) and returned an
+  # all-NaN pmf silently, poisoning every later log-prior.
+  expect_error(MkPrimeEmpiricalPrior(body = c(0, 0), tail_decay = 0.4),
+               "positive total mass")
+  expect_error(MkPrimeEmpiricalPrior(body = c(0, 0), tail_decay = 0),
+               "positive total mass")
+})
+
+
 test_that(".LogPriorEmpiricalGeometric matches hand-computed convolution", {
   emp <- MkPrimeEmpiricalPrior(body = c(0.6, 0.3, 0.1), tail_decay = 0)
   p <- 0.7
