@@ -31,9 +31,12 @@ dispatching.
 | `opus` | Opus 4.8 | rounds dated on or before 2026-07-26 |
 | `opus` | Opus 5 | 2026-09-18 |
 | `fable` | Fable 5.1 | 2026-09-18 |
+| `opus` | Opus 5.5 | 2026-09-23 |
+| `fable` | Fable 5.1 — **suspended**, outclassed by Opus 5.5; not dispatched until the maintainer re-enables it | 2026-09-23 |
 
-**A version bump reopens dormancy.** A `dry` or `dormant` verdict is evidence
-about the version that produced it, not about the rung.
+**A capability bump reopens dormancy.** A `dry` or `dormant` verdict is evidence
+about the model that produced it; Opus 5.5 reopens every verdict recorded at
+Opus 4.8, Opus 5 or Fable 5.1.
 
 This table is here rather than in the skill because the skill says it must be:
 the alias-to-version mapping is project-local, and "a dated table baked into
