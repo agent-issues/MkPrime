@@ -139,10 +139,10 @@ The uncorrected kernel drives fractions toward the extremes: the smallest
 comes out 25% below its target mean. Gate:
 `tests/testthat/test-weighted-spr-invariance.R`.
 
-## 6. Not fixed here
+## 6. The sibling moves
 
 `weighted_branch_scale_impl`, `block_gibbs_branch` and
-`weighted_subtree_swap_impl` build their Hastings ratios from the same
-single-component pattern and are very likely to carry the same defect. Their
-*normaliser* structure has not been derived, and a partial fix that looks
-complete is worse than a known-open one, so they are left alone: issue #158.
+`weighted_subtree_swap_impl` carried the same single-component ratio (issue
+#158). In the first two the weights and normaliser cancel, so the mixture is
+the whole fix: `weighted-branch-hastings.md`. In the swap neither cancels:
+`weighted-subtree-swap-hastings.md`.
