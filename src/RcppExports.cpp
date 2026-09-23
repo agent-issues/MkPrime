@@ -245,6 +245,20 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// f81_transition_cpp
+Rcpp::NumericMatrix f81_transition_cpp(Rcpp::NumericMatrix cl, Rcpp::NumericVector pi, double mu, double t);
+RcppExport SEXP _MkPrime_f81_transition_cpp(SEXP clSEXP, SEXP piSEXP, SEXP muSEXP, SEXP tSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< Rcpp::NumericMatrix >::type cl(clSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type pi(piSEXP);
+    Rcpp::traits::input_parameter< double >::type mu(muSEXP);
+    Rcpp::traits::input_parameter< double >::type t(tSEXP);
+    rcpp_result_gen = Rcpp::wrap(f81_transition_cpp(cl, pi, mu, t));
+    return rcpp_result_gen;
+END_RCPP
+}
 // bactrian_draws
 NumericVector bactrian_draws(int n);
 RcppExport SEXP _MkPrime_bactrian_draws(SEXP nSEXP) {
@@ -1026,6 +1040,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_pruning_jc", (DL_FUNC) &_MkPrime_pruning_jc, 6},
     {"_MkPrime_pruning_jc_collapsed", (DL_FUNC) &_MkPrime_pruning_jc_collapsed, 6},
     {"_MkPrime_pruning_mkn", (DL_FUNC) &_MkPrime_pruning_mkn, 6},
+    {"_MkPrime_f81_transition_cpp", (DL_FUNC) &_MkPrime_f81_transition_cpp, 4},
     {"_MkPrime_bactrian_draws", (DL_FUNC) &_MkPrime_bactrian_draws, 1},
     {"_MkPrime_bactrian_2d_draws", (DL_FUNC) &_MkPrime_bactrian_2d_draws, 2},
     {"_MkPrime_fitch_score_r", (DL_FUNC) &_MkPrime_fitch_score_r, 5},

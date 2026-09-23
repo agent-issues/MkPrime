@@ -11,8 +11,6 @@
 # i.i.d.-sampleable.  Starting each replicate from an exact draw therefore
 # tests pi K^B = pi with no burn-in or mixing assumption.
 
-library("ape")
-library("TreeTools")
 
 test_that("weighted_spr holds the prior at beta = 0", {
   nTip <- 6L

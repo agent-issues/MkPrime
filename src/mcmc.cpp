@@ -2658,10 +2658,9 @@ double bin_mixture_log_density(NumericVector weights, double f, int nBins) {
 // Gibbs-sample a bin, then draw a new fraction from a Beta centred on the
 // selected midpoint.  Returns logHastings for standard MH acceptance.
 //
-// The bin-selection weights are symmetric (forward == reverse) because
-// midpoint evaluations are independent of the current fraction.
-// logHastings = log(w_oldBin) + logBeta(f_old|a_old,b_old)
-//             - log(w_chosenBin) - logBeta(f_new|a_new,b_new).
+// The bin weights depend only on the edges the move leaves alone, so they
+// and their normaliser are the same in both directions; the bin is integrated
+// out.  Derivation: dev/red-team/proofs/weighted-branch-hastings.md.
 // ---------------------------------------------------------------------------
 static bool weighted_branch_scale_impl(
     McmcData* data, McmcState* state, double beta,
@@ -2745,20 +2744,10 @@ static bool weighted_branch_scale_impl(
   if (newF < 1e-8) newF = 1e-8;
   if (newF > 1.0 - 1e-8) newF = 1.0 - 1e-8;
 
-  // 7. Hastings ratio
-  //    Bin weights cancel (symmetric); within-bin densities remain.
-  int oldBin = nBins - 1;
-  for (int b = 0; b < nBins; ++b) {
-    if (oldF <= bins.breaks[b + 1]) { oldBin = b; break; }
-  }
-  const double oldMid = bins.mids[oldBin];
-  const double alphaOld = oldMid * conc + 1.0;
-  const double betaOld  = (1.0 - oldMid) * conc + 1.0;
-
-  logHastings = std::log(weights[oldBin])
-              + R::dbeta(oldF, alphaOld, betaOld, 1)
-              - std::log(weights[chosenBin])
-              - R::dbeta(newF, alphaNew, betaNew, 1);
+  // 7. Hastings ratio.  The weights depend only on edges the move leaves
+  //    alone, so they are identical in both directions.
+  logHastings = bin_mixture_logdensity(weights, oldF, bins)
+              - bin_mixture_logdensity(weights, newF, bins);
 
   // 8. Apply proposed fraction
   state->relBrLengths[index] = newF * relTotal;
@@ -2881,19 +2870,9 @@ static bool block_gibbs_branch_sweep_impl(
     if (newF < 1e-8) newF = 1e-8;
     if (newF > 1.0 - 1e-8) newF = 1.0 - 1e-8;
 
-    // Hastings ratio: bin weights cancel; within-bin Beta densities remain
-    int oldBin = nBins - 1;
-    for (int b = 0; b < nBins; ++b) {
-      if (oldF <= bins.breaks[b + 1]) { oldBin = b; break; }
-    }
-    const double oldMid = bins.mids[oldBin];
-    const double alphaOld = oldMid * conc + 1.0;
-    const double betaOld  = (1.0 - oldMid) * conc + 1.0;
-
-    double logHastings = std::log(weights[oldBin])
-                       + R::dbeta(oldF, alphaOld, betaOld, 1)
-                       - std::log(weights[chosenBin])
-                       - R::dbeta(newF, alphaNew, betaNew, 1);
+    // Hastings ratio: as in weighted_branch_scale_impl
+    double logHastings = bin_mixture_logdensity(weights, oldF, bins)
+                       - bin_mixture_logdensity(weights, newF, bins);
 
     if (!R_FINITE(logHastings)) continue;
 
@@ -3221,18 +3200,113 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
 // total branch length (brA + brB_i) is held fixed and redistributed across
 // B bins.  Self (current topology) included as a point weight.  Sample
 // partner from {self, cand_0, ..., cand_N}, then sample bin and fraction
-// for the chosen partner.  MH acceptance corrects the approximation.
+// for the chosen partner, and accept/reject via MH.
 //
-// Cost: O(N × B) likelihood evaluations.
+// Neither the selection normaliser nor the bin weights cancel: the anchored
+// neighbourhood differs between the two endpoints (as for gibbs_subtree_swap),
+// and the reverse bins are scored on the reverse topology.  The reverse
+// neighbourhood is therefore enumerated in full, doubling the cost.
+// Derivation: dev/red-team/proofs/weighted-subtree-swap-hastings.md.
+//
+// Cost: O(N × B) likelihood evaluations in each direction.
 // ---------------------------------------------------------------------------
 
 // (Uses find_child_row_gibbs defined above)
 
+// The anchored neighbourhood of `nodeA`: log selection weight of each
+// (partner, bin) configuration, and the log normaliser including staying put.
+// Rows are located by child, so any edge order is accepted.
+struct SwapNeighbourhood {
+  std::vector<int> partners;
+  std::vector<int> rowBs;
+  std::vector<double> totals;               // brA + brB_i
+  std::vector<std::vector<double>> logW;    // [partner][bin]
+  double logZ = R_NegInf;
+};
+
+static void weighted_swap_neighbourhood(
+    McmcData* data, McmcState* state,
+    const IntegerVector& parent, const IntegerVector& child,
+    const NumericVector& absLenIn, int nodeA, double logSelf, double beta,
+    SwapNeighbourhood& nb) {
+  const int nEdge = parent.size();
+  const int nTip  = data->nTip;
+  const BranchBins& bins = data->branchBins;
+  const int nBins = bins.nBins;
+
+  nb.partners = get_valid_swap_partners_impl(parent, child, nTip, nodeA);
+  const int nPart = (int)nb.partners.size();
+  nb.rowBs.assign(nPart, -1);
+  nb.totals.assign(nPart, 0.0);
+  nb.logW.assign(nPart, std::vector<double>(nBins, R_NegInf));
+  nb.logZ = R_NegInf;
+
+  const int rowA = find_child_row_gibbs(child, nodeA);
+  if (rowA < 0) return;
+
+  // Working copies; child is unchanged by a subtree swap (M-109)
+  IntegerVector workPar = clone(parent);
+  NumericVector absLen  = clone(absLenIn);
+  IntegerVector ordPar(nEdge), ordCh(nEdge);
+  NumericVector ordAbs(nEdge);
+
+  const int origParA = workPar[rowA];
+  const double origAbsA = absLen[rowA];
+  double logMax = logSelf;
+
+  for (int pi = 0; pi < nPart; ++pi) {
+    const int rowB = find_child_row_gibbs(child, nb.partners[pi]);
+    if (rowB < 0) continue;
+    nb.rowBs[pi]  = rowB;
+    nb.totals[pi] = absLen[rowA] + absLen[rowB];
+
+    const int origParB = workPar[rowB];
+    const double origAbsB = absLen[rowB];
+    workPar[rowA] = origParB;
+    workPar[rowB] = origParA;
+
+    for (int b = 0; b < nBins; ++b) {
+      absLen[rowA] = bins.mids[b] * nb.totals[pi];
+      absLen[rowB] = (1.0 - bins.mids[b]) * nb.totals[pi];
+      preorder_into(workPar, child, absLen, nTip,
+                    INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
+      const double ll = compute_full_loglik_at(*data, *state,
+                                               ordPar, ordCh, ordAbs,
+                                               /*fillCharLLCache=*/false);  // FREEZE-003
+      if (R_FINITE(ll)) {
+        nb.logW[pi][b] = beta * ll;
+        if (nb.logW[pi][b] > logMax) logMax = nb.logW[pi][b];
+      }
+    }
+
+    workPar[rowA] = origParA;
+    workPar[rowB] = origParB;
+    absLen[rowA]  = origAbsA;
+    absLen[rowB]  = origAbsB;
+  }
+
+  if (!R_FINITE(logMax)) return;
+  double sum = R_FINITE(logSelf) ? std::exp(logSelf - logMax) : 0.0;
+  for (int pi = 0; pi < nPart; ++pi)
+    for (int b = 0; b < nBins; ++b)
+      sum += std::exp(nb.logW[pi][b] - logMax);
+  nb.logZ = logMax + std::log(sum);
+}
+
+// Log density of fraction `f` under the bin mixture with log weights `logW`.
+static double log_bin_mixture(const std::vector<double>& logW, double f,
+                              const BranchBins& bins) {
+  double logMax = R_NegInf;
+  for (double lw : logW) if (lw > logMax) logMax = lw;
+  if (!R_FINITE(logMax)) return R_NegInf;
+  std::vector<double> w(logW.size());
+  for (size_t b = 0; b < logW.size(); ++b) w[b] = std::exp(logW[b] - logMax);
+  return logMax + bin_mixture_logdensity(w, f, bins);
+}
+
 static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
                                         double beta) {
   const int nEdge = state->parent.size();
-  const int nTip  = data->nTip;
-
   const BranchBins& bins = data->branchBins;
   const int nBins = bins.nBins;
 
@@ -3240,132 +3314,54 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
   int pickIdx = (int)(R::unif_rand() * (double)nEdge);
   if (pickIdx >= nEdge) pickIdx = nEdge - 1;
   const int nodeA = state->child[pickIdx];
-
-  // 2. Get valid swap partners
-  std::vector<int> partners = get_valid_swap_partners_impl(
-      state->parent, state->child, nTip, nodeA);
-  if (partners.empty()) return false;
-  const int nPart = (int)partners.size();
-
-  // 3. Find rowA
   const int rowA = find_child_row_gibbs(state->child, nodeA);
   if (rowA < 0) return false;
 
-  // 4. Absolute edge lengths
   NumericVector absLen(nEdge);
   for (int i = 0; i < nEdge; ++i)
     absLen[i] = state->treeLength * state->relBrLengths[i];
 
-  // 5. Candidate marginals: in-place topology + preorder_into (M-109)
-  std::vector<std::vector<double>> candLL(nPart,
-                                           std::vector<double>(nBins));
-  std::vector<double> candMax(nPart, R_NegInf);
-  std::vector<int> rowBs(nPart);       // edge row for each partner
-  std::vector<double> totals(nPart);   // brA + brB_i
+  // 2. Forward neighbourhood
+  const double logSelf = beta * state->logLik;
+  SwapNeighbourhood fwd;
+  weighted_swap_neighbourhood(data, state, state->parent, state->child,
+                              absLen, nodeA, logSelf, beta, fwd);
+  const int nPart = (int)fwd.partners.size();
+  if (nPart == 0 || !R_FINITE(fwd.logZ)) return false;
 
-  // Working copy of parent (cloned ONCE); child unchanged in subtree swap
-  IntegerVector workPar = clone(state->parent);
-  IntegerVector ordPar(nEdge), ordCh(nEdge);
-  NumericVector ordAbs(nEdge);
-
-  const int origParA = workPar[rowA];
-  const double origAbsA = absLen[rowA];
-
-  for (int pi = 0; pi < nPart; ++pi) {
-    int rowB = find_child_row_gibbs(state->child, partners[pi]);
-    if (rowB < 0) { candMax[pi] = R_NegInf; rowBs[pi] = -1; continue; }
-    rowBs[pi]  = rowB;
-    totals[pi] = absLen[rowA] + absLen[rowB];
-
-    int origParB = workPar[rowB];
-    double origAbsB = absLen[rowB];
-
-    // Apply swap in-place
-    workPar[rowA] = origParB;
-    workPar[rowB] = origParA;
-
+  // 3. Sample (partner, bin) jointly; self-draw → no-op
+  double rnd = R::unif_rand() - std::exp(logSelf - fwd.logZ);
+  if (rnd < 0.0) return false;
+  int chosen = -1, chosenBin = -1;
+  for (int pi = 0; pi < nPart && chosen < 0; ++pi) {
     for (int b = 0; b < nBins; ++b) {
-      absLen[rowA] = bins.mids[b] * totals[pi];
-      absLen[rowB] = (1.0 - bins.mids[b]) * totals[pi];
-
-      preorder_into(workPar, state->child, absLen, nTip,
-                    INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
-      candLL[pi][b] = compute_full_loglik_at(*data, *state,
-                                              ordPar, ordCh, ordAbs,
-                                              /*fillCharLLCache=*/false);  // FREEZE-003
-      if (R_FINITE(candLL[pi][b]) && candLL[pi][b] > candMax[pi])
-        candMax[pi] = candLL[pi][b];
-    }
-
-    // Restore
-    workPar[rowA] = origParA;
-    workPar[rowB] = origParB;
-    absLen[rowA]  = origAbsA;
-    absLen[rowB]  = origAbsB;
-  }
-
-  // 6. Compute marginal weights with global offset
-  double globalMax = state->logLik;
-  for (int pi = 0; pi < nPart; ++pi)
-    if (candMax[pi] > globalMax) globalMax = candMax[pi];
-  if (!R_FINITE(globalMax)) return false;
-
-  double wOrig = std::exp(beta * (state->logLik - globalMax));
-  std::vector<double> mCand(nPart);
-  std::vector<std::vector<double>> candW(nPart,
-                                          std::vector<double>(nBins));
-  double sumM = wOrig;
-  for (int pi = 0; pi < nPart; ++pi) {
-    mCand[pi] = 0.0;
-    for (int b = 0; b < nBins; ++b) {
-      candW[pi][b] = R_FINITE(candLL[pi][b]) ?
-                       std::exp(beta * (candLL[pi][b] - globalMax)) : 0.0;
-      mCand[pi] += candW[pi][b];
-    }
-    sumM += mCand[pi];
-  }
-  if (sumM <= 0.0) return false;
-
-  // 7. Sample: self-draw → no-op
-  double rnd = R::unif_rand() * sumM;
-  if (rnd < wOrig) return false;
-  rnd -= wOrig;
-  int chosen = nPart - 1;
-  for (int pi = 0; pi < nPart - 1; ++pi) {
-    if (rnd < mCand[pi]) { chosen = pi; break; }
-    rnd -= mCand[pi];
-  }
-  if (rowBs[chosen] < 0) return false;
-
-  // 8. Sample bin within chosen candidate
-  int chosenBin = nBins - 1;
-  {
-    double rndBin = R::unif_rand() * mCand[chosen];
-    double cum = 0.0;
-    for (int b = 0; b < nBins; ++b) {
-      cum += candW[chosen][b];
-      if (rndBin < cum) { chosenBin = b; break; }
+      rnd -= std::exp(fwd.logW[pi][b] - fwd.logZ);
+      if (rnd < 0.0) { chosen = pi; chosenBin = b; break; }
     }
   }
+  if (chosen < 0) return false;  // rounding at the top of [0, 1)
+  const int rowB  = fwd.rowBs[chosen];
+  const int nodeB = fwd.partners[chosen];
 
-  // 9. Draw fraction from Beta centred on chosen bin's midpoint
+  // 4. Draw fraction from Beta centred on chosen bin's midpoint
   const double conc = bins.concentration;
   const double chosenMid = bins.mids[chosenBin];
-  const double alphaNew = chosenMid * conc + 1.0;
-  const double betaNew  = (1.0 - chosenMid) * conc + 1.0;
-  double fNew = R::rbeta(alphaNew, betaNew);
+  double fNew = R::rbeta(chosenMid * conc + 1.0,
+                         (1.0 - chosenMid) * conc + 1.0);
   if (fNew < 1e-8) fNew = 1e-8;
   if (fNew > 1.0 - 1e-8) fNew = 1.0 - 1e-8;
 
-  // 10. Construct final proposed topology at fNew (using working copy)
-  const int rowB   = rowBs[chosen];
-  const double tot = totals[chosen];
+  // 5. Construct the proposed tree
+  const double tot  = fwd.totals[chosen];
+  const double fOld = absLen[rowA] / tot;
+  IntegerVector workPar = clone(state->parent);
   workPar[rowA] = state->parent[rowB];
   workPar[rowB] = state->parent[rowA];
-  absLen[rowA] = fNew * tot;
-  absLen[rowB] = (1.0 - fNew) * tot;
+  NumericVector propAbs = clone(absLen);
+  propAbs[rowA] = fNew * tot;
+  propAbs[rowB] = (1.0 - fNew) * tot;
 
-  auto po = TreeTools::preorder_weighted_impl(workPar, state->child, absLen);
+  auto po = TreeTools::preorder_weighted_impl(workPar, state->child, propAbs);
   IntegerMatrix ordEdge = po.first;
   NumericVector ordAbsFinal = po.second;
   IntegerVector op = ordEdge(_, 0);
@@ -3374,23 +3370,22 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
                                              /*fillCharLLCache=*/false);  // FREEZE-003
   if (!R_FINITE(newLogLik)) return false;
 
-  // 11. Hastings ratio
-  //     f_default = absLen[rowB] / tot (the default swap fraction)
-  const double fDefault = (tot > 0.0) ? absLen[rowB] / tot : 0.5;
-  int defaultBin = nBins - 1;
-  for (int b = 0; b < nBins; ++b) {
-    if (fDefault <= bins.breaks[b + 1]) { defaultBin = b; break; }
-  }
-  const double defaultMid  = bins.mids[defaultBin];
-  const double alphaOld    = defaultMid * conc + 1.0;
-  const double betaOld     = (1.0 - defaultMid) * conc + 1.0;
+  // 6. Reverse neighbourhood: the same anchor returns to the current state by
+  //    swapping back with nodeB at fraction fOld.  Enumerated on the
+  //    un-reordered proposal, because preordering renumbers internal nodes.
+  SwapNeighbourhood rev;
+  weighted_swap_neighbourhood(data, state, workPar, state->child, propAbs,
+                              nodeA, beta * newLogLik, beta, rev);
+  int back = -1;
+  for (size_t pi = 0; pi < rev.partners.size(); ++pi)
+    if (rev.partners[pi] == nodeB) { back = (int)pi; break; }
+  if (back < 0 || !R_FINITE(rev.logZ)) return false;
 
-  double logHR = std::log(std::max(wOrig, 1e-300))
-               + R::dbeta(fDefault, alphaOld, betaOld, 1)
-               - std::log(std::max(candW[chosen][chosenBin], 1e-300))
-               - R::dbeta(fNew, alphaNew, betaNew, 1);
+  // 7. Hastings ratio
+  const double logHR = log_bin_mixture(rev.logW[back], fOld, bins) - rev.logZ
+                     - log_bin_mixture(fwd.logW[chosen], fNew, bins) + fwd.logZ;
 
-  // 12. Prior at proposed state
+  // 8. Prior at proposed state
   NumericVector propRelBr(nEdge);
   for (int k = 0; k < nEdge; ++k)
     propRelBr[k] = ordAbsFinal[k] / state->treeLength;
@@ -3398,7 +3393,7 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
   double newLogPrior = compute_log_prior_at(*data, *state, propRelBr);
   if (!R_FINITE(newLogPrior)) return false;
 
-  // 13. MH acceptance
+  // 9. MH acceptance
   double logAlpha = beta * (newLogLik - state->logLik)
                   + (newLogPrior - state->logPrior) + logHR;
   if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {

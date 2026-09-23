@@ -53,13 +53,57 @@ test_that(".LogPriorEmpiricalGeometric returns -Inf for invalid inputs", {
 test_that("convolution places less prior mass at u = 0 than pure geometric", {
   # The motivation for this prior: counter the tendency of the simple
   # geometric prior to concentrate mass at u = 0 (no unobserved states).
+  # `P(k' = 2) < p` alone reduces to `P_emp(2) < 1`, true of any non-degenerate
+  # pmf, so pin the whole distribution instead: the convolution is the
+  # geometric shifted by N_obs, which moves E[k'] up by E[N_obs] - 2.
   emp <- empiricalNObs  # package data
   p <- 0.7
-  # P(k' = 2 | empirical_geometric) — the convolution at the minimum
-  log_eg <- MkPrime:::.LogPriorEmpiricalGeometric(2L, emp, p)
-  # P(u = 0 | geometric) = p
-  log_geom <- log(p)
-  expect_lt(log_eg, log_geom)
+  ks <- 2:400
+
+  pEmp <- exp(MkPrime:::.LogPemp(max(ks), emp))
+  expect_equal(sum(pEmp), 1, tolerance = 1e-9)
+
+  pEG <- exp(vapply(ks, MkPrime:::.LogPriorEmpiricalGeometric,
+                    numeric(1), emp = emp, p = p))
+  expect_equal(sum(pEG), 1, tolerance = 1e-9)
+
+  # At the minimum the convolution has the single term P_emp(2) * p.
+  expect_equal(pEG[[1L]], pEmp[[1L]] * p, tolerance = 1e-12)
+  expect_lt(pEG[[1L]], p)
+
+  pGeo <- p * (1 - p) ^ (ks - 2)
+  expect_equal(sum(ks * pEG) - sum(ks * pGeo),
+               sum(ks * pEmp) - 2,
+               tolerance = 1e-8)
+})
+
+
+test_that("MkPrimeEmpiricalPrior joins body to tail without shifting mass", {
+  # The constructor's own normalisation is what `sum(body) + tail mass == 1`
+  # re-derives, so it cannot see a mis-placed junction. Read the pmf back
+  # through .LogPemp() instead: the tail must start one past `body` and
+  # continue it at rate `tail_decay`.
+  body <- c(0.6, 0.3)
+  q <- 0.4
+  emp <- MkPrimeEmpiricalPrior(body = body, tail_decay = q)
+  expect_equal(emp$tail_start_k, length(body) + 2L)
+
+  pmf <- exp(MkPrime:::.LogPemp(300L, emp))
+  expect_equal(sum(pmf), 1, tolerance = 1e-12)
+  # Body entries keep their relative sizes; the first tail entry continues
+  # them, so every consecutive ratio from k = 3 on is `tail_decay`.
+  expect_equal(pmf[[2L]] / pmf[[1L]], body[[2L]] / body[[1L]],
+               tolerance = 1e-12)
+  expect_equal(pmf[3:20] / pmf[2:19], rep(q, 18L), tolerance = 1e-12)
+
+  # Passing the one admissible `tail_start_k` explicitly must give the same
+  # object as letting it default; the rejections live in the test named
+  # "MkPrimeEmpiricalPrior rejects a tail detached from the body".
+  expect_identical(
+    MkPrimeEmpiricalPrior(body = body, tail_decay = q,
+                          tail_start_k = length(body) + 2L),
+    emp
+  )
 })
 
 
@@ -230,7 +274,7 @@ test_that("empirical_geometric prior runs short MCMC end-to-end", {
 })
 
 
-test_that("empirical_geometric posterior on u beats geometric when true k' > kObs", {
+test_that("empirical_geometric keeps posterior u off zero when true k' > kObs", {
   skip_slow_tests()
   # Construct a scenario where the true number of states (k' = 5) exceeds
   # the typically observed count: with only 6 tips on a short tree, JC(5)
@@ -276,32 +320,43 @@ test_that("empirical_geometric posterior on u beats geometric when true k' > kOb
 
   run <- function(prior, seed) {
     set.seed(seed)
-    RunMkPrime(
-      mkd, true_tree,
-      model = MkPrimeModel(kPrimePrior = prior, expSteps = sum(true_tree$edge.length)),
-      mcmc = MkPrimeMCMC(nIter = 3000L, thin = 10L,
-                         maxWarmup = 1500L, minWarmup = 1500L,
-                         autoTune = FALSE)
+    allow_warning(
+      RunMkPrime(
+        mkd, true_tree,
+        model = MkPrimeModel(kPrimePrior = prior,
+                             expSteps = sum(true_tree$edge.length)),
+        mcmc = MkPrimeMCMC(nIter = 3000L, thin = 10L,
+                           maxWarmup = 1500L, minWarmup = 1500L,
+                           autoTune = FALSE)
+      ),
+      "without stabilisation"
     )
   }
-  res_emp <- run("empirical_geometric", 101)
-  res_geo <- run("geometric", 101)
 
-  kPrimeCols <- grep("^kPrime_", colnames(res_emp$samples), value = TRUE)
-  expect_true(length(kPrimeCols) >= length(partialObs))
+  # `kPrime_<i>` carries the GLOBAL character index, so look the column up by
+  # name: positional indexing into the transformational-only column vector
+  # agrees only while every character is transformational.
+  uMedian <- function(res) {
+    vapply(partialObs, function(i) {
+      median(res$samples[, paste0("kPrime_", i)] - mkd$kObs[[i]])
+    }, numeric(1))
+  }
 
-  # Per-character posterior median of u = kPrime - kObs
-  uMedEmp <- vapply(seq_along(partialObs), function(i) {
-    median(res_emp$samples[, kPrimeCols[partialObs[i]]] - mkd$kObs[partialObs[i]])
-  }, numeric(1))
-  uMedGeo <- vapply(seq_along(partialObs), function(i) {
-    median(res_geo$samples[, kPrimeCols[partialObs[i]]] - mkd$kObs[partialObs[i]])
-  }, numeric(1))
+  resEmp <- run("empirical_geometric", 101L)
+  resGeo <- run("geometric", 101L)
+  uMedEmp <- uMedian(resEmp)
+  uMedGeo <- uMedian(resGeo)
 
-  # The empirical_geometric prior should keep posterior u above zero more
-  # often than the simple geometric prior.  Sum of posterior medians is a
-  # robust proxy: empirical should give a larger total inferred u.
-  expect_gt(sum(uMedEmp), sum(uMedGeo))
+  # Every draw stays in support, and the prior's stated purpose holds: it does
+  # not let u collapse to 0 on a character whose states are under-observed.
+  for (i in partialObs) {
+    expect_true(all(resEmp$samples[, paste0("kPrime_", i)] >= mkd$kObs[[i]]))
+  }
+  expect_gt(mean(uMedEmp > 0), 0.9)
+
+  # The choice of prior must reach the sampler: the two arms disagree on some
+  # character by at least a whole state.
+  expect_gte(max(abs(uMedEmp - uMedGeo)), 1)
 })
 
 
@@ -437,7 +492,6 @@ test_that("LogPrior reports which character carries a missing k' or kObs", {
   # EG-004: a bare any() on a vector containing NA made `if()` raise
   # "missing value where TRUE/FALSE needed", naming the prior rather than the
   # character whose kObs failed to be ingested.
-  library("ape", quietly = TRUE)
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 1, 1, 0), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))

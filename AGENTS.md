@@ -36,8 +36,10 @@ so the value never reaches the transcript:
 
 ```bash
 TOKEN=$(powershell.exe -NoProfile -Command   "[Environment]::GetEnvironmentVariable('CLAUDE_GH_TOKEN','User')" | tr -d '\r')
-git -c credential.helper='!f() { echo username=ms609-agent; echo "password=$TOKEN"; }; f'   push -u origin <branch>
+TOKEN="$TOKEN" git -c credential.helper= -c credential.helper='!f() { echo username=ms609-agent; echo "password=$TOKEN"; }; f' push -u origin <branch>
 ```
+
+Keep both the `TOKEN="$TOKEN"` prefix and the empty `credential.helper=`; without either, the push silently goes out as `ms609`.
 
 **Never commit in `C:/Users/pjjg18/GitHub/mkp` itself.**
 Every change — including documentation — goes on a branch in a worktree under
