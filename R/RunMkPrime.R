@@ -255,6 +255,15 @@ RunMkPrime <- function(data, tree = NULL,
                          model$priorOnClassRateLogSd %||% "hyperprior_pooled",
                        likelihoodMode = model$likelihoodMode %||% "sampled_k")
 
+  # Fail before any run starts, rather than inside each one.
+  initialWeights <- vapply(moves, `[[`, numeric(1), "weight")
+  names(initialWeights) <- vapply(moves, `[[`, character(1), "name")
+  .SchedulePins(
+    initialWeights / sum(initialWeights),
+    vapply(moves, `[[`, character(1), "type"),
+    mcmc$moveWeights[intersect(names(mcmc$moveWeights), names(initialWeights))]
+  )
+
   mcmc$thinWasAuto <- identical(mcmc$thin, "auto")
   if (mcmc$thinWasAuto) {
     mcmc$thin <- length(moves)
@@ -875,16 +884,11 @@ RunMkPrime <- function(data, tree = NULL,
   # log(dim) term in the score formula gives multi-parameter moves an
   # arithmetic advantage (e.g. kPrime dim=nTrans ~30 -> +3.4 nats); at
   # temp=0.5 this is enough to crush dim=1 scale moves to wMin even when
-  # their acceptance rate is healthy. Mirrors the init-time scalar floor
-  # at .BuildMoves; same set of types.
-  .kScalarFloorTypes <- c("scale", "int_walk", "gibbs_p", "scale_p",
-                           "logit_scale_p", "slice", "beta_simplex",
-                           "gibbs_p_marginal")
-  moveTypes <- vapply(moves, function(m) m$type %||% m$name, character(1))
-  scalarFloorMoves <- moveNames[(moveDim == 1L & moveTypes %in% .kScalarFloorTypes) |
-                                  moveTypes == "joint_2d"]
+  # their acceptance rate is healthy.
+  scalarFloorMoves <- .ScalarFloorMoves(moves)
   # M-171: index for warmup-phase sweep frequency reduction (NA = no trans chars)
   gibbsKpIdx <- match("gibbs_kPrime", moveNames)
+  blockKpIdx <- match("block_kPrime", moveNames)
   moveTypeCodes <- vapply(moves, function(m) {
     # For per-class moves (e.g. scale_class_rate_log_sd_1) the unique name
     # is not in .kMoveTypes; fall back to m$type which IS registered.
@@ -922,30 +926,12 @@ RunMkPrime <- function(data, tree = NULL,
     integer(0L)
   }
 
-  # Auto-pin always-accept moves (Gibbs, slice) at initial weights.
-  # The warmup scheduler's score (accept_rate x dim / cost) gives these
-  # astronomical scores because acceptance = 1.0 and cost ~ 0; this inflates
-  # their weight and starves bottleneck MH moves.  One Gibbs draw or slice
-  # sample per cycle is already optimal, so freeze them.
-  # Also pin BG hyperparameter slice (slice_kprime_hyper): cheap, always-accept.
-  # gibbs_p_marginal (case 35) is near-always-accept and cheap (cache reads +
-  # one rbeta + Z evals, no pruning); pin it so the score = accept x dim / cost
-  # formula does not inflate its weight and starve bottleneck MH moves. It can
-  # reject in the small-p tail, but one draw per cycle is optimal regardless.
-  alwaysAcceptTypes <- c("gibbs_p", "slice", "gibbs_kprime_sweep",
-                         "slice_kprime_hyper", "gibbs_p_marginal")
   moveTypes <- vapply(moves, `[[`, character(1), "type")
-  autoPin <- moveWeights[moveTypes %in% alwaysAcceptTypes]
-
-  # Merge with user-specified pins (user takes precedence)
-  userPins <- .ResolvePinnedWeights(mcmc$moveWeights, moveNames)
-  if (length(autoPin) > 0L || !is.null(userPins)) {
-    allPins <- autoPin
-    if (!is.null(userPins)) allPins[names(userPins)] <- userPins
-    pinnedWeights <- allPins
+  pinnedWeights <- .SchedulePins(
+    moveWeights, moveTypes, .ResolvePinnedWeights(mcmc$moveWeights, moveNames)
+  )
+  if (!is.null(pinnedWeights)) {
     moveWeights <- .NormalizeMoveWeights(moveWeights, pinnedWeights)
-  } else {
-    pinnedWeights <- NULL
   }
 
   # T-018: Capture initial weights (post-normalization) for per-move decay floor.
@@ -1083,8 +1069,16 @@ RunMkPrime <- function(data, tree = NULL,
     bsTunings    <- vapply(r$chain_tuning,
                            function(t) t$beta_simplex, numeric(1L))
     iwWins       <- vapply(r$chain_tuning,
-                           function(t) as.integer(t$int_walk_window), integer(1L))
+                           function(t) .IntWalkWindow(t$int_walk_window),
+                           integer(1L))
+    # block_kPrime's window travels as its per-move int param, which C++
+    # shares across chains: heated chains shift by the cold chain's window.
+    if (!is.na(blockKpIdx)) {
+      moveIntParams[blockKpIdx] <-
+        .IntWalkWindow(r$chain_tuning[[1]]$block_kprime_window)
+    }
 
+    .CheckMoveWeights(moveWeights)
     result <- run_mcmc_batch_cpp(
       mcmcData, r$chainStates, r$betas,
       moveTypeCodes, transIdx0, sliceParamCodes, moveWeights,
@@ -3995,23 +3989,37 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     }
   }
 
-  # --- Scalar weight floor ---
-  # Scalar model-parameter moves (dim=1, non-topology) can be starved when
-  # kPrime and branch_lengths dominate the weight budget. Guarantee each
-  # scalar move gets at least 2% of the pre-floor total weight.
-  # Joint 2D moves also get the floor so they're comparable to individual
-  # scalar moves they complement.
-  scalarTypes <- c("scale", "int_walk", "gibbs_p", "scale_p", "logit_scale_p",
-                    "slice", "beta_simplex")
-  totalWeight <- sum(vapply(moves, `[[`, numeric(1), "weight"))
-  floorVal <- totalWeight * 0.02
-  for (i in seq_along(moves)) {
-    m <- moves[[i]]
-    if ((m$dim == 1L && m$type %in% scalarTypes) || m$type == "joint_2d") {
-      moves[[i]]$weight <- max(m$weight, floorVal)
-    }
-  }
+  .ApplyScalarFloor(moves)
+}
 
+
+# Scalar model-parameter moves (dim 1, non-topology) that must not be starved:
+# at build time when kPrime and branch_lengths dominate the weight budget, and
+# during warmup when the softmax scheduler's log(dim) term favours block moves.
+# Joint 2D moves share the floor, so they stay comparable to the scalar moves
+# they complement.
+.kScalarFloorTypes <- c("scale", "int_walk", "gibbs_p", "scale_p",
+                        "logit_scale_p", "slice", "beta_simplex",
+                        "gibbs_p_marginal", "scale_class_rate_log_sd",
+                        "scale_hyper_tau")
+
+# Names of the moves `.kScalarFloorTypes` covers.
+.ScalarFloorMoves <- function(moves) {
+  moveNames <- vapply(moves, `[[`, character(1), "name")
+  moveTypes <- vapply(moves, function(m) m$type %||% m$name, character(1))
+  moveDim <- vapply(moves, function(m) as.integer(m$dim %||% 1L), integer(1))
+  moveNames[(moveDim == 1L & moveTypes %in% .kScalarFloorTypes) |
+              moveTypes == "joint_2d"]
+}
+
+# Raise each scalar move to at least 2% of the schedule's pre-floor total.
+.ApplyScalarFloor <- function(moves) {
+  floorVal <- 0.02 * sum(vapply(moves, `[[`, numeric(1), "weight"))
+  floored <- vapply(moves, `[[`, character(1), "name") %in%
+    .ScalarFloorMoves(moves)
+  for (i in which(floored)) {
+    moves[[i]]$weight <- max(moves[[i]]$weight, floorVal)
+  }
   moves
 }
 
@@ -4215,8 +4223,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       }
     )
     # For dirichlet_branch / local_dirichlet, intWalkWindow carries nCats
-    iww <- if (!is.null(move$nCats)) as.integer(move$nCats)
-           else tuning$int_walk_window
+    iww <- if (!is.null(move$nCats)) {
+      as.integer(move$nCats)
+    } else if (identical(move$name, "block_kPrime")) {
+      .IntWalkWindow(tuning$block_kprime_window)
+    } else {
+      .IntWalkWindow(tuning$int_walk_window)
+    }
     accepted <- do_move_cpp(
       mcmcData, stateOrPtr, moveCode, charIdx,
       scaleTun, tuning$beta_simplex, iww, beta
@@ -4264,7 +4277,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       prop <- ProposeBoundedIntWalk(
         state$kPrime[charI],
         lower = mkd$kObs[charI],
-        window = tuning$int_walk_window
+        window = .IntWalkWindow(tuning$int_walk_window)
       )
       proposed$kPrime[charI] <- prop$value
       logHastings <- prop$logHastings
@@ -4564,6 +4577,64 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   keep <- intersect(names(userMoveWeights), moveNames)
   if (length(keep) == 0L) return(NULL)
   userMoveWeights[keep]
+}
+
+
+# Always-accepting moves (Gibbs, slice), pinned at their initial weights.
+# The warmup scheduler's score (accept_rate x dim / cost) gives these
+# astronomical scores because acceptance = 1.0 and cost ~ 0; this inflates
+# their weight and starves bottleneck MH moves.  One Gibbs draw or slice
+# sample per cycle is already optimal, so freeze them.
+# Also pin BG hyperparameter slice (slice_kprime_hyper): cheap, always-accept.
+# gibbs_p_marginal (case 35) is near-always-accept and cheap (cache reads +
+# one rbeta + Z evals, no pruning); pin it so the score = accept x dim / cost
+# formula does not inflate its weight and starve bottleneck MH moves. It can
+# reject in the small-p tail, but one draw per cycle is optimal regardless.
+.kAlwaysAcceptTypes <- c("gibbs_p", "slice", "gibbs_kprime_sweep",
+                         "slice_kprime_hyper", "gibbs_p_marginal")
+
+# Pinned weights for a schedule: the always-accepting moves at their current
+# shares, overridden by the user's `userPins` (already resolved against the
+# pool). Aborts when the pins leave the un-pinned moves no weight, which would
+# silently freeze every parameter only they update.
+.SchedulePins <- function(moveWeights, moveTypes, userPins) {
+  autoPin <- moveWeights[moveTypes %in% .kAlwaysAcceptTypes]
+  if (length(autoPin) == 0L && is.null(userPins)) return(NULL)
+  allPins <- autoPin
+  allPins[names(userPins)] <- userPins
+  freeMoves <- setdiff(names(moveWeights), names(allPins))
+  if (length(freeMoves) > 0L && 1 - sum(allPins) < 1e-12) {
+    autoOnly <- autoPin[setdiff(names(autoPin), names(userPins))]
+    maxPin <- floor((1 - sum(autoOnly)) * 1e4) / 1e4
+    cli::cli_abort(c(
+      "{.arg moveWeights} leaves the {length(freeMoves)} un-pinned \
+       move{?s} no weight.",
+      "i" = "{.val {names(autoOnly)}} {?is/are} pinned automatically at \
+             {signif(sum(autoOnly), 4)} of this schedule, so pinned \
+             {.arg moveWeights} must sum to less than {maxPin}; they sum \
+             to {signif(sum(userPins), 4)}."
+    ))
+  }
+  allPins
+}
+
+# Guard at the C++ boundary: run_mcmc_batch_cpp samples moves by cumulative
+# weight, and a negative entry silently makes later moves unreachable.
+.CheckMoveWeights <- function(weights, tolerance = 1e-6) {
+  if (!all(is.finite(weights))) {
+    cli::cli_abort("Internal error: move weights are not all finite.")
+  }
+  if (any(weights < 0)) {
+    cli::cli_abort(
+      "Internal error: negative move weight{?s} for {.val {names(weights)[weights < 0]}}."
+    )
+  }
+  if (abs(sum(weights) - 1) > tolerance) {
+    cli::cli_abort(
+      "Internal error: move weights must sum to 1, not {sum(weights)}."
+    )
+  }
+  invisible(weights)
 }
 
 
@@ -4921,18 +4992,31 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   dirichlet_branch = "Branches", local_dirichlet = "Branches",
   block_gibbs_branch = "Branches", weighted_branch_lengths = "Branches",
 
+  slice_tree_length = "Branches",
+
   kPrime = "Characters", gibbs_kPrime = "Characters",
   block_kPrime = "Characters", p = "Characters",
-  mh_logit_p = "Characters",
+  mh_logit_p = "Characters", gibbs_p_marginal = "Characters",
+  slice_kprime_s = "Characters", slice_kprime_r = "Characters",
 
   rate_loss = "Rates", rate_neo = "Rates", rate_log_sd = "Rates",
   beta_scale = "Rates",
   slice_rate_loss = "Rates", slice_rate_neo = "Rates",
   slice_rate_log_sd = "Rates", slice_beta_scale = "Rates",
-  joint_tl_rls = "Rates", joint_tl_rl = "Rates", joint_tl_rn = "Rates"
+  joint_tl_rls = "Rates", joint_tl_rl = "Rates", joint_tl_rn = "Rates",
+  scale_class_rate_log_sd = "Rates", scale_hyper_tau = "Rates",
+  dirichlet_simplex_class_w = "Rates"
 )
 
 .moveCategoryOrder <- c("Topology", "Branches", "Characters", "Rates")
+
+# Display category of each move, or `NA` for an unmapped one. Per-class
+# instances (`<type>_<classIdx>`) take their type's category.
+.MoveCategory <- function(moveNames) {
+  perClass <- paste0("^(", paste(.kPerClassMoveTypes, collapse = "|"),
+                     ")_[0-9]+$")
+  unname(.moveCategoryMap[sub(perClass, "\\1", moveNames)])
+}
 
 #' Format move weights as styled, categorized lines
 #'
@@ -4942,7 +5026,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' @keywords internal
 .FormatMoveWeights <- function(weights, moveNames) {
   pct <- weights * 100
-  cats <- .moveCategoryMap[moveNames]
+  cats <- .MoveCategory(moveNames)
   cats[is.na(cats)] <- "Other"
 
   presentCats <- intersect(.moveCategoryOrder, unique(cats))
@@ -4973,7 +5057,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' @keywords internal
 .FormatMoveWeightsPlain <- function(weights, moveNames) {
   pct <- weights * 100
-  cats <- .moveCategoryMap[moveNames]
+  cats <- .MoveCategory(moveNames)
   cats[is.na(cats)] <- "Other"
 
   presentCats <- intersect(.moveCategoryOrder, unique(cats))
@@ -5010,6 +5094,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 }
 
 
+# Integer window handed to a k' walk. The tuner stores it continuous; a
+# window below 1 would make every proposed delta 0.
+.IntWalkWindow <- function(window) {
+  max(1L, as.integer(round(window %||% 1)))
+}
+
+
 #' Adapt tuning parameters based on acceptance rates
 #' @keywords internal
 .AdaptTuning <- function(tuning, acceptCount, proposeCount, moves) {
@@ -5027,6 +5118,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     dirichlet_branch = 0.234,
     local_dirichlet = 0.234,
     joint_tl_rls = 0.25, joint_tl_rl = 0.25, joint_tl_rn = 0.25,
+    scale_class_rate_log_sd = 0.35, scale_hyper_tau = 0.35,
     # Gibbs/weighted/block/kPrime/slice moves: no MH tuning to adapt
     gibbs_kPrime = NA_real_, block_kPrime = 0.234,
     gibbs_spr = NA_real_, gibbs_subtree_swap = NA_real_,
@@ -5054,11 +5146,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     joint_tl_rls = "scale_joint_tl_rls",
     joint_tl_rl = "scale_joint_tl_rl",
     joint_tl_rn = "scale_joint_tl_rn",
+    scale_class_rate_log_sd = "scale_class_rate_log_sd",
+    scale_hyper_tau = "scale_hyper_tau",
     dirichlet_branch = "dirichlet_alpha",
     local_dirichlet = "local_dirichlet_alpha",
     # Gibbs/weighted/block/kPrime/slice moves: no tuning to adapt
     gibbs_kPrime = NA_character_,
-    block_kPrime = "int_walk_window",  # uses intWalkWindow for shift range
+    block_kPrime = "block_kprime_window",
     gibbs_spr = NA_character_, gibbs_subtree_swap = NA_character_,
     weighted_branch_lengths = NA_character_,
     weighted_spr = NA_character_, weighted_subtree_swap = NA_character_,
@@ -5069,17 +5163,31 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     slice_beta_scale = NA_character_
   )
 
-  for (move in moves) {
-    nm <- move$name
-    if (proposeCount[nm] < 10) next
-    rate <- acceptCount[nm] / proposeCount[nm]
+  # Checkpoints written before block_kPrime had its own window lack the key.
+  tuning$block_kprime_window <- tuning$block_kprime_window %||% 1
+
+  # Per-class instances ("<type>_<c>") share their type's rule and step size,
+  # so their counts are pooled and the step is updated once.
+  moveNames <- vapply(moves, `[[`, character(1), "name")
+  ruleKeys <- vapply(moves, function(m) {
+    if (m$name %in% names(tuningKeys)) m$name else m$type %||% m$name
+  }, character(1))
+
+  for (nm in unique(ruleKeys)) {
+    ruleMoves <- moveNames[ruleKeys == nm]
+    proposed <- sum(proposeCount[ruleMoves])
+    if (proposed < 10) next
+    rate <- sum(acceptCount[ruleMoves]) / proposed
     target <- targets[nm]
     tk <- tuningKeys[nm]
 
     if (!is.na(tk) && !is.null(tuning[[tk]])) {
       adj <- exp(0.5 * (rate - target))
-      if (nm == "kPrime") {
-        tuning[[tk]] <- max(1L, as.integer(round(tuning[[tk]] * adj)))
+      if (nm %in% c("kPrime", "block_kPrime")) {
+        # Held continuous and rounded only at use (.IntWalkWindow): adj never
+        # reaches 1.5, so a window rounded here could never leave 1. The cap
+        # stops a flat conditional from widening it without limit.
+        tuning[[tk]] <- max(1, min(tuning[[tk]] * adj, 50))
       } else if (nm == "branch_lengths") {
         tuning[[tk]] <- tuning[[tk]] / adj
         tuning[[tk]] <- max(2, tuning[[tk]])
@@ -5312,8 +5420,10 @@ if (n < 2L * windowSize) {
     pinnedIdx <- pinnedIdx[!is.na(pinnedIdx)]
   }
   freeIdx <- setdiff(seq_along(currentWeights), pinnedIdx)
-  if (length(freeIdx) < 2L) {
-    # Can't meaningfully perturb with fewer than 2 free moves
+  budget <- if (length(pinnedIdx) > 0L) 1.0 - sum(pinnedWeights) else 1.0
+  if (length(freeIdx) < 2L || budget < 1e-12) {
+    # Can't meaningfully perturb with fewer than 2 free moves, or with no
+    # budget to share among them
     return(list())
   }
 
@@ -5329,11 +5439,6 @@ if (n < 2L * windowSize) {
     w[freeIdx] <- pmax(w[freeIdx], wMin)
 
     # Renormalise free moves to their budget
-    budget <- if (length(pinnedIdx) > 0L) {
-      1.0 - sum(pinnedWeights)
-    } else {
-      1.0
-    }
     freeSum <- sum(w[freeIdx])
     if (freeSum > 0) {
       w[freeIdx] <- w[freeIdx] / freeSum * budget

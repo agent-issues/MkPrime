@@ -81,3 +81,14 @@ test_that(".AdaptThinning excludes kPrime and branch columns", {
   # Should be near the floor (driven by iid scalars), not by kPrime/br
   expect_lte(result, 25L)
 })
+
+test_that(".AdaptThinning ignores the topology hash", {
+  set.seed(90210)
+  n <- 200L
+  mat <- cbind(log_posterior = rnorm(n), tree_length = rnorm(n),
+               topo_hash = cumsum(rnorm(n)))
+  # A random walk has an ESS of order 1: were topo_hash read, it would set
+  # the thinning interval.
+  expect_equal(MkPrime:::.AdaptThinning(mat, 15L, 15L),
+               MkPrime:::.AdaptThinning(mat[, 1:2], 15L, 15L))
+})
