@@ -30,13 +30,15 @@
 # regenerated once on 2026-09-18 when the fixture was made hermetic: it now
 # pins its starting tree (_reference/partition-bitcompat-null-start.nwk) and
 # pins `gibbsSpr = FALSE`, and again on 2026-09-23 when `pSpr = FALSE` joined
-# it (issue #142). The 2026-05-20 reference delegated its starting
+# it (issue #142), and again on 2026-09-23 when `cacheBonus = 1` joined it
+# (issue #70). The 2026-05-20 reference delegated its starting
 # topology to TreeSearch::AdditionTree(), so it silently depended on the
 # installed version of a Suggests package and no CI job could ever reproduce
 # it; see helper-partition-ref.R.
 #
 # What the pinned schedule does NOT cover: `gibbs_spr` and `pspr` (both pinned
-# off), `gibbs_subtree_swap`, `joint2d`, and the default-off weighted /
+# off), the cache-aware selection boost (pinned off), `gibbs_subtree_swap`,
+# `joint2d`, and the default-off weighted /
 # block-Gibbs moves. Everything else in the legacy path — the starting tree,
 # the three remaining unweighted topology moves (nni / spr / tbr), the
 # branch-length and Dirichlet moves, the k-prime and rate moves, the

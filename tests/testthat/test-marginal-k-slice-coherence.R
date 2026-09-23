@@ -136,3 +136,25 @@ test_that("sampled_k keeps the partitioned slice fast path coherent", {
 
   expect_equal(s$logLik, .SliceCohCold(fixture, s), tolerance = 1e-8)
 })
+
+
+test_that("marginal_k slice leaves the charLL cache cold when it exhausts", {
+  # The shrink loop's trial evaluations refill the per-(char, k') cache. When
+  # no trial is accepted the scalar reverts, so the cache no longer describes
+  # the state; mh_logit_p and gibbs_p_marginal would read it without a rebuild.
+  # A stored log-prior far above anything the target can reach puts every
+  # trial below the slice, so the loop always exhausts.
+  set.seed(404)
+  fixture <- .SliceCohFixture("marginal_k")
+  state0 <- fixture$state0
+  state0$log_prior <- 1e6
+  statePtr <- MkPrime:::.InitMcmcChain(state0)
+  fill_partition_cache(fixture$dataPtr, statePtr)
+  allocate_cl_workspace(fixture$dataPtr, statePtr)
+  expect_true(get_marginal_cache_state(statePtr)$charLLReady)
+
+  expect_false(do_move_cpp(fixture$dataPtr, statePtr, 19L, 0L,
+                           1.0, 10, 1L, 1.0))
+  expect_equal(get_mcmc_state(statePtr)$treeLength, state0$tree_length)
+  expect_false(get_marginal_cache_state(statePtr)$charLLReady)
+})

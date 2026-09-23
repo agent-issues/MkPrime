@@ -291,14 +291,12 @@ scheduler during warmup. Example:
 To disable adaptive scheduling entirely, pin all moves (sum to 1).
 See section \strong{Adaptive move scheduling} below.}
 
-\item{cacheBonus}{Numeric; multiplier applied to partial-CL-eligible
-move weights (NNI, beta_simplex, Dirichlet, local_dirichlet) when the
-node CL cache is valid. Default 5. A value of 1 disables the boost.
-Higher values preferentially select fast partial-CL moves after
-another partial-CL move succeeds, exploiting the ~15\eqn{\times}
-speedup. Statistically valid: each component kernel individually
-satisfies detailed balance; only selection frequency changes.
-Ignored when Q-heterogeneity is enabled (partial CL not supported).}
+\item{cacheBonus}{Numeric specifying the factor applied to the weights of
+the moves that reuse cached partial likelihoods (NNI, SPR, \code{beta_simplex},
+Dirichlet, \code{local_dirichlet}) on the iteration after one of them is
+proposed; 1 disables the boost, which has no effect when
+\code{\link[=MkPrimeModel]{MkPrimeModel()}} sets \code{qHeterogeneity = TRUE} or
+\code{likelihoodMode = "marginal_k"}.}
 
 \item{tuning}{Named list of initial tuning parameters for each move
 type. See Details.}

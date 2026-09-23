@@ -244,14 +244,12 @@
 #'     batch completion is more important than a timely abort.
 #'
 #'   Ignored when `nCore = 1`.
-#' @param cacheBonus Numeric; multiplier applied to partial-CL-eligible
-#'   move weights (NNI, beta_simplex, Dirichlet, local_dirichlet) when the
-#'   node CL cache is valid. Default 5. A value of 1 disables the boost.
-#'   Higher values preferentially select fast partial-CL moves after
-#'   another partial-CL move succeeds, exploiting the ~15\eqn{\times}
-#'   speedup. Statistically valid: each component kernel individually
-#'   satisfies detailed balance; only selection frequency changes.
-#'   Ignored when Q-heterogeneity is enabled (partial CL not supported).
+#' @param cacheBonus Numeric specifying the factor applied to the weights of
+#'   the moves that reuse cached partial likelihoods (NNI, SPR, `beta_simplex`,
+#'   Dirichlet, `local_dirichlet`) on the iteration after one of them is
+#'   proposed; 1 disables the boost, which has no effect when
+#'   [MkPrimeModel()] sets `qHeterogeneity = TRUE` or
+#'   `likelihoodMode = "marginal_k"`.
 #' @param tuning Named list of initial tuning parameters for each move
 #'   type. See Details.
 #'

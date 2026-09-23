@@ -210,6 +210,11 @@ struct McmcState {
   int diagNniPartialCount = 0;
   int diagBsPartialCount = 0;
   int diagCachePopCount = 0;
+  // Whether the next move selection uses cache-boosted weights. Set from the
+  // type of the move just proposed, never from its acceptance or from
+  // nodeCL.ready(): either would make the mixture weights depend on the state,
+  // and the chain would no longer leave the posterior invariant.
+  bool cacheBoostNext = false;
 
   // Partition-API (Layer 1, plan v4 §4.2).
   // When usePartitioned is false (legacy path), these are ignored and the
@@ -3614,8 +3619,12 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
     if (u1 < u0) L = u1; else R_bound = u1;
   }
 
-  // Fallback: restore original value
+  // Fallback: restore original value. Under marginal_k every trial refilled
+  // the charLL cache at its own scalar, and the p-moves read it without a
+  // rebuild.
   set_scalar(state, paramIdx, x0);
+  state->charLLCacheReady = false;
+  state->invalidate_per_kp_cl_all();
   return false;
 }
 
@@ -6025,6 +6034,13 @@ bool do_move_cpp(SEXP dataPtr, SEXP statePtr,
 }
 
 
+// Moves that can score through the node CL cache: beta_simplex, NNI, SPR,
+// dirichlet_branch, local_dirichlet.
+static inline bool is_partial_cl_move(int moveType) {
+  return moveType == 4 || moveType == 5 || moveType == 6 ||
+         moveType == 23 || moveType == 24;
+}
+
 // ---------------------------------------------------------------------------
 // run_mcmc_batch_cpp: C++ inner loop — runs nBatch iterations for one run.
 //
@@ -6075,18 +6091,18 @@ List run_mcmc_batch_cpp(
     cumWeights[m] = totalWeight;
   }
 
-  // M-159: Cache-boosted weights (used when nodeCL.ready() && !qHeterogeneity).
-  // Partial-CL-eligible moves {4=beta_simplex, 5=NNI, 6=SPR, 23=dirichlet,
-  // 24=local_dirichlet} get cacheBonus multiplier.
-  bool haveCacheBoost = cacheBonus > 1.0 && !data->qHeterogeneity;
+  // M-159: Cache-boosted weights, used on the iteration after a
+  // partial-CL-eligible move (see McmcState::cacheBoostNext). The node CL
+  // cache is never populated under qHeterogeneity or marginalK.
+  bool haveCacheBoost = cacheBonus > 1.0 && !data->qHeterogeneity &&
+                        !data->marginalK;
   std::vector<double> cumWeightsCached(nMoves);
   double totalWeightCached = 0.0;
   if (haveCacheBoost) {
     for (int m = 0; m < nMoves; ++m) {
       int mt = moveTypeCodes[m];
       double w = moveWeights[m];
-      if (mt == 4 || mt == 5 || mt == 6 || mt == 23 || mt == 24)
-        w *= cacheBonus;
+      if (is_partial_cl_move(mt)) w *= cacheBonus;
       totalWeightCached += w;
       cumWeightsCached[m] = totalWeightCached;
     }
@@ -6172,9 +6188,7 @@ List run_mcmc_batch_cpp(
 
     // Advance each chain
     for (int ch = 0; ch < nChains; ++ch) {
-      // M-159: Cache-aware weighted move selection.
-      // When the node CL cache is valid, boost partial-CL-eligible moves.
-      bool useBoost = haveCacheBoost && states[ch]->nodeCL.ready();
+      bool useBoost = haveCacheBoost && states[ch]->cacheBoostNext;
       double tw = useBoost ? totalWeightCached : totalWeight;
       const auto& cw = useBoost ? cumWeightsCached : cumWeights;
       if (useBoost) ++cacheHits; else ++cacheMisses;
@@ -6236,6 +6250,7 @@ List run_mcmc_batch_cpp(
         (double)std::chrono::duration_cast<std::chrono::nanoseconds>(
           t1 - t0).count();
       if (accepted) acceptCounts(ch, moveIdx)++;
+      states[ch]->cacheBoostNext = is_partial_cl_move(moveType);
     }
 
     // Chain swap: propose one random adjacent pair per iteration
