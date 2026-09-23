@@ -17,32 +17,6 @@ alongside the p-samplers. Scopes were widened, not replaced, so the `area:1` and
 `dirichlet_simplex_class_w`) belong to no area. It needs its own row rather than
 being folded into a neighbour — see area 12.
 
-## Model-version legend
-
-A tier is a rung, not a model: `opus` and `fable` are Agent-tool aliases whose
-resolved version changes under you. Backward-looking verdicts (`ran dry`,
-`dormant`) are **version-scoped**; forward-looking routing ("escalate to opus")
-stays unversioned. Reconcile this table at the start of every round, and if the
-alias has moved, add a row and fire the version-bump revisit trigger **before**
-dispatching.
-
-| Alias | Resolved version | As of |
-|-------|------------------|-------|
-| `opus` | Opus 4.8 | rounds dated on or before 2026-07-26 |
-| `opus` | Opus 5 | 2026-09-18 |
-| `fable` | Fable 5.1 | 2026-09-18 |
-| `opus` | Opus 5.5 | 2026-09-23 |
-| `fable` | Fable 5.1 — **suspended**, outclassed by Opus 5.5; not dispatched until the maintainer re-enables it | 2026-09-23 |
-
-**A capability bump reopens dormancy.** A `dry` or `dormant` verdict is evidence
-about the model that produced it; Opus 5.5 reopens every verdict recorded at
-Opus 4.8, Opus 5 or Fable 5.1.
-
-This table is here rather than in the skill because the skill says it must be:
-the alias-to-version mapping is project-local, and "a dated table baked into
-[the skill] would go stale silently in every project that inherits it". It
-moved here from `log.md` when that file was deleted.
-
 ## Rotation
 
 **The rule is not recorded here.** It lives in the `/red-team` skill (Normal
@@ -76,4 +50,4 @@ pre-Discussions history is archived at discussion #124.
 | 9 | Convergence diagnostics & ESS | `R/Convergence.R`; `R/ess.R`; `R/treeESS.R`; `R/acrv.R` | Tree ESS computation correct for variable k'? Multi-chain convergence (R-hat) handles within-chain heat changes? Diagnostics emit on EG arm? |
 | 10 | Test-suite health | `tests/testthat/test-empirical-geometric-prior.R`; `tests/testthat/test-priors.R`; `tests/testthat/test-gibbs.R`; `tests/testthat/test-m092-adaptive-scheduler.R` | New EG tests cover the math and the p-sampler? Snapshot tests stable? Tests that broke under EG default — were they fixed by re-baselining or by hiding a real regression? |
 | 11 | **RB-oracle equivalence** | `dev/rb-equivalence/*`; `R/MkPrimeModel.R`; `R/MkPrimeMCMC.R`; `R/RunMkPrime.R`; `src/*` | Do MkPrime posteriors agree statistically with RevBayes on the 5 frozen matrices × 2 models (by_nt_9v, by_nt_kv)? Cross-sampler R-hat < 1.025 and pooled ESS > 128 on every scalar (tree_length, rate_log_sd, rate_loss, rate_neo) and on CID-to-pooled-median? Wall-seconds to target trend stable across commits? Tree ESS comparable (reported, not gating, since RB lacks the diagnostic)? Re-run on Hamilton (same node per cell) when any in-scope file changes — cache invalidation by `mtime(out/<rds>) < git log -1 --format=%cd R/ src/`. Pid 950 cid_to_median is the documented exception (near-prior posterior, degenerate tree CID). |
-| 12 | **Red-team process meta-review** | `dev/red-team/focus-areas.md`, `dev/red-team/README.md`, `dev/red-team/discussion-categories.md`, `dev/red-team/findings-archive.md`, `dev/red-team/migration-map.tsv`; `gh issue list --label red-team` | Reviews the rotation itself, not the package. Are any areas **too broad** — spanning distinct seams, so a finder concentrating on one file family systematically misses another? Too **narrow** — a single-feature scope better merged into a neighbour? Do any **overlap**, auditing the same source under two headings? Has any gone persistently **dry** (three consecutive rounds, zero confirmed sev:med+) and should be retired, merged or down-tiered — remembering that dry is version-scoped, so check the model-version legend before calling it? Are there **new seams** not covered by any area: recently merged features, new `src/` or `R/` files, `dev/rb-equivalence/`, `dev/profiling/` (scope question — profiling has its own rotation; does red-team own its harnesses?), the Hamilton harness under `data-raw/hamilton/`? Are **tier assignments calibrated to recorded yield** in the round Discussions and in closed issues? **This table has no `start_tier` column at all** — the skill expects one per area; adding it is this area's first job. Are areas 1–2 (tagged `[EG]`) still live, given the EG arm concluded and the released scope is MkNT? **Check Discussion-category headroom before proposing a new area** — GitHub caps a repo at 25, and each new area needs both an `area:N` label and a hand-created category (`discussion-categories.md`). Output is concrete restructuring actions — split, merge, retire, add, re-tier — each tied to yield evidence, not taste. |
+| 12 | **Red-team process meta-review** | `dev/red-team/focus-areas.md`, `dev/red-team/README.md`, `dev/red-team/discussion-categories.md`, `dev/red-team/findings-archive.md`, `dev/red-team/migration-map.tsv`; `gh issue list --label red-team` | Reviews the rotation itself, not the package. Are any areas **too broad** — spanning distinct seams, so a finder concentrating on one file family systematically misses another? Too **narrow** — a single-feature scope better merged into a neighbour? Do any **overlap**, auditing the same source under two headings? Has any gone persistently **dry** (three consecutive rounds, zero confirmed sev:med+) and should be retired, merged or down-tiered — remembering that dry is model-scoped, so check the model stamped in the round titles before calling it? Are there **new seams** not covered by any area: recently merged features, new `src/` or `R/` files, `dev/rb-equivalence/`, `dev/profiling/` (scope question — profiling has its own rotation; does red-team own its harnesses?), the Hamilton harness under `data-raw/hamilton/`? Are **tier assignments calibrated to recorded yield** in the round Discussions and in closed issues? Are areas 1–2 (tagged `[EG]`) still live, given the EG arm concluded and the released scope is MkNT? **Check Discussion-category headroom before proposing a new area** — GitHub caps a repo at 25, and each new area needs both an `area:N` label and a hand-created category (`discussion-categories.md`). Output is concrete restructuring actions — split, merge, retire, add, re-tier — each tied to yield evidence, not taste. |
