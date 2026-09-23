@@ -93,6 +93,18 @@ test_that(".BuildResult returns a partial posterior when a run never started (#9
   expect_identical(result$nSamples, 4L)
   expect_identical(result$requested_nRuns, 2L)
   expect_identical(result$dropped_runs$run, 2L)
+
+  # More than one unstarted run: the report names them all.
+  mcmc$nRuns <- 3L
+  expect_warning(
+    result <- .BuildResult(list(started, neverStarted, neverStarted),
+                          model = NULL, mkd = NULL, mcmc = mcmc,
+                          paramNames = paramNames,
+                          logFilePaths = c(logs, logs[[2]]), actualIter = 4L,
+                          stopReason = "cancelled"),
+    "never started"
+  )
+  expect_identical(result$dropped_runs$run, c(2L, 3L))
 })
 
 

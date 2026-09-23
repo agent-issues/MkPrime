@@ -2557,7 +2557,8 @@ RunMkPrime <- function(data, tree = NULL,
   if (!all(usable)) {
     unstarted <- which(!usable)
     cli::cli_warn(c(
-      "Run{?s} {unstarted} never started sampling, and {?is/are} omitted.",
+      "{cli::qty(length(unstarted))}Omitting run{?s} that never started \
+       sampling: {unstarted}.",
       "i" = "The job stopped ({.val {stopReason}}) before the first batch."
     ))
     drops <- rbind(drops, data.frame(
