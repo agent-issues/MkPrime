@@ -136,8 +136,8 @@ test_that("mh_logit_p (case 30) targets the correct p full-conditional (KS test)
   # sum(kPrime - 2)) that the retired conjugate gibbs_p (case 9) used to draw
   # directly, in the near-untruncated limit (kprimeTruncK at its
   # compile-time cap of 256, with kPrime chosen far from that boundary so
-  # the truncation normaliser Z_A(p) ~ 1).
-  skip_on_cran()
+  # the truncation normaliser Z_A(p) ~ 1). Runtime is ~1s, well under the
+  # "more than a few seconds" bar for skip_on_cran().
   set.seed(20260923)
 
   tree <- .small_trans_tree()
