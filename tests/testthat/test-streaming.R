@@ -105,6 +105,65 @@ test_that("Multi-run creates separate log files with _1/_2 suffix", {
 })
 
 
+# --- Convergence window (circular buffer) ---
+
+test_that(".ConvWindowRows returns rows in chronological order after wrap", {
+  convWindowSize <- 10L
+  buf <- .InitStreamBuffers(nParams = 1L, paramNames = "x",
+                             bufferSize = 100L, convWindowSize = convWindowSize)
+  logFile <- tempfile(fileext = ".log")
+  on.exit(unlink(logFile), add = TRUE)
+
+  for (i in 1:13) {
+    buf <- .AddToStreamBuffer(buf, row = i, iterNum = i, logFile = logFile,
+                               bufferSize = 100L, convWindowSize = convWindowSize)
+  }
+  expect_true(buf$conv_filled)
+
+  rows <- .ConvWindowRows(buf, minRows = 1L)
+  # 13 samples into a window of 10 -> the oldest 3 (1:3) have been
+  # overwritten; the chronological order of what remains is 4:13.
+  expect_equal(as.vector(rows), 4:13)
+})
+
+test_that(".ConvWindowRows is chronological right when the window first fills", {
+  # conv_head == convWindowSize is the edge case: the window has just
+  # wrapped to "filled" but has not yet overwritten anything.
+  convWindowSize <- 10L
+  buf <- .InitStreamBuffers(nParams = 1L, paramNames = "x",
+                             bufferSize = 100L, convWindowSize = convWindowSize)
+  logFile <- tempfile(fileext = ".log")
+  on.exit(unlink(logFile), add = TRUE)
+
+  for (i in 1:10) {
+    buf <- .AddToStreamBuffer(buf, row = i, iterNum = i, logFile = logFile,
+                               bufferSize = 100L, convWindowSize = convWindowSize)
+  }
+  expect_true(buf$conv_filled)
+  expect_equal(buf$conv_head, convWindowSize)
+
+  rows <- .ConvWindowRows(buf, minRows = 1L)
+  expect_equal(as.vector(rows), 1:10)
+})
+
+test_that(".ConvWindowRows returns unrotated rows before the window fills", {
+  convWindowSize <- 10L
+  buf <- .InitStreamBuffers(nParams = 1L, paramNames = "x",
+                             bufferSize = 100L, convWindowSize = convWindowSize)
+  logFile <- tempfile(fileext = ".log")
+  on.exit(unlink(logFile), add = TRUE)
+
+  for (i in 1:5) {
+    buf <- .AddToStreamBuffer(buf, row = i, iterNum = i, logFile = logFile,
+                               bufferSize = 100L, convWindowSize = convWindowSize)
+  }
+  expect_false(buf$conv_filled)
+
+  rows <- .ConvWindowRows(buf, minRows = 1L)
+  expect_equal(as.vector(rows), 1:5)
+})
+
+
 # --- MkPosterior result in streaming mode ---
 
 test_that("Streaming result has logFile field and empty samples matrix", {
