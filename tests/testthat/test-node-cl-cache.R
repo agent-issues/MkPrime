@@ -294,3 +294,29 @@ test_that("LIKE-001: partial-CL paths carry the singleton term", {
   expect_gt(result$partial, 100)
   expect_lt(result$drift, 1e-6)
 })
+
+# cache_total_loglik() computes the JC ascertainment term once per k and
+# reuses it for every cache unit with that k.  Resampling k' splits each
+# kObs partition into several units, and units in different partitions come
+# to share a k; each must still carry its own correction.
+test_that("partial-CL ascertainment is right when units share k", {
+  set.seed(5190)
+  tree <- Preorder(ape::rtree(10L, rooted = FALSE))
+  nChar <- 30L
+  mat <- matrix(sample(0:3, 10L * nChar, replace = TRUE),
+                nrow = 10L,
+                dimnames = list(tree$tip.label, paste0("c", seq_len(nChar))))
+  mat[, 1:10] <- mat[, 1:10] %% 2L
+  mkd <- MkPrimeData(MatrixToPhyDat(mat))
+  expect_gt(length(unique(mkd$kObs)), 1L)
+  moves <- rbind(
+    .kCacheMoves,
+    cbind(type = MkPrime:::.kMoveTypes[["gibbs_kPrime"]], param = 0L)
+  )
+  for (coding in c("variable", "informative")) {
+    result <- .CachedLogLikDrift(tree, mkd, MkPrimeModel(coding = coding),
+                                 moves)
+    expect_gt(result$partial, 100)
+    expect_lt(result$drift, 1e-6)
+  }
+})
