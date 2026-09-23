@@ -879,6 +879,7 @@ RunMkPrime <- function(data, tree = NULL,
   scalarFloorMoves <- .ScalarFloorMoves(moves)
   # M-171: index for warmup-phase sweep frequency reduction (NA = no trans chars)
   gibbsKpIdx <- match("gibbs_kPrime", moveNames)
+  blockKpIdx <- match("block_kPrime", moveNames)
   moveTypeCodes <- vapply(moves, function(m) {
     # For per-class moves (e.g. scale_class_rate_log_sd_1) the unique name
     # is not in .kMoveTypes; fall back to m$type which IS registered.
@@ -1077,7 +1078,14 @@ RunMkPrime <- function(data, tree = NULL,
     bsTunings    <- vapply(r$chain_tuning,
                            function(t) t$beta_simplex, numeric(1L))
     iwWins       <- vapply(r$chain_tuning,
-                           function(t) as.integer(t$int_walk_window), integer(1L))
+                           function(t) .IntWalkWindow(t$int_walk_window),
+                           integer(1L))
+    # block_kPrime's window travels as its per-move int param, which C++
+    # shares across chains: heated chains shift by the cold chain's window.
+    if (!is.na(blockKpIdx)) {
+      moveIntParams[blockKpIdx] <-
+        .IntWalkWindow(r$chain_tuning[[1]]$block_kprime_window)
+    }
 
     result <- run_mcmc_batch_cpp(
       mcmcData, r$chainStates, r$betas,
@@ -4223,8 +4231,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       }
     )
     # For dirichlet_branch / local_dirichlet, intWalkWindow carries nCats
-    iww <- if (!is.null(move$nCats)) as.integer(move$nCats)
-           else tuning$int_walk_window
+    iww <- if (!is.null(move$nCats)) {
+      as.integer(move$nCats)
+    } else if (identical(move$name, "block_kPrime")) {
+      .IntWalkWindow(tuning$block_kprime_window)
+    } else {
+      .IntWalkWindow(tuning$int_walk_window)
+    }
     accepted <- do_move_cpp(
       mcmcData, stateOrPtr, moveCode, charIdx,
       scaleTun, tuning$beta_simplex, iww, beta
@@ -4272,7 +4285,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       prop <- ProposeBoundedIntWalk(
         state$kPrime[charI],
         lower = mkd$kObs[charI],
-        window = tuning$int_walk_window
+        window = .IntWalkWindow(tuning$int_walk_window)
       )
       proposed$kPrime[charI] <- prop$value
       logHastings <- prop$logHastings
@@ -5031,6 +5044,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 }
 
 
+# Integer window handed to a k' walk. The tuner stores it continuous; a
+# window below 1 would make every proposed delta 0.
+.IntWalkWindow <- function(window) {
+  max(1L, as.integer(round(window %||% 1)))
+}
+
+
 #' Adapt tuning parameters based on acceptance rates
 #' @keywords internal
 .AdaptTuning <- function(tuning, acceptCount, proposeCount, moves) {
@@ -5082,7 +5102,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     local_dirichlet = "local_dirichlet_alpha",
     # Gibbs/weighted/block/kPrime/slice moves: no tuning to adapt
     gibbs_kPrime = NA_character_,
-    block_kPrime = "int_walk_window",  # uses intWalkWindow for shift range
+    block_kPrime = "block_kprime_window",
     gibbs_spr = NA_character_, gibbs_subtree_swap = NA_character_,
     weighted_branch_lengths = NA_character_,
     weighted_spr = NA_character_, weighted_subtree_swap = NA_character_,
@@ -5092,6 +5112,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     slice_rate_log_sd = NA_character_, slice_tree_length = NA_character_,
     slice_beta_scale = NA_character_
   )
+
+  # Checkpoints written before block_kPrime had its own window lack the key.
+  tuning$block_kprime_window <- tuning$block_kprime_window %||% 1
 
   # Per-class instances ("<type>_<c>") share their type's rule and step size,
   # so their counts are pooled and the step is updated once.
@@ -5110,8 +5133,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
     if (!is.na(tk) && !is.null(tuning[[tk]])) {
       adj <- exp(0.5 * (rate - target))
-      if (nm == "kPrime") {
-        tuning[[tk]] <- max(1L, as.integer(round(tuning[[tk]] * adj)))
+      if (nm %in% c("kPrime", "block_kPrime")) {
+        # Held continuous and rounded only at use (.IntWalkWindow): adj never
+        # reaches 1.5, so a window rounded here could never leave 1. The cap
+        # stops a flat conditional from widening it without limit.
+        tuning[[tk]] <- max(1, min(tuning[[tk]] * adj, 50))
       } else if (nm == "branch_lengths") {
         tuning[[tk]] <- tuning[[tk]] / adj
         tuning[[tk]] <- max(2, tuning[[tk]])

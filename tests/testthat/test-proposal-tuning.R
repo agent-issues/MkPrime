@@ -6,6 +6,7 @@
 #       they actually use, not the Gaussian 1-D optimum;
 #   #6  .kMoveTypes and the moveWeights whitelist must be one surface;
 #   #7  the generic branch of the step-size tuner must be bounded above;
+#   #72 the k' walks must keep a window that proposes a real change;
 #   #77 the partitioned per-class moves must adapt their step size.
 
 
@@ -197,6 +198,94 @@ test_that("the generic step floor still holds", {
     )
   }
   expect_gte(tuning$scale_rate_loss, 0.01)
+})
+
+
+# --- #72: the k' walks keep a real window --------------------------------
+
+test_that("both k' walks keep a usable window through warmup adaptation", {
+  mcmc <- MkPrimeMCMC(nIter = 10000L)
+  moves <- Filter(function(m) m$name %in% c("kPrime", "block_kPrime"),
+                  MkPrime:::.BuildMoves(20L, 5L, TRUE, mcmc))
+  expect_length(moves, 2L)
+  tuning <- mcmc$tuning
+  propose <- accept <- c(kPrime = 0, block_kPrime = 0)
+  for (batch in seq_len(8L)) {
+    # Cumulative counts, as the run loop passes them.
+    propose <- propose + c(kPrime = 100, block_kPrime = 20)
+    accept <- accept + c(kPrime = 80, block_kPrime = 0)
+    tuning <- MkPrime:::.AdaptTuning(tuning, accept, propose, moves)
+    # A window below 1 truncates to 0 at use: every delta is then 0.
+    expect_gte(tuning$int_walk_window, 1)
+    expect_gte(tuning$block_kprime_window, 1)
+  }
+  # A walk accepting 80% against a 0.35 target must widen...
+  expect_gt(MkPrime:::.IntWalkWindow(tuning$int_walk_window), 1L)
+  # ...and the block shift, which never accepts, cannot narrow past 1.
+  expect_identical(MkPrime:::.IntWalkWindow(tuning$block_kprime_window), 1L)
+})
+
+test_that(".IntWalkWindow hands C++ a whole window of at least 1", {
+  expect_identical(MkPrime:::.IntWalkWindow(0.889585), 1L)
+  expect_identical(MkPrime:::.IntWalkWindow(0), 1L)
+  expect_identical(MkPrime:::.IntWalkWindow(2.6), 3L)
+  # A checkpoint that predates the key.
+  expect_identical(MkPrime:::.IntWalkWindow(NULL), 1L)
+})
+
+test_that("the kPrime walk moves k' under a fractional stored window", {
+  set.seed(7201)
+  tree <- BalancedTree(8)
+  tree$edge.length <- rep(0.1, nrow(tree$edge))
+  mat <- matrix(sample(0:2, 8 * 6, replace = TRUE), nrow = 8,
+                dimnames = list(tree$tip.label, NULL))
+  mkd <- MkPrimeData(MatrixToPhyDat(mat))
+  transIdx <- which(mkd$type == "transformational")
+  expect_gt(length(transIdx), 0L)
+  model <- MkPrime:::.FinalizeModel(MkPrimeModel(), tree, mkd)
+  state <- MkPrime:::.InitState(Preorder(tree), mkd, model)
+  mcmcData <- MkPrime:::.InitMcmcData(mkd, model)
+  statePtr <- MkPrime:::.InitMcmcChain(state)
+  MkPrime:::fill_partition_cache(mcmcData, statePtr)
+  MkPrime:::allocate_cl_workspace(mcmcData, statePtr)
+
+  move <- list(name = "kPrime", type = "int_walk", target = "kPrime",
+               weight = 1, dim = 1L)
+  # The value the shared-key tuner used to store: truncated to a window of 0,
+  # it proposed delta = 0 every time and "accepted" all of them.
+  tuning <- list(int_walk_window = 0.889585, beta_simplex = 10)
+  # `+ 0L` copies: the vector get_mcmc_state() returns tracks the live state.
+  KPrime <- function() MkPrime:::get_mcmc_state(statePtr)$kPrime + 0L
+  kPrev <- KPrime()
+  nChanged <- 0L
+  for (i in seq_len(500L)) {
+    MkPrime:::.DoMove(move, statePtr, tuning = tuning, transIdx = transIdx,
+                      mcmcData = mcmcData)
+    k <- KPrime()
+    nChanged <- nChanged + !identical(k, kPrev)
+    kPrev <- k
+  }
+  expect_gt(nChanged, 0L)
+})
+
+test_that("a run leaves both k' walks with a usable window", {
+  skip_on_cran()
+  set.seed(7202)
+  tree <- BalancedTree(8)
+  tree$edge.length <- rep(0.1, nrow(tree$edge))
+  mat <- matrix(sample(0:2, 8 * 6, replace = TRUE), nrow = 8,
+                dimnames = list(tree$tip.label, NULL))
+  # Two warmup batches, so block_kPrime is proposed often enough to adapt.
+  mcmc <- MkPrimeMCMC(nIter = 1000L, minWarmup = 900L, maxWarmup = 900L,
+                      thin = 10L, nRuns = 1L, maxTime = 60, autoTune = FALSE)
+  result <- allow_warning(
+    RunMkPrime(data = MkPrimeData(MatrixToPhyDat(mat)), tree = tree,
+               model = MkPrimeModel(), mcmc = mcmc),
+    "without stabilisation"
+  )
+  expect_true(all(c("kPrime", "block_kPrime") %in% names(result$acceptance)))
+  expect_gte(result$tuning$int_walk_window, 1)
+  expect_gte(result$tuning$block_kprime_window, 1)
 })
 
 

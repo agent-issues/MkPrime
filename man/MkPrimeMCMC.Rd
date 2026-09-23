@@ -366,6 +366,7 @@ Default tuning values:
 \item \code{scale_rate_log_sd}: 0.5
 \item \code{scale_p}: 0.5
 \item \code{int_walk_window}: 1
+\item \code{block_kprime_window}: 1
 }
 \subsection{Tree ESS is enforced per run}{
 

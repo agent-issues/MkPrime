@@ -260,6 +260,7 @@
 #' - `scale_rate_log_sd`: 0.5
 #' - `scale_p`: 0.5
 #' - `int_walk_window`: 1
+#' - `block_kprime_window`: 1
 #'
 #' ## Tree ESS is enforced per run
 #'
@@ -558,7 +559,8 @@ MkPrimeMCMC <- function(
     scale_class_rate_log_sd = 0.5,
     scale_hyper_tau         = 0.5,
     dirichlet_class_w_alpha = 10,
-    int_walk_window = 1L,
+    int_walk_window = 1,
+    block_kprime_window = 1,
     slice_width_rate_loss = 1.0,
     slice_width_rate_neo = 1.0,
     slice_width_rate_log_sd = 1.0,
