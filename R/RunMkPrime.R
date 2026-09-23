@@ -4921,18 +4921,31 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   dirichlet_branch = "Branches", local_dirichlet = "Branches",
   block_gibbs_branch = "Branches", weighted_branch_lengths = "Branches",
 
+  slice_tree_length = "Branches",
+
   kPrime = "Characters", gibbs_kPrime = "Characters",
   block_kPrime = "Characters", p = "Characters",
-  mh_logit_p = "Characters",
+  mh_logit_p = "Characters", gibbs_p_marginal = "Characters",
+  slice_kprime_s = "Characters", slice_kprime_r = "Characters",
 
   rate_loss = "Rates", rate_neo = "Rates", rate_log_sd = "Rates",
   beta_scale = "Rates",
   slice_rate_loss = "Rates", slice_rate_neo = "Rates",
   slice_rate_log_sd = "Rates", slice_beta_scale = "Rates",
-  joint_tl_rls = "Rates", joint_tl_rl = "Rates", joint_tl_rn = "Rates"
+  joint_tl_rls = "Rates", joint_tl_rl = "Rates", joint_tl_rn = "Rates",
+  scale_class_rate_log_sd = "Rates", scale_hyper_tau = "Rates",
+  dirichlet_simplex_class_w = "Rates"
 )
 
 .moveCategoryOrder <- c("Topology", "Branches", "Characters", "Rates")
+
+# Display category of each move, or `NA` for an unmapped one. Per-class
+# instances (`<type>_<classIdx>`) take their type's category.
+.MoveCategory <- function(moveNames) {
+  perClass <- paste0("^(", paste(.kPerClassMoveTypes, collapse = "|"),
+                     ")_[0-9]+$")
+  unname(.moveCategoryMap[sub(perClass, "\\1", moveNames)])
+}
 
 #' Format move weights as styled, categorized lines
 #'
@@ -4942,7 +4955,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' @keywords internal
 .FormatMoveWeights <- function(weights, moveNames) {
   pct <- weights * 100
-  cats <- .moveCategoryMap[moveNames]
+  cats <- .MoveCategory(moveNames)
   cats[is.na(cats)] <- "Other"
 
   presentCats <- intersect(.moveCategoryOrder, unique(cats))
@@ -4973,7 +4986,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' @keywords internal
 .FormatMoveWeightsPlain <- function(weights, moveNames) {
   pct <- weights * 100
-  cats <- .moveCategoryMap[moveNames]
+  cats <- .MoveCategory(moveNames)
   cats[is.na(cats)] <- "Other"
 
   presentCats <- intersect(.moveCategoryOrder, unique(cats))
