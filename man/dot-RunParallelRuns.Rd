@@ -17,7 +17,8 @@
   treeFilePaths,
   isStreaming,
   logFilePaths,
-  convWindowSize
+  convWindowSize,
+  startIters = NULL
 )
 }
 \value{
