@@ -76,7 +76,7 @@ test_that(".BuildResult returns a partial posterior when a run never started (#9
   logs <- vapply(1:2, function(i) tempfile(fileext = ".log"), character(1L))
   on.exit(unlink(logs), add = TRUE)
   for (f in logs) {
-    writeLines(paste(c("Sample", paramNames), collapse = "	"), f)
+    writeLines(paste(c("Sample", paramNames), collapse = "\t"), f)
   }
 
   mcmc <- list(nChains = 1L, nRuns = 2L, warmup = 0L, thin = 1L, treeThin = 1L,
@@ -96,15 +96,31 @@ test_that(".BuildResult returns a partial posterior when a run never started (#9
 
   # More than one unstarted run: the report names them all.
   mcmc$nRuns <- 3L
+  logs3 <- c(logs, logs[[2]])
   expect_warning(
     result <- .BuildResult(list(started, neverStarted, neverStarted),
                           model = NULL, mkd = NULL, mcmc = mcmc,
                           paramNames = paramNames,
-                          logFilePaths = c(logs, logs[[2]]), actualIter = 4L,
+                          logFilePaths = logs3, actualIter = 4L,
                           stopReason = "cancelled"),
     "never started"
   )
   expect_identical(result$dropped_runs$run, c(2L, 3L))
+
+  # An unstarted run in the middle shifts every later run's position, so
+  # `logFile` must be filtered in step: callers pair `per_run[[i]]` with
+  # `logFile[i]`, and against the unfiltered vector run 3 would be read from
+  # run 2's never-written log.
+  expect_warning(
+    result <- .BuildResult(list(started, neverStarted, started),
+                          model = NULL, mkd = NULL, mcmc = mcmc,
+                          paramNames = paramNames,
+                          logFilePaths = logs3, actualIter = 4L,
+                          stopReason = "cancelled"),
+    "never started"
+  )
+  expect_identical(result$logFile, logs3[c(1L, 3L)])
+  expect_length(result$per_run, 2L)
 })
 
 
@@ -262,11 +278,14 @@ test_that("a never-started run resumes into Warmup, not mid-Sample (#94)", {
 
   warmup <- 200L
   thin   <- 5L
-  RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 600L, thin = thin,
-                       maxWarmup = warmup, minWarmup = warmup,
-                       autoTune = FALSE, maxTime = 120, checkEvery = 200L,
-                       checkpointFile = ckpFile, logFile = logFile))
+  allow_warning(
+    RunMkPrime(pd, tree,
+      mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 600L, thin = thin,
+                         maxWarmup = warmup, minWarmup = warmup,
+                         autoTune = FALSE, maxTime = 120, checkEvery = 200L,
+                         checkpointFile = ckpFile, logFile = logFile)),
+    "stabilis"
+  )
 
   # Recast run 2 as one that never launched: exactly the field set `.InitRun`
   # returns, with no position, phase or sample count.  Its chain state is run
@@ -281,7 +300,7 @@ test_that("a never-started run resumes into Warmup, not mid-Sample (#94)", {
   cp$mcmc$nIter <- 1200L
   saveRDS(cp, ckpFile)
 
-  ResumeMkPrime(ckpFile, pd)
+  allow_warning(ResumeMkPrime(ckpFile, pd), "stabilis")
 
   nRows <- vapply(logPaths, function(f) length(readLines(f)) - 1L,
                   integer(1L), USE.NAMES = FALSE)
@@ -344,5 +363,10 @@ test_that("interrupting a resumed run does not rewind the checkpoint (#96)", {
   saveRDS(cp, ckpFile)
 
   allow_warning(ResumeMkPrime(ckpFile, pd), "interrupted")
-  expect_gt(readRDS(ckpFile)$iter, before)
+  after <- readRDS(ckpFile)
+  expect_gt(after$iter, before)
+  # `checkpoint$moveWeights` is what the move-set-drift check reads, so an
+  # interrupt that writes a checkpoint without it silences that warning for
+  # every later resume of the file.
+  expect_false(is.null(after$moveWeights))
 })

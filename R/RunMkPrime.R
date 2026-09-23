@@ -377,13 +377,16 @@ RunMkPrime <- function(data, tree = NULL,
   # For temp-log runs, load samples into memory so the result is
   # self-contained (temp files will be deleted by on.exit).
   if (isTempLog && result$nSamples > 0L) {
-    result$samples <- ReadMkLog(logFilePaths)
+    # `.BuildResult` drops runs that never started, so read the logs it kept:
+    # `logFilePaths` still has one entry per requested run, and indexing it by
+    # a surviving run's new position pairs that run with a dropped run's log.
+    keptLogs <- result$logFile %||% logFilePaths
+    result$samples <- ReadMkLog(keptLogs)
     # Load per-run samples too (streaming sets them to NULL)
     if (!is.null(result$per_run)) {
       for (i in seq_along(result$per_run)) {
-        if (is.null(result$per_run[[i]]$samples) &&
-            i <= length(logFilePaths)) {
-          result$per_run[[i]]$samples <- ReadMkLog(logFilePaths[i])
+        if (is.null(result$per_run[[i]]$samples) && i <= length(keptLogs)) {
+          result$per_run[[i]]$samples <- ReadMkLog(keptLogs[i])
         }
       }
     }
@@ -2552,7 +2555,8 @@ RunMkPrime <- function(data, tree = NULL,
   # A run that stopped before its first batch is still the bare `.InitRun`
   # structure -- no `saved_idx`, `flush_idx` or `tree_samples` -- and every
   # consumer below dereferences those.  Four call sites can hand one over, so
-  # the test belongs here rather than in each of them (PAR-001).
+  # the test belongs here rather than in each of them (PAR-001).  Each hands
+  # `runs` over dense, so a position here is the run number `drops` uses.
   usable <- vapply(runs, function(r) !is.null(r$saved_idx), logical(1L))
   if (!all(usable)) {
     unstarted <- which(!usable)
@@ -3248,7 +3252,10 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   # The local `runs` is refreshed only on normal return, so it is the state
   # the resume began from for as long as the resume is still running.
   shared <- new.env(parent = emptyenv())
-  shared$runs <- runs
+  shared$runs        <- runs
+  shared$actualIter  <- 0L
+  shared$moveWeights <- checkpoint$moveWeights
+  shared$phase       <- checkpoint$phase
 
   tryCatch({
     if (isStreaming && mcmc$nCore > 1L && nRuns > 1L) {
@@ -3314,11 +3321,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     bestIter <- max(c(0, vapply(liveRuns,
                                 function(r) r$actual_iter %||% 0,
                                 numeric(1L))))
-    # The master must never move backwards.  Epoch checkpoints written during
-    # this session record work `liveRuns` need not cover -- the parallel arm
-    # shares no state with this handler at all -- and overwriting one with an
-    # earlier iteration silently discards every sample beyond it on the next
-    # resume, which truncates the logs to the older `saved_idx`.
+    # The master must never move backwards: overwriting a checkpoint with an
+    # earlier iteration discards every sample beyond it on the next resume,
+    # which truncates the logs to the older `saved_idx`.  The parallel arm
+    # shares no state with this handler, so it rests on this alone.  `iter` is
+    # a double wherever `.RunSerialRuns` wrote it, hence the numeric compare.
     diskIter <- if (!is.null(mcmc$checkpointFile) &&
                     file.exists(mcmc$checkpointFile)) {
       tryCatch(as.numeric(readRDS(mcmc$checkpointFile)$iter %||% 0),
@@ -3330,7 +3337,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     if (!is.null(mcmc$checkpointFile) && bestIter > diskIter) {
       tryCatch({
         .SaveCheckpoint(liveRuns, mcmc, bestIter, paramNames,
-                        mcmc$checkpointFile, model = model)
+                        mcmc$checkpointFile,
+                        moveWeights = shared$moveWeights,
+                        phase = shared$phase, model = model)
         ckpSaved <- TRUE
       }, error = function(e) NULL)
     }
