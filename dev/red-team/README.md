@@ -34,7 +34,7 @@ no re-attribution.
 ```
 dev/red-team/
   README.md                 # this file
-  focus-areas.md            # rotation table (11 areas) — start_tier per area, edited rarely
+  focus-areas.md            # scope table — files + key questions only, no status
   discussion-categories.md  # round records: category list, posting recipe, identity rules
   findings-archive.md       # FROZEN 2026-09-18 — terminal-state findings; anti-duplication memory only
   migration-map.tsv         # old <PREFIX>-nnn id -> issue number / archive entry
@@ -69,13 +69,10 @@ new issues carry none.
 
 `opus` / `fable` are **rungs on a capability ladder, not models** — the Agent tool
 accepts only the rung alias, so which version a rung resolves to changes as new
-models ship. Every round therefore stamps the version that actually ran, and a
-rung version bump is its own revisit trigger: a seam that ran dry at `opus-4.8` is
-re-visited at `opus-5` *before* escalating to `fable` or being left dormant.
-Backward-looking verdicts (`ran dry`, `dormant`) are version-scoped; forward-looking
-routing text ("escalate to opus") stays unversioned so it resolves to the current
-version at dispatch. The alias-to-version legend is at the top of `focus-areas.md` —
-reconcile it at the start of every round.
+models ship. Every round stamps the model that actually ran in its Discussion title,
+and a more capable model on any rung reopens a dry verdict: the `/red-team` skill holds
+the capability order (from 2026-09-23 Opus 5.5 is the top finder and `fable` is
+suspended). There is no project legend; its history is archived in [discussion #124](https://github.com/agent-issues/MkPrime/discussions/124#discussioncomment-18564504).
 
 Run outputs under `heavy-tests/` and `numerical/` (`*-results/`, `*.log`, experiment
 `*.rds`) are regenerable and git-ignored; committed regression fixtures are the

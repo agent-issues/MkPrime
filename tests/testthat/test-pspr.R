@@ -147,3 +147,44 @@ test_that("pSPR can be disabled", {
   expect_s3_class(res, "MkPosterior")
   expect_false("pspr" %in% names(res$acceptance))
 })
+
+
+# --- Row-order independence of the scorer ----------------------------------
+
+test_that("Fitch score is independent of edge-array row order", {
+  set.seed(11L)
+  for (nTip in c(5L, 7L, 9L)) {
+    tree <- Preorder(RandomTree(nTip, root = TRUE))
+    tipStates <- matrix(sample(0:2, nTip * 6L, replace = TRUE), nrow = nTip)
+    ref <- fitch_score_r(tree$edge[, 1], tree$edge[, 2], tipStates, nTip, 3L)
+    for (i in seq_len(20L)) {
+      perm <- sample(nrow(tree$edge))
+      expect_equal(fitch_score_r(tree$edge[perm, 1], tree$edge[perm, 2],
+                                 tipStates, nTip, 3L),
+                   ref)
+    }
+  }
+})
+
+
+test_that("pSPR candidate scores match the trees they regraft to", {
+  set.seed(9L)
+  for (nTip in c(5L, 6L, 7L)) {
+    edge <- Preorder(RandomTree(nTip, root = TRUE))$edge
+    tipStates <- matrix(sample(0:2, nTip * 6L, replace = TRUE), nrow = nTip)
+    for (pruneRow in which(edge[, 1] != nTip + 1L)) {
+      sites <- .PsprSites(edge, nTip, pruneRow)
+      if (is.null(sites)) next
+      got <- fitch_score_candidates_r(
+        edge[, 1], edge[, 2], tipStates, nTip, 3L,
+        pruneRow, sites$parentRow, sites$sibRow,
+        sites$u, sites$v, sites$sibNode, sites$candidates)
+      want <- vapply(sites$candidates, function(rr) {
+        moved <- .PsprRegraft(edge, sites, rr)
+        canonical <- RenumberTree(moved[, 1], moved[, 2])
+        fitch_score_r(canonical[, 1], canonical[, 2], tipStates, nTip, 3L)
+      }, integer(1))
+      expect_equal(got, want)
+    }
+  }
+})

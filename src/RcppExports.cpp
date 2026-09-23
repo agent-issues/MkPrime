@@ -297,6 +297,28 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// fitch_score_candidates_r
+IntegerVector fitch_score_candidates_r(IntegerVector parent, IntegerVector child, IntegerMatrix tipStates, int nTip, int kStates, int pruneRow, int parentRow, int sibRow, int u, int v, int sibNode, IntegerVector candidates);
+RcppExport SEXP _MkPrime_fitch_score_candidates_r(SEXP parentSEXP, SEXP childSEXP, SEXP tipStatesSEXP, SEXP nTipSEXP, SEXP kStatesSEXP, SEXP pruneRowSEXP, SEXP parentRowSEXP, SEXP sibRowSEXP, SEXP uSEXP, SEXP vSEXP, SEXP sibNodeSEXP, SEXP candidatesSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< IntegerVector >::type parent(parentSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type child(childSEXP);
+    Rcpp::traits::input_parameter< IntegerMatrix >::type tipStates(tipStatesSEXP);
+    Rcpp::traits::input_parameter< int >::type nTip(nTipSEXP);
+    Rcpp::traits::input_parameter< int >::type kStates(kStatesSEXP);
+    Rcpp::traits::input_parameter< int >::type pruneRow(pruneRowSEXP);
+    Rcpp::traits::input_parameter< int >::type parentRow(parentRowSEXP);
+    Rcpp::traits::input_parameter< int >::type sibRow(sibRowSEXP);
+    Rcpp::traits::input_parameter< int >::type u(uSEXP);
+    Rcpp::traits::input_parameter< int >::type v(vSEXP);
+    Rcpp::traits::input_parameter< int >::type sibNode(sibNodeSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type candidates(candidatesSEXP);
+    rcpp_result_gen = Rcpp::wrap(fitch_score_candidates_r(parent, child, tipStates, nTip, kStates, pruneRow, parentRow, sibRow, u, v, sibNode, candidates));
+    return rcpp_result_gen;
+END_RCPP
+}
 // init_mcmc_state
 SEXP init_mcmc_state(IntegerVector parent, IntegerVector child, NumericVector relBrLengths, double treeLength, double rateLoss, double rateLogSd, double rateNeo, double p, IntegerVector kPrime, double logLik, double logPrior, double betaScale, double kprimeAlpha, double kprimeBeta, NumericVector classRateLogSd, NumericVector classW, NumericVector classRate, IntegerVector nCharPerClass, double etaNeo, bool useHyperpriorOnSigma, double hyperTau, NumericVector classZ);
 RcppExport SEXP _MkPrime_init_mcmc_state(SEXP parentSEXP, SEXP childSEXP, SEXP relBrLengthsSEXP, SEXP treeLengthSEXP, SEXP rateLossSEXP, SEXP rateLogSdSEXP, SEXP rateNeoSEXP, SEXP pSEXP, SEXP kPrimeSEXP, SEXP logLikSEXP, SEXP logPriorSEXP, SEXP betaScaleSEXP, SEXP kprimeAlphaSEXP, SEXP kprimeBetaSEXP, SEXP classRateLogSdSEXP, SEXP classWSEXP, SEXP classRateSEXP, SEXP nCharPerClassSEXP, SEXP etaNeoSEXP, SEXP useHyperpriorOnSigmaSEXP, SEXP hyperTauSEXP, SEXP classZSEXP) {
@@ -372,6 +394,17 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< IntegerVector >::type child(childSEXP);
     Rcpp::traits::input_parameter< int >::type nTip(nTipSEXP);
     rcpp_result_gen = Rcpp::wrap(compute_topo_hash(parent, child, nTip));
+    return rcpp_result_gen;
+END_RCPP
+}
+// node_cl_ready
+bool node_cl_ready(SEXP statePtr);
+RcppExport SEXP _MkPrime_node_cl_ready(SEXP statePtrSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type statePtr(statePtrSEXP);
+    rcpp_result_gen = Rcpp::wrap(node_cl_ready(statePtr));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -1011,11 +1044,13 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_bactrian_draws", (DL_FUNC) &_MkPrime_bactrian_draws, 1},
     {"_MkPrime_bactrian_2d_draws", (DL_FUNC) &_MkPrime_bactrian_2d_draws, 2},
     {"_MkPrime_fitch_score_r", (DL_FUNC) &_MkPrime_fitch_score_r, 5},
+    {"_MkPrime_fitch_score_candidates_r", (DL_FUNC) &_MkPrime_fitch_score_candidates_r, 12},
     {"_MkPrime_init_mcmc_state", (DL_FUNC) &_MkPrime_init_mcmc_state, 22},
     {"_MkPrime_fill_partition_cache", (DL_FUNC) &_MkPrime_fill_partition_cache, 2},
     {"_MkPrime_allocate_cl_workspace", (DL_FUNC) &_MkPrime_allocate_cl_workspace, 2},
     {"_MkPrime_get_mcmc_state", (DL_FUNC) &_MkPrime_get_mcmc_state, 1},
     {"_MkPrime_compute_topo_hash", (DL_FUNC) &_MkPrime_compute_topo_hash, 3},
+    {"_MkPrime_node_cl_ready", (DL_FUNC) &_MkPrime_node_cl_ready, 1},
     {"_MkPrime_get_state_log_lik", (DL_FUNC) &_MkPrime_get_state_log_lik, 1},
     {"_MkPrime_get_marginal_cache_state", (DL_FUNC) &_MkPrime_get_marginal_cache_state, 1},
     {"_MkPrime_invalidate_marginal_cache", (DL_FUNC) &_MkPrime_invalidate_marginal_cache, 1},

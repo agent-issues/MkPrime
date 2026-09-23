@@ -195,69 +195,23 @@ static void restore_dirty_cls(
 
 
 // ---------------------------------------------------------------------------
-// JC transition: O(k) formula
-// Writes result to `out` from source `src` (length kStates).
-// ---------------------------------------------------------------------------
-static inline void jc_transition(
-    const double* src, double* out, int kStates, double t) {
-  double inv_k = 1.0 / kStates;
-  double km1   = kStates - 1.0;
-  // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small kt.
-  double arg = -kStates * t / km1;
-  double neg_expm1 = -std::expm1(arg);
-  double exp_term  = 1.0 - neg_expm1;
-  double p_diff   = inv_k * neg_expm1;
-  double diff_coeff = (inv_k + (1.0 - inv_k) * exp_term) - p_diff;
-
-  // For each character block (kStates values):
-  // out[i] = p_diff * sum(src) + diff_coeff * src[i]
-  // Caller iterates over characters externally.
-  double sum_cl = 0.0;
-  for (int s = 0; s < kStates; ++s) sum_cl += src[s];
-  for (int s = 0; s < kStates; ++s)
-    out[s] = p_diff * sum_cl + diff_coeff * src[s];
-}
-
-
-// ---------------------------------------------------------------------------
-// MkN transition: 2×2 asymmetric (neomorphic binary)
-// ---------------------------------------------------------------------------
-static inline void mkn_transition(
-    const double* src, double* out, double rateLoss, double t) {
-  double sum_rl = 1.0 + rateLoss;
-  double rate01 = 2.0 / sum_rl;
-  double rate10 = 2.0 * rateLoss / sum_rl;
-  double lambda = rate01 + rate10;
-  // FAST-EXP-001: expm1 form avoids cancellation in P01/P10 at small lambda*t.
-  double arg = -lambda * t;
-  double neg_expm1 = -std::expm1(arg);
-  double exp_term  = 1.0 - neg_expm1;
-  double P00 = rate10 / lambda + rate01 / lambda * exp_term;
-  double P01 = rate01 / lambda * neg_expm1;
-  double P10 = rate10 / lambda * neg_expm1;
-  double P11 = rate01 / lambda + rate10 / lambda * exp_term;
-  out[0] = P00 * src[0] + P01 * src[1];
-  out[1] = P10 * src[0] + P11 * src[1];
-}
-
-
-// ---------------------------------------------------------------------------
 // apply_transition: dispatch to JC or MkN for one (cat, child) edge.
 // Reads child CL from `srcCL`, writes per-character contributions to `dst`.
+// The transition probabilities depend only on (k, t), so they are computed
+// once per edge rather than once per character.
 // ---------------------------------------------------------------------------
 static void apply_transition(
     const CacheUnit& unit, const double* srcCL, double* dst,
     double edgeLen, double rateLoss, double rateMultiplier) {
   double t = edgeLen * rateMultiplier * unit.rateScale;
-  int k = unit.kStates;
-  int nChar = unit.nChar;
-
   if (unit.isMkN) {
-    for (int c = 0; c < nChar; ++c)
-      mkn_transition(srcCL + c * 2, dst + c * 2, rateLoss, t);
+    double P00, P01, P10, P11;
+    mkn_trans_params(rateLoss, t, P00, P01, P10, P11);
+    mkn_transition(srcCL, dst, unit.nChar, P00, P01, P10, P11);
   } else {
-    for (int c = 0; c < nChar; ++c)
-      jc_transition(srcCL + c * k, dst + c * k, k, t);
+    double pDiff, diffCoeff;
+    jc_trans_params(unit.kStates, t, pDiff, diffCoeff);
+    jc_transition(srcCL, dst, unit.nChar, unit.kStates, pDiff, diffCoeff);
   }
 }
 
@@ -714,6 +668,25 @@ static double cache_total_loglik(
     transAscEl[i] = absEdgeLen[i] * pScales.trans;
   }
 
+  // The JC correction depends only on k, so units that share a k value
+  // (across or within partitions) share one tree traversal.
+  std::vector<double> jcAscByK;
+  auto jcAscProb = [&](int k) {
+    if (k >= (int)jcAscByK.size()) jcAscByK.resize(k + 1, -1.0);
+    if (jcAscByK[k] < 0.0) {
+      NumericVector rootFreqs(k, 1.0 / k);
+      double pk = constant_site_prob_jc(parent, child, transAscEl, nTip,
+                                        k, rootFreqs, rates);
+      // LIKE-001 fix: informative coding adds the JC singleton probability.
+      if (cache.coding == 2) {
+        pk += singleton_site_prob_jc(parent, child, transAscEl, nTip,
+                                     k, rootFreqs, rates);
+      }
+      jcAscByK[k] = pk;
+    }
+    return jcAscByK[k];
+  };
+
   for (int pi = 0; pi < nParts; ++pi) {
     double ll = partRawLL[pi];
     if (cache.coding != 0 && partNChar[pi] > 0) {
@@ -733,15 +706,7 @@ static double cache_total_loglik(
         }
       } else if (part.type == 2) {
         // Known state space: single k for entire partition
-        int kStates = part.k;
-        NumericVector rootFreqs(kStates, 1.0 / kStates);
-        p = constant_site_prob_jc(parent, child, transAscEl, nTip,
-                                   kStates, rootFreqs, rates);
-        // LIKE-001 fix: informative coding adds the JC singleton probability.
-        if (cache.coding == 2) {
-          p += singleton_site_prob_jc(parent, child, transAscEl, nTip,
-                                       kStates, rootFreqs, rates);
-        }
+        p = jcAscProb(part.k);
       } else {
         // Transformational (type 1): per-unit ascertainment correction.
         // Each CacheUnit may have a different kStates (from kPrime grouping),
@@ -752,14 +717,7 @@ static double cache_total_loglik(
           if (unit.partIdx != pi) continue;
           int k = unit.kStates;
           if (k <= 0) continue;
-          NumericVector rootFreqs(k, 1.0 / k);
-          double pu = constant_site_prob_jc(parent, child, transAscEl,
-                                             nTip, k, rootFreqs, rates);
-          // LIKE-001 fix: informative coding adds the JC singleton probability.
-          if (cache.coding == 2) {
-            pu += singleton_site_prob_jc(parent, child, transAscEl,
-                                          nTip, k, rootFreqs, rates);
-          }
+          double pu = jcAscProb(k);
           if (pu > 0.0 && pu < 1.0)
             ll -= unit.nChar * std::log(1.0 - pu);
         }

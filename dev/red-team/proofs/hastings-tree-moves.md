@@ -785,16 +785,37 @@ $$\log H = \log \frac{q(T|T')}{q(T'|T)} + \log \ell_{\text{reg}} - \log \ell_{\t
 ## Implementation cross-check (pSPR)
 | Step | Code |
 |------|------|
-| Fitch scoring + alpha | `mcmc.cpp:3286, 3376–3387` |
-| $w_i = e^{-\alpha(s_i - s_{\min})}$ | `mcmc.cpp:3397–3401` |
-| $\log H_{\text{brlen}}$ | `mcmc.cpp:3454` |
-| $Z_{\text{rev}} = Z + w_{\text{orig}} - w_{\text{chosen}}$ | `mcmc.cpp:3456` |
-| $\log H_{\text{pars}}$ | `mcmc.cpp:3457–3458` |
+| Fitch scoring + alpha | `mcmc.cpp:3757, 3849–3860` |
+| $w_i = e^{-\alpha(s_i - s_{\min})}$ | `mcmc.cpp:3861–3872` |
+| $\log H_{\text{brlen}}$ | `mcmc.cpp:3925` |
+| $Z_{\text{rev}} = Z + w_{\text{orig}} - w_{\text{chosen}}$ | `mcmc.cpp:3927` |
+| $\log H_{\text{pars}}$ | `mcmc.cpp:3928–3929` |
 
 Implementation matches the derivation.
 
+## Lemma P0 (representation independence), issue #142
+
+P1 needs the weights to be a function of the *topology* T_i, not of the
+(parent, child) row layout that encodes it. That is not automatic:
+`fitch_score_candidates` applies each candidate regraft **in place**, so the
+array it scores is no longer in preorder, and `fitch_score_all` originally
+treated reverse-row-order as a postorder. It therefore read a node's state set
+before building it, and the weight became a functional of the row layout -- 72%
+of candidate scores wrong, log H off by up to 0.97 nat, while `scoreOrig`
+(computed on the restored, canonical array) stayed correct. The algebra above
+was never at fault; its precondition was.
+
+`fitch_score_all` now derives its postorder from the edges themselves
+(`fitch.h`), so the weight equals Fitch(T_i) for any row order of a tree of
+degree <= 3. This is the load-bearing invariant for every representation the
+state carries (TreeTools-canonical, in-place NNI, TreeNav-DFS): **recheck it
+whenever a tree move lands.** Guarded by `test-pspr.R` (row-order invariance;
+candidate scores against independently rebuilt regraft trees) and by
+`test-topology-detailed-balance.R`, which holds Z_rev and w_orig against a true
+reverse enumeration.
+
 ## Caveats (pSPR)
-- The constant $\alpha = 0.1$ (`mcmc.cpp:3286`) controls bias strength;
+- The constant $\alpha = 0.1$ (`mcmc.cpp:3757`) controls bias strength;
   reversibility holds for any $\alpha$.
 - `|N_T| = |N_{T'}|` by Lemmas S1, T1 (the prune-edge count is preserved,
   and the residual-backbone candidate count is preserved). So the
@@ -804,10 +825,11 @@ Implementation matches the derivation.
   positions). But the reverse moves *would* enumerate the
   original-position as one of its candidates (the position where $u$
   was originally inserted in $T$). The code's treatment of `scoreOrig`
-  and `wOrig` (`mcmc.cpp:3387, 3455`) handles this.
+  and `wOrig` (`mcmc.cpp:3860, 3926`) handles this.
 
 ## Verdict (pSPR)
-**Watertight.** Implementation matches.
+**Watertight**, given Lemma P0. The algebra held throughout; the
+implementation met P0's precondition only from `fix/pspr-preorder-scoring`.
 
 ---
 
