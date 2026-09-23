@@ -194,12 +194,15 @@
 #'   or `NULL` (default). When non-NULL, each named entry fixes the
 #'   probability of proposing that move type. Names must match valid move
 #'   names (e.g., `"nni"`, `"spr"`, `"gibbs_spr"`, `"tree_length"`, etc.).
-#'   Values must be positive and sum to at most 1. Remaining probability
-#'   is distributed among un-pinned moves by the adaptive scheduler during
-#'   warmup. Example: `moveWeights = c(nni = 0.3, spr = 0.2)` fixes NNI
-#'   at 30% and SPR at 20%, with the remaining 50% allocated adaptively
-#'   among other moves. To disable adaptive scheduling entirely, pin all
-#'   moves (sum to 1). See section **Adaptive move scheduling** below.
+#'   Values must be positive and sum to at most 1. Gibbs and slice moves
+#'   are also pinned, at their initial weights, and a run stops with an
+#'   error if the pins leave no weight for the other moves. Remaining
+#'   probability is distributed among un-pinned moves by the adaptive
+#'   scheduler during warmup. Example:
+#'   `moveWeights = c(nni = 0.3, spr = 0.2)` fixes NNI at 30% and SPR at
+#'   20%, with the remaining 50% allocated adaptively among other moves.
+#'   To disable adaptive scheduling entirely, pin all moves (sum to 1).
+#'   See section **Adaptive move scheduling** below.
 #' @param nCore Integer. Number of parallel worker processes for independent
 #'   runs. Default `getOption("mc.cores", 1L)`, matching the convention used
 #'   by \pkg{TreeDist}. With `nCore = 1` (the default), runs execute serially.

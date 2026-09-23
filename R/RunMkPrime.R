@@ -255,6 +255,15 @@ RunMkPrime <- function(data, tree = NULL,
                          model$priorOnClassRateLogSd %||% "hyperprior_pooled",
                        likelihoodMode = model$likelihoodMode %||% "sampled_k")
 
+  # Fail before any run starts, rather than inside each one.
+  initialWeights <- vapply(moves, `[[`, numeric(1), "weight")
+  names(initialWeights) <- vapply(moves, `[[`, character(1), "name")
+  .SchedulePins(
+    initialWeights / sum(initialWeights),
+    vapply(moves, `[[`, character(1), "type"),
+    mcmc$moveWeights[intersect(names(mcmc$moveWeights), names(initialWeights))]
+  )
+
   mcmc$thinWasAuto <- identical(mcmc$thin, "auto")
   if (mcmc$thinWasAuto) {
     mcmc$thin <- length(moves)
@@ -917,30 +926,12 @@ RunMkPrime <- function(data, tree = NULL,
     integer(0L)
   }
 
-  # Auto-pin always-accept moves (Gibbs, slice) at initial weights.
-  # The warmup scheduler's score (accept_rate x dim / cost) gives these
-  # astronomical scores because acceptance = 1.0 and cost ~ 0; this inflates
-  # their weight and starves bottleneck MH moves.  One Gibbs draw or slice
-  # sample per cycle is already optimal, so freeze them.
-  # Also pin BG hyperparameter slice (slice_kprime_hyper): cheap, always-accept.
-  # gibbs_p_marginal (case 35) is near-always-accept and cheap (cache reads +
-  # one rbeta + Z evals, no pruning); pin it so the score = accept x dim / cost
-  # formula does not inflate its weight and starve bottleneck MH moves. It can
-  # reject in the small-p tail, but one draw per cycle is optimal regardless.
-  alwaysAcceptTypes <- c("gibbs_p", "slice", "gibbs_kprime_sweep",
-                         "slice_kprime_hyper", "gibbs_p_marginal")
   moveTypes <- vapply(moves, `[[`, character(1), "type")
-  autoPin <- moveWeights[moveTypes %in% alwaysAcceptTypes]
-
-  # Merge with user-specified pins (user takes precedence)
-  userPins <- .ResolvePinnedWeights(mcmc$moveWeights, moveNames)
-  if (length(autoPin) > 0L || !is.null(userPins)) {
-    allPins <- autoPin
-    if (!is.null(userPins)) allPins[names(userPins)] <- userPins
-    pinnedWeights <- allPins
+  pinnedWeights <- .SchedulePins(
+    moveWeights, moveTypes, .ResolvePinnedWeights(mcmc$moveWeights, moveNames)
+  )
+  if (!is.null(pinnedWeights)) {
     moveWeights <- .NormalizeMoveWeights(moveWeights, pinnedWeights)
-  } else {
-    pinnedWeights <- NULL
   }
 
   # T-018: Capture initial weights (post-normalization) for per-move decay floor.
@@ -1087,6 +1078,7 @@ RunMkPrime <- function(data, tree = NULL,
         .IntWalkWindow(r$chain_tuning[[1]]$block_kprime_window)
     }
 
+    .CheckMoveWeights(moveWeights)
     result <- run_mcmc_batch_cpp(
       mcmcData, r$chainStates, r$betas,
       moveTypeCodes, transIdx0, sliceParamCodes, moveWeights,
@@ -4588,6 +4580,64 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 }
 
 
+# Always-accepting moves (Gibbs, slice), pinned at their initial weights.
+# The warmup scheduler's score (accept_rate x dim / cost) gives these
+# astronomical scores because acceptance = 1.0 and cost ~ 0; this inflates
+# their weight and starves bottleneck MH moves.  One Gibbs draw or slice
+# sample per cycle is already optimal, so freeze them.
+# Also pin BG hyperparameter slice (slice_kprime_hyper): cheap, always-accept.
+# gibbs_p_marginal (case 35) is near-always-accept and cheap (cache reads +
+# one rbeta + Z evals, no pruning); pin it so the score = accept x dim / cost
+# formula does not inflate its weight and starve bottleneck MH moves. It can
+# reject in the small-p tail, but one draw per cycle is optimal regardless.
+.kAlwaysAcceptTypes <- c("gibbs_p", "slice", "gibbs_kprime_sweep",
+                         "slice_kprime_hyper", "gibbs_p_marginal")
+
+# Pinned weights for a schedule: the always-accepting moves at their current
+# shares, overridden by the user's `userPins` (already resolved against the
+# pool). Aborts when the pins leave the un-pinned moves no weight, which would
+# silently freeze every parameter only they update.
+.SchedulePins <- function(moveWeights, moveTypes, userPins) {
+  autoPin <- moveWeights[moveTypes %in% .kAlwaysAcceptTypes]
+  if (length(autoPin) == 0L && is.null(userPins)) return(NULL)
+  allPins <- autoPin
+  allPins[names(userPins)] <- userPins
+  freeMoves <- setdiff(names(moveWeights), names(allPins))
+  if (length(freeMoves) > 0L && 1 - sum(allPins) < 1e-12) {
+    autoOnly <- autoPin[setdiff(names(autoPin), names(userPins))]
+    maxPin <- floor((1 - sum(autoOnly)) * 1e4) / 1e4
+    cli::cli_abort(c(
+      "{.arg moveWeights} leaves the {length(freeMoves)} un-pinned \
+       move{?s} no weight.",
+      "i" = "{.val {names(autoOnly)}} {?is/are} pinned automatically at \
+             {signif(sum(autoOnly), 4)} of this schedule, so pinned \
+             {.arg moveWeights} must sum to less than {maxPin}; they sum \
+             to {signif(sum(userPins), 4)}."
+    ))
+  }
+  allPins
+}
+
+# Guard at the C++ boundary: run_mcmc_batch_cpp samples moves by cumulative
+# weight, and a negative entry silently makes later moves unreachable.
+.CheckMoveWeights <- function(weights, tolerance = 1e-6) {
+  if (!all(is.finite(weights))) {
+    cli::cli_abort("Internal error: move weights are not all finite.")
+  }
+  if (any(weights < 0)) {
+    cli::cli_abort(
+      "Internal error: negative move weight{?s} for {.val {names(weights)[weights < 0]}}."
+    )
+  }
+  if (abs(sum(weights) - 1) > tolerance) {
+    cli::cli_abort(
+      "Internal error: move weights must sum to 1, not {sum(weights)}."
+    )
+  }
+  invisible(weights)
+}
+
+
 #' Apply pinned weights and renormalize free moves.
 #' @keywords internal
 .NormalizeMoveWeights <- function(weights, pinnedWeights) {
@@ -5370,8 +5420,10 @@ if (n < 2L * windowSize) {
     pinnedIdx <- pinnedIdx[!is.na(pinnedIdx)]
   }
   freeIdx <- setdiff(seq_along(currentWeights), pinnedIdx)
-  if (length(freeIdx) < 2L) {
-    # Can't meaningfully perturb with fewer than 2 free moves
+  budget <- if (length(pinnedIdx) > 0L) 1.0 - sum(pinnedWeights) else 1.0
+  if (length(freeIdx) < 2L || budget < 1e-12) {
+    # Can't meaningfully perturb with fewer than 2 free moves, or with no
+    # budget to share among them
     return(list())
   }
 
@@ -5387,11 +5439,6 @@ if (n < 2L * windowSize) {
     w[freeIdx] <- pmax(w[freeIdx], wMin)
 
     # Renormalise free moves to their budget
-    budget <- if (length(pinnedIdx) > 0L) {
-      1.0 - sum(pinnedWeights)
-    } else {
-      1.0
-    }
     freeSum <- sum(w[freeIdx])
     if (freeSum > 0) {
       w[freeIdx] <- w[freeIdx] / freeSum * budget
