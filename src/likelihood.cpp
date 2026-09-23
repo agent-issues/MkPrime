@@ -1,5 +1,6 @@
 #include <Rcpp.h>
 #include "fast_exp.h"
+#include "f81.h"
 #include <cmath>
 #include <vector>
 #include <algorithm>
@@ -365,4 +366,29 @@ double pruning_mkn(Rcpp::IntegerVector parent,
   }
 
   return logLik;
+}
+
+
+// Apply the F81 transition kernel to a matrix of conditional likelihoods.
+//
+// Exposes the kernel the Q-heterogeneity partial-CL path uses
+// (gibbs_partial_cl.h) so a test can check it against an independently
+// constructed P(t).  Column c of `cl` holds one character's kStates
+// conditional likelihoods; the return has the same shape and holds
+// (P(t) %*% cl[, c])_i.
+
+// [[Rcpp::export]]
+Rcpp::NumericMatrix f81_transition_cpp(Rcpp::NumericMatrix cl,
+                                       Rcpp::NumericVector pi,
+                                       double mu,
+                                       double t) {
+  int kStates = cl.nrow();
+  int nChar = cl.ncol();
+  if (pi.size() != kStates) {
+    Rcpp::stop("`pi` must have one entry per row of `cl`.");
+  }
+  Rcpp::NumericMatrix result(kStates, nChar);
+  f81_transition(cl.begin(), result.begin(), nChar, kStates,
+                 pi.begin(), mu, t);
+  return result;
 }

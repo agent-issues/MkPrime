@@ -43,7 +43,9 @@
   list(dataPtr = dataPtr, statePtr = statePtr)
 }
 
-# Attempt a move up to max_try times; return TRUE if any succeed
+# Attempt a move up to max_try times; return TRUE if any succeed.
+# Callers assert on the result: an invariant checked after a move that never
+# fired is an invariant checked on the untouched state.
 .try_move <- function(pts, moveType, max_try = 50L, beta = 1.0) {
   for (i in seq_len(max_try)) {
     if (do_move_cpp(pts$dataPtr, pts$statePtr,
@@ -51,6 +53,19 @@
       return(TRUE)
   }
   FALSE
+}
+
+# The single non-trivial split of a 4-tip tree, as a canonical string naming
+# the side that holds the first taxon.
+.split_label <- function(edge, taxa) {
+  tree <- structure(
+    list(edge = edge, Nnode = nrow(edge) - length(taxa) + 1L,
+         tip.label = taxa),
+    class = "phylo"
+  )
+  side <- taxa[as.logical(as.Splits(tree))[1L, ]]
+  if (!taxa[[1L]] %in% side) side <- setdiff(taxa, side)
+  paste(sort(side), collapse = "|")
 }
 
 # ---------------------------------------------------------------------------
@@ -76,7 +91,7 @@ test_that("GibbsSPR (moveType 10) can change topology on a 5-tip tree", {
 test_that("GibbsSPR preserves tree length", {
   pts     <- .gibbs_pts(seed = 102L)
   tl_before <- get_mcmc_state(pts$statePtr)$treeLength
-  .try_move(pts, 10L)
+  expect_true(.try_move(pts, 10L))
   tl_after  <- get_mcmc_state(pts$statePtr)$treeLength
   expect_equal(tl_before, tl_after, tolerance = 1e-12)
 })
@@ -85,7 +100,7 @@ test_that("GibbsSPR result is in canonical preorder", {
   # TreeTools preorder: edge where nd is child comes BEFORE all edges
   # where nd is parent. i.e., first_as_child < first_as_parent.
   pts <- .gibbs_pts(seed = 103L)
-  .try_move(pts, 10L)
+  expect_true(.try_move(pts, 10L))
   s   <- get_mcmc_state(pts$statePtr)
   par <- s$edge[, 1L]
   chi <- s$edge[, 2L]
@@ -103,8 +118,12 @@ test_that("GibbsSPR result is in canonical preorder", {
 test_that("GibbsSPR does not change scalar parameters", {
   pts <- .gibbs_pts(seed = 104L)
   s0  <- get_mcmc_state(pts$statePtr)
-  .try_move(pts, 10L, max_try = 20L)
+  expect_true(.try_move(pts, 10L, max_try = 20L))
   s1  <- get_mcmc_state(pts$statePtr)
+  # The move fired, so it either regrafted or redrew the committed split
+  # fraction: the invariants below are asserted against a state it touched.
+  expect_false(identical(s0$edge, s1$edge) &&
+                 isTRUE(all.equal(s0$relBrLengths, s1$relBrLengths)))
   expect_equal(s0$treeLength,  s1$treeLength,  tolerance = 1e-12)
   expect_equal(s0$rateLoss,    s1$rateLoss,    tolerance = 1e-12)
   expect_equal(s0$rateLogSd,   s1$rateLogSd,   tolerance = 1e-12)
@@ -113,24 +132,18 @@ test_that("GibbsSPR does not change scalar parameters", {
 
 test_that("GibbsSPR relative branch lengths sum to 1 after move", {
   pts <- .gibbs_pts(seed = 105L)
-  .try_move(pts, 10L)
+  expect_true(.try_move(pts, 10L))
   relBr <- get_mcmc_state(pts$statePtr)$relBrLengths
   expect_equal(sum(relBr), 1.0, tolerance = 1e-12)
 })
 
 test_that("GibbsSPR updates logLik in state", {
   pts     <- .gibbs_pts(seed = 106L)
-  ll_before <- get_state_log_lik(pts$statePtr)
-  accepted  <- .try_move(pts, 10L)
-  if (accepted) {
-    # State logLik must match re-evaluation at the new topology
-    ll_state  <- get_state_log_lik(pts$statePtr)
-    ll_reeval <- eval_full_loglik_cpp(pts$dataPtr, pts$statePtr)
-    expect_equal(ll_state, ll_reeval, tolerance = 1e-8)
-  } else {
-    # No topology change; logLik unchanged
-    expect_equal(get_state_log_lik(pts$statePtr), ll_before, tolerance = 1e-12)
-  }
+  expect_true(.try_move(pts, 10L))
+  # State logLik must match re-evaluation at the committed state
+  expect_equal(get_state_log_lik(pts$statePtr),
+               eval_full_loglik_cpp(pts$dataPtr, pts$statePtr),
+               tolerance = 1e-8)
 })
 
 test_that("GibbsSPR on a 4-tip tree changes topology at least once in 100 tries", {
@@ -146,34 +159,61 @@ test_that("GibbsSPR on a 4-tip tree changes topology at least once in 100 tries"
 # ---------------------------------------------------------------------------
 
 test_that("GibbsSPR samples better topologies more often than random", {
-  # Build a dataset with 4 tips where one tree topology has much higher
-  # likelihood. Use a star-like character matrix that strongly favours
-  # ((t1,t2),(t3,t4)).
-  tree_good <- read.tree(text = "((t1:0.1,t2:0.1):0.2,(t3:0.1,t4:0.1):0.2);")
-  tree_good <- Preorder(tree_good)
-  # Characters: t1,t2 share state 1; t3,t4 share state 2
+  # Six characters split {t1,t2} from {t3,t4}, so of the three unrooted 4-tip
+  # topologies exactly one is supported; the other two are ~e^15 less likely.
+  # A sampler that ignores the likelihood when weighting regraft positions
+  # would spread over all three, so the test asks which topology was drawn,
+  # not merely whether a move was accepted.
   mat <- matrix(c(1,1,0,0, 1,1,0,0, 0,0,1,1, 0,0,1,1,
                    1,1,0,0, 0,0,1,1),
                 nrow = 4L, ncol = 6L,
                 dimnames = list(c("t1","t2","t3","t4"), NULL))
-  pd    <- MatrixToPhyDat(mat)
-  mkd   <- suppressWarnings(MkPrimeData(pd))
-  model <- MkPrimeModel()
-  model <- MkPrime:::.FinalizeModel(model, tree_good, mkd)
-  state0   <- MkPrime:::.InitState(tree_good, mkd, model)
-  dataPtr  <- MkPrime:::.InitMcmcData(mkd, model)
-  statePtr <- MkPrime:::.InitMcmcChain(state0)
-  fill_partition_cache(dataPtr, statePtr)
-  allocate_cl_workspace(dataPtr, statePtr)
+  mkd  <- suppressWarnings(MkPrimeData(MatrixToPhyDat(mat)))
+  taxa <- rownames(mkd$matrix)
 
-  # Run 200 GibbsSPR moves; count how many times topology changes
+  # Tip indices are positional, so the tree must carry the data's tip order.
+  .pts_at <- function(text) {
+    tree  <- Preorder(RenumberTips(read.tree(text = text), taxa))
+    model <- MkPrime:::.FinalizeModel(MkPrimeModel(), tree, mkd)
+    state0   <- MkPrime:::.InitState(tree, mkd, model)
+    dataPtr  <- MkPrime:::.InitMcmcData(mkd, model)
+    statePtr <- MkPrime:::.InitMcmcChain(state0)
+    fill_partition_cache(dataPtr, statePtr)
+    allocate_cl_workspace(dataPtr, statePtr)
+    list(dataPtr = dataPtr, statePtr = statePtr)
+  }
+
+  starts <- c(good = "((t1:0.1,t2:0.1):0.2,(t3:0.1,t4:0.1):0.2);",
+              alt1 = "((t1:0.1,t3:0.1):0.2,(t2:0.1,t4:0.1):0.2);",
+              alt2 = "((t1:0.1,t4:0.1):0.2,(t2:0.1,t3:0.1):0.2);")
+  logLiks <- vapply(starts, function(text) {
+    pts <- .pts_at(text)
+    eval_full_loglik_cpp(pts$dataPtr, pts$statePtr)
+  }, numeric(1))
+  expect_gt(logLiks[["good"]], logLiks[["alt1"]] + 10)
+  expect_gt(logLiks[["good"]], logLiks[["alt2"]] + 10)
+
+  # From every start, including both wrong ones, the chain must find the
+  # supported topology and stay there.
+  for (start in names(starts)) {
+    set.seed(4242L)
+    pts <- .pts_at(starts[[start]])
+    visited <- vapply(seq_len(500L), function(i) {
+      do_move_cpp(pts$dataPtr, pts$statePtr, 10L, 0L, 0.5, 0.5, 1L, 1.0)
+      .split_label(get_mcmc_state(pts$statePtr)$edge, taxa)
+    }, character(1))
+    expect_gt(mean(visited == "t1|t2"), 0.95, label = paste("from", start))
+  }
+
+  # The MH step must still reject some proposals: perfect acceptance would
+  # mean the accept ratio is not being evaluated at all.
+  set.seed(4242L)
+  pts   <- .pts_at(starts[["good"]])
   n_try <- 200L
   n_acc <- sum(vapply(seq_len(n_try), function(i)
-    do_move_cpp(dataPtr, statePtr, 10L, 0L, 0.5, 0.5, 1L, 1.0),
+    do_move_cpp(pts$dataPtr, pts$statePtr, 10L, 0L, 0.5, 0.5, 1L, 1.0),
     logical(1L)))
-  # At least some proposals should be accepted
   expect_gt(n_acc, 0L)
-  # The MH step should reject some proposals
   expect_lt(n_acc, n_try)
 })
 
@@ -193,14 +233,14 @@ test_that("GibbsSubtreeSwap (moveType 11) can change topology on a 6-tip tree", 
 test_that("GibbsSubtreeSwap preserves tree length", {
   pts       <- .gibbs_pts(seed = 202L, nTip = 6L)
   tl_before <- get_mcmc_state(pts$statePtr)$treeLength
-  .try_move(pts, 11L, max_try = 100L)
+  expect_true(.try_move(pts, 11L, max_try = 100L))
   tl_after  <- get_mcmc_state(pts$statePtr)$treeLength
   expect_equal(tl_before, tl_after, tolerance = 1e-12)
 })
 
 test_that("GibbsSubtreeSwap result is in canonical preorder", {
   pts <- .gibbs_pts(seed = 203L, nTip = 6L)
-  .try_move(pts, 11L, max_try = 100L)
+  expect_true(.try_move(pts, 11L, max_try = 100L))
   s    <- get_mcmc_state(pts$statePtr)
   par  <- s$edge[, 1L]
   chi  <- s$edge[, 2L]
@@ -218,8 +258,11 @@ test_that("GibbsSubtreeSwap result is in canonical preorder", {
 test_that("GibbsSubtreeSwap does not change scalar parameters", {
   pts <- .gibbs_pts(seed = 204L, nTip = 6L)
   s0  <- get_mcmc_state(pts$statePtr)
-  .try_move(pts, 11L, max_try = 50L)
+  expect_true(.try_move(pts, 11L, max_try = 50L))
   s1  <- get_mcmc_state(pts$statePtr)
+  # A swap that fired must have moved the topology; the invariants below are
+  # then asserted against a state the move actually touched.
+  expect_false(identical(s0$edge, s1$edge))
   expect_equal(s0$treeLength,  s1$treeLength,  tolerance = 1e-12)
   expect_equal(s0$rateLoss,    s1$rateLoss,    tolerance = 1e-12)
   expect_equal(s0$rateLogSd,   s1$rateLogSd,   tolerance = 1e-12)
@@ -228,27 +271,34 @@ test_that("GibbsSubtreeSwap does not change scalar parameters", {
 
 test_that("GibbsSubtreeSwap relative branch lengths sum to 1 after move", {
   pts <- .gibbs_pts(seed = 205L, nTip = 6L)
-  .try_move(pts, 11L, max_try = 100L)
+  expect_true(.try_move(pts, 11L, max_try = 100L))
   relBr <- get_mcmc_state(pts$statePtr)$relBrLengths
   expect_equal(sum(relBr), 1.0, tolerance = 1e-12)
 })
 
 test_that("GibbsSubtreeSwap updates logLik in state", {
-  pts      <- .gibbs_pts(seed = 206L, nTip = 6L)
-  accepted <- .try_move(pts, 11L, max_try = 100L)
-  if (accepted) {
-    ll_state  <- get_state_log_lik(pts$statePtr)
-    ll_reeval <- eval_full_loglik_cpp(pts$dataPtr, pts$statePtr)
-    expect_equal(ll_state, ll_reeval, tolerance = 1e-8)
-  }
+  pts <- .gibbs_pts(seed = 206L, nTip = 6L)
+  expect_true(.try_move(pts, 11L, max_try = 100L))
+  expect_equal(get_state_log_lik(pts$statePtr),
+               eval_full_loglik_cpp(pts$dataPtr, pts$statePtr),
+               tolerance = 1e-8)
 })
 
 test_that("GibbsSubtreeSwap on small tree returns false gracefully when no partners", {
-  # 3-tip tree: very constrained — some nodes may have no valid swap partners
-  pts <- .gibbs_pts(seed = 207L, nTip = 3L)
-  # Should not crash; may return true or false
-  result <- do_move_cpp(pts$dataPtr, pts$statePtr, 11L, 0L, 0.5, 0.5, 1L, 1.0)
-  expect_true(is.logical(result))
+  # A 3-tip tree is a star: no node has a valid swap partner, so every call
+  # must decline and leave the state exactly as it found it.
+  pts    <- .gibbs_pts(seed = 207L, nTip = 3L)
+  before <- get_mcmc_state(pts$statePtr)
+  results <- vapply(seq_len(20L), function(i)
+    do_move_cpp(pts$dataPtr, pts$statePtr, 11L, 0L, 0.5, 0.5, 1L, 1.0),
+    logical(1L))
+  expect_false(any(results))
+  after <- get_mcmc_state(pts$statePtr)
+  expect_identical(before$edge, after$edge)
+  expect_equal(before$relBrLengths, after$relBrLengths, tolerance = 1e-14)
+  expect_equal(get_state_log_lik(pts$statePtr),
+               eval_full_loglik_cpp(pts$dataPtr, pts$statePtr),
+               tolerance = 1e-10)
 })
 
 # ---------------------------------------------------------------------------

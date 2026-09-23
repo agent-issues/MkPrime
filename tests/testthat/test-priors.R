@@ -78,13 +78,69 @@ test_that("LogPrior matches manual density calculations", {
 })
 
 
+test_that("LogPrior's truncated geometric separates Model A from Model B", {
+  # At kObs = 2 with K = 200 the two variants coincide: log Z_A underflows to
+  # 0 and Model A's (k' - 2) equals Model B's u.  kObs = 3 and a small K are
+  # what make the branch pair distinguishable.
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 1, 2, 0), 4, 1,
+                dimnames = list(paste0("t", 1:4), NULL))
+  mkd <- MkPrimeData(MatrixToPhyDat(mat))
+  expect_equal(mkd$kObs, 3L)
+
+  K <- 6L
+  p <- 0.4
+  state <- list(
+    tree_length = 0.5,
+    rel_br_lengths = tree$edge.length / sum(tree$edge.length),
+    rate_loss = 1.5,
+    rate_log_sd = 0.3,
+    kPrime = 5L,
+    p = p
+  )
+
+  # Everything except the k' term, which is the piece under test.
+  log1mP <- log1p(-p)
+  shared <- dgamma(0.5, shape = 2, rate = 2 / 10, log = TRUE) +
+    lfactorial(length(state$rel_br_lengths) - 1L) +
+    dgamma(0.3, shape = 1, rate = 1, log = TRUE) +
+    dbeta(p, 1, 1, log = TRUE)
+
+  # Model A: P(k') propto p (1-p)^(k'-2) on k' in [2, K].
+  modelA <- MkPrimeModel(expSteps = 10, kPrimePrior = "geometric",
+                         kprimeTruncK = K)
+  expect_identical(modelA$priorVariant, "unconditional")
+  expect_equal(
+    MkPrime:::LogPrior(state, modelA, mkd),
+    shared + log(p) + (5 - 2) * log1mP - log1p(-exp((K - 1) * log1mP)),
+    tolerance = 1e-12
+  )
+
+  # Model B: P(k') propto p (1-p)^(k' - kObs) on k' in [kObs, K].
+  modelB <- MkPrimeModel(expSteps = 10, kPrimePrior = "geometric",
+                         kprimeTruncK = K, priorVariant = "conditional")
+  expect_equal(
+    MkPrime:::LogPrior(state, modelB, mkd),
+    shared + log(p) + (5 - 3) * log1mP - log1p(-exp((K - 3 + 1) * log1mP)),
+    tolerance = 1e-12
+  )
+
+  # k' outside the truncated support carries no mass.
+  state$kPrime <- K + 1L
+  expect_equal(MkPrime:::LogPrior(state, modelA, mkd), -Inf)
+})
+
+
 test_that("LogPrior includes rate_loss for neomorphic chars", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1), 4, 1,
                 dimnames = list(paste0("t", 1:4), NULL))
   pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd, neomorphic = 1L)
-  model <- MkPrimeModel(expSteps = 10)
+  # Non-default hyperparameters, so a term wired to the wrong ones (e.g. the
+  # rate_neo pair, or the LogNormal(0, 2) the argument defaults to) differs.
+  model <- MkPrimeModel(expSteps = 10,
+                        rateLossMeanlog = log(2), rateLossSdlog = 0.73)
 
   state <- list(
     tree_length = 1.0,
@@ -95,20 +151,26 @@ test_that("LogPrior includes rate_loss for neomorphic chars", {
     p = 0.5
   )
 
-  lp <- MkPrime:::LogPrior(state, model, mkd)
+  # All-neomorphic data, so there is no k' term: the total is exactly the
+  # tree-length, branch-simplex, rate_loss and rate_log_sd densities.
+  expected <- dgamma(1.0, shape = 2, rate = 2 / 10, log = TRUE) +
+    lfactorial(length(state$rel_br_lengths) - 1L) +
+    dlnorm(2.0, meanlog = log(2), sdlog = 0.73, log = TRUE) +
+    dgamma(0.5, shape = 1, rate = 1, log = TRUE)
 
-  # Should include rate_loss LogNormal(0, 2) density
-  lp_rate_loss <- dlnorm(2.0, meanlog = 0, sdlog = 2, log = TRUE)
-  # rate_loss component is included since there are neomorphic chars
-  expect_true(is.finite(lp))
+  expect_equal(MkPrime:::LogPrior(state, model, mkd), expected,
+               tolerance = 1e-12)
 
-  # Remove rate_loss from expected and check separately
+  # The rate_loss term is the only one that moves with rate_loss.
   state2 <- state
   state2$rate_loss <- 1.0
-  lp2 <- MkPrime:::LogPrior(state2, model, mkd)
-  # Different rate_loss should give different prior
-
-  expect_false(isTRUE(all.equal(lp, lp2)))
+  expect_equal(
+    MkPrime:::LogPrior(state, model, mkd) -
+      MkPrime:::LogPrior(state2, model, mkd),
+    dlnorm(2.0, meanlog = log(2), sdlog = 0.73, log = TRUE) -
+      dlnorm(1.0, meanlog = log(2), sdlog = 0.73, log = TRUE),
+    tolerance = 1e-12
+  )
 })
 
 
