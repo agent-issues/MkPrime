@@ -875,14 +875,8 @@ RunMkPrime <- function(data, tree = NULL,
   # log(dim) term in the score formula gives multi-parameter moves an
   # arithmetic advantage (e.g. kPrime dim=nTrans ~30 -> +3.4 nats); at
   # temp=0.5 this is enough to crush dim=1 scale moves to wMin even when
-  # their acceptance rate is healthy. Mirrors the init-time scalar floor
-  # at .BuildMoves; same set of types.
-  .kScalarFloorTypes <- c("scale", "int_walk", "gibbs_p", "scale_p",
-                           "logit_scale_p", "slice", "beta_simplex",
-                           "gibbs_p_marginal")
-  moveTypes <- vapply(moves, function(m) m$type %||% m$name, character(1))
-  scalarFloorMoves <- moveNames[(moveDim == 1L & moveTypes %in% .kScalarFloorTypes) |
-                                  moveTypes == "joint_2d"]
+  # their acceptance rate is healthy.
+  scalarFloorMoves <- .ScalarFloorMoves(moves)
   # M-171: index for warmup-phase sweep frequency reduction (NA = no trans chars)
   gibbsKpIdx <- match("gibbs_kPrime", moveNames)
   moveTypeCodes <- vapply(moves, function(m) {
@@ -3995,23 +3989,37 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     }
   }
 
-  # --- Scalar weight floor ---
-  # Scalar model-parameter moves (dim=1, non-topology) can be starved when
-  # kPrime and branch_lengths dominate the weight budget. Guarantee each
-  # scalar move gets at least 2% of the pre-floor total weight.
-  # Joint 2D moves also get the floor so they're comparable to individual
-  # scalar moves they complement.
-  scalarTypes <- c("scale", "int_walk", "gibbs_p", "scale_p", "logit_scale_p",
-                    "slice", "beta_simplex")
-  totalWeight <- sum(vapply(moves, `[[`, numeric(1), "weight"))
-  floorVal <- totalWeight * 0.02
-  for (i in seq_along(moves)) {
-    m <- moves[[i]]
-    if ((m$dim == 1L && m$type %in% scalarTypes) || m$type == "joint_2d") {
-      moves[[i]]$weight <- max(m$weight, floorVal)
-    }
-  }
+  .ApplyScalarFloor(moves)
+}
 
+
+# Scalar model-parameter moves (dim 1, non-topology) that must not be starved:
+# at build time when kPrime and branch_lengths dominate the weight budget, and
+# during warmup when the softmax scheduler's log(dim) term favours block moves.
+# Joint 2D moves share the floor, so they stay comparable to the scalar moves
+# they complement.
+.kScalarFloorTypes <- c("scale", "int_walk", "gibbs_p", "scale_p",
+                        "logit_scale_p", "slice", "beta_simplex",
+                        "gibbs_p_marginal", "scale_class_rate_log_sd",
+                        "scale_hyper_tau")
+
+# Names of the moves `.kScalarFloorTypes` covers.
+.ScalarFloorMoves <- function(moves) {
+  moveNames <- vapply(moves, `[[`, character(1), "name")
+  moveTypes <- vapply(moves, function(m) m$type %||% m$name, character(1))
+  moveDim <- vapply(moves, function(m) as.integer(m$dim %||% 1L), integer(1))
+  moveNames[(moveDim == 1L & moveTypes %in% .kScalarFloorTypes) |
+              moveTypes == "joint_2d"]
+}
+
+# Raise each scalar move to at least 2% of the schedule's pre-floor total.
+.ApplyScalarFloor <- function(moves) {
+  floorVal <- 0.02 * sum(vapply(moves, `[[`, numeric(1), "weight"))
+  floored <- vapply(moves, `[[`, character(1), "name") %in%
+    .ScalarFloorMoves(moves)
+  for (i in which(floored)) {
+    moves[[i]]$weight <- max(moves[[i]]$weight, floorVal)
+  }
   moves
 }
 
@@ -5040,6 +5048,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     dirichlet_branch = 0.234,
     local_dirichlet = 0.234,
     joint_tl_rls = 0.25, joint_tl_rl = 0.25, joint_tl_rn = 0.25,
+    scale_class_rate_log_sd = 0.35, scale_hyper_tau = 0.35,
     # Gibbs/weighted/block/kPrime/slice moves: no MH tuning to adapt
     gibbs_kPrime = NA_real_, block_kPrime = 0.234,
     gibbs_spr = NA_real_, gibbs_subtree_swap = NA_real_,
@@ -5067,6 +5076,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     joint_tl_rls = "scale_joint_tl_rls",
     joint_tl_rl = "scale_joint_tl_rl",
     joint_tl_rn = "scale_joint_tl_rn",
+    scale_class_rate_log_sd = "scale_class_rate_log_sd",
+    scale_hyper_tau = "scale_hyper_tau",
     dirichlet_branch = "dirichlet_alpha",
     local_dirichlet = "local_dirichlet_alpha",
     # Gibbs/weighted/block/kPrime/slice moves: no tuning to adapt
@@ -5082,10 +5093,18 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     slice_beta_scale = NA_character_
   )
 
-  for (move in moves) {
-    nm <- move$name
-    if (proposeCount[nm] < 10) next
-    rate <- acceptCount[nm] / proposeCount[nm]
+  # Per-class instances ("<type>_<c>") share their type's rule and step size,
+  # so their counts are pooled and the step is updated once.
+  moveNames <- vapply(moves, `[[`, character(1), "name")
+  ruleKeys <- vapply(moves, function(m) {
+    if (m$name %in% names(tuningKeys)) m$name else m$type %||% m$name
+  }, character(1))
+
+  for (nm in unique(ruleKeys)) {
+    ruleMoves <- moveNames[ruleKeys == nm]
+    proposed <- sum(proposeCount[ruleMoves])
+    if (proposed < 10) next
+    rate <- sum(acceptCount[ruleMoves]) / proposed
     target <- targets[nm]
     tk <- tuningKeys[nm]
 

@@ -428,7 +428,7 @@
   }
 
   # Return:
-  moves
+  .ApplyScalarFloor(moves)
 }
 
 

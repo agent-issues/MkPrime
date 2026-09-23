@@ -5,7 +5,8 @@
 #   #5  the scalar p moves' acceptance target must suit the Bactrian kernel
 #       they actually use, not the Gaussian 1-D optimum;
 #   #6  .kMoveTypes and the moveWeights whitelist must be one surface;
-#   #7  the generic branch of the step-size tuner must be bounded above.
+#   #7  the generic branch of the step-size tuner must be bounded above;
+#   #77 the partitioned per-class moves must adapt their step size.
 
 
 # --- #4: the R fallback uses the C++ kernel ------------------------------
@@ -196,4 +197,40 @@ test_that("the generic step floor still holds", {
     )
   }
   expect_gte(tuning$scale_rate_loss, 0.01)
+})
+
+
+# --- #77: partitioned per-class moves adapt ------------------------------
+
+.PartitionedScaleMoves <- function() {
+  list(
+    list(name = "scale_class_rate_log_sd_1", type = "scale_class_rate_log_sd",
+         target = "class_rate_log_sd", weight = 1, dim = 1L, classIdx = 1L),
+    list(name = "scale_class_rate_log_sd_2", type = "scale_class_rate_log_sd",
+         target = "class_rate_log_sd", weight = 1, dim = 1L, classIdx = 2L),
+    list(name = "scale_hyper_tau", type = "scale_hyper_tau",
+         target = "hyper_tau", weight = 1, dim = 1L)
+  )
+}
+
+test_that("scale_hyper_tau adapts its step size", {
+  out <- MkPrime:::.AdaptTuning(
+    list(scale_hyper_tau = 5), c(scale_hyper_tau = 0),
+    c(scale_hyper_tau = 100), .PartitionedScaleMoves()[3]
+  )
+  expect_equal(out$scale_hyper_tau, 5 * exp(0.5 * (0 - 0.35)))
+})
+
+test_that("per-class instances pool into their type's one step size", {
+  # Both instances read the single `scale_class_rate_log_sd` key, so each
+  # adapting it in turn would compound the update.
+  out <- MkPrime:::.AdaptTuning(
+    list(scale_class_rate_log_sd = 5, scale_hyper_tau = 0.5),
+    c(scale_class_rate_log_sd_1 = 60, scale_class_rate_log_sd_2 = 20,
+      scale_hyper_tau = 35),
+    c(scale_class_rate_log_sd_1 = 100, scale_class_rate_log_sd_2 = 100,
+      scale_hyper_tau = 100),
+    .PartitionedScaleMoves()
+  )
+  expect_equal(out$scale_class_rate_log_sd, 5 * exp(0.5 * (0.4 - 0.35)))
 })

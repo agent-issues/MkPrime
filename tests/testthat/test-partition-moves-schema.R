@@ -202,3 +202,23 @@ test_that(".ParamNamesPartitioned appends both column families when both unlinke
                                "class1_rate_log_sd_z",
                                "class2_rate_log_sd_z"))
 })
+
+
+# ---- #77: per-class moves share the scalar floor ----
+
+test_that("per-class scalar moves receive the scalar weight floor", {
+  mcmc <- MkPrimeMCMC(nIter = 100L, autoTune = FALSE, nRuns = 1L,
+                      minWarmup = 50L, maxWarmup = 50L)
+  spec <- list(partition = rep(1:2, length.out = 10L), unlink = "shape",
+               nClasses = 2L)
+  # A large tree, so the floor exceeds the per-class moves' raw weight of 1.
+  moves <- MkPrime:::.BuildMovesPartitioned(200L, 5L, TRUE, mcmc, spec)
+  w <- vapply(moves, `[[`, numeric(1), "weight")
+  names(w) <- vapply(moves, `[[`, character(1), "name")
+  perClass <- c("scale_class_rate_log_sd_1", "scale_class_rate_log_sd_2",
+                "scale_hyper_tau")
+  expect_gt(w[["tree_length"]], 1)
+  # tree_length's raw weight is also 1: all four sit at the same floor.
+  expect_equal(unname(w[perClass]), rep(w[["tree_length"]], 3))
+  expect_true(all(perClass %in% MkPrime:::.ScalarFloorMoves(moves)))
+})
