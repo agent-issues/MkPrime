@@ -128,36 +128,51 @@ test_that("Q-heterogeneity bypasses node CL cache without errors", {
 # rate_loss, rate_log_sd, kPrime) to be systematically rejected
 # ("wall pattern").
 # ---------------------------------------------------------------------------
-test_that("partial-CL path does not freeze tree_length (ascertainment fix)", {
-  # All-transformational dataset: no neomorphic characters
+test_that("partial-CL path carries the transformational ascertainment term", {
+  # An all-transformational dataset, so every partition takes the per-unit
+  # correction branch of cache_total_loglik().  Only moves that maintain
+  # state$logLik through the CL cache are fired, so the value left in the
+  # state came from the cached path; dropping the correction moves it 0.28
+  # log-units away from a fresh full evaluation.  Comparing the two
+  # beats asserting that tree_length mixes: .AdaptMoveWeights() normalises by
+  # wall-clock time, so how often any one move is proposed is not reproducible.
   set.seed(3847)
-  tree <- ape::rtree(10L, rooted = FALSE)
-  tree <- Preorder(tree)
+  tree <- Preorder(ape::rtree(10L, rooted = FALSE))
   nChar <- 20L
   mat <- matrix(sample(0:2, 10L * nChar, replace = TRUE),
                 nrow = 10L,
                 dimnames = list(tree$tip.label, paste0("c", seq_len(nChar))))
-  pd <- MatrixToPhyDat(mat)
-  mkd <- MkPrimeData(pd)  # no neomorphic → all transformational
+  mkd <- MkPrimeData(MatrixToPhyDat(mat))
+  expect_true(all(mkd$type == "transformational"))
 
-  model <- MkPrimeModel()
-  mcmc <- MkPrimeMCMC(
-    nIter = 600L, maxWarmup = 150L, minWarmup = 150L, thin = 3L,
-    autoTune = FALSE, nRuns = 1L
+  model <- MkPrime:::.FinalizeModel(MkPrimeModel(), tree, mkd)
+  mcmcData <- MkPrime:::.InitMcmcData(mkd, model)
+  chainState <- MkPrime:::.InitMcmcChain(MkPrime:::.InitState(tree, mkd, model))
+  fill_partition_cache(mcmcData, chainState)
+  allocate_cl_workspace(mcmcData, chainState)
+
+  # nni, beta_simplex and dirichlet_branch are the moves that score through
+  # the CL cache rather than a full evaluation.
+  moveTypes <- MkPrime:::.kMoveTypes[c("nni", "branch_lengths",
+                                       "dirichlet_branch")]
+  nMoves <- length(moveTypes)
+  nEdge <- nrow(tree$edge)
+  run_mcmc_batch_cpp(
+    mcmcData, list(chainState), 1.0,
+    as.integer(moveTypes),
+    which(mkd$type == "transformational") - 1L,
+    integer(nMoves), rep(1, nMoves),
+    matrix(0.5, 1, nMoves), 10, 1L, integer(nMoves),
+    matrix(1.0, 1, nMoves), matrix(0.0, 1, nMoves),
+    500L, 1L, 500L, 10L,
+    FALSE, nEdge
   )
-  result <- suppressWarnings(RunMkPrime(data = mkd, tree = tree,
-                                         model = model, mcmc = mcmc))
 
-  tl <- result$samples[, "tree_length"]
-  n_unique <- length(unique(tl))
-  # With the bug, tree_length would be nearly completely frozen
-  # (ascertainment gap ~8 LL units → acceptance rate ~0.03%).
-  # Expect at least 5 distinct values from normal mixing;
-  # the buggy code would typically produce 1-2.
-  expect_true(n_unique >= 5,
-              info = paste("tree_length has only", n_unique,
-                           "unique values; expected >= 5"))
+  expect_equal(get_state_log_lik(chainState),
+               eval_full_loglik_cpp(mcmcData, chainState),
+               tolerance = 1e-8)
 })
+
 
 # ---------------------------------------------------------------------------
 # Regression test M-145: slice sampler must invalidate node CL cache.
