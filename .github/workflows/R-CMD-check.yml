@@ -75,7 +75,7 @@ jobs:
   #                  superseding push never cancels it: every commit gets a
   #                  "did this build?" signal.
   #   core        -> Windows (+codecov), arm, devel; only if sense-check passed.
-  #   full        -> macOS x2 (~10x runner-minutes); only once core is green.
+  #   full        -> macOS (~10x runner-minutes); only once core is green.
   #   valgrind, asan -> the sanitiser workflows. They are the long poles, so
   #                  they start alongside the sense-check; `abort` cancels
   #                  them if it fails, since an hour of valgrind on a commit
@@ -143,8 +143,8 @@ jobs:
       matrix:
         config:
           - {os: windows-latest,   r: "release"}
-          - {os: ubuntu-24.04-arm, r: "release", rspm: "https://packagemanager.posit.co/cran/__linux__/noble/latest"}
-          - {os: ubuntu-24.04,     r: "devel",   rspm: "https://packagemanager.posit.co/cran/__linux__/noble/latest"}
+          - {os: ubuntu-24.04-arm, r: "release"}
+          - {os: ubuntu-26.04,     r: "devel"}
 
     env:
       _R_CHECK_CRAN_INCOMING_: ${{ github.event_name == 'pull_request' }}
@@ -236,7 +236,6 @@ jobs:
       matrix:
         config:
           - {os: macOS-latest,     r: "release"}
-          - {os: macos-15-intel,   r: "release"} # Until Intel architecture retired 2027-11
 
     env:
       _R_CHECK_CRAN_INCOMING_: ${{ github.event_name == 'pull_request' }}
@@ -337,7 +336,7 @@ jobs:
     # so it could never satisfy a per-OS required check.
     #
     # Certifies exactly the legs that were required before the gate existed;
-    # macos-15-intel, arm and devel stay advisory. `needs` gives only the
+    # arm and devel stay advisory. `needs` gives only the
     # matrix's aggregate result, so each leg is read from the API.
     name: R-CMD-check gate
     needs: [changes, sense-check, core, full]
