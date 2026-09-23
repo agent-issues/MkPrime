@@ -178,7 +178,6 @@ struct McmcState {
   int diagNniMismatchCount = 0;
   int diagBsPartialCount = 0;
   int diagBsMismatchCount = 0;
-  int diagDriftCount = 0;
   int diagCachePopCount = 0;
   double diagMaxDiff = 0.0;
 
@@ -838,7 +837,6 @@ List get_mcmc_state(SEXP statePtr) {
     _["diagDirFullback"] = s->diagDirFullbackCount,
     _["diagNniPartial"] = s->diagNniPartialCount,
     _["diagBsPartial"]  = s->diagBsPartialCount,
-    _["diagDriftCount"] = s->diagDriftCount,
     _["diagMaxDiff"]    = s->diagMaxDiff,
     _["diagSelectivePop"] = s->nodeCL.diagSelectivePopCount,
     // Partition-API extras (zero-length / scalar defaults on legacy state).
@@ -6382,8 +6380,7 @@ List run_mcmc_batch_cpp(
     _["dir_mismatch"] = states[0]->diagDirMismatchCount,
     _["dir_fullback"] = states[0]->diagDirFullbackCount,
     _["nni_partial"] = states[0]->diagNniPartialCount,
-    _["bs_partial"] = states[0]->diagBsPartialCount,
-    _["drift"] = states[0]->diagDriftCount
+    _["bs_partial"] = states[0]->diagBsPartialCount
   );
 
   return List::create(

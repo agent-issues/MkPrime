@@ -175,65 +175,63 @@ test_that("partial-CL path carries the transformational ascertainment term", {
 
 
 # ---------------------------------------------------------------------------
-# Regression test M-145: slice sampler must invalidate node CL cache.
+# state$logLik must match a fresh full evaluation after every move.
 #
-# Before the fix, slice_scalar_impl accepted without setting
-# nodeCL.valid = false.  A subsequent NNI using partial-CL evaluation
-# would read stale CLs (computed with the old parameter value), producing
-# incorrect log-likelihoods.  The diagnostic drift counter catches this:
-# every 100 iterations, do_move_impl compares state->logLik against a
-# fresh full evaluation and increments diagDriftCount on mismatch.
+# Checked after each move, not at the end of a run: a stale value survives
+# only until the next move that rescores from scratch.  The count of moves
+# scored through the partial-CL cache guards against a test passing because
+# it never reached the cache.
 # ---------------------------------------------------------------------------
+.CachedLogLikDrift <- function(tree, mkd, model, moves, nMove = 400L) {
+  model <- MkPrime:::.FinalizeModel(model, tree, mkd)
+  dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
+  statePtr <- MkPrime:::.InitMcmcChain(MkPrime:::.InitState(tree, mkd, model))
+  fill_partition_cache(dataPtr, statePtr)
+  allocate_cl_workspace(dataPtr, statePtr)
+
+  drift <- 0
+  for (i in sample.int(nrow(moves), nMove, replace = TRUE)) {
+    do_move_cpp(dataPtr, statePtr, moves[i, "type"], moves[i, "param"],
+                0.5, 10, 1L, 1.0)
+    drift <- max(drift, abs(get_state_log_lik(statePtr) -
+                              eval_full_loglik_cpp(dataPtr, statePtr)))
+  }
+  st <- get_mcmc_state(statePtr)
+  list(drift = drift,
+       partial = st$diagNniPartial + st$diagBsPartial + st$diagDirPartial)
+}
+
+# The moves that score through the node CL cache rather than a full
+# evaluation.
+.kCacheMoves <- cbind(
+  type = MkPrime:::.kMoveTypes[c("nni", "branch_lengths", "dirichlet_branch")],
+  param = 0L
+)
+
+# M-145: an accepted slice step changes a model parameter, so it must
+# invalidate the node CLs it affects; otherwise the next partial-CL move
+# reuses CLs computed under the old value.  Slice parameters 0-3 are
+# tree_length, rate_loss, rate_log_sd and rate_neo, each with its own
+# invalidation granularity; rate_loss touches only neomorphic units.
 test_that("slice sampler invalidates CL cache (M-145 regression)", {
   skip_if_not_installed("TreeSearch")
   dat <- TreeSearch::inapplicable.phyData[["Vinther2008"]]
-  mkd <- suppressWarnings(MkPrimeData(dat))
-  model <- MkPrimeModel()
-  tree <- ape::rtree(length(dat), tip.label = names(dat))
-  tree <- Preorder(tree)
-  model <- MkPrime:::.FinalizeModel(model, tree, mkd)
-
-  mcmcData <- MkPrime:::.InitMcmcData(mkd, model)
-  state <- MkPrime:::.InitState(tree, mkd, model)
-  chainState <- MkPrime:::.InitMcmcChain(state)
-  fill_partition_cache(mcmcData, chainState)
-  allocate_cl_workspace(mcmcData, chainState)
-
-  hasNeo <- any(mkd$type == "neomorphic")
-  nEdge <- nrow(tree$edge)
-  mcmcCfg <- MkPrimeMCMC(
-    nIter = 100L, minWarmup = 50L,
-    gibbsSpr = FALSE, gibbsSubtreeSwap = FALSE
+  mkd <- suppressWarnings(
+    MkPrimeData(dat, neomorphic = AutoDetectNeomorphic(dat))
   )
-  moves <- MkPrime:::.BuildMoves(nEdge, sum(mkd$type == "transformational"),
-                                  hasNeo, mcmcCfg)
-  moveTypeCodes <- vapply(
-    moves, function(m) MkPrime:::.kMoveTypes[[m$name]], integer(1L)
+  expect_true(any(mkd$type == "neomorphic"))
+  expect_true(any(mkd$type == "transformational"))
+
+  set.seed(1452)
+  tree <- Preorder(ape::rtree(length(dat), tip.label = names(dat)))
+  moves <- rbind(
+    .kCacheMoves,
+    cbind(type = MkPrime:::.kMoveTypes[["slice_tree_length"]], param = 0:3)
   )
-  moveWeights <- vapply(moves, `[[`, numeric(1), "weight")
-  nMoves <- length(moves)
-  transIdx <- which(mkd$type == "transformational")
-  transIdx0 <- if (length(transIdx)) transIdx - 1L else integer(0)
+  result <- .CachedLogLikDrift(tree, mkd, MkPrimeModel(), moves)
 
-  scaleTunings <- matrix(0.5, 1, nMoves)
-  sliceParamCodes <- vapply(moves, function(m) m$sliceParamIdx %||% 0L,
-                            integer(1L))
-  sliceWidths <- matrix(1.0, 1, nMoves)
-  jointRhos <- matrix(0.0, 1, nMoves)
-  moveIntPars <- integer(nMoves)
-
-  # Run enough iterations for the 100-iter drift check to fire multiple times
-  result <- run_mcmc_batch_cpp(
-    mcmcData, list(chainState), 1.0,
-    moveTypeCodes, transIdx0, sliceParamCodes, moveWeights,
-    scaleTunings, 10, 1L, moveIntPars, sliceWidths, jointRhos,
-    500L, 1L, 500L, 10L,
-    hasNeo, nEdge
-  )
-
-  # Before M-145 fix, drift > 0 because slice sampler left stale CL cache.
-  expect_equal(result$diag_counters[["drift"]], 0L,
-               info = "slice sampler should invalidate nodeCL after accepting")
+  expect_gt(result$partial, 100)
+  expect_lt(result$drift, 1e-6)
 })
 
 # ---------------------------------------------------------------------------
@@ -246,9 +244,7 @@ test_that("slice sampler invalidates CL cache (M-145 regression)", {
 # to their _full variants when codingType == 2.  This test exercises the
 # fallback at the RunMkPrime level (an 8-tip 10-char trans-only dataset)
 # and asserts the chain produces finite log-posteriors with both Gibbs
-# topology moves enabled.  A separate low-level test checks drift==0 on
-# the partial-CL paths that REMAIN under coding="informative" (NNI,
-# beta_simplex via cache_total_loglik — patched earlier).
+# topology moves enabled.
 # ---------------------------------------------------------------------------
 test_that("LIKE-001: gibbs_spr + gibbs_subtree_swap run under coding=\"informative\"", {
   set.seed(2618)
@@ -275,61 +271,26 @@ test_that("LIKE-001: gibbs_spr + gibbs_subtree_swap run under coding=\"informati
               info = "log_posterior must be finite under coding=informative")
 })
 
-test_that("LIKE-001: drift==0 under coding=\"informative\" with Gibbs moves", {
+# coding = "informative" adds a singleton-site term to the ascertainment
+# correction.  The partial-CL cache and gibbs_subtree_swap both commit the
+# value they scored, so dropping the term from either leaves state$logLik
+# adrift.  gibbs_spr commits a full evaluation, so a missing term in its
+# selection weights cannot show here.
+test_that("LIKE-001: partial-CL paths carry the singleton term", {
   set.seed(2619)
-  tree <- ape::rtree(8L, rooted = FALSE)
-  tree <- Preorder(tree)
+  tree <- Preorder(ape::rtree(8L, rooted = FALSE))
   mat <- matrix(sample(0:2, 8L * 10L, replace = TRUE),
                 nrow = 8L,
                 dimnames = list(tree$tip.label, paste0("c", seq_len(10L))))
-  pd <- MatrixToPhyDat(mat)
-  mkd <- MkPrimeData(pd)
-  model <- MkPrimeModel(coding = "informative")
-  model <- MkPrime:::.FinalizeModel(model, tree, mkd)
-
-  mcmcData <- MkPrime:::.InitMcmcData(mkd, model)
-  state <- MkPrime:::.InitState(tree, mkd, model)
-  chainState <- MkPrime:::.InitMcmcChain(state)
-  fill_partition_cache(mcmcData, chainState)
-  allocate_cl_workspace(mcmcData, chainState)
-
-  hasNeo <- any(mkd$type == "neomorphic")
-  nEdge <- nrow(tree$edge)
-  mcmcCfg <- MkPrimeMCMC(
-    nIter = 500L, minWarmup = 50L,
-    gibbsSpr = TRUE, gibbsSubtreeSwap = TRUE
+  mkd <- MkPrimeData(MatrixToPhyDat(mat))
+  moves <- rbind(
+    .kCacheMoves,
+    cbind(type = MkPrime:::.kMoveTypes[c("gibbs_spr", "gibbs_subtree_swap")],
+          param = 0L)
   )
-  moves <- MkPrime:::.BuildMoves(nEdge, sum(mkd$type == "transformational"),
-                                  hasNeo, mcmcCfg)
-  moveTypeCodes <- vapply(
-    moves, function(m) MkPrime:::.kMoveTypes[[m$name]], integer(1L)
-  )
-  moveWeights <- vapply(moves, `[[`, numeric(1), "weight")
-  nMoves <- length(moves)
-  transIdx <- which(mkd$type == "transformational")
-  transIdx0 <- if (length(transIdx)) transIdx - 1L else integer(0)
+  result <- .CachedLogLikDrift(tree, mkd, MkPrimeModel(coding = "informative"),
+                               moves)
 
-  scaleTunings <- matrix(0.5, 1, nMoves)
-  sliceParamCodes <- vapply(moves, function(m) m$sliceParamIdx %||% 0L,
-                            integer(1L))
-  sliceWidths <- matrix(1.0, 1, nMoves)
-  jointRhos <- matrix(0.0, 1, nMoves)
-  moveIntPars <- integer(nMoves)
-
-  result <- run_mcmc_batch_cpp(
-    mcmcData, list(chainState), 1.0,
-    moveTypeCodes, transIdx0, sliceParamCodes, moveWeights,
-    scaleTunings, 10, 1L, moveIntPars, sliceWidths, jointRhos,
-    500L, 1L, 500L, 10L,
-    hasNeo, nEdge
-  )
-
-  # Before the LIKE-001 fix, gibbs_spr / gibbs_subtree_swap committed
-  # state->logLik computed without the singleton-site ascertainment
-  # term, so the periodic full-eval drift check (every 100 iters)
-  # would tick.
-  expect_equal(result$diag_counters[["drift"]], 0L,
-               info = paste("drift = ", result$diag_counters[["drift"]],
-                            " under coding=informative; gibbs_*_impl",
-                            "should fall back to _full variants"))
+  expect_gt(result$partial, 100)
+  expect_lt(result$drift, 1e-6)
 })
