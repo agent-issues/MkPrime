@@ -3621,8 +3621,12 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
     if (u1 < u0) L = u1; else R_bound = u1;
   }
 
-  // Fallback: restore original value
+  // Fallback: restore original value. Under marginal_k every trial refilled
+  // the charLL cache at its own scalar, and the p-moves read it without a
+  // rebuild.
   set_scalar(state, paramIdx, x0);
+  state->charLLCacheReady = false;
+  state->invalidate_per_kp_cl_all();
   return false;
 }
 
