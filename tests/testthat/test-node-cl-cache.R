@@ -320,3 +320,36 @@ test_that("partial-CL ascertainment is right when units share k", {
     expect_lt(result$drift, 1e-6)
   }
 })
+
+# A Dirichlet over every edge dirties almost every internal node. It must
+# still score through the cache, and a rejected proposal must restore the
+# cached edge lengths so that later partial evaluations stay exact.
+test_that("whole-tree dirichlet_branch keeps the CL cache coherent", {
+  set.seed(1441)
+  tree <- Preorder(ape::rtree(12L, rooted = FALSE))
+  mat <- matrix(sample(0:2, 12L * 15L, replace = TRUE), nrow = 12L,
+                dimnames = list(tree$tip.label, NULL))
+  mkd <- MkPrimeData(MatrixToPhyDat(mat))
+  model <- MkPrime:::.FinalizeModel(MkPrimeModel(), tree, mkd)
+  dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
+  statePtr <- MkPrime:::.InitMcmcChain(MkPrime:::.InitState(tree, mkd, model))
+  fill_partition_cache(dataPtr, statePtr)
+  allocate_cl_workspace(dataPtr, statePtr)
+
+  nEdge <- nrow(tree$edge)
+  dirichlet <- MkPrime:::.kMoveTypes[["dirichlet_branch"]]
+  betaSimplex <- MkPrime:::.kMoveTypes[["branch_lengths"]]
+  drift <- 0
+  accepted <- logical(0)
+  for (i in 1:100) {
+    accepted <- c(accepted, do_move_cpp(dataPtr, statePtr, dirichlet, 0L,
+                                        100, 10, nEdge, 1.0))
+    do_move_cpp(dataPtr, statePtr, betaSimplex, 0L, 0.5, 10, 1L, 1.0)
+    drift <- max(drift, abs(get_state_log_lik(statePtr) -
+                              eval_full_loglik_cpp(dataPtr, statePtr)))
+  }
+  st <- get_mcmc_state(statePtr)
+  expect_true(any(accepted) && !all(accepted))
+  expect_equal(st$diagDirPartial, length(accepted))
+  expect_lt(drift, 1e-6)
+})
