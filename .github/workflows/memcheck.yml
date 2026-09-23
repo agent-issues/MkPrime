@@ -99,8 +99,10 @@ jobs:
 
     name: valgrind ${{ matrix.config.test }}
 
-    # Fail a runaway smoke run long before the 6 h ceiling.
-    timeout-minutes: ${{ needs.changes.outputs.smoke == 'true' && 120 || 360 }}
+    # Fail a runaway smoke run long before the 6 h ceiling.  The smoke budget
+    # is not a target: a run that needs most of it is one slow runner away
+    # from a cancelled gate, so trim the suite rather than spend the margin.
+    timeout-minutes: ${{ needs.changes.outputs.smoke == 'true' && 180 || 360 }}
 
     strategy:
       fail-fast: false
@@ -125,8 +127,13 @@ jobs:
       # together they are ~150 of the full suite's ~200 min (2026-09-21).
       # C++ unit files stay in, however slow. Add a file here only on the
       # same grounds; the full suite still runs it after merge.
+      #
+      # The two pi-invariance gates are the extreme case: 5 s and 25 s of
+      # wall clock locally, 35 min and 14 min under valgrind -- together half
+      # the smoke budget, for statistical properties of kernels whose C++ the
+      # cheaper weighted-spr / subtree-swap files already execute.
       PR_SKIP: >-
-        ^(marginal-k-free-topology|node-cl-cache|stepping-stone|stepping-stone-schedule|partition-moves-impl|partition-casali-smoke|auto-thin|tree-thin|beta-geometric-prior|marginal-k-truncation)$
+        ^(marginal-k-free-topology|node-cl-cache|stepping-stone|stepping-stone-schedule|partition-moves-impl|partition-casali-smoke|auto-thin|tree-thin|beta-geometric-prior|marginal-k-truncation|weighted-spr-invariance|gibbs-subtree-swap-invariance)$
 
     steps:
       - uses: ms609/actions/memcheck@main
