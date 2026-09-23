@@ -247,10 +247,21 @@ jobs:
         # quiet = FALSE streams the instrumented test run to the job log. The
         # default swallows it, so a test that fails only under covr reports as
         # `Error: Failure in <tempdir>/testthat.Rout.fail` — a path that no
-        # longer exists by the time anyone reads the log.
+        # longer exists by the time anyone reads the log. The per-file summary
+        # and line tally keep the result readable if the upload fails.
         run: |
-          covr::codecov(quiet = FALSE)
+          cov <- covr::package_coverage(quiet = FALSE)
+          print(cov)
+          saveRDS(covr::tally_coverage(cov, by = "line"), "coverage-lines.rds")
+          covr::codecov(coverage = cov)
         shell: Rscript {0}
+
+      - name: Upload line coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lines
+          path: coverage-lines.rds
+          retention-days: 14
 
   gate:
     # The job branch protection should require, in place of the per-OS
