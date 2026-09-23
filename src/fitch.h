@@ -6,15 +6,67 @@
 // Uses bitmask state sets: state i → bit (1 << i).
 // Missing data (-1) → all bits set.  k ≤ 26 (fits in uint32_t).
 //
-// The tree is stored as (parent, child) vectors in preorder.
-// Processing edges in reverse gives a valid postorder traversal.
+// The tree is stored as (parent, child) vectors in any row order: the postorder
+// is derived from the topology, not from the array, because
+// fitch_score_candidates rewrites rows in place and the result is no longer in
+// preorder.  Row order is immaterial up to degree 3; the sequential fold below
+// is order-sensitive at a polytomy of degree 4 or more, which MkPrime's binary
+// and trifurcating-root encodings never present.
 
 #include <Rcpp.h>
+#include <algorithm>
 #include <vector>
 #include <cstdint>
 
+// Edge indices ordered so that every edge out of a node precedes the edge
+// into it — a postorder, whatever order the rows are stored in.
+inline void fitch_postorder(
+    const int* parent, const int* child, int nEdge, int nNode,
+    std::vector<int>& order)
+{
+  std::vector<int> firstEdge(nNode + 1, -1), nextEdge(nEdge, -1);
+  std::vector<char> hasParent(nNode + 1, 0);
+  // Descending, so each node's outgoing edges stay in ascending row order.
+  for (int e = nEdge - 1; e >= 0; --e) {
+    const int p = parent[e], ch = child[e];
+    if (p < 1 || p > nNode || ch < 1 || ch > nNode)
+      Rcpp::stop("fitch_postorder: node ID out of range");
+    if (hasParent[ch])
+      Rcpp::stop("fitch_postorder: node %d has two parents", ch);
+    nextEdge[e] = firstEdge[p];
+    firstEdge[p] = e;
+    hasParent[ch] = 1;
+  }
+
+  int root = -1;
+  for (int e = 0; e < nEdge; ++e)
+    if (!hasParent[parent[e]]) { root = parent[e]; break; }
+  if (root < 0)
+    Rcpp::stop("fitch_postorder: edge array has no root");
+
+  order.clear();
+  order.reserve(nEdge);
+  std::vector<int> stack;
+  stack.reserve(nEdge);
+  stack.push_back(root);
+  while (!stack.empty()) {
+    const int nd = stack.back();
+    stack.pop_back();
+    for (int e = firstEdge[nd]; e >= 0; e = nextEdge[e]) {
+      order.push_back(e);
+      stack.push_back(child[e]);
+    }
+  }
+  // One parent per node means no cycle is reachable from the root, so a short
+  // traversal is a forest or an unreachable cycle, never a hang.
+  if ((int)order.size() != nEdge)
+    Rcpp::stop("fitch_postorder: edge array is not connected");
+
+  std::reverse(order.begin(), order.end());
+}
+
 // Compute total Fitch parsimony score across all partitions.
-// parent/child: 1-indexed node IDs in preorder, length nEdge.
+// parent/child: 1-indexed node IDs, length nEdge, any row order.
 // parts: vector of {tipStates (nTip × nChar), kStates} pairs.
 // nTip: number of tips (nodes 1..nTip).
 //
@@ -23,8 +75,17 @@ inline int fitch_score_all(
     const int* parent, const int* child, int nEdge, int nTip,
     const std::vector<std::pair<Rcpp::IntegerMatrix, int>>& parts)
 {
-  const int nNode = 2 * nTip;  // nodes numbered 1..nNode for unrooted binary
+  // Every buffer below is indexed by node ID, and nTip is caller-supplied, so
+  // the bound comes from the IDs actually present.
+  int nNode = 2 * nTip;
+  for (int e = 0; e < nEdge; ++e) {
+    if (parent[e] > nNode) nNode = parent[e];
+    if (child[e] > nNode) nNode = child[e];
+  }
   int totalScore = 0;
+
+  std::vector<int> order;
+  fitch_postorder(parent, child, nEdge, nNode, order);
 
   for (const auto& pp : parts) {
     const Rcpp::IntegerMatrix& tips = pp.first;
@@ -50,8 +111,8 @@ inline int fitch_score_all(
 
     int score = 0;
 
-    // Reverse-preorder = postorder: children before parents
-    for (int e = nEdge - 1; e >= 0; --e) {
+    for (int oi = 0; oi < nEdge; ++oi) {
+      const int e = order[oi];
       const int p = parent[e];
       const int ch = child[e];
 
@@ -90,11 +151,10 @@ inline int fitch_score_all(
 //   2. Score via fitch_score_all
 //   3. Restore the original topology
 //
-// This is O(nCand × nEdge × nChar) — plenty fast for morphological data
-// (≤500 chars, ≤300 tips, ≤100 candidates → ~15M bitwise ops, <5 ms).
+// This is O(nCand × nEdge × nChar).
 //
-// parent/child are MODIFIED IN PLACE and restored; caller's arrays unchanged
-// on return.
+// parent/child are MODIFIED IN PLACE and restored on normal return; a throw
+// from the scorer leaves them mid-regraft, so callers pass a copy.
 inline void fitch_score_candidates(
     int* parent, int* child, int nEdge, int nTip,
     const std::vector<std::pair<Rcpp::IntegerMatrix, int>>& parts,

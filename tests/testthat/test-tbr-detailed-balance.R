@@ -10,21 +10,6 @@
 
 # --- Shared helpers --------------------------------------------------------
 
-# Canonical topology key: sorted non-trivial splits identified by tip names.
-# Invariant under root placement and node renumbering.
-.topo_key <- function(tr) {
-  splits <- as.Splits(tr)
-  mat <- as.logical(splits)
-  tip_names <- colnames(mat)
-  row_keys <- apply(mat, 1, function(r) {
-    side_a <- sort(tip_names[r])
-    side_b <- sort(tip_names[!r])
-    if (side_a[1] < side_b[1]) paste(side_a, collapse = ",")
-    else paste(side_b, collapse = ",")
-  })
-  paste(sort(row_keys), collapse = "|")
-}
-
 # Run a flat-posterior MH chain using a single proposal function.
 # Returns a frequency table of topology keys.
 .flat_posterior_chain <- function(propose_fn, n_iter, thin, seed) {
@@ -49,7 +34,7 @@
       current_rel <- prop$rel_br_lengths
     }
     if (i %% thin == 0L) {
-      keys[i %/% thin] <- .topo_key(current)
+      keys[i %/% thin] <- .TopologyKey(current$edge, current$tip.label)
     }
   }
 

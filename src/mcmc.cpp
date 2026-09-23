@@ -138,6 +138,41 @@ int fitch_score_r(IntegerVector parent, IntegerVector child,
 }
 
 
+// Exported for unit testing.  Row arguments are 1-based edge indices.
+// [[Rcpp::export]]
+IntegerVector fitch_score_candidates_r(
+    IntegerVector parent, IntegerVector child,
+    IntegerMatrix tipStates, int nTip, int kStates,
+    int pruneRow, int parentRow, int sibRow,
+    int u, int v, int sibNode, IntegerVector candidates) {
+  const int nEdge = parent.size();
+  // Every row argument indexes a raw int* inside fitch_score_candidates, so an
+  // out-of-range one would write past the vector rather than fail.
+  auto requireRow = [nEdge](int row, const char* name) {
+    if (row < 1 || row > nEdge) Rcpp::stop("%s out of range", name);
+  };
+  if (child.size() != nEdge)
+    Rcpp::stop("parent and child must have equal length");
+  requireRow(pruneRow, "pruneRow");
+  requireRow(parentRow, "parentRow");
+  requireRow(sibRow, "sibRow");
+  for (int i = 0; i < candidates.size(); ++i) requireRow(candidates[i], "candidates");
+  if (nTip < 1 || nTip > tipStates.nrow())
+    Rcpp::stop("nTip exceeds the rows of tipStates");
+  if (kStates < 1 || kStates > 26)
+    Rcpp::stop("kStates must lie in 1:26");
+  std::vector<std::pair<IntegerMatrix, int>> parts = {{tipStates, kStates}};
+  std::vector<int> cand(candidates.size());
+  for (int i = 0; i < candidates.size(); ++i) cand[i] = candidates[i] - 1;
+  IntegerVector wp = clone(parent), wc = clone(child);
+  std::vector<int> scores;
+  fitch_score_candidates(INTEGER(wp), INTEGER(wc), nEdge, nTip, parts,
+                         pruneRow - 1, parentRow - 1, sibRow - 1,
+                         u, v, sibNode, cand, scores);
+  return wrap(scores);
+}
+
+
 // ---------------------------------------------------------------------------
 // McmcState: mutable per-chain state
 // ---------------------------------------------------------------------------
@@ -868,6 +903,14 @@ static double fnv_topo_hash(const IntegerVector& parent,
 double compute_topo_hash(IntegerVector parent, IntegerVector child, int nTip) {
   return fnv_topo_hash(parent, child, nTip);
 }
+
+// Exported for unit testing.  Case 6 takes the TreeNav SPR branch only while
+// this cache is live.
+// [[Rcpp::export]]
+bool node_cl_ready(SEXP statePtr) {
+  return Rcpp::XPtr<McmcState>(statePtr).get()->nodeCL.ready();
+}
+
 
 // [[Rcpp::export]]
 double get_state_log_lik(SEXP statePtr) {
