@@ -94,6 +94,94 @@ test_that("C++ engine rejects gibbs_p under the truncated geometric (non-conjuga
   expect_equal(s_after$logPrior, s_before$logPrior)  # prior untouched
 })
 
+test_that("C++ engine rejects gibbs_p under empirical_geometric (EG guard)", {
+  # The EG guard sits ahead of the plain-geometric guard tested above: p
+  # enters the empirical_geometric prior via a convolution, so its full
+  # conditional is never Beta either.  Route a gibbs_p (case 9) call
+  # directly at an empirical_geometric model to exercise that guard, not
+  # the plain-geometric one.
+  skip_if_not(requireNamespace("ape", quietly = TRUE))
+  set.seed(2195)
+
+  pd   <- .small_trans_pd()
+  mkd  <- MkPrimeData(pd)
+  model <- MkPrimeModel(kPrimePrior = "empirical_geometric")
+  tree <- .small_trans_tree()
+
+  model  <- MkPrime:::.FinalizeModel(model, tree, mkd)
+  state0 <- MkPrime:::.InitState(tree, mkd, model)
+  mcmcData <- MkPrime:::.InitMcmcData(mkd, model)
+  statePtr <- MkPrime:::.InitMcmcChain(state0)
+  fill_partition_cache(mcmcData, statePtr)
+  allocate_cl_workspace(mcmcData, statePtr)
+
+  sBefore <- get_mcmc_state(statePtr)
+  accepted <- do_move_cpp(mcmcData, statePtr,
+    moveType = 9L, charIdx = 0L,
+    scaleTuning = 0.5, betaSimplexTuning = 10.0,
+    intWalkWindow = 1L, beta = 1.0)
+  sAfter <- get_mcmc_state(statePtr)
+
+  expect_false(accepted)                          # non-conjugate -> rejected
+  expect_equal(sAfter$p, sBefore$p)                # p untouched
+  expect_equal(sAfter$logPrior, sBefore$logPrior)  # prior untouched
+})
+
+test_that("mh_logit_p (case 30) targets the correct p full-conditional (KS test)", {
+  # mh_logit_p only ever touches p -- it never re-proposes kPrime, the tree
+  # or rates -- so state$logLik never depends on it: holding kPrime fixed
+  # makes the likelihood genuinely constant across p-moves, and the
+  # distribution mh_logit_p should sample from is the closed-form full
+  # conditional p | kPrime ~ Beta(kprimeAlpha + nTrans, kprimeBeta +
+  # sum(kPrime - 2)) that the retired conjugate gibbs_p (case 9) used to draw
+  # directly, in the near-untruncated limit (kprimeTruncK at its
+  # compile-time cap of 256, with kPrime chosen far from that boundary so
+  # the truncation normaliser Z_A(p) ~ 1).
+  skip_on_cran()
+  set.seed(20260923)
+
+  tree <- .small_trans_tree()
+  pd   <- .small_trans_pd()
+  mkd  <- MkPrimeData(pd)
+  model <- MkPrimeModel(kPrimePrior = "geometric", priorVariant = "unconditional",
+                        kprimeAlpha = 1, kprimeBeta = 1, kprimeTruncK = 256L)
+  model  <- MkPrime:::.FinalizeModel(model, tree, mkd)
+  state0 <- MkPrime:::.InitState(tree, mkd, model)
+
+  transIdx <- which(mkd$type == "transformational")
+  kObs     <- mkd$kObs[transIdx]
+  kpFixed  <- kObs + c(3L, 5L)               # held fixed for the whole chain
+  state0$kPrime[transIdx] <- kpFixed
+  state0$p <- 0.3
+
+  mcmcData <- MkPrime:::.InitMcmcData(mkd, model)
+  statePtr <- MkPrime:::.InitMcmcChain(state0)
+  MkPrime:::fill_partition_cache(mcmcData, statePtr)
+  MkPrime:::allocate_cl_workspace(mcmcData, statePtr)
+
+  nIter <- 60000L
+  burn  <- 2000L
+  thin  <- 15L
+  pSamples <- numeric(0L)
+  for (i in seq_len(nIter)) {
+    MkPrime:::do_move_cpp(mcmcData, statePtr, moveType = 30L, charIdx = 0L,
+                          scaleTuning = 4.0, betaSimplexTuning = 10.0,
+                          intWalkWindow = 1L, beta = 1.0)
+    if (i > burn && (i - burn) %% thin == 0L) {
+      pSamples <- c(pSamples, MkPrime:::get_mcmc_state(statePtr)$p)
+    }
+  }
+
+  shape1 <- 1 + length(kpFixed)
+  shape2 <- 1 + sum(kpFixed - 2)
+  # Occasional exact ties occur when a thinning interval spans zero accepted
+  # moves; harmless at this sample size and not evidence against the fit.
+  ks <- suppressWarnings(
+    stats::ks.test(pSamples, "pbeta", shape1 = shape1, shape2 = shape2)
+  )
+  expect_gt(ks$p.value, 0.01)
+})
+
 test_that("RunMkPrime samples p via mh_logit_p under the geometric prior (valid posterior)", {
   set.seed(7342)
   tree <- .small_trans_tree()
