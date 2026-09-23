@@ -207,7 +207,6 @@ struct McmcState {
   std::vector<int> dirEdges;
   // DIAG counters
   int diagDirPartialCount = 0;
-  int diagDirFullbackCount = 0;
   int diagNniPartialCount = 0;
   int diagBsPartialCount = 0;
   int diagCachePopCount = 0;
@@ -864,7 +863,6 @@ List get_mcmc_state(SEXP statePtr) {
     _["logPost"]       = s->logLik + s->logPrior,
     _["betaScale"]     = s->betaScale,
     _["diagDirPartial"] = s->diagDirPartialCount,
-    _["diagDirFullback"] = s->diagDirFullbackCount,
     _["diagNniPartial"] = s->diagNniPartialCount,
     _["diagBsPartial"]  = s->diagBsPartialCount,
     _["diagSelectivePop"] = s->nodeCL.diagSelectivePopCount,
@@ -5738,31 +5736,12 @@ static bool do_move_impl(McmcData* data, McmcState* state,
 
     auto dirty = find_dirty_dirichlet(state->nodeCL.topo,
                                        evalParent, state->dirEdges);
-    // Heuristic: if dirty set covers most of the tree, fall back to full eval
-    int nInternal = nEdge + 1 - data->nTip;
-    if ((int)dirty.size() > (int)(0.8 * (nInternal + data->nTip))) {
-      state->diagDirFullbackCount++;
-      { ClWorkspace* dWs = state->clWs.ready() ? &state->clWs : nullptr;
-        newLogLik = state->usePartitioned
-          ? cpp_log_likelihood_partitioned(
-              *data, evalParent, evalChild, propEdgeLen,
-              state->kPrime, state->rateLoss,
-              state->classRateLogSd, state->classRate,
-              state->etaNeo, state->betaScale, dWs)
-          : cpp_log_likelihood(
-              *data, evalParent, evalChild, propEdgeLen,
-              state->kPrime, state->rateLoss, state->rateLogSd,
-              state->rateNeo, state->betaScale, dWs);
-      }
-    } else {
-      newLogLik = partial_eval_dirty(state->nodeCL, *data,
-                                      evalParent, evalChild, propEdgeLen,
-                                      state->rateLoss, state->rateNeo,
-                                      state->rateLogSd, state->betaScale, dirty);
-      usedPartialCL = true;
-
-      state->diagDirPartialCount++;
-    }
+    newLogLik = partial_eval_dirty(state->nodeCL, *data,
+                                    evalParent, evalChild, propEdgeLen,
+                                    state->rateLoss, state->rateNeo,
+                                    state->rateLogSd, state->betaScale, dirty);
+    usedPartialCL = true;
+    state->diagDirPartialCount++;
 
   } else if (sprPartialCL) {
     // M-158: SPR with partial CL evaluation via TreeNav
@@ -5781,33 +5760,14 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     for (int i = 0; i < nEdge; ++i)
       propEdgeLen[i] = state->treeLength * proposedRelBr[i];
 
-    // 3. Find dirty set and check if partial eval is worthwhile
+    // 3. Partial CL evaluation over the dirty set
     auto dirty = find_dirty_spr(state->nodeCL.topo,
                                  sprMeta.u, sprMeta.p, sprMeta.a);
-    int nInternal = nEdge + 1 - data->nTip;
-    if ((int)dirty.size() > (int)(0.8 * (nInternal + data->nTip))) {
-      // Dirty set too large — fall back to full eval
-      // (TreeNav already updated; will be reversed on rejection)
-      { ClWorkspace* sWs = state->clWs.ready() ? &state->clWs : nullptr;
-        newLogLik = state->usePartitioned
-          ? cpp_log_likelihood_partitioned(
-              *data, sprParent, sprChild, propEdgeLen,
-              state->kPrime, state->rateLoss,
-              state->classRateLogSd, state->classRate,
-              state->etaNeo, state->betaScale, sWs)
-          : cpp_log_likelihood(
-              *data, sprParent, sprChild, propEdgeLen,
-              state->kPrime, state->rateLoss, state->rateLogSd,
-              state->rateNeo, state->betaScale, sWs);
-      }
-    } else {
-      // 4. Partial CL evaluation
-      newLogLik = partial_eval_dirty(state->nodeCL, *data,
-                                      sprParent, sprChild, propEdgeLen,
-                                      state->rateLoss, state->rateNeo,
-                                      state->rateLogSd, state->betaScale, dirty);
-      usedPartialCL = true;
-    }
+    newLogLik = partial_eval_dirty(state->nodeCL, *data,
+                                    sprParent, sprChild, propEdgeLen,
+                                    state->rateLoss, state->rateNeo,
+                                    state->rateLogSd, state->betaScale, dirty);
+    usedPartialCL = true;
 
   } else if (!hasPLC) {
     int nEdge = evalRelBr.size();
@@ -6025,7 +5985,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
           state->treeLength * state->relBrLengths[idx];
     }
   }
-  // M-158: rollback SPR TreeNav on rejection (whether or not partial CL was used)
+  // M-158: rollback SPR TreeNav on rejection
   if (sprPartialCL) {
     reverse_topo_spr(state->nodeCL.topo, sprMeta);
     if (usedPartialCL) {
@@ -6364,7 +6324,6 @@ List run_mcmc_batch_cpp(
   // DIAG: aggregate counters from cold chain (index 0)
   IntegerVector diagCounters = IntegerVector::create(
     _["dir_partial"] = states[0]->diagDirPartialCount,
-    _["dir_fullback"] = states[0]->diagDirFullbackCount,
     _["nni_partial"] = states[0]->diagNniPartialCount,
     _["bs_partial"] = states[0]->diagBsPartialCount
   );
