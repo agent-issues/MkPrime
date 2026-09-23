@@ -202,6 +202,14 @@
     # test-gibbs-spr-candidates.R and the detailed-balance gate at
     # dev/red-team/heavy-tests/gibbs-spr-db.R.
     gibbsSpr         = FALSE,
+    #
+    # pSpr is pinned off for the same reason as gibbsSpr: it was the other move
+    # on main known to be incorrect (issue #142 -- candidate parsimony weights
+    # were a function of the edge-array row layout, so the move was not
+    # pi-invariant), and leaving it on made the reference hostage to that fix.
+    # pspr correctness is covered by test-pspr.R and
+    # test-topology-detailed-balance.R.
+    pSpr             = FALSE,
     gibbsSubtreeSwap = FALSE,
     joint2d          = FALSE
   )
