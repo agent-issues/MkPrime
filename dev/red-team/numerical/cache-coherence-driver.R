@@ -2,6 +2,10 @@
 #
 # Lane N3 — Partial-CL cache coherence stress driver
 #
+# INERT: src/mcmc.cpp has no mismatch counters or `diagMaxDiff`, so every
+# readout below is NA. Per-move coherence is tested in
+# tests/testthat/test-node-cl-cache.R.
+#
 # Purpose
 # -------
 # Force the partial-CL machinery (src/node_cl_cache.h, src/gibbs_partial_cl.h)
