@@ -172,15 +172,11 @@ struct McmcState {
   std::vector<int> dirEdges;
   // DIAG counters
   int diagDirPartialCount = 0;
-  int diagDirMismatchCount = 0;
   int diagDirFullbackCount = 0;
   int diagNniPartialCount = 0;
-  int diagNniMismatchCount = 0;
   int diagBsPartialCount = 0;
-  int diagBsMismatchCount = 0;
   int diagDriftCount = 0;
   int diagCachePopCount = 0;
-  double diagMaxDiff = 0.0;
 
   // Partition-API (Layer 1, plan v4 §4.2).
   // When usePartitioned is false (legacy path), these are ignored and the
@@ -834,12 +830,10 @@ List get_mcmc_state(SEXP statePtr) {
     _["logPost"]       = s->logLik + s->logPrior,
     _["betaScale"]     = s->betaScale,
     _["diagDirPartial"] = s->diagDirPartialCount,
-    _["diagDirMismatch"] = s->diagDirMismatchCount,
     _["diagDirFullback"] = s->diagDirFullbackCount,
     _["diagNniPartial"] = s->diagNniPartialCount,
     _["diagBsPartial"]  = s->diagBsPartialCount,
     _["diagDriftCount"] = s->diagDriftCount,
-    _["diagMaxDiff"]    = s->diagMaxDiff,
     _["diagSelectivePop"] = s->nodeCL.diagSelectivePopCount,
     // Partition-API extras (zero-length / scalar defaults on legacy state).
     _["usePartitioned"]     = s->usePartitioned,
@@ -5671,23 +5665,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                                     state->rateLoss, state->rateNeo,
                                     state->rateLogSd, state->betaScale, dirty);
     usedPartialCL = true;
-    // DIAG: compare NNI partial-CL with full eval
-    { ClWorkspace* nniWs = state->clWs.ready() ? &state->clWs : nullptr;
-      double fullLL = state->usePartitioned
-        ? cpp_log_likelihood_partitioned(
-            *data, evalParent, evalChild, propEdgeLen,
-            state->kPrime, state->rateLoss,
-            state->classRateLogSd, state->classRate,
-            state->etaNeo, state->betaScale, nniWs)
-        : cpp_log_likelihood(
-            *data, evalParent, evalChild, propEdgeLen,
-            state->kPrime, state->rateLoss, state->rateLogSd,
-            state->rateNeo, state->betaScale, nniWs);
-      double diff = std::abs(newLogLik - fullLL);
-      state->diagNniPartialCount++;
-      if (diff > state->diagMaxDiff) state->diagMaxDiff = diff;
-      if (diff > 1e-6) state->diagNniMismatchCount++;
-    }
+    state->diagNniPartialCount++;
 
   } else if (moveType == 4 && state->nodeCL.ready()) {
     // M-121: beta_simplex with valid node CL cache → partial evaluation
@@ -5709,23 +5687,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                                     state->rateLoss, state->rateNeo,
                                     state->rateLogSd, state->betaScale, dirty);
     usedPartialCL = true;
-    // DIAG: compare BS partial-CL with full eval
-    { ClWorkspace* bsWs = state->clWs.ready() ? &state->clWs : nullptr;
-      double fullLL = state->usePartitioned
-        ? cpp_log_likelihood_partitioned(
-            *data, evalParent, evalChild, propEdgeLen,
-            state->kPrime, state->rateLoss,
-            state->classRateLogSd, state->classRate,
-            state->etaNeo, state->betaScale, bsWs)
-        : cpp_log_likelihood(
-            *data, evalParent, evalChild, propEdgeLen,
-            state->kPrime, state->rateLoss, state->rateLogSd,
-            state->rateNeo, state->betaScale, bsWs);
-      double diff = std::abs(newLogLik - fullLL);
-      state->diagBsPartialCount++;
-      if (diff > state->diagMaxDiff) state->diagMaxDiff = diff;
-      if (diff > 1e-6) state->diagBsMismatchCount++;
-    }
+    state->diagBsPartialCount++;
 
   } else if ((moveType == 23 || moveType == 24) && state->nodeCL.ready()) {
     // M-127: Dirichlet (random or local) with valid node CL cache → partial eval
@@ -5763,25 +5725,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                                       state->rateLogSd, state->betaScale, dirty);
       usedPartialCL = true;
 
-      // DIAG: compare Dirichlet partial-CL with full eval
-      { ClWorkspace* dWs2 = state->clWs.ready() ? &state->clWs : nullptr;
-        double fullLL = state->usePartitioned
-          ? cpp_log_likelihood_partitioned(
-              *data, evalParent, evalChild, propEdgeLen,
-              state->kPrime, state->rateLoss,
-              state->classRateLogSd, state->classRate,
-              state->etaNeo, state->betaScale, dWs2)
-          : cpp_log_likelihood(
-              *data, evalParent, evalChild, propEdgeLen,
-              state->kPrime, state->rateLoss, state->rateLogSd,
-              state->rateNeo, state->betaScale, dWs2);
-        double diff = std::abs(newLogLik - fullLL);
-        state->diagDirPartialCount++;
-        if (diff > state->diagMaxDiff) state->diagMaxDiff = diff;
-        if (diff > 1e-6) {
-          state->diagDirMismatchCount++;
-        }
-      }
+      state->diagDirPartialCount++;
     }
 
   } else if (sprPartialCL) {
@@ -6384,7 +6328,6 @@ List run_mcmc_batch_cpp(
   // DIAG: aggregate counters from cold chain (index 0)
   IntegerVector diagCounters = IntegerVector::create(
     _["dir_partial"] = states[0]->diagDirPartialCount,
-    _["dir_mismatch"] = states[0]->diagDirMismatchCount,
     _["dir_fullback"] = states[0]->diagDirFullbackCount,
     _["nni_partial"] = states[0]->diagNniPartialCount,
     _["bs_partial"] = states[0]->diagBsPartialCount,
@@ -6403,7 +6346,6 @@ List run_mcmc_batch_cpp(
     _["edge_samples"]     = edgeSamples,
     _["n_saved"]          = nSaved,
     _["diag_counters"]    = diagCounters,
-    _["diag_max_diff"]    = states[0]->diagMaxDiff,
     _["cache_hits"]       = cacheHits,
     _["cache_misses"]     = cacheMisses
   );
