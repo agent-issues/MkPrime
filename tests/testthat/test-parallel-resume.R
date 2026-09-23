@@ -251,3 +251,63 @@ test_that("ResumeMkPrime synthesises master when master.ckp is missing", {
   expect_true(file.exists(ckp))  # master synthesised
   expect_gt(resumed$nSamples, 0L)
 })
+
+
+test_that("a parallel resume writes each tree once, keeping the tail (#95)", {
+  skip_on_cran()
+  skip_if_not_installed("callr")
+  skip_if_not(.is_mkprime_installed(),
+              "MkPrime not installed -- callr workers need installed package")
+
+  fx <- .tiny_fixture()
+  ckpFile  <- tempfile(fileext = ".ckp")
+  logFile  <- tempfile(fileext = ".log")
+  treeFile <- tempfile(fileext = ".nwk")
+  logPaths  <- .LogFilePaths(logFile, 2L)
+  treePaths <- .TreeFilePaths(treeFile, 2L)
+  on.exit(unlink(c(ckpFile, .CkpFilePaths(ckpFile, 2L), logPaths, treePaths)),
+          add = TRUE)
+
+  set.seed(95)
+  setTimeLimit(elapsed = 600, transient = TRUE)
+  on.exit(setTimeLimit(elapsed = Inf, transient = TRUE), add = TRUE)
+
+  RunMkPrime(fx$pd, fx$tree,
+    mcmc = MkPrimeMCMC(nRuns = 2L, nCore = 2L, nIter = 600L, thin = 5L,
+                       treeThin = 5L, maxWarmup = 200L, minWarmup = 200L,
+                       autoTune = FALSE, pollInterval = 1L, maxTime = 240,
+                       checkEvery = 200L, checkpointFile = ckpFile,
+                       logFile = logFile, treeFile = treeFile))
+
+  # Extend the budget so there is a second segment to resume into.
+  cp <- readRDS(ckpFile)
+  cp$mcmc$nIter <- 1200L
+  saveRDS(cp, ckpFile)
+
+  preRows  <- vapply(logPaths, function(f) length(readLines(f)) - 1L,
+                     integer(1L), USE.NAMES = FALSE)
+  preTrees <- vapply(treePaths, function(p) length(readLines(p)),
+                     integer(1L), USE.NAMES = FALSE)
+
+  ResumeMkPrime(ckpFile, fx$pd)
+
+  onDisk <- vapply(treePaths, function(p) length(readLines(p)),
+                   integer(1L), USE.NAMES = FALSE)
+  after  <- readRDS(ckpFile)
+  # Workers stream their own trees, so the coordinator's post-completion
+  # append wrote every resumed tree a second time; resetting `tree_saved_idx`
+  # then pointed the next rewind at the oldest trees rather than the extra
+  # ones.  `treeThin == thin`, so each tree has exactly one param row.
+  expect_identical(onDisk, vapply(after$runs,
+                                  function(r) as.integer(r$tree_saved_idx),
+                                  integer(1L), USE.NAMES = FALSE))
+  expect_identical(onDisk, preTrees + (1200L - 600L) %/% 5L)
+  nRows <- vapply(logPaths, function(f) length(readLines(f)) - 1L,
+                  integer(1L), USE.NAMES = FALSE)
+  # Sync invariant: every tree still has a backing param row.
+  expect_true(all(onDisk <= nRows))
+  # And each worker continued from iteration 601, adding one draw per `thin`
+  # over the 600 iterations of new budget, rather than repeating the whole
+  # 1200 from 1.
+  expect_identical(nRows, preRows + (1200L - 600L) %/% 5L)
+})

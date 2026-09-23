@@ -99,10 +99,14 @@ test_that("RunMkPrime samples p via mh_logit_p under the geometric prior (valid 
   tree <- .small_trans_tree()
   pd   <- .small_trans_pd()
 
-  result <- suppressWarnings(RunMkPrime(pd, tree,
-    model = MkPrimeModel(kPrimePrior = "geometric"),
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 600L, thin = 5L,
-                       maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE)))
+  result <- allow_warning(
+    RunMkPrime(pd, tree,
+               model = MkPrimeModel(kPrimePrior = "geometric"),
+               mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 600L, thin = 5L,
+                                  maxWarmup = 200L, minWarmup = 200L,
+                                  autoTune = FALSE)),
+    "without stabilisation"
+  )
 
   expect_s3_class(result, "MkPosterior")
   expect_true(all(is.finite(result$samples[, "log_posterior"])))

@@ -11,8 +11,6 @@
 # point -- and the target is then exp(logLik) normalised over the states the
 # chain visits, every state carrying the same exchangeable Dirichlet prior.
 
-library("ape")
-library("TreeTools")
 
 .SwapChain <- function(nTip = 5L, nIter = 60000L, seed = 7L) {
   set.seed(seed)
