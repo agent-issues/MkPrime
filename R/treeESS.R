@@ -19,6 +19,10 @@
 #' (Magee et al. 2021); this adds negligible cost since the full
 #' distance matrix is computed either way.
 #'
+#' A chain that never leaves one topology has no median pseudo-ESS (`NA`):
+#' on its own it cannot be told apart from a posterior concentrated on one
+#' topology.
+#'
 #' @param trees A `multiPhylo` list of trees from a single MCMC chain.
 #' @param dist_fn Distance function applied to `trees`; must return a
 #'   `dist` object.  Default: [TreeDist::RobinsonFoulds].
@@ -100,7 +104,8 @@ if (all(dmat == 0)) return(1)
 #' @param dmat Numeric square distance matrix.
 #' @param min_nsamples Minimum samples for lag computation (default 5).
 #' @param maxRows Maximum rows to evaluate; 0 = all rows.  Default 200.
-#' @return Scalar ESS estimate.
+#' @return Scalar ESS estimate; `NA` when every row is constant, i.e. the
+#' chain sampled a single topology.
 #' @references
 #' Lanfear R, Hua X, Warren DL (2016). \emph{Genome Biology
 #'   and Evolution}, 8(8), 2319--2332.

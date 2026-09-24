@@ -989,6 +989,7 @@ RunMkPrime <- function(data, tree = NULL,
   bestWeights      <- moveWeights
   tuningFreezeStreak <- r$tuningFreezeStreak %||% 0L
   convStreak       <- r$convStreak %||% 0L
+  warnedStuckTopology <- FALSE
   tuningCandidates <- list()
   tuningCandIdx    <- 0L
   effectiveTuningBudget <- r$effectiveTuningBudget %||% mcmc$tuningBudget
@@ -1606,6 +1607,19 @@ RunMkPrime <- function(data, tree = NULL,
         etaStr <- .EstimateEta(etaCrit$current, etaCrit$target, elapsedSample)
         # Refresh ticker pages from latest diagnostics (M-097)
         tickerPages <- .BuildTickerPages(diagCheck, etaStr)
+        if (identical(diagCheck$treeEssStatus, "stuck") &&
+            !warnedStuckTopology) {
+          warnedStuckTopology <- TRUE
+          cli::cli_warn(c(
+            "Run {runIdx} has sampled a single tree topology, so its tree \\
+             ESS cannot be assessed and {.arg minTreeEss} cannot be met.",
+            "i" = "The run continues until it samples another topology, or \\
+                   stops at {.arg nIter}, {.arg maxTime} or a cancel file.",
+            "i" = "One run cannot tell a stuck chain from a posterior \\
+                   concentrated on one topology; if the posterior is \\
+                   concentrated, drop {.arg minTreeEss}."
+          ))
+        }
         convVerdict  <- .ConvergenceStreak(convStreak, diagCheck$converged)
         convStreak   <- convVerdict[["streak"]]
         r$convStreak <- convStreak
@@ -2371,6 +2385,7 @@ RunMkPrime <- function(data, tree = NULL,
   # decision, and upgrades to full precision when tree ESS is the binding
   # constraint.
   treeEss <- NA_real_
+  treeEssStatus <- NA_character_
   treeEssPrecision <- "skip"
   if (!is.null(mcmc$minTreeEss) &&
       requireNamespace("TreeDist", quietly = TRUE)) {
@@ -2386,15 +2401,19 @@ RunMkPrime <- function(data, tree = NULL,
                         else "coarse"
 
     if (treeEssPrecision != "skip") {
-      maxPerRun <- if (treeEssPrecision == "fine") 1000L else 500L
-      treeEss <- .ComputeTreeEssInLoop(runs, maxPerRun, isStreaming)
+      tree <- .ComputeTreeEssInLoop(
+        runs, if (treeEssPrecision == "fine") 1000L else 500L, isStreaming
+      )
 
-      # Upgrade coarse -> fine if estimate is close to threshold
-      if (treeEssPrecision == "coarse" && !is.na(treeEss) &&
-          treeEss >= 0.8 * mcmc$minTreeEss) {
-        treeEss <- .ComputeTreeEssInLoop(runs, 1000L, isStreaming)
+      # Upgrade coarse -> fine if the criterion looks close to being met
+      if (treeEssPrecision == "coarse" &&
+          (identical(tree[["status"]], "agree") ||
+           isTRUE(tree[["ess"]] >= 0.8 * mcmc$minTreeEss))) {
+        tree <- .ComputeTreeEssInLoop(runs, 1000L, isStreaming)
         treeEssPrecision <- "fine"
       }
+      treeEss <- tree[["ess"]]
+      treeEssStatus <- tree[["status"]]
     }
   }
 
@@ -2406,12 +2425,12 @@ RunMkPrime <- function(data, tree = NULL,
     (is.null(mcmc$minEss)     || isTRUE(minEss >= mcmc$minEss)) &&
     (is.null(mcmc$maxRhat)    || (nRuns >= 2L &&
                                    isTRUE(maxRhat <= mcmc$maxRhat))) &&
-    (is.null(mcmc$minTreeEss) || (!is.na(treeEss) &&
-                                   treeEss >= mcmc$minTreeEss))
+    (is.null(mcmc$minTreeEss) || identical(treeEssStatus, "agree") ||
+                                 isTRUE(treeEss >= mcmc$minTreeEss))
 
   list(converged = converged, minEss = minEss, maxRhat = maxRhat,
        treeEss = treeEss, treeEssPrecision = treeEssPrecision,
-       ess = ess, rhat = rhat)
+       treeEssStatus = treeEssStatus, ess = ess, rhat = rhat)
 }
 
 
@@ -2489,17 +2508,30 @@ RunMkPrime <- function(data, tree = NULL,
 #' Compute tree ESS from in-memory MCMC runs
 #'
 #' Extracts tree samples from each run, subsamples to `maxPerRun`,
-#' and returns the **minimum** median pseudo-ESS across runs (conservative).
+#' and takes the **minimum** median pseudo-ESS across runs (conservative).
 #' Used during convergence checks when `minTreeEss` is set.
+#'
+#' A run that has sampled a single topology has no pseudo-ESS: within one run,
+#' a stuck chain cannot be told from a posterior concentrated on one topology.
+#' Runs that started apart and settled on the same topology agree, so tree ESS
+#' does not apply to them; runs on different topologies, or a mix of stuck and
+#' moving runs, have not converged.
 #'
 #' @param runs List of run state objects (each with `$tree_samples` and
 #'   `$tree_saved_idx`).
 #' @param maxPerRun Maximum trees per run to use (controls coarse vs fine).
 #' @param isStreaming Logical; when `TRUE`, trees are in a flat list
 #'   (streaming mode stores all trees, no `saved_idx` subsetting needed).
-#' @return Scalar minimum median pseudo-ESS, or `NA_real_` on failure.
+#' @return List with `ess`, the minimum median pseudo-ESS or `NA_real_`, and
+#' `status`:
+#'  - `ok`: `ess` is the minimum over runs;
+#'  - `stuck`: a lone run has sampled one topology;
+#'  - `agree`: every run has sampled the same single topology;
+#'  - `disagree`: some run has sampled one topology and the others differ;
+#'  - `unavailable`: too few trees, or the computation failed.
 #' @keywords internal
 .ComputeTreeEssInLoop <- function(runs, maxPerRun, isStreaming) {
+  unavailable <- list(ess = NA_real_, status = "unavailable")
   perRunTrees <- lapply(runs, function(r) {
     if (isStreaming) {
       ts <- r$tree_samples
@@ -2516,8 +2548,10 @@ RunMkPrime <- function(data, tree = NULL,
     }
   })
 
-  perRunTrees <- Filter(Negate(is.null), perRunTrees)
-  if (length(perRunTrees) == 0L) return(NA_real_)
+  if (length(perRunTrees) == 0L ||
+      any(vapply(perRunTrees, is.null, logical(1)))) {
+    return(unavailable)
+  }
 
   # Subsample and convert to multiPhylo
   perRunTrees <- lapply(perRunTrees, function(ts) {
@@ -2533,10 +2567,26 @@ RunMkPrime <- function(data, tree = NULL,
       TreeESS(chain, dist_fn = TreeDist::RobinsonFoulds,
               frechet = FALSE)[["medianPseudoESS"]]
     }, double(1))
-    essVals <- essVals[is.finite(essVals)]
-    if (length(essVals) == 0L) return(NA_real_)
-    min(essVals)
-  }, error = function(e) NA_real_)
+    stuck <- vapply(seq_along(perRunTrees), function(i) {
+      is.na(essVals[i]) &&
+        all(TreeDist::RobinsonFoulds(perRunTrees[[i]][[1]],
+                                     perRunTrees[[i]]) == 0)
+    }, logical(1))
+
+    if (any(stuck)) {
+      if (length(perRunTrees) == 1L) {
+        return(list(ess = NA_real_, status = "stuck"))
+      }
+      firstTrees <- structure(lapply(perRunTrees, `[[`, 1L),
+                              class = "multiPhylo")
+      agree <- all(stuck) &&
+        all(TreeDist::RobinsonFoulds(firstTrees[[1]], firstTrees) == 0)
+      return(list(ess = NA_real_,
+                  status = if (agree) "agree" else "disagree"))
+    }
+    if (!all(is.finite(essVals))) return(unavailable)
+    list(ess = min(essVals), status = "ok")
+  }, error = function(e) unavailable)
 }
 
 
@@ -5324,8 +5374,8 @@ if (n < 2L * windowSize) {
 #'
 #' @return `.MinEssRate()` a list with the `rate` min(ESS)/`wallTimeSec` and
 #' the `ess` it came from; `.MinEssPerSec()` the rate alone. Both are `NA`
-#' where any gate ESS cannot be computed: a window that froze a parameter is
-#' unassessable, not the best.
+#' where any gate ESS, or the tree ESS, cannot be computed: a window that
+#' froze a parameter or the topology is unassessable, not the best.
 #' @keywords internal
 .MinEssRate <- function(sampleMatrix, wallTimeSec, tuningTrees = NULL,
                         fixedCols = NULL) {
@@ -5350,9 +5400,8 @@ if (n < 2L * windowSize) {
               frechet = FALSE)[["medianPseudoESS"]],
       error = function(e) NA_real_
     )
-    if (!is.na(treeEss) && is.finite(treeEss)) {
-      minEss <- min(minEss, treeEss)
-    }
+    if (!is.finite(treeEss)) return(noRate)
+    minEss <- min(minEss, treeEss)
   }
 
   # Return:

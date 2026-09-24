@@ -16,11 +16,26 @@
 (streaming mode stores all trees, no \code{saved_idx} subsetting needed).}
 }
 \value{
-Scalar minimum median pseudo-ESS, or \code{NA_real_} on failure.
+List with \code{ess}, the minimum median pseudo-ESS or \code{NA_real_}, and
+\code{status}:
+\itemize{
+\item \code{ok}: \code{ess} is the minimum over runs;
+\item \code{stuck}: a lone run has sampled one topology;
+\item \code{agree}: every run has sampled the same single topology;
+\item \code{disagree}: some run has sampled one topology and the others differ;
+\item \code{unavailable}: too few trees, or the computation failed.
+}
 }
 \description{
 Extracts tree samples from each run, subsamples to \code{maxPerRun},
-and returns the \strong{minimum} median pseudo-ESS across runs (conservative).
+and takes the \strong{minimum} median pseudo-ESS across runs (conservative).
 Used during convergence checks when \code{minTreeEss} is set.
+}
+\details{
+A run that has sampled a single topology has no pseudo-ESS: within one run,
+a stuck chain cannot be told from a posterior concentrated on one topology.
+Runs that started apart and settled on the same topology agree, so tree ESS
+does not apply to them; runs on different topologies, or a mix of stuck and
+moving runs, have not converged.
 }
 \keyword{internal}

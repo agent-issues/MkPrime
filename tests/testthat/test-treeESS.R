@@ -112,9 +112,9 @@ test_that(".MedianPseudoESS returns Geyer ESS (n=30)", {
   expect_equal(.MedianPseudoESS(.dmat_30), 16.678, tolerance = 1e-2)
 })
 
-test_that(".MedianPseudoESS returns n for constant chain", {
+test_that(".MedianPseudoESS returns NA for a constant chain (#195)", {
   dmat_const <- matrix(0, 20, 20)
-  expect_equal(.MedianPseudoESS(dmat_const), 20)
+  expect_true(is.na(.MedianPseudoESS(dmat_const)))
 })
 
 test_that(".MedianPseudoESS returns NA for too-short chain", {
@@ -181,4 +181,11 @@ test_that("TreeESS returns finite positive number on rtree(8) posterior", {
   result <- TreeESS(trees)
   expect_true(is.finite(result[["medianPseudoESS"]]))
   expect_true(result[["medianPseudoESS"]] > 0)
+})
+
+test_that("median pseudo-ESS is NA, not n, for a single topology (#195)", {
+  skip_if_not_installed("TreeDist")
+  tree <- as.phylo(0, 8)
+  trees <- structure(rep(list(tree), 50), class = "multiPhylo")
+  expect_true(is.na(TreeESS(trees)[["medianPseudoESS"]]))
 })
