@@ -2839,7 +2839,7 @@ double cpp_log_likelihood(
 // chars (where it is further scaled by RB-style neoScale/transScale
 // internally — audit Issue 1).
 //
-// rateNeo is hard-coded to 1.0 in the call below. Two regimes:
+// partitioned_eval_params() fixes rateNeo at 1.0. Two regimes:
 //   - hasNeo == false (Casali production workload): nNeo == 0, so
 //     compute_partition_scales returns (1.0, 1.0) — partition normalisation
 //     is a no-op and behaviour is bit-identical to the pre-audit-Issue-1
@@ -2876,8 +2876,6 @@ double cpp_log_likelihood_partitioned(
     double betaScale,
     ClWorkspace* ws) {
 
-  const int rlsLen = rateLogSd.size();
-  const int crLen  = classRate.size();
   const int nEdge  = edgeLen.size();
 
   // Per-partition scaled-edge buffer (reused across partitions to avoid
@@ -2886,22 +2884,16 @@ double cpp_log_likelihood_partitioned(
 
   double totalLoglik = 0.0;
   for (int pi = 0; pi < (int)data.parts.size(); ++pi) {
-    const PartInfo& part = data.parts[pi];
-    const int cls = part.classIdx;  // 1-based
-    const int ci  = cls - 1;        // 0-based
+    const PartEvalParams pe =
+      partitioned_eval_params(data, pi, rateLogSd, classRate);
 
-    const double rls_c = (rlsLen == 1) ? rateLogSd[0] : rateLogSd[ci];
-    const double cr_c  = (crLen  == 1) ? classRate[0] : classRate[ci];
-
-    // Pre-scale edgeLen by classRate[cls-1] so cpp_partition_log_likelihood
-    // sees the class-scaled time axis. For neo partitions, the internal
-    // neoEl = edgeLen * rateNeo computation then sees edgeLen already
-    // pre-scaled and we pass rateNeo = 1.0.
-    for (int e = 0; e < nEdge; ++e) scaledEdge[e] = edgeLen[e] * cr_c;
+    // Pre-scale edgeLen by the class rate so cpp_partition_log_likelihood
+    // sees the class-scaled time axis.
+    for (int e = 0; e < nEdge; ++e) scaledEdge[e] = edgeLen[e] * pe.classRate;
 
     totalLoglik += cpp_partition_log_likelihood(
       data, pi, parent, child, scaledEdge, kPrime,
-      rateLoss, rls_c, /* rateNeo */ 1.0, betaScale, ws);
+      rateLoss, pe.rateLogSd, pe.rateNeo, betaScale, ws);
   }
   return totalLoglik;
 }

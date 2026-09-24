@@ -202,6 +202,29 @@ static inline PartitionScales compute_partition_scales(
 }
 
 
+// The parameters partition `partIdx` is scored under by the partition-API
+// likelihood (cpp_log_likelihood_partitioned): its class's ACRV shape and
+// rate multiplier, with rate_neo fixed at 1. An evaluator that takes them from
+// anywhere else scores a different model from the one state->logLik holds.
+struct PartEvalParams {
+  double rateLogSd;
+  double classRate;  // multiplies every edge length
+  double rateNeo;
+};
+
+static inline PartEvalParams partitioned_eval_params(
+    const McmcData& data, int partIdx,
+    const Rcpp::NumericVector& rateLogSd,
+    const Rcpp::NumericVector& classRate) {
+  const int ci = data.parts[partIdx].classIdx - 1;
+  PartEvalParams pe;
+  pe.rateLogSd = (rateLogSd.size() == 1) ? rateLogSd[0] : rateLogSd[ci];
+  pe.classRate = (classRate.size() == 1) ? classRate[0] : classRate[ci];
+  pe.rateNeo   = 1.0;
+  return pe;
+}
+
+
 // Pre-allocated flat CL workspace (M-063): eliminates per-call heap
 // allocations inside the pruning hot path.
 //
