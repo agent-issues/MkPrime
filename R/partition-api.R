@@ -364,9 +364,8 @@
   # case 19-slice on rate_log_sd, and the joint_tl_rls 2D move). The
   # scalar `state->rateLogSd` only stays meaningful as the lockstep
   # mirror of `classRateLogSd[0]`; an independent scalar move would
-  # break that lockstep and the partial-CL fallbacks in the C++ hot
-  # path that consume state->rateLogSd would return wrong (or NaN)
-  # log-likelihoods. Per-class moves (cases 31, 33) target σ_0
+  # break that lockstep, which the partitioned prior relies on when it
+  # skips the c == 0 term. Per-class moves (cases 31, 33) target σ_0
   # explicitly via classIdx = 1.
   if ("shape" %in% partitionSpec$unlink) {
     keep <- vapply(moves, function(mv) {
