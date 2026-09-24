@@ -851,6 +851,28 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// log1m_exp_cpp
+NumericVector log1m_exp_cpp(NumericVector x);
+RcppExport SEXP _MkPrime_log1m_exp_cpp(SEXP xSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< NumericVector >::type x(xSEXP);
+    rcpp_result_gen = Rcpp::wrap(log1m_exp_cpp(x));
+    return rcpp_result_gen;
+END_RCPP
+}
+// logseries_log_norm_cpp
+double logseries_log_norm_cpp(double c);
+RcppExport SEXP _MkPrime_logseries_log_norm_cpp(SEXP cSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< double >::type c(cSEXP);
+    rcpp_result_gen = Rcpp::wrap(logseries_log_norm_cpp(c));
+    return rcpp_result_gen;
+END_RCPP
+}
 // spr_proposal
 List spr_proposal(IntegerMatrix edge, int nTip, double treeLength, NumericVector relBrLengths);
 RcppExport SEXP _MkPrime_spr_proposal(SEXP edgeSEXP, SEXP nTipSEXP, SEXP treeLengthSEXP, SEXP relBrLengthsSEXP) {
@@ -1079,6 +1101,8 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_cpp_log_likelihood_xptr", (DL_FUNC) &_MkPrime_cpp_log_likelihood_xptr, 9},
     {"_MkPrime_cpp_log_likelihood_partitioned_xptr", (DL_FUNC) &_MkPrime_cpp_log_likelihood_partitioned_xptr, 10},
     {"_MkPrime_cpp_data_nclasses", (DL_FUNC) &_MkPrime_cpp_data_nclasses, 1},
+    {"_MkPrime_log1m_exp_cpp", (DL_FUNC) &_MkPrime_log1m_exp_cpp, 1},
+    {"_MkPrime_logseries_log_norm_cpp", (DL_FUNC) &_MkPrime_logseries_log_norm_cpp, 1},
     {"_MkPrime_spr_proposal", (DL_FUNC) &_MkPrime_spr_proposal, 4},
     {"_MkPrime_beta_simplex_proposal", (DL_FUNC) &_MkPrime_beta_simplex_proposal, 3},
     {"_MkPrime_dirichlet_simplex_proposal", (DL_FUNC) &_MkPrime_dirichlet_simplex_proposal, 3},

@@ -8,7 +8,8 @@
 
 # Build a marginal-k state at a given p and truncation cap K, return its
 # full marginal log-likelihood. K is injected via the model's kprimeTruncK.
-.trunc_eval <- function(p, K, seed = 11L, nTip = 10L, nChar = 40L) {
+.trunc_eval <- function(p, K, seed = 11L, nTip = 10L, nChar = 40L, simP = p,
+                        priorVariant = "unconditional") {
   set.seed(seed)
   tr <- rtree(nTip, tip.label = paste0("t", seq_len(nTip)))
   tr$edge.length <- rep_len(0.3, nrow(tr$edge))
@@ -16,7 +17,7 @@
   m <- matrix(NA_integer_, nTip, nChar, dimnames = list(tr$tip.label, NULL))
   for (j in seq_len(nChar)) {
     repeat {
-      k <- draw_tg(p, 30L)
+      k <- draw_tg(simP, 30L)
       st <- integer(2L * nTip - 1L); st[nTip + 1L] <- sample.int(k, 1L) - 1L
       e <- tr$edge
       for (i in seq_len(nrow(e))) {
@@ -34,7 +35,7 @@
   trp <- Preorder(tr)
   mod <- suppressMessages(MkPrimeModel(
     coding = "variable", nCat = 1L, kPrimePrior = "geometric",
-    likelihoodMode = "marginal_k", priorVariant = "unconditional",
+    likelihoodMode = "marginal_k", priorVariant = priorVariant,
     kprimeTruncK = 30L,   # Stage 1b: model default is now 200; pin to the
                           # forward K_MAX_PRIOR (30) these references assume.
     kprimeHyperA = 1, kprimeHyperB = 1, expSteps = 1.4))
@@ -454,4 +455,13 @@ test_that("gibbs_kprime_sweep respects the truncation cap K (case-25 cap fires)"
               label = "K=4: the cap boundary k'=K is reached (cap is binding, not collapsed)")
   expect_true(all(is.finite(tight$lp)),
               label = "K=4: logPrior finite after every always-accept sweep (no -Inf corruption)")
+})
+
+
+test_that("marginal-k truncation normaliser stays finite at tiny p", {
+  # Z(p) = 1 - (1-p)^(K-1) ~ (K-1) p: log1p(-exp(.)) rounds it to log(0).
+  for (variant in c("unconditional", "conditional")) {
+    r <- .trunc_eval(1e-19, K = 30L, simP = 0.3, priorVariant = variant)
+    expect_true(is.finite(r$LL), info = variant)
+  }
 })
