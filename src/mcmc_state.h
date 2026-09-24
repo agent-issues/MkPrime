@@ -7,6 +7,8 @@
 
 #include <Rcpp.h>
 #include <vector>
+#include <cmath>
+#include <cstdint>
 #include <string>
 
 // Per-partition data: tip states and character mapping.
@@ -163,7 +165,54 @@ struct McmcData {
   // wires the model's K via set_kprime_trunc_k) still agrees with the R-side
   // LogPrior. SBC and the truncation tests pin K=30 explicitly via the model.
   int kprimeTruncK = 200;
+
+  // Ascertainment under missing data (#213). A character is kept when it
+  // varies among its OBSERVED tips, so its correction conditions on that
+  // event: its ?/- tips are marginalised, not pinned to the constant state.
+  // Characters are grouped by which tips are missing; missingMasks[m][t] is
+  // 1 when tip t + 1 is missing, mask 0 has no missing tip, and charMask
+  // maps a global character to its mask.
+  std::vector<std::vector<uint8_t>> missingMasks;
+  std::vector<int> charMask;
 };
+
+// Characters counted by missing-data mask, in increasing mask order.
+struct MaskTally {
+  std::vector<int> ids;
+  std::vector<int> counts;
+  bool complete() const { return ids.size() == 1 && ids[0] == 0; }
+};
+
+template <class GlobalIdx>
+inline MaskTally tally_masks(const McmcData& data, const GlobalIdx& globalIdx,
+                             int n) {
+  std::vector<int> count(data.missingMasks.size(), 0);
+  for (int i = 0; i < n; ++i) ++count[data.charMask[globalIdx[i]]];
+  MaskTally tally;
+  for (int m = 0; m < (int)count.size(); ++m) {
+    if (count[m]) {
+      tally.ids.push_back(m);
+      tally.counts.push_back(count[m]);
+    }
+  }
+  return tally;
+}
+
+// Sum over masks of n_m * log(1 - P_m), the amount the ascertainment
+// correction subtracts. p0 is P for the no-missing mask, which the fused
+// kernels compute alongside the pruning; pMasked[i] (from asc_probs_masked)
+// is P for tally.ids[i] otherwise. skipDegenerate drops P outside (0, 1).
+inline double masked_asc_log1m(const MaskTally& tally, double p0,
+                               const std::vector<double>& pMasked,
+                               bool skipDegenerate = false) {
+  double sum = 0.0;
+  for (size_t i = 0; i < tally.ids.size(); ++i) {
+    const double p = tally.ids[i] == 0 ? p0 : pMasked[i];
+    if (skipDegenerate && !(p > 0.0 && p < 1.0)) continue;
+    sum += tally.counts[i] * std::log(1.0 - p);
+  }
+  return sum;
+}
 
 // ---------------------------------------------------------------------------
 // Partition-rate scales (audit Issue 1: RB-style nChar-weighted-mean-1)
@@ -388,6 +437,18 @@ double const_site_prob_for_k(
     const Rcpp::NumericVector& edgeLen,
     int kStates, double betaScale,
     const Rcpp::NumericVector& acrvRates);
+
+// Ascertainment probability (constant, plus singleton under informative
+// coding) for each mask in maskIds, under the model of a partition of type
+// partType, in one batched traversal. Entries for mask 0 are left 0.
+// edgeLen must carry the partition scale.
+std::vector<double> asc_probs_masked(
+    const McmcData& data,
+    const Rcpp::IntegerVector& parent,
+    const Rcpp::IntegerVector& child,
+    const Rcpp::NumericVector& edgeLen,
+    int partType, int kStates, double rateLoss, double betaScale,
+    const Rcpp::NumericVector& rates, const std::vector<int>& maskIds);
 
 
 // ---------------------------------------------------------------------------

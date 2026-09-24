@@ -19,6 +19,7 @@
 #include <array>
 #include <cmath>
 #include "fast_exp.h"
+#include "mkn_rates.h"
 #include "f81.h"
 
 using namespace Rcpp;
@@ -105,6 +106,10 @@ struct CLGroup {
   double f81Mu = 0.0;         // 1 / (1 - Σπ²)
 
   IntegerMatrix tipData;  // nTip × nChar, 0-indexed states, -1 missing
+
+  // Characters by missing-data mask; for a pseudo-character group, the masks
+  // its pseudo-characters stand for (k per mask, in this order).
+  MaskTally masks;
 
   // Flat storage indexed as [(cat * (maxNode+1) + node) * stride + c*kStates+s]
   std::vector<double> inside;  // I[n]  = CL at node (product of children)
@@ -235,9 +240,8 @@ inline void jc_transition(const double* cl, double* result,
 inline void mkn_trans_params(double rateLoss, double t,
                               double& P00, double& P01,
                               double& P10, double& P11) {
-  double sum_rl = 1.0 + rateLoss;
-  double rate01 = 2.0 / sum_rl;
-  double rate10 = 2.0 * rateLoss / sum_rl;
+  double rate01, rate10;
+  mkn_rates(rateLoss, rate01, rate10);
   double lambda = rate01 + rate10;
   // FAST-EXP-001: expm1 form avoids cancellation in P01/P10 at small lambda*t.
   double arg = -lambda * t;
@@ -671,21 +675,47 @@ static double evaluate_candidate(
 // Create a pseudo-character CLGroup for constant-site patterns.
 // Returns a CLGroup with kStates pseudo-characters, each with all tips in
 // state s.  Same model parameters as the source group.
-static CLGroup create_const_pseudo_group(const CLGroup& src, int nTip, int maxNode, int nCat) {
+static CLGroup create_const_pseudo_group(
+    const CLGroup& src, int nTip, int maxNode, int nCat,
+    const std::vector<std::vector<uint8_t>>& missingMasks) {
   CLGroup pg;
   pg.isMkN      = src.isMkN;
   pg.rateLoss   = src.rateLoss;
   pg.rateScale  = src.rateScale;
+  pg.masks      = src.masks;
   int k = src.kStates;
+  const bool complete = src.masks.ids.empty() || src.masks.complete();
+  const int nMask = complete ? 1 : (int)src.masks.ids.size();
 
-  // Tip data: k pseudo-characters, each with all tips in state s
-  IntegerMatrix tips(nTip, k);
-  for (int c = 0; c < k; ++c)
-    for (int t = 0; t < nTip; ++t)
-      tips(t, c) = c;
+  // Tip data: k pseudo-characters per mask, each with all observed tips in
+  // state s and the mask's missing tips marginalised
+  IntegerMatrix tips(nTip, k * nMask);
+  for (int mi = 0; mi < nMask; ++mi) {
+    const uint8_t* missing =
+      complete ? nullptr : missingMasks[src.masks.ids[mi]].data();
+    for (int c = 0; c < k; ++c)
+      for (int t = 0; t < nTip; ++t)
+        tips(t, mi * k + c) = (missing && missing[t]) ? -1 : c;
+  }
   pg.tipData = tips;
-  pg.allocate(maxNode, nCat, k, k);
+  pg.allocate(maxNode, nCat, k * nMask, k);
   return pg;
+}
+
+// Sum over the pseudo-group's masks of n_m * log(1 - P_m), where P_m is the
+// sum of the mask's k per-pseudo-character accumulators over denom.
+// Terms with P_m >= 1 are dropped.
+static double pseudo_asc_log1m(const CLGroup& pg, const double* accum,
+                               double denom) {
+  const int k = pg.kStates;
+  double sum = 0.0;
+  for (size_t mi = 0; mi < pg.masks.ids.size(); ++mi) {
+    double constP = 0.0;
+    for (int c = 0; c < k; ++c) constP += accum[mi * k + c];
+    constP /= denom;
+    if (constP < 1.0) sum += pg.masks.counts[mi] * std::log(1.0 - constP);
+  }
+  return sum;
 }
 
 // Evaluate P_const for a candidate regraft using partial CLs on pseudo-chars.

@@ -17,6 +17,7 @@
 #include "gibbs_partial_cl.h"  // TreeNav
 #include "fast_exp.h"
 #include <cstring>
+#include <map>
 #include <cmath>
 #include <algorithm>
 
@@ -78,6 +79,9 @@ struct CacheUnit {
 
   // Tip data for this unit (nTip × nChar, 0-indexed states, -1 = missing)
   IntegerMatrix tipStates;
+
+  // Characters by missing-data mask, for the ascertainment correction
+  MaskTally masks;
 
   // Characters' kObs (for relabelling correction, transformational only)
   std::vector<int> kObsLocal;
@@ -399,6 +403,7 @@ static void build_cache_units(
       u.doRelabel = false;
       // MkN stationary frequencies: π0 = rl/(1+rl), π1 = 1/(1+rl)
       u.rootFreqs = { rateLoss / (1.0 + rateLoss), 1.0 / (1.0 + rateLoss) };
+      u.masks = tally_masks(data, part.globalCharIdx, nCharPart);
       cache.units.push_back(std::move(u));
 
     } else if (part.type == 2) {
@@ -415,6 +420,7 @@ static void build_cache_units(
       u.tipStates = part.tipStates;
       u.doRelabel = false;
       u.rootFreqs.assign(k, 1.0 / k);
+      u.masks = tally_masks(data, part.globalCharIdx, nCharPart);
       cache.units.push_back(std::move(u));
 
     } else {
@@ -445,6 +451,7 @@ static void build_cache_units(
             u.kObsLocal[ci] = part.kObsLocal[ci];
         }
         u.rootFreqs.assign(kp0, 1.0 / kp0);
+        u.masks = tally_masks(data, part.globalCharIdx, nCharPart);
         cache.units.push_back(std::move(u));
       } else {
         // Heterogeneous kPrime: create one unit per distinct k value.
@@ -487,6 +494,10 @@ static void build_cache_units(
               u.kObsLocal[ci] = part.kObsLocal[cols[ci]];
           }
           u.rootFreqs.assign(kv, 1.0 / kv);
+          std::vector<int> unitGlobal(nc);
+          for (int ci = 0; ci < nc; ++ci)
+            unitGlobal[ci] = part.globalCharIdx[cols[ci]];
+          u.masks = tally_masks(data, unitGlobal, nc);
           cache.units.push_back(std::move(u));
         }
       }
@@ -668,8 +679,8 @@ static double cache_total_loglik(
     transAscEl[i] = absEdgeLen[i] * pScales.trans;
   }
 
-  // The JC correction depends only on k, so units that share a k value
-  // (across or within partitions) share one tree traversal.
+  // The JC correction depends only on (k, missing-data mask), so units that
+  // share one (across or within partitions) share one tree traversal.
   std::vector<double> jcAscByK;
   auto jcAscProb = [&](int k) {
     if (k >= (int)jcAscByK.size()) jcAscByK.resize(k + 1, -1.0);
@@ -686,45 +697,52 @@ static double cache_total_loglik(
     }
     return jcAscByK[k];
   };
+  std::map<std::pair<int, int>, double> jcAscByKMask;
+  auto jcAscProbsMasked = [&](int k, const std::vector<int>& ids) {
+    std::vector<int> todo;
+    for (int m : ids) {
+      if (m != 0 && !jcAscByKMask.count({k, m})) todo.push_back(m);
+    }
+    if (!todo.empty()) {
+      const std::vector<double> pNew = asc_probs_masked(
+        data, parent, child, transAscEl, 1, k, 1.0, betaScale, rates, todo);
+      for (size_t i = 0; i < todo.size(); ++i) {
+        jcAscByKMask[{k, todo[i]}] = pNew[i];
+      }
+    }
+    std::vector<double> p(ids.size(), 0.0);
+    for (size_t i = 0; i < ids.size(); ++i) {
+      if (ids[i] != 0) p[i] = jcAscByKMask[{k, ids[i]}];
+    }
+    return p;
+  };
 
   for (int pi = 0; pi < nParts; ++pi) {
     double ll = partRawLL[pi];
     if (cache.coding != 0 && partNChar[pi] > 0) {
-      const PartInfo& part = data.parts[pi];
-      double p = 0.0;
-
-      if (part.type == 0) {
-        NumericVector rootFreqs(2);
-        rootFreqs[0] = rateLoss / (1.0 + rateLoss);
-        rootFreqs[1] = 1.0 / (1.0 + rateLoss);
-        p = constant_site_prob_mkn(parent, child, neoAscEl, nTip,
-                                    rateLoss, rootFreqs, rates);
-        // LIKE-001 fix: informative coding adds the MkN singleton probability.
-        if (cache.coding == 2) {
-          p += singleton_site_prob_mkn(parent, child, neoAscEl, nTip,
-                                        rateLoss, rootFreqs, rates);
+      for (int ui = 0; ui < (int)cache.units.size(); ++ui) {
+        const CacheUnit& unit = cache.units[ui];
+        if (unit.partIdx != pi) continue;
+        int k = unit.kStates;
+        if (k <= 0) continue;
+        if (unit.isMkN) {
+          NumericVector rootFreqs(2);
+          rootFreqs[0] = rateLoss / (1.0 + rateLoss);
+          rootFreqs[1] = 1.0 / (1.0 + rateLoss);
+          double p = constant_site_prob_mkn(parent, child, neoAscEl, nTip,
+                                            rateLoss, rootFreqs, rates);
+          // LIKE-001 fix: informative coding adds the MkN singleton term.
+          if (cache.coding == 2) {
+            p += singleton_site_prob_mkn(parent, child, neoAscEl, nTip,
+                                          rateLoss, rootFreqs, rates);
+          }
+          ll -= masked_asc_log1m(unit.masks, p, asc_probs_masked(
+            data, parent, child, neoAscEl, 0, 2, rateLoss, betaScale, rates,
+            unit.masks.ids), true);
+        } else {
+          ll -= masked_asc_log1m(unit.masks, jcAscProb(k),
+                                 jcAscProbsMasked(k, unit.masks.ids), true);
         }
-      } else if (part.type == 2) {
-        // Known state space: single k for entire partition
-        p = jcAscProb(part.k);
-      } else {
-        // Transformational (type 1): per-unit ascertainment correction.
-        // Each CacheUnit may have a different kStates (from kPrime grouping),
-        // so we cannot use a single constant-site probability for the whole
-        // partition.  Apply the correction per unit directly.
-        for (int ui = 0; ui < (int)cache.units.size(); ++ui) {
-          const CacheUnit& unit = cache.units[ui];
-          if (unit.partIdx != pi) continue;
-          int k = unit.kStates;
-          if (k <= 0) continue;
-          double pu = jcAscProb(k);
-          if (pu > 0.0 && pu < 1.0)
-            ll -= unit.nChar * std::log(1.0 - pu);
-        }
-        // p stays 0.0 → final correction block below is a no-op for type 1
-      }
-      if (p > 0.0 && p < 1.0) {
-        ll -= partNChar[pi] * std::log(1.0 - p);
       }
     }
     totalLL += ll;

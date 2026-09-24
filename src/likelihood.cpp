@@ -1,5 +1,6 @@
 #include <Rcpp.h>
 #include "fast_exp.h"
+#include "mkn_rates.h"
 #include "f81.h"
 #include <cmath>
 #include <vector>
@@ -306,10 +307,9 @@ double pruning_mkn(Rcpp::IntegerVector parent,
   }
 
   // Precompute MkN rate parameters
-  double sum_rl = 1.0 + rate_loss;
-  double rate01 = 2.0 / sum_rl;
-  double rate10 = 2.0 * rate_loss / sum_rl;
-  double lambda = rate01 + rate10; // = 2.0
+  double rate01, rate10;
+  mkn_rates(rate_loss, rate01, rate10);
+  double lambda = rate01 + rate10;
 
   for (int e = nEdge - 1; e >= 0; --e) {
     int par = parent[e];

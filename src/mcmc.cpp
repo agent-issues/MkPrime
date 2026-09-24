@@ -15,6 +15,7 @@
 #include <TreeTools/edge_to_splits.h>
 #include <TreeTools/renumber_tree.h>
 #include <cmath>
+#include <map>
 #include <cstring>
 #include <chrono>
 #include <cstdio>
@@ -1323,12 +1324,14 @@ static void build_cl_groups(const McmcData* data, const McmcState* state,
     const double rateScale =
       (part.type == 0 ? pScales.neo : pScales.trans) * pe.classRate;
 
-    auto add = [&](bool isMkN, const IntegerMatrix& tips, int nChar, int k) {
+    auto add = [&](bool isMkN, const IntegerMatrix& tips, int nChar, int k,
+                   MaskTally masks) {
       CLGroup g;
       g.isMkN     = isMkN;
       g.rateLoss  = isMkN ? state->rateLoss : 1.0;
       g.rateScale = rateScale;
       g.tipData   = tips;
+      g.masks     = std::move(masks);
       g.allocate(maxNode, nCat, nChar, k);
       groups.push_back(std::move(g));
       groupRates.push_back(rates);
@@ -1336,10 +1339,12 @@ static void build_cl_groups(const McmcData* data, const McmcState* state,
 
     if (part.type == 0) {
       // Neomorphic: k=2, MkN model
-      add(true, part.tipStates, part.tipStates.ncol(), 2);
+      add(true, part.tipStates, part.tipStates.ncol(), 2,
+          tally_masks(*data, part.globalCharIdx, part.tipStates.ncol()));
     } else if (part.type == 2) {
       // Known state space: fixed k
-      add(false, part.tipStates, part.tipStates.ncol(), part.k);
+      add(false, part.tipStates, part.tipStates.ncol(), part.k,
+          tally_masks(*data, part.globalCharIdx, part.tipStates.ncol()));
     } else {
       // Transformational: group by kPrime
       int nCharPart = part.tipStates.ncol();
@@ -1356,10 +1361,13 @@ static void build_cl_groups(const McmcData* data, const McmcState* state,
         int nSub = (int)cols.size();
 
         IntegerMatrix sub(nTip, nSub);
-        for (int c = 0; c < nSub; ++c)
+        std::vector<int> subGlobal(nSub);
+        for (int c = 0; c < nSub; ++c) {
           for (int t = 0; t < nTip; ++t)
             sub(t, c) = part.tipStates(t, cols[c]);
-        add(false, sub, nSub, kp);
+          subGlobal[c] = part.globalCharIdx[cols[c]];
+        }
+        add(false, sub, nSub, kp, tally_masks(*data, subGlobal, nSub));
       }
     }
   }
@@ -1610,7 +1618,8 @@ static void gibbs_spr_eval_partial(McmcData* data, McmcState* state,
     pseudoResiduals.resize(groups.size());
     for (size_t gi = 0; gi < groups.size(); ++gi) {
       pseudoGroups[gi] = create_const_pseudo_group(
-        groups[gi], nTip, topo.maxNode, groups[gi].nCat);
+        groups[gi], nTip, topo.maxNode, groups[gi].nCat,
+        data->missingMasks);
       caching_downpass(pseudoGroups[gi], topo, state->parent, state->child,
                        groupRates[gi]);
       compute_residual_cl(pseudoResiduals[gi], pseudoGroups[gi], topo,
@@ -1646,12 +1655,22 @@ static void gibbs_spr_eval_partial(McmcData* data, McmcState* state,
       // circuits to gibbs_spr_impl_full when codingType == 2 (LIKE-001
       // interim), so we only reach this branch under coding == 1.
       if (coding != 0 && groups[gi].nChar > 0) {
-        double constP = evaluate_const_prob(
-          pseudoGroups[gi], topo, pseudoResiduals[gi], groupRates[gi],
-          plan.v, plan.u, plan.sibNode, plan.lMerge, a, b, lHalf, plan.lPrune,
-          nullptr, merged);
-        if (constP < 1.0)
-          grpLL -= groups[gi].nChar * std::log(1.0 - constP);
+        if (groups[gi].masks.complete()) {
+          double constP = evaluate_const_prob(
+            pseudoGroups[gi], topo, pseudoResiduals[gi], groupRates[gi],
+            plan.v, plan.u, plan.sibNode, plan.lMerge, a, b, lHalf,
+            plan.lPrune, nullptr, merged);
+          if (constP < 1.0)
+            grpLL -= groups[gi].nChar * std::log(1.0 - constP);
+        } else {
+          std::vector<double> accum(pseudoGroups[gi].nChar, 0.0);
+          evaluate_const_prob(
+            pseudoGroups[gi], topo, pseudoResiduals[gi], groupRates[gi],
+            plan.v, plan.u, plan.sibNode, plan.lMerge, a, b, lHalf,
+            plan.lPrune, accum.data(), merged);
+          grpLL -= pseudo_asc_log1m(pseudoGroups[gi], accum.data(),
+                                    pseudoGroups[gi].nCat);
+        }
       }
 
       totalLL += grpLL;
@@ -1781,7 +1800,8 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
     pseudoGroups.resize(groups.size());
     for (size_t gi = 0; gi < groups.size(); ++gi)
       pseudoGroups[gi] = create_const_pseudo_group(
-        groups[gi], nTip, maxNode, groups[gi].nCat);
+        groups[gi], nTip, maxNode, groups[gi].nCat,
+        data->missingMasks);
   }
 
   const int g = topo.parentNode[plan.u];
@@ -1876,14 +1896,18 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
         nChar_gi, totalComp);
 
       if (coding != 0 && nChar_gi > 0) {
-        int nPseudo = pseudoGroups[gi].nChar;  // = k
-        double constP = 0.0;
+        int nPseudo = pseudoGroups[gi].nChar;
         const double* cpa =
           constProbAccums[gi].data() + (size_t)ci * nPseudo;
-        for (int c = 0; c < nPseudo; ++c) constP += cpa[c];
-        constP /= totalComp;
-        if (constP < 1.0)
-          grpLL -= nChar_gi * std::log(1.0 - constP);
+        if (grp.masks.complete()) {
+          double constP = 0.0;
+          for (int c = 0; c < nPseudo; ++c) constP += cpa[c];
+          constP /= totalComp;
+          if (constP < 1.0)
+            grpLL -= nChar_gi * std::log(1.0 - constP);
+        } else {
+          grpLL -= pseudo_asc_log1m(pseudoGroups[gi], cpa, totalComp);
+        }
       }
 
       candLL[ci] += grpLL;
@@ -2084,7 +2108,8 @@ static bool swap_neighbourhood_partial(McmcData* data, McmcState* state,
     pseudoGroups.resize(groups.size());
     for (size_t gi = 0; gi < groups.size(); ++gi) {
       pseudoGroups[gi] = create_const_pseudo_group(
-        groups[gi], nTip, maxNode, groups[gi].nCat);
+        groups[gi], nTip, maxNode, groups[gi].nCat,
+        data->missingMasks);
       caching_downpass(pseudoGroups[gi], topo, parent, child, groupRates[gi]);
     }
   }
@@ -2114,11 +2139,20 @@ static bool swap_neighbourhood_partial(McmcData* data, McmcState* state,
 
       // Ascertainment correction
       if (coding != 0 && groups[gi].nChar > 0) {
-        double constP = evaluate_swap_const_prob(
-          pseudoGroups[gi], topo, groupRates[gi], nodeA, partners[pi],
-          pA, slotA, lenA, pathA, pathAIdx);
-        if (constP < 1.0)
-          grpLL -= groups[gi].nChar * std::log(1.0 - constP);
+        if (groups[gi].masks.complete()) {
+          double constP = evaluate_swap_const_prob(
+            pseudoGroups[gi], topo, groupRates[gi], nodeA, partners[pi],
+            pA, slotA, lenA, pathA, pathAIdx);
+          if (constP < 1.0)
+            grpLL -= groups[gi].nChar * std::log(1.0 - constP);
+        } else {
+          std::vector<double> accum(pseudoGroups[gi].nChar, 0.0);
+          evaluate_swap_impl(
+            pseudoGroups[gi], topo, groupRates[gi], nodeA, partners[pi],
+            pA, slotA, lenA, pathA, pathAIdx, true, nullptr, accum.data());
+          grpLL -= pseudo_asc_log1m(pseudoGroups[gi], accum.data(),
+                                    pseudoGroups[gi].nCat);
+        }
       }
 
       totalLL += grpLL;
@@ -2309,7 +2343,8 @@ static bool swap_neighbourhood_het(McmcData* data, McmcState* state,
     pseudoGroups.resize(groups.size());
     for (size_t gi = 0; gi < groups.size(); ++gi)
       pseudoGroups[gi] = create_const_pseudo_group(
-        groups[gi], nTip, maxNode, groups[gi].nCat);
+        groups[gi], nTip, maxNode, groups[gi].nCat,
+        data->missingMasks);
   }
 
   // Precompute nodeA-fixed data
@@ -2392,13 +2427,17 @@ static bool swap_neighbourhood_het(McmcData* data, McmcState* state,
 
       if (coding != 0 && nChar_gi > 0) {
         int nPseudo = pseudoGroups[gi].nChar;
-        double constP = 0.0;
         const double* cpa =
           constProbAccums[gi].data() + (size_t)pi2 * nPseudo;
-        for (int c = 0; c < nPseudo; ++c) constP += cpa[c];
-        constP /= totalComp;
-        if (constP < 1.0)
-          grpLL -= nChar_gi * std::log(1.0 - constP);
+        if (grp.masks.complete()) {
+          double constP = 0.0;
+          for (int c = 0; c < nPseudo; ++c) constP += cpa[c];
+          constP /= totalComp;
+          if (constP < 1.0)
+            grpLL -= nChar_gi * std::log(1.0 - constP);
+        } else {
+          grpLL -= pseudo_asc_log1m(pseudoGroups[gi], cpa, totalComp);
+        }
       }
 
       candLL[pi2] += grpLL;
@@ -3865,6 +3904,7 @@ void compute_per_kprime_log_lik(
   struct EvalSlot {
     NumericVector edgeLen, rates;
     std::vector<double> csp;
+    std::map<std::pair<int, int>, double> cspMasked;  // by (kStates, mask)
   };
   std::vector<EvalSlot> slots(state->usePartitioned ? data->nClasses : 1);
   std::vector<bool> slotReady(slots.size(), false);
@@ -3898,8 +3938,34 @@ void compute_per_kprime_log_lik(
     return si;
   };
 
-  auto getCSP = [&](int si, int kStates) -> double {
+  // Masks among transformational characters, filled for all of them in one
+  // batched traversal per (slot, kStates).
+  std::vector<int> transMaskIds;
+  {
+    std::vector<bool> seen(data->missingMasks.size(), false);
+    for (int ti = 0; ti < nTrans; ++ti) {
+      const int m = data->charMask[data->transIdxGlobal[ti]];
+      if (m != 0 && !seen[m]) {
+        seen[m] = true;
+        transMaskIds.push_back(m);
+      }
+    }
+  }
+
+  auto getCSP = [&](int si, int kStates, int mask) -> double {
     if (data->codingType == 0) return 0.0;
+    if (mask != 0) {
+      auto& cache = slots[si].cspMasked;
+      auto found = cache.find({kStates, mask});
+      if (found != cache.end()) return found->second;
+      const std::vector<double> p = asc_probs_masked(
+        *data, parent, child, slots[si].edgeLen, 1, kStates, 1.0,
+        state->betaScale, slots[si].rates, transMaskIds);
+      for (size_t i = 0; i < transMaskIds.size(); ++i) {
+        cache[{kStates, transMaskIds[i]}] = p[i];
+      }
+      return cache.at({kStates, mask});
+    }
     std::vector<double>& cspCache = slots[si].csp;
     if (kStates >= (int)cspCache.size()) cspCache.resize(kStates + 20, -1.0);
     if (cspCache[kStates] < 0.0) {
@@ -4110,7 +4176,7 @@ void compute_per_kprime_log_lik(
       const int si = slotFor(tp.partIdx);
       const NumericVector& partEdgeLen = slots[si].edgeLen;
       const NumericVector& partRates   = slots[si].rates;
-      double csp = getCSP(si, k);
+      double csp = getCSP(si, k, 0);
       double logAscCorr = (coding != 0 && csp < 1.0)
         ? -std::log(1.0 - csp) : 0.0;
       if (coding != 0 && csp >= 1.0) logAscCorr = R_NegInf;
@@ -4221,9 +4287,10 @@ void compute_per_kprime_log_lik(
       }
 
       // M-172: scatter siteLL[ai] to all characters sharing the active pattern.
-      // logAscCorr and relabelling depend only on (k, kObs) — same for all
-      // characters sharing a pattern — so corrected LL is identical across the
-      // group and termination can be decided from one representative.
+      // The ascertainment correction depends only on (k, mask) and relabelling
+      // on (k, kObs) — same for all characters sharing a pattern — so
+      // corrected LL is identical across the group and termination can be
+      // decided from one representative.
       double logPrior_k;
       if (isBetaGeometric) {
         logPrior_k = bgLogPrior[ko];
@@ -4241,9 +4308,16 @@ void compute_per_kprime_log_lik(
       for (int ai = 0; ai < nAct; ++ai) {
         int localPat = pa.activePatterns[ai];
         double ll = siteLL[ai];
-        if (R_FINITE(ll) && R_FINITE(logAscCorr))
-          ll += logAscCorr;
-        else if (!R_FINITE(logAscCorr))
+        const int mask = data->charMask[
+          data->transIdxGlobal[pa.patTrans[localPat][0]]];
+        double patAscCorr = logAscCorr;
+        if (coding != 0 && mask != 0) {
+          const double cspMask = getCSP(si, k, mask);
+          patAscCorr = cspMask < 1.0 ? -std::log(1.0 - cspMask) : R_NegInf;
+        }
+        if (R_FINITE(ll) && R_FINITE(patAscCorr))
+          ll += patAscCorr;
+        else if (!R_FINITE(patAscCorr))
           ll = R_NegInf;
         if (data->relabel && R_FINITE(ll))
           ll += mk_prime_relabel_log(k, tp.kObs);

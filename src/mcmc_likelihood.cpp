@@ -13,10 +13,13 @@
 
 #include "mcmc_state.h"
 #include "fast_exp.h"
+#include "ascertainment.h"
+#include "mkn_rates.h"
 #include <cmath>
 #include <cstring>
 #include <algorithm>
 #include <set>
+#include <map>
 
 using namespace Rcpp;
 
@@ -1403,9 +1406,8 @@ static double pruning_mkn_flat(
     }
   }
 
-  double sum_rl     = 1.0 + rate_loss;
-  double rate01     = 2.0 / sum_rl;
-  double rate10     = 2.0 * rate_loss / sum_rl;
+  double rate01, rate10;
+  mkn_rates(rate_loss, rate01, rate10);
   double lambda     = rate01 + rate10;
   double inv_lam_01 = rate01 / lambda;
   double inv_lam_10 = rate10 / lambda;
@@ -1528,9 +1530,8 @@ static double pruning_mkn_acrv_flat(
     siteLikLocal.assign(nChar, 0.0);
     siteLikPtr = siteLikLocal.data();
   }
-  double sum_rl     = 1.0 + rate_loss;
-  double rate01     = 2.0 / sum_rl;
-  double rate10     = 2.0 * rate_loss / sum_rl;
+  double rate01, rate10;
+  mkn_rates(rate_loss, rate01, rate10);
   double lambda     = rate01 + rate10;
   double inv_lam_01 = rate01 / lambda;
   double inv_lam_10 = rate10 / lambda;
@@ -2142,12 +2143,15 @@ void pruning_f81_het_acrv_persite(
 // pseudo-characters -- the spike state, and one non-spike state weighted
 // kStates - 1 -- therefore give the exact k x k sum (#66). At kStates == 2
 // there is no rotation and the two pseudo-characters are the two states.
-static double het_constant_site_prob(
-    IntegerVector parent, IntegerVector child,
-    NumericVector edge_length, int nTip,
+// One probability per missing-data mask (see ascertainment.h) is written to
+// `out`; the masks share one traversal.
+static void het_constant_site_probs(
+    const IntegerVector& parent, const IntegerVector& child,
+    const NumericVector& edge_length, int nTip,
     int kStates, double baseRL,
     const double* betaBins, int nBetaCat,
-    NumericVector rate_multipliers) {
+    const NumericVector& rate_multipliers,
+    const std::vector<const uint8_t*>& masks, double* out) {
 
   int nEdge = parent.size();
   int nCat = rate_multipliers.size();
@@ -2161,19 +2165,29 @@ static double het_constant_site_prob(
 
   int maxNode = 2 * nTip - 1;
   int root    = nTip + 1;
-  const int nPseudo = 2;
+  const int nMask = masks.empty() ? 1 : (int)masks.size();
+  const int nPseudo = 2 * nMask;
   int ascStride = nPseudo * kStates;
 
   std::vector<double>  ascBuf((maxNode + 1) * ascStride, 0.0);
   std::vector<uint8_t> ascInit(maxNode + 1, 0);
 
-  // Init tips: pseudo-char c has CL = e_c (constant-state-c pattern)
+  // Init tips: pseudo-char 2m + c has CL = e_c (constant-state-c pattern);
+  // a missing tip is marginalised, which leaves both symmetry arguments
+  // intact.
   for (int tip = 1; tip <= nTip; ++tip) {
-    double* a = ascBuf.data() + tip * ascStride;
-    for (int c = 0; c < nPseudo; ++c)
-      a[c * kStates + c] = 1.0;
+    for (int m = 0; m < nMask; ++m) {
+      double* a = ascBuf.data() + tip * ascStride + m * 2 * kStates;
+      if (!masks.empty() && masks[m] && masks[m][tip - 1]) {
+        std::fill_n(a, 2 * kStates, 1.0);
+      } else {
+        for (int c = 0; c < 2; ++c)
+          a[c * kStates + c] = 1.0;
+      }
+    }
     ascInit[tip] = 1;
   }
+  std::fill_n(out, nMask, 0.0);
 
   double gain_base = 0.0, loss_base = 0.0;
   if (kStates == 2) {
@@ -2183,7 +2197,6 @@ static double het_constant_site_prob(
   }
 
   std::vector<double> pi(kStates);
-  double totalP = 0.0;
   for (int cat = 0; cat < nCat; ++cat) {
     double acrvRate = rmPtr[cat];
     for (int bi = 0; bi < nBetaCat; ++bi) {
@@ -2248,18 +2261,33 @@ static double het_constant_site_prob(
         // Root: the non-spike pseudo-char stands for all kStates - 1 of its
         // kind, and the nRot rotations all share this sum.
         double* ascRoot = ascBuf.data() + root * ascStride;
-        double rotSum = 0.0;
-        for (int c = 0; c < nPseudo; ++c) {
-          int off = c * kStates;
-          double sl = 0.0;
-          for (int s = 0; s < kStates; ++s) sl += pi[s] * ascRoot[off + s];
-          rotSum += (c == 0) ? sl : (kStates - 1.0) * sl;
+        for (int m = 0; m < nMask; ++m) {
+          double rotSum = 0.0;
+          for (int c = 0; c < 2; ++c) {
+            int off = (2 * m + c) * kStates;
+            double sl = 0.0;
+            for (int s = 0; s < kStates; ++s) sl += pi[s] * ascRoot[off + s];
+            rotSum += (c == 0) ? sl : (kStates - 1.0) * sl;
+          }
+          out[m] += nRot * rotSum;
         }
-        totalP += nRot * rotSum;
       }
     }
   }
-  return totalP / totalComp;
+  for (int m = 0; m < nMask; ++m) out[m] /= totalComp;
+}
+
+static double het_constant_site_prob(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, int nTip,
+    int kStates, double baseRL,
+    const double* betaBins, int nBetaCat,
+    NumericVector rate_multipliers) {
+  double p;
+  het_constant_site_probs(parent, child, edge_length, nTip, kStates, baseRL,
+                          betaBins, nBetaCat, rate_multipliers, {}, &p);
+  // Return:
+  return p;
 }
 
 
@@ -2335,6 +2363,59 @@ double const_site_prob_for_k(
 }
 
 
+
+std::vector<double> asc_probs_masked(
+    const McmcData& data,
+    const IntegerVector& parent, const IntegerVector& child,
+    const NumericVector& edgeLen,
+    int partType, int kStates, double rateLoss, double betaScale,
+    const NumericVector& ratesIn, const std::vector<int>& maskIds) {
+
+  const NumericVector rates = ratesIn.size() ? ratesIn : NumericVector(1, 1.0);
+  std::vector<double> p(maskIds.size(), 0.0);
+  std::vector<int> which;
+  std::vector<const uint8_t*> masks;
+  for (int i = 0; i < (int)maskIds.size(); ++i) {
+    if (maskIds[i] == 0) continue;
+    which.push_back(i);
+    masks.push_back(data.missingMasks[maskIds[i]].data());
+  }
+  if (masks.empty()) return p;
+
+  const int nTip = data.nTip;
+  const bool neo = (partType == 0);
+  std::vector<double> pm(masks.size());
+  NumericVector rootFreqs = neo ? mkn_stationary(rateLoss)
+                                : NumericVector(kStates, 1.0 / kStates);
+  if (data.qHeterogeneity) {
+    double hetBins[16];
+    compute_het_bins(betaScale, kStates, data.nBetaCat, hetBins);
+    // The het singleton term is not implemented (het_singleton_site_prob).
+    het_constant_site_probs(parent, child, edgeLen, nTip, kStates,
+                            neo ? rateLoss : 1.0, hetBins, data.nBetaCat,
+                            rates, masks, pm.data());
+  } else if (neo) {
+    constant_site_probs_mkn_impl(parent, child, edgeLen, nTip, rateLoss,
+                                 rootFreqs, rates, masks, pm.data());
+  } else {
+    constant_site_probs_jc_impl(parent, child, edgeLen, nTip, kStates, rates,
+                                masks, pm.data());
+  }
+  for (int j = 0; j < (int)masks.size(); ++j) {
+    if (data.codingType == 2 && !data.qHeterogeneity) {
+      pm[j] += neo
+        ? singleton_site_prob_mkn_impl(parent, child, edgeLen, nTip, rateLoss,
+                                       rootFreqs, rates, masks[j])
+        : singleton_site_prob_jc_impl(parent, child, edgeLen, nTip, kStates,
+                                      rootFreqs, rates, masks[j]);
+    }
+    p[which[j]] = pm[j];
+  }
+  // Return:
+  return p;
+}
+
+
 // ---------------------------------------------------------------------------
 // C++ log-likelihood orchestration (mirrors .MkpLogLikelihood in R)
 // ---------------------------------------------------------------------------
@@ -2360,6 +2441,7 @@ double cpp_partition_log_likelihood(
   bool useAcrv = (rateLogSd > 0.0);
   int coding = data.codingType;
   bool useHet = data.qHeterogeneity;
+  const NumericVector ascRates = useAcrv ? rates : NumericVector(1, 1.0);
 
   const PartInfo& part = data.parts[partIdx];
   double ll = 0.0;
@@ -2435,7 +2517,12 @@ double cpp_partition_log_likelihood(
         double p = neoConstProb;
         if (coding == 2) p += het_singleton_site_prob(
           parent, child, scaledEdge, nTip, 2, rateLoss, hetBins, nBC, rates);
-        ll -= part.tipStates.ncol() * std::log(1.0 - p);
+        {
+          const MaskTally masks = tally_masks(data, part.globalCharIdx, part.tipStates.ncol());
+          ll -= masked_asc_log1m(masks, p, asc_probs_masked(
+            data, parent, child, scaledEdge, 0, 2, rateLoss, betaScale,
+            ascRates, masks.ids));
+        }
       }
     } else {
       // Homogeneous path (original).
@@ -2464,7 +2551,12 @@ double cpp_partition_log_likelihood(
         double p = neoConstProb;
         if (coding == 2) p += singleton_site_prob_mkn(parent, child, scaledEdge, nTip,
                                                        rateLoss, rootFreqs, rates);
-        ll -= part.tipStates.ncol() * std::log(1.0 - p);
+        {
+          const MaskTally masks = tally_masks(data, part.globalCharIdx, part.tipStates.ncol());
+          ll -= masked_asc_log1m(masks, p, asc_probs_masked(
+            data, parent, child, scaledEdge, 0, 2, rateLoss, betaScale,
+            ascRates, masks.ids));
+        }
       }
     }
   } else if (part.type == 2) {
@@ -2515,7 +2607,12 @@ double cpp_partition_log_likelihood(
         double p = knownConstProb;
         if (coding == 2) p += het_singleton_site_prob(
           parent, child, scaledEdge, nTip, kStates, 1.0, hetBins, nBC, rates);
-        ll -= part.tipStates.ncol() * std::log(1.0 - p);
+        {
+          const MaskTally masks = tally_masks(data, part.globalCharIdx, part.tipStates.ncol());
+          ll -= masked_asc_log1m(masks, p, asc_probs_masked(
+            data, parent, child, scaledEdge, 2, kStates, rateLoss, betaScale,
+            ascRates, masks.ids));
+        }
       }
     } else {
       // Homogeneous path. JC-COLLAPSE (stage 2): when kObsMax + 1 < kStates,
@@ -2565,7 +2662,12 @@ double cpp_partition_log_likelihood(
         double p = knownConstProb;
         if (coding == 2) p += singleton_site_prob_jc(parent, child, scaledEdge, nTip,
                                                       kStates, rootFreqs, rates);
-        ll -= part.tipStates.ncol() * std::log(1.0 - p);
+        {
+          const MaskTally masks = tally_masks(data, part.globalCharIdx, part.tipStates.ncol());
+          ll -= masked_asc_log1m(masks, p, asc_probs_masked(
+            data, parent, child, scaledEdge, 2, kStates, rateLoss, betaScale,
+            ascRates, masks.ids));
+        }
       }
     }
   } else {
@@ -2627,7 +2729,12 @@ double cpp_partition_log_likelihood(
           double p = transConstProb;
           if (coding == 2) p += het_singleton_site_prob(
             parent, child, scaledEdge, nTip, kp0, 1.0, hetBinsSub, nBC, rates);
-          ll -= nCharPart * std::log(1.0 - p);
+          {
+            const MaskTally masks = tally_masks(data, part.globalCharIdx, nCharPart);
+            ll -= masked_asc_log1m(masks, p, asc_probs_masked(
+              data, parent, child, scaledEdge, 1, kp0, rateLoss, betaScale,
+              ascRates, masks.ids));
+          }
         }
       } else {
         // JC-COLLAPSE (stage 2): transformational allSame at kp0; collapse
@@ -2672,7 +2779,12 @@ double cpp_partition_log_likelihood(
           double p = transConstProb;
           if (coding == 2) p += singleton_site_prob_jc(parent, child, scaledEdge, nTip,
                                                         kp0, rootFreqs, rates);
-          ll -= nCharPart * std::log(1.0 - p);
+          {
+            const MaskTally masks = tally_masks(data, part.globalCharIdx, nCharPart);
+            ll -= masked_asc_log1m(masks, p, asc_probs_masked(
+              data, parent, child, scaledEdge, 1, kp0, rateLoss, betaScale,
+              ascRates, masks.ids));
+          }
         }
       }
       if (data.relabel) {
@@ -2713,6 +2825,8 @@ double cpp_partition_log_likelihood(
         IntegerMatrix sub(nTip, nSub);
         for (int c = 0; c < nSub; ++c)
           for (int t = 0; t < nTip; ++t) sub(t, c) = part.tipStates(t, cols[c]);
+        std::vector<int> subGlobal(nSub);
+        for (int c = 0; c < nSub; ++c) subGlobal[c] = part.globalCharIdx[cols[c]];
 
         // M-157: fused ascertainment per k' sub-group
         double subConstProb = 0.0;
@@ -2742,7 +2856,12 @@ double cpp_partition_log_likelihood(
             double p = subConstProb;
             if (coding == 2) p += het_singleton_site_prob(
               parent, child, scaledEdge, nTip, kp, 1.0, hetBinsSub, nBC, rates);
-            subLl -= nSub * std::log(1.0 - p);
+            {
+              const MaskTally masks = tally_masks(data, subGlobal, nSub);
+              subLl -= masked_asc_log1m(masks, p, asc_probs_masked(
+                data, parent, child, scaledEdge, 1, kp, rateLoss, betaScale,
+                ascRates, masks.ids));
+            }
           }
         } else {
           // JC-COLLAPSE (stage 2): per sub-group, collapse when
@@ -2789,7 +2908,12 @@ double cpp_partition_log_likelihood(
             double p = subConstProb;
             if (coding == 2) p += singleton_site_prob_jc(parent, child, scaledEdge, nTip,
                                                           kp, rootFreqs, rates);
-            subLl -= nSub * std::log(1.0 - p);
+            {
+              const MaskTally masks = tally_masks(data, subGlobal, nSub);
+              subLl -= masked_asc_log1m(masks, p, asc_probs_masked(
+                data, parent, child, scaledEdge, 1, kp, rateLoss, betaScale,
+                ascRates, masks.ids));
+            }
           }
         }
         ll += subLl;
@@ -3029,6 +3153,27 @@ SEXP prepare_mcmc_data(List partitions_r,
       pinfo.classIdx = 1;
     }
     if (pinfo.classIdx > d->nClasses) d->nClasses = pinfo.classIdx;
+  }
+
+  d->missingMasks.assign(1, std::vector<uint8_t>(d->nTip, 0));
+  d->charMask.assign(d->nChar, 0);
+  std::map<std::vector<uint8_t>, int> maskIndex;
+  maskIndex[d->missingMasks[0]] = 0;
+  for (const PartInfo& pinfo : d->parts) {
+    for (int ci = 0; ci < pinfo.tipStates.ncol(); ++ci) {
+      std::vector<uint8_t> mask(d->nTip);
+      for (int t = 0; t < d->nTip; ++t) mask[t] = pinfo.tipStates(t, ci) < 0;
+      auto found = maskIndex.find(mask);
+      int m;
+      if (found == maskIndex.end()) {
+        m = (int)d->missingMasks.size();
+        maskIndex[mask] = m;
+        d->missingMasks.push_back(mask);
+      } else {
+        m = found->second;
+      }
+      d->charMask[pinfo.globalCharIdx[ci]] = m;
+    }
   }
 
   // Initialize branchBins with the default so weighted/block-Gibbs moves

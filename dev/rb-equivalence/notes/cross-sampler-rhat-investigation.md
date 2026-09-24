@@ -6,6 +6,8 @@
 
 Two specific source-level asymmetries between MkPrime's and RevBayes's implementations of the "shared" Mk + ACRV + asymmetric-Mk2 model parsimoniously explain the entire signature of the observed cross-sampler drift (`tree_length` rhat 1.037, `rate_log_sd` rhat 1.027, `rate_neo` rhat 1.030; `rate_loss` and tree-CID agree). **(1) Partition-rate parameterisation:** RB applies `partition_rate := [rate_neo/(1+rate_neo), 1/(1+rate_neo)] * sum(nChar)/nChar` to both partitions, so the nChar-weighted mean rate is 1 by construction; MkPrime applies `rate_neo` as a one-sided neomorphic branch-length multiplier (`neoEl = edgeLen * rate_neo`) and leaves the transformational partition at rate 1, so the weighted mean rate is `(n_neo · rate_neo + n_trans) / (n_neo + n_trans)`. That makes `rate_neo` a fundamentally different parameter on the two sides and breaks the implicit `tree_length` × `rate_neo` identification, explaining the exact pair of params (`tree_length`, `rate_neo`) that drift. **(2) ACRV discretisation normalisation:** both samplers use `qnorm((i+0.5)/nCat, μ=−σ²/2, σ=rate_log_sd)` for the bin medians, but MkPrime then renormalises so the arithmetic mean of the discrete rates is exactly 1, while RB's `fnDiscretizeDistribution` does NOT renormalise. At σ=1 this is a ~13 % multiplicative bias on the per-site rate, absorbed by `tree_length` and `rate_log_sd`. These two asymmetries are sufficient to produce a 1.03–1.04 rhat gap on exactly the observed parameters; `rate_loss` and the tree CID are correctly insensitive (rate_loss enters the Q-matrix only, not the time axis).
 
+> **Correction (2026-09-24, agent-issues/MkPrime#212, #213):** two of this note's AGREED verdicts were wrong. (a) MkPrime's neomorphic Q was not normalised: its π-weighted mean rate was 4r/(1+r)², whereas RevBayes' `fnFreeK` rescales to 1, so `rate_loss` *did* scale the neomorphic time axis in MkPrime. MkPrime now normalises to mean rate 1. (b) §4: MkPrime pinned every tip to the constant state, whereas RevBayes marginalises each character's ?/- tips (one correction per missing-data mask). MkPrime now does the same. Cross-sampler comparisons recorded before the fix compare different models on `rate_loss`, `rate_neo` and `tree_length`, and on any matrix with missing data.
+
 ---
 
 ## Context
@@ -93,7 +95,7 @@ Predicted bias direction: posterior marginals on `rate_neo` differ in mean and v
 
 Verdict DIFFER. Predicted to dominate the `rate_neo` drift; mediates a fraction of the `tree_length` drift.
 
-### 4. Variable-coding ascertainment correction — AGREED
+### 4. Variable-coding ascertainment correction — DIFFERED (missing data; fixed in #213)
 
 **Mkn (neomorphic):** MkPrime's `constant_site_prob_mkn` (`src/ascertainment.cpp:428–514`) constructs 2 pseudo-characters with `cl[s][s]=1` (i.e. all-0 and all-1 patterns), prunes under the same Q + rate_loss + ACRV, sums by `root_freqs`, and the caller subtracts `nChar * log(1 - p_const)` (`src/mcmc_likelihood.cpp:2431`). RB's `coding="variable"` excludes the same two constant patterns under the asymmetric Q + stationary root frequencies. ✓
 
@@ -145,7 +147,7 @@ Verdict AGREED.
 | 2 | §2 ACRV bin normalisation | `tree_length` ↑ in RB, `rate_log_sd` weakly | ~10–15 % multiplicative on TL at σ=1 |
 | 3 | §1, §5 BL prior constants | none on posteriors, only on absolute log-priors | nil |
 | 4 | §6 topology prior | nil under symmetric proposals | nil |
-| 5 | §4 ascertainment | nil (audited identical) | nil |
+| 5 | §4 ascertainment | differed on characters with ?/- cells (#213) | unmeasured |
 | 6 | §7 rooting / §8 float | nil at this sample count | nil |
 
 Notably, **(1) and (2) operate on different parameters but both impinge on `tree_length`.** Their combination cleanly reproduces the observed pattern:

@@ -142,7 +142,8 @@ MkpLogLikelihood <- function(tree, mkd,
             parent, child, neoEl, nTip, rate_loss, rootFreqs, rates
           )
         }
-        ll <- ll - nCharPart * log(1 - puninf)
+        ll <- ll - .MaskedAscLog1m(tipStates, puninf, parent, child, neoEl,
+                                   nTip, 2L, TRUE, rate_loss, rates, coding)
       }
 
     } else if (part$type == "known") {
@@ -173,7 +174,9 @@ MkpLogLikelihood <- function(tree, mkd,
               parent, child, transEdge, nTip, kStates, kObsMax, rates
             )
           }
-          ll <- ll - nCharPart * log(1 - puninf)
+          ll <- ll - .MaskedAscLog1m(tipStates, puninf, parent, child,
+                                     transEdge, nTip, kStates, FALSE, 1,
+                                     rates, coding)
         }
       } else {
         rootFreqs <- rep(1.0 / kStates, kStates)
@@ -193,7 +196,9 @@ MkpLogLikelihood <- function(tree, mkd,
               parent, child, transEdge, nTip, kStates, rootFreqs, rates
             )
           }
-          ll <- ll - nCharPart * log(1 - puninf)
+          ll <- ll - .MaskedAscLog1m(tipStates, puninf, parent, child,
+                                     transEdge, nTip, kStates, FALSE, 1,
+                                     rates, coding)
         }
       }
 
@@ -231,7 +236,9 @@ MkpLogLikelihood <- function(tree, mkd,
                 parent, child, transEdge, nTip, kp, kObsMaxSub, rates
               )
             }
-            subLl <- subLl - nCharSub * log(1 - puninf)
+            subLl <- subLl - .MaskedAscLog1m(subStates, puninf, parent, child,
+                                             transEdge, nTip, kp, FALSE, 1,
+                                             rates, coding)
           }
         } else {
           rootFreqs <- rep(1.0 / kp, kp)
@@ -251,7 +258,9 @@ MkpLogLikelihood <- function(tree, mkd,
                 parent, child, transEdge, nTip, kp, rootFreqs, rates
               )
             }
-            subLl <- subLl - nCharSub * log(1 - puninf)
+            subLl <- subLl - .MaskedAscLog1m(subStates, puninf, parent, child,
+                                             transEdge, nTip, kp, FALSE, 1,
+                                             rates, coding)
           }
         }
 
@@ -271,4 +280,30 @@ MkpLogLikelihood <- function(tree, mkd,
   }
 
   totalLoglik
+}
+
+
+# Sum over missing-data masks of n_m * log(1 - P_m): the amount the
+# ascertainment correction subtracts. A character's ?/- tips are marginalised,
+# as it was kept for varying among its observed tips. `puninf` is P for the
+# characters with every tip observed.
+.MaskedAscLog1m <- function(tipStates, puninf, parent, child, edgeLength,
+                            nTip, kStates, neomorphic, rateLoss, rates,
+                            coding) {
+  missing <- tipStates < 0L
+  maskKey <- apply(missing, 2, function(x) paste(which(x), collapse = " "))
+  counts <- table(maskKey)
+  keys <- names(counts)
+  p <- vapply(keys, function(key) {
+    if (!nzchar(key)) {
+      puninf
+    } else {
+      asc_site_prob_missing(parent, child, edgeLength, nTip, kStates,
+                            neomorphic, rateLoss, rates,
+                            missing[, match(key, maskKey)],
+                            coding == "informative")
+    }
+  }, double(1))
+  # Return:
+  sum(as.integer(counts) * log(1 - p))
 }

@@ -163,6 +163,26 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// asc_site_prob_missing
+double asc_site_prob_missing(Rcpp::IntegerVector parent, Rcpp::IntegerVector child, Rcpp::NumericVector edge_length, int nTip, int kStates, bool neomorphic, double rate_loss, Rcpp::NumericVector rate_multipliers, Rcpp::LogicalVector missing, bool informative);
+RcppExport SEXP _MkPrime_asc_site_prob_missing(SEXP parentSEXP, SEXP childSEXP, SEXP edge_lengthSEXP, SEXP nTipSEXP, SEXP kStatesSEXP, SEXP neomorphicSEXP, SEXP rate_lossSEXP, SEXP rate_multipliersSEXP, SEXP missingSEXP, SEXP informativeSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type parent(parentSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type child(childSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type edge_length(edge_lengthSEXP);
+    Rcpp::traits::input_parameter< int >::type nTip(nTipSEXP);
+    Rcpp::traits::input_parameter< int >::type kStates(kStatesSEXP);
+    Rcpp::traits::input_parameter< bool >::type neomorphic(neomorphicSEXP);
+    Rcpp::traits::input_parameter< double >::type rate_loss(rate_lossSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type rate_multipliers(rate_multipliersSEXP);
+    Rcpp::traits::input_parameter< Rcpp::LogicalVector >::type missing(missingSEXP);
+    Rcpp::traits::input_parameter< bool >::type informative(informativeSEXP);
+    rcpp_result_gen = Rcpp::wrap(asc_site_prob_missing(parent, child, edge_length, nTip, kStates, neomorphic, rate_loss, rate_multipliers, missing, informative));
+    return rcpp_result_gen;
+END_RCPP
+}
 // mk_prime_relabel_log
 double mk_prime_relabel_log(int kPrime, int kObs);
 RcppExport SEXP _MkPrime_mk_prime_relabel_log(SEXP kPrimeSEXP, SEXP kObsSEXP) {
@@ -1034,6 +1054,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_singleton_site_prob_jc_collapsed", (DL_FUNC) &_MkPrime_singleton_site_prob_jc_collapsed, 7},
     {"_MkPrime_constant_site_prob_mkn", (DL_FUNC) &_MkPrime_constant_site_prob_mkn, 7},
     {"_MkPrime_singleton_site_prob_mkn", (DL_FUNC) &_MkPrime_singleton_site_prob_mkn, 7},
+    {"_MkPrime_asc_site_prob_missing", (DL_FUNC) &_MkPrime_asc_site_prob_missing, 10},
     {"_MkPrime_mk_prime_relabel_log", (DL_FUNC) &_MkPrime_mk_prime_relabel_log, 2},
     {"_MkPrime_mk_prime_relabel_log_batch", (DL_FUNC) &_MkPrime_mk_prime_relabel_log_batch, 2},
     {"_MkPrime_mkp_hello", (DL_FUNC) &_MkPrime_mkp_hello, 0},
