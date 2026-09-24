@@ -1,0 +1,91 @@
+# Create a Discussion, or comment on one, from a workflow_dispatch.
+#
+# Exists because cloud Claude Code sessions cannot reach GitHub's GraphQL
+# API, and REST can only read Discussions. Red-team round records are
+# Discussions, so without this a cloud round cannot record itself. Cloud
+# sessions can trigger this workflow over REST.
+#
+# Posts as ms609-agent via the CLAUDE_GH_TOKEN secret, so records keep the
+# agent's authorship; falls back to github-actions[bot] if the secret is unset.
+#
+# Must be on `main`: workflow_dispatch runs only workflows on the default
+# branch (or the ref it is dispatched against).
+name: Post Discussion
+
+on:
+  workflow_dispatch:
+    inputs:
+      category:
+        description: "Category slug, e.g. 09-convergence-diagnostics-ess (ignored when commenting)"
+        required: false
+        default: ""
+      title:
+        description: "Discussion title (ignored when commenting)"
+        required: false
+        default: ""
+      body:
+        description: "Markdown body of the discussion or comment"
+        required: true
+      discussion:
+        description: "Discussion number to comment on; leave empty to create a new discussion"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  discussions: write
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post
+        env:
+          # Inputs arrive via env, never interpolated into the script.
+          GH_TOKEN: ${{ secrets.CLAUDE_GH_TOKEN || github.token }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          CATEGORY: ${{ inputs.category }}
+          TITLE: ${{ inputs.title }}
+          BODY: ${{ inputs.body }}
+          DISCUSSION: ${{ inputs.discussion }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$DISCUSSION" ]; then
+            discId=$(gh api graphql -f owner="$OWNER" -f name="$REPO" \
+              -F number="$DISCUSSION" -f query='
+              query($owner:String!,$name:String!,$number:Int!){
+                repository(owner:$owner,name:$name){discussion(number:$number){id}}}' \
+              --jq '.data.repository.discussion.id')
+            url=$(gh api graphql -f discussionId="$discId" -f body="$BODY" -f query='
+              mutation($discussionId:ID!,$body:String!){
+                addDiscussionComment(input:{discussionId:$discussionId,body:$body}){
+                  comment{url}}}' \
+              --jq '.data.addDiscussionComment.comment.url')
+          else
+            if [ -z "$CATEGORY" ] || [ -z "$TITLE" ]; then
+              echo "::error::category and title are required to create a discussion"
+              exit 1
+            fi
+            ids=$(gh api graphql -f owner="$OWNER" -f name="$REPO" -f query='
+              query($owner:String!,$name:String!){
+                repository(owner:$owner,name:$name){
+                  id discussionCategories(first:50){nodes{id slug}}}}')
+            repoId=$(jq -r '.data.repository.id' <<<"$ids")
+            catId=$(jq -r --arg s "$CATEGORY" \
+              '.data.repository.discussionCategories.nodes[] | select(.slug == $s) | .id' <<<"$ids")
+            if [ -z "$catId" ]; then
+              echo "::error::No discussion category with slug '$CATEGORY'"
+              exit 1
+            fi
+            url=$(gh api graphql -f repositoryId="$repoId" -f categoryId="$catId" \
+              -f title="$TITLE" -f body="$BODY" -f query='
+              mutation($repositoryId:ID!,$categoryId:ID!,$title:String!,$body:String!){
+                createDiscussion(input:{repositoryId:$repositoryId,categoryId:$categoryId,
+                  title:$title,body:$body}){discussion{url}}}' \
+              --jq '.data.createDiscussion.discussion.url')
+          fi
+
+          echo "Posted: $url"
+          echo "Posted: $url" >> "$GITHUB_STEP_SUMMARY"
