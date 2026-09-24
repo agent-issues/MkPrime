@@ -2839,7 +2839,7 @@ double cpp_log_likelihood(
 // chars (where it is further scaled by RB-style neoScale/transScale
 // internally — audit Issue 1).
 //
-// rateNeo is hard-coded to 1.0 in the call below. Two regimes:
+// partitioned_eval_params() fixes rateNeo at 1.0. Two regimes:
 //   - hasNeo == false (Casali production workload): nNeo == 0, so
 //     compute_partition_scales returns (1.0, 1.0) — partition normalisation
 //     is a no-op and behaviour is bit-identical to the pre-audit-Issue-1

@@ -1297,7 +1297,6 @@ NumericVector eval_preorder_paths_cpp(SEXP dataPtr, SEXP statePtr,
 // coding = "informative" per LIKE-001).
 // ---------------------------------------------------------------------------
 
-// Old full-evaluation path (used as fallback and for validation)
 // CLGroups for the partial-CL candidate evaluators: one per (partition, k)
 // evaluation unit, each carrying its partition's edge scale and ACRV rates
 // from part_eval_params, so candidates are scored under the model that
@@ -1367,6 +1366,7 @@ static void build_cl_groups(const McmcData* data, const McmcState* state,
 }
 
 
+// Old full-evaluation path (used as fallback and for validation)
 static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta);
 // M-114: partial CL path for Q-heterogeneity
 static bool gibbs_spr_impl_het(McmcData* data, McmcState* state, double beta);
