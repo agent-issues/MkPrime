@@ -180,8 +180,11 @@ static double univariate_ess_geyer(const double* x, int n,
   for (int i = 0; i < n; ++i) mean += x[i];
   mean /= n;
 
+  // A constant row means the chain never left one topology. Within one chain
+  // that cannot be told apart from a posterior concentrated on one topology,
+  // so it is unassessable, not maximally mixed.
   const double var0 = autocovariance(x, n, mean, 0);
-  if (var0 == 0.0) return static_cast<double>(n);
+  if (var0 == 0.0) return NA_REAL;
 
   // Lazy evaluation: compute autocovariances on demand and stop as soon as
   // the initial-positive-sequence criterion is met.  For chains with ESS ~E,

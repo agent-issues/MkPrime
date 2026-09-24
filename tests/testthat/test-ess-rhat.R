@@ -286,3 +286,9 @@ test_that(".CheckConvergenceFromLogs handles unequal sample counts", {
   expect_false(is.na(result$maxRhat))
   expect_true(is.numeric(result$minEss))
 })
+
+test_that(".RhatClassical is Inf for runs constant at different values (#197)", {
+  expect_identical(
+    MkPrime:::.RhatClassical(cbind(rep(0.3, 10), rep(0.7, 10))), Inf
+  )
+})

@@ -5,9 +5,9 @@
 \alias{.MinEssPerSec}
 \title{Compute min-ESS/s for a set of samples collected over a known wall-time.}
 \usage{
-.MinEssRate(sampleMatrix, wallTimeSec, tuningTrees = NULL)
+.MinEssRate(sampleMatrix, wallTimeSec, tuningTrees = NULL, fixedCols = NULL)
 
-.MinEssPerSec(sampleMatrix, wallTimeSec, tuningTrees = NULL)
+.MinEssPerSec(sampleMatrix, wallTimeSec, tuningTrees = NULL, fixedCols = NULL)
 }
 \arguments{
 \item{sampleMatrix}{Numeric matrix (rows = samples, columns = parameters).}
@@ -16,11 +16,14 @@
 
 \item{tuningTrees}{List of sampled topologies whose tree ESS enters the
 minimum, giving topology moves credit in the bandit (M-152).}
+
+\item{fixedCols}{Character vector naming the columns no move updates.}
 }
 \value{
 \code{.MinEssRate()} a list with the \code{rate} min(ESS)/\code{wallTimeSec} and
 the \code{ess} it came from; \code{.MinEssPerSec()} the rate alone. Both are \code{NA}
-where ESS cannot be computed.
+where any gate ESS, or the tree ESS, cannot be computed: a window that
+froze a parameter or the topology is unassessable, not the best.
 }
 \description{
 Compute min-ESS/s for a set of samples collected over a known wall-time.

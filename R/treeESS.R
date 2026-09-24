@@ -14,14 +14,20 @@
 #' Computes tree-topology effective sample size for a sample of
 #' phylogenetic trees using Robinson–Foulds distances.
 #'
-#' By default only the median pseudo-ESS is returned.  Set
+#' By default only the median pseudo-ESS is returned, which needs the
+#' distances from at most `maxRows` anchor trees to every tree.  Set
 #' `frechet = TRUE` to also compute the Fréchet correlation ESS
-#' (Magee et al. 2021); this adds negligible cost since the full
-#' distance matrix is computed either way.
+#' (Magee et al. 2021), which needs the full distance matrix.
+#'
+#' A chain that never leaves one topology has no median pseudo-ESS (`NA`):
+#' on its own it cannot be told apart from a posterior concentrated on one
+#' topology.
 #'
 #' @param trees A `multiPhylo` list of trees from a single MCMC chain.
-#' @param dist_fn Distance function applied to `trees`; must return a
-#'   `dist` object.  Default: [TreeDist::RobinsonFoulds].
+#' @param dist_fn Distance function giving a `dist` object for
+#'   `dist_fn(trees)`; one that also gives the matrix between two sets of
+#'   trees for `dist_fn(anchors, trees)`, as [TreeDist::RobinsonFoulds] does,
+#'   is asked only for the anchor rows.
 #' @param min_nsamples Integer; minimum number of samples used when
 #'   computing lag-k statistics (default 5).
 #' @param frechet Logical; if `TRUE`, also compute the Fréchet
@@ -54,7 +60,17 @@
 TreeESS <- function(trees, dist_fn = TreeDist::RobinsonFoulds,
                      min_nsamples = 5L, frechet = FALSE,
                      maxRows = 200L) {
-  dmat <- as.matrix(dist_fn(trees))
+  n <- length(trees)
+  dmat <- NULL
+  if (!frechet && maxRows >= 2L && n > maxRows) {
+    # The rows `median_pseudo_ess_cpp()` would pick from the full matrix.
+    anchors <- floor(seq.int(0L, maxRows - 1L) * (n - 1) / (maxRows - 1) +
+                       0.5) + 1L
+    dmat <- tryCatch(as.matrix(dist_fn(trees[anchors], trees)),
+                     error = function(e) NULL)
+    if (!identical(dim(dmat), c(length(anchors), n))) dmat <- NULL
+  }
+  if (is.null(dmat)) dmat <- as.matrix(dist_fn(trees))
   c(
     frechetCorrelationESS = if (frechet) {
       .FrechetCorrelationESS(dmat, min_nsamples)
@@ -97,10 +113,12 @@ if (all(dmat == 0)) return(1)
 #' large matrices, a deterministic subsample of rows is used (the median
 #' stabilises well before all rows are evaluated).
 #'
-#' @param dmat Numeric square distance matrix.
+#' @param dmat Numeric distance matrix whose columns follow the chain: square,
+#'   or the rows of chosen anchor trees only.
 #' @param min_nsamples Minimum samples for lag computation (default 5).
 #' @param maxRows Maximum rows to evaluate; 0 = all rows.  Default 200.
-#' @return Scalar ESS estimate.
+#' @return Scalar ESS estimate; `NA` when every row is constant, i.e. the
+#' chain sampled a single topology.
 #' @references
 #' Lanfear R, Hua X, Warren DL (2016). \emph{Genome Biology
 #'   and Evolution}, 8(8), 2319--2332.

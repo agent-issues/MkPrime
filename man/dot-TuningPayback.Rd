@@ -4,7 +4,14 @@
 \alias{.TuningPayback}
 \title{Has tuning stopped paying for itself?}
 \usage{
-.TuningPayback(streak, spentSec, bestRate, targetEss, nRuns = 1L)
+.TuningPayback(
+  streak,
+  spentSec,
+  bestRate,
+  targetEss,
+  nRuns = 1L,
+  frozen = FALSE
+)
 }
 \arguments{
 \item{streak}{Integer count of consecutive rounds that have voted to freeze.}
@@ -17,6 +24,9 @@
 \code{NULL} where none is set.}
 
 \item{nRuns}{Integer number of runs sharing that target.}
+
+\item{frozen}{Logical; \code{TRUE} where the best window never changed topology.
+Its rate prices the scalar moves alone, so it cannot vote to freeze.}
 }
 \value{
 List with the updated \code{streak} and a logical \code{freeze}.

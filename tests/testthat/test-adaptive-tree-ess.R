@@ -13,7 +13,7 @@ test_that("minTreeEss parameter accepted by MkPrimeMCMC", {
 test_that(".ComputeTreeEssInLoop returns NA when no trees saved", {
   run <- list(tree_saved_idx = 0L, tree_samples = list())
   result <- MkPrime:::.ComputeTreeEssInLoop(list(run), 500L, FALSE)
-  expect_true(is.na(result))
+  expect_true(is.na(result[["ess"]]))
 })
 
 
@@ -21,7 +21,7 @@ test_that(".ComputeTreeEssInLoop returns NA when too few trees", {
   trees <- replicate(3, ape::rtree(5, rooted = FALSE), simplify = FALSE)
   run <- list(tree_saved_idx = 3L, tree_samples = trees)
   result <- MkPrime:::.ComputeTreeEssInLoop(list(run), 500L, FALSE)
-  expect_true(is.na(result))
+  expect_true(is.na(result[["ess"]]))
 })
 
 
@@ -31,8 +31,8 @@ test_that(".ComputeTreeEssInLoop returns finite ESS with sufficient trees", {
   trees <- replicate(50, ape::rtree(10, rooted = FALSE), simplify = FALSE)
   run <- list(tree_saved_idx = 50L, tree_samples = trees)
   result <- MkPrime:::.ComputeTreeEssInLoop(list(run), 500L, FALSE)
-  expect_true(is.finite(result))
-  expect_true(result > 0)
+  expect_true(is.finite(result[["ess"]]))
+  expect_true(result[["ess"]] > 0)
 })
 
 
@@ -46,8 +46,8 @@ test_that(".ComputeTreeEssInLoop subsamples to maxPerRun", {
   # Fine (1000) vs coarse (50) — both should return finite
   fine   <- MkPrime:::.ComputeTreeEssInLoop(list(run), 1000L, FALSE)
   coarse <- MkPrime:::.ComputeTreeEssInLoop(list(run), 50L, FALSE)
-  expect_true(is.finite(fine))
-  expect_true(is.finite(coarse))
+  expect_true(is.finite(fine[["ess"]]))
+  expect_true(is.finite(coarse[["ess"]]))
 })
 
 
@@ -60,7 +60,7 @@ test_that(".ComputeTreeEssInLoop returns NA (not Inf) with borderline tree count
   trees <- replicate(6, ape::rtree(8, rooted = FALSE), simplify = FALSE)
   run <- list(tree_saved_idx = 6L, tree_samples = trees)
   result <- MkPrime:::.ComputeTreeEssInLoop(list(run), 500L, FALSE)
-  expect_true(is.na(result))
+  expect_true(is.na(result[["ess"]]))
 })
 
 
@@ -73,7 +73,7 @@ test_that(".ComputeTreeEssInLoop handles streaming mode with NULL slots", {
 
   run <- list(tree_samples = trees)  # streaming: no saved_idx
   result <- MkPrime:::.ComputeTreeEssInLoop(list(run), 500L, TRUE)
-  expect_true(is.finite(result))
+  expect_true(is.finite(result[["ess"]]))
 })
 
 
@@ -222,17 +222,12 @@ test_that(".MinEssPerSec includes tree ESS when provided", {
   # Without trees
   ess_scalar <- MkPrime:::.MinEssPerSec(mat, 1.0)
 
-  # With identical trees (ESS ~ 1) — should pull min-ESS down
-  identicalTrees <- replicate(nSamp, ape::rtree(8, rooted = FALSE),
-                              simplify = FALSE)
-  # Make them all the same tree to get low tree ESS
-  singleTree <- identicalTrees[[1]]
-  sameTrees <- replicate(nSamp, singleTree, simplify = FALSE)
-
+  # A sticky topology chain (each tree held for ten samples) has a low tree
+  # ESS, which should pull the minimum down.
+  stickyTrees <- rep(lapply(0:4, as.phylo, 8), each = 10)
   ess_with_trees <- MkPrime:::.MinEssPerSec(mat, 1.0,
-                                             tuningTrees = sameTrees)
-  # Tree ESS for identical trees is ~1, so it should pull down the min
-  expect_true(ess_with_trees <= ess_scalar)
+                                             tuningTrees = stickyTrees)
+  expect_lt(ess_with_trees, ess_scalar)
 })
 
 
@@ -258,4 +253,98 @@ test_that(".TickerSummaryStr omits tree ESS when NA", {
   )
   s <- MkPrime:::.TickerSummaryStr(diagCheck)
   expect_false(grepl("treeESS", cli::ansi_strip(s)))
+})
+
+
+# --- #196: minTreeEss above 1000 is reachable ---
+
+test_that("minTreeEss above 1000 can be met (#196)", {
+  skip_if_not_installed("TreeDist")
+  set.seed(1962)
+  n <- 1700L
+  trees <- lapply(sample.int(10000, n), as.phylo, 10)
+  run <- list(saved_idx = n, tree_saved_idx = n, tree_samples = trees,
+              samples = matrix(rnorm(n), n, 1,
+                               dimnames = list(NULL, "log_posterior")))
+  res <- MkPrime:::.CheckConvergence(list(run), "log_posterior",
+                                     list(minEss = 10, minTreeEss = 1100))
+  expect_gt(res$treeEss, 1100)
+  expect_true(res$converged)
+})
+
+
+# --- #195: a run stuck on one topology is not evidence of mixing ---
+
+.StuckRun <- function(tree, n = 100L) {
+  list(saved_idx = n, tree_saved_idx = n, tree_samples = rep(list(tree), n),
+       samples = matrix(rnorm(n), n, 1,
+                        dimnames = list(NULL, "log_posterior")))
+}
+
+test_that("runs stuck on different topologies do not pass minTreeEss (#195)", {
+  skip_if_not_installed("TreeDist")
+  set.seed(1951)
+  t1 <- as.phylo(0, 8)
+  t2 <- as.phylo(1, 8)
+  mcmc <- list(minEss = 10, minTreeEss = 50)
+  Check <- function(runs) {
+    MkPrime:::.CheckConvergence(runs, "log_posterior", mcmc)
+  }
+
+  apart <- Check(list(.StuckRun(t1), .StuckRun(t2)))
+  expect_false(apart$converged)
+  expect_true(is.na(apart$treeEss))
+
+  mixed <- .StuckRun(t2)
+  mixed$tree_samples <- lapply(sample.int(1000, 100), as.phylo, 8)
+  expect_false(Check(list(.StuckRun(t1), mixed))$converged)
+
+  # Distinct starts that settled on one topology agree: tree ESS does not apply.
+  expect_true(Check(list(.StuckRun(t1), .StuckRun(t1)))$converged)
+
+  # One run alone cannot tell a stuck chain from a concentrated posterior.
+  single <- Check(list(.StuckRun(t1)))
+  expect_false(single$converged)
+  expect_identical(single$treeEssStatus, "stuck")
+})
+
+test_that("the tuning bandit ranks a frozen topology below a moving one (#195)", {
+  skip_if_not_installed("TreeDist")
+  set.seed(1952)
+  mat <- matrix(rnorm(100), 50, 2,
+                dimnames = list(NULL, c("log_posterior", "tree_length")))
+  frozen <- rep(list(as.phylo(0, 8)), 50)
+  moving <- lapply(sample(0:200, 50, replace = TRUE), as.phylo, 8)
+  still <- MkPrime:::.MinEssRate(mat, 1, tuningTrees = frozen)
+  moved <- MkPrime:::.MinEssRate(mat, 1, tuningTrees = moving)
+  expect_true(still[["frozen"]])
+  expect_false(moved[["frozen"]])
+  # A frozen window is scored on its scalars, so it never ties with perfect
+  # topology mixing, yet stays comparable when every candidate froze.
+  expect_equal(still[["ess"]], min(MkPrime:::.EssMatrix(mat)))
+  expect_lte(moved[["ess"]], still[["ess"]])
+
+  Beats <- function(cand, best, ...) {
+    MkPrime:::.BeatsIncumbent(cand[["rate"]], cand[["ess"]],
+                              best[["rate"]], best[["ess"]],
+                              candFrozen = cand[["frozen"]],
+                              bestFrozen = best[["frozen"]], ...)
+  }
+  expect_false(Beats(still, moved))
+  expect_true(Beats(moved, still))
+  # Among frozen windows, a faster one is adopted only if it does not buy its
+  # speed by starving the topology moves.
+  fasterStill <- modifyList(still, list(rate = 10 * still[["rate"]]))
+  expect_true(Beats(fasterStill, still))
+  expect_false(Beats(fasterStill, still, topologyCut = TRUE))
+  expect_false(Beats(fasterStill, still, everMoved = TRUE))
+})
+
+test_that("minTreeEss with a fixed topology warns that it can never be met", {
+  mcmc <- list(minTreeEss = 100, fixTopology = TRUE, nRuns = 2L, nCore = 1L,
+               nIter = Inf)
+  expect_warning(MkPrime:::.WarnUnreachableCriteria(mcmc, 500L),
+                 "minTreeEss.*fixTopology")
+  mcmc$fixTopology <- FALSE
+  expect_no_warning(MkPrime:::.WarnUnreachableCriteria(mcmc, 500L))
 })

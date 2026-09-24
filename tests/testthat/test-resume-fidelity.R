@@ -197,8 +197,9 @@ test_that("maxTime bounds the job, not each run (#13)", {
     mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 1e7, thin = 5L,
                        maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
                        checkEvery = 500L, maxTime = budget,
-                       # Unreachable, so the clock is what stops the job.
-                       maxRhat = 1 + 1e-12)))
+                       # Beyond what a 500-row window reaches in practice, so
+                       # the clock stops the job while run 1 is in Phase 1.
+                       minEss = 1300, maxRhat = 1 + 1e-12)))
   elapsed <- unname(proc.time()["elapsed"] - t0)
 
   expect_identical(res$stop_reason, "max_time")

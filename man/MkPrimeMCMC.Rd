@@ -95,13 +95,12 @@ When \code{FALSE}, move weights are frozen at the end of warmup using
 the acceptance-rate heuristic (legacy behaviour). See section
 \strong{Three-phase MCMC} below.}
 
-\item{tuningBudget}{Maximum iterations in the tuning phase.
-Default 10 000. Only used when \code{autoTune = TRUE}.}
+\item{tuningBudget}{Integer giving the most iterations the tuning phase may
+use; tuning can end sooner (see \strong{Three-phase MCMC}).}
 
-\item{tuningRounds}{Number of perturbation-evaluation rounds in
-the tuning phase. Default 5. Each round evaluates the current
-weights plus \code{nPerturbations} candidates. Only used when
-\code{autoTune = TRUE}.}
+\item{tuningRounds}{Integer giving the most perturbation-evaluation rounds
+in the tuning phase, each evaluating the current weights and three
+perturbed candidates.}
 
 \item{nRuns}{Number of independent runs. Default 2. Each run has its
 own set of \code{nChains} chains. Convergence diagnostics (R-hat) require
@@ -119,22 +118,22 @@ Ignored when \code{nChains = 1}.}
 \item{maxTime}{Maximum wall-clock time in seconds. \code{NULL} (default)
 means no time limit.}
 
-\item{minEss}{Minimum effective sample size for early stopping.
-\code{NULL} (default) disables ESS-based stopping.}
+\item{minEss}{Numeric specifying the effective sample size every monitored
+parameter must reach before sampling stops; \code{NULL} disables ESS-based
+stopping.}
 
-\item{maxRhat}{Maximum R-hat (rank-normalized; Vehtari et al. 2021)
-for early stopping. \code{NULL} (default) disables R-hat-based stopping.
-The modern recommendation is 1.01 for reliable inference; 1.05 is
-a pragmatic threshold for phylogenetics where mixing is slower.
-Requires \code{nRuns >= 2}.
-Replaces the classical PSRF (Gelman-Rubin) statistic.}
+\item{maxRhat}{Numeric specifying the R-hat (rank-normalized; Vehtari et al.
+2021) that no monitored parameter may exceed across runs before sampling
+stops, needing \code{nRuns >= 2}; \code{NULL} disables R-hat-based stopping.
+1.01 is the usual recommendation; 1.05 is a pragmatic threshold for
+slow-mixing phylogenetic posteriors.}
 
 \item{minTreeEss}{Numeric specifying the tree-topology ESS (median
 pseudo-ESS, via \strong{TreeDist}) each run must reach before it may stop;
 \code{NULL} disables tree-ESS-based stopping.}
 
-\item{checkEvery}{Check convergence every this many iterations
-(default 1000). Only used when stopping criteria are set.}
+\item{checkEvery}{Integer giving the iterations between convergence checks,
+of which two in a row must pass before sampling stops.}
 
 \item{cancelFile}{Path to a cancel-signal file. \code{NULL} (default) disables
 cancel-file checking. When set, \code{\link[=RunMkPrime]{RunMkPrime()}} checks every 200
@@ -369,15 +368,47 @@ Default tuning values:
 \item \code{int_walk_window}: 1
 \item \code{block_kprime_window}: 1
 }
-\subsection{Tree ESS is enforced per run}{
+\subsection{Stopping criteria}{
 
-Trees are not written to the log files, so the log-based convergence check
-used for parallel runs and for the serial cross-run phase cannot evaluate
-\code{minTreeEss}; only the per-run check can. With \code{nRuns > 1} the criterion
-therefore governs each run's own stopping, while the cross-run decision
-rests on \code{minEss} and \code{maxRhat} alone. Set at least one of those when
-running more than one run, or the cross-run phase has no criterion to
-apply.
+Sampling stops when two consecutive convergence checks, \code{checkEvery}
+iterations apart, both meet every criterion that is set; one favourable
+check is not enough.
+
+The criteria judge every sampled scalar except \code{log_likelihood}, the
+per-character \code{kPrime_i}, branch lengths, and columns no move updates
+(such as \code{p} when there are no transformational characters). This includes
+\code{kprime_alpha}, \code{kprime_beta}, \code{beta_scale}, the per-class \code{rate_log_sd}
+columns, \verb{w_*} and \code{hyper_tau}. A judged parameter whose ESS or R-hat cannot
+be computed -- because it did not move, holds a non-finite value, or
+different runs are stuck at different values -- blocks the stop rather
+than being skipped.
+
+A run on its own (\code{nRuns = 1}, or serial runs with \code{nCore = 1}) judges
+\code{minEss} on its convergence window: its last
+\code{max(bufferSize, 4 * checkEvery / thin)} samples. The ESS of \code{W} samples
+cannot exceed \code{W * log10(W)}, 1349 for the usual 500, and independent draws
+rarely give more than half that. Parallel runs, and serial runs in their cross-run
+phase, judge \code{minEss} and \code{maxRhat} on the full logs.
+
+With \code{nRuns > 1} and \code{nCore = 1}, a \code{maxRhat} job samples each run in turn
+until its own criteria are met (or, with \code{maxRhat} alone, for two checks),
+then extends every run by at least 1000 iterations at a time until the
+cross-run check passes twice in a row. With \code{nCore > 1}, a check counts
+towards the pair only once the logs have gained a \code{checkEvery}'s worth of
+samples.
+
+\code{minTreeEss} is judged per run, on up to \code{max(1000, 1.5 * minTreeEss)}
+evenly spaced trees. Trees are not written to the logs, so the cross-run
+decision rests on \code{minEss} and \code{maxRhat} alone; set one of them when
+running more than one run. A run that has sampled a single topology has
+no tree ESS: it cannot tell a stuck chain from a posterior concentrated on
+one topology, so it cannot meet \code{minTreeEss} until it samples another,
+and warns.
+
+A criterion that can never be met -- \code{maxRhat} with one run, a \code{minEss}
+above the window's ceiling, or \code{minTreeEss} with a fixed topology -- does
+not prevent the run, but draws a warning: the run then ends only at
+\code{nIter}, \code{maxTime} or a cancel file.
 }
 
 \subsection{Parallel tempering}{
@@ -429,15 +460,21 @@ chain's log-posterior stabilises (Geweke z-score test), or when
 are optimised to maximise min-ESS/s (minimum effective sample
 size per second across parameters) using a perturbation bandit.
 Each round evaluates the current and perturbed weight vectors
-over short windows, adopting the best. Tuning samples are
-discarded. Step-size tuning is frozen. The phase runs for
-\code{tuningRounds} rounds or up to \code{tuningBudget} iterations.
+over short windows, adopting a candidate only when it beats the
+incumbent by more than the noise in its ESS estimate. Tuning samples
+are discarded. Step-size tuning is frozen. The phase ends after
+\code{tuningRounds} rounds or \code{tuningBudget} iterations, or, when \code{minEss}
+is set, sooner once tuning stops paying for itself: when, in two
+consecutive rounds, the
+time already spent on warmup and tuning exceeds the time the best
+kernel needs to collect this run's share of \code{minEss}.
 Set \code{autoTune = FALSE} to skip this phase.
 
 \strong{Sample.} Move weights are frozen and posterior samples are
-collected. Convergence is monitored at \code{checkEvery} intervals.
-The run terminates when \code{minEss}/\code{maxRhat} criteria are met,
-\code{maxTime} is reached, or \code{nIter} iterations complete.
+collected. Convergence is checked every \code{checkEvery} iterations.
+The run terminates when the stopping criteria are met (see
+\strong{Stopping criteria}), \code{maxTime} is reached, or \code{nIter}
+iterations complete.
 
 Use \code{moveWeights} to pin specific move frequencies and exclude
 them from adaptation in all phases.

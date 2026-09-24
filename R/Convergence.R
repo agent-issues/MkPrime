@@ -13,9 +13,16 @@
 # when a chain is constant over the window, which is the signature of a stuck
 # sampler, so the bug turns the worst mixing outcome into a green light exactly
 # where the user is trusting the automatic stopping rule instead of the traces.
-.MaxOrNA <- function(x) if (all(is.na(x))) NA_real_ else max(x, na.rm = TRUE)
+#
+# With `dropNA = FALSE`, a single NA also gives NA: a stopping-rule column that
+# cannot be assessed blocks the verdict rather than leaving the gate.
+.MaxOrNA <- function(x, dropNA = TRUE) {
+  if (all(is.na(x)) || (!dropNA && anyNA(x))) NA_real_ else max(x, na.rm = TRUE)
+}
 
-.MinOrNA <- function(x) if (all(is.na(x))) NA_real_ else min(x, na.rm = TRUE)
+.MinOrNA <- function(x, dropNA = TRUE) {
+  if (all(is.na(x)) || (!dropNA && anyNA(x))) NA_real_ else min(x, na.rm = TRUE)
+}
 
 #' Compute convergence diagnostics for an MkPosterior
 #'
@@ -301,9 +308,12 @@ print.MkpDiagnostics <- function(x, ...) {
 #'
 #' @param streak Integer counting the consecutive checkpoints met so far.
 #' @param met Logical giving this checkpoint's verdict.
+#' @param fresh Logical; `FALSE` marks a checkpoint that saw no new samples,
+#'   which leaves the streak unchanged.
 #' @return List with the updated `streak` and a logical `stop`.
 #' @keywords internal
-.ConvergenceStreak <- function(streak, met) {
+.ConvergenceStreak <- function(streak, met, fresh = TRUE) {
+  if (!fresh) return(list(streak = streak, stop = FALSE))
   streak <- if (isTRUE(met)) streak + 1L else 0L
   # Return:
   list(streak = streak, stop = streak >= .kConvergenceStreak)
