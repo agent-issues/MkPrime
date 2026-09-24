@@ -165,8 +165,12 @@ tree_file   <- file.path(data_root, sprintf("tree_%02d/tree.nwk", tree_idx))
 stopifnot(dir.exists(dataset_dir), file.exists(tree_file))
 
 # ---- Load character data -----------------------------------------------------
-nex_files <- sort(list.files(dataset_dir, pattern = "^chr[0-9]+\\.nex$",
-                              full.names = TRUE))
+nex_files <- list.files(dataset_dir, pattern = "^chr[0-9]+\\.nex$",
+                        full.names = TRUE)
+# Numeric, not lexical: chr2 before chr10, so column i is character i, as in
+# ground_truth.csv.
+nex_files <- nex_files[order(as.integer(sub("^chr([0-9]+)\\.nex$", "\\1",
+                                            basename(nex_files))))]
 stopifnot(length(nex_files) > 0)
 
 mat_list <- lapply(nex_files, TreeTools::ReadCharacters)
@@ -192,20 +196,13 @@ file.remove(tmp_nex)
 
 cat(sprintf("  Loaded %d characters, %d taxa\n", n_char_raw, n_taxa_raw))
 
-# Record the character order this task actually used.
-#
-# `sort()` above is LEXICAL -- chr1, chr10, chr11, ..., chr2 -- so column i of
-# every `kPrime_i` log column is the i-th lexically sorted file, not character
-# i. `ground_truth.csv` is in numeric order, and a downstream script that pairs
-# the two positionally compares each character's posterior against a different
-# character's truth. That is EG-003 (#54): it turned a real rho of +0.31 into a
-# published -0.11, because the pairing was a permutation null by construction.
-#
-# Emitting the order removes the guess: a consumer can join on char_idx instead
-# of assuming an order that was never written down.
+# Record the character order this task actually used. Runs before this file
+# sorted numerically used lexical order (chr1, chr10, ..., chr2); pairing those
+# positionally against ground_truth.csv was EG-003 (#54). The file lets a
+# consumer join on char_idx rather than assume either order.
 write.csv(
   data.frame(
-    lex_position = seq_along(nex_files),
+    position     = seq_along(nex_files),
     file         = basename(nex_files),
     char_idx     = as.integer(sub("^chr([0-9]+)\\.nex$", "\\1",
                                   basename(nex_files)))
@@ -644,23 +641,20 @@ if (arm == "mk") {
   gt_path <- file.path(dataset_dir, "ground_truth.csv")
   stopifnot(file.exists(gt_path))
   gt <- read.csv(gt_path)
-  # ground_truth.csv has char_idx = 1..50 matching chr{N}.nex file number,
-  # NOT lex sort order. combined_mat columns are in lex sort order
-  # (chr1, chr10, chr11, ..., chr19, chr2, ..., chr29, chr3, ..., chr9).
-  # Extract file-number from each lex-sorted file and look up k_true.
+  # Join on the file number rather than assume ground_truth.csv's row order.
   file_nums <- as.integer(sub("^chr([0-9]+)\\.nex$", "\\1",
                               basename(nex_files)))
   # match() takes the first hit, so a duplicated char_idx would silently pair
   # every downstream k_true with the wrong character (#104).
   stopifnot(!anyDuplicated(gt$char_idx))
-  k_true_lex <- gt$k_true[match(file_nums, gt$char_idx)]
-  stopifnot(all(!is.na(k_true_lex)))
+  k_true_used <- gt$k_true[match(file_nums, gt$char_idx)]
+  stopifnot(all(!is.na(k_true_used)))
 
   kobs_raw <- .kObsFromMatrix(combined_mat)
   var_orig <- which(kobs_raw > 1L)
   # Sanity: k_true must be >= kObs for variable characters
-  stopifnot(all(k_true_lex[var_orig] >= kobs_raw[var_orig]))
-  k_for_mk <- setNames(as.integer(k_true_lex[var_orig]),
+  stopifnot(all(k_true_used[var_orig] >= kobs_raw[var_orig]))
+  k_for_mk <- setNames(as.integer(k_true_used[var_orig]),
                        as.character(var_orig))
   cat(sprintf("  mk_ktrue: k_true range %d-%d, mean %.2f, vs kObs range %d-%d\n",
               min(k_for_mk), max(k_for_mk), mean(k_for_mk),
