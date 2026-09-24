@@ -51,11 +51,11 @@ filed against a missing label simply fails.
 | 11 | `11 · RB-oracle equivalence` | `11-rb-oracle-equivalence` |
 | 12 | `12 · Red-team process meta-review` | `12-red-team-process-meta-review` |
 
-**Categories 1 and 2 are pending a rename on the live board.** They still read
-`01 · Empirical-geometric prior math & normalisation` and `02 · EG p-sampler: case 30
-logit-MH`, from before those areas were rescoped on 2026-09-18. The table above is the
-target. Nothing is broken meanwhile — only the leading `NN` is read by tooling, and a
-rename does not move existing posts (discussion #28 sits in category 2).
+| 13 | `13 · Partition API & hierarchical hyperprior` | *not yet created* |
+
+Areas 3, 4, 5, 6, 8 and 10 were rescoped on 2026-09-24 and their category names
+now lag the rows. Renaming is optional: only the leading `NN` is read, and a
+rename does not move existing posts.
 
 Profiling does **not** get a category: the `/profile` skill keeps round records in
 `dev/profiling/log.md` by design (one serial rotation, and `log.md` doubles as the
@@ -90,4 +90,6 @@ GH_TOKEN=$CLAUDE_GH_TOKEN gh api graphql -F query=@/tmp/post.graphql
 ```
 
 Title format stamps the rung **and the version that ran**, per the skill:
-`Round N — area #M (<name>) — <rung>-<version> — <date>`.
+`RT <date> - area <N> - <rung> (<Version>) - yield <n> (<h>h/<m>m/<l>l)`.
+`yield` counts confirmed candidates, and the `h/m/l` split is by confirmed
+candidate too, not by filed issue; say in the body how many issues they became.
