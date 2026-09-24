@@ -8,7 +8,7 @@ DiscreteLognormalRates(rateLogSd, nCat = 6L)
 }
 \arguments{
 \item{rateLogSd}{Standard deviation on the log scale (sigma parameter
-of the lognormal). When 0, returns a single category with rate 1.}
+of the lognormal). When 0, returns \code{nCat} categories, all with rate 1.}
 
 \item{nCat}{Number of discrete rate categories (default 6).}
 }

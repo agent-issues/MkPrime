@@ -632,11 +632,11 @@ print.MkpDiagnostics <- function(x, ...) {
               frechet = frechet)
     })
     essMat <- do.call(rbind, chainRows)
-    # Minimum across runs -- conservative multi-chain estimate.
-    # Replace non-finite values (from all-NA columns) with NA.
-    result <- apply(essMat, 2, min, na.rm = TRUE)
-    result[!is.finite(result)] <- NA_real_
-    result
+    # Minimum across runs -- conservative multi-chain estimate. `.MinOrNA`
+    # returns NA for an all-NA column (e.g. frechetCorrelationESS when
+    # frechet = FALSE) instead of `min()`'s "no non-missing arguments"
+    # warning plus an Inf that then needs mopping up.
+    apply(essMat, 2, .MinOrNA)
   }, error = function(e) {
     cli::cli_warn("Tree ESS computation failed: {conditionMessage(e)}")
     NULL
