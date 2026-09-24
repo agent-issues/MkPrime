@@ -305,9 +305,12 @@ print.MkpDiagnostics <- function(x, ...) {
 #'
 #' @param streak Integer counting the consecutive checkpoints met so far.
 #' @param met Logical giving this checkpoint's verdict.
+#' @param fresh Logical; `FALSE` marks a checkpoint that saw no new samples,
+#'   which leaves the streak unchanged.
 #' @return List with the updated `streak` and a logical `stop`.
 #' @keywords internal
-.ConvergenceStreak <- function(streak, met) {
+.ConvergenceStreak <- function(streak, met, fresh = TRUE) {
+  if (!fresh) return(list(streak = streak, stop = FALSE))
   streak <- if (isTRUE(met)) streak + 1L else 0L
   # Return:
   list(streak = streak, stop = streak >= .kConvergenceStreak)

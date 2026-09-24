@@ -4,12 +4,15 @@
 \alias{.ConvergenceStreak}
 \title{Track consecutive checkpoints meeting the stopping criteria}
 \usage{
-.ConvergenceStreak(streak, met)
+.ConvergenceStreak(streak, met, fresh = TRUE)
 }
 \arguments{
 \item{streak}{Integer counting the consecutive checkpoints met so far.}
 
 \item{met}{Logical giving this checkpoint's verdict.}
+
+\item{fresh}{Logical; \code{FALSE} marks a checkpoint that saw no new samples,
+which leaves the streak unchanged.}
 }
 \value{
 List with the updated \code{streak} and a logical \code{stop}.

@@ -2072,6 +2072,10 @@ RunMkPrime <- function(data, tree = NULL,
   startTime    <- proc.time()["elapsed"]
   pollInterval <- mcmc$pollInterval %||% 10L
   convStreak   <- 0L
+  # Workers flush in blocks, so consecutive polls can read identical logs; a
+  # verdict counts towards the streak only on a checkEvery's worth of new rows.
+  checkedRows  <- 0L
+  freshRows    <- max(1L, (mcmc$checkEvery %||% 1000L) %/% mcmc$thin)
   stopReason   <- "max_iter"
   actualIter   <- if (is.finite(mcmc$nIter)) mcmc$nIter else mcmc$warmup
 
@@ -2157,7 +2161,9 @@ RunMkPrime <- function(data, tree = NULL,
         tryCatch(mcmc$progressFn(info), error = function(e) NULL)
       }
 
-      convVerdict <- .ConvergenceStreak(convStreak, diagCheck$converged)
+      fresh <- sum(diagCheck$nRows) - checkedRows >= freshRows
+      if (fresh) checkedRows <- sum(diagCheck$nRows)
+      convVerdict <- .ConvergenceStreak(convStreak, diagCheck$converged, fresh)
       convStreak  <- convVerdict[["streak"]]
       if (convVerdict[["stop"]]) {
         for (cf in cancelFiles) file.create(cf)
@@ -2511,7 +2517,7 @@ RunMkPrime <- function(data, tree = NULL,
 
   list(converged = converged, minEss = minEss, maxRhat = maxRhat,
        treeEss = NA_real_, treeEssPrecision = "skip",
-       ess = ess, rhat = rhat, perRunSamples = perRunSamples)
+       ess = ess, rhat = rhat, perRunSamples = perRunSamples, nRows = nRows)
 }
 
 
