@@ -204,4 +204,8 @@ test_that("TreeESS reads anchor rows only, matching the full matrix (#196)", {
   }
   expect_equal(TreeESS(trees, dist_fn = CrossRF)[["medianPseudoESS"]], full)
   expect_equal(calls, list(c(200L, 450L)))
+
+  # A distance function with no two-set form still gets the full matrix.
+  OneSetRF <- function(x) TreeDist::RobinsonFoulds(x)
+  expect_equal(TreeESS(trees, dist_fn = OneSetRF)[["medianPseudoESS"]], full)
 })

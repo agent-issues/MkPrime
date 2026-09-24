@@ -15,10 +15,10 @@ TreeESS(
 \arguments{
 \item{trees}{A \code{multiPhylo} list of trees from a single MCMC chain.}
 
-\item{dist_fn}{Distance function giving a \code{dist} object when called as
-\code{dist_fn(trees)}, and the matrix of distances between two sets of trees
-when called as \code{dist_fn(anchors, trees)}, as \link[TreeDist:RobinsonFoulds]{TreeDist::RobinsonFoulds}
-does.}
+\item{dist_fn}{Distance function giving a \code{dist} object for
+\code{dist_fn(trees)}; one that also gives the matrix between two sets of
+trees for \code{dist_fn(anchors, trees)}, as \link[TreeDist:RobinsonFoulds]{TreeDist::RobinsonFoulds} does,
+is asked only for the anchor rows.}
 
 \item{min_nsamples}{Integer; minimum number of samples used when
 computing lag-k statistics (default 5).}

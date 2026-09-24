@@ -24,10 +24,10 @@
 #' topology.
 #'
 #' @param trees A `multiPhylo` list of trees from a single MCMC chain.
-#' @param dist_fn Distance function giving a `dist` object when called as
-#'   `dist_fn(trees)`, and the matrix of distances between two sets of trees
-#'   when called as `dist_fn(anchors, trees)`, as [TreeDist::RobinsonFoulds]
-#'   does.
+#' @param dist_fn Distance function giving a `dist` object for
+#'   `dist_fn(trees)`; one that also gives the matrix between two sets of
+#'   trees for `dist_fn(anchors, trees)`, as [TreeDist::RobinsonFoulds] does,
+#'   is asked only for the anchor rows.
 #' @param min_nsamples Integer; minimum number of samples used when
 #'   computing lag-k statistics (default 5).
 #' @param frechet Logical; if `TRUE`, also compute the Fréchet
@@ -61,22 +61,22 @@ TreeESS <- function(trees, dist_fn = TreeDist::RobinsonFoulds,
                      min_nsamples = 5L, frechet = FALSE,
                      maxRows = 200L) {
   n <- length(trees)
-  if (frechet || maxRows < 2L || n <= maxRows) {
-    dmat <- as.matrix(dist_fn(trees))
-    frechetEss <- if (frechet) {
-      .FrechetCorrelationESS(dmat, min_nsamples)
-    } else {
-      NA_real_
-    }
-  } else {
+  dmat <- NULL
+  if (!frechet && maxRows >= 2L && n > maxRows) {
     # The rows `median_pseudo_ess_cpp()` would pick from the full matrix.
     anchors <- floor(seq.int(0L, maxRows - 1L) * (n - 1) / (maxRows - 1) +
                        0.5) + 1L
-    dmat <- as.matrix(dist_fn(trees[anchors], trees))
-    frechetEss <- NA_real_
+    dmat <- tryCatch(as.matrix(dist_fn(trees[anchors], trees)),
+                     error = function(e) NULL)
+    if (!identical(dim(dmat), c(length(anchors), n))) dmat <- NULL
   }
+  if (is.null(dmat)) dmat <- as.matrix(dist_fn(trees))
   c(
-    frechetCorrelationESS = frechetEss,
+    frechetCorrelationESS = if (frechet) {
+      .FrechetCorrelationESS(dmat, min_nsamples)
+    } else {
+      NA_real_
+    },
     medianPseudoESS = .MedianPseudoESS(dmat, min_nsamples, maxRows)
   )
 }
