@@ -717,6 +717,22 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
 // set a marginal-aware initial logLik under marginal_k (MARGINAL-K-INIT-001).
 static double compute_full_loglik(const McmcData& data, McmcState& state);
 
+// The parameters the state scores partition `partIdx` under. Every evaluator
+// takes them from here so that all of them score the model state->logLik
+// holds (compute_full_loglik_at).
+static inline PartEvalParams part_eval_params(
+    const McmcData& data, const McmcState& state, int partIdx) {
+  if (state.usePartitioned) {
+    return partitioned_eval_params(data, partIdx,
+                                   state.classRateLogSd, state.classRate);
+  }
+  PartEvalParams pe;
+  pe.rateLogSd = state.rateLogSd;
+  pe.classRate = 1.0;
+  pe.rateNeo   = state.rateNeo;
+  return pe;
+}
+
 // [[Rcpp::export]]
 void fill_partition_cache(SEXP dataPtr, SEXP statePtr) {
   McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
@@ -1259,6 +1275,75 @@ NumericVector eval_preorder_paths_cpp(SEXP dataPtr, SEXP statePtr,
 // ---------------------------------------------------------------------------
 
 // Old full-evaluation path (used as fallback and for validation)
+// CLGroups for the partial-CL candidate evaluators: one per (partition, k)
+// evaluation unit, each carrying its partition's edge scale and ACRV rates
+// from part_eval_params, so candidates are scored under the model that
+// state->logLik holds.  groupRates[gi] holds the rates for groups[gi].
+static void build_cl_groups(const McmcData* data, const McmcState* state,
+                            int maxNode, std::vector<CLGroup>& groups,
+                            std::vector<NumericVector>& groupRates) {
+  const int nTip = data->nTip;
+  groups.clear();
+  groupRates.clear();
+
+  for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
+    const PartInfo& part = data->parts[pi];
+    const PartEvalParams pe = part_eval_params(*data, *state, pi);
+    const bool useAcrv = (pe.rateLogSd > 0.0);
+    const int nCat = useAcrv ? data->nCat : 1;
+    const NumericVector rates = useAcrv
+      ? gibbs_acrv_rates(pe.rateLogSd, data->nCat, data->acrvZ)
+      : NumericVector(1, 1.0);
+    // Audit Issue 1: RB-style partition-rate normalisation (nChar-weighted
+    // mean rate = 1), then the class rate on top.
+    const PartitionScales pScales =
+      compute_partition_scales(pe.rateNeo, data->nNeo, data->nTrans);
+    const double rateScale =
+      (part.type == 0 ? pScales.neo : pScales.trans) * pe.classRate;
+
+    auto add = [&](bool isMkN, const IntegerMatrix& tips, int nChar, int k) {
+      CLGroup g;
+      g.isMkN     = isMkN;
+      g.rateLoss  = isMkN ? state->rateLoss : 1.0;
+      g.rateScale = rateScale;
+      g.tipData   = tips;
+      g.allocate(maxNode, nCat, nChar, k);
+      groups.push_back(std::move(g));
+      groupRates.push_back(rates);
+    };
+
+    if (part.type == 0) {
+      // Neomorphic: k=2, MkN model
+      add(true, part.tipStates, part.tipStates.ncol(), 2);
+    } else if (part.type == 2) {
+      // Known state space: fixed k
+      add(false, part.tipStates, part.tipStates.ncol(), part.k);
+    } else {
+      // Transformational: group by kPrime
+      int nCharPart = part.tipStates.ncol();
+      IntegerVector kPrimePart(nCharPart);
+      for (int ci = 0; ci < nCharPart; ++ci)
+        kPrimePart[ci] = state->kPrime[part.globalCharIdx[ci]];
+      IntegerVector uniqKp = sort_unique(kPrimePart);
+
+      for (int ui = 0; ui < uniqKp.size(); ++ui) {
+        int kp = uniqKp[ui];
+        std::vector<int> cols;
+        for (int ci = 0; ci < nCharPart; ++ci)
+          if (kPrimePart[ci] == kp) cols.push_back(ci);
+        int nSub = (int)cols.size();
+
+        IntegerMatrix sub(nTip, nSub);
+        for (int c = 0; c < nSub; ++c)
+          for (int t = 0; t < nTip; ++t)
+            sub(t, c) = part.tipStates(t, cols[c]);
+        add(false, sub, nSub, kp);
+      }
+    }
+  }
+}
+
+
 static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta);
 // M-114: partial CL path for Q-heterogeneity
 static bool gibbs_spr_impl_het(McmcData* data, McmcState* state, double beta);
@@ -2076,75 +2161,16 @@ static bool swap_neighbourhood_partial(McmcData* data, McmcState* state,
   TreeNav topo;
   topo.build(parent, child, absLen, nTip);
 
-  NumericVector rates = gibbs_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ);
-  bool useAcrv = (state->rateLogSd > 0.0);
-  int nCat = useAcrv ? data->nCat : 1;
-  if (!useAcrv) rates = NumericVector(1, 1.0);
-
   int coding = data->codingType;
   int maxNode = topo.maxNode;
 
-  // Audit Issue 1: partition-rate normalisation (see comment at first call site).
-  const PartitionScales pScales =
-      compute_partition_scales(state->rateNeo, data->nNeo, data->nTrans);
-
-  // Build CLGroups: one per (partition, kStates) evaluation unit
   std::vector<CLGroup> groups;
-
-  for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
-    const PartInfo& part = data->parts[pi];
-
-    if (part.type == 0) {
-      CLGroup g;
-      g.isMkN     = true;
-      g.rateLoss  = state->rateLoss;
-      g.rateScale = pScales.neo;
-      g.tipData   = part.tipStates;
-      g.allocate(maxNode, nCat, part.tipStates.ncol(), 2);
-      groups.push_back(std::move(g));
-
-    } else if (part.type == 2) {
-      CLGroup g;
-      g.isMkN     = false;
-      g.rateLoss  = 1.0;
-      g.rateScale = pScales.trans;
-      g.tipData   = part.tipStates;
-      g.allocate(maxNode, nCat, part.tipStates.ncol(), part.k);
-      groups.push_back(std::move(g));
-
-    } else {
-      int nCharPart = part.tipStates.ncol();
-      IntegerVector kPrimePart(nCharPart);
-      for (int ci = 0; ci < nCharPart; ++ci)
-        kPrimePart[ci] = state->kPrime[part.globalCharIdx[ci]];
-      IntegerVector uniqKp = sort_unique(kPrimePart);
-
-      for (int ui = 0; ui < uniqKp.size(); ++ui) {
-        int kp = uniqKp[ui];
-        std::vector<int> cols;
-        for (int ci = 0; ci < nCharPart; ++ci)
-          if (kPrimePart[ci] == kp) cols.push_back(ci);
-        int nSub = (int)cols.size();
-
-        IntegerMatrix sub(nTip, nSub);
-        for (int c = 0; c < nSub; ++c)
-          for (int t = 0; t < nTip; ++t)
-            sub(t, c) = part.tipStates(t, cols[c]);
-
-        CLGroup g;
-        g.isMkN     = false;
-        g.rateLoss  = 1.0;
-        g.rateScale = pScales.trans;
-        g.tipData   = sub;
-        g.allocate(maxNode, nCat, nSub, kp);
-        groups.push_back(std::move(g));
-      }
-    }
-  }
+  std::vector<NumericVector> groupRates;
+  build_cl_groups(data, state, maxNode, groups, groupRates);
 
   // Run caching downpass for each group
-  for (auto& grp : groups)
-    caching_downpass(grp, topo, parent, child, rates);
+  for (size_t gi = 0; gi < groups.size(); ++gi)
+    caching_downpass(groups[gi], topo, parent, child, groupRates[gi]);
 
   // Ascertainment correction: pseudo-character groups
   std::vector<CLGroup> pseudoGroups;
@@ -2152,8 +2178,8 @@ static bool swap_neighbourhood_partial(McmcData* data, McmcState* state,
     pseudoGroups.resize(groups.size());
     for (size_t gi = 0; gi < groups.size(); ++gi) {
       pseudoGroups[gi] = create_const_pseudo_group(
-        groups[gi], nTip, maxNode, nCat);
-      caching_downpass(pseudoGroups[gi], topo, parent, child, rates);
+        groups[gi], nTip, maxNode, groups[gi].nCat);
+      caching_downpass(pseudoGroups[gi], topo, parent, child, groupRates[gi]);
     }
   }
 
@@ -2177,13 +2203,13 @@ static bool swap_neighbourhood_partial(McmcData* data, McmcState* state,
 
     for (size_t gi = 0; gi < groups.size(); ++gi) {
       double grpLL = evaluate_swap_candidate(
-        groups[gi], topo, rates, nodeA, partners[pi],
+        groups[gi], topo, groupRates[gi], nodeA, partners[pi],
         pA, slotA, lenA, pathA, pathAIdx);
 
       // Ascertainment correction
       if (coding != 0 && groups[gi].nChar > 0) {
         double constP = evaluate_swap_const_prob(
-          pseudoGroups[gi], topo, rates, nodeA, partners[pi],
+          pseudoGroups[gi], topo, groupRates[gi], nodeA, partners[pi],
           pA, slotA, lenA, pathA, pathAIdx);
         if (constP < 1.0)
           grpLL -= groups[gi].nChar * std::log(1.0 - constP);
@@ -2364,74 +2390,20 @@ static bool swap_neighbourhood_het(McmcData* data, McmcState* state,
   TreeNav topo;
   topo.build(parent, child, absLen, nTip);
 
-  NumericVector rates = gibbs_acrv_rates(state->rateLogSd, data->nCat,
-                                          data->acrvZ);
-  bool useAcrv = (state->rateLogSd > 0.0);
-  int nCat = useAcrv ? data->nCat : 1;
-  if (!useAcrv) rates = NumericVector(1, 1.0);
-
   int coding  = data->codingType;
   int maxNode = topo.maxNode;
   int nBC     = data->nBetaCat;
 
-  // Audit Issue 1: partition-rate normalisation (see comment at first call site).
-  const PartitionScales pScales =
-      compute_partition_scales(state->rateNeo, data->nNeo, data->nTrans);
-
-  // Build CLGroups (same as gibbs_spr_impl_het)
   std::vector<CLGroup> groups;
-
-  for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
-    const PartInfo& part = data->parts[pi];
-    if (part.type == 0) {
-      CLGroup g;
-      g.isMkN     = true;
-      g.rateLoss  = state->rateLoss;
-      g.rateScale = pScales.neo;
-      g.tipData   = part.tipStates;
-      g.allocate(maxNode, nCat, part.tipStates.ncol(), 2);
-      groups.push_back(std::move(g));
-    } else if (part.type == 2) {
-      CLGroup g;
-      g.isMkN     = false;
-      g.rateLoss  = 1.0;
-      g.rateScale = pScales.trans;
-      g.tipData   = part.tipStates;
-      g.allocate(maxNode, nCat, part.tipStates.ncol(), part.k);
-      groups.push_back(std::move(g));
-    } else {
-      int nCharPart = part.tipStates.ncol();
-      IntegerVector kPrimePart(nCharPart);
-      for (int ci = 0; ci < nCharPart; ++ci)
-        kPrimePart[ci] = state->kPrime[part.globalCharIdx[ci]];
-      IntegerVector uniqKp = sort_unique(kPrimePart);
-      for (int ui = 0; ui < uniqKp.size(); ++ui) {
-        int kp = uniqKp[ui];
-        std::vector<int> cols;
-        for (int ci = 0; ci < nCharPart; ++ci)
-          if (kPrimePart[ci] == kp) cols.push_back(ci);
-        int nSub = (int)cols.size();
-        IntegerMatrix sub(nTip, nSub);
-        for (int c = 0; c < nSub; ++c)
-          for (int t = 0; t < nTip; ++t)
-            sub(t, c) = part.tipStates(t, cols[c]);
-        CLGroup g;
-        g.isMkN     = false;
-        g.rateLoss  = 1.0;
-        g.rateScale = pScales.trans;
-        g.tipData   = sub;
-        g.allocate(maxNode, nCat, nSub, kp);
-        groups.push_back(std::move(g));
-      }
-    }
-  }
+  std::vector<NumericVector> groupRates;
+  build_cl_groups(data, state, maxNode, groups, groupRates);
 
   std::vector<CLGroup> pseudoGroups;
   if (coding != 0) {
     pseudoGroups.resize(groups.size());
     for (size_t gi = 0; gi < groups.size(); ++gi)
       pseudoGroups[gi] = create_const_pseudo_group(
-        groups[gi], nTip, maxNode, nCat);
+        groups[gi], nTip, maxNode, groups[gi].nCat);
   }
 
   // Precompute nodeA-fixed data
@@ -2461,6 +2433,7 @@ static bool swap_neighbourhood_het(McmcData* data, McmcState* state,
   // Stream over (betaBin, rotation) per group
   for (size_t gi = 0; gi < groups.size(); ++gi) {
     CLGroup& grp = groups[gi];
+    const NumericVector& rates = groupRates[gi];
     int k = grp.kStates;
     double baseRL = grp.isMkN ? state->rateLoss : 1.0;
     int nRot = (k == 2) ? 1 : k;
@@ -2503,7 +2476,7 @@ static bool swap_neighbourhood_het(McmcData* data, McmcState* state,
     const CLGroup& grp = groups[gi];
     int k     = grp.kStates;
     int nRot  = (k == 2) ? 1 : k;
-    int totalComp = nCat * nBC * nRot;
+    int totalComp = grp.nCat * nBC * nRot;
     int nChar_gi  = grp.nChar;
 
     for (int pi2 = 0; pi2 < nPart; ++pi2) {
