@@ -8,11 +8,12 @@ suppressPackageStartupMessages({
 
 GT_ROOT <- "C:/Users/pjjg18/GitHub/mkprime/tree-inference"
 
-# Replicates data-raw/hamilton/run_one.R exactly: sort(list.files(...)),
-# cbind, write.nexus.data, ReadAsPhyDat.
+# Replicates data-raw/hamilton/run_one.R: numeric file order, cbind,
+# write.nexus.data, ReadAsPhyDat.
 LoadRep <- function(tree_idx, rep_idx = 1L) {
   d <- file.path(GT_ROOT, sprintf("tree_%02d/rep_%02d", tree_idx, rep_idx))
-  nex <- sort(list.files(d, pattern = "^chr[0-9]+\\.nex$", full.names = TRUE))
+  nex <- list.files(d, pattern = "^chr[0-9]+\\.nex$", full.names = TRUE)
+  nex <- nex[order(as.integer(sub("^chr([0-9]+)\\.nex$", "\\1", basename(nex))))]
   mats <- lapply(nex, TreeTools::ReadCharacters)
   m <- do.call(cbind, mats)
   tmp <- tempfile(fileext = ".nex")
