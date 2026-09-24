@@ -303,6 +303,7 @@ RunMkPrime <- function(data, tree = NULL,
   if (identical(model$likelihoodMode, "marginal_k")) {
     paramNames <- paramNames[!grepl("^kPrime_", paramNames)]
   }
+  mcmc$fixedCols <- .FixedCols(paramNames, moves)
 
   # --- Log file setup ---
   # Always stream to a log file for interrupt recovery.  When the user
@@ -1387,7 +1388,8 @@ RunMkPrime <- function(data, tree = NULL,
           windowTime,
           tuningTrees = if (tuneWithTreeEss && tuningBufIdx >= 20L) {
             tuningTreeBuf[seq_len(tuningBufIdx)]
-          }
+          },
+          fixedCols = mcmc$fixedCols
         )
         currentEssPerSec <- currentRate[["rate"]]
 
@@ -2345,8 +2347,8 @@ RunMkPrime <- function(data, tree = NULL,
 
   # Nuisance columns remain in the `ess` vector for display in
   # .PrintProgressTable, but do not gate the stopping rule.
-  isConvParam <- .ConvergenceTier(names(ess)) == "gate"
-  minEss <- .MinOrNA(ess[isConvParam])
+  isConvParam <- .ConvergenceTier(names(ess), mcmc$fixedCols) == "gate"
+  minEss <- .MinOrNA(ess[isConvParam], dropNA = FALSE)
 
   # R-hat (requires >= 2 runs)
   rhat    <- NULL
@@ -2358,7 +2360,8 @@ RunMkPrime <- function(data, tree = NULL,
       .Rhat(chainMat)
     }, numeric(1))
     names(rhat) <- paramNms
-    maxRhat <- .MaxOrNA(rhat[isConvParam[names(rhat) %in% names(ess)]])
+    maxRhat <- .MaxOrNA(rhat[isConvParam[names(rhat) %in% names(ess)]],
+                        dropNA = FALSE)
   }
 
   # --- Adaptive tree ESS ---
@@ -2453,8 +2456,8 @@ RunMkPrime <- function(data, tree = NULL,
   ess <- .EssMatrix(combined)
 
   # Exclude kPrime nuisance parameters from convergence criteria (M-098)
-  isConvParam <- .ConvergenceTier(names(ess)) == "gate"
-  minEss <- .MinOrNA(ess[isConvParam])
+  isConvParam <- .ConvergenceTier(names(ess), mcmc$fixedCols) == "gate"
+  minEss <- .MinOrNA(ess[isConvParam], dropNA = FALSE)
 
   rhat    <- NULL
   maxRhat <- NA_real_
@@ -2465,7 +2468,8 @@ RunMkPrime <- function(data, tree = NULL,
       .Rhat(chainMat)
     }, numeric(1))
     names(rhat) <- paramNms
-    maxRhat <- .MaxOrNA(rhat[isConvParam[names(rhat) %in% names(ess)]])
+    maxRhat <- .MaxOrNA(rhat[isConvParam[names(rhat) %in% names(ess)]],
+                        dropNA = FALSE)
   }
 
   # Tree ESS not available in log-based mode (scalar logs don't contain trees).
@@ -3174,6 +3178,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                   model$priorOnClassRateLogSd %||% "hyperprior_pooled",
                 likelihoodMode = model$likelihoodMode %||% "sampled_k")
   }
+  mcmc$fixedCols <- .FixedCols(paramNames, moves)
 
   # Self-check against the run being resumed. The checkpoint records the move
   # weights by name, so a rebuild that has drifted is detectable even for
@@ -5315,21 +5320,24 @@ if (n < 2L * windowSize) {
 #' @param wallTimeSec Wall-clock seconds for the evaluation window.
 #' @param tuningTrees List of sampled topologies whose tree ESS enters the
 #'   minimum, giving topology moves credit in the bandit (M-152).
+#' @param fixedCols Character vector naming the columns no move updates.
 #'
 #' @return `.MinEssRate()` a list with the `rate` min(ESS)/`wallTimeSec` and
 #' the `ess` it came from; `.MinEssPerSec()` the rate alone. Both are `NA`
-#' where ESS cannot be computed.
+#' where any gate ESS cannot be computed: a window that froze a parameter is
+#' unassessable, not the best.
 #' @keywords internal
-.MinEssRate <- function(sampleMatrix, wallTimeSec, tuningTrees = NULL) {
+.MinEssRate <- function(sampleMatrix, wallTimeSec, tuningTrees = NULL,
+                        fixedCols = NULL) {
   noRate <- list(rate = NA_real_, ess = NA_real_)
   if (nrow(sampleMatrix) < 10L || wallTimeSec < 1e-6) return(noRate)
 
-  keyCols <- .GateCols(colnames(sampleMatrix))
+  keyCols <- .GateCols(colnames(sampleMatrix), fixedCols)
   if (length(keyCols) == 0L) return(noRate)
 
   ess <- .EssMatrix(sampleMatrix[, keyCols, drop = FALSE])
 
-  minEss <- min(ess, na.rm = TRUE)
+  minEss <- .MinOrNA(ess, dropNA = FALSE)
   if (!is.finite(minEss)) return(noRate)
 
   # Include tree ESS in the minimum when topology trees are available.
@@ -5354,8 +5362,9 @@ if (n < 2L * windowSize) {
 
 #' @rdname dot-MinEssRate
 #' @keywords internal
-.MinEssPerSec <- function(sampleMatrix, wallTimeSec, tuningTrees = NULL) {
-  .MinEssRate(sampleMatrix, wallTimeSec, tuningTrees)[["rate"]]
+.MinEssPerSec <- function(sampleMatrix, wallTimeSec, tuningTrees = NULL,
+                          fixedCols = NULL) {
+  .MinEssRate(sampleMatrix, wallTimeSec, tuningTrees, fixedCols)[["rate"]]
 }
 
 

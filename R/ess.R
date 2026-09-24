@@ -57,7 +57,9 @@
   chainVars <- apply(x, 2, var)
   varBetween <- nIter * var(chainMeans)
   varWithin <- mean(chainVars)
-  if (varWithin == 0) return(NA_real_)
+  # `.IsConstant()` has ruled out one shared value, so each chain is constant
+  # at a different one: as far apart as chains can be.
+  if (varWithin == 0) return(Inf)
   sqrt((varBetween / varWithin + nIter - 1) / nIter)
 }
 
