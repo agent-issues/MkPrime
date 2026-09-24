@@ -5,7 +5,8 @@
 #
 # Usage:
 #   Rscript dev/rb-equivalence/post_rb.R <pid> <model> --wall=<sec> \
-#     [--out-dir=dev/rb-equivalence/out] [--rb-dir=.]
+#     [--out-dir=dev/rb-equivalence/out] [--rb-dir=.] \
+#     [--cellinfo-dir=dev/rb-equivalence/out] [--rb-bin=/path/to/rb]
 
 suppressPackageStartupMessages({
   library(ape)
@@ -21,10 +22,13 @@ script_dir <- (function() {
   f <- a[grep("^--file=", a)]
   if (length(f)) dirname(normalizePath(sub("^--file=", "", f[1]))) else getwd()
 })()
+source(file.path(script_dir, "R", "utils.R"))
 
 opt <- list(wall = NA_real_,
             out_dir = file.path(script_dir, "out"),
-            rb_dir = ".")
+            rb_dir = ".",
+            cellinfo_dir = file.path(script_dir, "out"),
+            rb_bin = NA_character_)
 for (a in args[-(1:2)]) {
   kv <- strsplit(sub("^--", "", a), "=", fixed = TRUE)[[1]]
   if (length(kv) != 2L) stop("Bad option: ", a)
@@ -109,6 +113,23 @@ cat(sprintf("[post_rb] scalar params: %s\n", paste(scalar_cols, collapse = ", ")
 cat("[post_rb] ESS per param:\n"); print(round(ess, 1))
 cat("[post_rb] R-hat per param:\n"); print(round(rhat, 4))
 
+# --- Cell info (must already exist -- render_rev.R runs before the RB job) -
+# agent-issues/MkPrime#214: compare.R needs to see that this RB run and its
+# MkPrime counterpart were fed the same k/nChar/taxa. post_rb.R does not
+# recompute it (RB already ran against whatever render_rev.R wrote); it just
+# refuses to produce an rds with no provenance to check.
+
+cellinfo_path <- file.path(opt$cellinfo_dir,
+                           sprintf("cellinfo_%s_%s.rds", pid, model))
+if (!file.exists(cellinfo_path)) {
+  stop(
+    "No cell info at ", cellinfo_path, "; run render_rev.R before the RB ",
+    "job so compare.R can verify this RB run and its MkPrime counterpart ",
+    "were fed the same data (agent-issues/MkPrime#214)."
+  )
+}
+cellInfo <- readRDS(cellinfo_path)
+
 # --- Save -----------------------------------------------------------------
 
 result <- list(
@@ -138,7 +159,9 @@ result <- list(
     rateLogSdShape = 1, rateLogSdRate = 1,
     rateLossMeanlog = 0, rateLossSdlog = 2,
     rateNeoMeanlog = 0, rateNeoSdlog = 2
-  )
+  ),
+  cell_info = cellInfo,               # #214: same field as run_mkprime.R's rds
+  provenance = HarnessProvenance(script_dir, rbBin = opt$rb_bin)  # #215
 )
 out_path <- file.path(opt$out_dir, sprintf("rb_%s_%s.rds", pid, model))
 saveRDS(result, out_path)

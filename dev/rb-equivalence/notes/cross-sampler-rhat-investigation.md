@@ -7,6 +7,25 @@
 Two specific source-level asymmetries between MkPrime's and RevBayes's implementations of the "shared" Mk + ACRV + asymmetric-Mk2 model parsimoniously explain the entire signature of the observed cross-sampler drift (`tree_length` rhat 1.037, `rate_log_sd` rhat 1.027, `rate_neo` rhat 1.030; `rate_loss` and tree-CID agree). **(1) Partition-rate parameterisation:** RB applies `partition_rate := [rate_neo/(1+rate_neo), 1/(1+rate_neo)] * sum(nChar)/nChar` to both partitions, so the nChar-weighted mean rate is 1 by construction; MkPrime applies `rate_neo` as a one-sided neomorphic branch-length multiplier (`neoEl = edgeLen * rate_neo`) and leaves the transformational partition at rate 1, so the weighted mean rate is `(n_neo · rate_neo + n_trans) / (n_neo + n_trans)`. That makes `rate_neo` a fundamentally different parameter on the two sides and breaks the implicit `tree_length` × `rate_neo` identification, explaining the exact pair of params (`tree_length`, `rate_neo`) that drift. **(2) ACRV discretisation normalisation:** both samplers use `qnorm((i+0.5)/nCat, μ=−σ²/2, σ=rate_log_sd)` for the bin medians, but MkPrime then renormalises so the arithmetic mean of the discrete rates is exactly 1, while RB's `fnDiscretizeDistribution` does NOT renormalise. At σ=1 this is a ~13 % multiplicative bias on the per-site rate, absorbed by `tree_length` and `rate_log_sd`. These two asymmetries are sufficient to produce a 1.03–1.04 rhat gap on exactly the observed parameters; `rate_loss` and the tree CID are correctly insensitive (rate_loss enters the Q-matrix only, not the time axis).
 
 > **Correction (2026-09-24, agent-issues/MkPrime#212, #213):** two of this note's AGREED verdicts were wrong. (a) MkPrime's neomorphic Q was not normalised: its π-weighted mean rate was 4r/(1+r)², whereas RevBayes' `fnFreeK` rescales to 1, so `rate_loss` *did* scale the neomorphic time axis in MkPrime. MkPrime now normalises to mean rate 1. (b) §4: MkPrime pinned every tip to the constant state, whereas RevBayes marginalises each character's ?/- tips (one correction per missing-data mask). MkPrime now does the same. Cross-sampler comparisons recorded before the fix compare different models on `rate_loss`, `rate_neo` and `tree_length`, and on any matrix with missing data.
+>
+> **Further correction (2026-09-24, agent-issues/MkPrime#217, RB-115):** **§1, §4 and §5's
+> "AGREED" verdicts should not be treated as settled.** This round's sev:high red-team
+> findings on the RB-oracle harness (agent-issues/MkPrime#214, #215) contradict §4 and the
+> "Why `rate_loss` does not drift" reasoning: #214 shows the harness can silently feed the two
+> samplers different `k`, `nChar` and taxon sets, and #215 shows a rerun can silently report a
+> stale posterior. Every verdict in this note rests on the pid-635 smoke run having given both
+> samplers the same data and reported a genuinely current result — neither was independently
+> verified at the time, so §1's and §5's "no predicted bias" claims (like §4's "AGREED") are
+> unconfirmed, not disproven. Re-derive after #214/#215 land and a cell has been re-run with
+> provably-matched, freshly-stamped data.
+>
+> The "relabel correction... inert for by_nt_9v" paragraph below (§"Two related but
+> lower-priority discrepancies", first bullet) also misdescribes the mechanism: it is not
+> that `kPrime == kObs` makes the correction cancel to a constant. `src/mcmc.cpp:1627` (and
+> the other `type == 1` call sites) apply the relabel correction only to **transformational**
+> partitions (C++ `type == 1`); every character run through `RBMatchedModel()` here has
+> `knownStates` set (R `type == "known"`, not `"transformational"`), so the correction never
+> runs for any of these cells at all — not "inert", simply inapplicable.
 
 ---
 
@@ -101,7 +120,9 @@ Verdict DIFFER. Predicted to dominate the `rate_neo` drift; mediates a fraction 
 
 **JC(9) (transformational):** `constant_site_prob_jc` (`src/ascertainment.cpp:32+`) and `pruning_jc_acrv` symmetrically subtract all 9 monomorphic patterns. ✓
 
-Verdict AGREED. No predicted bias.
+Verdict: **was DIFFER prior to the #212/#213 fix** (this section's own heading already says
+so; this line was left stale). Not currently re-verified — see the RB-115 correction at the
+top of this note.
 
 ### 5. Compound-Dirichlet vs decoupled branch lengths — AGREED
 
@@ -171,7 +192,18 @@ Each fix is a one-line change on one side; the two together should drop all thre
 
 ## Two related but lower-priority discrepancies surfaced during the audit
 
-- **Mk' relabelling correction** (`src/corrections.cpp:35–45`) is added on the MkPrime side for transformational characters but is absent in RB's `fnJC(9)` model. When `kPrime == kObs` (always true under by_nt_9v because `knownStates` pins k=9 = max possible observed states for 9-state chars), the correction reduces to `log(kObs!)` per character — a constant that cancels in MH ratios on a single dataset, so it does not bias posteriors at fixed `kPrime`. *But* if any transformational character has `kPrime > kObs` floating across the chain, that correction term will systematically pull MkPrime's posterior. For by_nt_9v with `kPrime = 9 = kObs`, this is inert; for by_nt_kv it could matter.
+- **Mk' relabelling correction** (`src/corrections.cpp:35–45`) is added on the MkPrime side
+  for **transformational** characters (`type == 1` in `src/mcmc.cpp`, e.g. line 1627) but
+  absent in RB's `fnJC(9)` model.
+  > **Correction (2026-09-24, agent-issues/MkPrime#217, RB-115):** claimed — "when
+  > `kPrime == kObs` the correction reduces to a per-character constant that cancels in MH
+  > ratios, so it is inert for by_nt_9v (`kPrime = 9 = kObs`)". Actually true — every
+  > character in these RB-oracle cells is run with `knownStates` set (`RBMatchedModel()` via
+  > `BuildKnownStates()`), which makes it R `type == "known"`, not `"transformational"`. The
+  > relabel correction's `type == 1` guard means it is **never invoked at all** for these
+  > characters, on either model. It is not "inert because `kPrime == kObs`"; it simply never
+  > runs. `by_nt_kv` is unaffected by this specific point for the same reason (also
+  > `knownStates`-pinned), though see #214 for a separate `kPrime`/`kObs` bug in that model.
 - **Per-partition rate normalisation for the transformational partition under MkPrime** is implicitly 1, but RB's formula gives `1/(1+rate_neo) * sum(nChar)/nChar[trans]`, which for the by_nt_9v Casali numbers (mostly trans-heavy) is close to 1 only at `rate_neo ≈ 1`. So even the trans partition sees a different effective rate between samplers when `rate_neo ≠ 1`. This is a subset of cause (3) but worth flagging since it means the bias on `tree_length` is not solely mediated through the neomorphic partition.
 
 ---
