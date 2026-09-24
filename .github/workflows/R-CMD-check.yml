@@ -70,7 +70,20 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
 
-  check-release:
+  # Waves, as in TreeSearch:
+  #   sense-check -> ubuntu release (cheapest). No concurrency group, so a
+  #                  superseding push never cancels it: every commit gets a
+  #                  "did this build?" signal.
+  #   core        -> Windows (+codecov), arm, devel; only if sense-check passed.
+  #   full        -> macOS (~10x runner-minutes); only once core is green.
+  #   valgrind, asan -> the sanitiser workflows. They are the long poles, so
+  #                  they start alongside the sense-check; `abort` cancels
+  #                  them if it fails, since an hour of valgrind on a commit
+  #                  that fails its tests finds nothing a fix will not
+  #                  invalidate.
+  # Every expensive job carries a per-ref concurrency group, so a new push
+  # cancels superseded work there without touching the sense-check.
+  sense-check:
     needs: changes
     if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-24.04
@@ -116,18 +129,20 @@ jobs:
         uses: r-lib/actions/check-r-package@v2
 
 
-  check-all:
-    needs: changes
-    if: needs.changes.outputs.run == 'true'
+  core:
+    needs: sense-check
     runs-on: ${{ matrix.config.os }}
     name: ${{ matrix.config.os }} (${{ matrix.config.r }})
+
+    concurrency:
+      group: ${{ github.workflow }}-core-${{ matrix.config.os }}-${{ matrix.config.r }}-${{ github.ref }}
+      cancel-in-progress: true
 
     strategy:
       fail-fast: false
       matrix:
         config:
           - {os: windows-latest,   r: "release"}
-          - {os: macOS-latest,     r: "release"}
           - {os: ubuntu-24.04-arm, r: "release"}
           - {os: ubuntu-26.04,     r: "devel"}
 
@@ -152,11 +167,7 @@ jobs:
           old_version=$(grep "Version:" DESCRIPTION | awk '{print $2}')
           if [[ $(echo "$old_version" | tr -cd '.' | wc -c) -eq 2 ]]; then
             new_version="${old_version}.9999"
-            if [[ "$RUNNER_OS" == "macOS" ]]; then
-              sed -i "" "s/Version: .*/Version: ${new_version}/" DESCRIPTION
-            else
-              sed -i "s/Version: .*/Version: ${new_version}/" DESCRIPTION
-            fi
+            sed -i "s/Version: .*/Version: ${new_version}/" DESCRIPTION
           fi
           echo "Current package version is now: $(grep "Version:" DESCRIPTION | awk '{print $2}')"
         shell: bash
@@ -190,15 +201,6 @@ jobs:
             check
             coverage
 
-      - name: Rebuild TreeDist from source (macOS)
-        # P3M's macOS TreeDist 2.15.0 binary calls OpenMP without linking
-        # libomp (`symbol not found '___kmpc_dispatch_init_4'`). CRAN's binary
-        # is sound but zstd-compressed, which pak cannot extract. macOS R sets
-        # SHLIB_OPENMP_CXXFLAGS empty, so a local build has no OpenMP.
-        if: runner.os == 'macOS'
-        run: install.packages("TreeDist", type = "source", repos = "https://cloud.r-project.org")
-        shell: Rscript {0}
-
       - name: Pre-install package for Quarto vignette subprocess
         # Quarto spawns a fresh R process when rendering .qmd vignettes; that
         # subprocess uses R_LIBS_USER, not the R CMD check temp library.
@@ -220,16 +222,124 @@ jobs:
           covr::codecov(quiet = FALSE)
         shell: Rscript {0}
 
+  full:
+    needs: core
+    runs-on: ${{ matrix.config.os }}
+    name: ${{ matrix.config.os }} (${{ matrix.config.r }})
+
+    concurrency:
+      group: ${{ github.workflow }}-full-${{ matrix.config.os }}-${{ matrix.config.r }}-${{ github.ref }}
+      cancel-in-progress: true
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - {os: macOS-latest,     r: "release"}
+
+    env:
+      _R_CHECK_CRAN_INCOMING_: ${{ github.event_name == 'pull_request' }}
+      _R_CHECK_FORCE_SUGGESTS_: false
+      R_COMPILE_AND_INSTALL_PACKAGES: 'never'
+      _R_CHECK_THINGS_IN_CHECK_DIR_: false
+      R_REMOTES_STANDALONE: true
+      R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
+      _R_CHECK_CRAN_INCOMING_USE_ASPELL_: false
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout git repo
+        uses: actions/checkout@v6
+
+      - name: Temporarily bump package version
+        run: |
+          old_version=$(grep "Version:" DESCRIPTION | awk '{print $2}')
+          if [[ $(echo "$old_version" | tr -cd '.' | wc -c) -eq 2 ]]; then
+            new_version="${old_version}.9999"
+            sed -i "" "s/Version: .*/Version: ${new_version}/" DESCRIPTION
+          fi
+          echo "Current package version is now: $(grep "Version:" DESCRIPTION | awk '{print $2}')"
+        shell: bash
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: ${{ matrix.config.r }}
+
+      - name: Set up Quarto
+        uses: quarto-dev/quarto-actions/setup@v2
+
+      - name: Set up R dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          cache-version: 4-${{ runner.arch }}
+          needs: |
+            check
+
+      - name: Rebuild TreeDist from source
+        # P3M's macOS TreeDist 2.15.0 binary calls OpenMP without linking
+        # libomp (`symbol not found '___kmpc_dispatch_init_4'`). CRAN's binary
+        # is sound but zstd-compressed, which pak cannot extract. macOS R sets
+        # SHLIB_OPENMP_CXXFLAGS empty, so a local build has no OpenMP.
+        run: install.packages("TreeDist", type = "source", repos = "https://cloud.r-project.org")
+        shell: Rscript {0}
+
+      - name: Check package
+        uses: r-lib/actions/check-r-package@v2
+
+  valgrind:
+    needs: changes
+    # mem-check's own pull_request trigger was limited to main; keep that.
+    if: >-
+      needs.changes.outputs.run == 'true' && github.event_name == 'pull_request' &&
+      contains(fromJSON('["main", "master"]'), github.base_ref)
+    uses: ./.github/workflows/memcheck.yml
+    # A called workflow's jobs may not exceed the caller's token; `report`
+    # declares issues: write, and is validated even though a PR skips it.
+    permissions:
+      contents: read
+      issues: write
+    concurrency:
+      group: ${{ github.workflow }}-valgrind-${{ github.ref }}
+      cancel-in-progress: true
+
+  asan:
+    needs: changes
+    if: needs.changes.outputs.run == 'true' && github.event_name == 'pull_request'
+    uses: ./.github/workflows/ASan.yml
+    permissions:
+      contents: read
+    concurrency:
+      group: ${{ github.workflow }}-asan-${{ github.ref }}
+      cancel-in-progress: true
+
+  abort:
+    # Cancelling the run is the only way to stop a job already in progress.
+    # Everything else still pending needs the sense-check, so is skipped
+    # anyway; the gates below are `always()` and so still report.
+    name: cancel sanitisers after failed sense-check
+    needs: sense-check
+    if: failure() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh run cancel ${{ github.run_id }}
+
   gate:
     # The job branch protection should require, in place of the per-OS
     # checks: a matrix leg skipped by `if:` reports under its unexpanded name,
     # so it could never satisfy a per-OS required check.
     #
     # Certifies exactly the legs that were required before the gate existed;
-    # macos-15-intel, arm and devel stay advisory. `needs` gives only the
+    # arm and devel stay advisory. `needs` gives only the
     # matrix's aggregate result, so each leg is read from the API.
     name: R-CMD-check gate
-    needs: [changes, check-release, check-all]
+    needs: [changes, sense-check, core, full]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -255,6 +365,8 @@ jobs:
             exit 0
           fi
 
+          # A leg skipped because an earlier wave failed reads 'skipped',
+          # which is not 'success', so it fails here too.
           fail=0
           for leg in "ubuntu-24.04 (release)" "windows-latest (release)" "macOS-latest (release)"; do
             result=$(gh api --paginate "$JOBS_URL" \
@@ -266,3 +378,73 @@ jobs:
             echo "::error::A required R CMD check leg did not succeed."
             exit 1
           fi
+
+  # The sanitiser gates live here, not in memcheck.yml / ASan.yml, because
+  # a called workflow's jobs report as "<caller> / <job>", which would not
+  # match the required check names. They pass when the sanitiser ran green
+  # or was not needed, and fail when it failed or was cancelled by `abort`.
+  valgrind-gate:
+    name: valgrind gate
+    needs: [changes, sense-check, valgrind]
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Certify valgrind status
+        shell: bash
+        run: |
+          echo "changes     : ${{ needs.changes.result }} (run=${{ needs.changes.outputs.run }})"
+          echo "sense-check : ${{ needs.sense-check.result }}"
+          echo "valgrind    : ${{ needs.valgrind.result }}"
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "::error::Change detection did not succeed, so valgrind status cannot be certified."
+            exit 1
+          fi
+          if [ "${{ needs.sense-check.result }}" = "failure" ]; then
+            echo "::error::R CMD check failed, so valgrind was cancelled."
+            exit 1
+          fi
+          case "${{ needs.valgrind.result }}" in
+            success)
+              echo "valgrind passed, or found no compiled-code change to test."
+              ;;
+            skipped)
+              echo "valgrind was not required for this pull request."
+              ;;
+            *)
+              echo "::error::valgrind result was '${{ needs.valgrind.result }}'."
+              exit 1
+              ;;
+          esac
+
+  asan-gate:
+    name: ASAN gate
+    needs: [changes, sense-check, asan]
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Certify AddressSanitizer status
+        shell: bash
+        run: |
+          echo "changes     : ${{ needs.changes.result }} (run=${{ needs.changes.outputs.run }})"
+          echo "sense-check : ${{ needs.sense-check.result }}"
+          echo "asan        : ${{ needs.asan.result }}"
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "::error::Change detection did not succeed, so AddressSanitizer status cannot be certified."
+            exit 1
+          fi
+          if [ "${{ needs.sense-check.result }}" = "failure" ]; then
+            echo "::error::R CMD check failed, so AddressSanitizer was cancelled."
+            exit 1
+          fi
+          case "${{ needs.asan.result }}" in
+            success)
+              echo "AddressSanitizer passed, or found no compiled-code change to test."
+              ;;
+            skipped)
+              echo "AddressSanitizer was not required for this pull request."
+              ;;
+            *)
+              echo "::error::AddressSanitizer result was '${{ needs.asan.result }}'."
+              exit 1
+              ;;
+          esac
