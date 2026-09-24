@@ -65,9 +65,10 @@ ConvergenceDiagnostics <- function(posterior, trees = FALSE,
   # --- ESS (combined samples) ---
   ess <- .ComputeEss(pb$samples[, keyCols, drop = FALSE])
 
-  # kPrime are discrete nuisance parameters -- exclude from summary min/max
-  # (M-098). Individual kPrime ESS/R-hat remain in the output for display.
-  isConvParam <- !grepl("^kPrime_", names(ess)) & names(ess) != "log_likelihood"
+  # kPrime and log_likelihood are nuisance columns -- exclude from summary
+  # min/max (M-098). Individual kPrime ESS/R-hat remain in the output for
+  # display.
+  isConvParam <- .ConvergenceTier(names(ess)) == "gate"
 
   # --- R-hat across runs ---
   rhat <- NULL
@@ -127,9 +128,11 @@ print.MkpDiagnostics <- function(x, ...) {
   hasRhat <- !is.null(x$rhat)
 
   nms <- names(x$ess)
-  # log_likelihood is redundant with log_posterior in display
-  scalarNms <- nms[!grepl("^kPrime_", nms) & nms != "log_likelihood"]
-  kPrimeNms <- nms[grepl("^kPrime_", nms)]
+  tier <- .ConvergenceTier(nms)
+  scalarNms <- nms[tier == "gate"]
+  # log_likelihood is redundant with log_posterior, so only kPrime nuisance
+  # columns get a summary row
+  kPrimeNms <- nms[tier == "nuisance" & grepl("^kPrime_", nms)]
 
   cli::cli_rule(
     left = sprintf(
@@ -346,9 +349,10 @@ print.MkpDiagnostics <- function(x, ...) {
   rhat <- diagCheck$rhat
   hasRhat <- !is.null(rhat)
 
-  nms       <- names(ess)
-  scalarNms <- nms[!grepl("^kPrime_", nms) & nms != "log_likelihood"]
-  kPrimeNms <- nms[grepl("^kPrime_", nms)]
+  nms  <- names(ess)
+  tier <- .ConvergenceTier(nms)
+  scalarNms <- nms[tier == "gate"]
+  kPrimeNms <- nms[tier == "nuisance" & grepl("^kPrime_", nms)]
 
   # Build all output as a character vector (one element per line)
   out <- character()
