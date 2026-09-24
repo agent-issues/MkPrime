@@ -990,7 +990,7 @@ RunMkPrime <- function(data, tree = NULL,
   bestWeights      <- moveWeights
   tuningFreezeStreak <- r$tuningFreezeStreak %||% 0L
   convStreak       <- r$convStreak %||% 0L
-  warnedStuckTopology <- FALSE
+  warnedStuckTopology <- r$warnedStuckTopology %||% FALSE
   tuningCandidates <- list()
   tuningCandIdx    <- 0L
   effectiveTuningBudget <- r$effectiveTuningBudget %||% mcmc$tuningBudget
@@ -1611,6 +1611,7 @@ RunMkPrime <- function(data, tree = NULL,
         if (identical(diagCheck$treeEssStatus, "stuck") &&
             !warnedStuckTopology) {
           warnedStuckTopology <- TRUE
+          r$warnedStuckTopology <- TRUE
           cli::cli_warn(c(
             "Run {runIdx} has sampled a single tree topology, so its tree \\
              ESS cannot be assessed and {.arg minTreeEss} cannot be met.",
@@ -2583,8 +2584,9 @@ RunMkPrime <- function(data, tree = NULL,
       TreeESS(chain, dist_fn = TreeDist::RobinsonFoulds,
               frechet = FALSE)[["medianPseudoESS"]]
     }, double(1))
+    # Below 7 trees (`min_nsamples + 2`) the ESS is NA whatever the chain did.
     stuck <- vapply(seq_along(perRunTrees), function(i) {
-      is.na(essVals[i]) &&
+      is.na(essVals[i]) && length(perRunTrees[[i]]) >= 7L &&
         all(TreeDist::RobinsonFoulds(perRunTrees[[i]][[1]],
                                      perRunTrees[[i]]) == 0)
     }, logical(1))
@@ -2625,6 +2627,10 @@ RunMkPrime <- function(data, tree = NULL,
       !requireNamespace("TreeDist", quietly = TRUE)) {
     why <- c(why, "x" = "{.arg minTreeEss} needs {.pkg TreeDist}, which is \\
                          not installed.")
+  }
+  if (!is.null(mcmc$minTreeEss) && isTRUE(mcmc$fixTopology)) {
+    why <- c(why, "x" = "{.arg minTreeEss} needs the topology to move, but \\
+                         {.arg fixTopology} = TRUE.")
   }
 
   # Only a serial run stops on its own convergence window; parallel runs are

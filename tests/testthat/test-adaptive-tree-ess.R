@@ -316,3 +316,12 @@ test_that("the tuning bandit scores a frozen topology as unassessable (#195)", {
   frozen <- rep(list(as.phylo(0, 8)), 50)
   expect_true(is.na(MkPrime:::.MinEssRate(mat, 1, tuningTrees = frozen)[["rate"]]))
 })
+
+test_that("minTreeEss with a fixed topology warns that it can never be met", {
+  mcmc <- list(minTreeEss = 100, fixTopology = TRUE, nRuns = 2L, nCore = 1L,
+               nIter = Inf)
+  expect_warning(MkPrime:::.WarnUnreachableCriteria(mcmc, 500L),
+                 "minTreeEss.*fixTopology")
+  mcmc$fixTopology <- FALSE
+  expect_no_warning(MkPrime:::.WarnUnreachableCriteria(mcmc, 500L))
+})
