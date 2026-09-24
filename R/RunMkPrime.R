@@ -987,8 +987,10 @@ RunMkPrime <- function(data, tree = NULL,
   tuningWindowStart <- NULL
   bestMinEssPerSec <- -Inf
   bestMinEss       <- NA_real_
-  bestFrozen       <- FALSE
+  bestFrozen       <- NA
   bestWeights      <- moveWeights
+  topologyMoves    <- which(.MoveCategory(moveNames) == "Topology")
+  tuningEverMoved  <- r$tuningEverMoved %||% FALSE
   tuningFreezeStreak <- r$tuningFreezeStreak %||% 0L
   convStreak       <- r$convStreak %||% 0L
   warnedStuckTopology <- r$warnedStuckTopology %||% FALSE
@@ -1345,7 +1347,7 @@ RunMkPrime <- function(data, tree = NULL,
             }
             bestMinEssPerSec <- -Inf
             bestMinEss       <- NA_real_
-            bestFrozen       <- FALSE
+            bestFrozen       <- NA
             bestWeights      <- moveWeights
             tuningFreezeStreak <- 0L
             tuningCandidates <- .PerturbMoveWeights(
@@ -1399,14 +1401,22 @@ RunMkPrime <- function(data, tree = NULL,
 
         if (!is.na(currentEssPerSec)) {
           tickerPages <- sprintf("minESS/s: %.2f", currentEssPerSec)
+          topologyCut <- sum(moveWeights[topologyMoves]) <
+            sum(bestWeights[topologyMoves]) * (1 - sqrt(.Machine$double.eps))
           if (.BeatsIncumbent(currentEssPerSec, currentRate[["ess"]],
                               bestMinEssPerSec, bestMinEss,
                               candFrozen = currentRate[["frozen"]],
-                              bestFrozen = bestFrozen)) {
+                              bestFrozen = bestFrozen,
+                              topologyCut = topologyCut,
+                              everMoved = tuningEverMoved)) {
             bestMinEssPerSec <- currentEssPerSec
             bestMinEss       <- currentRate[["ess"]]
             bestFrozen       <- currentRate[["frozen"]]
             bestWeights      <- moveWeights
+            if (isFALSE(bestFrozen)) {
+              tuningEverMoved <- TRUE
+              r$tuningEverMoved <- TRUE
+            }
           }
         }
 
@@ -1433,7 +1443,8 @@ RunMkPrime <- function(data, tree = NULL,
 
           payback <- .TuningPayback(
             tuningFreezeStreak, proc.time()["elapsed"] - startTime,
-            bestMinEssPerSec, mcmc$minEss, mcmc$nRuns
+            bestMinEssPerSec, mcmc$minEss, mcmc$nRuns,
+            frozen = isTRUE(bestFrozen)
           )
           tuningFreezeStreak <- payback[["streak"]]
           r$tuningFreezeStreak <- tuningFreezeStreak
@@ -1469,7 +1480,7 @@ RunMkPrime <- function(data, tree = NULL,
             tuningWindowStart <- proc.time()["elapsed"]
             bestMinEssPerSec  <- -Inf
             bestMinEss        <- NA_real_
-            bestFrozen        <- FALSE
+            bestFrozen        <- NA
             for (ch in seq_len(nChains)) {
               r$chain_accept[[ch]][]    <- 0L
               r$chain_propose[[ch]][]   <- 0L
@@ -5453,8 +5464,9 @@ if (n < 2L * windowSize) {
 #' @param fixedCols Character vector naming the columns no move updates.
 #'
 #' @return `.MinEssRate()` a list with the `rate` min(ESS)/`wallTimeSec`, the
-#' `ess` it came from, and `frozen`, `TRUE` where the window never changed
-#' topology; `.MinEssPerSec()` the rate alone. The rate is `NA` where a gate
+#' `ess` it came from, and `frozen`: `TRUE` where the window never changed
+#' topology, `FALSE` where it did, `NA` where no trees were scored;
+#' `.MinEssPerSec()` the rate alone. The rate is `NA` where a gate
 #' ESS cannot be computed: a window that froze a parameter is unassessable,
 #' not the best. A window that froze the topology is scored on its scalar ESS
 #' and flagged `frozen`, so that `.BeatsIncumbent()` can rank it below any
@@ -5463,7 +5475,7 @@ if (n < 2L * windowSize) {
 #' @keywords internal
 .MinEssRate <- function(sampleMatrix, wallTimeSec, tuningTrees = NULL,
                         fixedCols = NULL) {
-  noRate <- list(rate = NA_real_, ess = NA_real_, frozen = FALSE)
+  noRate <- list(rate = NA_real_, ess = NA_real_, frozen = NA)
   if (nrow(sampleMatrix) < 10L || wallTimeSec < 1e-6) return(noRate)
 
   keyCols <- .GateCols(colnames(sampleMatrix), fixedCols)
@@ -5477,7 +5489,7 @@ if (n < 2L * windowSize) {
   # Include tree ESS in the minimum when topology trees are available.
   # This gives topology moves credit in the bandit, preventing the
   # starvation that M-152 described.
-  frozen <- FALSE
+  frozen <- NA
   if (!is.null(tuningTrees) && length(tuningTrees) >= 20L) {
     trees <- structure(tuningTrees, class = "multiPhylo")
     treeEss <- tryCatch(
@@ -5486,11 +5498,8 @@ if (n < 2L * windowSize) {
       error = function(e) NULL
     )
     if (is.null(treeEss)) return(noRate)
-    if (is.finite(treeEss)) {
-      minEss <- min(minEss, treeEss)
-    } else {
-      frozen <- TRUE
-    }
+    frozen <- !is.finite(treeEss)
+    if (!frozen) minEss <- min(minEss, treeEss)
   }
 
   # Return:

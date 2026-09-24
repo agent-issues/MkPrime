@@ -324,16 +324,20 @@ test_that("the tuning bandit ranks a frozen topology below a moving one (#195)",
   expect_equal(still[["ess"]], min(MkPrime:::.EssMatrix(mat)))
   expect_lte(moved[["ess"]], still[["ess"]])
 
-  Beats <- function(cand, best) {
+  Beats <- function(cand, best, ...) {
     MkPrime:::.BeatsIncumbent(cand[["rate"]], cand[["ess"]],
                               best[["rate"]], best[["ess"]],
                               candFrozen = cand[["frozen"]],
-                              bestFrozen = best[["frozen"]])
+                              bestFrozen = best[["frozen"]], ...)
   }
   expect_false(Beats(still, moved))
   expect_true(Beats(moved, still))
+  # Among frozen windows, a faster one is adopted only if it does not buy its
+  # speed by starving the topology moves.
   fasterStill <- modifyList(still, list(rate = 10 * still[["rate"]]))
   expect_true(Beats(fasterStill, still))
+  expect_false(Beats(fasterStill, still, topologyCut = TRUE))
+  expect_false(Beats(fasterStill, still, everMoved = TRUE))
 })
 
 test_that("minTreeEss with a fixed topology warns that it can never be met", {
