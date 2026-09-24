@@ -226,3 +226,115 @@ test_that("class1_rate_log_sd stays in lockstep with rate_log_sd (no slot-0 drif
     label = "class1 lockstep with legacy rate_log_sd"
   )
 })
+
+# ==============================================================================
+# 5. Every evaluator scores the partitioned model
+# ==============================================================================
+
+# The partitioned likelihood gives each class its own shape and rate
+# multiplier. Every path that scores or commits a likelihood must use them,
+# or an accepted move leaves state$logLik holding the likelihood of a
+# different model (#153). Each move type runs on a fresh chain, so a partial-
+# CL accept that clears the partition cache cannot divert the moves after it
+# onto a different evaluator.
+.Ternary12 <- function(seed = 153L, nTip = 8L) {
+  set.seed(seed)
+  tree <- Preorder(ape::rtree(nTip, rooted = FALSE))
+  mat <- matrix(sample(0:2, nTip * 12L, replace = TRUE), nrow = nTip,
+                dimnames = list(tree$tip.label, NULL))
+  list(tree = tree, mkd = suppressWarnings(MkPrimeData(MatrixToPhyDat(mat))))
+}
+
+test_that("every move commits the partitioned likelihood", {
+  d <- .Ternary12()
+  tree <- d$tree
+  mkd <- d$mkd
+
+  chain <- .PartitionedChain(tree, mkd)
+  expect_lt(abs(get_state_log_lik(chain$statePtr) - .PartitionedLogLik(chain)),
+            1e-9)
+
+  moves <- c(scale_tree_length = 0L, beta_simplex = 4L, nni = 5L, spr = 6L,
+             int_walk = 7L, gibbs_spr = 10L, gibbs_subtree_swap = 11L,
+             weighted_branch_scale = 12L, weighted_spr = 13L,
+             weighted_subtree_swap = 14L, block_gibbs_branch = 15L, tbr = 17L,
+             slice_tree_length = 19L, pspr = 20L, dirichlet_branch = 23L,
+             local_dirichlet = 24L, gibbs_kprime_sweep = 25L,
+             block_kprime_shift = 26L, scale_class_rate_log_sd = 31L,
+             dirichlet_simplex_class_w = 32L)
+  for (move in names(moves)) {
+    chain <- .PartitionedChain(tree, mkd)
+    set.seed(1L)
+    accepted <- 0L
+    drift <- 0
+    for (i in seq_len(60L)) {
+      charIdx <- switch(move,
+                        int_walk = sample(chain$nChar, 1L) - 1L,
+                        scale_class_rate_log_sd = sample(2L, 1L),
+                        0L)
+      if (do_move_cpp(chain$dataPtr, chain$statePtr, moves[[move]], charIdx,
+                      0.5, 0.5, 3L, 1.0)) {
+        accepted <- accepted + 1L
+        drift <- max(drift, abs(get_state_log_lik(chain$statePtr) -
+                                  .PartitionedLogLik(chain)))
+      }
+    }
+    expect_gt(accepted, 0L, label = paste(move, "acceptances"))
+    expect_lt(drift, 1e-9, label = paste(move, "logLik drift"))
+  }
+})
+
+# The Gibbs k' sweep draws each k'_i from a conditional it computes for
+# itself, which must also be the partitioned one (#153). With the tree and
+# every other parameter held fixed, successive sweeps are independent draws
+# from it, so the draws must be likelier under the partitioned conditional
+# than under the class-blind one.
+test_that("gibbs_kprime_sweep samples the partitioned conditional", {
+  d <- .Ternary12()
+  chain <- .PartitionedChain(d$tree, d$mkd)
+  st <- get_mcmc_state(chain$statePtr)
+  edgeLen <- st$treeLength * st$relBrLengths
+  kObs <- d$mkd$kObs
+  shifts <- 0:8
+
+  # The k' prior does not involve the class parameters, so a legacy state
+  # supplies it.
+  model <- MkPrime:::.FinalizeModel(MkPrimeModel(), d$tree, d$mkd)
+  legacyData <- MkPrime:::.InitMcmcData(d$mkd, model)
+  legacyState <- MkPrime:::.InitState(d$tree, d$mkd, model)
+  LogConditional <- function(i, LogLik) {
+    lw <- vapply(kObs[[i]] + shifts, function(k) {
+      kPrime <- st$kPrime
+      kPrime[[i]] <- k
+      priorState <- legacyState
+      priorState$kPrime[[i]] <- k
+      LogLik(kPrime) + eval_log_prior_cpp(
+        legacyData, MkPrime:::.InitMcmcChain(priorState))
+    }, double(1))
+    # Return:
+    lw - max(lw) - log(sum(exp(lw - max(lw))))
+  }
+  Partitioned <- function(kPrime) {
+    cpp_log_likelihood_partitioned_xptr(
+      chain$dataPtr, st$edge[, 1], st$edge[, 2], edgeLen, kPrime,
+      st$rateLoss, st$classRateLogSd, st$classRate, st$etaNeo, st$betaScale)
+  }
+  ClassBlind <- function(kPrime) {
+    cpp_log_likelihood_xptr(
+      chain$dataPtr, st$edge[, 1], st$edge[, 2], edgeLen, kPrime,
+      st$rateLoss, st$rateLogSd, st$rateNeo, st$betaScale)
+  }
+
+  set.seed(25L)
+  draws <- vapply(seq_len(1000L), function(j) {
+    do_move_cpp(chain$dataPtr, chain$statePtr, 25L, 0L, 0.5, 0.5, 3L, 1.0)
+    get_mcmc_state(chain$statePtr)$kPrime
+  }, integer(d$mkd$nChar))
+
+  logRatio <- sum(vapply(seq_len(d$mkd$nChar), function(i) {
+    counts <- tabulate(draws[i, ] - kObs[[i]] + 1L, length(shifts))
+    sum(counts * (LogConditional(i, Partitioned) -
+                    LogConditional(i, ClassBlind)))
+  }, double(1)))
+  expect_gt(logRatio, 0)
+})

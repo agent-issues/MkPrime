@@ -223,8 +223,8 @@ struct McmcState {
   // is called with the per-class vectors below.
   //
   // Invariant: classRateLogSd[0] == rateLogSd and etaNeo == 1.0 (frozen in
-  // Layer 1) so that rateNeo == 1.0. They are kept in lockstep so the partial-
-  // CL paths (which take scalars) can still use state->rateLogSd safely.
+  // Layer 1). Every evaluator takes a partition's parameters from
+  // part_eval_params(), never from the scalars directly.
   bool usePartitioned = false;
   NumericVector classRateLogSd;   // length 1 (linked) or nClasses (unlinked shape)
   NumericVector classW;           // length nClasses (simplex; 1 when trivial)
@@ -733,6 +733,31 @@ static inline PartEvalParams part_eval_params(
   return pe;
 }
 
+// True when partitions can differ in shape or rate, so an evaluator that
+// shares one set of scalars across partitions scores the wrong model.
+static inline bool class_params_free(const McmcState& state) {
+  return state.usePartitioned &&
+    (state.classRateLogSd.size() > 1 || state.classRate.size() > 1);
+}
+
+// Log-likelihood of partition `partIdx` at (parent, child, edgeLen) under the
+// state's parameters.
+static double partition_loglik(
+    const McmcData& data, const McmcState& state, int partIdx,
+    const IntegerVector& parent, const IntegerVector& child,
+    const NumericVector& edgeLen, ClWorkspace* ws) {
+  const PartEvalParams pe = part_eval_params(data, state, partIdx);
+  NumericVector el = edgeLen;
+  if (pe.classRate != 1.0) {
+    el = NumericVector(edgeLen.size());
+    for (int e = 0; e < edgeLen.size(); ++e)
+      el[e] = edgeLen[e] * pe.classRate;
+  }
+  return cpp_partition_log_likelihood(
+    data, partIdx, parent, child, el, state.kPrime,
+    state.rateLoss, pe.rateLogSd, pe.rateNeo, state.betaScale, ws);
+}
+
 // [[Rcpp::export]]
 void fill_partition_cache(SEXP dataPtr, SEXP statePtr) {
   McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
@@ -745,10 +770,8 @@ void fill_partition_cache(SEXP dataPtr, SEXP statePtr) {
   state->partLogLik.resize(nParts);
   double totalLogLik = 0.0;
   for (int pi = 0; pi < nParts; ++pi) {
-    state->partLogLik[pi] = cpp_partition_log_likelihood(
-      *data, pi, state->parent, state->child, edgeLen,
-      state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
-      state->betaScale,
+    state->partLogLik[pi] = partition_loglik(
+      *data, *state, pi, state->parent, state->child, edgeLen,
       state->clWs.ready() ? &state->clWs : nullptr);
     totalLogLik += state->partLogLik[pi];
   }
@@ -1561,87 +1584,21 @@ static void gibbs_spr_eval_partial(McmcData* data, McmcState* state,
   TreeNav topo;
   topo.build(state->parent, state->child, plan.absLen, nTip);
 
-  // Compute ACRV rates
-  NumericVector rates = gibbs_acrv_rates(state->rateLogSd, data->nCat, data->acrvZ);
-  bool useAcrv = (state->rateLogSd > 0.0);
-  int nCat = useAcrv ? data->nCat : 1;
-  if (!useAcrv) rates = NumericVector(1, 1.0);
-
   int coding = data->codingType;
-  int maxNode = topo.maxNode;
 
-  // Audit Issue 1: RB-style partition-rate normalisation (nChar-weighted
-  // mean rate = 1). Both neo and trans/known unit rateScales are derived
-  // from rate_neo + per-partition character counts; legacy "rateScale = 1
-  // for trans" behaviour is recovered when nNeo == 0 or nTrans == 0.
-  const PartitionScales pScales =
-      compute_partition_scales(state->rateNeo, data->nNeo, data->nTrans);
-
-  // Build CLGroups: one per (partition, kStates) evaluation unit
   std::vector<CLGroup> groups;
-
-  for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
-    const PartInfo& part = data->parts[pi];
-
-    if (part.type == 0) {
-      // Neomorphic: k=2, MkN model
-      CLGroup g;
-      g.isMkN     = true;
-      g.rateLoss  = state->rateLoss;
-      g.rateScale = pScales.neo;
-      g.tipData   = part.tipStates;
-      g.allocate(maxNode, nCat, part.tipStates.ncol(), 2);
-      groups.push_back(std::move(g));
-
-    } else if (part.type == 2) {
-      // Known state space: fixed k
-      CLGroup g;
-      g.isMkN     = false;
-      g.rateLoss  = 1.0;
-      g.rateScale = pScales.trans;
-      g.tipData   = part.tipStates;
-      g.allocate(maxNode, nCat, part.tipStates.ncol(), part.k);
-      groups.push_back(std::move(g));
-
-    } else {
-      // Transformational: group by kPrime
-      int nCharPart = part.tipStates.ncol();
-      IntegerVector kPrimePart(nCharPart);
-      for (int ci = 0; ci < nCharPart; ++ci)
-        kPrimePart[ci] = state->kPrime[part.globalCharIdx[ci]];
-      IntegerVector uniqKp = sort_unique(kPrimePart);
-
-      for (int ui = 0; ui < uniqKp.size(); ++ui) {
-        int kp = uniqKp[ui];
-        std::vector<int> cols;
-        for (int ci = 0; ci < nCharPart; ++ci)
-          if (kPrimePart[ci] == kp) cols.push_back(ci);
-        int nSub = (int)cols.size();
-
-        IntegerMatrix sub(nTip, nSub);
-        for (int c = 0; c < nSub; ++c)
-          for (int t = 0; t < nTip; ++t)
-            sub(t, c) = part.tipStates(t, cols[c]);
-
-        CLGroup g;
-        g.isMkN     = false;
-        g.rateLoss  = 1.0;
-        g.rateScale = pScales.trans;
-        g.tipData   = sub;
-        g.allocate(maxNode, nCat, nSub, kp);
-        groups.push_back(std::move(g));
-      }
-    }
-  }
+  std::vector<NumericVector> groupRates;
+  build_cl_groups(data, state, topo.maxNode, groups, groupRates);
 
   // Run caching downpass for each group
-  for (auto& grp : groups)
-    caching_downpass(grp, topo, state->parent, state->child, rates);
+  for (size_t gi = 0; gi < groups.size(); ++gi)
+    caching_downpass(groups[gi], topo, state->parent, state->child,
+                     groupRates[gi]);
 
   // Compute residual CLs for each group (detach v from u)
   std::vector<ResidualCL> residuals(groups.size());
   for (size_t gi = 0; gi < groups.size(); ++gi)
-    compute_residual_cl(residuals[gi], groups[gi], topo, rates,
+    compute_residual_cl(residuals[gi], groups[gi], topo, groupRates[gi],
                         plan.u, plan.sibNode, plan.lMerge);
 
   // Ascertainment correction: create pseudo-character groups (constant-site
@@ -1653,9 +1610,11 @@ static void gibbs_spr_eval_partial(McmcData* data, McmcState* state,
     pseudoResiduals.resize(groups.size());
     for (size_t gi = 0; gi < groups.size(); ++gi) {
       pseudoGroups[gi] = create_const_pseudo_group(
-        groups[gi], nTip, topo.maxNode, nCat);
-      caching_downpass(pseudoGroups[gi], topo, state->parent, state->child, rates);
-      compute_residual_cl(pseudoResiduals[gi], pseudoGroups[gi], topo, rates,
+        groups[gi], nTip, topo.maxNode, groups[gi].nCat);
+      caching_downpass(pseudoGroups[gi], topo, state->parent, state->child,
+                       groupRates[gi]);
+      compute_residual_cl(pseudoResiduals[gi], pseudoGroups[gi], topo,
+                          groupRates[gi],
                           plan.u, plan.sibNode, plan.lMerge);
     }
   }
@@ -1676,7 +1635,7 @@ static void gibbs_spr_eval_partial(McmcData* data, McmcState* state,
 
     for (size_t gi = 0; gi < groups.size(); ++gi) {
       double grpLL = evaluate_candidate(
-        groups[gi], topo, residuals[gi], rates,
+        groups[gi], topo, residuals[gi], groupRates[gi],
         plan.v, plan.u, plan.sibNode, plan.lMerge, a, b, lHalf, plan.lPrune,
         nullptr, merged);
 
@@ -1688,7 +1647,7 @@ static void gibbs_spr_eval_partial(McmcData* data, McmcState* state,
       // interim), so we only reach this branch under coding == 1.
       if (coding != 0 && groups[gi].nChar > 0) {
         double constP = evaluate_const_prob(
-          pseudoGroups[gi], topo, pseudoResiduals[gi], rates,
+          pseudoGroups[gi], topo, pseudoResiduals[gi], groupRates[gi],
           plan.v, plan.u, plan.sibNode, plan.lMerge, a, b, lHalf, plan.lPrune,
           nullptr, merged);
         if (constP < 1.0)
@@ -1808,67 +1767,13 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
   TreeNav topo;
   topo.build(state->parent, state->child, plan.absLen, nTip);
 
-  NumericVector rates = gibbs_acrv_rates(state->rateLogSd, data->nCat,
-                                          data->acrvZ);
-  bool useAcrv = (state->rateLogSd > 0.0);
-  int nCat = useAcrv ? data->nCat : 1;
-  if (!useAcrv) rates = NumericVector(1, 1.0);
-
   int coding  = data->codingType;
   int maxNode = topo.maxNode;
   int nBC     = data->nBetaCat;
 
-  // Audit Issue 1: partition-rate normalisation (see comment at first call site).
-  const PartitionScales pScales =
-      compute_partition_scales(state->rateNeo, data->nNeo, data->nTrans);
-
-  // Build CLGroups (same structure as non-het, but with useF81 flag)
   std::vector<CLGroup> groups;
-
-  for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
-    const PartInfo& part = data->parts[pi];
-    if (part.type == 0) {
-      CLGroup g;
-      g.isMkN     = true;
-      g.rateLoss  = state->rateLoss;
-      g.rateScale = pScales.neo;
-      g.tipData   = part.tipStates;
-      g.allocate(maxNode, nCat, part.tipStates.ncol(), 2);
-      groups.push_back(std::move(g));
-    } else if (part.type == 2) {
-      CLGroup g;
-      g.isMkN     = false;
-      g.rateLoss  = 1.0;
-      g.rateScale = pScales.trans;
-      g.tipData   = part.tipStates;
-      g.allocate(maxNode, nCat, part.tipStates.ncol(), part.k);
-      groups.push_back(std::move(g));
-    } else {
-      int nCharPart = part.tipStates.ncol();
-      IntegerVector kPrimePart(nCharPart);
-      for (int ci = 0; ci < nCharPart; ++ci)
-        kPrimePart[ci] = state->kPrime[part.globalCharIdx[ci]];
-      IntegerVector uniqKp = sort_unique(kPrimePart);
-      for (int ui = 0; ui < uniqKp.size(); ++ui) {
-        int kp = uniqKp[ui];
-        std::vector<int> cols;
-        for (int ci = 0; ci < nCharPart; ++ci)
-          if (kPrimePart[ci] == kp) cols.push_back(ci);
-        int nSub = (int)cols.size();
-        IntegerMatrix sub(nTip, nSub);
-        for (int c = 0; c < nSub; ++c)
-          for (int t = 0; t < nTip; ++t)
-            sub(t, c) = part.tipStates(t, cols[c]);
-        CLGroup g;
-        g.isMkN     = false;
-        g.rateLoss  = 1.0;
-        g.rateScale = pScales.trans;
-        g.tipData   = sub;
-        g.allocate(maxNode, nCat, nSub, kp);
-        groups.push_back(std::move(g));
-      }
-    }
-  }
+  std::vector<NumericVector> groupRates;
+  build_cl_groups(data, state, maxNode, groups, groupRates);
 
   // Pseudo-character groups for ascertainment correction
   std::vector<CLGroup> pseudoGroups;
@@ -1876,7 +1781,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
     pseudoGroups.resize(groups.size());
     for (size_t gi = 0; gi < groups.size(); ++gi)
       pseudoGroups[gi] = create_const_pseudo_group(
-        groups[gi], nTip, maxNode, nCat);
+        groups[gi], nTip, maxNode, groups[gi].nCat);
   }
 
   const int g = topo.parentNode[plan.u];
@@ -1901,6 +1806,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
   // Process each group independently (different k → different bins/rotations)
   for (size_t gi = 0; gi < groups.size(); ++gi) {
     CLGroup& grp = groups[gi];
+    const NumericVector& rates = groupRates[gi];
     int k = grp.kStates;
     double baseRL = grp.isMkN ? state->rateLoss : 1.0;
     int nRot = (k == 2) ? 1 : k;
@@ -1961,7 +1867,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
     const CLGroup& grp = groups[gi];
     int k     = grp.kStates;
     int nRot  = (k == 2) ? 1 : k;
-    int totalComp = nCat * nBC * nRot;
+    int totalComp = grp.nCat * nBC * nRot;
     int nChar_gi  = grp.nChar;
 
     for (int ci = 0; ci < nEval; ++ci) {
@@ -3441,10 +3347,8 @@ static double eval_slice_target(McmcData* data, McmcState* state,
     for (size_t ni = 0; ni < data->neoPartIndices.size(); ++ni) {
       int pi = data->neoPartIndices[ni];
       double oldPart = state->partLogLik[pi];
-      double newPart = cpp_partition_log_likelihood(
-        *data, pi, state->parent, state->child, edgeLen,
-        state->kPrime, state->rateLoss, state->rateLogSd,
-        state->rateNeo, state->betaScale, wsPtr);
+      double newPart = partition_loglik(
+        *data, *state, pi, state->parent, state->child, edgeLen, wsPtr);
       logLik += (newPart - oldPart);
     }
   } else if (data->marginalK) {
@@ -3534,10 +3438,8 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
         // rate_neo now shifts transScale and so makes every partition stale.)
         for (size_t ni = 0; ni < data->neoPartIndices.size(); ++ni) {
           int pi = data->neoPartIndices[ni];
-          state->partLogLik[pi] = cpp_partition_log_likelihood(
-            *data, pi, state->parent, state->child, edgeLen,
-            state->kPrime, state->rateLoss, state->rateLogSd,
-            state->rateNeo, state->betaScale, wsPtr);
+          state->partLogLik[pi] = partition_loglik(
+            *data, *state, pi, state->parent, state->child, edgeLen, wsPtr);
         }
         state->logLik = 0.0;
         for (size_t pi = 0; pi < state->partLogLik.size(); ++pi)
@@ -3953,36 +3855,57 @@ void compute_per_kprime_log_lik(
   out.resize(nTrans);
   if (nTrans == 0) return;
 
-  // Partition-rate normalisation (issue #25). Every partition this helper
-  // prunes is transformational, so cpp_partition_log_likelihood would scale its
-  // edges by compute_partition_scales(...).trans; pruning at the caller's raw
-  // lengths made marginal_k target a different posterior from sampled_k, and
-  // made the case-25 Gibbs sweep sample the unscaled conditional and always
-  // accept it. Applied here rather than at the two call sites so they cannot
-  // diverge again. Both scales are 1 when nNeo == 0 or nTrans == 0.
-  const double transScale =
-      compute_partition_scales(state->rateNeo, data->nNeo, data->nTrans).trans;
-  if (transScale != 1.0) {
-    NumericVector scaledEdge(edgeLen.size());
-    for (int i = 0; i < edgeLen.size(); ++i)
-      scaledEdge[i] = edgeLen[i] * transScale;
-    edgeLen = scaledEdge;   // rebinds the local only; caller's vector untouched
-  }
-
-  // Cache for constant-site probability by kStates (shared across characters)
-  std::vector<double> cspCache;
-  int cspCacheSize = 0;
-  auto getCSP = [&](int kStates) -> double {
-    if (data->codingType == 0) return 0.0;
-    if (kStates >= cspCacheSize) {
-      int newSize = kStates + 20;
-      cspCache.resize(newSize, -1.0);
-      cspCacheSize = newSize;
+  // Each partition is pruned at the edge lengths and ACRV rates the full
+  // evaluator gives it. Outside the partition API every partition shares one
+  // slot: the caller's rates, and edges scaled by the transformational
+  // partition-rate normalisation (issue #25; pruning at raw lengths made
+  // marginal_k and the case-25 sweep target the unscaled conditional). Under
+  // the partition API each user class has its own slot (part_eval_params).
+  // Each slot caches the constant-site probability by kStates.
+  struct EvalSlot {
+    NumericVector edgeLen, rates;
+    std::vector<double> csp;
+  };
+  std::vector<EvalSlot> slots(state->usePartitioned ? data->nClasses : 1);
+  std::vector<bool> slotReady(slots.size(), false);
+  auto slotFor = [&](int partIdx) -> int {
+    const int si = state->usePartitioned
+      ? data->parts[partIdx].classIdx - 1 : 0;
+    if (slotReady[si]) return si;
+    EvalSlot& slot = slots[si];
+    if (state->usePartitioned) {
+      const PartEvalParams pe = part_eval_params(*data, *state, partIdx);
+      const double transScale =
+        compute_partition_scales(pe.rateNeo, data->nNeo, data->nTrans).trans;
+      slot.edgeLen = NumericVector(edgeLen.size());
+      for (int i = 0; i < edgeLen.size(); ++i)
+        slot.edgeLen[i] = edgeLen[i] * pe.classRate * transScale;
+      slot.rates = (pe.rateLogSd > 0.0)
+        ? cpp_acrv_rates(pe.rateLogSd, data->nCat, data->acrvZ)
+        : NumericVector(1, 1.0);
+    } else {
+      const double transScale =
+        compute_partition_scales(state->rateNeo, data->nNeo, data->nTrans).trans;
+      slot.edgeLen = edgeLen;
+      if (transScale != 1.0) {
+        slot.edgeLen = NumericVector(edgeLen.size());
+        for (int i = 0; i < edgeLen.size(); ++i)
+          slot.edgeLen[i] = edgeLen[i] * transScale;
+      }
+      slot.rates = acrvRates;
     }
+    slotReady[si] = true;
+    return si;
+  };
+
+  auto getCSP = [&](int si, int kStates) -> double {
+    if (data->codingType == 0) return 0.0;
+    std::vector<double>& cspCache = slots[si].csp;
+    if (kStates >= (int)cspCache.size()) cspCache.resize(kStates + 20, -1.0);
     if (cspCache[kStates] < 0.0) {
       cspCache[kStates] = const_site_prob_for_k(
-        *data, parent, child, edgeLen,
-        kStates, state->betaScale, acrvRates);
+        *data, parent, child, slots[si].edgeLen,
+        kStates, state->betaScale, slots[si].rates);
     }
     return cspCache[kStates];
   };
@@ -4184,7 +4107,10 @@ void compute_per_kprime_log_lik(
       }
 
       int k = tp.kObs + ko;
-      double csp = getCSP(k);
+      const int si = slotFor(tp.partIdx);
+      const NumericVector& partEdgeLen = slots[si].edgeLen;
+      const NumericVector& partRates   = slots[si].rates;
+      double csp = getCSP(si, k);
       double logAscCorr = (coding != 0 && csp < 1.0)
         ? -std::log(1.0 - csp) : 0.0;
       if (coding != 0 && csp >= 1.0) logAscCorr = R_NegInf;
@@ -4243,23 +4169,23 @@ void compute_per_kprime_log_lik(
         // All unique patterns active — use uniqueTipStates directly
         if (useHet) {
           gibbs_compute_het_bins(state->betaScale, k, nBC, hetBins);
-          NumericVector rates = acrvRates;
+          NumericVector rates = partRates;
           if (rates.size() == 0) rates = NumericVector(1, 1.0);
           pruning_f81_het_acrv_persite(
-            parent, child, edgeLen, part.uniqueTipStates,
+            parent, child, partEdgeLen, part.uniqueTipStates,
             k, 1.0, hetBins, nBC, rates,
             state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
             neededStride, siteLL.data());
         } else if (useCollapse) {
           pruning_jc_acrv_persite_collapsed(
-            parent, child, edgeLen, part.uniqueTipStates,
-            k, tp.kObs, acrvRates,
+            parent, child, partEdgeLen, part.uniqueTipStates,
+            k, tp.kObs, partRates,
             state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
             neededStride, siteLL.data());
         } else {
           pruning_jc_acrv_persite(
-            parent, child, edgeLen, part.uniqueTipStates,
-            k, acrvRates,
+            parent, child, partEdgeLen, part.uniqueTipStates,
+            k, partRates,
             state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
             neededStride, siteLL.data());
         }
@@ -4272,23 +4198,23 @@ void compute_per_kprime_log_lik(
 
         if (useHet) {
           gibbs_compute_het_bins(state->betaScale, k, nBC, hetBins);
-          NumericVector rates = acrvRates;
+          NumericVector rates = partRates;
           if (rates.size() == 0) rates = NumericVector(1, 1.0);
           pruning_f81_het_acrv_persite(
-            parent, child, edgeLen, sub,
+            parent, child, partEdgeLen, sub,
             k, 1.0, hetBins, nBC, rates,
             state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
             neededStride, siteLL.data());
         } else if (useCollapse) {
           pruning_jc_acrv_persite_collapsed(
-            parent, child, edgeLen, sub,
-            k, tp.kObs, acrvRates,
+            parent, child, partEdgeLen, sub,
+            k, tp.kObs, partRates,
             state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
             neededStride, siteLL.data());
         } else {
           pruning_jc_acrv_persite(
-            parent, child, edgeLen, sub,
-            k, acrvRates,
+            parent, child, partEdgeLen, sub,
+            k, partRates,
             state->gibbsWs.buf.data(), state->gibbsWs.init.data(),
             neededStride, siteLL.data());
         }
@@ -4719,10 +4645,8 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   std::vector<double> newPLC(nParts);
   double newLL = 0.0;
   for (int pi = 0; pi < nParts; ++pi) {
-    newPLC[pi] = cpp_partition_log_likelihood(
-      *data, pi, state->parent, state->child, edgeLen,
-      state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
-      state->betaScale, wsPtr);
+    newPLC[pi] = partition_loglik(
+      *data, *state, pi, state->parent, state->child, edgeLen, wsPtr);
     newLL += newPLC[pi];
   }
   state->logLik = newLL;
@@ -4793,10 +4717,8 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
     newLogLik = state->logLik;
     for (int pi = 0; pi < nParts; ++pi) {
       if (data->parts[pi].type == 1) {  // transformational only
-        double v = cpp_partition_log_likelihood(
-          *data, pi, state->parent, state->child, edgeLen,
-          state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
-          state->betaScale, wsPtr);
+        double v = partition_loglik(
+          *data, *state, pi, state->parent, state->child, edgeLen, wsPtr);
         newLogLik += (v - newPC[pi]);
         newPC[pi] = v;
       }
@@ -4805,10 +4727,8 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
     newPC.resize(nParts);
     newLogLik = 0.0;
     for (int pi = 0; pi < nParts; ++pi) {
-      newPC[pi] = cpp_partition_log_likelihood(
-        *data, pi, state->parent, state->child, edgeLen,
-        state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
-        state->betaScale, wsPtr);
+      newPC[pi] = partition_loglik(
+        *data, *state, pi, state->parent, state->child, edgeLen, wsPtr);
       newLogLik += newPC[pi];
     }
   }
@@ -4956,9 +4876,16 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   // k = state->kPrime). The marginal evaluator dispatches through
   // compute_full_loglik_at which always recomputes the full marginal sum
   // from scratch (or from the charLL cache for p-only moves).
+  //
+  // Also skipped when partitions differ in shape or rate: the cache scores
+  // every unit under one shape and one set of scales, so it would score a
+  // different model from state->logLik. Left unpopulated, it is never ready,
+  // and these moves take the full evaluators.
+  const PartEvalParams cachePe = part_eval_params(*data, *state, 0);
   if ((moveType == 5 || moveType == 4 || moveType == 23 || moveType == 24
        || moveType == 6) &&
-      !data->qHeterogeneity && !data->marginalK && !state->nodeCL.ready()) {
+      !data->qHeterogeneity && !data->marginalK &&
+      !class_params_free(*state) && !state->nodeCL.ready()) {
     state->diagCachePopCount++;
     int nEdge = state->relBrLengths.size();
     NumericVector absLen(nEdge);
@@ -4967,7 +4894,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     populate_cache(state->nodeCL, *data,
                         state->parent, state->child, absLen,
                         state->kPrime, state->rateLoss,
-                        state->rateLogSd, state->rateNeo);
+                        cachePe.rateLogSd, cachePe.rateNeo);
   }
 
   switch (moveType) {
@@ -5678,8 +5605,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     auto dirty = find_dirty_nni(state->nodeCL.topo, nniVNode, nniUNode);
     newLogLik = partial_eval_dirty(state->nodeCL, *data,
                                     evalParent, evalChild, propEdgeLen,
-                                    state->rateLoss, state->rateNeo,
-                                    state->rateLogSd, state->betaScale, dirty);
+                                    state->rateLoss, cachePe.rateNeo,
+                                    cachePe.rateLogSd, state->betaScale, dirty);
     usedPartialCL = true;
     state->diagNniPartialCount++;
 
@@ -5700,8 +5627,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                                           evalParent, bsIdx1, bsIdx2);
     newLogLik = partial_eval_dirty(state->nodeCL, *data,
                                     evalParent, evalChild, propEdgeLen,
-                                    state->rateLoss, state->rateNeo,
-                                    state->rateLogSd, state->betaScale, dirty);
+                                    state->rateLoss, cachePe.rateNeo,
+                                    cachePe.rateLogSd, state->betaScale, dirty);
     usedPartialCL = true;
     state->diagBsPartialCount++;
 
@@ -5720,8 +5647,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                                        evalParent, state->dirEdges);
     newLogLik = partial_eval_dirty(state->nodeCL, *data,
                                     evalParent, evalChild, propEdgeLen,
-                                    state->rateLoss, state->rateNeo,
-                                    state->rateLogSd, state->betaScale, dirty);
+                                    state->rateLoss, cachePe.rateNeo,
+                                    cachePe.rateLogSd, state->betaScale, dirty);
     usedPartialCL = true;
     state->diagDirPartialCount++;
 
@@ -5747,8 +5674,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
                                  sprMeta.u, sprMeta.p, sprMeta.a);
     newLogLik = partial_eval_dirty(state->nodeCL, *data,
                                     sprParent, sprChild, propEdgeLen,
-                                    state->rateLoss, state->rateNeo,
-                                    state->rateLogSd, state->betaScale, dirty);
+                                    state->rateLoss, cachePe.rateNeo,
+                                    cachePe.rateLogSd, state->betaScale, dirty);
     usedPartialCL = true;
 
   } else if (!hasPLC) {
@@ -5775,10 +5702,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         newLogLik = state->logLik;
         for (size_t ni = 0; ni < data->neoPartIndices.size(); ++ni) {
           int pi = data->neoPartIndices[ni];
-          double v = cpp_partition_log_likelihood(*data, pi,
-            evalParent, evalChild, propEdgeLen,
-            state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
-            state->betaScale, wsPtr);
+          double v = partition_loglik(*data, *state, pi,
+            evalParent, evalChild, propEdgeLen, wsPtr);
           newLogLik += (v - newPC[pi]);
           newPC[pi] = v;
         }
@@ -5793,10 +5718,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         int ap = data->charToPartition[charIdx];
         newLogLik = state->logLik;
         if (ap >= 0) {
-          double v = cpp_partition_log_likelihood(*data, ap,
-            evalParent, evalChild, propEdgeLen,
-            state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
-            state->betaScale, wsPtr);
+          double v = partition_loglik(*data, *state, ap,
+            evalParent, evalChild, propEdgeLen, wsPtr);
           newLogLik += (v - newPC[ap]);
           newPC[ap] = v;
         }
@@ -5806,10 +5729,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
         newLogLik = 0.0;
         for (int pi = 0; pi < nParts; ++pi) {
-          newPC[pi] = cpp_partition_log_likelihood(*data, pi,
-            evalParent, evalChild, propEdgeLen,
-            state->kPrime, state->rateLoss, state->rateLogSd, state->rateNeo,
-            state->betaScale, wsPtr);
+          newPC[pi] = partition_loglik(*data, *state, pi,
+            evalParent, evalChild, propEdgeLen, wsPtr);
           newLogLik += newPC[pi];
         }
         break;
