@@ -2621,6 +2621,18 @@ RunMkPrime <- function(data, tree = NULL,
                          not installed.")
   }
 
+  # Only a serial run stops on its own convergence window; parallel runs are
+  # stopped by a check that reads whole logs.
+  serial <- mcmc$nRuns < 2L || !isTRUE(mcmc$nCore > 1L)
+  if (serial && !is.null(mcmc$minEss) && convWindowSize > 1L) {
+    essCeiling <- convWindowSize * log10(convWindowSize)
+    if (mcmc$minEss > essCeiling) {
+      why <- c(why, "x" = "{.arg minEss} = {mcmc$minEss} exceeds \\
+        {round(essCeiling, 1)}, the largest ESS that a run's \\
+        {convWindowSize}-sample convergence window can report.")
+    }
+  }
+
   if (length(why) > 0L) {
     ends <- c(if (is.finite(mcmc$nIter)) "{.arg nIter}",
               if (!is.null(mcmc$maxTime)) "{.arg maxTime}")
