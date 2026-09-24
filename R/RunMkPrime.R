@@ -4370,7 +4370,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     empTailDecay,
     empLogTailStartP,
     identical(model$likelihoodMode, "marginal_k"),
-    identical(model$priorVariant %||% "conditional", "unconditional")
+    identical(model$priorVariant %||% MkPrimeModel(
+      kPrimePrior = model$kPrimePrior %||% "geometric")$priorVariant,
+      "unconditional")
   )
   # Wire the truncation cap K from the model into the McmcData
   # (set_kprime_trunc_k; mirrors set_branch_bins, avoiding a prepare_mcmc_data
