@@ -141,6 +141,15 @@ test_that(".SplitChains doubles columns and halves rows", {
   expect_equal(nrow(splits), 5)
 })
 
+test_that(".SplitChains drops the middle draw on odd n (#202)", {
+  # Vehtari et al. (2021) / `posterior` drop the middle draw, not the last.
+  mat <- matrix(1:9, ncol = 1)
+  splits <- MkPrime:::.SplitChains(mat)
+  expect_equal(dim(splits), c(4L, 2L))
+  expect_equal(as.integer(splits[, 1]), 1:4)
+  expect_equal(as.integer(splits[, 2]), 6:9)
+})
+
 test_that(".ZScale produces standard normal-ish output", {
   set.seed(6331)
   x <- runif(1000)

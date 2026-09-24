@@ -65,9 +65,10 @@ ConvergenceDiagnostics <- function(posterior, trees = FALSE,
   # --- ESS (combined samples) ---
   ess <- .ComputeEss(pb$samples[, keyCols, drop = FALSE])
 
-  # kPrime are discrete nuisance parameters -- exclude from summary min/max
-  # (M-098). Individual kPrime ESS/R-hat remain in the output for display.
-  isConvParam <- !grepl("^kPrime_", names(ess)) & names(ess) != "log_likelihood"
+  # kPrime and log_likelihood are nuisance columns -- exclude from summary
+  # min/max (M-098). Individual kPrime ESS/R-hat remain in the output for
+  # display.
+  isConvParam <- .ConvergenceTier(names(ess)) == "gate"
 
   # --- R-hat across runs ---
   rhat <- NULL
@@ -127,9 +128,11 @@ print.MkpDiagnostics <- function(x, ...) {
   hasRhat <- !is.null(x$rhat)
 
   nms <- names(x$ess)
-  # log_likelihood is redundant with log_posterior in display
-  scalarNms <- nms[!grepl("^kPrime_", nms) & nms != "log_likelihood"]
-  kPrimeNms <- nms[grepl("^kPrime_", nms)]
+  tier <- .ConvergenceTier(nms)
+  scalarNms <- nms[tier == "gate"]
+  # log_likelihood is redundant with log_posterior, so only kPrime nuisance
+  # columns get a summary row
+  kPrimeNms <- nms[tier == "nuisance" & grepl("^kPrime_", nms)]
 
   cli::cli_rule(
     left = sprintf(
@@ -346,9 +349,10 @@ print.MkpDiagnostics <- function(x, ...) {
   rhat <- diagCheck$rhat
   hasRhat <- !is.null(rhat)
 
-  nms       <- names(ess)
-  scalarNms <- nms[!grepl("^kPrime_", nms) & nms != "log_likelihood"]
-  kPrimeNms <- nms[grepl("^kPrime_", nms)]
+  nms  <- names(ess)
+  tier <- .ConvergenceTier(nms)
+  scalarNms <- nms[tier == "gate"]
+  kPrimeNms <- nms[tier == "nuisance" & grepl("^kPrime_", nms)]
 
   # Build all output as a character vector (one element per line)
   out <- character()
@@ -628,11 +632,11 @@ print.MkpDiagnostics <- function(x, ...) {
               frechet = frechet)
     })
     essMat <- do.call(rbind, chainRows)
-    # Minimum across runs -- conservative multi-chain estimate.
-    # Replace non-finite values (from all-NA columns) with NA.
-    result <- apply(essMat, 2, min, na.rm = TRUE)
-    result[!is.finite(result)] <- NA_real_
-    result
+    # Minimum across runs -- conservative multi-chain estimate. `.MinOrNA`
+    # returns NA for an all-NA column (e.g. frechetCorrelationESS when
+    # frechet = FALSE) instead of `min()`'s "no non-missing arguments"
+    # warning plus an Inf that then needs mopping up.
+    apply(essMat, 2, .MinOrNA)
   }, error = function(e) {
     cli::cli_warn("Tree ESS computation failed: {conditionMessage(e)}")
     NULL

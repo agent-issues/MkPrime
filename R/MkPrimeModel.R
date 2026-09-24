@@ -288,6 +288,17 @@ MkPrimeModel <- function(
     }
   }
 
+  # Validate logseries hyperparameter
+  if (kPrimePrior == "logseries") {
+    if (!is.numeric(kprimeLogseriesC) || length(kprimeLogseriesC) != 1L ||
+        !is.finite(kprimeLogseriesC) ||
+        kprimeLogseriesC <= 0 || kprimeLogseriesC >= 1) {
+      cli::cli_abort(
+        "{.arg kprimeLogseriesC} must be a finite scalar in (0, 1)."
+      )
+    }
+  }
+
   # M-052: validate Het parameters
   if (isTRUE(qHeterogeneity)) {
     nBetaCat <- as.integer(nBetaCat)
