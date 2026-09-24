@@ -37,6 +37,10 @@ singleton_site_prob_mkn <- function(parent, child, edge_length, nTip, rate_loss,
     .Call(`_MkPrime_singleton_site_prob_mkn`, parent, child, edge_length, nTip, rate_loss, root_freqs, rate_multipliers)
 }
 
+asc_site_prob_missing <- function(parent, child, edge_length, nTip, kStates, neomorphic, rate_loss, rate_multipliers, missing, informative) {
+    .Call(`_MkPrime_asc_site_prob_missing`, parent, child, edge_length, nTip, kStates, neomorphic, rate_loss, rate_multipliers, missing, informative)
+}
+
 mk_prime_relabel_log <- function(kPrime, kObs) {
     .Call(`_MkPrime_mk_prime_relabel_log`, kPrime, kObs)
 }

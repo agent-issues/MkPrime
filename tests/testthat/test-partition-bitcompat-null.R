@@ -31,7 +31,9 @@
 # pins its starting tree (_reference/partition-bitcompat-null-start.nwk) and
 # pins `gibbsSpr = FALSE`, and again on 2026-09-23 when `pSpr = FALSE` joined
 # it (issue #142), and again on 2026-09-23 when `cacheBonus = 1` joined it
-# (issue #70). The 2026-05-20 reference delegated its starting
+# (issue #70), and again on 2026-09-24 when the neomorphic rate matrix was
+# normalised to mean rate 1 (issue #212), a likelihood change that no pin
+# can undo. The 2026-05-20 reference delegated its starting
 # topology to TreeSearch::AdditionTree(), so it silently depended on the
 # installed version of a Suggests package and no CI job could ever reproduce
 # it; see helper-partition-ref.R.
