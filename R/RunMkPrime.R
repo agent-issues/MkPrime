@@ -987,6 +987,7 @@ RunMkPrime <- function(data, tree = NULL,
   tuningWindowStart <- NULL
   bestMinEssPerSec <- -Inf
   bestMinEss       <- NA_real_
+  bestFrozen       <- FALSE
   bestWeights      <- moveWeights
   tuningFreezeStreak <- r$tuningFreezeStreak %||% 0L
   convStreak       <- r$convStreak %||% 0L
@@ -1344,6 +1345,7 @@ RunMkPrime <- function(data, tree = NULL,
             }
             bestMinEssPerSec <- -Inf
             bestMinEss       <- NA_real_
+            bestFrozen       <- FALSE
             bestWeights      <- moveWeights
             tuningFreezeStreak <- 0L
             tuningCandidates <- .PerturbMoveWeights(
@@ -1398,9 +1400,12 @@ RunMkPrime <- function(data, tree = NULL,
         if (!is.na(currentEssPerSec)) {
           tickerPages <- sprintf("minESS/s: %.2f", currentEssPerSec)
           if (.BeatsIncumbent(currentEssPerSec, currentRate[["ess"]],
-                              bestMinEssPerSec, bestMinEss)) {
+                              bestMinEssPerSec, bestMinEss,
+                              candFrozen = currentRate[["frozen"]],
+                              bestFrozen = bestFrozen)) {
             bestMinEssPerSec <- currentEssPerSec
             bestMinEss       <- currentRate[["ess"]]
+            bestFrozen       <- currentRate[["frozen"]]
             bestWeights      <- moveWeights
           }
         }
@@ -1464,6 +1469,7 @@ RunMkPrime <- function(data, tree = NULL,
             tuningWindowStart <- proc.time()["elapsed"]
             bestMinEssPerSec  <- -Inf
             bestMinEss        <- NA_real_
+            bestFrozen        <- FALSE
             for (ch in seq_len(nChains)) {
               r$chain_accept[[ch]][]    <- 0L
               r$chain_propose[[ch]][]   <- 0L
@@ -5446,14 +5452,18 @@ if (n < 2L * windowSize) {
 #'   minimum, giving topology moves credit in the bandit (M-152).
 #' @param fixedCols Character vector naming the columns no move updates.
 #'
-#' @return `.MinEssRate()` a list with the `rate` min(ESS)/`wallTimeSec` and
-#' the `ess` it came from; `.MinEssPerSec()` the rate alone. Both are `NA`
-#' where any gate ESS, or the tree ESS, cannot be computed: a window that
-#' froze a parameter or the topology is unassessable, not the best.
+#' @return `.MinEssRate()` a list with the `rate` min(ESS)/`wallTimeSec`, the
+#' `ess` it came from, and `frozen`, `TRUE` where the window never changed
+#' topology; `.MinEssPerSec()` the rate alone. The rate is `NA` where a gate
+#' ESS cannot be computed: a window that froze a parameter is unassessable,
+#' not the best. A window that froze the topology is scored on its scalar ESS
+#' and flagged `frozen`, so that `.BeatsIncumbent()` can rank it below any
+#' window that moved the topology without leaving tuning with nothing to
+#' compare when no candidate moves it.
 #' @keywords internal
 .MinEssRate <- function(sampleMatrix, wallTimeSec, tuningTrees = NULL,
                         fixedCols = NULL) {
-  noRate <- list(rate = NA_real_, ess = NA_real_)
+  noRate <- list(rate = NA_real_, ess = NA_real_, frozen = FALSE)
   if (nrow(sampleMatrix) < 10L || wallTimeSec < 1e-6) return(noRate)
 
   keyCols <- .GateCols(colnames(sampleMatrix), fixedCols)
@@ -5467,19 +5477,24 @@ if (n < 2L * windowSize) {
   # Include tree ESS in the minimum when topology trees are available.
   # This gives topology moves credit in the bandit, preventing the
   # starvation that M-152 described.
+  frozen <- FALSE
   if (!is.null(tuningTrees) && length(tuningTrees) >= 20L) {
     trees <- structure(tuningTrees, class = "multiPhylo")
     treeEss <- tryCatch(
       TreeESS(trees, dist_fn = TreeDist::RobinsonFoulds,
               frechet = FALSE)[["medianPseudoESS"]],
-      error = function(e) NA_real_
+      error = function(e) NULL
     )
-    if (!is.finite(treeEss)) return(noRate)
-    minEss <- min(minEss, treeEss)
+    if (is.null(treeEss)) return(noRate)
+    if (is.finite(treeEss)) {
+      minEss <- min(minEss, treeEss)
+    } else {
+      frozen <- TRUE
+    }
   }
 
   # Return:
-  list(rate = minEss / wallTimeSec, ess = minEss)
+  list(rate = minEss / wallTimeSec, ess = minEss, frozen = frozen)
 }
 
 

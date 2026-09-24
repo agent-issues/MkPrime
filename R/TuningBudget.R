@@ -21,15 +21,23 @@
 #' @param candRate,bestRate Numeric min-ESS/s for the candidate and incumbent.
 #' @param candEss,bestEss Numeric effective sample sizes the rates came from.
 #' @param z Numeric giving the standard errors a candidate must clear.
+#' @param candFrozen,bestFrozen Logical; `TRUE` where that window never changed
+#'   topology, so its rate reflects the scalar gate alone. A window that moved
+#'   the topology outranks one that froze it whatever their rates; windows on
+#'   the same side are compared on rate.
 #' @return `TRUE` where the candidate should be adopted.
 #' @keywords internal
 .BeatsIncumbent <- function(candRate, candEss, bestRate, bestEss,
-                            z = .kTuningGateZ) {
+                            z = .kTuningGateZ,
+                            candFrozen = FALSE, bestFrozen = FALSE) {
   if (!isTRUE(is.finite(candRate)) || candRate <= 0) {
     return(FALSE)
   }
   if (!isTRUE(is.finite(bestRate)) || bestRate <= 0) {
     return(TRUE)
+  }
+  if (!identical(isTRUE(candFrozen), isTRUE(bestFrozen))) {
+    return(isTRUE(bestFrozen))
   }
   rse <- sqrt(2 / max(candEss, 1) + 2 / max(bestEss, 1))
   candRate > bestRate * (1 + z * rse)

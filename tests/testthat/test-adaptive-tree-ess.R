@@ -308,13 +308,32 @@ test_that("runs stuck on different topologies do not pass minTreeEss (#195)", {
   expect_identical(single$treeEssStatus, "stuck")
 })
 
-test_that("the tuning bandit scores a frozen topology as unassessable (#195)", {
+test_that("the tuning bandit ranks a frozen topology below a moving one (#195)", {
   skip_if_not_installed("TreeDist")
   set.seed(1952)
   mat <- matrix(rnorm(100), 50, 2,
                 dimnames = list(NULL, c("log_posterior", "tree_length")))
   frozen <- rep(list(as.phylo(0, 8)), 50)
-  expect_true(is.na(MkPrime:::.MinEssRate(mat, 1, tuningTrees = frozen)[["rate"]]))
+  moving <- lapply(sample(0:200, 50, replace = TRUE), as.phylo, 8)
+  still <- MkPrime:::.MinEssRate(mat, 1, tuningTrees = frozen)
+  moved <- MkPrime:::.MinEssRate(mat, 1, tuningTrees = moving)
+  expect_true(still[["frozen"]])
+  expect_false(moved[["frozen"]])
+  # A frozen window is scored on its scalars, so it never ties with perfect
+  # topology mixing, yet stays comparable when every candidate froze.
+  expect_equal(still[["ess"]], min(MkPrime:::.EssMatrix(mat)))
+  expect_lte(moved[["ess"]], still[["ess"]])
+
+  Beats <- function(cand, best) {
+    MkPrime:::.BeatsIncumbent(cand[["rate"]], cand[["ess"]],
+                              best[["rate"]], best[["ess"]],
+                              candFrozen = cand[["frozen"]],
+                              bestFrozen = best[["frozen"]])
+  }
+  expect_false(Beats(still, moved))
+  expect_true(Beats(moved, still))
+  fasterStill <- modifyList(still, list(rate = 10 * still[["rate"]]))
+  expect_true(Beats(fasterStill, still))
 })
 
 test_that("minTreeEss with a fixed topology warns that it can never be met", {
