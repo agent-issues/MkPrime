@@ -1,0 +1,116 @@
+# Open an issue or PR, or comment on one, as ms609-agent.
+#
+# Exists because cloud Claude Code sessions reach GitHub only through a
+# proxy whose credential they cannot choose: items they create land under
+# claude[bot] or the maintainer's own account, and the maintainer cannot
+# approve a PR he authored. Authorship here comes from the CLAUDE_GH_TOKEN
+# secret alone, whoever dispatches the run.
+#
+# Fails rather than falling back to github.token: an item posted under the
+# wrong account cannot be re-attributed.
+#
+# Must be on `main`: workflow_dispatch runs only workflows on the default
+# branch (or the ref it is dispatched against).
+name: Post as agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "issue (open an issue), comment (on an issue or PR), or pr (open a PR from a pushed branch)"
+        required: true
+        type: choice
+        options: [issue, comment, pr]
+      body:
+        description: "Markdown body"
+        required: true
+      title:
+        description: "Title (issue, pr)"
+        required: false
+        default: ""
+      number:
+        description: "Issue or PR number (comment)"
+        required: false
+        default: ""
+      labels:
+        description: "Comma-separated labels (issue, pr)"
+        required: false
+        default: ""
+      head:
+        description: "Pushed branch to open the PR from (pr)"
+        required: false
+        default: ""
+      base:
+        description: "Branch to merge into (pr)"
+        required: false
+        default: "main"
+      draft:
+        description: "Open the PR as a draft (pr)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post
+        env:
+          # Inputs arrive via env, never interpolated into the script.
+          GH_TOKEN: ${{ secrets.CLAUDE_GH_TOKEN }}
+          REPO: ${{ github.repository }}
+          ACTION: ${{ inputs.action }}
+          BODY: ${{ inputs.body }}
+          TITLE: ${{ inputs.title }}
+          NUMBER: ${{ inputs.number }}
+          LABELS: ${{ inputs.labels }}
+          HEAD: ${{ inputs.head }}
+          BASE: ${{ inputs.base }}
+          DRAFT: ${{ inputs.draft }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::CLAUDE_GH_TOKEN secret is unset; refusing to post under another account"
+            exit 1
+          fi
+
+          need() {
+            if [ -z "${!1}" ]; then
+              echo "::error::'$(tr '[:upper:]' '[:lower:]' <<<"$1")' is required for action '$ACTION'"
+              exit 1
+            fi
+          }
+
+          labelArgs=()
+          if [ -n "$LABELS" ]; then
+            labelArgs=(--label "$LABELS")
+          fi
+
+          case "$ACTION" in
+            issue)
+              need TITLE
+              url=$(gh issue create --repo "$REPO" --title "$TITLE" --body "$BODY" "${labelArgs[@]}")
+              ;;
+            comment)
+              need NUMBER
+              url=$(gh issue comment "$NUMBER" --repo "$REPO" --body "$BODY")
+              ;;
+            pr)
+              need TITLE
+              need HEAD
+              draftArgs=()
+              if [ "$DRAFT" = "true" ]; then
+                draftArgs=(--draft)
+              fi
+              url=$(gh pr create --repo "$REPO" --head "$HEAD" --base "$BASE" \
+                --title "$TITLE" --body "$BODY" --reviewer ms609 --assignee ms609 \
+                "${draftArgs[@]}" "${labelArgs[@]}")
+              ;;
+          esac
+
+          echo "Posted: $url"
+          echo "Posted: $url" >> "$GITHUB_STEP_SUMMARY"
