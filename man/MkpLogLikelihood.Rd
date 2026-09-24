@@ -37,7 +37,8 @@ current MCMC proposal.}
 \item{coding}{Ascertainment bias correction type. \code{"none"} for no
 correction, \code{"variable"} for conditioning on variable characters,
 \code{"informative"} for conditioning on parsimony-informative characters
-(excludes constant + singleton patterns). Default \code{"variable"}.}
+(excludes every pattern in which fewer than two states each occur
+twice or more). Default \code{"variable"}.}
 
 \item{rate_neo}{Rate scalar for the neomorphic partition relative to
 transformational (which is fixed at 1.0). Default 1.0 (equal rates).}

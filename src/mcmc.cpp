@@ -1700,19 +1700,19 @@ static void gibbs_spr_eval_partial(McmcData* data, McmcState* state,
 }
 
 static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
+  // LIKE-001 interim (option 3): the pseudo-character partial-CL paths,
+  // Q-het included, compute only the constant-site ascertainment term.
+  // Under coding="informative" (codingType == 2) that omission biases the
+  // selection weights. Fall back to the full evaluator, which routes
+  // through cpp_partition_log_likelihood with the full correction applied.
+  // Restore partial-CL once evaluate_singleton_prob (math-prover option 2)
+  // is implemented.
+  if (data->codingType == 2)
+    return gibbs_spr_impl_full(data, state, beta);
+
   // M-114: Q-heterogeneity uses streaming partial CL
   if (data->qHeterogeneity)
     return gibbs_spr_impl_het(data, state, beta);
-
-  // LIKE-001 interim (option 3): the pseudo-character partial-CL path
-  // computes only the constant-site ascertainment term, not the singleton
-  // term. Under coding="informative" (codingType == 2) that omission
-  // biases the selection weights. Fall back to the full evaluator,
-  // which routes through cpp_partition_log_likelihood with the singleton
-  // correction applied. Restore partial-CL once evaluate_singleton_prob
-  // (math-prover option 2) is implemented.
-  if (data->codingType == 2)
-    return gibbs_spr_impl_full(data, state, beta);
 
   GibbsSprPlan plan;
   if (!gibbs_spr_plan(data, state, plan)) return false;
@@ -2204,11 +2204,12 @@ static bool swap_neighbourhood(McmcData* data, McmcState* state, SwapEval ev,
 
 static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
                                     double beta) {
-  // The pseudo-character partial-CL path omits the singleton-site
-  // ascertainment term required under coding = "informative" (LIKE-001).
-  const SwapEval ev = data->qHeterogeneity ? SwapEval::Het
-                    : (data->codingType == 2 ? SwapEval::Full
-                                             : SwapEval::Partial);
+  // The pseudo-character partial-CL paths, Q-het included, omit the
+  // non-constant ascertainment term required under coding = "informative"
+  // (LIKE-001).
+  const SwapEval ev = data->codingType == 2 ? SwapEval::Full
+                    : (data->qHeterogeneity ? SwapEval::Het
+                                            : SwapEval::Partial);
 
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;

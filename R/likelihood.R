@@ -31,7 +31,8 @@
 #' @param coding Ascertainment bias correction type. `"none"` for no
 #'   correction, `"variable"` for conditioning on variable characters,
 #'   `"informative"` for conditioning on parsimony-informative characters
-#'   (excludes constant + singleton patterns). Default `"variable"`.
+#'   (excludes every pattern in which fewer than two states each occur
+#'   twice or more). Default `"variable"`.
 #' @param rate_neo Rate scalar for the neomorphic partition relative to
 #'   transformational (which is fixed at 1.0). Default 1.0 (equal rates).
 #' @param relabel Logical. Apply Mk' relabelling correction for
@@ -170,8 +171,8 @@ MkpLogLikelihood <- function(tree, mkd,
             parent, child, transEdge, nTip, kStates, kObsMax, rates
           )
           if (coding == "informative") {
-            puninf <- puninf + singleton_site_prob_jc_collapsed(
-              parent, child, transEdge, nTip, kStates, kObsMax, rates
+            puninf <- puninf + uninf_nonconst_prob_jc(
+              parent, child, transEdge, nTip, kStates, rates
             )
           }
           ll <- ll - .MaskedAscLog1m(tipStates, puninf, parent, child,
@@ -192,8 +193,8 @@ MkpLogLikelihood <- function(tree, mkd,
           puninf <- constant_site_prob_jc(parent, child, transEdge,
                                           nTip, kStates, rootFreqs, rates)
           if (coding == "informative") {
-            puninf <- puninf + singleton_site_prob_jc(
-              parent, child, transEdge, nTip, kStates, rootFreqs, rates
+            puninf <- puninf + uninf_nonconst_prob_jc(
+              parent, child, transEdge, nTip, kStates, rates
             )
           }
           ll <- ll - .MaskedAscLog1m(tipStates, puninf, parent, child,
@@ -232,8 +233,8 @@ MkpLogLikelihood <- function(tree, mkd,
               parent, child, transEdge, nTip, kp, kObsMaxSub, rates
             )
             if (coding == "informative") {
-              puninf <- puninf + singleton_site_prob_jc_collapsed(
-                parent, child, transEdge, nTip, kp, kObsMaxSub, rates
+              puninf <- puninf + uninf_nonconst_prob_jc(
+                parent, child, transEdge, nTip, kp, rates
               )
             }
             subLl <- subLl - .MaskedAscLog1m(subStates, puninf, parent, child,
@@ -254,8 +255,8 @@ MkpLogLikelihood <- function(tree, mkd,
             puninf <- constant_site_prob_jc(parent, child, transEdge,
                                             nTip, kp, rootFreqs, rates)
             if (coding == "informative") {
-              puninf <- puninf + singleton_site_prob_jc(
-                parent, child, transEdge, nTip, kp, rootFreqs, rates
+              puninf <- puninf + uninf_nonconst_prob_jc(
+                parent, child, transEdge, nTip, kp, rates
               )
             }
             subLl <- subLl - .MaskedAscLog1m(subStates, puninf, parent, child,

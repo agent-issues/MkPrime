@@ -40,6 +40,21 @@ test_that("Fitch score handles missing data (-1) correctly", {
   expect_equal(fitch_score_r(parent, child, tipStates2, nTip = 4L, kStates = 2L), 0L)
 })
 
+# Known-k partitions pass k verbatim, and 1u << k is undefined for k >= 32
+# (#156): missing data must stay compatible with every observed state.
+test_that("Fitch score is independent of k, even beyond 32 states", {
+  parent <- c(5L, 6L, 6L, 5L, 5L)
+  child  <- c(6L, 1L, 2L, 3L, 4L)
+  tipStates <- matrix(c(-1L, -1L, 9L, 9L, 0L, -1L, 9L, 31L), ncol = 2)
+  # Character 1 needs no change; character 2 needs two (0 -> 9, 0 -> 31).
+  for (k in c(32L, 40L, 64L, 100L)) {
+    expect_equal(fitch_score_r(parent, child, tipStates, nTip = 4L,
+                               kStates = k), 2L)
+  }
+  expect_error(fitch_score_r(parent, child, matrix(c(0L, 32L, 1L, 1L)),
+                             nTip = 4L, kStates = 40L), "32 states")
+})
+
 test_that("Fitch score handles multi-state characters (k > 2)", {
   parent <- c(5L, 6L, 6L, 5L, 5L)
   child  <- c(6L, 1L, 2L, 3L, 4L)
