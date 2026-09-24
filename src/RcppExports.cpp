@@ -1065,7 +1065,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_pruning_jc_acrv_collapsed", (DL_FUNC) &_MkPrime_pruning_jc_acrv_collapsed, 7},
     {"_MkPrime_pruning_mkn_acrv", (DL_FUNC) &_MkPrime_pruning_mkn_acrv, 7},
     {"_MkPrime_constant_site_prob_jc", (DL_FUNC) &_MkPrime_constant_site_prob_jc, 7},
-    {"_MkPrime_uninf_nonconst_prob_jc", (DL_FUNC) (RCPP_FUNC) &_MkPrime_uninf_nonconst_prob_jc, 6},
+    {"_MkPrime_uninf_nonconst_prob_jc", (DL_FUNC) &_MkPrime_uninf_nonconst_prob_jc, 6},
     {"_MkPrime_singleton_site_prob_jc", (DL_FUNC) &_MkPrime_singleton_site_prob_jc, 7},
     {"_MkPrime_constant_site_prob_jc_collapsed", (DL_FUNC) &_MkPrime_constant_site_prob_jc_collapsed, 7},
     {"_MkPrime_singleton_site_prob_jc_collapsed", (DL_FUNC) &_MkPrime_singleton_site_prob_jc_collapsed, 7},
