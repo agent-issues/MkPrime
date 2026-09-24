@@ -4,9 +4,12 @@
 # scores a different model from cpp_log_likelihood_partitioned.
 #
 # kPrime starts one above kObs so that block_kprime_shift can move either way.
+# `hyperprior = TRUE` samples sigma_c = tau * z_c under the pooled hyperprior,
+# starting from tau = 1.
 .PartitionedChain <- function(tree, mkd, model = MkPrimeModel(),
                               classW = c(0.3, 0.7),
-                              classRateLogSd = c(0.3, 0.9)) {
+                              classRateLogSd = c(0.3, 0.9),
+                              hyperprior = FALSE) {
   partition <- rep(1:2, length.out = mkd$nChar)
   mkd$partitions <- MkPrime:::.BuildPartitions(mkd, partition = partition)
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)
@@ -25,11 +28,14 @@
       st$beta_scale %||% 1,
       st$kprime_alpha %||% 1, st$kprime_beta %||% 1,
       classRateLogSd = classRateLogSd, classW = classW,
-      classRate = classRate, nCharPerClass = nCharPerClass
+      classRate = classRate, nCharPerClass = nCharPerClass,
+      useHyperpriorOnSigma = hyperprior, hyperTau = 1, classZ = classZ
     )
   }
+  classZ <- if (hyperprior) classRateLogSd else numeric(0)
   statePtr <- NewState(eval_log_prior_partitioned_cpp(
-    dataPtr, NewState(0), classRateLogSd, classW, 1))
+    dataPtr, NewState(0), classRateLogSd, classW, 1,
+    useHyperpriorOnSigma = hyperprior, hyperTau = 1, classZ = classZ))
   fill_partition_cache(dataPtr, statePtr)
   allocate_cl_workspace(dataPtr, statePtr)
 

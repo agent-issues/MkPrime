@@ -282,6 +282,24 @@ test_that("every move commits the partitioned likelihood", {
     expect_gt(accepted, 0L, label = paste(move, "acceptances"))
     expect_lt(drift, 1e-9, label = paste(move, "logLik drift"))
   }
+
+  # Under the pooled hyperprior, case 31 scales z_c and case 34 scales tau.
+  for (move in c(scale_class_rate_log_sd = 31L, scale_hyper_tau = 34L)) {
+    chain <- .PartitionedChain(tree, mkd, hyperprior = TRUE)
+    set.seed(2L)
+    accepted <- 0L
+    drift <- 0
+    for (i in seq_len(60L)) {
+      if (do_move_cpp(chain$dataPtr, chain$statePtr, move, sample(2L, 1L),
+                      0.5, 0.5, 3L, 1.0)) {
+        accepted <- accepted + 1L
+        drift <- max(drift, abs(get_state_log_lik(chain$statePtr) -
+                                  .PartitionedLogLik(chain)))
+      }
+    }
+    expect_gt(accepted, 0L, label = paste("hyperprior", move, "acceptances"))
+    expect_lt(drift, 1e-9, label = paste("hyperprior", move, "logLik drift"))
+  }
 })
 
 # The Gibbs k' sweep draws each k'_i from a conditional it computes for

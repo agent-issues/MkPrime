@@ -4881,6 +4881,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   // every unit under one shape and one set of scales, so it would score a
   // different model from state->logLik. Left unpopulated, it is never ready,
   // and these moves take the full evaluators.
+  //
+  // Read before the proposal: valid for the partial evaluations below only
+  // because no partial-CL move changes rateLogSd or rateNeo.
   const PartEvalParams cachePe = part_eval_params(*data, *state, 0);
   if ((moveType == 5 || moveType == 4 || moveType == 23 || moveType == 24
        || moveType == 6) &&
