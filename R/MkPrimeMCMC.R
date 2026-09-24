@@ -299,9 +299,10 @@
 #' one topology, so it cannot meet `minTreeEss` until it samples another,
 #' and warns.
 #'
-#' A criterion that can never be met -- `maxRhat` with one run, or a `minEss`
-#' above the window's ceiling -- does not prevent the run, but draws a
-#' warning: the run then ends only at `nIter`, `maxTime` or a cancel file.
+#' A criterion that can never be met -- `maxRhat` with one run, a `minEss`
+#' above the window's ceiling, or `minTreeEss` with a fixed topology -- does
+#' not prevent the run, but draws a warning: the run then ends only at
+#' `nIter`, `maxTime` or a cancel file.
 #'
 #' ## Parallel tempering
 #'

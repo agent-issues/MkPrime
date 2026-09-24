@@ -405,9 +405,10 @@ no tree ESS: it cannot tell a stuck chain from a posterior concentrated on
 one topology, so it cannot meet \code{minTreeEss} until it samples another,
 and warns.
 
-A criterion that can never be met -- \code{maxRhat} with one run, or a \code{minEss}
-above the window's ceiling -- does not prevent the run, but draws a
-warning: the run then ends only at \code{nIter}, \code{maxTime} or a cancel file.
+A criterion that can never be met -- \code{maxRhat} with one run, a \code{minEss}
+above the window's ceiling, or \code{minTreeEss} with a fixed topology -- does
+not prevent the run, but draws a warning: the run then ends only at
+\code{nIter}, \code{maxTime} or a cancel file.
 }
 
 \subsection{Parallel tempering}{
