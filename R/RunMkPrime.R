@@ -323,6 +323,7 @@ RunMkPrime <- function(data, tree = NULL,
   }
   isStreaming     <- TRUE
   convWindowSize  <- .ComputeConvWindowSize(mcmc)
+  .WarnUnreachableCriteria(mcmc, convWindowSize)
   logFilePaths    <- .OpenLogFiles(mcmc$logFile, paramNames, nRuns)
 
   # Register temp files so cleanup can find them (crash, new run, etc.)
@@ -1763,6 +1764,9 @@ RunMkPrime <- function(data, tree = NULL,
     # Strip maxRhat so it doesn't block ESS-based stopping inside each run.
     innerMcmc <- mcmc
     innerMcmc$maxRhat <- NULL
+    # With no per-run criterion left, run 1 would sample until nIter or maxTime
+    # and Phase 2 would never check R-hat.
+    innerMcmc$handOff <- is.null(mcmc$minEss) && is.null(mcmc$minTreeEss)
 
     for (run in seq_len(nRuns)) {
       # maxTime bounds the job, not each run: without this the true ceiling
@@ -2379,11 +2383,10 @@ RunMkPrime <- function(data, tree = NULL,
   }
 
   # --- Adaptive tree ESS ---
-  # Three tiers: skip (scalars far off), coarse (500 trees), fine (1000 trees).
-  # Avoids expensive RF distance computation when it can't affect the stopping
-
-  # decision, and upgrades to full precision when tree ESS is the binding
-  # constraint.
+  # Three tiers: skip (scalars far off), coarse (500 trees), fine (at least
+  # 1000 trees). Avoids expensive RF distance computation when it can't affect
+  # the stopping decision, and upgrades to full precision when tree ESS is the
+  # binding constraint.
   treeEss <- NA_real_
   treeEssStatus <- NA_character_
   treeEssPrecision <- "skip"
@@ -2401,15 +2404,17 @@ RunMkPrime <- function(data, tree = NULL,
                         else "coarse"
 
     if (treeEssPrecision != "skip") {
+      finePerRun <- .FineTreesPerRun(mcmc$minTreeEss)
       tree <- .ComputeTreeEssInLoop(
-        runs, if (treeEssPrecision == "fine") 1000L else 500L, isStreaming
+        runs, if (treeEssPrecision == "fine") finePerRun else 500L,
+        isStreaming
       )
 
       # Upgrade coarse -> fine if the criterion looks close to being met
       if (treeEssPrecision == "coarse" &&
           (identical(tree[["status"]], "agree") ||
            isTRUE(tree[["ess"]] >= 0.8 * mcmc$minTreeEss))) {
-        tree <- .ComputeTreeEssInLoop(runs, 1000L, isStreaming)
+        tree <- .ComputeTreeEssInLoop(runs, finePerRun, isStreaming)
         treeEssPrecision <- "fine"
       }
       treeEss <- tree[["ess"]]
@@ -2419,14 +2424,19 @@ RunMkPrime <- function(data, tree = NULL,
 
   # Converged only when at least one criterion is set AND all set criteria pass.
   # (Avoids spurious early stopping when no criteria are configured.)
+  # `handOff` marks a run with no criterion of its own, which stops once it is
+  # sampling so that a cross-run check can take over.
   hasCriteria <- !is.null(mcmc$minEss) || !is.null(mcmc$maxRhat) ||
                  !is.null(mcmc$minTreeEss)
-  converged   <- hasCriteria &&
+  converged   <- if (hasCriteria) {
     (is.null(mcmc$minEss)     || isTRUE(minEss >= mcmc$minEss)) &&
     (is.null(mcmc$maxRhat)    || (nRuns >= 2L &&
                                    isTRUE(maxRhat <= mcmc$maxRhat))) &&
     (is.null(mcmc$minTreeEss) || identical(treeEssStatus, "agree") ||
                                  isTRUE(treeEss >= mcmc$minTreeEss))
+  } else {
+    isTRUE(mcmc$handOff)
+  }
 
   list(converged = converged, minEss = minEss, maxRhat = maxRhat,
        treeEss = treeEss, treeEssPrecision = treeEssPrecision,
@@ -2587,6 +2597,45 @@ RunMkPrime <- function(data, tree = NULL,
     if (!all(is.finite(essVals))) return(unavailable)
     list(ess = min(essVals), status = "ok")
   }, error = function(e) unavailable)
+}
+
+
+# Trees per run for the fine tier. Per-run ESS cannot exceed the number of
+# trees, and independent draws reach about 0.97 of it, so a target near 1000
+# needs more than 1000.
+.FineTreesPerRun <- function(minTreeEss) {
+  max(1000L, as.integer(ceiling(1.5 * minTreeEss)))
+}
+
+
+# Warn, once and before sampling, about a stopping criterion the run can never
+# meet. Such a run is allowed: it ends at `nIter`, `maxTime` or a cancel file.
+.WarnUnreachableCriteria <- function(mcmc, convWindowSize) {
+  why <- character(0)
+  if (!is.null(mcmc$maxRhat) && mcmc$nRuns < 2L) {
+    why <- c(why, "x" = "{.arg maxRhat} compares runs, but {.arg nRuns} = 1.")
+  }
+  if (!is.null(mcmc$minTreeEss) &&
+      !requireNamespace("TreeDist", quietly = TRUE)) {
+    why <- c(why, "x" = "{.arg minTreeEss} needs {.pkg TreeDist}, which is \\
+                         not installed.")
+  }
+
+  if (length(why) > 0L) {
+    ends <- c(if (is.finite(mcmc$nIter)) "{.arg nIter}",
+              if (!is.null(mcmc$maxTime)) "{.arg maxTime}")
+    cli::cli_warn(c(
+      "A stopping criterion can never be met.",
+      why,
+      "i" = if (length(ends) > 0L) {
+        paste("The run will stop only at", paste(ends, collapse = ", "),
+              "or a cancel file.")
+      } else {
+        "With {.code nIter = Inf} and no {.arg maxTime}, the run will not \\
+         stop until it is cancelled."
+      }
+    ))
+  }
 }
 
 
@@ -3229,6 +3278,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                 likelihoodMode = model$likelihoodMode %||% "sampled_k")
   }
   mcmc$fixedCols <- .FixedCols(paramNames, moves)
+  .WarnUnreachableCriteria(mcmc, convWindowSize)
 
   # Self-check against the run being resumed. The checkpoint records the move
   # weights by name, so a rebuild that has drifted is detectable even for

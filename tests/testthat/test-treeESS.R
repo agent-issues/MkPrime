@@ -189,3 +189,19 @@ test_that("median pseudo-ESS is NA, not n, for a single topology (#195)", {
   trees <- structure(rep(list(tree), 50), class = "multiPhylo")
   expect_true(is.na(TreeESS(trees)[["medianPseudoESS"]]))
 })
+
+test_that("TreeESS reads anchor rows only, matching the full matrix (#196)", {
+  skip_if_not_installed("TreeDist")
+  set.seed(1963)
+  trees <- structure(lapply(sample.int(300, 450, replace = TRUE),
+                            as.phylo, 7), class = "multiPhylo")
+  full <- .MedianPseudoESS(as.matrix(TreeDist::RobinsonFoulds(trees)),
+                           5L, 200L)
+  calls <- list()
+  CrossRF <- function(...) {
+    calls[[length(calls) + 1L]] <<- lengths(list(...))
+    TreeDist::RobinsonFoulds(...)
+  }
+  expect_equal(TreeESS(trees, dist_fn = CrossRF)[["medianPseudoESS"]], full)
+  expect_equal(calls, list(c(200L, 450L)))
+})

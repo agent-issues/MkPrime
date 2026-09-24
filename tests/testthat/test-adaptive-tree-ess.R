@@ -256,6 +256,23 @@ test_that(".TickerSummaryStr omits tree ESS when NA", {
 })
 
 
+# --- #196: minTreeEss above 1000 is reachable ---
+
+test_that("minTreeEss above 1000 can be met (#196)", {
+  skip_if_not_installed("TreeDist")
+  set.seed(1962)
+  n <- 1700L
+  trees <- lapply(sample.int(10000, n), as.phylo, 10)
+  run <- list(saved_idx = n, tree_saved_idx = n, tree_samples = trees,
+              samples = matrix(rnorm(n), n, 1,
+                               dimnames = list(NULL, "log_posterior")))
+  res <- MkPrime:::.CheckConvergence(list(run), "log_posterior",
+                                     list(minEss = 10, minTreeEss = 1100))
+  expect_gt(res$treeEss, 1100)
+  expect_true(res$converged)
+})
+
+
 # --- #195: a run stuck on one topology is not evidence of mixing ---
 
 .StuckRun <- function(tree, n = 100L) {
