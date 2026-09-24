@@ -17,7 +17,8 @@ MkpLogLikelihood(
 )
 }
 \arguments{
-\item{tree}{A \code{phylo} object (from ape). Must be unrooted or rooted.}
+\item{tree}{A \code{phylo} object (from ape). Must be unrooted or rooted.
+Its tip labels must be the taxa of \code{mkd}, in any order.}
 
 \item{mkd}{A \code{MkPrimeData} object.}
 

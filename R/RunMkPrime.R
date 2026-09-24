@@ -27,7 +27,8 @@
 #'   behaviour). Default `FALSE` enables NNI and SPR topology proposals.
 #' @param overwrite Logical. If `FALSE` (the default) and
 #'   `mcmc$checkpointFile` points to an existing file, the run is
-#'   automatically resumed from that checkpoint.
+#'   automatically resumed from that checkpoint, with any `mcmc` or `...`
+#'   options passed on to [ResumeMkPrime()].
 #'   Set to `TRUE` to discard the existing checkpoint and start fresh.
 #' @param partition Optional integer vector of length `mkd$nChar` (after
 #'   invariant-character drop) assigning each character to a user class.
@@ -119,21 +120,30 @@ RunMkPrime <- function(data, tree = NULL,
             MCMC arguments directly (e.g. {.code nIter = 50000})."
     ))
   }
+  requested <- if (!is.null(mcmc)) mcmc
   if (is.null(mcmc)) {
     mcmc <- do.call(MkPrimeMCMC, dots)
+    mcmcArgs <- names(formals(MkPrimeMCMC))
+    requested <- mcmc[mcmcArgs[pmatch(names(dots), mcmcArgs)]]
   }
 
   # --- Auto-resume from checkpoint ---
   cpFile <- mcmc$checkpointFile
   if (!overwrite && !is.null(cpFile) && file.exists(cpFile)) {
     .AlertInfo("Resuming from checkpoint {.file {cpFile}}.")
+    if (!is.null(partition) || length(unlink) || isTRUE(fixTopology)) {
+      .AlertInfo(
+        "{.arg partition}, {.arg unlink} and {.arg fixTopology} are taken \\
+         from the checkpoint; their values in this call are not used.")
+    }
     return(ResumeMkPrime(
       checkpointFile = cpFile,
       data = data,
       tree = tree,
       neomorphic = neomorphic,
       knownStates = knownStates,
-      model = model
+      model = model,
+      mcmc = requested
     ))
   }
 
@@ -235,10 +245,12 @@ RunMkPrime <- function(data, tree = NULL,
 
   model <- .FinalizeModel(model, tree, mkd)
 
+  # Below the API, tip i is data row i; AdditionTree() adds tips in random order.
+  tree <- TreeTools::RenumberTips(tree, dataTaxa)
   # PREORDER INVARIANT: all topology proposals maintain canonical preorder.
   tree <- TreeTools::Preorder(tree)
   nEdge <- nrow(tree$edge)
-  tipLabels <- tree$tip.label
+  tipLabels <- dataTaxa
 
   hasNeo <- any(mkd$type == "neomorphic")
   transIdx <- which(mkd$type == "transformational")
@@ -680,6 +692,9 @@ RunMkPrime <- function(data, tree = NULL,
       rate_log_sd    = s$rate_log_sd,
       rate_neo       = s$rate_neo %||% 1.0,
       p              = s$p %||% 0.5,
+      kprime_alpha   = s$kprime_alpha %||% 1.0,
+      kprime_beta    = s$kprime_beta %||% 1.0,
+      beta_scale     = s$beta_scale %||% 1.0,
       kPrime         = as.integer(s$kPrime),
       log_lik        = s$log_lik,
       log_prior      = s$log_prior,
@@ -745,6 +760,68 @@ RunMkPrime <- function(data, tree = NULL,
 }
 
 
+# Chain state in the R-serialisable form that .RunMkPrimeSingleRun()
+# reconstructs from. Every sampled field must travel: a dropped one is
+# silently reset to its `%||%` default on resume and at each epoch boundary.
+.SerialiseChain <- function(ptr) {
+  s <- get_mcmc_state(ptr)
+  ch <- list(
+    log_lik        = s$logLik,
+    log_prior      = s$logPrior,
+    log_post       = s$logPost,
+    tree_length    = s$treeLength,
+    rel_br_lengths = s$relBrLengths,
+    rate_loss      = s$rateLoss,
+    rate_log_sd    = s$rateLogSd,
+    rate_neo       = s$rateNeo,
+    p              = s$p,
+    kprime_alpha   = s$kprimeAlpha,
+    kprime_beta    = s$kprimeBeta,
+    kPrime         = s$kPrime,
+    edge           = s$edge,
+    beta_scale     = s$betaScale
+  )
+  # Partition-API extras, absent for legacy chains (§7a contract).
+  if (isTRUE(s$usePartitioned)) {
+    ch$class_rate_log_sd <- as.numeric(s$classRateLogSd)
+    ch$class_w           <- as.numeric(s$classW)
+    ch$class_rate        <- as.numeric(s$classRate)
+    ch$nChar_c           <- as.integer(s$nCharPerClass)
+    ch$eta_neo           <- s$etaNeo
+    if (isTRUE(s$useHyperpriorOnSigma)) {
+      ch$use_hyperprior_on_sigma <- TRUE
+      ch$hyper_tau               <- as.numeric(s$hyperTau)
+      ch$class_rate_log_sd_z     <- as.numeric(s$classZ)
+    }
+  }
+  ch
+}
+
+
+# Inverse of .SerialiseChain(): a C++ chain state from its R form.
+.DeserialiseChain <- function(ch_r) {
+  init_mcmc_state(
+    ch_r$edge[, 1L], ch_r$edge[, 2L],
+    ch_r$rel_br_lengths, ch_r$tree_length,
+    ch_r$rate_loss, ch_r$rate_log_sd,
+    ch_r$rate_neo %||% 1.0, ch_r$p %||% 0.5,
+    as.integer(ch_r$kPrime),
+    ch_r$log_lik, ch_r$log_prior,
+    ch_r$beta_scale %||% 1.0,
+    ch_r$kprime_alpha %||% 1.0,
+    ch_r$kprime_beta %||% 1.0,
+    classRateLogSd = as.numeric(ch_r$class_rate_log_sd %||% numeric(0)),
+    classW         = as.numeric(ch_r$class_w %||% numeric(0)),
+    classRate      = as.numeric(ch_r$class_rate %||% numeric(0)),
+    nCharPerClass  = as.integer(ch_r$nChar_c %||% integer(0)),
+    etaNeo         = ch_r$eta_neo %||% 1.0,
+    useHyperpriorOnSigma = isTRUE(ch_r$use_hyperprior_on_sigma),
+    hyperTau       = ch_r$hyper_tau %||% 1.0,
+    classZ         = as.numeric(ch_r$class_rate_log_sd_z %||% numeric(0))
+  )
+}
+
+
 # --- Single-run MCMC engine ---
 
 #' Run the complete MCMC batch loop for one independent run
@@ -780,25 +857,7 @@ RunMkPrime <- function(data, tree = NULL,
     # serialized chain list (set by .InitRun when partitionSpec is non-NULL).
     # Legacy chains (partition = NULL) lack these fields; the default empty
     # vectors in init_mcmc_state leave usePartitioned = FALSE (§7a contract).
-    r$chainStates[[ch]] <- init_mcmc_state(
-      ch_r$edge[, 1L], ch_r$edge[, 2L],
-      ch_r$rel_br_lengths, ch_r$tree_length,
-      ch_r$rate_loss, ch_r$rate_log_sd,
-      ch_r$rate_neo %||% 1.0, ch_r$p %||% 0.5,
-      as.integer(ch_r$kPrime),
-      ch_r$log_lik, ch_r$log_prior,
-      ch_r$beta_scale %||% 1.0,
-      ch_r$kprime_alpha %||% 1.0,
-      ch_r$kprime_beta %||% 1.0,
-      classRateLogSd = as.numeric(ch_r$class_rate_log_sd %||% numeric(0)),
-      classW         = as.numeric(ch_r$class_w %||% numeric(0)),
-      classRate      = as.numeric(ch_r$class_rate %||% numeric(0)),
-      nCharPerClass  = as.integer(ch_r$nChar_c %||% integer(0)),
-      etaNeo         = ch_r$eta_neo %||% 1.0,
-      useHyperpriorOnSigma = isTRUE(ch_r$use_hyperprior_on_sigma),
-      hyperTau       = ch_r$hyper_tau %||% 1.0,
-      classZ         = as.numeric(ch_r$class_rate_log_sd_z %||% numeric(0))
-    )
+    r$chainStates[[ch]] <- .DeserialiseChain(ch_r)
   }
   for (ch in seq_len(nChains)) {
     fill_partition_cache(mcmcData, r$chainStates[[ch]])
@@ -1701,36 +1760,7 @@ RunMkPrime <- function(data, tree = NULL,
   }
 
   # --- Serialize and return ---
-  r$chains <- lapply(r$chainStates, function(ptr) {
-    s <- get_mcmc_state(ptr)
-    ch <- list(
-      log_lik        = s$logLik,
-      log_prior      = s$logPrior,
-      log_post       = s$logPost,
-      tree_length    = s$treeLength,
-      rel_br_lengths = s$relBrLengths,
-      rate_loss      = s$rateLoss,
-      rate_log_sd    = s$rateLogSd,
-      rate_neo       = s$rateNeo,
-      p              = s$p,
-      kPrime         = s$kPrime,
-      edge           = s$edge
-    )
-    # Partition-API extras — see matching block in .SaveCheckpoint.
-    if (isTRUE(s$usePartitioned)) {
-      ch$class_rate_log_sd <- as.numeric(s$classRateLogSd)
-      ch$class_w           <- as.numeric(s$classW)
-      ch$class_rate        <- as.numeric(s$classRate)
-      ch$nChar_c           <- as.integer(s$nCharPerClass)
-      ch$eta_neo           <- s$etaNeo
-      if (isTRUE(s$useHyperpriorOnSigma)) {
-        ch$use_hyperprior_on_sigma <- TRUE
-        ch$hyper_tau               <- as.numeric(s$hyperTau)
-        ch$class_rate_log_sd_z     <- as.numeric(s$classZ)
-      }
-    }
-    ch
-  })
+  r$chains <- lapply(r$chainStates, .SerialiseChain)
   r$chainStates  <- NULL
   r$stop_reason  <- stopReason
   r$actual_iter  <- actualIter
@@ -2917,41 +2947,7 @@ RunMkPrime <- function(data, tree = NULL,
     # Guard: .RunMkPrimeSingleRun() already serializes on return (chainStates
     # is NULL, chains is populated), so skip when chains are already R lists.
     if (!is.null(r$chainStates)) {
-      r$chains <- lapply(r$chainStates, function(ptr) {
-        s <- get_mcmc_state(ptr)
-        ch <- list(
-          log_lik        = s$logLik,
-          log_prior      = s$logPrior,
-          log_post       = s$logPost,
-          tree_length    = s$treeLength,
-          rel_br_lengths = s$relBrLengths,
-          rate_loss      = s$rateLoss,
-          rate_log_sd    = s$rateLogSd,
-          rate_neo       = s$rateNeo,
-          p              = s$p,
-          kPrime         = s$kPrime,
-          edge           = s$edge,
-          beta_scale     = s$betaScale
-        )
-        # Partition-API extras — must mirror .InitRun (R/RunMkPrime.R:659-674)
-        # so the round-trip through .RunMkPrimeSingleRun's reconstruction
-        # (R/RunMkPrime.R:754-772) preserves per-class state and the pooled-σ
-        # hyperprior. Without these, a resume silently rebuilds a legacy
-        # single-σ chain.
-        if (isTRUE(s$usePartitioned)) {
-          ch$class_rate_log_sd <- as.numeric(s$classRateLogSd)
-          ch$class_w           <- as.numeric(s$classW)
-          ch$class_rate        <- as.numeric(s$classRate)
-          ch$nChar_c           <- as.integer(s$nCharPerClass)
-          ch$eta_neo           <- s$etaNeo
-          if (isTRUE(s$useHyperpriorOnSigma)) {
-            ch$use_hyperprior_on_sigma <- TRUE
-            ch$hyper_tau               <- as.numeric(s$hyperTau)
-            ch$class_rate_log_sd_z     <- as.numeric(s$classZ)
-          }
-        }
-        ch
-      })
+      r$chains <- lapply(r$chainStates, .SerialiseChain)
       r$chainStates <- NULL
     }  # else: chains already serialized, chainStates already NULL
     if (isStreaming) {
@@ -2989,7 +2985,13 @@ RunMkPrime <- function(data, tree = NULL,
   # survive an interrupted save; ignore stray .tmp files on read.
   tmpFile <- paste0(file, ".tmp")
   saveRDS(payload, tmpFile)
-  file.rename(tmpFile, file)
+  if (!suppressWarnings(file.rename(tmpFile, file))) {
+    cli::cli_warn(c(
+      "Checkpoint not updated: could not replace {.file {file}}.",
+      "i" = "It still holds an earlier state; the new one is in \\
+             {.file {tmpFile}}."
+    ))
+  }
 }
 
 
@@ -3098,27 +3100,93 @@ RunMkPrime <- function(data, tree = NULL,
 }
 
 
-# Flush any pending streaming buffers then save a checkpoint, if configured.
-# Returns the (possibly modified) runs list so flush_idx resets propagate.
+# A checkpoint carries no schema version for its `model` and `mcmc`, so one
+# written before a field existed lacks it, and a `%||%` fallback at the point
+# of use would silently pick a value the run never had. Fill each missing
+# field with the default the constructor gives now -- for the model, the
+# default under the checkpoint's own `kPrimePrior` -- and say so.
 #
 # @keywords internal
-.FlushAndSaveCheckpoint <- function(runs, nRuns, mcmc, batchEnd,
-                                    paramNames, isStreaming, logFilePaths,
-                                    moveWeights = NULL, model = NULL) {
-  if (!is.null(mcmc$checkpointFile)) {
-    if (isStreaming) {
-      for (run in seq_len(nRuns)) {
-        if (runs[[run]]$flush_idx > 0L) {
-          .FlushBuffer(runs[[run]]$flush_buf, runs[[run]]$flush_idx,
-                       runs[[run]]$flush_iter, logFilePaths[run])
-          runs[[run]]$flush_idx <- 0L
-        }
-      }
-    }
-    .SaveCheckpoint(runs, mcmc, batchEnd, paramNames, mcmc$checkpointFile,
-                    moveWeights = moveWeights, model = model)
+.MigrateCheckpoint <- function(checkpoint) {
+  Missing <- function(x, defaults) {
+    fill <- defaults[setdiff(names(defaults), names(x))]
+    fill[!vapply(fill, is.null, logical(1))]
   }
-  runs
+  filled <- character(0)
+  if (!is.null(checkpoint$model)) {
+    kPrimePrior <- checkpoint$model$kPrimePrior %||% "geometric"
+    fill <- Missing(checkpoint$model, MkPrimeModel(kPrimePrior = kPrimePrior))
+    checkpoint$model[names(fill)] <- fill
+    filled <- c(filled, sprintf("model$%s = %s", names(fill),
+                                vapply(fill, .DeparseSetting, character(1))))
+  }
+  if (!is.null(checkpoint$mcmc)) {
+    fill <- Missing(checkpoint$mcmc, MkPrimeMCMC())
+    checkpoint$mcmc[names(fill)] <- fill
+    filled <- c(filled, sprintf("mcmc$%s = %s", names(fill),
+                                vapply(fill, .DeparseSetting, character(1))))
+  }
+  if (length(filled)) {
+    cli::cli_warn(c(
+      "Checkpoint predates {length(filled)} setting{?s}; using current \\
+       default{?s}:",
+      stats::setNames(filled, rep("*", length(filled)))
+    ))
+  }
+  checkpoint
+}
+
+
+.DeparseSetting <- function(x) {
+  txt <- paste(deparse(x, width.cutoff = 60L), collapse = " ")
+  if (nchar(txt) > 60L) paste0(substr(txt, 1L, 57L), "...") else txt
+}
+
+
+# MkPrimeMCMC() settings a resume can take from the caller: they bound or
+# report on the run without changing its kernel or its output layout.
+.kResumableMcmc <- c("nIter", "maxTime", "minEss", "minTreeEss",
+                     "cancelFile", "nCore", "pollInterval", "cancelGrace",
+                     "progressFn", "plotEvery")
+
+# Combine the checkpoint's `mcmc` with settings the caller supplied on resume,
+# reporting each conflict rather than silently preferring either side.
+# `override` is an MkPrimeMCMC object, or a named list of its fields.
+#
+# @keywords internal
+.ResumeMcmc <- function(mcmc, override) {
+  if (is.null(override)) return(mcmc)
+  if (!is.list(override) || (length(override) && is.null(names(override)))) {
+    cli::cli_abort(
+      "{.arg mcmc} must be an {.cls MkPrimeMCMC} object or a named list.")
+  }
+  override <- unclass(override)
+  differs <- vapply(names(override), function(f) {
+    !identical(override[[f]], mcmc[[f]])
+  }, logical(1))
+  fields <- names(override)[differs]
+  applied <- intersect(fields, .kResumableMcmc)
+  # In a whole MkPrimeMCMC object, NULL and "auto" are unresolved defaults,
+  # not a request to change what the run resolved them to.
+  kept <- Filter(function(f) {
+    !is.null(override[[f]]) && !identical(override[[f]], "auto")
+  }, setdiff(fields, .kResumableMcmc))
+  for (f in applied) {
+    mcmc[f] <- list(override[[f]])
+  }
+  if (length(applied)) {
+    .AlertInfo("Resuming with {.arg {applied}} from this call, not the \\
+                checkpoint.")
+  }
+  if (length(kept)) {
+    cli::cli_warn(c(
+      "Resume keeps the checkpoint's {.arg {kept}}.",
+      "i" = "The chain was built with {cli::qty(length(kept))}{?it/them}; \\
+             start a fresh run with {.code overwrite = TRUE} to change \\
+             {cli::qty(length(kept))}{?it/them}."
+    ))
+  }
+  mcmc
 }
 
 
@@ -3132,11 +3200,21 @@ RunMkPrime <- function(data, tree = NULL,
 #' @param checkpointFile Path to the checkpoint RDS file.
 #' @param data A `phyDat` or `MkPrimeData` object (must match original).
 #' @param model An `MkPrimeModel` object.  If `NULL` (the default),
-#'   the model stored in the checkpoint is used; otherwise it is finalized
-#'   using `tree` or re-derived from data.
-#' @param tree A `phylo` object (used only for model finalization via
-#'   Fitch parsimony).  Can be `NULL` when the checkpoint already contains
-#'   a finalized model (all checkpoints since M-149).
+#'   the model stored in the checkpoint is used.  Otherwise its unset
+#'   data-derived defaults (`expSteps`, `treeLengthRate`) are taken from the
+#'   checkpoint's model, so the prior does not change mid-chain.
+#'   Fields that a checkpoint predates are filled with current defaults,
+#'   with a warning.
+#' @param tree A `phylo` object, used only to check tip labels and, for a
+#'   checkpoint with no stored model, to derive `expSteps`.  Usually `NULL`.
+#' @param mcmc `NULL` (the default) to continue with the checkpoint's MCMC
+#'   settings, or an `MkPrimeMCMC` object (or a named list of its fields)
+#'   whose run-bounding settings -- `nIter`, `maxTime`, `minEss`,
+#'   `minTreeEss`, `cancelFile`, `nCore`, `pollInterval`, `cancelGrace`,
+#'   `progressFn` and `plotEvery` -- replace the checkpoint's.  Other
+#'   settings fix the sampler and are kept from the checkpoint, with a
+#'   warning where they differ.  [RunMkPrime()] passes the options it was
+#'   given when it resumes automatically.
 #' @param neomorphic,knownStates Passed to [MkPrimeData()] if `data`
 #'   is a `phyDat` object.
 #' @inheritParams RunMkPrime
@@ -3147,9 +3225,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                            neomorphic = integer(0),
                            knownStates = integer(0),
                            model = NULL,
+                           mcmc = NULL,
                            verbosity = MkPrimeVerbosity()) {
   oldOpts <- options(MkPrime.verbosity = .CheckVerbosity(verbosity))
   on.exit(options(oldOpts), add = TRUE)
+  mcmcOverride <- mcmc
   # Parallel-mode recovery: if the parent process did not exit cleanly
   # (SIGKILL / SLURM walltime overrun), the master .ckp is stale or
   # missing but each callr worker wrote its own per-run .ckp.  Rebuild
@@ -3202,24 +3282,28 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                        knownStates = knownStates)
   }
 
-  # Model resolution: prefer checkpoint model (already finalized), then
-  # user-supplied model + tree, then fresh MkPrimeModel + NJ tree.
-  if (is.null(model) && !is.null(checkpoint$model)) {
-    model <- checkpoint$model
-  } else {
-    if (is.null(model)) model <- MkPrimeModel()
-    if (is.null(tree)) {
-      # Need tree only for .FinalizeModel (Fitch parsimony score)
-      startInput <- if (inherits(data, "phyDat")) data else mkd$phyDat
-      if (requireNamespace("TreeSearch", quietly = TRUE)) {
-        tree <- TreeSearch::AdditionTree(startInput)
-        tree$edge.length <- rep(0.1, nrow(tree$edge))
-      } else {
-        tree <- TreeTools::NJTree(startInput, edgeLengths = TRUE)
-      }
+  checkpoint <- .MigrateCheckpoint(checkpoint)
+
+  # The prior's data-derived defaults are fixed when the chain starts, so a
+  # resume takes them from the checkpoint rather than re-deriving them from a
+  # fresh start tree, which would shift the tree-length prior mid-chain.
+  ckModel <- checkpoint$model
+  if (is.null(model)) {
+    model <- ckModel %||% MkPrimeModel()
+  } else if (!is.null(ckModel) && is.null(model$expSteps)) {
+    model$expSteps <- ckModel$expSteps
+    if (is.null(model$treeLengthRate)) {
+      model$treeLengthRate <- ckModel$treeLengthRate
     }
-    tree <- TreeTools::Preorder(tree)
-    model <- .FinalizeModel(model, tree, mkd)
+  }
+  if (is.null(model$expSteps)) {
+    # Only a checkpoint that predates stored models reaches here.
+    ch1 <- checkpoint$runs[[1]]$chains[[1]]
+    fitchTree <- tree %||% .EdgeToTree(
+      ch1$edge, ch1$rel_br_lengths * ch1$tree_length, rownames(mkd$matrix))
+    model <- .FinalizeModel(model, fitchTree, mkd)
+  } else {
+    model <- .FinalizeModel(model, NULL, mkd)
   }
 
   # Validate tip labels when a tree is available
@@ -3247,9 +3331,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   }
 
   runs <- checkpoint$runs
-  mcmc <- checkpoint$mcmc
+  mcmc <- .ResumeMcmc(checkpoint$mcmc, mcmcOverride)
   startIter <- checkpoint$iter + 1L
   nRuns <- mcmc$nRuns
+  if (is.finite(mcmc$nIter) && mcmc$nIter < startIter) {
+    .AlertWarning(
+      "Checkpoint is at iteration {startIter - 1L}, past {.arg nIter} = \\
+       {mcmc$nIter}: no further iterations will run.")
+  }
 
   # Derive nEdge and paramNames: version 2 stores them directly;
   # version 1 derives from the sample matrix column names.
@@ -3348,6 +3437,18 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   if (is.null(mcmc$treeThin)) mcmc$treeThin <- mcmc$thin
   treeEvery <- as.integer(mcmc$treeThin / mcmc$thin)
 
+  # Chain state pairs tip i with data row i, whatever order `tree` was in.
+  tipLabels       <- rownames(mkd$matrix)
+  # Column index for tree reconstruction; the layout lives in .ParamNames().
+  brColStart      <- .BrColStart(paramNames)
+
+  # --- Sequential per-run execution ---
+  stopReason <- "max_iter"
+  actualIter <- if (is.finite(mcmc$nIter)) mcmc$nIter else startIter - 1L
+
+  # M-149 #7: per-run startIters from individual actual_iter
+  perRunStarts <- .ResumeStartIters(runs, startIter)
+
   if (isStreaming) {
     # Rewind each log file to the checkpoint's saved_idx.  Any samples
     # flushed after the last checkpoint are discarded -- the chain state
@@ -3377,17 +3478,6 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     }
   }
 
-  tipLabels       <- tree$tip.label %||% rownames(mkd$matrix)
-  # Column index for tree reconstruction; the layout lives in .ParamNames().
-  brColStart      <- .BrColStart(paramNames)
-
-  # --- Sequential per-run execution ---
-  stopReason <- "max_iter"
-  actualIter <- if (is.finite(mcmc$nIter)) mcmc$nIter else startIter - 1L
-
-  # M-149 #7: per-run startIters from individual actual_iter
-  perRunStarts <- .ResumeStartIters(runs, startIter)
-
   # Live run state for the interrupt handler, mirroring `.RunWithRecovery`.
   # The local `runs` is refreshed only on normal return, so it is the state
   # the resume began from for as long as the resume is still running.
@@ -3398,7 +3488,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   shared$phase       <- checkpoint$phase
 
   tryCatch({
-    if (isStreaming && mcmc$nCore > 1L && nRuns > 1L) {
+    if (isStreaming && isTRUE(mcmc$nCore > 1L) && nRuns > 1L) {
       # Parallel resume: mirror the RunMkPrime parallel branch.  Each worker
       # has its own treeFile and streams to it, appending to the tail this
       # session's rewind left in place, so `tree_saved_idx` carries forward

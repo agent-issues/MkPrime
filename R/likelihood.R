@@ -18,6 +18,7 @@
 #'
 #' @references \insertAllCited{}
 #' @param tree A `phylo` object (from ape). Must be unrooted or rooted.
+#'   Its tip labels must be the taxa of `mkd`, in any order.
 #' @param mkd A `MkPrimeData` object.
 #' @param kPrime Integer vector of length `mkd$nChar`. The assumed true number
 #'   of states for each character. For "known" characters, this is the fixed k.
@@ -55,6 +56,16 @@ MkpLogLikelihood <- function(tree, mkd,
     cli::cli_abort("{.arg mkd} must be a {.cls MkPrimeData} object.")
   }
   coding <- match.arg(coding, c("variable", "informative", "none"))
+  dataTaxa <- rownames(mkd$matrix)
+  if (length(tree$tip.label) != length(dataTaxa) ||
+      !setequal(tree$tip.label, dataTaxa)) {
+    cli::cli_abort(c(
+      "Tip labels in {.arg tree} do not match taxa in {.arg mkd}.",
+      "i" = "Every taxon in the data must appear once as a tip label."
+    ))
+  }
+  # Pruning pairs tip i with data row i.
+  tree <- TreeTools::RenumberTips(tree, dataTaxa)
 
   # Default kPrime: use kObs for transformational, known_k for known, 2 for neo
   if (is.null(kPrime)) {
