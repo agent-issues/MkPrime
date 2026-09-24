@@ -141,13 +141,19 @@
 }
 
 
-# Extract the currently valid rows from a circular convergence window.
-# Returns NULL if fewer than minRows rows are available.
+# Extract the currently valid rows from a circular convergence window, in
+# chronological order.  Returns NULL if fewer than minRows rows are
+# available.
 # @keywords internal
 .ConvWindowRows <- function(r, minRows = 10L) {
   nRows <- if (r$conv_filled) nrow(r$conv_window) else r$conv_head
   if (nRows < minRows) return(NULL)
-  if (r$conv_filled) r$conv_window else r$conv_window[seq_len(nRows), , drop = FALSE]
+  if (r$conv_filled) {
+    idx <- c(seq_len(nRows - r$conv_head) + r$conv_head, seq_len(r$conv_head))
+    r$conv_window[idx, , drop = FALSE]
+  } else {
+    r$conv_window[seq_len(nRows), , drop = FALSE]
+  }
 }
 
 

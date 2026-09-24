@@ -22,6 +22,34 @@ test_that("MkPrimeModel rejects invalid kPrimePrior", {
 })
 
 
+test_that("MkPrimeModel rejects out-of-range kprimeLogseriesC", {
+  expect_error(
+    MkPrimeModel(kPrimePrior = "logseries", kprimeLogseriesC = 0),
+    "kprimeLogseriesC"
+  )
+  expect_error(
+    MkPrimeModel(kPrimePrior = "logseries", kprimeLogseriesC = 1),
+    "kprimeLogseriesC"
+  )
+  expect_error(
+    MkPrimeModel(kPrimePrior = "logseries", kprimeLogseriesC = 1.5),
+    "kprimeLogseriesC"
+  )
+  expect_error(
+    MkPrimeModel(kPrimePrior = "logseries", kprimeLogseriesC = -0.2),
+    "kprimeLogseriesC"
+  )
+  expect_error(
+    MkPrimeModel(kPrimePrior = "logseries", kprimeLogseriesC = c(0.3, 0.4)),
+    "kprimeLogseriesC"
+  )
+  expect_error(
+    MkPrimeModel(kPrimePrior = "logseries", kprimeLogseriesC = NA_real_),
+    "kprimeLogseriesC"
+  )
+})
+
+
 # ---------------------------------------------------------------------------
 # 2. LogPrior logseries: matches manual density
 # ---------------------------------------------------------------------------
@@ -112,13 +140,21 @@ test_that("LogPrior logseries: c out of bounds returns -Inf", {
     kPrime         = 2L
   )
 
-  bad_c_zero <- MkPrimeModel(kPrimePrior = "logseries",
-                              kprimeLogseriesC = 0.0, expSteps = 10)
-  bad_c_one  <- MkPrimeModel(kPrimePrior = "logseries",
-                              kprimeLogseriesC = 1.0, expSteps = 10)
+  # MkPrimeModel() now rejects an out-of-range kprimeLogseriesC at
+  # construction (see "MkPrimeModel rejects out-of-range kprimeLogseriesC"),
+  # so an invalid c can no longer reach LogPrior via the constructor. This
+  # test still pins LogPrior's own defensive -Inf guard as a second line of
+  # defense for a model object mutated after construction (e.g. by hand, or
+  # restored from an old checkpoint predating that validation).
+  badCZero <- MkPrimeModel(kPrimePrior = "logseries",
+                           kprimeLogseriesC = 0.5, expSteps = 10)
+  badCZero$kprimeLogseriesC <- 0.0
+  badCOne  <- MkPrimeModel(kPrimePrior = "logseries",
+                           kprimeLogseriesC = 0.5, expSteps = 10)
+  badCOne$kprimeLogseriesC <- 1.0
 
-  expect_equal(MkPrime:::LogPrior(base_state, bad_c_zero, mkd), -Inf)
-  expect_equal(MkPrime:::LogPrior(base_state, bad_c_one,  mkd), -Inf)
+  expect_equal(MkPrime:::LogPrior(base_state, badCZero, mkd), -Inf)
+  expect_equal(MkPrime:::LogPrior(base_state, badCOne,  mkd), -Inf)
 })
 
 
