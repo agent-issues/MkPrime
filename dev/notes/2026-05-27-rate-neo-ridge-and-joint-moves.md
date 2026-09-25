@@ -13,8 +13,18 @@
 - **B (deterministic trans-invariant move) — DEFERRED.** Profile first.
 
 **rb-equivalence smoke results (Hamilton, 2026-05-27):**
-- pid 950 `by_nt_9v` (trans-only): scalar params all PASS (max rhat 1.008, min ESS 624). Tree topology marginal (cid_to_median rhat 1.09, hardcoded exception in compare.R — known pre-existing).
-- pid 635 `by_nt_9v` (mixed): scalar params all PASS (max rhat 1.014, min ESS 321). Tree topology cid_to_median ESS 115 < 128 threshold — short-run artefact; estimated ~59 min MkPrime needed to hit tree ESS target (only 29 min ran).
+- pid 950 `by_nt_9v`: scalar params all PASS (max rhat 1.008, min ESS 624). Tree topology marginal (cid_to_median rhat 1.09, hardcoded exception in compare.R — known pre-existing).
+  > **Correction (2026-09-24, agent-issues/MkPrime#217, RB-115):** claimed — pid 950 is
+  > "trans-only". Actually true — pid 950 is 12 taxa × 8 characters, 6 trans + 2 neo
+  > (`revbayes-bug-report.md`'s reproduction data), not trans-only.
+- pid 635 `by_nt_9v`: scalar params all PASS (max rhat 1.014, min ESS 321). Tree topology cid_to_median ESS 115 < 128 threshold — short-run artefact; estimated ~59 min MkPrime needed to hit tree ESS target (only 29 min ran).
+  > **Correction (2026-09-24, agent-issues/MkPrime#217, RB-115):** claimed — implicitly "all
+  > PASS" (only scalar params are called out as PASS, but the cell as a whole is not flagged
+  > as failing). Actually true — pid 635 is not a `pid == "950"` `cid_to_median` exception, so
+  > `compare.R`'s gate (`rhat < target_rhat & ess > target_ess`, `compare.R:264`) fails this
+  > cell on `cid_to_median` (ESS 115 < 128 target) even though every individual scalar param
+  > passed;
+  > `compare.R` would exit non-zero for this cell, not report it as "all PASS".
 
 **Context:** Branch `fix/partition-rate-normalisation` (commits `c739d0c`,
 `9e68cad`, `4a38326`), now merged, landed RB-style partition-rate normalisation. Audit

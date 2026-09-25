@@ -42,12 +42,13 @@ Rscript $REPO/render_rev.R $PID $MODEL \
   --ess=$TARGET_ESS --max-time=$MAX_TIME \
   --neo-path=$NEOTRANS/inst/projects/project${PID}.neo.nex \
   --trans-path=$NEOTRANS/inst/projects/project${PID}.trans.nex \
-  --out-dir=$CELL
+  --out-dir=$CELL --cellinfo-dir=$OUT
 
+RB_BIN=${RB_BIN:-/nobackup/pjjg18/revbayes/projects/cmake/build-pr816/rb}
 cd $CELL
 t0=$SECONDS
 set +e
-${RB_BIN:-/nobackup/pjjg18/revbayes/projects/cmake/build-pr816/rb} long_${MODEL}.Rev
+$RB_BIN long_${MODEL}.Rev
 rb_exit=$?
 set -e
 rb_wall=$((SECONDS - t0))
@@ -58,5 +59,6 @@ if [ $rb_exit -ne 0 ]; then
   exit $rb_exit
 fi
 
-Rscript $REPO/post_rb.R $PID $MODEL --wall=$rb_wall --out-dir=$OUT --rb-dir=$CELL
+Rscript $REPO/post_rb.R $PID $MODEL --wall=$rb_wall --out-dir=$OUT --rb-dir=$CELL \
+  --cellinfo-dir=$OUT --rb-bin=$RB_BIN
 echo "[rb-only] cell done: ${PID}_${MODEL}"

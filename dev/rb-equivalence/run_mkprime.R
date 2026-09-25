@@ -3,9 +3,17 @@
 #
 # Usage:
 #   Rscript dev/rb-equivalence/run_mkprime.R <pid> <model> \
-#     [--rhat=1.025] [--ess=128] [--max-time=3600] [--out-dir=dev/rb-equivalence/out]
+#     [--rhat=1.025] [--ess=128] [--max-time=3600] [--out-dir=dev/rb-equivalence/out] \
+#     [--resume]
 #
 # <model> ∈ {by_nt_9v, by_nt_kv}.
+#
+# By default any existing checkpoint for this (pid, model) is discarded before
+# the run starts, so a fresh invocation always reflects the CLI options and
+# code version given to it (agent-issues/MkPrime#215, RB-106: auto-resume
+# silently ignored new --ess/--rhat/--max-time and mixed samples from an
+# earlier code version into the posterior). Pass --resume to opt back in to
+# the old auto-resume behaviour for a genuinely interrupted run.
 #
 # Output:
 #   dev/rb-equivalence/out/mkprime_<pid>_<model>.rds containing the posterior,
@@ -43,8 +51,12 @@ pid <- args[[1]]
 model <- args[[2]]
 
 opt <- list(rhat = 1.025, ess = 128, max_time = 3600,
-            out_dir = file.path(script_dir, "out"))
+            out_dir = file.path(script_dir, "out"), resume = FALSE)
 for (a in args[-(1:2)]) {
+  if (a == "--resume") {
+    opt$resume <- TRUE
+    next
+  }
   kv <- strsplit(sub("^--", "", a), "=", fixed = TRUE)[[1]]
   if (length(kv) != 2L) stop("Bad option: ", a)
   opt[[gsub("-", "_", kv[[1]])]] <- kv[[2]]
@@ -52,22 +64,14 @@ for (a in args[-(1:2)]) {
 opt$rhat <- as.numeric(opt$rhat)
 opt$ess <- as.numeric(opt$ess)
 opt$max_time <- as.numeric(opt$max_time)
+opt$resume <- isTRUE(opt$resume) || identical(opt$resume, "TRUE") ||
+  identical(opt$resume, "true")
 dir.create(opt$out_dir, showWarnings = FALSE, recursive = TRUE)
 
 cat(sprintf("[run_mkprime] pid=%s model=%s target=(rhat<%.3f, ess>%d) max_time=%ds\n",
             pid, model, opt$rhat, opt$ess, opt$max_time))
 
-# --- Load frozen matrix selection ------------------------------------------
-
-matrices_path <- file.path(script_dir, "matrices.rds")
-if (!file.exists(matrices_path)) {
-  stop("matrices.rds missing; run select_matrices.R first")
-}
-matrices <- readRDS(matrices_path)
-info <- matrices[[pid]]
-if (is.null(info)) stop("pid '", pid, "' not in matrices.rds")
-
-# --- Read splits, combine, build phyDat ------------------------------------
+# --- Read splits, derive the canonical (shared-with-RB) cell info ----------
 
 neotrans_proj <- if (nzchar(Sys.getenv("NEOTRANS"))) {
   file.path(Sys.getenv("NEOTRANS"), "inst", "projects")
@@ -81,17 +85,28 @@ trans_mat <- ReadSplit(file.path(neotrans_proj,
                                  sprintf("project%s.trans.nex", pid)))
 neo_mat <- ReadSplit(file.path(neotrans_proj,
                                sprintf("project%s.neo.nex", pid)))
-comb <- CombineSplits(trans_mat, neo_mat)
-stopifnot(comb$nTrans == info$nTrans, comb$nNeo == info$nNeo)
 
+# PrepareCellInfo() is the single source of truth for k/nChar/taxa that
+# render_rev.R also calls; WriteOrCheckCellInfo() asserts the two scripts
+# agree, whichever runs first (agent-issues/MkPrime#214).
+cellInfo <- PrepareCellInfo(trans_mat, neo_mat, model)
+cellinfo_path <- file.path(opt$out_dir,
+                           sprintf("cellinfo_%s_%s.rds", pid, model))
+WriteOrCheckCellInfo(cellinfo_path, cellInfo)
+
+# --- Build MkPrimeData ------------------------------------------------------
+# Built from cellInfo's canonical (taxon-intersected, polymorphism-sanitised)
+# matrices -- the same ones render_rev.R writes for RB to read.
+
+comb <- CombineSplits(cellInfo$transMatCanonical, cellInfo$neoMatCanonical)
 phy <- MatrixToCombinedPhyDat(comb$matrix)
 
-# --- Build MkPrimeData -----------------------------------------------------
-
-neoIdx <- BuildNeoIdx(info, model)
-knownStates <- BuildKnownStates(info, model)
-
-mkd <- MkPrimeData(phy, neomorphic = neoIdx, knownStates = knownStates)
+mkd <- MkPrimeData(phy, neomorphic = cellInfo$neoIdx,
+                   knownStates = cellInfo$knownStates)
+stopifnot(
+  sum(mkd$type == "neomorphic") == cellInfo$nNeoFinal,
+  sum(mkd$type == "known") == cellInfo$nTransFinal
+)
 
 cat(sprintf("[run_mkprime] data: %d tips, %d chars (after invariant drop), \\
 %d neo, %d trans-known\n",
@@ -125,9 +140,13 @@ mcmc <- MkPrimeMCMC(
 )
 
 # --- Run -------------------------------------------------------------------
+# overwrite = TRUE unless --resume: a stale checkpoint left by a killed or
+# timed-out prior run must not be silently auto-resumed under new CLI
+# options / a new code version (agent-issues/MkPrime#215, RB-106).
 
 t0 <- Sys.time()
-posterior <- RunMkPrime(data = mkd, model = mkm, mcmc = mcmc)
+posterior <- RunMkPrime(data = mkd, model = mkm, mcmc = mcmc,
+                        overwrite = !opt$resume)
 t1 <- Sys.time()
 wall_total <- as.numeric(difftime(t1, t0, units = "secs"))
 
@@ -208,7 +227,10 @@ result <- list(
     rateLogSdShape = 1, rateLogSdRate = 1,
     rateLossMeanlog = 0, rateLossSdlog = 2,
     rateNeoMeanlog = 0, rateNeoSdlog = 2
-  )
+  ),
+  cell_info = cellInfo,     # #214: what data/k/taxa this run actually used
+  provenance = HarnessProvenance(script_dir),  # #215: tell current from stale
+  resumed = opt$resume
 )
 saveRDS(result, out_path)
 cat(sprintf("[run_mkprime] Saved: %s\n", out_path))
@@ -227,4 +249,8 @@ cat(sprintf("[run_mkprime] Saved: %s\n", out_path))
 # $coding                              "variable"
 # $nCat                                6L
 # $prior_spec                          list of prior hyperparams (for assert)
+# $cell_info                           PrepareCellInfo() result: k/nChar/taxa
+#                                       actually used (#214 equality check)
+# $provenance                          HarnessProvenance() result (#215)
+# $resumed                             logical; TRUE iff --resume was passed
 # ===========================================================================

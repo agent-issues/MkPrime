@@ -67,6 +67,43 @@ if (!identical(mk$host, rb$host)) {
                   mk$host, rb$host))
 }
 
+# agent-issues/MkPrime#214: refuse to compare cells that weren't provably fed
+# the same k/nChar/taxa (both sides get this from the shared cellinfo_*.rds
+# cache written by render_rev.R / run_mkprime.R, so a match here means the
+# equality check already passed at run time -- this just refuses to compare
+# if either rds predates that fix and has no cell_info at all).
+if (is.null(mk$cell_info) || is.null(rb$cell_info)) {
+  stop(
+    "cell_info missing from mkprime and/or rb rds -- rerun run_mkprime.R / ",
+    "render_rev.R + post_rb.R (agent-issues/MkPrime#214); refusing to ",
+    "compare a cell with no data-provenance guarantee."
+  )
+}
+if (!identical(mk$cell_info, rb$cell_info)) {
+  stop("cell_info mismatch between mkprime and rb rds -- the two samplers ",
+       "were not fed the same data/k/taxa for this cell (agent-issues/MkPrime#214).")
+}
+
+# agent-issues/MkPrime#215 (RB-107): a template edit must invalidate a
+# previously-rendered rb_*.rds even though nothing here recomputes mtimes.
+mkTH <- mk$provenance$templateHash
+rbTH <- rb$provenance$templateHash
+if (is.na(mkTH) || is.na(rbTH)) {
+  warning("templateHash unavailable on one or both rds (older run, or no ",
+          "git checkout at run time) -- cannot verify the Rev templates ",
+          "haven't drifted since this cell was rendered.")
+} else if (!identical(mkTH, rbTH)) {
+  stop("templateHash mismatch between mkprime and rb rds -- the RB templates ",
+       "changed between the two runs (agent-issues/MkPrime#215); rerun both.")
+}
+
+# agent-issues/MkPrime#215: a resumed MkPrime run's wall_ratio is not
+# comparable (wall_total only times the resumed segment).
+if (isTRUE(mk$resumed)) {
+  warning("mk$resumed is TRUE: wall_ratio for this cell is not meaningful ",
+          "(wall_total only covers the resumed segment).")
+}
+
 # --- Extract per-source scalar samples (MkP) -------------------------------
 
 mk_scalar_per_run <- mk$per_run_scalars
@@ -166,6 +203,14 @@ tree_ess_per_source <- vapply(all_trees_list, function(trs) {
 
 # --- Assemble long summary ------------------------------------------------
 
+# agent-issues/MkPrime#215 (RB-107, last bullet): summary.csv previously
+# de-duplicated purely on (pid, model, param), so a stale row could not be
+# told apart from a current one. cellinfo_hash + mkp_git_sha let a reader
+# (or a future automated check) see whether two rows for the same cell came
+# from the same data/code, without changing the de-dup key itself -- the
+# newest run for a cell is still what should win.
+cellinfo_hash <- rlang::hash(mk$cell_info)
+
 rows <- data.frame(
   pid = pid, model = model,
   param = c(scalar_cols, "cid_to_median"),
@@ -175,6 +220,9 @@ rows <- data.frame(
   wall_mkp_tree_target_est = mk$wall_to_tree_target_estimated %||% NA_real_,
   wall_rb = rb$wall_to_target,
   wall_ratio = mk$wall_to_target / rb$wall_to_target,
+  cellinfo_hash = cellinfo_hash,
+  mkp_git_sha = mk$provenance$gitSha %||% NA_character_,
+  mkp_resumed = isTRUE(mk$resumed),
   stringsAsFactors = FALSE
 )
 rows$passed <- rows$rhat < opt$target_rhat & rows$ess > opt$target_ess
@@ -183,6 +231,7 @@ tree_rows <- data.frame(
   pid = pid, model = model,
   source = names(tree_ess_per_source),
   tree_ess = as.numeric(tree_ess_per_source),
+  cellinfo_hash = cellinfo_hash,
   stringsAsFactors = FALSE
 )
 
