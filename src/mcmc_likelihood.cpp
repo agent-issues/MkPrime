@@ -56,6 +56,10 @@ double singleton_site_prob_jc(IntegerVector parent, IntegerVector child,
                               int kStates, NumericVector root_freqs,
                               NumericVector rate_multipliers);
 
+double uninf_nonconst_prob_jc(IntegerVector parent, IntegerVector child,
+                              NumericVector edge_length, int nTip,
+                              int kStates, NumericVector rate_multipliers);
+
 double constant_site_prob_mkn(IntegerVector parent, IntegerVector child,
                               NumericVector edge_length, int nTip,
                               double rate_loss, NumericVector root_freqs,
@@ -2352,11 +2356,11 @@ double const_site_prob_for_k(
     NumericVector rootFreqs(kStates, 1.0 / kStates);
     double p = constant_site_prob_jc(parent, child, edgeLen, data.nTip,
                                       kStates, rootFreqs, acrvRates);
-    // L5-trivial: informative coding adds the JC singleton probability.
+    // Informative coding adds the non-constant parsimony-uninformative mass.
     // Het+informative remains gated upstream (see het_singleton_site_prob).
     if (data.codingType == 2) {
-      p += singleton_site_prob_jc(parent, child, edgeLen, data.nTip,
-                                   kStates, rootFreqs, acrvRates);
+      p += uninf_nonconst_prob_jc(parent, child, edgeLen, data.nTip,
+                                  kStates, acrvRates);
     }
     return p;
   }
@@ -2406,8 +2410,8 @@ std::vector<double> asc_probs_masked(
       pm[j] += neo
         ? singleton_site_prob_mkn_impl(parent, child, edgeLen, nTip, rateLoss,
                                        rootFreqs, rates, masks[j])
-        : singleton_site_prob_jc_impl(parent, child, edgeLen, nTip, kStates,
-                                      rootFreqs, rates, masks[j]);
+        : uninf_nonconst_prob_jc_impl(parent, child, edgeLen, nTip, kStates,
+                                      rates, masks[j]);
     }
     p[which[j]] = pm[j];
   }
@@ -2660,8 +2664,8 @@ double cpp_partition_log_likelihood(
       }
       if (coding != 0) {
         double p = knownConstProb;
-        if (coding == 2) p += singleton_site_prob_jc(parent, child, scaledEdge, nTip,
-                                                      kStates, rootFreqs, rates);
+        if (coding == 2) p += uninf_nonconst_prob_jc(parent, child, scaledEdge, nTip,
+                                                      kStates, rates);
         {
           const MaskTally masks = tally_masks(data, part.globalCharIdx, part.tipStates.ncol());
           ll -= masked_asc_log1m(masks, p, asc_probs_masked(
@@ -2777,8 +2781,8 @@ double cpp_partition_log_likelihood(
         }
         if (coding != 0) {
           double p = transConstProb;
-          if (coding == 2) p += singleton_site_prob_jc(parent, child, scaledEdge, nTip,
-                                                        kp0, rootFreqs, rates);
+          if (coding == 2) p += uninf_nonconst_prob_jc(parent, child, scaledEdge, nTip,
+                                                        kp0, rates);
           {
             const MaskTally masks = tally_masks(data, part.globalCharIdx, nCharPart);
             ll -= masked_asc_log1m(masks, p, asc_probs_masked(
@@ -2906,8 +2910,8 @@ double cpp_partition_log_likelihood(
           }
           if (coding != 0) {
             double p = subConstProb;
-            if (coding == 2) p += singleton_site_prob_jc(parent, child, scaledEdge, nTip,
-                                                          kp, rootFreqs, rates);
+            if (coding == 2) p += uninf_nonconst_prob_jc(parent, child, scaledEdge, nTip,
+                                                          kp, rates);
             {
               const MaskTally masks = tally_masks(data, subGlobal, nSub);
               subLl -= masked_asc_log1m(masks, p, asc_probs_masked(

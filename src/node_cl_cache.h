@@ -34,6 +34,9 @@ double constant_site_prob_mkn(IntegerVector parent, IntegerVector child,
                               NumericVector edge_length, int nTip,
                               double rate_loss, NumericVector root_freqs,
                               NumericVector rate_multipliers);
+double uninf_nonconst_prob_jc(IntegerVector parent, IntegerVector child,
+                              NumericVector edge_length, int nTip,
+                              int kStates, NumericVector rate_multipliers);
 double singleton_site_prob_jc(IntegerVector parent, IntegerVector child,
                               NumericVector edge_length, int nTip,
                               int kStates, NumericVector root_freqs,
@@ -576,8 +579,10 @@ static void populate_cache(
     const NumericVector& absEdgeLen, const IntegerVector& kPrime,
     double rateLoss, double rateLogSd, double rateNeo) {
 
-  // Fast path: full rebuild when topology or unit structure is stale
-  if (!cache.topoValid || !cache.structureValid) {
+  // Fast path: full rebuild when topology or unit structure is stale, or
+  // when ACRV switches on or off: each unit's nCat was fixed at allocate().
+  if (!cache.topoValid || !cache.structureValid ||
+      cache.useAcrv != (rateLogSd > 0.0)) {
     populate_cache_full(cache, data, parent, child, absEdgeLen,
                         kPrime, rateLoss, rateLogSd, rateNeo);
     return;
@@ -588,12 +593,9 @@ static void populate_cache(
 
   // Update ACRV rates if rateLogSd changed
   if (cache.cachedRateLogSd != rateLogSd) {
-    cache.useAcrv = (rateLogSd > 0.0);
     if (cache.useAcrv) {
       NumericVector rv = ncl_acrv_rates(rateLogSd, data.nCat, data.acrvZ);
       cache.rates.assign(rv.begin(), rv.end());
-    } else {
-      cache.rates = {1.0};
     }
     cache.cachedRateLogSd = rateLogSd;
   }
@@ -688,10 +690,10 @@ static double cache_total_loglik(
       NumericVector rootFreqs(k, 1.0 / k);
       double pk = constant_site_prob_jc(parent, child, transAscEl, nTip,
                                         k, rootFreqs, rates);
-      // LIKE-001 fix: informative coding adds the JC singleton probability.
+      // Informative coding adds the non-constant parsimony-uninformative mass.
       if (cache.coding == 2) {
-        pk += singleton_site_prob_jc(parent, child, transAscEl, nTip,
-                                     k, rootFreqs, rates);
+        pk += uninf_nonconst_prob_jc(parent, child, transAscEl, nTip, k,
+                                     rates);
       }
       jcAscByK[k] = pk;
     }

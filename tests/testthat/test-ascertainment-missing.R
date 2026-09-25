@@ -11,8 +11,9 @@
   tree
 }
 
-# P(constant [or singleton] among the observed tips), by enumerating every
-# completion of the missing tips: independent of the masked kernels.
+# P(constant [or parsimony-uninformative] among the observed tips), by
+# enumerating every completion of the missing tips: independent of the
+# masked kernels.
 .BruteAscProb <- function(tree, missing, k, neo, rateLoss, rates,
                           informative) {
   parent <- tree$edge[, 1]
@@ -31,19 +32,18 @@
                                 rep(1 / k, k), rates)
     })
   }
-  patterns <- list()
-  for (s in seq_len(k) - 1L) {
+  # Uninformative: fewer than two states each occur twice or more.
+  obsPatterns <- as.matrix(expand.grid(rep(list(seq_len(k) - 1L),
+                                           length(obs))))
+  keep <- apply(obsPatterns, 1, function(x) {
+    counts <- tabulate(x + 1L, k)
+    if (informative) sum(counts >= 2L) < 2L else sum(counts > 0L) == 1L
+  })
+  patterns <- lapply(which(keep), function(i) {
     p <- integer(nTip)
-    p[obs] <- s
-    patterns <- c(patterns, list(p))
-    if (informative) {
-      for (s2 in setdiff(seq_len(k) - 1L, s)) for (j in obs) {
-        q <- p
-        q[j] <- s2
-        patterns <- c(patterns, list(q))
-      }
-    }
-  }
+    p[obs] <- obsPatterns[i, ]
+    p
+  })
   fills <- as.matrix(expand.grid(rep(list(seq_len(k) - 1L), length(mis))))
   # Return:
   sum(vapply(patterns, function(p) {

@@ -78,6 +78,22 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// uninf_nonconst_prob_jc
+double uninf_nonconst_prob_jc(Rcpp::IntegerVector parent, Rcpp::IntegerVector child, Rcpp::NumericVector edge_length, int nTip, int kStates, Rcpp::NumericVector rate_multipliers);
+RcppExport SEXP _MkPrime_uninf_nonconst_prob_jc(SEXP parentSEXP, SEXP childSEXP, SEXP edge_lengthSEXP, SEXP nTipSEXP, SEXP kStatesSEXP, SEXP rate_multipliersSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type parent(parentSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type child(childSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type edge_length(edge_lengthSEXP);
+    Rcpp::traits::input_parameter< int >::type nTip(nTipSEXP);
+    Rcpp::traits::input_parameter< int >::type kStates(kStatesSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type rate_multipliers(rate_multipliersSEXP);
+    rcpp_result_gen = Rcpp::wrap(uninf_nonconst_prob_jc(parent, child, edge_length, nTip, kStates, rate_multipliers));
+    return rcpp_result_gen;
+END_RCPP
+}
 // singleton_site_prob_jc
 double singleton_site_prob_jc(Rcpp::IntegerVector parent, Rcpp::IntegerVector child, Rcpp::NumericVector edge_length, int nTip, int kStates, Rcpp::NumericVector root_freqs, Rcpp::NumericVector rate_multipliers);
 RcppExport SEXP _MkPrime_singleton_site_prob_jc(SEXP parentSEXP, SEXP childSEXP, SEXP edge_lengthSEXP, SEXP nTipSEXP, SEXP kStatesSEXP, SEXP root_freqsSEXP, SEXP rate_multipliersSEXP) {
@@ -1049,6 +1065,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_pruning_jc_acrv_collapsed", (DL_FUNC) &_MkPrime_pruning_jc_acrv_collapsed, 7},
     {"_MkPrime_pruning_mkn_acrv", (DL_FUNC) &_MkPrime_pruning_mkn_acrv, 7},
     {"_MkPrime_constant_site_prob_jc", (DL_FUNC) &_MkPrime_constant_site_prob_jc, 7},
+    {"_MkPrime_uninf_nonconst_prob_jc", (DL_FUNC) &_MkPrime_uninf_nonconst_prob_jc, 6},
     {"_MkPrime_singleton_site_prob_jc", (DL_FUNC) &_MkPrime_singleton_site_prob_jc, 7},
     {"_MkPrime_constant_site_prob_jc_collapsed", (DL_FUNC) &_MkPrime_constant_site_prob_jc_collapsed, 7},
     {"_MkPrime_singleton_site_prob_jc_collapsed", (DL_FUNC) &_MkPrime_singleton_site_prob_jc_collapsed, 7},

@@ -2,6 +2,7 @@
 #include "fast_exp.h"
 #include "mkn_rates.h"
 #include "ascertainment.h"
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -239,6 +240,161 @@ double singleton_site_prob_jc_impl(const Rcpp::IntegerVector& parent,
 
   total_singleton_prob /= nCat;
   return total_singleton_prob * kStates * (kStates - 1);
+}
+
+// ---------------------------------------------------------------------------
+// uninf_nonconst_prob_jc
+//
+// P(parsimony-uninformative but not constant) for JC(k): the mass that
+// coding = "informative" removes beyond the constant patterns. A pattern
+// over the observed tips is uninformative iff at most one state occurs twice
+// or more; for k = 2 that is exactly the singletons, but for k >= 3 it also
+// holds e.g. (0,0,0,1,2), which the singleton term misses.
+//
+// Such a pattern is a background state on a set B of >= 2 tips plus m
+// deviant tips T, each in its own non-background state; or (nObs <= k) all
+// observed tips distinct. Under JC the probability of a labelled pattern is
+// invariant under state permutation, so fix the background at 0 and give T
+// a fixed injective labelling; each (T, labelling) class then holds
+// k * (k-1)_m patterns (falling factorial). A pruning pass sums over every
+// T at once, tracking m and three classes of node state x:
+//   A(m): x = background;
+//   D(m): x = the label of a deviant tip below, summed over those tips;
+//   F(m): x = a non-background state no tip below carries.
+// Everything with m >= k is dropped: it only feeds totals whose
+// falling-factorial weight is zero. Cost O(nNode * k^2) per rate category.
+// ---------------------------------------------------------------------------
+
+double uninf_nonconst_prob_jc_impl(const Rcpp::IntegerVector& parent,
+                                   const Rcpp::IntegerVector& child,
+                                   const Rcpp::NumericVector& edge_length,
+                                   int nTip, int kStates,
+                                   const Rcpp::NumericVector& rate_multipliers,
+                                   const uint8_t* missing) {
+  if (kStates <= 2) {
+    const Rcpp::NumericVector rootFreqs(kStates, 1.0 / kStates);
+    return singleton_site_prob_jc_impl(parent, child, edge_length, nTip,
+                                       kStates, rootFreqs, rate_multipliers,
+                                       missing);
+  }
+  int nObs = 0;
+  for (int t = 0; t < nTip; ++t) nObs += !(missing && missing[t]);
+  if (nObs < 2) return 0.0;
+
+  const int nEdge   = parent.size();
+  const int nCat    = rate_multipliers.size();
+  const int maxNode = 2 * nTip - 1;
+  const int root    = nTip + 1;
+  const int mMax    = std::min(kStates - 1, nObs);
+  const int width   = mMax + 1;
+  const double k    = kStates;
+  const double inv_k = 1.0 / k;
+  const double km1   = k - 1.0;
+
+  // Per node: A, D, F, each of `width`, and the highest m reachable below.
+  std::vector<double> nodeA((maxNode + 1) * width), nodeD(nodeA.size()),
+                      nodeF(nodeA.size());
+  std::vector<int> top(maxNode + 1);
+  std::vector<double> msgB(width), msgO(width), msgF(width),
+                      newA(width), newD(width), newF(width);
+
+  // Falling factorial (k-1)_m.
+  std::vector<double> fall(width, 1.0);
+  for (int m = 1; m <= mMax; ++m) fall[m] = fall[m - 1] * (k - m);
+
+  double total = 0.0;
+  for (int cat = 0; cat < nCat; ++cat) {
+    const double rate = rate_multipliers[cat];
+
+    std::fill(nodeA.begin(), nodeA.end(), 0.0);
+    std::fill(nodeD.begin(), nodeD.end(), 0.0);
+    std::fill(nodeF.begin(), nodeF.end(), 0.0);
+    for (int n = 1; n <= maxNode; ++n) {
+      double* a = nodeA.data() + n * width;
+      double* f = nodeF.data() + n * width;
+      if (n <= nTip) {
+        a[0] = 1.0;
+        if (missing && missing[n - 1]) {
+          f[0] = 1.0;
+          top[n] = 0;
+        } else {
+          nodeD[n * width + 1] = 1.0;
+          top[n] = 1;
+        }
+      } else {
+        a[0] = 1.0;  // empty product: A = F = 1, D = 0
+        f[0] = 1.0;
+        top[n] = 0;
+      }
+    }
+
+    for (int e = nEdge - 1; e >= 0; --e) {
+      const int par = parent[e];
+      const int ch  = child[e];
+      const double t         = edge_length[e] * rate;
+      const double neg_expm1 = -std::expm1(-k * t / km1);
+      const double p_same    = inv_k + (1.0 - inv_k) * (1.0 - neg_expm1);
+      const double p_diff    = inv_k * neg_expm1;
+
+      const double* a = nodeA.data() + ch * width;
+      const double* d = nodeD.data() + ch * width;
+      const double* f = nodeF.data() + ch * width;
+      const int topCh = top[ch];
+      for (int m = 0; m <= topCh; ++m) {
+        const double fresh = k - 1.0 - m;  // non-background states unused below
+        msgB[m] = p_same * a[m] + p_diff * (d[m] + fresh * f[m]);
+        msgO[m] = p_same * d[m]
+                + p_diff * (m * a[m] + (m - 1.0) * d[m] + fresh * m * f[m]);
+        msgF[m] = p_same * f[m] + p_diff * (a[m] + d[m] + (fresh - 1.0) * f[m]);
+      }
+
+      double* pa = nodeA.data() + par * width;
+      double* pd = nodeD.data() + par * width;
+      double* pf = nodeF.data() + par * width;
+      const int topPar = top[par];
+      const int topNew = std::min(mMax, topPar + topCh);
+      std::fill_n(newA.begin(), topNew + 1, 0.0);
+      std::fill_n(newD.begin(), topNew + 1, 0.0);
+      std::fill_n(newF.begin(), topNew + 1, 0.0);
+      for (int i = 0; i <= topPar; ++i) {
+        for (int j = 0; j <= topCh && i + j <= topNew; ++j) {
+          newA[i + j] += pa[i] * msgB[j];
+          newD[i + j] += pd[i] * msgF[j] + pf[i] * msgO[j];
+          newF[i + j] += pf[i] * msgF[j];
+        }
+      }
+      std::copy_n(newA.begin(), topNew + 1, pa);
+      std::copy_n(newD.begin(), topNew + 1, pd);
+      std::copy_n(newF.begin(), topNew + 1, pf);
+      top[par] = topNew;
+    }
+
+    const double* a = nodeA.data() + root * width;
+    const double* d = nodeD.data() + root * width;
+    const double* f = nodeF.data() + root * width;
+    // R(m): P(one labelled pattern class with m deviants), summed over T.
+    auto rootProb = [&](int m) {
+      return inv_k * (a[m] + d[m] + (k - 1.0 - m) * f[m]);
+    };
+    const int mBg = std::min(mMax, nObs - 2);  // background on >= 2 tips
+    for (int m = 1; m <= mBg; ++m) total += k * fall[m] * rootProb(m);
+    if (nObs <= kStates) {
+      // All observed tips distinct: each such pattern appears once per
+      // choice of which tip is taken as background.
+      total += k * fall[nObs - 1] * rootProb(nObs - 1) / nObs;
+    }
+  }
+  return total / nCat;
+}
+
+// [[Rcpp::export]]
+double uninf_nonconst_prob_jc(Rcpp::IntegerVector parent,
+                              Rcpp::IntegerVector child,
+                              Rcpp::NumericVector edge_length,
+                              int nTip, int kStates,
+                              Rcpp::NumericVector rate_multipliers) {
+  return uninf_nonconst_prob_jc_impl(parent, child, edge_length, nTip,
+                                     kStates, rate_multipliers, nullptr);
 }
 
 // [[Rcpp::export]]
@@ -708,8 +864,8 @@ double singleton_site_prob_mkn(Rcpp::IntegerVector parent,
 
 
 // Ascertainment probability for one character with the tips flagged in
-// `missing` marginalised: the constant-site probability, plus the singleton
-// probability if `informative`. MkN (rate_loss) if `neomorphic`, else JC(k).
+// `missing` marginalised: the constant-site probability, plus the rest of
+// the parsimony-uninformative mass if `informative`. MkN (rate_loss) if `neomorphic`, else JC(k).
 
 // [[Rcpp::export]]
 double asc_site_prob_missing(Rcpp::IntegerVector parent,
@@ -736,12 +892,9 @@ double asc_site_prob_missing(Rcpp::IntegerVector parent,
   } else {
     constant_site_probs_jc_impl(parent, child, edge_length, nTip, kStates,
                                 rate_multipliers, {miss.data()}, &p);
-    if (informative) {
-      const Rcpp::NumericVector rootFreqs(kStates, 1.0 / kStates);
-      p += singleton_site_prob_jc_impl(parent, child, edge_length, nTip,
-                                       kStates, rootFreqs, rate_multipliers,
-                                       miss.data());
-    }
+    if (informative)
+      p += uninf_nonconst_prob_jc_impl(parent, child, edge_length, nTip,
+                                       kStates, rate_multipliers, miss.data());
   }
   // Return:
   return p;

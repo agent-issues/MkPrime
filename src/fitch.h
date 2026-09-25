@@ -4,7 +4,7 @@
 // Fitch parsimony scoring for Mk characters (M-119).
 //
 // Uses bitmask state sets: state i → bit (1 << i).
-// Missing data (-1) → all bits set.  k ≤ 26 (fits in uint32_t).
+// Missing data (-1) → all bits set.  Observed states < 32 (uint32_t).
 //
 // The tree is stored as (parent, child) vectors in any row order: the postorder
 // is derived from the topology, not from the array, because
@@ -89,9 +89,12 @@ inline int fitch_score_all(
 
   for (const auto& pp : parts) {
     const Rcpp::IntegerMatrix& tips = pp.first;
-    const int kStates = pp.second;
     const int nChar = tips.ncol();
-    const uint32_t allBits = (1u << kStates) - 1;
+    // Missing data gets every bit, not just the first k: k may exceed 32
+    // (known-k partitions pass k verbatim), and bits no tip carries cannot
+    // change the score, because every state set is then either All or a
+    // subset of the observed states.
+    const uint32_t allBits = ~0u;
 
     // State sets: indexed [nodeID * nChar + charIdx]
     // Node IDs are 1-based, so allocate nNode+1 slots.
@@ -102,6 +105,7 @@ inline int fitch_score_all(
       const int nodeID = t + 1;
       for (int c = 0; c < nChar; ++c) {
         int s = tips(t, c);  // 0-based state, or -1 for missing
+        if (s >= 32) Rcpp::stop("Fitch scoring supports at most 32 states");
         ss[nodeID * nChar + c] = (s < 0) ? allBits : (1u << s);
       }
     }

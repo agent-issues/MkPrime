@@ -28,6 +28,14 @@ double singleton_site_prob_jc_impl(const Rcpp::IntegerVector& parent,
                                    const Rcpp::NumericVector& rate_multipliers,
                                    const uint8_t* missing);
 
+// Parsimony-uninformative but non-constant mass; see ascertainment.cpp.
+double uninf_nonconst_prob_jc_impl(const Rcpp::IntegerVector& parent,
+                                   const Rcpp::IntegerVector& child,
+                                   const Rcpp::NumericVector& edge_length,
+                                   int nTip, int kStates,
+                                   const Rcpp::NumericVector& rate_multipliers,
+                                   const uint8_t* missing);
+
 void constant_site_probs_mkn_impl(const Rcpp::IntegerVector& parent,
                                   const Rcpp::IntegerVector& child,
                                   const Rcpp::NumericVector& edge_length,
