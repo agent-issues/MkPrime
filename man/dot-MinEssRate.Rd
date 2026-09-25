@@ -15,15 +15,22 @@
 \item{wallTimeSec}{Wall-clock seconds for the evaluation window.}
 
 \item{tuningTrees}{List of sampled topologies whose tree ESS enters the
-minimum, giving topology moves credit in the bandit (M-152).}
+minimum, giving topology moves credit in the bandit (M-152). Where
+\code{sampleMatrix} has a \code{topo_hash} column, the tree ESS is capped at one
+more than the number of topology changes it records.}
 
 \item{fixedCols}{Character vector naming the columns no move updates.}
 }
 \value{
-\code{.MinEssRate()} a list with the \code{rate} min(ESS)/\code{wallTimeSec} and
-the \code{ess} it came from; \code{.MinEssPerSec()} the rate alone. Both are \code{NA}
-where any gate ESS, or the tree ESS, cannot be computed: a window that
-froze a parameter or the topology is unassessable, not the best.
+\code{.MinEssRate()} a list with the \code{rate} min(ESS)/\code{wallTimeSec}, the
+\code{ess} it came from, and \code{frozen}: \code{TRUE} where the window never changed
+topology, \code{FALSE} where it did, \code{NA} where no trees were scored;
+\code{.MinEssPerSec()} the rate alone. The rate is \code{NA} where a gate
+ESS cannot be computed: a window that froze a parameter is unassessable,
+not the best. A window that froze the topology is scored on its scalar ESS
+and flagged \code{frozen}, so that \code{.BeatsIncumbent()} can rank it below any
+window that moved the topology without leaving tuning with nothing to
+compare when no candidate moves it.
 }
 \description{
 Compute min-ESS/s for a set of samples collected over a known wall-time.

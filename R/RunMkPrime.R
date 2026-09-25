@@ -1041,14 +1041,16 @@ RunMkPrime <- function(data, tree = NULL,
   tuningBuf        <- NULL
   tuningBufIdx     <- 0L
   tuningTreeBuf    <- list()
-  tuneWithTreeEss  <- !is.null(mcmc$minTreeEss) &&
+  topologyMoves    <- which(.MoveCategory(moveNames) == "Topology")
+  # Scored whenever the topology is free, not only under minTreeEss: priced
+  # on cost alone, topology moves lose weight they cannot win back (#222).
+  tuneWithTreeEss  <- length(topologyMoves) > 0L &&
     requireNamespace("TreeDist", quietly = TRUE)
-  tuningWindowStart <- NULL
+  tuningWindowSec  <- 0
   bestMinEssPerSec <- -Inf
   bestMinEss       <- NA_real_
   bestFrozen       <- NA
   bestWeights      <- moveWeights
-  topologyMoves    <- which(.MoveCategory(moveNames) == "Topology")
   tuningEverMoved  <- r$tuningEverMoved %||% FALSE
   tuningFreezeStreak <- r$tuningFreezeStreak %||% 0L
   convStreak       <- r$convStreak %||% 0L
@@ -1056,6 +1058,8 @@ RunMkPrime <- function(data, tree = NULL,
   tuningCandidates <- list()
   tuningCandIdx    <- 0L
   effectiveTuningBudget <- r$effectiveTuningBudget %||% mcmc$tuningBudget
+  tuningWindowSamples <- .TuningWindowSamples(effectiveTuningBudget,
+                                              mcmc$thin, tuningBatch)
 
   # M-149: Re-allocate tuning infrastructure on Tuning-phase resume.
   # The tuningBuf is normally allocated at the Warmup->Tuning transition,
@@ -1066,7 +1070,13 @@ RunMkPrime <- function(data, tree = NULL,
     tuningBuf <- matrix(NA_real_, nrow = tuningBufSize,
                         ncol = length(paramNames),
                         dimnames = list(NULL, paramNames))
-    tuningWindowStart <- proc.time()["elapsed"]
+    # A checkpoint taken mid-round holds the candidate then on trial; restart
+    # the round from the best schedule it had found, lest that candidate be
+    # promoted with no comparison (#221).
+    if (identical(names(r$tuningBestWeights), moveNames)) {
+      moveWeights <- r$tuningBestWeights
+    }
+    bestWeights <- moveWeights
     tuningCandidates <- .PerturbMoveWeights(
       moveWeights, pinnedWeights, moveNames, nPerturbations = 3L
     )
@@ -1144,6 +1154,7 @@ RunMkPrime <- function(data, tree = NULL,
     }
 
     .CheckMoveWeights(moveWeights)
+    batchClock <- proc.time()[["elapsed"]]
     result <- run_mcmc_batch_cpp(
       mcmcData, r$chainStates, r$betas,
       moveTypeCodes, transIdx0, sliceParamCodes, moveWeights,
@@ -1153,6 +1164,9 @@ RunMkPrime <- function(data, tree = NULL,
       hasNeo, nEdge,
       mcmc$cacheBonus
     )
+    # A tuning window is charged for its batches alone: checkpoints and
+    # progress callbacks between them would fall on fixed slots (#220).
+    batchSec <- proc.time()[["elapsed"]] - batchClock
 
     # Accept/propose counts, timing (M-092), and slice expansion counts
     for (ch in seq_len(nChains)) {
@@ -1378,9 +1392,8 @@ RunMkPrime <- function(data, tree = NULL,
             # samples for meaningful ESS. 4 windows per round (current + 3
             # perturbations), ~100 samples each.
             nCandidates <- 4L
-            minSamplesPerWindow <- 100L
             scaledBudget <- as.integer(
-              mcmc$thin * minSamplesPerWindow * nCandidates
+              mcmc$thin * .kTuningWindowSamples * nCandidates
             )
             baseBudget <- max(mcmc$tuningBudget, scaledBudget)
             effectiveTuningBudget <- if (is.finite(remainingIter)) {
@@ -1389,6 +1402,9 @@ RunMkPrime <- function(data, tree = NULL,
               baseBudget
             }
             r$effectiveTuningBudget <- effectiveTuningBudget
+            tuningWindowSamples <- .TuningWindowSamples(
+              effectiveTuningBudget, mcmc$thin, tuningBatch, nCandidates
+            )
             # Allocate tuning buffer
             tuningBufSize <- as.integer(effectiveTuningBudget / mcmc$thin) + 100L
             tuningBuf <- matrix(NA_real_, nrow = tuningBufSize,
@@ -1396,7 +1412,7 @@ RunMkPrime <- function(data, tree = NULL,
                                 dimnames = list(NULL, paramNames))
             tuningBufIdx     <- 0L
             tuningTreeBuf    <- list()
-            tuningWindowStart <- proc.time()["elapsed"]
+            tuningWindowSec  <- 0
             # Reset acceptance/timing counters for clean tuning measurement
             for (ch in seq_len(nChains)) {
               r$chain_accept[[ch]][]    <- 0L
@@ -1435,6 +1451,7 @@ RunMkPrime <- function(data, tree = NULL,
       # --- Tuning: min-ESS/s perturbation bandit ---
       tuningIterUsed <- tuningIterUsed + nBatch
       r$tuningIterUsed <- tuningIterUsed
+      tuningWindowSec <- tuningWindowSec + batchSec
 
       # M-126: Continue rho estimation from tuning buffer samples
       if (tuningBufIdx >= 50L) {
@@ -1446,11 +1463,10 @@ RunMkPrime <- function(data, tree = NULL,
       }
 
       # Evaluate current weight vector after each tuning window
-      if (tuningBufIdx >= 10L) {
-        windowTime <- proc.time()["elapsed"] - tuningWindowStart
+      if (tuningBufIdx >= tuningWindowSamples) {
         currentRate <- .MinEssRate(
           tuningBuf[seq_len(tuningBufIdx), , drop = FALSE],
-          windowTime,
+          tuningWindowSec,
           tuningTrees = if (tuneWithTreeEss && tuningBufIdx >= 20L) {
             tuningTreeBuf[seq_len(tuningBufIdx)]
           },
@@ -1480,13 +1496,18 @@ RunMkPrime <- function(data, tree = NULL,
         }
 
         # Move to next candidate or next round
-        tuningCandIdx <- tuningCandIdx + 1L
+        tuningCandIdx <- .NextTuningWindow(
+          tuningCandIdx, currentEssPerSec, length(tuningCandidates),
+          budgetLeft = tuningIterUsed < effectiveTuningBudget
+        )
         if (tuningCandIdx <= length(tuningCandidates)) {
-          # Try next perturbation candidate
-          moveWeights <- tuningCandidates[[tuningCandIdx]]
+          # Try next perturbation candidate, or re-measure the incumbent
+          if (tuningCandIdx > 0L) {
+            moveWeights <- tuningCandidates[[tuningCandIdx]]
+          }
           tuningBufIdx      <- 0L
           tuningTreeBuf     <- list()
-          tuningWindowStart <- proc.time()["elapsed"]
+          tuningWindowSec   <- 0
           # Reset counters for clean measurement
           for (ch in seq_len(nChains)) {
             r$chain_accept[[ch]][]    <- 0L
@@ -1536,7 +1557,7 @@ RunMkPrime <- function(data, tree = NULL,
             tuningCandIdx     <- 0L
             tuningBufIdx      <- 0L
             tuningTreeBuf     <- list()
-            tuningWindowStart <- proc.time()["elapsed"]
+            tuningWindowSec   <- 0
             bestMinEssPerSec  <- -Inf
             bestMinEss        <- NA_real_
             bestFrozen        <- NA
@@ -1551,6 +1572,7 @@ RunMkPrime <- function(data, tree = NULL,
       }
     }
     # Sample phase: no adaptation needed (weights frozen)
+    r$tuningBestWeights <- if (phase == "Tuning") bestWeights
 
     # Streaming checkpoint: fire when buffer was flushed this batch (Sample)
     if (phase == "Sample" && isStreaming &&
@@ -4428,11 +4450,18 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                     transIdx = integer(0), mcmcData = NULL) {
   # Detect XPtr mode: mcmcData is provided and stateOrPtr is externalptr
   if (!is.null(mcmcData) && inherits(stateOrPtr, "externalptr")) {
-    moveCode <- .kMoveTypes[[move$name]]
-    # charIdx is overloaded: the drawn character for int_walk, and the
-    # parameter selector for the slice samplers (as in run_mcmc_batch_cpp).
+    # Per-class moves (scale_class_rate_log_sd_1, ...) are registered by type,
+    # as in the batch path.
+    key <- if (move$name %in% names(.kMoveTypes)) move$name else
+      move$type %||% move$name
+    moveCode <- .kMoveTypes[[key]]
+    # charIdx is overloaded: the drawn character for int_walk, the parameter
+    # selector for the slice samplers, and the 1-based class for
+    # scale_class_rate_log_sd (as in run_mcmc_batch_cpp).
     charIdx <- if (moveCode == 7L && length(transIdx) > 0L) {
       sample(transIdx, 1L) - 1L
+    } else if (moveCode == 31L) {
+      as.integer(move$classIdx %||% 0L)
     } else {
       as.integer(move$sliceParamIdx %||% 0L)
     }
@@ -5552,7 +5581,9 @@ if (n < 2L * windowSize) {
 #' @param sampleMatrix Numeric matrix (rows = samples, columns = parameters).
 #' @param wallTimeSec Wall-clock seconds for the evaluation window.
 #' @param tuningTrees List of sampled topologies whose tree ESS enters the
-#'   minimum, giving topology moves credit in the bandit (M-152).
+#'   minimum, giving topology moves credit in the bandit (M-152). Where
+#'   `sampleMatrix` has a `topo_hash` column, the tree ESS is capped at one
+#'   more than the number of topology changes it records.
 #' @param fixedCols Character vector naming the columns no move updates.
 #'
 #' @return `.MinEssRate()` a list with the `rate` min(ESS)/`wallTimeSec`, the
@@ -5591,6 +5622,12 @@ if (n < 2L * windowSize) {
     )
     if (is.null(treeEss)) return(noRate)
     frozen <- !is.finite(treeEss)
+    # A window that flips topology once can report a pseudo-ESS near its
+    # length (#219): it earns credit only for the moves it made.
+    if ("topo_hash" %in% colnames(sampleMatrix)) {
+      hash <- sampleMatrix[seq_along(tuningTrees), "topo_hash"]
+      treeEss <- min(treeEss, sum(diff(hash) != 0) + 1)
+    }
     if (!frozen) minEss <- min(minEss, treeEss)
   }
 

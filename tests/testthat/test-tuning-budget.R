@@ -90,3 +90,27 @@ test_that(".TuningPayback does not vote on a frozen window's rate", {
                list(streak = 0L, freeze = FALSE))
   expect_true(MkPrime:::.TuningPayback(1L, 1e6, 10, 200, frozen = FALSE)$freeze)
 })
+
+test_that(".TuningWindowSamples fills a window to ~100 samples (#78)", {
+  # thin = 17 gives 29 samples a batch: four batches clear 100.
+  expect_identical(MkPrime:::.TuningWindowSamples(10000L, 17L, 500L), 116L)
+  expect_identical(MkPrime:::.TuningWindowSamples(10000L, 5L, 500L), 100L)
+})
+
+test_that(".TuningWindowSamples keeps a round within the budget", {
+  # 4750 iterations buy two 500-iteration batches per candidate.
+  expect_identical(MkPrime:::.TuningWindowSamples(4750L, 17L, 500L), 58L)
+  # Never below the ten rows the rate needs.
+  expect_identical(MkPrime:::.TuningWindowSamples(100L, 100L, 500L), 10L)
+})
+
+test_that(".NextTuningWindow re-measures an unassessable incumbent (#221)", {
+  expect_identical(MkPrime:::.NextTuningWindow(0L, NA_real_, 3L, TRUE), 0L)
+  # Out of budget: close the round on the incumbent, adopting nothing.
+  expect_identical(MkPrime:::.NextTuningWindow(0L, NA_real_, 3L, FALSE), 4L)
+  # With no candidates there is nothing to gate.
+  expect_identical(MkPrime:::.NextTuningWindow(0L, NA_real_, 0L, TRUE), 1L)
+  expect_identical(MkPrime:::.NextTuningWindow(0L, 2, 3L, TRUE), 1L)
+  # A candidate's window moves on whatever it scored.
+  expect_identical(MkPrime:::.NextTuningWindow(2L, NA_real_, 3L, TRUE), 3L)
+})

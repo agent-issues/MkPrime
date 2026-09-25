@@ -348,3 +348,17 @@ test_that("minTreeEss with a fixed topology warns that it can never be met", {
   mcmc$fixTopology <- FALSE
   expect_no_warning(MkPrime:::.WarnUnreachableCriteria(mcmc, 500L))
 })
+
+test_that("one topology flip earns a tuning window no more than it moved (#219)", {
+  skip_if_not_installed("TreeDist")
+  set.seed(2190)
+  nSamp <- 30L
+  # Held on one topology, then flipped once at the last sample.
+  hash <- c(rep(1, nSamp - 1L), 2)
+  mat <- cbind(log_posterior = rnorm(nSamp), tree_length = rnorm(nSamp),
+               topo_hash = hash)
+  trees <- lapply(hash - 1, as.phylo, 8)
+  flipped <- MkPrime:::.MinEssRate(mat, 1, tuningTrees = trees)
+  expect_false(flipped[["frozen"]])
+  expect_equal(flipped[["ess"]], 2)
+})
