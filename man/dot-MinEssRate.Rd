@@ -12,7 +12,7 @@
 \arguments{
 \item{sampleMatrix}{Numeric matrix (rows = samples, columns = parameters).}
 
-\item{wallTimeSec}{Wall-clock seconds for the evaluation window.}
+\item{wallTimeSec}{Seconds the window's MCMC batches took.}
 
 \item{tuningTrees}{List of sampled topologies whose tree ESS enters the
 minimum, giving topology moves credit in the bandit (M-152). Where

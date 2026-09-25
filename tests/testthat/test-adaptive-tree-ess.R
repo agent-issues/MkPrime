@@ -361,4 +361,7 @@ test_that("one topology flip earns a tuning window no more than it moved (#219)"
   flipped <- MkPrime:::.MinEssRate(mat, 1, tuningTrees = trees)
   expect_false(flipped[["frozen"]])
   expect_equal(flipped[["ess"]], 2)
+  # Uncapped, the lone flip reads as near-independent draws.
+  uncapped <- MkPrime:::.MinEssRate(mat[, 1:2], 1, tuningTrees = trees)
+  expect_gt(uncapped[["ess"]], 10)
 })

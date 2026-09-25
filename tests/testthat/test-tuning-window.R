@@ -1,14 +1,15 @@
 # What each tuning window is scored on, seen through the calls to .MinEssRate()
 
 .windowRecord <- new.env()
+.tuningTree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+.tuningData <- MatrixToPhyDat(matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
+                                     dimnames = list(paste0("t", 1:4), NULL)))
 
-# One tuning round on a 4-tip tree. The progress callback sleeps during
-# tuning, so that time charged to a window shows in its `sec`.
+# Tuning on a 4-tip tree, 20000 iterations after a 500-iteration warmup, so a
+# budget of 9750. The progress callback sleeps during tuning, so that time
+# charged to a window shows in its `sec`.
 .TuningWindows <- function(pause = 0.2) {
   if (!is.null(.windowRecord$windows)) return(.windowRecord$windows)
-  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
-  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
-                dimnames = list(paste0("t", 1:4), NULL))
   windows <- new.env()
   windows$list <- list()
   RealRate <- MkPrime:::.MinEssRate
@@ -26,12 +27,11 @@
   Pause <- function(info) if (identical(info$phase, "Tuning")) Sys.sleep(pause)
   set.seed(7820)
   allow_warning(
-    RunMkPrime(MatrixToPhyDat(mat), tree,
+    RunMkPrime(.tuningData, .tuningTree,
                mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 20000L, thin = 17L,
                                   maxWarmup = 500L, minWarmup = 500L,
-                                  autoTune = TRUE, tuningRounds = 1L,
-                                  progressFn = Pause, plotEvery = 1000L,
-                                  maxTime = 60)),
+                                  autoTune = TRUE, progressFn = Pause,
+                                  plotEvery = 1000L, maxTime = 60)),
     "maxWarmup"
   )
   .windowRecord$windows <- windows$list
@@ -42,6 +42,12 @@ test_that("a tuning window holds ~100 samples, not one batch (#78)", {
   windows <- .TuningWindows()
   expect_gte(length(windows), 4L)
   expect_true(all(vapply(windows, `[[`, integer(1), "n") >= 100L))
+})
+
+test_that("tuning starts no round that would overrun its budget", {
+  windows <- .TuningWindows()
+  # Samples per window times thin: the iterations tuning spent.
+  expect_lte(sum(vapply(windows, `[[`, integer(1), "n")) * 17L, 9750L)
 })
 
 test_that("a tuning window is not charged for the progress callback (#220)", {
@@ -55,47 +61,48 @@ test_that("tree ESS enters the tuning score without minTreeEss (#222)", {
   expect_true(all(vapply(windows, `[[`, logical(1), "trees")))
 })
 
-test_that("a mid-round resume restarts the round from the best schedule (#221)", {
-  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
-  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
-                dimnames = list(paste0("t", 1:4), NULL))
-  pd <- MatrixToPhyDat(mat)
+test_that("a mid-round resume keeps the round's best so far (#221)", {
   cpFile <- tempfile(fileext = ".ckp")
-  cpFile2 <- tempfile(fileext = ".ckp")
-  on.exit(unlink(c(cpFile, cpFile2)), add = TRUE)
+  snapFile <- tempfile(fileext = ".ckp")
+  on.exit(unlink(c(cpFile, snapFile)), add = TRUE)
 
-  set.seed(2211)
-  allow_warning(
-    RunMkPrime(pd, tree,
-               mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 3000L, thin = 5L,
-                                  maxWarmup = 500L, minWarmup = 500L,
-                                  autoTune = FALSE, checkEvery = 300L,
-                                  checkpointFile = cpFile, maxTime = 60)),
-    "maxWarmup"
-  )
-  cp <- readRDS(cpFile)
-  r <- cp$runs[[1]]
-  best <- r$moveWeights
-  # The checkpoint caught a candidate on trial, not yet compared.
-  onTrial <- MkPrime:::.PerturbMoveWeights(best, NULL, names(best))[[1]]
-  r$phase <- "Tuning"
-  r$tuningIterUsed <- 0L
-  r$tuningRoundsDone <- 0L
-  r$moveWeights <- onTrial
-  r$tuningBestWeights <- best
-  cp$runs[[1]] <- r
-  cp$moveWeights <- onTrial
-  cp$iter <- 500L
-  saveRDS(cp, cpFile2)
-
-  seen <- new.env()
+  # Keep the last checkpoint written during tuning: mid-way through the last
+  # candidate's window, with the incumbent and earlier candidates scored.
+  RealSave <- MkPrime:::.SaveCheckpoint
   local_mocked_bindings(
-    .PerturbMoveWeights = function(currentWeights, ...) {
-      if (is.null(seen$first)) seen$first <- currentWeights
-      list()
+    .SaveCheckpoint = function(runs, mcmc, iter, paramNames, file, ...) {
+      RealSave(runs, mcmc, iter, paramNames, file, ...)
+      if (identical(runs[[1]]$phase, "Tuning")) {
+        file.copy(file, snapFile, overwrite = TRUE)
+      }
     },
     .package = "MkPrime"
   )
-  ResumeMkPrime(cpFile2, pd, tree)
-  expect_equal(seen$first, best)
+  set.seed(2211)
+  allow_warning(
+    RunMkPrime(.tuningData, .tuningTree,
+               mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 20000L, thin = 17L,
+                                  maxWarmup = 500L, minWarmup = 500L,
+                                  autoTune = TRUE, tuningRounds = 1L,
+                                  checkEvery = 500L, checkpointFile = cpFile,
+                                  maxTime = 60)),
+    "maxWarmup"
+  )
+  expect_true(file.exists(snapFile))
+  saved <- readRDS(snapFile)$runs[[1]]$tuningRound
+  expect_gt(saved$candIdx, 0L)
+  expect_true(is.finite(saved$bestRate))
+
+  seen <- new.env()
+  local_mocked_bindings(
+    .BeatsIncumbent = function(candRate, candEss, bestRate, bestEss, ...) {
+      if (is.null(seen$bestRate)) seen$bestRate <- bestRate
+      FALSE
+    },
+    .package = "MkPrime"
+  )
+  ResumeMkPrime(snapFile, .tuningData, .tuningTree)
+  # The candidate on trial is judged against the best found before the
+  # checkpoint, not against nothing.
+  expect_identical(seen$bestRate, saved$bestRate)
 })

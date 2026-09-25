@@ -950,12 +950,7 @@ RunMkPrime <- function(data, tree = NULL,
   # M-171: index for warmup-phase sweep frequency reduction (NA = no trans chars)
   gibbsKpIdx <- match("gibbs_kPrime", moveNames)
   blockKpIdx <- match("block_kPrime", moveNames)
-  moveTypeCodes <- vapply(moves, function(m) {
-    # For per-class moves (e.g. scale_class_rate_log_sd_1) the unique name
-    # is not in .kMoveTypes; fall back to m$type which IS registered.
-    key <- if (m$name %in% names(.kMoveTypes)) m$name else m$type %||% m$name
-    .kMoveTypes[[key]]
-  }, integer(1L))
+  moveTypeCodes <- vapply(moves, .MoveTypeCode, integer(1L))
   # Slice param index: 0=treeLength, 1=rateLoss, 2=rateLogSd, 3=rateNeo, 4=betaScale
   sliceParamCodes <- vapply(moves, function(m) m$sliceParamIdx %||% 0L, integer(1L))
   # Per-move integer parameter.
@@ -1057,9 +1052,13 @@ RunMkPrime <- function(data, tree = NULL,
   warnedStuckTopology <- r$warnedStuckTopology %||% FALSE
   tuningCandidates <- list()
   tuningCandIdx    <- 0L
+  incumbentRemeasured <- FALSE
+  roundStartIter   <- tuningIterUsed
   effectiveTuningBudget <- r$effectiveTuningBudget %||% mcmc$tuningBudget
-  tuningWindowSamples <- .TuningWindowSamples(effectiveTuningBudget,
-                                              mcmc$thin, tuningBatch)
+  nTuningWindows   <- 4L
+  tuningWindowSamples <- .TuningWindowSamples(
+    effectiveTuningBudget, mcmc$thin, tuningBatch, nTuningWindows
+  )
 
   # M-149: Re-allocate tuning infrastructure on Tuning-phase resume.
   # The tuningBuf is normally allocated at the Warmup->Tuning transition,
@@ -1070,16 +1069,30 @@ RunMkPrime <- function(data, tree = NULL,
     tuningBuf <- matrix(NA_real_, nrow = tuningBufSize,
                         ncol = length(paramNames),
                         dimnames = list(NULL, paramNames))
-    # A checkpoint taken mid-round holds the candidate then on trial; restart
-    # the round from the best schedule it had found, lest that candidate be
-    # promoted with no comparison (#221).
-    if (identical(names(r$tuningBestWeights), moveNames)) {
-      moveWeights <- r$tuningBestWeights
+    # A checkpoint taken mid-round holds the candidate then on trial. Resume
+    # the round where it stood, so that candidate still has to beat the best
+    # so far (#221); only the interrupted window is run again.
+    savedRound <- r$tuningRound
+    if (identical(names(savedRound$bestWeights), moveNames)) {
+      tuningCandidates    <- savedRound$candidates
+      tuningCandIdx       <- savedRound$candIdx
+      incumbentRemeasured <- savedRound$remeasured
+      roundStartIter      <- savedRound$startIter
+      bestMinEssPerSec    <- savedRound$bestRate
+      bestMinEss          <- savedRound$bestEss
+      bestFrozen          <- savedRound$bestFrozen
+      bestWeights         <- savedRound$bestWeights
+      moveWeights <- if (tuningCandIdx > 0L) {
+        tuningCandidates[[tuningCandIdx]]
+      } else {
+        bestWeights
+      }
+    } else {
+      bestWeights <- moveWeights
+      tuningCandidates <- .PerturbMoveWeights(
+        moveWeights, pinnedWeights, moveNames, nPerturbations = 3L
+      )
     }
-    bestWeights <- moveWeights
-    tuningCandidates <- .PerturbMoveWeights(
-      moveWeights, pinnedWeights, moveNames, nPerturbations = 3L
-    )
   }
 
   # The C++ warmup parameter controls when samples are saved.
@@ -1391,9 +1404,8 @@ RunMkPrime <- function(data, tree = NULL,
             # Scale tuning budget: ensure each candidate window has enough
             # samples for meaningful ESS. 4 windows per round (current + 3
             # perturbations), ~100 samples each.
-            nCandidates <- 4L
             scaledBudget <- as.integer(
-              mcmc$thin * .kTuningWindowSamples * nCandidates
+              mcmc$thin * .kTuningWindowSamples * nTuningWindows
             )
             baseBudget <- max(mcmc$tuningBudget, scaledBudget)
             effectiveTuningBudget <- if (is.finite(remainingIter)) {
@@ -1403,7 +1415,7 @@ RunMkPrime <- function(data, tree = NULL,
             }
             r$effectiveTuningBudget <- effectiveTuningBudget
             tuningWindowSamples <- .TuningWindowSamples(
-              effectiveTuningBudget, mcmc$thin, tuningBatch, nCandidates
+              effectiveTuningBudget, mcmc$thin, tuningBatch, nTuningWindows
             )
             # Allocate tuning buffer
             tuningBufSize <- as.integer(effectiveTuningBudget / mcmc$thin) + 100L
@@ -1430,6 +1442,8 @@ RunMkPrime <- function(data, tree = NULL,
               nPerturbations = 3L
             )
             tuningCandIdx    <- 0L
+            incumbentRemeasured <- FALSE
+            roundStartIter   <- tuningIterUsed
             tickerPages      <- "minESS/s: ?"
           } else {
             # Skip tuning, go straight to Sample
@@ -1496,10 +1510,13 @@ RunMkPrime <- function(data, tree = NULL,
         }
 
         # Move to next candidate or next round
-        tuningCandIdx <- .NextTuningWindow(
+        nextIdx <- .NextTuningWindow(
           tuningCandIdx, currentEssPerSec, length(tuningCandidates),
+          remeasured = incumbentRemeasured,
           budgetLeft = tuningIterUsed < effectiveTuningBudget
         )
+        if (nextIdx == 0L) incumbentRemeasured <- TRUE
+        tuningCandIdx <- nextIdx
         if (tuningCandIdx <= length(tuningCandidates)) {
           # Try next perturbation candidate, or re-measure the incumbent
           if (tuningCandIdx > 0L) {
@@ -1529,8 +1546,10 @@ RunMkPrime <- function(data, tree = NULL,
           tuningFreezeStreak <- payback[["streak"]]
           r$tuningFreezeStreak <- tuningFreezeStreak
 
+          # A round now spans ~100 samples a window, so start another only if
+          # one as long as this still fits the budget.
           if (tuningRoundsDone >= mcmc$tuningRounds ||
-              tuningIterUsed >= effectiveTuningBudget ||
+              2 * tuningIterUsed - roundStartIter > effectiveTuningBudget ||
               payback[["freeze"]]) {
             # Transition: Tuning -> Sample
             phase      <- "Sample"
@@ -1555,6 +1574,8 @@ RunMkPrime <- function(data, tree = NULL,
               nPerturbations = 3L
             )
             tuningCandIdx     <- 0L
+            incumbentRemeasured <- FALSE
+            roundStartIter    <- tuningIterUsed
             tuningBufIdx      <- 0L
             tuningTreeBuf     <- list()
             tuningWindowSec   <- 0
@@ -1572,7 +1593,13 @@ RunMkPrime <- function(data, tree = NULL,
       }
     }
     # Sample phase: no adaptation needed (weights frozen)
-    r$tuningBestWeights <- if (phase == "Tuning") bestWeights
+
+    r$tuningRound <- if (phase == "Tuning") {
+      list(candidates = tuningCandidates, candIdx = tuningCandIdx,
+           remeasured = incumbentRemeasured, startIter = roundStartIter,
+           bestRate = bestMinEssPerSec, bestEss = bestMinEss,
+           bestFrozen = bestFrozen, bestWeights = bestWeights)
+    }
 
     # Streaming checkpoint: fire when buffer was flushed this batch (Sample)
     if (phase == "Sample" && isStreaming &&
@@ -4333,6 +4360,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   gibbs_p_marginal = 35L
 )
 
+# For per-class moves (e.g. scale_class_rate_log_sd_1) the unique name is not
+# in .kMoveTypes; fall back to the move's type, which is registered.
+.MoveTypeCode <- function(move) {
+  key <- if (move$name %in% names(.kMoveTypes)) move$name else
+    move$type %||% move$name
+  .kMoveTypes[[key]]
+}
+
 # The single whitelist `MkPrimeMCMC()` validates user `moveWeights` against.
 # Derived from `.kMoveTypes` rather than restated, so the two surfaces cannot
 # drift: a move that is registered is settable, and nothing else is.
@@ -4450,11 +4485,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                     transIdx = integer(0), mcmcData = NULL) {
   # Detect XPtr mode: mcmcData is provided and stateOrPtr is externalptr
   if (!is.null(mcmcData) && inherits(stateOrPtr, "externalptr")) {
-    # Per-class moves (scale_class_rate_log_sd_1, ...) are registered by type,
-    # as in the batch path.
-    key <- if (move$name %in% names(.kMoveTypes)) move$name else
-      move$type %||% move$name
-    moveCode <- .kMoveTypes[[key]]
+    moveCode <- .MoveTypeCode(move)
     # charIdx is overloaded: the drawn character for int_walk, the parameter
     # selector for the slice samplers, and the 1-based class for
     # scale_class_rate_log_sd (as in run_mcmc_batch_cpp).
@@ -5579,7 +5610,7 @@ if (n < 2L * windowSize) {
 #' Compute min-ESS/s for a set of samples collected over a known wall-time.
 #'
 #' @param sampleMatrix Numeric matrix (rows = samples, columns = parameters).
-#' @param wallTimeSec Wall-clock seconds for the evaluation window.
+#' @param wallTimeSec Seconds the window's MCMC batches took.
 #' @param tuningTrees List of sampled topologies whose tree ESS enters the
 #'   minimum, giving topology moves credit in the bandit (M-152). Where
 #'   `sampleMatrix` has a `topo_hash` column, the tree ESS is capped at one

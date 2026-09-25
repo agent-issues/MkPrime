@@ -92,25 +92,34 @@ test_that(".TuningPayback does not vote on a frozen window's rate", {
 })
 
 test_that(".TuningWindowSamples fills a window to ~100 samples (#78)", {
-  # thin = 17 gives 29 samples a batch: four batches clear 100.
-  expect_identical(MkPrime:::.TuningWindowSamples(10000L, 17L, 500L), 116L)
+  # thin = 17: four 500-iteration batches hold at least 2000 %/% 17 samples.
+  expect_identical(MkPrime:::.TuningWindowSamples(10000L, 17L, 500L), 117L)
   expect_identical(MkPrime:::.TuningWindowSamples(10000L, 5L, 500L), 100L)
 })
 
 test_that(".TuningWindowSamples keeps a round within the budget", {
-  # 4750 iterations buy two 500-iteration batches per candidate.
+  # 4750 iterations buy two 500-iteration batches per window.
   expect_identical(MkPrime:::.TuningWindowSamples(4750L, 17L, 500L), 58L)
-  # Never below the ten rows the rate needs.
+  # A thin wider than a batch: 50 batches per window, a sample every other.
+  expect_identical(MkPrime:::.TuningWindowSamples(100000L, 1000L, 500L), 25L)
+})
+
+test_that(".TuningWindowSamples never asks for fewer than ten rows", {
   expect_identical(MkPrime:::.TuningWindowSamples(100L, 100L, 500L), 10L)
 })
 
-test_that(".NextTuningWindow re-measures an unassessable incumbent (#221)", {
-  expect_identical(MkPrime:::.NextTuningWindow(0L, NA_real_, 3L, TRUE), 0L)
+test_that(".NextTuningWindow re-measures an unassessable incumbent once (#221)", {
+  Next <- function(idx, rate, remeasured = FALSE, budgetLeft = TRUE, n = 3L) {
+    MkPrime:::.NextTuningWindow(idx, rate, n, remeasured, budgetLeft)
+  }
+  expect_identical(Next(0L, NA_real_), 0L)
+  # Unassessable twice: likely frozen, so let the candidates try.
+  expect_identical(Next(0L, NA_real_, remeasured = TRUE), 1L)
   # Out of budget: close the round on the incumbent, adopting nothing.
-  expect_identical(MkPrime:::.NextTuningWindow(0L, NA_real_, 3L, FALSE), 4L)
+  expect_identical(Next(0L, NA_real_, budgetLeft = FALSE), 4L)
   # With no candidates there is nothing to gate.
-  expect_identical(MkPrime:::.NextTuningWindow(0L, NA_real_, 0L, TRUE), 1L)
-  expect_identical(MkPrime:::.NextTuningWindow(0L, 2, 3L, TRUE), 1L)
+  expect_identical(Next(0L, NA_real_, n = 0L), 1L)
+  expect_identical(Next(0L, 2), 1L)
   # A candidate's window moves on whatever it scored.
-  expect_identical(MkPrime:::.NextTuningWindow(2L, NA_real_, 3L, TRUE), 3L)
+  expect_identical(Next(2L, NA_real_), 3L)
 })

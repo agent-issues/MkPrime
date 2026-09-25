@@ -8,7 +8,7 @@
   budget,
   thin,
   batch,
-  nCandidates = 4L,
+  nWindows = 4L,
   target = .kTuningWindowSamples
 )
 }
@@ -19,16 +19,18 @@
 
 \item{batch}{Integer iterations per tuning batch.}
 
-\item{nCandidates}{Integer windows per round.}
+\item{nWindows}{Integer windows per round: the incumbent and each candidate.}
 
 \item{target}{Integer samples a window should hold.}
 }
 \value{
-Integer samples at which a window is scored.
+Integer samples at which a window is scored; never below the ten
+\code{.MinEssRate()} needs, even where \code{budget} cannot buy them.
 }
 \description{
-A window spans whole batches, so it is sized in batches: enough to reach
-\code{target} samples, but never so many that one round of \code{nCandidates} windows
-outruns \code{budget}.
+A window spans whole batches: enough to reach \code{target} samples, but never so
+many that one round of \code{nWindows} windows outruns \code{budget}. Samples are
+saved on multiples of \code{thin}, so a window of \code{L} iterations holds at least
+\code{L \%/\% thin} of them.
 }
 \keyword{internal}

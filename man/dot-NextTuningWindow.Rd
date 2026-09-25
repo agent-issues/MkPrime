@@ -4,7 +4,7 @@
 \alias{.NextTuningWindow}
 \title{Which window does the tuning round run next?}
 \usage{
-.NextTuningWindow(candIdx, rate, nCandidates, budgetLeft)
+.NextTuningWindow(candIdx, rate, nCandidates, remeasured, budgetLeft)
 }
 \arguments{
 \item{candIdx}{Integer index of the window just scored; 0 is the incumbent.}
@@ -12,6 +12,9 @@
 \item{rate}{Numeric min-ESS/s that window gave.}
 
 \item{nCandidates}{Integer candidate windows in the round.}
+
+\item{remeasured}{Logical; \code{TRUE} once the incumbent has been measured again
+this round.}
 
 \item{budgetLeft}{Logical; \code{TRUE} while tuning budget remains.}
 }
@@ -22,8 +25,10 @@ round.
 \description{
 The incumbent's window (index 0) is the yardstick every candidate is gated
 against. If it yields no rate, the first usable candidate would be adopted
-on one window with no gate at all, so the incumbent is measured again while
-budget remains, and the round is closed on the incumbent once it does not.
+on one window with no gate at all, so the incumbent is measured once more
+while budget remains, and the round is closed on the incumbent once the
+budget is spent. An incumbent that fails twice is likely frozen, so the
+candidates are then tried rather than letting tuning stall on it.
 A round with no candidates has nothing to gate, so it closes at once.
 }
 \keyword{internal}
