@@ -528,6 +528,38 @@ MkPrimeModel <- function(
 }
 
 
+#' Accurate `log(1 - exp(x))` for `x <= 0`
+#'
+#' Two-branch form of Maechler (2012): `log1p(-exp(x))` underflows to `-Inf`
+#' as `x -> 0`, and `log(-expm1(x))` rounds to exactly 0 once `exp(x)` falls
+#' below machine precision. Mirrors `mkp::log1m_exp()` in `src/prior_math.h`.
+#' @param x Numeric vector, `x <= 0`.
+#' @return Numeric vector of `log(1 - exp(x))`.
+#' @keywords internal
+.Log1mExp <- function(x) {
+  ifelse(x > -log(2), log(-expm1(x)), log1p(-exp(x)))
+}
+
+
+#' Log normalising constant of the logseries prior on `k' >= 2`
+#'
+#' `log(sum_{k >= 2} c^k / k) = log(-log(1 - c) - c)`. The subtraction
+#' cancels at small `c`, where the series is summed directly instead. Mirrors
+#' `mkp::logseries_log_norm()` in `src/prior_math.h`.
+#' @param c Scalar in (0, 1).
+#' @return Scalar.
+#' @keywords internal
+.LogseriesLogNorm <- function(c) {
+  s <- if (c < 0.25) {
+    sum(c ^ (2:60) / (2:60))
+  } else {
+    -log1p(-c) - c
+  }
+  # Return:
+  log(s)
+}
+
+
 #' Log P_emp(k) for k = 2, ..., kMax under an `MkPrimeEmpiricalPrior`
 #'
 #' Returns a numeric vector of length `kMax - 1`; entry `i` is
@@ -545,8 +577,11 @@ MkPrimeModel <- function(
     result[seq_len(bodyEnd)] <- ifelse(bp > 0, log(bp), -Inf)
   }
   tailStartK <- emp$tail_start_k
-  if (kMax >= tailStartK && emp$tail_start_p > 0 && emp$tail_decay > 0) {
-    kk <- seq.int(tailStartK, kMax)
+  # The body takes precedence over the tail wherever both define a k, as in
+  # cpp_log_prior.
+  tailFrom <- max(tailStartK, bodyLen + 2L)
+  if (kMax >= tailFrom && emp$tail_start_p > 0 && emp$tail_decay > 0) {
+    kk <- seq.int(tailFrom, kMax)
     result[kk - 1L] <- log(emp$tail_start_p) +
                        (kk - tailStartK) * log(emp$tail_decay)
   }
@@ -665,7 +700,7 @@ MkPrimeModel <- function(
   pmf <- numeric(length(ks))
   pmf[seq_len(bodyLen)] <- as.numeric(emp$body)
   if (emp$tail_decay > 0 && emp$tail_start_p > 0) {
-    tailIdx <- which(ks >= emp$tail_start_k)
+    tailIdx <- which(ks >= max(emp$tail_start_k, bodyLen + 2L))
     if (length(tailIdx) > 0L) {
       kt <- ks[tailIdx]
       pmf[tailIdx] <- emp$tail_start_p *
@@ -780,7 +815,7 @@ LogPrior <- function(state, model, mkd) {
     if (identical(model$kPrimePrior, "geometric")) {
       # k'_i: TRUNCATED Geometric(p) on [2, K], renormalised by Z(p)
       # (MARGINAL-K-TRUNC-001). This MUST mirror cpp_log_prior (src/mcmc.cpp,
-      # the plain-geometric branch) bit-for-bit -- same log1p(-exp(.)) forms --
+      # the plain-geometric branch) bit-for-bit -- same .Log1mExp() forms --
       # so the R and C++ priors agree (test-partition-prior / -hyperprior compare
       # them to 1e-10). Under sampled_k both likelihoodModes then target the same
       # posterior (RB-consistency). Under marginal_k the per-character mass is
@@ -794,12 +829,12 @@ LogPrior <- function(state, model, mkd) {
         log1mP <- log1p(-state$p)
         if (identical(model$priorVariant %||% "conditional", "unconditional")) {
           # Model A: P(k' = k | p) propto p (1-p)^(k-2), k in [2, K].
-          logZA <- log1p(-exp((K - 1) * log1mP))
+          logZA <- .Log1mExp((K - 1) * log1mP)
           lp <- lp + sum(logP + (kp - 2) * log1mP - logZA)
         } else {
           # Model B: P(k' = kObs + u | p) propto p (1-p)^u, u in [0, K - kObs].
           u     <- kp - kobs
-          logZB <- log1p(-exp((K - kobs + 1) * log1mP))   # per-character
+          logZB <- .Log1mExp((K - kobs + 1) * log1mP)   # per-character
           lp <- lp + sum(logP + u * log1mP - logZB)
         }
       }
@@ -840,14 +875,15 @@ LogPrior <- function(state, model, mkd) {
       lp <- lp + dexp(alpha, rate = 1, log = TRUE)
       lp <- lp + dexp(beta_, rate = 1, log = TRUE)
     } else {
-      # k'_i: Logseries(c)
-      # log P(k; c) = k*log(c) - log(k) - log(-log(1-c))
-      # Truncation at kObs cancels in MH ratios; constant included here
-      # for correct absolute log-posterior reporting.
+      # k'_i: Logseries(c), normalised over its support k' >= 2:
+      # log P(k; c) = k*log(c) - log(k) - log(-log(1-c) - c).
+      # The further truncation to k' >= kObs_i is not renormalised: with c
+      # fixed it is a constant that cancels in every MH ratio, but it means
+      # log_prior is the untruncated density.
       c_ls <- model$kprimeLogseriesC
       kp <- state$kPrime[transIdx]
       lp <- lp + sum(kp * log(c_ls) - log(kp)) -
-            length(transIdx) * log(-log1p(-c_ls))
+            length(transIdx) * .LogseriesLogNorm(c_ls)
     }
   }
 

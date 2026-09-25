@@ -225,6 +225,14 @@ cpp_data_nclasses <- function(dataPtr) {
     .Call(`_MkPrime_cpp_data_nclasses`, dataPtr)
 }
 
+log1m_exp_cpp <- function(x) {
+    .Call(`_MkPrime_log1m_exp_cpp`, x)
+}
+
+logseries_log_norm_cpp <- function(c) {
+    .Call(`_MkPrime_logseries_log_norm_cpp`, c)
+}
+
 spr_proposal <- function(edge, nTip, treeLength, relBrLengths) {
     .Call(`_MkPrime_spr_proposal`, edge, nTip, treeLength, relBrLengths)
 }

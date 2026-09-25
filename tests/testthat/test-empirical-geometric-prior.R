@@ -638,3 +638,53 @@ test_that("prepare_mcmc_data derives the empirical body length from the body", {
   expect_false("empBodyLastK" %in%
                  names(formals(MkPrime:::prepare_mcmc_data)))
 })
+
+
+test_that("R and C++ share one body/tail precedence rule for P_emp", {
+  tree <- Preorder(
+    read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);"))
+  mat <- matrix(c(0, 1, 0, 1,
+                  0, 1, 2, 0), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  mkd <- MkPrimeData(MatrixToPhyDat(mat))
+
+  wellFormed <- MkPrimeEmpiricalPrior(body = c(0.6, 0.3, 0.05, 0.05),
+                                      tail_decay = 0.4)
+  # The constructor refuses a tail that overlaps the body, so build one by
+  # hand: both sides must still read the pmf the same way.
+  overlapping <- wellFormed
+  overlapping$tail_start_k <- 3L
+
+  for (emp in list(wellFormed, overlapping)) {
+    model <- MkPrimeModel(expSteps = 10, kPrimePrior = "empirical_geometric",
+                          empiricalNObs = emp)
+    model <- MkPrime:::.FinalizeModel(model, tree, mkd)
+    dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
+    for (kp in list(c(3L, 4L), c(5L, 3L), c(2L, 9L))) {
+      state <- list(
+        tree = tree, tree_length = 0.5,
+        rel_br_lengths = tree$edge.length / sum(tree$edge.length),
+        rate_loss = 1.0, rate_log_sd = 0.2, rate_neo = 1.0,
+        kPrime = kp, p = 0.5, log_lik = 0.0, log_prior = 0.0
+      )
+      expect_equal(
+        eval_log_prior_cpp(dataPtr, MkPrime:::.InitMcmcChain(state)),
+        MkPrime:::LogPrior(state, model, mkd),
+        tolerance = 1e-10,
+        info = sprintf("tail_start_k = %d, kp = %s", emp$tail_start_k,
+                       paste(kp, collapse = ","))
+      )
+    }
+  }
+})
+
+
+test_that("P_emp normalises over k >= 2", {
+  for (emp in list(MkPrimeEmpiricalPrior(body = c(0.6, 0.3, 0.05, 0.05),
+                                         tail_decay = 0.4),
+                   MkPrimeEmpiricalPrior(body = rep(0.25, 4)),
+                   MkPrime:::.EmpiricalNObs())) {
+    expect_equal(sum(exp(MkPrime:::.LogPemp(2000L, emp))), 1,
+                 tolerance = 1e-12)
+  }
+})

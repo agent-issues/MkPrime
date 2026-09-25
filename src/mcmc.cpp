@@ -12,6 +12,7 @@
 #include "gibbs_partial_cl.h"
 #include "fitch.h"
 #include "node_cl_cache.h"
+#include "prior_math.h"
 #include <TreeTools/edge_to_splits.h>
 #include <TreeTools/renumber_tree.h>
 #include <cmath>
@@ -375,10 +376,13 @@ static double cpp_log_prior(
   if (hasTrans) {
     int nTrans = data.transIdxGlobal.size();
     if (data.kPriorLogseries) {
-      // Logseries: log P(k'_i; c) = k'_i*log(c) - log(k'_i) - log(-log(1-c))
+      // Logseries on k' >= 2 (k' = 1 is impossible):
+      //   log P(k'_i; c) = k'_i*log(c) - log(k'_i) - log(-log(1-c) - c)
+      // The truncation to k'_i >= kObs_i is not renormalised; with c fixed it
+      // is a constant, as in LogPrior().
       double c = data.kprimeLogseriesC;
       double logC   = std::log(c);
-      double logNorm = std::log(-std::log1p(-c));  // log(-log(1-c))
+      double logNorm = mkp::logseries_log_norm(c);
       for (int i = 0; i < nTrans; ++i) {
         int kp = kPrime[data.transIdxGlobal[i]];
         lp += kp * logC - std::log(static_cast<double>(kp)) - logNorm;
@@ -479,8 +483,8 @@ static double cpp_log_prior(
       // term + that character's LL) over k'_i in [kObs_i, K] reproduces the
       // marginal-k per-character value, so likelihoodMode "sampled_k" and
       // "marginal_k" target the SAME posterior (Rao-Blackwell consistency).
-      // The two Model A/B branches and the exact log1p/exp forms below mirror
-      // the marginal evaluator so the deterministic logSumExp bit-check matches.
+      // The two Model A/B branches and the log1m_exp forms below mirror the
+      // marginal evaluator so the deterministic logSumExp bit-check matches.
       //
       // Under marginal-k mode the per-character P(k'_i | p) mass (incl. the
       // truncation normaliser) is consumed by cpp_log_likelihood_marginal, so
@@ -492,7 +496,7 @@ static double cpp_log_prior(
         if (data.unconditionalPrior) {
           // Model A: P(k'_i = k | p) propto p (1-p)^(k-2), k in [2, K].
           // logZA = log(1 - (1-p)^(K-1)) is shared across all characters.
-          const double logZA = std::log1p(-std::exp((K - 1) * log1mP));
+          const double logZA = mkp::log1m_exp((K - 1) * log1mP);
           for (int i = 0; i < nTrans; ++i) {
             int gi = data.transIdxGlobal[i];
             lp += logP + (kPrime[gi] - 2) * log1mP - logZA;
@@ -504,7 +508,7 @@ static double cpp_log_prior(
             int gi = data.transIdxGlobal[i];
             int u  = kPrime[gi] - data.kObs[gi];
             lp += logP + u * log1mP
-                - std::log1p(-std::exp((K - data.kObs[gi] + 1) * log1mP));
+                - mkp::log1m_exp((K - data.kObs[gi] + 1) * log1mP);
           }
         }
       }
@@ -3989,7 +3993,7 @@ void compute_per_kprime_log_lik(
   } else if (!isBetaGeometric) {
     double c = data->kprimeLogseriesC;
     lsLogC    = std::log(c);
-    lsLogNorm = std::log(-std::log1p(-c));
+    lsLogNorm = mkp::logseries_log_norm(c);
   }
 
   // ---------------------------------------------------------------
@@ -4450,7 +4454,7 @@ double cpp_log_likelihood_marginal(
   // as corrected 2026-05-30; R spec-check cap-z-spec-check.R.)
   const bool uncond = data.unconditionalPrior;
   const int    K     = data.kprimeTruncK;
-  const double logZA = std::log1p(-std::exp((K - 1) * log1mP));
+  const double logZA = mkp::log1m_exp((K - 1) * log1mP);
 
   // Cache fast-path: if the charLL cache is valid, skip the helper call
   // and recompute the per-char logSumExp against the current p-weights.
@@ -4531,7 +4535,7 @@ double cpp_log_likelihood_marginal(
       if (uncond) {
         charLL += (kObs_ti - 2) * log1mP - logZA;                       // Model A
       } else {
-        charLL -= std::log1p(-std::exp((K - kObs_ti + 1) * log1mP));    // Model B
+        charLL -= mkp::log1m_exp((K - kObs_ti + 1) * log1mP);           // Model B
       }
       if (R_FINITE(totalLL)) totalLL += charLL;
     }
@@ -4569,7 +4573,7 @@ double cpp_log_likelihood_marginal(
     if (uncond) {
       charLL += (kObs_ti - 2) * log1mP - logZA;                       // Model A
     } else {
-      charLL -= std::log1p(-std::exp((K - kObs_ti + 1) * log1mP));    // Model B
+      charLL -= mkp::log1m_exp((K - kObs_ti + 1) * log1mP);           // Model B
     }
     if (R_FINITE(totalLL)) totalLL += charLL;
   }
@@ -5395,9 +5399,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       if (uncond) {
         // Model A: Z = 1 − (1−p)^(K−1), shared across all trans chars.
         sumLogZ_old =
-          (double)nTrans * std::log1p(-std::exp((K - 1) * log1mP));
+          (double)nTrans * mkp::log1m_exp((K - 1) * log1mP);
         sumLogZ_new =
-          (double)nTrans * std::log1p(-std::exp((K - 1) * log1mPstar));
+          (double)nTrans * mkp::log1m_exp((K - 1) * log1mPstar);
       } else {
         // Model B: Z_i = 1 − (1−p)^(K − kObs_i + 1), per character.
         sumLogZ_old = 0.0;
@@ -5405,13 +5409,13 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         for (int i = 0; i < nTrans; ++i) {
           const int kObsi = data->kObs[data->transIdxGlobal[i]];
           const int e     = K - kObsi + 1;
-          sumLogZ_old += std::log1p(-std::exp(e * log1mP));
-          sumLogZ_new += std::log1p(-std::exp(e * log1mPstar));
+          sumLogZ_old += mkp::log1m_exp(e * log1mP);
+          sumLogZ_new += mkp::log1m_exp(e * log1mPstar);
         }
       }
-      // Deep small-p tail: Z → 0, logZ → −∞. The non-finite guard is symmetric
-      // in (oldP, pStar) so detailed balance is preserved; mh_logit_p covers
-      // that region. (See proof §6.4.)
+      // log1m_exp keeps logZ finite for every p in (0, 1), so this guard is
+      // defensive; being symmetric in (oldP, pStar) it preserves detailed
+      // balance should it ever fire. (See proof §6.4.)
       if (!R_FINITE(sumLogZ_old) || !R_FINITE(sumLogZ_new)) return false;
       const double logAlpha = sumLogZ_old - sumLogZ_new;
 
