@@ -6,15 +6,83 @@
 \alias{MkPrime-package}
 \title{MkPrime: Bayesian Phylogenetic Inference Under the Mk' Model}
 \description{
-Bayesian inference of phylogenetic trees from discrete morphological characters under the Mk' (Mk-prime) model, which infers the true number of character states including those not observed in the data. Supports three character types in a single analysis: asymmetric binary (neomorphic), Mk' with inferred state count (transformational), and standard Mk with known state space. Implements Markov chain Monte Carlo with parallel tempering, among-character rate variation, and ascertainment bias correction.
+Bayesian inference of phylogenetic trees from discrete morphological
+characters under the Mk' (Mk-prime) model, which infers the true number
+of character states, including states not observed in the data. Three
+character types can be combined in a single analysis: asymmetric binary
+(neomorphic), Mk' with inferred state count (transformational), and
+standard Mk with a known state space. MCMC sampling supports parallel
+tempering, among-character rate variation, and ascertainment bias
+correction, with samples streamed to disk so long runs can be resumed
+or inspected before they finish.
 }
-\seealso{
-Useful links:
+\section{Data and model setup}{
+
 \itemize{
-  \item \url{https://github.com/mk-prime/r}
-  \item Report bugs at \url{https://github.com/mk-prime/r/issues}
+\item \code{\link[=MkPrimeData]{MkPrimeData()}} classifies characters and builds the data object
+\code{RunMkPrime()} consumes.
+\item \code{\link[=AutoDetectNeomorphic]{AutoDetectNeomorphic()}} flags likely neomorphic (asymmetric binary)
+characters.
+\item \code{\link[=MkPrimeModel]{MkPrimeModel()}} specifies priors and among-character rate variation.
+\item \code{\link[=MkPrimeEmpiricalPrior]{MkPrimeEmpiricalPrior()}} builds an empirical-Bayes prior on k' from a
+corpus of comparable characters.
+\item \code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}} configures chain counts, tempering, stopping rules,
+and output file paths.
+}
 }
 
+\section{Running MCMC}{
+
+\itemize{
+\item \code{\link[=RunMkPrime]{RunMkPrime()}} is the main entry point.
+\item \code{\link[=ResumeMkPrime]{ResumeMkPrime()}} continues a run from its checkpoint file.
+\item \code{\link[=MkPrimeRecover]{MkPrimeRecover()}} loads whatever samples an interrupted run already
+flushed to disk.
+}
+}
+
+\section{Monitoring a run in progress}{
+
+\itemize{
+\item \code{\link[=ReadMkLog]{ReadMkLog()}} reads the streamed parameter log, including while the
+run that wrote it is still in progress.
+\item \code{\link[=MkLogPaths]{MkLogPaths()}} resolves per-run log file paths for a multi-run analysis.
+\item \code{\link[=MkpWatchLog]{MkpWatchLog()}} and \code{\link[=MkpTracePlot]{MkpTracePlot()}} display live trace plots.
+\item \code{\link[=MkpPngProgress]{MkpPngProgress()}} writes progress plots to disk instead of a device.
+\item \code{\link[=MkCancelPath]{MkCancelPath()}} builds the path to a job's cancel-signal file.
+\item \code{\link[=MkPrimeVerbosity]{MkPrimeVerbosity()}} controls MCMC console output.
+}
+}
+
+\section{Convergence and summarising results}{
+
+\itemize{
+\item \code{\link[=ConvergenceDiagnostics]{ConvergenceDiagnostics()}} computes ESS and rank-normalized R-hat.
+\item \code{\link[=TreeESS]{TreeESS()}} computes effective sample size for the sampled tree
+topologies.
+\item \code{\link[=AutoBurnin]{AutoBurnin()}} and \code{\link[=SetBurnin]{SetBurnin()}} detect and set the burn-in period.
+\item \code{\link[=mkp_stepping_stone]{mkp_stepping_stone()}} estimates the marginal likelihood for model
+comparison.
+\item \code{\link[=MkpLogLikelihood]{MkpLogLikelihood()}} evaluates the model log-likelihood for a given
+tree and data outside of MCMC.
+}
+}
+
+\section{Shiny GUI}{
+
+\itemize{
+\item \code{\link[=EasyMkPrime]{EasyMkPrime()}} launches the standalone Shiny app.
+\item \code{\link[=MkBayesianUi]{MkBayesianUi()}} and \code{\link[=MkBayesianServer]{MkBayesianServer()}} provide a Shiny module for
+the TreeSearch GUI.
+}
+}
+
+\seealso{
+\code{vignette("hyoliths", package = "MkPrime")} for a full worked analysis,
+including saving, resuming, and monitoring long runs.
+
+\code{vignette("het-details", package = "MkPrime")} for among-character rate
+variation and Q-matrix heterogeneity.
 }
 \author{
 \strong{Maintainer}: Martin R. Smith \email{martin.smith@durham.ac.uk} (\href{https://orcid.org/0000-0001-5660-1727}{ORCID}) [copyright holder]
