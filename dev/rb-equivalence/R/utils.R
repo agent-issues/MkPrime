@@ -175,15 +175,15 @@ SanitizePolymorphic <- function(mat) {
 #' -- separate script invocations -- provably agree on what they fed their
 #' respective sampler (agent-issues/MkPrime#214).
 #'
-#' Known remaining gap (not fixed here): MkPrimeData drops columns that
-#' become invariant after the taxon intersection and polymorphism
-#' sanitisation entirely, while RevBayes keeps them in the alignment and
-#' relies on its `coding="variable"` ascertainment correction instead. These
-#' are different representations of the same constant-site exclusion, and
-#' making RB drop the identical columns would require changing what its
-#' ascertainment correction integrates over -- an intervention this harness
-#' cannot validate without a RevBayes build. Tracked as a residual source of
-#' cross-sampler difference; not addressed by this function.
+#' Not a gap: MkPrimeData drops columns that become invariant after the
+#' taxon intersection and polymorphism sanitisation, while RevBayes keeps
+#' them in its data object (`nchar()` still counts them, hence the NCHAR
+#' substitution below) but excludes them from the likelihood under
+#' `coding="variable"` -- confirmed by a smoke test against a real RevBayes
+#' build (2026-09-25, Hamilton, PR agent-issues/MkPrime#231): the
+#' log-likelihood is identical with and without a constant column present.
+#' The two samplers reach the same likelihood by different bookkeeping, not
+#' by different models.
 #'
 #' @param transMat,neoMat Raw character matrices as returned by `ReadSplit()`
 #'   (must carry the `"nexusSymbols"` attribute `ReadSplit()` attaches).
