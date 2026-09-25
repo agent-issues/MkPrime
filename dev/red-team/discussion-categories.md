@@ -50,12 +50,7 @@ filed against a missing label simply fails.
 | 10 | `10 · Test-suite health` | `10-test-suite-health` |
 | 11 | `11 · RB-oracle equivalence` | `11-rb-oracle-equivalence` |
 | 12 | `12 · Red-team process meta-review` | `12-red-team-process-meta-review` |
-
-| 13 | `13 · Partition API & hierarchical hyperprior` | *not yet created* |
-
-Areas 3, 4, 5, 6, 8 and 10 were rescoped on 2026-09-24 and their category names
-now lag the rows. Renaming is optional: only the leading `NN` is read, and a
-rename does not move existing posts.
+| 13 | `13 · Partition API & hierarchical hyperprior` | `13-partition-api-hierarchical-hyperprior` |
 
 Profiling does **not** get a category: the `/profile` skill keeps round records in
 `dev/profiling/log.md` by design (one serial rotation, and `log.md` doubles as the
