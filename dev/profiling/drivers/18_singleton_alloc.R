@@ -157,26 +157,31 @@ nCalls <- length(binParts) +
 cat(sprintf("binary trans chars: %d; singleton calls per eval: %d\n",
             length(masks), nCalls))
 
-# One full likelihood evaluation, same tree, for scale.
-dataPtr <- MkPrime:::prepare_mcmc_data(
-  partitions_r = mkd$partitions, kObs_r = mkd$kObs, charTypes_r = mkd$type,
-  hasNeo = FALSE, nCat = nCat, codingStr = "informative",
-  relabelFlag = TRUE, treeLengthShape = 1.5, treeLengthRate = 1,
-  rateLossMeanlog = 0, rateLossSdlog = 1, rateLogSdShape = 1,
-  rateLogSdRate = 1, rateNeoMeanlog = 0, rateNeoSdlog = 2,
-  kprimeHyperA = 1, kprimeHyperB = 1, kPriorLogseries = TRUE,
-  kprimeLogseriesC = 0.7
-)
-EvalOnce <- function() {
-  MkPrime:::cpp_log_likelihood_xptr(dataPtr, parent, child,
-                                    tree$edge.length,
-                                    as.integer(mkd$kObs), rateLoss = 1,
-                                    rateLogSd = 0.5, rateNeo = 1)
+# One full likelihood evaluation, same tree, for scale; "variable" shows how
+# much of an informative evaluation the extra ascertainment mass costs.
+EvalUs <- function(coding) {
+  dataPtr <- MkPrime:::prepare_mcmc_data(
+    partitions_r = mkd$partitions, kObs_r = mkd$kObs, charTypes_r = mkd$type,
+    hasNeo = FALSE, nCat = nCat, codingStr = coding,
+    relabelFlag = TRUE, treeLengthShape = 1.5, treeLengthRate = 1,
+    rateLossMeanlog = 0, rateLossSdlog = 1, rateLogSdShape = 1,
+    rateLogSdRate = 1, rateNeoMeanlog = 0, rateNeoSdlog = 2,
+    kprimeHyperA = 1, kprimeHyperB = 1, kPriorLogseries = TRUE,
+    kprimeLogseriesC = 0.7
+  )
+  EvalOnce <- function() {
+    MkPrime:::cpp_log_likelihood_xptr(dataPtr, parent, child,
+                                      tree$edge.length,
+                                      as.integer(mkd$kObs), rateLoss = 1,
+                                      rateLogSd = 0.5, rateNeo = 1)
+  }
+  invisible(EvalOnce())
+  median(replicate(7, system.time(for (i in 1:20) EvalOnce())[[3]])) /
+    20 * 1e6
 }
-invisible(EvalOnce())
-evalMs <- median(replicate(7, system.time(for (i in 1:20) EvalOnce())[[3]]))
-evalUs <- evalMs / 20 * 1e6
-saving <- nCalls * diff(rev(perCall))
-cat(sprintf("full likelihood eval: %.0f us\n", evalUs))
+evalUs <- EvalUs("informative")
+saving <- nCalls * median(pairedDelta)
+cat(sprintf("full likelihood eval: %.0f us informative, %.0f us variable\n",
+            evalUs, EvalUs("variable")))
 cat(sprintf("saving per eval: %.2f us = %.3f %% of an eval\n",
             saving, 100 * saving / evalUs))

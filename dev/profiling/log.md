@@ -817,7 +817,8 @@ call and far less of an evaluation (the scan is skipped under
 `18_singleton_alloc.R` compiles the kernel twice (fresh zero-filled vector per
 call vs caller-owned scratch with only tips re-zeroed), 21 paired
 replicates of 2000 calls: 75.9 vs 75.6 us per call, paired delta median
--0.04 us (IQR -2.8 to 3.0 us). Inside noise. The allocation is ~93 KB and the
+-0.04 us (IQR -2.8 to 3.0 us); a rerun gave +0.42 us (IQR -3.5 to
+6.1 us). Inside noise. The allocation is ~93 KB and the
 pruning pass is O(nEdge * nTip * k) over it, so the malloc and zero-fill are
 lost in the arithmetic.
 
@@ -826,6 +827,6 @@ not the cost, the call count is: under `coding = "informative"` Sun2018 makes
 ~111 singleton calls per likelihood evaluation (one per binary
 transformational partition plus one per distinct missing-data mask,
 `asc_probs_masked`), each a full O(nTip) pseudo-character pruning pass. A full
-evaluation costs 8.3 ms informative against 0.65 ms variable on the same tree,
-so the masked uninformative-mass correction is ~90 % of an informative
-evaluation. Batching masks into one pass is where a real saving would be.
+evaluation costs 8.3-8.5 ms informative against 0.65 ms variable on the same
+tree (both timed by the driver), so the masked uninformative-mass correction
+is ~90 % of an informative evaluation. Batching masks into one pass is where a real saving would be.
