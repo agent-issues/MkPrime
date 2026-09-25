@@ -356,3 +356,25 @@ test_that("gibbs_kprime_sweep samples the partitioned conditional", {
   }, double(1)))
   expect_gt(logRatio, 0)
 })
+
+test_that(".DoMove runs a per-class move by its type (#145)", {
+  d <- .setup_2class_data()
+  chain <- .PartitionedChain(d$tree, d$mkd)
+  move <- list(name = "scale_class_rate_log_sd_2",
+               type = "scale_class_rate_log_sd",
+               target = "class_rate_log_sd", classIdx = 2L,
+               weight = 1, dim = 1L)
+  tuning <- list(scale_class_rate_log_sd = 0.5, beta_simplex = 10,
+                 int_walk_window = 1)
+  # `+ 0` copies: the vector get_mcmc_state() returns tracks the live state.
+  Sigma <- function() get_mcmc_state(chain$statePtr)$classRateLogSd + 0
+  before <- Sigma()
+  set.seed(1451)
+  for (i in seq_len(30L)) {
+    MkPrime:::.DoMove(move, chain$statePtr, tuning = tuning,
+                      mcmcData = chain$dataPtr)
+  }
+  after <- Sigma()
+  expect_identical(after[[1]], before[[1]])
+  expect_false(after[[2]] == before[[2]])
+})

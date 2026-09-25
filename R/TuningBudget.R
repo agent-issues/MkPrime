@@ -84,3 +84,58 @@
   # Return:
   list(streak = streak, freeze = streak >= .kTuningFreezeStreak)
 }
+
+# Samples a tuning window collects before it is scored. Admitting a window at
+# its first batch scored each candidate on ~29 draws (#78).
+.kTuningWindowSamples <- 100L
+
+#' Samples each tuning window collects before it is scored
+#'
+#' A window spans whole batches: enough to reach `target` samples, but never so
+#' many that one round of `nWindows` windows outruns `budget`. Samples are
+#' saved on multiples of `thin`, so a window of `L` iterations holds at least
+#' `L %/% thin` of them.
+#'
+#' @param budget Integer iterations the tuning phase may spend.
+#' @param thin Integer iterations per stored sample.
+#' @param batch Integer iterations per tuning batch.
+#' @param nWindows Integer windows per round: the incumbent and each candidate.
+#' @param target Integer samples a window should hold.
+#' @return Integer samples at which a window is scored; never below the ten
+#'   `.MinEssRate()` needs, even where `budget` cannot buy them.
+#' @keywords internal
+.TuningWindowSamples <- function(budget, thin, batch, nWindows = 4L,
+                                 target = .kTuningWindowSamples) {
+  nBatch <- min(ceiling(target * thin / batch),
+                max(budget %/% (nWindows * batch), 1L))
+  # Return:
+  as.integer(max((nBatch * batch) %/% thin, 10L))
+}
+
+#' Which window does the tuning round run next?
+#'
+#' The incumbent's window (index 0) is the yardstick every candidate is gated
+#' against. If it yields no rate, the first usable candidate would be adopted
+#' on one window with no gate at all, so the incumbent is measured once more
+#' while budget remains, and the round is closed on the incumbent once the
+#' budget is spent. An incumbent that fails twice is likely frozen, so the
+#' candidates are then tried rather than letting tuning stall on it.
+#' A round with no candidates has nothing to gate, so it closes at once.
+#'
+#' @param candIdx Integer index of the window just scored; 0 is the incumbent.
+#' @param rate Numeric min-ESS/s that window gave.
+#' @param nCandidates Integer candidate windows in the round.
+#' @param remeasured Logical; `TRUE` once the incumbent has been measured again
+#'   this round.
+#' @param budgetLeft Logical; `TRUE` while tuning budget remains.
+#' @return Integer index of the next window; above `nCandidates` to end the
+#'   round.
+#' @keywords internal
+.NextTuningWindow <- function(candIdx, rate, nCandidates, remeasured,
+                              budgetLeft) {
+  if (candIdx == 0L && nCandidates > 0L && !isTRUE(rate > 0)) {
+    if (!budgetLeft) return(nCandidates + 1L)
+    if (!remeasured) return(0L)
+  }
+  candIdx + 1L
+}
