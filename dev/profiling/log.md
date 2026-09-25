@@ -786,3 +786,46 @@ history of the **Performance profiling** standing task is preserved verbatim bel
 the Discussions migration and is history, not a queue.
 
 **Standing: Performance profiling.** Profile the compiled MCMC hot path using VTune (see `r-package-profiling` skill) or `bench::mark()` microbenchmarks. Identify the current top hotspot after OPP-1–6. Check whether `pruning_jc_flat` / `pruning_jc_acrv_flat` show further vectorisation opportunities, whether chain-swap overhead is visible at scale, or whether R↔C++ boundary crossings dominate for small datasets. File any actionable findings as new `M-nnn` tasks. When completed, record the focus and key finding in Notes and reset to OPEN. Priority: same dynamic rule as S-RED. | Last run: 2026-03-31 round 5 (B, M-166). Focus: **VTune re-profile post M-156/M-157/M-158/M-164 optimizations.** Sun2018 (54 taxa, 225 all-trans, nCat=6), 5000 iters, 337s CPU. SW sampling (no admin). Compared to round 4 baseline (`vtune-out/`). **Key findings:** (1) `exp()` → `fast_neg_exp` (M-156): `_expl_internal` dropped from 11.7% to 0.1%; `fast_neg_exp` at 1.8% total — net ~10% CPU savings, the dominant improvement. (2) `pruning_jc_acrv_persite` share rose 59.1%→75.7% (absorbs ex-exp time). (3) `constant_site_prob_jc` (ascertainment) rose 6.6%→15.2% — now the clear #2 bottleneck. (4) `pruning_jc_acrv_flat` dropped 3.9%→0.6% (M-157 fused ascertainment, M-158 SPR partial CL, M-159 cache-aware scheduling). (5) M-164 pre-filter effect not separately quantifiable — multiple changes between baseline and current; per-iteration sweep cost roughly unchanged (pre-filter overhead may offset savings at this dataset scale). (6) Combined Gibbs sweep (persite+ascertainment+exp-like) = 92.7% of CPU (up from 77.4%). **Next bottleneck: `constant_site_prob_jc` at 15.2%** — batched ascertainment would give biggest remaining improvement. Results saved in `vtune-out-m166/`. Prev: round 4 (B) — baseline profile; filed M-156 fast_exp opportunity.
+
+## Measure-first pass: #22, #11, #18 — 2026-09-25
+
+Cloud container (Intel Xeon @ 2.10 GHz, 2 cores used), package built from
+`main` @ `1ad163a` plus the #145 change (no effect on these paths). Workload:
+Sun2018 (54 taxa, 225 trans chars, 3 partitions at kObs 2/3/4), NJ start
+tree, `nCat = 4`. Drivers in `dev/profiling/drivers/`, all runnable with
+`TREESEARCH_SRC=<TreeSearch checkout>` when TreeSearch is not installed.
+
+**#22 — k' sweep bound past K: already fixed (#66, `1638678`).**
+`22_kprime_sweep_bound.R` counts candidates per character with
+`kprime_sweep_candidates()` on the plain-geometric arm (the only arm
+truncated at K) over K in {10, 30, 100, 200} x p in {0.01, 0.1, 0.5}: zero
+characters are evaluated past `nEff = K - kObs + 1` anywhere on the grid. The
+per-partition bound #22 proposes is `partKoMax` in
+`compute_per_kprime_log_lik`. For scale, one sweep costs 0.044 s at K = 30
+and 3.1-3.5 s at K = 256 (the pre-#66 enumeration). Nothing left to land.
+
+**#11 — `cache_total_loglik` unit re-scan: [AT-LIMIT].**
+`11_cache_units_rescan.R` times the `nParts x nUnits` scan against a
+precomputed per-partition index at Sun2018's 3 partitions: 0.006 us saved per
+call at 1 unit per partition, 0.055 us at a pessimistic 10 distinct k' per
+partition. The same call does at least one `constant_site_prob_jc` pass
+(12.5 us at k = 2, including R call overhead), so the scan is < 0.5 % of the
+call and far less of an evaluation (the scan is skipped under
+`coding = "none"`).
+
+**#18 — `singleton_site_prob_jc` per-call buffer: [AT-LIMIT].**
+`18_singleton_alloc.R` compiles the kernel twice (fresh zero-filled vector per
+call vs caller-owned scratch with only tips re-zeroed), 21 paired
+replicates of 2000 calls: 75.9 vs 75.6 us per call, paired delta median
+-0.04 us (IQR -2.8 to 3.0 us). Inside noise. The allocation is ~93 KB and the
+pruning pass is O(nEdge * nTip * k) over it, so the malloc and zero-fill are
+lost in the arithmetic.
+
+**Lead for the next ascertainment round (not filed).** The per-call buffer is
+not the cost, the call count is: under `coding = "informative"` Sun2018 makes
+~111 singleton calls per likelihood evaluation (one per binary
+transformational partition plus one per distinct missing-data mask,
+`asc_probs_masked`), each a full O(nTip) pseudo-character pruning pass. A full
+evaluation costs 8.3 ms informative against 0.65 ms variable on the same tree,
+so the masked uninformative-mass correction is ~90 % of an informative
+evaluation. Batching masks into one pass is where a real saving would be.
