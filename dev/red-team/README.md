@@ -44,11 +44,10 @@ dev/red-team/
   heavy-tests/              # standalone R harnesses (SBC/coverage/detailed-balance) + fixtures
   repros/                   # minimal reproducers cited from issue bodies
   reviews/                  # per-branch external-review reports
-  notes/                    # investigation write-ups too long for an issue body
 ```
 
 Legacy per-round investigation files (`MARGINAL-K-*.md`, `harness-001-investigation.md`,
-`campaign-2026-05-26.md`) stay where they are; issue bodies cite them by path.
+`campaign-2026-05-26.md`) stay where they are: source files, tests and proofs cite them by path.
 
 ## Finding ids
 
@@ -75,5 +74,7 @@ the capability order (from 2026-09-23 Opus 5.5 is the top finder and `fable` is
 suspended). There is no project legend; its history is archived in [discussion #124](https://github.com/agent-issues/MkPrime/discussions/124#discussioncomment-18564504).
 
 Run outputs under `heavy-tests/` and `numerical/` (`*-results/`, `*.log`, experiment
-`*.rds`) are regenerable and git-ignored; committed regression fixtures are the
-exception.
+`*.rds`) are regenerable. Only `heavy-tests/*-results/summary.rds` is git-ignored;
+about 25 result files under `numerical/*-results/`, `heavy-tests/gibbs-spr-db-results/`
+and `sbc-results-mixed/` are tracked, and whether each is a fixture or a stray is
+undecided.
