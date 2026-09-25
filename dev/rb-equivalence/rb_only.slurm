@@ -7,7 +7,7 @@
 #   sbatch --export=ALL,PID=635,MODEL=by_nt_9v,TARGET_ESS=128,MAX_TIME=1800 \
 #          dev/rb-equivalence/rb_only.slurm
 #
-#SBATCH -c 1
+#SBATCH -c 2
 #SBATCH --mem=8G
 #SBATCH --time=2:00:00
 #SBATCH --gres=tmp:4G

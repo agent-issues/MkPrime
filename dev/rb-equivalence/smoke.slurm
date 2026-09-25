@@ -8,7 +8,7 @@
 #
 # Or via the dispatcher helper run_cell.ps1 (see plan).
 #
-#SBATCH -c 1
+#SBATCH -c 2
 #SBATCH --mem=8G
 #SBATCH --time=2:00:00
 #SBATCH --gres=tmp:4G
