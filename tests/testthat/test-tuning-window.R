@@ -6,9 +6,12 @@
                                      dimnames = list(paste0("t", 1:4), NULL)))
 
 # Tuning on a 4-tip tree, 20000 iterations after a 500-iteration warmup, so a
-# budget of 9750. The progress callback sleeps during tuning, so that time
-# charged to a window shows in its `sec`.
-.TuningWindows <- function(pause = 0.2) {
+# budget of 9750. The progress callback sleeps once per 2000-iteration window
+# during tuning, so that time charged to a window shows in its `sec`. The pause
+# dwarfs a window's own sampling time (~0.1 s on Linux; more on Windows CI).
+.tuningPause <- 1
+
+.TuningWindows <- function(pause = .tuningPause) {
   if (!is.null(.windowRecord$windows)) return(.windowRecord$windows)
   windows <- new.env()
   windows$list <- list()
@@ -31,7 +34,7 @@
                mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 20000L, thin = 17L,
                                   maxWarmup = 500L, minWarmup = 500L,
                                   autoTune = TRUE, progressFn = Pause,
-                                  plotEvery = 1000L, maxTime = 60)),
+                                  plotEvery = 2000L, maxTime = 60)),
     "maxWarmup"
   )
   .windowRecord$windows <- windows$list
@@ -52,7 +55,7 @@ test_that("tuning starts no round that would overrun its budget", {
 
 test_that("a tuning window is not charged for the progress callback (#220)", {
   windows <- .TuningWindows()
-  expect_true(all(vapply(windows, `[[`, numeric(1), "sec") < 0.2))
+  expect_lt(max(vapply(windows, `[[`, numeric(1), "sec")), .tuningPause)
 })
 
 test_that("tree ESS enters the tuning score without minTreeEss (#222)", {
