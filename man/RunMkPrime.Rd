@@ -42,7 +42,8 @@ behaviour). Default \code{FALSE} enables NNI and SPR topology proposals.}
 
 \item{overwrite}{Logical. If \code{FALSE} (the default) and
 \code{mcmc$checkpointFile} points to an existing file, the run is
-automatically resumed from that checkpoint.
+automatically resumed from that checkpoint, with any \code{mcmc} or \code{...}
+options passed on to \code{\link[=ResumeMkPrime]{ResumeMkPrime()}}.
 Set to \code{TRUE} to discard the existing checkpoint and start fresh.}
 
 \item{partition}{Optional integer vector of length \code{mkd$nChar} (after

@@ -11,6 +11,7 @@ ResumeMkPrime(
   neomorphic = integer(0),
   knownStates = integer(0),
   model = NULL,
+  mcmc = NULL,
   verbosity = MkPrimeVerbosity()
 )
 }
@@ -19,16 +20,27 @@ ResumeMkPrime(
 
 \item{data}{A \code{phyDat} or \code{MkPrimeData} object (must match original).}
 
-\item{tree}{A \code{phylo} object (used only for model finalization via
-Fitch parsimony).  Can be \code{NULL} when the checkpoint already contains
-a finalized model (all checkpoints since M-149).}
+\item{tree}{A \code{phylo} object, used only to check tip labels and, for a
+checkpoint with no stored model, to derive \code{expSteps}.  Usually \code{NULL}.}
 
 \item{neomorphic, knownStates}{Passed to \code{\link[=MkPrimeData]{MkPrimeData()}} if \code{data}
 is a \code{phyDat} object.}
 
 \item{model}{An \code{MkPrimeModel} object.  If \code{NULL} (the default),
-the model stored in the checkpoint is used; otherwise it is finalized
-using \code{tree} or re-derived from data.}
+the model stored in the checkpoint is used.  Otherwise its unset
+data-derived defaults (\code{expSteps}, \code{treeLengthRate}) are taken from the
+checkpoint's model, so the prior does not change mid-chain.
+Fields that a checkpoint predates are filled with current defaults,
+with a warning.}
+
+\item{mcmc}{\code{NULL} (the default) to continue with the checkpoint's MCMC
+settings, or an \code{MkPrimeMCMC} object (or a named list of its fields)
+whose run-bounding settings -- \code{nIter}, \code{maxTime}, \code{minEss},
+\code{minTreeEss}, \code{cancelFile}, \code{nCore}, \code{pollInterval}, \code{cancelGrace},
+\code{progressFn} and \code{plotEvery} -- replace the checkpoint's.  Other
+settings fix the sampler and are kept from the checkpoint, with a
+warning where they differ.  \code{\link[=RunMkPrime]{RunMkPrime()}} passes the options it was
+given when it resumes automatically.}
 
 \item{verbosity}{Integer from \code{0} (silent) to \code{2} (tuning diagnostics)
 controlling console output for the duration of the call; see

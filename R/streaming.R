@@ -305,8 +305,12 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
 
   # --- Path 1: recover from named log file(s) on disk ---
   if (!is.null(logFile)) {
-    logPaths <- .DiscoverLogFiles(logFile)
-    if (is.null(logPaths)) {
+    logPaths <- if (length(logFile) > 1L) {
+      logFile[file.exists(logFile)]
+    } else {
+      .DiscoverLogFiles(logFile)
+    }
+    if (!length(logPaths)) {
       .AlertDanger("No log files found for {.file {logFile}}.")
       return(invisible(NULL))
     }
@@ -341,27 +345,20 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
     model <- ckp$model
     mcmc  <- ckp$mcmc
 
-    # Try to load trees from the Newick file.  Derive the path from the
-    # log file location (not mcmc$treeFile, which stores a path relative
-    # to the working directory at run time, which may have changed).
-    treeFile <- sub("\\.[^.]+$", "_trees.nwk", logFile)
-    trees <- list()
-    if (file.exists(treeFile)) {
-      treeLines <- readLines(treeFile, warn = FALSE)
-      treeLines <- treeLines[nzchar(trimws(treeLines))]
-      if (length(treeLines) > 0L) {
-        trees <- tryCatch(
-          lapply(treeLines, function(x) ape::read.tree(text = x)),
-          error = function(e) {
-            .AlertWarning(
-              "Could not parse tree file {.file {treeFile}}: \\
-               {conditionMessage(e)}"
-            )
-            list()
-          }
-        )
+    # Trees: prefer the checkpoint's record of where they went; otherwise
+    # derive the paths as MkPrimeMCMC() and .TreeFilePaths() would, relative
+    # to the log files rather than the run's working directory.
+    treeFiles <- ckp$treeFilePaths
+    if (is.null(treeFiles) || !all(file.exists(treeFiles))) {
+      treeBase <- if (length(logPaths) > 1L) {
+        sub("(_\\d+)?\\.[^.]+$", "_trees.nwk", logPaths[1])
+      } else {
+        sub("\\.[^.]+$", "_trees.nwk", logPaths)
       }
+      treeFiles <- .TreeFilePaths(treeBase, length(logPaths))
     }
+    runTrees <- lapply(treeFiles, .ReadTreeFile)
+    trees <- unlist(runTrees, recursive = FALSE) %||% list()
 
     result <- MkPosterior(
       samples    = samples,
@@ -386,6 +383,9 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
         list(samples = s, trees = list(), acceptance = numeric(0),
              saved_idx = nrow(s))
       })
+      for (i in seq_along(perRun)) {
+        if (i <= length(runTrees)) perRun[[i]]$trees <- runTrees[[i]]
+      }
       # Drop runs with no samples (e.g. stale log from a prior attempt)
       hasData <- vapply(perRun, function(r) nrow(r$samples) > 0L, logical(1))
       perRun <- perRun[hasData]
@@ -477,6 +477,24 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
 }
 
 
+# Trees from one Newick stream; an empty list when the file is missing or
+# unreadable.
+.ReadTreeFile <- function(treeFile) {
+  if (!file.exists(treeFile)) return(list())
+  treeLines <- readLines(treeFile, warn = FALSE)
+  treeLines <- treeLines[nzchar(trimws(treeLines))]
+  tryCatch(
+    lapply(treeLines, function(x) ape::read.tree(text = x)),
+    error = function(e) {
+      .AlertWarning(
+        "Could not parse tree file {.file {treeFile}}: {conditionMessage(e)}"
+      )
+      list()
+    }
+  )
+}
+
+
 #' Discover per-run log files from a base log path
 #'
 #' Tries the `_N.log` multi-run naming convention first, then falls back
@@ -505,7 +523,7 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
   }
 
   # Fall back to exact file
- if (file.exists(logFile)) return(logFile)
+  if (file.exists(logFile)) return(logFile)
 
   NULL
 }

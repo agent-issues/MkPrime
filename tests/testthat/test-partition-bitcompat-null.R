@@ -33,7 +33,9 @@
 # it (issue #142), and again on 2026-09-23 when `cacheBonus = 1` joined it
 # (issue #70), and again on 2026-09-24 when the neomorphic rate matrix was
 # normalised to mean rate 1 (issue #212), a likelihood change that no pin
-# can undo. The 2026-05-20 reference delegated its starting
+# can undo, and again on 2026-09-24 when RunMkPrime began putting the start
+# tree's tips in data order (issue #224): the merge base given the pinned tree
+# renumbered to data order reproduces the new payload bit for bit. The 2026-05-20 reference delegated its starting
 # topology to TreeSearch::AdditionTree(), so it silently depended on the
 # installed version of a Suggests package and no CI job could ever reproduce
 # it; see helper-partition-ref.R.
