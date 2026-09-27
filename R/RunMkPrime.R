@@ -150,7 +150,10 @@ RunMkPrime <- function(data, tree = NULL,
   # A discarded run's per-run checkpoints would otherwise be merged into this
   # run's state if it is interrupted before its own workers replace them.
   if (overwrite && !is.null(cpFile)) {
-    unlink(c(paste0(cpFile, ".tmp"), .PerRunCkpFiles(cpFile, tmp = TRUE)))
+    oldNRuns <- tryCatch(readRDS(cpFile)$mcmc$nRuns, error = function(e) NULL)
+    perRun <- .CkpFilePaths(cpFile, max(mcmc$nRuns, oldNRuns %||% 1L))
+    unlink(paste0(cpFile, ".tmp"))
+    if (length(perRun) > 1L) unlink(c(perRun, paste0(perRun, ".tmp")))
   }
 
   # Discard any temp logs from a previously interrupted run that the
@@ -477,6 +480,7 @@ RunMkPrime <- function(data, tree = NULL,
                                         tipLabels, paramNames, nEdge,
                                         brColStart, treeFilePaths,
                                         TRUE, logFilePaths, convWindowSize)
+      launchRuns   <- runs
       runs         <- parResult$runs
       logFilePaths <- parResult$logFilePaths
       stopReason   <- parResult$stopReason
@@ -489,8 +493,8 @@ RunMkPrime <- function(data, tree = NULL,
       # the worker state returned via $get_result(); it doesn't depend on
       # the per-run ckps that the workers also produced on disk.
       if (!is.null(mcmc$checkpointFile)) {
-        .SaveCheckpoint(runs, mcmc, actualIter, paramNames,
-                        mcmc$checkpointFile, model = model)
+        .SaveCheckpoint(.WithDroppedRuns(runs, launchRuns), mcmc, actualIter,
+                        paramNames, mcmc$checkpointFile, model = model)
       }
     } else if (nRuns >= 2L && !is.null(mcmc$maxRhat)) {
       # M-146: cross-run R-hat convergence orchestrator
@@ -852,6 +856,18 @@ RunMkPrime <- function(data, tree = NULL,
 }
 
 
+# Every per-move counter of a run, aligned by .AlignMoveCounts().
+.AlignRunCounts <- function(r, moveNames) {
+  for (counter in c("chain_accept", "chain_propose", "chain_time_ns",
+                    "chain_slice_exp")) {
+    if (!is.null(r[[counter]])) {
+      r[[counter]] <- lapply(r[[counter]], .AlignMoveCounts, moveNames)
+    }
+  }
+  r
+}
+
+
 # --- Single-run MCMC engine ---
 
 #' Run the complete MCMC batch loop for one independent run
@@ -964,12 +980,7 @@ RunMkPrime <- function(data, tree = NULL,
   moveWeights   <- vapply(moves, `[[`, numeric(1), "weight")
   moveWeights   <- moveWeights / sum(moveWeights)
   names(moveWeights) <- moveNames
-  for (counter in c("chain_accept", "chain_propose", "chain_time_ns",
-                    "chain_slice_exp")) {
-    if (!is.null(r[[counter]])) {
-      r[[counter]] <- lapply(r[[counter]], .AlignMoveCounts, moveNames)
-    }
-  }
+  r <- .AlignRunCounts(r, moveNames)
 
   # M-149 #2: restore adapted weights from checkpoint / previous run
   if (!is.null(resumeMoveWeights)) {
@@ -3103,6 +3114,15 @@ RunMkPrime <- function(data, tree = NULL,
 }
 
 
+# A parallel job returns only the runs that finished. Its master checkpoint
+# keeps the state each dropped run was launched from, so the job resumes
+# whole rather than without them.
+.WithDroppedRuns <- function(returned, launched) {
+  launched[.RunIndices(returned)] <- returned
+  launched
+}
+
+
 # First iteration for each run when resuming.
 #
 # A run carries its own position in `actual_iter`.  One that has neither that
@@ -3143,26 +3163,25 @@ RunMkPrime <- function(data, tree = NULL,
   ref <- if (file.exists(checkpointFile)) {
     tryCatch(readRDS(checkpointFile), error = function(e) NULL)
   }
-  # A per-run file older than the master predates the state the master holds
-  # -- typically one left by a discarded run -- so it is refused, not merged.
-  masterMtime <- if (is.null(ref)) -Inf else file.mtime(checkpointFile)
-  fresh <- perRunExists
-  fresh[perRunExists] <- file.mtime(perRunPaths[perRunExists]) > masterMtime
-  if (!any(fresh)) return(invisible(0L))
 
+  # A per-run checkpoint written before the master predates the state the
+  # master holds -- typically one left by a discarded run -- so it is refused,
+  # not merged. Payload timestamps are compared, not file times, which a copy
+  # may not preserve.
   perRun     <- vector("list", nRuns)
   mergedRuns <- vector("list", nRuns)
   iters      <- integer(nRuns)
-  for (i in which(fresh)) {
+  for (i in which(perRunExists)) {
     ck <- tryCatch(readRDS(perRunPaths[i]), error = function(e) NULL)
-    if (!is.null(ck) && length(ck$runs) >= 1L) {
+    fresh <- is.null(ref$timestamp) || isTRUE(ck$timestamp > ref$timestamp)
+    if (!is.null(ck) && length(ck$runs) >= 1L && fresh) {
       perRun[[i]]     <- ck
       mergedRuns[[i]] <- ck$runs[[1L]]
       iters[i]        <- as.integer(ck$iter %||% 0L)
     }
   }
 
-  # If no per-run ckp was readable, leave master alone.
+  # If no per-run ckp is usable, leave master alone.
   readable <- !vapply(perRun, is.null, logical(1))
   if (!any(readable)) return(invisible(0L))
 
@@ -3386,8 +3405,15 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   } else {
     # Master missing or corrupt: discover per-run ckps via glob and infer
     # nRuns from the highest index.
+    ext  <- tools::file_ext(checkpointFile)
+    base <- tools::file_path_sans_ext(basename(checkpointFile))
+    pat  <- if (nzchar(ext)) {
+      paste0("^", base, "_\\d+\\.", ext, "$")
+    } else {
+      paste0("^", base, "_\\d+$")
+    }
     dir   <- dirname(checkpointFile)
-    found <- .PerRunCkpFiles(checkpointFile)
+    found <- list.files(dir, pattern = pat, full.names = FALSE)
     if (length(found) == 0L) {
       cli::cli_abort(c(
         "Cannot resume: {.file {checkpointFile}} is missing/unreadable \\
@@ -3395,7 +3421,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         "i" = "Start a fresh run with {.code RunMkPrime(..., overwrite = TRUE)}."
       ))
     }
-    sampleCk <- readRDS(found[1L])
+    sampleCk <- readRDS(file.path(dir, found[1L]))
     sampleCk$mcmc$nRuns %||% length(found)
   }
 
@@ -3475,13 +3501,16 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   present <- !vapply(runs, is.null, logical(1))
   runIdx  <- .RunIndices(runs)[present]
   if (length(runs) != nRuns || !identical(runIdx, seq_len(nRuns))) {
+    absent <- setdiff(seq_len(nRuns), runIdx)
     cli::cli_abort(c(
       "Checkpoint holds state for {length(runIdx)} of {nRuns} run{?s}.",
-      "x" = "No state for run{?s} {.val {setdiff(seq_len(nRuns), runIdx)}}.",
-      "i" = "A worker may have failed or been killed. Start a fresh run \\
-             with {.code RunMkPrime(..., overwrite = TRUE)}."
+      "x" = "No state for {cli::qty(length(absent))}run{?s} {.val {absent}}.",
+      "i" = "A parallel worker's run may have been dropped when it failed, \\
+             was killed or never launched. Start a fresh run with \\
+             {.code RunMkPrime(..., overwrite = TRUE)}."
     ))
   }
+  for (i in seq_len(nRuns)) runs[[i]]$run_index <- i
   if (is.finite(mcmc$nIter) && mcmc$nIter < startIter) {
     .AlertWarning(
       "Checkpoint is at iteration {startIter - 1L}, past {.arg nIter} = \\
@@ -3577,6 +3606,10 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     ))
   }
 
+  # Checked here too, not only in each run: a parallel worker that aborts is
+  # dropped, and the job would carry on without it.
+  runs <- lapply(runs, .AlignRunCounts, rebuiltMoveNames)
+
   if (identical(mcmc$thin, "auto")) {
     mcmc$thin <- length(moves)
   }
@@ -3647,14 +3680,15 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                                         brColStart, treeFilePaths,
                                         TRUE, logFilePaths, convWindowSize,
                                         startIters = perRunStarts)
+      launchRuns   <- runs
       runs         <- parResult$runs
       logFilePaths <- parResult$logFilePaths
       stopReason   <- parResult$stopReason
       actualIter   <- parResult$actualIter
 
       if (!is.null(mcmc$checkpointFile)) {
-        .SaveCheckpoint(runs, mcmc, actualIter, paramNames,
-                        mcmc$checkpointFile, model = model)
+        .SaveCheckpoint(.WithDroppedRuns(runs, launchRuns), mcmc, actualIter,
+                        paramNames, mcmc$checkpointFile, model = model)
       }
     } else if (isStreaming && nRuns >= 2L && !is.null(mcmc$maxRhat)) {
       # M-146: cross-run R-hat convergence orchestrator

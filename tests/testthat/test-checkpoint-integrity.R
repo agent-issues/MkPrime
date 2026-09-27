@@ -162,9 +162,9 @@ test_that("checkpoints look up files by each run's original index (#92)", {
   perRun <- .CkpFilePaths(ckp, 2L)
   for (i in 1:2) {
     saveRDS(list(runs = master$runs[i], iter = 400L, mcmc = master$mcmc,
-                 paramNames = master$paramNames, version = 3L), perRun[i])
+                 paramNames = master$paramNames, version = 3L,
+                 timestamp = master$timestamp + 1), perRun[i])
   }
-  Sys.setFileTime(ckp, Sys.time() - 60)
   list(ckp = ckp, dir = dir, perRun = perRun, master = master, pd = fx$pd)
 }
 
@@ -176,6 +176,21 @@ test_that("a checkpoint missing a run fails with a clear message (#92)", {
   saveRDS(ck, job$ckp)
   expect_error(ResumeMkPrime(job$ckp, job$pd, mcmc = list(nIter = 600L)),
                "state for 1 of 2 runs")
+
+  ck$mcmc$nRuns <- 3L
+  saveRDS(ck, job$ckp)
+  expect_error(ResumeMkPrime(job$ckp, job$pd, mcmc = list(nIter = 600L)),
+               "No state for runs 2 and 3")
+})
+
+test_that("a parallel master keeps the runs its workers dropped (#92)", {
+  launched <- lapply(1:3, function(i) list(run_index = i, phase = NULL))
+  returned <- list(list(run_index = 1L, phase = "Sample"),
+                   list(run_index = 3L, phase = "Sample"))
+  kept <- .WithDroppedRuns(returned, launched)
+  expect_identical(vapply(kept, `[[`, 0L, "run_index"), 1:3)
+  expect_identical(kept[[2]], launched[[2]])
+  expect_identical(kept[c(1, 3)], returned)
 })
 
 test_that("per-run checkpoints that disagree are not merged (#92)", {
@@ -205,20 +220,22 @@ test_that("per-run checkpoints that disagree are not merged (#92)", {
 
 test_that("per-run checkpoints older than the master are refused (#107)", {
   job <- .TwoRunCheckpoint()
-  Sys.setFileTime(job$perRun, Sys.time() - 3600)
   before <- readRDS(job$ckp)
-  expect_identical(.SynthesiseMasterFromPerRun(job$ckp, 2L), 0L)
-  expect_identical(readRDS(job$ckp)$runs, before$runs)
-
-  # Only the stale one is refused; its slot keeps the master's state.
-  Sys.setFileTime(job$perRun[1], Sys.time())
-  stale <- readRDS(job$perRun[2])
-  stale$runs[[1]]$saved_idx <- 999L
-  saveRDS(stale, job$perRun[2])
-  Sys.setFileTime(job$perRun[2], Sys.time() - 3600)
+  Backdate <- function(path) {
+    ck <- readRDS(path)
+    ck$runs[[1]]$saved_idx <- 999L
+    ck$timestamp <- before$timestamp - 3600
+    saveRDS(ck, path)
+  }
+  Backdate(job$perRun[2])
   .SynthesiseMasterFromPerRun(job$ckp, 2L)
   expect_identical(readRDS(job$ckp)$runs[[2]]$saved_idx,
                    before$runs[[2]]$saved_idx)
+
+  job <- .TwoRunCheckpoint()
+  before <- readRDS(job$ckp)
+  lapply(job$perRun, Backdate)
+  expect_identical(.SynthesiseMasterFromPerRun(job$ckp, 2L), 0L)
 })
 
 test_that("overwrite = TRUE discards the previous run's per-run checkpoints (#107)", {
@@ -229,8 +246,9 @@ test_that("overwrite = TRUE discards the previous run's per-run checkpoints (#10
   ckp <- file.path(dir, "job.ckp")
   stale <- file.path(dir, c("job_1.ckp", "job_3.ckp", "job_2.ckp.tmp",
                             "job.ckp.tmp"))
-  keep <- file.path(dir, c("job_notes.ckp", "other_1.ckp"))
-  file.create(c(ckp, stale, keep))
+  keep <- file.path(dir, c("job_4.ckp", "job_notes.ckp", "other_1.ckp"))
+  saveRDS(list(mcmc = list(nRuns = 3L)), ckp)
+  file.create(c(stale, keep))
 
   set.seed(10701)
   allow_warning(RunMkPrime(fx$pd, fx$tree, overwrite = TRUE,
@@ -259,4 +277,26 @@ test_that("a temp-log parallel run leaves no per-run checkpoints (#107)", {
     maxWarmup = 200L, autoTune = FALSE, checkEvery = 500L, pollInterval = 1L,
     maxTime = 60)), "without stabilisation")
   expect_identical(setdiff(CkpFiles(), before), character(0))
+})
+
+test_that("a parallel resume on another schedule stops before launching (#74)", {
+  skip_if_not_installed("callr")
+  skip_if(requireNamespace("pkgload", quietly = TRUE) &&
+            isTRUE(pkgload::is_dev_package("MkPrime")),
+          "callr workers need the installed package")
+  ckp <- tempfile(fileext = ".ckp")
+  log <- sub("ckp$", "log", ckp)
+  on.exit(unlink(c(ckp, .CkpFilePaths(ckp, 2L), .LogFilePaths(log, 2L))),
+          add = TRUE)
+  ck <- .LegacyFixTopologyCheckpoint(MkPrimeMCMC(
+    nRuns = 2L, nCore = 2L, nIter = 600L, thin = 5L, minWarmup = 200L,
+    maxWarmup = 200L, autoTune = FALSE, checkEvery = 200L, pollInterval = 1L,
+    maxTime = 60, checkpointFile = ckp, logFile = log))
+  ck$moveWeights <- NULL
+  saveRDS(ck, ckp)
+
+  expect_error(ResumeMkPrime(ckp, .IntegrityFixture()$pd,
+                             mcmc = list(nIter = 800L)),
+               "move counts do not match")
+  expect_length(readRDS(ckp)$runs, 2L)
 })
