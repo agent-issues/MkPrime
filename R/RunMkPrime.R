@@ -1072,7 +1072,7 @@ RunMkPrime <- function(data, tree = NULL,
     # A checkpoint taken mid-round holds the candidate then on trial. Resume
     # the round where it stood, so that candidate still has to beat the best
     # so far (#221); only the interrupted window is run again.
-    savedRound <- r$tuningRound
+    savedRound <- r[["tuningRound"]]
     if (identical(names(savedRound$bestWeights), moveNames)) {
       tuningCandidates    <- savedRound$candidates
       tuningCandIdx       <- savedRound$candIdx
