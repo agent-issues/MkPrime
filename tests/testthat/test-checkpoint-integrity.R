@@ -218,6 +218,20 @@ test_that("per-run checkpoints that disagree are not merged (#92)", {
   expect_error(.SynthesiseMasterFromPerRun(job$ckp, 2L), "run index")
 })
 
+test_that(".CheckPerRunCkps compares shapes, not storage types (#92)", {
+  Run <- function(edge, i) {
+    list(chains = list(list(edge = edge)), run_index = i)
+  }
+  edge <- matrix(c(5L, 6L, 6L, 5L, 7L, 7L, 6L, 1L, 2L, 7L, 3L, 4L), ncol = 2)
+  ref <- list(paramNames = "log_post",
+              runs = list(Run(edge + 0, 1L), Run(edge + 0, 2L)))
+  perRun <- list(NULL, list(paramNames = "log_post", runs = list(Run(edge, 2L))))
+  expect_null(.CheckPerRunCkps(perRun, c("a_1.ckp", "a_2.ckp"), ref, "a.ckp"))
+  # All workers killed: the master holds no runs.
+  ref$runs <- list()
+  expect_null(.CheckPerRunCkps(perRun, c("a_1.ckp", "a_2.ckp"), ref, "a.ckp"))
+})
+
 test_that("per-run checkpoints older than the master are refused (#107)", {
   job <- .TwoRunCheckpoint()
   before <- readRDS(job$ckp)

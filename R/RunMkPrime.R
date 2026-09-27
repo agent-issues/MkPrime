@@ -3236,9 +3236,15 @@ RunMkPrime <- function(data, tree = NULL,
   Shape <- function(paramNames, run) {
     edge <- run$chains[[1L]]$edge
     list(paramNames = paramNames, nEdge = nrow(edge),
-         nChains = length(run$chains), nTip = min(edge[, 1L]) - 1L)
+         nChains = length(run$chains), nTip = as.integer(min(edge[, 1L])) - 1L)
   }
-  refRun <- Filter(Negate(is.null), ref$runs)[[1L]]
+  # A master whose workers were all killed holds no runs to compare against.
+  refRuns <- Filter(Negate(is.null), ref$runs)
+  refRun <- if (length(refRuns)) {
+    refRuns[[1L]]
+  } else {
+    Filter(Negate(is.null), perRun)[[1L]]$runs[[1L]]
+  }
   want <- Shape(ref$paramNames, refRun)
   for (i in which(!vapply(perRun, is.null, logical(1)))) {
     run <- perRun[[i]]$runs[[1L]]
