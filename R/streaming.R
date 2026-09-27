@@ -75,6 +75,19 @@
 }
 
 
+# Per-run checkpoints on disk for `checkpointFile`, whatever `nRuns` wrote
+# them; `tmp = TRUE` adds the `.tmp` files an interrupted atomic write leaves.
+# @keywords internal
+.PerRunCkpFiles <- function(checkpointFile, tmp = FALSE) {
+  ext  <- tools::file_ext(checkpointFile)
+  base <- tools::file_path_sans_ext(basename(checkpointFile))
+  base <- gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", base)
+  pat  <- paste0("^", base, "_\\d+", if (nzchar(ext)) paste0("\\.", ext),
+                 if (tmp) "(\\.tmp)?", "$")
+  list.files(dirname(checkpointFile), pattern = pat, full.names = TRUE)
+}
+
+
 # Create log file(s) and write the tab-separated header line.
 # Returns character vector of resolved paths (length nRuns).
 # @keywords internal
