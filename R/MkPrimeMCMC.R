@@ -380,7 +380,7 @@ MkPrimeMCMC <- function(
     minWarmup = 2000L,
     maxWarmup = NULL,
     autoTune = TRUE,
-    tuningBudget = 10000L,
+    tuningBudget = 24000L,
     tuningRounds = 5L,
     nRuns = 2L,
     nChains = 1L,
