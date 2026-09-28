@@ -303,6 +303,20 @@ struct McmcState {
   }
 };
 
+// MH accept/reject. A -Inf current state (bad start tree, k' < kObs seed,
+// ...) gives logAlpha = +Inf; a finite proposal must be accepted or the chain
+// can never leave it (#145, F7-08). Any other non-finite logAlpha rejects.
+static inline bool mh_accept(double logAlpha,
+                             double curLogLik, double curLogPrior,
+                             double newLogLik, double newLogPrior) {
+  if (logAlpha == R_PosInf) {
+    return (curLogLik == R_NegInf || curLogPrior == R_NegInf) &&
+           R_FINITE(newLogLik) && R_FINITE(newLogPrior);
+  }
+  return R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha;
+}
+
+
 
 // ---------------------------------------------------------------------------
 // Log prior (mirrors LogPrior in MkPrimeModel.R)
@@ -1564,7 +1578,8 @@ static bool gibbs_spr_finish(McmcData* data, McmcState* state, double beta,
                   + (newLogPrior - state->logPrior)
                   + beta * (candLL[nCand] - candLL[chosen])
                   + std::log(lReg) - std::log(plan.lMerge);
-  if (!(R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha))
+  if (!mh_accept(logAlpha, state->logLik, state->logPrior,
+                newLogLik, newLogPrior))
     return false;
 
   for (int k = 0; k < nEdge; ++k) {
@@ -2805,7 +2820,8 @@ static bool block_gibbs_branch_sweep_impl(
     // MH accept/reject (prior is constant for relBrLengths)
     double logAlpha = beta * (proposedLL - currentLL) + logHastings;
 
-    if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+    if (mh_accept(logAlpha, currentLL, state->logPrior,
+                  proposedLL, state->logPrior)) {
       state->relBrLengths[index] = newF * relTotal;
       state->relBrLengths[other] = (1.0 - newF) * relTotal;
       absLen[index] = trialAbs[index];
@@ -3094,7 +3110,8 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
   // 16. MH acceptance
   double logAlpha = beta * (newLogLik - state->logLik)
                   + (newLogPrior - state->logPrior) + logHR;
-  if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+  if (mh_accept(logAlpha, state->logLik, state->logPrior,
+                newLogLik, newLogPrior)) {
     for (int k = 0; k < nEdge; ++k) {
       state->parent[k]       = ordEdge(k, 0);
       state->child[k]        = ordEdge(k, 1);
@@ -3314,7 +3331,8 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
   // 9. MH acceptance
   double logAlpha = beta * (newLogLik - state->logLik)
                   + (newLogPrior - state->logPrior) + logHR;
-  if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+  if (mh_accept(logAlpha, state->logLik, state->logPrior,
+                newLogLik, newLogPrior)) {
     for (int k = 0; k < nEdge; ++k) {
       state->parent[k]       = ordEdge(k, 0);
       state->child[k]        = ordEdge(k, 1);
@@ -4816,7 +4834,8 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
   double logAlpha = beta * (newLogLik - state->logLik) +
                     (newLogPrior - state->logPrior);
 
-  if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+  if (mh_accept(logAlpha, state->logLik, state->logPrior,
+                newLogLik, newLogPrior)) {
     state->logLik = newLogLik;
     state->logPrior = newLogPrior;
     state->partLogLik = std::move(newPC);
@@ -5822,7 +5841,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
 
   double logAlpha = beta * (newLogLik - state->logLik) +
                     (newLogPrior - state->logPrior) + logHastings;
-  if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
+  if (mh_accept(logAlpha, state->logLik, state->logPrior,
+                newLogLik, newLogPrior)) {
     state->logLik   = newLogLik;
     state->logPrior = newLogPrior;
     if (!newPC.empty()) state->partLogLik = std::move(newPC);

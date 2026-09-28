@@ -211,7 +211,6 @@ bool beta_simplex_impl(NumericVector& x, int index, double tuning,
   int other = (int)(unif_rand() * (double)(n - 1));
   if (other >= index) ++other;
   if (other >= n) other = n - 1;
-  if (other == index) other = (index + 1) % n;
   outOther = other;
 
   const double oldA = x[index];
@@ -290,7 +289,6 @@ static bool dirichlet_core(NumericVector& x,
   std::vector<double> alphaFwd(nCats);
   for (int i = 0; i < nCats; ++i) {
     alphaFwd[i] = xK[i] * alpha + 1.0;
-    if (alphaFwd[i] < 0.01) alphaFwd[i] = 0.01;
   }
 
   // ---- Draw zK ~ Dir(alphaFwd) via Gamma variates ----
@@ -312,7 +310,6 @@ static bool dirichlet_core(NumericVector& x,
   std::vector<double> alphaRev(nCats);
   for (int i = 0; i < nCats; ++i) {
     alphaRev[i] = zK[i] * alpha + 1.0;
-    if (alphaRev[i] < 0.01) alphaRev[i] = 0.01;
   }
 
   // ---- Log Hastings = log Dir(xK | alphaRev) - log Dir(zK | alphaFwd) ----
