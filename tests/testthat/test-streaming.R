@@ -13,7 +13,7 @@ test_that(".ConvWindowRows returns rows in chronological order after wrap", {
 
   for (i in 1:13) {
     buf <- .AddToStreamBuffer(buf, row = i, iterNum = i, logFile = logFile,
-                               bufferSize = 100L, convWindowSize = convWindowSize)
+                               bufferSize = 100L)
   }
   expect_true(buf$conv_filled)
 
@@ -34,7 +34,7 @@ test_that(".ConvWindowRows is chronological right when the window first fills", 
 
   for (i in 1:10) {
     buf <- .AddToStreamBuffer(buf, row = i, iterNum = i, logFile = logFile,
-                               bufferSize = 100L, convWindowSize = convWindowSize)
+                               bufferSize = 100L)
   }
   expect_true(buf$conv_filled)
   expect_equal(buf$conv_head, convWindowSize)
@@ -52,12 +52,51 @@ test_that(".ConvWindowRows returns unrotated rows before the window fills", {
 
   for (i in 1:5) {
     buf <- .AddToStreamBuffer(buf, row = i, iterNum = i, logFile = logFile,
-                               bufferSize = 100L, convWindowSize = convWindowSize)
+                               bufferSize = 100L)
   }
   expect_false(buf$conv_filled)
 
   rows <- .ConvWindowRows(buf, minRows = 1L)
   expect_equal(as.vector(rows), 1:5)
+})
+
+test_that(".GrowConvWindow enlarges a full window that falls short (#105)", {
+  buf <- .InitStreamBuffers(nParams = 1L, paramNames = "x",
+                            bufferSize = 100L, convWindowSize = 10L)
+  logFile <- tempfile(fileext = ".log")
+  on.exit(unlink(logFile), add = TRUE)
+  for (i in 1:13) {
+    buf <- .AddToStreamBuffer(buf, row = i, iterNum = i, logFile = logFile,
+                              bufferSize = 100L)
+  }
+
+  # Enough ESS, or none measured: unchanged
+  expect_identical(.GrowConvWindow(buf, 50, 40), buf)
+  expect_identical(.GrowConvWindow(buf, NA_real_, 40), buf)
+
+  # 20% of the target: grow by the capped factor, keeping chronological rows
+  grown <- .GrowConvWindow(buf, 8, 40)
+  expect_equal(nrow(grown$conv_window), 40L)
+  expect_false(grown$conv_filled)
+  expect_equal(as.vector(.ConvWindowRows(grown, minRows = 1L)), 4:13)
+  expect_identical(colnames(grown$conv_window), "x")
+
+  # Not full yet: no further growth
+  expect_identical(.GrowConvWindow(grown, 8, 40), grown)
+
+  # New samples fill the added space before the window wraps
+  for (i in 14:43) {
+    grown <- .AddToStreamBuffer(grown, row = i, iterNum = i, logFile = logFile,
+                                bufferSize = 100L)
+  }
+  expect_true(grown$conv_filled)
+  expect_equal(as.vector(.ConvWindowRows(grown, minRows = 1L)), 4:43)
+  grown <- .AddToStreamBuffer(grown, row = 44, iterNum = 44, logFile = logFile,
+                              bufferSize = 100L)
+  expect_equal(as.vector(.ConvWindowRows(grown, minRows = 1L)), 5:44)
+
+  # A small shortfall grows by 1.1 x the ratio
+  expect_equal(nrow(.GrowConvWindow(buf, 20, 40)$conv_window), 22L)
 })
 
 

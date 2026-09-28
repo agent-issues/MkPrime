@@ -384,10 +384,13 @@ different runs are stuck at different values -- blocks the stop rather
 than being skipped.
 
 A run on its own (\code{nRuns = 1}, or serial runs with \code{nCore = 1}) judges
-\code{minEss} on its convergence window: its last
-\code{max(bufferSize, 4 * checkEvery / thin)} samples. The ESS of \code{W} samples
-cannot exceed \code{W * log10(W)}, 1349 for the usual 500, and independent draws
-rarely give more than half that. Parallel runs, and serial runs in their cross-run
+\code{minEss} on its convergence window: at first its last
+\code{max(bufferSize, 4 * checkEvery / thin)} samples. A window's ESS is
+bounded by its length, so whenever a full window falls short of
+\code{minEss}, it is enlarged in proportion to the shortfall (at most
+fourfold per check) and fills with later samples. A large \code{minEss}
+thus costs memory and time, but is not capped by the window. Parallel runs, and
+serial runs in their cross-run
 phase, judge \code{minEss} and \code{maxRhat} on the full logs.
 
 With \code{nRuns > 1} and \code{nCore = 1}, a \code{maxRhat} job samples each run in turn
@@ -405,8 +408,8 @@ no tree ESS: it cannot tell a stuck chain from a posterior concentrated on
 one topology, so it cannot meet \code{minTreeEss} until it samples another,
 and warns.
 
-A criterion that can never be met -- \code{maxRhat} with one run, a \code{minEss}
-above the window's ceiling, or \code{minTreeEss} with a fixed topology -- does
+A criterion that can never be met -- \code{maxRhat} with one run, or
+\code{minTreeEss} with a fixed topology -- does
 not prevent the run, but draws a warning: the run then ends only at
 \code{nIter}, \code{maxTime} or a cancel file.
 }

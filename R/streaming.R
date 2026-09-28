@@ -120,8 +120,7 @@
 # Add one sample row to the flush buffer and convergence window.
 # Flushes the buffer to logFile when full.  Returns modified run list r.
 # @keywords internal
-.AddToStreamBuffer <- function(r, row, iterNum, logFile, bufferSize,
-                                convWindowSize) {
+.AddToStreamBuffer <- function(r, row, iterNum, logFile, bufferSize) {
   # --- flush buffer ---
   r$flush_idx <- r$flush_idx + 1L
   r$flush_buf[r$flush_idx, ] <- row
@@ -133,6 +132,7 @@
   }
 
   # --- convergence window (circular buffer) ---
+  convWindowSize <- nrow(r$conv_window)
   r$conv_head <- (r$conv_head %% convWindowSize) + 1L
   r$conv_window[r$conv_head, ] <- row
   if (!r$conv_filled && r$conv_head == convWindowSize) r$conv_filled <- TRUE
@@ -154,6 +154,33 @@
   } else {
     r$conv_window[seq_len(nRows), , drop = FALSE]
   }
+}
+
+
+# Enlarge a full convergence window that falls short of `targetEss`, so that
+# at the ESS per row it has shown it could hold `targetEss`; a window's ESS
+# is bounded by its length, so a fixed window can make `minEss` unreachable.
+# Existing rows are kept in chronological order and new samples fill the
+# extra space; the window grows again only once that space has filled, and
+# by at most `maxGrowth` times per step so that one noisy estimate cannot
+# balloon it.
+# @keywords internal
+.GrowConvWindow <- function(r, observedEss, targetEss, maxGrowth = 4) {
+  if (!isTRUE(r$conv_filled) || !isTRUE(is.finite(observedEss)) ||
+      observedEss <= 0 || observedEss >= targetEss) {
+    return(r)
+  }
+  nRows <- nrow(r$conv_window)
+  newSize <- as.integer(ceiling(
+    nRows * min(maxGrowth, 1.1 * targetEss / observedEss)
+  ))
+  if (newSize <= nRows) return(r)
+  rows <- .ConvWindowRows(r, minRows = 1L)
+  r$conv_window <- rbind(rows, matrix(NA_real_, nrow = newSize - nRows,
+                                      ncol = ncol(rows)))
+  r$conv_head   <- nRows
+  r$conv_filled <- FALSE
+  r
 }
 
 
