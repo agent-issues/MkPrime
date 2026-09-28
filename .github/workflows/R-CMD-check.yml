@@ -74,7 +74,8 @@ jobs:
   #   sense-check -> ubuntu release (cheapest). No concurrency group, so a
   #                  superseding push never cancels it: every commit gets a
   #                  "did this build?" signal.
-  #   core        -> Windows (+codecov), arm, devel; only if sense-check passed.
+  #   core        -> Windows, arm (no tests), devel; only if sense-check passed.
+  #   coverage    -> the full test suite under covr, on arm; alongside core.
   #   full        -> macOS (~10x runner-minutes); only once core is green.
   #   valgrind, asan -> the sanitiser workflows. They are the long poles, so
   #                  they start alongside the sense-check; `abort` cancels
@@ -143,7 +144,7 @@ jobs:
       matrix:
         config:
           - {os: windows-latest,   r: "release"}
-          - {os: ubuntu-24.04-arm, r: "release"}
+          - {os: ubuntu-24.04-arm, r: "release", skip-tests: true}
           - {os: ubuntu-26.04,     r: "devel"}
 
     env:
@@ -155,7 +156,6 @@ jobs:
       R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
       _R_CHECK_CRAN_INCOMING_USE_ASPELL_: false
       RSPM: ${{ matrix.config.rspm }}
-      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
@@ -199,7 +199,6 @@ jobs:
           cache-version: 4-${{ runner.arch }}
           needs: |
             check
-            coverage
 
       - name: Pre-install package for Quarto vignette subprocess
         # Quarto spawns a fresh R process when rendering .qmd vignettes; that
@@ -211,16 +210,62 @@ jobs:
 
       - name: Check package
         uses: r-lib/actions/check-r-package@v2
+        with:
+          args: ${{ matrix.config.skip-tests && 'c("--no-manual", "--as-cran", "--no-tests")' || 'c("--no-manual", "--as-cran")' }}
+
+  coverage:
+    # Its own job, on the cheapest runner. covr must compile its own
+    # instrumented build, so it cannot share an install with R CMD check; it
+    # runs the full test suite, which is why the arm check leg skips tests.
+    needs: sense-check
+    runs-on: ubuntu-24.04-arm
+    name: coverage
+
+    concurrency:
+      group: ${{ github.workflow }}-coverage-${{ github.ref }}
+      cancel-in-progress: true
+
+    env:
+      R_COMPILE_AND_INSTALL_PACKAGES: 'never'
+      R_REMOTES_STANDALONE: true
+      R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
+      RSPM: "https://packagemanager.posit.co/cran/__linux__/noble/latest"
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout git repo
+        uses: actions/checkout@v6
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+
+      - name: Set up R dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          cache-version: 1-${{ runner.arch }}
+          needs: |
+            coverage
 
       - name: Code coverage
-        if: runner.os == 'Windows'
         # quiet = FALSE streams the instrumented test run to the job log. The
         # default swallows it, so a test that fails only under covr reports as
         # `Error: Failure in <tempdir>/testthat.Rout.fail` — a path that no
-        # longer exists by the time anyone reads the log.
+        # longer exists by the time anyone reads the log. The per-file summary
+        # and line tally keep the result readable if the upload fails.
         run: |
-          covr::codecov(quiet = FALSE)
+          cov <- covr::package_coverage(quiet = FALSE)
+          print(cov)
+          saveRDS(covr::tally_coverage(cov, by = "line"), "coverage-lines.rds")
+          covr::codecov(coverage = cov)
         shell: Rscript {0}
+
+      - name: Upload line coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lines
+          path: coverage-lines.rds
+          retention-days: 14
 
   full:
     needs: core
@@ -335,11 +380,12 @@ jobs:
     # checks: a matrix leg skipped by `if:` reports under its unexpanded name,
     # so it could never satisfy a per-OS required check.
     #
-    # Certifies exactly the legs that were required before the gate existed;
-    # arm and devel stay advisory. `needs` gives only the
+    # Certifies exactly the legs that were required before the gate existed,
+    # plus `coverage`, which runs the arm leg's tests; the arm check and devel
+    # stay advisory. `needs` gives only the
     # matrix's aggregate result, so each leg is read from the API.
     name: R-CMD-check gate
-    needs: [changes, sense-check, core, full]
+    needs: [changes, sense-check, core, full, coverage]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -368,6 +414,8 @@ jobs:
           # A leg skipped because an earlier wave failed reads 'skipped',
           # which is not 'success', so it fails here too.
           fail=0
+          echo "coverage : ${{ needs.coverage.result }}"
+          [ "${{ needs.coverage.result }}" = "success" ] || fail=1
           for leg in "ubuntu-24.04 (release)" "windows-latest (release)" "macOS-latest (release)"; do
             result=$(gh api --paginate "$JOBS_URL" \
               -q ".jobs[] | select(.name == \"$leg\") | .conclusion")
