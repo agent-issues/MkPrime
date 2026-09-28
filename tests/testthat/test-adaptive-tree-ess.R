@@ -343,10 +343,10 @@ test_that("the tuning bandit ranks a frozen topology below a moving one (#195)",
 test_that("minTreeEss with a fixed topology warns that it can never be met", {
   mcmc <- list(minTreeEss = 100, fixTopology = TRUE, nRuns = 2L, nCore = 1L,
                nIter = Inf)
-  expect_warning(MkPrime:::.WarnUnreachableCriteria(mcmc, 500L),
+  expect_warning(MkPrime:::.WarnUnreachableCriteria(mcmc),
                  "minTreeEss.*fixTopology")
   mcmc$fixTopology <- FALSE
-  expect_no_warning(MkPrime:::.WarnUnreachableCriteria(mcmc, 500L))
+  expect_no_warning(MkPrime:::.WarnUnreachableCriteria(mcmc))
 })
 
 test_that("one topology flip earns a tuning window no more than it moved (#219)", {

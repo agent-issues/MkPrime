@@ -278,10 +278,13 @@
 #' than being skipped.
 #'
 #' A run on its own (`nRuns = 1`, or serial runs with `nCore = 1`) judges
-#' `minEss` on its convergence window: its last
-#' `max(bufferSize, 4 * checkEvery / thin)` samples. The ESS of `W` samples
-#' cannot exceed `W * log10(W)`, 1349 for the usual 500, and independent draws
-#' rarely give more than half that. Parallel runs, and serial runs in their cross-run
+#' `minEss` on its convergence window: at first its last
+#' `max(bufferSize, 4 * checkEvery / thin)` samples. A window's ESS is
+#' bounded by its length, so whenever a full window falls short of
+#' `minEss`, it is enlarged in proportion to the shortfall (at most
+#' fourfold per check) and fills with later samples. A large `minEss`
+#' thus costs memory and time, but is not capped by the window. Parallel runs, and
+#' serial runs in their cross-run
 #' phase, judge `minEss` and `maxRhat` on the full logs.
 #'
 #' With `nRuns > 1` and `nCore = 1`, a `maxRhat` job samples each run in turn
@@ -299,8 +302,8 @@
 #' one topology, so it cannot meet `minTreeEss` until it samples another,
 #' and warns.
 #'
-#' A criterion that can never be met -- `maxRhat` with one run, a `minEss`
-#' above the window's ceiling, or `minTreeEss` with a fixed topology -- does
+#' A criterion that can never be met -- `maxRhat` with one run, or
+#' `minTreeEss` with a fixed topology -- does
 #' not prevent the run, but draws a warning: the run then ends only at
 #' `nIter`, `maxTime` or a cancel file.
 #'

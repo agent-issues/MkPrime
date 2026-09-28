@@ -345,7 +345,7 @@ RunMkPrime <- function(data, tree = NULL,
   }
   isStreaming     <- TRUE
   convWindowSize  <- .ComputeConvWindowSize(mcmc)
-  .WarnUnreachableCriteria(mcmc, convWindowSize)
+  .WarnUnreachableCriteria(mcmc)
   logFilePaths    <- .OpenLogFiles(mcmc$logFile, paramNames, nRuns)
 
   # Register temp files so cleanup can find them (crash, new run, etc.)
@@ -1267,7 +1267,7 @@ RunMkPrime <- function(data, tree = NULL,
 
         if (isStreaming) {
           r <- .AddToStreamBuffer(r, bufRow, sampleIters[i], logFilePath,
-                                  mcmc$bufferSize, convWindowSize)
+                                  mcmc$bufferSize)
         } else {
           if (r$saved_idx > nrow(r$samples)) {
             n <- nrow(r$samples)
@@ -1804,6 +1804,9 @@ RunMkPrime <- function(data, tree = NULL,
           stopReason <- "converged"
           actualIter <- batchEnd
           break
+        }
+        if (isStreaming && !is.null(mcmc$minEss)) {
+          r <- .GrowConvWindow(r, diagCheck$minEss, mcmc$minEss)
         }
       }
 
@@ -2767,7 +2770,7 @@ RunMkPrime <- function(data, tree = NULL,
 
 # Warn, once and before sampling, about a stopping criterion the run can never
 # meet. Such a run is allowed: it ends at `nIter`, `maxTime` or a cancel file.
-.WarnUnreachableCriteria <- function(mcmc, convWindowSize) {
+.WarnUnreachableCriteria <- function(mcmc) {
   why <- character(0)
   if (!is.null(mcmc$maxRhat) && mcmc$nRuns < 2L) {
     why <- c(why, "x" = "{.arg maxRhat} compares runs, but {.arg nRuns} = 1.")
@@ -2782,17 +2785,6 @@ RunMkPrime <- function(data, tree = NULL,
                          {.arg fixTopology} = TRUE.")
   }
 
-  # Only a serial run stops on its own convergence window; parallel runs are
-  # stopped by a check that reads whole logs.
-  serial <- mcmc$nRuns < 2L || !isTRUE(mcmc$nCore > 1L)
-  if (serial && !is.null(mcmc$minEss) && convWindowSize > 1L) {
-    essCeiling <- convWindowSize * log10(convWindowSize)
-    if (mcmc$minEss > essCeiling) {
-      why <- c(why, "x" = "{.arg minEss} = {mcmc$minEss} exceeds \\
-        {round(essCeiling, 1)}, the largest ESS that a run's \\
-        {convWindowSize}-sample convergence window can report.")
-    }
-  }
 
   if (length(why) > 0L) {
     ends <- c(if (is.finite(mcmc$nIter)) "{.arg nIter}",
@@ -3591,7 +3583,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                 likelihoodMode = model$likelihoodMode %||% "sampled_k")
   }
   mcmc$fixedCols <- .FixedCols(paramNames, moves)
-  .WarnUnreachableCriteria(mcmc, convWindowSize)
+  .WarnUnreachableCriteria(mcmc)
 
   # Self-check against the run being resumed. The checkpoint records the move
   # weights by name, so a rebuild that has drifted is detectable even for
