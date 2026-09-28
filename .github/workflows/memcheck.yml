@@ -51,8 +51,8 @@ env:
   # ~390 min on a slow one (2026-09-28, #249): runner speed alone swings every
   # file by ~1.4x, so a single job no longer fits the 6 h ceiling. Shards 1
   # and 2 name the heaviest files; shard 3 runs every file neither names, so
-  # each file runs exactly once and new files land in shard 3. Slowest
-  # observed runner: ~130 / ~140 / ~125 min.
+  # each file runs exactly once and new files land in shard 3. Measured job
+  # times, setup included (2026-09-28): 136-148 / 93-148 / 138-144 min.
   SHARD_1: >-
     ^(marginal-k-free-topology|partition-moves-impl)$
   SHARD_2: >-
