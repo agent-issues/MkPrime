@@ -73,6 +73,8 @@ test_that("a mid-warmup resume on another schedule aborts clearly (#74)", {
 })
 
 test_that("Sample records each row's true iteration once thin adapts (#91)", {
+  # Under valgrind maxTime stops the run before thin first adapts.
+  skip_under_memcheck()
   fx <- .IntegrityFixture()
   log <- tempfile(fileext = ".log")
   on.exit(unlink(c(log, sub("log$", "ckp", log))), add = TRUE)
@@ -91,6 +93,7 @@ test_that("Sample records each row's true iteration once thin adapts (#91)", {
 })
 
 test_that("every checkpoint records each run's adapted thin (#91)", {
+  skip_under_memcheck()
   fx <- .IntegrityFixture()
   ckp <- tempfile(fileext = ".ckp")
   log <- sub("ckp$", "log", ckp)
