@@ -127,6 +127,8 @@ checkpoint_file <- file.path(opt$out_dir, sprintf("%s.ckp", run_id))
 
 mcmc <- MkPrimeMCMC(
   nRuns = 2L,
+  nCore = 2L,           # parallel runs -- serial (nCore=1) starves run 2+
+                        # of maxTime budget (agent-issues/MkPrime#234)
   nChains = 4L,        # PT minimum per the plan
   heat = 0.2,
   minEss = opt$ess,
