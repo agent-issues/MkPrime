@@ -177,7 +177,7 @@ test_that("MkPrimeMCMC stores three-phase defaults", {
   expect_equal(mcmc$minWarmup, 2000L)
   expect_equal(mcmc$maxWarmup, 5000L)  # nIter / 2
   expect_true(mcmc$autoTune)
-  expect_equal(mcmc$tuningBudget, 10000L)
+  expect_equal(mcmc$tuningBudget, 24000L)
   expect_equal(mcmc$tuningRounds, 5L)
 })
 

@@ -96,10 +96,12 @@ test_that(".SynthesiseMasterFromPerRun rebuilds master from per-run ckps", {
   expect_true(file.exists(file.path(td, "run_1.ckp")))
   expect_true(file.exists(file.path(td, "run_2.ckp")))
 
-  # Touch a per-run ckp to make it newer than master -> synthesis fires
+  # A parent killed before its final save leaves a master older than the
+  # per-run ckps -> synthesis fires
+  master <- readRDS(ckp)
+  master$timestamp <- master$timestamp - 3600
+  saveRDS(master, ckp)
   Sys.sleep(1.1)  # ensure mtime resolution distinguishes
-  perRun1 <- file.path(td, "run_1.ckp")
-  Sys.setFileTime(perRun1, Sys.time())
 
   origMtime <- file.mtime(ckp)
   synthIter <- MkPrime:::.SynthesiseMasterFromPerRun(ckp, 2L)

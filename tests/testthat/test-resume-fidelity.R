@@ -170,8 +170,8 @@ test_that("a fixTopology run resumes with the same move set (#23)", {
   topoMoves <- c("nni", "spr", "tbr", "pspr")
   expect_length(intersect(names(cp$moveWeights), topoMoves), 0L)
 
-  # ResumeMkPrime warns when the rebuilt move set differs from the stored one,
-  # so a silent resume is the assertion.
+  # ResumeMkPrime stops when the rebuilt move set differs from the stored one,
+  # so a clean resume is the assertion.
   expect_no_warning(
     resumed <- ResumeMkPrime(ckpFile, pd),
     message = "move set"
