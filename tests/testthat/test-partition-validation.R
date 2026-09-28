@@ -60,6 +60,18 @@ test_that("partition with non-integer values errors", {
   )
 })
 
+test_that("non-finite or oversized partition values error clearly (#245)", {
+  mkd <- .make_mkd()
+  expect_error(
+    .ValidatePartitionArgs(c(1, 1, 2, Inf), character(0), mkd),
+    regexp = "finite class IDs"
+  )
+  expect_error(
+    .ValidatePartitionArgs(c(1, 1, 2, 2^31), character(0), mkd),
+    regexp = "class IDs above"
+  )
+})
+
 test_that("partition values < 1 error", {
   mkd <- .make_mkd()
   expect_error(
@@ -142,6 +154,14 @@ test_that("duplicate unlink tokens warn and deduplicate", {
     fixed = FALSE
   )
   expect_identical(spec$unlink, "shape")
+})
+
+test_that("NA unlink token errors clearly (#245)", {
+  mkd <- .make_mkd()
+  expect_error(
+    .ValidatePartitionArgs(c(1L, 1L, 2L, 2L), NA_character_, mkd),
+    regexp = "contains.*NA.*position 1"
+  )
 })
 
 test_that("empty-string unlink token errors", {

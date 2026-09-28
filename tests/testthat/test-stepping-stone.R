@@ -174,3 +174,16 @@ test_that("SE is positive and smaller with more iterations", {
   expect_true(is.finite(ssSmall$se))
   expect_true(is.finite(ssLarge$se))
 })
+
+test_that("Stepping-stone rejects partitioned data (#243)", {
+  tree <- read.tree(text = "((t1:0.2,t2:0.3):0.1,(t3:0.15,t4:0.25):0.1);")
+  mat <- matrix(c(0L, 1L, 0L, 1L,
+                  0L, 0L, 1L, 1L),
+                nrow = 4,
+                dimnames = list(c("t1", "t2", "t3", "t4"), NULL))
+  mkd <- MkPrimeData(MatrixToPhyDat(mat))
+  mkd$partitions <- MkPrime:::.BuildPartitions(mkd, partition = 1:2)
+  expect_error(mkp_stepping_stone(mkd, tree, nStones = 2L, nIter = 5L,
+                                  warmup = 0L, verbose = FALSE),
+               "does not support partitioned")
+})

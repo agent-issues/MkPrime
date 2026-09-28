@@ -107,6 +107,15 @@ mkp_stepping_stone <- function(data, tree = NULL,
     tree$edge.length[tree$edge.length <= 0] <- 1e-8
   }
 
+  classIdx <- vapply(mkd$partitions, function(p) as.integer(p$classIdx %||% 1L),
+                     integer(1))
+  if (any(classIdx > 1L)) {
+    cli::cli_abort(c(
+      "{.fn mkp_stepping_stone} does not support partitioned models.",
+      "i" = "Supply {.arg data} without a user {.arg partition}."
+    ))
+  }
+
   if (is.null(model)) model <- MkPrimeModel()
   if (is.null(mcmc)) mcmc <- MkPrimeMCMC()
   if (isTRUE(mcmc$gibbsPMarginal)) {

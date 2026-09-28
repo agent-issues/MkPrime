@@ -735,6 +735,7 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
 // Forward declaration (defined below, M-083) — fill_partition_cache needs it to
 // set a marginal-aware initial logLik under marginal_k (MARGINAL-K-INIT-001).
 static double compute_full_loglik(const McmcData& data, McmcState& state);
+static double compute_log_prior(const McmcData& data, const McmcState& state);
 
 // The parameters the state scores partition `partIdx` under. Every evaluator
 // takes them from here so that all of them score the model state->logLik
@@ -781,6 +782,12 @@ static double partition_loglik(
 void fill_partition_cache(SEXP dataPtr, SEXP statePtr) {
   McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
   McmcState* state = Rcpp::XPtr<McmcState>(statePtr).get();
+  // A data pointer built without the run's partition would score every
+  // character under class 1 while the state samples K classes.
+  if (state->usePartitioned && state->classW.size() != data->nClasses) {
+    Rcpp::stop("Partitioned state has %d classes but its data has %d.",
+               (int)state->classW.size(), data->nClasses);
+  }
   int nParts = (int)data->parts.size();
   int nEdge  = state->relBrLengths.size();
   NumericVector edgeLen(nEdge);
@@ -798,6 +805,10 @@ void fill_partition_cache(SEXP dataPtr, SEXP statePtr) {
   // value may differ (e.g. ascertainment correction edge-cases returning -Inf).
   // A self-consistent logLik is required for the MH acceptance ratio.
   state->logLik = totalLogLik;
+  // Likewise the prior: the R-computed initial value may use settings (e.g.
+  // classRateConcentration) that would offset the first MH ratio if they
+  // drifted from the C++ prior.
+  if (state->usePartitioned) state->logPrior = compute_log_prior(*data, *state);
 
   // MARGINAL-K-INIT-001: under marginal_k the partition sum above is the
   // FIXED-kPrime likelihood (kPrime pinned to kObs), which sits ~+9.68 nats
@@ -4924,12 +4935,12 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   int oldKPrimeVal = 0;     // single-element rollback for case 7 (kPrime)
   int kPrimeCharIdx = -1;   // which character was changed
 
-  // Rollback storage for per-class moves (cases 31, 32, 33)
+  // Rollback storage for per-class moves (cases 31, 32, 34)
   int    classIdx31   = -1;   // 0-based class index for case 31 rollback
   double oldClassRLS  = 0.0;  // old classRateLogSd[classIdx31]
   double oldClassZ    = 0.0;  // old classZ[classIdx31] (hyperprior path)
   NumericVector classWSnapshot;  // full classW snapshot for case 32 rollback
-  // Case 33 (scale_hyper_tau) rollback: all σ_c change together with τ.
+  // Case 34 (scale_hyper_tau) rollback: all σ_c change together with τ.
   bool             case34Active   = false;
   double           oldTau34       = 0.0;
   NumericVector    oldClassRLS34;  // snapshot of classRateLogSd (all entries)
@@ -5515,8 +5526,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         int nk = (k < (int)state->nCharPerClass.size()) ? state->nCharPerClass[k] : 1;
         state->classRate[k] = (nk > 0) ? state->classW[k] * nChar / nk : 1.0;
       }
-      // NOTE: Dirichlet prior on classW is pending the parallel agent
-      // cpp_log_prior extension. Acceptance is LL-ratio only until reconciled.
+      // The Dirichlet(alpha) prior on classW enters via compute_log_prior.
       break;
     }
     case 33: { // joint_tl_rn (tree_length × rate_neo): partition-rate ridge
@@ -6130,7 +6140,7 @@ List run_mcmc_batch_cpp(
   // (scale_class_rate_log_sd), which indicates shape is unlinked.
   // Emit classW columns iff any move has type 32 (dirichlet_simplex_class_w).
   // Emit hyper_tau + class_z columns iff state->useHyperpriorOnSigma
-  // (move 33 is the τ move; state flag drives column emission).
+  // (move 34 is the τ move; state flag drives column emission).
   bool hasMove31 = false, hasMove32 = false;
   for (int m = 0; m < nMoves; ++m) {
     if (moveTypeCodes[m] == 31) hasMove31 = true;
