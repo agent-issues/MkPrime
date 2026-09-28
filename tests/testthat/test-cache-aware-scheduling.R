@@ -134,3 +134,54 @@ test_that("MkPrimeMCMC rejects invalid cacheBonus", {
   expect_error(suppressWarnings(MkPrimeMCMC(nIter = 100, cacheBonus = -1)),
                "cacheBonus")
 })
+
+# The boost may depend on which move was proposed last, but never on whether
+# it was accepted: acceptance is correlated with the state, and a
+# state-dependent choice of mixture weights leaves the target distribution
+# non-invariant.  So `cache_hits` (boosted selections) must equal the number of
+# proposals of eligible moves, less those that were the last move of a chain.
+test_that("cache boost follows the previous move type, not acceptance", {
+  set.seed(7031)
+  tree <- ape::unroot(ape::rtree(10, br = runif))
+  tree$edge.length <- tree$edge.length + 0.01
+  tipStates <- matrix(sample(0:1, 10 * 4, replace = TRUE), nrow = 10,
+                      dimnames = list(tree$tip.label, NULL))
+  mkd <- MkPrimeData(MatrixToPhyDat(tipStates), knownStates = rep(2L, 4))
+  model <- MkPrime:::.FinalizeModel(MkPrimeModel(coding = "variable",
+                                                 nCat = 1L), tree, mkd)
+  tree0 <- Preorder(tree)
+  state0 <- MkPrime:::.InitState(tree0, mkd, model)
+  state0$log_prior <- MkPrime:::LogPrior(state0, model, mkd)
+  dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
+
+  # NNI is eligible; a bold tree_length scale is not, and is mostly rejected,
+  # which is when an acceptance-driven flag would keep boosting.
+  moveTypes <- c(5L, 0L)
+  nMoves <- length(moveTypes)
+  RunChains <- function(betas) {
+    nChains <- length(betas)
+    statePtrs <- lapply(seq_len(nChains), function(i) {
+      statePtr <- MkPrime:::.InitMcmcChain(state0)
+      fill_partition_cache(dataPtr, statePtr)
+      allocate_cl_workspace(dataPtr, statePtr)
+      statePtr
+    })
+    run_mcmc_batch_cpp(
+      dataPtr, statePtrs, betas,
+      moveTypes, integer(0), integer(0), c(0.5, 0.5),
+      matrix(3, nChains, nMoves), rep(10, nChains), rep(1L, nChains),
+      integer(nMoves), matrix(1, nChains, nMoves),
+      matrix(0, nChains, nMoves),
+      nBatch = 2000L, startIter = 0L, warmup = 2000L, thin = 1L,
+      hasNeo = FALSE, nEdge = nrow(tree0$edge), cacheBonus = 10
+    )
+  }
+
+  for (betas in list(1, c(1, 0.5))) {
+    res <- RunChains(betas)
+    nEligible <- sum(res$propose_counts[, 1])
+    expect_lt(sum(res$accept_counts[, 2]), sum(res$propose_counts[, 2]))
+    expect_lte(res$cache_hits, nEligible)
+    expect_gte(res$cache_hits, nEligible - length(betas))
+  }
+})

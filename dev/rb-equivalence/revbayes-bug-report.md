@@ -1,5 +1,26 @@
 ## [BUG] `srMinESS` triggers SIGFPE at iter 0 of MCMC simulation phase (non-MPI `mcmcmc`)
 
+> **Correction (2026-09-24, agent-issues/MkPrime#217, RB-116):** the hypothesis below is
+> wrong, and this should not be filed upstream as written.
+>
+> **Claimed:** `MinEssStoppingRule::getStatistic` reads a log file with zero or one rows and
+> `coda`-style ESS computation divides by zero.
+>
+> **Actually true:** every call site in this repo invokes `srMinESS(N, "<log>.log", FALSE)` —
+> the third positional argument is `frequency`, not a `burninMethod`/logical flag (parameter
+> order: `minEss, filename, frequency, burninMethod, burnin`). At RevBayes v1.3.2 and 8f71e5f,
+> `frequency` is typed `Natural`, and `RlBoolean` `FALSE` converts to `0`. The very first
+> stopping-rule check then evaluates `generation % checkFrequency` with `checkFrequency == 0`
+> (`AbstractConvergenceStoppingRule.cpp:68`), which is integer modulo by zero — SIGFPE fires
+> immediately after `Iter 0` regardless of how many rows the log file has. An empty/short log
+> would produce `inf`/`NaN` from the ESS computation, not SIGFPE. On current `master`,
+> `frequency` has been retyped `IntegerPos`, so the same call instead fails with a type error
+> rather than crashing; whether `build-pr816` (in use elsewhere in this repo) shares the
+> `master` type or the v1.3.2/`8f71e5f` type is unchecked.
+>
+> **Fix:** pass `frequency` by name, e.g. `srMinESS(N, "<log>.log", frequency = 500)`. That
+> also re-enables convergence-based stopping on the RevBayes side.
+
 ### Summary
 
 Adding `srMinESS(N, "<log>.log", FALSE)` to the stopping-rules list of a non-MPI `mcmcmc(... nruns = 2, nchains = 4, tuneHeat = TRUE)` analysis causes the binary to die with `SIGFPE` (exit code 136 = 128 + signal 8) immediately after the burn-in completes — the `Iter 0` row is printed and the process aborts before generation 1. Removing only the `srMinESS` rule (keeping `srMaxTime`) makes the same script run to completion on identical data. We have reproduced this with two independent datasets on RevBayes 1.3.2 / Rocky Linux 8.10.
@@ -240,13 +261,29 @@ Job 17297095 is the controlled comparator (against the older 1.3.2 binary): iden
 
 ### Hypothesis
 
-The `Iter 0` row is printed by `mnScreen` from inside the MCMC loop *before* any periodic stopping-rule check fires; the very first stopping-rule pass then calls `MinEssStoppingRule::getStatistic`, which reads `by_nt_9v.log`. At that moment the log file contains only the header line written by `mnModel` (the first data row is not flushed until `printgen = 18` is reached). `coda`-style ESS computation on a zero-row or one-row trace divides by zero (or by `var = 0`), raising `SIGFPE`.
+**Superseded — see the correction at the top of this report.** The actual cause is the
+positional `FALSE` in `srMinESS(N, "<log>.log", FALSE)` coercing to `frequency = 0` and
+triggering an integer modulo-by-zero on the first stopping-rule check, not an empty-log ESS
+computation. The paragraphs below are kept for the record of what was originally reported.
 
-The MPI-flavoured crash reported in [#1023](https://github.com/revbayes/revbayes/issues/1023) has an almost identical signature — backtrace through `MinEssStoppingRule::getStatistic -> TraceContinuousReader` at `Iter 0` — but on the MPI build the read of an empty/half-written log file produces a `SIGSEGV` rather than a `SIGFPE`. The two are almost certainly the same defect surfacing differently depending on what the empty trace lands on inside the ESS code path.
+~~The `Iter 0` row is printed by `mnScreen` from inside the MCMC loop *before* any periodic
+stopping-rule check fires; the very first stopping-rule pass then calls
+`MinEssStoppingRule::getStatistic`, which reads `by_nt_9v.log`. At that moment the log file
+contains only the header line written by `mnModel` (the first data row is not flushed until
+`printgen = 18` is reached). `coda`-style ESS computation on a zero-row or one-row trace
+divides by zero (or by `var = 0`), raising `SIGFPE`.~~
+
+~~The MPI-flavoured crash reported in [#1023](https://github.com/revbayes/revbayes/issues/1023)
+has an almost identical signature — backtrace through `MinEssStoppingRule::getStatistic ->
+TraceContinuousReader` at `Iter 0` — but on the MPI build the read of an empty/half-written log
+file produces a `SIGSEGV` rather than a `SIGFPE`. The two are almost certainly the same defect
+surfacing differently depending on what the empty trace lands on inside the ESS code path.~~
+Whether #1023 is actually related is now unclear given the corrected root cause above; treat
+that cross-reference as unverified.
 
 ### Workaround
 
-Drop `srMinESS` from the stopping-rules list. Use `srMaxTime` (or a generation cap) only, and compute ESS post-hoc from the log files with `coda::effectiveSize` / `tracerer` / Tracer. This is what we have done in our pipeline.
+Pass `frequency` by name: `srMinESS(N, "<log>.log", frequency = 500)`. `dev/rb-equivalence/templates/long.template.Rev` still uses `srMaxTime` only and computes ESS post-hoc (`coda::effectiveSize`); re-enabling `srMinESS` there is future work, not done as part of this correction, and should be validated against a real RevBayes build first.
 
 ### Searched prior reports
 

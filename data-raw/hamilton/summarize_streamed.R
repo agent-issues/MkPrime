@@ -90,20 +90,24 @@ stopifnot(length(log_files) > 0L, all(file.exists(log_files)),
           length(tree_files) > 0L,
           all(file.exists(tree_files)), file.exists(true_tree_file))
 
-# ---- Load character data in MCMC lex order to get kObs alignment -----------
-# IMPORTANT: run_one.R uses plain sort() on chr*.nex filenames, which gives
-# lexicographic order (chr1, chr10, chr11, ..., chr2, ...) for unpadded names.
-# kPrime_<i> in the log refers to position i in this lex-sorted character list.
-# Downstream code MUST use this kObs vector to pair kp_means[i] with kObs[i].
-# Using natural sort (chr1, chr2, ...) misaligns kObs for tasks with >= 10
-# characters — that was the source of the per-kObs mean flatness bug.
+# ---- Load character data in the order the MCMC used ------------------------
+# kPrime_<i> in the log refers to position i of run_one.R's character list, so
+# kObs must be built in that same order. run_one.R records it in
+# `<arm>_char_order.csv`. Outputs without that file predate it and used a plain
+# lexical sort() (chr1, chr10, ..., chr2); pairing them in any other order is
+# EG-003 (#54).
 dataset_dir <- file.path(data_root,
                           sprintf("tree_%02d/rep_%02d", tree_idx, rep_idx))
 stopifnot(dir.exists(dataset_dir))
-# Lex sort: matches sort() in run_one.R exactly.
-nex_files_lex <- sort(list.files(dataset_dir, pattern = "^chr[0-9]+\\.nex$",
-                                  full.names = TRUE))
-mat_list <- lapply(nex_files_lex, TreeTools::ReadCharacters)
+char_order_file <- file.path(task_dir, sprintf("%s_char_order.csv", arm))
+nex_files <- if (file.exists(char_order_file)) {
+  file.path(dataset_dir, read.csv(char_order_file)$file)
+} else {
+  sort(list.files(dataset_dir, pattern = "^chr[0-9]+\\.nex$",
+                  full.names = TRUE))
+}
+stopifnot(length(nex_files) > 0L, all(file.exists(nex_files)))
+mat_list <- lapply(nex_files, TreeTools::ReadCharacters)
 # cbind joins positionally and keeps the first matrix's rownames (#104).
 stopifnot(all(vapply(mat_list,
                      function(m) identical(rownames(m), rownames(mat_list[[1L]])),
@@ -119,11 +123,11 @@ ape::write.nexus.data(
 pd <- TreeTools::ReadAsPhyDat(tmp_nex)
 file.remove(tmp_nex)
 mkd_local <- MkPrimeData(pd)
-# kObs in lex-sorted character order (matches kPrime_i log column positions).
-kObs_lex <- as.integer(mkd_local$kObs)
+# kObs in the MCMC's character order (matches kPrime_i log column positions).
+kObs_run <- as.integer(mkd_local$kObs)
 cat(sprintf("  char data: %d raw chars -> %d variable (kObs range %d-%d)\n",
             n_char_raw, mkd_local$nChar,
-            min(kObs_lex), max(kObs_lex)))
+            min(kObs_run), max(kObs_run)))
 rm(mat_list, combined_mat, pd, mkd_local)
 invisible(gc(verbose = FALSE))
 
@@ -200,11 +204,11 @@ kp_means <- vapply(kp_cols,
                    function(cn) mean(dt[[cn]], na.rm = TRUE),
                    numeric(1L))
 p_mean   <- if ("p" %in% names(dt)) mean(dt$p, na.rm = TRUE) else NA_real_
-# Sanity: kp_means length must equal kObs_lex length (both are over
-# variable characters in lex order). Warn but do not abort.
-if (length(kp_means) && length(kp_means) != length(kObs_lex)) {
-  cat(sprintf("  WARN: kp_means length (%d) != kObs_lex length (%d)\n",
-              length(kp_means), length(kObs_lex)))
+# Sanity: kp_means length must equal kObs_run length (both are over
+# variable characters in the MCMC's order). Warn but do not abort.
+if (length(kp_means) && length(kp_means) != length(kObs_run)) {
+  cat(sprintf("  WARN: kp_means length (%d) != kObs_run length (%d)\n",
+              length(kp_means), length(kObs_run)))
 }
 
 # Last-row sanity-check vector.
@@ -323,15 +327,13 @@ summary_list <- list(
   scalar_means  = scalar_means,
   br_means      = br_means,
   kp_means      = kp_means,
-  # kObs paired to kp_means: position i of kObs_lex corresponds to kp_means[i].
-  # Both are in lex-sorted chr*.nex order (matching run_one.R's plain sort()).
-  # Do NOT use natural-sort kObs vectors from raw nexus files to align kp_means.
-  kObs          = kObs_lex,
-  # The numeric character index behind each lex position, so a consumer can
-  # join on char_idx rather than assume an order. Pairing lex-ordered posteriors
-  # against numeric-ordered ground_truth.csv is EG-003 (#54).
+  # kObs paired to kp_means: position i of kObs_run corresponds to kp_means[i].
+  # Both are in the MCMC's character order; join on char_idx, never position.
+  kObs          = kObs_run,
+  # The numeric character index behind each position, so a consumer can join
+  # on char_idx rather than assume an order (#54).
   char_idx      = as.integer(sub("^chr([0-9]+)\\.nex$", "\\1",
-                                 basename(nex_files_lex))),
+                                 basename(nex_files))),
   p_mean        = p_mean,
   last_row      = last_row,
   log_files     = log_files,

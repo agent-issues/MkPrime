@@ -1,5 +1,6 @@
 #include <Rcpp.h>
 #include "fast_exp.h"
+#include "mkn_rates.h"
 #include <cmath>
 #include <vector>
 
@@ -47,9 +48,9 @@ Rcpp::NumericMatrix jc_transition_probs(int k, double t) {
 
 // MkN (asymmetric binary) transition probability matrix
 //
-// Q-matrix parameterized by rate_loss:
-//   rate01 = 2 / (1 + rate_loss)        (gain rate: 0 → 1)
-//   rate10 = 2 * rate_loss / (1 + rate_loss)  (loss rate: 1 → 0)
+// Q-matrix parameterized by rate_loss (see mkn_rates.h):
+//   rate01 = (1 + rate_loss) / (2 * rate_loss)   (gain rate: 0 → 1)
+//   rate10 = (1 + rate_loss) / 2                 (loss rate: 1 → 0)
 //
 // This parameterization normalizes: π0 * rate01 + π1 * rate10 = 1
 // where π is the stationary distribution.
@@ -74,10 +75,9 @@ Rcpp::NumericMatrix mkn_transition_probs(double rate_loss, double t) {
     Rcpp::stop("Branch length t must be >= 0");
   }
 
-  double sum_rl = 1.0 + rate_loss;
-  double rate01 = 2.0 / sum_rl;      // gain
-  double rate10 = 2.0 * rate_loss / sum_rl;  // loss
-  double lambda = rate01 + rate10;    // = 2.0 always (by construction)
+  double rate01, rate10;
+  mkn_rates(rate_loss, rate01, rate10);
+  double lambda = rate01 + rate10;
   // FAST-EXP-001: expm1 form avoids cancellation in P01/P10 at small lambda*t.
   double arg = -lambda * t;
   double neg_expm1 = -std::expm1(arg);

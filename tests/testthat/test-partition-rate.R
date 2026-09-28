@@ -125,9 +125,11 @@ test_that("R and C++ direct-eval likelihoods agree on mixed data, rate_neo != 1"
   expect_equal(sum(mkd$type == "neomorphic"), 3L)
   expect_equal(sum(mkd$type != "neomorphic"), 10L)
 
-  tree <- Preorder(
-    ape::rtree(ntax, br = function(n) runif(n, 0.05, 0.3))
-  )
+  # C++ pairs tip i with data row i; MkpLogLikelihood() matches by label.
+  tree <- Preorder(RenumberTips(
+    ape::rtree(ntax, br = function(n) runif(n, 0.05, 0.3)),
+    rownames(mkd$matrix)
+  ))
   parent <- tree$edge[, 1]
   child  <- tree$edge[, 2]
   edgeLen <- tree$edge.length

@@ -83,6 +83,40 @@
   Preorder(tree)
 }
 
+# The reference weights must be the partitioned likelihood of the regrafted
+# tree -- each class scored with its own shape and rate multiplier -- or the
+# selection weights and the selection term of the MH ratio target a different
+# model from state$logLik (#153).
+test_that("gibbs_spr weights candidates under the partitioned likelihood", {
+  ctx   <- .CandContext(seed = 7L, nChar = 12L)
+  chain <- .PartitionedChain(ctx$tree, ctx$mkd)
+  st    <- get_mcmc_state(chain$statePtr)
+  x     <- ctx$tree
+  x$edge        <- st$edge
+  x$edge.length <- st$treeLength * st$relBrLengths
+
+  pruneRow <- which(x$edge[, 1L] != ctx$nTip + 1L)[1L]
+  en <- gibbs_spr_enumerate_cpp(chain$dataPtr, chain$statePtr, pruneRow)
+  nCand <- nrow(en$edges) - 1L
+
+  RegraftLogLik <- function(y) {
+    .PartitionedLogLik(chain, y$edge, y$edge.length)
+  }
+  candLL <- vapply(seq_len(nCand), function(j) {
+    candRow <- which(x$edge[, 1L] == en$edges[j, 1L] &
+                       x$edge[, 2L] == en$edges[j, 2L])
+    RegraftLogLik(.ApplySpr(x, pruneRow, candRow, tau = 0.5))
+  }, double(1))
+
+  merged <- x
+  parentRow <- which(x$edge[, 2L] == en$u)
+  sibRow    <- which(x$edge[, 1L] == en$u & x$edge[, 2L] != en$v)
+  merged$edge.length[c(parentRow, sibRow)] <- en$lMerge / 2
+
+  expect_lt(max(abs(en$logLik - c(candLL, RegraftLogLik(merged)))), 1e-9)
+})
+
+
 # ---------------------------------------------------------------------------
 # 1. GSPR-004: candidate-set symmetry and weight cancellation
 # ---------------------------------------------------------------------------

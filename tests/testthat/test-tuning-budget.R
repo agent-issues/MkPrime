@@ -50,3 +50,43 @@ test_that(".TuningPayback shares the target between runs", {
   expect_equal(MkPrime:::.TuningPayback(0L, 12, 10, 200, nRuns = 2L)$streak, 1L)
   expect_equal(MkPrime:::.TuningPayback(0L, 12, 10, 200, nRuns = 1L)$streak, 0L)
 })
+
+test_that(".BeatsIncumbent ranks a window that moved the topology first", {
+  expect_true(MkPrime:::.BeatsIncumbent(1, 50, 10, 50, candFrozen = FALSE,
+                                        bestFrozen = TRUE))
+  expect_false(MkPrime:::.BeatsIncumbent(10, 50, 1, 50, candFrozen = TRUE,
+                                         bestFrozen = FALSE))
+  expect_true(MkPrime:::.BeatsIncumbent(10, 50, 1, 50, candFrozen = TRUE,
+                                        bestFrozen = TRUE))
+  expect_true(MkPrime:::.BeatsIncumbent(1, 50, -Inf, NA, candFrozen = TRUE))
+})
+
+test_that(".BeatsIncumbent never lets a frozen window cut topology weight", {
+  expect_false(MkPrime:::.BeatsIncumbent(10, 50, 1, 50, candFrozen = TRUE,
+                                         bestFrozen = TRUE, topologyCut = TRUE))
+  expect_false(MkPrime:::.BeatsIncumbent(10, 50, -Inf, NA, candFrozen = TRUE,
+                                         topologyCut = TRUE))
+  # A moving window may cut topology weight: its rate prices the topology.
+  expect_true(MkPrime:::.BeatsIncumbent(10, 50, 1, 50, candFrozen = FALSE,
+                                        bestFrozen = FALSE, topologyCut = TRUE))
+})
+
+test_that(".BeatsIncumbent keeps a moving schedule once one is adopted", {
+  expect_false(MkPrime:::.BeatsIncumbent(10, 50, 1, 50, candFrozen = TRUE,
+                                         bestFrozen = TRUE, everMoved = TRUE))
+  expect_true(MkPrime:::.BeatsIncumbent(10, 50, 1, 50, candFrozen = FALSE,
+                                        bestFrozen = TRUE, everMoved = TRUE))
+})
+
+test_that(".BeatsIncumbent compares on rate where trees were not scored", {
+  expect_true(MkPrime:::.BeatsIncumbent(10, 50, 1, 50, candFrozen = NA,
+                                        bestFrozen = FALSE))
+  expect_false(MkPrime:::.BeatsIncumbent(1, 50, 10, 50, candFrozen = NA,
+                                         bestFrozen = TRUE))
+})
+
+test_that(".TuningPayback does not vote on a frozen window's rate", {
+  expect_equal(MkPrime:::.TuningPayback(1L, 1e6, 10, 200, frozen = TRUE),
+               list(streak = 0L, freeze = FALSE))
+  expect_true(MkPrime:::.TuningPayback(1L, 1e6, 10, 200, frozen = FALSE)$freeze)
+})

@@ -4,10 +4,13 @@
 \alias{.ConvergenceTier}
 \title{Convergence tier of each sampled column}
 \usage{
-.ConvergenceTier(colNames)
+.ConvergenceTier(colNames, fixed = NULL)
 }
 \arguments{
 \item{colNames}{Character vector naming the sampled columns.}
+
+\item{fixed}{Character vector naming the columns no move updates, as
+given by \code{\link[=.FixedCols]{.FixedCols()}}.}
 }
 \value{
 Character vector of tiers, named by \code{colNames}.
@@ -17,8 +20,13 @@ Character vector of tiers, named by \code{colNames}.
 \item \code{"gate"}: judged by the stopping rule, and minimized over by the
 auto-thin ACT estimate and the tuning bandit.
 \item \code{"nuisance"}: reported in the progress table but not judged.
+\item \code{"fixed"}: logged, but no move updates it, so it is constant by design.
 \item \code{"branch"}: the per-edge lengths \code{br_i}, too numerous to report.
 \item \code{"bookkeeping"}: not parameters.
 }
+}
+\details{
+A gate column whose ESS or R-hat is \code{NA} makes the stopping rule
+unassessable; only a \code{"fixed"} column may be constant without blocking it.
 }
 \keyword{internal}

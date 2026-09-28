@@ -17,6 +17,10 @@ constant_site_prob_jc <- function(parent, child, edge_length, nTip, kStates, roo
     .Call(`_MkPrime_constant_site_prob_jc`, parent, child, edge_length, nTip, kStates, root_freqs, rate_multipliers)
 }
 
+uninf_nonconst_prob_jc <- function(parent, child, edge_length, nTip, kStates, rate_multipliers) {
+    .Call(`_MkPrime_uninf_nonconst_prob_jc`, parent, child, edge_length, nTip, kStates, rate_multipliers)
+}
+
 singleton_site_prob_jc <- function(parent, child, edge_length, nTip, kStates, root_freqs, rate_multipliers) {
     .Call(`_MkPrime_singleton_site_prob_jc`, parent, child, edge_length, nTip, kStates, root_freqs, rate_multipliers)
 }
@@ -35,6 +39,10 @@ constant_site_prob_mkn <- function(parent, child, edge_length, nTip, rate_loss, 
 
 singleton_site_prob_mkn <- function(parent, child, edge_length, nTip, rate_loss, root_freqs, rate_multipliers) {
     .Call(`_MkPrime_singleton_site_prob_mkn`, parent, child, edge_length, nTip, rate_loss, root_freqs, rate_multipliers)
+}
+
+asc_site_prob_missing <- function(parent, child, edge_length, nTip, kStates, neomorphic, rate_loss, rate_multipliers, missing, informative) {
+    .Call(`_MkPrime_asc_site_prob_missing`, parent, child, edge_length, nTip, kStates, neomorphic, rate_loss, rate_multipliers, missing, informative)
 }
 
 mk_prime_relabel_log <- function(kPrime, kObs) {
@@ -215,6 +223,14 @@ cpp_log_likelihood_partitioned_xptr <- function(dataPtr, parent, child, edgeLen,
 
 cpp_data_nclasses <- function(dataPtr) {
     .Call(`_MkPrime_cpp_data_nclasses`, dataPtr)
+}
+
+log1m_exp_cpp <- function(x) {
+    .Call(`_MkPrime_log1m_exp_cpp`, x)
+}
+
+logseries_log_norm_cpp <- function(c) {
+    .Call(`_MkPrime_logseries_log_norm_cpp`, c)
 }
 
 spr_proposal <- function(edge, nTip, treeLength, relBrLengths) {

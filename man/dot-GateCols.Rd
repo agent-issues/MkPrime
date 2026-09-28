@@ -5,12 +5,15 @@
 \alias{.ReportCols}
 \title{Columns the convergence criteria are judged on}
 \usage{
-.GateCols(colNames)
+.GateCols(colNames, fixed = NULL)
 
 .ReportCols(colNames)
 }
 \arguments{
 \item{colNames}{Character vector naming the sampled columns.}
+
+\item{fixed}{Character vector naming the columns no move updates, as
+given by \code{\link[=.FixedCols]{.FixedCols()}}.}
 }
 \value{
 Integer column indices; \code{.GateCols()} gives the judged columns and

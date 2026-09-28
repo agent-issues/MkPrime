@@ -112,9 +112,9 @@ test_that(".MedianPseudoESS returns Geyer ESS (n=30)", {
   expect_equal(.MedianPseudoESS(.dmat_30), 16.678, tolerance = 1e-2)
 })
 
-test_that(".MedianPseudoESS returns n for constant chain", {
+test_that(".MedianPseudoESS returns NA for a constant chain (#195)", {
   dmat_const <- matrix(0, 20, 20)
-  expect_equal(.MedianPseudoESS(dmat_const), 20)
+  expect_true(is.na(.MedianPseudoESS(dmat_const)))
 })
 
 test_that(".MedianPseudoESS returns NA for too-short chain", {
@@ -181,4 +181,31 @@ test_that("TreeESS returns finite positive number on rtree(8) posterior", {
   result <- TreeESS(trees)
   expect_true(is.finite(result[["medianPseudoESS"]]))
   expect_true(result[["medianPseudoESS"]] > 0)
+})
+
+test_that("median pseudo-ESS is NA, not n, for a single topology (#195)", {
+  skip_if_not_installed("TreeDist")
+  tree <- as.phylo(0, 8)
+  trees <- structure(rep(list(tree), 50), class = "multiPhylo")
+  expect_true(is.na(TreeESS(trees)[["medianPseudoESS"]]))
+})
+
+test_that("TreeESS reads anchor rows only, matching the full matrix (#196)", {
+  skip_if_not_installed("TreeDist")
+  set.seed(1963)
+  trees <- structure(lapply(sample.int(300, 450, replace = TRUE),
+                            as.phylo, 7), class = "multiPhylo")
+  full <- .MedianPseudoESS(as.matrix(TreeDist::RobinsonFoulds(trees)),
+                           5L, 200L)
+  calls <- list()
+  CrossRF <- function(...) {
+    calls[[length(calls) + 1L]] <<- lengths(list(...))
+    TreeDist::RobinsonFoulds(...)
+  }
+  expect_equal(TreeESS(trees, dist_fn = CrossRF)[["medianPseudoESS"]], full)
+  expect_equal(calls, list(c(200L, 450L)))
+
+  # A distance function with no two-set form still gets the full matrix.
+  OneSetRF <- function(x) TreeDist::RobinsonFoulds(x)
+  expect_equal(TreeESS(trees, dist_fn = OneSetRF)[["medianPseudoESS"]], full)
 })

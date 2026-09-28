@@ -5,7 +5,10 @@
 # Separate Neomorphic partition
 partitioned[1] <- neo
 partitioned[2] <- trans
-nChar <- v(neo.nchar(), trans.nchar())
+# nChar counts characters AFTER MkPrimeData's invariant-column drop, so both
+# samplers weight partition_rate identically (agent-issues/MkPrime#214,
+# RB-105); raw neo.nchar()/trans.nchar() would count columns MkPrime drops.
+nChar <- v(${NCHAR_NEO}, ${NCHAR_TRANS})
 
 # Dataset properties
 taxa <- neo.names()

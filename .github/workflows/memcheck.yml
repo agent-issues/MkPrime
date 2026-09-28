@@ -1,10 +1,9 @@
 # valgrind memcheck.
 #
-# Structure mirrors ASan.yml: `changes` decides whether this PR touches
-# compiled code; `valgrind` runs only if it does; `gate` always runs and
-# reports the single status that branch protection requires. A PR with no
-# C++ change skips the matrix and the gate passes immediately, so the
-# required check can never deadlock on a workflow that did not trigger.
+# On pull requests R-CMD-check.yml calls this workflow, and only once its
+# sense-check has passed; the required `valgrind gate` lives there too.
+# `changes` decides whether this PR touches compiled code; `valgrind` runs
+# only if it does.
 #
 # Pull requests run a *smoke* test suite: every test file except the MCMC
 # integration files in PR_SKIP (~50 min instead of ~3.5 h). Pushes to main,
@@ -27,15 +26,11 @@ on:
     branches:
       - main
       - master
-      # No '**valgrind**' branch pattern: such a branch's push run posts a
-      # second `valgrind gate` on the PR's head commit, pending for the full
-      # suite's ~3.5 h and failed if cancelled. Dispatch on the branch instead.
-  # Deliberately unfiltered — see ASan.yml. Path filtering happens in
-  # `changes`, where a skip still reports a status.
-  pull_request:
-    branches:
-      - main
-      - master
+      # No '**valgrind**' branch pattern: such a branch's push would run the
+      # ~3.5 h full suite beside its PR's smoke run. Dispatch on the branch
+      # instead.
+  # Pull requests: called from R-CMD-check.yml, behind its sense-check.
+  workflow_call:
 
 name: mem-check
 
@@ -74,13 +69,10 @@ jobs:
           echo "Changed files:"
           printf '  %s\n' $changed
 
-          # This workflow's own file is deliberately NOT in the pattern.
-          # Under the gate structure the `pull_request` trigger is
-          # unfiltered, so editing this file no longer needs to appear here
-          # to prove the workflow still dispatches -- `changes` proves that
-          # by running. Listing it would instead make every future CI-config
-          # edit, comment changes included, a blocking 40-minute gate once
-          # these are required checks. Exercise a workflow edit with the
+          # This workflow's own file is deliberately NOT in the pattern:
+          # `changes` running proves the call still dispatches, and listing
+          # it would make every CI-config edit, comment changes included, a
+          # blocking 40-minute run. Exercise a workflow edit with the
           # workflow_dispatch button on the branch before merging it.
           if printf '%s\n' "$changed" | grep -qE '^(src/|inst/include/|memcheck/)'; then
             echo "-> compiled code changed; running valgrind."
@@ -141,45 +133,6 @@ jobs:
           test: ${{ matrix.config.test}}
           filter: ${{ needs.changes.outputs.smoke == 'true' && env.PR_SKIP || '' }}
           invert: ${{ needs.changes.outputs.smoke }}
-
-  gate:
-    # This is the job branch protection should require.
-    #
-    # `if: always()` is what makes it report even when `valgrind` was
-    # skipped. Because always() also runs the job when a dependency failed,
-    # each dependency's result must be inspected explicitly; GitHub will not
-    # fail this job on our behalf.
-    name: valgrind gate
-    needs: [changes, valgrind]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Certify valgrind status
-        shell: bash
-        run: |
-          echo "changes  : ${{ needs.changes.result }} (run=${{ needs.changes.outputs.run }})"
-          echo "valgrind : ${{ needs.valgrind.result }}"
-
-          # Failing to determine whether the sanitiser was needed is not a
-          # pass. Fail closed.
-          if [ "${{ needs.changes.result }}" != "success" ]; then
-            echo "::error::Change detection did not succeed, so valgrind status cannot be certified."
-            exit 1
-          fi
-
-          case "${{ needs.valgrind.result }}" in
-            success)
-              echo "valgrind passed."
-              ;;
-            skipped)
-              echo "No compiled-code change in this pull request, so valgrind was not required."
-              echo "It still runs on the push to main and in the weekly sweep."
-              ;;
-            *)
-              echo "::error::valgrind result was '${{ needs.valgrind.result }}'."
-              exit 1
-              ;;
-          esac
 
   report:
     # A full-suite failure after merge blocks nothing, so make it visible:

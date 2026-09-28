@@ -24,17 +24,21 @@ OUT_DIR     <- "dev/pilots/2026-05-12-prior-validation/analysis"
 # both arms track at about +0.31. Marginal statistics -- mean, median, the
 # whole u_post distribution -- are exactly invariant, because the error permutes
 # a multiset; only anything paired per character changes.
-gt_for <- function(task) {
+# `charIdx` is the summary's recorded character order; summaries without one
+# came from runs that sorted characters lexically.
+gt_for <- function(task, charIdx = NULL) {
   tree <- as.integer(sub("^t([0-9]+).*", "\\1", task))
   rep  <- as.integer(sub(".*_r([0-9]+)$", "\\1", task))
   tr   <- sprintf("tree_%02d", tree)
   rp   <- sprintf("rep_%02d",  rep)
   gt   <- read.csv(file.path(GT_ROOT, tr, rp, "ground_truth.csv"))
 
-  files <- list.files(file.path(GT_ROOT, tr, rp), "^chr[0-9]+\\.nex$")
-  lex   <- as.integer(sub("^chr([0-9]+)\\.nex$", "\\1", sort(files)))
-  stopifnot(setequal(lex, gt$char_idx), !anyDuplicated(lex))
-  gt[match(lex, gt$char_idx), , drop = FALSE]
+  if (is.null(charIdx)) {
+    files <- list.files(file.path(GT_ROOT, tr, rp), "^chr[0-9]+\\.nex$")
+    charIdx <- as.integer(sub("^chr([0-9]+)\\.nex$", "\\1", sort(files)))
+  }
+  stopifnot(setequal(charIdx, gt$char_idx), !anyDuplicated(charIdx))
+  gt[match(charIdx, gt$char_idx), , drop = FALSE]
 }
 
 # k' >= kObs holds by construction, so u_post < 0 is impossible for a correctly
@@ -57,7 +61,7 @@ geo_files <- list.files(SUMMARY_DIR, "^mkp_geo_.*\\.rds$", full.names = TRUE)
 cat("geo files:", length(geo_files), "\n")
 geo_per <- do.call(rbind, lapply(geo_files, function(f) {
   x <- readRDS(f)
-  gt <- gt_for(x$tag)
+  gt <- gt_for(x$tag, x$char_idx)
   k_post <- unname(x$kp_means)
   if (length(k_post) != nrow(gt)) return(NULL)
   data.frame(
@@ -78,7 +82,7 @@ eg_per_full <- do.call(rbind, lapply(seq_along(eg_post), function(i) {
   r    <- eg_post[[i]]
   task <- if (!is.null(r$task)) r$task else names(eg_post)[i]
   k_post <- r$k_post
-  gt   <- gt_for(task)
+  gt   <- gt_for(task, r$char_idx)
   if (length(k_post) != nrow(gt)) return(NULL)
   data.frame(
     prior  = "EG",

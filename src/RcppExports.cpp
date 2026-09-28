@@ -78,6 +78,22 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// uninf_nonconst_prob_jc
+double uninf_nonconst_prob_jc(Rcpp::IntegerVector parent, Rcpp::IntegerVector child, Rcpp::NumericVector edge_length, int nTip, int kStates, Rcpp::NumericVector rate_multipliers);
+RcppExport SEXP _MkPrime_uninf_nonconst_prob_jc(SEXP parentSEXP, SEXP childSEXP, SEXP edge_lengthSEXP, SEXP nTipSEXP, SEXP kStatesSEXP, SEXP rate_multipliersSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type parent(parentSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type child(childSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type edge_length(edge_lengthSEXP);
+    Rcpp::traits::input_parameter< int >::type nTip(nTipSEXP);
+    Rcpp::traits::input_parameter< int >::type kStates(kStatesSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type rate_multipliers(rate_multipliersSEXP);
+    rcpp_result_gen = Rcpp::wrap(uninf_nonconst_prob_jc(parent, child, edge_length, nTip, kStates, rate_multipliers));
+    return rcpp_result_gen;
+END_RCPP
+}
 // singleton_site_prob_jc
 double singleton_site_prob_jc(Rcpp::IntegerVector parent, Rcpp::IntegerVector child, Rcpp::NumericVector edge_length, int nTip, int kStates, Rcpp::NumericVector root_freqs, Rcpp::NumericVector rate_multipliers);
 RcppExport SEXP _MkPrime_singleton_site_prob_jc(SEXP parentSEXP, SEXP childSEXP, SEXP edge_lengthSEXP, SEXP nTipSEXP, SEXP kStatesSEXP, SEXP root_freqsSEXP, SEXP rate_multipliersSEXP) {
@@ -160,6 +176,26 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< Rcpp::NumericVector >::type root_freqs(root_freqsSEXP);
     Rcpp::traits::input_parameter< Rcpp::NumericVector >::type rate_multipliers(rate_multipliersSEXP);
     rcpp_result_gen = Rcpp::wrap(singleton_site_prob_mkn(parent, child, edge_length, nTip, rate_loss, root_freqs, rate_multipliers));
+    return rcpp_result_gen;
+END_RCPP
+}
+// asc_site_prob_missing
+double asc_site_prob_missing(Rcpp::IntegerVector parent, Rcpp::IntegerVector child, Rcpp::NumericVector edge_length, int nTip, int kStates, bool neomorphic, double rate_loss, Rcpp::NumericVector rate_multipliers, Rcpp::LogicalVector missing, bool informative);
+RcppExport SEXP _MkPrime_asc_site_prob_missing(SEXP parentSEXP, SEXP childSEXP, SEXP edge_lengthSEXP, SEXP nTipSEXP, SEXP kStatesSEXP, SEXP neomorphicSEXP, SEXP rate_lossSEXP, SEXP rate_multipliersSEXP, SEXP missingSEXP, SEXP informativeSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type parent(parentSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type child(childSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type edge_length(edge_lengthSEXP);
+    Rcpp::traits::input_parameter< int >::type nTip(nTipSEXP);
+    Rcpp::traits::input_parameter< int >::type kStates(kStatesSEXP);
+    Rcpp::traits::input_parameter< bool >::type neomorphic(neomorphicSEXP);
+    Rcpp::traits::input_parameter< double >::type rate_loss(rate_lossSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type rate_multipliers(rate_multipliersSEXP);
+    Rcpp::traits::input_parameter< Rcpp::LogicalVector >::type missing(missingSEXP);
+    Rcpp::traits::input_parameter< bool >::type informative(informativeSEXP);
+    rcpp_result_gen = Rcpp::wrap(asc_site_prob_missing(parent, child, edge_length, nTip, kStates, neomorphic, rate_loss, rate_multipliers, missing, informative));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -851,6 +887,28 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// log1m_exp_cpp
+NumericVector log1m_exp_cpp(NumericVector x);
+RcppExport SEXP _MkPrime_log1m_exp_cpp(SEXP xSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< NumericVector >::type x(xSEXP);
+    rcpp_result_gen = Rcpp::wrap(log1m_exp_cpp(x));
+    return rcpp_result_gen;
+END_RCPP
+}
+// logseries_log_norm_cpp
+double logseries_log_norm_cpp(double c);
+RcppExport SEXP _MkPrime_logseries_log_norm_cpp(SEXP cSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< double >::type c(cSEXP);
+    rcpp_result_gen = Rcpp::wrap(logseries_log_norm_cpp(c));
+    return rcpp_result_gen;
+END_RCPP
+}
 // spr_proposal
 List spr_proposal(IntegerMatrix edge, int nTip, double treeLength, NumericVector relBrLengths);
 RcppExport SEXP _MkPrime_spr_proposal(SEXP edgeSEXP, SEXP nTipSEXP, SEXP treeLengthSEXP, SEXP relBrLengthsSEXP) {
@@ -1029,11 +1087,13 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_pruning_jc_acrv_collapsed", (DL_FUNC) &_MkPrime_pruning_jc_acrv_collapsed, 7},
     {"_MkPrime_pruning_mkn_acrv", (DL_FUNC) &_MkPrime_pruning_mkn_acrv, 7},
     {"_MkPrime_constant_site_prob_jc", (DL_FUNC) &_MkPrime_constant_site_prob_jc, 7},
+    {"_MkPrime_uninf_nonconst_prob_jc", (DL_FUNC) &_MkPrime_uninf_nonconst_prob_jc, 6},
     {"_MkPrime_singleton_site_prob_jc", (DL_FUNC) &_MkPrime_singleton_site_prob_jc, 7},
     {"_MkPrime_constant_site_prob_jc_collapsed", (DL_FUNC) &_MkPrime_constant_site_prob_jc_collapsed, 7},
     {"_MkPrime_singleton_site_prob_jc_collapsed", (DL_FUNC) &_MkPrime_singleton_site_prob_jc_collapsed, 7},
     {"_MkPrime_constant_site_prob_mkn", (DL_FUNC) &_MkPrime_constant_site_prob_mkn, 7},
     {"_MkPrime_singleton_site_prob_mkn", (DL_FUNC) &_MkPrime_singleton_site_prob_mkn, 7},
+    {"_MkPrime_asc_site_prob_missing", (DL_FUNC) &_MkPrime_asc_site_prob_missing, 10},
     {"_MkPrime_mk_prime_relabel_log", (DL_FUNC) &_MkPrime_mk_prime_relabel_log, 2},
     {"_MkPrime_mk_prime_relabel_log_batch", (DL_FUNC) &_MkPrime_mk_prime_relabel_log_batch, 2},
     {"_MkPrime_mkp_hello", (DL_FUNC) &_MkPrime_mkp_hello, 0},
@@ -1079,6 +1139,8 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_cpp_log_likelihood_xptr", (DL_FUNC) &_MkPrime_cpp_log_likelihood_xptr, 9},
     {"_MkPrime_cpp_log_likelihood_partitioned_xptr", (DL_FUNC) &_MkPrime_cpp_log_likelihood_partitioned_xptr, 10},
     {"_MkPrime_cpp_data_nclasses", (DL_FUNC) &_MkPrime_cpp_data_nclasses, 1},
+    {"_MkPrime_log1m_exp_cpp", (DL_FUNC) &_MkPrime_log1m_exp_cpp, 1},
+    {"_MkPrime_logseries_log_norm_cpp", (DL_FUNC) &_MkPrime_logseries_log_norm_cpp, 1},
     {"_MkPrime_spr_proposal", (DL_FUNC) &_MkPrime_spr_proposal, 4},
     {"_MkPrime_beta_simplex_proposal", (DL_FUNC) &_MkPrime_beta_simplex_proposal, 3},
     {"_MkPrime_dirichlet_simplex_proposal", (DL_FUNC) &_MkPrime_dirichlet_simplex_proposal, 3},

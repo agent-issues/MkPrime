@@ -101,6 +101,39 @@ test_that("MkN satisfies detailed balance", {
 })
 
 
+test_that("MkN Q has stationary-weighted mean rate 1", {
+  # P00(t) = pi0 + pi1 exp(-lambda t), and q01 = pi1 lambda, q10 = pi0 lambda
+  t <- 0.7
+  for (rl in c(0.12, 0.5, 1, 2, 5)) {
+    P <- MkPrime:::mkn_transition_probs(rl, t)
+    pi_vec <- as.numeric(MkPrime:::mkn_stationary_freqs(rl))
+    lambda <- -log((P[1, 1] - pi_vec[1]) / pi_vec[2]) / t
+    expect_equal(2 * pi_vec[1] * pi_vec[2] * lambda, 1, tolerance = 1e-12,
+                 label = sprintf("rl=%g", rl))
+  }
+})
+
+
+test_that("MkN matches the normalised F81 of the Q-heterogeneity path", {
+  # A single beta bin of 0.5 gives the F81 component the MkN frequencies;
+  # F81 is normalised to mean rate 1, so the two models must coincide.
+  tree <- Preorder(ape::read.tree(
+    text = "((t1:0.3,t2:0.1):0.2,(t3:0.4,(t4:0.2,t5:0.5):0.1):0.3);"))
+  parent <- tree$edge[, 1]
+  child <- tree$edge[, 2]
+  rates <- c(0.4, 1.6)
+  for (rl in c(0.2, 1, 3)) {
+    expect_equal(
+      MkPrime:::het_const_site_prob(parent, child, tree$edge.length, 5L, 2L,
+                                    rl, 0.5, rates),
+      MkPrime:::constant_site_prob_mkn(parent, child, tree$edge.length, 5L, rl,
+                                       MkPrime:::mkn_stationary_freqs(rl),
+                                       rates),
+      tolerance = 1e-12, label = sprintf("rl=%g", rl))
+  }
+})
+
+
 test_that("MkN stationary frequencies sum to 1", {
   for (rl in c(0.1, 0.5, 1, 2, 10)) {
     pi_vec <- MkPrime:::mkn_stationary_freqs(rl)

@@ -4,7 +4,17 @@
 \alias{.BeatsIncumbent}
 \title{Does a candidate beat the incumbent by more than measurement noise?}
 \usage{
-.BeatsIncumbent(candRate, candEss, bestRate, bestEss, z = .kTuningGateZ)
+.BeatsIncumbent(
+  candRate,
+  candEss,
+  bestRate,
+  bestEss,
+  z = .kTuningGateZ,
+  candFrozen = NA,
+  bestFrozen = NA,
+  topologyCut = FALSE,
+  everMoved = FALSE
+)
 }
 \arguments{
 \item{candRate, bestRate}{Numeric min-ESS/s for the candidate and incumbent.}
@@ -12,6 +22,17 @@
 \item{candEss, bestEss}{Numeric effective sample sizes the rates came from.}
 
 \item{z}{Numeric giving the standard errors a candidate must clear.}
+
+\item{candFrozen, bestFrozen}{Logical; \code{TRUE} where that window never changed
+topology, so its rate reflects the scalar gate alone; \code{FALSE} where it
+did; \code{NA} where no trees were scored. A window that moved the topology
+outranks one that froze it whatever their rates.}
+
+\item{topologyCut}{Logical; \code{TRUE} where the candidate gives topology moves
+less weight than the incumbent.}
+
+\item{everMoved}{Logical; \code{TRUE} once this run has adopted a schedule seen
+to move the topology.}
 }
 \value{
 \code{TRUE} where the candidate should be adopted.
@@ -20,5 +41,12 @@
 The relative standard error of an effective-sample-size estimate is about
 \code{sqrt(2 / ESS)} (Geyer 1992); the wall clock contributes negligibly beside
 it, so the rate inherits the ESS's error.
+}
+\details{
+A frozen window's rate prices only the scalar moves, so among
+frozen windows the cheapest schedule is the one that spends least on
+topology. A frozen candidate is therefore never adopted if it cuts
+topology weight, nor once a moving schedule has been seen, whose evidence
+one quiet window cannot overturn.
 }
 \keyword{internal}

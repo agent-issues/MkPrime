@@ -6,6 +6,28 @@ Entries are dated, newest at top. Each entry: what was run, what came back, what
 
 ---
 
+## 2026-09-19 — CORRECTION to 2026-05-16: the Spearman(u_post, u_true) ≈ −0.1 figure was a pairing artefact (#54)
+
+The per-character statistics in the 2026-05-16 entry below (Spearman ≈ −0.08/−0.10,
+the per-task ≈ −0.11±0.15 figures, and the "u is unidentified" reading built on them)
+paired `kPrime_i` (lexical file order — `chr1, chr10, chr11, …, chr2`) against
+`ground_truth.csv` (numeric order) with no re-mapping. `k' ≥ kObs` holds by
+construction, so `u_post < 0` is impossible for a correctly aligned pair; the
+published pairing nonetheless produced 115/1300 (EG) and 248/1300 (geo) violations
+— a falsifier needing no modelling assumption. Corrected pairing: 0 violations,
+Spearman(u_post, u_true) ≈ **+0.31** for both arms (was ≈ −0.11). The marginal
+figures below (mean, median, p(u_post<0.5), bias) are unaffected — the error
+permutes a multiset, so they are exactly invariant.
+
+**Survives:** geo shrinks `u_post` toward 0 relative to EG (the location claim).
+**Does not survive:** "`u_post` does not track `u_true`" — corrected, both arms
+track at ρ ≈ +0.31. See `dev/pilots/2026-05-12-prior-validation/PROVENANCE.md` for
+the full table and derivation; `analysis/eg001_upost_compare.R` now reorders the
+ground truth into the sampler's order and asserts the zero-violation property so
+the pairing cannot silently regress again.
+
+---
+
 ## 2026-05-16 — Summarization arrays + EG-001 empirical test: **u_post anchor is prior shape, not truncation bug**
 
 **Summarization 17185790 (mk, 260) + 17185791 (geo, 26):**

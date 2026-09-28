@@ -1,5 +1,6 @@
 #include <Rcpp.h>
 #include "fast_exp.h"
+#include "mkn_rates.h"
 #include <cmath>
 #include <vector>
 #include <algorithm>
@@ -287,9 +288,8 @@ double pruning_mkn_acrv(Rcpp::IntegerVector parent,
   std::vector<std::vector<double>> CL(nNode + 1, std::vector<double>(clSize, 0.0));
   std::vector<bool> initialized(nNode + 1, false);
 
-  double sum_rl = 1.0 + rate_loss;
-  double rate01 = 2.0 / sum_rl;
-  double rate10 = 2.0 * rate_loss / sum_rl;
+  double rate01, rate10;
+  mkn_rates(rate_loss, rate01, rate10);
   double lambda = rate01 + rate10;
 
   for (int cat = 0; cat < nCat; ++cat) {

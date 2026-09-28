@@ -21,15 +21,36 @@
 #' @param candRate,bestRate Numeric min-ESS/s for the candidate and incumbent.
 #' @param candEss,bestEss Numeric effective sample sizes the rates came from.
 #' @param z Numeric giving the standard errors a candidate must clear.
+#' @param candFrozen,bestFrozen Logical; `TRUE` where that window never changed
+#'   topology, so its rate reflects the scalar gate alone; `FALSE` where it
+#'   did; `NA` where no trees were scored. A window that moved the topology
+#'   outranks one that froze it whatever their rates.
+#' @param topologyCut Logical; `TRUE` where the candidate gives topology moves
+#'   less weight than the incumbent.
+#' @param everMoved Logical; `TRUE` once this run has adopted a schedule seen
+#'   to move the topology.
 #' @return `TRUE` where the candidate should be adopted.
+#' @details A frozen window's rate prices only the scalar moves, so among
+#'   frozen windows the cheapest schedule is the one that spends least on
+#'   topology. A frozen candidate is therefore never adopted if it cuts
+#'   topology weight, nor once a moving schedule has been seen, whose evidence
+#'   one quiet window cannot overturn.
 #' @keywords internal
 .BeatsIncumbent <- function(candRate, candEss, bestRate, bestEss,
-                            z = .kTuningGateZ) {
+                            z = .kTuningGateZ,
+                            candFrozen = NA, bestFrozen = NA,
+                            topologyCut = FALSE, everMoved = FALSE) {
   if (!isTRUE(is.finite(candRate)) || candRate <= 0) {
+    return(FALSE)
+  }
+  if (isTRUE(candFrozen) && (isTRUE(topologyCut) || isTRUE(everMoved))) {
     return(FALSE)
   }
   if (!isTRUE(is.finite(bestRate)) || bestRate <= 0) {
     return(TRUE)
+  }
+  if (!is.na(candFrozen) && !is.na(bestFrozen) && candFrozen != bestFrozen) {
+    return(bestFrozen)
   }
   rse <- sqrt(2 / max(candEss, 1) + 2 / max(bestEss, 1))
   candRate > bestRate * (1 + z * rse)
@@ -50,10 +71,13 @@
 #' @param targetEss Numeric ESS the stopping rule asks of the pooled runs, or
 #'   `NULL` where none is set.
 #' @param nRuns Integer number of runs sharing that target.
+#' @param frozen Logical; `TRUE` where the best window never changed topology.
+#'   Its rate prices the scalar moves alone, so it cannot vote to freeze.
 #' @return List with the updated `streak` and a logical `freeze`.
 #' @keywords internal
-.TuningPayback <- function(streak, spentSec, bestRate, targetEss, nRuns = 1L) {
-  vote <- isTRUE(is.finite(bestRate)) && bestRate > 0 &&
+.TuningPayback <- function(streak, spentSec, bestRate, targetEss, nRuns = 1L,
+                           frozen = FALSE) {
+  vote <- !isTRUE(frozen) && isTRUE(is.finite(bestRate)) && bestRate > 0 &&
     !is.null(targetEss) && isTRUE(is.finite(targetEss)) &&
     spentSec >= (targetEss / max(nRuns, 1L)) / bestRate
   streak <- if (vote) streak + 1L else 0L

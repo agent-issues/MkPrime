@@ -105,3 +105,52 @@ test_that("print on a zero-run MkPosterior is quiet and says so (#128)", {
   )
   expect_true(any(grepl("No runs completed", cli::ansi_strip(msgs))))
 })
+
+
+# --- #197: an NA gate column blocks the verdict instead of leaving the gate ---
+
+.GateRun <- function(rateLogSd, n = 200L) {
+  samples <- cbind(log_posterior = rnorm(n, -100),
+                   tree_length = rnorm(n, 2.5, 0.1),
+                   rate_log_sd = rateLogSd, p = 0.5)
+  list(samples = samples, saved_idx = n)
+}
+.gateNames <- c("log_posterior", "tree_length", "rate_log_sd", "p")
+
+test_that("runs stuck at different values do not pass maxRhat (#197)", {
+  set.seed(1971)
+  res <- .CheckConvergence(list(.GateRun(0.3), .GateRun(0.7)), .gateNames,
+                           mcmc = list(maxRhat = 1.01, fixedCols = "p"))
+  expect_false(res$converged)
+})
+
+test_that("a frozen or non-finite gate column is unassessable (#197)", {
+  set.seed(1972)
+  frozen <- .CheckConvergence(list(.GateRun(0.3)), .gateNames,
+                              mcmc = list(minEss = 10, fixedCols = "p"))
+  expect_false(frozen$converged)
+  expect_true(is.na(frozen$minEss))
+
+  nonFinite <- .GateRun(rnorm(200, 0.8, 0.05))
+  nonFinite$samples[5, "rate_log_sd"] <- Inf
+  expect_false(.CheckConvergence(list(nonFinite), .gateNames,
+                                 mcmc = list(minEss = 10,
+                                             fixedCols = "p"))$converged)
+})
+
+test_that("a column no move updates stays exempt (#197)", {
+  set.seed(1973)
+  res <- .CheckConvergence(list(.GateRun(rnorm(200, 0.8, 0.05))), .gateNames,
+                           mcmc = list(minEss = 10, fixedCols = "p"))
+  expect_true(res$converged)
+  expect_true(is.finite(res$minEss))
+})
+
+test_that("the tuning bandit scores a frozen gate column as unassessable (#197)", {
+  set.seed(1974)
+  mat <- cbind(log_posterior = rnorm(50), tree_length = 2.5, p = 0.5)
+  expect_true(is.na(.MinEssRate(mat, 1)[["rate"]]))
+  expect_true(is.finite(
+    .MinEssRate(mat, 1, fixedCols = c("tree_length", "p"))[["rate"]]
+  ))
+})

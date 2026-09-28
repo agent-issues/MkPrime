@@ -7,14 +7,16 @@
 .MedianPseudoESS(dmat, min_nsamples = 5L, maxRows = 200L)
 }
 \arguments{
-\item{dmat}{Numeric square distance matrix.}
+\item{dmat}{Numeric distance matrix whose columns follow the chain: square,
+or the rows of chosen anchor trees only.}
 
 \item{min_nsamples}{Minimum samples for lag computation (default 5).}
 
 \item{maxRows}{Maximum rows to evaluate; 0 = all rows.  Default 200.}
 }
 \value{
-Scalar ESS estimate.
+Scalar ESS estimate; \code{NA} when every row is constant, i.e. the
+chain sampled a single topology.
 }
 \description{
 Treats each row of the distance matrix as a univariate time series

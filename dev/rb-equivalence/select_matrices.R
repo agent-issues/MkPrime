@@ -16,6 +16,14 @@
 #
 # Selection is hard-coded after a one-off audit; the script verifies that the
 # audit still holds against current metadata.csv + fast list.
+#
+# NOTE (agent-issues/MkPrime#214): $kObs here is the distinct-non-ambiguous-
+# token count, NOT RevBayes' state-count rule (max observed state index + 1,
+# polymorphic bits included). render_rev.R and run_mkprime.R no longer read
+# this rds for k/nChar/taxa -- they derive those from R/utils.R's
+# PrepareCellInfo() directly from the split files, which both samplers are
+# guaranteed to agree on. This script's output remains useful only for the
+# PIDS selection audit above.
 
 suppressPackageStartupMessages({
   library(TreeTools)

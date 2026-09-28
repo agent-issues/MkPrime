@@ -15,8 +15,10 @@ TreeESS(
 \arguments{
 \item{trees}{A \code{multiPhylo} list of trees from a single MCMC chain.}
 
-\item{dist_fn}{Distance function applied to \code{trees}; must return a
-\code{dist} object.  Default: \link[TreeDist:RobinsonFoulds]{TreeDist::RobinsonFoulds}.}
+\item{dist_fn}{Distance function giving a \code{dist} object for
+\code{dist_fn(trees)}; one that also gives the matrix between two sets of
+trees for \code{dist_fn(anchors, trees)}, as \link[TreeDist:RobinsonFoulds]{TreeDist::RobinsonFoulds} does,
+is asked only for the anchor rows.}
 
 \item{min_nsamples}{Integer; minimum number of samples used when
 computing lag-k statistics (default 5).}
@@ -37,10 +39,14 @@ Computes tree-topology effective sample size for a sample of
 phylogenetic trees using Robinson–Foulds distances.
 }
 \details{
-By default only the median pseudo-ESS is returned.  Set
+By default only the median pseudo-ESS is returned, which needs the
+distances from at most \code{maxRows} anchor trees to every tree.  Set
 \code{frechet = TRUE} to also compute the Fréchet correlation ESS
-(Magee et al. 2021); this adds negligible cost since the full
-distance matrix is computed either way.
+(Magee et al. 2021), which needs the full distance matrix.
+
+A chain that never leaves one topology has no median pseudo-ESS (\code{NA}):
+on its own it cannot be told apart from a posterior concentrated on one
+topology.
 }
 \examples{
 if (requireNamespace("ape", quietly = TRUE) &&

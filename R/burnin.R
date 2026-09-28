@@ -103,7 +103,7 @@ AutoBurnin <- function(posterior,
     bi <- results$burnin[i]
     pb <- .PostBurninData(resolved, bi)
 
-    keyCols <- .KeyParamCols(pb$samples)
+    keyCols <- .GateCols(colnames(pb$samples))
     if (length(keyCols) == 0L) next
 
     ess <- .ComputeEss(pb$samples[, keyCols, drop = FALSE])

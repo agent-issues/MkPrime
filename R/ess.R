@@ -57,7 +57,9 @@
   chainVars <- apply(x, 2, var)
   varBetween <- nIter * var(chainMeans)
   varWithin <- mean(chainVars)
-  if (varWithin == 0) return(NA_real_)
+  # `.IsConstant()` has ruled out one shared value, so each chain is constant
+  # at a different one: as far apart as chains can be.
+  if (varWithin == 0) return(Inf)
   sqrt((varBetween / varWithin + nIter - 1) / nIter)
 }
 
@@ -377,8 +379,11 @@
   nIter <- nrow(x)
   half <- nIter %/% 2L
   if (half < 1L) return(x)
+  # Odd nIter: drop the middle draw (Vehtari et al. 2021; `posterior`),
+  # not the last one -- the two halves stay adjacent to the discarded draw.
+  offset <- if (nIter %% 2L == 1L) 1L else 0L
   cbind(x[seq_len(half), , drop = FALSE],
-        x[half + seq_len(half), , drop = FALSE])
+        x[half + offset + seq_len(half), , drop = FALSE])
 }
 
 

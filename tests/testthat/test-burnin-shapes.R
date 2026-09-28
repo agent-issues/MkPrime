@@ -139,6 +139,39 @@ test_that("AutoBurnin declines when no candidate is assessable (#90)", {
 })
 
 
+test_that("AutoBurnin ignores kPrime/log_likelihood when selecting burnin (#198)", {
+  # `log_posterior` is well-mixed at every burnin fraction; `kPrime_1` and
+  # `log_likelihood` are sticky and offset between runs, so their R-hat
+  # never drops near 1 regardless of how much is discarded. AutoBurnin must
+  # judge only gate-tier columns, or a nuisance column's R-hat forces a
+  # large burnin onto an already-converged gate parameter for no reason.
+  n <- 200
+  set.seed(4471)
+  lp1 <- rnorm(n)
+  lp2 <- rnorm(n)
+  kp1 <- 1 + 0.01 * sin(seq_len(n) / 3)
+  kp2 <- 5 + 0.01 * sin(seq_len(n) / 3)
+
+  Samples <- function(lp, kp) {
+    cbind(log_posterior = lp, kPrime_1 = kp, log_likelihood = kp)
+  }
+  post <- MkPosterior(
+    samples = rbind(Samples(lp1, kp1), Samples(lp2, kp2)),
+    trees = list(), acceptance = numeric(0),
+    model = NULL, data = NULL, mcmc = list(thin = 1L),
+    warmup = 0L, tuning = list()
+  )
+  post$nRuns <- 2L
+  post$per_run <- list(
+    list(samples = Samples(lp1, kp1), trees = list()),
+    list(samples = Samples(lp2, kp2), trees = list())
+  )
+
+  expect_no_warning(r_auto <- suppressMessages(AutoBurnin(post)))
+  expect_equal(r_auto$burnin, 0L)
+})
+
+
 test_that(".PostBurninData says when a burnin empties a run", {
   post <- .SyntheticPosterior(c(30L, 12L))
   # Only reachable by assigning `$burnin` directly; SetBurnin rejects it.

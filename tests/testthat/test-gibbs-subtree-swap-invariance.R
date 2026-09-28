@@ -65,18 +65,32 @@ test_that("gibbs_subtree_swap samples its exact target", {
 # the slot it moves INTO; a commit giving each subtree the stem it arrived
 # WITH leaves state$logLik holding the likelihood of a different tree,
 # several log-units adrift per accepted swap.
-.SwapLogLikDrift <- function(model, seed = 5719L, nTip = 8L, nMove = 400L) {
+.SwapLogLikDrift <- function(model, seed = 5719L, nTip = 8L, nMove = 400L,
+                             partitioned = FALSE) {
   set.seed(seed)
   tree <- TreeTools::Preorder(ape::rtree(nTip, rooted = FALSE))
   mat <- matrix(sample(0:2, nTip * 10L, replace = TRUE), nrow = nTip,
                 dimnames = list(tree$tip.label, paste0("c", seq_len(10L))))
   mkd <- suppressWarnings(MkPrimeData(MatrixToPhyDat(mat)))
-  finalModel <- MkPrime:::.FinalizeModel(model, tree, mkd)
-  statePtr <- MkPrime:::.InitMcmcChain(
-    MkPrime:::.InitState(tree, mkd, finalModel))
-  dataPtr <- MkPrime:::.InitMcmcData(mkd, finalModel)
-  fill_partition_cache(dataPtr, statePtr)
-  allocate_cl_workspace(dataPtr, statePtr)
+  if (partitioned) {
+    chain <- .PartitionedChain(tree, mkd, model)
+    dataPtr <- chain$dataPtr
+    statePtr <- chain$statePtr
+    ColdLogLik <- function(st) .PartitionedLogLik(chain)
+  } else {
+    finalModel <- MkPrime:::.FinalizeModel(model, tree, mkd)
+    statePtr <- MkPrime:::.InitMcmcChain(
+      MkPrime:::.InitState(tree, mkd, finalModel))
+    dataPtr <- MkPrime:::.InitMcmcData(mkd, finalModel)
+    fill_partition_cache(dataPtr, statePtr)
+    allocate_cl_workspace(dataPtr, statePtr)
+    ColdLogLik <- function(st) {
+      cpp_log_likelihood_xptr(
+        dataPtr, st$edge[, 1], st$edge[, 2],
+        st$treeLength * st$relBrLengths, st$kPrime,
+        st$rateLoss, st$rateLogSd, st$rateNeo, st$betaScale)
+    }
+  }
 
   set.seed(11L)
   accepted <- 0L
@@ -85,10 +99,7 @@ test_that("gibbs_subtree_swap samples its exact target", {
     if (do_move_cpp(dataPtr, statePtr, 11L, 0L, 0.5, 0.5, 1L, 1.0)) {
       accepted <- accepted + 1L
       st <- get_mcmc_state(statePtr)
-      worst <- max(worst, abs(st$logLik - cpp_log_likelihood_xptr(
-        dataPtr, st$edge[, 1], st$edge[, 2],
-        st$treeLength * st$relBrLengths, st$kPrime,
-        st$rateLoss, st$rateLogSd, st$rateNeo, st$betaScale)))
+      worst <- max(worst, abs(st$logLik - ColdLogLik(st)))
     }
   }
   list(accepted = accepted, drift = worst)
@@ -100,6 +111,20 @@ test_that("gibbs_subtree_swap commits the tree it evaluated", {
                      MkPrimeModel(qHeterogeneity = TRUE),
                      MkPrimeModel(coding = "informative"))) {
     result <- .SwapLogLikDrift(model)
+    expect_gt(result$accepted, 50L)
+    expect_lt(result$drift, 1e-8)
+  }
+})
+
+
+# Under the partition API the neighbourhood must be scored with each class's
+# own shape and rate multiplier, as state$logLik is: a class-blind score
+# commits the likelihood of a different model (#163).
+test_that("gibbs_subtree_swap scores the partitioned likelihood", {
+  for (model in list(MkPrimeModel(),
+                     MkPrimeModel(qHeterogeneity = TRUE),
+                     MkPrimeModel(coding = "informative"))) {
+    result <- .SwapLogLikDrift(model, partitioned = TRUE)
     expect_gt(result$accepted, 50L)
     expect_lt(result$drift, 1e-8)
   }

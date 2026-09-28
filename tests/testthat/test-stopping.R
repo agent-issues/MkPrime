@@ -384,3 +384,41 @@ test_that("serial nRuns=2 + maxRhat does not block minEss stopping", {
   expect_equal(result$stop_reason, "converged")
   expect_lt(result$actual_iter, 100000L)
 })
+
+
+# --- Criteria that the run can never meet (#196, #105) ---
+
+test_that("serial maxRhat alone reaches the cross-run check (#196)", {
+  # Phase 1 strips maxRhat, so with no per-run criterion left run 1 used to
+  # sample until maxTime and Phase 2 never ran.
+  set.seed(1960)
+  result <- allow_warning(RunMkPrime(.mkp_test_pd(), .mkp_test_tree(),
+    mcmc = MkPrimeMCMC(nRuns = 2L, thin = 5L, maxWarmup = 200L,
+                       minWarmup = 200L, autoTune = FALSE, maxRhat = 5,
+                       checkEvery = 300L, maxTime = 20)), "maxWarmup")
+  expect_identical(result$stop_reason, "converged")
+})
+
+test_that("maxRhat with a single run warns that it can never be met (#196)", {
+  set.seed(1961)
+  expect_warning(allow_warning(
+    result <- RunMkPrime(.mkp_test_pd(), .mkp_test_tree(),
+      mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 600L, thin = 5L,
+                         maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
+                         maxRhat = 1.05, checkEvery = 200L, maxTime = 20)),
+    "maxWarmup"), "maxRhat.*nRuns"
+  )
+  expect_identical(result$stop_reason, "max_iter")
+})
+
+test_that("minEss above the window's ESS ceiling warns, naming it (#105)", {
+  set.seed(1050)
+  expect_warning(allow_warning(
+    result <- RunMkPrime(.mkp_test_pd(), .mkp_test_tree(),
+      mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 600L, thin = 5L,
+                         maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
+                         minEss = 5000, checkEvery = 200L, maxTime = 20)),
+    "maxWarmup"), "minEss.*1349"
+  )
+  expect_identical(result$stop_reason, "max_iter")
+})

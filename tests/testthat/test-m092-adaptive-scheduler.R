@@ -4,14 +4,6 @@
 # .NormalizeMoveWeights(), .LogMoveWeights(), .FormatMoveWeights(),
 # MkPrimeMCMC() moveWeights parameter, and C++ timing data.
 
-# Skip slow integration tests unless explicitly requested
-skip_slow_tests <- function() {
-  if (!identical(Sys.getenv("MKPRIME_RUN_SLOW_TESTS"), "true")) {
-    skip("Slow test: set MKPRIME_RUN_SLOW_TESTS=true to run")
-  }
-}
-
-
 # ==========================================================================
 # MkPrimeMCMC() moveWeights parameter validation
 # ==========================================================================
@@ -652,7 +644,7 @@ test_that("Adaptive scheduler runs end-to-end (short MCMC)", {
   )
   result <- RunMkPrime(dat, tree, model = model, mcmc = mcmc)
   expect_s3_class(result, "MkPosterior")
-  expect_gt(nrow(result$samples[[1]]), 0)
+  expect_gt(nrow(result$samples), 0)
 })
 
 test_that("User-pinned moveWeights preserved end-to-end", {

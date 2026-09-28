@@ -256,7 +256,7 @@ test_that("MkpLogLikelihood collapse-path informative coding matches uncollapsed
     puninf <- constant_site_prob_jc(parent, child, el, nTip, kp, rf, rates)
     if (coding == "informative") {
       puninf <- puninf +
-        singleton_site_prob_jc(parent, child, el, nTip, kp, rf, rates)
+        uninf_nonconst_prob_jc(parent, child, el, nTip, kp, rates)
     }
     ll - log(1 - puninf)
   }

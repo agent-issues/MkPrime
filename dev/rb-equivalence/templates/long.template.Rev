@@ -2,15 +2,20 @@
 # run MCMC with srMaxTime as the only stopping rule.
 # Substitutions performed by render_rev.R:
 #   ${PID}, ${MODEL}, ${NEO_PATH}, ${TRANS_PATH}, ${TARGET_ESS}, ${MAX_TIME_SEC}
+# NEO_PATH/TRANS_PATH always point at render_rev.R's own
+# {neo,trans}_filtered.nex, already restricted to the taxa the two source
+# splits have in common (agent-issues/MkPrime#214, RB-119) -- so
+# `neo.names()` below is also the taxon set MkPrime used.
 #
-# NOTE: srMinESS is intentionally NOT used. Adding `srMinESS(N, "X.log",
-# FALSE)` triggers SIGFPE at iter 0 on every cell we tried (job 17296889 pid
-# 950, job 17297082 pid 635); both crashed with "Floating point exception"
-# immediately after printing "Iter 0". The verbatim m9-long template uses
-# only srMaxTime and runs fine. Hypothesis: srMinESS tries to parse the
-# log file before any rows are written, divides by zero. ESS is computed
-# post-hoc in compare.R; if a cell hasn't converged, increase MAX_TIME and
-# resume.
+# NOTE: srMinESS is intentionally NOT used. `srMinESS(N, "X.log", FALSE)`
+# triggers SIGFPE at iter 0 on every cell we tried (job 17296889 pid 950,
+# job 17297082 pid 635). Root cause (agent-issues/MkPrime#217, RB-116):
+# the third positional argument is `frequency`, not a boolean flag; `FALSE`
+# coerces to `frequency = 0`, and the first stopping-rule check divides by
+# it (`AbstractConvergenceStoppingRule.cpp:68`). Fix is `frequency = <n>`
+# passed by name, but that is unvalidated here (no RevBayes available) --
+# see dev/rb-equivalence/revbayes-bug-report.md. ESS is computed post-hoc
+# in compare.R; if a cell hasn't converged, increase MAX_TIME and resume.
 
 print("RB cell starting: pid=${PID} model=${MODEL} at", time("year"), time("day"), time("seconds") / 60 / 60)
 seed(0)

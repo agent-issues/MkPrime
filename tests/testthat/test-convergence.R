@@ -131,12 +131,11 @@ test_that("ConvergenceDiagnostics trees=FALSE skips tree ESS", {
 })
 
 
-test_that("ConvergenceDiagnostics tree ESS computed when treess available", {
-  skip_if_not_installed("treess")
+test_that("ConvergenceDiagnostics tree ESS computed with TreeDist (#202)", {
   skip_if_not_installed("TreeDist")
-  # treess is O(n^2) in tree count and requires topological variability to
-  # return finite ESS.  Skip unless explicitly opted in (needs a real dataset,
-  # not the tiny 4-tip fixture).
+  # O(n^2) in tree count and requires topological variability to return
+  # finite ESS. Skip unless explicitly opted in (needs a real dataset, not
+  # the tiny 4-tip fixture).
   skip_if(
     !nzchar(Sys.getenv("MKP_TREE_ESS_TESTS")),
     "tree ESS tests skipped by default; set MKP_TREE_ESS_TESTS=1 to enable"
@@ -151,14 +150,19 @@ test_that("ConvergenceDiagnostics tree ESS computed when treess available", {
   result <- RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 200L, thin = 5L, maxWarmup = 100L, minWarmup = 100L, autoTune = FALSE))
 
-  diag <- ConvergenceDiagnostics(result, trees = TRUE)
+  # frechetESS defaults to FALSE, so frechetCorrelationESS is NA by design;
+  # only medianPseudoESS is expected to be finite here.
+  expect_no_warning(
+    diag <- ConvergenceDiagnostics(result, trees = TRUE)
+  )
   expect_true(!is.null(diag$treeEss))
   expect_named(diag$treeEss,
                c("frechetCorrelationESS", "medianPseudoESS"), ignore.order = TRUE)
-  expect_true(all(is.finite(diag$treeEss)))
-  expect_true(all(diag$treeEss > 0))
+  expect_true(is.na(diag$treeEss[["frechetCorrelationESS"]]))
+  expect_true(is.finite(diag$treeEss[["medianPseudoESS"]]))
+  expect_true(diag$treeEss[["medianPseudoESS"]] > 0)
 
   # Topology rows appear in print with actual values
   out <- capture.output(print(diag))
-  expect_true(any(grepl("topology.*Fréchet|topology.*Fre", out)))
+  expect_true(any(grepl("topology.*med.pseudo", out)))
 })

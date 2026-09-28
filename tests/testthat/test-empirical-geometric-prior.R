@@ -20,6 +20,18 @@ test_that("MkPrimeEmpiricalPrior rejects invalid inputs", {
 })
 
 
+test_that("MkPrimeEmpiricalPrior rejects body with zero total mass", {
+  # body = c(0, 0) with tail_decay = 0 sums to 0, which is already caught by
+  # the "must sum to 1" check -- but with tail_decay > 0 the old code divided
+  # by a zero total (anchor = 0, tailMass = 0, total = 0) and returned an
+  # all-NaN pmf silently, poisoning every later log-prior.
+  expect_error(MkPrimeEmpiricalPrior(body = c(0, 0), tail_decay = 0.4),
+               "positive total mass")
+  expect_error(MkPrimeEmpiricalPrior(body = c(0, 0), tail_decay = 0),
+               "positive total mass")
+})
+
+
 test_that(".LogPriorEmpiricalGeometric matches hand-computed convolution", {
   emp <- MkPrimeEmpiricalPrior(body = c(0.6, 0.3, 0.1), tail_decay = 0)
   p <- 0.7
@@ -488,6 +500,63 @@ test_that("EG-001 Model A: R and C++ EG priors agree under priorVariant='uncondi
 })
 
 
+test_that("EG-001 Model B: R and C++ EG priors agree under priorVariant='conditional'", {
+  # Model B (conditional) is the arm that exercises the per-character Z_i
+  # renormaliser (src/mcmc.cpp's `if (!data.unconditionalPrior)` block),
+  # which no other test reaches: every other `priorVariant = "conditional"`
+  # fixture pairs it with `kPrimePrior = "geometric"`, a different branch.
+  tree <- Preorder(
+    read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);"))
+  # Two transformational chars, kObs = 2 and 3 (the second exercises Z_i).
+  mat <- matrix(c(0, 1, 0, 1,
+                  0, 1, 2, 0), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  pd <- MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd)
+  model <- MkPrimeModel(expSteps = 10, kPrimePrior = "empirical_geometric",
+                        priorVariant = "conditional")
+  model <- MkPrime:::.FinalizeModel(model, tree, mkd)
+  dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
+  emp <- model$empiricalNObs %||% MkPrime:::.EmpiricalNObs()
+
+  for (p in c(0.2, 0.5, 0.8)) {
+    for (kp in list(c(2L, 3L), c(3L, 5L), c(4L, 8L),
+                    c(2L, 25L), c(20L, 30L))) {
+      state <- list(
+        tree = tree, tree_length = 0.5,
+        rel_br_lengths = tree$edge.length / sum(tree$edge.length),
+        rate_loss = 1.0, rate_log_sd = 0.2, rate_neo = 1.0,
+        kPrime = kp, p = p, log_lik = 0.0, log_prior = 0.0
+      )
+      lpR   <- MkPrime:::LogPrior(state, model, mkd)
+      lpCpp <- eval_log_prior_cpp(dataPtr, MkPrime:::.InitMcmcChain(state))
+      expect_equal(lpCpp, lpR, tolerance = 1e-9,
+                   info = sprintf("Model B R vs C++ at p=%.2f, kp=%s",
+                                  p, paste(kp, collapse = ",")))
+
+      # Demonstrate this comparison actually bites: src/ is out of scope
+      # here, so mutate the R side instead, using the *wrong* (unconditional,
+      # i.e. Model A) branch of the same function in place of Model B's Z_i
+      # renormaliser. If the C++ Z_i renormaliser regressed to compute the
+      # unconditional value, C++ and R would then agree with each other but
+      # both be wrong -- so what matters is that the real (correct) R value
+      # above is *not* interchangeable with the wrong one: a broken C++
+      # renormaliser producing the wrong-branch value would visibly miss the
+      # real R value by far more than the 1e-9 tolerance used above.
+      lpWrongEg <- MkPrime:::.LogPriorEmpiricalGeometric(
+        kp, emp, p, mkd$kObs[mkd$type == "transformational"],
+        unconditional = TRUE
+      )
+      lpWrong <- lpR - MkPrime:::.LogPriorEmpiricalGeometric(
+        kp, emp, p, mkd$kObs[mkd$type == "transformational"],
+        unconditional = FALSE
+      ) + lpWrongEg
+      expect_gt(abs(lpCpp - lpWrong), 1e-3)
+    }
+  }
+})
+
+
 test_that("LogPrior reports which character carries a missing k' or kObs", {
   # EG-004: a bare any() on a vector containing NA made `if()` raise
   # "missing value where TRUE/FALSE needed", naming the prior rather than the
@@ -568,4 +637,54 @@ test_that("prepare_mcmc_data derives the empirical body length from the body", {
   # disagree with the first.
   expect_false("empBodyLastK" %in%
                  names(formals(MkPrime:::prepare_mcmc_data)))
+})
+
+
+test_that("R and C++ share one body/tail precedence rule for P_emp", {
+  tree <- Preorder(
+    read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);"))
+  mat <- matrix(c(0, 1, 0, 1,
+                  0, 1, 2, 0), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  mkd <- MkPrimeData(MatrixToPhyDat(mat))
+
+  wellFormed <- MkPrimeEmpiricalPrior(body = c(0.6, 0.3, 0.05, 0.05),
+                                      tail_decay = 0.4)
+  # The constructor refuses a tail that overlaps the body, so build one by
+  # hand: both sides must still read the pmf the same way.
+  overlapping <- wellFormed
+  overlapping$tail_start_k <- 3L
+
+  for (emp in list(wellFormed, overlapping)) {
+    model <- MkPrimeModel(expSteps = 10, kPrimePrior = "empirical_geometric",
+                          empiricalNObs = emp)
+    model <- MkPrime:::.FinalizeModel(model, tree, mkd)
+    dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
+    for (kp in list(c(3L, 4L), c(5L, 3L), c(2L, 9L))) {
+      state <- list(
+        tree = tree, tree_length = 0.5,
+        rel_br_lengths = tree$edge.length / sum(tree$edge.length),
+        rate_loss = 1.0, rate_log_sd = 0.2, rate_neo = 1.0,
+        kPrime = kp, p = 0.5, log_lik = 0.0, log_prior = 0.0
+      )
+      expect_equal(
+        eval_log_prior_cpp(dataPtr, MkPrime:::.InitMcmcChain(state)),
+        MkPrime:::LogPrior(state, model, mkd),
+        tolerance = 1e-10,
+        info = sprintf("tail_start_k = %d, kp = %s", emp$tail_start_k,
+                       paste(kp, collapse = ","))
+      )
+    }
+  }
+})
+
+
+test_that("P_emp normalises over k >= 2", {
+  for (emp in list(MkPrimeEmpiricalPrior(body = c(0.6, 0.3, 0.05, 0.05),
+                                         tail_decay = 0.4),
+                   MkPrimeEmpiricalPrior(body = rep(0.25, 4)),
+                   MkPrime:::.EmpiricalNObs())) {
+    expect_equal(sum(exp(MkPrime:::.LogPemp(2000L, emp))), 1,
+                 tolerance = 1e-12)
+  }
 })

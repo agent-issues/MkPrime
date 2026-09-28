@@ -36,12 +36,11 @@
 #'   When `FALSE`, move weights are frozen at the end of warmup using
 #'   the acceptance-rate heuristic (legacy behaviour). See section
 #'   **Three-phase MCMC** below.
-#' @param tuningBudget Maximum iterations in the tuning phase.
-#'   Default 10 000. Only used when `autoTune = TRUE`.
-#' @param tuningRounds Number of perturbation-evaluation rounds in
-#'   the tuning phase. Default 5. Each round evaluates the current
-#'   weights plus `nPerturbations` candidates. Only used when
-#'   `autoTune = TRUE`.
+#' @param tuningBudget Integer giving the most iterations the tuning phase may
+#'   use; tuning can end sooner (see **Three-phase MCMC**).
+#' @param tuningRounds Integer giving the most perturbation-evaluation rounds
+#'   in the tuning phase, each evaluating the current weights and three
+#'   perturbed candidates.
 #' @param nRuns Number of independent runs. Default 2. Each run has its
 #'   own set of `nChains` chains. Convergence diagnostics (R-hat) require
 #'   `nRuns >= 2`.
@@ -54,19 +53,19 @@
 #'   Ignored when `nChains = 1`.
 #' @param maxTime Maximum wall-clock time in seconds. `NULL` (default)
 #'   means no time limit.
-#' @param minEss Minimum effective sample size for early stopping.
-#'   `NULL` (default) disables ESS-based stopping.
-#' @param maxRhat Maximum R-hat (rank-normalized; Vehtari et al. 2021)
-#'   for early stopping. `NULL` (default) disables R-hat-based stopping.
-#'   The modern recommendation is 1.01 for reliable inference; 1.05 is
-#'   a pragmatic threshold for phylogenetics where mixing is slower.
-#'   Requires `nRuns >= 2`.
-#'   Replaces the classical PSRF (Gelman-Rubin) statistic.
+#' @param minEss Numeric specifying the effective sample size every monitored
+#'   parameter must reach before sampling stops; `NULL` disables ESS-based
+#'   stopping.
+#' @param maxRhat Numeric specifying the R-hat (rank-normalized; Vehtari et al.
+#'   2021) that no monitored parameter may exceed across runs before sampling
+#'   stops, needing `nRuns >= 2`; `NULL` disables R-hat-based stopping.
+#'   1.01 is the usual recommendation; 1.05 is a pragmatic threshold for
+#'   slow-mixing phylogenetic posteriors.
 #' @param minTreeEss Numeric specifying the tree-topology ESS (median
 #'   pseudo-ESS, via **TreeDist**) each run must reach before it may stop;
 #'   `NULL` disables tree-ESS-based stopping.
-#' @param checkEvery Check convergence every this many iterations
-#'   (default 1000). Only used when stopping criteria are set.
+#' @param checkEvery Integer giving the iterations between convergence checks,
+#'   of which two in a row must pass before sampling stops.
 #' @param cancelFile Path to a cancel-signal file. `NULL` (default) disables
 #'   cancel-file checking. When set, [RunMkPrime()] checks every 200
 #'   iterations whether this file exists. If it does, the run flushes any
@@ -194,12 +193,15 @@
 #'   or `NULL` (default). When non-NULL, each named entry fixes the
 #'   probability of proposing that move type. Names must match valid move
 #'   names (e.g., `"nni"`, `"spr"`, `"gibbs_spr"`, `"tree_length"`, etc.).
-#'   Values must be positive and sum to at most 1. Remaining probability
-#'   is distributed among un-pinned moves by the adaptive scheduler during
-#'   warmup. Example: `moveWeights = c(nni = 0.3, spr = 0.2)` fixes NNI
-#'   at 30% and SPR at 20%, with the remaining 50% allocated adaptively
-#'   among other moves. To disable adaptive scheduling entirely, pin all
-#'   moves (sum to 1). See section **Adaptive move scheduling** below.
+#'   Values must be positive and sum to at most 1. Gibbs and slice moves
+#'   are also pinned, at their initial weights, and a run stops with an
+#'   error if the pins leave no weight for the other moves. Remaining
+#'   probability is distributed among un-pinned moves by the adaptive
+#'   scheduler during warmup. Example:
+#'   `moveWeights = c(nni = 0.3, spr = 0.2)` fixes NNI at 30% and SPR at
+#'   20%, with the remaining 50% allocated adaptively among other moves.
+#'   To disable adaptive scheduling entirely, pin all moves (sum to 1).
+#'   See section **Adaptive move scheduling** below.
 #' @param nCore Integer. Number of parallel worker processes for independent
 #'   runs. Default `getOption("mc.cores", 1L)`, matching the convention used
 #'   by \pkg{TreeDist}. With `nCore = 1` (the default), runs execute serially.
@@ -241,14 +243,12 @@
 #'     batch completion is more important than a timely abort.
 #'
 #'   Ignored when `nCore = 1`.
-#' @param cacheBonus Numeric; multiplier applied to partial-CL-eligible
-#'   move weights (NNI, beta_simplex, Dirichlet, local_dirichlet) when the
-#'   node CL cache is valid. Default 5. A value of 1 disables the boost.
-#'   Higher values preferentially select fast partial-CL moves after
-#'   another partial-CL move succeeds, exploiting the ~15\eqn{\times}
-#'   speedup. Statistically valid: each component kernel individually
-#'   satisfies detailed balance; only selection frequency changes.
-#'   Ignored when Q-heterogeneity is enabled (partial CL not supported).
+#' @param cacheBonus Numeric specifying the factor applied to the weights of
+#'   the moves that reuse cached partial likelihoods (NNI, SPR, `beta_simplex`,
+#'   Dirichlet, `local_dirichlet`) on the iteration after one of them is
+#'   proposed; 1 disables the boost, which has no effect when
+#'   [MkPrimeModel()] sets `qHeterogeneity = TRUE` or
+#'   `likelihoodMode = "marginal_k"`.
 #' @param tuning Named list of initial tuning parameters for each move
 #'   type. See Details.
 #'
@@ -260,16 +260,49 @@
 #' - `scale_rate_log_sd`: 0.5
 #' - `scale_p`: 0.5
 #' - `int_walk_window`: 1
+#' - `block_kprime_window`: 1
 #'
-#' ## Tree ESS is enforced per run
+#' ## Stopping criteria
 #'
-#' Trees are not written to the log files, so the log-based convergence check
-#' used for parallel runs and for the serial cross-run phase cannot evaluate
-#' `minTreeEss`; only the per-run check can. With `nRuns > 1` the criterion
-#' therefore governs each run's own stopping, while the cross-run decision
-#' rests on `minEss` and `maxRhat` alone. Set at least one of those when
-#' running more than one run, or the cross-run phase has no criterion to
-#' apply.
+#' Sampling stops when two consecutive convergence checks, `checkEvery`
+#' iterations apart, both meet every criterion that is set; one favourable
+#' check is not enough.
+#'
+#' The criteria judge every sampled scalar except `log_likelihood`, the
+#' per-character `kPrime_i`, branch lengths, and columns no move updates
+#' (such as `p` when there are no transformational characters). This includes
+#' `kprime_alpha`, `kprime_beta`, `beta_scale`, the per-class `rate_log_sd`
+#' columns, `w_*` and `hyper_tau`. A judged parameter whose ESS or R-hat cannot
+#' be computed -- because it did not move, holds a non-finite value, or
+#' different runs are stuck at different values -- blocks the stop rather
+#' than being skipped.
+#'
+#' A run on its own (`nRuns = 1`, or serial runs with `nCore = 1`) judges
+#' `minEss` on its convergence window: its last
+#' `max(bufferSize, 4 * checkEvery / thin)` samples. The ESS of `W` samples
+#' cannot exceed `W * log10(W)`, 1349 for the usual 500, and independent draws
+#' rarely give more than half that. Parallel runs, and serial runs in their cross-run
+#' phase, judge `minEss` and `maxRhat` on the full logs.
+#'
+#' With `nRuns > 1` and `nCore = 1`, a `maxRhat` job samples each run in turn
+#' until its own criteria are met (or, with `maxRhat` alone, for two checks),
+#' then extends every run by at least 1000 iterations at a time until the
+#' cross-run check passes twice in a row. With `nCore > 1`, a check counts
+#' towards the pair only once the logs have gained a `checkEvery`'s worth of
+#' samples.
+#'
+#' `minTreeEss` is judged per run, on up to `max(1000, 1.5 * minTreeEss)`
+#' evenly spaced trees. Trees are not written to the logs, so the cross-run
+#' decision rests on `minEss` and `maxRhat` alone; set one of them when
+#' running more than one run. A run that has sampled a single topology has
+#' no tree ESS: it cannot tell a stuck chain from a posterior concentrated on
+#' one topology, so it cannot meet `minTreeEss` until it samples another,
+#' and warns.
+#'
+#' A criterion that can never be met -- `maxRhat` with one run, a `minEss`
+#' above the window's ceiling, or `minTreeEss` with a fixed topology -- does
+#' not prevent the run, but draws a warning: the run then ends only at
+#' `nIter`, `maxTime` or a cancel file.
 #'
 #' ## Parallel tempering
 #'
@@ -318,15 +351,21 @@
 #' are optimised to maximise min-ESS/s (minimum effective sample
 #' size per second across parameters) using a perturbation bandit.
 #' Each round evaluates the current and perturbed weight vectors
-#' over short windows, adopting the best. Tuning samples are
-#' discarded. Step-size tuning is frozen. The phase runs for
-#' `tuningRounds` rounds or up to `tuningBudget` iterations.
+#' over short windows, adopting a candidate only when it beats the
+#' incumbent by more than the noise in its ESS estimate. Tuning samples
+#' are discarded. Step-size tuning is frozen. The phase ends after
+#' `tuningRounds` rounds or `tuningBudget` iterations, or, when `minEss`
+#' is set, sooner once tuning stops paying for itself: when, in two
+#' consecutive rounds, the
+#' time already spent on warmup and tuning exceeds the time the best
+#' kernel needs to collect this run's share of `minEss`.
 #' Set `autoTune = FALSE` to skip this phase.
 #'
 #' **Sample.** Move weights are frozen and posterior samples are
-#' collected. Convergence is monitored at `checkEvery` intervals.
-#' The run terminates when `minEss`/`maxRhat` criteria are met,
-#' `maxTime` is reached, or `nIter` iterations complete.
+#' collected. Convergence is checked every `checkEvery` iterations.
+#' The run terminates when the stopping criteria are met (see
+#' **Stopping criteria**), `maxTime` is reached, or `nIter`
+#' iterations complete.
 #'
 #' Use `moveWeights` to pin specific move frequencies and exclude
 #' them from adaptation in all phases.
@@ -558,7 +597,8 @@ MkPrimeMCMC <- function(
     scale_class_rate_log_sd = 0.5,
     scale_hyper_tau         = 0.5,
     dirichlet_class_w_alpha = 10,
-    int_walk_window = 1L,
+    int_walk_window = 1,
+    block_kprime_window = 1,
     slice_width_rate_loss = 1.0,
     slice_width_rate_neo = 1.0,
     slice_width_rate_log_sd = 1.0,

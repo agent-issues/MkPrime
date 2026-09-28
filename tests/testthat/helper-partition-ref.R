@@ -210,6 +210,13 @@
     # pspr correctness is covered by test-pspr.R and
     # test-topology-detailed-balance.R.
     pSpr             = FALSE,
+    #
+    # cacheBonus is pinned off (1 = no boost) for the same reason: the boost
+    # rule made move selection depend on the chain's state (issue #70), and its
+    # fix changes which moves are drawn, so leaving it on made the reference
+    # hostage to that fix. Its correctness is covered by
+    # test-cache-aware-scheduling.R.
+    cacheBonus       = 1,
     gibbsSubtreeSwap = FALSE,
     joint2d          = FALSE
   )

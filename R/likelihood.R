@@ -18,6 +18,7 @@
 #'
 #' @references \insertAllCited{}
 #' @param tree A `phylo` object (from ape). Must be unrooted or rooted.
+#'   Its tip labels must be the taxa of `mkd`, in any order.
 #' @param mkd A `MkPrimeData` object.
 #' @param kPrime Integer vector of length `mkd$nChar`. The assumed true number
 #'   of states for each character. For "known" characters, this is the fixed k.
@@ -31,7 +32,8 @@
 #' @param coding Ascertainment bias correction type. `"none"` for no
 #'   correction, `"variable"` for conditioning on variable characters,
 #'   `"informative"` for conditioning on parsimony-informative characters
-#'   (excludes constant + singleton patterns). Default `"variable"`.
+#'   (excludes every pattern in which fewer than two states each occur
+#'   twice or more). Default `"variable"`.
 #' @param rate_neo Rate scalar for the neomorphic partition relative to
 #'   transformational (which is fixed at 1.0). Default 1.0 (equal rates).
 #' @param relabel Logical. Apply Mk' relabelling correction for
@@ -55,6 +57,21 @@ MkpLogLikelihood <- function(tree, mkd,
     cli::cli_abort("{.arg mkd} must be a {.cls MkPrimeData} object.")
   }
   coding <- match.arg(coding, c("variable", "informative", "none"))
+  # Pruning pairs tip i with data row i.
+  dataTaxa <- rownames(mkd$matrix)
+  if (!identical(tree$tip.label, dataTaxa)) {
+    missing <- setdiff(dataTaxa, tree$tip.label)
+    extra <- setdiff(tree$tip.label, dataTaxa)
+    if (length(missing) || length(extra) || anyDuplicated(tree$tip.label)) {
+      cli::cli_abort(c(
+        "Tip labels in {.arg tree} do not match taxa in {.arg mkd}.",
+        "x" = if (length(missing)) "Not in {.arg tree}: {.val {missing}}.",
+        "x" = if (length(extra)) "Not in {.arg mkd}: {.val {extra}}.",
+        "i" = "Every taxon in the data must appear once as a tip label."
+      ))
+    }
+    tree <- TreeTools::RenumberTips(tree, dataTaxa)
+  }
 
   # Default kPrime: use kObs for transformational, known_k for known, 2 for neo
   if (is.null(kPrime)) {
@@ -142,7 +159,8 @@ MkpLogLikelihood <- function(tree, mkd,
             parent, child, neoEl, nTip, rate_loss, rootFreqs, rates
           )
         }
-        ll <- ll - nCharPart * log(1 - puninf)
+        ll <- ll - .MaskedAscLog1m(tipStates, puninf, parent, child, neoEl,
+                                   nTip, 2L, TRUE, rate_loss, rates, coding)
       }
 
     } else if (part$type == "known") {
@@ -169,11 +187,13 @@ MkpLogLikelihood <- function(tree, mkd,
             parent, child, transEdge, nTip, kStates, kObsMax, rates
           )
           if (coding == "informative") {
-            puninf <- puninf + singleton_site_prob_jc_collapsed(
-              parent, child, transEdge, nTip, kStates, kObsMax, rates
+            puninf <- puninf + uninf_nonconst_prob_jc(
+              parent, child, transEdge, nTip, kStates, rates
             )
           }
-          ll <- ll - nCharPart * log(1 - puninf)
+          ll <- ll - .MaskedAscLog1m(tipStates, puninf, parent, child,
+                                     transEdge, nTip, kStates, FALSE, 1,
+                                     rates, coding)
         }
       } else {
         rootFreqs <- rep(1.0 / kStates, kStates)
@@ -189,11 +209,13 @@ MkpLogLikelihood <- function(tree, mkd,
           puninf <- constant_site_prob_jc(parent, child, transEdge,
                                           nTip, kStates, rootFreqs, rates)
           if (coding == "informative") {
-            puninf <- puninf + singleton_site_prob_jc(
-              parent, child, transEdge, nTip, kStates, rootFreqs, rates
+            puninf <- puninf + uninf_nonconst_prob_jc(
+              parent, child, transEdge, nTip, kStates, rates
             )
           }
-          ll <- ll - nCharPart * log(1 - puninf)
+          ll <- ll - .MaskedAscLog1m(tipStates, puninf, parent, child,
+                                     transEdge, nTip, kStates, FALSE, 1,
+                                     rates, coding)
         }
       }
 
@@ -227,11 +249,13 @@ MkpLogLikelihood <- function(tree, mkd,
               parent, child, transEdge, nTip, kp, kObsMaxSub, rates
             )
             if (coding == "informative") {
-              puninf <- puninf + singleton_site_prob_jc_collapsed(
-                parent, child, transEdge, nTip, kp, kObsMaxSub, rates
+              puninf <- puninf + uninf_nonconst_prob_jc(
+                parent, child, transEdge, nTip, kp, rates
               )
             }
-            subLl <- subLl - nCharSub * log(1 - puninf)
+            subLl <- subLl - .MaskedAscLog1m(subStates, puninf, parent, child,
+                                             transEdge, nTip, kp, FALSE, 1,
+                                             rates, coding)
           }
         } else {
           rootFreqs <- rep(1.0 / kp, kp)
@@ -247,11 +271,13 @@ MkpLogLikelihood <- function(tree, mkd,
             puninf <- constant_site_prob_jc(parent, child, transEdge,
                                             nTip, kp, rootFreqs, rates)
             if (coding == "informative") {
-              puninf <- puninf + singleton_site_prob_jc(
-                parent, child, transEdge, nTip, kp, rootFreqs, rates
+              puninf <- puninf + uninf_nonconst_prob_jc(
+                parent, child, transEdge, nTip, kp, rates
               )
             }
-            subLl <- subLl - nCharSub * log(1 - puninf)
+            subLl <- subLl - .MaskedAscLog1m(subStates, puninf, parent, child,
+                                             transEdge, nTip, kp, FALSE, 1,
+                                             rates, coding)
           }
         }
 
@@ -271,4 +297,30 @@ MkpLogLikelihood <- function(tree, mkd,
   }
 
   totalLoglik
+}
+
+
+# Sum over missing-data masks of n_m * log(1 - P_m): the amount the
+# ascertainment correction subtracts. A character's ?/- tips are marginalised,
+# as it was kept for varying among its observed tips. `puninf` is P for the
+# characters with every tip observed.
+.MaskedAscLog1m <- function(tipStates, puninf, parent, child, edgeLength,
+                            nTip, kStates, neomorphic, rateLoss, rates,
+                            coding) {
+  missing <- tipStates < 0L
+  maskKey <- apply(missing, 2, function(x) paste(which(x), collapse = " "))
+  counts <- table(maskKey)
+  keys <- names(counts)
+  p <- vapply(keys, function(key) {
+    if (!nzchar(key)) {
+      puninf
+    } else {
+      asc_site_prob_missing(parent, child, edgeLength, nTip, kStates,
+                            neomorphic, rateLoss, rates,
+                            missing[, match(key, maskKey)],
+                            coding == "informative")
+    }
+  }, double(1))
+  # Return:
+  sum(as.integer(counts) * log(1 - p))
 }

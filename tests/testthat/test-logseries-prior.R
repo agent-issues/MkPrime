@@ -22,6 +22,34 @@ test_that("MkPrimeModel rejects invalid kPrimePrior", {
 })
 
 
+test_that("MkPrimeModel rejects out-of-range kprimeLogseriesC", {
+  expect_error(
+    MkPrimeModel(kPrimePrior = "logseries", kprimeLogseriesC = 0),
+    "kprimeLogseriesC"
+  )
+  expect_error(
+    MkPrimeModel(kPrimePrior = "logseries", kprimeLogseriesC = 1),
+    "kprimeLogseriesC"
+  )
+  expect_error(
+    MkPrimeModel(kPrimePrior = "logseries", kprimeLogseriesC = 1.5),
+    "kprimeLogseriesC"
+  )
+  expect_error(
+    MkPrimeModel(kPrimePrior = "logseries", kprimeLogseriesC = -0.2),
+    "kprimeLogseriesC"
+  )
+  expect_error(
+    MkPrimeModel(kPrimePrior = "logseries", kprimeLogseriesC = c(0.3, 0.4)),
+    "kprimeLogseriesC"
+  )
+  expect_error(
+    MkPrimeModel(kPrimePrior = "logseries", kprimeLogseriesC = NA_real_),
+    "kprimeLogseriesC"
+  )
+})
+
+
 # ---------------------------------------------------------------------------
 # 2. LogPrior logseries: matches manual density
 # ---------------------------------------------------------------------------
@@ -47,11 +75,11 @@ test_that("LogPrior logseries matches manual density calculation", {
 
   lp <- MkPrime:::LogPrior(state, model, mkd)
 
-  # Manual:
-  # log P(k' = 3; c = 0.7) = 3*log(0.7) - log(3) - log(-log(1-0.7))
+  # Manual, normalised over the support k' >= 2:
+  # log P(k' = 3; c = 0.7) = 3*log(0.7) - log(3) - log(-log(1-0.7) - 0.7)
   c_ls  <- 0.7
   kp    <- 3L
-  expected_kprime <- kp * log(c_ls) - log(kp) - log(-log1p(-c_ls))
+  expected_kprime <- kp * log(c_ls) - log(kp) - log(-log1p(-c_ls) - c_ls)
 
   expected <- dgamma(0.5, shape = 2, rate = 2 / 10, log = TRUE) +
     lfactorial(length(state$rel_br_lengths) - 1L) +
@@ -60,6 +88,15 @@ test_that("LogPrior logseries matches manual density calculation", {
   # No rate_loss (no neomorphic), no Beta(p) term
 
   expect_equal(lp, expected, tolerance = 1e-12)
+
+  model <- MkPrime:::.FinalizeModel(model, Preorder(tree), mkd)
+  state$tree <- Preorder(tree)
+  state$rel_br_lengths <- state$tree$edge.length / sum(state$tree$edge.length)
+  state$rate_neo <- 1
+  state$log_lik <- state$log_prior <- 0
+  dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
+  expect_equal(eval_log_prior_cpp(dataPtr, MkPrime:::.InitMcmcChain(state)),
+               expected, tolerance = 1e-12)
 })
 
 
@@ -112,13 +149,21 @@ test_that("LogPrior logseries: c out of bounds returns -Inf", {
     kPrime         = 2L
   )
 
-  bad_c_zero <- MkPrimeModel(kPrimePrior = "logseries",
-                              kprimeLogseriesC = 0.0, expSteps = 10)
-  bad_c_one  <- MkPrimeModel(kPrimePrior = "logseries",
-                              kprimeLogseriesC = 1.0, expSteps = 10)
+  # MkPrimeModel() now rejects an out-of-range kprimeLogseriesC at
+  # construction (see "MkPrimeModel rejects out-of-range kprimeLogseriesC"),
+  # so an invalid c can no longer reach LogPrior via the constructor. This
+  # test still pins LogPrior's own defensive -Inf guard as a second line of
+  # defense for a model object mutated after construction (e.g. by hand, or
+  # restored from an old checkpoint predating that validation).
+  badCZero <- MkPrimeModel(kPrimePrior = "logseries",
+                           kprimeLogseriesC = 0.5, expSteps = 10)
+  badCZero$kprimeLogseriesC <- 0.0
+  badCOne  <- MkPrimeModel(kPrimePrior = "logseries",
+                           kprimeLogseriesC = 0.5, expSteps = 10)
+  badCOne$kprimeLogseriesC <- 1.0
 
-  expect_equal(MkPrime:::LogPrior(base_state, bad_c_zero, mkd), -Inf)
-  expect_equal(MkPrime:::LogPrior(base_state, bad_c_one,  mkd), -Inf)
+  expect_equal(MkPrime:::LogPrior(base_state, badCZero, mkd), -Inf)
+  expect_equal(MkPrime:::LogPrior(base_state, badCOne,  mkd), -Inf)
 })
 
 
@@ -321,4 +366,16 @@ test_that("LogPrior logseries and cpp_log_prior both reject k' < kObs", {
   expect_equal(MkPrime:::LogPrior(state, model, mkd), -Inf)
   expect_equal(eval_log_prior_cpp(dataPtr, MkPrime:::.InitMcmcChain(state)),
                -Inf)
+})
+
+
+test_that("the logseries k' pmf sums to 1 over its support k' >= 2", {
+  k <- 2:20000
+  for (c_ls in c(1e-9, 1e-3, 0.05, 0.2499, 0.25, 0.3, 0.7, 0.95)) {
+    logNormR <- MkPrime:::.LogseriesLogNorm(c_ls)
+    logNormCpp <- MkPrime:::logseries_log_norm_cpp(c_ls)
+    expect_equal(logNormCpp, logNormR, tolerance = 1e-14, info = c_ls)
+    expect_equal(sum(exp(k * log(c_ls) - log(k) - logNormR)), 1,
+                 tolerance = 1e-12, info = c_ls)
+  }
 })
