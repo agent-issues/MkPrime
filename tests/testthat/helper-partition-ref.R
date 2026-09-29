@@ -103,7 +103,10 @@
     nCat                   = 6L,
     relabel                = TRUE,
     treeLengthShape        = 2,
-    treeLengthRate         = NULL,
+    # The rate the pre-#62 default derived from this start tree, 2 / Fitch
+    # (204 steps on Lobo.phy), pinned when the default moved to per-character
+    # units.
+    treeLengthRate         = 2 / 204,
     expSteps               = NULL,
     rateLossMeanlog        = 0,
     rateLossSdlog          = 2,

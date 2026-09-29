@@ -45,11 +45,14 @@ MkPrimeModel(
 characters? Default \code{TRUE}.}
 
 \item{treeLengthShape, treeLengthRate}{Shape and rate for the Gamma prior
-on tree length. Defaults: shape = 2, rate = 2 / \code{expSteps}.}
+on tree length. Defaults: shape = 2, rate = \code{treeLengthShape / expSteps},
+so that the prior mean tree length is \code{expSteps}.}
 
-\item{expSteps}{Expected number of character state changes. Used to set
-the tree length prior scale. Default \code{NULL} (computed from parsimony score
-of the starting tree).}
+\item{expSteps}{Expected number of state changes per character: the prior
+mean tree length, in the per-character units of branch length. Default
+\code{NULL} computes it from the data as the parsimony score of the starting
+tree divided by the number of characters. Parsimony misses multiple hits,
+so this underestimates the true tree length.}
 
 \item{rateLossMeanlog, rateLossSdlog}{Parameters for the LogNormal prior
 on \code{rate_loss} (neomorphic asymmetry). Defaults: meanlog = 0, sdlog = 2.}
@@ -67,7 +70,10 @@ Not consulted by the default pooled hyperprior (see
 states with a \code{Geometric(p)} prior on the number of unobserved states,
 so \verb{k' = N_obs + N_unobs}),
 \code{"beta_geometric"} (per-character Beta-Geometric with shared
-hyperparameters \code{alpha}, \code{beta}),
+hyperparameters \code{alpha}, \code{beta}, on the number of states beyond those
+observed, \verb{k' - kObs_i}; this prior conditions on the data, so the arm
+cannot be calibrated by simulation-based calibration, and it accepts only
+\code{priorVariant = "conditional"}),
 \code{"geometric"} (hierarchical geometric with Beta hyperprior on \code{p}),
 or \code{"logseries"} (logarithmic series with fixed parameter \code{c}; matches
 the RevBayes default).
@@ -180,9 +186,10 @@ backward comparison.
 Default (\code{NULL}): \code{"unconditional"} for both \code{"empirical_geometric"} and
 \code{"geometric"} (the correct pre-data prior; the geometric SBC harness uses
 \verb{k' ~ 2 + Geo(p)}, so the default aligns inference with the validated SBC
-forward model). Consulted for \code{empirical_geometric} and for \code{geometric}
-under \code{likelihoodMode = "marginal_k"}; ignored for \code{beta_geometric} and
-\code{logseries}.}
+forward model); \code{"conditional"} for \code{"beta_geometric"}, which has no
+unconditional form and rejects \code{"unconditional"}. Consulted for
+\code{empirical_geometric} and for \code{geometric} under
+\code{likelihoodMode = "marginal_k"}; ignored for \code{logseries}.}
 
 \item{kprimeTruncK}{Integer specifying the cap \code{K} at which the geometric
 arm's \verb{k'} prior is truncated and renormalised over \verb{[2, K]}, bounded

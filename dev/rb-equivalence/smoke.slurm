@@ -3,7 +3,7 @@
 # write rds outputs to /nobackup/pjjg18/rb-equivalence/out/, copy back.
 #
 # Submit:
-#   sbatch --export=ALL,PID=950,MODEL=by_nt_9v,TARGET_ESS=128,TARGET_RHAT=1.025,MAX_TIME=1800 \
+#   sbatch --export=ALL,PID=950,MODEL=by_nt_9v,TARGET_ESS=256,TARGET_RHAT=1.025,MAX_TIME=1800 \
 #          dev/rb-equivalence/smoke.slurm
 #
 # Or via the dispatcher helper run_cell.ps1 (see plan).
@@ -24,8 +24,10 @@ if [ -z "${PID:-}" ] || [ -z "${MODEL:-}" ]; then
   echo "ERROR: PID and MODEL env vars required" >&2
   exit 1
 fi
-TARGET_ESS=${TARGET_ESS:-128}
-TARGET_RHAT=${TARGET_RHAT:-1.02}    # intra-sampler convergence target
+# Match run_mkprime.R's and compare.R's defaults: compare.R refuses a
+# MkPrime run whose targets were looser than its own.
+TARGET_ESS=${TARGET_ESS:-256}
+TARGET_RHAT=${TARGET_RHAT:-1.025}
 MAX_TIME=${MAX_TIME:-3600}
 
 export REPO=/nobackup/pjjg18/rb-equivalence

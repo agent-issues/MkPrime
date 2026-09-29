@@ -17,7 +17,11 @@
 Updated \code{MkPrimeModel} with all defaults resolved.
 }
 \description{
-Sets \code{expSteps} and \code{treeLengthRate} if not user-specified.
+Sets \code{expSteps} and \code{treeLengthRate} if not user-specified. \code{expSteps}
+defaults to the parsimony score per character: tree length is measured in
+expected changes per character, and every character in \code{mkd} is variable,
+so parsimony needs at least one step per character and the floor binds
+only on a hand-built \code{mkd}.
 Called internally by \code{\link[=RunMkPrime]{RunMkPrime()}} before MCMC starts.
 }
 \keyword{internal}

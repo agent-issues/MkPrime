@@ -21,7 +21,7 @@ test_that("MkPrimeModel accepts custom parameters", {
   expect_equal(model$coding, "none")
   expect_equal(model$nCat, 4L)
   expect_equal(model$expSteps, 50)
-  expect_equal(model$treeLengthRate, 2 / 50)
+  expect_equal(model$treeLengthRate, 3 / 50)
 })
 
 
@@ -251,8 +251,8 @@ test_that("Fitch score used for expSteps default", {
 
   model <- MkPrimeModel()
   finalized <- MkPrime:::.FinalizeModel(model, tree, mkd)
-  expect_equal(finalized$expSteps, 3)
-  expect_equal(finalized$treeLengthRate, 2 / 3)
+  expect_equal(finalized$expSteps, 3 / 2)
+  expect_equal(finalized$treeLengthRate, 2 / (3 / 2))
 })
 
 
@@ -278,8 +278,8 @@ test_that("LogPrior rejects an unresolved treeLengthRate", {
 
 test_that("print names the tree-length prior's unresolved rate", {
   unresolved <- capture.output(print(MkPrimeModel()), type = "message")
-  expect_match(paste(unresolved, collapse = " "), "Gamma(2, auto: 2 / expSteps)",
-               fixed = TRUE)
+  expect_match(paste(unresolved, collapse = " "),
+               "Gamma(2, auto: shape / expSteps)", fixed = TRUE)
   resolved <- capture.output(print(MkPrimeModel(expSteps = 10)),
                              type = "message")
   expect_match(paste(resolved, collapse = " "), "Gamma(2, 0.2)", fixed = TRUE)
@@ -302,4 +302,63 @@ test_that("empiricalNObs is read from this build, not a like-named one", {
   e <- new.env(parent = emptyenv())
   utils::data("empiricalNObs", package = environmentName(ns), envir = e)
   expect_identical(MkPrime:::.EmpiricalNObs(), e$empiricalNObs)
+})
+
+
+test_that("Tree-length prior mean is per character, not per matrix (#62)", {
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 0, 1, 1, 0, 1, 0, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  once <- MkPrime:::.FinalizeModel(MkPrimeModel(), tree,
+                                   MkPrimeData(MatrixToPhyDat(mat)))
+  thrice <- MkPrime:::.FinalizeModel(
+    MkPrimeModel(), tree, MkPrimeData(MatrixToPhyDat(cbind(mat, mat, mat))))
+  # Tree length is in changes per character, so copying the characters
+  # leaves its prior unchanged.
+  expect_equal(thrice$expSteps, once$expSteps)
+  expect_equal(thrice$treeLengthRate, once$treeLengthRate)
+
+  shape <- 3
+  model <- MkPrime:::.FinalizeModel(MkPrimeModel(treeLengthShape = shape),
+                                    tree, MkPrimeData(MatrixToPhyDat(mat)))
+  expect_equal(shape / model$treeLengthRate, 3 / 2)
+})
+
+
+test_that("Per-character expSteps floors at one change per character", {
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 0, 1, 1, 0, 1, 0, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  mkd <- MkPrimeData(MatrixToPhyDat(mat))
+  mkd$matrix[] <- 0L
+  model <- MkPrime:::.FinalizeModel(MkPrimeModel(), tree, mkd)
+  expect_equal(model$expSteps, 1)
+})
+
+
+test_that("beta_geometric rejects an unconditional prior (#48)", {
+  expect_error(
+    MkPrimeModel(kPrimePrior = "beta_geometric",
+                 priorVariant = "unconditional"),
+    "no unconditional form"
+  )
+  expect_identical(
+    MkPrimeModel(kPrimePrior = "beta_geometric")$priorVariant,
+    "conditional"
+  )
+  expect_identical(
+    MkPrimeModel(kPrimePrior = "beta_geometric",
+                 priorVariant = "conditional")$priorVariant,
+    "conditional"
+  )
+
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
+  mat <- matrix(c(0, 0, 1, 1, 0, 1, 0, 1), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  model <- MkPrimeModel(kPrimePrior = "beta_geometric")
+  model$priorVariant <- "unconditional"
+  expect_error(
+    MkPrime:::.FinalizeModel(model, tree, MkPrimeData(MatrixToPhyDat(mat))),
+    "no unconditional form"
+  )
 })

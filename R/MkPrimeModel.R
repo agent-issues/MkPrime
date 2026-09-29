@@ -10,10 +10,13 @@
 #' @param relabel Apply Mk' relabelling correction for transformational
 #'   characters? Default `TRUE`.
 #' @param treeLengthShape,treeLengthRate Shape and rate for the Gamma prior
-#'   on tree length. Defaults: shape = 2, rate = 2 / `expSteps`.
-#' @param expSteps Expected number of character state changes. Used to set
-#'   the tree length prior scale. Default `NULL` (computed from parsimony score
-#'   of the starting tree).
+#'   on tree length. Defaults: shape = 2, rate = `treeLengthShape / expSteps`,
+#'   so that the prior mean tree length is `expSteps`.
+#' @param expSteps Expected number of state changes per character: the prior
+#'   mean tree length, in the per-character units of branch length. Default
+#'   `NULL` computes it from the data as the parsimony score of the starting
+#'   tree divided by the number of characters. Parsimony misses multiple hits,
+#'   so this underestimates the true tree length.
 #' @param rateLossMeanlog,rateLossSdlog Parameters for the LogNormal prior
 #'   on `rate_loss` (neomorphic asymmetry). Defaults: meanlog = 0, sdlog = 2.
 #' @param rateLogSdShape,rateLogSdRate Shape and rate for the Gamma prior
@@ -49,7 +52,10 @@
 #'   states with a `Geometric(p)` prior on the number of unobserved states,
 #'   so `k' = N_obs + N_unobs`),
 #'   `"beta_geometric"` (per-character Beta-Geometric with shared
-#'   hyperparameters `alpha`, `beta`),
+#'   hyperparameters `alpha`, `beta`, on the number of states beyond those
+#'   observed, `k' - kObs_i`; this prior conditions on the data, so the arm
+#'   cannot be calibrated by simulation-based calibration, and it accepts only
+#'   `priorVariant = "conditional"`),
 #'   `"geometric"` (hierarchical geometric with Beta hyperprior on `p`),
 #'   or `"logseries"` (logarithmic series with fixed parameter `c`; matches
 #'   the RevBayes default).
@@ -126,9 +132,10 @@
 #'   Default (`NULL`): `"unconditional"` for both `"empirical_geometric"` and
 #'   `"geometric"` (the correct pre-data prior; the geometric SBC harness uses
 #'   `k' ~ 2 + Geo(p)`, so the default aligns inference with the validated SBC
-#'   forward model). Consulted for `empirical_geometric` and for `geometric`
-#'   under `likelihoodMode = "marginal_k"`; ignored for `beta_geometric` and
-#'   `logseries`.
+#'   forward model); `"conditional"` for `"beta_geometric"`, which has no
+#'   unconditional form and rejects `"unconditional"`. Consulted for
+#'   `empirical_geometric` and for `geometric` under
+#'   `likelihoodMode = "marginal_k"`; ignored for `logseries`.
 #'
 #' @section Q-matrix heterogeneity:
 #'
@@ -212,6 +219,7 @@ MkPrimeModel <- function(
       "unconditional" else "conditional"
   } else {
     priorVariant <- match.arg(priorVariant, c("conditional", "unconditional"))
+    .CheckPriorVariant(kPrimePrior, priorVariant)
   }
 
   if (identical(likelihoodMode, "marginal_k")) {
@@ -325,9 +333,8 @@ MkPrimeModel <- function(
     }
   }
 
-  # Derive treeLengthRate from expSteps if not provided
   if (is.null(treeLengthRate) && !is.null(expSteps)) {
-    treeLengthRate <- 2 / expSteps
+    treeLengthRate <- treeLengthShape / expSteps
   }
 
   structure(
@@ -409,9 +416,33 @@ MkPrimeModel <- function(
 }
 
 
+# beta_geometric offsets k' from kObs_i (u = k' - kObs_i), so its prior is
+# conditional by construction and has no unconditional form to switch to.
+# Checked at finalisation too, for a model whose priorVariant was set by hand.
+.CheckPriorVariant <- function(kPrimePrior, priorVariant) {
+  if (identical(kPrimePrior, "beta_geometric") &&
+      identical(priorVariant, "unconditional")) {
+    cli::cli_abort(c(
+      "{.code kPrimePrior = \"beta_geometric\"} has no unconditional form.",
+      i = "Its prior is on {.code k' - kObs}, so it conditions on the observed
+           state count by construction.",
+      i = "Use {.code priorVariant = \"conditional\"} (the default for this
+           arm), or {.code kPrimePrior = \"geometric\"} or
+           {.code \"empirical_geometric\"} for an unconditional prior."
+    ))
+  }
+  # Return:
+  invisible(NULL)
+}
+
+
 #' Finalize model with data-derived defaults
 #'
-#' Sets `expSteps` and `treeLengthRate` if not user-specified.
+#' Sets `expSteps` and `treeLengthRate` if not user-specified. `expSteps`
+#' defaults to the parsimony score per character: tree length is measured in
+#' expected changes per character, and every character in `mkd` is variable,
+#' so parsimony needs at least one step per character and the floor binds
+#' only on a hand-built `mkd`.
 #' Called internally by [RunMkPrime()] before MCMC starts.
 #'
 #' @param model An `MkPrimeModel` object.
@@ -420,11 +451,12 @@ MkPrimeModel <- function(
 #' @return Updated `MkPrimeModel` with all defaults resolved.
 #' @keywords internal
 .FinalizeModel <- function(model, tree, mkd) {
+  .CheckPriorVariant(model$kPrimePrior, model$priorVariant)
   if (is.null(model$expSteps)) {
-    model$expSteps <- max(1, .FitchScore(tree, mkd))
+    model$expSteps <- max(1, .FitchScore(tree, mkd) / ncol(mkd$matrix))
   }
   if (is.null(model$treeLengthRate)) {
-    model$treeLengthRate <- 2 / model$expSteps
+    model$treeLengthRate <- model$treeLengthShape / model$expSteps
   }
   if (identical(model$kPrimePrior, "empirical_geometric") &&
       is.null(model$empiricalNObs)) {
@@ -464,14 +496,16 @@ MkPrimeModel <- function(
 
 
 # model$treeLengthRate is resolvable only once the data are in hand (its
-# default is 2 / expSteps, and expSteps defaults to the data's Fitch score), so
+# default is treeLengthShape / expSteps, and expSteps defaults to the data's
+# Fitch score per character), so
 # .FinalizeModel is the one place that resolves it. Read it through here rather
 # than defaulting it: any `%||%` is a silently different prior.
 .TreeLengthRate <- function(model) {
   if (is.null(model$treeLengthRate)) {
     cli::cli_abort(c(
       "{.field treeLengthRate} is unresolved.",
-      i = "It defaults to {.code 2 / expSteps}, which needs the data.",
+      i = "It defaults to {.code treeLengthShape / expSteps}, which needs the
+           data.",
       i = "Pass {.arg treeLengthRate} or {.arg expSteps} to
            {.fun MkPrimeModel}, or finalize the model against a tree and an
            {.cls MkPrimeData} first."
@@ -484,8 +518,9 @@ MkPrimeModel <- function(
 
 #' Fitch parsimony score on a tree
 #'
-#' Simple post-order Fitch algorithm. Used to set a data-informed default
-#' for `expSteps` (the expected tree length).
+#' Simple post-order Fitch algorithm, summed over characters. Divided by the
+#' number of characters, it sets a data-informed default for `expSteps` (the
+#' prior mean tree length).
 #'
 #' @param tree A `phylo` object.
 #' @param mkd An `MkPrimeData` object.
@@ -1016,7 +1051,7 @@ print.MkPrimeModel <- function(x, ...) {
 
   # treeLengthRate is unresolved until .FinalizeModel sees the data.
   tlPriorStr <- paste0("Gamma(", x$treeLengthShape, ", ",
-                       x$treeLengthRate %||% "auto: 2 / expSteps", ")")
+                       x$treeLengthRate %||% "auto: shape / expSteps", ")")
 
   cli::cli_ul(c(
     "Coding: {x$coding}",
