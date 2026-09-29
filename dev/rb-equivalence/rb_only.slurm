@@ -4,7 +4,7 @@
 # independently or rerun RB only.
 #
 # Submit:
-#   sbatch --export=ALL,PID=635,MODEL=by_nt_9v,TARGET_ESS=128,MAX_TIME=1800 \
+#   sbatch --export=ALL,PID=635,MODEL=by_nt_9v,TARGET_ESS=256,MAX_TIME=1800 \
 #          dev/rb-equivalence/rb_only.slurm
 #
 #SBATCH -c 2
@@ -23,7 +23,7 @@ if [ -z "${PID:-}" ] || [ -z "${MODEL:-}" ]; then
   echo "ERROR: PID and MODEL env vars required" >&2
   exit 1
 fi
-TARGET_ESS=${TARGET_ESS:-128}
+TARGET_ESS=${TARGET_ESS:-256}
 MAX_TIME=${MAX_TIME:-3600}
 
 export REPO=/nobackup/pjjg18/rb-equivalence

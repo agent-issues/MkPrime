@@ -3,7 +3,7 @@
 #
 # Usage:
 #   Rscript dev/rb-equivalence/run_mkprime.R <pid> <model> \
-#     [--rhat=1.025] [--ess=128] [--max-time=3600] [--out-dir=dev/rb-equivalence/out] \
+#     [--rhat=1.025] [--ess=256] [--max-time=3600] [--out-dir=dev/rb-equivalence/out] \
 #     [--resume]
 #
 # <model> ∈ {by_nt_9v, by_nt_kv}.
@@ -39,18 +39,19 @@ script_dir <- (function() {
   else getwd()
 })()
 source(file.path(script_dir, "R", "utils.R"))
+source(file.path(script_dir, "R", "gate.R"))
 
 # --- Parse CLI -------------------------------------------------------------
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 2L) {
-  stop("Usage: run_mkprime.R <pid> <model> [--rhat=1.025] [--ess=128] ",
+  stop("Usage: run_mkprime.R <pid> <model> [--rhat=1.025] [--ess=256] ",
        "[--max-time=3600] [--out-dir=dev/rb-equivalence/out]")
 }
 pid <- args[[1]]
 model <- args[[2]]
 
-opt <- list(rhat = 1.025, ess = 128, max_time = 3600,
+opt <- list(rhat = 1.025, ess = 256, max_time = 3600,
             out_dir = file.path(script_dir, "out"), resume = FALSE)
 for (a in args[-(1:2)]) {
   if (a == "--resume") {
@@ -194,12 +195,19 @@ per_run_scalars <- lapply(per_run_log_files, function(f) {
 # Also collect per-run trees in the same shape RB uses
 per_run_trees <- lapply(posterior$per_run, function(pr) pr$trees)
 
+# Same burn-in as post_rb.R (RB-111): the stopping rule certified only its
+# convergence window, and compare.R re-checks convergence on these rows.
+burninFrac <- 0.25
+per_run_scalars <- lapply(per_run_scalars, DropBurnin, frac = burninFrac)
+per_run_trees <- lapply(per_run_trees, DropBurnin, frac = burninFrac)
+
 # --- Save ------------------------------------------------------------------
 
 out_path <- file.path(opt$out_dir, sprintf("%s.rds", run_id))
 
-# Wall-to-target: posterior may carry per-iter timing; fall back to total
-wall_to_target <- wall_total  # MkPrime auto-stops on rhat/ess hit, so total ≈ target
+# A run that stopped on time or iterations never reached the target (RB-112).
+stopReason <- posterior$stop_reason %||% NA_character_
+wall_to_target <- if (identical(stopReason, "converged")) wall_total else NA_real_
 
 result <- list(
   pid = pid,
@@ -222,14 +230,9 @@ result <- list(
     started = format(t0, "%Y-%m-%dT%H:%M:%S%z"),
     finished = format(t1, "%Y-%m-%dT%H:%M:%S%z")
   ),
-  coding = "variable",
-  nCat = 6L,
-  prior_spec = list(  # for assertion in compare.R
-    treeLengthShape = 2, treeLengthRate = 2,
-    rateLogSdShape = 1, rateLogSdRate = 1,
-    rateLossMeanlog = 0, rateLossSdlog = 2,
-    rateNeoMeanlog = 0, rateNeoSdlog = 2
-  ),
+  stop_reason = stopReason,
+  model_spec = MkModelSpec(posterior$model),
+  burnin_frac = burninFrac,
   cell_info = cellInfo,     # #214: what data/k/taxa this run actually used
   provenance = HarnessProvenance(script_dir),  # #215: tell current from stale
   resumed = opt$resume
@@ -240,7 +243,7 @@ cat(sprintf("[run_mkprime] Saved: %s\n", out_path))
 # === rds schema ============================================================
 # $pid                                 character
 # $model                               "by_nt_9v" | "by_nt_kv"
-# $wall_to_target                      numeric (seconds)
+# $wall_to_target                      numeric (seconds); NA unless converged
 # $wall_total                          numeric (seconds)
 # $wall_to_tree_target_estimated       numeric or NA
 # $diag_scalar                         MkpDiagnostics (trees = FALSE)
@@ -248,9 +251,10 @@ cat(sprintf("[run_mkprime] Saved: %s\n", out_path))
 # $posterior                           MkPosterior (full chains)
 # $host                                character (nodename)
 # $sysinfo                             list (OS, R, MkPrime version, timestamps)
-# $coding                              "variable"
-# $nCat                                6L
-# $prior_spec                          list of prior hyperparams (for assert)
+# $per_run_scalars, $per_run_trees     per-run traces after burn-in
+# $stop_reason                         posterior$stop_reason
+# $model_spec                          MkModelSpec() of the model run
+# $burnin_frac                         fraction of each run dropped
 # $cell_info                           PrepareCellInfo() result: k/nChar/taxa
 #                                       actually used (#214 equality check)
 # $provenance                          HarnessProvenance() result (#215)

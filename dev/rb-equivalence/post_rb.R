@@ -23,6 +23,7 @@ script_dir <- (function() {
   if (length(f)) dirname(normalizePath(sub("^--file=", "", f[1]))) else getwd()
 })()
 source(file.path(script_dir, "R", "utils.R"))
+source(file.path(script_dir, "R", "gate.R"))
 
 opt <- list(wall = NA_real_,
             out_dir = file.path(script_dir, "out"),
@@ -70,44 +71,27 @@ tree_files <- list.files(opt$rb_dir, pattern = sprintf("^%s_run_\\d+\\.trees$", 
 tree_files <- sort(tree_files)
 per_run_trees <- lapply(tree_files, read_rb_trees)
 
-# --- Burn-in: drop first 25% ----------------------------------------------
+# --- Burn-in: same fraction run_mkprime.R drops (RB-111) -------------------
 
-drop_burnin <- function(x, frac = 0.25) {
-  n <- if (is.data.frame(x)) nrow(x) else length(x)
-  if (n < 4) return(x)
-  start <- max(2L, floor(n * frac))
-  if (is.data.frame(x)) x[start:n, , drop = FALSE] else x[start:n]
-}
-
-per_run_scalars_pb <- lapply(per_run_scalars, drop_burnin)
-per_run_trees_pb <- lapply(per_run_trees, drop_burnin)
+burninFrac <- 0.25
+per_run_scalars_pb <- lapply(per_run_scalars, DropBurnin, frac = burninFrac)
+per_run_trees_pb <- lapply(per_run_trees, DropBurnin, frac = burninFrac)
 
 # --- Diagnostics: scalar ESS + R-hat ---------------------------------------
 
-scalar_cols <- intersect(
-  c("tree_length", "rate_log_sd", "rate_loss", "rate_neo"),
-  Reduce(intersect, lapply(per_run_scalars_pb, names))
-)
-
-ess_per_run <- lapply(per_run_scalars_pb, function(d) {
-  vapply(scalar_cols, function(p) coda::effectiveSize(d[[p]]), numeric(1))
+AssertScalarsPresent(per_run_scalars_pb, "rb")
+scalar_cols <- ExpectedScalars
+conv <- lapply(scalar_cols, function(p) {
+  SamplerConvergence(lapply(per_run_scalars_pb, `[[`, p), Inf, 0)
 })
-ess <- Reduce(`+`, ess_per_run)  # summed across runs
-names(ess) <- scalar_cols
+ess <- setNames(vapply(conv, `[[`, numeric(1), "ess"), scalar_cols)
+rhat <- setNames(vapply(conv, `[[`, numeric(1), "rhat"), scalar_cols)
 
-# R-hat via posterior::rhat_basic when available
-rhat <- if (requireNamespace("posterior", quietly = TRUE) && nRuns >= 2L) {
-  vapply(scalar_cols, function(p) {
-    mat <- do.call(cbind, lapply(per_run_scalars_pb, function(d) d[[p]]))
-    # Truncate to common length
-    nMin <- min(vapply(per_run_scalars_pb, function(d) length(d[[p]]), integer(1)))
-    mat <- do.call(cbind, lapply(per_run_scalars_pb,
-                                 function(d) d[[p]][seq_len(nMin)]))
-    posterior::rhat_basic(mat)
-  }, numeric(1))
-} else {
-  setNames(rep(NA_real_, length(scalar_cols)), scalar_cols)
-}
+# --- Model settings RB actually ran (RB-109) -------------------------------
+
+revPath <- file.path(opt$rb_dir, sprintf("%s.Rev", model))
+if (!file.exists(revPath)) stop("Rendered model script not found: ", revPath)
+modelSpec <- RevModelSpec(readLines(revPath, warn = FALSE))
 
 cat(sprintf("[post_rb] scalar params: %s\n", paste(scalar_cols, collapse = ", ")))
 cat("[post_rb] ESS per param:\n"); print(round(ess, 1))
@@ -132,10 +116,12 @@ cellInfo <- readRDS(cellinfo_path)
 
 # --- Save -----------------------------------------------------------------
 
+# RB always runs to srMaxTime, so it never measures time to target; compare.R
+# pro-rates one from diag_scalar$minEss (RB-112).
 result <- list(
   pid = pid,
   model = model,
-  wall_to_target = opt$wall,
+  wall_to_target = NA_real_,
   wall_total = opt$wall,
   wall_to_tree_target_estimated = NA_real_,  # RB doesn't expose tree ESS
   diag_scalar = list(ess = ess, rhat = rhat,
@@ -152,14 +138,8 @@ result <- list(
     rversion = R.version.string,
     started = NA_character_, finished = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z")
   ),
-  coding = "variable",
-  nCat = 6L,
-  prior_spec = list(
-    treeLengthShape = 2, treeLengthRate = 2,
-    rateLogSdShape = 1, rateLogSdRate = 1,
-    rateLossMeanlog = 0, rateLossSdlog = 2,
-    rateNeoMeanlog = 0, rateNeoSdlog = 2
-  ),
+  model_spec = modelSpec,
+  burnin_frac = burninFrac,
   cell_info = cellInfo,               # #214: same field as run_mkprime.R's rds
   provenance = HarnessProvenance(script_dir, rbBin = opt$rb_bin)  # #215
 )
