@@ -7,8 +7,8 @@
 #
 # Pull requests run a *smoke* test suite: every test file except the MCMC
 # integration files in PR_SKIP (~50 min instead of ~3.5 h). Pushes to main,
-# the weekly sweep and workflow_dispatch run the full suite; a failure there
-# opens (or comments on) an issue. To run the full suite on a PR branch before
+# the weekly sweep and workflow_dispatch run the full suite, sharded into
+# three `tests` jobs; a failure there opens (or comments on) an issue. To run the full suite on a PR branch before
 # merging, dispatch this workflow on that branch.
 #
 # For help debugging build failures open an issue on the RStudio community
@@ -34,6 +34,30 @@ on:
 
 name: mem-check
 
+env:
+  # Test files skipped on pull requests. Each costs over a minute under
+  # valgrind and drives the C++ through MCMC runs rather than unit calls;
+  # together they are ~150 of the full suite's ~200 min (2026-09-21).
+  # C++ unit files stay in, however slow. Add a file here only on the
+  # same grounds; the full suite still runs it after merge.
+  #
+  # The two pi-invariance gates are the extreme case: 5 s and 25 s of
+  # wall clock locally, 35 min and 14 min under valgrind -- together half
+  # the smoke budget, for statistical properties of kernels whose C++ the
+  # cheaper weighted-spr / subtree-swap files already execute.
+  PR_SKIP: >-
+    ^(marginal-k-free-topology|node-cl-cache|stepping-stone|stepping-stone-schedule|partition-moves-impl|partition-casali-smoke|auto-thin|tree-thin|beta-geometric-prior|marginal-k-truncation|weighted-spr-invariance|gibbs-subtree-swap-invariance)$
+  # Full-suite shards. The unsharded suite took 230 min on a fast runner and
+  # ~390 min on a slow one (2026-09-28, #249): runner speed alone swings every
+  # file by ~1.4x, so a single job no longer fits the 6 h ceiling. Shards 1
+  # and 2 name the heaviest files; shard 3 runs every file neither names, so
+  # each file runs exactly once and new files land in shard 3. Measured job
+  # times, setup included (2026-09-28): 136-148 / 93-148 / 138-144 min.
+  SHARD_1: >-
+    ^(marginal-k-free-topology|partition-moves-impl)$
+  SHARD_2: >-
+    ^(ascertainment-missing|weighted-spr-invariance|gibbs-subtree-swap-invariance|node-cl-cache)$
+
 jobs:
   changes:
     name: detect compiled-code changes
@@ -41,6 +65,7 @@ jobs:
     outputs:
       run: ${{ steps.check.outputs.run }}
       smoke: ${{ github.event_name == 'pull_request' }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -83,13 +108,32 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            tests=$(jq -nc --arg f "$PR_SKIP" \
+              '[{test: "tests", filter: $f, invert: "true"}]')
+          else
+            tests=$(jq -nc --arg a "$SHARD_1" --arg b "$SHARD_2" '[
+              {test: "tests", shard: "1/3", filter: $a, invert: "false"},
+              {test: "tests", shard: "2/3", filter: $b, invert: "false"},
+              {test: "tests", shard: "3/3",
+               filter: ("(" + $a + ")|(" + $b + ")"), invert: "true"}]')
+          fi
+          matrix=$(jq -nc --argjson t "$tests" \
+            '{config: ($t + [{test: "examples"}, {test: "vignettes"}])}')
+          echo "$matrix" | jq .
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
   valgrind:
     needs: changes
     if: needs.changes.outputs.run == 'true'
 
     runs-on: ubuntu-24.04
 
-    name: valgrind ${{ matrix.config.test }}
+    name: valgrind ${{ matrix.config.test }}${{ matrix.config.shard && format(' {0}', matrix.config.shard) || '' }}
 
     # Fail a runaway smoke run long before the 6 h ceiling.  The smoke budget
     # is not a target: a run that needs most of it is one slow runner away
@@ -98,11 +142,7 @@ jobs:
 
     strategy:
       fail-fast: false
-      matrix:
-        config:
-          - {test: 'tests'}
-          - {test: 'examples'}
-          - {test: 'vignettes'}
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
 
     env:
       R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
@@ -114,25 +154,13 @@ jobs:
       # reach: valgrind costs ~30x gcc-ASAN, so the full suite needs ~18 h
       # against GitHub's 6 h job ceiling. See tests/testthat/helper-slow.R.
       MKPRIME_MEMCHECK: true
-      # Test files skipped on pull requests. Each costs over a minute under
-      # valgrind and drives the C++ through MCMC runs rather than unit calls;
-      # together they are ~150 of the full suite's ~200 min (2026-09-21).
-      # C++ unit files stay in, however slow. Add a file here only on the
-      # same grounds; the full suite still runs it after merge.
-      #
-      # The two pi-invariance gates are the extreme case: 5 s and 25 s of
-      # wall clock locally, 35 min and 14 min under valgrind -- together half
-      # the smoke budget, for statistical properties of kernels whose C++ the
-      # cheaper weighted-spr / subtree-swap files already execute.
-      PR_SKIP: >-
-        ^(marginal-k-free-topology|node-cl-cache|stepping-stone|stepping-stone-schedule|partition-moves-impl|partition-casali-smoke|auto-thin|tree-thin|beta-geometric-prior|marginal-k-truncation|weighted-spr-invariance|gibbs-subtree-swap-invariance)$
 
     steps:
       - uses: ms609/actions/memcheck@main
         with:
           test: ${{ matrix.config.test}}
-          filter: ${{ needs.changes.outputs.smoke == 'true' && env.PR_SKIP || '' }}
-          invert: ${{ needs.changes.outputs.smoke }}
+          filter: ${{ matrix.config.filter || '' }}
+          invert: ${{ matrix.config.invert || 'false' }}
 
   report:
     # A full-suite failure after merge blocks nothing, so make it visible:
