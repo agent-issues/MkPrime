@@ -238,7 +238,8 @@
 #     "weights proportional to character count" prior mean, which gives
 #     class_rate ≡ 1 in every class (matches the legacy rate = 1).
 #   - state$class_rate: numeric vector length nClasses derived from w
-#     (initially identically 1.0 by construction).
+#     (initially identically 1.0 by construction) when "ratemultiplier" is
+#     unlinked; 1.0 otherwise.
 #   - state$eta_neo: scalar, 1.0 by default. Only consumed when hasNeo.
 #
 # log_lik is recomputed via cpp_log_likelihood_partitioned (sibling) so
@@ -268,8 +269,15 @@
   # class_w initialised so class_rate == 1.0 for every class:
   #   class_rate[c] = w[c] * nChar / nChar_c == 1
   #   => w[c] = nChar_c / nChar  (a valid simplex point: sum = 1)
+  # With the rate multiplier linked, class_rate stays scalar: a length-K
+  # vector would tell the engine the class rates can differ, and disable the
+  # node-CL cache for a model identical to the unpartitioned one (#244).
   state$class_w    <- nCharPC / nChar
-  state$class_rate <- .PartitionWToClassRate(state$class_w, nCharPC)
+  state$class_rate <- if ("ratemultiplier" %in% partitionSpec$unlink) {
+    .PartitionWToClassRate(state$class_w, nCharPC)
+  } else {
+    1.0
+  }
 
   # class_rate_log_sd is per-class only when "shape" is unlinked. Each c
   # starts at the legacy value 0.5 so the partition-aware path collapses
@@ -323,7 +331,8 @@
     rateLogSd  = state$class_rate_log_sd,
     classRate  = state$class_rate,
     etaNeo     = state$eta_neo,
-    betaScale  = state$beta_scale %||% 1.0
+    betaScale  = state$beta_scale %||% 1.0,
+    rateNeo    = state$rate_neo %||% 1.0
   )
   # Recompute log_prior with the extended LogPrior() that handles per-class
   # fields (class_w, class_rate_log_sd). At the initial point (class_w ==
@@ -357,14 +366,16 @@
                                    qHeterogeneity = FALSE,
                                    joint2d       = TRUE,
                                    priorOnClassRateLogSd = "hyperprior_pooled",
-                                   likelihoodMode = "sampled_k") {
+                                   likelihoodMode = "sampled_k",
+                                   rateNeoLive   = hasNeo) {
   # Always build the legacy spec first; trivial partition is a no-op.
   moves <- .BuildMoves(nEdge, nTrans, hasNeo, mcmc,
                        fixTopology   = fixTopology,
                        kPrimePrior   = kPrimePrior,
                        qHeterogeneity = qHeterogeneity,
                        joint2d       = joint2d,
-                       likelihoodMode = likelihoodMode)
+                       likelihoodMode = likelihoodMode,
+                       rateNeoLive   = rateNeoLive)
 
   if (is.null(partitionSpec$partition) || partitionSpec$nClasses == 1L) {
     # Return:

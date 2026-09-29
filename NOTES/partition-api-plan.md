@@ -231,6 +231,13 @@ User-tunable via a new `MkPrimeModel(classRateConcentration = 1)` arg.
 
 ### 5.2 `rate_neo` → `eta_neo` reparameterisation [Q5 resolved]
 
+> **As implemented (issue #241):** `eta_neo` is not sampled and does not
+> enter the likelihood. `rate_neo` enters every partitioned evaluator as
+> on the legacy path (the RB-style neo/trans split, char-weighted mean 1),
+> and class rates multiply that split, divided by the product's
+> char-weighted mean so the overall mean stays 1. `rate_neo` is fixed at 1,
+> with no moves, unless the data hold both neomorphic and other characters.
+
 `eta_neo` is a **single global scalar** controlling gain→loss vs
 loss→gain asymmetry in neomorphic characters. The constraint is:
 

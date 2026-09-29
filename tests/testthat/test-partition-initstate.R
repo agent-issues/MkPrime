@@ -85,14 +85,13 @@ test_that("multi-class partition starts at class_rate ≡ 1 (§7b at t=0)", {
 })
 
 
-test_that("ratemultiplier linked: class_rate is still derivable but w is uniform", {
-  # Only "shape" in unlink; ratemultiplier is linked. class_rate is initialised
-  # to ≡ 1 regardless of unlink choice (the linked case just means subsequent
-  # moves won't touch w).
+test_that("ratemultiplier linked: class_rate is length 1", {
+  # Only "shape" in unlink; ratemultiplier is linked. A scalar class_rate
+  # tells the engine the class rates cannot differ (#244).
   s <- .setup_init(partition = c(1L, 1L, 1L, 1L, 2L, 2L, 2L, 2L),
                    unlink    = "shape")
   partitioned <- .InitStatePartitioned(s$tree, s$mkd, s$model, s$spec)
-  expect_equal(partitioned$class_rate, c(1, 1), tolerance = 1e-12)
+  expect_identical(partitioned$class_rate, 1)
   expect_identical(length(partitioned$class_rate_log_sd), 2L)
 })
 

@@ -50,7 +50,12 @@ Set to \code{TRUE} to discard the existing checkpoint and start fresh.}
 invariant-character drop) assigning each character to a user class.
 Values must form a contiguous range \code{1:nClasses}. \code{NULL} (the default)
 routes through the unchanged legacy code path; see the §7a bit-identity
-contract in \code{NOTES/partition-api-plan.md}.}
+contract in \code{NOTES/partition-api-plan.md}.
+With neomorphic characters, \code{rate_neo} sets the neomorphic share of the
+rate exactly as without a partition, and class rates act on top of it,
+rescaled so that the rate averaged over characters remains 1.
+\code{rate_neo} is held at 1 unless the data contain both neomorphic and
+other characters, as it cannot then affect the likelihood.}
 
 \item{unlink}{Character vector of model-component tokens to unlink
 across classes. Layer 1 honours \code{"shape"} (per-class \code{rate_log_sd}) and

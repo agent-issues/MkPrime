@@ -656,11 +656,9 @@ static double cpp_log_prior_partitioned(
   // 4. etaNeo prior: LogNormal(0, rateNeoSdlog) — plan §5.2.
   //    Only when hasNeo; at etaNeo == 1.0 this is the mode of the LogNormal,
   //    but the prior is still finite and correct for the MH ratio.
-  //    Note: the legacy rateNeo prior (inside cpp_log_prior) is already added
-  //    for the scalar rateNeo. In the partitioned path rateNeo == etaNeo
-  //    (Layer 1 sets both to 1.0 and keeps them in lockstep), so the legacy
-  //    term already covers etaNeo. No extra term is needed here; this comment
-  //    is a forward-compatibility marker for when etaNeo becomes free.
+  //    Note: the rateNeo prior is added by cpp_log_prior. etaNeo is frozen
+  //    at 1.0 and unused by the likelihood, so it contributes nothing; this
+  //    comment is a forward-compatibility marker for when etaNeo becomes free.
 
   return lp;
 }
@@ -717,7 +715,6 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
     // Invariant: keep legacy scalar in lockstep with classRateLogSd[0].
     if (classRateLogSd.size() > 0)
       s->rateLogSd = classRateLogSd[0];
-    // Layer 1 freezes etaNeo at 1.0 → rateNeo stays 1.0 (no change needed).
 
     // Hyperprior on per-class σ_c: only activates when there is more than
     // one σ (i.e. shape unlinked with K >= 2). Degenerate at K == 1, in
@@ -744,7 +741,8 @@ static inline PartEvalParams part_eval_params(
     const McmcData& data, const McmcState& state, int partIdx) {
   if (state.usePartitioned) {
     return partitioned_eval_params(data, partIdx,
-                                   state.classRateLogSd, state.classRate);
+                                   state.classRateLogSd, state.classRate,
+                                   state.rateNeo);
   }
   PartEvalParams pe;
   pe.rateLogSd = state.rateLogSd;
@@ -1212,7 +1210,7 @@ static double compute_full_loglik_at(
       data, parent, child, edgeLen,
       state.kPrime, state.rateLoss,
       state.classRateLogSd, state.classRate,
-      state.etaNeo, state.betaScale,
+      state.rateNeo, state.etaNeo, state.betaScale,
       state.clWs.ready() ? &state.clWs : nullptr);
   }
   return cpp_log_likelihood(
@@ -3441,7 +3439,7 @@ static double eval_slice_target(McmcData* data, McmcState* state,
           *data, state->parent, state->child, edgeLen,
           state->kPrime, state->rateLoss,
           state->classRateLogSd, state->classRate,
-          state->etaNeo, state->betaScale, wsPtr)
+          state->rateNeo, state->etaNeo, state->betaScale, wsPtr)
       : cpp_log_likelihood(
           *data, state->parent, state->child, edgeLen,
           state->kPrime, state->rateLoss, state->rateLogSd,
@@ -3534,7 +3532,7 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
               *data, state->parent, state->child, edgeLen,
               state->kPrime, state->rateLoss,
               state->classRateLogSd, state->classRate,
-              state->etaNeo, state->betaScale, wsPtr)
+              state->rateNeo, state->etaNeo, state->betaScale, wsPtr)
           : cpp_log_likelihood(
               *data, state->parent, state->child, edgeLen,
               state->kPrime, state->rateLoss, state->rateLogSd,
@@ -5508,7 +5506,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     }
     case 32: { // dirichlet_simplex_class_w - Dirichlet proposal on classW simplex
       int nC = (int)state->classW.size();
-      if (nC < 2) return false;
+      // A length-1 classRate means the class rates are linked (#244).
+      if (nC < 2 || state->classRate.size() != nC) return false;
       classWSnapshot = clone(state->classW);
       std::vector<int> dummyEdges;
       NumericVector tmpSnap = clone(state->classW);

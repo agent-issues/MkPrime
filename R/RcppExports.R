@@ -217,8 +217,8 @@ cpp_log_likelihood_xptr <- function(dataPtr, parent, child, edgeLen, kPrime, rat
     .Call(`_MkPrime_cpp_log_likelihood_xptr`, dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, betaScale)
 }
 
-cpp_log_likelihood_partitioned_xptr <- function(dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, classRate, etaNeo, betaScale = 1.0) {
-    .Call(`_MkPrime_cpp_log_likelihood_partitioned_xptr`, dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, classRate, etaNeo, betaScale)
+cpp_log_likelihood_partitioned_xptr <- function(dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, classRate, etaNeo, betaScale = 1.0, rateNeo = 1.0) {
+    .Call(`_MkPrime_cpp_log_likelihood_partitioned_xptr`, dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, classRate, etaNeo, betaScale, rateNeo)
 }
 
 cpp_data_nclasses <- function(dataPtr) {

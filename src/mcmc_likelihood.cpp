@@ -2961,36 +2961,15 @@ double cpp_log_likelihood(
 //
 // Strategy: reuse cpp_partition_log_likelihood per partition, threading
 // per-class scalars looked up by classIdx. Branch lengths for every
-// partition are pre-scaled by classRate[classIdx - 1] so the per-partition
-// function (which only knows about its scalar inputs) sees the right
-// effective rate for both transformational/known chars and neomorphic
-// chars (where it is further scaled by RB-style neoScale/transScale
-// internally — audit Issue 1).
+// partition are pre-scaled by the class rate from partitioned_eval_params,
+// and cpp_partition_log_likelihood applies the RB-style neoScale/transScale
+// on top (audit Issue 1); partitioned_eval_params normalises the product so
+// the char-weighted mean rate is 1.
 //
-// partitioned_eval_params() fixes rateNeo at 1.0. Two regimes:
-//   - hasNeo == false (Casali production workload): nNeo == 0, so
-//     compute_partition_scales returns (1.0, 1.0) — partition normalisation
-//     is a no-op and behaviour is bit-identical to the pre-audit-Issue-1
-//     legacy path.
-//   - hasNeo == true (theoretical, not currently a production code path):
-//     scales are (0.5 · n/n_neo, 0.5 · n/n_trans) ≠ 1.0. The nChar-weighted
-//     mean is still 1 by construction, but tree_length is now split
-//     unequally between neo and trans partitions. Callers exercising the
-//     partition-API with hasNeo must keep etaNeo = 1 (existing constraint)
-//     and accept this implicit asymmetry, OR an eta_neo-aware partitioned
-//     path must be added (§5.2 of plan v4, currently deferred).
-//
-// Length-1 inputs collapse to the legacy scalar path. The §7b
-// numeric-equivalence contract holds at:
-//   rateLogSd = c(rateLogSdScalar), classRate = c(1.0), etaNeo = 1.0
-// where the per-partition call reduces to the legacy cpp_log_likelihood
-// with rateNeo = 1.0 — the default state.
-//
-// Layer 1 does NOT yet honour etaNeo != 1 for neomorphic chars: the
-// Q-matrix asymmetry semantics of §5.2 are deferred. The Casali driver
-// has hasNeo == false everywhere so this restriction does not bite the
-// production workload. Callers with neomorphic data must keep etaNeo = 1
-// until the eta_neo-aware path lands.
+// Length-1 inputs collapse to the legacy scalar path: the §7b
+// numeric-equivalence contract holds at
+//   rateLogSd = c(rateLogSdScalar), classRate = c(1.0)
+// for any rateNeo. etaNeo (plan §5.2) is reserved and unused.
 double cpp_log_likelihood_partitioned(
     const McmcData& data,
     IntegerVector parent,
@@ -3000,6 +2979,7 @@ double cpp_log_likelihood_partitioned(
     double rateLoss,
     NumericVector rateLogSd,
     NumericVector classRate,
+    double rateNeo,
     double /* etaNeo */,
     double betaScale,
     ClWorkspace* ws) {
@@ -3013,7 +2993,7 @@ double cpp_log_likelihood_partitioned(
   double totalLoglik = 0.0;
   for (int pi = 0; pi < (int)data.parts.size(); ++pi) {
     const PartEvalParams pe =
-      partitioned_eval_params(data, pi, rateLogSd, classRate);
+      partitioned_eval_params(data, pi, rateLogSd, classRate, rateNeo);
 
     // Pre-scale edgeLen by the class rate so cpp_partition_log_likelihood
     // sees the class-scaled time axis.
@@ -3274,11 +3254,12 @@ double cpp_log_likelihood_partitioned_xptr(SEXP dataPtr,
                                            Rcpp::NumericVector rateLogSd,
                                            Rcpp::NumericVector classRate,
                                            double etaNeo,
-                                           double betaScale = 1.0) {
+                                           double betaScale = 1.0,
+                                           double rateNeo = 1.0) {
   McmcData* d = Rcpp::XPtr<McmcData>(dataPtr);
   return cpp_log_likelihood_partitioned(*d, parent, child, edgeLen, kPrime,
                                         rateLoss, rateLogSd, classRate,
-                                        etaNeo, betaScale, nullptr);
+                                        rateNeo, etaNeo, betaScale, nullptr);
 }
 
 

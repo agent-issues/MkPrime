@@ -35,6 +35,11 @@
 #'   Values must form a contiguous range `1:nClasses`. `NULL` (the default)
 #'   routes through the unchanged legacy code path; see the §7a bit-identity
 #'   contract in `NOTES/partition-api-plan.md`.
+#'   With neomorphic characters, `rate_neo` sets the neomorphic share of the
+#'   rate exactly as without a partition, and class rates act on top of it,
+#'   rescaled so that the rate averaged over characters remains 1.
+#'   `rate_neo` is held at 1 unless the data contain both neomorphic and
+#'   other characters, as it cannot then affect the likelihood.
 #' @param unlink Character vector of model-component tokens to unlink
 #'   across classes. Layer 1 honours `"shape"` (per-class `rate_log_sd`) and
 #'   `"ratemultiplier"` (char-weighted mean-1 Dirichlet on class rates).
@@ -274,7 +279,8 @@ RunMkPrime <- function(data, tree = NULL,
                        joint2d = isTRUE(mcmc$joint2d),
                        priorOnClassRateLogSd =
                          model$priorOnClassRateLogSd,
-                       likelihoodMode = model$likelihoodMode %||% "sampled_k")
+                       likelihoodMode = model$likelihoodMode %||% "sampled_k",
+                       rateNeoLive = .RateNeoLive(mkd))
 
   # Fail before any run starts, rather than inside each one.
   initialWeights <- vapply(moves, `[[`, numeric(1), "weight")
@@ -3574,7 +3580,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                 kPrimePrior = model$kPrimePrior %||% "geometric",
                 qHeterogeneity = qHet,
                 joint2d = isTRUE(mcmc$joint2d),
-                likelihoodMode = model$likelihoodMode %||% "sampled_k")
+                likelihoodMode = model$likelihoodMode %||% "sampled_k",
+                rateNeoLive = .RateNeoLive(mkd))
   } else {
     .BuildMovesPartitioned(nEdge, nTrans, hasNeo, mcmc,
                 partitionSpec = resumePartition,
@@ -3584,7 +3591,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                 joint2d = isTRUE(mcmc$joint2d),
                 priorOnClassRateLogSd =
                   model$priorOnClassRateLogSd,
-                likelihoodMode = model$likelihoodMode %||% "sampled_k")
+                likelihoodMode = model$likelihoodMode %||% "sampled_k",
+                rateNeoLive = .RateNeoLive(mkd))
   }
   mcmc$fixedCols <- .FixedCols(paramNames, moves)
   .WarnUnreachableCriteria(mcmc)
@@ -4086,6 +4094,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 }
 
 
+# rate_neo splits the rate between neomorphic and other characters, so it
+# can move the likelihood only when the data hold both (issue #241).
+.RateNeoLive <- function(mkd) {
+  isNeo <- mkd$type == "neomorphic"
+  # Return:
+  any(isNeo) && !all(isNeo)
+}
+
 #' Build move schedule
 #' @keywords internal
 .BuildMoves <- function(nEdge, nTrans, hasNeo, mcmc,
@@ -4093,7 +4109,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                         kPrimePrior = "geometric",
                         qHeterogeneity = FALSE,
                         joint2d = TRUE,
-                        likelihoodMode = "sampled_k") {
+                        likelihoodMode = "sampled_k",
+                        rateNeoLive = hasNeo) {
   moves <- list(
     list(name = "tree_length", type = "scale", target = "tree_length",
          weight = 1, dim = 1L),
@@ -4349,7 +4366,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   if (hasNeo) {
     moves <- c(moves, list(
       list(name = "rate_loss", type = "scale", target = "rate_loss",
-           weight = 1.5, dim = 1L),
+           weight = 1.5, dim = 1L)
+    ))
+  }
+  if (rateNeoLive) {
+    moves <- c(moves, list(
       list(name = "rate_neo", type = "scale", target = "rate_neo",
            weight = 1, dim = 1L)
     ))
@@ -4373,7 +4394,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   if (hasNeo) {
     moves <- c(moves, list(
       list(name = "slice_rate_loss", type = "slice", target = "rate_loss",
-           weight = 1.5, dim = 1L, sliceParamIdx = 1L),
+           weight = 1.5, dim = 1L, sliceParamIdx = 1L)
+    ))
+  }
+  if (rateNeoLive) {
+    moves <- c(moves, list(
       list(name = "slice_rate_neo", type = "slice", target = "rate_neo",
            weight = 1, dim = 1L, sliceParamIdx = 3L)
     ))
@@ -4400,6 +4425,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         list(name = "joint_tl_rl", type = "joint_2d",
              target = "tree_length", weight = 1, dim = 2L)
       ))
+    }
+    if (rateNeoLive) {
       # Issue-1 partition-rate ridge: rate_neo now couples to tree_length
       # via the joint-weighted-mean constraint. See
       # dev/notes/2026-05-27-rate-neo-ridge-and-joint-moves.md Item A1.
@@ -4718,14 +4745,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       logHastings <- prop$logHastings
     },
     gibbs_p = {
-      # Conjugate Beta draw; acceptance = 1, no MH step needed
-      transIdx <- which(mkd$type == "transformational")
-      sumU <- sum(state$kPrime[transIdx] - mkd$kObs[transIdx])
-      proposed$p <- rbeta(1L,
-        shape1 = model$kprimeHyperA + length(transIdx),
-        shape2 = model$kprimeHyperB + sumU)
-      proposed$log_prior <- LogPrior(proposed, model, mkd)
-      return(list(accept = TRUE, state = proposed))
+      # Refused, as by the C++ engine: under the truncated geometric prior
+      # p's full conditional is not Beta, so a conjugate draw is wrong.
+      return(list(accept = FALSE, state = state))
     },
     scale_p = {
       # Bactrian multiplicative MH on p; standard accept/reject via prior.

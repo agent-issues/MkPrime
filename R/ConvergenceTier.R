@@ -59,11 +59,13 @@
   unname(which(.ConvergenceTier(colNames) %in% c("gate", "nuisance")))
 }
 
-# The k' hyperparameters are logged whatever the data, but only
-# transformational characters give them a move.
+# Columns logged whatever the data, but moved only when the data can inform
+# them: the k' hyperparameters need transformational characters, and
+# rate_neo needs neomorphic and other characters together.
 .kHyperMoveTargets <- list(p = "p",
                            kprime_alpha = c("kprime_s", "kprime_r"),
-                           kprime_beta = c("kprime_s", "kprime_r"))
+                           kprime_beta = c("kprime_s", "kprime_r"),
+                           rate_neo = "rate_neo")
 
 #' Logged columns that no move updates
 #'

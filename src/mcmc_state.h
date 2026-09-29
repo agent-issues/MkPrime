@@ -253,23 +253,43 @@ static inline PartitionScales compute_partition_scales(
 
 // The parameters partition `partIdx` is scored under by the partition-API
 // likelihood (cpp_log_likelihood_partitioned): its class's ACRV shape and
-// rate multiplier, with rate_neo fixed at 1. An evaluator that takes them from
-// anywhere else scores a different model from the one state->logLik holds.
+// rate multiplier, and rate_neo. An evaluator that takes them from anywhere
+// else scores a different model from the one state->logLik holds.
+//
+// Class rates and the neo/trans split each have char-weighted mean 1, but
+// their product does not when classes differ in their neo:trans mix, so
+// classRate is divided by that product's mean (issue #241).
 struct PartEvalParams {
   double rateLogSd;
   double classRate;  // multiplies every edge length
   double rateNeo;
 };
 
+static inline double class_rate_norm(
+    const McmcData& data, const Rcpp::NumericVector& classRate,
+    double rateNeo) {
+  if (classRate.size() == 1 || data.nNeo == 0 || data.nTrans == 0) return 1.0;
+  const PartitionScales s =
+    compute_partition_scales(rateNeo, data.nNeo, data.nTrans);
+  double sum = 0.0;
+  for (const PartInfo& part : data.parts) {
+    sum += part.tipStates.ncol() * classRate[part.classIdx - 1] *
+      (part.type == 0 ? s.neo : s.trans);
+  }
+  return sum / static_cast<double>(data.nNeo + data.nTrans);
+}
+
 static inline PartEvalParams partitioned_eval_params(
     const McmcData& data, int partIdx,
     const Rcpp::NumericVector& rateLogSd,
-    const Rcpp::NumericVector& classRate) {
+    const Rcpp::NumericVector& classRate,
+    double rateNeo) {
   const int ci = data.parts[partIdx].classIdx - 1;
   PartEvalParams pe;
   pe.rateLogSd = (rateLogSd.size() == 1) ? rateLogSd[0] : rateLogSd[ci];
-  pe.classRate = (classRate.size() == 1) ? classRate[0] : classRate[ci];
-  pe.rateNeo   = 1.0;
+  pe.classRate = ((classRate.size() == 1) ? classRate[0] : classRate[ci]) /
+    class_rate_norm(data, classRate, rateNeo);
+  pe.rateNeo   = rateNeo;
   return pe;
 }
 
@@ -362,10 +382,8 @@ double cpp_log_likelihood(
 // shared across all classes); Layer 2 widens to nEdge × nClasses for the
 // "brlens" unlink token (T3 treatment).
 //
-// etaNeo is the geometric-mean asymmetry parameter (plan §5.2) that
-// replaces rate_neo in the partitioned path. It is only consulted when
-// data.hasNeo; at etaNeo = 1 (default) the per-partition call matches
-// the legacy rateNeo = 1 path bit-for-bit.
+// etaNeo (plan §5.2) is reserved and unused; rateNeo enters exactly as in
+// the legacy path, composed with classRate by partitioned_eval_params.
 double cpp_log_likelihood_partitioned(
     const McmcData& data,
     Rcpp::IntegerVector parent,
@@ -375,6 +393,7 @@ double cpp_log_likelihood_partitioned(
     double rateLoss,
     Rcpp::NumericVector rateLogSd,    // length 1 (linked) or data.nClasses
     Rcpp::NumericVector classRate,    // length 1 (linked) or data.nClasses
+    double rateNeo,
     double etaNeo,
     double betaScale = 1.0,
     ClWorkspace* ws = nullptr);
