@@ -273,7 +273,7 @@ RunMkPrime <- function(data, tree = NULL,
                        qHeterogeneity = qHet,
                        joint2d = isTRUE(mcmc$joint2d),
                        priorOnClassRateLogSd =
-                         model$priorOnClassRateLogSd %||% "hyperprior_pooled",
+                         model$priorOnClassRateLogSd,
                        likelihoodMode = model$likelihoodMode %||% "sampled_k")
 
   # Fail before any run starts, rather than inside each one.
@@ -317,8 +317,7 @@ RunMkPrime <- function(data, tree = NULL,
                              kPrimePrior = model$kPrimePrior %||% "geometric",
                              qHeterogeneity = qHet,
                              priorOnClassRateLogSd =
-                               model$priorOnClassRateLogSd %||%
-                               "hyperprior_pooled")
+                               model$priorOnClassRateLogSd)
 
   # Plan §7.4: under marginal_k mode kPrime_i is pinned to kObs_i throughout
   # the chain -- emitting those columns bloats the trace and misleads readers.
@@ -3492,6 +3491,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
   runs <- checkpoint$runs
   mcmc <- .ResumeMcmc(checkpoint$mcmc, mcmcOverride)
+  .RequireMarginalKSupported(model, mkd, mcmc$partitionSpec)
+  if (!is.null(mcmc$partitionSpec$partition)) {
+    mkd$partitions <- .BuildPartitions(mkd,
+                                       partition = mcmc$partitionSpec$partition)
+  }
   startIter <- checkpoint$iter + 1L
   nRuns <- mcmc$nRuns
   # A parallel job keeps only the runs that returned a state, so a checkpoint
@@ -3579,7 +3583,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                 qHeterogeneity = qHet,
                 joint2d = isTRUE(mcmc$joint2d),
                 priorOnClassRateLogSd =
-                  model$priorOnClassRateLogSd %||% "hyperprior_pooled",
+                  model$priorOnClassRateLogSd,
                 likelihoodMode = model$likelihoodMode %||% "sampled_k")
   }
   mcmc$fixedCols <- .FixedCols(paramNames, moves)
@@ -4589,6 +4593,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     }
     set_kprime_trunc_k(dp, K)
   }
+  set_class_rate_concentration(dp, model$classRateConcentration %||% 1)
   dp
 }
 

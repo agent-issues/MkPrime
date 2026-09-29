@@ -46,6 +46,9 @@
   resolved <- character(length(unlink))
   for (i in seq_along(unlink)) {
     raw <- unlink[i]
+    if (is.na(raw)) {
+      cli::cli_abort("{.arg unlink} contains {.val NA} at position {i}.")
+    }
     if (!nzchar(raw)) {
       cli::cli_abort("{.arg unlink} contains an empty string at position {i}.")
     }
@@ -94,8 +97,21 @@
     if (anyNA(partition)) {
       cli::cli_abort("{.arg partition} contains {.val NA}; supply an integer vector with no missing values.")
     }
+    if (!all(is.finite(partition))) {
+      cli::cli_abort("{.arg partition} must contain finite class IDs only.")
+    }
     if (any(partition != floor(partition))) {
       cli::cli_abort("{.arg partition} must contain whole-number class IDs only.")
+    }
+    if (any(partition < 1)) {
+      cli::cli_abort("{.arg partition} must contain values {.val >= 1}; got values < 1.")
+    }
+    if (any(partition > mkd$nChar)) {
+      cli::cli_abort(c(
+        "{.arg partition} contains class IDs above {.val {mkd$nChar}}.",
+        "i" = "Class labels must form a contiguous range starting at \
+              {.val 1}, so cannot exceed the number of characters."
+      ))
     }
     partition <- as.integer(partition)
     if (length(partition) != mkd$nChar) {
@@ -105,9 +121,6 @@
         "i" = "Supply a length-{mkd$nChar} integer vector whose values form a \\
               contiguous range {.val 1}:{.val nClasses}."
       ))
-    }
-    if (any(partition < 1L)) {
-      cli::cli_abort("{.arg partition} must contain values {.val >= 1}; got values < 1.")
     }
     nClasses <- max(partition)
     observed <- sort(unique(partition))

@@ -432,6 +432,9 @@ MkPrimeModel <- function(
     # package namespace.
     model$empiricalNObs <- .EmpiricalNObs()
   }
+  # A model saved before this field existed takes the constructor's default.
+  model$priorOnClassRateLogSd <- model$priorOnClassRateLogSd %||%
+    "hyperprior_pooled"
   model
 }
 
