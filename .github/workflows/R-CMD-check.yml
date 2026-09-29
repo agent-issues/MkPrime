@@ -21,7 +21,7 @@ on:
   # filter above, and `gate` reports on every pull request, so a PR touching
   # no package files is not left waiting on checks that never start.
   pull_request:
-    branches: ["*"]
+    branches: ["**"]
 
 name: R-CMD-check
 
