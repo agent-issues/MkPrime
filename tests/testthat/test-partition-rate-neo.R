@@ -184,3 +184,18 @@ test_that("RunMkPrime holds rate_neo at 1 on all-neomorphic data", {
   samples <- as.matrix(res$samples %||% res$runSamples[[1]])
   expect_true(all(samples[, "rate_neo"] == 1))
 })
+
+test_that("a partition that cannot inform rate_neo warns", {
+  mkd <- .NeoTransData()$mkd
+  byType <- ifelse(mkd$type == "neomorphic", 1L, 2L)
+  mixed <- rep(1:2, length.out = mkd$nChar)
+  Spec <- function(partition, unlink = "ratemultiplier") {
+    list(partition = partition, nClasses = 2L, unlink = unlink)
+  }
+  expect_warning(MkPrime:::.WarnConfoundedRateNeo(Spec(byType), mkd),
+                 "mixes neomorphic and other")
+  expect_no_warning(MkPrime:::.WarnConfoundedRateNeo(Spec(mixed), mkd))
+  expect_no_warning(MkPrime:::.WarnConfoundedRateNeo(Spec(byType, "shape"),
+                                                      mkd))
+  expect_no_warning(MkPrime:::.WarnConfoundedRateNeo(Spec(NULL), mkd))
+})

@@ -187,6 +187,30 @@
 }
 
 
+# With free class rates and no class mixing neomorphic and other characters,
+# the class rates alone can set the neomorphic share, so the data cannot
+# inform rate_neo separately. The model still runs; the user is told.
+.WarnConfoundedRateNeo <- function(spec, mkd) {
+  if (is.null(spec$partition) || !("ratemultiplier" %in% spec$unlink) ||
+      !.RateNeoLive(mkd)) {
+    # Return:
+    return(invisible(NULL))
+  }
+  isNeo <- mkd$type == "neomorphic"
+  mixed <- tapply(isNeo, spec$partition, function(x) any(x) && !all(x))
+  if (!any(mixed)) {
+    cli::cli_warn(c(
+      "No class in {.arg partition} mixes neomorphic and other characters.",
+      "i" = "{.field rate_neo} is then confounded with the class rates, and
+             the data cannot inform it separately.",
+      "i" = "Mix character types within a class, or leave
+             {.val ratemultiplier} linked."
+    ))
+  }
+  invisible(NULL)
+}
+
+
 # Derive per-class character counts from a partition vector.
 # Returns integer vector of length nClasses with the number of characters
 # in each user class. Used to convert between the Dirichlet w-simplex

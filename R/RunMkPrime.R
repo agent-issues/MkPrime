@@ -182,6 +182,7 @@ RunMkPrime <- function(data, tree = NULL,
   partitionSpec <- .ValidatePartitionArgs(partition, unlink, mkd)
   .RequirePartitionImplemented(partitionSpec)
   .RequireMarginalKSupported(model, mkd, partitionSpec)
+  .WarnConfoundedRateNeo(partitionSpec, mkd)
 
   # Persisted with the checkpoint, so a resume rebuilds the move set the run
   # was using rather than the default one. `mcmc` is what .SaveCheckpoint()
