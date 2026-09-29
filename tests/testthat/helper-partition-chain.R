@@ -17,7 +17,7 @@
   st <- MkPrime:::.InitState(tree, mkd, model)
   dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
 
-  nCharPerClass <- tabulate(partition, 2L)
+  nCharPerClass <- tabulate(partition, length(classW))
   classRate <- classW * mkd$nChar / nCharPerClass
   NewState <- function(logPrior) {
     init_mcmc_state(

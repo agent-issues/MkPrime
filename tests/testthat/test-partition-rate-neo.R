@@ -125,6 +125,11 @@ test_that("every move commits the partitioned likelihood at rate_neo != 1", {
       label <- paste(pName, move)
       expect_gt(accepted, 0L, label = paste(label, "acceptances"))
       expect_lt(drift, 1e-9, label = paste(label, "logLik drift"))
+      if (oneClass && move %in% c("nni", "beta_simplex", "dirichlet_branch")) {
+        st <- get_mcmc_state(chain$statePtr)
+        expect_gt(st$diagNniPartial + st$diagBsPartial + st$diagDirPartial, 0,
+                  label = paste(label, "node-CL cache evaluations"))
+      }
     }
   }
 })
