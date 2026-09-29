@@ -42,6 +42,9 @@
 }
 
 test_that("a tuning window holds ~100 samples, not one batch (#78)", {
+  # Under valgrind maxTime cuts tuning short, and a window's own sampling
+  # outlasts the pause.
+  skip_under_memcheck()
   windows <- .TuningWindows()
   expect_gte(length(windows), 4L)
   expect_true(all(vapply(windows, `[[`, integer(1), "n") >= 100L))
@@ -54,6 +57,7 @@ test_that("tuning starts no round that would overrun its budget", {
 })
 
 test_that("a tuning window is not charged for the progress callback (#220)", {
+  skip_under_memcheck()
   windows <- .TuningWindows()
   expect_lt(max(vapply(windows, `[[`, numeric(1), "sec")), .tuningPause)
 })
