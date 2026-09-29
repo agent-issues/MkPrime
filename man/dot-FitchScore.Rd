@@ -15,7 +15,8 @@
 Integer parsimony score.
 }
 \description{
-Simple post-order Fitch algorithm. Used to set a data-informed default
-for \code{expSteps} (the expected tree length).
+Simple post-order Fitch algorithm, summed over characters. Divided by the
+number of characters, it sets a data-informed default for \code{expSteps} (the
+prior mean tree length).
 }
 \keyword{internal}

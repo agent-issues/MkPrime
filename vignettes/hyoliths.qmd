@@ -121,8 +121,10 @@ model <- MkPrimeModel(
 model
 ```
 
-`expSteps = NULL` (default) sets the tree-length prior scale automatically
-from the Fitch parsimony score of the starting tree.
+`expSteps = NULL` (default) sets the prior mean tree length automatically
+to the Fitch parsimony score of the starting tree divided by the number of
+characters, since branch lengths count expected changes per character.
+Parsimony misses multiple hits, so this errs low.
 
 ### Q-matrix heterogeneity (optional)
 
