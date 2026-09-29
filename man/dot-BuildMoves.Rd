@@ -13,7 +13,8 @@
   kPrimePrior = "geometric",
   qHeterogeneity = FALSE,
   joint2d = TRUE,
-  likelihoodMode = "sampled_k"
+  likelihoodMode = "sampled_k",
+  rateNeoLive = hasNeo
 )
 }
 \description{

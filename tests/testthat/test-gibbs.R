@@ -127,6 +127,21 @@ test_that("C++ engine rejects gibbs_p under empirical_geometric (EG guard)", {
   expect_equal(sAfter$logPrior, sBefore$logPrior)  # prior untouched
 })
 
+# The R-list fallback of .DoMove must refuse gibbs_p as the engine does: it
+# used to draw the untruncated conjugate Beta and return a stale log_post (#61).
+test_that("R fallback refuses gibbs_p as the C++ engine does", {
+  set.seed(2196)
+  mkd   <- MkPrimeData(.small_trans_pd())
+  tree  <- .small_trans_tree()
+  model <- MkPrime:::.FinalizeModel(MkPrimeModel(), tree, mkd)
+  state <- MkPrime:::.InitState(tree, mkd, model)
+  move  <- list(name = "p", type = "gibbs_p", target = "p",
+                weight = 1, dim = 1L)
+  result <- MkPrime:::.DoMove(move, state, mkd, model, list())
+  expect_false(result$accept)
+  expect_identical(result$state, state)
+})
+
 test_that("mh_logit_p (case 30) targets the correct p full-conditional (KS test)", {
   # mh_logit_p only ever touches p -- it never re-proposes kPrime, the tree
   # or rates -- so state$logLik never depends on it: holding kPrime fixed

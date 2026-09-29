@@ -208,6 +208,44 @@ test_that("partial-CL path carries the transformational ascertainment term", {
   param = 0L
 )
 
+# A partition with nothing unlinked is the unpartitioned model, so its
+# partial-CL moves must keep the cache (#244); unlinked class rates must not.
+test_that("node CL cache serves a partition whose class rates are linked", {
+  setup <- make_test_setup(nTip = 10L, nChar = 12L, seed = 2441L)
+  mkd <- setup$mkd
+  model <- MkPrime:::.FinalizeModel(setup$model, setup$tree, mkd)
+  partition <- rep(1:2, length.out = mkd$nChar)
+  mkd$partitions <- MkPrime:::.BuildPartitions(mkd, partition)
+  Partial <- function(unlink) {
+    s <- MkPrime:::.InitStatePartitioned(setup$tree, mkd, model, list(
+      partition = partition, nClasses = 2L, unlink = unlink))
+    dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
+    statePtr <- MkPrime:::.DeserialiseChain(list(
+      edge = s$tree$edge, rel_br_lengths = s$rel_br_lengths,
+      tree_length = s$tree_length, rate_loss = s$rate_loss,
+      rate_log_sd = s$rate_log_sd, p = s$p, kPrime = as.integer(s$kPrime),
+      log_lik = s$log_lik, log_prior = s$log_prior, log_post = s$log_post,
+      class_rate_log_sd = s$class_rate_log_sd, class_w = s$class_w,
+      class_rate = s$class_rate, nChar_c = s$nChar_c, eta_neo = s$eta_neo))
+    fill_partition_cache(dataPtr, statePtr)
+    allocate_cl_workspace(dataPtr, statePtr)
+    set.seed(2442L)
+    drift <- 0
+    for (i in sample.int(nrow(.kCacheMoves), 200L, replace = TRUE)) {
+      do_move_cpp(dataPtr, statePtr, .kCacheMoves[i, "type"], 0L,
+                  0.5, 10, 1L, 1.0)
+      drift <- max(drift, abs(get_state_log_lik(statePtr) -
+                                eval_full_loglik_cpp(dataPtr, statePtr)))
+    }
+    expect_lt(drift, 1e-6)
+    st <- get_mcmc_state(statePtr)
+    # Return:
+    st$diagNniPartial + st$diagBsPartial + st$diagDirPartial
+  }
+  expect_gt(Partial(character(0)), 50)
+  expect_equal(Partial("ratemultiplier"), 0)
+})
+
 # M-145: an accepted slice step changes a model parameter, so it must
 # invalidate the node CLs it affects; otherwise the next partial-CL move
 # reuses CLs computed under the old value.  Slice parameters 0-3 are

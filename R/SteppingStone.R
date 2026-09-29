@@ -157,7 +157,8 @@ mkp_stepping_stone <- function(data, tree = NULL,
                        kPrimePrior = model$kPrimePrior %||% "geometric",
                        qHeterogeneity = isTRUE(model$qHeterogeneity),
                        joint2d = FALSE,
-                       likelihoodMode = model$likelihoodMode %||% "sampled_k")
+                       likelihoodMode = model$likelihoodMode %||% "sampled_k",
+                       rateNeoLive = .RateNeoLive(mkd))
   moveWeights <- vapply(moves, `[[`, numeric(1), "weight")
   names(moveWeights) <- vapply(moves, `[[`, character(1), "name")
   moveWeights <- moveWeights / sum(moveWeights)

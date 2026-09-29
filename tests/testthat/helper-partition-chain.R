@@ -9,21 +9,22 @@
 .PartitionedChain <- function(tree, mkd, model = MkPrimeModel(),
                               classW = c(0.3, 0.7),
                               classRateLogSd = c(0.3, 0.9),
-                              hyperprior = FALSE) {
-  partition <- rep(1:2, length.out = mkd$nChar)
+                              hyperprior = FALSE,
+                              partition = rep(1:2, length.out = mkd$nChar),
+                              rateNeo = 1) {
   mkd$partitions <- MkPrime:::.BuildPartitions(mkd, partition = partition)
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)
   st <- MkPrime:::.InitState(tree, mkd, model)
   dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
 
-  nCharPerClass <- tabulate(partition, 2L)
+  nCharPerClass <- tabulate(partition, length(classW))
   classRate <- classW * mkd$nChar / nCharPerClass
   NewState <- function(logPrior) {
     init_mcmc_state(
       st$tree$edge[, 1L], st$tree$edge[, 2L],
       st$rel_br_lengths, st$tree_length,
       st$rate_loss, classRateLogSd[[1L]],
-      st$rate_neo %||% 1, st$p %||% 0.5,
+      rateNeo, st$p %||% 0.5,
       as.integer(st$kPrime) + 1L, 0, logPrior,
       st$beta_scale %||% 1,
       st$kprime_alpha %||% 1, st$kprime_beta %||% 1,
@@ -54,5 +55,6 @@
   # Return:
   cpp_log_likelihood_partitioned_xptr(
     chain$dataPtr, edge[, 1L], edge[, 2L], edgeLen, st$kPrime,
-    st$rateLoss, st$classRateLogSd, st$classRate, st$etaNeo, st$betaScale)
+    st$rateLoss, st$classRateLogSd, st$classRate, st$etaNeo, st$betaScale,
+    st$rateNeo)
 }
