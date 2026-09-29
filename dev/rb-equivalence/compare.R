@@ -3,22 +3,22 @@
 #
 # Usage:
 #   Rscript dev/rb-equivalence/compare.R <pid> <model> \
-#     [--target-rhat=1.025] [--target-ess=128] [--out-dir=dev/rb-equivalence/out]
+#     [--target-rhat=1.025] [--target-ess=256] [--tolerance=0.25] [--alpha=0.05]
+#     [--out-dir=dev/rb-equivalence/out]
 #
-# Loads mkprime_<pid>_<model>.rds and rb_<pid>_<model>.rds.  Pools the
-# post-burnin traces across both samplers; computes:
-#   * cross-sampler R-hat and ESS on each scalar parameter
-#   * pooled-posterior median tree
-#   * per-source CID-to-median distribution; R-hat / ESS on that scalar
-#   * per-source tree ESS (reported only, not in pass/fail)
+# Loads mkprime_<pid>_<model>.rds and rb_<pid>_<model>.rds. For each scalar
+# parameter and for CID to the pooled median tree, GateParam() (R/gate.R)
+# checks each sampler's own convergence, cross-sampler rank-normalised R-hat,
+# and a standardised mean-difference test (family-wise `alpha`); a cell that
+# could miss a `tolerance`-SD shift is UNDERPOWERED, not PASS. Per-source tree
+# ESS is reported only.
 # Writes one row per (param) to out/summary.csv and one row per (source)
-# to out/summary_tree.csv.
+# to out/summary_tree.csv. Exit status: 0 PASS, 1 FAIL, 2 UNDERPOWERED.
 
 suppressPackageStartupMessages({
   library(ape)
   library(MkPrime)
   library(TreeDist)
-  library(coda)
 })
 
 args <- commandArgs(trailingOnly = TRUE)
@@ -31,9 +31,11 @@ script_dir <- (function() {
   f <- a[grep("^--file=", a)]
   if (length(f)) dirname(normalizePath(sub("^--file=", "", f[1]))) else getwd()
 })()
+source(file.path(script_dir, "R", "utils.R"))
+source(file.path(script_dir, "R", "gate.R"))
 
-opt <- list(target_rhat = 1.025, target_ess = 128,
-            out_dir = file.path(script_dir, "out"))
+opt <- list(target_rhat = 1.025, target_ess = 256, tolerance = 0.25,
+            alpha = 0.05, out_dir = file.path(script_dir, "out"))
 # target_rhat = 1.025 is the canonical equivalence threshold. Cross-sampler
 # rhat above this currently flags two known source-level asymmetries (see
 # dev/rb-equivalence/notes/cross-sampler-rhat-investigation.md) which are
@@ -45,6 +47,8 @@ for (a in args[-(1:2)]) {
 }
 opt$target_rhat <- as.numeric(opt$target_rhat)
 opt$target_ess <- as.numeric(opt$target_ess)
+opt$tolerance <- as.numeric(opt$tolerance)
+opt$alpha <- as.numeric(opt$alpha)
 
 # --- Load both rds ---------------------------------------------------------
 
@@ -56,12 +60,10 @@ rb <- readRDS(rb_path)
 
 # --- Sanity asserts --------------------------------------------------------
 
-if (!identical(mk$coding, rb$coding)) {
-  stop(sprintf("coding mismatch: mk=%s rb=%s", mk$coding, rb$coding))
-}
-if (!identical(mk$nCat, rb$nCat)) {
-  stop(sprintf("nCat mismatch: mk=%s rb=%s", mk$nCat, rb$nCat))
-}
+# model_spec is read from the MkPrimeModel object and from the Rev script RB
+# ran, not hard-coded (RB-109).
+AssertSameSetup(mk, rb)
+AssertMkRunTargets(mk$posterior, opt$target_rhat, opt$target_ess)
 if (!identical(mk$host, rb$host)) {
   warning(sprintf("HOST MISMATCH (wall-clock not comparable): mk=%s rb=%s",
                   mk$host, rb$host))
@@ -110,63 +112,25 @@ mk_scalar_per_run <- mk$per_run_scalars
 if (is.null(mk_scalar_per_run) || !length(mk_scalar_per_run)) {
   stop("mk$per_run_scalars missing; rerun run_mkprime.R with the streamed-log fix")
 }
-mk_runs <- length(mk_scalar_per_run)
+AssertScalarsPresent(mk_scalar_per_run, "mkprime")
+AssertScalarsPresent(rb$per_run_scalars, "rb")
+scalar_cols <- ExpectedScalars
 
-# --- Determine common scalar columns --------------------------------------
-
-scalar_cols <- intersect(
-  c("tree_length", "rate_log_sd", "rate_loss", "rate_neo"),
-  intersect(
-    Reduce(intersect, lapply(mk_scalar_per_run, names)),
-    Reduce(intersect, lapply(rb$per_run_scalars, names))
-  )
-)
-cat(sprintf("[compare] Common scalar params: %s\n",
-            paste(scalar_cols, collapse = ", ")))
-
-# --- Subsample to common N per source -------------------------------------
-
-source_lengths <- c(
-  vapply(mk_scalar_per_run, nrow, integer(1)),
-  vapply(rb$per_run_scalars, nrow, integer(1))
-)
-n_common <- min(source_lengths)
-cat(sprintf("[compare] %d sources; common N = %d\n",
-            length(source_lengths), n_common))
-
-subsample <- function(x, n) {
-  m <- if (is.data.frame(x)) nrow(x) else length(x)
-  idx <- seq.int(1, m, length.out = n)
-  if (is.data.frame(x)) x[idx, , drop = FALSE] else x[idx]
-}
-
-mk_sub <- lapply(mk_scalar_per_run, subsample, n = n_common)
-rb_sub <- lapply(rb$per_run_scalars, subsample, n = n_common)
-all_scalar <- c(mk_sub, rb_sub)
-source_labels <- c(paste0("mkp_", seq_along(mk_sub)),
-                   paste0("rb_", seq_along(rb_sub)))
-names(all_scalar) <- source_labels
-
-# --- Cross-sampler R-hat + ESS per scalar ---------------------------------
-
-cross_rhat <- vapply(scalar_cols, function(p) {
-  mat <- do.call(cbind, lapply(all_scalar, function(d) d[[p]]))
-  posterior::rhat_basic(mat)
-}, numeric(1))
-
-cross_ess <- vapply(scalar_cols, function(p) {
-  vals <- unlist(lapply(all_scalar, function(d) d[[p]]))
-  as.numeric(coda::effectiveSize(vals))
-}, numeric(1))
-
-# --- Subsample trees + build pooled median --------------------------------
+# --- Subsample trees to common N per source (bounds the median's O(N^2)) ---
 
 mk_trees <- mk$per_run_trees
 if (is.null(mk_trees) || !length(mk_trees)) {
   stop("mk$per_run_trees missing; rerun run_mkprime.R")
 }
-mk_trees_sub <- lapply(mk_trees, subsample, n = n_common)
-rb_trees_sub <- lapply(rb$per_run_trees, subsample, n = n_common)
+source_lengths <- lengths(c(mk_trees, rb$per_run_trees))
+n_common <- min(source_lengths)
+cat(sprintf("[compare] %d tree sources; common N = %d\n",
+            length(source_lengths), n_common))
+source_labels <- c(paste0("mkp_", seq_along(mk_trees)),
+                   paste0("rb_", seq_along(rb$per_run_trees)))
+
+mk_trees_sub <- lapply(mk_trees, Subsample, n = n_common)
+rb_trees_sub <- lapply(rb$per_run_trees, Subsample, n = n_common)
 all_trees_list <- c(mk_trees_sub, rb_trees_sub)
 names(all_trees_list) <- source_labels
 
@@ -182,14 +146,27 @@ median_tree <- pooled[[median_idx]]
 cat(sprintf("[compare] Pooled median tree: index %d / %d (sum-CID = %.3f)\n",
             median_idx, length(pooled), sum(dmat[median_idx, ])))
 
-# Per-source CID-to-median
-cid_to_median_per_source <- lapply(all_trees_list, function(trs) {
-  TreeDist::ClusteringInfoDistance(trs, median_tree, normalize = TRUE)
-})
+# Per-source CID-to-median, on every post-burn-in tree
+CidToMedian <- function(trs) {
+  as.numeric(TreeDist::ClusteringInfoDistance(trs, median_tree, normalize = TRUE))
+}
+mkCid <- lapply(mk_trees, CidToMedian)
+rbCid <- lapply(rb$per_run_trees, CidToMedian)
 
-cid_mat <- do.call(cbind, cid_to_median_per_source)
-cid_rhat <- posterior::rhat_basic(cid_mat)
-cid_ess <- as.numeric(coda::effectiveSize(unlist(cid_to_median_per_source)))
+# --- Gate: per-sampler convergence, cross R-hat, mean shift ---------------
+
+gate <- do.call(rbind, c(
+  lapply(scalar_cols, function(p) {
+    GateParam(lapply(mk_scalar_per_run, `[[`, p),
+              lapply(rb$per_run_scalars, `[[`, p),
+              opt$target_rhat, opt$target_ess,
+              logScale = p %in% LogScaleScalars, alpha = opt$alpha,
+              nTests = length(scalar_cols) + 1L, tolerance = opt$tolerance)
+  }),
+  list(GateParam(mkCid, rbCid, opt$target_rhat, opt$target_ess,
+                 alpha = opt$alpha, nTests = length(scalar_cols) + 1L,
+                 tolerance = opt$tolerance))
+))
 
 # --- Tree ESS per source (reporting only) ---------------------------------
 
@@ -211,21 +188,22 @@ tree_ess_per_source <- vapply(all_trees_list, function(trs) {
 # newest run for a cell is still what should win.
 cellinfo_hash <- rlang::hash(mk$cell_info)
 
+# RevBayes always runs to srMaxTime, so its time to target is pro-rated from
+# its ESS (RB-112); MkPrime's is NA unless it stopped on convergence.
+wallRbEst <- rb$wall_total * opt$target_ess / rb$diag_scalar$minEss
 rows <- data.frame(
   pid = pid, model = model,
   param = c(scalar_cols, "cid_to_median"),
-  rhat = c(cross_rhat, cid_rhat),
-  ess = c(cross_ess, cid_ess),
-  wall_mkp = mk$wall_to_target,
+  gate,
+  wall_mkp = mk$wall_to_target %||% NA_real_,
   wall_mkp_tree_target_est = mk$wall_to_tree_target_estimated %||% NA_real_,
-  wall_rb = rb$wall_to_target,
-  wall_ratio = mk$wall_to_target / rb$wall_to_target,
+  wall_rb_est = wallRbEst,
+  wall_ratio = (mk$wall_to_target %||% NA_real_) / wallRbEst,
   cellinfo_hash = cellinfo_hash,
   mkp_git_sha = mk$provenance$gitSha %||% NA_character_,
   mkp_resumed = isTRUE(mk$resumed),
   stringsAsFactors = FALSE
 )
-rows$passed <- rows$rhat < opt$target_rhat & rows$ess > opt$target_ess
 
 tree_rows <- data.frame(
   pid = pid, model = model,
@@ -235,35 +213,38 @@ tree_rows <- data.frame(
   stringsAsFactors = FALSE
 )
 
-cat("\n=== summary (scalar pass/fail) ===\n")
+cat(sprintf(paste0(
+  "\n=== summary: tolerance %.2f SD, family-wise alpha %.3f over %d params, ",
+  "target R-hat < %.3f, ESS > %g ===\n"),
+  opt$tolerance, opt$alpha, nrow(rows), opt$target_rhat, opt$target_ess))
 print(rows, row.names = FALSE, digits = 4)
 cat("\n=== tree ESS per source ===\n")
 print(tree_rows, row.names = FALSE, digits = 4)
 
 # --- Append to global summary CSVs ----------------------------------------
 
-write_csv_append <- function(df, path) {
-  if (file.exists(path)) {
-    existing <- read.csv(path, stringsAsFactors = FALSE)
-    # De-dup on (pid, model, param/source) -- keep most recent
-    key_cols <- intersect(c("pid", "model", "param", "source"), names(df))
-    existing <- existing[!do.call(paste, existing[, key_cols, drop = FALSE]) %in%
-                         do.call(paste, df[, key_cols, drop = FALSE]), ]
-    df <- rbind(existing, df)
-  }
-  write.csv(df, path, row.names = FALSE)
-}
-write_csv_append(rows, file.path(opt$out_dir, "summary.csv"))
-write_csv_append(tree_rows, file.path(opt$out_dir, "summary_tree.csv"))
+AppendCsv(rows, file.path(opt$out_dir, "summary.csv"))
+AppendCsv(tree_rows, file.path(opt$out_dir, "summary_tree.csv"))
 
 cat(sprintf("\n[compare] Updated %s and summary_tree.csv\n",
             file.path(opt$out_dir, "summary.csv")))
 
-# --- Exit status: 0 if all rows pass (excluding pid 950 cid_to_median) ----
+# --- Exit status: 0 PASS, 1 FAIL, 2 UNDERPOWERED; no exemptions -----------
 
-failed <- rows[!rows$passed & !(pid == "950" & rows$param == "cid_to_median"), ]
+failed <- rows[rows$verdict == "FAIL", ]
 if (nrow(failed)) {
-  cat(sprintf("\n[compare] FAIL: %d scalar(s) did not meet target\n", nrow(failed)))
+  cat(sprintf("\n[compare] FAIL: %s\n",
+              paste0(failed$param, " (", failed$reasons, ")", collapse = ", ")))
   quit(status = 1L)
 }
-cat("\n[compare] PASS: all scalars met target\n")
+weak <- rows[rows$verdict == "UNDERPOWERED", ]
+if (nrow(weak)) {
+  cat(sprintf(paste0(
+    "\n[compare] UNDERPOWERED: %s cannot detect a %.2f-SD shift ",
+    "(smallest detectable: %s); run both samplers longer.\n"),
+    paste(weak$param, collapse = ", "), opt$tolerance,
+    paste(sprintf("%.2f", weak$mdd_sd), collapse = ", ")))
+  quit(status = 2L)
+}
+cat(sprintf("\n[compare] PASS: no shift of %.2f SD or more on any parameter\n",
+            opt$tolerance))

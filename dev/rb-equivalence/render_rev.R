@@ -3,7 +3,7 @@
 #
 # Usage:
 #   Rscript dev/rb-equivalence/render_rev.R <pid> <model> \
-#     [--ess=128] [--max-time=3600] \
+#     [--ess=256] [--max-time=3600] \
 #     [--neo-path=PATH] [--trans-path=PATH] \
 #     [--out-dir=dev/rb-equivalence/rev/<pid>] [--cellinfo-dir=dev/rb-equivalence/out]
 #
@@ -39,7 +39,7 @@ script_dir <- (function() {
 })()
 source(file.path(script_dir, "R", "utils.R"))
 
-opt <- list(ess = 128, max_time = 3600,
+opt <- list(ess = 256, max_time = 3600,
             neo_path = sprintf("project%s.neo.nex", pid),
             trans_path = sprintf("project%s.trans.nex", pid),
             out_dir = file.path(script_dir, "rev", pid),
