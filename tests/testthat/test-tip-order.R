@@ -106,7 +106,8 @@ test_that("Resume keeps the labelling and the prior of the run (#224)", {
               checkpointFile = ckpFile),
     "without stabilisation")
   ck <- readRDS(ckpFile)
-  expect_gt(ck$model$expSteps, phangorn::parsimony(o$truth, o$pd))
+  nChar <- allow_warning(MkPrimeData(o$pd), "invariant")$nChar
+  expect_gt(ck$model$expSteps, phangorn::parsimony(o$truth, o$pd) / nChar)
   ck$mcmc$nIter <- 400L
   saveRDS(ck, ckpFile)
 
