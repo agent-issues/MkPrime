@@ -321,3 +321,25 @@ test_that("MkPrimeRecover() keeps a log the user named", {
   expect_gt(nrow(recovered$samples), 0L)
   expect_true(file.exists(log))
 })
+
+test_that("a run paused on maxTime keeps the log beside its checkpoint", {
+  d <- CkpData()
+  dir <- withr::local_tempdir()
+  ckp <- file.path(dir, "run.ckp")
+  set.seed(11)
+  res <- allow_warning(RunMkPrime(
+    d$pd, d$tree,
+    mcmc = MkPrimeMCMC(
+      nRuns = 1L, nIter = Inf, thin = 5L, minWarmup = 500L, maxWarmup = 500L,
+      autoTune = FALSE, bufferSize = 50L, checkpointFile = ckp, maxTime = 0.5
+    )
+  ), "maxWarmup")
+  expect_identical(res$stop_reason, "max_time")
+  log <- readRDS(ckp)$logFilePaths
+  expect_true(file.exists(log))
+  rows <- LogRows(log)
+
+  allow_warning(ResumeMkPrime(ckp, d$pd, d$tree, mcmc = list(maxTime = 0.5)),
+                "maxWarmup")
+  expect_gt(LogRows(log), rows)
+})

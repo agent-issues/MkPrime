@@ -441,7 +441,10 @@ RunMkPrime <- function(data, tree = NULL,
     }
     result$logFile <- NULL
   }
-  if (isTempLog && !isTempCkp) .CleanupTempLogs(logFilePaths)
+  # A run paused on maxTime or a cancel file will be resumed from its log.
+  if (isTempLog && !isTempCkp && stopReason %in% c("max_iter", "converged")) {
+    .CleanupTempLogs(logFilePaths)
+  }
 
   result
 }
