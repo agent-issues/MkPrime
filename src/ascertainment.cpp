@@ -910,7 +910,16 @@ void singleton_site_probs_mkn_impl(const Rcpp::IntegerVector& parent,
     }
   }
 
-  for (int m = 0; m < nMask; ++m) out[m] /= nCat;
+  // As in uninf_nonconst_probs_jc_impl: with two observed tips each tip is
+  // the other's singleton, and a lone tip has no non-constant pattern.
+  for (int m = 0; m < nMask; ++m) {
+    int obs = 0;
+    for (int t = 0; t < nTip; ++t)
+      obs += masks.empty() || !masks[m] || !masks[m][t];
+    out[m] /= nCat;
+    if (obs < 2) out[m] = 0.0;
+    else if (obs == 2) out[m] /= 2.0;
+  }
 }
 
 double singleton_site_prob_mkn_impl(const Rcpp::IntegerVector& parent,

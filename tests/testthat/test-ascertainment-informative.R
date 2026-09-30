@@ -201,6 +201,12 @@ test_that("k = 2 uninformative mass is exact with one or two observed tips", {
                             seq_len(6L) %in% missing, TRUE),
       oracle[["uninf"]], tolerance = 1e-12,
       info = paste(missing, collapse = ","))
+    # Every pattern on two or fewer tips is uninformative.
+    expect_equal(
+      asc_site_prob_missing(tree$edge[, 1], tree$edge[, 2], tree$edge.length,
+                            6L, 2L, TRUE, 0.4, rates,
+                            seq_len(6L) %in% missing, TRUE),
+      1, tolerance = 1e-12, info = paste(missing, collapse = ","))
   }
 })
 

@@ -33,7 +33,9 @@
 #'   correction, `"variable"` for conditioning on variable characters,
 #'   `"informative"` for conditioning on parsimony-informative characters
 #'   (excludes every pattern in which fewer than two states each occur
-#'   twice or more). Default `"variable"`.
+#'   twice or more; characters with fewer than four observed tips, which
+#'   cannot be informative, are dropped with a message). Default
+#'   `"variable"`.
 #' @param rate_neo Rate scalar for the neomorphic partition relative to
 #'   transformational (which is fixed at 1.0). Default 1.0 (equal rates).
 #' @param relabel Logical. Apply Mk' relabelling correction for
