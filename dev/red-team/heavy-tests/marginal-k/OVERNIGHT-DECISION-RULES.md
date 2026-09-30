@@ -1,7 +1,9 @@
 # Pre-registered decision rules for the Phase-2 overnight runs
 
 Written 2026-06-02 eve BEFORE the results land (advisor-driven), so the read is
-not rationalised after seeing the numbers. Job: `bx3s4g4qz` (driver log
+not rationalised after seeing the numbers. Both runs used
+`priorVariant = "conditional"` (Model B), then the geometric default; the driver
+now defaults to Model A, and `run-phase2-overnight.sh` pins Model B. Job: `bx3s4g4qz` (driver log
 `T-OVL-overnight-driver.log`); logs `T-OVL-moveson.log`, `T-OVL-precheck-200k.log`.
 
 ## (1) Moves-on overlap (T-OVL-moveson.log) — read RELATIVE to the gated baseline

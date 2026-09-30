@@ -2,6 +2,7 @@
 # Hamilton results land in sbc-results-hamilton/ and are intended to be
 # committed to a dedicated results branch when validated, not main.
 sbc-results/
+sbc-results-b2/
 sbc-results-hamilton/
-T-OVL-results.rds
-T-OVL-verdict.txt
+T-OVL-*.rds
+T-OVL-*-verdict.txt

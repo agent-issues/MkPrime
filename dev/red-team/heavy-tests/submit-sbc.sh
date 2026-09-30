@@ -65,11 +65,16 @@ cd "${SRC}"
 # Use the source-controlled sbc.R, NOT the stale out-of-tree
 # ${RT}/heavy-tests/sbc.R (which is not updated when the source tree changes).
 # All v6/v7 runs prior to 2026-05-27 silently used that stale copy.
+# One seedBase for every task: sbc.R offsets each arm's seeds by its name, so
+# reordering ARMS cannot re-seed an arm. RUN_ID defaults to the array job id;
+# the aggregation step needs the same value.
+RUN_ID="${RUN_ID:-${SLURM_ARRAY_JOB_ID}}"
 Rscript "${SRC}/dev/red-team/heavy-tests/sbc.R" \
   --full \
   --arm "${ARM_NAME}" \
   --out "${RT}/results/sbc-v10" \
-  --seed $((20260528 + SLURM_ARRAY_TASK_ID))
+  --seed 20260528 \
+  --run-id "${RUN_ID}"
 
 du -hs "${TMPDIR}" > "${RT}/logs/sbc_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}_tmpdir.log" || true
 
@@ -78,6 +83,11 @@ echo "[$(date)] Arm ${ARM_NAME} complete"
 # ---- Aggregate the per-arm verdicts -----------------------------------------
 # Each task writes verdict-<arm>.txt; the run-level verdict.txt is produced
 # only by the reduction below, so it can never be one task's output wearing the
-# aggregate's name (#16). Submit it after the array:
+# aggregate's name (#16). Submit it after the array; files not stamped with
+# this array's run id (left over from an earlier submission) are ignored, so an
+# arm whose task died reports INCOMPLETE:
 #
-#   sbatch --dependency=afterany:$ARRAY_JOB_ID --wrap #     "Rscript ${SRC}/dev/red-team/heavy-tests/aggregate-verdicts.R #        ${RT}/results/sbc-v10 ${ARMS[*]}"
+#   ARRAY_JOB_ID=$(sbatch --parsable dev/red-team/heavy-tests/submit-sbc.sh)
+#   sbatch --dependency=afterany:$ARRAY_JOB_ID --wrap \
+#     "Rscript ${SRC}/dev/red-team/heavy-tests/aggregate-verdicts.R \
+#        ${RT}/results/sbc-v10 --run-id $ARRAY_JOB_ID ${ARMS[*]}"

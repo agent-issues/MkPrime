@@ -6,16 +6,33 @@ Validation drivers for the `likelihoodMode = "marginal_k"` feature
 - `dev/notes/2026-05-28-marginal-k-plan.md` — implementation plan
 - `dev/red-team/proofs/marginal-k-geometric.md` — proof note
 
+## Prior variant
+
+Every driver pins `priorVariant` rather than inheriting `MkPrimeModel()`'s
+default, which for `geometric` changed from `"conditional"` (Model B) to
+`"unconditional"` (Model A) on 2026-06-04. `T-OVL-sampled-vs-marginal.R` and
+`gibbs-p-fullchain-check.R` default to `"unconditional"` (what ships) and take
+`MARGINAL_K_PRIOR_VARIANT=conditional` to override; the value is written into
+their outputs. The two `T-SBC-*-geometric.R` drivers are fixed at
+`"unconditional"` because their forward model is Model A.
+
+**The recorded 2026-06 verdicts were Model B:** the T-OVL gated and moves-on
+runs and the 200k p-recheck (2026-06-02; `run-phase2-overnight.sh` now pins
+Model B to reproduce them) and the "3.2x p-ESS" full-chain check (2026-06-03).
+They say nothing about the current default.
+
 ## Tests
 
 ### `T-OVL-sampled-vs-marginal.R` — plan §7.2 (Rung 2)
 
 Posterior overlap between `sampled_k` and `marginal_k` modes on the same
-dataset / seed across a small `(n_tip × n_char)` grid. KS test per
-parameter per cell.
+dataset / seed across a small `(n_tip × n_char)` grid. Equivalence test per
+parameter per cell: the difference in mean and in sd must each lie within
+`Z_BAR = 3` batch-means standard errors.
 
-**Pass bar.** KS p > 0.01 on every parameter (`tree_length`,
-`rate_log_sd`, `p`) in every grid cell.
+**Pass bar.** A cell/parameter below the ESS floor (200 in each mode) is
+INCONCLUSIVE. The run PASSes only if no cell/parameter FAILs and at least half
+are conclusive; otherwise it is INCONCLUSIVE.
 
 **Quick local run** (no Hamilton submit yet — heavy test):
 
@@ -32,7 +49,11 @@ no longer a sampled state under marginal-k (proof §2).
 
 **Pass bar (full mode).** Anderson–Darling p > 0.4 on each of
 `tree_length`, `rate_log_sd`, `p` at N_SIM = 200, N_ITER = 12000,
-N_TIP = 8, N_CHAR = 30. MARGINAL between 0.01 and 0.4. FAIL below.
+N_TIP = 16, N_CHAR = 100. MARGINAL between 0.01 and 0.4. FAIL below.
+
+Both SBC drivers run at `nCat = 1`, so the rate multiplier is 1 for every
+character and `rate_log_sd` never enters the likelihood: its rank test checks
+only that the chain recovers its prior. It cannot reveal rate-cache bugs.
 
 **Quick local sanity** (env var; ~few minutes):
 
@@ -53,12 +74,16 @@ cd /nobackup/${USER}/mkp-study/red-team/mkp-source
 module load r/4.5.1 && module load gcc/14.2 || true
 R_LIBS_USER=/nobackup/${USER}/mkp-study/red-team/lib \
   Rscript -e 'devtools::load_all(".")'
-sbatch dev/red-team/heavy-tests/submit-marginal-k-sbc.sh
+A1=$(sbatch --parsable --export=ALL,BATCH=1 dev/red-team/heavy-tests/submit-marginal-k-sbc.sh)
+sbatch --dependency=afterany:${A1} --export=ALL,BATCH=1 dev/red-team/heavy-tests/submit-marginal-k-agg.sh
 ```
 
-Walltime: 8h initially (per `feedback_resumable_runs`).
-Results land in
-`dev/red-team/heavy-tests/marginal-k/sbc-results-hamilton/`.
+`BATCH=1` (seedBase 20260528) writes to `sbc-results/`, `BATCH=2` (seedBase
+20260901) to `sbc-results-b2/`; the driver reads `MARGINAL_K_SBC_OUTDIR` and
+`MARGINAL_K_SBC_SEEDBASE`, so concurrent batches never share a shard dir. The
+aggregate step mirrors each into `<dir>-hamilton/`. No committed script pools
+the two batches for the marginal driver (see `MARGINAL-K-CACHE-002-resume.md`);
+`pool-sampled-batches.R` does so for the sampled driver.
 
 ## Output layout
 
@@ -66,14 +91,15 @@ Results land in
 marginal-k/
 ├── T-OVL-sampled-vs-marginal.R       # §7.2 driver (PR-B)
 ├── T-SBC-marginal-geometric.R        # §7.3 driver (PR-C)
-├── T-OVL-results.rds                 # §7.2 results
-├── T-OVL-verdict.txt                 # §7.2 verdict
+├── T-OVL-<tag>-results.rds           # §7.2 results; <tag> = "gated" or the
+├── T-OVL-<tag>-verdict.txt           #   MARGINAL_K_OVL_EXTRA moves joined by "+"
 ├── sbc-results/                      # §7.3 local artefacts
 │   ├── sims.rds
 │   ├── ranks.rds
 │   ├── rank-histograms.png
 │   ├── verdict.txt
 │   └── verdict-headline.txt          # one-line PASS / MARGINAL / FAIL
+├── sbc-results-b2/                   # second seed batch (BATCH=2)
 └── sbc-results-hamilton/             # mirror after Hamilton submit
     └── (same shape)
 ```
@@ -93,8 +119,8 @@ marginal-k/
   kprime-viability) to localise: if sampled-k passes and marginal-k
   fails, the bug is in the marginal evaluator alone (not the prior).
 
-- **T-SBC FAIL on `tree_length` or `rate_log_sd`.** Either a cache
-  invalidation bug under tree/rate moves, or a parametric mismatch
+- **T-SBC FAIL on `tree_length`.** Either a cache invalidation bug under
+  tree moves, or a parametric mismatch
   between the forward simulator and the inference model
   (see SBC-HARNESS-001..006 in `dev/red-team/findings.md` for the
   pattern — the historical SBC harness has had four such mismatches).

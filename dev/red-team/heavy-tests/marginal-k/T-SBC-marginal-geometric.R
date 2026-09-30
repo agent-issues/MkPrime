@@ -58,7 +58,12 @@ suppressPackageStartupMessages({
   library(TreeTools)
 })
 
-OUT_DIR <- "dev/red-team/heavy-tests/marginal-k/sbc-results"
+# OUT_DIR override (MARGINAL_K_SBC_OUTDIR): each seed batch needs its own dir,
+# or two batches collide on shards/sims-shard-NNN.rds.
+OUT_DIR <- {
+  od_env <- Sys.getenv("MARGINAL_K_SBC_OUTDIR", unset = "")
+  if (nzchar(od_env)) od_env else "dev/red-team/heavy-tests/marginal-k/sbc-results"
+}
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
 quick_env <- Sys.getenv("MARGINAL_K_SBC_QUICK", unset = "")

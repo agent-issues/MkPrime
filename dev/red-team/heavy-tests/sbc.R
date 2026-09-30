@@ -44,6 +44,13 @@ outRoot <- {
     "dev/red-team/heavy-tests/sbc-results"
 }
 dir.create(outRoot, recursive = TRUE, showWarnings = FALSE)
+# Stamped into the verdict so aggregate-verdicts.R can tell this run's file from
+# one a previous submission left in the same outRoot.
+runId <- {
+  ix <- which(args == "--run-id")
+  if (length(ix) && length(args) >= ix + 1L) args[ix + 1L] else
+    sprintf("local-%s-%d", format(Sys.time(), "%Y%m%d%H%M%S"), Sys.getpid())
+}
 
 cat(sprintf("SBC harness  | mode=%s | seedBase=%d | armFilter=%s\n",
             mode, seedBase, if (is.null(armFilter)) "<all>" else armFilter))
@@ -416,6 +423,14 @@ TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
 }
 
 # ----------------- Per-arm driver ------------------------------
+# Keyed on the arm's name, not its position in ALL_ARMS, so adding or removing
+# an arm leaves every other arm's simulations unchanged. Offsets are multiples
+# of 1000 (> N_SIM) and stay well below .Machine$integer.max.
+ArmSeedOffset <- function(armName) {
+  code <- utf8ToInt(armName)
+  1000L * as.integer(sum(code * seq_along(code)) %% 99991L)
+}
+
 .runArm <- function(arm) {
   cat(sprintf("\n=== arm: %-30s (model=%s prior=%s expect=%s) ===\n",
               arm$name, arm$model, arm$prior, arm$expect))
@@ -424,7 +439,7 @@ TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
 
   sims <- vector("list", N_SIM)
   for (i in seq_len(N_SIM)) {
-    seed <- seedBase + 1000L * match(arm$name, vapply(ALL_ARMS, `[[`, "", "name")) + i
+    seed <- seedBase + ArmSeedOffset(arm$name) + i
     cat(sprintf("  sim %3d/%d (seed=%d) ... ", i, N_SIM, seed))
     s <- tryCatch(.runOneSim(arm, i, seed),
                   error = function(e) list(skipped = TRUE,
@@ -587,6 +602,7 @@ top_verdict_path <- file.path(
 )
 lines <- c(
   sprintf("SBC harness top-level summary"),
+  sprintf("run_id:   %s", runId),
   sprintf("mode:     %s", mode),
   sprintf("seedBase: %d", seedBase),
   sprintf("wall:     %.1fs", dt),
