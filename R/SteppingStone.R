@@ -42,6 +42,11 @@
 #' tempered), and with no weight adaptation. An estimate is therefore
 #' comparable only with others computed under the same `model` and `mcmc`.
 #'
+#' Under `likelihoodMode = "sampled_k"` and the unconditional `k'` prior, no
+#' stone visits `k'_i < kObs_i`, so the prior-only stone is normalised on
+#' `k' >= kObs` alone; the estimate adds back the log prior mass of that
+#' region, integrated over `p` numerically.
+#'
 #' The standard error is computed via the delta method applied to each
 #' stepping-stone ratio, following Xie et al. (2011) and the implementation in
 #' the \pkg{mcmc3r} package (dos Reis). For each stone \eqn{k},
@@ -177,6 +182,8 @@ mkp_stepping_stone <- function(data, tree = NULL,
   fill_partition_cache(mcmcData, statePtr)
   allocate_cl_workspace(mcmcData, statePtr)  # M-063
 
+  # Before the stones, so a failed quadrature costs no sampling.
+  logZ0 <- .LogZ0(model, mkd)
   logRatios <- numeric(nStones)
 
   # Per-stone importance weights (centered) and their means,
@@ -234,7 +241,7 @@ mkp_stepping_stone <- function(data, tree = NULL,
     }
   }
 
-  logMarginal <- sum(logRatios)
+  logMarginal <- sum(logRatios) + logZ0
 
   # --- SE via delta method (Xie et al. 2011; mcmc3r implementation) ---
   # Var(log r_k) ≈ Var(L_k) / (N_eff * r_k^2)
@@ -293,3 +300,102 @@ mkp_stepping_stone <- function(data, tree = NULL,
 
 
 # .EssVector() is now defined in R/ess.R (native Geyer 1992 + Vehtari 2021).
+
+
+# Under the unconditional (Model A) prior, sampled_k gives k'_i < kObs_i zero
+# likelihood and no move proposes it, so the beta = 0 stone samples the prior
+# restricted to k' >= kObs and the stones multiply to Z1 / Z0 (#267), with
+#   Z0 = E_prior[prod_i P(k'_i >= kObs_i | hyperparameters)].
+# Model B already normalises on k' >= kObs, and marginal_k carries that mass in
+# its per-character sum, so Z0 = 1 for both.
+.LogZ0 <- function(model, mkd) {
+  # Resolved as .InitMcmcData resolves it for the sampler.
+  priorVariant <- model$priorVariant %||% MkPrimeModel(
+    kPrimePrior = model$kPrimePrior %||% "geometric")$priorVariant
+  if (!identical(priorVariant, "unconditional") ||
+      identical(model$likelihoodMode, "marginal_k")) {
+    # Return:
+    return(0)
+  }
+  kObs <- mkd$kObs[mkd$type == "transformational"]
+  kObs <- kObs[kObs > 2L]
+  if (length(kObs) == 0L) {
+    # Return:
+    return(0)
+  }
+  counts <- table(kObs)
+  ko <- as.integer(names(counts))
+  counts <- as.vector(counts)
+
+  if (identical(model$kPrimePrior, "logseries")) {
+    logseriesC <- model$kprimeLogseriesC %||% 0.7
+    # Return:
+    return(sum(counts * vapply(ko, .LogseriesLogTail, 0, logseriesC)))
+  }
+  LogTail <- switch(
+    model$kPrimePrior,
+    geometric = {
+      K <- as.integer(model$kprimeTruncK %||% 200L)
+      function(k, p, log1mP) {
+        (k - 2) * log1mP + .Log1mExp((K - k + 1) * log1mP) -
+          .Log1mExp((K - 1) * log1mP)
+      }
+    },
+    empirical_geometric = {
+      emp <- model$empiricalNObs %||% .EmpiricalNObs()
+      # The two variants differ by exactly the Model B normaliser log Z_i(p).
+      function(k, p, log1mP) {
+        vapply(p, function(pj) {
+          .LogPriorEmpiricalGeometric(k, emp, pj, k, unconditional = TRUE) -
+            .LogPriorEmpiricalGeometric(k, emp, pj, k, unconditional = FALSE)
+        }, 0)
+      }
+    },
+    cli::cli_abort("No unconditional form for {.val {model$kPrimePrior}}.")
+  )
+
+  a <- model$kprimeHyperA
+  b <- model$kprimeHyperB
+  # Integrate over x = logit(p); p^a (1-p)^b folds in the Jacobian p (1-p).
+  LogF <- function(x) {
+    p <- stats::plogis(x)
+    log1mP <- stats::plogis(-x, log.p = TRUE)
+    lf <- a * stats::plogis(x, log.p = TRUE) + b * log1mP - lbeta(a, b)
+    for (j in seq_along(ko)) {
+      lf <- lf + counts[j] * LogTail(ko[j], p, log1mP)
+    }
+    # Out at |x| ~ 700, p rounds to 0 or 1 and the tail is 0/0.
+    lf[is.nan(lf)] <- -Inf
+    # Return:
+    lf
+  }
+  grid <- seq(-40, 40, by = 0.5)
+  xMax <- grid[which.max(LogF(grid))]
+  xMax <- stats::optimize(LogF, xMax + c(-0.5, 0.5), maximum = TRUE)$maximum
+  fMax <- LogF(xMax)
+  Integrand <- function(x) exp(LogF(x) - fMax)
+  mass <- stats::integrate(Integrand, -Inf, xMax, rel.tol = 1e-10)$value +
+    stats::integrate(Integrand, xMax, Inf, rel.tol = 1e-10)$value
+  # Return:
+  fMax + log(mass)
+}
+
+
+# log P(k' >= ko; logseriesC) under the logseries prior on k' >= 2. The complement is
+# summed while it is small; otherwise the tail, whose terms fall by at least
+# logseriesC.
+.LogseriesLogTail <- function(ko, logseriesC) {
+  logC <- log(logseriesC)
+  logNorm <- .LogseriesLogNorm(logseriesC)
+  below <- seq.int(2L, ko - 1L)
+  lower <- sum(exp(below * logC - log(below) - logNorm))
+  if (lower < 0.99) {
+    # Return:
+    return(log1p(-lower))
+  }
+  kk <- seq.int(ko, ko + ceiling(-60 / logC))
+  logTerms <- kk * logC - log(kk)
+  mx <- max(logTerms)
+  # Return:
+  mx + log(sum(exp(logTerms - mx))) - logNorm
+}

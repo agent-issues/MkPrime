@@ -111,6 +111,10 @@
 #'     `kPrimePrior = "geometric"` only — other arms are §11 follow-ups
 #'     in `dev/notes/2026-05-28-marginal-k-plan.md`. Het + marginal-k and
 #'     partition-API + marginal-k are deferred (§13 of the plan).
+#'     The sum over `k'_i` stops at the first candidate whose log weight is
+#'     more than 25 below the largest so far, so each discarded candidate
+#'     carries under about `exp(-25)` of that character's largest term (a
+#'     bound that loosens as `kObs_i` grows when `relabel = TRUE`).
 #' @param priorVariant Whether the `k'` prior conditions on the observed state
 #'   count `kObs_i`. One of `"unconditional"` (Model A) or `"conditional"`
 #'   (Model B), or `NULL` (default) to select per `kPrimePrior` (see below).

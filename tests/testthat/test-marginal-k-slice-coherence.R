@@ -108,18 +108,16 @@ test_that("marginal_k slice_rate_loss commits a marginal logLik", {
 })
 
 
-test_that("marginal_k slice ignores a partLogLik refilled by direct dispatch", {
+test_that("marginal_k slice stays coherent after a direct k' sweep dispatch", {
   set.seed(202)
   fixture <- .SliceCohFixture("marginal_k")
 
-  # `.BuildMoves` drops the k'-moves under marginal_k, but `do_move_cpp`
-  # dispatches them regardless, and the k' sweep repopulates partLogLik with
-  # fixed-kPrime sums. An empty cache at init is therefore not on its own enough:
-  # the slice sites need their own exclusion. The sweep leaves logLik fixed-k
-  # (here -83.9 against a marginal -89.2); an accepted marginal slice must heal
-  # that rather than build on it.
-  expect_true(do_move_cpp(fixture$dataPtr, fixture$statePtr, 25L, 0L,
-                          0.5, 0.5, 2L, 1.0))
+  # `.BuildMoves` drops the k'-moves under marginal_k. A direct dispatch of the
+  # k' sweep once repopulated partLogLik with fixed-kPrime sums and left logLik
+  # fixed-k (-83.9 against a marginal -89.2); it is now refused (#270), and the
+  # slice sites keep their own exclusion regardless.
+  expect_false(do_move_cpp(fixture$dataPtr, fixture$statePtr, 25L, 0L,
+                           0.5, 0.5, 2L, 1.0))
   s <- .SliceCohRun(fixture, 1L)
 
   expect_equal(s$logLik, .SliceCohCold(fixture, s), tolerance = 1e-8)
