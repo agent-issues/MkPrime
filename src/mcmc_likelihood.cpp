@@ -3039,6 +3039,24 @@ SEXP prepare_mcmc_data(List partitions_r,
                        double empLogTailStartP = -1e308,
                        bool   marginalK = false,
                        bool   unconditionalPrior = false) {
+  if (codingStr == "informative") {
+    // With fewer than four observed tips no pattern is informative, so the
+    // correction's 1 - P(uninformative) is zero.
+    int nUninformable = 0;
+    for (R_xlen_t i = 0; i < partitions_r.size(); ++i) {
+      const IntegerMatrix ts = as<List>(partitions_r[i])["tip_states"];
+      for (int j = 0; j < ts.ncol(); ++j) {
+        int nObs = 0;
+        for (int t = 0; t < ts.nrow(); ++t) nObs += ts(t, j) >= 0;
+        nUninformable += nObs < 4;
+      }
+    }
+    if (nUninformable) {
+      Rcpp::stop("coding = \"informative\" needs four or more observed tips "
+                 "per character; %d character(s) have fewer. Remove them, "
+                 "or use coding = \"variable\".", nUninformable);
+    }
+  }
   McmcData* d = new McmcData();
   d->hasNeo = hasNeo;
   d->nCat = nCat;

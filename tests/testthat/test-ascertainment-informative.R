@@ -187,3 +187,51 @@ test_that("informative Sun2018 likelihood matches the per-tip kernels", {
   expect_lt(max(abs(ll - c(-2829.4843325754368, -2826.5877050786489))),
             1e-10)
 })
+
+test_that("k = 2 uninformative mass is exact with one or two observed tips", {
+  set.seed(2651)
+  tree <- Preorder(ape::rtree(6L, rooted = FALSE,
+                              br = function(n) runif(n, 0.05, 0.6)))
+  rates <- c(0.5, 1.5)
+  for (missing in list(3:6, 2:6)) {
+    oracle <- .UninformativeMass(tree, 2L, rates, missing = missing)
+    expect_equal(
+      asc_site_prob_missing(tree$edge[, 1], tree$edge[, 2], tree$edge.length,
+                            6L, 2L, FALSE, 1, rates,
+                            seq_len(6L) %in% missing, TRUE),
+      oracle[["uninf"]], tolerance = 1e-12,
+      info = paste(missing, collapse = ","))
+    # Every pattern on two or fewer tips is uninformative.
+    expect_equal(
+      asc_site_prob_missing(tree$edge[, 1], tree$edge[, 2], tree$edge.length,
+                            6L, 2L, TRUE, 0.4, rates,
+                            seq_len(6L) %in% missing, TRUE),
+      1, tolerance = 1e-12, info = paste(missing, collapse = ","))
+  }
+})
+
+.SixTipData <- function(extra) {
+  mat <- cbind(c(0, 0, 0, 1, 1, 1), c(0, 0, 1, 1, 2, 2), extra)
+  dimnames(mat) <- list(paste0("t", 1:6), NULL)
+  MatrixToPhyDat(mat)
+}
+
+test_that("informative coding drops characters with under four observed tips", {
+  tree <- Preorder(ape::read.tree(
+    text = "((t1:0.2,t2:0.3):0.1,(t3:0.25,t4:0.15):0.2,(t5:0.3,t6:0.1):0.05);"
+  ))
+  ref <- MkpLogLikelihood(tree, MkPrimeData(.SixTipData(NULL)),
+                          coding = "informative")
+  for (extra in list(c(0, 1, "?", "?", "?", "?"), c(0, 1, 1, "?", "?", "?"))) {
+    mkd <- MkPrimeData(.SixTipData(extra))
+    expect_message(
+      ll <- MkpLogLikelihood(tree, mkd, coding = "informative"),
+      "Dropping 1 character .*column 3"
+    )
+    expect_equal(ll, ref, tolerance = 1e-12)
+    model <- MkPrime:::.FinalizeModel(MkPrimeModel(coding = "informative"),
+                                      tree, mkd)
+    expect_error(MkPrime:::.InitMcmcData(mkd, model),
+                 "four or more observed tips.*1 character")
+  }
+})
