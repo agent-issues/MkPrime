@@ -37,7 +37,9 @@ MkPrimeModel(
 }
 \arguments{
 \item{coding}{Ascertainment bias correction: \code{"variable"} (default),
-\code{"informative"}, or \code{"none"}.}
+\code{"informative"}, or \code{"none"}. Under \code{"informative"}, characters that
+are not parsimony-informative among their observed tips are dropped
+with a message.}
 
 \item{nCat}{Number of ACRV rate categories (default 6).}
 

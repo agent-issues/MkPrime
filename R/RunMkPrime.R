@@ -173,6 +173,10 @@ RunMkPrime <- function(data, tree = NULL,
     mkd <- MkPrimeData(data, neomorphic = neomorphic,
                        knownStates = knownStates)
   }
+  if (identical(model$coding, "informative")) {
+    if (!is.null(partition)) partition <- partition[.Informable(mkd)]
+    mkd <- .DropUninformable(mkd)
+  }
 
   # --- Partition API (Layer 1 plumbing; see NOTES/partition-api-plan.md) ---
   # Validation and silent coercion happen here so any error is raised before
@@ -3498,6 +3502,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     if (is.null(model$treeLengthRate)) {
       model$treeLengthRate <- ckModel$treeLengthRate
     }
+  }
+  if (identical(model$coding, "informative")) {
+    mkd <- .DropUninformable(mkd)
   }
   if (is.null(model$expSteps)) {
     # Only a checkpoint that predates stored models reaches here.

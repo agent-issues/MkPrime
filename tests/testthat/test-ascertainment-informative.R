@@ -216,22 +216,41 @@ test_that("k = 2 uninformative mass is exact with one or two observed tips", {
   MatrixToPhyDat(mat)
 }
 
-test_that("informative coding drops characters with under four observed tips", {
+test_that("informative coding drops parsimony-uninformative characters", {
   tree <- Preorder(ape::read.tree(
     text = "((t1:0.2,t2:0.3):0.1,(t3:0.25,t4:0.15):0.2,(t5:0.3,t6:0.1):0.05);"
   ))
   ref <- MkpLogLikelihood(tree, MkPrimeData(.SixTipData(NULL)),
                           coding = "informative")
-  for (extra in list(c(0, 1, "?", "?", "?", "?"), c(0, 1, 1, "?", "?", "?"))) {
+  extras <- list(c(0, 1, "?", "?", "?", "?"), c(0, 1, 1, "?", "?", "?"),
+                 c(0, 0, 0, 0, 0, 1), c(0, 0, 1, 2, "?", 0))
+  for (extra in extras) {
     mkd <- MkPrimeData(.SixTipData(extra))
     expect_message(
       ll <- MkpLogLikelihood(tree, mkd, coding = "informative"),
-      "Dropping 1 character .*column 3"
+      "Dropping 1 parsimony-uninformative character .*column 3"
     )
     expect_equal(ll, ref, tolerance = 1e-12)
+  }
+  # With under four observed tips the correction is undefined, so the
+  # sampler's data setup refuses what the R entry points failed to drop.
+  for (extra in extras[1:2]) {
+    mkd <- MkPrimeData(.SixTipData(extra))
     model <- MkPrime:::.FinalizeModel(MkPrimeModel(coding = "informative"),
                                       tree, mkd)
     expect_error(MkPrime:::.InitMcmcData(mkd, model),
                  "four or more observed tips.*1 character")
   }
+})
+
+test_that("RunMkPrime drops parsimony-uninformative characters", {
+  # A run this short warns that warmup did not stabilise.
+  suppressWarnings(expect_message(
+    result <- RunMkPrime(.SixTipData(c(0, 0, 0, 0, 0, 1)),
+                         model = MkPrimeModel(coding = "informative"),
+                         nIter = 20L, nRuns = 1L, autoTune = FALSE,
+                         checkpointFile = FALSE, maxTime = 30),
+    "Dropping 1 parsimony-uninformative character"
+  ))
+  expect_true(all(is.finite(result$samples[, "log_likelihood"])))
 })

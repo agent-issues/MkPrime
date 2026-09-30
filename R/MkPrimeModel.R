@@ -5,7 +5,9 @@
 #' Specify an MkPrime model
 #'
 #' @param coding Ascertainment bias correction: `"variable"` (default),
-#'   `"informative"`, or `"none"`.
+#'   `"informative"`, or `"none"`. Under `"informative"`, characters that
+#'   are not parsimony-informative among their observed tips are dropped
+#'   with a message.
 #' @param nCat Number of ACRV rate categories (default 6).
 #' @param relabel Apply Mk' relabelling correction for transformational
 #'   characters? Default `TRUE`.
