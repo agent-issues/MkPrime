@@ -346,7 +346,9 @@
 #'
 #' **Warmup.** Tuning parameters (scale, window), move weights
 #' (acceptance-rate/cost heuristic), and temperatures (parallel
-#' tempering) all adapt. The phase ends automatically when the cold
+#' tempering) all adapt. Each chain tunes its own step sizes, but move
+#' weights are adapted from the cold chain alone and shared by every chain
+#' in the temperature ladder. The phase ends automatically when the cold
 #' chain's log-posterior stabilises (Geweke z-score test), or when
 #' `maxWarmup` is reached. No samples are saved.
 #'
@@ -356,7 +358,8 @@
 #' Each round evaluates the current and perturbed weight vectors
 #' over short windows, adopting a candidate only when it beats the
 #' incumbent by more than the noise in its ESS estimate. Tuning samples
-#' are discarded. Step-size tuning is frozen. The phase ends after
+#' are discarded. Step sizes and joint-proposal correlations are frozen at
+#' their warmup values. The phase ends after
 #' `tuningRounds` rounds or `tuningBudget` iterations, or, when `minEss`
 #' is set, sooner once tuning stops paying for itself: when, in two
 #' consecutive rounds, the

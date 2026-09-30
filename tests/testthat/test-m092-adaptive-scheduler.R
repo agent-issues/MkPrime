@@ -265,6 +265,52 @@ test_that(".AdaptMoveWeights applies floor", {
   expect_equal(sum(result), 1.0, tolerance = 1e-10)
 })
 
+test_that(".AdaptMoveWeights floors cascade without inverting the ranking (#79)", {
+  moveNames <- letters[1:5]
+  current <- setNames(rep(0.2, 5), moveNames)
+  # At warmupProgress = 1 the softmax weights are proportional to the squared
+  # scores: roughly 0.60, 0.16, 0.08, 0.08, 0.08. Flooring c-e at 0.15 once
+  # pushes b below its own floor, and below the moves it outscored.
+  accept <- setNames(c(775L, 400L, 283L, 283L, 283L), moveNames)
+  propose <- setNames(rep(1000L, 5), moveNames)
+  timeNs <- setNames(rep(1e9, 5), moveNames)
+  result <- MkPrime:::.AdaptMoveWeights(
+    current, accept, propose, timeNs, moveNames,
+    pinnedWeights = NULL, warmupProgress = 1, wMin = 0.15
+  )
+  expect_equal(sum(result), 1, tolerance = 1e-12)
+  expect_true(all(result >= 0.15 - 1e-12))
+  expect_identical(order(result, decreasing = TRUE)[1:2], 1:2)
+  expect_equal(unname(result), c(0.4, rep(0.15, 4)), tolerance = 1e-12)
+})
+
+test_that(".AdaptMoveWeights never ranks the best move last (#79)", {
+  # The finding's repro: floors of 4 x 0.3 exceed the budget, so no share can
+  # honour them all. The single-pass floor gave a = 0.1, b = c = d = 0.3.
+  moveNames <- letters[1:4]
+  current <- setNames(rep(0.25, 4), moveNames)
+  accept <- setNames(c(90L, 1L, 1L, 1L), moveNames)
+  propose <- setNames(rep(100L, 4), moveNames)
+  timeNs <- setNames(rep(1e8, 4), moveNames)
+  result <- MkPrime:::.AdaptMoveWeights(
+    current, accept, propose, timeNs, moveNames,
+    pinnedWeights = NULL, warmupProgress = 1, wMin = 0.3
+  )
+  expect_equal(sum(result), 1, tolerance = 1e-12)
+  expect_equal(result[["a"]], max(result))
+})
+
+test_that(".ProjectOntoFloors honours feasible floors and scales infeasible ones", {
+  Project <- MkPrime:::.ProjectOntoFloors
+  expect_equal(Project(c(4, 3, 2, 1), rep(0.1, 4), 1), c(4, 3, 2, 1) / 10)
+  # Every entry below its floor, with slack left over: the slack follows the
+  # raw weights instead of being dropped.
+  got <- Project(c(1, 1e-20), c(0.1, 0.1), 0.5)
+  expect_equal(got, c(0.4, 0.1))
+  # Floors alone exceed the budget: each gets the same fraction of its floor.
+  expect_equal(Project(c(9, 1, 1), c(0.2, 0.4, 0.4), 0.5), c(0.1, 0.2, 0.2))
+})
+
 test_that(".AdaptMoveWeights temperature annealing works", {
   n <- 3L
   moveNames <- c("a", "b", "c")
@@ -569,9 +615,9 @@ test_that(".BuildMoves builds a usable schedule for every k' arm", {
 })
 
 test_that("composed warmup adaptation keeps a positive, floored schedule", {
-  # .AdaptMoveWeights, .DecayLowAcceptMoves and the gibbs cap were each
-  # tested alone; the schedule the chain actually samples from is their
-  # composition, applied batch after batch.
+  # .AdaptMoveWeights and the gibbs cap were each tested alone; the schedule
+  # the chain actually samples from is their composition, applied batch after
+  # batch.
   mcmc <- MkPrimeMCMC(nIter = 200L, minWarmup = 100L)
   moves <- MkPrime:::.BuildMoves(20L, 5L, TRUE, mcmc)
   moveNames <- vapply(moves, `[[`, character(1), "name")
@@ -598,9 +644,6 @@ test_that("composed warmup adaptation keeps a positive, floored schedule", {
       w, accept, propose, moveTimeNs, moveNames, moveDim,
       pinnedWeights = pinned, warmupProgress = batch / 6,
       scalarFloorMoves = floorMoves
-    )
-    w <- MkPrime:::.DecayLowAcceptMoves(
-      w, accept, propose, initial, moveNames, pinnedWeights = pinned
     )
     expect_equal(sum(w), 1, tolerance = 1e-12)
     expect_true(all(w > 0))
