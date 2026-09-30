@@ -238,7 +238,9 @@ field.}
 \item{gibbsPMarginal}{Logical; use the data-augmentation
 Metropolis-within-Gibbs \code{p}-update as the PRIMARY \code{p}-move for
 \code{likelihoodMode = "marginal_k"} (default \code{FALSE}; no effect under
-\code{sampled_k}). Correctness-verified (\code{dev/red-team/proofs/marginal-k-gibbs-p.md},
+\code{sampled_k}, and ignored with an informational message when
+\code{nChains > 1}, because the update is not tempered).
+Correctness-verified (\code{dev/red-team/proofs/marginal-k-gibbs-p.md},
 math-prover). When enabled it improves \code{p}-mixing by ~3.2x over the
 random-walk \code{mh_logit_p} in the production regime (narrow, near the p->1
 boundary), measured apples-to-apples on an n16_c48 free-topology run
