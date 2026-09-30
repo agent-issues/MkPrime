@@ -386,8 +386,8 @@ RunMkPrime <- function(data, tree = NULL,
     for (p in treeFilePaths) writeLines(character(0), p)
   }
 
-  # Column index for tree reconstruction in scalar_samples (1-based R).
-  # The layout itself lives in .ParamNames(); do not restate it here.
+  # Index of br_1 in the stored layout; .RunMkPrimeSingleRun() maps it onto
+  # the raw C++ row. The layout itself lives in .ParamNames().
   brColStart      <- .BrColStart(paramNames)
 
   # --- Execute MCMC (with interrupt recovery) ---
@@ -1072,12 +1072,13 @@ RunMkPrime <- function(data, tree = NULL,
   # raw C++ row; it is empty under sampled_k or when nTrans == 0.
   marginalK <- identical(model$likelihoodMode, "marginal_k")
   kPrimeRawIdx <- if (marginalK && length(transIdx) > 0L) {
-    # Layout: ..., swap_cold, topo_hash, kPrime_1..nTrans, br_1..nEdge
-    # brColStart is the 1-based index of the first br_ column.
-    seq_len(length(transIdx)) + brColStart - length(transIdx) - 1L
+    # Raw layout: ..., topo_hash, kPrime_1..nTrans, br_1..nEdge. `brColStart`
+    # indexes the stored (stripped) layout, where br_1 takes kPrime_1's place.
+    brColStart - 1L + seq_along(transIdx)
   } else {
     integer(0L)
   }
+  rawBrColStart <- brColStart + length(kPrimeRawIdx)
 
   moveTypes <- vapply(moves, `[[`, character(1), "type")
   pinnedWeights <- .SchedulePins(
@@ -1325,8 +1326,8 @@ RunMkPrime <- function(data, tree = NULL,
         r$saved_idx <- r$saved_idx + 1L
         row <- result$scalar_samples[i, ]
         # Plan §7.4: strip no-op kPrime_ columns before writing to the trace.
-        # Keep the raw `row` intact below for tree reconstruction (brColStart
-        # indexes into the unstripped C++ layout).
+        # Keep the raw `row` intact below for tree reconstruction (via
+        # rawBrColStart).
         bufRow <- if (length(kPrimeRawIdx) > 0L) row[-kPrimeRawIdx] else row
 
         if (isStreaming) {
@@ -1350,7 +1351,7 @@ RunMkPrime <- function(data, tree = NULL,
             r$tree_samples <- c(r$tree_samples, vector("list", n))
           }
           tl    <- row[3L]
-          relBr <- row[brColStart:(brColStart + nEdge - 1L)]
+          relBr <- row[rawBrColStart:(rawBrColStart + nEdge - 1L)]
           curTree <- .EdgeToTree(result$edge_samples[[i]], tl * relBr,
                                  tipLabels)
           r$tree_samples[[r$tree_saved_idx]] <- curTree
@@ -1381,7 +1382,7 @@ RunMkPrime <- function(data, tree = NULL,
         if (tuneWithTreeEss) {
           row <- result$scalar_samples[i, ]
           tl    <- row[3L]
-          relBr <- row[brColStart:(brColStart + nEdge - 1L)]
+          relBr <- row[rawBrColStart:(rawBrColStart + nEdge - 1L)]
           tuningTreeBuf[[tuningBufIdx]] <- .EdgeToTree(
             result$edge_samples[[i]], tl * relBr, tipLabels
           )
@@ -3700,7 +3701,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
   # Chain state pairs tip i with data row i, whatever order `tree` was in.
   tipLabels       <- rownames(mkd$matrix)
-  # Column index for tree reconstruction; the layout lives in .ParamNames().
+  # Index of br_1 in the stored layout; the layout lives in .ParamNames().
   brColStart      <- .BrColStart(paramNames)
 
   # --- Sequential per-run execution ---
