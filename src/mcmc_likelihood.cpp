@@ -2405,16 +2405,18 @@ std::vector<double> asc_probs_masked(
     constant_site_probs_jc_impl(parent, child, edgeLen, nTip, kStates, rates,
                                 masks, pm.data());
   }
-  for (int j = 0; j < (int)masks.size(); ++j) {
-    if (data.codingType == 2 && !data.qHeterogeneity) {
-      pm[j] += neo
-        ? singleton_site_prob_mkn_impl(parent, child, edgeLen, nTip, rateLoss,
-                                       rootFreqs, rates, masks[j])
-        : uninf_nonconst_prob_jc_impl(parent, child, edgeLen, nTip, kStates,
-                                      rates, masks[j]);
+  if (data.codingType == 2 && !data.qHeterogeneity) {
+    std::vector<double> pu(masks.size());
+    if (neo) {
+      singleton_site_probs_mkn_impl(parent, child, edgeLen, nTip, rateLoss,
+                                    rootFreqs, rates, masks, pu.data());
+    } else {
+      uninf_nonconst_probs_jc_impl(parent, child, edgeLen, nTip, kStates,
+                                   rates, masks, pu.data());
     }
-    p[which[j]] = pm[j];
+    for (int j = 0; j < (int)masks.size(); ++j) pm[j] += pu[j];
   }
+  for (int j = 0; j < (int)masks.size(); ++j) p[which[j]] = pm[j];
   // Return:
   return p;
 }

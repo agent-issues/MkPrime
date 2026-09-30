@@ -688,3 +688,47 @@ test_that("P_emp normalises over k >= 2", {
                  tolerance = 1e-12)
   }
 })
+
+
+test_that("EG-001 Model B normaliser holds where 1 - belowMass cancels (#259)", {
+  emp <- MkPrime::empiricalNObs
+  logP <- function(k, p) MkPrime:::.LogPriorEmpiricalGeometric(k, emp, p)
+  # Exact Z_i: the untruncated convolution pmf summed upward from kObs.
+  ExactLogZ <- function(kObs, p) {
+    lp <- vapply(kObs:3000L, logP, double(1), p = p)
+    mx <- max(lp)
+    mx + log(sum(exp(lp - mx)))
+  }
+  kObs <- c(50L, 60L)
+
+  # C++ reads kObs from the data pointer; 50 distinct observed states would
+  # need 50 taxa, so set them directly: the prior sees no other data.
+  tree <- Preorder(read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);"))
+  mat <- matrix(c(0, 1, 0, 1, 0, 1, 2, 0), 4, 2,
+                dimnames = list(paste0("t", 1:4), NULL))
+  mkd <- MkPrimeData(MatrixToPhyDat(mat))
+  mkd$kObs <- kObs
+  model <- MkPrimeModel(expSteps = 10, kPrimePrior = "empirical_geometric",
+                        priorVariant = "conditional")
+  model <- MkPrime:::.FinalizeModel(model, tree, mkd)
+  dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
+
+  for (p in c(0.5, 0.9, 0.99)) {
+    exact <- sum(vapply(kObs, function(k) logP(k, p) - ExactLogZ(k, p),
+                        double(1)))
+    lpR <- MkPrime:::.LogPriorEmpiricalGeometric(kObs, emp, p, kObs)
+    expect_equal(lpR, exact, tolerance = 1e-12, info = sprintf("R, p = %g", p))
+
+    state <- list(
+      tree = tree, tree_length = 0.5,
+      rel_br_lengths = tree$edge.length / sum(tree$edge.length),
+      rate_loss = 1, rate_log_sd = 0.2, rate_neo = 1,
+      kPrime = kObs, p = p, log_lik = 0, log_prior = 0
+    )
+    expect_equal(
+      eval_log_prior_cpp(dataPtr, MkPrime:::.InitMcmcChain(state)),
+      MkPrime:::LogPrior(state, model, mkd),
+      tolerance = 1e-12, info = sprintf("C++ vs R, p = %g", p)
+    )
+  }
+})

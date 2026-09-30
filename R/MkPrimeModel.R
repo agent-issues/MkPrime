@@ -713,11 +713,11 @@ MkPrimeModel <- function(
   logP <- log(p)
   log1mP <- log1p(-p)
 
-  # kObs_i <= kPrime_i (truncation enforced in LogPrior), so the pmf table
-  # built to max(kPrime) also covers every m' < kObs_i needed by the
-  # normaliser below.
   kMaxOverall <- max(kPrime)
   logEmp <- .LogPemp(kMaxOverall, emp)
+  # The normaliser also reads body entries above max(kPrime).
+  bodyLen <- length(emp$body)
+  logEmpZ <- .LogPemp(max(kMaxOverall, bodyLen + 1L, kObs - 1L), emp)
 
   # log P(k' = m | p) = logSumExp_{j=2..m} [ logP_emp(j) + log p + (m-j) log(1-p) ]
   .logPconv <- function(m) {
@@ -740,8 +740,8 @@ MkPrimeModel <- function(
     # EG-001: under the conditional variant (Model B) LogPrior enforces
     # k'_i >= kObs_i (returns -Inf below), so the density must be renormalised
     # over that truncated support. The truncation normaliser is
-    # Z_i(p) = sum_{k >= kObs_i} P(k | p) = 1 - sum_{m'=2}^{kObs_i-1} P(m' | p)
-    # (total mass over k >= 2 is 1; see proofs/kprime-priors.md s4.3). No-op
+    # Z_i(p) = sum_{k >= kObs_i} P(k | p) (see proofs/kprime-priors.md s4.3),
+    # summed below as positive terms. No-op
     # when kObs_i <= 2 (empty below-sum => Z_i = 1 => log Z_i = 0). Z_i depends
     # on p, so this term is NOT absorbed by MH ratios that vary p.
     # Under the unconditional variant (Model A) the prior lives on the full
@@ -749,16 +749,26 @@ MkPrimeModel <- function(
     logZ <- 0.0
     ko <- kObs[idx]
     if (!unconditional && ko > 2L) {
-      belowMass <- 0.0
-      for (mm in seq.int(2L, ko - 1L)) {
-        belowMass <- belowMass + exp(.logPconv(mm))
+      # Z_i as a sum of positive terms,
+      #   sum_{j<kObs} P_emp(j) (1-p)^(kObs-j) + sum_{j>=kObs} P_emp(j),
+      # since 1 - sum_{m'<kObs} P(m'|p) cancels catastrophically near kObs = 50.
+      below <- seq.int(2L, ko - 1L)
+      logTerms <- logEmpZ[below - 1L] + (ko - below) * log1mP
+      bodyAbove <- seq_len(max(bodyLen + 1L - ko + 1L, 0L)) + ko - 1L
+      logTerms <- c(logTerms, logEmpZ[bodyAbove - 1L])
+      if (emp$tail_start_p > 0 && emp$tail_decay > 0) {
+        j0 <- max(ko, emp$tail_start_k, bodyLen + 2L)
+        logTerms <- c(logTerms, log(emp$tail_start_p) +
+                        (j0 - emp$tail_start_k) * log(emp$tail_decay) -
+                        log1p(-emp$tail_decay))
       }
-      Zi <- 1.0 - belowMass
-      if (!is.finite(Zi) || Zi <= 0) {
+      finite <- is.finite(logTerms)
+      if (!any(finite)) {
         # Return:
         return(-Inf)
       }
-      logZ <- log(Zi)
+      mx <- max(logTerms[finite])
+      logZ <- mx + log(sum(exp(logTerms[finite] - mx)))
     }
     total <- total + lpm - logZ
   }
