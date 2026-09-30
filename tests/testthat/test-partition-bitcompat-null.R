@@ -35,7 +35,11 @@
 # normalised to mean rate 1 (issue #212), a likelihood change that no pin
 # can undo, and again on 2026-09-24 when RunMkPrime began putting the start
 # tree's tips in data order (issue #224): the merge base given the pinned tree
-# renumbered to data order reproduces the new payload bit for bit. The 2026-05-20 reference delegated its starting
+# renumbered to data order reproduces the new payload bit for bit. It was
+# regenerated again on 2026-09-30 when slice stepping out took Neal's
+# randomised split of its budget (issue #281), which draws one more uniform
+# per slice call: with every slice move dropped from the schedule, the merge
+# base and the branch give bit-identical payloads. The 2026-05-20 reference delegated its starting
 # topology to TreeSearch::AdditionTree(), so it silently depended on the
 # installed version of a Suggests package and no CI job could ever reproduce
 # it; see helper-partition-ref.R.
