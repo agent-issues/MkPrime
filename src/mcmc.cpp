@@ -253,7 +253,9 @@ struct McmcState {
   // When data->marginalK is true, the marginal evaluator stores per-(char,
   // ko) raw log-likelihoods (no prior, no β) flat in `charLLCache` with
   // stride kMaxKprimeCand. `charLLNCand[ti]` is the number of valid ko
-  // slots for char ti (after early termination). `charLLCacheReady` is
+  // slots for char ti (after early termination at the fill p; readers
+  // re-derive the support at their own p with marginal_support_at_p).
+  // `charLLCacheReady` is
   // true iff the cache is consistent with the current
   // (parent, child, edgeLen, rateLoss, rateLogSd, rateNeo) — that is, the
   // cache is invalidated on every move except case 30 (mh_logit_p), since
@@ -467,8 +469,10 @@ static double cpp_log_prior(
         lp += numer;
         // EG-001: under the conditional variant (Model B), LogPrior enforces
         // k'_i >= kObs_i, so renormalise over that truncated support.
-        //   Z_i(p) = sum_{k>=kObs_i} P(k|p) = 1 - sum_{m'=2}^{kObs_i-1} P(m'|p)
-        // (total mass over k>=2 is 1; proofs/kprime-priors.md s4.3). No-op when
+        //   Z_i(p) = sum_{k>=kObs_i} P(k|p)
+        //          = sum_{j<kObs_i} P_emp(j) (1-p)^(kObs_i-j) + sum_{j>=kObs_i} P_emp(j)
+        // summed as positive terms: 1 - sum_{m'<kObs_i} P(m'|p) cancels
+        // catastrophically once kObs_i nears 50 (#259). No-op when
         // kObs_i <= 2. Z_i depends on p, so it is NOT absorbed by p-varying MH.
         // Under the unconditional variant (Model A) the prior lives on the full
         // support k' >= 2 with Z_i == 1; the likelihood enforces the k' >= kObs
@@ -476,14 +480,35 @@ static double cpp_log_prior(
         if (!data.unconditionalPrior) {
           int kobs_i = data.kObs[gi];
           if (kobs_i > 2) {
-            double belowMass = 0.0;
-            for (int mm = 2; mm < kobs_i; ++mm) {
-              double lpmm = logPconv(mm);
-              if (std::isfinite(lpmm)) belowMass += std::exp(lpmm);
+            terms.clear();
+            // Every j below kObs_i, and body entries at or above it.
+            for (int j = 2; j < std::max(kobs_i, bodyLen + 2); ++j) {
+              const int bodyIdx = j - 2;
+              const double logPemp = bodyIdx < bodyLen
+                ? data.empLogBody[bodyIdx]
+                : (data.empTailStartK > 0 && j >= data.empTailStartK &&
+                   std::isfinite(data.empLogTailStartP) && std::isfinite(logQ))
+                  ? data.empLogTailStartP + (j - data.empTailStartK) * logQ
+                  : R_NegInf;
+              if (!std::isfinite(logPemp)) continue;
+              terms.push_back(j < kobs_i ? logPemp + (kobs_i - j) * log1mP
+                                         : logPemp);
             }
-            double Zi = 1.0 - belowMass;
-            if (!(Zi > 0.0) || !std::isfinite(Zi)) return R_NegInf;
-            lp -= std::log(Zi);
+            // Geometric tail beyond the body, from j0 = max(kObs_i, tail start).
+            const int tailFrom = std::max(data.empTailStartK, bodyLen + 2);
+            if (data.empTailStartK > 0 && std::isfinite(data.empLogTailStartP) &&
+                std::isfinite(logQ)) {
+              const int j0 = std::max(kobs_i, tailFrom);
+              terms.push_back(data.empLogTailStartP +
+                              (j0 - data.empTailStartK) * logQ -
+                              std::log1p(-data.empTailDecay));
+            }
+            double mx = R_NegInf;
+            for (double t : terms) if (t > mx) mx = t;
+            if (!std::isfinite(mx)) return R_NegInf;
+            double sumExp = 0.0;
+            for (double t : terms) sumExp += std::exp(t - mx);
+            lp -= mx + std::log(sumExp);
           }
         }
       }
@@ -4215,7 +4240,18 @@ void compute_per_kprime_log_lik(
 
       const PartInfo& part = data->parts[tp.partIdx];
 
-      // M-164: prior-ceiling pre-filter for ko ≥ 2.
+      // M-164: prior-ceiling pre-filter for ko ≥ 2, taking the best corrected
+      // LL so far as a ceiling on later candidates. That ceiling is not exact:
+      // with relabel on, the corrected LL rises in k (for a minimal history by
+      // (k)_kObs / (k (k−1)^(kObs−1)), increasing toward 1). The truncation
+      // stays negligible because the total rise is bounded by about
+      // R(kObs) = (kObs−1) log(kObs−1) − lgamma(kObs): 0.7 nats at kObs = 3,
+      // 5.1 at 8, 12.7 at 16. Each skipped weight is then below
+      // max + cutoff + (rise remaining), and the rise is front-loaded
+      // (log kObs − 1 in the first step). R(kObs) reaches |cutoff| near
+      // kObs = 29, beyond which this bound alone no longer guarantees a
+      // negligible truncation. The post-evaluation stop below rests on the
+      // same bound (#260).
       // Use representative (first) trans index per pattern — all sharing a
       // pattern have identical weights so terminate together.
       if (ko >= 2) {
@@ -4364,7 +4400,9 @@ void compute_per_kprime_log_lik(
           if (w > charMaxLogW[ti]) charMaxLogW[ti] = w;
         }
 
-        // Termination check: representative ti0 holds the same charMaxLogW as all
+        // Termination check: stop at the first weight below the cutoff; later
+        // weights can exceed it only by the bounded relabel rise (see the
+        // pre-filter). Representative ti0 holds the same charMaxLogW as all
         // others in the group (identical weights throughout), so one check suffices.
         int ti0 = pa.patTrans[localPat][0];
         if (!R_FINITE(ll) || w < charMaxLogW[ti0] + kKprimeLogCutoff) {
@@ -4379,6 +4417,43 @@ void compute_per_kprime_log_lik(
       pa.activePatterns = std::move(stillActive);
     }
   }
+}
+
+
+// ---------------------------------------------------------------------------
+// marginal_support_at_p — replays compute_per_kprime_log_lik's termination
+// (β = 1, geometric prior) on one character's cached raw LLs, returning how
+// many leading candidates the cold sweep keeps at p. That support depends on
+// p, so a cache filled at one p cannot be summed over its stored length at
+// another: a lower p favours a tail the fill never evaluated (#255). Returns
+// -1 when the replay needs a candidate beyond the nRaw the fill evaluated;
+// the caller must then refill cold. Exits mirror the sweep in order: the
+// ko >= 2 pre-filter before evaluation, then a non-finite LL or a weight
+// below the cutoff (candidate kept), then the cap koMax. Writes each kept
+// candidate's weight to w, if given.
+// ---------------------------------------------------------------------------
+
+static int marginal_support_at_p(const double* rawLL, int nRaw, int koMax,
+                                 double logP, double log1mP,
+                                 double* w = nullptr) {
+  double maxLL = R_NegInf;
+  double maxW  = R_NegInf;
+  for (int ko = 0; ko < koMax; ++ko) {
+    const double logPrior = logP + ko * log1mP;
+    if (ko >= 2 && maxLL + logPrior < maxW + kKprimeLogCutoff) return ko;
+    if (ko >= nRaw) return -1;
+    const double ll = rawLL[ko];
+    if (!R_FINITE(ll)) {
+      if (w) w[ko] = R_NegInf;
+      return ko + 1;
+    }
+    const double wKo = ll + logPrior;
+    if (w) w[ko] = wKo;
+    if (ll > maxLL) maxLL = ll;
+    if (wKo > maxW) maxW = wKo;
+    if (wKo < maxW + kKprimeLogCutoff) return ko + 1;
+  }
+  return koMax;
 }
 
 
@@ -4484,13 +4559,45 @@ double cpp_log_likelihood_marginal(
   const double logZA = mkp::log1m_exp((K - 1) * log1mP);
 
   // Cache fast-path: if the charLL cache is valid, skip the helper call
-  // and recompute the per-char logSumExp against the current p-weights.
+  // and recompute the per-char logSumExp against the current p-weights, over
+  // the support the cold sweep would keep at this p. If any character needs
+  // a candidate the fill never evaluated, fall through to a cold refill.
   bool useCache = fillCharLLCache && data.marginalK && state.charLLCacheReady &&
                   (int)state.charLLNCand.size() == nTrans &&
                   (int)state.charLLCache.size() ==
                     nTrans * kMaxKprimeCand;
 
-  if (!useCache) {
+  if (useCache) {
+    double cachedLL = totalLL;
+    for (int ti = 0; ti < nTrans; ++ti) {
+      const int kObs_ti = data.kObs[data.transIdxGlobal[ti]];
+      const int koMax = std::max(0, std::min(kMaxKprimeCand, K - kObs_ti + 1));
+      double wBuf[kMaxKprimeCand];
+      const int nCand = marginal_support_at_p(
+        &state.charLLCache[ti * kMaxKprimeCand], state.charLLNCand[ti], koMax,
+        logP, log1mP, wBuf);
+      if (nCand < 0) { useCache = false; break; }
+      double mx = R_NegInf;
+      for (int c = 0; c < nCand; ++c)
+        if (R_FINITE(wBuf[c]) && wBuf[c] > mx) mx = wBuf[c];
+      if (!R_FINITE(mx)) { cachedLL = R_NegInf; continue; }
+      double s = 0.0;
+      for (int c = 0; c < nCand; ++c)
+        if (R_FINITE(wBuf[c])) s += std::exp(wBuf[c] - mx);
+      // MARGINAL-K-TRUNC-001: nCand <= koMax applies the k<=K cap; only the
+      // -logZ renormaliser is applied here.
+      double charLL = mx + std::log(s);
+      if (uncond) {
+        charLL += (kObs_ti - 2) * log1mP - logZA;                       // Model A
+      } else {
+        charLL -= mkp::log1m_exp((K - kObs_ti + 1) * log1mP);           // Model B
+      }
+      if (R_FINITE(cachedLL)) cachedLL += charLL;
+    }
+    if (useCache) return cachedLL;
+  }
+
+  {
     // Compute per-(char, ko) Gibbs weights via the PR-A helper at β = 1.
     // For the geometric arm these weights are LL + log P(u|p) — exactly
     // what the marginal logSumExp wants.
@@ -4572,39 +4679,6 @@ double cpp_log_likelihood_marginal(
     if (fillCharLLCache) state.charLLCacheReady = true;
     return totalLL;
   }
-
-  // Cache fast-path: reuse stored raw charLL, only re-do the logSumExp
-  // against the new logPriorByU weights.
-  for (int ti = 0; ti < nTrans; ++ti) {
-    const int nCand = state.charLLNCand[ti];
-    double mx = R_NegInf;
-    // Compute weights into a small local buffer to avoid double-exp cost.
-    double wBuf[kMaxKprimeCand];
-    for (int c = 0; c < nCand; ++c) {
-      double rawLL = state.charLLCache[ti * kMaxKprimeCand + c];
-      double w = R_FINITE(rawLL)
-        ? (rawLL + logPriorByU[c])
-        : R_NegInf;
-      wBuf[c] = w;
-      if (R_FINITE(w) && w > mx) mx = w;
-    }
-    if (!R_FINITE(mx)) { totalLL = R_NegInf; continue; }
-    double s = 0.0;
-    for (int c = 0; c < nCand; ++c)
-      if (R_FINITE(wBuf[c])) s += std::exp(wBuf[c] - mx);
-    // MARGINAL-K-TRUNC-001: the k<=K cap is INHERITED here via charLLNCand[ti]
-    // (= nEff, set capped during the fill above), so the loops already stop at
-    // k=K; only the -logZ renormaliser is applied here.
-    double charLL = mx + std::log(s);
-    const int kObs_ti = data.kObs[data.transIdxGlobal[ti]];
-    if (uncond) {
-      charLL += (kObs_ti - 2) * log1mP - logZA;                       // Model A
-    } else {
-      charLL -= mkp::log1m_exp((K - kObs_ti + 1) * log1mP);           // Model B
-    }
-    if (R_FINITE(totalLL)) totalLL += charLL;
-  }
-  return totalLL;
 }
 
 
@@ -5373,8 +5447,28 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       const bool   uncond = data->unconditionalPrior;
       const int    K      = data->kprimeTruncK;
 
-      // --- Step 1: impute u_i ~ Categorical(charLogW[i,·]) over the cached
-      //     support {0..nEff_i-1}; accumulate S = Σ u_i and (Model A) the shift
+      // Impute over the support the marginal sums at oldP. A cache filled at a
+      // higher p can stop short of it; refill cold at oldP rather than skip,
+      // since a skip decided by the current state need not preserve the target.
+      std::vector<int> support(nTrans);
+      for (int pass = 0; pass < 2; ++pass) {
+        bool complete = true;
+        for (int i = 0; i < nTrans && complete; ++i) {
+          const int kObsi = data->kObs[data->transIdxGlobal[i]];
+          const int koMax = std::max(0, std::min(kMaxKprimeCand, K - kObsi + 1));
+          support[i] = marginal_support_at_p(
+            &state->charLLCache[(size_t)i * kMaxKprimeCand],
+            state->charLLNCand[i], koMax, logP, log1mP);
+          complete = support[i] >= 0;
+        }
+        if (complete) break;
+        if (pass == 1) return false;
+        state->charLLCacheReady = false;
+        compute_full_loglik(*data, *state);
+      }
+
+      // --- Step 1: impute u_i ~ Categorical(charLogW[i,·]) over the
+      //     support {0..nEff_i-1} at oldP; accumulate S = Σ u_i and (Model A) the shift
       //     c_A = Σ (kObs_i - 2). charLogW[i,c] = charLLCache[i,c] + logP +
       //     c·log1mP (the evaluator's per-char logSumExp argument); g_i(p) and
       //     Z_i(p) are u-independent and cancel out of the categorical.
@@ -5383,7 +5477,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       for (int i = 0; i < nTrans; ++i) {
         const int gi    = data->transIdxGlobal[i];
         const int kObsi = data->kObs[gi];
-        const int nEff  = state->charLLNCand[i];
+        const int nEff  = support[i];
         if (nEff <= 0) return false;  // empty support (kObs_i > K): degenerate
         const double* rawRow =
           &state->charLLCache[(size_t)i * kMaxKprimeCand];
@@ -5449,16 +5543,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
 
       if (std::log(R::unif_rand()) < logAlpha) {
         state->p = pStar;
-        // The charLL cache's candidate SUPPORT (nEff per char) is p-dependent:
-        // it is the early-termination set chosen at FILL-TIME p. The raw LLs are
-        // p-independent, but a large downward p-jump fattens the geometric tail
-        // P(u|p)=p(1-p)^u, moving non-negligible mass onto candidates the warm
-        // cache never stored — so the warm fast-path would UNDERCOUNT. Force a
-        // COLD re-fill at p* (re-derives the support via pruning + M-164
-        // early-termination at p*): this gives a correct committed logLik AND
-        // leaves the cache appropriate for the NEXT move's imputation. Same
-        // force-cold idiom as the FREEZE-003 weighted-move re-enable. (The warm
-        // shortcut is only valid for mh_logit_p's small steps; case 30 keeps it.)
+        // Commit the cold marginal at p*, refilling the cache there.
         state->charLLCacheReady = false;
         state->logLik   = compute_full_loglik(*data, *state);
         state->logPrior = compute_log_prior(*data, *state);
@@ -6010,9 +6095,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   // Marginal-k: on rejection of a non-30 move, the cache contents are
   // stale (they were filled against the proposed parent/child/edgeLen).
   // Invalidate so the next marginal eval rebuilds against the rolled-
-  // back state. For case 30 (p-only) the cache was not written during
-  // the proposal (cache path skipped re-pruning) and is independent of
-  // p, so leave it valid.
+  // back state. For case 30 (p-only) the tree is unchanged, and any refill
+  // at the proposed p stored p-independent raw LLs over a support that
+  // covers the current p, so leave it valid.
   //
   // FU-3 Tier 2 mirrors charLLCacheReady on rejection: any subtree CLs
   // written during partial-CL evaluation (FU-3b future work) are

@@ -24,7 +24,8 @@
 # Single-step bit-identity check. Build a marginal-k state at known
 # (tree, mu, p_init). Fire one accepted case-30 move via do_move_cpp.
 # Read state->logLik (must reflect the new p under the fix) and compare
-# to an independent fresh recompute via eval_full_loglik_cpp.
+# to the forced-cold logLik of a fresh pointer built at the new p.
+# (eval_full_loglik_cpp would go through the warm-cache path under test.)
 #
 # Pre-fix outcome: state->logLik == L(p_init) (stale, because case-30
 #   takes the `!likChanges` branch and reuses state->logLik in MH). The
@@ -95,8 +96,8 @@
 test_that("marginal-k: case-30 p-move writes the new marginal LL to state->logLik", {
 
   # Direct bit-identity check: after an accepted case-30 move under
-  # marginal-k, state->logLik must equal a fresh independent recompute
-  # (eval_full_loglik_cpp) at the new p.
+  # marginal-k, state->logLik must equal a cold recompute on a fresh pointer
+  # at the new p.
   #
   # Pre-fix:  case 30 takes the `!likChanges` branch, sets
   #   newLogLik = state->logLik, and state->logLik is therefore
@@ -109,10 +110,12 @@ test_that("marginal-k: case-30 p-move writes the new marginal LL to state->logLi
   #   marginal-k and writes newLogLik (= L_marg(new p)) to state->logLik
   #   on acceptance. The two values agree to FP noise.
 
-  p_init <- 0.55
+  # A fill at high p followed by a large drop also exercises the support the
+  # warm cache must re-derive at the new p (#255).
+  p_init <- 0.95
   X <- .pmove_build_ptrs(p_init)
 
-  # Fire case-30 until acceptance with a noticeable p shift.
+  # Fire case-30 until acceptance with a large drop in p.
   accepted <- FALSE
   p_new <- p_init
   for (trial in seq_len(500L)) {
@@ -126,17 +129,17 @@ test_that("marginal-k: case-30 p-move writes the new marginal LL to state->logLi
                       beta              = 1.0)
     if (ok) {
       p_new <- get_mcmc_state(X$statePtr)$p
-      if (abs(p_new - p_init) > 0.02) {
+      if (p_new < 0.5) {
         accepted <- TRUE
         break
       }
     }
   }
   expect_true(accepted,
-              label = "A case-30 move with |delta p| > 0.02 should be accepted within 500 tries")
+              label = "A case-30 move to p < 0.5 should be accepted within 500 tries")
 
   L_stored <- get_mcmc_state(X$statePtr)$logLik
-  L_fresh  <- eval_full_loglik_cpp(X$dataPtr, X$statePtr)
+  L_fresh  <- get_mcmc_state(.pmove_build_ptrs(p_new)$statePtr)$logLik
   expect_true(is.finite(L_stored))
   expect_true(is.finite(L_fresh))
 
@@ -161,7 +164,8 @@ test_that("marginal-k: case-30 p-move writes the new marginal LL to state->logLi
                               ". If this fails, src/mcmc.cpp:5142 is excluding ",
                               "case 30 from `likChanges` under marginal-k -- the ",
                               "MH ratio is missing the LL contribution and the ",
-                              "chain is random-walking on p."))
+                              "chain is random-walking on p; or the warm cache ",
+                              "summed a support chosen at another p (#255)."))
 })
 
 # ---------------------------------------------------------------------------
