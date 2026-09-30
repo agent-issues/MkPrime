@@ -11,9 +11,9 @@ OUT_DIR     <- "dev/pilots/2026-05-12-prior-validation/analysis"
 
 # Ground truth, reordered into the character order the sampler actually used.
 #
-# CORRECTED 2026-09-19 (#54). `run_one.R` builds its matrix from
+# CORRECTED 2026-09-19 (#54). Until dee5668, `run_one.R` built its matrix from
 # `sort(list.files(..., "^chr[0-9]+\\.nex$"))`, which is LEXICAL --
-# chr1, chr10, chr11, ..., chr2 -- so `kPrime_i` is the i-th lexically sorted
+# chr1, chr10, chr11, ..., chr2 -- so `kPrime_i` was the i-th lexically sorted
 # file. `ground_truth.csv` is in NUMERIC order. This function used to return
 # the numeric-order rows and every caller below paired them positionally
 # against lexical-order posteriors, so each character's posterior was compared
@@ -24,21 +24,32 @@ OUT_DIR     <- "dev/pilots/2026-05-12-prior-validation/analysis"
 # both arms track at about +0.31. Marginal statistics -- mean, median, the
 # whole u_post distribution -- are exactly invariant, because the error permutes
 # a multiset; only anything paired per character changes.
-# `charIdx` is the summary's recorded character order; summaries without one
-# came from runs that sorted characters lexically.
-gt_for <- function(task, charIdx = NULL) {
+# `charIdx` is the summary's recorded character order. A summary without one
+# cannot say which order its run used -- runs resumed across dee5668 mixed both
+# (#286) -- so it is refused rather than assumed lexical.
+gt_for <- function(task, charIdx) {
+  if (is.null(charIdx)) {
+    stop(task, " records no char_idx, so its character order is unknown")
+  }
   tree <- as.integer(sub("^t([0-9]+).*", "\\1", task))
   rep  <- as.integer(sub(".*_r([0-9]+)$", "\\1", task))
   tr   <- sprintf("tree_%02d", tree)
   rp   <- sprintf("rep_%02d",  rep)
   gt   <- read.csv(file.path(GT_ROOT, tr, rp, "ground_truth.csv"))
 
-  if (is.null(charIdx)) {
-    files <- list.files(file.path(GT_ROOT, tr, rp), "^chr[0-9]+\\.nex$")
-    charIdx <- as.integer(sub("^chr([0-9]+)\\.nex$", "\\1", sort(files)))
-  }
-  stopifnot(setequal(charIdx, gt$char_idx), !anyDuplicated(charIdx))
+  # Invariant characters are dropped before the MCMC, so `charIdx` may cover
+  # only a subset of ground_truth.csv.
+  stopifnot(all(charIdx %in% gt$char_idx), !anyDuplicated(charIdx))
   gt[match(charIdx, gt$char_idx), , drop = FALSE]
+}
+
+# A length mismatch means the posterior and the truth describe different
+# characters; dropping the task silently hid that (#293).
+check_lengths <- function(task, kPost, gt) {
+  if (length(kPost) != nrow(gt)) {
+    stop(sprintf("%s: %d posterior k' values but %d characters", task,
+                 length(kPost), nrow(gt)))
+  }
 }
 
 # k' >= kObs holds by construction, so u_post < 0 is impossible for a correctly
@@ -63,7 +74,7 @@ geo_per <- do.call(rbind, lapply(geo_files, function(f) {
   x <- readRDS(f)
   gt <- gt_for(x$tag, x$char_idx)
   k_post <- unname(x$kp_means)
-  if (length(k_post) != nrow(gt)) return(NULL)
+  check_lengths(x$tag, k_post, gt)
   data.frame(
     prior  = "geo",
     task   = x$tag,
@@ -83,7 +94,7 @@ eg_per_full <- do.call(rbind, lapply(seq_along(eg_post), function(i) {
   task <- if (!is.null(r$task)) r$task else names(eg_post)[i]
   k_post <- r$k_post
   gt   <- gt_for(task, r$char_idx)
-  if (length(k_post) != nrow(gt)) return(NULL)
+  check_lengths(task, k_post, gt)
   data.frame(
     prior  = "EG",
     task   = task,

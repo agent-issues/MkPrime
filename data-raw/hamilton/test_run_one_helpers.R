@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-## Unit checks for the four helpers run_one.R gained in the area-4 pass.
+## Unit checks for the helpers run_one.R uses to guard its inputs and outputs.
 ##
 ## Run from the repository root:
 ##   Rscript data-raw/hamilton/test_run_one_helpers.R
@@ -10,9 +10,11 @@
 suppressPackageStartupMessages(library(MkPrime))
 
 src   <- parse("data-raw/hamilton/run_one.R")
-wanted <- c(".kObsFromMatrix", ".UPostMeans", ".BURNIN_FRAC", ".arm_own_files")
+wanted <- c(".kObsFromMatrix", ".UPostMeans", ".BURNIN_FRAC", ".arm_own_files",
+            ".validate_ckp", ".IsCorruptCheckpoint", ".run_arm",
+            ".CheckCharOrder", ".VariableCharIdx", ".SaveResult", ".BUILD_SHA")
 env   <- new.env(parent = globalenv())
-## .arm_own_files() closes over the script's ckp_dir.
+## The helpers close over the script's ckp_dir.
 env$ckp_dir <- tempfile("ckp"); dir.create(env$ckp_dir)
 found <- character(0L)
 for (e in src) {
@@ -29,7 +31,7 @@ ok <- function(label, cond) {
   if (!isTRUE(cond)) stop(label)
 }
 
-## ---- .kObsFromMatrix ---------------------------------------------------------
+## ---- .kObsFromMatrix --------------------------------------------------------
 mat <- cbind(
   plain      = c("0", "1", "0", "1"),
   with_gaps  = c("0", "1", "?", "-"),
@@ -49,12 +51,13 @@ old <- apply(mat, 2L, function(col) length(unique(col[!col %in% c("?", "-")])))
 ok("old expression did inflate the polymorphic columns",
    old[["polymorph"]] == 3L && old[["paren_poly"]] == 3L)
 
-## ---- .arm_own_files ----------------------------------------------------------
+## ---- .arm_own_files ---------------------------------------------------------
 ## The shared per-(tree, rep) directory as every arm leaves it.
 siblings <- c(
   "mk_checkpoint.rds", "mk_run_1.log", "mk_run_2.log",
   "mk_trees_1.nwk", "mk_trees_2.nwk", "mk_trees.nwk", "mk_run.log",
-  "mk_k9_checkpoint.rds", "mk_k9_run_1.log", "mk_k9_trees_1.nwk",
+  "mk_run_1.log.gz", "mk_char_order.csv",
+  "mk_k9_checkpoint.rds", "mk_k9_run_1.log.gz", "mk_k9_run_1.log", "mk_k9_trees_1.nwk",
   "mk_k15_run_1.log", "mk_k24_run_1.log", "mk_k40_trees_2.nwk",
   "mk_kp1_checkpoint.rds", "mk_kp2_run_1.log", "mk_ktrue_trees_1.nwk",
   "mk_tlshrink_run_2.log",
@@ -68,8 +71,8 @@ invisible(file.create(file.path(env$ckp_dir, siblings)))
 own_mk  <- basename(env$.arm_own_files("mk"))
 own_mkp <- basename(env$.arm_own_files("mkp"))
 
-ok("mk claims its own seven files", setequal(own_mk, c(
-  "mk_checkpoint.rds", "mk_run_1.log", "mk_run_2.log",
+ok("mk claims its own eight files, gzipped log included", setequal(own_mk, c(
+  "mk_checkpoint.rds", "mk_run_1.log", "mk_run_2.log", "mk_run_1.log.gz",
   "mk_trees_1.nwk", "mk_trees_2.nwk", "mk_trees.nwk", "mk_run.log")))
 ok("mk claims nothing of mk_k9 / mk_kp1 / mk_ktrue / mk_tlshrink",
    !any(grepl("^mk_(k[0-9]|kp[0-9]|ktrue|tlshrink)", own_mk)))
@@ -82,10 +85,10 @@ ok("the job sentinel is never purged",
 
 ## The old prefix glob, for contrast: this is the blast radius in #98.
 old_mk <- grep("^mk_", siblings, value = TRUE)
-ok("old prefix glob did reach ten foreign files",
-   sum(!old_mk %in% own_mk) == 10L)
+ok("old prefix glob did reach eleven foreign files",
+   sum(!old_mk %in% own_mk & old_mk != "mk_char_order.csv") == 11L)
 
-## ---- .UPostMeans -------------------------------------------------------------
+## ---- .UPostMeans ------------------------------------------------------------
 ## Two runs whose k' means differ sharply, so reading one run or skipping the
 ## burn-in both give visibly different answers from reading both correctly.
 nChar <- 3L
@@ -135,5 +138,124 @@ ok("no kPrime_ columns gives NA per character",
    identical(env$.UPostMeans(res_nokp, mkd)$means, rep(NA_real_, nChar)))
 
 ok("default burn-in fraction is 25%", identical(env$.BURNIN_FRAC, 0.25))
+
+## ---- .IsCorruptCheckpoint / .run_arm ----------------------------------------
+env$ckp_dir <- tempfile("purge"); dir.create(env$ckp_dir)
+validCkp <- list(runs = list(1), mcmc = list(nRuns = 1L), iter = 10L)
+ArmFiles <- function() basename(env$.arm_own_files("mkp"))
+Populate <- function() {
+  saveRDS(validCkp, file.path(env$ckp_dir, "mkp_checkpoint.rds"))
+  writeLines("Sample", file.path(env$ckp_dir, "mkp_run_1.log"))
+}
+FailOnce <- function(msg) {
+  calls <- new.env()
+  calls$n <- 0L
+  function() {
+    calls$n <- calls$n + 1L
+    if (calls$n == 1L) stop(msg) else "resumed"
+  }
+}
+
+## Real messages from R/RunMkPrime.R that name the checkpoint but are not
+## corruption: the old regex purged on every one of them (#289).
+for (msg in c("Unsupported checkpoint version 3.",
+              "Checkpoint holds state for 1 of 2 runs.",
+              "Resumed move set differs from the one this checkpoint was written with.",
+              "Checkpointed move counts do not match the rebuilt move schedule.")) {
+  Populate()
+  res <- tryCatch(env$.run_arm(FailOnce(msg), "mkp"), error = identity)
+  ok(paste0("not purged: ", substr(msg, 1L, 40L)),
+     inherits(res, "error") &&
+       setequal(ArmFiles(), c("mkp_checkpoint.rds", "mkp_run_1.log")))
+}
+ok("old regex would have purged those",
+   grepl("reading from connection|checkpoint",
+         "Unsupported checkpoint version 3.", ignore.case = TRUE))
+
+Populate()
+ok("a connection read error purges and retries",
+   identical(env$.run_arm(FailOnce("error reading from connection"), "mkp"),
+             "resumed") && !length(ArmFiles()))
+
+Populate()
+writeLines("not an rds", file.path(env$ckp_dir, "mkp_checkpoint.rds"))
+ok("a checkpoint failing .validate_ckp purges whatever the message",
+   identical(env$.run_arm(FailOnce("anything at all"), "mkp"), "resumed") &&
+     !length(ArmFiles()))
+
+## ---- .CheckCharOrder --------------------------------------------------------
+env$ckp_dir <- tempfile("order"); dir.create(env$ckp_dir)
+numeric <- file.path("rep", sprintf("chr%d.nex", 1:11))
+lexical <- sort(numeric)
+orderCsv <- file.path(env$ckp_dir, "mkp_eg_char_order.csv")
+ckpFile  <- file.path(env$ckp_dir, "mkp_eg_checkpoint.rds")
+
+env$.CheckCharOrder("mkp_eg", numeric)
+rec <- read.csv(orderCsv)
+ok("first start records the order", identical(rec$file, basename(numeric)) &&
+     identical(rec$char_idx, 1:11))
+
+saveRDS(validCkp, ckpFile)
+ok("resume under the recorded order proceeds",
+   !inherits(tryCatch(env$.CheckCharOrder("mkp_eg", numeric), error = identity),
+             "error"))
+
+refusal <- tryCatch(env$.CheckCharOrder("mkp_eg", lexical), error = identity)
+ok("resume under another order is refused", inherits(refusal, "error"))
+ok("refusal leaves the saved state in place", file.exists(ckpFile) &&
+     identical(read.csv(orderCsv)$file, basename(numeric)))
+ok("refusal names both orders",
+   grepl("chr1.nex chr2.nex chr3.nex", conditionMessage(refusal)) &&
+     grepl("chr1.nex chr10.nex chr11.nex", conditionMessage(refusal)))
+ok("refusal would not trigger the purge",
+   !env$.IsCorruptCheckpoint(refusal, "mkp_eg"))
+
+invisible(file.remove(orderCsv))
+ok("saved state with no recorded order is refused",
+   inherits(tryCatch(env$.CheckCharOrder("mkp_eg", numeric), error = identity),
+            "error") && !file.exists(orderCsv))
+
+invisible(file.remove(ckpFile))
+saveRDS(validCkp, file.path(env$ckp_dir, "mkp_eg_checkpoint_2.rds"))
+ok("a per-run checkpoint alone counts as saved state",
+   inherits(tryCatch(env$.CheckCharOrder("mkp_eg", numeric), error = identity),
+            "error"))
+invisible(file.remove(file.path(env$ckp_dir, "mkp_eg_checkpoint_2.rds")))
+env$.CheckCharOrder("mkp_eg", lexical)
+ok("with no saved state, the new order is recorded",
+   identical(read.csv(orderCsv)$file, basename(lexical)))
+
+## ---- .VariableCharIdx -------------------------------------------------------
+## 11 characters, character 5 invariant: the variable subset is not 1:10.
+taxa <- paste0("t", 1:6)
+mat  <- vapply(1:11, function(i) {
+  if (i == 5L) rep("1", 6L) else as.character(c(0, 1, 0, 1, i %% 3, 0))
+}, character(6L))
+rownames(mat) <- taxa
+tmpNex <- tempfile(fileext = ".nex")
+ape::write.nexus.data(setNames(lapply(seq_along(taxa), function(i) mat[i, ]),
+                               taxa),
+                      file = tmpNex, format = "standard")
+pd <- TreeTools::ReadAsPhyDat(tmpNex)
+ok("invariant character dropped from char_idx",
+   identical(env$.VariableCharIdx(pd, 1:11), c(1:4, 6:11)))
+ok("result aligns with MkPrimeData()'s kObs",
+   length(env$.VariableCharIdx(pd, 1:11)) ==
+     suppressWarnings(MkPrimeData(pd))$nChar)
+ok("wrong-length index is refused",
+   inherits(tryCatch(env$.VariableCharIdx(pd, 1:10), error = identity), "error"))
+
+## ---- .SaveResult ------------------------------------------------------------
+env$out_dir <- tempfile("out"); dir.create(env$out_dir)
+env$arm <- "mkp_eg"
+env$tag <- "t01_r01"
+env$var_char_idx <- c(1:4, 6:11)
+env$.SaveResult(list(stop_reason = "max_time"))
+saved <- readRDS(file.path(env$out_dir, "mkp_eg_t01_r01.rds"))
+ok("result records char_idx", identical(saved$char_idx, c(1:4, 6:11)))
+ok("result records the build sha (NA if unstamped)",
+   is.character(saved$build_sha) && length(saved$build_sha) == 1L &&
+     identical(saved$build_sha, env$.BUILD_SHA))
+ok("result keeps its own fields", identical(saved$stop_reason, "max_time"))
 
 cat("\nALL CHECKS PASSED\n")

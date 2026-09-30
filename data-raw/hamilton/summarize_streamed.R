@@ -1,7 +1,8 @@
 #!/usr/bin/env Rscript
-# Post-hoc summarisation of streamed MCMC output from a TIMEOUT'd
-# RunMkPrime job (the in-R `saveRDS(partial, ...)` never fired because
-# HARNESS-001 graceful-exit didn't trigger before SIGKILL at 8h wall).
+# Post-hoc summarisation of streamed MCMC output from a finished run_one.R
+# task, or -- with --incomplete -- from a TIMEOUT'd one whose in-R
+# `saveRDS(partial, ...)` never fired because HARNESS-001 graceful-exit didn't
+# trigger before SIGKILL at 8h wall.
 #
 # Reads the streamed .log + _trees.nwk files for ONE (tree, rep, arm)
 # task and writes a small RDS summary to
@@ -9,7 +10,7 @@
 #
 # Usage:
 #   Rscript summarize_streamed.R <tree_idx> <rep_idx> <arm> <results_root> \
-#                                <data_root> <out_dir> [n_thin]
+#                                <data_root> <out_dir> [n_thin] [--incomplete]
 #
 # Arguments:
 #   tree_idx      integer 1..26
@@ -19,6 +20,9 @@
 #   data_root     /nobackup/pjjg18/mkprime-files/tree-inference  (for true tree)
 #   out_dir       /nobackup/pjjg18/mkp-study/summary
 #   n_thin        optional integer, default 1000 (target # thinned trees)
+#   --incomplete  summarise a task that has no up-to-date final .rds. Pass it
+#                 only once `sacct` shows the task's job is dead: a live task
+#                 appends to the very files this script reads and cleans up.
 
 .libPaths(c("/nobackup/pjjg18/mkp-study/lib", .libPaths()))
 suppressPackageStartupMessages({
@@ -30,6 +34,8 @@ suppressPackageStartupMessages({
 })
 
 args         <- commandArgs(trailingOnly = TRUE)
+incomplete   <- "--incomplete" %in% args
+args         <- args[args != "--incomplete"]
 tree_idx     <- as.integer(args[1])
 rep_idx      <- as.integer(args[2])
 arm          <- match.arg(args[3], c("mk", "mkp_geo", "mkp_eg", "mkp", "mk_kp1", "mk_kp2", "mk_k9", "mk_k15", "mk_k24", "mk_k40", "mk_ktrue", "mkp_highk", "mkp_logs", "mk_tlshrink"))
@@ -59,6 +65,13 @@ task_dir  <- file.path(results_root, tag)
   if (!length(found)) return(character(0L))
   idx <- as.integer(sub(sprintf("^.*_%s_([0-9]+)\\.%s(\\.gz)?$", suffix, ext),
                         "\\1", basename(found)))
+  # A `.log` beside a `.log.gz` for one run is a fresh chain started after an
+  # earlier pass gzipped the old one; pooling them fuses two chains (#289).
+  if (anyDuplicated(idx)) {
+    dup <- idx[anyDuplicated(idx)]
+    stop("More than one file for run ", dup, ": ",
+         paste(basename(found[idx == dup]), collapse = ", "))
+  }
   found[order(idx)]
 }
 
@@ -89,6 +102,28 @@ cat("  out  : ", out_file,  "\n")
 stopifnot(length(log_files) > 0L, all(file.exists(log_files)),
           length(tree_files) > 0L,
           all(file.exists(tree_files)), file.exists(true_tree_file))
+
+# ---- Refuse a task that may still be running ------------------------------
+# The cleanup below unlinks the tree streams and gzips the logs; on a live task
+# the logger reopens the log per flush and carries on headerless, and the trees
+# are gone (#289). run_one.R writes `<arm>_<tag>.rds` only after the MCMC
+# returns, so that file, newer than everything the run writes, marks a task
+# done. A resubmitted task extending an earlier run leaves the earlier .rds in
+# place, hence the mtime test.
+final_file <- file.path(results_root, sprintf("%s_%s.rds", arm, tag))
+ckp_files  <- list.files(task_dir,
+                         sprintf("^%s_checkpoint(_[0-9]+)?\\.rds$", arm),
+                         full.names = TRUE)
+final_res  <- if (file.exists(final_file)) {
+  tryCatch(readRDS(final_file), error = function(e) NULL)
+}
+task_done  <- !is.null(final_res$stop_reason) &&
+  file.mtime(final_file) >= max(file.mtime(c(log_files, tree_files, ckp_files)))
+if (!task_done && !incomplete) {
+  stop("No up-to-date ", basename(final_file), " with a stop_reason in ",
+       results_root, ": the task may still be running. If `sacct` shows its ",
+       "job is dead, rerun with --incomplete.", call. = FALSE)
+}
 
 # ---- Load character data in the order the MCMC used ------------------------
 # kPrime_<i> in the log refers to position i of run_one.R's character list, so
@@ -125,10 +160,23 @@ file.remove(tmp_nex)
 mkd_local <- MkPrimeData(pd)
 # kObs in the MCMC's character order (matches kPrime_i log column positions).
 kObs_run <- as.integer(mkd_local$kObs)
+# MkPrimeData() drops invariant characters, so kObs_run covers the variable
+# ones only; char_idx must be cut to the same subset or the two misalign from
+# the first invariant on (#293). Same rule as run_one.R's .VariableCharIdx().
+kObs_all <- apply(MkPrime:::.PhyDatToIntMatrix(pd), 2L,
+                  function(col) length(unique(col[!is.na(col)])))
+stopifnot(length(kObs_all) == length(nex_files))
+char_idx <- as.integer(sub("^chr([0-9]+)\\.nex$", "\\1",
+                           basename(nex_files)))[kObs_all > 1L]
+stopifnot(length(char_idx) == length(kObs_run),
+          identical(as.integer(kObs_all[kObs_all > 1L]), kObs_run))
+if (!is.null(final_res$char_idx) && !identical(final_res$char_idx, char_idx)) {
+  stop("char_idx here differs from the one run_one.R recorded in ", final_file)
+}
 cat(sprintf("  char data: %d raw chars -> %d variable (kObs range %d-%d)\n",
             n_char_raw, mkd_local$nChar,
             min(kObs_run), max(kObs_run)))
-rm(mat_list, combined_mat, pd, mkd_local)
+rm(mat_list, combined_mat, pd, mkd_local, kObs_all)
 invisible(gc(verbose = FALSE))
 
 # ---- Read every run's log, drop #-comment rows, drop per-run burn-in --------
@@ -330,10 +378,9 @@ summary_list <- list(
   # kObs paired to kp_means: position i of kObs_run corresponds to kp_means[i].
   # Both are in the MCMC's character order; join on char_idx, never position.
   kObs          = kObs_run,
-  # The numeric character index behind each position, so a consumer can join
-  # on char_idx rather than assume an order (#54).
-  char_idx      = as.integer(sub("^chr([0-9]+)\\.nex$", "\\1",
-                                 basename(nex_files))),
+  # The file index of the variable character at each position of kObs (#54).
+  char_idx      = char_idx,
+  incomplete    = !task_done,
   p_mean        = p_mean,
   last_row      = last_row,
   log_files     = log_files,
@@ -353,9 +400,18 @@ cat(sprintf("  Wrote %s  (%.2f MB)\n", out_file, size_mb))
 #
 # The bulk is the tree streams, so those are removed; the logs, which carry
 # every scalar and every kPrime_ column, are gzipped instead (~10x, and fread
-# reads .gz directly). The checkpoint is kept either way, so a run can still be
-# extended with a longer walltime (see feedback_resumable_runs.md).
-if (file.exists(out_file) && file.info(out_file)$size > 1024L) {
+# reads .gz directly).
+#
+# Not while a checkpoint remains, though: extending that run resumes into a
+# fresh log beside the gzipped one, which the package does not find, and into a
+# tree file holding only the extension, so a re-summary would mix segments
+# (#289). Deleting the checkpoint is the decision that the run is finished.
+if (length(ckp_files)) {
+  cat(sprintf(
+    "  Checkpoint kept (%s): nothing cleaned; delete it and rerun to clean up\n",
+    paste(basename(ckp_files), collapse = ", ")
+  ))
+} else if (file.exists(out_file) && file.info(out_file)$size > 1024L) {
   gone <- tree_files[file.exists(tree_files)]
   if (length(gone) > 0L) unlink(gone)
 
@@ -366,7 +422,7 @@ if (file.exists(out_file) && file.info(out_file)$size > 1024L) {
     }, error = function(e) FALSE)
     if (!ok) cat(sprintf("  WARN: could not gzip %s; left uncompressed\n", f))
   }
-  cat(sprintf("  Cleaned %d tree stream(s), gzipped %d log(s) for %s/%s%s\n",
-              length(gone), length(kept), tag, arm, " (checkpoint kept)"))
+  cat(sprintf("  Cleaned %d tree stream(s), gzipped %d log(s) for %s/%s\n",
+              length(gone), length(kept), tag, arm))
 }
 cat("Done.\n")

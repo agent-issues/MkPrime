@@ -19,6 +19,12 @@ suppressPackageStartupMessages({
 })
 options(warn = 1L)  # print warnings as they happen; avoids spurious parser-error in exit warning summary (mk_ktrue/mk_tlshrink)
 
+# install_mkp.sh writes RemoteSha into DESCRIPTION; older builds lack it (#294).
+.BUILD_SHA <- local({
+  sha <- utils::packageDescription("MkPrime")$RemoteSha
+  if (is.null(sha)) NA_character_ else sha
+})
+
 args      <- commandArgs(trailingOnly = TRUE)
 tree_idx  <- as.integer(args[1])
 rep_idx   <- as.integer(args[2])
@@ -60,12 +66,15 @@ dir.create(ckp_dir, showWarnings = FALSE)
 # Anchoring on the suffixes this arm actually writes closes that: after
 # `^mk_` the next characters must be one of the three literals below, which
 # `k9_run_1.log` is not. The `_[0-9]+` groups are optional so the pre-2026-05-20
-# single-file layout is covered too.
+# single-file layout is covered too. A log gzipped by summarize_streamed.R must
+# go too, or the summariser pools it with the fresh chain as one run (#289).
 .arm_own_files <- function(arm) {
   list.files(
     ckp_dir,
-    pattern = sprintf("^%s_(checkpoint\\.rds|run(_[0-9]+)?\\.log|trees(_[0-9]+)?\\.nwk)$",
-                      arm),
+    pattern = sprintf(
+      "^%s_(checkpoint\\.rds|run(_[0-9]+)?\\.log(\\.gz)?|trees(_[0-9]+)?\\.nwk)$",
+      arm
+    ),
     full.names = TRUE
   )
 }
@@ -158,6 +167,65 @@ if (.cur_job != .prev_job) {
        burninFrac = burninFrac)
 }
 
+# A resumed run restores its per-position k' state unchanged, so resuming under
+# another character order pairs those positions with the wrong characters: the
+# pre- and post-resume segments of one log then describe different characters
+# (#286). The order is recorded at first start and a resume under any other is
+# refused rather than purged -- whether to discard the run is the user's call.
+# State with no record predates the record and used lexical order.
+.CheckCharOrder <- function(arm, nexFiles) {
+  orderFile <- file.path(ckp_dir, sprintf("%s_char_order.csv", arm))
+  current   <- basename(nexFiles)
+  saved     <- list.files(ckp_dir,
+                          sprintf("^%s_checkpoint(_[0-9]+)?\\.rds$", arm))
+  if (!length(saved)) {
+    write.csv(
+      data.frame(
+        position = seq_along(current),
+        file     = current,
+        char_idx = as.integer(sub("^chr([0-9]+)\\.nex$", "\\1", current))
+      ),
+      orderFile,
+      row.names = FALSE
+    )
+    return(invisible(orderFile))
+  }
+  recorded <- if (file.exists(orderFile)) as.character(read.csv(orderFile)$file)
+  if (!identical(recorded, current)) {
+    Shown <- function(x) paste(c(head(x, 12L), if (length(x) > 12L) "..."),
+                               collapse = " ")
+    stop(sprintf(paste(
+      "Refusing to resume %s in %s: its saved state was written under",
+      "character order [%s], but this start reads [%s]. Resuming would pair",
+      "its kPrime_ columns with the wrong characters (#286). To restart,",
+      "delete %s_* there; to resume, restore the recorded order."),
+      arm, ckp_dir,
+      if (is.null(recorded)) "unrecorded, so lexical" else Shown(recorded),
+      Shown(current), arm), call. = FALSE)
+  }
+  invisible(orderFile)
+}
+
+# MkPrimeData() drops invariant characters without saying which, so the
+# surviving file indices are recomputed under its rule and checked against the
+# kObs it returns. Checked here, before the MCMC, so a mismatch costs nothing.
+.VariableCharIdx <- function(pd, charIdx) {
+  kObs <- apply(MkPrime:::.PhyDatToIntMatrix(pd), 2L,
+                function(col) length(unique(col[!is.na(col)])))
+  stopifnot(length(kObs) == length(charIdx),
+            identical(as.integer(kObs[kObs > 1L]),
+                      as.integer(suppressWarnings(MkPrimeData(pd))$kObs)))
+  charIdx[kObs > 1L]
+}
+
+# Every result carries the file index of each variable character, so a
+# consumer joins on char_idx rather than position, and the build it came from.
+.SaveResult <- function(partial) {
+  partial$char_idx  <- var_char_idx
+  partial$build_sha <- .BUILD_SHA
+  saveRDS(partial, file.path(out_dir, sprintf("%s_%s.rds", arm, tag)))
+}
+
 # ---- Locate data -------------------------------------------------------------
 dataset_dir <- file.path(data_root,
   sprintf("tree_%02d/rep_%02d", tree_idx, rep_idx))
@@ -200,15 +268,9 @@ cat(sprintf("  Loaded %d characters, %d taxa\n", n_char_raw, n_taxa_raw))
 # sorted numerically used lexical order (chr1, chr10, ..., chr2); pairing those
 # positionally against ground_truth.csv was EG-003 (#54). The file lets a
 # consumer join on char_idx rather than assume either order.
-write.csv(
-  data.frame(
-    position     = seq_along(nex_files),
-    file         = basename(nex_files),
-    char_idx     = as.integer(sub("^chr([0-9]+)\\.nex$", "\\1",
-                                  basename(nex_files)))
-  ),
-  file.path(ckp_dir, sprintf("%s_char_order.csv", arm)),
-  row.names = FALSE
+.CheckCharOrder(arm, nex_files)
+var_char_idx <- .VariableCharIdx(
+  pd, as.integer(sub("^chr([0-9]+)\\.nex$", "\\1", basename(nex_files)))
 )
 
 # ---- Starting tree: NJ ------------------------------------------------------
@@ -249,11 +311,18 @@ make_mcmc <- function(prefix, thin_iters = 500L) {
   )
 }
 
+# Only corruption is purged. Matching any error that mentioned "checkpoint" also
+# caught an unsupported version or a changed move set, so a package reinstall
+# silently wiped up to 7.5 h of output (#289); those are the user's call.
+.IsCorruptCheckpoint <- function(e, arm) {
+  !.validate_ckp(file.path(ckp_dir, paste0(arm, "_checkpoint.rds"))) ||
+    grepl("reading from connection|unknown input format", conditionMessage(e))
+}
+
 # Retry wrapper for checkpoint read errors
 .run_arm <- function(call_fn, label) {
   tryCatch(call_fn(), error = function(e) {
-    if (grepl("reading from connection|checkpoint", conditionMessage(e),
-              ignore.case = TRUE)) {
+    if (.IsCorruptCheckpoint(e, label)) {
       message(label, " checkpoint error — purging and retrying: ",
               conditionMessage(e))
       unlink(.arm_own_files(label))
@@ -290,7 +359,7 @@ if (arm == "mk") {
     stop_reason = res$stop_reason,
     acceptance  = res$acceptance
   )
-  saveRDS(partial, file.path(out_dir, sprintf("mk_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mk_kp1") {
   # Mk with knownStates = kObs_i + 1 per character (one unobserved state
@@ -319,7 +388,7 @@ if (arm == "mk") {
     stop_reason = res$stop_reason,
     acceptance  = res$acceptance
   )
-  saveRDS(partial, file.path(out_dir, sprintf("mk_kp1_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mkp") {
   mkd_mkp <- MkPrimeData(pd)
@@ -353,7 +422,7 @@ if (arm == "mk") {
     n_runs_read    = up$nRuns,
     burnin_frac    = up$burninFrac
   )
-  saveRDS(partial, file.path(out_dir, sprintf("mkp_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mkp_eg") {
   # Mk' with empirical_geometric prior on k' (convolution of empirical N_obs
@@ -390,7 +459,7 @@ if (arm == "mk") {
     n_runs_read    = up$nRuns,
     burnin_frac    = up$burninFrac
   )
-  saveRDS(partial, file.path(out_dir, sprintf("mkp_eg_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mkp_geo") {
   # Mk' with plain geometric prior on k' (EG-001 pilot arm).
@@ -429,7 +498,7 @@ if (arm == "mk") {
     n_runs_read    = up$nRuns,
     burnin_frac    = up$burninFrac
   )
-  saveRDS(partial, file.path(out_dir, sprintf("mkp_geo_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mk_kp2") {
   # Mk with knownStates = kObs_i + 2 per character (two unobserved states
@@ -454,7 +523,7 @@ if (arm == "mk") {
 
   partial <- list(trees = res$trees, stop_reason = res$stop_reason,
                   acceptance = res$acceptance)
-  saveRDS(partial, file.path(out_dir, sprintf("mk_kp2_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mk_k9") {
   # Mk with knownStates = 9 across all variable characters (fixed ceiling
@@ -479,7 +548,7 @@ if (arm == "mk") {
 
   partial <- list(trees = res$trees, stop_reason = res$stop_reason,
                   acceptance = res$acceptance)
-  saveRDS(partial, file.path(out_dir, sprintf("mk_k9_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mk_k15") {
   # Mk with knownStates = 15 across all variable characters. Tests
@@ -504,7 +573,7 @@ if (arm == "mk") {
 
   partial <- list(trees = res$trees, stop_reason = res$stop_reason,
                   acceptance = res$acceptance)
-  saveRDS(partial, file.path(out_dir, sprintf("mk_k15_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mk_k24") {
   # Mk with knownStates = 24 across all variable characters. High-k
@@ -528,7 +597,7 @@ if (arm == "mk") {
 
   partial <- list(trees = res$trees, stop_reason = res$stop_reason,
                   acceptance = res$acceptance)
-  saveRDS(partial, file.path(out_dir, sprintf("mk_k24_%s.rds", tag)))
+  .SaveResult(partial)
 } else if (arm == "mk_k40") {
   # Mk with knownStates = 40 across all variable characters. Extended
   # endpoint; tests whether the k-ramp continues past k=24.
@@ -551,7 +620,7 @@ if (arm == "mk") {
 
   partial <- list(trees = res$trees, stop_reason = res$stop_reason,
                   acceptance = res$acceptance)
-  saveRDS(partial, file.path(out_dir, sprintf("mk_k40_%s.rds", tag)))
+  .SaveResult(partial)
 } else if (arm == "mkp_highk") {
   # Mk' with geometric prior on k' but a STRONG high-k Beta(1, 20) hyperprior
   # on p: E[p] = 1/21 ≈ 0.048, so E[k'] ≈ kObs + 21. Tests whether Mk' can
@@ -590,7 +659,7 @@ if (arm == "mk") {
     n_runs_read    = up$nRuns,
     burnin_frac    = up$burninFrac
   )
-  saveRDS(partial, file.path(out_dir, sprintf("mkp_highk_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mkp_logs") {
   # Mk' with logseries prior on k': P(k) ∝ c^k / k with c = 0.95. Much heavier
@@ -629,7 +698,7 @@ if (arm == "mk") {
     n_runs_read    = up$nRuns,
     burnin_frac    = up$burninFrac
   )
-  saveRDS(partial, file.path(out_dir, sprintf("mkp_logs_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mk_ktrue") {
   # Mk with knownStates = k_true per character (oracle / ceiling arm).
@@ -675,7 +744,7 @@ if (arm == "mk") {
   partial <- list(trees = res$trees, stop_reason = res$stop_reason,
                   acceptance = res$acceptance,
                   k_true = k_for_mk)
-  saveRDS(partial, file.path(out_dir, sprintf("mk_ktrue_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mk_tlshrink") {
   # Mk (kObs) with an explicit branch-length shrinkage prior.
@@ -713,7 +782,7 @@ if (arm == "mk") {
 
   partial <- list(trees = res$trees, stop_reason = res$stop_reason,
                   acceptance = res$acceptance)
-  saveRDS(partial, file.path(out_dir, sprintf("mk_tlshrink_%s.rds", tag)))
+  .SaveResult(partial)
 }
 
 cat("  Done.\n")
