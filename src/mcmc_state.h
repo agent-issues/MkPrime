@@ -615,7 +615,9 @@ double cpp_log_likelihood_marginal(
 //   L(y_i | tree, μ, k) does NOT depend on p. Therefore neither Tier 1
 //   nor Tier 2 are invalidated by case 30 (mh_logit_p). The per-character
 //   `log P(u | p)` weights are recomputed on each p-move from scratch
-//   (cheap: nTrans × kMaxKprimeCand scalar ops, no pruning).
+//   (cheap: nTrans × kMaxKprimeCand scalar ops, no pruning). The candidate
+//   support is p-dependent, so it is re-derived at the new p; a p that needs
+//   candidates the fill never evaluated forces a cold refill (#255).
 //
 // Invalidation rules (Tier 2 currently mirrors Tier 1):
 //   | Move                        | Tier 1 (charLL)  | Tier 2 (per-(node,k)) |
