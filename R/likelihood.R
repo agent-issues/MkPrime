@@ -33,7 +33,9 @@
 #'   correction, `"variable"` for conditioning on variable characters,
 #'   `"informative"` for conditioning on parsimony-informative characters
 #'   (excludes every pattern in which fewer than two states each occur
-#'   twice or more). Default `"variable"`.
+#'   twice or more; characters with fewer than four observed tips, which
+#'   cannot be informative, are dropped with a message). Default
+#'   `"variable"`.
 #' @param rate_neo Rate scalar for the neomorphic partition relative to
 #'   transformational (which is fixed at 1.0). Default 1.0 (equal rates).
 #' @param relabel Logical. Apply Mk' relabelling correction for
@@ -71,6 +73,25 @@ MkpLogLikelihood <- function(tree, mkd,
       ))
     }
     tree <- TreeTools::RenumberTips(tree, dataTaxa)
+  }
+
+  if (coding == "informative") {
+    informable <- .Informable(mkd)
+    if (!all(informable)) {
+      if (!any(informable)) {
+        cli::cli_abort(
+          "No character has the four observed tips that
+          {.code coding = \"informative\"} needs."
+        )
+      }
+      cli::cli_inform(
+        "Dropping {sum(!informable)} character{?s} with fewer than four
+        observed tips, which cannot be parsimony-informative:
+        {?column/columns} {which(!informable)}."
+      )
+      mkd <- .SubsetMkPrimeData(mkd, informable)
+      if (!is.null(kPrime)) kPrime <- kPrime[informable]
+    }
   }
 
   # Default kPrime: use kObs for transformational, known_k for known, 2 for neo

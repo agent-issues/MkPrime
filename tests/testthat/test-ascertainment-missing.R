@@ -179,6 +179,24 @@ test_that("each character is conditioned on its own observed tips", {
   }
 })
 
+# The C++ evaluator scores all of a partition's masks in one traversal; the
+# R evaluator scores each character on its own. Varied k' gives the masks
+# different deviant-count widths within one batch.
+test_that("batched masked correction matches per-character scoring", {
+  d <- .MissingData(known = FALSE)
+  isTrans <- d$mkd$type == "transformational"
+  kPrime <- d$mkd$kObs
+  kPrime[isTrans] <- rep_len(4:8, sum(isTrans))
+  for (sd in c(0, 0.6)) {
+    expect_equal(
+      .DirectLogLik(d, "informative", 0.7, sd, 1.2, kPrime),
+      MkpLogLikelihood(d$tree, d$mkd, kPrime = kPrime, rate_loss = 0.7,
+                       rate_log_sd = sd, rate_neo = 1.2,
+                       coding = "informative"),
+      tolerance = 1e-12, info = sd)
+  }
+})
+
 # Cached, partial-CL and Gibbs paths each rebuild the correction; every one
 # must agree with a fresh full evaluation after every move.
 .MissingDrift <- function(d, model, moveNames, nMove = 300L) {

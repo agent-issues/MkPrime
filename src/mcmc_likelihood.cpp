@@ -2405,16 +2405,18 @@ std::vector<double> asc_probs_masked(
     constant_site_probs_jc_impl(parent, child, edgeLen, nTip, kStates, rates,
                                 masks, pm.data());
   }
-  for (int j = 0; j < (int)masks.size(); ++j) {
-    if (data.codingType == 2 && !data.qHeterogeneity) {
-      pm[j] += neo
-        ? singleton_site_prob_mkn_impl(parent, child, edgeLen, nTip, rateLoss,
-                                       rootFreqs, rates, masks[j])
-        : uninf_nonconst_prob_jc_impl(parent, child, edgeLen, nTip, kStates,
-                                      rates, masks[j]);
+  if (data.codingType == 2 && !data.qHeterogeneity) {
+    std::vector<double> pu(masks.size());
+    if (neo) {
+      singleton_site_probs_mkn_impl(parent, child, edgeLen, nTip, rateLoss,
+                                    rootFreqs, rates, masks, pu.data());
+    } else {
+      uninf_nonconst_probs_jc_impl(parent, child, edgeLen, nTip, kStates,
+                                   rates, masks, pu.data());
     }
-    p[which[j]] = pm[j];
+    for (int j = 0; j < (int)masks.size(); ++j) pm[j] += pu[j];
   }
+  for (int j = 0; j < (int)masks.size(); ++j) p[which[j]] = pm[j];
   // Return:
   return p;
 }
@@ -3037,6 +3039,24 @@ SEXP prepare_mcmc_data(List partitions_r,
                        double empLogTailStartP = -1e308,
                        bool   marginalK = false,
                        bool   unconditionalPrior = false) {
+  if (codingStr == "informative") {
+    // With fewer than four observed tips no pattern is informative, so the
+    // correction's 1 - P(uninformative) is zero.
+    int nUninformable = 0;
+    for (R_xlen_t i = 0; i < partitions_r.size(); ++i) {
+      const IntegerMatrix ts = as<List>(partitions_r[i])["tip_states"];
+      for (int j = 0; j < ts.ncol(); ++j) {
+        int nObs = 0;
+        for (int t = 0; t < ts.nrow(); ++t) nObs += ts(t, j) >= 0;
+        nUninformable += nObs < 4;
+      }
+    }
+    if (nUninformable) {
+      Rcpp::stop("coding = \"informative\" needs four or more observed tips "
+                 "per character; %d character(s) have fewer. Remove them, "
+                 "or use coding = \"variable\".", nUninformable);
+    }
+  }
   McmcData* d = new McmcData();
   d->hasNeo = hasNeo;
   d->nCat = nCat;

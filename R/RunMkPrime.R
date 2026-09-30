@@ -349,6 +349,10 @@ RunMkPrime <- function(data, tree = NULL,
   if (is.null(mcmc$checkpointFile)) {
     mcmc$checkpointFile <- sub("\\.[^.]+$", ".ckp", mcmc$logFile)
   }
+  # The checkpoint records these, and a resume may run from another directory.
+  for (f in c("logFile", "treeFile", "checkpointFile")) {
+    mcmc[f] <- list(.AbsolutePath(mcmc[[f]]))
+  }
   isStreaming     <- TRUE
   convWindowSize  <- .ComputeConvWindowSize(mcmc)
   .WarnUnreachableCriteria(mcmc)
@@ -382,8 +386,8 @@ RunMkPrime <- function(data, tree = NULL,
     for (p in treeFilePaths) writeLines(character(0), p)
   }
 
-  # Column index for tree reconstruction in scalar_samples (1-based R).
-  # The layout itself lives in .ParamNames(); do not restate it here.
+  # Index of br_1 in the stored layout; .RunMkPrimeSingleRun() maps it onto
+  # the raw C++ row. The layout itself lives in .ParamNames().
   brColStart      <- .BrColStart(paramNames)
 
   # --- Execute MCMC (with interrupt recovery) ---
@@ -466,6 +470,7 @@ RunMkPrime <- function(data, tree = NULL,
   shared$actualIter  <- 0L
   shared$phase       <- "Warmup"
   shared$moveWeights <- NULL
+  shared$mcmc        <- mcmc
 
   # Save an initial checkpoint so the .ckp file always exists, even if
 
@@ -520,7 +525,7 @@ RunMkPrime <- function(data, tree = NULL,
           paramNames, nEdge, brColStart,
           logFilePath    = logFilePaths[run],
           cancelFile     = mcmc$cancelFile,
-          checkpointFile = if (nRuns == 1L) mcmc$checkpointFile else NULL,
+          checkpointFile = mcmc$checkpointFile,
           startIter      = 1L,
           isStreaming     = TRUE,
           convWindowSize = convWindowSize,
@@ -569,7 +574,8 @@ RunMkPrime <- function(data, tree = NULL,
         .SaveCheckpoint(shared$runs, mcmc, shared$actualIter,
                         paramNames, mcmc$checkpointFile,
                         moveWeights = shared$moveWeights,
-                        phase = shared$phase, model = model)
+                        phase = shared$phase, model = model,
+                        serialPhase = shared$serialPhase)
         ckpSaved <- TRUE
         ckpIter  <- shared$actualIter
       }, error = function(e) NULL)
@@ -643,6 +649,38 @@ RunMkPrime <- function(data, tree = NULL,
 
     "interrupted"
   })
+}
+
+
+# `path` resolved against `dir`; an absolute path is returned as given.
+.AbsolutePath <- function(path, dir = getwd()) {
+  if (is.null(path)) return(NULL)
+  path <- path.expand(path)
+  relative <- !.IsAbsolutePath(path)
+  path[relative] <- file.path(dir, path[relative])
+  # Return:
+  path
+}
+
+.IsAbsolutePath <- function(path) grepl("^([/\\\\~]|[A-Za-z]:)", path)
+
+# The directory a run started in, recovered from where its checkpoint is now
+# found (`found`) and the path it recorded for itself (`recorded`). Paths in
+# checkpoints that predate absolute paths are relative to it.
+.RunDirectory <- function(recorded, found) {
+  if (is.null(recorded) || .IsAbsolutePath(recorded)) return(getwd())
+  parts <- strsplit(recorded, "[/\\\\]+")[[1]]
+  parts <- parts[!parts %in% c("", ".")]
+  if (!length(parts) || ".." %in% parts) {
+    return(getwd())
+  }
+  dir <- .AbsolutePath(found)
+  for (part in rev(parts)) {
+    if (basename(dir) != part) return(getwd())
+    dir <- dirname(dir)
+  }
+  # Return:
+  dir
 }
 
 
@@ -1034,12 +1072,13 @@ RunMkPrime <- function(data, tree = NULL,
   # raw C++ row; it is empty under sampled_k or when nTrans == 0.
   marginalK <- identical(model$likelihoodMode, "marginal_k")
   kPrimeRawIdx <- if (marginalK && length(transIdx) > 0L) {
-    # Layout: ..., swap_cold, topo_hash, kPrime_1..nTrans, br_1..nEdge
-    # brColStart is the 1-based index of the first br_ column.
-    seq_len(length(transIdx)) + brColStart - length(transIdx) - 1L
+    # Raw layout: ..., topo_hash, kPrime_1..nTrans, br_1..nEdge. `brColStart`
+    # indexes the stored (stripped) layout, where br_1 takes kPrime_1's place.
+    brColStart - 1L + seq_along(transIdx)
   } else {
     integer(0L)
   }
+  rawBrColStart <- brColStart + length(kPrimeRawIdx)
 
   moveTypes <- vapply(moves, `[[`, character(1), "type")
   pinnedWeights <- .SchedulePins(
@@ -1188,6 +1227,26 @@ RunMkPrime <- function(data, tree = NULL,
   stopReason <- "max_iter"
   actualIter <- if (is.finite(mcmc$nIter)) mcmc$nIter else startIter - 1L
 
+  # Under an orchestrator a save holds every run, so a kill part way through
+  # this run resumes the whole job from here; a parallel worker, which has no
+  # `shared`, writes its own run to its own file.
+  Checkpoint <- function(r) {
+    if (is.null(checkpointFile)) return(invisible())
+    if (is.null(shared$mcmc)) {
+      .SaveCheckpoint(list(r), mcmc, r$actual_iter, paramNames, checkpointFile,
+                      moveWeights = r$moveWeights, phase = r$phase,
+                      model = model)
+    } else {
+      allRuns <- shared$runs
+      allRuns[[runIdx]] <- r
+      iter <- max(vapply(allRuns, function(x) as.numeric(x$actual_iter %||% 0),
+                         numeric(1)))
+      .SaveCheckpoint(allRuns, shared$mcmc, iter, paramNames, checkpointFile,
+                      moveWeights = r$moveWeights, phase = r$phase,
+                      model = model, serialPhase = shared$serialPhase)
+    }
+  }
+
   # --- Main batch loop ---
   batchStart <- startIter
   repeat {
@@ -1267,8 +1326,8 @@ RunMkPrime <- function(data, tree = NULL,
         r$saved_idx <- r$saved_idx + 1L
         row <- result$scalar_samples[i, ]
         # Plan §7.4: strip no-op kPrime_ columns before writing to the trace.
-        # Keep the raw `row` intact below for tree reconstruction (brColStart
-        # indexes into the unstripped C++ layout).
+        # Keep the raw `row` intact below for tree reconstruction (via
+        # rawBrColStart).
         bufRow <- if (length(kPrimeRawIdx) > 0L) row[-kPrimeRawIdx] else row
 
         if (isStreaming) {
@@ -1292,7 +1351,7 @@ RunMkPrime <- function(data, tree = NULL,
             r$tree_samples <- c(r$tree_samples, vector("list", n))
           }
           tl    <- row[3L]
-          relBr <- row[brColStart:(brColStart + nEdge - 1L)]
+          relBr <- row[rawBrColStart:(rawBrColStart + nEdge - 1L)]
           curTree <- .EdgeToTree(result$edge_samples[[i]], tl * relBr,
                                  tipLabels)
           r$tree_samples[[r$tree_saved_idx]] <- curTree
@@ -1323,7 +1382,7 @@ RunMkPrime <- function(data, tree = NULL,
         if (tuneWithTreeEss) {
           row <- result$scalar_samples[i, ]
           tl    <- row[3L]
-          relBr <- row[brColStart:(brColStart + nEdge - 1L)]
+          relBr <- row[rawBrColStart:(rawBrColStart + nEdge - 1L)]
           tuningTreeBuf[[tuningBufIdx]] <- .EdgeToTree(
             result$edge_samples[[i]], tl * relBr, tipLabels
           )
@@ -1657,30 +1716,6 @@ RunMkPrime <- function(data, tree = NULL,
            bestFrozen = bestFrozen, bestWeights = bestWeights)
     }
 
-    # Streaming checkpoint: fire when buffer was flushed this batch (Sample)
-    if (phase == "Sample" && isStreaming &&
-        !is.null(checkpointFile) && isTRUE(r$flushed)) {
-      if (r$flush_idx > 0L) {
-        .FlushBuffer(r$flush_buf, r$flush_idx, r$flush_iter, logFilePath)
-        r$flush_idx <- 0L
-      }
-      r$flushed <- FALSE
-      .SaveCheckpoint(list(r), mcmc, batchEnd, paramNames, checkpointFile,
-                      moveWeights = moveWeights, phase = phase,
-                      model = model)
-    }
-
-    # Warmup/tuning checkpoint at checkEvery intervals so long warmups
-    # are recoverable.  No samples to flush -- just save chain state.
-    if (phase != "Sample" && !is.null(checkpointFile) &&
-        !is.null(mcmc$checkEvery) && mcmc$checkEvery > 0L &&
-        (batchEnd %/% mcmc$checkEvery) >
-          ((batchStart - 1L) %/% mcmc$checkEvery)) {
-      .SaveCheckpoint(list(r), mcmc, batchEnd, paramNames, checkpointFile,
-                      moveWeights = moveWeights, phase = phase,
-                      model = model)
-    }
-
     # Persist move weights in run state so checkpoints capture them (M-149 #2).
     r$moveWeights <- moveWeights
 
@@ -1689,6 +1724,26 @@ RunMkPrime <- function(data, tree = NULL,
     # behind is a sibling's iteration, past `warmup`, with no warmup at all.
     r$actual_iter <- batchEnd
     r$phase       <- phase
+
+    # Streaming checkpoint: fire when buffer was flushed this batch (Sample)
+    if (phase == "Sample" && isStreaming &&
+        !is.null(checkpointFile) && isTRUE(r$flushed)) {
+      if (r$flush_idx > 0L) {
+        .FlushBuffer(r$flush_buf, r$flush_idx, r$flush_iter, logFilePath)
+        r$flush_idx <- 0L
+      }
+      r$flushed <- FALSE
+      Checkpoint(r)
+    }
+
+    # Warmup/tuning checkpoint at checkEvery intervals so long warmups
+    # are recoverable.  No samples to flush -- just save chain state.
+    if (phase != "Sample" && !is.null(checkpointFile) &&
+        !is.null(mcmc$checkEvery) && mcmc$checkEvery > 0L &&
+        (batchEnd %/% mcmc$checkEvery) >
+          ((batchStart - 1L) %/% mcmc$checkEvery)) {
+      Checkpoint(r)
+    }
 
     # Update shared state for interrupt-safe checkpointing (M-149).
     # The interrupt handler in .RunWithRecovery() reads from this env.
@@ -1735,11 +1790,7 @@ RunMkPrime <- function(data, tree = NULL,
         r$flush_idx <- 0L
         r$flushed   <- FALSE
       }
-      if (!is.null(checkpointFile)) {
-        .SaveCheckpoint(list(r), mcmc, batchEnd, paramNames, checkpointFile,
-                        moveWeights = moveWeights, phase = phase,
-                        model = model)
-      }
+      Checkpoint(r)
       stopReason <- "max_time"
       actualIter <- batchEnd
       break
@@ -1752,11 +1803,7 @@ RunMkPrime <- function(data, tree = NULL,
         r$flush_idx <- 0L
         r$flushed   <- FALSE
       }
-      if (!is.null(checkpointFile)) {
-        .SaveCheckpoint(list(r), mcmc, batchEnd, paramNames, checkpointFile,
-                        moveWeights = moveWeights, phase = phase,
-                        model = model)
-      }
+      Checkpoint(r)
       stopReason <- "cancelled"
       actualIter <- batchEnd
       break
@@ -1774,9 +1821,7 @@ RunMkPrime <- function(data, tree = NULL,
           r$flush_idx <- 0L
           r$flushed   <- FALSE
         }
-        .SaveCheckpoint(list(r), mcmc, batchEnd, paramNames, checkpointFile,
-                        moveWeights = moveWeights, phase = phase,
-                        model = model)
+        Checkpoint(r)
       }
 
       diagCheck <- .CheckConvergence(list(r), paramNames, mcmc, isStreaming)
@@ -1952,7 +1997,7 @@ RunMkPrime <- function(data, tree = NULL,
         paramNames, nEdge, brColStart,
         logFilePath    = logFilePaths[run],
         cancelFile     = mcmc$cancelFile,
-        checkpointFile = NULL,
+        checkpointFile = if (!is.null(shared$mcmc)) mcmc$checkpointFile,
         startIter      = startIters[run],
         isStreaming     = TRUE,
         convWindowSize = convWindowSize,
@@ -2001,6 +2046,7 @@ RunMkPrime <- function(data, tree = NULL,
   }
 
   # --- Phase 2: cross-run R-hat loop ---
+  if (!is.null(shared)) shared$serialPhase <- 2L
   convStreak <- 0L
   repeat {
     diagCheck <- .CheckConvergenceFromLogs(logFilePaths, paramNames, mcmc)
@@ -2063,7 +2109,7 @@ RunMkPrime <- function(data, tree = NULL,
         paramNames, nEdge, brColStart,
         logFilePath    = logFilePaths[run],
         cancelFile     = mcmc$cancelFile,
-        checkpointFile = NULL,
+        checkpointFile = if (!is.null(shared$mcmc)) mcmc$checkpointFile,
         startIter      = startIters[run],
         isStreaming     = TRUE,
         convWindowSize = convWindowSize,
@@ -3034,7 +3080,8 @@ RunMkPrime <- function(data, tree = NULL,
 #'
 #' Version 1 (in-memory mode): stores full run history (samples, trees).
 #' Version 2 (streaming mode): stores chain state only; samples live in the
-#' log file.  The large flush_buf and conv_window matrices are excluded.
+#' log file, and trees in the tree file when there is one.  The large
+#' flush_buf and conv_window matrices are excluded.
 #'
 #' @keywords internal
 .SaveCheckpoint <- function(runs, mcmc, iter, paramNames, file,
@@ -3057,6 +3104,8 @@ RunMkPrime <- function(data, tree = NULL,
       r$flush_iter  <- NULL
       r$conv_window <- NULL
       r$flushed     <- NULL
+      # Already on disk; ResumeMkPrime() reads them back from the tree file.
+      if (!is.null(mcmc$treeFile)) r$tree_samples <- NULL
     }
     r
   })
@@ -3327,6 +3376,12 @@ RunMkPrime <- function(data, tree = NULL,
       "{.arg mcmc} must be an {.cls MkPrimeMCMC} object or a named list.")
   }
   override <- unclass(override)
+  # A run stores these absolute; the call that resumes it may not.
+  for (f in intersect(c("logFile", "treeFile", "checkpointFile"),
+                      names(override))) {
+    if (!.IsAbsolutePath(mcmc[[f]] %||% "")) next
+    override[f] <- list(.AbsolutePath(override[[f]]))
+  }
   differs <- vapply(names(override), function(f) {
     !identical(override[[f]], mcmc[[f]])
   }, logical(1))
@@ -3498,6 +3553,10 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
   runs <- checkpoint$runs
   mcmc <- .ResumeMcmc(checkpoint$mcmc, mcmcOverride)
+  runDir <- .RunDirectory(mcmc$checkpointFile, checkpointFile)
+  for (f in c("logFile", "treeFile", "checkpointFile")) {
+    mcmc[f] <- list(.AbsolutePath(mcmc[[f]], runDir))
+  }
   .RequireMarginalKSupported(model, mkd, mcmc$partitionSpec)
   if (!is.null(mcmc$partitionSpec$partition)) {
     mkd$partitions <- .BuildPartitions(mkd,
@@ -3531,15 +3590,26 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   if (isStreaming) {
     nEdge      <- nrow(runs[[1]]$chains[[1]]$edge)
     paramNames <- checkpoint$paramNames
-    logFilePaths   <- checkpoint$logFilePaths
+    relativeLog    <- !.IsAbsolutePath(checkpoint$logFilePaths)
+    logFilePaths   <- .AbsolutePath(checkpoint$logFilePaths, runDir)
     # v3+ stores treeFilePaths explicitly; v2 must derive it on the fly.
-    treeFilePaths  <- checkpoint$treeFilePaths %||%
+    treeFilePaths  <- .AbsolutePath(checkpoint$treeFilePaths, runDir) %||%
                       .TreeFilePaths(mcmc$treeFile, nRuns)
 
     # Check whether log files exist.  If they were temp files (deleted on
     # clean exit), recreate them so the chain can resume from checkpoint
     # state.  Previous samples are lost (they were loaded into memory in
     # the original result).
+    lostLogs <- relativeLog & !file.exists(logFilePaths)
+    if (any(lostLogs)) {
+      cli::cli_abort(c(
+        "Cannot find the log files this checkpoint recorded: \\
+         {.file {logFilePaths[lostLogs]}}.",
+        "i" = "The checkpoint holds relative paths, which resolve against \\
+               the directory the run started in; resume from there with \\
+               {.fn setwd}."
+      ))
+    }
     logsRecreated <- FALSE
     for (i in seq_along(logFilePaths)) {
       if (!file.exists(logFilePaths[i])) {
@@ -3631,7 +3701,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
   # Chain state pairs tip i with data row i, whatever order `tree` was in.
   tipLabels       <- rownames(mkd$matrix)
-  # Column index for tree reconstruction; the layout lives in .ParamNames().
+  # Index of br_1 in the stored layout; the layout lives in .ParamNames().
   brColStart      <- .BrColStart(paramNames)
 
   # --- Sequential per-run execution ---
@@ -3667,6 +3737,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
           treeEvery   = as.integer((runs[[run]]$treeThin %||% mcmc$treeThin) /
                                      (runs[[run]]$thin %||% mcmc$thin))
         )
+        if (is.null(runs[[run]]$tree_samples)) {
+          runs[[run]]$tree_samples <- lapply(.ReadTreeFile(tp), function(tr) {
+            TreeTools::Preorder(TreeTools::RenumberTips(tr, tipLabels))
+          })
+        }
       }
     }
   }
@@ -3679,6 +3754,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   shared$actualIter  <- 0L
   shared$moveWeights <- checkpoint$moveWeights
   shared$phase       <- checkpoint$phase
+  shared$mcmc        <- mcmc
 
   tryCatch({
     if (isStreaming && isTRUE(mcmc$nCore > 1L) && nRuns > 1L) {
@@ -3722,7 +3798,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
           paramNames, nEdge, brColStart,
           logFilePath    = if (isStreaming) logFilePaths[run] else NULL,
           cancelFile     = mcmc$cancelFile,
-          checkpointFile = if (nRuns == 1L) mcmc$checkpointFile else NULL,
+          checkpointFile = mcmc$checkpointFile,
           startIter      = perRunStarts[run],
           isStreaming    = isStreaming,
           convWindowSize = convWindowSize,
@@ -3763,7 +3839,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         .SaveCheckpoint(liveRuns, mcmc, bestIter, paramNames,
                         mcmc$checkpointFile,
                         moveWeights = shared$moveWeights,
-                        phase = shared$phase, model = model)
+                        phase = shared$phase, model = model,
+                        serialPhase = shared$serialPhase)
         ckpSaved <- TRUE
       }, error = function(e) NULL)
     }
@@ -4546,6 +4623,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' @keywords internal
 .InitMcmcData <- function(mkd, model) {
   .RequireMarginalKSupported(model, mkd)
+  model <- .ResolvePriorDefaults(model)
   # Replace NA with -1 in tip states for C++
   parts <- lapply(mkd$partitions, function(p) {
     ts <- p$tip_states
@@ -4562,7 +4640,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   empTailStartK <- 0L
   empTailDecay <- 0.0
   empLogTailStartP <- -Inf
-  if (isEmpGeom && !is.null(emp)) {
+  if (isEmpGeom) {
     body <- as.numeric(emp$body)
     empLogBody <- ifelse(body > 0, log(body), -Inf)
     empTailStartK <- as.integer(emp$tail_start_k)
@@ -4579,7 +4657,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     model$rateNeoMeanlog, model$rateNeoSdlog,
     model$kprimeHyperA, model$kprimeHyperB,
     identical(model$kPrimePrior, "logseries"),
-    model$kprimeLogseriesC %||% 0.7,
+    model$kprimeLogseriesC,
     identical(model$kPrimePrior, "beta_geometric"),
     isTRUE(model$qHeterogeneity),
     model$nBetaCat %||% 4L,
@@ -4591,9 +4669,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     empTailDecay,
     empLogTailStartP,
     identical(model$likelihoodMode, "marginal_k"),
-    identical(model$priorVariant %||% MkPrimeModel(
-      kPrimePrior = model$kPrimePrior %||% "geometric")$priorVariant,
-      "unconditional")
+    identical(model$priorVariant, "unconditional")
   )
   # Wire the truncation cap K from the model into the McmcData
   # (set_kprime_trunc_k; mirrors set_branch_bins, avoiding a prepare_mcmc_data

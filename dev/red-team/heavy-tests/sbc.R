@@ -49,14 +49,13 @@ cat(sprintf("SBC harness  | mode=%s | seedBase=%d | armFilter=%s\n",
             mode, seedBase, if (is.null(armFilter)) "<all>" else armFilter))
 
 # --------------------- Configuration table ---------------------
-# Six arms. See sbc.md §Arms for predicted PASS/FAIL.
+# Five arms. See sbc.md §Arms for predicted PASS/FAIL.
 ALL_ARMS <- list(
   list(name = "MkNT_geometric",          model = "MkNT", prior = "geometric",
        expect = "PASS"),
   list(name = "Mkp_geometric",           model = "Mkp",  prior = "geometric",
        expect = "PASS"),
-  list(name = "Mkp_beta_geometric",      model = "Mkp",  prior = "beta_geometric",
-       expect = "PASS"),
+  # No beta_geometric arm: its prior conditions on kObs, so it is not SBC-calibratable.
   list(name = "Mkp_empirical_geometric", model = "Mkp",  prior = "empirical_geometric",
        expect = "PASS"),  # EG-001 not visible at kObs=2 (option α); L6 closes the math
   list(name = "Mkp_logseries",           model = "Mkp",  prior = "logseries",
@@ -198,12 +197,6 @@ TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
     if (prior == "geometric") {
       u <- stats::rgeom(n, p)
       return(u + kFloor)
-    } else if (prior == "beta_geometric") {
-      # u ~ BetaGeo(alpha, beta): u = number of "failures" before success
-      # under p ~ Beta(alpha, beta). Sample p then u.
-      pv <- stats::rbeta(n, model_hp$kprimeAlpha, model_hp$kprimeBeta)
-      u <- stats::rgeom(n, pv)
-      return(u + kFloor)
     } else if (prior == "empirical_geometric") {
       # k = N_obs + N_unobs;  N_obs ~ empiricalNObs body+tail;  N_unobs ~ Geo(p)
       emp <- model_hp$empiricalNObs
@@ -232,13 +225,10 @@ TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
 
   # Step 1. Hyperparameter draws -- match the *inference* hyperprior.
   # For geometric and empirical_geometric: p ~ Beta(a=1, b=1) by default.
-  # For beta_geometric: alpha,beta ~ Exp(1) by default; we leave as fixed
-  #   in the inference model and sample p via beta-geo marginalisation.
   # For logseries: c is fixed in the inference, so we don't sample it.
   p_true <- stats::rbeta(1, 1, 1)  # used for {geometric, empirical_geometric}
   model_hp <- list(
     kprimeHyperA = 1, kprimeHyperB = 1,
-    kprimeAlpha  = 2, kprimeBeta = 2,    # mean E[u] = beta/(alpha-1) = 2
     kprimeLogseriesC = 0.5,
     empiricalNObs = NULL
   )
@@ -339,8 +329,6 @@ TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
   } else {
     modelArgs$kprimeHyperA <- model_hp$kprimeHyperA
     modelArgs$kprimeHyperB <- model_hp$kprimeHyperB
-    modelArgs$kprimeAlpha  <- model_hp$kprimeAlpha
-    modelArgs$kprimeBeta   <- model_hp$kprimeBeta
     if (arm$prior == "logseries") {
       modelArgs$kprimeLogseriesC <- model_hp$kprimeLogseriesC
     }

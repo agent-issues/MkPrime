@@ -178,6 +178,25 @@ MkPrimeData <- function(data,
 }
 
 
+# coding = "informative" conditions each character on being parsimony-
+# informative among its observed tips. With fewer than four observed tips no
+# pattern is, so 1 - P(uninformative) is zero and the correction undefined.
+.Informable <- function(mkd) {
+  # Return:
+  colSums(!is.na(mkd$matrix)) >= 4L
+}
+
+.SubsetMkPrimeData <- function(mkd, keep) {
+  mkd$matrix <- mkd$matrix[, keep, drop = FALSE]
+  mkd$nChar <- ncol(mkd$matrix)
+  mkd$type <- mkd$type[keep]
+  mkd$kObs <- mkd$kObs[keep]
+  mkd$known_k <- mkd$known_k[keep]
+  mkd$partitions <- .BuildPartitions(mkd)
+  mkd
+}
+
+
 #' @export
 print.MkPrimeData <- function(x, ...) {
   typeCounts <- table(x$type)

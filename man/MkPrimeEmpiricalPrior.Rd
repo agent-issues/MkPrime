@@ -14,7 +14,8 @@ MkPrimeEmpiricalPrior(
 \arguments{
 \item{body}{Numeric vector of probabilities \code{P(N_obs = 2)},
 \code{P(N_obs = 3)}, ..., \code{P(N_obs = nMax)}.  Need not sum to 1; the
-remaining mass is assumed to lie in the geometric tail.}
+remaining mass is assumed to lie in the geometric tail.  \code{P(N_obs = 2)}
+must be positive.}
 
 \item{tail_decay}{Geometric decay rate \code{q} for the tail, with
 \verb{0 < q < 1}.  Default \code{0} (no tail; pmf truncated at \code{nMax}).  When

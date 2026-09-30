@@ -214,13 +214,7 @@ MkPrimeModel <- function(
   priorOnClassRateLogSd <- match.arg(priorOnClassRateLogSd)
   likelihoodMode <- match.arg(likelihoodMode)
   if (is.null(priorVariant)) {
-    # A prior is pre-data: kObs_i is an observation and must not enter it. Both
-    # empirical_geometric and geometric default to the unconditional (Model A)
-    # prior. The geometric SBC harness draws k' ~ 2 + Geo(p) (Model A), so this
-    # aligns inference with the validated SBC forward model (cf.
-    # project_sbc_kprime_structural: Model A passes SBC on p, Model B fails).
-    priorVariant <- if (kPrimePrior %in% c("empirical_geometric", "geometric"))
-      "unconditional" else "conditional"
+    priorVariant <- .DefaultPriorVariant(kPrimePrior)
   } else {
     priorVariant <- match.arg(priorVariant, c("conditional", "unconditional"))
     .CheckPriorVariant(kPrimePrior, priorVariant)
@@ -291,25 +285,10 @@ MkPrimeModel <- function(
     )
   }
 
-  # Validate beta_geometric hyperparameters
-  if (kPrimePrior == "beta_geometric") {
-    if (kprimeAlpha <= 0 || kprimeBeta <= 0) {
-      cli::cli_abort(
-        "{.arg kprimeAlpha} and {.arg kprimeBeta} must be positive."
-      )
-    }
-  }
+  .CheckKPrimeHyper(kPrimePrior, kprimeHyperA, kprimeHyperB, kprimeAlpha,
+                    kprimeBeta)
 
-  # Validate logseries hyperparameter
-  if (kPrimePrior == "logseries") {
-    if (!is.numeric(kprimeLogseriesC) || length(kprimeLogseriesC) != 1L ||
-        !is.finite(kprimeLogseriesC) ||
-        kprimeLogseriesC <= 0 || kprimeLogseriesC >= 1) {
-      cli::cli_abort(
-        "{.arg kprimeLogseriesC} must be a finite scalar in (0, 1)."
-      )
-    }
-  }
+  .CheckLogseriesC(kPrimePrior, kprimeLogseriesC)
 
   # M-052: validate Het parameters
   if (isTRUE(qHeterogeneity)) {
@@ -420,6 +399,77 @@ MkPrimeModel <- function(
 }
 
 
+# A prior is pre-data: kObs_i is an observation and must not enter it. Both
+# empirical_geometric and geometric default to the unconditional (Model A)
+# prior. The geometric SBC harness draws k' ~ 2 + Geo(p) (Model A), so this
+# aligns inference with the validated SBC forward model (cf.
+# project_sbc_kprime_structural: Model A passes SBC on p, Model B fails).
+.DefaultPriorVariant <- function(kPrimePrior) {
+  if (kPrimePrior %in% c("empirical_geometric", "geometric")) {
+    "unconditional"
+  } else {
+    "conditional"
+  }
+}
+
+
+# Fills k'-prior fields that a hand-built model, or one saved before the field
+# existed, may lack. LogPrior and .InitMcmcData both resolve through here, so R
+# and C++ score the same prior.
+.ResolvePriorDefaults <- function(model) {
+  model$priorVariant <- model$priorVariant %||%
+    .DefaultPriorVariant(model$kPrimePrior %||% "geometric")
+  model$kprimeLogseriesC <- model$kprimeLogseriesC %||% 0.7
+  if (identical(model$kPrimePrior, "empirical_geometric")) {
+    model$empiricalNObs <- model$empiricalNObs %||% .EmpiricalNObs()
+  }
+  model
+}
+
+
+.IsPositiveScalar <- function(x) {
+  is.numeric(x) && length(x) == 1L && is.finite(x) && x > 0
+}
+
+
+# Checked at finalisation too, for a model whose fields were set by hand.
+.CheckKPrimeHyper <- function(kPrimePrior, kprimeHyperA, kprimeHyperB,
+                              kprimeAlpha, kprimeBeta) {
+  if (kPrimePrior %in% c("geometric", "empirical_geometric") &&
+      !(.IsPositiveScalar(kprimeHyperA) && .IsPositiveScalar(kprimeHyperB))) {
+    cli::cli_abort(
+      "{.arg kprimeHyperA} and {.arg kprimeHyperB} must be positive finite
+       scalars."
+    )
+  }
+  if (identical(kPrimePrior, "beta_geometric") &&
+      !(.IsPositiveScalar(kprimeAlpha) && .IsPositiveScalar(kprimeBeta))) {
+    cli::cli_abort(
+      "{.arg kprimeAlpha} and {.arg kprimeBeta} must be positive finite
+       scalars."
+    )
+  }
+  # Return:
+  invisible(NULL)
+}
+
+
+# cpp_log_prior has no guard on c: outside (0, 1) it returns NaN, which
+# silently rejects every move.
+.CheckLogseriesC <- function(kPrimePrior, kprimeLogseriesC) {
+  if (identical(kPrimePrior, "logseries") &&
+      !(is.numeric(kprimeLogseriesC) && length(kprimeLogseriesC) == 1L &&
+        is.finite(kprimeLogseriesC) &&
+        kprimeLogseriesC > 0 && kprimeLogseriesC < 1)) {
+    cli::cli_abort(
+      "{.arg kprimeLogseriesC} must be a finite scalar in (0, 1)."
+    )
+  }
+  # Return:
+  invisible(NULL)
+}
+
+
 # beta_geometric offsets k' from kObs_i (u = k' - kObs_i), so its prior is
 # conditional by construction and has no unconditional form to switch to.
 # Checked at finalisation too, for a model whose priorVariant was set by hand.
@@ -455,18 +505,16 @@ MkPrimeModel <- function(
 #' @return Updated `MkPrimeModel` with all defaults resolved.
 #' @keywords internal
 .FinalizeModel <- function(model, tree, mkd) {
+  model <- .ResolvePriorDefaults(model)
   .CheckPriorVariant(model$kPrimePrior, model$priorVariant)
+  .CheckKPrimeHyper(model$kPrimePrior, model$kprimeHyperA, model$kprimeHyperB,
+                    model$kprimeAlpha, model$kprimeBeta)
+  .CheckLogseriesC(model$kPrimePrior, model$kprimeLogseriesC)
   if (is.null(model$expSteps)) {
     model$expSteps <- max(1, .FitchScore(tree, mkd) / ncol(mkd$matrix))
   }
   if (is.null(model$treeLengthRate)) {
     model$treeLengthRate <- model$treeLengthShape / model$expSteps
-  }
-  if (identical(model$kPrimePrior, "empirical_geometric") &&
-      is.null(model$empiricalNObs)) {
-    # Copy to the model so MCMC code can consume it without reaching into the
-    # package namespace.
-    model$empiricalNObs <- .EmpiricalNObs()
   }
   # A model saved before this field existed takes the constructor's default.
   model$priorOnClassRateLogSd <- model$priorOnClassRateLogSd %||%
@@ -780,6 +828,7 @@ MkPrimeModel <- function(
 #' @return Scalar log-prior density.
 #' @keywords internal
 LogPrior <- function(state, model, mkd) {
+  model <- .ResolvePriorDefaults(model)
   # Boundary checks — return -Inf for out-of-support values
 
   if (state$tree_length <= 0) return(-Inf)
@@ -807,7 +856,7 @@ LogPrior <- function(state, model, mkd) {
 
     if (identical(model$kPrimePrior, "geometric") ||
         identical(model$kPrimePrior, "empirical_geometric")) {
-      if (state$p <= 0 || state$p >= 1) return(-Inf)
+      if (is.null(state$p) || state$p <= 0 || state$p >= 1) return(-Inf)
     } else if (identical(model$kPrimePrior, "beta_geometric")) {
       ka <- state$kprime_alpha %||% 1.0
       kb <- state$kprime_beta %||% 1.0
@@ -879,7 +928,7 @@ LogPrior <- function(state, model, mkd) {
         if (any(kp > K)) return(-Inf)            # truncated support: k' in [.., K]
         logP   <- log(state$p)
         log1mP <- log1p(-state$p)
-        if (identical(model$priorVariant %||% "conditional", "unconditional")) {
+        if (identical(model$priorVariant, "unconditional")) {
           # Model A: P(k' = k | p) propto p (1-p)^(k-2), k in [2, K].
           logZA <- .Log1mExp((K - 1) * log1mP)
           lp <- lp + sum(logP + (kp - 2) * log1mP - logZA)
@@ -901,13 +950,10 @@ LogPrior <- function(state, model, mkd) {
       # Prior on k' is the convolution; truncation k'_i >= kObs_i already
       # enforced above.  N_obs and N_unobs are latent components that sum to
       # k'; we marginalise over their split.
-      # A model built with an explicit expSteps or treeLengthRate reaches
-      # here without empiricalNObs; fall back to the packaged distribution.
-      emp <- model$empiricalNObs %||% .EmpiricalNObs()
       lp <- lp + .LogPriorEmpiricalGeometric(
-        state$kPrime[transIdx], emp, state$p, mkd$kObs[transIdx],
-        unconditional = identical(model$priorVariant %||% "conditional",
-                                  "unconditional")
+        state$kPrime[transIdx], model$empiricalNObs, state$p,
+        mkd$kObs[transIdx],
+        unconditional = identical(model$priorVariant, "unconditional")
       )
 
       # p: Beta hyperprior
