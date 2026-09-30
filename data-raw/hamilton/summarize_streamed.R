@@ -23,6 +23,11 @@
 #   --incomplete  summarise a task that has no up-to-date final .rds. Pass it
 #                 only once `sacct` shows the task's job is dead: a live task
 #                 appends to the very files this script reads and cleans up.
+#
+# Tree streams are deleted and logs gzipped only once the task's checkpoint is
+# gone, i.e. once nobody will extend the run. To reclaim the space, run
+#   rm <results_root>/*/<arm>_checkpoint*.rds
+# and then this script again.
 
 .libPaths(c("/nobackup/pjjg18/mkp-study/lib", .libPaths()))
 suppressPackageStartupMessages({

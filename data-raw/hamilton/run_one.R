@@ -19,11 +19,13 @@ suppressPackageStartupMessages({
 })
 options(warn = 1L)  # print warnings as they happen; avoids spurious parser-error in exit warning summary (mk_ktrue/mk_tlshrink)
 
-# install_mkp.sh writes RemoteSha into DESCRIPTION; older builds lack it (#294).
-.BUILD_SHA <- local({
-  sha <- utils::packageDescription("MkPrime")$RemoteSha
+# The commit a build came from, once install_mkp.sh stamps RemoteSha into
+# DESCRIPTION (#294); NA for a build without it.
+.BuildSha <- function(libLoc = NULL) {
+  sha <- utils::packageDescription("MkPrime", lib.loc = libLoc)$RemoteSha
   if (is.null(sha)) NA_character_ else sha
-})
+}
+.BUILD_SHA <- .BuildSha()
 
 args      <- commandArgs(trailingOnly = TRUE)
 tree_idx  <- as.integer(args[1])
@@ -72,7 +74,7 @@ dir.create(ckp_dir, showWarnings = FALSE)
   list.files(
     ckp_dir,
     pattern = sprintf(
-      "^%s_(checkpoint\\.rds|run(_[0-9]+)?\\.log(\\.gz)?|trees(_[0-9]+)?\\.nwk)$",
+      "^%s_(checkpoint(_[0-9]+)?\\.rds|run(_[0-9]+)?\\.log(\\.gz)?|trees(_[0-9]+)?\\.nwk)$",
       arm
     ),
     full.names = TRUE
@@ -197,11 +199,12 @@ if (.cur_job != .prev_job) {
     stop(sprintf(paste(
       "Refusing to resume %s in %s: its saved state was written under",
       "character order [%s], but this start reads [%s]. Resuming would pair",
-      "its kPrime_ columns with the wrong characters (#286). To restart,",
-      "delete %s_* there; to resume, restore the recorded order."),
+      "its kPrime_ columns with the wrong characters (#286). To discard it",
+      "and restart, delete %s."),
       arm, ckp_dir,
       if (is.null(recorded)) "unrecorded, so lexical" else Shown(recorded),
-      Shown(current), arm), call. = FALSE)
+      Shown(current), paste(basename(.arm_own_files(arm)), collapse = " ")),
+      call. = FALSE)
   }
   invisible(orderFile)
 }

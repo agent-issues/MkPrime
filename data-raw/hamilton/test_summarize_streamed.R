@@ -206,6 +206,15 @@ rc <- Summarise(fx)
 ok("final .rds older than the logs: refused",
    !rc$ok && identical(TaskFiles(fx), before))
 
+## ---- Output from before the order record: lexical ---------------------------
+fx <- Fixture()
+invisible(file.remove(file.path(fx$task, sprintf("%s_char_order.csv", arm))))
+WriteFinal(fx, charIdx = lexVar)
+rc <- Summarise(fx)
+s  <- readRDS(rc$summary)
+ok("no order record: kObs and char_idx follow lexical order",
+   rc$ok && identical(s$kObs, kObsLexical) && identical(s$char_idx, lexVar))
+
 ## ---- A final .rds recorded under another character order --------------------
 fx <- Fixture()
 WriteFinal(fx, charIdx = lexVar)

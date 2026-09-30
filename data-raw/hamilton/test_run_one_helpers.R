@@ -12,7 +12,8 @@ suppressPackageStartupMessages(library(MkPrime))
 src   <- parse("data-raw/hamilton/run_one.R")
 wanted <- c(".kObsFromMatrix", ".UPostMeans", ".BURNIN_FRAC", ".arm_own_files",
             ".validate_ckp", ".IsCorruptCheckpoint", ".run_arm",
-            ".CheckCharOrder", ".VariableCharIdx", ".SaveResult", ".BUILD_SHA")
+            ".CheckCharOrder", ".VariableCharIdx", ".SaveResult", ".BuildSha",
+            ".BUILD_SHA")
 env   <- new.env(parent = globalenv())
 ## The helpers close over the script's ckp_dir.
 env$ckp_dir <- tempfile("ckp"); dir.create(env$ckp_dir)
@@ -76,6 +77,12 @@ ok("mk claims its own eight files, gzipped log included", setequal(own_mk, c(
   "mk_trees_1.nwk", "mk_trees_2.nwk", "mk_trees.nwk", "mk_run.log")))
 ok("mk claims nothing of mk_k9 / mk_kp1 / mk_ktrue / mk_tlshrink",
    !any(grepl("^mk_(k[0-9]|kp[0-9]|ktrue|tlshrink)", own_mk)))
+ok("per-run checkpoints are the arm's own",
+   identical(basename(env$.arm_own_files("mkp_geo")), "mkp_geo_checkpoint.rds") &&
+     {
+       file.create(file.path(env$ckp_dir, "mkp_geo_checkpoint_2.rds"))
+       "mkp_geo_checkpoint_2.rds" %in% basename(env$.arm_own_files("mkp_geo"))
+     })
 ok("mkp claims its own two files",
    setequal(own_mkp, c("mkp_checkpoint.rds", "mkp_run_1.log")))
 ok("mkp claims nothing of mkp_eg / mkp_geo / mkp_highk / mkp_logs",
@@ -204,6 +211,9 @@ refusal <- tryCatch(env$.CheckCharOrder("mkp_eg", lexical), error = identity)
 ok("resume under another order is refused", inherits(refusal, "error"))
 ok("refusal leaves the saved state in place", file.exists(ckpFile) &&
      identical(read.csv(orderCsv)$file, basename(numeric)))
+ok("refusal names this arm's files, never a prefix glob",
+   grepl("mkp_eg_checkpoint.rds", conditionMessage(refusal)) &&
+     !grepl("mkp_eg_\\*", conditionMessage(refusal)))
 ok("refusal names both orders",
    grepl("chr1.nex chr2.nex chr3.nex", conditionMessage(refusal)) &&
      grepl("chr1.nex chr10.nex chr11.nex", conditionMessage(refusal)))
@@ -253,9 +263,20 @@ env$var_char_idx <- c(1:4, 6:11)
 env$.SaveResult(list(stop_reason = "max_time"))
 saved <- readRDS(file.path(env$out_dir, "mkp_eg_t01_r01.rds"))
 ok("result records char_idx", identical(saved$char_idx, c(1:4, 6:11)))
-ok("result records the build sha (NA if unstamped)",
-   is.character(saved$build_sha) && length(saved$build_sha) == 1L &&
-     identical(saved$build_sha, env$.BUILD_SHA))
+ok("result records the build sha", identical(saved$build_sha, env$.BUILD_SHA))
+
+## ---- .BuildSha -------------------------------------------------------------
+FakeLib <- function(extra) {
+  lib <- tempfile("lib")
+  dir.create(file.path(lib, "MkPrime"), recursive = TRUE)
+  writeLines(c("Package: MkPrime", "Version: 0.0.0.9000", extra),
+             file.path(lib, "MkPrime", "DESCRIPTION"))
+  lib
+}
+ok("a stamped build reports its sha",
+   identical(env$.BuildSha(FakeLib("RemoteSha: 5a890df")), "5a890df"))
+ok("an unstamped build reports NA",
+   identical(env$.BuildSha(FakeLib(character(0L))), NA_character_))
 ok("result keeps its own fields", identical(saved$stop_reason, "max_time"))
 
 cat("\nALL CHECKS PASSED\n")
