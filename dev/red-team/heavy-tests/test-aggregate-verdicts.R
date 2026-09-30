@@ -37,8 +37,8 @@ Run <- function(dir, expected = character(0L)) {
        status = if (is.null(status)) 0L else status)
 }
 
-ARMS <- c("MkNT_geometric", "Mkp_geometric", "Mkp_beta_geometric",
-          "Mkp_empirical_geometric", "Mkp_logseries", "MkNT_logseries")
+ARMS <- c("MkNT_geometric", "Mkp_geometric", "Mkp_empirical_geometric",
+          "Mkp_logseries", "MkNT_logseries")
 
 ## ---- All arms present and passing -------------------------------------------
 d1 <- tempfile("sbc1"); dir.create(d1)
@@ -55,7 +55,7 @@ d2 <- tempfile("sbc2"); dir.create(d2)
 for (a in ARMS[-3L]) WriteArmVerdict(d2, a, "PASS")
 r2 <- Run(d2, ARMS)
 ok("missing arm exits non-zero", r2$status != 0L)
-ok("missing arm is named", grepl("Mkp_beta_geometric", r2$text))
+ok("missing arm is named", grepl(ARMS[3L], r2$text, fixed = TRUE))
 ok("missing arm reports INCOMPLETE", grepl("overall: INCOMPLETE", r2$text))
 
 ## ---- A failing arm -----------------------------------------------------------

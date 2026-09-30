@@ -41,7 +41,8 @@
 #'
 #' @param body Numeric vector of probabilities `P(N_obs = 2)`,
 #'   `P(N_obs = 3)`, ..., `P(N_obs = nMax)`.  Need not sum to 1; the
-#'   remaining mass is assumed to lie in the geometric tail.
+#'   remaining mass is assumed to lie in the geometric tail.  `P(N_obs = 2)`
+#'   must be positive.
 #' @param tail_decay Geometric decay rate `q` for the tail, with
 #'   `0 < q < 1`.  Default `0` (no tail; pmf truncated at `nMax`).  When
 #'   `0`, `body` must sum to 1.
@@ -68,11 +69,14 @@
 MkPrimeEmpiricalPrior <- function(body, tail_decay = 0,
                                    tail_start_k = NULL,
                                    nSource = NA_integer_) {
-  if (!is.numeric(body) || length(body) < 1L || any(body < 0)) {
-    cli::cli_abort("{.arg body} must be a non-negative numeric vector.")
+  if (!is.numeric(body) || length(body) < 1L || !all(is.finite(body)) ||
+      any(body < 0)) {
+    cli::cli_abort(
+      "{.arg body} must be a non-negative, finite numeric vector."
+    )
   }
   if (!is.numeric(tail_decay) || length(tail_decay) != 1L ||
-      tail_decay < 0 || tail_decay >= 1) {
+      !is.finite(tail_decay) || tail_decay < 0 || tail_decay >= 1) {
     cli::cli_abort("{.arg tail_decay} must be a scalar in [0, 1).")
   }
   nBody <- length(body)
@@ -97,6 +101,14 @@ MkPrimeEmpiricalPrior <- function(body, tail_decay = 0,
   bodySum <- sum(body)
   if (bodySum <= 0) {
     cli::cli_abort("{.arg body} must have positive total mass.")
+  }
+  if (body[1] == 0) {
+    cli::cli_abort(c(
+      "{.arg body} must give positive mass to {.code N_obs = 2}.",
+      i = "A character with two observed states starts at {.code k' = 2},
+           whose prior is {.code P(N_obs = 2)} alone, so the chain would
+           start at zero prior probability."
+    ))
   }
   if (tail_decay == 0) {
     if (abs(bodySum - 1) > 1e-8) {
