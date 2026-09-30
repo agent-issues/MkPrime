@@ -110,22 +110,31 @@ That is informative — and still the wrong quantity. It reports the *frequency*
 of movement and never its *magnitude*, which puts these moves in the same class
 as the topology MH moves below, not in a class of their own.
 
-## 4. `.DecayLowAcceptMoves` is #767's error with the sign flipped
+## 4. `.DecayLowAcceptMoves` was not the decay it was described as
 
-`R/RunMkPrime.R:4556`: any move whose batch acceptance falls below
+*Corrected 2026-09-30 (#73); the rule has since been retired.*
+
+The rule read: any move whose batch acceptance falls below
 `accept_floor = 0.02` is multiplied by `decay = 0.7` per batch, down to
-`0.1 × initialWeight`.
+`0.1 × initialWeight`. This section first called that #767's error with the
+sign flipped: a compounding decay that punishes expensive success. As composed
+in the warmup loop it was neither.
 
-Where #767 rewarded cheap failure, this punishes expensive success. A `tbr`
-move on a large tree can genuinely sit below 2% while being the only kernel
-that crosses topology islands; per acceptance it displaces far more than `nni`.
-And because topology moves have no step size to adapt (§2), nothing pulls their
-acceptance back up when a dataset drives it down — the registry's own expected
-rate for `spr`/`pspr` is 0.10, only 5× the decay floor, so the rule is one hard
-dataset away from firing on a move that is behaving exactly as designed.
+- **It could not compound.** `.AdaptMoveWeights` ran first each batch and
+  recomputed every scoreable weight from cumulative counters, overwriting the
+  previous batch's decay. From the third batch the pair sat at a fixed point.
+- **It promoted rather than punished.** The update was
+  `max(oldW * decay, 0.1 × initialWeight)`. Once the softmax had already pushed
+  a low-acceptance move below `0.1 × initialWeight`, the `max` raised it back
+  to that value, undoing the demotion the softmax had just made for the same
+  reason.
 
-Currently latent rather than active, but it is the same category error:
-acceptance rate used as a mixing proxy across heterogeneous kernels.
+So the rule did not starve `tbr` on a hard dataset, as argued here; if
+anything it propped up the moves the softmax demoted. It is retired all the
+same, because it duplicated the softmax's demotion of low-acceptance moves and,
+composed with it, did the opposite of what it was written for. The underlying
+category error this plan is about, acceptance rate used as a mixing proxy
+across heterogeneous kernels, remains in the softmax score itself.
 
 ## 5. The tuning bandit's min-ESS/s objective — the most direct transfer
 
@@ -221,9 +230,9 @@ to adopt a candidate whose advantage is inside its own standard error.
    `accept × dim / cost` and ESJD/s rank the moves the same way, there is
    nothing to buy and the answer is "no change."
 
-3. **Only if they disagree:** swap the score's numerator, retire
-   `.DecayLowAcceptMoves`, replace the fixed-share floors with draw-count
-   floors, and decide the softmax-vs-sqrt question.
+3. **Only if they disagree:** swap the score's numerator, replace the
+   fixed-share floors with draw-count floors, and decide the softmax-vs-sqrt
+   question. (`.DecayLowAcceptMoves` is already retired; see §4.)
 
 4. **Decision mechanism:** equal-wall-clock A/B, paired by seed, on a
    multimodal target — never an ESS comparison, for the reasons in §5.

@@ -1088,10 +1088,6 @@ RunMkPrime <- function(data, tree = NULL,
     moveWeights <- .NormalizeMoveWeights(moveWeights, pinnedWeights)
   }
 
-  # T-018: Capture initial weights (post-normalization) for per-move decay floor.
-  # On resume, re-derive from current moveWeights so the floor is consistent.
-  initialMoveWeights <- moveWeights
-
   # Ensure chain_time_ns exists (may be absent in older checkpoints)
   if (is.null(r$chain_time_ns)) {
     r$chain_time_ns <- vector("list", nChains)
@@ -1398,14 +1394,22 @@ RunMkPrime <- function(data, tree = NULL,
 
     if (phase == "Warmup") {
       # --- Warmup: adapt tuning, temperatures, and move weights ---
+      # Step sizes and slice widths read this batch's counts alone: a
+      # cumulative rate is dominated by steps already replaced, so a
+      # per-batch multiplicative update driven by it keeps correcting an
+      # error that has gone (#79). Move weights keep the cumulative counts.
       for (ch in seq_len(nChains)) {
+        batchAccept <- stats::setNames(
+          as.integer(result$accept_counts[ch, ]), moveNames)
+        batchPropose <- stats::setNames(
+          as.integer(result$propose_counts[ch, ]), moveNames)
+        batchSliceExp <- stats::setNames(
+          as.numeric(result$slice_expansions[ch, ]), moveNames)
         r$chain_tuning[[ch]] <- .AdaptTuning(
-          r$chain_tuning[[ch]], r$chain_accept[[ch]],
-          r$chain_propose[[ch]], moves
+          r$chain_tuning[[ch]], batchAccept, batchPropose, moves
         )
         r$chain_tuning[[ch]] <- .AdaptSliceWidths(
-          r$chain_tuning[[ch]], r$chain_propose[[ch]],
-          r$chain_slice_exp[[ch]], moves
+          r$chain_tuning[[ch]], batchPropose, batchSliceExp, moves
         )
       }
       if (nChains > 1L) {
@@ -1436,19 +1440,6 @@ RunMkPrime <- function(data, tree = NULL,
         pinnedWeights = pinnedWeights,
         scalarFloorMoves = scalarFloorMoves,
         warmupProgress = min(1, batchEnd / warmupHorizon)
-      )
-
-      # T-018: Decay low-acceptance moves using per-batch counts.
-      # Uses batch-level accept/propose from the last C++ call (result) so
-      # the cumulative counters used by .AdaptMoveWeights() are undisturbed.
-      # Frozen at the warmup boundary via the phase guard above.
-      moveWeights <- .DecayLowAcceptMoves(
-        moveWeights,
-        batchAccept  = as.integer(result$accept_counts[1L, ]),
-        batchPropose = as.integer(result$propose_counts[1L, ]),
-        initialWeights = initialMoveWeights,
-        moveNames    = moveNames,
-        pinnedWeights = pinnedWeights
       )
 
       # M-171: Reduce Gibbs kPrime sweep frequency during warmup.
@@ -1582,15 +1573,6 @@ RunMkPrime <- function(data, tree = NULL,
       tuningIterUsed <- tuningIterUsed + nBatch
       r$tuningIterUsed <- tuningIterUsed
       tuningWindowSec <- tuningWindowSec + batchSec
-
-      # M-126: Continue rho estimation from tuning buffer samples
-      if (tuningBufIdx >= 50L) {
-        newRhos <- .EstimateJointRhos(
-          tuningBuf[seq_len(tuningBufIdx), , drop = FALSE], hasNeo
-        )
-        for (ch in seq_len(nChains))
-          r$chain_rhos[[ch]] <- newRhos
-      }
 
       # Evaluate current weight vector after each tuning window
       if (tuningBufIdx >= tuningWindowSamples) {
@@ -5309,16 +5291,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     floorVec[scoreableNames %in% scalarFloorMoves] <-
       max(wMin, wMinScalar)
   }
-  floored <- softmaxWeights < floorVec
-  if (any(floored) && !all(floored)) {
-    floorTotal <- sum(floorVec[floored])
-    freeTotal <- scoreableBudget - floorTotal
-    if (freeTotal > 0) {
-      softmaxWeights[floored] <- floorVec[floored]
-      softmaxWeights[!floored] <- softmaxWeights[!floored] /
-        sum(softmaxWeights[!floored]) * freeTotal
-    }
-  }
+  softmaxWeights <- .ProjectOntoFloors(rawWeights, floorVec, scoreableBudget)
 
   newWeights <- currentWeights
   newWeights[scoreableIdx] <- softmaxWeights
@@ -5333,106 +5306,29 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 }
 
 
-# --- T-018: Acceptance-aware adaptive move decay ---
-
-#' Decay weights of low-acceptance moves during warmup.
-#'
-#' Complement to `.AdaptMoveWeights()`. Applies a multiplicative decay to
-#' any free move whose **batch-level** acceptance rate falls below
-#' `accept_floor`, provided at least `n_min` proposals were made in the batch.
-#' Pinned moves are never decayed. Weights are normalised to sum to the
-#' unpinned budget after decay. A per-move floor prevents any move from being
-#' completely eliminated.
-#'
-#' This adaptation is designed to run during warmup only; the caller is
-#' responsible for not invoking it after the warmup-to-sampling transition.
-#'
-#' Diagnostic output (per-move before/after) is emitted to stderr at
-#' verbosity 2, or when `MKPRIME_ADAPT_DIAG=1` is set.
-#'
-#' @param currentWeights Numeric vector (current move probabilities, sums to 1).
-#' @param batchAccept  Integer vector of **per-batch** accept counts (cold chain).
-#' @param batchPropose Integer vector of **per-batch** propose counts (cold chain).
-#' @param initialWeights Numeric vector of move weights at warmup start
-#'   (used to compute the per-move floor).
-#' @param moveNames Character vector of move names.
-#' @param pinnedWeights Named numeric vector or NULL.
-#' @param accept_floor Acceptance rate threshold below which decay fires
-#'   (default 0.02 = 2 %).
-#' @param decay Multiplicative decay factor applied to flagged moves
-#'   (default 0.7).
-#' @param weight_floor Floor as a fraction of each move's initial weight
-#'   (default 0.1).  Prevents any move from falling below
-#'   `weight_floor * initialWeights[m]`.
-#' @param n_min Minimum proposals in the batch before decay is considered
-#'   (default 30).
-#' @return Numeric vector of (possibly decayed and re-normalised) move weights.
-#' @keywords internal
-.DecayLowAcceptMoves <- function(currentWeights, batchAccept, batchPropose,
-                                  initialWeights, moveNames,
-                                  pinnedWeights = NULL,
-                                  accept_floor = 0.02,
-                                  decay = 0.7,
-                                  weight_floor = 0.1,
-                                  n_min = 30L) {
-  nMoves <- length(currentWeights)
-  stopifnot(length(batchAccept)  == nMoves,
-            length(batchPropose) == nMoves,
-            length(initialWeights) == nMoves)
-
-  # Identify pinned and free moves
-  pinnedIdx <- integer(0)
-  if (!is.null(pinnedWeights)) {
-    pinnedIdx <- match(names(pinnedWeights), moveNames)
-    pinnedIdx <- pinnedIdx[!is.na(pinnedIdx)]
+# Shares `budget` in proportion to `rawWeights`, except that no entry falls
+# below its `floorVec` entry. Raising one entry to its floor shrinks the rest,
+# which can push another below its own, so repeat until nothing new is floored;
+# floored entries only accumulate, so this ends within length(rawWeights)
+# passes. When the floors alone exceed the budget no share can honour them all,
+# and each entry gets the same fraction of its floor.
+.ProjectOntoFloors <- function(rawWeights, floorVec, budget) {
+  floorTotal <- sum(floorVec)
+  if (floorTotal >= budget) {
+    return(floorVec / floorTotal * budget)
   }
-  freeIdx <- setdiff(seq_len(nMoves), pinnedIdx)
-  if (length(freeIdx) == 0L) return(currentWeights)
-
-  budget <- if (length(pinnedIdx) > 0L) {
-    1.0 - sum(pinnedWeights)
-  } else {
-    1.0
+  floored <- logical(length(rawWeights))
+  weights <- rawWeights / sum(rawWeights) * budget
+  repeat {
+    newlyFloored <- !floored & weights < floorVec
+    if (!any(newlyFloored)) break
+    floored <- floored | newlyFloored
+    weights[floored] <- floorVec[floored]
+    free <- !floored
+    weights[free] <- rawWeights[free] / sum(rawWeights[free]) *
+      (budget - sum(floorVec[floored]))
   }
-  if (budget < 1e-12) return(currentWeights)
-
-  verbose <- .Loud(2L) || identical(Sys.getenv("MKPRIME_ADAPT_DIAG"), "1")
-  decayFired <- FALSE
-
-  newWeights <- currentWeights
-  for (m in freeIdx) {
-    if (batchPropose[m] < n_min) next
-    rate <- batchAccept[m] / batchPropose[m]
-    if (rate < accept_floor) {
-      oldW <- newWeights[m]
-      floorW <- weight_floor * initialWeights[m]
-      newW <- max(oldW * decay, floorW)
-      if (verbose && abs(newW - oldW) > 1e-10) {
-        message(sprintf(
-          "[T-018 decay] %s: accept=%.1f%% -> weight %.4f -> %.4f",
-          moveNames[m], 100 * rate, oldW, newW
-        ))
-        decayFired <- TRUE
-      }
-      newWeights[m] <- newW
-    }
-  }
-
-  # Re-normalise free moves so their total equals the unpinned budget
-  freeSum <- sum(newWeights[freeIdx])
-  if (freeSum > 1e-12) {
-    newWeights[freeIdx] <- newWeights[freeIdx] / freeSum * budget
-  }
-
-  # Re-enforce pinned values (in case normalisation pushed them)
-  if (length(pinnedIdx) > 0L) {
-    for (nm in names(pinnedWeights)) {
-      idx <- match(nm, moveNames)
-      if (!is.na(idx)) newWeights[idx] <- pinnedWeights[nm]
-    }
-  }
-
-  newWeights
+  weights
 }
 
 

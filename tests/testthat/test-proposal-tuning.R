@@ -7,7 +7,9 @@
 #   #6  .kMoveTypes and the moveWeights whitelist must be one surface;
 #   #7  the generic branch of the step-size tuner must be bounded above;
 #   #72 the k' walks must keep a window that proposes a real change;
-#   #77 the partitioned per-class moves must adapt their step size.
+#   #77 the partitioned per-class moves must adapt their step size;
+#   #79 fed one batch's counts, step sizes and slice widths settle on their
+#       targets instead of chasing a cumulative average.
 
 
 # --- #4: the R fallback uses the C++ kernel ------------------------------
@@ -209,11 +211,10 @@ test_that("both k' walks keep a usable window through warmup adaptation", {
                   MkPrime:::.BuildMoves(20L, 5L, TRUE, mcmc))
   expect_length(moves, 2L)
   tuning <- mcmc$tuning
-  propose <- accept <- c(kPrime = 0, block_kPrime = 0)
+  # One batch's counts, as the run loop passes them.
+  propose <- c(kPrime = 100, block_kPrime = 20)
+  accept <- c(kPrime = 80, block_kPrime = 0)
   for (batch in seq_len(8L)) {
-    # Cumulative counts, as the run loop passes them.
-    propose <- propose + c(kPrime = 100, block_kPrime = 20)
-    accept <- accept + c(kPrime = 80, block_kPrime = 0)
     tuning <- MkPrime:::.AdaptTuning(tuning, accept, propose, moves)
     # A window below 1 truncates to 0 at use: every delta is then 0.
     expect_gte(tuning$int_walk_window, 1)
@@ -322,4 +323,40 @@ test_that("per-class instances pool into their type's one step size", {
     .PartitionedScaleMoves()
   )
   expect_equal(out$scale_class_rate_log_sd, 5 * exp(0.5 * (0.4 - 0.35)))
+})
+
+
+# --- #79: the controllers settle when fed one batch's counts -------------
+
+test_that("a step size fed batch counts settles at its acceptance target", {
+  moves <- list(list(name = "rate_loss", type = "scale",
+                     target = "rate_loss", weight = 1, dim = 1L))
+  tuning <- list(scale_rate_loss = 0.05)
+  # Acceptance falls with step size, reaching the 0.35 target at -log(0.35).
+  Rate <- function(step) exp(-step)
+  for (batch in seq_len(40L)) {
+    accepted <- 1000 * Rate(tuning$scale_rate_loss)
+    tuning <- MkPrime:::.AdaptTuning(
+      tuning, c(rate_loss = accepted), c(rate_loss = 1000), moves
+    )
+  }
+  expect_equal(Rate(tuning$scale_rate_loss), 0.35, tolerance = 0.01)
+})
+
+test_that("a slice width fed batch counts settles instead of ratcheting", {
+  moves <- list(list(name = "slice_rate_loss", type = "slice",
+                     target = "rate_loss", weight = 1, dim = 1L))
+  tuning <- list(slice_width_rate_loss = 0.2)
+  # Stepping out needs about 3 / width expansions: the target of 3 is met at
+  # width 1. The cumulative mean, still recalling the narrow start, walked
+  # this width to its clamp of 10.
+  widths <- numeric(10L)
+  for (batch in seq_along(widths)) {
+    expansions <- 100 * 3 / tuning$slice_width_rate_loss
+    tuning <- MkPrime:::.AdaptSliceWidths(
+      tuning, c(slice_rate_loss = 100), c(slice_rate_loss = expansions), moves
+    )
+    widths[batch] <- tuning$slice_width_rate_loss
+  }
+  expect_equal(widths[3:10], rep(1, 8))
 })
