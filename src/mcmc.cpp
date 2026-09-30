@@ -4503,6 +4503,18 @@ double cpp_log_likelihood_marginal(
     Rcpp::stop("cpp_log_likelihood_marginal: Q-matrix heterogeneity is not "
                "supported in v1 marginal-k mode (plan §13).");
   }
+  // Known-k partitions would drop out of both loops below, and the class
+  // parameters of the partition API are never read (#270).
+  if (state.usePartitioned) {
+    Rcpp::stop("cpp_log_likelihood_marginal: the partition API is not "
+               "supported in marginal-k mode (plan §13).");
+  }
+  for (const auto& part : data.parts) {
+    if (part.type == 2) {
+      Rcpp::stop("cpp_log_likelihood_marginal: known-k partitions are not "
+                 "supported in marginal-k mode (plan §11).");
+    }
+  }
 
   const int nTrans = (int)data.transIdxGlobal.size();
   const int nParts = (int)data.parts.size();
@@ -4887,7 +4899,7 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
     edgeLen[i] = state->treeLength * state->relBrLengths[i];
 
   ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
-  bool hasPLC = !state->partLogLik.empty();
+  bool hasPLC = !state->partLogLik.empty() && !data->marginalK;
   int nParts = (int)data->parts.size();
   std::vector<double> newPC;
   double newLogLik;
@@ -5292,6 +5304,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       return gibbs_spr_impl(data, state, beta);
     }
     case 11: { // gibbs_subtree_swap — M-086
+      // Commits a fixed-k' candidate logLik; .BuildMoves drops it under
+      // marginal_k, and so must a direct dispatch (#270).
+      if (data->marginalK) return false;
       return gibbs_subtree_swap_impl(data, state, beta);
     }
     case 12: { // weighted_branch_scale — M-087, O(1) rollback
@@ -5382,9 +5397,11 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       return slice_kprime_hyper_impl(data, state, charIdx, scaleTuning);
 
     case 25: { // gibbs_kprime_sweep — Gibbs update of all k'_i
+      if (data->marginalK) return false;  // k' is pinned to kObs (#270)
       return gibbs_kprime_sweep_impl(data, state, beta);
     }
     case 26: { // block_kprime_shift — shift all k'_i by same delta
+      if (data->marginalK) return false;  // k' is pinned to kObs (#270)
       return block_kprime_shift_impl(data, state, intWalkWindow, beta);
     }
     // Move types 27 (scale_kprime_alpha) and 28 (scale_kprime_beta) — the
@@ -5424,6 +5441,10 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       // invariance check: dev/red-team/proofs/marginal-k-gibbs-p.md and
       // dev/red-team/numerical/gibbs-p-identity-check.R.
       if (!data->marginalK) return false;
+      // The kernel targets the beta = 1 conditional: imputing u needs the
+      // marginal as a mixture over k', which L^beta is not for 0 < beta < 1.
+      // A heated chain keeps p fixed here and moves it by case 30 (#269).
+      if (beta != 1.0) return false;
       // Geometric arm only (the other priors carry no scalar conjugate p).
       {
         const bool isPlainGeom = !data->kPriorLogseries &&

@@ -73,6 +73,11 @@ this function does not adapt) and \code{gibbs_p_marginal} (which is not
 tempered), and with no weight adaptation. An estimate is therefore
 comparable only with others computed under the same \code{model} and \code{mcmc}.
 
+Under \code{likelihoodMode = "sampled_k"} and the unconditional \verb{k'} prior, no
+stone visits \verb{k'_i < kObs_i}, so the prior-only stone is normalised on
+\verb{k' >= kObs} alone; the estimate adds back the log prior mass of that
+region, integrated over \code{p} numerically.
+
 The standard error is computed via the delta method applied to each
 stepping-stone ratio, following Xie et al. (2011) and the implementation in
 the \pkg{mcmc3r} package (dos Reis). For each stone \eqn{k},

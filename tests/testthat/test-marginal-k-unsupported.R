@@ -83,3 +83,34 @@ test_that("marginal_k without knownStates or a partition is accepted", {
     .mku_model("marginal_k"), mkd,
     list(partition = NULL, unlink = character(0), nClasses = 1L)))
 })
+
+# #270: the C++ evaluator must refuse both itself, not trust the R guard.
+.MkuState <- function(mkd, model) {
+  tr <- Preorder(.mku_tree(mkd))
+  model <- MkPrime:::.FinalizeModel(model, tr, mkd)
+  MkPrime:::.InitState(tr, mkd, model)
+}
+
+test_that("marginal evaluator aborts on known-k partitions past the R guard", {
+  local_mocked_bindings(.RequireMarginalKSupported = function(...) NULL)
+  mkd <- .mku_data(knownStates = c("1" = 3L))
+  model <- .mku_model("marginal_k")
+  dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
+  statePtr <- MkPrime:::.InitMcmcChain(.MkuState(mkd, model))
+  expect_error(eval_full_loglik_cpp(dataPtr, statePtr), "known-k partitions")
+})
+
+test_that("marginal evaluator aborts on a partitioned state", {
+  mkd <- .mku_data()
+  model <- .mku_model("marginal_k")
+  dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
+  st <- .MkuState(mkd, model)
+  statePtr <- init_mcmc_state(
+    st$tree$edge[, 1], st$tree$edge[, 2], st$rel_br_lengths, st$tree_length,
+    st$rate_loss, st$rate_log_sd, st$rate_neo %||% 1, st$p,
+    as.integer(st$kPrime), 0, 0,
+    classRateLogSd = st$rate_log_sd, classW = 1, classRate = 1,
+    nCharPerClass = mkd$nChar
+  )
+  expect_error(eval_full_loglik_cpp(dataPtr, statePtr), "partition API")
+})
