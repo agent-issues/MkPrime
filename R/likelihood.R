@@ -73,6 +73,25 @@ MkpLogLikelihood <- function(tree, mkd,
     tree <- TreeTools::RenumberTips(tree, dataTaxa)
   }
 
+  if (coding == "informative") {
+    informable <- .Informable(mkd)
+    if (!all(informable)) {
+      if (!any(informable)) {
+        cli::cli_abort(
+          "No character has the four observed tips that
+          {.code coding = \"informative\"} needs."
+        )
+      }
+      cli::cli_inform(
+        "Dropping {sum(!informable)} character{?s} with fewer than four
+        observed tips, which cannot be parsimony-informative:
+        {?column/columns} {which(!informable)}."
+      )
+      mkd <- .SubsetMkPrimeData(mkd, informable)
+      if (!is.null(kPrime)) kPrime <- kPrime[informable]
+    }
+  }
+
   # Default kPrime: use kObs for transformational, known_k for known, 2 for neo
   if (is.null(kPrime)) {
     kPrime <- mkd$kObs
