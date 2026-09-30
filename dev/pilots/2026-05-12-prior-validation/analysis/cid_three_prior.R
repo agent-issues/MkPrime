@@ -8,8 +8,10 @@ SUMMARY_DIR <- "dev/pilots/2026-05-12-prior-validation/summary"
 EG_CID      <- "C:/Users/pjjg18/GitHub/mkprime/report-data/mkp-eg-260/cid_compare_260.rds"
 OUT_DIR     <- "dev/pilots/2026-05-12-prior-validation/analysis"
 
-per_task_cid <- function(prefix, label) {
-  files <- list.files(SUMMARY_DIR, paste0("^", prefix, "_.*\\.rds$"), full.names = TRUE)
+# `pattern` is anchored on the whole filename: a bare `^mk_` also matches
+# mk_k9, mk_kp1, mk_tlshrink, ... and would pool those arms as "mk".
+per_task_cid <- function(pattern, label, dir = SUMMARY_DIR) {
+  files <- list.files(dir, pattern, full.names = TRUE)
   do.call(rbind, lapply(files, function(f) {
     x <- readRDS(f)
     cid <- x$cid
@@ -24,8 +26,8 @@ per_task_cid <- function(prefix, label) {
   }))
 }
 
-mk  <- per_task_cid("mk",      "mk")
-geo <- per_task_cid("mkp_geo", "geo")
+mk  <- per_task_cid("^mk_t[0-9]+_r[0-9]+\\.rds$", "mk")
+geo <- per_task_cid("^mkp_geo_.*\\.rds$", "geo")
 
 # EG: reuse existing per-task means from cid_compare_260.rds
 cc <- readRDS(EG_CID)

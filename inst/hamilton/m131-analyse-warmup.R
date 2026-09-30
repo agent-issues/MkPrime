@@ -12,7 +12,7 @@ library(ggplot2)
 results_dir <- commandArgs(trailingOnly = TRUE)[1]
 if (is.na(results_dir)) results_dir <- "inst/hamilton/results"
 
-rds_files <- list.files(results_dir, pattern = "^m131_.*\.rds$",
+rds_files <- list.files(results_dir, pattern = "^m131_.*\\.rds$",
                          full.names = TRUE)
 if (length(rds_files) == 0L) stop("No RDS files found in: ", results_dir)
 

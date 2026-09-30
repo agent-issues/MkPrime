@@ -1,5 +1,6 @@
 # Aggregate the gibbsSpr on/off grid.
 SP <- Sys.getenv("GSPR_DIR", ".")
+source(file.path(SP, "align.R"))
 fs <- list.files(file.path(SP, "grid"), "\\.rds$", full.names = TRUE)
 cat("cells:", length(fs), "\n")
 
@@ -16,7 +17,9 @@ d <- do.call(rbind, lapply(fs, function(f) {
              mcse_k = median(x$kp_se, na.rm = TRUE))
 }))
 d$arm <- factor(d$arm, levels = c("on", "off"))
-cat("\ncells per (tree, arm):\n"); print(table(d$tree, d$arm))
+cellCounts <- table(d$tree, d$arm)
+cat("\ncells per (tree, arm):\n"); print(cellCounts)
+nSeeds <- CheckCompleteGrid(d, treeIdx = 1:8)   # 8 datasets, as in 02b
 
 METRICS <- c("mean_u", "median_u", "p_lt_05", "rho", "p_mean", "tree_length", "log_lik")
 
@@ -42,7 +45,7 @@ for (m in METRICS) {
   se <- sd(df) / sqrt(nD)
   tt <- t.test(df)
   # pure MC-noise floor: what SE would we expect if the arms were identical?
-  se_mc <- sqrt(mean((sd_on[k]^2 + sd_off[k]^2) / 3)) / sqrt(nD)
+  se_mc <- sqrt(mean((sd_on[k]^2 + sd_off[k]^2) / nSeeds)) / sqrt(nD)
   cat(sprintf("  %-12s  on=%+.4f  off=%+.4f  diff=%+.4f  SE=%.4f  95%%CI [%+.4f,%+.4f]  p=%.3f  (MC-only SE %.4f)\n",
               m, mean(on[k]), mean(off[k]), mean(df), se,
               tt$conf.int[1], tt$conf.int[2], tt$p.value, se_mc))
