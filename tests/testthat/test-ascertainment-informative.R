@@ -254,3 +254,25 @@ test_that("RunMkPrime drops parsimony-uninformative characters", {
   ))
   expect_true(all(is.finite(result$samples[, "log_likelihood"])))
 })
+
+test_that("ResumeMkPrime and mkp_stepping_stone drop them too", {
+  data <- .SixTipData(c(0, 0, 0, 0, 0, 1))
+  model <- MkPrimeModel(coding = "informative")
+  cp <- tempfile(fileext = ".ckp")
+  on.exit(unlink(cp))
+  suppressWarnings(suppressMessages(
+    RunMkPrime(data, model = model, nIter = 20L, nRuns = 1L,
+               autoTune = FALSE, checkpointFile = cp, maxTime = 30)
+  ))
+  suppressWarnings(expect_message(
+    resumed <- ResumeMkPrime(cp, data, mcmc = list(nIter = 40L)),
+    "Dropping 1 parsimony-uninformative character"
+  ))
+  expect_true(all(is.finite(resumed$samples[, "log_likelihood"])))
+  suppressWarnings(expect_message(
+    ss <- mkp_stepping_stone(data, model = model, nStones = 2L,
+                             nIter = 20L, warmup = 10L, verbose = FALSE),
+    "Dropping 1 parsimony-uninformative character"
+  ))
+  expect_true(is.finite(ss$log_marginal))
+})
