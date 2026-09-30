@@ -89,7 +89,9 @@ test_that("Sample records each row's true iteration once thin adapts (#91)", {
   expect_gt(max(gaps), min(gaps))
   expect_true(all(gaps > 0L))
   expect_lte(max(iters), res$actual_iter)
-  expect_gt(max(iters) + max(gaps), res$actual_iter)
+  # The adapted thin need not have completed a gap before the run ends.
+  thin <- readRDS(sub("log$", "ckp", log))$runs[[1]]$thin
+  expect_gt(max(iters) + thin, res$actual_iter)
 })
 
 test_that("every checkpoint records each run's adapted thin (#91)", {
