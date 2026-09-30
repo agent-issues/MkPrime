@@ -342,8 +342,15 @@ RunMkPrime <- function(data, tree = NULL,
   # If the user (or MkPrimeMCMC auto-derive from logFile) set it, preserve it.
   userCkpFile <- mcmc$checkpointFile
   isTempLog   <- is.null(userLogFile)
+  # A checkpoint the user keeps needs its log to outlive the session, which
+  # deletes tempdir() on exit.
+  isTempCkp   <- isTempLog && is.null(userCkpFile)
   if (isTempLog) {
-    mcmc$logFile <- tempfile("mkp_run_", fileext = ".log")
+    mcmc$logFile <- if (isTempCkp) {
+      tempfile("mkp_run_", fileext = ".log")
+    } else {
+      paste0(tools::file_path_sans_ext(userCkpFile), "_mkp_run.log")
+    }
   }
   # Always checkpoint -- derive from log path if not already set
   if (is.null(mcmc$checkpointFile)) {
@@ -358,22 +365,19 @@ RunMkPrime <- function(data, tree = NULL,
   .WarnUnreachableCriteria(mcmc)
   logFilePaths    <- .OpenLogFiles(mcmc$logFile, paramNames, nRuns)
 
-  # Register temp files so cleanup can find them (crash, new run, etc.)
-  # Only treat the checkpoint as temp if it was auto-derived from the temp log.
-  # A user-supplied checkpointFile should survive cleanup.
-  isTempCkp <- isTempLog && is.null(userCkpFile)
-  tempFiles <- if (isTempLog) {
+  # Register temp files so cleanup can find them (crash, new run, etc.).
+  # Logs beside a user-supplied checkpoint go only once the run completes: the
+  # checkpoint cannot resume without them.
+  tempFiles <- if (isTempCkp) {
     ckpFiles <- unique(c(mcmc$checkpointFile,
                          .CkpFilePaths(mcmc$checkpointFile, nRuns)))
-    c(logFilePaths, if (isTempCkp) c(ckpFiles, paste0(ckpFiles, ".tmp")))
-  } else {
-    NULL
+    c(logFilePaths, ckpFiles, paste0(ckpFiles, ".tmp"))
   }
   .mkp_env$active_temp_logs <- tempFiles
 
   # Clean up temp files on normal exit or error -- but NOT on interrupt,
   # where we want MkPrimeRecover() to find them.
-  if (isTempLog) {
+  if (isTempCkp) {
     on.exit(.CleanupTempLogs(tempFiles), add = TRUE)
   }
 
@@ -393,7 +397,7 @@ RunMkPrime <- function(data, tree = NULL,
   # --- Execute MCMC (with interrupt recovery) ---
   execResult <- .RunWithRecovery(
     mkd, model, mcmc, runs, moves, tipLabels, paramNames, nEdge, brColStart,
-    logFilePaths, convWindowSize, treeFilePaths, isTempLog
+    logFilePaths, convWindowSize, treeFilePaths, isTempCkp
   )
 
   # If interrupted, on.exit cleanup is cancelled and we return early
@@ -437,6 +441,7 @@ RunMkPrime <- function(data, tree = NULL,
     }
     result$logFile <- NULL
   }
+  if (isTempLog && !isTempCkp) .CleanupTempLogs(logFilePaths)
 
   result
 }
