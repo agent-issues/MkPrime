@@ -177,9 +177,13 @@ test_that("informative Sun2018 likelihood matches the per-tip kernels", {
   binary <- c(1L, 3L, 5L, 6L, 7L, 9L, 10L, 11L, 12L, 13L, 14L, 15L)
   ll <- vapply(list(integer(0), binary), function(neo) {
     mkd <- suppressWarnings(MkPrimeData(sun, neomorphic = neo))
-    MkpLogLikelihood(tree, mkd, rate_loss = 0.6, rate_log_sd = 0.4,
-                     rate_neo = 1.3, coding = "informative")
+    model <- MkPrime:::.FinalizeModel(MkPrimeModel(coding = "informative"),
+                                      tree, mkd)
+    cpp_log_likelihood_xptr(MkPrime:::.InitMcmcData(mkd, model),
+                            tree$edge[, 1], tree$edge[, 2], tree$edge.length,
+                            as.integer(mkd$kObs), rateLoss = 0.6,
+                            rateLogSd = 0.4, rateNeo = 1.3)
   }, double(1))
-  expect_equal(ll, c(-2829.4843325754705, -2826.5877050786803),
-               tolerance = 1e-12)
+  expect_lt(max(abs(ll - c(-2829.4843325754368, -2826.5877050786489))),
+            1e-10)
 })

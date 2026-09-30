@@ -139,8 +139,8 @@ double constant_site_prob_jc(Rcpp::IntegerVector parent,
 // ---------------------------------------------------------------------------
 // singleton_site_prob_jc
 //
-// P(singleton site) for JC(k): under JC symmetry, the k*(k-1) singleton
-// patterns at a given tip all have the same probability, so
+// P(singleton site) for JC(k): with uniform root_freqs, the k*(k-1)
+// singleton patterns at a given tip all have the same probability, so
 // P(singleton) = k*(k-1) * sum_j P(all observed = 0, tip_j = 1).
 //
 // #252: rather than one pseudo-character per tip (O(nTip) per edge), one
