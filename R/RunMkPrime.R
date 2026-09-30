@@ -1399,17 +1399,17 @@ RunMkPrime <- function(data, tree = NULL,
       # per-batch multiplicative update driven by it keeps correcting an
       # error that has gone (#79). Move weights keep the cumulative counts.
       for (ch in seq_len(nChains)) {
-        batchPropose <- setNames(as.integer(result$propose_counts[ch, ]),
-                                 moveNames)
+        batchAccept <- stats::setNames(
+          as.integer(result$accept_counts[ch, ]), moveNames)
+        batchPropose <- stats::setNames(
+          as.integer(result$propose_counts[ch, ]), moveNames)
+        batchSliceExp <- stats::setNames(
+          as.numeric(result$slice_expansions[ch, ]), moveNames)
         r$chain_tuning[[ch]] <- .AdaptTuning(
-          r$chain_tuning[[ch]],
-          setNames(as.integer(result$accept_counts[ch, ]), moveNames),
-          batchPropose, moves
+          r$chain_tuning[[ch]], batchAccept, batchPropose, moves
         )
         r$chain_tuning[[ch]] <- .AdaptSliceWidths(
-          r$chain_tuning[[ch]], batchPropose,
-          setNames(as.numeric(result$slice_expansions[ch, ]), moveNames),
-          moves
+          r$chain_tuning[[ch]], batchPropose, batchSliceExp, moves
         )
       }
       if (nChains > 1L) {
