@@ -410,8 +410,8 @@ MkPrimeModel <- function(
 
 
 # Fills k'-prior fields that a hand-built model, or one saved before the field
-# existed, may lack, exactly as .InitMcmcData does, so that R LogPrior and the
-# C++ prior see the same model.
+# existed, may lack. LogPrior and .InitMcmcData both resolve through here, so R
+# and C++ score the same prior.
 .ResolvePriorDefaults <- function(model) {
   model$priorVariant <- model$priorVariant %||%
     .DefaultPriorVariant(model$kPrimePrior %||% "geometric")

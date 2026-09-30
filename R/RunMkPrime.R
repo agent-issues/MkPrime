@@ -4546,6 +4546,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' @keywords internal
 .InitMcmcData <- function(mkd, model) {
   .RequireMarginalKSupported(model, mkd)
+  model <- .ResolvePriorDefaults(model)
   # Replace NA with -1 in tip states for C++
   parts <- lapply(mkd$partitions, function(p) {
     ts <- p$tip_states
@@ -4562,7 +4563,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   empTailStartK <- 0L
   empTailDecay <- 0.0
   empLogTailStartP <- -Inf
-  if (isEmpGeom && !is.null(emp)) {
+  if (isEmpGeom) {
     body <- as.numeric(emp$body)
     empLogBody <- ifelse(body > 0, log(body), -Inf)
     empTailStartK <- as.integer(emp$tail_start_k)
@@ -4579,7 +4580,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     model$rateNeoMeanlog, model$rateNeoSdlog,
     model$kprimeHyperA, model$kprimeHyperB,
     identical(model$kPrimePrior, "logseries"),
-    model$kprimeLogseriesC %||% 0.7,
+    model$kprimeLogseriesC,
     identical(model$kPrimePrior, "beta_geometric"),
     isTRUE(model$qHeterogeneity),
     model$nBetaCat %||% 4L,
@@ -4591,9 +4592,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     empTailDecay,
     empLogTailStartP,
     identical(model$likelihoodMode, "marginal_k"),
-    identical(model$priorVariant %||% MkPrimeModel(
-      kPrimePrior = model$kPrimePrior %||% "geometric")$priorVariant,
-      "unconditional")
+    identical(model$priorVariant, "unconditional")
   )
   # Wire the truncation cap K from the model into the McmcData
   # (set_kprime_trunc_k; mirrors set_branch_bins, avoiding a prepare_mcmc_data
