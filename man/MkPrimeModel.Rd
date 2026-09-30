@@ -52,9 +52,11 @@ so that the prior mean tree length is \code{expSteps}.}
 
 \item{expSteps}{Expected number of state changes per character: the prior
 mean tree length, in the per-character units of branch length. Default
-\code{NULL} computes it from the data as the parsimony score of the starting
-tree divided by the number of characters. Parsimony misses multiple hits,
-so this underestimates the true tree length.}
+\code{NULL} computes it from the data as the parsimony score of the
+neighbour-joining tree of the data (not the starting tree, so that
+\code{\link[=RunMkPrime]{RunMkPrime()}} and \code{\link[=mkp_stepping_stone]{mkp_stepping_stone()}} share one prior whatever tree
+each starts from) divided by the number of characters. Parsimony misses
+multiple hits, so this underestimates the true tree length.}
 
 \item{rateLossMeanlog, rateLossSdlog}{Parameters for the LogNormal prior
 on \code{rate_loss} (neomorphic asymmetry). Defaults: meanlog = 0, sdlog = 2.}
@@ -194,8 +196,8 @@ Default (\code{NULL}): \code{"unconditional"} for both \code{"empirical_geometri
 \verb{k' ~ 2 + Geo(p)}, so the default aligns inference with the validated SBC
 forward model); \code{"conditional"} for \code{"beta_geometric"}, which has no
 unconditional form and rejects \code{"unconditional"}. Consulted for
-\code{empirical_geometric} and for \code{geometric} under
-\code{likelihoodMode = "marginal_k"}; ignored for \code{logseries}.}
+\code{empirical_geometric} and \code{geometric} under either \code{likelihoodMode};
+ignored for \code{logseries}.}
 
 \item{kprimeTruncK}{Integer specifying the cap \code{K} at which the geometric
 arm's \verb{k'} prior is truncated and renormalised over \verb{[2, K]}, bounded

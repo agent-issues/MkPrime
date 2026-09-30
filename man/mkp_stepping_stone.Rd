@@ -15,6 +15,7 @@ mkp_stepping_stone(
   warmup = 200L,
   alpha = 0.3,
   fixTopology = FALSE,
+  nRuns = 2L,
   verbose = MkPrimeVerbosity() > 0L
 )
 }
@@ -35,9 +36,11 @@ ignored.}
 
 \item{nStones}{Number of stepping stones (power posterior levels). Default 50.}
 
-\item{nIter}{Number of MCMC iterations per stone. Default 1000.}
+\item{nIter}{Number of MCMC iterations per stone, each a single move (not
+a sweep through every move type). Default 1000.}
 
-\item{warmup}{Warmup iterations per stone (discarded). Default 200.}
+\item{warmup}{Warmup iterations per stone (discarded), counted as for
+\code{nIter}. Default 200.}
 
 \item{alpha}{Shape parameter for the Beta(alpha, 1) quantile schedule.
 Smaller values concentrate more stones near beta = 0 where the integrand
@@ -46,18 +49,25 @@ changes fastest. Default 0.3 (Xie et al. recommendation).}
 \item{fixTopology}{If \code{TRUE}, fix the tree topology and only sample
 continuous parameters + branch lengths. Default \code{FALSE}.}
 
+\item{nRuns}{Integer specifying the number of independent runs through the
+whole ladder; at least two are needed for a standard error. Default 2.}
+
 \item{verbose}{Logical specifying whether to report per-stone progress;
 see \code{\link[=MkPrimeVerbosity]{MkPrimeVerbosity()}}.}
 }
 \value{
 A list with components:
 \describe{
-\item{log_marginal}{Log marginal likelihood estimate.}
-\item{se}{Standard error of the estimate (delta-method approximation;
-see Details).}
+\item{log_marginal}{Log marginal likelihood estimate, pooling the
+runs.}
+\item{se}{Standard error of the estimate (see Details); \code{NA} when
+\code{nRuns = 1}.}
+\item{run_log_marginal}{The estimate from each run alone (length \code{nRuns}).}
 \item{log_ratios}{Per-stone log ratios (length \code{nStones}).}
 \item{betas}{The beta schedule used.}
 }
+If any stone of any run has no finite log-likelihood, or an infinite one,
+\code{log_marginal} and \code{se} are \code{NA}, with a warning.
 }
 \description{
 Estimates the marginal likelihood of the data under the Mk' model using
@@ -72,30 +82,25 @@ and \code{mcmc} specify, less the 2D joint proposals (which need a correlation
 this function does not adapt) and \code{gibbs_p_marginal} (which is not
 tempered), and with no weight adaptation. An estimate is therefore
 comparable only with others computed under the same \code{model} and \code{mcmc}.
+One iteration performs one move, so a stone updates a parameter about
+\code{nIter} times the weight of the moves that change it; a large tree, whose
+many branch lengths share those weights, needs a correspondingly larger
+\code{nIter}.
 
 Under \code{likelihoodMode = "sampled_k"} and the unconditional \verb{k'} prior, no
 stone visits \verb{k'_i < kObs_i}, so the prior-only stone is normalised on
 \verb{k' >= kObs} alone; the estimate adds back the log prior mass of that
 region, integrated over \code{p} numerically.
 
-The standard error is computed via the delta method applied to each
-stepping-stone ratio, following Xie et al. (2011) and the implementation in
-the \pkg{mcmc3r} package (dos Reis). For each stone \eqn{k},
-the importance weights \eqn{L_{k,i} = \exp(\Delta\beta_k \cdot \ell_i - C_k)}
-are computed (where \eqn{C_k} is a centering constant for numerical
-stability). The per-stone ratio is \eqn{r_k = \bar{L}_k} and its log
-contributes to the overall log-marginal likelihood. By the delta method,
-\deqn{\mathrm{Var}(\log r_k) \approx \frac{\mathrm{Var}(L_k)}{N_{\mathrm{eff},k}
-  \cdot r_k^2}}
-where \eqn{N_{\mathrm{eff},k}} is the effective sample size (accounting
-for MCMC autocorrelation). The total SE is
-\eqn{\sqrt{\sum_k \mathrm{Var}(\log r_k)}}. A warning is issued for any
-stone where \eqn{\mathrm{Var}(L_k) / (N_{\mathrm{eff},k} \cdot r_k^2) > 0.1},
-indicating the delta approximation may be unreliable; consider increasing
-\code{nIter} or \code{nStones}.
-
-If the \pkg{coda} package is not available, a fallback ESS estimate is used
-(initial positive sequence estimator on the autocorrelation function).
+Each run is one chain that carries its state from stone to stone, starting
+from \code{tree}. The estimate pools the draws of every run at each stone; the
+standard error is \eqn{s / \sqrt{n}}, where \eqn{s} is the standard
+deviation of the \code{n = nRuns} runs' own estimates. Within a run, the
+autocorrelation of the chain commonly outlasts a stone and carries into
+the next, so an error computed from each stone's draws alone (the delta
+method of Xie et al. 2011) can understate the true error several-fold;
+independent runs capture both. With few runs the standard error is itself
+uncertain: with the default two it rests on one degree of freedom.
 }
 \references{
 Xie, W., Lewis, P.O., Fan, Y., Kuo, L., & Chen, M.-H. (2011).

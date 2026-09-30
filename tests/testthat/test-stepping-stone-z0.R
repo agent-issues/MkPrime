@@ -55,19 +55,25 @@
   } else {
     c(mh_logit_p = 1)
   }
+  # The oracle needs the tree and branch lengths frozen, which pins summing to
+  # one would do but mkp_stepping_stone() refuses (#277).
+  local_mocked_bindings(
+    .SchedulePins = function(moveWeights, moveTypes, userPins) userPins,
+    .package = "MkPrime"
+  )
   set.seed(1L)
   mkp_stepping_stone(.Z0Data(), .Z0Tree(), model = .Z0Model(mode),
                      mcmc = MkPrimeMCMC(moveWeights = weights),
                      nStones = 20L, nIter = 2000L, warmup = 200L,
-                     fixTopology = TRUE, verbose = FALSE)
+                     fixTopology = TRUE, nRuns = 1L, verbose = FALSE)
 }
 
 test_that("stepping stone matches the exact log ML in both modes (#267)", {
   exact <- .Z0ExactLogMl()
   for (mode in c("sampled_k", "marginal_k")) {
     ss <- .Z0SteppingStone(mode)
-    # Before the fix, sampled_k sat -log Z0 = 1.975 above the exact value. The
-    # delta-method se misses the stones' shared chain, so allow for seed spread.
+    # Before the fix, sampled_k sat -log Z0 = 1.975 above the exact value.
+    # The tolerance allows for seed spread.
     expect_lt(abs(ss$log_marginal - exact), 0.25)
   }
 })
