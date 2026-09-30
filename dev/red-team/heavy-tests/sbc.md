@@ -41,8 +41,10 @@ implemented (untruncated) prior the posterior is biased by
 harness draws `(p, k'_i, character)` from the truncation-aware joint that
 the L6 proof identifies as the *intended* model — so the rank histogram
 of `p` and pooled `k'` will skew non-uniformly under the buggy sampler.
-The geometric, beta-geometric (`Z_i ≡ 1`) and logseries-with-fixed-`c`
-(latent LS-001) arms should remain calibrated.
+The geometric (`Z_i ≡ 1`) and logseries-with-fixed-`c` (latent LS-001)
+arms should remain calibrated. There is no beta-geometric arm: that prior
+is on `k' - kObs_i`, so it conditions on the data and is not
+SBC-calibratable.
 
 ## Pass criterion
 
@@ -56,8 +58,8 @@ For each arm, let `K_arm` be the number of monitored parameters.
 
 `p_AD > 0.001 / K_arm`     (Bonferroni-corrected across parameters)
 
-The base threshold `α = 0.001` is conservative — six arms × ~5
-parameters gives ~30 tests, and at `α = 0.001` the family-wise false
+The base threshold `α = 0.001` is conservative — five arms × ~5
+parameters gives ~25 tests, and at `α = 0.001` the family-wise false
 positive rate is still < 5%. Per-arm correction prevents one noisy
 parameter (e.g. topology summary) from dragging the whole arm down.
 
@@ -65,14 +67,13 @@ parameter (e.g. topology summary) from dragging the whole arm down.
 
 ## Arms
 
-Six arms, with predicted PASS/FAIL under the **current** (unpatched)
+Five arms, with predicted PASS/FAIL under the **current** (unpatched)
 code:
 
 | arm | model | prior | K | expected | reason |
 |-----|-------|-------|---|----------|--------|
 | `MkNT_geometric` | MkNT | geometric | 2 | PASS | k' pinned by knownStates; geometric is no-op |
 | `Mkp_geometric` | Mk' | geometric | 4 | PASS | `Z_i ≡ 1`; hierarchical geometric |
-| `Mkp_beta_geometric` | Mk' | beta_geometric | 3 | PASS | `Z_i ≡ 1`; BetaGeo identity |
 | `Mkp_empirical_geometric` | Mk' | empirical_geometric | 4 | **FAIL** (EG-001) | missing `log Z_i(p)`; bias scales with kObs spread |
 | `Mkp_logseries` | Mk' | logseries | 3 | PASS (latent LS-001) | `c` is fixed → bias is per-char additive constant, cancels in MH ratios |
 | `MkNT_logseries` | MkNT | logseries | 2 | PASS | k pinned; prior reduces to support indicator |
@@ -89,9 +90,7 @@ Per-arm `K`:
   under the hierarchical-prior exchangeability assumption — see L6 §2.1)
   monitored for Mk' arms.
 - `p` monitored for arms whose prior actually samples `p` (geometric,
-  empirical_geometric); not monitored for beta_geometric (no scalar `p`
-  to sample — alpha, beta are sampled instead and not exposed in the
-  samples matrix) or logseries (`c` is fixed).
+  empirical_geometric); not monitored for logseries (`c` is fixed).
 
 **Topology rank is intentionally excluded** from the rank histogram
 test. Talts et al.'s rank-uniformity is for continuous parameters;
@@ -168,7 +167,6 @@ sbc-results/
 │   ├── summary.rds                      # full sim outputs
 │   └── rank-matrix.csv                  # pooled ranks, one col per param
 ├── Mkp_geometric/...
-├── Mkp_beta_geometric/...
 ├── Mkp_empirical_geometric/...
 ├── Mkp_logseries/...
 └── MkNT_logseries/...
@@ -196,8 +194,8 @@ expected fix is to add the `log Z_i(p)` term to
 `src/mcmc.cpp::cpp_log_prior`. Re-running the harness with the patch
 applied should flip the arm to PASS.
 
-**Unexpected FAIL on `Mkp_geometric` or `Mkp_beta_geometric`:** these
-arms have `Z_i ≡ 1` (L6 §4.1 and §4.2) — so a FAIL here points to a bug
+**Unexpected FAIL on `Mkp_geometric`:** this
+arm has `Z_i ≡ 1` (L6 §4.1) — so a FAIL here points to a bug
 *elsewhere* in the inference pipeline. Most likely causes, in order:
 (a) the MCMC mixing is poor enough that fixed-topology runs aren't
 converging in `N_iter = 6000`; (b) the relabelling correction
