@@ -56,7 +56,8 @@ cat(sprintf("SBC harness  | mode=%s | seedBase=%d | armFilter=%s\n",
             mode, seedBase, if (is.null(armFilter)) "<all>" else armFilter))
 
 # --------------------- Configuration table ---------------------
-# Five arms. See sbc.md §Arms for predicted PASS/FAIL.
+# Five arms. See sbc.md §Arms. Every arm simulates each character from its
+# drawn k, so the Mk' arms rank p (where sampled) and k' against their prior.
 ALL_ARMS <- list(
   list(name = "MkNT_geometric",          model = "MkNT", prior = "geometric",
        expect = "PASS"),
@@ -64,9 +65,9 @@ ALL_ARMS <- list(
        expect = "PASS"),
   # No beta_geometric arm: its prior conditions on kObs, so it is not SBC-calibratable.
   list(name = "Mkp_empirical_geometric", model = "Mkp",  prior = "empirical_geometric",
-       expect = "PASS"),  # EG-001 not visible at kObs=2 (option α); L6 closes the math
+       expect = "PASS"),
   list(name = "Mkp_logseries",           model = "Mkp",  prior = "logseries",
-       expect = "PASS"),  # LS-001 latent because c is fixed
+       expect = "PASS"),  # c is fixed, so only k' is ranked beyond tree_length
   list(name = "MkNT_logseries",          model = "MkNT", prior = "logseries",
        expect = "PASS")
 )
@@ -121,6 +122,12 @@ if (!requireNamespace("goftest", quietly = TRUE)) {
 # parameterisation, so the forward and inferred priors agree.
 EXPSTEPS_FIXED <- 50         # treeLengthRate = TREE_SHAPE / EXPSTEPS_FIXED
 TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
+# The geometric k' prior is truncated to [2, kprimeTruncK] and renormalised
+# (MARGINAL-K-TRUNC-001); the forward rejection-samples the same support.
+K_MAX_PRIOR    <- 30L
+# ACRV on, so rate_log_sd reaches the likelihood and its rank test means
+# something. Categories are equiprobable, as in inference.
+N_CAT          <- 4L
 .simTree <- function(nTip) {
   tr <- ape::rtree(nTip, tip.label = paste0("t", seq_len(nTip)))
   nEdge <- nrow(tr$edge)
@@ -134,7 +141,7 @@ TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
 
 # Simulate one character under JC(kTrue) by recursive root-to-tip draws.
 # kTrue >= 2.  Returns integer tip vector in {0, ..., kTrue-1}.
-.simJCchar <- function(tree, kTrue) {
+.simJCchar <- function(tree, kTrue, rate = 1) {
   nTip <- length(tree$tip.label)
   states <- integer(2L * nTip - 1L)
   rootIdx <- nTip + 1L
@@ -142,7 +149,7 @@ TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
   edges <- tree$edge
   el    <- tree$edge.length
   for (e in seq_len(nrow(edges))) {
-    pa <- edges[e, 1L]; ch <- edges[e, 2L]; t <- el[e]
+    pa <- edges[e, 1L]; ch <- edges[e, 2L]; t <- el[e] * rate
     # Forward (root→tip) iteration on a Preorder edge list: parents are
     # always introduced before their children, so states[pa] is valid when
     # we reach edge e. `rev()` here would give postorder traversal, reading
@@ -170,57 +177,46 @@ TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
   out
 }
 
-# Draw kPrime from the *untruncated* prior. This is the heart of the SBC
-# generative model: we sample k' before knowing kObs, then simulate the
-# character, then let inference condition on the resulting kObs. Any
-# missing truncation normaliser in inference will then bias the joint.
+# Draw each character's k from the arm's prior, before any data exist.
 #
-# For MkNT we simply set kPrime = kTrue (no latent expansion) and draw
-# kTrue from the marginal prior on observable states.
+# Mk': k' is drawn from exactly the prior inference uses (Model A,
+# unconditional on kObs, including the geometric arm's truncation), so SBC
+# ranks of p and k' are uniform under a correct sampler.
+#
+# MkNT: k is fixed per character through knownStates, so it is data rather than
+# a parameter; any distribution on k >= 2 is valid.
 .drawKPrime <- function(arm, p, model_hp, n) {
   prior <- arm$prior
   if (arm$model == "MkNT") {
-    # MkNT has no kPrime; "k" is the observable state count. Draw from
-    # the same marginal but reject k = 1 (need >= 2 states to be a
-    # character) and clamp to a sane max for the JC simulator.
     if (prior == "geometric") {
-      # u ~ Geo(p), k = u + 2 (kObs >= 2 for variable characters under MkNT)
       u <- stats::rgeom(n, p)
       return(pmin(u + 2L, 20L))
     } else if (prior == "logseries") {
-      # logseries on k >= 1, then take max(k, 2)
       c_ls <- model_hp$kprimeLogseriesC
-      # inverse-CDF sample
       kvals <- 1:50
       pk <- -c_ls^kvals / (kvals * log(1 - c_ls))
-      pk <- pk / sum(pk)
-      kk <- sample(kvals, n, replace = TRUE, prob = pk)
+      kk <- sample(kvals, n, replace = TRUE, prob = pk / sum(pk))
       return(pmax(kk, 2L))
     }
   } else {
-    # Mk': u ~ <prior>, kPrime = u + 2 nominal (we pick kObs=2 floor and
-    # let observed kObs emerge from simulation).
-    kFloor <- 2L
     if (prior == "geometric") {
-      u <- stats::rgeom(n, p)
-      return(u + kFloor)
+      # Rejection, not pmin(): a clamp piles the tail's mass onto K (#57).
+      return(vapply(seq_len(n), function(i) {
+        repeat {
+          k <- 2L + stats::rgeom(1L, p)
+          if (k <= K_MAX_PRIOR) return(k)
+        }
+      }, integer(1L)))
     } else if (prior == "empirical_geometric") {
-      # k = N_obs + N_unobs;  N_obs ~ empiricalNObs body+tail;  N_unobs ~ Geo(p)
-      emp <- model_hp$empiricalNObs
-      kVals <- seq.int(2L, length.out = length(emp$body))
-      pBody <- emp$body
-      # sample N_obs from the empirical body only (truncate tail for
-      # simulation simplicity; tail mass typically < 5%).
-      pBody <- pBody / sum(pBody)
-      nObs <- sample(kVals, n, replace = TRUE, prob = pBody)
-      nUnobs <- stats::rgeom(n, p)
-      return(nObs + nUnobs)
+      # k' = N_obs + N_unobs, untruncated like the inference convolution.
+      nObs <- MkPrime:::.SampleNObsEmpirical(n, model_hp$empiricalNObs)
+      return(nObs + stats::rgeom(n, p))
     } else if (prior == "logseries") {
+      # P(k) ~ c^k / k on k >= 2; mass beyond 200 is below 1e-60 at c = 0.5.
       c_ls <- model_hp$kprimeLogseriesC
-      kvals <- 2:50  # kPrime >= 2 by support
-      pk <- -c_ls^kvals / (kvals * log(1 - c_ls))
-      pk <- pk / sum(pk)
-      return(sample(kvals, n, replace = TRUE, prob = pk))
+      kvals <- 2:200
+      pk <- c_ls^kvals / kvals
+      return(sample(kvals, n, replace = TRUE, prob = pk / sum(pk)))
     }
   }
   stop("unknown prior/model combination: ", arm$model, "/", prior)
@@ -256,49 +252,43 @@ TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
   true_tree <- .simTree(N_TIP)
   tl_true <- sum(true_tree$edge.length)
 
-  # Step 3. Draw kTrue per character from the inference prior (tracked
-  # as the SBC "truth" for kPrime ranks). Simulation is forced to k=2.
+  # Step 3. Draw kTrue per character from the inference prior.
   kTrue <- .drawKPrime(arm, p_true, model_hp, N_CHAR)
 
-  # Simulation states per character: kSim = 2 (binary) for ALL arms.
-  # Tried kSim=kTrue for Mk' in v9 (option γ). Result: tree_length REGRESSED
-  # on Mkp_geometric (v8 p=0.47 → v9 p=2.85e-4) and `p` did NOT improve
-  # (still 3e-6). Mechanism: with kSim=kTrue and kObs<kTrue (common at 8 tips
-  # under geometric prior's long kTrue tail), inference can't recover kTrue
-  # under the JC(kPrime~kObs+Geo(p)) prior and absorbs the missing
-  # substitutions into longer branches → tree_length posterior shifts up.
-  # kSim=2 keeps forward-k=inference-k=2 and is the v8 calibration that
-  # demonstrated tree_length + rate_log_sd PASS in all 6 arms.
-  kSim <- rep(2L, N_CHAR)
-
-  # Step 4. Simulate each character with k = 2 (binary).
+  # Step 4. Simulate each character at its own kTrue. Inference conditions each
+  # character on being variable (coding = "variable"): given k, the likelihood
+  # is sum_c L_c / sum_c (1 - a_c) over the equiprobable rate categories c, a
+  # ratio of sums (src/ascertainment.cpp averages P(constant) over categories).
+  # So k stays fixed while (category, data) are redrawn together until the
+  # character varies; redrawing k too, or holding the category fixed, would
+  # simulate a different model.
+  rates <- MkPrime:::DiscreteLognormalRates(rateLogSd_true, N_CAT)
   sim_mat <- matrix(NA_integer_, N_TIP, N_CHAR,
                     dimnames = list(true_tree$tip.label, NULL))
   kObs <- integer(N_CHAR)
   for (j in seq_len(N_CHAR)) {
-    raw <- .simJCchar(true_tree, kSim[j])
-    canon <- .canonicaliseLabels(raw)
+    attempt <- 0L
+    repeat {
+      attempt <- attempt + 1L
+      if (attempt > 100000L) {
+        return(list(skipped = TRUE, reason = "redraw_cap"))
+      }
+      canon <- .canonicaliseLabels(
+        .simJCchar(true_tree, kTrue[j], rates[sample.int(N_CAT, 1L)]))
+      if (attr(canon, "kObs") >= 2L) break
+    }
     sim_mat[, j] <- canon
     kObs[j] <- attr(canon, "kObs")
   }
-  # Drop invariant chars (kObs = 1) under coding = "variable"
-  keep <- kObs >= 2L
-  if (sum(keep) < 3L) {
-    return(list(skipped = TRUE, reason = "too_few_variable_chars"))
-  }
-  sim_mat <- sim_mat[, keep, drop = FALSE]
-  kTrue <- kTrue[keep]
-  kObs  <- kObs[keep]
-  n_char <- sum(keep)
+  n_char <- N_CHAR
 
   pd <- TreeTools::MatrixToPhyDat(sim_mat)
   mkd <- if (arm$model == "MkNT") {
-    # MkNT: pin k = kObs by treating every character as transformational
-    # with knownStates set to its observed support. This matches
-    # `feedback_model_scope.md`.
+    # MkNT: pin each character's k to the kTrue it was simulated at, which
+    # may exceed the states observed.
     MkPrimeData(pd,
-                knownStates = setNames(as.integer(kObs),
-                                       as.character(seq_along(kObs))))
+                knownStates = setNames(as.integer(kTrue),
+                                       as.character(seq_along(kTrue))))
   } else {
     MkPrimeData(pd)
   }
@@ -315,18 +305,11 @@ TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
   # Step 6. Build the matched inference model. Hyperparameter draws above
   # are matched to inference defaults (Beta(1,1) on p, etc).
   #
-  # Two earlier mismatches now closed:
-  #   - expSteps fixed to EXPSTEPS_FIXED, not derived from tl_true
-  #     (data-derived expSteps leaks ground truth into the inference
-  #     prior on tree_length).
-  #   - nCat = 1L: disable ACRV. The forward simulator does NOT add
-  #     per-character rate variation; matching nCat = 1L in the
-  #     inference satisfies SBC's forward==inference requirement.
-  #     L7 already proved ACRV correct analytically, so we don't need
-  #     SBC to re-exercise that path.
+  # expSteps is fixed to EXPSTEPS_FIXED, not derived from tl_true: a
+  # data-derived expSteps leaks ground truth into the tree_length prior.
   modelArgs <- list(
     coding = "variable",
-    nCat = 1L,
+    nCat = N_CAT,
     kPrimePrior = if (arm$model == "MkNT") "geometric" else arm$prior,
     expSteps = EXPSTEPS_FIXED
   )
@@ -336,6 +319,13 @@ TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
   } else {
     modelArgs$kprimeHyperA <- model_hp$kprimeHyperA
     modelArgs$kprimeHyperB <- model_hp$kprimeHyperB
+    if (arm$prior == "geometric") {
+      modelArgs$kprimeTruncK <- K_MAX_PRIOR
+    }
+    if (arm$prior %in% c("geometric", "empirical_geometric")) {
+      # Pinned: the forward above is Model A whatever the package default.
+      modelArgs$priorVariant <- "unconditional"
+    }
     if (arm$prior == "logseries") {
       modelArgs$kprimeLogseriesC <- model_hp$kprimeLogseriesC
     }
@@ -376,12 +366,14 @@ TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
   }
 
   # Step 8. Compute SBC ranks.
-  # For a true value t and L posterior samples x_1, ..., x_L:
-  #   rank(t) = #{x_i < t}                      (Talts et al. 2018)
-  # Under correct inference rank ~ Uniform{0,...,L}.
+  # For a true value t and L posterior samples x_1, ..., x_L the rank is
+  # #{x_i < t} (Talts et al. 2018), with ties broken uniformly at random so that
+  # a discrete parameter's rank is still Uniform{0, ..., L} under correct
+  # inference.
   .rankOf <- function(true_val, post_samples) {
     if (!is.finite(true_val)) return(NA_integer_)
-    sum(post_samples < true_val)
+    sum(post_samples < true_val) +
+      sample.int(sum(post_samples == true_val) + 1L, 1L) - 1L
   }
   L <- nrow(samples)
   ranks <- list()
@@ -389,26 +381,19 @@ TREE_SHAPE     <- 2          # matches MkPrimeModel() default treeLengthShape
   if ("rate_log_sd" %in% colnames(samples)) {
     ranks$rate_log_sd <- .rankOf(rateLogSd_true, samples[, "rate_log_sd"])
   }
-  # Mk'-only ranks (kPrime_pooled, p): STRUCTURALLY EXCLUDED from SBC suite.
-  #
-  # The inference prior `kPrime ~ kObs + Geo(p)` has a data-dependent floor
-  # (at kObs). This makes both rank tests invalid:
-  #
-  # * kPrime_pooled: kObs ≤ kTrue by construction; on 5–8 tip trees with
-  #   geometric prior, kObs=kTrue ~80% of the time → kPrime_post ≥ kObs = kTrue
-  #   → rank piles at 0. Option α (kSim=2) had the dual failure: posterior
-  #   concentrates at 2, so kTrue > 2 piles ranks near L. No parameterisation
-  #   escapes both modes.
-  #
-  # * p: Gibbs update is p_post ~ Beta(n+1, sum(u_i)+1) where u_i = kPrime_i−kObs.
-  #   When kObs ≈ kTrue dominates, u_i = 0 for most chars → p_post collapses to
-  #   Beta(n+1, 1) (mean ≈ 1) regardless of p_true. v9 (kSim=kTrue option γ)
-  #   confirmed: `p` FAIL unchanged at 3e-6 vs v8 (kSim=2). Same structural
-  #   reason as kPrime_pooled — the data-dependent floor.
-  #
-  # See SBC-KPRIME-STRUCTURAL in dev/red-team/findings.md. kPrime / p sampling
-  # is exercised jointly by the chain; PASS on tree_length and rate_log_sd is
-  # evidence those updates are not catastrophically broken.
+  if (arm$model == "Mkp") {
+    if (arm$prior != "logseries") {
+      ranks$p <- .rankOf(p_true, samples[, "p"])
+    }
+    # k' summed over characters: one scalar per sim, a function of the
+    # parameters, so its rank is uniform too.
+    kpCols <- grep("^kPrime_", colnames(samples), value = TRUE)
+    if (length(kpCols) != n_char) {
+      stop("expected ", n_char, " kPrime_ columns, found ", length(kpCols))
+    }
+    ranks$kPrime_sum <- .rankOf(sum(kTrue),
+                                rowSums(samples[, kpCols, drop = FALSE]))
+  }
 
   list(skipped = FALSE,
        L = L,

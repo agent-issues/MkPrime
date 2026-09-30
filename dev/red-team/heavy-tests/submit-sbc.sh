@@ -10,9 +10,8 @@
 #SBATCH --error=/nobackup/%u/mkp-study/red-team/logs/sbc_%A_%a.err
 #
 # Red-team Lane D1 SBC heavy test — 5 arms in parallel array tasks.
-# Authored 2026-05-26; v10 (2026-05-27): reverted Option γ — kSim=2 for all
-# arms; kPrime_pooled and p both excluded as structural. See sbc.md +
-# dev/red-team/findings.md::SBC-KPRIME-STRUCTURAL.
+# Each character is simulated at k drawn from the arm's prior (Model A), with
+# nCat = 4; Mk' arms also rank p and k'. See sbc.md §Forward model.
 #
 # The 5 array tasks share one src/ tree, and pkgload::load_all() compiles into
 # it in place, so an unbuilt tree means 6 concurrent compiles corrupting each

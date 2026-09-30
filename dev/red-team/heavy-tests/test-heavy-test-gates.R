@@ -170,4 +170,37 @@ naRls <- RunPool(function(i, ranks) NA_real_)
 ok("an NA AD fails clause (a)",
    naRls$status != 0L && grepl("\\(a\\) global AD\\s+: FAIL", naRls$text))
 
+## ---- HARN2-009: sbc.R simulates from the drawn k and ranks the k' prior ----
+canLoad <- requireNamespace("MkPrime", quietly = TRUE) ||
+  requireNamespace("pkgload", quietly = TRUE)
+if (!nzchar(Sys.getenv("MKP_SKIP_SBC_SMOKE")) && canLoad) {
+  smokeOut <- tempfile("sbc-smoke")
+  for (arm in c("Mkp_geometric", "MkNT_geometric")) {
+    status <- system2("Rscript", c(shQuote(sbcR), "--quick", "--arm", arm,
+                                   "--out", shQuote(smokeOut), "--run-id", "smoke"),
+                      stdout = FALSE, stderr = FALSE)
+    ok(sprintf("sbc.R --quick runs %s", arm), identical(status, 0L))
+  }
+  Good <- function(arm) {
+    sims <- readRDS(file.path(smokeOut, arm, "summary.rds"))$sims
+    Filter(function(x) !isTRUE(x$skipped), sims)
+  }
+  mkp <- Good("Mkp_geometric")
+  ok("Mk' characters are simulated at their drawn k, not all at 2",
+     length(mkp) >= 3L && any(unlist(lapply(mkp, `[[`, "kObs")) > 2L))
+  ok("Mk' k' draws respect the truncation cap",
+     all(unlist(lapply(mkp, `[[`, "kTrue")) <= Definition(sbcR, "K_MAX_PRIOR")))
+  ok("Mk' ranks p and k'",
+     all(vapply(mkp, function(x) is.finite(x$ranks$p) &&
+                  is.finite(x$ranks$kPrime_sum), logical(1L))))
+  mknt <- Good("MkNT_geometric")
+  ok("MkNT characters are simulated at their drawn k",
+     length(mknt) >= 3L && any(unlist(lapply(mknt, `[[`, "kObs")) > 2L))
+  ok("the verdict is stamped with the run id",
+     any(readLines(file.path(smokeOut, "verdict-MkNT_geometric.txt")) ==
+           "run_id:   smoke"))
+} else {
+  cat("(sbc.R smoke skipped: MkPrime not loadable or MKP_SKIP_SBC_SMOKE set)\n")
+}
+
 cat("\nALL CHECKS PASSED\n")
