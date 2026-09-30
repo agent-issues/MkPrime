@@ -125,7 +125,9 @@
 #' @param gibbsPMarginal Logical; use the data-augmentation
 #'   Metropolis-within-Gibbs `p`-update as the PRIMARY `p`-move for
 #'   `likelihoodMode = "marginal_k"` (default `FALSE`; no effect under
-#'   `sampled_k`). Correctness-verified (`dev/red-team/proofs/marginal-k-gibbs-p.md`,
+#'   `sampled_k`, and ignored with an informational message when
+#'   `nChains > 1`, because the update is not tempered).
+#'   Correctness-verified (`dev/red-team/proofs/marginal-k-gibbs-p.md`,
 #'   math-prover). When enabled it improves `p`-mixing by ~3.2x over the
 #'   random-walk `mh_logit_p` in the production regime (narrow, near the p->1
 #'   boundary), measured apples-to-apples on an n16_c48 free-topology run
