@@ -63,12 +63,12 @@
 }
 
 test_that("stepping stone matches the exact log ML in both modes (#267)", {
-  skip_on_cran()
   exact <- .Z0ExactLogMl()
   for (mode in c("sampled_k", "marginal_k")) {
     ss <- .Z0SteppingStone(mode)
-    # Before the fix, sampled_k sat -log Z0 = 1.975 above the exact value.
-    expect_lt(abs(ss$log_marginal - exact), 5 * ss$se + 0.05)
+    # Before the fix, sampled_k sat -log Z0 = 1.975 above the exact value. The
+    # delta-method se misses the stones' shared chain, so allow for seed spread.
+    expect_lt(abs(ss$log_marginal - exact), 0.25)
   }
 })
 

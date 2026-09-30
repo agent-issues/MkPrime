@@ -182,6 +182,8 @@ mkp_stepping_stone <- function(data, tree = NULL,
   fill_partition_cache(mcmcData, statePtr)
   allocate_cl_workspace(mcmcData, statePtr)  # M-063
 
+  # Before the stones, so a failed quadrature costs no sampling.
+  logZ0 <- .LogZ0(model, mkd)
   logRatios <- numeric(nStones)
 
   # Per-stone importance weights (centered) and their means,
@@ -239,7 +241,7 @@ mkp_stepping_stone <- function(data, tree = NULL,
     }
   }
 
-  logMarginal <- sum(logRatios) + .LogZ0(model, mkd)
+  logMarginal <- sum(logRatios) + logZ0
 
   # --- SE via delta method (Xie et al. 2011; mcmc3r implementation) ---
   # Var(log r_k) ≈ Var(L_k) / (N_eff * r_k^2)
@@ -307,7 +309,10 @@ mkp_stepping_stone <- function(data, tree = NULL,
 # Model B already normalises on k' >= kObs, and marginal_k carries that mass in
 # its per-character sum, so Z0 = 1 for both.
 .LogZ0 <- function(model, mkd) {
-  if (!identical(model$priorVariant, "unconditional") ||
+  # Resolved as .InitMcmcData resolves it for the sampler.
+  priorVariant <- model$priorVariant %||% MkPrimeModel(
+    kPrimePrior = model$kPrimePrior %||% "geometric")$priorVariant
+  if (!identical(priorVariant, "unconditional") ||
       identical(model$likelihoodMode, "marginal_k")) {
     # Return:
     return(0)
