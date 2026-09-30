@@ -114,3 +114,76 @@ test_that("coding = 'informative' likelihood conditions on the exact set", {
   pInf <- 1 - oracle[["uninf"]]
   expect_equal(llInf - llVar, -3 * (log(pInf) - log(pVar)), tolerance = 1e-10)
 })
+
+test_that("k = 2 informative mass marginalises missing tips exactly", {
+  set.seed(1543)
+  tree <- Preorder(ape::rtree(7L, rooted = FALSE,
+                              br = function(n) runif(n, 0.05, 0.6)))
+  rates <- c(0.4, 1.6)
+  for (missing in list(integer(0), c(2L, 5L), 1:4)) {
+    oracle <- .UninformativeMass(tree, 2L, rates, missing = missing)
+    miss <- seq_len(7L) %in% missing
+    expect_equal(
+      asc_site_prob_missing(tree$edge[, 1], tree$edge[, 2], tree$edge.length,
+                            7L, 2L, FALSE, 1, rates, miss, TRUE),
+      oracle[["uninf"]], tolerance = 1e-12,
+      info = paste(missing, collapse = ","))
+  }
+})
+
+# #252 replaced the singleton kernels' one-pseudo-character-per-tip pruning
+# with a two-partial pass shared across masks. Reference values are from the
+# per-tip kernels.
+.ParityTree <- function(nTip) {
+  tree <- Preorder(BalancedTree(nTip))
+  nEdge <- nrow(tree$edge)
+  tree$edge.length <- 0.02 + 0.4 * ((seq_len(nEdge) * 0.618034) %% 1)
+  tree
+}
+
+test_that("masked informative mass matches the per-tip kernels", {
+  tree <- .ParityTree(24L)
+  rates <- c(0.35, 0.9, 1.75)
+  masks <- list(seq_len(24L) > 3L, (seq_len(24L) * 7L) %% 5L > 1L,
+                seq_len(24L) > 11L, logical(24L))
+  cfgs <- list(list(k = 2L, neo = FALSE, rl = 1),
+               list(k = 3L, neo = FALSE, rl = 1),
+               list(k = 4L, neo = FALSE, rl = 1),
+               list(k = 2L, neo = TRUE, rl = 0.3),
+               list(k = 2L, neo = TRUE, rl = 4))
+  got <- t(vapply(masks, function(miss) {
+    vapply(cfgs, function(cfg) {
+      asc_site_prob_missing(tree$edge[, 1], tree$edge[, 2], tree$edge.length,
+                            24L, cfg$k, cfg$neo, cfg$rl, rates, miss, TRUE)
+    }, double(1))
+  }, double(length(cfgs))))
+  expected <- matrix(c(
+    0.99999999999999989, 1.0000000000000018, 1, 1, 1.0000000000000007,
+    0.16524578611100146, 0.18279127818222329, 0.20878860777916805,
+    0.41299734949258726, 0.48267023856705127,
+    0.18594945557368181, 0.19180540998096099, 0.20044918455134883,
+    0.36917821700091774, 0.4259048656366955,
+    0.034519821646537677, 0.040302537569187655, 0.044469679306904111,
+    0.1010723288314237, 0.12706618949063464), 4L, byrow = TRUE)
+  expect_equal(got, expected, tolerance = 1e-12)
+})
+
+test_that("informative Sun2018 likelihood matches the per-tip kernels", {
+  nexFile <- system.file("datasets/Sun2018.nex", package = "TreeSearch")
+  skip_if(nexFile == "", message = "TreeSearch not available")
+  sun <- ReadAsPhyDat(nexFile)
+  tree <- .ParityTree(length(sun))
+  tree$tip.label <- names(sun)
+  binary <- c(1L, 3L, 5L, 6L, 7L, 9L, 10L, 11L, 12L, 13L, 14L, 15L)
+  ll <- vapply(list(integer(0), binary), function(neo) {
+    mkd <- suppressWarnings(MkPrimeData(sun, neomorphic = neo))
+    model <- MkPrime:::.FinalizeModel(MkPrimeModel(coding = "informative"),
+                                      tree, mkd)
+    cpp_log_likelihood_xptr(MkPrime:::.InitMcmcData(mkd, model),
+                            tree$edge[, 1], tree$edge[, 2], tree$edge.length,
+                            as.integer(mkd$kObs), rateLoss = 0.6,
+                            rateLogSd = 0.4, rateNeo = 1.3)
+  }, double(1))
+  expect_lt(max(abs(ll - c(-2829.4843325754368, -2826.5877050786489))),
+            1e-10)
+})
