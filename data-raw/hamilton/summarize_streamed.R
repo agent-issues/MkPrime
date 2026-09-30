@@ -181,7 +181,7 @@ if (!is.null(final_res$char_idx) && !identical(final_res$char_idx, char_idx)) {
 cat(sprintf("  char data: %d raw chars -> %d variable (kObs range %d-%d)\n",
             n_char_raw, mkd_local$nChar,
             min(kObs_run), max(kObs_run)))
-rm(mat_list, combined_mat, pd, mkd_local, kObs_all)
+rm(mat_list, combined_mat, pd, mkd_local, kObs_all, final_res)
 invisible(gc(verbose = FALSE))
 
 # ---- Read every run's log, drop #-comment rows, drop per-run burn-in --------
