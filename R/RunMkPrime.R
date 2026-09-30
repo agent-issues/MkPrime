@@ -3079,7 +3079,8 @@ RunMkPrime <- function(data, tree = NULL,
 #'
 #' Version 1 (in-memory mode): stores full run history (samples, trees).
 #' Version 2 (streaming mode): stores chain state only; samples live in the
-#' log file.  The large flush_buf and conv_window matrices are excluded.
+#' log file, and trees in the tree file when there is one.  The large
+#' flush_buf and conv_window matrices are excluded.
 #'
 #' @keywords internal
 .SaveCheckpoint <- function(runs, mcmc, iter, paramNames, file,
@@ -3374,6 +3375,12 @@ RunMkPrime <- function(data, tree = NULL,
       "{.arg mcmc} must be an {.cls MkPrimeMCMC} object or a named list.")
   }
   override <- unclass(override)
+  # A run stores these absolute; the call that resumes it may not.
+  for (f in intersect(c("logFile", "treeFile", "checkpointFile"),
+                      names(override))) {
+    if (!.IsAbsolutePath(mcmc[[f]] %||% "")) next
+    override[f] <- list(.AbsolutePath(override[[f]]))
+  }
   differs <- vapply(names(override), function(f) {
     !identical(override[[f]], mcmc[[f]])
   }, logical(1))
