@@ -102,9 +102,10 @@ arms <- vapply(Definition(sbcR, "ALL_ARMS"), `[[`, "", "name")
 offsets <- vapply(arms, ArmSeedOffset, integer(1L))
 ok("each SBC arm has its own seed block",
    !anyDuplicated(offsets) && min(diff(sort(offsets))) >= 1000L)
-ok("an arm's seeds do not depend on the other arms",
-   identical(ArmSeedOffset("Mkp_logseries"),
-             vapply(rev(arms), ArmSeedOffset, integer(1L))[["Mkp_logseries"]]))
+# Pinned, so an edit to the hash that would silently re-seed an arm fails here.
+ok("arm seed offsets are unchanged",
+   identical(unname(offsets), c(10935000L, 9647000L, 29083000L, 9765000L,
+                                11067000L)))
 ok("seeds stay within integer range",
    all(20260528 + offsets + 1000 < .Machine$integer.max))
 seedLine <- grep("--seed", readLines(file.path(HT, "submit-sbc.sh")), value = TRUE)
