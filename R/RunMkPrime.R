@@ -4199,29 +4199,12 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     # mixing gain on trees with > ~20 tips, so cap the initial weight (M-115).
     # The adaptive scheduler refines from here during warmup.
     #
-    # MARGINAL-K-FREEZE-003 (Bug A): gibbs_spr / gibbs_subtree_swap evaluate
-    # candidates at the single state->kPrime via the sampled-k partial-CL
-    # machinery (a fixed-kPrime likelihood, no marginal-over-k' sum, no
-    # geometric P(u|p) weight), then write that inflated value into
-    # state->logLik -- freezing the continuous samplers under marginal_k. They
-    # never call the marginal evaluator, so the Bug-B threading fix does not
-    # reach them. Disable under marginal_k; topology is still searched by
-    # nni/spr/pspr/tbr (marginal-correct after the Bug-B fix). A marginal-aware
-    # Gibbs candidate eval is a deferred optimisation.
-    # FREEZE-003 efficiency follow-up (2026-06-02): the four WEIGHTED/BLOCK moves
-    # (weighted_branch_scale, weighted_spr, weighted_subtree_swap,
-    # block_gibbs_branch) are now marginal-correct and RE-ENABLED under
-    # marginal_k. Each selects candidates via the marginal evaluator
-    # (compute_full_loglik_at) with a full MH accept (prior + Hastings); the only
-    # FREEZE-003 defect was the shared per-(char,k') charLLCache going stale
-    # across the multiple configs each move evaluates. Fixed in C++ by passing
-    # fillCharLLCache=false (SCRATCH eval: no cache read/write) to every intra-
-    # move eval, so per-config marginal LLs are recomputed coherently and the
-    # cache is left cold for the next mh_logit_p. The two GIBBS moves
-    # (gibbs_spr/gibbs_subtree_swap) stay disabled: they select candidates via
-    # the fixed-kPrime partial-CL path (no marginal sum, no P(u|p) weight), so a
-    # cache fix alone does not make them target-correct -- a marginal-aware
-    # candidate eval is the deferred item.
+    # Under marginal_k, gibbs_subtree_swap scores and commits its candidates
+    # with the fixed-kPrime partial-CL likelihood, which is not the marginal
+    # target, so it cannot run. gibbs_spr is target-correct there: it commits
+    # the marginal likelihood through a full MH step, and its fixed-kPrime
+    # candidate scores only shape the proposal, with a matching Hastings term.
+    # It stays off until an invariance test backs re-enabling it.
     marginalK <- identical(likelihoodMode, "marginal_k")
     if (marginalK) {
       droppedByMargK <- c(
@@ -4231,8 +4214,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       if (length(droppedByMargK) > 0L) {
         .Inform(
           "{length(droppedByMargK)} requested move{?s} not used under \\
-           {.code likelihoodMode = \"marginal_k\"} (fixed-kPrime candidate \\
-           selection; marginal-aware re-enable deferred): {.val {droppedByMargK}}."
+           {.code likelihoodMode = \"marginal_k\"}: {.val {droppedByMargK}}."
         )
       }
     }
@@ -4250,13 +4232,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
              weight = max(1L, min(nEdge / 6, gibbsCap)), dim = 1L)
       ))
     }
-    # Weighted moves (M-090). FREEZE-003: re-enabled under marginal_k now that the
-    # scratch-eval (fillCharLLCache=false) fix makes their multi-config evals
-    # cache-coherent (see the block comment above). weighted_branch_scale (case
-    # 12) evaluates B branch-fraction bins per candidate; weighted_spr/
-    # weighted_subtree_swap evaluate a self + candidate-topology grid. All now
-    # recompute each config's marginal LL cold and leave the charLLCache
-    # invalidated for the next mh_logit_p.
+    # Weighted moves (M-090). Valid under marginal_k: each selects candidates via
+    # the marginal evaluator with a full MH accept, and scratch evals
+    # (fillCharLLCache=false) keep their multi-config evals cache-coherent.
+    # weighted_branch_scale (case 12) evaluates B branch-fraction bins per
+    # candidate; weighted_spr/weighted_subtree_swap evaluate a self +
+    # candidate-topology grid. All recompute each config's marginal LL cold and
+    # leave the charLLCache invalidated for the next mh_logit_p.
     if (isTRUE(mcmc$weightedBranchScale)) {
       moves <- c(moves, list(
         list(name = "weighted_branch_lengths", type = "weighted_branch_scale",
@@ -4357,7 +4339,19 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       # sampled_k ceiling); mh_logit_p is retained at low weight for small-p-tail
       # irreducibility. Pinned (alwaysAcceptTypes) so the softmax scheduler does
       # not distort a near-always-accept move.
-      if (isTRUE(mcmc$gibbsPMarginal)) {
+      #
+      # Case 35 is not tempered: it no-ops at beta != 1, so on a heated ladder
+      # its pinned weight would be spent on no-ops in every heated chain.
+      gibbsP <- isTRUE(mcmc$gibbsPMarginal)
+      if (gibbsP && (mcmc$nChains %||% 1L) > 1L) {
+        .Inform(
+          "{.arg gibbsPMarginal} ignored with {.arg nChains} > 1: \\
+           {.code gibbs_p_marginal} is not tempered, so {.code mh_logit_p} \\
+           samples {.code p} on every chain instead."
+        )
+        gibbsP <- FALSE
+      }
+      if (gibbsP) {
         kPrimeMoves <- list(
           list(name = "gibbs_p_marginal", type = "gibbs_p_marginal", target = "p",
                weight = max(1, nTrans * 2L + 2L), dim = 1L),

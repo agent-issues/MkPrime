@@ -426,3 +426,25 @@ test_that("marginal-k gibbs_p_marginal is opt-in (default off; present only when
     function(m) m$name, character(1))
   expect_false("gibbs_p_marginal" %in% nm_samp)
 })
+
+test_that("gibbs_p_marginal is left out of a heated ladder (#269)", {
+  local_mkp_verbosity(1L)
+  nTrans <- 4L
+  Build <- function(nChains) {
+    mcmc <- suppressWarnings(MkPrimeMCMC(nIter = 10L, nChains = nChains,
+                                         gibbsPMarginal = TRUE,
+                                         gibbsSpr = FALSE,
+                                         gibbsSubtreeSwap = FALSE))
+    moves <- MkPrime:::.BuildMoves(13L, nTrans, hasNeo = FALSE, mcmc,
+                                   likelihoodMode = "marginal_k")
+    stats::setNames(vapply(moves, `[[`, numeric(1), "weight"),
+                    vapply(moves, `[[`, character(1), "name"))
+  }
+
+  expect_message(heated <- Build(2L), "gibbsPMarginal.*ignored")
+  expect_false("gibbs_p_marginal" %in% names(heated))
+  expect_equal(heated[["mh_logit_p"]], nTrans * 2 + 2)
+
+  expect_no_message(cold <- Build(1L), message = "gibbsPMarginal")
+  expect_true("gibbs_p_marginal" %in% names(cold))
+})
