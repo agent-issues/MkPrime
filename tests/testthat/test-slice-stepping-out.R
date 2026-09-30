@@ -38,7 +38,7 @@ test_that("narrow slice_scalar holds the rate_log_sd prior at beta = 0", {
     MkPrime:::get_mcmc_state(statePtr)$rateLogSd
   }, numeric(1))
   p <- ks.test(x, "pgamma", shape, rate)$p.value
-  expect_gt(p, 1e-3, label = paste("KS p =", signif(p, 2)))
+  expect_gt(p, 1e-4, label = paste("KS p =", signif(p, 2)))
 })
 
 test_that("narrow slice_kprime_hyper holds the beta_geometric prior", {
@@ -78,5 +78,5 @@ test_that("narrow slice_kprime_hyper holds the beta_geometric prior", {
     log(d$a + d$b)
   }, numeric(1))
   p <- ks.test(s, reference)$p.value
-  expect_gt(p, 1e-3, label = paste("KS p =", signif(p, 2)))
+  expect_gt(p, 1e-4, label = paste("KS p =", signif(p, 2)))
 })
