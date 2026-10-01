@@ -9,42 +9,45 @@ the data, then for any one-dimensional posterior summary the rank of the
 true value within `L` posterior samples is Uniform{0, …, L}* (Cook,
 Gelman & Rubin 2006; Talts, Betancourt, Simpson, Vehtari & Gelman 2018).
 
-The harness is **parameterised per prior** so it can demonstrate
-calibration under matched priors *and* explicit miscalibration when the
-sampler's prior is missing its truncation normaliser — i.e. it functions
-as a regression demonstrator for **EG-001** (already filed; see
-`dev/red-team/proofs/kprime-priors.md` §4.3).
+The harness is **parameterised per prior**. Every arm draws each
+character's `k` from the arm's prior and simulates the character at that
+`k`, so the Mk' arms test the `k'` prior they are named after.
 
-## Theoretical basis
+## Forward model
 
-For a generative model with parameter `θ`, observation `y` with
-likelihood `p(y | θ)`, and prior `π(θ)`:
+Per simulation, matching the inference model term by term:
 
-1. Draw `θ̃ ~ π`.
-2. Draw `ỹ ~ p(· | θ̃)`.
-3. Run inference to obtain `L` posterior samples `θ_1, …, θ_L ~ p(· | ỹ)`.
-4. Compute rank `r = #{i : θ_i < θ̃}`.
+1. `p ~ Beta(1, 1)` (geometric and empirical-geometric arms; logseries fixes
+   `c = 0.5`), `rate_log_sd ~ Gamma(1, 1)`, tree length
+   `~ Gamma(2, 2 / expSteps)` with `expSteps = 50` spread over edges by a
+   flat Dirichlet, on a random topology that inference then holds fixed.
+2. `k_j` per character from the arm's prior, before any data exist:
+   - Mk' geometric: `2 + Geometric(p)` truncated to `[2, 30]` by rejection,
+     with `kprimeTruncK = 30` on the inference side (the prior is truncated and
+     renormalised; a `pmin()` clamp would not match, cf. #57).
+   - Mk' empirical-geometric: `N_obs + Geometric(p)`, `N_obs` from the packaged
+     `empiricalNObs`, untruncated like the inference convolution.
+   - Mk' logseries: `P(k) ∝ c^k / k` on `k ≥ 2`.
+   - MkNT: `k` is pinned per character through `knownStates = kTrue`, so it is
+     data rather than a parameter; the arm's prior merely supplies it.
+   Mk' arms pin `priorVariant = "unconditional"` (Model A), the prior this
+   forward draws from.
+3. Each character is simulated under JC(`k_j`) at a rate multiplier from one
+   of `nCat = 4` equiprobable discretised-lognormal categories
+   (`DiscreteLognormalRates(rate_log_sd, 4)`), and `(category, data)` are
+   redrawn together, with `k_j` held fixed, until the character is variable.
+   That matches `coding = "variable"`: given `k`, inference divides the
+   category-averaged likelihood by the category-averaged probability of
+   variability (a ratio of sums over categories), and sums over `k'` outside
+   that ratio.
 
-Then `r ~ Uniform{0, 1, …, L}` whenever the inference is *exact* (Talts
-et al. 2018, theorem in §3). Repeating across `N_sim` simulations and
-testing the pooled ranks against uniformity gives a frequentist
-goodness-of-fit test for the entire inference pipeline.
+The earlier design simulated every character at `k = 2` and dropped
+invariant characters, so `kObs ≡ 2`, Models A and B coincided and `p` and
+`k'` were not ranked; at `nCat = 1` `rate_log_sd` never reached the
+likelihood. Those arms could not fail on the prior they were named after.
 
-**Why EG-001 shows up here.** The L6 proof
-(`dev/red-team/proofs/kprime-priors.md`) shows the empirical-geometric
-prior in `R/MkPrimeModel.R::.LogPriorEmpiricalGeometric` is missing the
-per-character truncation normaliser
-`Z_i(p) = Σ_{k ≥ kObs_i} P(k | p)`.  Under the correct (truncated) prior
-the MCMC posterior on `p` would absorb the data correctly; under the
-implemented (untruncated) prior the posterior is biased by
-`∑_i log Z_i(p)`, which depends on `p`. The forward simulator in this
-harness draws `(p, k'_i, character)` from the truncation-aware joint that
-the L6 proof identifies as the *intended* model — so the rank histogram
-of `p` and pooled `k'` will skew non-uniformly under the buggy sampler.
-The geometric (`Z_i ≡ 1`) and logseries-with-fixed-`c` (latent LS-001)
-arms should remain calibrated. There is no beta-geometric arm: that prior
-is on `k' - kObs_i`, so it conditions on the data and is not
-SBC-calibratable.
+Seeds are `seedBase + ArmSeedOffset(arm) + i`, keyed on the arm's name, so
+adding or removing an arm does not re-seed the others.
 
 ## Pass criterion
 
@@ -67,30 +70,28 @@ parameter (e.g. topology summary) from dragging the whole arm down.
 
 ## Arms
 
-Five arms, with predicted PASS/FAIL under the **current** (unpatched)
-code:
+| arm | model | prior | monitored |
+|-----|-------|-------|-----------|
+| `MkNT_geometric` | MkNT | geometric | `tree_length`, `rate_log_sd` |
+| `Mkp_geometric` | Mk' | geometric (truncated at 30) | + `p`, `kPrime_sum` |
+| `Mkp_empirical_geometric` | Mk' | empirical_geometric | + `p`, `kPrime_sum` |
+| `Mkp_logseries` | Mk' | logseries (`c` fixed) | + `kPrime_sum` |
+| `MkNT_logseries` | MkNT | logseries | `tree_length`, `rate_log_sd` |
 
-| arm | model | prior | K | expected | reason |
-|-----|-------|-------|---|----------|--------|
-| `MkNT_geometric` | MkNT | geometric | 2 | PASS | k' pinned by knownStates; geometric is no-op |
-| `Mkp_geometric` | Mk' | geometric | 4 | PASS | `Z_i ≡ 1`; hierarchical geometric |
-| `Mkp_empirical_geometric` | Mk' | empirical_geometric | 4 | **FAIL** (EG-001) | missing `log Z_i(p)`; bias scales with kObs spread |
-| `Mkp_logseries` | Mk' | logseries | 3 | PASS (latent LS-001) | `c` is fixed → bias is per-char additive constant, cancels in MH ratios |
-| `MkNT_logseries` | MkNT | logseries | 2 | PASS | k pinned; prior reduces to support indicator |
+All five are expected to PASS under a correct sampler. There is no
+beta-geometric arm: that prior is on `k' - kObs_i`, so it conditions on the
+data and is not SBC-calibratable.
 
-`MkNT × empirical_geometric` is *not* run — MkNT pins `k = kObs` via
-`knownStates`, so the empirical-geometric prior has no degrees of
-freedom under MkNT. Skipping this combination is explicit in
-`sbc.R::ALL_ARMS`.
+`kPrime_sum` is `Σ_j k'_j`, one scalar per simulation; as a function of the
+parameters its rank is uniform too. Being discrete, its ties are broken
+uniformly at random (as are all ranks), which keeps the rank
+Uniform{0, …, L} under correct inference.
 
-Per-arm `K`:
-
-- `tree_length`, `rate_log_sd` always monitored.
-- `kPrime_pooled` (per-character `k'_i` ranks pooled across characters
-  under the hierarchical-prior exchangeability assumption — see L6 §2.1)
-  monitored for Mk' arms.
-- `p` monitored for arms whose prior actually samples `p` (geometric,
-  empirical_geometric); not monitored for logseries (`c` is fixed).
+**Residual mismatch.** The `k'` sampler never proposes beyond
+`kObs + 255` (`kMaxKprimeCand`), while the empirical-geometric and logseries
+priors are untruncated. The forward cannot match a cap that depends on
+`kObs`; the lost mass `P(k' > kObs + 255)` is negligible except for
+empirical-geometric simulations with `p` below about 0.01.
 
 **Topology rank is intentionally excluded** from the rank histogram
 test. Talts et al.'s rank-uniformity is for continuous parameters;
@@ -110,30 +111,21 @@ Rscript dev/red-team/heavy-tests/sbc.R --quick
 Confirms the harness executes for every arm. Per-arm verdicts at
 quick scale are reported as `EXEC_OK` not `PASS`/`FAIL` because
 `N_sim = 5` and `L = 34` (after warmup) give the AD test insufficient
-power. The reported AD p-values at quick scale should be inspected for
-*qualitative* skew direction (e.g. `Mkp_empirical_geometric` should
-already show smaller `k'` p-values than `Mkp_geometric` — visible at
-quick scale even if not statistically significant).
-
-**Measured execution time** (this worktree, win-x64, `--quick`, all 6
-arms):
-
-```
-real  0m6.146s
-user  0m0.015s
-sys   0m0.030s
-```
-
-Output at `dev/red-team/heavy-tests/sbc-results/verdict.txt`. All six
-arms `EXEC_OK (good=5)`. The full quick run completes in well under the
-60 s budget.
+power; quick-scale AD p-values mean nothing.
+`test-heavy-test-gates.R` runs two quick arms and checks that characters
+are simulated at their drawn `k` and that `p` and `k'` are ranked.
 
 ### Full scale (Hamilton, 8 h walltime per arm)
 
 ```bash
-# On Hamilton, after copying sbc.R to /nobackup/$USER/mkp-study/
-sbatch dev/red-team/heavy-tests/sbc-hamilton.sh
+BUILD=$(sbatch --parsable dev/red-team/heavy-tests/submit-build.sh)
+ARR=$(sbatch --parsable --dependency=afterok:$BUILD dev/red-team/heavy-tests/submit-sbc.sh)
 ```
+
+then aggregate with `--run-id $ARR` as the footer of `submit-sbc.sh` shows.
+Each task stamps `run_id:` into its `verdict-<arm>.txt`;
+`aggregate-verdicts.R` ignores files from any other run, so an arm whose task
+died reports INCOMPLETE rather than last run's verdict.
 
 Resources per arm (one SLURM array task each):
 
@@ -141,13 +133,15 @@ Resources per arm (one SLURM array task each):
 |----------|-------|---------------|
 | CPUs | 1 | RunMkPrime is single-threaded at fixTopology=TRUE |
 | memory | 8 GB | conservative; MCMC state ~10s of MB |
-| time | 8 h | 200 sims × ~45 s/sim = 2.5 h nominal; 8 h covers warmup variance + Hamilton's slow-start tax |
+| time | 8 h | set for the old `nCat = 1` design; `nCat = 4` costs more per sim, and the new per-sim wall has not been measured on Hamilton |
 | scratch | 4 GB | per-task checkpoints |
 | partition | shared | standard analysis class |
 
 Full scale: `N_sim = 200`, `N_iter = 6000`, `thin = 60` so
 `L = 100` posterior samples per simulation. This matches Talts et al.'s
-recommended L ≈ 100.
+recommended L ≈ 100. The 8-tip, `expSteps = 50` regime is near saturation
+(`T-SBC-marginal-geometric.R` moved off it for that reason); poor mixing
+there can pile ranks at the extremes even with a correct forward model.
 
 To run a single arm at full scale locally (e.g. to debug):
 
@@ -161,7 +155,8 @@ Output root: `dev/red-team/heavy-tests/sbc-results/`
 
 ```
 sbc-results/
-├── verdict.txt                          # top-level summary
+├── verdict.txt                          # all arms: one process, or aggregate-verdicts.R
+├── verdict-<arm>.txt                    # one array task's arm, stamped with run_id
 ├── MkNT_geometric/
 │   ├── verdict.txt                      # per-arm AD p-values + decision
 │   ├── summary.rds                      # full sim outputs
@@ -186,63 +181,31 @@ qualitative signature of miscalibration; the AD p-value formalises it.
 
 ## What a failure would mean
 
-**Predicted FAIL on `Mkp_empirical_geometric` `k'` and/or `p` ranks:**
-EG-001 is confirmed by SBC — the missing `Z_i(p)` truncation normaliser
-is producing a real, measurable bias in the joint posterior. The
-expected fix is to add the `log Z_i(p)` term to
-`R/MkPrimeModel.R::.LogPriorEmpiricalGeometric` and
-`src/mcmc.cpp::cpp_log_prior`. Re-running the harness with the patch
-applied should flip the arm to PASS.
+**FAIL on `p` or `kPrime_sum` in an Mk' arm:** the `k'` prior, its
+hyperprior update, or the `k'` moves target the wrong distribution for that
+prior. Check first that the forward in `.drawKPrime()` still matches the
+inference prior (support, truncation, `priorVariant`); this harness family
+has had four forward/inference mismatches.
 
-**Unexpected FAIL on `Mkp_geometric`:** this
-arm has `Z_i ≡ 1` (L6 §4.1) — so a FAIL here points to a bug
-*elsewhere* in the inference pipeline. Most likely causes, in order:
-(a) the MCMC mixing is poor enough that fixed-topology runs aren't
-converging in `N_iter = 6000`; (b) the relabelling correction
-(`src/corrections.cpp::mk_prime_relabel_log`) is double-counted or
-missing somewhere; (c) a likelihood arithmetic error orthogonal to
-either of the above.
-
-**Unexpected PASS on `Mkp_empirical_geometric`:** the harness's forward
-simulator is conditioning on `kObs` somewhere it shouldn't (defeating
-the EG-001 demonstration). The most likely place is the kPrime draw —
-verify `.drawKPrime()` does *not* truncate at `kObs` before simulation.
-A reconcile call to the math-prover lane is warranted in that case.
-
-**FAIL on `tree_length` or `rate_log_sd` in any arm:** these are
-shared infrastructure parameters. A FAIL here is likely a mixing
-problem rather than a prior bug, since neither parameter is implicated
-in EG-001 or LS-001. Inspect ESS for that parameter in
-`summary.rds$sims[[i]]` to confirm.
+**FAIL on `tree_length` or `rate_log_sd` in any arm:** shared
+infrastructure parameters. Either a likelihood or ACRV error, a forward
+mismatch in the rate or ascertainment model (step 3 above), or poor mixing.
+Inspect ESS for that parameter in `summary.rds$sims[[i]]` before blaming
+the sampler.
 
 ## Constraints honoured
 
 - `feedback_no_oversample`: thinning chosen so `L ≈ 100` post-warmup,
   well below the 30k cap.
-- `feedback_start_tree`: starting tree uses `TreeSearch::AdditionTree`
-  (NJ fallback only on `TreeSearch` unavailable).
-- `feedback_prior_modelling`: the forward simulator draws `k'_i` from
-  the untruncated prior; `kObs_i` is observed *after* simulation. The
-  prior at inference time depends on `kObs_i` only as a support bound
-  (per L6 §2 assumption 2) — *not* as a data-conditioned truncation.
-- `feedback_model_scope`: MkNT arms pin `k = kObs` via
-  `knownStates = setNames(kObs, names)`. Mk' arms leave `k'` free.
-- `feedback_no_prs`: no PR will be opened; this is a heavy-test
-  artefact only.
-- Role-spec constraints: standalone Rscript under
-  `dev/red-team/heavy-tests/`, no edits to `R/`, `src/`, or
-  `tests/testthat/`. Quick-mode wall recorded above. Pass criterion
-  stated upfront (top of this file). Outputs under
-  `dev/red-team/heavy-tests/sbc-results/`. `verdict.txt` written per
-  arm + top-level.
-
-## Trivial-fix policy
-
-No patch file is produced. EG-001 is a code fix outside the red-team
-scope (`R/` is read-only per the role spec). The fix is described above
-("Predicted FAIL" section) and is already documented in
-`dev/red-team/proofs/kprime-priors.md` §4.3. The orchestrator may route
-the actual fix to a separate lane that has `R/` write access.
+- The starting tree is the true topology with uniform edge lengths
+  (SBC-HARNESS-005); inference holds the topology fixed.
+- `feedback_prior_modelling`: the forward draws `k'_j` from the
+  unconditional prior; `kObs_j` is observed *after* simulation and enters
+  inference only as the likelihood's support bound.
+- `feedback_model_scope`: MkNT arms pin `k` via
+  `knownStates = setNames(kTrue, names)`. Mk' arms leave `k'` free.
+- Standalone Rscript under `dev/red-team/heavy-tests/`, no edits to `R/`,
+  `src/`, or `tests/testthat/`.
 
 ## References
 

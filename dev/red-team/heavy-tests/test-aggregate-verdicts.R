@@ -15,9 +15,10 @@ ok <- function(label, cond) {
 
 # Exactly sbc.R's layout: header block, blank line, "arms:", then
 # sprintf("  %-30s %s", name, paste0(verdict, " (good=N)")).
-WriteArmVerdict <- function(dir, arm, verdict, good = 200L) {
+WriteArmVerdict <- function(dir, arm, verdict, good = 200L, runId = RUN_ID) {
   lines <- c(
     "SBC harness top-level summary",
+    sprintf("run_id:   %s", runId),
     "mode:     full",
     "seedBase: 20260528",
     "wall:     123.4s",
@@ -29,8 +30,11 @@ WriteArmVerdict <- function(dir, arm, verdict, good = 200L) {
   writeLines(lines, file.path(dir, sprintf("verdict-%s.txt", arm)))
 }
 
-Run <- function(dir, expected = character(0L)) {
-  out <- system2("Rscript", c(shQuote(script), shQuote(dir), expected),
+RUN_ID <- "17330001"
+
+Run <- function(dir, expected = character(0L), runId = RUN_ID) {
+  runArg <- if (is.null(runId)) character(0L) else c("--run-id", runId)
+  out <- system2("Rscript", c(shQuote(script), shQuote(dir), runArg, expected),
                  stdout = TRUE, stderr = TRUE)
   status <- attr(out, "status")
   list(text = paste(out, collapse = "\n"),
@@ -75,6 +79,7 @@ d5 <- tempfile("sbc5"); dir.create(d5)
 for (a in ARMS) WriteArmVerdict(d5, a, "PASS")
 writeLines(c(
   "SBC mixed-partition summary",
+  sprintf("run_id:   %s", RUN_ID),
   "mode:     full",
   "seedBase: 20260528",
   "N_sim:    200  L:1000  thin:10",
@@ -92,6 +97,29 @@ file.copy(file.path(d6, "verdict-Mkp_geometric.txt"),
           file.path(d6, "verdict-Mkp_geometric-rerun.txt"))
 r6 <- Run(d6, ARMS)
 ok("a duplicated arm is called out", grepl("DUPLICATE", r6$text))
+
+## ---- A stale file from an earlier run must not stand in for a dead task ----
+d7 <- tempfile("sbc7"); dir.create(d7)
+for (a in ARMS) WriteArmVerdict(d7, a, "PASS", runId = "17220000")
+for (a in ARMS[-3L]) WriteArmVerdict(d7, a, "PASS")
+r7 <- Run(d7, ARMS)
+ok("a previous run's verdict is not counted", r7$status != 0L)
+ok("the arm whose task died this run is INCOMPLETE",
+   grepl("overall: INCOMPLETE", r7$text) &&
+     grepl(sprintf("no verdict: %s", ARMS[3L]), r7$text, fixed = TRUE))
+ok("the stale file is named", grepl("STALE", r7$text) &&
+     grepl(sprintf("verdict-%s.txt", ARMS[3L]), r7$text, fixed = TRUE))
+
+## ---- A verdict with no run id at all is stale too ----------------------------
+d8 <- tempfile("sbc8"); dir.create(d8)
+for (a in ARMS) WriteArmVerdict(d8, a, "PASS")
+txt <- readLines(file.path(d8, sprintf("verdict-%s.txt", ARMS[1L])))
+writeLines(txt[!grepl("^run_id:", txt)],
+           file.path(d8, sprintf("verdict-%s.txt", ARMS[1L])))
+ok("an unstamped verdict is not counted", Run(d8, ARMS)$status != 0L)
+
+## ---- The run id is required --------------------------------------------------
+ok("aggregating without --run-id is refused", Run(d1, ARMS, runId = NULL)$status != 0L)
 
 ## ---- The aggregate never silently replaces a single task's output -----------
 ok("the aggregate is a separate file from any verdict-<arm>.txt",
