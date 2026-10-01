@@ -146,7 +146,10 @@ clean stop: \code{file.create(cancelFile)}. See also \code{\link[=MkCancelPath]{
 (default) auto-derives from \code{logFile} when set
 (e.g. \code{"run.log"} -> \code{"run.ckp"}). Set to \code{FALSE} to
 disable checkpointing. Checkpoints are saved at each
-convergence check interval and on cancel.}
+convergence check interval and on cancel.
+Without a \code{logFile}, samples stream to a log beside the checkpoint
+(\code{"run.ckp"} -> \code{"run_mkp_run.log"}); \code{\link[=RunMkPrime]{RunMkPrime()}} deletes it when
+sampling finishes, but keeps it through a \code{maxTime} or cancel stop.}
 
 \item{treeFile}{Path to write sampled trees in Newick format.
 \code{NULL} (default) auto-derives from \code{logFile} when set
