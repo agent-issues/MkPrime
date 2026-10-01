@@ -31,7 +31,8 @@
 #'   options passed on to [ResumeMkPrime()].
 #'   Set to `TRUE` to discard the existing checkpoint and start fresh.
 #' @param partition Optional integer vector of length `mkd$nChar` (after
-#'   invariant-character drop) assigning each character to a user class.
+#'   invariant-character drop, but before `coding = "informative"` drops
+#'   uninformative characters) assigning each character to a user class.
 #'   Values must form a contiguous range `1:nClasses`. `NULL` (the default)
 #'   routes through the unchanged legacy code path; see the §7a bit-identity
 #'   contract in `NOTES/partition-api-plan.md`.
@@ -172,6 +173,10 @@ RunMkPrime <- function(data, tree = NULL,
   } else {
     mkd <- MkPrimeData(data, neomorphic = neomorphic,
                        knownStates = knownStates)
+  }
+  if (identical(model$coding, "informative")) {
+    if (!is.null(partition)) partition <- partition[.Informable(mkd)]
+    mkd <- .DropUninformable(mkd)
   }
 
   # --- Partition API (Layer 1 plumbing; see NOTES/partition-api-plan.md) ---
@@ -3498,6 +3503,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     if (is.null(model$treeLengthRate)) {
       model$treeLengthRate <- ckModel$treeLengthRate
     }
+  }
+  if (identical(model$coding, "informative")) {
+    mkd <- .DropUninformable(mkd)
   }
   if (is.null(model$expSteps)) {
     # Only a checkpoint that predates stored models reaches here.

@@ -122,6 +122,9 @@ mkp_stepping_stone <- function(data, tree = NULL,
   }
 
   if (is.null(model)) model <- MkPrimeModel()
+  if (identical(model$coding, "informative")) {
+    mkd <- .DropUninformable(mkd)
+  }
   if (is.null(mcmc)) mcmc <- MkPrimeMCMC()
   if (isTRUE(mcmc$gibbsPMarginal)) {
     # gibbs_p_marginal accepts on a truncation-normaliser ratio that carries
