@@ -4,9 +4,10 @@
 # Usage:
 #   DATASET=Sun2018 SEED=2847 OUTDIR=results Rscript m131-warmup-validation.R
 #
-# Runs MkPrime with warmup disabled (minWarmup = maxWarmup = 200000)
-# for 200k iterations, capturing the logP snapshot trace for post-hoc
-# offline replay of the stabilisation detector.
+# Runs MkPrime for NITER (default 200k) iterations, all of them warmup
+# (minWarmup = maxWarmup = nIter, autoTune off), so the stabilisation detector
+# cannot end warmup early. The logP snapshot trace is kept for post-hoc offline
+# replay of the detector.
 
 .start <- Sys.time()
 
@@ -28,26 +29,29 @@ if (!file.exists(nex_file)) {
 
 cat(sprintf("M-131 validation: %s, seed %d\n", dataset_name, seed))
 
-dat <- ReadCharacters(nex_file)
+dat <- ReadAsPhyDat(nex_file)
 mkd <- MkPrimeData(dat)
 
+nIter <- as.integer(Sys.getenv("NITER", "200000"))
+
+# A temp log file avoids accumulating large streaming files; only the
+# warmup_trace on the returned posterior is needed.
 mcmc_val <- MkPrimeMCMC(
-  nIter       = 200000L,
+  nIter       = nIter,
   thin        = 50L,
-  maxWarmup   = 200000L,
-  minWarmup   = 200000L,
+  maxWarmup   = nIter,
+  minWarmup   = nIter,
   autoTune    = FALSE,
   nRuns       = 1L,
-  nChains     = 1L
+  nChains     = 1L,
+  logFile     = tempfile()
 )
 
 set.seed(seed)
 
-# Use a temp log file to avoid accumulating large streaming files.
-# We only need the warmup_trace from the posterior object.
-posterior <- RunMkPrime(mkd, mcmc = mcmc_val, logFile = tempfile())
+posterior <- RunMkPrime(mkd, mcmc = mcmc_val)
 
-nTip  <- length(mkd$tipLabels)
+nTip  <- length(mkd$taxon_names)
 nEdge <- 2L * nTip - 3L
 
 result <- list(
@@ -55,7 +59,7 @@ result <- list(
   seed          = seed,
   nTip          = nTip,
   nEdge         = nEdge,
-  nChar         = sum(lengths(mkd$partitions)),
+  nChar         = mkd$nChar,
   warmup_trace  = posterior$warmup_trace[[1]],
   wall_time_sec = as.numeric(difftime(Sys.time(), .start, units = "secs"))
 )

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Full grid: 8 datasets x {gibbsSpr on, off} x 3 seeds, 200k iterations each.
-SP="${GSPR_DIR:?set GSPR_DIR to a scratch dir containing common.R and the numbered scripts}"
+SP="${GSPR_DIR:?set GSPR_DIR to a scratch dir containing common.R, align.R and the numbered scripts}"
 OUT="$SP/grid"
 LOG="$SP/grid.log"
 NITER=200000
-PAR=6
+PAR=2   # 2-core policy
 mkdir -p "$OUT"
 : > "$LOG"
 
@@ -20,8 +20,8 @@ done
 i=0
 for j in "${jobs_list[@]}"; do
   set -- $j
-  # outermost guard: shell timeout well above the 1500 s maxTime
-  timeout 1800 Rscript "$SP/02-toggle-run-cell.R" "$1" "$2" "$3" "$NITER" "$OUT" \
+  # outermost guard: above the 3600 s setTimeLimit in 02 (maxTime 1500 s x 2.1 overshoot)
+  timeout 3900 Rscript "$SP/02-toggle-run-cell.R" "$1" "$2" "$3" "$NITER" "$OUT" \
     >> "$LOG" 2>&1 &
   i=$((i+1))
   if [ $((i % PAR)) -eq 0 ]; then wait; echo "--- batch $((i/PAR)) done ---" >> "$LOG"; fi

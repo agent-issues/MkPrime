@@ -198,7 +198,7 @@ Posterior summaries pulled to `report-data/mkp-eg-260/post_means.rds`. Diagnosti
 
 ## 2026-05-12 — Campaign opened
 
-Commit 9332a54: empirical_geometric prior on k' made default. Campaign design: three priors compared on the same 26-tree × 10-rep validation set — mkp-eg (above), mkp (native logseries), mk (no u, fixed k'=kObs). The mkp native arm was later cancelled to reduce scope; mk was intended as the floor benchmark and is the one now blocked on STREAM-001.
+Commit 9332a54: empirical_geometric prior on k' made default. Campaign design: three priors compared on the same 26-tree × 10-rep validation set — mkp-eg (above), mkp (`kPrimePrior` left at its default, empirical_geometric, so a duplicate of mkp-eg; the logseries arm is `mkp_logs`), mk (no u, fixed k'=kObs). The mkp arm was later cancelled to reduce scope; mk was intended as the floor benchmark and is the one now blocked on STREAM-001.
 
 ---
 

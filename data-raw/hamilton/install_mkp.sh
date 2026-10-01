@@ -47,4 +47,10 @@ install.packages(
 library(MkPrime, lib.loc = lib)
 cat("MkPrime loaded OK\n")
 cat("Version:", as.character(packageVersion("MkPrime", lib.loc = lib)), "\n")
+sha <- packageDescription("MkPrime", lib.loc = lib)$RemoteSha
+cat("RemoteSha:", if (is.null(sha)) "NONE" else sha, "\n")
+if (is.null(sha)) {
+  cat("WARNING: tarball carries no RemoteSha; results from this build cannot be tied",
+      "to a commit. Build it with data-raw/hamilton/build_mkp_tarball.sh.\n")
+}
 EOF
