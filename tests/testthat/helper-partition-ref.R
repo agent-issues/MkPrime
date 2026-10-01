@@ -44,9 +44,10 @@
 # The platform the stored reference was generated on, and why the comparison
 # is by tolerance rather than by bits.
 #
-# The reference RDS was generated on x86_64 Windows (mingw-w64). Run against
-# it on 2026-09-19 the six CI jobs split cleanly, each group internally
-# bit-identical:
+# The reference RDS was last generated on x86_64 Linux (glibc), on
+# 2026-09-30. The measurements below were taken against its predecessor,
+# generated on x86_64 Windows (mingw-w64). Run against that on 2026-09-19 the
+# six CI jobs split cleanly, each group internally bit-identical:
 #
 #   x86_64 Linux (release and devel) and x86_64 macOS  ->  one element of
 #     result$samples differs from the reference by exactly one ULP:
