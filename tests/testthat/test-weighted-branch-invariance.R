@@ -23,3 +23,14 @@ test_that("block_gibbs_branch holds the prior at beta = 0", {
   p <- .PriorInvarianceP(moveType = 15L, nMove = 5L, nReps = 1000L)
   expect_true(all(p > 1e-4), info = paste(signif(p, 2), collapse = ", "))
 })
+
+# The default start trees have a degree-2 root, 2n - 2 edges (#338).
+test_that("weighted_branch_scale and block_gibbs_branch hold the rooted prior", {
+  skip_under_memcheck()
+  set.seed(1205L)
+  p <- .RootedInvarianceP(moveType = 12L, nMove = 25L, nReps = 1000L)
+  expect_true(all(p > 1e-4), info = paste(signif(p, 2), collapse = ", "))
+  set.seed(1505L)
+  p <- .RootedInvarianceP(moveType = 15L, nMove = 5L, nReps = 1000L)
+  expect_true(all(p > 1e-4), info = paste(signif(p, 2), collapse = ", "))
+})

@@ -15,6 +15,14 @@ test_that("weighted_subtree_swap holds the prior at beta = 0", {
   expect_true(all(p > 1e-4), info = paste(signif(p, 2), collapse = ", "))
 })
 
+# The default start trees have a degree-2 root, 2n - 2 edges (#338).
+test_that("weighted_subtree_swap holds the rooted prior at beta = 0", {
+  skip_under_memcheck()
+  set.seed(1406L)
+  p <- .RootedInvarianceP(moveType = 14L, nMove = 25L, nReps = 1000L)
+  expect_true(all(p > 1e-4), info = paste(signif(p, 2), collapse = ", "))
+})
+
 
 
 # Replicates of a few moves each are weak on topology.  A long chain is not:
