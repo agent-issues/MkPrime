@@ -5,7 +5,8 @@
   set.seed(343)
   mat <- matrix(sample(0:1, 12 * 40, replace = TRUE), 12, 40,
                 dimnames = list(paste0("t", 1:12), NULL))
-  mat[1:2, ] <- rep(0:1, each = 2)
+  mat[1, ] <- 0
+  mat[2, ] <- 1
   mat
 }
 
@@ -118,12 +119,13 @@ test_that("RunMkPrime aborts when the starting log-likelihood is -Inf (#346)", {
                 dimnames = list(paste0("t", seq_len(nTip)), NULL))
   tree <- ape::rtree(nTip, tip.label = rownames(mat))
   tree$edge.length <- tree$edge.length * 20 / sum(tree$edge.length)
-  expect_error(
+  err <- expect_error(
     RunMkPrime(MatrixToPhyDat(mat), tree, model = MkPrimeModel(nCat = 1L),
                mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 20L, minWarmup = 10L,
                                   maxWarmup = 10L)),
-    "Underflowing character: 1"
+    "Starting log-likelihood is -Inf"
   )
+  expect_match(conditionMessage(err), "Underflowing character: 1")
 })
 
 test_that("ResumeMkPrime aborts on a checkpoint whose chain is at -Inf (#346)", {
