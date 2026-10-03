@@ -16,7 +16,7 @@ HeatedAcceptCount <- function(beta, nMoves = 400L) {
   fill_partition_cache(mcmcData, statePtr)
 
   tuning <- MkPrimeMCMC()$tuning
-  tuning$scale_tree_length <- 2
+  tuning$scale_tree_length <- 6
   move <- list(name = "tree_length", type = "scale",
                target = "tree_length", weight = 1)
   set.seed(7562)

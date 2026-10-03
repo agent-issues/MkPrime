@@ -413,16 +413,11 @@ test_that("maxRhat with a single run warns that it can never be met (#196)", {
 
 test_that("a large minEss draws no unreachable-criterion warning (#105)", {
   set.seed(1050)
-  warned <- character(0)
-  withCallingHandlers(
+  warned <- capture_warnings(
     result <- RunMkPrime(.mkp_test_pd(), .mkp_test_tree(),
       mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 600L, thin = 5L,
                          maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
-                         minEss = 5000, checkEvery = 200L, maxTime = 20)),
-    warning = function(w) {
-      warned <<- c(warned, conditionMessage(w))
-      invokeRestart("muffleWarning")
-    })
+                         minEss = 5000, checkEvery = 200L, maxTime = 20)))
   expect_false(any(grepl("minEss", warned)))
   expect_identical(result$stop_reason, "max_iter")
 })
