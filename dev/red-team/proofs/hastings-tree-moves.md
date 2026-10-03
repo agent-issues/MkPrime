@@ -200,7 +200,8 @@ Implementation matches the derivation.
   there is exactly one internal edge and the move is forced — still
   symmetric (each direction has $q = 1/2$). For $n = 3$, no internal
   edges; the code returns `logHastings = R_NegInf` (rejection)
-  (`tree_moves.cpp:37–42`).
+  (`tree_moves.cpp:37–42`). With a degree-2 root, $n = 3$ has one internal
+  edge, whose NNI is a root slide.
 - **Branch length 0:** NNI does not modify branch lengths; the absolute
   lengths flow through `preorder_weighted_impl` unchanged. No special
   case needed.

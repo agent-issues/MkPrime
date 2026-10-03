@@ -109,9 +109,9 @@ test_that("gibbs_subtree_swap samples its exact target", {
 # The default start trees have a degree-2 root, 2n - 2 edges (#338).
 test_that("gibbs_subtree_swap samples its exact target on a rooted tree", {
   skip_under_memcheck()
-  # The slope's t ignores autocorrelation, so it is not calibrated: over
-  # seeds 7-20 it ranged -1.5 to 4.1 (seed 7) with TV 0.022-0.029, against
-  # t > 7 for an uncorrected kernel.
+  # With 105 states, rare ones have low counts, whose log is biased low, and
+  # the slope's t ignores autocorrelation, so it is not calibrated here: over
+  # seeds 7-20 it ranged -1.5 to 4.1 (seed 7), TV 0.022-0.029.
   chain <- .SwapChain(seed = 8L, rooted = TRUE)
   expect_gt(length(chain$target), 20L)
   fit <- summary(lm(log(chain$empirical / chain$target) ~ log(chain$target)))
