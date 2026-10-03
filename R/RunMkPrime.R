@@ -195,6 +195,7 @@ RunMkPrime <- function(data, tree = NULL,
   mcmc$fixTopology <- isTRUE(fixTopology)
   mcmc$partitionSpec <- partitionSpec
   mcmc$dataFingerprint <- .DataFingerprint(mkd)
+  mcmc$tipLabels <- rownames(mkd$matrix)
 
   # When a user partition is supplied, rebuild mkd$partitions with classIdx
   # populated for each PartInfo. The C++ McmcData uses classIdx to map each
@@ -757,6 +758,7 @@ RunMkPrime <- function(data, tree = NULL,
     } else {
       s <- .InitState(tree, mkd, model)
     }
+    .CheckStartLogLik(s, tree, mkd, model)
     ch_list <- list(
       edge           = s$tree$edge,
       rel_br_lengths = s$rel_br_lengths,
@@ -3115,6 +3117,77 @@ RunMkPrime <- function(data, tree = NULL,
   ))
 }
 
+# Chain state numbers tips by data row, so data supplied on resume must take
+# the checkpoint's row order.
+.OrderTipsAs <- function(mkd, tipLabels) {
+  if (is.null(tipLabels)) {
+    .AlertInfo("Checkpoint predates stored tip labels; pairing its tips \\
+                with the rows of {.arg data} by position.")
+    return(mkd)
+  }
+  dataLabels <- rownames(mkd$matrix)
+  rowOrder <- match(tipLabels, dataLabels)
+  if (anyNA(rowOrder) || length(tipLabels) != length(dataLabels)) {
+    cli::cli_abort(c(
+      "{.arg data} holds different taxa from the data this chain was run on.",
+      "x" = if (anyNA(rowOrder)) {
+        "Not in {.arg data}: {.val {tipLabels[is.na(rowOrder)]}}."
+      },
+      "x" = if (!all(dataLabels %in% tipLabels)) {
+        "Not in checkpoint: {.val {setdiff(dataLabels, tipLabels)}}."
+      },
+      "i" = "Resume with the original data, or start a fresh run with \\
+             {.code RunMkPrime(..., overwrite = TRUE)}."
+    ))
+  }
+  if (identical(rowOrder, seq_along(rowOrder))) return(mkd)
+  mkd$matrix <- mkd$matrix[rowOrder, , drop = FALSE]
+  mkd$taxon_names <- mkd$taxon_names[rowOrder]
+  mkd$partitions <- .BuildPartitions(mkd)
+  # Return:
+  mkd
+}
+
+# A serialised chain's tree, tips labelled by data row.
+.ChainTree <- function(chain, mkd) {
+  .EdgeToTree(chain$edge, chain$tree_length * chain$rel_br_lengths,
+              rownames(mkd$matrix))
+}
+
+# Pruning does not rescale conditional likelihoods, so many tips with a
+# near-random character underflow the whole state to -Inf (#346); a chain
+# started there can sample -Inf throughout.
+.CheckStartLogLik <- function(state, tree, mkd, model) {
+  logLik <- state$log_lik
+  if (is.null(logLik) || isTRUE(logLik > -Inf)) return(invisible())
+  culprits <- tryCatch(
+    which(vapply(seq_len(mkd$nChar), function(i) {
+      !isTRUE(.MkpLogLikelihood(
+        tree, .SubsetMkPrimeData(mkd, i),
+        kPrime = state$kPrime[i],
+        rate_loss = state$rate_loss,
+        rate_log_sd = state$rate_log_sd,
+        nCat = model$nCat,
+        coding = model$coding,
+        rate_neo = state$rate_neo %||% 1,
+        relabel = model$relabel
+      ) > -Inf)
+    }, logical(1))),
+    error = function(e) integer(0)
+  )
+  cli::cli_abort(c(
+    "Starting log-likelihood is {logLik}, so the chain cannot score moves.",
+    "i" = "Conditional likelihoods underflow when many tips carry a \\
+           near-random character with many observed states.",
+    "i" = if (length(culprits)) {
+      "Underflowing character{?s}: {culprits}."
+    },
+    "i" = "Try a start tree with shorter branches, rate variation \\
+           ({.code MkPrimeModel(nCat > 1)}), or dropping the underflowing \\
+           characters."
+  ))
+}
+
 #' Save MCMC checkpoint to RDS
 #'
 #' Version 1 (in-memory mode): stores full run history (samples, trees).
@@ -3564,12 +3637,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     mkd <- .DropUninformable(mkd)
   }
   .CheckDataFingerprint(checkpoint$mcmc$dataFingerprint, mkd)
+  mkd <- .OrderTipsAs(mkd, checkpoint$mcmc$tipLabels)
   model <- .FinalizeModel(model, NULL, mkd)
 
   if (!is.null(tree)) .CheckTipLabels(tree, mkd)
 
   runs <- checkpoint$runs
   mcmc <- .ResumeMcmc(checkpoint$mcmc, mcmcOverride)
+  mcmc$tipLabels <- rownames(mkd$matrix)
   runDir <- .RunDirectory(mcmc$checkpointFile, checkpointFile)
   for (f in c("logFile", "treeFile", "checkpointFile")) {
     mcmc[f] <- list(.AbsolutePath(mcmc[[f]], runDir))
@@ -3596,6 +3671,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     ))
   }
   for (i in seq_len(nRuns)) runs[[i]]$run_index <- i
+  for (ch in unlist(lapply(runs, `[[`, "chains"), recursive = FALSE)) {
+    .CheckStartLogLik(ch, .ChainTree(ch, mkd), mkd, model)
+  }
   if (is.finite(mcmc$nIter) && mcmc$nIter < startIter) {
     .AlertWarning(
       "Checkpoint is at iteration {startIter - 1L}, past {.arg nIter} = \\

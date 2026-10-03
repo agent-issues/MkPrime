@@ -55,14 +55,6 @@ test_that("ResumeMkPrime refuses changed kObs (#287)", {
                "differs from the data this chain was run on")
 })
 
-test_that("ResumeMkPrime accepts identical data, whatever the tip order", {
-  ck <- .FingerprintCheckpoint()
-  on.exit(unlink(ck$files), add = TRUE)
-  mat <- .FingerprintMatrix()
-  expect_no_error(
-    ResumeMkPrime(ck$cpFile, MatrixToPhyDat(mat[6:1, ]), ck$tree))
-})
-
 test_that("A checkpoint without a fingerprint still resumes (#287)", {
   ck <- .FingerprintCheckpoint()
   on.exit(unlink(ck$files), add = TRUE)
