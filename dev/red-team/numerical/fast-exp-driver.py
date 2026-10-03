@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Historical: src/fast_exp.h (fast_neg_exp, MKP_EXP) was removed as dead code (agent-issues/MkPrime#349).
 """Lane N1 - fast_exp + closed-form P(t) stability stress driver.
 
 Audits src/fast_exp.h::fast_neg_exp and the JC/MkN/F81 closed-form

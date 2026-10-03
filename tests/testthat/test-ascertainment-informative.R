@@ -177,6 +177,8 @@ test_that("informative Sun2018 likelihood matches the per-tip kernels", {
   binary <- c(1L, 3L, 5L, 6L, 7L, 9L, 10L, 11L, 12L, 13L, 14L, 15L)
   ll <- vapply(list(integer(0), binary), function(neo) {
     mkd <- suppressWarnings(MkPrimeData(sun, neomorphic = neo))
+    # As the R entry points do; reference from the per-tip kernels (9da52ce).
+    mkd <- suppressMessages(MkPrime:::.DropUninformable(mkd))
     model <- MkPrime:::.FinalizeModel(MkPrimeModel(coding = "informative"),
                                       tree, mkd)
     cpp_log_likelihood_xptr(MkPrime:::.InitMcmcData(mkd, model),
@@ -184,7 +186,7 @@ test_that("informative Sun2018 likelihood matches the per-tip kernels", {
                             as.integer(mkd$kObs), rateLoss = 0.6,
                             rateLogSd = 0.4, rateNeo = 1.3)
   }, double(1))
-  expect_lt(max(abs(ll - c(-2829.4843325754368, -2826.5877050786489))),
+  expect_lt(max(abs(ll - c(-2751.0193475561714, -2761.1086807231436))),
             1e-10)
 })
 
@@ -241,6 +243,36 @@ test_that("informative coding drops parsimony-uninformative characters", {
     expect_error(MkPrime:::.InitMcmcData(mkd, model),
                  "four or more observed tips.*1 character")
   }
+})
+
+.PrepareData <- function(mkd, coding = "informative", qHet = FALSE) {
+  MkPrime:::prepare_mcmc_data(
+    partitions_r = mkd$partitions, kObs_r = mkd$kObs,
+    charTypes_r = mkd$type, hasNeo = any(mkd$type == "neomorphic"),
+    nCat = 4L, codingStr = coding, relabelFlag = TRUE,
+    treeLengthShape = 1.5, treeLengthRate = 1.0,
+    rateLossMeanlog = 0.0, rateLossSdlog = 1.0,
+    rateLogSdShape = 1.0, rateLogSdRate = 1.0,
+    rateNeoMeanlog = 0.0, rateNeoSdlog = 2.0,
+    kprimeHyperA = 1.0, kprimeHyperB = 1.0,
+    kPriorLogseries = TRUE, kprimeLogseriesC = 0.7,
+    qHeterogeneity = qHet
+  )
+}
+
+test_that("prepare_mcmc_data refuses what informative coding cannot score", {
+  # #348: R entry points guard these; direct C++ callers must be refused too.
+  expect_type(.PrepareData(MkPrimeData(.SixTipData(NULL))), "externalptr")
+  for (extra in list(c(0, 0, 0, 0, 0, 1), c(0, 0, 1, 2, "?", 0))) {
+    mkd <- MkPrimeData(.SixTipData(extra))
+    expect_error(.PrepareData(mkd),
+                 "parsimony-informative characters; 1 character")
+    expect_type(.PrepareData(mkd, coding = "variable"), "externalptr")
+  }
+  mkd <- MkPrimeData(.SixTipData(NULL))
+  expect_error(.PrepareData(mkd, qHet = TRUE), "qHeterogeneity cannot")
+  expect_type(.PrepareData(mkd, coding = "variable", qHet = TRUE),
+              "externalptr")
 })
 
 test_that("RunMkPrime drops parsimony-uninformative characters", {

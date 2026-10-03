@@ -18,7 +18,6 @@
 #include <cstring>
 #include <array>
 #include <cmath>
-#include "fast_exp.h"
 #include "mkn_rates.h"
 #include "f81.h"
 

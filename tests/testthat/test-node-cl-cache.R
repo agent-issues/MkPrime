@@ -183,6 +183,9 @@ test_that("partial-CL path carries the transformational ascertainment term", {
 # it never reached the cache.
 # ---------------------------------------------------------------------------
 .CachedLogLikDrift <- function(tree, mkd, model, moves, nMove = 400L) {
+  if (identical(model$coding, "informative")) {
+    mkd <- suppressMessages(MkPrime:::.DropUninformable(mkd))
+  }
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)
   dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
   statePtr <- MkPrime:::.InitMcmcChain(MkPrime:::.InitState(tree, mkd, model))
