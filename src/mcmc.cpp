@@ -217,6 +217,8 @@ struct McmcState {
   // nodeCL.ready(): either would make the mixture weights depend on the state,
   // and the chain would no longer leave the posterior invariant.
   bool cacheBoostNext = false;
+  // Set when a move meets a non-binary tree; the exported entry point raises.
+  bool treeShapeError = false;
 
   // Partition-API (Layer 1, plan v4 §4.2).
   // When usePartitioned is false (legacy path), these are ignored and the
@@ -693,6 +695,34 @@ static double cpp_log_prior_partitioned(
 // init_mcmc_state: create XPtr<McmcState>
 // ---------------------------------------------------------------------------
 
+// Every tree move assumes this shape (#336).
+static bool is_binary_tree(const IntegerVector& parent,
+                           const IntegerVector& child) {
+  const int nEdge = parent.size();
+  if (child.size() != nEdge || nEdge < 2) return false;
+  int maxNode = 0;
+  for (int e = 0; e < nEdge; ++e) {
+    if (parent[e] < 1 || child[e] < 1) return false;
+    maxNode = std::max(maxNode, std::max(parent[e], child[e]));
+  }
+  std::vector<int> nChild(maxNode + 1, 0), nParent(maxNode + 1, 0);
+  for (int e = 0; e < nEdge; ++e) {
+    ++nChild[parent[e]];
+    ++nParent[child[e]];
+  }
+  int nTip = 0;
+  for (int n = 1; n <= maxNode; ++n)
+    if (nChild[n] == 0) ++nTip;
+  for (int n = 1; n <= nTip; ++n)
+    if (nChild[n] != 0 || nParent[n] != 1) return false;
+  const int root = nTip + 1;
+  if (root > maxNode || nParent[root] != 0 ||
+      nChild[root] < 2 || nChild[root] > 3) return false;
+  for (int n = root + 1; n <= maxNode; ++n)
+    if (nParent[n] != 1 || nChild[n] != 2) return false;
+  return true;
+}
+
 // [[Rcpp::export]]
 SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
                      NumericVector relBrLengths, double treeLength,
@@ -710,6 +740,10 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
                      bool useHyperpriorOnSigma   = false,
                      double hyperTau             = 1.0,
                      NumericVector classZ        = NumericVector(0)) {
+  if (!is_binary_tree(parent, child)) {
+    stop("Tree must be binary, with tips 1..nTip and root nTip + 1 "
+         "(two children per internal node; two or three at the root).");
+  }
   McmcState* s = new McmcState();
   s->parent       = clone(parent);
   s->child        = clone(child);
@@ -1139,7 +1173,7 @@ static double compute_log_prior(const McmcData& data, const McmcState& state) {
 // matters for subsequent in-place NNI), use TreeTools::preorder_weighted_impl
 // instead.
 // ---------------------------------------------------------------------------
-static int preorder_into(const IntegerVector& parent,
+static bool preorder_into(const IntegerVector& parent,
                          const IntegerVector& child,
                          const NumericVector& edgeLen,
                          int nTip,
@@ -1163,14 +1197,17 @@ static int preorder_into(const IntegerVector& parent,
 
   // Seed with root's children (reversed so first child is popped first)
   int cnt = 0;
-  int rootEdges[4]; // root has ≤3 children (unrooted trifurcating)
-  for (int e = head[root]; e >= 0; e = nxt[e])
-    if (cnt < 4) rootEdges[cnt++] = e;
+  int rootEdges[3];
+  for (int e = head[root]; e >= 0; e = nxt[e]) {
+    if (cnt == 3) return false;
+    rootEdges[cnt++] = e;
+  }
   for (int i = cnt - 1; i >= 0; --i)
     stk.push_back(rootEdges[i]);
 
   while (!stk.empty()) {
     int e = stk.back(); stk.pop_back();
+    if (pos == nEdge) return false;  // a cycle revisits edges
     outParent[pos] = parent[e];
     outChild[pos]  = child[e];
     outLen[pos]    = edgeLen[e];
@@ -1180,14 +1217,31 @@ static int preorder_into(const IntegerVector& parent,
     if (ch > nTip) {
       // Internal node: push children in reverse linked-list order
       int nc = 0;
-      int ce[3]; // binary tree: ≤2 children per internal node
-      for (int x = head[ch]; x >= 0; x = nxt[x])
-        if (nc < 3) ce[nc++] = x;
+      int ce[2];
+      for (int x = head[ch]; x >= 0; x = nxt[x]) {
+        if (nc == 2) return false;
+        ce[nc++] = x;
+      }
       for (int i = nc - 1; i >= 0; --i)
         stk.push_back(ce[i]);
     }
   }
-  return pos;
+  return pos == nEdge;
+}
+
+// preorder_into for a candidate inside a move: a failure flags the state so
+// that the exported entry point raises it.
+static bool preorder_candidate(McmcState* state,
+                               const IntegerVector& parent,
+                               const IntegerVector& child,
+                               const NumericVector& edgeLen, int nTip,
+                               IntegerVector& ordPar, IntegerVector& ordCh,
+                               NumericVector& ordAbs) {
+  if (preorder_into(parent, child, edgeLen, nTip,
+                    INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs)))
+    return true;
+  state->treeShapeError = true;
+  return false;
 }
 
 
@@ -1291,8 +1345,9 @@ NumericVector eval_preorder_paths_cpp(SEXP dataPtr, SEXP statePtr,
   // Candidate-evaluation path (M-109): in-place edits then preorder_into.
   IntegerVector ordPar(nEdge), ordCh(nEdge);
   NumericVector ordAbs(nEdge);
-  preorder_into(parent, child, edgeLen, nTip,
-                INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
+  if (!preorder_into(parent, child, edgeLen, nTip,
+                     INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs)))
+    stop("Tree is not binary.");
   double ll_into = compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs,
                                           /*fillCharLLCache=*/false);
   // Commit path: TreeTools::preorder_weighted_impl.
@@ -2037,10 +2092,11 @@ static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta) {
       workAbs[plan.sibRow]    = 0.5 * lReg;
     }
 
-    preorder_into(workPar, workCh, workAbs, nTip,
-                  INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
-    candLL[ci] = compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs,
-                                        /*fillCharLLCache=*/false);  // FREEZE-003
+    candLL[ci] = preorder_candidate(state, workPar, workCh, workAbs, nTip,
+                                    ordPar, ordCh, ordAbs)
+      ? compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs,
+                               /*fillCharLLCache=*/false)  // FREEZE-003
+      : R_NegInf;
 
     // Restore
     if (merged) {
@@ -2328,8 +2384,9 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
 
   IntegerVector ordPar(nEdge), ordCh(nEdge);
   NumericVector ordAbs(nEdge);
-  preorder_into(propPar, state->child, propAbs, nTip,
-                INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
+  if (!preorder_candidate(state, propPar, state->child, propAbs, nTip,
+                          ordPar, ordCh, ordAbs))
+    return false;
 
   // 6. Accept with min(1, Z_x / Z_y)
   std::vector<int> revPartners;
@@ -2564,9 +2621,10 @@ static bool swap_neighbourhood_full(McmcData* data, McmcState* state,
     absLen[rowA]  = origAbsB;
     absLen[rowB]  = origAbsA;
 
-    preorder_into(workPar, child, absLen, nTip,
-                  INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
-    candLL[pi] = compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs);
+    candLL[pi] = preorder_candidate(state, workPar, child, absLen, nTip,
+                                    ordPar, ordCh, ordAbs)
+      ? compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs)
+      : R_NegInf;
 
     workPar[rowA] = origParA;
     workPar[rowB] = origParB;
@@ -3019,11 +3077,11 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
       absLen[rr]     = bins.mids[b] * lReg;
       absLen[sibRow] = (1.0 - bins.mids[b]) * lReg;
 
-      preorder_into(workPar, workCh, absLen, nTip,
-                    INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
-      candLL[ci][b] = compute_full_loglik_at(*data, *state,
-                                              ordPar, ordCh, ordAbs,
-                                              /*fillCharLLCache=*/false);  // FREEZE-003
+      candLL[ci][b] = preorder_candidate(state, workPar, workCh, absLen, nTip,
+                                         ordPar, ordCh, ordAbs)
+        ? compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs,
+                                 /*fillCharLLCache=*/false)  // FREEZE-003
+        : R_NegInf;
       if (R_FINITE(candLL[ci][b]) && candLL[ci][b] > candMax[ci])
         candMax[ci] = candLL[ci][b];
     }
@@ -3237,11 +3295,11 @@ static void weighted_swap_neighbourhood(
     for (int b = 0; b < nBins; ++b) {
       absLen[rowA] = bins.mids[b] * nb.totals[pi];
       absLen[rowB] = (1.0 - bins.mids[b]) * nb.totals[pi];
-      preorder_into(workPar, child, absLen, nTip,
-                    INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
-      const double ll = compute_full_loglik_at(*data, *state,
-                                               ordPar, ordCh, ordAbs,
-                                               /*fillCharLLCache=*/false);  // FREEZE-003
+      const double ll = preorder_candidate(state, workPar, child, absLen,
+                                           nTip, ordPar, ordCh, ordAbs)
+        ? compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs,
+                                 /*fillCharLLCache=*/false)  // FREEZE-003
+        : R_NegInf;
       if (R_FINITE(ll)) {
         nb.logW[pi][b] = beta * ll;
         if (nb.logW[pi][b] > logMax) logMax = nb.logW[pi][b];
@@ -6140,8 +6198,10 @@ bool do_move_cpp(SEXP dataPtr, SEXP statePtr,
                  int intWalkWindow, double beta) {
   McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
   McmcState* state = Rcpp::XPtr<McmcState>(statePtr).get();
-  return do_move_impl(data, state, moveType, charIdx,
-                      scaleTuning, betaSimplexTuning, intWalkWindow, beta);
+  const bool accepted = do_move_impl(data, state, moveType, charIdx, scaleTuning,
+                                     betaSimplexTuning, intWalkWindow, beta);
+  if (state->treeShapeError) stop("Tree is not binary.");
+  return accepted;
 }
 
 
@@ -6527,8 +6587,9 @@ DataFrame validate_swap_partial_cl(SEXP dataPtr, SEXP statePtr, int nodeA) {
     workPar[rowA] = origParB;  workPar[rowB] = origParA;
     absLen[rowA]  = origAbsB;  absLen[rowB]  = origAbsA;
 
-    preorder_into(workPar, state->child, absLen, nTip,
-                  INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs));
+    if (!preorder_into(workPar, state->child, absLen, nTip,
+                       INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs)))
+      stop("Tree is not binary.");
     llFull[pi] = compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs);
 
     workPar[rowA] = origParA;  workPar[rowB] = origParB;
