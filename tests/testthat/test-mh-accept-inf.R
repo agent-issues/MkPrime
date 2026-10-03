@@ -66,3 +66,20 @@ test_that("block Gibbs branch sweep escapes a -Inf starting state", {
   expect_equal(get_state_log_lik(statePtr),
                eval_full_loglik_cpp(fx$dataPtr, statePtr))
 })
+
+# #339 RT7-06: at beta = 0, beta * (newLL - curLL) is 0 * Inf = NaN when the
+# current logLik is -Inf, so the +Inf escape above never fired.
+test_that("MH move escapes a -Inf starting state at beta = 0", {
+  fx <- InfStartFixture()
+  statePtr <- InfState(fx, fx$mkd$kObs, -Inf)
+
+  set.seed(339L)
+  accepted <- vapply(seq_len(5L), function(i)
+    do_move_cpp(fx$dataPtr, statePtr, moveType = 0L, charIdx = 0L,
+                scaleTuning = 0.4, betaSimplexTuning = 1.0,
+                intWalkWindow = 1L, beta = 0), logical(1))
+  expect_true(any(accepted))
+  expect_true(is.finite(get_state_log_lik(statePtr)))
+  expect_equal(get_state_log_lik(statePtr),
+               eval_full_loglik_cpp(fx$dataPtr, statePtr))
+})

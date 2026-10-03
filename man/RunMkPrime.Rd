@@ -25,7 +25,9 @@ RunMkPrime(
 \item{tree}{A \code{phylo} object (starting topology), or \code{NULL} (default)
 to start from a greedy parsimony stepwise-addition tree (via
 \code{TreeSearch::AdditionTree}) when the \code{TreeSearch} package is
-installed, falling back to a neighbour-joining tree otherwise.}
+installed, falling back to a neighbour-joining tree otherwise.
+The tree must be binary, rooted or unrooted; polytomies are resolved
+at random with \code{\link[ape:multi2di]{ape::multi2di()}}, with a warning.}
 
 \item{neomorphic, knownStates}{Passed to \code{\link[=MkPrimeData]{MkPrimeData()}} if \code{data} is
 a \code{phyDat} object.}

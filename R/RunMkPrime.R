@@ -16,6 +16,8 @@
 #'   to start from a greedy parsimony stepwise-addition tree (via
 #'   `TreeSearch::AdditionTree`) when the `TreeSearch` package is
 #'   installed, falling back to a neighbour-joining tree otherwise.
+#'   The tree must be binary, rooted or unrooted; polytomies are resolved
+#'   at random with [ape::multi2di()], with a warning.
 #' @param neomorphic,knownStates Passed to [MkPrimeData()] if `data` is
 #'   a `phyDat` object.
 #' @param model An `MkPrimeModel` object, or `NULL` for defaults.
@@ -700,6 +702,21 @@ RunMkPrime <- function(data, tree = NULL,
 }
 
 
+# Nodes with more children than a binary tree allows: two per internal node,
+# or three at the root of an unrooted tree. NA if a node has a single child,
+# which no resolution fixes.
+.PolytomyCount <- function(tree) {
+  parent <- tree$edge[, 1]
+  nChild <- tabulate(parent)
+  root <- setdiff(parent, tree$edge[, 2])
+  nodes <- unique(parent)
+  if (any(nChild[nodes] < 2L)) {
+    return(NA_integer_)
+  }
+  sum(nChild[nodes] > ifelse(nodes == root, 3L, 2L))
+}
+
+
 # Validates a user or default start tree and returns it as every sampler
 # indexes it: tip i is data row i (#224), edges in canonical preorder, which
 # all topology proposals maintain.
@@ -723,6 +740,21 @@ RunMkPrime <- function(data, tree = NULL,
              They are invalid for likelihood computation."
     ))
     tree$edge.length[tree$edge.length <= 0] <- 1e-8
+  }
+  nPoly <- .PolytomyCount(tree)
+  if (is.na(nPoly)) {
+    cli::cli_abort(c(
+      "{.arg tree} has an internal node with a single child.",
+      "i" = "Remove such nodes with {.code ape::collapse.singles(tree)}."
+    ))
+  }
+  if (nPoly > 0L) {
+    tree <- ape::multi2di(tree)
+    tree$edge.length[tree$edge.length <= 0] <- 1e-8
+    cli::cli_warn(c(
+      "{nPoly} polytom{?y/ies} in {.arg tree} resolved at random.",
+      "i" = "The tree moves need a binary tree; new edges have length 1e-8."
+    ))
   }
   .CheckTipLabels(tree, mkd)
   TreeTools::Preorder(TreeTools::RenumberTips(tree, rownames(mkd$matrix)))
