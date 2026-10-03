@@ -5,7 +5,9 @@
 #' Specify an MkPrime model
 #'
 #' @param coding Ascertainment bias correction: `"variable"` (default),
-#'   `"informative"`, or `"none"`.
+#'   `"informative"`, or `"none"`. Under `"informative"`, characters that
+#'   are not parsimony-informative among their observed tips are dropped
+#'   with a message.
 #' @param nCat Number of ACRV rate categories (default 6).
 #' @param relabel Apply Mk' relabelling correction for transformational
 #'   characters? Default `TRUE`.
@@ -14,9 +16,11 @@
 #'   so that the prior mean tree length is `expSteps`.
 #' @param expSteps Expected number of state changes per character: the prior
 #'   mean tree length, in the per-character units of branch length. Default
-#'   `NULL` computes it from the data as the parsimony score of the starting
-#'   tree divided by the number of characters. Parsimony misses multiple hits,
-#'   so this underestimates the true tree length.
+#'   `NULL` computes it from the data as the parsimony score of the
+#'   neighbour-joining tree of the data (not the starting tree, so that
+#'   [RunMkPrime()] and [mkp_stepping_stone()] share one prior whatever tree
+#'   each starts from) divided by the number of characters. Parsimony misses
+#'   multiple hits, so this underestimates the true tree length.
 #' @param rateLossMeanlog,rateLossSdlog Parameters for the LogNormal prior
 #'   on `rate_loss` (neomorphic asymmetry). Defaults: meanlog = 0, sdlog = 2.
 #' @param rateLogSdShape,rateLogSdRate Shape and rate for the Gamma prior
@@ -138,8 +142,8 @@
 #'   `k' ~ 2 + Geo(p)`, so the default aligns inference with the validated SBC
 #'   forward model); `"conditional"` for `"beta_geometric"`, which has no
 #'   unconditional form and rejects `"unconditional"`. Consulted for
-#'   `empirical_geometric` and for `geometric` under
-#'   `likelihoodMode = "marginal_k"`; ignored for `logseries`.
+#'   `empirical_geometric` and `geometric` under either `likelihoodMode`;
+#'   ignored for `logseries`.
 #'
 #' @section Q-matrix heterogeneity:
 #'
@@ -501,7 +505,9 @@ MkPrimeModel <- function(
 #' Called internally by [RunMkPrime()] before MCMC starts.
 #'
 #' @param model An `MkPrimeModel` object.
-#' @param tree A `phylo` object (starting tree).
+#' @param tree A `phylo` object to score for `expSteps`, or `NULL`, as the
+#'   entry points pass, to score the neighbour-joining tree of the data, so
+#'   that the prior depends on the data alone and not on a start tree.
 #' @param mkd An `MkPrimeData` object.
 #' @return Updated `MkPrimeModel` with all defaults resolved.
 #' @keywords internal
@@ -512,6 +518,7 @@ MkPrimeModel <- function(
                     model$kprimeAlpha, model$kprimeBeta)
   .CheckLogseriesC(model$kPrimePrior, model$kprimeLogseriesC)
   if (is.null(model$expSteps)) {
+    tree <- tree %||% TreeTools::NJTree(mkd$phyDat)
     model$expSteps <- max(1, .FitchScore(tree, mkd) / ncol(mkd$matrix))
   }
   if (is.null(model$treeLengthRate)) {

@@ -16,24 +16,32 @@
 #'   tuning for each stone; its run-length and stopping-rule settings are
 #'   ignored.
 #' @param nStones Number of stepping stones (power posterior levels). Default 50.
-#' @param nIter Number of MCMC iterations per stone. Default 1000.
-#' @param warmup Warmup iterations per stone (discarded). Default 200.
+#' @param nIter Number of MCMC iterations per stone, each a single move (not
+#'   a sweep through every move type). Default 1000.
+#' @param warmup Warmup iterations per stone (discarded), counted as for
+#'   `nIter`. Default 200.
 #' @param alpha Shape parameter for the Beta(alpha, 1) quantile schedule.
 #'   Smaller values concentrate more stones near beta = 0 where the integrand
 #'   changes fastest. Default 0.3 (Xie et al. recommendation).
 #' @param fixTopology If `TRUE`, fix the tree topology and only sample
 #'   continuous parameters + branch lengths. Default `FALSE`.
+#' @param nRuns Integer specifying the number of independent runs through the
+#'   whole ladder; at least two are needed for a standard error. Default 2.
 #' @param verbose Logical specifying whether to report per-stone progress;
 #'   see [MkPrimeVerbosity()].
 #'
 #' @return A list with components:
 #'   \describe{
-#'     \item{log_marginal}{Log marginal likelihood estimate.}
-#'     \item{se}{Standard error of the estimate (delta-method approximation;
-#'       see Details).}
+#'     \item{log_marginal}{Log marginal likelihood estimate, pooling the
+#'       runs.}
+#'     \item{se}{Standard error of the estimate (see Details); `NA` when
+#'       `nRuns = 1`.}
+#'     \item{run_log_marginal}{The estimate from each run alone (length `nRuns`).}
 #'     \item{log_ratios}{Per-stone log ratios (length `nStones`).}
 #'     \item{betas}{The beta schedule used.}
 #'   }
+#'   If any stone of any run has no finite log-likelihood, or an infinite one,
+#'   `log_marginal` and `se` are `NA`, with a warning.
 #'
 #' @details
 #' Every stone runs for `warmup + nIter` iterations under the schedule `model`
@@ -41,30 +49,25 @@
 #' this function does not adapt) and `gibbs_p_marginal` (which is not
 #' tempered), and with no weight adaptation. An estimate is therefore
 #' comparable only with others computed under the same `model` and `mcmc`.
+#' One iteration performs one move, so a stone updates a parameter about
+#' `nIter` times the weight of the moves that change it; a large tree, whose
+#' many branch lengths share those weights, needs a correspondingly larger
+#' `nIter`.
 #'
 #' Under `likelihoodMode = "sampled_k"` and the unconditional `k'` prior, no
 #' stone visits `k'_i < kObs_i`, so the prior-only stone is normalised on
 #' `k' >= kObs` alone; the estimate adds back the log prior mass of that
 #' region, integrated over `p` numerically.
 #'
-#' The standard error is computed via the delta method applied to each
-#' stepping-stone ratio, following Xie et al. (2011) and the implementation in
-#' the \pkg{mcmc3r} package (dos Reis). For each stone \eqn{k},
-#' the importance weights \eqn{L_{k,i} = \exp(\Delta\beta_k \cdot \ell_i - C_k)}
-#' are computed (where \eqn{C_k} is a centering constant for numerical
-#' stability). The per-stone ratio is \eqn{r_k = \bar{L}_k} and its log
-#' contributes to the overall log-marginal likelihood. By the delta method,
-#' \deqn{\mathrm{Var}(\log r_k) \approx \frac{\mathrm{Var}(L_k)}{N_{\mathrm{eff},k}
-#'   \cdot r_k^2}}
-#' where \eqn{N_{\mathrm{eff},k}} is the effective sample size (accounting
-#' for MCMC autocorrelation). The total SE is
-#' \eqn{\sqrt{\sum_k \mathrm{Var}(\log r_k)}}. A warning is issued for any
-#' stone where \eqn{\mathrm{Var}(L_k) / (N_{\mathrm{eff},k} \cdot r_k^2) > 0.1},
-#' indicating the delta approximation may be unreliable; consider increasing
-#' \code{nIter} or \code{nStones}.
-#'
-#' If the \pkg{coda} package is not available, a fallback ESS estimate is used
-#' (initial positive sequence estimator on the autocorrelation function).
+#' Each run is one chain that carries its state from stone to stone, starting
+#' from `tree`. The estimate pools the draws of every run at each stone; the
+#' standard error is \eqn{s / \sqrt{n}}, where \eqn{s} is the standard
+#' deviation of the `n = nRuns` runs' own estimates. Within a run, the
+#' autocorrelation of the chain commonly outlasts a stone and carries into
+#' the next, so an error computed from each stone's draws alone (the delta
+#' method of Xie et al. 2011) can understate the true error several-fold;
+#' independent runs capture both. With few runs the standard error is itself
+#' uncertain: with the default two it rests on one degree of freedom.
 #'
 #' @references
 #' Xie, W., Lewis, P.O., Fan, Y., Kuo, L., & Chen, M.-H. (2011).
@@ -81,6 +84,7 @@ mkp_stepping_stone <- function(data, tree = NULL,
                               warmup = 200L,
                               alpha = 0.3,
                               fixTopology = FALSE,
+                              nRuns = 2L,
                               verbose = MkPrimeVerbosity() > 0L) {
 
   # --- Input processing ---
@@ -97,20 +101,7 @@ mkp_stepping_stone <- function(data, tree = NULL,
       cli::cli_alert_info("No starting tree supplied; using neighbour-joining tree.")
     }
   }
-  if (is.null(tree$edge.length)) {
-    cli::cli_abort(c(
-      "{.arg tree} has no branch lengths.",
-      "i" = "Supply a tree with edge lengths, e.g. {.code TreeTools::NJTree(data)}."
-    ))
-  }
-  nNeg <- sum(tree$edge.length <= 0)
-  if (nNeg > 0L) {
-    cli::cli_warn(c(
-      "{nNeg} non-positive branch length{?s} clamped to 1e-8.",
-      "i" = "Zero or negative lengths arise in NJ trees when taxa are very similar."
-    ))
-    tree$edge.length[tree$edge.length <= 0] <- 1e-8
-  }
+  tree <- .PrepareStartTree(tree, mkd)
 
   classIdx <- vapply(mkd$partitions, function(p) as.integer(p$classIdx %||% 1L),
                      integer(1))
@@ -122,6 +113,9 @@ mkp_stepping_stone <- function(data, tree = NULL,
   }
 
   if (is.null(model)) model <- MkPrimeModel()
+  if (identical(model$coding, "informative")) {
+    mkd <- .DropUninformable(mkd)
+  }
   if (is.null(mcmc)) mcmc <- MkPrimeMCMC()
   if (isTRUE(mcmc$gibbsPMarginal)) {
     # gibbs_p_marginal accepts on a truncation-normaliser ratio that carries
@@ -133,11 +127,15 @@ mkp_stepping_stone <- function(data, tree = NULL,
     ))
     mcmc$gibbsPMarginal <- FALSE
   }
-  model <- .FinalizeModel(model, tree, mkd)
+  model <- .FinalizeModel(model, NULL, mkd)
 
   nStones <- as.integer(nStones)
   nIter <- as.integer(nIter)
   warmup <- as.integer(warmup)
+  nRuns <- as.integer(nRuns)
+  if (length(nRuns) != 1L || is.na(nRuns) || nRuns < 1L) {
+    cli::cli_abort("{.arg nRuns} must be a positive integer.")
+  }
 
   # --- Beta schedule: quantiles of Beta(alpha, 1) ---
   # beta_k = (k/K)^(1/alpha), k = 0, ..., K
@@ -145,11 +143,6 @@ mkp_stepping_stone <- function(data, tree = NULL,
   betas <- ((seq_len(nStones + 1L) - 1L) / nStones)^(1 / alpha)
   # betas[1] = 0 (prior only), betas[nStones + 1] = 1 (full posterior)
 
-  # --- Initialize MCMC state ---
-  # PREORDER INVARIANT: .MkpLogLikelihood() (internal fast-path) requires
-  # edges in canonical preorder. Reorder here so .InitState() and all
-  # subsequent topology proposals maintain the invariant.
-  tree <- TreeTools::Preorder(tree)
   state <- .InitState(tree, mkd, model)
 
   nEdge <- nrow(tree$edge)
@@ -167,139 +160,107 @@ mkp_stepping_stone <- function(data, tree = NULL,
   moveWeights <- vapply(moves, `[[`, numeric(1), "weight")
   names(moveWeights) <- vapply(moves, `[[`, character(1), "name")
   moveWeights <- moveWeights / sum(moveWeights)
-  userPins <- .ResolvePinnedWeights(mcmc$moveWeights, names(moveWeights))
-  if (!is.null(userPins)) {
-    moveWeights <- .NormalizeMoveWeights(moveWeights, userPins)
+  pinnedWeights <- .SchedulePins(
+    moveWeights, vapply(moves, `[[`, character(1), "type"),
+    .ResolvePinnedWeights(mcmc$moveWeights, names(moveWeights))
+  )
+  if (!is.null(pinnedWeights)) {
+    moveWeights <- .NormalizeMoveWeights(moveWeights, pinnedWeights)
   }
 
   mcmcTuning <- mcmc$tuning
-
-  # Build C++ data struct and XPtr state (shared across all stones)
   mcmcData <- .InitMcmcData(mkd, model)
   set_branch_bins(mcmcData, mcmc$nBranchBins)
-  transIdx  <- which(mkd$type == "transformational")
-  statePtr  <- .InitMcmcChain(state)
-  fill_partition_cache(mcmcData, statePtr)
-  allocate_cl_workspace(mcmcData, statePtr)  # M-063
+  transIdx <- which(mkd$type == "transformational")
 
   # Before the stones, so a failed quadrature costs no sampling.
   logZ0 <- .LogZ0(model, mkd)
-  logRatios <- numeric(nStones)
 
-  # Per-stone importance weights (centered) and their means,
-  # retained for delta-method SE calculation
-  stoneWeights <- vector("list", nStones)
-  stoneMeans <- numeric(nStones)
-
-  for (stone in seq_len(nStones)) {
-    betaLo <- betas[stone]
-    betaHi <- betas[stone + 1L]
-
-    if (verbose) {
-      cli::cli_progress_step(
-        "Stone {stone}/{nStones}: beta = [{round(betaLo, 4)}, {round(betaHi, 4)}]"
-      )
-    }
-
-    # Run MCMC at power posterior betaLo
-    logLiks <- numeric(nIter)
-
-    for (iter in seq_len(warmup + nIter)) {
-      moveIdx <- sample.int(length(moves), 1L, prob = moveWeights)
-      move <- moves[[moveIdx]]
-      .DoMove(move, statePtr, tuning = mcmcTuning,
-              beta = betaLo, transIdx = transIdx, mcmcData = mcmcData)
-
-      if (iter > warmup) {
-        logLiks[iter - warmup] <- get_state_log_lik(statePtr)
+  # One chain per run walks the whole ladder, carrying its state from stone
+  # to stone; that carry-over is why runs, not stones, are the replicates.
+  logLiks <- lapply(seq_len(nRuns), function(run) {
+    statePtr <- .InitMcmcChain(state)
+    fill_partition_cache(mcmcData, statePtr)
+    allocate_cl_workspace(mcmcData, statePtr)  # M-063
+    runLogLiks <- matrix(NA_real_, nIter, nStones)
+    for (stone in seq_len(nStones)) {
+      if (verbose) {
+        cli::cli_progress_step(
+          "Run {run}/{nRuns}, stone {stone}/{nStones}: beta = \\
+           [{round(betas[stone], 4)}, {round(betas[stone + 1L], 4)}]"
+        )
+      }
+      for (iter in seq_len(warmup + nIter)) {
+        move <- moves[[sample.int(length(moves), 1L, prob = moveWeights)]]
+        .DoMove(move, statePtr, tuning = mcmcTuning,
+                beta = betas[stone], transIdx = transIdx, mcmcData = mcmcData)
+        if (iter > warmup) {
+          runLogLiks[iter - warmup, stone] <- get_state_log_lik(statePtr)
+        }
       }
     }
+    runLogLiks
+  })
 
-    # Stepping-stone ratio for this interval:
-    # log r_k = log( (1/n) * sum_i exp((betaHi - betaLo) * logLik_i) )
-    # Use log-sum-exp for numerical stability
-    deltaBeta <- betaHi - betaLo
-    # Remove -Inf logLiks (can occur when sampling near the prior; those
-    # samples contribute zero importance weight and are numerically harmless
-    # if at least one finite sample exists, but cause NaN via -Inf - (-Inf)
-    # if ALL logLiks are -Inf)
-    finiteLogLiks <- logLiks[is.finite(logLiks)]
-    if (length(finiteLogLiks) == 0L) {
-      # Degenerate stone — flag as unreliable; set weights to 0
-      logRatios[stone] <- NaN
-      stoneWeights[[stone]] <- numeric(0)
-      stoneMeans[stone] <- NaN
-    } else {
-      shifted <- deltaBeta * logLiks
-      maxShifted <- max(shifted, na.rm = TRUE)
-      Lk <- exp(shifted - maxShifted) # centered importance weights
-      Lk[!is.finite(Lk)] <- 0         # -Inf logLiks → weight 0
-      rk <- mean(Lk)
-      logRatios[stone] <- maxShifted + log(rk)
-      stoneWeights[[stone]] <- Lk
-      stoneMeans[stone] <- rk
-    }
-  }
-
-  logMarginal <- sum(logRatios) + logZ0
-
-  # --- SE via delta method (Xie et al. 2011; mcmc3r implementation) ---
-  # Var(log r_k) ≈ Var(L_k) / (N_eff * r_k^2)
-  varLogRatios <- numeric(nStones)
-  unreliable <- character(0)
-
-  for (stone in seq_len(nStones)) {
-    Lk <- stoneWeights[[stone]]
-    rk <- stoneMeans[stone]
-
-    # Degenerate stone: no finite logLiks were available
-    if (length(Lk) == 0L || !is.finite(rk)) {
-      varLogRatios[stone] <- NA_real_
-      unreliable <- c(unreliable, paste0(stone, " (beta=",
-                                          round(betas[stone], 4), ", degenerate)"))
-      next
-    }
-
-    essK <- .EssVector(Lk)
-    vzrK <- var(Lk) / essK
-    ratio <- vzrK / rk^2
-    varLogRatios[stone] <- ratio
-
-    if (is.finite(ratio) && ratio > 0.1) {
-      unreliable <- c(unreliable, paste0(stone, " (beta=",
-                                          round(betas[stone], 4), ")"))
-    } else if (!is.finite(ratio)) {
-      unreliable <- c(unreliable, paste0(stone, " (beta=",
-                                          round(betas[stone], 4), ", degenerate)"))
-    }
-  }
-
-  se <- sqrt(sum(varLogRatios, na.rm = TRUE))
-
-  if (length(unreliable) > 0L && verbose) {
-    cli::cli_warn(c(
-      "Delta-method SE may be unreliable for {length(unreliable)} stone{?s}.",
-      "i" = "Stones with Var(L)/r^2 > 0.1: {unreliable}.",
-      "i" = "Consider increasing {.arg nIter} or {.arg nStones}."
-    ))
-  }
-
+  result <- .SteppingStoneEstimate(logLiks, betas, logZ0)
   if (verbose) {
     cli::cli_alert_success(
-      "Log marginal likelihood: {round(logMarginal, 2)} (SE: {round(se, 2)})"
+      "Log marginal likelihood: {round(result$log_marginal, 2)} \\
+       (SE: {round(result$se, 2)})"
     )
   }
 
-  list(
-    log_marginal = logMarginal,
-    se = se,
-    log_ratios = logRatios,
-    betas = betas
-  )
+  # Return:
+  c(result, list(betas = betas))
 }
 
 
-# .EssVector() is now defined in R/ess.R (native Geyer 1992 + Vehtari 2021).
+# `logLiks` holds one draws x stones matrix per run. The estimate pools every
+# run's draws at each stone; its standard error is that of the mean of the
+# runs' own estimates, which are independent where a run's stones are not.
+.SteppingStoneEstimate <- function(logLiks, betas, logZ0) {
+  nStones <- length(betas) - 1L
+  nRuns <- length(logLiks)
+  runRatios <- matrix(vapply(logLiks, .StoneLogRatios, numeric(nStones),
+                             betas), nStones)
+  runLogMarginal <- colSums(runRatios) + logZ0
+  logRatios <- .StoneLogRatios(do.call(rbind, logLiks), betas)
+  degenerate <- which(rowSums(is.na(runRatios)) > 0L)
+  if (length(degenerate) > 0L) {
+    cli::cli_warn(c(
+      "Log marginal likelihood is undefined: {length(degenerate)} stone{?s}
+       had no finite log-likelihood, or an infinite one.",
+      "i" = "Stone{?s} {degenerate}; check the model and starting values."
+    ))
+    logMarginal <- NA_real_
+    se <- NA_real_
+  } else {
+    logMarginal <- sum(logRatios) + logZ0
+    se <- if (nRuns > 1L) stats::sd(runLogMarginal) / sqrt(nRuns) else NA_real_
+  }
+  # Return:
+  list(log_marginal = logMarginal, se = se, run_log_marginal = runLogMarginal,
+       log_ratios = logRatios)
+}
+
+
+# Stepping-stone log ratios, one per stone, from a draws x stones matrix of
+# log-likelihoods sampled at betas[-length(betas)]. NA marks a stone with no
+# finite draw or one at +Inf / NaN, whose ratio is undefined.
+.StoneLogRatios <- function(logLiks, betas) {
+  deltaBeta <- diff(betas)
+  vapply(seq_along(deltaBeta), function(stone) {
+    ll <- logLiks[, stone]
+    if (anyNA(ll) || any(ll == Inf) || !any(is.finite(ll))) {
+      # Return:
+      return(NA_real_)
+    }
+    shifted <- deltaBeta[stone] * ll
+    maxShifted <- max(shifted)
+    # Return:
+    maxShifted + log(mean(exp(shifted - maxShifted)))
+  }, numeric(1))
+}
 
 
 # Under the unconditional (Model A) prior, sampled_k gives k'_i < kObs_i zero

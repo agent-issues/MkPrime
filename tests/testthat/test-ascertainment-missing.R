@@ -140,6 +140,8 @@ test_that("fixture has missing cells in every partition", {
 
 test_that("each character is conditioned on its own observed tips", {
   d <- .MissingData()
+  # MkpLogLikelihood() drops uninformative characters under informative coding.
+  d$mkd <- MkPrime:::.SubsetMkPrimeData(d$mkd, MkPrime:::.Informable(d$mkd))
   mkd <- d$mkd
   tree <- d$tree
   nCat <- MkPrimeModel()$nCat
@@ -184,6 +186,8 @@ test_that("each character is conditioned on its own observed tips", {
 # different deviant-count widths within one batch.
 test_that("batched masked correction matches per-character scoring", {
   d <- .MissingData(known = FALSE)
+  # MkpLogLikelihood() drops uninformative characters under informative coding.
+  d$mkd <- MkPrime:::.SubsetMkPrimeData(d$mkd, MkPrime:::.Informable(d$mkd))
   isTrans <- d$mkd$type == "transformational"
   kPrime <- d$mkd$kObs
   kPrime[isTrans] <- rep_len(4:8, sum(isTrans))
