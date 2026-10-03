@@ -307,15 +307,16 @@ struct McmcState {
   }
 };
 
-// MH accept/reject. A -Inf current state (bad start tree, k' < kObs seed,
-// ...) gives logAlpha = +Inf; a finite proposal must be accepted or the chain
-// can never leave it (#145, F7-08). Any other non-finite logAlpha rejects.
+// MH accept/reject. A finite proposal from a -Inf current state (bad start
+// tree, k' < kObs seed, ...) must be accepted or the chain can never leave it
+// (#145, F7-08). This is decided from the components, because logAlpha is
+// NaN at beta = 0, where beta * (newLL - curLL) is 0 * Inf (#339). Any other
+// non-finite logAlpha rejects.
 static inline bool mh_accept(double logAlpha,
                              double curLogLik, double curLogPrior,
                              double newLogLik, double newLogPrior) {
-  if (logAlpha == R_PosInf) {
-    return (curLogLik == R_NegInf || curLogPrior == R_NegInf) &&
-           R_FINITE(newLogLik) && R_FINITE(newLogPrior);
+  if (curLogLik == R_NegInf || curLogPrior == R_NegInf) {
+    return R_FINITE(newLogLik) && R_FINITE(newLogPrior);
   }
   return R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha;
 }
@@ -1558,9 +1559,10 @@ static bool gibbs_spr_plan_at(const McmcState* state, int nTip, int pruneRow,
 }
 
 // Random part: choose the prune edge uniformly among eligible edges.  The
-// eligible count is nEdge - 3 independent of topology (exactly the root's
-// three edges are excluded), so the choice probability cancels between the
-// two directions of a move and needs no Hastings term.
+// eligible count is nEdge minus the root's edges (three on an unrooted tree,
+// two on a rooted one), so it depends only on the tree's shape, the choice
+// probability cancels between the two directions of a move, and it needs no
+// Hastings term.
 static bool gibbs_spr_plan(const McmcData* data, const McmcState* state,
                            GibbsSprPlan& plan) {
   const int nEdge = state->parent.size();
@@ -2768,8 +2770,7 @@ static bool weighted_branch_scale_impl(
   const double alphaNew = chosenMid * conc + 1.0;
   const double betaNew  = (1.0 - chosenMid) * conc + 1.0;
   double newF = R::rbeta(alphaNew, betaNew);
-  if (newF < 1e-8) newF = 1e-8;
-  if (newF > 1.0 - 1e-8) newF = 1.0 - 1e-8;
+  if (newF < 1e-8 || newF > 1.0 - 1e-8) return false;  // #339 RT7-05
 
   // 7. Hastings ratio.  The weights depend only on edges the move leaves
   //    alone, so they are identical in both directions.
@@ -2894,8 +2895,7 @@ static bool block_gibbs_branch_sweep_impl(
     const double alphaNew = chosenMid * conc + 1.0;
     const double betaNew  = (1.0 - chosenMid) * conc + 1.0;
     double newF = R::rbeta(alphaNew, betaNew);
-    if (newF < 1e-8) newF = 1e-8;
-    if (newF > 1.0 - 1e-8) newF = 1.0 - 1e-8;
+    if (newF < 1e-8 || newF > 1.0 - 1e-8) continue;  // #339 RT7-05
 
     // Hastings ratio: as in weighted_branch_scale_impl
     double logHastings = bin_mixture_logdensity(weights, oldF, bins)
@@ -3156,8 +3156,7 @@ static bool weighted_spr_impl(McmcData* data, McmcState* state,
   const double alphaNew = chosenMid * conc + 1.0;
   const double betaNew  = (1.0 - chosenMid) * conc + 1.0;
   double fNew = R::rbeta(alphaNew, betaNew);
-  if (fNew < 1e-8) fNew = 1e-8;
-  if (fNew > 1.0 - 1e-8) fNew = 1.0 - 1e-8;
+  if (fNew < 1e-8 || fNew > 1.0 - 1e-8) return false;  // #339 RT7-05
 
   // 13. Construct final proposed topology with fNew using working copies
   //     (state untouched until acceptance confirmed)
@@ -3377,8 +3376,7 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
   const double chosenMid = bins.mids[chosenBin];
   double fNew = R::rbeta(chosenMid * conc + 1.0,
                          (1.0 - chosenMid) * conc + 1.0);
-  if (fNew < 1e-8) fNew = 1e-8;
-  if (fNew > 1.0 - 1e-8) fNew = 1.0 - 1e-8;
+  if (fNew < 1e-8 || fNew > 1.0 - 1e-8) return false;  // #339 RT7-05
 
   // 5. Construct the proposed tree
   const double tot  = fwd.totals[chosen];
@@ -3868,22 +3866,9 @@ static List pspr_proposal_impl(
 
   // 5. Build partition list for Fitch scoring
   std::vector<std::pair<IntegerMatrix, int>> fitchParts;
-  for (const auto& part : data->parts) {
-    int kEff = (part.type == 0) ? 2 :
-               (part.type == 2) ? part.k : 0;
-    if (kEff == 0) {
-      // Transformational: use max observed k across characters
-      int maxK = 2;
-      for (int c = 0; c < part.tipStates.ncol(); ++c) {
-        for (int t = 0; t < nTip; ++t) {
-          int s = part.tipStates(t, c);
-          if (s >= maxK) maxK = s + 1;
-        }
-      }
-      kEff = maxK;
-    }
-    fitchParts.push_back({part.tipStates, kEff});
-  }
+  // fitch_score_* read only the state matrix; the int is unused.
+  for (const auto& part : data->parts)
+    fitchParts.push_back({part.tipStates, 0});
 
   // 6. Score all candidates using Fitch parsimony
   std::vector<int> scores;
