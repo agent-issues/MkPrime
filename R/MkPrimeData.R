@@ -181,11 +181,31 @@ MkPrimeData <- function(data,
 
 
 # coding = "informative" conditions each character on being parsimony-
-# informative among its observed tips. With fewer than four observed tips no
-# pattern is, so 1 - P(uninformative) is zero and the correction undefined.
+# informative among its observed tips, so a character that is not has zero
+# likelihood under the model; with fewer than four observed tips, the
+# correction itself is undefined.
 .Informable <- function(mkd) {
   # Return:
-  colSums(!is.na(mkd$matrix)) >= 4L
+  apply(mkd$matrix, 2, function(col) {
+    sum(tabulate(col[!is.na(col)] + 1L) >= 2L) >= 2L
+  })
+}
+
+.DropUninformable <- function(mkd) {
+  keep <- .Informable(mkd)
+  if (all(keep)) return(mkd)
+  if (!any(keep)) {
+    cli::cli_abort(
+      "No character is parsimony-informative, as
+      {.code coding = \"informative\"} requires."
+    )
+  }
+  cli::cli_inform(
+    "Dropping {sum(!keep)} parsimony-uninformative character{?s} (fewer than
+    two states each on two or more observed tips): {?column/columns}
+    {which(!keep)}."
+  )
+  .SubsetMkPrimeData(mkd, keep)
 }
 
 .SubsetMkPrimeData <- function(mkd, keep) {

@@ -11,11 +11,15 @@
 # Usage:  sbatch --array=0-259 summarize_array.slurm mk
 #         sbatch --array=0-25  summarize_array.slurm mkp_geo
 #
+# Arguments after ARMNAME go to summarize_streamed.R, e.g. `--incomplete` for
+# tasks that `sacct` shows were killed before writing their final .rds.
+#
 # tree_idx = TASK_ID / 10 + 1,  rep_idx = TASK_ID % 10 + 1 (mk arm)
 # For mkp_geo the user has only run rep_01, so we map TASK_ID -> tree only,
 # rep_idx = 1.
 
-ARM="${1:?usage: sbatch --array=... summarize_array.slurm ARMNAME}"
+ARM="${1:?usage: sbatch --array=... summarize_array.slurm ARMNAME [--incomplete]}"
+shift
 
 # This is the only script here with no in-file `#SBATCH --array`; the range has
 # to come from the command line. Submitted without one, SLURM_ARRAY_TASK_ID is
@@ -50,4 +54,4 @@ mkdir -p "$OUT_DIR"
 echo "[summarize] arm=$ARM tree=$TREE rep=$REP task=$SLURM_ARRAY_TASK_ID"
 
 Rscript /nobackup/pjjg18/mkp-study/summarize_streamed.R \
-  "$TREE" "$REP" "$ARM" "$RESULTS_ROOT" "$DATA_ROOT" "$OUT_DIR"
+  "$TREE" "$REP" "$ARM" "$RESULTS_ROOT" "$DATA_ROOT" "$OUT_DIR" "$@"
