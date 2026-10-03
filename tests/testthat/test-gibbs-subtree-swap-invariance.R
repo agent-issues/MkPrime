@@ -12,9 +12,9 @@
 # chain visits, every state carrying the same exchangeable Dirichlet prior.
 
 
-.SwapChain <- function(nTip = 5L, nIter = 60000L, seed = 7L) {
+.SwapChain <- function(nTip = 5L, nIter = 60000L, seed = 7L, rooted = FALSE) {
   set.seed(seed)
-  tree <- TreeTools::Preorder(ape::rtree(nTip, rooted = FALSE))
+  tree <- TreeTools::Preorder(ape::rtree(nTip, rooted = rooted))
   tree$edge.length <- rep(1 / nrow(tree$edge), nrow(tree$edge))
   mat <- matrix(sample(0:1, nTip * 8L, replace = TRUE), nrow = nTip,
                 dimnames = list(tree$tip.label, NULL))
@@ -66,9 +66,9 @@ test_that("gibbs_subtree_swap samples its exact target", {
 # WITH leaves state$logLik holding the likelihood of a different tree,
 # several log-units adrift per accepted swap.
 .SwapLogLikDrift <- function(model, seed = 5719L, nTip = 8L, nMove = 400L,
-                             partitioned = FALSE) {
+                             partitioned = FALSE, rooted = FALSE) {
   set.seed(seed)
-  tree <- TreeTools::Preorder(ape::rtree(nTip, rooted = FALSE))
+  tree <- TreeTools::Preorder(ape::rtree(nTip, rooted = rooted))
   mat <- matrix(sample(0:2, nTip * 10L, replace = TRUE), nrow = nTip,
                 dimnames = list(tree$tip.label, paste0("c", seq_len(10L))))
   mkd <- suppressWarnings(MkPrimeData(MatrixToPhyDat(mat)))
@@ -106,13 +106,29 @@ test_that("gibbs_subtree_swap samples its exact target", {
 }
 
 
+# The default start trees have a degree-2 root, 2n - 2 edges (#338).
+test_that("gibbs_subtree_swap samples its exact target on a rooted tree", {
+  skip_under_memcheck()
+  # With 105 states, rare ones have low counts, whose log is biased low, and
+  # the slope's t ignores autocorrelation, so it is not calibrated here: over
+  # seeds 7-20 it ranged -1.5 to 4.1 (seed 7), TV 0.022-0.029.
+  chain <- .SwapChain(seed = 8L, rooted = TRUE)
+  expect_gt(length(chain$target), 20L)
+  fit <- summary(lm(log(chain$empirical / chain$target) ~ log(chain$target)))
+  expect_lt(abs(fit$coefficients[2L, 3L]), 4)
+  expect_lt(sum(abs(chain$empirical - chain$target)) / 2, 0.05)
+})
+
+
 test_that("gibbs_subtree_swap commits the tree it evaluated", {
   for (model in list(MkPrimeModel(),
                      MkPrimeModel(qHeterogeneity = TRUE),
                      MkPrimeModel(coding = "informative"))) {
-    result <- .SwapLogLikDrift(model)
-    expect_gt(result$accepted, 50L)
-    expect_lt(result$drift, 1e-8)
+    for (rooted in c(FALSE, TRUE)) {
+      result <- .SwapLogLikDrift(model, rooted = rooted)
+      expect_gt(result$accepted, 50L)
+      expect_lt(result$drift, 1e-8)
+    }
   }
 })
 

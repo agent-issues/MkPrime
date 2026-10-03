@@ -65,6 +65,15 @@ test_that("weighted_spr holds the prior at beta = 0", {
 })
 
 
+# The default start trees have a degree-2 root, 2n - 2 edges (#338).
+test_that("weighted_spr holds the rooted prior at beta = 0", {
+  skip_under_memcheck()
+  set.seed(1306L)
+  p <- .RootedInvarianceP(moveType = 13L, nMove = 25L, nReps = 1000L)
+  expect_true(all(p > 1e-4), info = paste(signif(p, 2), collapse = ", "))
+})
+
+
 # The beta = 0 check above leaves every bin weight at 1, so it says nothing
 # about how the weights enter the mixture.  Pin that separately against an
 # independent R-side sum, and against the single component it replaces.

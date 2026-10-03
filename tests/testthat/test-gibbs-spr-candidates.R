@@ -22,9 +22,9 @@
 # ---------------------------------------------------------------------------
 
 .CandContext <- function(seed = 7L, nTip = 6L, nChar = 5L,
-                         model = MkPrimeModel()) {
+                         model = MkPrimeModel(), rooted = FALSE) {
   set.seed(seed)
-  tree <- Preorder(ape::rtree(nTip, rooted = FALSE))
+  tree <- Preorder(ape::rtree(nTip, rooted = rooted))
   mat  <- matrix(sample(0:2, nTip * nChar, replace = TRUE), nrow = nTip,
                  dimnames = list(tree$tip.label, NULL))
   mkd   <- suppressWarnings(MkPrimeData(MatrixToPhyDat(mat)))
@@ -121,73 +121,77 @@ test_that("gibbs_spr weights candidates under the partitioned likelihood", {
 # 1. GSPR-004: candidate-set symmetry and weight cancellation
 # ---------------------------------------------------------------------------
 
+# The default start trees have a degree-2 root, 2n - 2 edges (#338), so the
+# check runs on both root shapes.
 test_that("GSPR-004: x and y enumerate the same edges of R with equal weights", {
-  ctx  <- .CandContext(seed = 7L)
-  nTip <- ctx$nTip
-  root <- nTip + 1L
-  x    <- ctx$tree
+  for (rooted in c(FALSE, TRUE)) {
+    ctx  <- .CandContext(seed = 7L, rooted = rooted)
+    nTip <- ctx$nTip
+    root <- nTip + 1L
+    x    <- ctx$tree
 
-  # Two prune edges: one whose merge point g is the trifurcating root, one
-  # deeper — the merged-edge special case must hold in both regimes.
-  eligible <- which(x$edge[, 1L] != root)
-  gOf <- x$edge[match(x$edge[eligible, 1L], x$edge[, 2L]), 1L]
-  pruneRows <- unique(c(eligible[which(gOf == root)[1L]],
-                        eligible[which(gOf != root)[1L]]))
-  pruneRows <- pruneRows[!is.na(pruneRows)]
-  expect_gte(length(pruneRows), 2L)
+    # Two prune edges: one whose merge point g is the root, one
+    # deeper — the merged-edge special case must hold in both regimes.
+    eligible <- which(x$edge[, 1L] != root)
+    gOf <- x$edge[match(x$edge[eligible, 1L], x$edge[, 2L]), 1L]
+    pruneRows <- unique(c(eligible[which(gOf == root)[1L]],
+                          eligible[which(gOf != root)[1L]]))
+    pruneRows <- pruneRows[!is.na(pruneRows)]
+    expect_gte(length(pruneRows), 2L)
 
-  for (pruneRow in pruneRows) {
-    spX  <- .StateFor(ctx, x)
-    enX  <- gibbs_spr_enumerate_cpp(ctx$dataPtr, spX, pruneRow)
-    recX <- .TipSetBelow(x$edge, nTip)
-    S    <- recX(enX$v)
-    keyX <- .REdgeKeys(enX$edges, recX, S)
-    nX   <- length(keyX)
+    for (pruneRow in pruneRows) {
+      spX  <- .StateFor(ctx, x)
+      enX  <- gibbs_spr_enumerate_cpp(ctx$dataPtr, spX, pruneRow)
+      recX <- .TipSetBelow(x$edge, nTip)
+      S    <- recX(enX$v)
+      keyX <- .REdgeKeys(enX$edges, recX, S)
+      nX   <- length(keyX)
 
-    # Enumerated set is exactly E(R): every edge of the pruned tree, once.
-    nDesc <- sum(vapply(x$edge[, 2L],
-                        function(ch) all(recX(ch) %in% S), logical(1L)))
-    expect_equal(nX, nrow(x$edge) - nDesc - 1L)
-    expect_false(anyDuplicated(keyX) > 0L)
+      # Enumerated set is exactly E(R): every edge of the pruned tree, once.
+      nDesc <- sum(vapply(x$edge[, 2L],
+                          function(ch) all(recX(ch) %in% S), logical(1L)))
+      expect_equal(nX, nrow(x$edge) - nDesc - 1L)
+      expect_false(anyDuplicated(keyX) > 0L)
 
-    # Build y by regrafting onto the first candidate at an asymmetric tau
-    j <- 1L
-    candRow <- which(x$edge[, 1L] == enX$edges[j, 1L] &
-                     x$edge[, 2L] == enX$edges[j, 2L])
-    expect_length(candRow, 1L)
-    y    <- .ApplySpr(x, pruneRow, candRow, tau = 0.37)
-    spY  <- .StateFor(ctx, y)
-    recY <- .TipSetBelow(y$edge, nTip)
+      # Build y by regrafting onto the first candidate at an asymmetric tau
+      j <- 1L
+      candRow <- which(x$edge[, 1L] == enX$edges[j, 1L] &
+                       x$edge[, 2L] == enX$edges[j, 2L])
+      expect_length(candRow, 1L)
+      y    <- .ApplySpr(x, pruneRow, candRow, tau = 0.37)
+      spY  <- .StateFor(ctx, y)
+      recY <- .TipSetBelow(y$edge, nTip)
 
-    # Locate the same prune edge (u -> v) in y by v's tip set
-    pruneRowY <- which(vapply(seq_len(nrow(y$edge)), function(i)
-      identical(recY(y$edge[i, 2L]), S), logical(1L)))
-    expect_length(pruneRowY, 1L)
+      # Locate the same prune edge (u -> v) in y by v's tip set
+      pruneRowY <- which(vapply(seq_len(nrow(y$edge)), function(i)
+        identical(recY(y$edge[i, 2L]), S), logical(1L)))
+      expect_length(pruneRowY, 1L)
 
-    enY  <- gibbs_spr_enumerate_cpp(ctx$dataPtr, spY, pruneRowY)
-    keyY <- .REdgeKeys(enY$edges, recY, S)
+      enY  <- gibbs_spr_enumerate_cpp(ctx$dataPtr, spY, pruneRowY)
+      keyY <- .REdgeKeys(enY$edges, recY, S)
 
-    # Same set of edges of R from both endpoints — the GSPR-004 fix
-    expect_equal(length(keyY), nX)
-    expect_setequal(keyX, keyY)
+      # Same set of edges of R from both endpoints — the GSPR-004 fix
+      expect_equal(length(keyY), nX)
+      expect_setequal(keyX, keyY)
 
-    # Same weight for every edge of R, whichever endpoint enumerates it.
-    # This includes x's own position: the mergedEdge special case (last row
-    # of enX) must equal y's regular-path evaluation of that edge, and vice
-    # versa — the normaliser cancellation is exact, not assumed.
-    oy <- match(keyX, keyY)
-    expect_false(anyNA(oy))
-    expect_equal(enX$logLik, enY$logLik[oy], tolerance = 1e-8)
+      # Same weight for every edge of R, whichever endpoint enumerates it.
+      # This includes x's own position: the mergedEdge special case (last row
+      # of enX) must equal y's regular-path evaluation of that edge, and vice
+      # versa — the normaliser cancellation is exact, not assumed.
+      oy <- match(keyX, keyY)
+      expect_false(anyNA(oy))
+      expect_equal(enX$logLik, enY$logLik[oy], tolerance = 1e-8)
 
-    # The merged edge of x is a regular candidate of y, and y's merged edge
-    # is the candidate x moved to
-    expect_true(keyX[nX] %in% keyY[-length(keyY)])
-    expect_identical(keyY[length(keyY)], keyX[j])
+      # The merged edge of x is a regular candidate of y, and y's merged edge
+      # is the candidate x moved to
+      expect_true(keyX[nX] %in% keyY[-length(keyY)])
+      expect_identical(keyY[length(keyY)], keyX[j])
 
-    # lMerge from y equals the regraft edge length x split (lReg), and
-    # vice versa (the Jacobian's two lengths swap roles between directions)
-    lRegX <- x$edge.length[candRow]
-    expect_equal(enY$lMerge, lRegX, tolerance = 1e-12)
+      # lMerge from y equals the regraft edge length x split (lReg), and
+      # vice versa (the Jacobian's two lengths swap roles between directions)
+      lRegX <- x$edge.length[candRow]
+      expect_equal(enY$lMerge, lRegX, tolerance = 1e-12)
+    }
   }
 })
 
