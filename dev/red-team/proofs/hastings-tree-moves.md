@@ -34,21 +34,41 @@ Proofs are organised in the same order.
 A1. **Tree representation.** Trees are stored as a `phylo` edge matrix in
 canonical preorder (TreeTools convention). Tips have node indices
 $1 \dots n$; internal nodes have indices $n+1 \dots 2n-1$; the root is
-node $n+1$. The root is a *trifurcation* (three children), matching the
-output of `ape::unroot()` followed by `TreeTools::Preorder()`. Every
-non-root internal node has exactly two children. (Verified empirically for
-$n \in \{4,\dots,8\}$.)
+node $n+1$. Every non-root internal node has exactly two children. The
+root has $\rho$ children, in one of two shapes:
 
-A2. **Edge count.** For an unrooted binary tree on $n \geq 3$ tips, the
-edge matrix has $E = 2n - 3$ rows ($n$ pendant edges + $n - 3$ internal
-edges).
+- $\rho = 3$, a *trifurcation*, matching the output of `ape::unroot()`
+  followed by `TreeTools::Preorder()`. (Verified empirically for
+  $n \in \{4,\dots,8\}$.)
+- $\rho = 2$, a *degree-2 root*. This is the default: `RunMkPrime()`
+  starts from `TreeSearch::AdditionTree()` (fallback `TreeTools::NJTree()`),
+  both rooted, and `.PrepareStartTree()` keeps the rooting (94 edges on
+  48-tip `Lobo.phy`; issue #338). No move changes $\rho$, so a chain stays
+  in the shape it starts in.
+
+A degree-2 root sits *on* an edge of the unrooted tree, splitting it in
+two, so for $\rho = 2$ the state space is labelled *rooted* binary
+topologies. The likelihood is root-invariant (every model is
+time-reversible), and each unrooted topology on $n$ tips has the same
+number, $2n - 3$, of rootings, so a chain uniform on rooted topologies has
+a uniform unrooted marginal (A4).
+
+A2. **Edge count.** For a binary tree on $n \geq 3$ tips under A1, the
+edge matrix has $E = 2n - \rho$ rows: $n$ pendant edges and
+$n - \rho$ internal edges. There are $n - \rho + 1$ internal nodes
+(the root plus $n - \rho$ non-root internal nodes, as $n + (n-\rho+1) - 1
+= E$), and each non-root internal node has one internal parent. So
+$E = 2n - 3$ with $n - 3$ internal edges when $\rho = 3$, and
+$E = 2n - 2$ with $n - 2$ internal edges when $\rho = 2$.
 
 A3. **Branch lengths.** Stored as `rel_br_lengths`, a simplex summing to 1
 that, multiplied by `tree_length`, gives absolute edge lengths. Total tree
 length is held fixed by every topology move; topology moves redistribute
 mass on the simplex.
 
-A4. **Topology prior.** Flat over labelled unrooted binary topologies. This
+A4. **Topology prior.** Flat over labelled unrooted binary topologies
+($\rho = 3$), or over labelled rooted binary topologies ($\rho = 2$),
+which by A1 is again flat over the unrooted marginal. This
 matches the convention under which the chi-squared test in
 `tests/testthat/test-tbr-detailed-balance.R` is well-posed.
 
@@ -61,8 +81,9 @@ A6. **Selection of internal edges.** "Internal edge" in this code means an
 edge row $i$ with `parent[i] > nTip && child[i] > nTip`. Under A1 the root
 has parent = 0 in the edge matrix, so root–incident edges have
 $\text{parent}=n+1>n$ and may qualify if their child is internal. The
-internal-internal edge count thus equals $n - 3$ — the textbook count of
-internal edges in an unrooted binary tree (Lemma N1 below).
+internal-internal edge count thus equals $n - \rho$ (A2; Lemma N1 below):
+$n - 3$, the textbook count for an unrooted binary tree, or $n - 2$, the
+count for a rooted one.
 
 ---
 
@@ -74,16 +95,18 @@ unrooted labelled binary topologies. Equivalently, $\log H_{\text{NNI}} = 0$.
 
 ## Lemma N1 (internal-edge count).
 Under A1–A2, the number of edge rows with both endpoints internal equals
-$n - 3$.
+$n - \rho$, whatever the topology.
 
-*Proof.* The unrooted binary tree on $n$ tips has $n - 3$ internal edges
-and $n$ pendant edges. The trifurcating root introduces no extra edges
-(it sits *at* a node of the unrooted tree, not on an edge). Each pendant
-edge has a tip endpoint (label $\leq n$). Each internal edge has two
-internal endpoints (labels $> n$). $\square$
+*Proof.* Each pendant edge has a tip endpoint (label $\leq n$); each of
+the other $E - n = n - \rho$ edges joins two internal nodes (labels
+$> n$). For $\rho = 3$ these are the $n - 3$ edges of the unrooted tree
+(the trifurcating root sits *at* a node). For $\rho = 2$ the root splits
+one unrooted edge into two root edges, each counted when its child is
+internal, giving $n - 2$. $\square$
 
-*Empirical confirmation.* $n=4,\dots,8$: edges = $\{5,7,9,11,13\}$ =
-$\{2n-3\}$; internal-internal = $\{1,2,3,4,5\}$ = $\{n-3\}$.
+*Empirical confirmation* ($\rho = 3$). $n=4,\dots,8$: edges =
+$\{5,7,9,11,13\}$ = $\{2n-3\}$; internal-internal = $\{1,2,3,4,5\}$ =
+$\{n-3\}$.
 
 ## Lemma N2 (degree of selectable endpoints).
 Let an internal edge $(u, v)$ be selected by `nni_proposal_impl`. Then:
@@ -91,7 +114,8 @@ Let an internal edge $(u, v)$ be selected by `nni_proposal_impl`. Then:
 - $v$ is non-root (since $\text{parent}=u$), so $v$ has exactly two
   children. `vChildRows` has size 2.
 - $u$ has $|\text{children}(u)| - 1$ "siblings" of $v$:
-    - If $u = \text{root}$: $u$ has 3 children, so `uSibRows` has size 2.
+    - If $u = \text{root}$: $u$ has $\rho$ children, so `uSibRows` has
+      size $\rho - 1$ (2 for a trifurcation, 1 for a degree-2 root).
     - If $u \neq \text{root}$: $u$ has 2 children, so `uSibRows` has size 1.
 
 ## Proof of NNI symmetry.
@@ -99,8 +123,9 @@ Let an internal edge $(u, v)$ be selected by `nni_proposal_impl`. Then:
 Let $T$ be the current tree, $T'$ the proposed tree. The forward proposal
 performs three independent uniform draws:
 
-1. Pick an internal edge $(u, v)$ uniformly from $|N(T)| = n-3$ edges
-   (`tree_moves.cpp:44–48`).
+1. Pick an internal edge $(u, v)$ uniformly from $|N(T)| = n-\rho$ edges
+   (`tree_moves.cpp:44–48`). The sections below take $\rho = 3$; the
+   degree-2 root follows them.
 2. Pick $c \in \text{children}(v)$ uniformly (size 2)
    (`tree_moves.cpp:70–71`).
 3. Pick $w \in \text{children}(u) \setminus \{v\}$ uniformly (size 1 if
@@ -135,11 +160,23 @@ $$q(T' \mid T) \;=\; 2 \cdot \frac{1}{(n-3) \cdot 2 \cdot 2} \;=\; \frac{1}{2(n-
 
 In both regimes, $q(T' \mid T) = 1/[2(n-3)]$.
 
+*(c) Degree-2 root ($\rho = 2$), on rooted topologies.* Now $m(u) = 1$
+for every $u$, the root included, and $|N(T)| = n - 2$ (Lemma N1), so
+each of the $2$ raw swaps on $(u, v)$ has probability $1/[2(n-2)]$. Each
+produces a distinct rooted tree, and no other tuple produces it: a swap
+on $(u, v)$ replaces the clade below $v$ and leaves every other clade
+intact, so $T'$ determines $v$, and the clade $T'$ gains below $v$
+determines $(c, w)$. Hence $q(T' \mid T) = 1/[2(n-2)]$. When
+$u = \text{root}$ the swap exchanges a child of $v$ with the root's other
+child $r$; the edges $(u, v)$ and $(u, r)$ are halves of one unrooted
+edge, so the unrooted topology is unchanged and only the root moves
+(a root slide).
+
 **Reverse move.** NNI preserves: (i) the existence of edge $(u, v)$ — both
 endpoints stay internal post-swap; (ii) the internal-internal count
-$|N(T')| = n - 3$; (iii) the root-incidence status of $(u,v)$ in $T'$
+$|N(T')| = n - \rho$ (Lemma N1); (iii) the root-incidence status of $(u,v)$ in $T'$
 ($u$ remains the root, $v$ remains its child). Therefore $q(T \mid T')$ is
-computed by the same formula, $1/[2(n-3)]$.
+computed by the same formula, $1/[2(n-\rho)]$.
 
 $$\log H_{\text{NNI}} \;=\; \log \frac{q(T \mid T')}{q(T' \mid T)} \;=\; 0. \qquad \square$$
 
@@ -188,8 +225,8 @@ the merged length of the two edges flanking the suppressed node in $T'$
 (equivalently, the new regraft edge in the reverse move).
 
 ## Lemma S1 (candidate-set sizes).
-Let $T$ be an unrooted binary tree on $n$ tips, root = $n+1$, edge count
-$E = 2n-3$. Let edge $(u, v)$ be selected for pruning, and let
+Let $T$ be a binary tree on $n$ tips under A1, root = $n+1$ with $\rho$
+children, edge count $E = 2n-\rho$ (A2). Let edge $(u, v)$ be selected for pruning, and let
 $d(v) = |\text{desc}(v) \cap \text{tips}|$ be the number of tips below
 $v$.
 
@@ -205,7 +242,10 @@ $v$.
   (the root) are excluded. The Gibbs and TBR variants apply the identical
   filter.
 
-  *General formula:* `eligiblePrune` $= 2n - 6 = E - 3$.
+  *General formula:* exactly $\rho$ edges have $\text{parent} =
+  \text{root}$, so `eligiblePrune` $= E - \rho = 2n - 2\rho$: $2n - 6$
+  for a trifurcation, $2n - 4$ for a degree-2 root. Either way it is the
+  same for every tree, $T'$ included.
 
 - Regraft candidates: edges with $\text{child}[i] \notin \text{desc}(v)$
   AND $\text{parent}[i] \neq u$ AND $\text{child}[i] \neq u$
@@ -216,14 +256,19 @@ $v$.
   itself, plus $2 d(v) - 2$ edges strictly inside the subtree, total
   $2 d(v) - 1$). The remaining filter excludes the two edges
   $(p, u)$ and $(u, w)$. Net candidates:
-  $$|\text{cands}| \;=\; E - (2d(v) - 1) - 2 \;=\; 2n - 3 - 2d(v) + 1 - 2 \;=\; 2n - 4 - 2d(v).$$
+  $$|\text{cands}| \;=\; E - (2d(v) - 1) - 2 \;=\; 2n - \rho - 1 - 2d(v),$$
+  i.e. $2n - 4 - 2d(v)$ for a trifurcation and $2n - 3 - 2d(v)$ for a
+  degree-2 root. (For $\rho = 2$, the root's two edges are both
+  candidates unless one is $(p, u)$; regrafting onto either gives the same
+  unrooted tree, rooted on different halves of its edge.) The sections
+  below write the $\rho = 3$ values; for $\rho = 2$ substitute these.
 - After SPR, the residual backbone tree (the original tree with $v$
   pruned and $u$ suppressed) has $E - 2$ edges. Regrafting on any
   candidate produces a binary tree $T'$ of the same topology class. In
   $T'$, the reverse move selects pruning edge $(u, v)$ (identical
   node identifiers post-suppression-and-reinsertion-by-the-same-name),
   and the analogous candidate count in $T'$ equals
-  $2n - 4 - 2 d_{T'}(v)$. Since $v$'s subtree is moved as a unit,
+  $2n - \rho - 1 - 2 d_{T'}(v)$. Since $v$'s subtree is moved as a unit,
   $d_{T'}(v) = d_T(v)$. **The candidate-set sizes match.**
 
 ## Lemma S2 (branch-length Jacobian).
@@ -314,7 +359,8 @@ Implementation matches.
 - **$d(v) = n - 1$** (prune everything except one tip): cands = $2n - 4 -
   2(n-1) = -2 < 0$ — impossible. In fact $d(v) \leq n - 2$ since the
   prune edge has parent $\neq$ root and root has $\geq 1$ tip
-  descendant per side.
+  descendant per side. For $\rho = 2$ the same bound gives cands
+  $= 2n - 3 - 2d(v) \geq 1$, and $n = 4$ gives 4 eligible prune edges.
 - **Zero-length branches:** $\log H$ becomes $-\infty$ if
   $\ell_{\text{merge}} = 0$ or $\ell_{\text{reg}} = 0$. The MCMC harness
   is expected to reject such moves; A5 (priors absolutely continuous in
@@ -344,8 +390,8 @@ the bijection between rooted representations of an unrooted subtree.)
 ## Lemma T2 (candidate-count balance).
 Both the forward and reverse moves have:
 
-- Eligible prune edges = $2n - 6$ (Lemma S1; A1).
-- Regraft candidates = $2n - 4 - 2 d(v)$ (Lemma S1 + T1).
+- Eligible prune edges = $2n - 2\rho$ (Lemma S1; A1).
+- Regraft candidates = $2n - \rho - 1 - 2 d(v)$ (Lemma S1 + T1).
 - Subtree-edge count for re-rooting = $2 d(v) - 1$ (T1).
 
 All three counts are state-independent given $v$ (which is invariant
