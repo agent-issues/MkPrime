@@ -105,8 +105,8 @@ test_that("Acceptance rates are non-degenerate (fixed topology)", {
   result <- RunMkPrime(pd, tree, fixTopology = TRUE,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 6000L, thin = 10L, maxWarmup = 1000L, minWarmup = 1000L, autoTune = FALSE))
 
-  # Gibbs moves always accept: p is a conjugate Gibbs draw
-  gibbs_moves <- c("p")
+  # Gibbs and slice moves always accept
+  gibbs_moves <- c("p", "gibbs_kPrime", "slice_rate_log_sd")
   for (nm in names(result$acceptance)) {
     expect_gt(result$acceptance[[nm]], 0, label = paste(nm, "acceptance > 0"))
     if (!nm %in% gibbs_moves) {

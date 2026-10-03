@@ -40,8 +40,8 @@ subprocess must be triple-guarded. For tests that run MCMC:
 | Stopping-rule tests | Use `maxTime = 0.5` | Self-limiting wall-clock |
 
 **Expensive optional computations** (tree-ESS via distance matrices, etc.)
-should be gated behind an env var (e.g. `MKP_TREE_ESS_TESTS=1`) and skipped
-by default.
+belong in the slow tier (`skip_slow_tests()`, `MKPRIME_SLOW_TESTS=true`); do
+not add a second env-var gate, which nothing would ever set.
 
 ## Targeted test runs
 

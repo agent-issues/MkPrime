@@ -33,6 +33,12 @@ ScoresWrittenTree <- function(tree, row, o, model) {
   isTRUE(all.equal(ll, row[["log_likelihood"]], tolerance = 1e-8))
 }
 
+# fixTopology = TRUE must leave the topology as given: a tree that scored
+# self-consistently but with the tips renumbered would still be a different one.
+SameTopology <- function(written, input) {
+  isTRUE(ape::all.equal.phylo(written, input, use.edge.length = FALSE))
+}
+
 OracleRun <- function(o, tree, ...) {
   RunMkPrime(o$pd, tree, fixTopology = TRUE, nRuns = 1L, thin = 50L,
              maxWarmup = 50L, minWarmup = 50L, autoTune = FALSE, ...)
@@ -72,6 +78,8 @@ test_that("RunMkPrime() writes trees with their own labels (#224)", {
   expect_true(ScoresWrittenTree(result$trees[[length(result$trees)]],
                                 result$samples[nrow(result$samples), ],
                                 o, result$model))
+  expect_true(SameTopology(result$trees[[length(result$trees)]],
+                           o$scrambled))
 })
 
 
@@ -113,7 +121,8 @@ test_that("Resume keeps the labelling and the prior of the run (#224)", {
 
   # A model passed on resume (as the RB harness does) used to trigger a
   # fresh random-order start tree and a re-derived expSteps.
-  resumed <- ResumeMkPrime(ckpFile, o$pd, model = MkPrimeModel())
+  resumed <- allow_warning(ResumeMkPrime(ckpFile, o$pd, model = MkPrimeModel()),
+                           "without stabilisation")
   expect_identical(resumed$model$expSteps, ck$model$expSteps)
   written <- ape::read.tree(treeFile)
   logged <- ReadMkLog(logFile)
@@ -122,5 +131,6 @@ test_that("Resume keeps the labelling and the prior of the run (#224)", {
   for (i in c(1L, nrow(logged))) {
     expect_true(ScoresWrittenTree(written[[i]], logged[i, ], o,
                                   resumed$model))
+    expect_true(SameTopology(written[[i]], start))
   }
 })
