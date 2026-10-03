@@ -560,6 +560,18 @@ print.MkpDiagnostics <- function(x, ...) {
 }
 
 
+# Seconds of sampling that the pooled ESS of parallel runs was bought with,
+# per run still sampling: pooled ESS grows with the runs' summed sampling time,
+# so this is the `elapsedSampleSec` that .EstimateEta() projects the pool from.
+# `starts` is NA for a run not yet sampling; `ends` is NA for one still running.
+.SampleElapsed <- function(starts, ends, now) {
+  spent <- ifelse(is.na(ends), now, ends) - starts
+  spent[is.na(spent)] <- 0
+  # Return:
+  sum(pmax(spent, 0)) / max(1L, sum(is.na(ends)))
+}
+
+
 #' Estimate remaining wall-clock time to reach target minESS (M-141).
 #'
 #' Uses a conservative linear extrapolation: ESS grows roughly linearly with

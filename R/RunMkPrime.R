@@ -947,7 +947,7 @@ RunMkPrime <- function(data, tree = NULL,
                                   checkpointFile, startIter = 1L,
                                   isStreaming = FALSE, convWindowSize = 0L,
                                   treeFile = NULL, shared = NULL,
-                                  resumeMoveWeights = NULL) {
+                                  resumeMoveWeights = NULL, essRuns = 1L) {
   nChains <- mcmc$nChains
   # Thin adapts within a run, so the value in force travels on the run state;
   # `mcmc` holds the value the job started with.
@@ -1024,9 +1024,10 @@ RunMkPrime <- function(data, tree = NULL,
 
   # M-126: Rho estimation buffer for 2D joint Bactrian moves.
   # During warmup, C++ saves no samples (nSaved=0), so we accumulate
-
   # cold-chain state snapshots after each batch instead.
-  rhoSampleBuf <- NULL
+  rhoSampleBuf <- r$rhoSampleBuf
+  rhoCols <- intersect(c("tree_length", "rate_log_sd", "rate_loss", "rate_neo"),
+                       paramNames)
 
   # --- Batch loop constants ---
   # Adaptive batch size (M-106): fewer iterations per batch during warmup
@@ -1096,8 +1097,12 @@ RunMkPrime <- function(data, tree = NULL,
   rawBrColStart <- brColStart + length(kPrimeRawIdx)
 
   moveTypes <- vapply(moves, `[[`, character(1), "type")
+  # Resumed weights may carry the warmup cap on gibbs_kPrime; pins derived
+  # from them would shrink by the cap at every resume (#302).
+  r$autoPins <- r$autoPins %||% moveWeights[moveTypes %in% .kAlwaysAcceptTypes]
   pinnedWeights <- .SchedulePins(
-    moveWeights, moveTypes, .ResolvePinnedWeights(mcmc$moveWeights, moveNames)
+    moveWeights, moveTypes, .ResolvePinnedWeights(mcmc$moveWeights, moveNames),
+    basePins = r$autoPins
   )
   if (!is.null(pinnedWeights)) {
     moveWeights <- .NormalizeMoveWeights(moveWeights, pinnedWeights)
@@ -1113,6 +1118,7 @@ RunMkPrime <- function(data, tree = NULL,
   }
 
   startTime     <- proc.time()["elapsed"]
+  adaptSecBase  <- r$adaptSec %||% 0
   hasProgressFn <- !is.null(mcmc$progressFn) && !is.null(mcmc$plotEvery) &&
     mcmc$plotEvery > 0L
 
@@ -1157,6 +1163,9 @@ RunMkPrime <- function(data, tree = NULL,
   tuningCandIdx    <- 0L
   incumbentRemeasured <- FALSE
   roundStartIter   <- tuningIterUsed
+  windowStartIter  <- tuningIterUsed
+  # Rho is estimated from the first Tuning window, then frozen for the bandit.
+  rhoPending       <- r$rhoPending %||% FALSE
   effectiveTuningBudget <- r$effectiveTuningBudget %||% mcmc$tuningBudget
   nTuningWindows   <- 4L
   tuningWindowSamples <- .TuningWindowSamples(
@@ -1185,6 +1194,10 @@ RunMkPrime <- function(data, tree = NULL,
       bestMinEss          <- savedRound$bestEss
       bestFrozen          <- savedRound$bestFrozen
       bestWeights         <- savedRound$bestWeights
+      # The interrupted window is run again, so its batches are not charged.
+      tuningIterUsed      <- savedRound$windowStart %||% tuningIterUsed
+      windowStartIter     <- tuningIterUsed
+      r$tuningIterUsed    <- tuningIterUsed
       moveWeights <- if (tuningCandIdx > 0L) {
         tuningCandidates[[tuningCandIdx]]
       } else {
@@ -1303,6 +1316,9 @@ RunMkPrime <- function(data, tree = NULL,
     # A tuning window is charged for its batches alone: checkpoints and
     # progress callbacks between them would fall on fixed slots (#220).
     batchSec <- proc.time()[["elapsed"]] - batchClock
+    if (phase != "Sample") {
+      r$adaptSec <- adaptSecBase + proc.time()[["elapsed"]] - startTime
+    }
 
     # Accept/propose counts, timing (M-092), and slice expansion counts
     for (ch in seq_len(nChains)) {
@@ -1470,10 +1486,10 @@ RunMkPrime <- function(data, tree = NULL,
       # M-126: Accumulate cold-chain state snapshots for rho estimation.
       # C++ saves no samples during warmup, so we use the chain state
       # after each batch (already queried for the progress bar above).
-      rhoSampleBuf <- .AccumulateRhoSnapshot(
-        rhoSampleBuf, s, hasNeo, paramNames
-      )
-      newRhos <- .EstimateJointRhos(rhoSampleBuf, hasNeo)
+      rhoSampleBuf <- .AccumulateRhoSnapshot(rhoSampleBuf, s, hasNeo, rhoCols)
+      r$rhoSampleBuf <- rhoSampleBuf
+      newRhos <- .EstimateJointRhos(rhoSampleBuf, hasNeo,
+                                    prior = r$chain_rhos[[1L]])
       for (ch in seq_len(nChains)) {
         r$chain_rhos[[ch]] <- newRhos
       }
@@ -1498,6 +1514,7 @@ RunMkPrime <- function(data, tree = NULL,
         if (stabResult$stable || batchEnd >= mcmc$warmup) {
           # M-171: Restore gibbs_kPrime to full pinned weight before Tuning/Sample.
           moveWeights <- .RestoreGibbsCap(moveWeights, pinnedWeights, gibbsKpIdx)
+          r$rhoSampleBuf <- NULL
 
           # Transition: Warmup -> Tuning (or Sample if autoTune = FALSE)
           if (batchEnd >= mcmc$warmup && !stabResult$stable) {
@@ -1567,6 +1584,11 @@ RunMkPrime <- function(data, tree = NULL,
             tuningCandIdx    <- 0L
             incumbentRemeasured <- FALSE
             roundStartIter   <- tuningIterUsed
+            windowStartIter  <- tuningIterUsed
+            # Warmup snapshots rho's inputs once a batch, too sparsely to
+            # estimate it in under 50 batches (#301).
+            rhoPending       <- any(moveTypes == "joint_2d")
+            r$rhoPending     <- rhoPending
             tickerPages      <- "minESS/s: ?"
           } else {
             # Skip tuning, go straight to Sample
@@ -1589,8 +1611,31 @@ RunMkPrime <- function(data, tree = NULL,
       r$tuningIterUsed <- tuningIterUsed
       tuningWindowSec <- tuningWindowSec + batchSec
 
+      # Fix the proposal geometry before the bandit scores any window: rho
+      # moving under it would confound candidates with the correlation (#83).
+      if (rhoPending && tuningBufIdx >= max(tuningWindowSamples, 50L)) {
+        newRhos <- .EstimateJointRhos(
+          tuningBuf[seq_len(tuningBufIdx), , drop = FALSE], hasNeo,
+          prior = r$chain_rhos[[1L]]
+        )
+        for (ch in seq_len(nChains)) {
+          r$chain_rhos[[ch]] <- newRhos
+          r$chain_accept[[ch]][]    <- 0L
+          r$chain_propose[[ch]][]   <- 0L
+          r$chain_time_ns[[ch]][]   <- 0
+          r$chain_slice_exp[[ch]][] <- 0
+        }
+        rhoPending      <- FALSE
+        r$rhoPending    <- FALSE
+        tuningBufIdx    <- 0L
+        tuningTreeBuf   <- list()
+        tuningWindowSec <- 0
+        roundStartIter  <- tuningIterUsed
+        windowStartIter <- tuningIterUsed
+      }
+
       # Evaluate current weight vector after each tuning window
-      if (tuningBufIdx >= tuningWindowSamples) {
+      if (!rhoPending && tuningBufIdx >= tuningWindowSamples) {
         currentRate <- .MinEssRate(
           tuningBuf[seq_len(tuningBufIdx), , drop = FALSE],
           tuningWindowSec,
@@ -1635,6 +1680,7 @@ RunMkPrime <- function(data, tree = NULL,
           if (tuningCandIdx > 0L) {
             moveWeights <- tuningCandidates[[tuningCandIdx]]
           }
+          windowStartIter   <- tuningIterUsed
           tuningBufIdx      <- 0L
           tuningTreeBuf     <- list()
           tuningWindowSec   <- 0
@@ -1652,8 +1698,9 @@ RunMkPrime <- function(data, tree = NULL,
           moveWeights <- bestWeights
 
           payback <- .TuningPayback(
-            tuningFreezeStreak, proc.time()["elapsed"] - startTime,
-            bestMinEssPerSec, mcmc$minEss, mcmc$nRuns,
+            tuningFreezeStreak,
+            adaptSecBase + proc.time()[["elapsed"]] - startTime,
+            bestMinEssPerSec, mcmc$minEss, essRuns,
             frozen = isTRUE(bestFrozen)
           )
           tuningFreezeStreak <- payback[["streak"]]
@@ -1688,6 +1735,7 @@ RunMkPrime <- function(data, tree = NULL,
             tuningCandIdx     <- 0L
             incumbentRemeasured <- FALSE
             roundStartIter    <- tuningIterUsed
+            windowStartIter   <- tuningIterUsed
             tuningBufIdx      <- 0L
             tuningTreeBuf     <- list()
             tuningWindowSec   <- 0
@@ -1710,7 +1758,8 @@ RunMkPrime <- function(data, tree = NULL,
       list(candidates = tuningCandidates, candIdx = tuningCandIdx,
            remeasured = incumbentRemeasured, startIter = roundStartIter,
            bestRate = bestMinEssPerSec, bestEss = bestMinEss,
-           bestFrozen = bestFrozen, bestWeights = bestWeights)
+           bestFrozen = bestFrozen, bestWeights = bestWeights,
+           windowStart = windowStartIter)
     }
 
     # Persist move weights in run state so checkpoints capture them (M-149 #2).
@@ -2209,6 +2258,12 @@ RunMkPrime <- function(data, tree = NULL,
   launched    <- logical(nRuns)
   finished    <- logical(nRuns)
   launchTimes <- rep(NA_real_, nRuns)
+  # A worker's log gains nothing until it enters Sample, when
+  # .LogMoveWeights() appends the frozen weights; its growth past its size at
+  # launch dates the sample phase, which the ETA is projected from.
+  launchSizes  <- rep(NA_real_, nRuns)
+  sampleStarts <- rep(NA_real_, nRuns)
+  sampleEnds   <- rep(NA_real_, nRuns)
 
   # Kill any still-alive workers if we exit via error or interrupt.
   on.exit({
@@ -2222,7 +2277,7 @@ RunMkPrime <- function(data, tree = NULL,
       func = function(mkd, model, mcmc, runState, moves, tipLabels, run,
                       paramNames, nEdge, brColStart, logPath, cfPath,
                       ckpPath, treePath, convWindowSize, seed, verbosity,
-                      startIter) {
+                      startIter, essRuns) {
         options(MkPrime.verbosity = verbosity)
         assign(".Random.seed", seed, envir = globalenv())
         .RunMkPrimeSingleRun(
@@ -2235,7 +2290,8 @@ RunMkPrime <- function(data, tree = NULL,
           isStreaming    = TRUE,
           convWindowSize = convWindowSize,
           treeFile       = treePath,
-          resumeMoveWeights = runState$moveWeights
+          resumeMoveWeights = runState$moveWeights,
+          essRuns        = essRuns
         )
       },
       args = list(
@@ -2256,7 +2312,10 @@ RunMkPrime <- function(data, tree = NULL,
         convWindowSize = convWindowSize,
         seed           = streams[[run]],
         verbosity      = MkPrimeVerbosity(),
-        startIter      = startIters[run]
+        startIter      = startIters[run],
+        # The orchestrator stops on the pooled logs, so each worker need
+        # collect only its share of minEss.
+        essRuns        = nRuns
       ),
       supervise = TRUE,
       package   = TRUE
@@ -2265,6 +2324,10 @@ RunMkPrime <- function(data, tree = NULL,
 
   # Launch initial pool.
   for (run in seq_len(poolSize)) {
+    launchSizes[run]   <- file.size(logFilePaths[run])
+    if (identical(runs[[run]]$phase, "Sample")) {
+      sampleStarts[run] <- proc.time()[["elapsed"]]
+    }
     procs[[run]]       <- launchOne(run)
     launched[run]      <- TRUE
     launchTimes[run]   <- as.numeric(Sys.time())
@@ -2317,10 +2380,18 @@ RunMkPrime <- function(data, tree = NULL,
     }
     while (sum(launched & !finished) < poolSize && any(!launched)) {
       nextRun                <- which(!launched)[1L]
+      launchSizes[nextRun]   <- file.size(logFilePaths[nextRun])
+      if (identical(runs[[nextRun]]$phase, "Sample")) {
+        sampleStarts[nextRun] <- proc.time()[["elapsed"]]
+      }
       procs[[nextRun]]       <- launchOne(nextRun)
       launched[nextRun]      <- TRUE
       launchTimes[nextRun]   <- as.numeric(Sys.time())
     }
+    now <- proc.time()[["elapsed"]]
+    sampleStarts[launched & is.na(sampleStarts) &
+                   file.size(logFilePaths) > launchSizes] <- now
+    sampleEnds[finished & is.na(sampleEnds)] <- now
 
     # Convergence (reads log files from disk; returns NULL until every
     # logFilePaths entry has >=10 samples, so this is gated on the pool
@@ -2330,7 +2401,8 @@ RunMkPrime <- function(data, tree = NULL,
       elStr  <- .FormatElapsed(elapsed)
       essStr <- round(diagCheck$minEss)
       etaCrit <- .EtaCriterion(diagCheck, mcmc)
-      etaStr <- .EstimateEta(etaCrit$current, etaCrit$target, elapsed)
+      etaStr <- .EstimateEta(etaCrit$current, etaCrit$target,
+                             .SampleElapsed(sampleStarts, sampleEnds, now))
       pollStatus <- paste0(
         elStr, " | min ESS = ", essStr,
         if (!is.null(mcmc$minEss)) paste0(" / ", mcmc$minEss) else "",
@@ -4028,6 +4100,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   row["tree_length"] <- state$treeLength
   row["rate_log_sd"] <- state$rateLogSd
   if (hasNeo) row["rate_loss"] <- state$rateLoss
+  if ("rate_neo" %in% paramNames) row["rate_neo"] <- state$rateNeo
   buf <- if (is.null(buf)) {
     matrix(row, nrow = 1, dimnames = list(NULL, paramNames))
   } else {
@@ -4039,49 +4112,27 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
 
 #' Estimate posterior correlations for 2D joint proposals from recent samples
+#'
+#' A pair the samples cannot estimate keeps its value in `prior`, the rhos in
+#' force, so a short buffer never resets an adapted correlation to zero.
 #' @keywords internal
-.EstimateJointRhos <- function(samples, hasNeo) {
+.EstimateJointRhos <- function(samples, hasNeo, prior = NULL) {
   rhos <- list(rho_tl_rls = 0.0, rho_tl_rl = 0.0, rho_tl_rn = 0.0)
+  rhos[names(prior)] <- prior
   if (is.null(samples) || nrow(samples) < 50) return(rhos)
 
-  # tree_length x rate_log_sd
-  if (all(c("tree_length", "rate_log_sd") %in% colnames(samples))) {
+  pairs <- c(rho_tl_rls = "rate_log_sd",
+             if (hasNeo) c(rho_tl_rl = "rate_loss", rho_tl_rn = "rate_neo"))
+  for (rhoName in names(pairs)) {
+    partner <- pairs[[rhoName]]
+    if (!all(c("tree_length", partner) %in% colnames(samples))) next
     tl <- samples[, "tree_length"]
-    rls <- samples[, "rate_log_sd"]
-    ok <- tl > 0 & rls > 0
-    if (sum(ok) >= 30) {
-      # u.123: cor() returns NaN/NA for constant input; guard before clamping
-      rho <- suppressWarnings(cor(log(tl[ok]), log(rls[ok])))
-      if (is.finite(rho)) {
-        rhos$rho_tl_rls <- max(-0.95, min(0.95, rho))
-      }
-    }
-  }
-
-  # tree_length x rate_loss
-  if (hasNeo && all(c("tree_length", "rate_loss") %in% colnames(samples))) {
-    tl <- samples[, "tree_length"]
-    rl <- samples[, "rate_loss"]
-    ok <- tl > 0 & rl > 0
-    if (sum(ok) >= 30) {
-      rho <- suppressWarnings(cor(log(tl[ok]), log(rl[ok])))
-      if (is.finite(rho)) {
-        rhos$rho_tl_rl <- max(-0.95, min(0.95, rho))
-      }
-    }
-  }
-
-  # tree_length x rate_neo (Issue-1 partition-rate ridge)
-  if (hasNeo && all(c("tree_length", "rate_neo") %in% colnames(samples))) {
-    tl <- samples[, "tree_length"]
-    rn <- samples[, "rate_neo"]
-    ok <- tl > 0 & rn > 0
-    if (sum(ok) >= 30) {
-      rho <- suppressWarnings(cor(log(tl[ok]), log(rn[ok])))
-      if (is.finite(rho)) {
-        rhos$rho_tl_rn <- max(-0.95, min(0.95, rho))
-      }
-    }
+    other <- samples[, partner]
+    ok <- tl > 0 & other > 0
+    if (sum(ok) < 30) next
+    # u.123: cor() returns NaN/NA for constant input; guard before clamping
+    rho <- suppressWarnings(cor(log(tl[ok]), log(other[ok])))
+    if (is.finite(rho)) rhos[[rhoName]] <- max(-0.95, min(0.95, rho))
   }
 
   rhos
@@ -5096,11 +5147,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                          "slice_kprime_hyper", "gibbs_p_marginal")
 
 # Pinned weights for a schedule: the always-accepting moves at their current
-# shares, overridden by the user's `userPins` (already resolved against the
-# pool). Aborts when the pins leave the un-pinned moves no weight, which would
-# silently freeze every parameter only they update.
-.SchedulePins <- function(moveWeights, moveTypes, userPins) {
+# shares, or at `basePins` where given, overridden by the user's `userPins`
+# (already resolved against the pool). Aborts when the pins leave the
+# un-pinned moves no weight, which would silently freeze every parameter only
+# they update.
+.SchedulePins <- function(moveWeights, moveTypes, userPins, basePins = NULL) {
   autoPin <- moveWeights[moveTypes %in% .kAlwaysAcceptTypes]
+  kept <- intersect(names(autoPin), names(basePins))
+  autoPin[kept] <- basePins[kept]
   if (length(autoPin) == 0L && is.null(userPins)) return(NULL)
   allPins <- autoPin
   allPins[names(userPins)] <- userPins
