@@ -970,6 +970,8 @@ void allocate_cl_workspace(SEXP dataPtr, SEXP statePtr) {
 // get_mcmc_state: extract R-accessible values from XPtr
 // ---------------------------------------------------------------------------
 
+// Member vectors are cloned: moves write them in place, which would rewrite
+// every snapshot an R caller holds (#337).
 // [[Rcpp::export]]
 List get_mcmc_state(SEXP statePtr) {
   McmcState* s = Rcpp::XPtr<McmcState>(statePtr).get();
@@ -980,7 +982,7 @@ List get_mcmc_state(SEXP statePtr) {
   }
   return List::create(
     _["edge"]          = edge,
-    _["relBrLengths"]  = s->relBrLengths,
+    _["relBrLengths"]  = clone(s->relBrLengths),
     _["treeLength"]    = s->treeLength,
     _["rateLoss"]      = s->rateLoss,
     _["rateLogSd"]     = s->rateLogSd,
@@ -988,7 +990,7 @@ List get_mcmc_state(SEXP statePtr) {
     _["p"]             = s->p,
     _["kprimeAlpha"]   = s->kprimeAlpha,
     _["kprimeBeta"]    = s->kprimeBeta,
-    _["kPrime"]        = s->kPrime,
+    _["kPrime"]        = clone(s->kPrime),
     _["logLik"]        = s->logLik,
     _["logPrior"]      = s->logPrior,
     _["logPost"]       = s->logLik + s->logPrior,
@@ -999,14 +1001,14 @@ List get_mcmc_state(SEXP statePtr) {
     _["diagSelectivePop"] = s->nodeCL.diagSelectivePopCount,
     // Partition-API extras (zero-length / scalar defaults on legacy state).
     _["usePartitioned"]     = s->usePartitioned,
-    _["classRateLogSd"]     = s->classRateLogSd,
-    _["classW"]             = s->classW,
-    _["classRate"]          = s->classRate,
-    _["nCharPerClass"]      = s->nCharPerClass,
+    _["classRateLogSd"]     = clone(s->classRateLogSd),
+    _["classW"]             = clone(s->classW),
+    _["classRate"]          = clone(s->classRate),
+    _["nCharPerClass"]      = clone(s->nCharPerClass),
     _["etaNeo"]             = s->etaNeo,
     _["useHyperpriorOnSigma"] = s->useHyperpriorOnSigma,
     _["hyperTau"]           = s->hyperTau,
-    _["classZ"]             = s->classZ
+    _["classZ"]             = clone(s->classZ)
   );
 }
 
