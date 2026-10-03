@@ -967,6 +967,10 @@ RunMkPrime <- function(data, tree = NULL,
   mcmcData <- .InitMcmcData(mkd, model)
   set_branch_bins(mcmcData, mcmc$nBranchBins)
   r <- initialState
+  # A converged run that is carried on was asked for more than it met, so its
+  # streak must be earned afresh.
+  if (identical(r$stop_reason, "converged")) r$convStreak <- 0L
+  r$stop_reason <- NULL
   r$chainStates <- vector("list", nChains)
   for (ch in seq_len(nChains)) {
     ch_r <- r$chains[[ch]]
@@ -992,6 +996,8 @@ RunMkPrime <- function(data, tree = NULL,
   nTreePerRun <- as.integer(ceiling(nSavedPerRun / treeEvery))
 
   if (isStreaming) {
+    convWindowSize <- max(convWindowSize, r$conv_size %||% 0L)
+    priorRows <- .PriorWindowRows(r, logFilePath, paramNames, convWindowSize)
     # Clear stale streaming fields before merging fresh buffers (resume path).
     r$flush_idx <- NULL; r$flushed     <- NULL
     r$conv_head <- NULL; r$conv_filled <- NULL
@@ -999,7 +1005,7 @@ RunMkPrime <- function(data, tree = NULL,
     r$conv_window <- NULL
     bufs <- .InitStreamBuffers(length(paramNames), paramNames,
                                mcmc$bufferSize, convWindowSize)
-    r <- c(r, bufs)
+    r <- .SeedConvWindow(c(r, bufs), priorRows)
     r$saved_idx      <- savedIdx
     r$tree_saved_idx <- treeSavedIdx
     if (is.null(r$tree_samples)) r$tree_samples <- vector("list", 0L)
@@ -1277,11 +1283,21 @@ RunMkPrime <- function(data, tree = NULL,
     }
   }
 
+  # Callbacks, checks and the cancel file are polled between C++ calls, so a
+  # call must end on each plotEvery and checkEvery boundary (#327).
+  callEvery <- c(if (isTRUE(mcmc$checkEvery > 0L)) mcmc$checkEvery,
+                 if (hasProgressFn) mcmc$plotEvery)
+  # Warmup adapts on whole batches: a boundary splits the C++ call, not the
+  # batch, so that a display setting cannot change when warmup ends.
+  warmupBatchEnd <- startIter - 1L
+  warmupCounts   <- NULL
+
   # --- Main batch loop ---
   batchStart <- startIter
   repeat {
     # A resume may start past a lowered nIter, with nothing left to run.
     if (is.finite(mcmc$nIter) && batchStart > mcmc$nIter) break
+    batchPhase <- phase
     # Batch size depends on phase
     batchSize <- switch(phase,
       Warmup  = warmupBatch,
@@ -1293,6 +1309,14 @@ RunMkPrime <- function(data, tree = NULL,
     # Don't straddle the warmup boundary: end at maxWarmup so adaptation fires
     if (phase == "Warmup" && batchEnd > mcmc$warmup)
       batchEnd <- mcmc$warmup
+    if (phase == "Warmup") {
+      if (warmupBatchEnd < batchStart) {
+        warmupBatchEnd <- batchEnd
+        warmupCounts   <- NULL
+      }
+      batchEnd <- warmupBatchEnd
+    }
+    batchEnd <- as.integer(min(batchEnd, .NextMultiple(batchStart, callEvery)))
     nBatch   <- batchEnd - batchStart + 1L
 
     scaleTunings <- .BuildScaleTuningMatrix(r$chain_tuning, moves)
@@ -1345,6 +1369,11 @@ RunMkPrime <- function(data, tree = NULL,
       # PT-RT-001: accumulate round-trip count (canonical PT mixing diagnostic).
       r$round_trip_count <- (r$round_trip_count %||% 0L) +
                             (result$round_trip_count %||% 0L)
+    }
+
+    if (phase == "Warmup") {
+      warmupCounts <- .AddCounts(warmupCounts, result[
+        c("accept_counts", "propose_counts", "slice_expansions")])
     }
 
     # --- Sample handling depends on phase ---
@@ -1431,7 +1460,7 @@ RunMkPrime <- function(data, tree = NULL,
     s <- get_mcmc_state(r$chainStates[[1]])
     coldLogpost <- s$logPost
 
-    if (phase == "Warmup") {
+    if (phase == "Warmup" && batchEnd == warmupBatchEnd) {
       # --- Warmup: adapt tuning, temperatures, and move weights ---
       # Step sizes and slice widths read this batch's counts alone: a
       # cumulative rate is dominated by steps already replaced, so a
@@ -1439,11 +1468,11 @@ RunMkPrime <- function(data, tree = NULL,
       # error that has gone (#79). Move weights keep the cumulative counts.
       for (ch in seq_len(nChains)) {
         batchAccept <- stats::setNames(
-          as.integer(result$accept_counts[ch, ]), moveNames)
+          as.integer(warmupCounts$accept_counts[ch, ]), moveNames)
         batchPropose <- stats::setNames(
-          as.integer(result$propose_counts[ch, ]), moveNames)
+          as.integer(warmupCounts$propose_counts[ch, ]), moveNames)
         batchSliceExp <- stats::setNames(
-          as.numeric(result$slice_expansions[ch, ]), moveNames)
+          as.numeric(warmupCounts$slice_expansions[ch, ]), moveNames)
         r$chain_tuning[[ch]] <- .AdaptTuning(
           r$chain_tuning[[ch]], batchAccept, batchPropose, moves
         )
@@ -1838,7 +1867,7 @@ RunMkPrime <- function(data, tree = NULL,
     if (hasProgressFn &&
         (batchEnd %/% mcmc$plotEvery) > ((batchStart - 1L) %/% mcmc$plotEvery)) {
       info <- .BuildProgressInfo(list(r), batchEnd, mcmc, startTime,
-                                 recentAcc, paramNames, phase = phase)
+                                 recentAcc, paramNames, phase = batchPhase)
       mcmc$progressFn(info)
     }
 
@@ -1914,10 +1943,18 @@ RunMkPrime <- function(data, tree = NULL,
         if (convVerdict[["stop"]]) {
           stopReason <- "converged"
           actualIter <- batchEnd
+          # Recorded, so that a resume does not run a converged run again.
+          r$stop_reason   <- stopReason
+          r$conv_criteria <- list(minEss = mcmc$minEss,
+                                  minTreeEss = mcmc$minTreeEss)
+          Checkpoint(r)
           break
         }
         if (isStreaming && !is.null(mcmc$minEss)) {
           r <- .GrowConvWindow(r, diagCheck$minEss, mcmc$minEss)
+          # The window is not checkpointed; its size is, so that a resume
+          # does not shrink it back.
+          r$conv_size <- nrow(r$conv_window)
         }
       }
 
@@ -2005,6 +2042,18 @@ RunMkPrime <- function(data, tree = NULL,
 }
 
 
+# The first multiple of any of `every` at or after `iter`; Inf for none.
+.NextMultiple <- function(iter, every) {
+  min(Inf, ((iter - 1L) %/% every + 1L) * every)
+}
+
+
+# Element-wise sum of two lists of count matrices; `acc` may be NULL.
+.AddCounts <- function(acc, counts) {
+  if (is.null(acc)) counts else Map(`+`, acc, counts)
+}
+
+
 #' Run multiple serial MCMC runs with cross-run R-hat convergence
 #'
 #' Called by [.RunWithRecovery()] when `nCore == 1`, `nRuns >= 2`, and
@@ -2035,6 +2084,7 @@ RunMkPrime <- function(data, tree = NULL,
     innerMcmc$handOff <- is.null(mcmc$minEss) && is.null(mcmc$minTreeEss)
 
     for (run in seq_len(nRuns)) {
+      if (.StillConverged(runs[[run]], innerMcmc)) next
       # maxTime bounds the job, not each run: without this the true ceiling
       # is nRuns * maxTime, which overruns an external wall clock.
       innerMcmc$maxTime <- .RemainingBudget(mcmc$maxTime, startTime)
@@ -2165,6 +2215,9 @@ RunMkPrime <- function(data, tree = NULL,
       # each epoch, but a single run inside one must not be handed the whole
       # of maxTime over again.
       epochMcmc$maxTime <- .RemainingBudget(mcmc$maxTime, startTime)
+      # An epoch keeps minTreeEss, and a streak carried into it would end the
+      # epoch at its first check (RT6-22).
+      runs[[run]]$convStreak <- 0L
 
       runs[[run]] <- .RunMkPrimeSingleRun(
         mkd, model, epochMcmc, runs[[run]], moves, tipLabels, run,
@@ -2353,6 +2406,7 @@ RunMkPrime <- function(data, tree = NULL,
   startTime    <- proc.time()["elapsed"]
   pollInterval <- mcmc$pollInterval %||% 10L
   convStreak   <- 0L
+  plottedIter  <- 0L
   # Workers flush in blocks, so consecutive polls can read identical logs; a
   # verdict counts towards the streak only on a checkEvery's worth of new rows.
   checkedRows  <- 0L
@@ -2431,11 +2485,19 @@ RunMkPrime <- function(data, tree = NULL,
       )
       .ProgressUpdate()
 
-      # Live trace plot from log-file samples
-      if (hasProgressFn) {
-        nSamp <- nrow(diagCheck$perRunSamples[[1]])
+      # Live trace plot from log-file samples. Logs gain rows only in the
+      # Sample phase, and every run has some by now, so no run is in warmup.
+      iter <- if (hasProgressFn) {
+        max(vapply(diagCheck$perRunSamples, function(s) {
+          as.numeric(rownames(s)[nrow(s)])
+        }, numeric(1)))
+      }
+      if (hasProgressFn &&
+          (is.null(mcmc$plotEvery) ||
+             iter %/% mcmc$plotEvery > plottedIter %/% mcmc$plotEvery)) {
+        plottedIter <- iter
         info <- list(
-          iter             = nSamp * if (is.numeric(mcmc$thin)) mcmc$thin else 1L,
+          iter             = iter,
           nIter            = mcmc$nIter,
           warmup           = mcmc$warmup,
           inWarmup         = FALSE,
@@ -3888,6 +3950,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       actualIter <- serialResult$actualIter
     } else {
       for (run in seq_len(nRuns)) {
+        if (.StillConverged(runs[[run]], mcmc)) {
+          stopReason <- "converged"
+          actualIter <- runs[[run]]$actual_iter
+          next
+        }
         runs[[run]] <- .RunMkPrimeSingleRun(
           mkd, model, mcmc, runs[[run]], moves, tipLabels, run,
           paramNames, nEdge, brColStart,

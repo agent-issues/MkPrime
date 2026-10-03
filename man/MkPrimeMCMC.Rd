@@ -136,11 +136,15 @@ pseudo-ESS, via \strong{TreeDist}) each run must reach before it may stop;
 of which two in a row must pass before sampling stops.}
 
 \item{cancelFile}{Path to a cancel-signal file. \code{NULL} (default) disables
-cancel-file checking. When set, \code{\link[=RunMkPrime]{RunMkPrime()}} checks every 200
-iterations whether this file exists. If it does, the run flushes any
-buffered samples, saves a checkpoint (if \code{checkpointFile} is set), and
-exits with \code{stop_reason = "cancelled"}. Create the file to request a
-clean stop: \code{file.create(cancelFile)}. See also \code{\link[=MkCancelPath]{MkCancelPath()}}.}
+cancel-file checking. When set, \code{\link[=RunMkPrime]{RunMkPrime()}} checks whether this file
+exists between batches: every 500 iterations or fewer during warmup and
+tuning, and every 5000 or fewer during sampling. A batch also ends at
+each multiple of \code{checkEvery}, and of \code{plotEvery} when a progress
+callback is set. The \code{maxTime} limit is checked at the same points.
+If the file exists, the run flushes any buffered samples, saves a
+checkpoint (if \code{checkpointFile} is set), and exits with
+\code{stop_reason = "cancelled"}. Create the file to request a clean stop:
+\code{file.create(cancelFile)}. See also \code{\link[=MkCancelPath]{MkCancelPath()}}.}
 
 \item{checkpointFile}{Path to write checkpoint RDS files. \code{NULL}
 (default) auto-derives from \code{logFile} when set
