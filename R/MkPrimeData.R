@@ -85,7 +85,8 @@ MkPrimeData <- function(data,
   overlap <- intersect(neomorphic, ksIdx)
   if (length(overlap)) {
     cli::cli_abort(
-      "Character{?s} {overlap} appear{?s/} in both {.arg neomorphic} and
+      "Character{cli::qty(length(overlap))}{?s} {.val {overlap}}
+      {cli::qty(length(overlap))}appear{?s/} in both {.arg neomorphic} and
       {.arg knownStates}."
     )
   }
@@ -128,7 +129,8 @@ MkPrimeData <- function(data,
     neoNotBinary <- neomorphic[kObs[neomorphic] != 2L]
     if (length(neoNotBinary)) {
       cli::cli_warn(
-        "Neomorphic character{?s} {neoNotBinary} {?has/have} kObs != 2.
+        "Neomorphic character{cli::qty(length(neoNotBinary))}{?s}
+        {.val {neoNotBinary}} {cli::qty(length(neoNotBinary))}{?has/have} kObs != 2.
         Neomorphic model assumes exactly 2 states."
       )
     }
@@ -139,7 +141,7 @@ MkPrimeData <- function(data,
     tooSmall <- ksIdx[knownStates < kObs[ksIdx]]
     if (length(tooSmall)) {
       cli::cli_abort(
-        "Character{?s} {tooSmall}: {.arg knownStates} is less than the
+        "Character{cli::qty(length(tooSmall))}{?s} {.val {tooSmall}}: {.arg knownStates} is less than the
         observed state count (kObs). k must be >= kObs."
       )
     }
