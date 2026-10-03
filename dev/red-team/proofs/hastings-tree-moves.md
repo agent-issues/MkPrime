@@ -33,7 +33,7 @@ Proofs are organised in the same order.
 
 A1. **Tree representation.** Trees are stored as a `phylo` edge matrix in
 canonical preorder (TreeTools convention). Tips have node indices
-$1 \dots n$; internal nodes have indices $n+1 \dots 2n-1$; the root is
+$1 \dots n$; internal nodes have indices $n+1 \dots 2n-\rho+1$; the root is
 node $n+1$. Every non-root internal node has exactly two children. The
 root has $\rho$ children, in one of two shapes:
 

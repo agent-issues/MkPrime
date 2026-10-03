@@ -68,8 +68,9 @@
     vapply(5:6, function(j) {
       lev <- sort(unique(c(sampled[, j], reference[, j])))
       if (length(lev) < 2L) return(1)
-      chisq.test(rbind(table(factor(sampled[, j], lev)),
-                       table(factor(reference[, j], lev))))$p.value
+      suppressWarnings(chisq.test(rbind(
+        table(factor(sampled[, j], lev)),
+        table(factor(reference[, j], lev))))$p.value)
     }, numeric(1))
   )
 }
