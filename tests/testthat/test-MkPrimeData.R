@@ -166,3 +166,20 @@ test_that("AutoDetectNeomorphic works on real Nexus data", {
 test_that("AutoDetectNeomorphic rejects non-phyDat input", {
   expect_error(AutoDetectNeomorphic("not_phyDat"), "phyDat")
 })
+
+test_that("MkPrimeData pluralises messages for several characters", {
+  mat <- matrix(c(0, 1, 2, 1, 0), nrow = 5, ncol = 2,
+                dimnames = list(paste0("t", 1:5), NULL))
+  pd <- MatrixToPhyDat(mat)
+  expect_warning(MkPrimeData(pd, neomorphic = 1:2), "characters 1 and 2 have")
+  expect_warning(MkPrimeData(pd, neomorphic = 1L), "character 1 has")
+  expect_error(MkPrimeData(pd, knownStates = c("1" = 2L, "2" = 2L)),
+               "Characters 1 and 2:")
+  mat2 <- matrix(c(0, 1, 0, 1, 0), nrow = 5, ncol = 2,
+                 dimnames = list(paste0("t", 1:5), NULL))
+  expect_error(
+    MkPrimeData(MatrixToPhyDat(mat2), neomorphic = 1:2,
+                knownStates = c("1" = 2L, "2" = 2L)),
+    "Characters 1 and 2 appear in both"
+  )
+})
