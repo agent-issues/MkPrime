@@ -15,7 +15,6 @@
 
 #include "mcmc_state.h"
 #include "gibbs_partial_cl.h"  // TreeNav
-#include "fast_exp.h"
 #include <cstring>
 #include <map>
 #include <cmath>
