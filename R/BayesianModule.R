@@ -58,8 +58,9 @@
 
 # Relaunch a stopped run from its checkpoint.
 # Clears stale signal files, relaunches the existing mkp_run.R script
-# (which calls RunMkPrime with overwrite=FALSE, auto-resuming from the
-# checkpoint stored in input_mcmc.rds), and updates rv + job.rds.
+# (which calls RunMkPrime with overwrite=FALSE once mkp_resume.flag exists,
+# auto-resuming from the checkpoint stored in input_mcmc.rds), and updates
+# rv + job.rds.
 # Returns TRUE on success, FALSE if processx is unavailable or scriptFile
 # is missing.
 # @keywords internal
@@ -75,6 +76,7 @@
                 file.path(job$logDir, "mkp_error.txt"))) {
     if (!is.null(sig) && file.exists(sig)) file.remove(sig)
   }
+  file.create(.MkResumeFlagPath(job$logDir))
 
   proc <- processx::process$new(
     "Rscript",
@@ -96,20 +98,55 @@
   TRUE
 }
 
+# Flag file whose presence makes the launch script resume from the checkpoint;
+# without it, Run starts afresh (overwrite = TRUE).
+# @keywords internal
+.MkResumeFlagPath <- function(logDir) file.path(logDir, "mkp_resume.flag")
+
+# Base log path the GUI hands to MkPrimeMCMC(); MkPrimeMCMC appends ".log" to
+# an extensionless name, so name the extension here to keep job$logFiles in
+# step with the files RunMkPrime writes.
+# @keywords internal
+.MkLogBase <- function(logDir) file.path(logDir, "run.log")
+
+# Final lines of a text file, or NULL if it is missing or empty.
+# @keywords internal
+.TailFile <- function(path, n = 10L) {
+  if (!file.exists(path)) return(NULL)
+  lines <- readLines(path, warn = FALSE)
+  if (!length(lines)) return(NULL)
+  utils::tail(lines, n)
+}
+
+# Classify a job from its signal files and process liveness.
+# `procAlive` is NA when liveness is unknown.  A cancelled run still writes
+# the done signal, so the cancel file is tested first.
+# @keywords internal
+.MkJobStatus <- function(logDir, cancelFile, procAlive = NA) {
+  if (file.exists(file.path(logDir, "mkp_error.txt"))) return("error")
+  if (!is.null(cancelFile) && file.exists(cancelFile)) {
+    return(if (isTRUE(procAlive)) "running" else "cancelled")
+  }
+  if (file.exists(file.path(logDir, "mkp_done.signal"))) return("done")
+  if (isFALSE(procAlive)) return("failed")
+  "running"
+}
+
 # Build the R script run by the detached Rscript process.
 # All inputs are read from RDS files in logDir.
 # @keywords internal
-.MkLaunchScript <- function(logDir) {
+.MkLaunchScript <- function(logDir, libPaths = .libPaths()) {
   c(
-    sprintf('.libPaths(%s)', deparse(.libPaths())),
+    sprintf('.libPaths(%s)', paste(deparse(libPaths), collapse = "")),
     'suppressPackageStartupMessages(library("MkPrime"))',
-    sprintf('.d <- %s', deparse(logDir)),
+    sprintf('.d <- %s', paste(deparse(logDir), collapse = "")),
     'data <- readRDS(file.path(.d, "input_data.rds"))',
     'tree <- readRDS(file.path(.d, "input_tree.rds"))',
     'neo  <- readRDS(file.path(.d, "input_neo.rds"))',
     'mcmc <- readRDS(file.path(.d, "input_mcmc.rds"))',
     'result <- tryCatch(',
-    '  RunMkPrime(data, tree, neomorphic = neo, mcmc = mcmc),',
+    '  RunMkPrime(data, tree, neomorphic = neo, mcmc = mcmc,',
+    '             overwrite = !file.exists(file.path(.d, "mkp_resume.flag"))),',
     '  error = function(e) {',
     '    writeLines(conditionMessage(e), file.path(.d, "mkp_error.txt"))',
     '    NULL',
@@ -343,13 +380,14 @@ MkBayesianServer <- function(id, dataset, startTree = NULL) {
 
       cancelFile     <- MkCancelPath(logDir)
       checkpointFile <- file.path(logDir, "checkpoint.rds")
-      logBase        <- file.path(logDir, "run")
+      logBase        <- .MkLogBase(logDir)
       logFiles       <- MkLogPaths(logBase, nRuns)
 
       # Clear any stale signals from a previous run
       for (sig in c(cancelFile,
                     file.path(logDir, "mkp_done.signal"),
-                    file.path(logDir, "mkp_error.txt"))) {
+                    file.path(logDir, "mkp_error.txt"),
+                    .MkResumeFlagPath(logDir))) {
         if (file.exists(sig)) file.remove(sig)
       }
 
@@ -424,9 +462,9 @@ MkBayesianServer <- function(id, dataset, startTree = NULL) {
 
     # ---- Reconnect -----------------------------------------------------------
     # Decision tree:
-    #   done signal         -> "done"  (no relaunch)
     #   error file          -> relaunch from checkpoint if present, else "error"
     #   cancel signal       -> relaunch from checkpoint if present, else "cancelled"
+    #   done signal         -> "done"  (no relaunch; tested after the cancel file)
     #   no signals, PID alive  -> "running" (re-attach monitoring)
     #   no signals, PID dead   -> relaunch from checkpoint if present, else "error"
 
@@ -455,7 +493,10 @@ MkBayesianServer <- function(id, dataset, startTree = NULL) {
       cpFile   <- job$checkpointFile  # NULL on old job.rds -> file.exists(NULL) = FALSE
       haveCp   <- !is.null(cpFile) && file.exists(cpFile)
 
-      if (file.exists(file.path(job$logDir, "mkp_done.signal"))) {
+      cancelled <- file.exists(job$cancelFile) &&
+        !file.exists(file.path(job$logDir, "mkp_error.txt"))
+
+      if (!cancelled && file.exists(file.path(job$logDir, "mkp_done.signal"))) {
         # ---- Complete --------------------------------------------------------
         rv$status <- "done"
         shiny::showNotification("Reconnected: analysis complete.", type = "message")
@@ -528,33 +569,43 @@ MkBayesianServer <- function(id, dataset, startTree = NULL) {
       job <- rv$job
       if (is.null(job)) return()
 
-      doneSig <- file.path(job$logDir, "mkp_done.signal")
-      errFile <- file.path(job$logDir, "mkp_error.txt")
+      procAlive <- if (!is.null(rv$proc)) rv$proc$is_alive()
+                   else if (!is.null(job$pid) && !is.na(job$pid)) .PidIsAlive(job$pid)
+                   else NA
+      status <- .MkJobStatus(job$logDir, job$cancelFile, procAlive)
 
-      if (file.exists(doneSig)) {
+      if (status == "done") {
         rv$logSamples <- .ReadAllLogs(job$logFiles)
         rv$status     <- "done"
         shiny::showNotification("MCMC complete!", type = "message")
         return()
       }
 
-      if (file.exists(errFile)) {
+      if (status == "error") {
         rv$errorMsg <- paste(
-          readLines(errFile, warn = FALSE), collapse = "\n")
+          readLines(file.path(job$logDir, "mkp_error.txt"), warn = FALSE),
+          collapse = "\n")
         rv$status <- "error"
         shiny::showNotification(
           paste("MCMC error:", rv$errorMsg), type = "error", duration = 15)
         return()
       }
 
-      # If cancel signal exists, wait until the process has actually exited
-      if (file.exists(job$cancelFile)) {
-        procDead <- if (!is.null(rv$proc)) !rv$proc$is_alive() else TRUE
-        if (procDead) {
-          rv$logSamples <- .ReadAllLogs(job$logFiles)
-          rv$status     <- "cancelled"
-          return()
-        }
+      if (status == "cancelled") {
+        rv$logSamples <- .ReadAllLogs(job$logFiles)
+        rv$status     <- "cancelled"
+        return()
+      }
+
+      if (status == "failed") {
+        rv$logSamples <- .ReadAllLogs(job$logFiles)
+        stderrTail <- .TailFile(file.path(job$logDir, "mkp_stderr.txt"))
+        rv$errorMsg <- paste(
+          c("The analysis process exited without finishing.", stderrTail),
+          collapse = "\n")
+        rv$status <- "error"
+        shiny::showNotification(rv$errorMsg, type = "error", duration = 20)
+        return()
       }
 
       # Still running: refresh log samples for trace plot / ESS table
