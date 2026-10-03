@@ -940,6 +940,9 @@ RunMkPrime <- function(data, tree = NULL,
 #'   `chains` in checkpoint-compatible format (no `chainStates`).
 #' @param runIdx Integer index of this run (1-based), used for display only.
 #' @param startIter First iteration to run (1L for fresh, >1 when resuming).
+#' @param essRuns Integer number of runs whose pooled samples meet
+#'   `mcmc$minEss`, so the share of it this run must collect when tuning
+#'   prices its payback.
 #' @keywords internal
 .RunMkPrimeSingleRun <- function(mkd, model, mcmc, initialState, moves,
                                   tipLabels, runIdx, paramNames, nEdge,
