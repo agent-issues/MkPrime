@@ -67,11 +67,15 @@
 #' @param checkEvery Integer giving the iterations between convergence checks,
 #'   of which two in a row must pass before sampling stops.
 #' @param cancelFile Path to a cancel-signal file. `NULL` (default) disables
-#'   cancel-file checking. When set, [RunMkPrime()] checks every 200
-#'   iterations whether this file exists. If it does, the run flushes any
-#'   buffered samples, saves a checkpoint (if `checkpointFile` is set), and
-#'   exits with `stop_reason = "cancelled"`. Create the file to request a
-#'   clean stop: `file.create(cancelFile)`. See also [MkCancelPath()].
+#'   cancel-file checking. When set, [RunMkPrime()] checks whether this file
+#'   exists between batches: every 500 iterations or fewer during warmup and
+#'   tuning, and every 5000 or fewer during sampling. A batch also ends at
+#'   each multiple of `checkEvery`, and of `plotEvery` when a progress
+#'   callback is set. The `maxTime` limit is checked at the same points.
+#'   If the file exists, the run flushes any buffered samples, saves a
+#'   checkpoint (if `checkpointFile` is set), and exits with
+#'   `stop_reason = "cancelled"`. Create the file to request a clean stop:
+#'   `file.create(cancelFile)`. See also [MkCancelPath()].
 #' @param checkpointFile Path to write checkpoint RDS files. `NULL`
 #'   (default) auto-derives from `logFile` when set
 #'   (e.g. `"run.log"` -> `"run.ckp"`). Set to `FALSE` to

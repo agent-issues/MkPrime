@@ -320,6 +320,74 @@ print.MkpDiagnostics <- function(x, ...) {
 }
 
 
+#' Does a run that stopped as converged still meet the stopping criteria?
+#'
+#' A resume may raise `minEss` or `minTreeEss`, or drop both to run to
+#' `nIter`. A run whose state does not record the criteria it converged under
+#' is run on, to check them afresh.
+#'
+#' @param r A run state.
+#' @param mcmc The `MkPrimeMCMC` settings now in force.
+#' @return Logical.
+#' @keywords internal
+.StillConverged <- function(r, mcmc) {
+  was <- r$conv_criteria
+  if (!identical(r$stop_reason, "converged") || is.null(was)) return(FALSE)
+  now <- list(mcmc$minEss, mcmc$minTreeEss)
+  before <- list(was$minEss, was$minTreeEss)
+  Met <- function(target, met) is.null(target) || isTRUE(target <= met)
+  # Return:
+  !all(vapply(now, is.null, logical(1))) && all(mapply(Met, now, before))
+}
+
+
+#' Samples the convergence window of a run being carried on should hold
+#'
+#' A run carried on from memory keeps its window. One resumed from a
+#' checkpoint, which omits the window, takes the last `size` rows of its log,
+#' which a resume has already rewound to the checkpoint. Without them,
+#' `minEss` would be earned again from post-resume samples alone.
+#'
+#' @param r A run state.
+#' @param logFile Path to the run's log, or `NULL`.
+#' @param paramNames Character vector naming the window's columns.
+#' @param size Integer rows the window holds.
+#' @return A matrix of up to `size` rows, oldest first, or `NULL`.
+#' @keywords internal
+.PriorWindowRows <- function(r, logFile, paramNames, size) {
+  if (!is.null(r$conv_window)) {
+    rows <- .ConvWindowRows(r, minRows = 1L)
+  } else if (isTRUE(r$saved_idx > 0L) && !is.null(logFile) &&
+             file.exists(logFile)) {
+    rows <- tryCatch(ReadMkLog(logFile), error = function(e) NULL)
+    if (!identical(colnames(rows), paramNames)) return(NULL)
+  } else {
+    return(NULL)
+  }
+  n <- NROW(rows)
+  if (n == 0L) return(NULL)
+  # Return:
+  rows[seq.int(to = n, length.out = min(n, size)), , drop = FALSE]
+}
+
+
+#' Fill an empty convergence window with earlier samples
+#'
+#' @param r A run state holding an empty `conv_window`.
+#' @param rows Matrix of samples, oldest first, no longer than the window;
+#'   or `NULL`.
+#' @return `r`, with `rows` at the head of its window.
+#' @keywords internal
+.SeedConvWindow <- function(r, rows) {
+  n <- NROW(rows)
+  if (n == 0L) return(r)
+  r$conv_window[seq_len(n), ] <- rows
+  r$conv_head   <- n
+  r$conv_filled <- n == nrow(r$conv_window)
+  r
+}
+
+
 #' Identify key parameter columns (exclude branch lengths)
 #' @keywords internal
 .KeyParamCols <- function(samples) {
