@@ -58,6 +58,7 @@ test_that("valid models still finalise", {
 })
 
 test_that("the tree-length prior must be positive (#380)", {
+  expect_error(MkPrimeModel(treeLengthShape = NULL), "treeLengthShape")
   for (bad in list(0, -1, Inf, NA_real_, c(1, 2), "2")) {
     expect_error(MkPrimeModel(treeLengthShape = bad), "treeLengthShape")
     expect_error(MkPrimeModel(treeLengthRate = bad), "treeLengthRate")

@@ -238,8 +238,7 @@ test_that("Stepping-stone SE matches the spread of independent estimates (#279)"
                 dimnames = list(c("t1", "t2", "t3", "t4"), NULL))
   pd <- MatrixToPhyDat(mat)
   # sd over seeds 1:40 of run_log_marginal[2] at these budgets with
-  # nRuns = 2: single runs from independently perturbed starts (#382). The
-  # per-stone delta method reported a mean se of 0.09.
+  # nRuns = 2: single runs from independently perturbed starts (#382).
   singleRunSd <- 0.428
   nRuns <- 3L
   se <- vapply(1:6, function(seed) {
@@ -311,25 +310,22 @@ test_that("Stepping-stone runs start from distinct states (#382)", {
   for (starts in list(free, fixed)) {
     p <- vapply(starts, `[[`, 0, "p")
     expect_length(unique(p), 3L)
-    lengths <- lapply(starts, `[[`, "rel_br_lengths")
-    expect_false(isTRUE(all.equal(lengths[[1]], lengths[[2]])))
+    relBr <- lapply(starts, `[[`, "rel_br_lengths")
+    expect_false(isTRUE(all.equal(relBr[[1]], relBr[[2]])))
     for (start in starts) {
       expect_equal(start$log_prior,
                    MkPrime:::LogPrior(start, model, mkd))
     }
   }
-  splits <- function(starts) {
-    lapply(starts, function(s) as.character(as.Splits(s$tree)))
-  }
-  expect_true(all(vapply(splits(fixed), setequal, TRUE,
-                         splits(fixed)[[1]])))
+  SplitStrings <- function(tr) as.character(as.Splits(tr))
+  fixedSplits <- lapply(fixed, function(s) SplitStrings(s$tree))
+  expect_true(all(vapply(fixedSplits, setequal, TRUE, fixedSplits[[1]])))
   set.seed(3821)
-  topologies <- unlist(lapply(1:5, function(i) {
+  moved <- vapply(1:5, function(i) {
     starts <- MkPrime:::.SteppingStoneStarts(tree, 2L, FALSE, mkd, model)
-    !setequal(as.character(as.Splits(starts[[2]]$tree)),
-              as.character(as.Splits(tree)))
-  }))
-  expect_true(any(topologies))
+    !setequal(SplitStrings(starts[[2]]$tree), SplitStrings(tree))
+  }, logical(1))
+  expect_true(any(moved))
 })
 
 

@@ -138,7 +138,7 @@ mkp_stepping_stone <- function(data, tree = NULL,
 
   nStones <- .CheckWholeNumber(nStones, "nStones")
   nIter <- .CheckWholeNumber(nIter, "nIter")
-  warmup <- .CheckWholeNumber(warmup, "warmup", min = 0L)
+  warmup <- .CheckWholeNumber(warmup, "warmup", minimum = 0L)
   nRuns <- .CheckWholeNumber(nRuns, "nRuns")
   if (!(is.numeric(alpha) && length(alpha) == 1L && is.finite(alpha) &&
         alpha > 0)) {
@@ -253,11 +253,11 @@ mkp_stepping_stone <- function(data, tree = NULL,
 }
 
 
-.CheckWholeNumber <- function(value, name, min = 1L) {
+.CheckWholeNumber <- function(value, name, minimum = 1L) {
   if (!(is.numeric(value) && length(value) == 1L && is.finite(value) &&
-        value == round(value) && value >= min)) {
+        value == round(value) && value >= minimum)) {
     cli::cli_abort(
-      "{.arg {name}} must be a whole number no less than {min}, not
+      "{.arg {name}} must be a whole number no less than {minimum}, not
        {.val {value}}."
     )
   }

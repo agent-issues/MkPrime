@@ -188,9 +188,10 @@ test_that("block_kprime_shift logLik matches full recomputation", {
 
 
 test_that("Gibbs kPrime sweep at beta = 0 never draws a zero-likelihood k' (#383)", {
-  # At this tree length the informative-coding ascertainment correction is
-  # finite for k' = 2 but rounds to -Inf for k' = 3, where 0 * -Inf would
-  # give k' = 3 a NaN weight that the categorical draw picks.
+  # Near 1e-15 the informative-coding ascertainment correction is finite for
+  # k' = 2 but rounds to -Inf for k' = 3, where 0 * -Inf would give k' = 3 a
+  # NaN weight that the categorical draw picks. The exact window depends on
+  # floating-point rounding, so it is located rather than hard-coded.
   tree <- Preorder(.trans_tree())
   pd <- MatrixToPhyDat(matrix(c(0, 0, 1, 1), 4, 1,
                               dimnames = list(paste0("t", 1:4), NULL)))
@@ -198,13 +199,24 @@ test_that("Gibbs kPrime sweep at beta = 0 never draws a zero-likelihood k' (#383
   model <- MkPrime:::.FinalizeModel(
     MkPrimeModel(coding = "informative", kPrimePrior = "geometric",
                  expSteps = 1), tree, mkd)
-  state0 <- MkPrime:::.InitState(tree, mkd, model)
-  state0$tree_length <- 1e-15
   dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
-  statePtr <- MkPrime:::.InitMcmcChain(state0)
-  fill_partition_cache(dataPtr, statePtr)
-  allocate_cl_workspace(dataPtr, statePtr)
-  expect_equal(MkPrime:::kprime_sweep_candidates(dataPtr, statePtr, 0), 2L)
+  StateAt <- function(treeLength) {
+    state0 <- MkPrime:::.InitState(tree, mkd, model)
+    state0$tree_length <- treeLength
+    statePtr <- MkPrime:::.InitMcmcChain(state0)
+    fill_partition_cache(dataPtr, statePtr)
+    allocate_cl_workspace(dataPtr, statePtr)
+    statePtr
+  }
+  statePtr <- NULL
+  for (treeLength in 10^-seq(14, 17, by = 0.1)) {
+    candidate <- StateAt(treeLength)
+    if (MkPrime:::kprime_sweep_candidates(dataPtr, candidate, 0) == 2L) {
+      statePtr <- candidate
+      break
+    }
+  }
+  expect_false(is.null(statePtr))
 
   sweep <- list(name = "gibbs_kPrime", type = "gibbs_kprime_sweep",
                 target = NULL, weight = 1, dim = 1L)
