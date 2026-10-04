@@ -2992,10 +2992,11 @@ double cpp_log_likelihood_partitioned(
   // re-allocating). Size matches the linked-brlens case (Layer 1).
   NumericVector scaledEdge(nEdge);
 
+  const double classRateNorm = class_rate_norm(data, classRate, rateNeo);
   double totalLoglik = 0.0;
   for (int pi = 0; pi < (int)data.parts.size(); ++pi) {
-    const PartEvalParams pe =
-      partitioned_eval_params(data, pi, rateLogSd, classRate, rateNeo);
+    const PartEvalParams pe = partitioned_eval_params(
+      data, pi, rateLogSd, classRate, rateNeo, classRateNorm);
 
     // Pre-scale edgeLen by the class rate so cpp_partition_log_likelihood
     // sees the class-scaled time axis.

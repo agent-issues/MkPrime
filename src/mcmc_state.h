@@ -279,16 +279,18 @@ static inline double class_rate_norm(
   return sum / static_cast<double>(data.nNeo + data.nTrans);
 }
 
+// classRateNorm is class_rate_norm(data, classRate, rateNeo), computed once
+// per evaluation by the caller: it sums over every partition.
 static inline PartEvalParams partitioned_eval_params(
     const McmcData& data, int partIdx,
     const Rcpp::NumericVector& rateLogSd,
     const Rcpp::NumericVector& classRate,
-    double rateNeo) {
+    double rateNeo, double classRateNorm) {
   const int ci = data.parts[partIdx].classIdx - 1;
   PartEvalParams pe;
   pe.rateLogSd = (rateLogSd.size() == 1) ? rateLogSd[0] : rateLogSd[ci];
   pe.classRate = ((classRate.size() == 1) ? classRate[0] : classRate[ci]) /
-    class_rate_norm(data, classRate, rateNeo);
+    classRateNorm;
   pe.rateNeo   = rateNeo;
   return pe;
 }
