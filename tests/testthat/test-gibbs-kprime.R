@@ -208,15 +208,26 @@ test_that("Gibbs kPrime sweep at beta = 0 never draws a zero-likelihood k' (#383
     allocate_cl_workspace(dataPtr, statePtr)
     statePtr
   }
-  statePtr <- NULL
-  for (treeLength in 10^-seq(14, 17, by = 0.1)) {
-    candidate <- StateAt(treeLength)
-    if (MkPrime:::kprime_sweep_candidates(dataPtr, candidate, 0) == 2L) {
-      statePtr <- candidate
-      break
-    }
+  NCand <- function(logLength) {
+    MkPrime:::kprime_sweep_candidates(dataPtr, StateAt(10^logLength), 0)
   }
-  expect_false(is.null(statePtr))
+  # Bisect on log10(tree length) between a length at which k' = 3 is
+  # evaluated and one at which k' = 2 already has zero likelihood.
+  hi <- -12
+  lo <- -20
+  expect_gt(NCand(hi), 2L)
+  expect_equal(NCand(lo), 1L)
+  for (i in 1:60) {
+    mid <- (hi + lo) / 2
+    nCand <- NCand(mid)
+    if (nCand == 2L) break
+    if (nCand > 2L) hi <- mid else lo <- mid
+  }
+  if (nCand != 2L) {
+    skip(paste("k' = 2 and 3 lose their likelihood at the same tree length",
+               "on this platform; no state isolates a zero-likelihood k'."))
+  }
+  statePtr <- StateAt(10^mid)
 
   sweep <- list(name = "gibbs_kPrime", type = "gibbs_kprime_sweep",
                 target = NULL, weight = 1, dim = 1L)
