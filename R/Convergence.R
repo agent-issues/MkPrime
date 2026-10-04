@@ -320,6 +320,72 @@ print.MkpDiagnostics <- function(x, ...) {
 }
 
 
+#' Record whether a parallel worker's run meets `minTreeEss`
+#'
+#' Trees are not in the logs, so a parallel parent cannot judge `minTreeEss`
+#' itself. Each worker writes its run's tree verdict at every check, and the
+#' parent stops on convergence only once every run's verdict is met.
+#'
+#' @param verdictFile Path to write, or `NULL` to do nothing.
+#' @param diagCheck A [.CheckConvergence()] result for one run.
+#' @param mcmc The `MkPrimeMCMC` settings.
+#' @param iter Integer iteration of the check.
+#' @return `NULL`, invisibly.
+#' @keywords internal
+.WriteTreeVerdict <- function(verdictFile, diagCheck, mcmc, iter) {
+  if (is.null(verdictFile)) return(invisible())
+  verdict <- list(
+    iter = iter,
+    treeEss = diagCheck$treeEss,
+    met = is.null(mcmc$minTreeEss) ||
+      identical(diagCheck$treeEssStatus, "agree") ||
+      isTRUE(diagCheck$treeEss >= mcmc$minTreeEss)
+  )
+  # The parent may read at any moment, so it must never see a partial file.
+  tmp <- paste0(verdictFile, ".tmp")
+  saveRDS(verdict, tmp)
+  file.rename(tmp, verdictFile)
+  invisible()
+}
+
+
+#' Which parallel runs have met `minTreeEss`?
+#'
+#' @param verdictFiles Paths written by [.WriteTreeVerdict()].
+#' @return Logical, one per file; `FALSE` where no verdict is readable yet.
+#' @keywords internal
+.ReadTreeVerdicts <- function(verdictFiles) {
+  vapply(verdictFiles, function(f) {
+    verdict <- if (file.exists(f)) {
+      tryCatch(readRDS(f), error = function(e) NULL)
+    }
+    isTRUE(verdict$met)
+  }, logical(1L), USE.NAMES = FALSE)
+}
+
+
+#' Stop reason of a parallel job whose workers all stopped on their own
+#'
+#' The job converged only if every requested run returned and converged.
+#' Otherwise the first of `"cancelled"`, `"max_time"` that a run reports
+#' explains why the job stopped short, and `"max_iter"` is the default.
+#'
+#' @param runReasons Character `stop_reason` of each returned run.
+#' @param nRuns Integer number of runs requested.
+#' @return Character scalar.
+#' @keywords internal
+.WorkersStopReason <- function(runReasons, nRuns) {
+  if (length(runReasons) == nRuns && all(runReasons == "converged")) {
+    return("converged")
+  }
+  for (reason in c("cancelled", "max_time")) {
+    if (reason %in% runReasons) return(reason)
+  }
+  # Return:
+  "max_iter"
+}
+
+
 #' Does a run that stopped as converged still meet the stopping criteria?
 #'
 #' A resume may raise `minEss` or `minTreeEss`, or drop both to run to

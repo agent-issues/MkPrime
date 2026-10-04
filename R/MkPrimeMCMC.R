@@ -51,8 +51,8 @@
 #'   0.2. The temperature ladder uses geometric spacing:
 #'   `beta_i = heat^((i-1)/(nChains-1))` for i = 1, ..., nChains.
 #'   Ignored when `nChains = 1`.
-#' @param maxTime Maximum wall-clock time in seconds. `NULL` (default)
-#'   means no time limit.
+#' @param maxTime Maximum wall-clock time in seconds for the whole job, shared
+#'   by all its runs. `NULL` (default) means no time limit.
 #' @param minEss Numeric specifying the effective sample size every monitored
 #'   parameter must reach before sampling stops; `NULL` disables ESS-based
 #'   stopping.
@@ -301,12 +301,12 @@
 #' samples.
 #'
 #' `minTreeEss` is judged per run, on up to `max(1000, 1.5 * minTreeEss)`
-#' evenly spaced trees. Trees are not written to the logs, so the cross-run
-#' decision rests on `minEss` and `maxRhat` alone; set one of them when
-#' running more than one run. A run that has sampled a single topology has
-#' no tree ESS: it cannot tell a stuck chain from a posterior concentrated on
-#' one topology, so it cannot meet `minTreeEss` until it samples another,
-#' and warns.
+#' evenly spaced trees. With `nCore > 1`, each run reports its verdict to the
+#' cross-run check, which stops the job only once every run meets
+#' `minTreeEss`; with `minTreeEss` alone, each run stops when it meets it. A
+#' run that has sampled a single topology has no tree ESS: it cannot tell a
+#' stuck chain from a posterior concentrated on one topology, so it cannot
+#' meet `minTreeEss` until it samples another, and warns.
 #'
 #' A criterion that can never be met -- `maxRhat` with one run, or
 #' `minTreeEss` with a fixed topology -- does

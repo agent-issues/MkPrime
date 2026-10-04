@@ -81,7 +81,10 @@ explicit \code{mcmc} argument.}
 \value{
 An \code{MkPosterior} object. Each run adapts its move schedule
 independently, so \verb{$moveWeights} holds run 1's frozen schedule;
-\verb{$runMoveWeights} lists every run's.
+\verb{$runMoveWeights} lists every run's. \verb{$stop_reason} says why the job
+stopped; with \code{nRuns > 1}, each \verb{$per_run} entry's \code{stop_reason} says why
+that run did, and is \code{"cancelled"} for a parallel run stopped by the
+job's own decision.
 }
 \description{
 Metropolis-Hastings MCMC sampling tree topology, branch lengths, model
