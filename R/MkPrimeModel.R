@@ -260,15 +260,7 @@ MkPrimeModel <- function(
   # K_MAX_PRIOR for calibration, and K >= max(kObs) is enforced data-side in
   # .InitMcmcData.
   if (identical(kPrimePrior, "geometric")) {
-    kprimeTruncK <- as.integer(kprimeTruncK)
-    if (is.na(kprimeTruncK) || kprimeTruncK < 2L || kprimeTruncK > 256L) {
-      cli::cli_abort(c(
-        "{.arg kprimeTruncK} must be an integer in [2, 256] (got
-         {.val {kprimeTruncK}}).",
-        i = "256 is the compile-time candidate cap {.code kMaxKprimeCand}
-             in {.file src/mcmc_state.h}; raise it there to go higher."
-      ))
-    }
+    kprimeTruncK <- .CheckKprimeTruncK(kprimeTruncK)
   }
 
   # empiricalNObs is only relevant under the empirical_geometric prior; warn
@@ -279,12 +271,8 @@ MkPrimeModel <- function(
        {.arg kPrimePrior = \"{kPrimePrior}\"}."
     )
   }
-  if (kPrimePrior == "empirical_geometric" && !is.null(empiricalNObs) &&
-      !inherits(empiricalNObs, "MkPrimeEmpiricalPrior")) {
-    cli::cli_abort(
-      "{.arg empiricalNObs} must be an {.cls MkPrimeEmpiricalPrior} object;
-       build one with {.fn MkPrimeEmpiricalPrior}."
-    )
+  if (kPrimePrior == "empirical_geometric" && !is.null(empiricalNObs)) {
+    .CheckEmpiricalNObs(empiricalNObs)
   }
 
   # Warn if logseries-specific param is supplied for geometric prior
@@ -496,6 +484,59 @@ MkPrimeModel <- function(
 }
 
 
+# The constructor match.arg()s these; a model edited by hand is checked
+# exactly, because LogPrior, cpp_log_prior and .LogZ0 compare them with
+# identical() and fall through to a different arm on any other value (#366).
+.CheckPriorEnums <- function(kPrimePrior, priorVariant) {
+  arms <- c("empirical_geometric", "geometric", "beta_geometric", "logseries")
+  if (!(is.character(kPrimePrior) && length(kPrimePrior) == 1L &&
+        kPrimePrior %in% arms)) {
+    cli::cli_abort(
+      "{.field kPrimePrior} must be one of {.val {arms}}, not
+       {.code {deparse(kPrimePrior)}}."
+    )
+  }
+  variants <- c("conditional", "unconditional")
+  if (!(is.character(priorVariant) && length(priorVariant) == 1L &&
+        priorVariant %in% variants)) {
+    cli::cli_abort(
+      "{.field priorVariant} must be one of {.val {variants}}, not
+       {.code {deparse(priorVariant)}}."
+    )
+  }
+  # Return:
+  invisible(NULL)
+}
+
+
+# Returns the cap as an integer. 256 is the C++ candidate cap kMaxKprimeCand.
+.CheckKprimeTruncK <- function(kprimeTruncK) {
+  K <- suppressWarnings(as.integer(kprimeTruncK))
+  if (length(K) != 1L || is.na(K) || K < 2L || K > 256L) {
+    cli::cli_abort(c(
+      "{.arg kprimeTruncK} must be an integer in [2, 256] (got
+       {.val {kprimeTruncK}}).",
+      i = "256 is the compile-time candidate cap {.code kMaxKprimeCand}
+           in {.file src/mcmc_state.h}; raise it there to go higher."
+    ))
+  }
+  # Return:
+  K
+}
+
+
+.CheckEmpiricalNObs <- function(empiricalNObs) {
+  if (!inherits(empiricalNObs, "MkPrimeEmpiricalPrior")) {
+    cli::cli_abort(
+      "{.arg empiricalNObs} must be an {.cls MkPrimeEmpiricalPrior} object;
+       build one with {.fn MkPrimeEmpiricalPrior}."
+    )
+  }
+  # Return:
+  invisible(NULL)
+}
+
+
 # beta_geometric offsets k' from kObs_i (u = k' - kObs_i), so its prior is
 # conditional by construction and has no unconditional form to switch to.
 # Checked at finalisation too, for a model whose priorVariant was set by hand.
@@ -534,7 +575,15 @@ MkPrimeModel <- function(
 #' @keywords internal
 .FinalizeModel <- function(model, tree, mkd) {
   model <- .ResolvePriorDefaults(model)
+  .CheckPriorEnums(model$kPrimePrior, model$priorVariant)
   .CheckPriorVariant(model$kPrimePrior, model$priorVariant)
+  if (identical(model$kPrimePrior, "geometric") &&
+      !is.null(model$kprimeTruncK)) {
+    model$kprimeTruncK <- .CheckKprimeTruncK(model$kprimeTruncK)
+  }
+  if (identical(model$kPrimePrior, "empirical_geometric")) {
+    .CheckEmpiricalNObs(model$empiricalNObs)
+  }
   .CheckKPrimeHyper(model$kPrimePrior, model$kprimeHyperA, model$kprimeHyperB,
                     model$kprimeAlpha, model$kprimeBeta)
   .CheckLogseriesC(model$kPrimePrior, model$kprimeLogseriesC)

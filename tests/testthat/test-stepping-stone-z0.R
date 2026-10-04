@@ -141,3 +141,36 @@ test_that(".LogZ0 integrates the Model A tail mass of each k' prior (#267)", {
     0
   )
 })
+
+test_that("default logseries subtracts log Z0 (#365)", {
+  mkd <- list(kObs = c(3L, 3L, 4L, 2L, 6L),
+              type = c(rep("transformational", 4), "neomorphic"))
+  default <- MkPrimeModel(kPrimePrior = "logseries")
+  unconditional <- MkPrimeModel(kPrimePrior = "logseries",
+                                priorVariant = "unconditional")
+  expect_lt(MkPrime:::.LogZ0(default, mkd), 0)
+  expect_equal(MkPrime:::.LogZ0(default, mkd),
+               MkPrime:::.LogZ0(unconditional, mkd))
+  expect_equal(MkPrime:::.LogZ0(default, .Z0Data()), -2.579877,
+               tolerance = 1e-6)
+})
+
+test_that("default logseries stepping stone matches the exact log ML (#365)", {
+  # Exact value by enumerating k'_i in [kObs_i, 30] under the untruncated
+  # logseries pmf (c = 0.7); the omitted tail is 3e-6 per character.
+  exact <- -13.63322
+  local_mocked_bindings(
+    .SchedulePins = function(moveWeights, moveTypes, userPins) userPins,
+    .package = "MkPrime"
+  )
+  set.seed(1L)
+  ss <- mkp_stepping_stone(
+    .Z0Data(), .Z0Tree(), model = MkPrimeModel(kPrimePrior = "logseries"),
+    mcmc = MkPrimeMCMC(moveWeights = c(kPrime = 0.4, gibbs_kPrime = 0.6)),
+    nStones = 20L, nIter = 2000L, warmup = 200L, fixTopology = TRUE,
+    nRuns = 1L, verbose = FALSE
+  )
+  # Before the fix it sat -log Z0 = 2.58 above the exact value; seeds spread
+  # by about 0.01.
+  expect_lt(abs(ss$log_marginal - exact), 0.25)
+})

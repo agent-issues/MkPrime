@@ -267,14 +267,12 @@ mkp_stepping_stone <- function(data, tree = NULL,
 # likelihood and no move proposes it, so the beta = 0 stone samples the prior
 # restricted to k' >= kObs and the stones multiply to Z1 / Z0 (#267), with
 #   Z0 = E_prior[prod_i P(k'_i >= kObs_i | hyperparameters)].
-# Model B already normalises on k' >= kObs, and marginal_k carries that mass in
-# its per-character sum, so Z0 = 1 for both.
+# logseries has that form whatever priorVariant says, since the sampler ignores
+# the field for it (#365). Model B already normalises on k' >= kObs, and
+# marginal_k carries that mass in its per-character sum, so Z0 = 1 for both.
 .LogZ0 <- function(model, mkd) {
-  # Resolved as .InitMcmcData resolves it for the sampler.
-  priorVariant <- model$priorVariant %||% MkPrimeModel(
-    kPrimePrior = model$kPrimePrior %||% "geometric")$priorVariant
-  if (!identical(priorVariant, "unconditional") ||
-      identical(model$likelihoodMode, "marginal_k")) {
+  model <- .ResolvePriorDefaults(model)
+  if (identical(model$likelihoodMode, "marginal_k")) {
     # Return:
     return(0)
   }
@@ -289,9 +287,13 @@ mkp_stepping_stone <- function(data, tree = NULL,
   counts <- as.vector(counts)
 
   if (identical(model$kPrimePrior, "logseries")) {
-    logseriesC <- model$kprimeLogseriesC %||% 0.7
     # Return:
-    return(sum(counts * vapply(ko, .LogseriesLogTail, 0, logseriesC)))
+    return(sum(counts * vapply(ko, .LogseriesLogTail, 0,
+                               model$kprimeLogseriesC)))
+  }
+  if (!identical(model$priorVariant, "unconditional")) {
+    # Return:
+    return(0)
   }
   LogTail <- switch(
     model$kPrimePrior,
@@ -303,7 +305,7 @@ mkp_stepping_stone <- function(data, tree = NULL,
       }
     },
     empirical_geometric = {
-      emp <- model$empiricalNObs %||% .EmpiricalNObs()
+      emp <- model$empiricalNObs
       # The two variants differ by exactly the Model B normaliser log Z_i(p).
       function(k, p, log1mP) {
         vapply(p, function(pj) {
