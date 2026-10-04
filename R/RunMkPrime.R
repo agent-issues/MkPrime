@@ -140,11 +140,8 @@ RunMkPrime <- function(data, tree = NULL,
   cpFile <- mcmc$checkpointFile
   if (!overwrite && !is.null(cpFile) && file.exists(cpFile)) {
     .AlertInfo("Resuming from checkpoint {.file {cpFile}}.")
-    if (!is.null(partition) || length(unlink) || isTRUE(fixTopology)) {
-      .AlertInfo(
-        "{.arg partition}, {.arg unlink} and {.arg fixTopology} are taken \\
-         from the checkpoint; their values in this call are not used.")
-    }
+    .WarnIgnoredResumeArgs(cpFile, data, neomorphic, knownStates, partition,
+                           unlink, fixTopology)
     return(ResumeMkPrime(
       checkpointFile = cpFile,
       data = data,
@@ -178,7 +175,9 @@ RunMkPrime <- function(data, tree = NULL,
                        knownStates = knownStates)
   }
   if (identical(model$coding, "informative")) {
-    if (!is.null(partition)) partition <- partition[.Informable(mkd)]
+    if (!is.null(partition)) {
+      partition <- .SubsetInformativePartition(partition, mkd)
+    }
     mkd <- .DropUninformable(mkd)
   }
 
@@ -914,6 +913,22 @@ RunMkPrime <- function(data, tree = NULL,
   )
 }
 
+
+# Moves gated on .RateNeoLive().
+.kRateNeoMoves <- c("rate_neo", "slice_rate_neo", "joint_tl_rn")
+
+# Remove the named moves from every per-move counter of a run.
+.DropMoveCounts <- function(r, moveNames) {
+  for (counter in c("chain_accept", "chain_propose", "chain_time_ns",
+                    "chain_slice_exp")) {
+    if (!is.null(r[[counter]])) {
+      r[[counter]] <- lapply(r[[counter]], function(x) {
+        if (is.null(names(x))) x else x[!names(x) %in% moveNames]
+      })
+    }
+  }
+  r
+}
 
 # Per-move counts from a checkpoint, in the order of the schedule rebuilt on
 # resume. Matched by name: added to a count vector of another length, R
@@ -3898,6 +3913,19 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   # only warning those older files can be given.
   storedMoveNames <- names(checkpoint$moveWeights)
   rebuiltMoveNames <- vapply(moves, function(m) m$name, character(1))
+  # Checkpoints written before these moves were gated on .RateNeoLive() hold
+  # them for neomorphic-only data, where they have nothing to act on.
+  inertMoves <- if (.RateNeoLive(mkd)) character(0) else
+    intersect(storedMoveNames, .kRateNeoMoves)
+  if (length(inertMoves)) {
+    cli::cli_inform(c(
+      "Dropping {.val {inertMoves}} from the checkpoint's move set.",
+      "i" = "This checkpoint predates the change that makes these moves \\
+             inert unless the data mix neomorphic and other characters."
+    ))
+    storedMoveNames <- setdiff(storedMoveNames, inertMoves)
+    runs <- lapply(runs, .DropMoveCounts, inertMoves)
+  }
   if (length(storedMoveNames) && !setequal(rebuiltMoveNames, storedMoveNames)) {
     added   <- setdiff(rebuiltMoveNames, storedMoveNames)
     dropped <- setdiff(storedMoveNames, rebuiltMoveNames)
@@ -6171,4 +6199,44 @@ if (n < 2L * windowSize) {
     candidates[[i]] <- w
   }
   candidates
+}
+
+
+# Warn when an auto-resume ignores a partition, unlink or fixTopology request
+# that differs from what the checkpoint holds. Defaults never warn, so
+# repeating the original call to resume stays quiet.
+.WarnIgnoredResumeArgs <- function(cpFile, data, neomorphic, knownStates,
+                                   partition, unlink, fixTopology) {
+  stored <- tryCatch(readRDS(cpFile), error = function(e) NULL)
+  storedSpec <- stored$mcmc$partitionSpec
+  ignored <- character(0)
+
+  if (!is.null(partition)) {
+    same <- identical(as.integer(partition), storedSpec$partition)
+    if (!same && identical(stored$model$coding, "informative")) {
+      same <- tryCatch({
+        mkd <- if (inherits(data, "MkPrimeData")) data else
+          MkPrimeData(data, neomorphic = neomorphic, knownStates = knownStates)
+        identical(as.integer(partition[.Informable(mkd)]), storedSpec$partition)
+      }, error = function(e) FALSE)
+    }
+    if (!same) ignored <- c(ignored, "partition")
+  }
+  if (length(unlink) &&
+      !setequal(unlink, storedSpec$unlink %||% character(0))) {
+    ignored <- c(ignored, "unlink")
+  }
+  if (isTRUE(fixTopology) && !isTRUE(stored$mcmc$fixTopology)) {
+    ignored <- c(ignored, "fixTopology")
+  }
+  if (length(ignored)) {
+    cli::cli_warn(c(
+      "Resuming from the checkpoint, which ignores {.arg {ignored}} from \\
+       this call.",
+      "i" = "{.arg partition}, {.arg unlink} and {.arg fixTopology} are \\
+             fixed when a run starts. Use {.code overwrite = TRUE} to start a \\
+             fresh run with {cli::qty(length(ignored))}{?this/these}."
+    ))
+  }
+  invisible(NULL)
 }
