@@ -185,3 +185,35 @@ test_that("block_kprime_shift logLik matches full recomputation", {
   fresh_ll <- eval_full_loglik_cpp(setup$dataPtr, setup$statePtr)
   expect_equal(st$logLik, fresh_ll, tolerance = 1e-10)
 })
+
+
+test_that("Gibbs kPrime sweep at beta = 0 never draws a zero-likelihood k' (#383)", {
+  # At this tree length the informative-coding ascertainment correction is
+  # finite for k' = 2 but rounds to -Inf for k' = 3, where 0 * -Inf would
+  # give k' = 3 a NaN weight that the categorical draw picks.
+  tree <- Preorder(.trans_tree())
+  pd <- MatrixToPhyDat(matrix(c(0, 0, 1, 1), 4, 1,
+                              dimnames = list(paste0("t", 1:4), NULL)))
+  mkd <- MkPrimeData(pd)
+  model <- MkPrime:::.FinalizeModel(
+    MkPrimeModel(coding = "informative", kPrimePrior = "geometric",
+                 expSteps = 1), tree, mkd)
+  state0 <- MkPrime:::.InitState(tree, mkd, model)
+  state0$tree_length <- 1e-15
+  dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
+  statePtr <- MkPrime:::.InitMcmcChain(state0)
+  fill_partition_cache(dataPtr, statePtr)
+  allocate_cl_workspace(dataPtr, statePtr)
+  expect_equal(MkPrime:::kprime_sweep_candidates(dataPtr, statePtr, 0), 2L)
+
+  sweep <- list(name = "gibbs_kPrime", type = "gibbs_kprime_sweep",
+                target = NULL, weight = 1, dim = 1L)
+  set.seed(3830)
+  for (i in 1:10) {
+    MkPrime:::.DoMove(sweep, statePtr, tuning = MkPrimeMCMC()$tuning,
+                      beta = 0, transIdx = 1L, mcmcData = dataPtr)
+    state <- get_mcmc_state(statePtr)
+    expect_equal(state$kPrime, 2L)
+    expect_true(is.finite(state$logLik))
+  }
+})

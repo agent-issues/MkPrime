@@ -4413,7 +4413,9 @@ void compute_per_kprime_log_lik(
         if (data->relabel && R_FINITE(ll))
           ll += mk_prime_relabel_log(k, tp.kObs);
 
-        double w = beta * ll + logPrior_k;
+        // At beta = 0, 0 * -Inf is NaN, which the categorical draw would
+        // pick by default (#383); the support is L > 0, as in mh_accept.
+        double w = R_FINITE(ll) ? beta * ll + logPrior_k : R_NegInf;
 
         // Update per-character tracking for every character sharing this pattern
         for (int ti : pa.patTrans[localPat]) {

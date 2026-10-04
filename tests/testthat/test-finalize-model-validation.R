@@ -56,3 +56,22 @@ test_that("valid models still finalise", {
   model$priorVariant <- NULL
   expect_identical(.Finalize(model)$priorVariant, "unconditional")
 })
+
+test_that("the tree-length prior must be positive (#380)", {
+  for (bad in list(0, -1, Inf, NA_real_, c(1, 2), "2")) {
+    expect_error(MkPrimeModel(treeLengthShape = bad), "treeLengthShape")
+    expect_error(MkPrimeModel(treeLengthRate = bad), "treeLengthRate")
+    expect_error(MkPrimeModel(expSteps = bad), "expSteps")
+  }
+  model <- MkPrimeModel(expSteps = 1)
+  model$treeLengthShape <- -2
+  expect_error(.Finalize(model), "treeLengthShape")
+  model <- MkPrimeModel(expSteps = 1)
+  model$treeLengthRate <- 0
+  expect_error(.Finalize(model), "treeLengthRate")
+  model <- MkPrimeModel()
+  model$expSteps <- -1
+  expect_error(.Finalize(model), "expSteps")
+  expect_equal(.Finalize(MkPrimeModel(treeLengthShape = 3, expSteps = 2))$
+                 treeLengthRate, 1.5)
+})

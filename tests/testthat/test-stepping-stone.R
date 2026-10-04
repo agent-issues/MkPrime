@@ -237,9 +237,10 @@ test_that("Stepping-stone SE matches the spread of independent estimates (#279)"
                 nrow = 4,
                 dimnames = list(c("t1", "t2", "t3", "t4"), NULL))
   pd <- MatrixToPhyDat(mat)
-  # sd of single-run estimates over 40 seeds at these budgets. The per-stone
-  # delta method reported a mean se of 0.09 against it.
-  singleRunSd <- 0.638
+  # sd over seeds 1:40 of run_log_marginal[2] at these budgets with
+  # nRuns = 2: single runs from independently perturbed starts (#382). The
+  # per-stone delta method reported a mean se of 0.09.
+  singleRunSd <- 0.428
   nRuns <- 3L
   se <- vapply(1:6, function(seed) {
     set.seed(2790 + seed)
@@ -280,4 +281,73 @@ test_that("A degenerate stone leaves estimate and SE both undefined (#279)", {
   expect_true(is.finite(
     MkPrime:::.SteppingStoneEstimate(list(someZero), betas, 0)$log_marginal))
   expect_true(is.na(MkPrime:::.SteppingStoneEstimate(list(Draws()), betas, 0)$se))
+})
+
+
+test_that("Stepping-stone reports the mean of the runs it gives an SE for (#382)", {
+  betas <- c(0, 0.5, 1)
+  # Per-stone log ratios (0, 1) in one run and (1, 0) in the other.
+  RunDraws <- function(stone1, stone2) {
+    cbind(rep(stone1 / 0.5, 2), rep(stone2 / 0.5, 2))
+  }
+  est <- MkPrime:::.SteppingStoneEstimate(
+    list(RunDraws(0, 1), RunDraws(1, 0)), betas, logZ0 = 0.25)
+  expect_equal(est$run_log_marginal, c(1.25, 1.25))
+  expect_equal(est$log_marginal, 1.25)
+  expect_equal(est$se, 0)
+  expect_equal(sum(est$log_ratios) + 0.25, est$log_marginal)
+})
+
+
+test_that("Stepping-stone runs start from distinct states (#382)", {
+  f <- SixTaxonFixture()
+  mkd <- MkPrimeData(f$pd)
+  model <- MkPrime:::.FinalizeModel(MkPrimeModel(), NULL, mkd)
+  tree <- MkPrime:::.PrepareStartTree(f$tree, mkd)
+  set.seed(3820)
+  free <- MkPrime:::.SteppingStoneStarts(tree, 3L, FALSE, mkd, model)
+  fixed <- MkPrime:::.SteppingStoneStarts(tree, 3L, TRUE, mkd, model)
+  expect_identical(free[[1]], MkPrime:::.InitState(tree, mkd, model))
+  for (starts in list(free, fixed)) {
+    p <- vapply(starts, `[[`, 0, "p")
+    expect_length(unique(p), 3L)
+    lengths <- lapply(starts, `[[`, "rel_br_lengths")
+    expect_false(isTRUE(all.equal(lengths[[1]], lengths[[2]])))
+    for (start in starts) {
+      expect_equal(start$log_prior,
+                   MkPrime:::LogPrior(start, model, mkd))
+    }
+  }
+  splits <- function(starts) {
+    lapply(starts, function(s) as.character(as.Splits(s$tree)))
+  }
+  expect_true(all(vapply(splits(fixed), setequal, TRUE,
+                         splits(fixed)[[1]])))
+  set.seed(3821)
+  topologies <- unlist(lapply(1:5, function(i) {
+    starts <- MkPrime:::.SteppingStoneStarts(tree, 2L, FALSE, mkd, model)
+    !setequal(as.character(as.Splits(starts[[2]]$tree)),
+              as.character(as.Splits(tree)))
+  }))
+  expect_true(any(topologies))
+})
+
+
+test_that("Stepping-stone controls are validated (#380)", {
+  f <- SixTaxonFixture()
+  SS <- function(...) {
+    mkp_stepping_stone(f$pd, f$tree, nStones = 2L, nIter = 5L, warmup = 0L,
+                       verbose = FALSE, ...)
+  }
+  expect_error(SS(nStones = 0L), "nStones")
+  expect_error(SS(nRuns = 2.9), "nRuns")
+  expect_error(SS(nRuns = 0), "nRuns")
+  expect_error(SS(nRuns = NA), "nRuns")
+  expect_error(SS(alpha = 0), "alpha")
+  expect_error(SS(alpha = Inf), "alpha")
+  expect_error(mkp_stepping_stone(f$pd, f$tree, nStones = 2L, nIter = 0L,
+                                  verbose = FALSE), "nIter")
+  expect_error(mkp_stepping_stone(f$pd, f$tree, nStones = 2L, nIter = 5L,
+                                  warmup = -1L, verbose = FALSE), "warmup")
+  expect_error(SS(model = MkPrimeModel(expSteps = 0)), "expSteps")
 })
