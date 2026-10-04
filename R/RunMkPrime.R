@@ -277,7 +277,9 @@ RunMkPrime <- function(data, tree = NULL,
   # --- Initialize per-run state ---
   runs <- vector("list", nRuns)
   for (run in seq_len(nRuns)) {
-    startTree <- if (run == 1L) tree else .PerturbStart(tree)
+    startTree <- if (run == 1L) tree else {
+      .PerturbStart(tree, topology = !mcmc$fixTopology)
+    }
     runs[[run]] <- .InitRun(startTree, mkd, model, mcmc, moves,
                             partitionSpec = partitionSpec)
     runs[[run]]$run_index <- run
@@ -3089,7 +3091,9 @@ RunMkPrime <- function(data, tree = NULL,
   storage.mode(charMatrix) <- "integer"
   list(nChar = as.integer(mkd$nChar),
        kObs = as.integer(mkd$kObs),
-       hash = rlang::hash(unname(charMatrix)))
+       hash = rlang::hash(unname(charMatrix)),
+       type = as.character(mkd$type),
+       knownK = as.integer(mkd$known_k))
 }
 
 #' Abort a resume whose data differ from the checkpoint's
@@ -3100,12 +3104,16 @@ RunMkPrime <- function(data, tree = NULL,
                 {.arg data} matches the data it was run on.")
     return(invisible())
   }
-  now <- .DataFingerprint(mkd)
+  # A fingerprint saved before a field existed is checked on the rest.
+  now <- .DataFingerprint(mkd)[names(saved)]
   if (identical(saved, now)) return(invisible())
   what <- if (!identical(saved$nChar, now$nChar)) {
     "character count ({saved$nChar} in checkpoint, {now$nChar} in {.arg data})"
   } else if (!identical(saved$kObs, now$kObs)) {
     "observed state counts (kObs) per character"
+  } else if (!identical(saved$type, now$type) ||
+             !identical(saved$knownK, now$knownK)) {
+    "character types ({.arg neomorphic}, {.arg knownStates})"
   } else {
     "character states or order"
   }
@@ -3115,6 +3123,34 @@ RunMkPrime <- function(data, tree = NULL,
     "i" = "Resume with the original data, or start a fresh run with \\
            {.code RunMkPrime(..., overwrite = TRUE)}."
   ))
+}
+
+# Fields that size the chain's state or fix its move set or likelihood engine.
+.resumeStructuralFields <- c("coding", "relabel", "kPrimePrior",
+                             "priorVariant", "likelihoodMode",
+                             "qHeterogeneity", "nCat", "nBetaCat")
+
+#' Abort a resume whose model differs structurally from the checkpoint's
+#'
+#' Compares only fields the checkpoint recorded, so a checkpoint that predates
+#' a field still resumes.
+#' @keywords internal
+.CheckResumeModel <- function(saved, model) {
+  for (field in .resumeStructuralFields) {
+    was <- saved[[field]]
+    now <- model[[field]]
+    if (is.null(was) || is.null(now)) next
+    if (field == "nBetaCat" && !isTRUE(model$qHeterogeneity)) next
+    if (isTRUE(all.equal(unname(was), unname(now)))) next
+    cli::cli_abort(c(
+      "{.arg model} differs from the model this chain was run on.",
+      "x" = "{.field {field}} is {.val {now}}, but {.val {was}} in the \\
+             checkpoint.",
+      "i" = "Resume with the original model (or {.code model = NULL}), or \\
+             start a fresh run with {.code RunMkPrime(..., overwrite = TRUE)}."
+    ))
+  }
+  invisible()
 }
 
 # Chain state numbers tips by data row, so data supplied on resume must take
@@ -3539,7 +3575,9 @@ RunMkPrime <- function(data, tree = NULL,
 #'   checkpoint's too, unless `treeLengthShape` differs from the
 #'   checkpoint's, when the rate is resolved from the new shape.
 #'   Fields that a checkpoint predates are filled with current defaults,
-#'   with a warning.
+#'   with a warning.  A `coding`, `relabel`, `kPrimePrior`, `priorVariant`,
+#'   `likelihoodMode`, `qHeterogeneity`, `nCat` or `nBetaCat` that differs
+#'   from the checkpoint's is an error.
 #' @param tree A `phylo` object, used only to check tip labels.  Usually
 #'   `NULL`.
 #' @param mcmc `NULL` (the default) to continue with the checkpoint's MCMC
@@ -3617,6 +3655,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                        knownStates = knownStates)
   }
 
+  # Before migration fills fields the checkpoint predates with defaults.
+  savedModel <- checkpoint$model
   checkpoint <- .MigrateCheckpoint(checkpoint)
 
   # The prior's data-derived defaults are fixed when the chain starts, so a
@@ -3629,10 +3669,12 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     model$expSteps <- ckModel$expSteps
     # A changed shape re-derives the rate from expSteps.
     if (is.null(model$treeLengthRate) &&
-        identical(model$treeLengthShape, ckModel$treeLengthShape)) {
+        isTRUE(all.equal(as.numeric(model$treeLengthShape),
+                         as.numeric(ckModel$treeLengthShape)))) {
       model$treeLengthRate <- ckModel$treeLengthRate
     }
   }
+  .CheckResumeModel(savedModel, model)
   if (identical(model$coding, "informative")) {
     mkd <- .DropUninformable(mkd)
   }
@@ -3969,12 +4011,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 # --- Start perturbation ---
 
 #' Generate a perturbed starting tree for independent runs
+#' @param topology Logical; if `FALSE`, perturb branch lengths only.
 #' @keywords internal
-.PerturbStart <- function(tree) {
+.PerturbStart <- function(tree, topology = TRUE) {
   nTip <- length(tree$tip.label)
   if (nTip < 4L) return(tree)
 
-  nNni <- sample(2:5, 1)
+  nNni <- if (topology) sample(2:5, 1) else 0L
   for (i in seq_len(nNni)) {
     treeLength <- sum(tree$edge.length)
     relBr <- tree$edge.length / treeLength
