@@ -20,7 +20,8 @@
 test_that("informative coding checks partition length against the data (#360)", {
   skip_on_cran()
   fx <- .InformativePartitionFixture()
-  setTimeLimit(elapsed = 120, transient = TRUE)
+  setTimeLimit(elapsed = 120)
+  on.exit(setTimeLimit(elapsed = Inf), add = TRUE)
   expect_error(
     suppressWarnings(suppressMessages(RunMkPrime(
       fx$pd, model = fx$model, partition = rep(1:2, 5), mcmc = .QuickMcmc(),
@@ -31,7 +32,8 @@ test_that("informative coding checks partition length against the data (#360)", 
 test_that("informative coding aborts when a class would be emptied (#360)", {
   skip_on_cran()
   fx <- .InformativePartitionFixture()
-  setTimeLimit(elapsed = 120, transient = TRUE)
+  setTimeLimit(elapsed = 120)
+  on.exit(setTimeLimit(elapsed = Inf), add = TRUE)
   expect_error(
     suppressWarnings(suppressMessages(RunMkPrime(
       fx$pd, model = fx$model, partition = c(rep(1:2, 5), 3L, 3L),
@@ -43,7 +45,8 @@ test_that("informative coding accepts a correct partition (#360)", {
   skip_on_cran()
   skip_under_memcheck()
   fx <- .InformativePartitionFixture()
-  setTimeLimit(elapsed = 120, transient = TRUE)
+  setTimeLimit(elapsed = 120)
+  on.exit(setTimeLimit(elapsed = Inf), add = TRUE)
   expect_no_error(suppressWarnings(suppressMessages(RunMkPrime(
     fx$pd, model = fx$model, partition = c(rep(1:2, 5), 1L, 2L),
     mcmc = .QuickMcmc(), overwrite = TRUE, verbosity = 0))))
@@ -71,7 +74,8 @@ test_that("auto-resume warns only when a request differs from the checkpoint (#3
   ckp <- file.path(td, "a.ckp")
   lg <- file.path(td, "a.log")
   part <- c(rep(1:2, 5), 1L, 2L)
-  setTimeLimit(elapsed = 240, transient = TRUE)
+  setTimeLimit(elapsed = 240)
+  on.exit(setTimeLimit(elapsed = Inf), add = TRUE)
   suppressWarnings(suppressMessages(RunMkPrime(
     fx$pd, model = fx$model, partition = part,
     mcmc = .QuickMcmc(ckp, logFile = lg), verbosity = 0)))

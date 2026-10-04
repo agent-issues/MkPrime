@@ -16,7 +16,8 @@
                       maxWarmup = 50L, minWarmup = 50L, autoTune = FALSE,
                       checkEvery = 50L, nCore = 1L, maxTime = 60,
                       checkpointFile = ckp, logFile = file.path(td, "neo.log"))
-  setTimeLimit(elapsed = 120, transient = TRUE)
+  setTimeLimit(elapsed = 120)
+  on.exit(setTimeLimit(elapsed = Inf), add = TRUE)
   suppressWarnings(suppressMessages(RunMkPrime(
     pd, neomorphic = seq_len(nChar), mcmc = mcmc, verbosity = 0)))
   list(pd = pd, nChar = nChar, ckp = ckp)
@@ -49,7 +50,8 @@ test_that("a neomorphic-only checkpoint holding rate_neo moves resumes (#361)", 
   fx <- .NeoOnlyCheckpoint(td)
   .InjectMoves(fx$ckp, c("rate_neo", "slice_rate_neo", "joint_tl_rn"))
 
-  setTimeLimit(elapsed = 120, transient = TRUE)
+  setTimeLimit(elapsed = 120)
+  on.exit(setTimeLimit(elapsed = Inf), add = TRUE)
   expect_message(
     suppressWarnings(res <- ResumeMkPrime(
       fx$ckp, fx$pd, neomorphic = seq_len(fx$nChar),
@@ -67,7 +69,8 @@ test_that("a checkpoint with any other extra move still aborts (#361)", {
   fx <- .NeoOnlyCheckpoint(td)
   .InjectMoves(fx$ckp, c("rate_neo", "bogus_move"))
 
-  setTimeLimit(elapsed = 120, transient = TRUE)
+  setTimeLimit(elapsed = 120)
+  on.exit(setTimeLimit(elapsed = Inf), add = TRUE)
   expect_error(
     suppressWarnings(suppressMessages(ResumeMkPrime(
       fx$ckp, fx$pd, neomorphic = seq_len(fx$nChar),
