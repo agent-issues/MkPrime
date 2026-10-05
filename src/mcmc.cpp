@@ -5450,8 +5450,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       // p-update for the marginal_k geometric arm. Self-contained (does its own
       // accept/reject and returns), like the Gibbs cases — it does NOT fall
       // through to the generic MH machinery, because the accept ratio is the
-      // truncation-normaliser ratio Σ_i[logZ_i(p) − logZ_i(p*)], not the
-      // marginal-LL ratio. Derivation + math-prover verification + numerical
+      // truncation-normaliser ratio Σ_i[logZ_i(p) − logZ_i(p*)] times the
+      // support indicator ∏_i 1{u_i < S_i(p*)}, not the marginal-LL ratio.
+      // Derivation + math-prover verification + numerical
       // invariance check: dev/red-team/proofs/marginal-k-gibbs-p.md and
       // dev/red-team/numerical/gibbs-p-identity-check.R.
       if (!data->marginalK) return false;
@@ -5509,6 +5510,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       //     Z_i(p) are u-independent and cancel out of the categorical.
       double sumU = 0.0;
       double cA   = 0.0;
+      std::vector<int> imputedU(nTrans);
       for (int i = 0; i < nTrans; ++i) {
         const int gi    = data->transIdxGlobal[i];
         const int kObsi = data->kObs[gi];
@@ -5540,6 +5542,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         }
         // ui >= 0 guaranteed: mx finite => at least one finite candidate exists,
         // and only finite candidates are ever assigned to ui.
+        imputedU[i] = ui;
         sumU += (double)ui;
         if (uncond) cA += (double)(kObsi - 2);
       }
@@ -5577,6 +5580,18 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       const double logAlpha = sumLogZ_old - sumLogZ_new;
 
       if (std::log(R::unif_rand()) < logAlpha) {
+        // The support depends on p, so the augmented target is zero unless
+        // every u_i lies in S_i(p*) (proof §6.7). -1 means S_i(p*) extends
+        // past the nRaw candidates the fill evaluated, which contain u_i.
+        const double logPstar = std::log(pStar);
+        for (int i = 0; i < nTrans; ++i) {
+          const int kObsi = data->kObs[data->transIdxGlobal[i]];
+          const int koMax = std::max(0, std::min(kMaxKprimeCand, K - kObsi + 1));
+          const int sStar = marginal_support_at_p(
+            &state->charLLCache[(size_t)i * kMaxKprimeCand],
+            state->charLLNCand[i], koMax, logPstar, log1mPstar);
+          if (sStar >= 0 && imputedU[i] >= sStar) return false;
+        }
         state->p = pStar;
         // Commit the cold marginal at p*, refilling the cache there.
         state->charLLCacheReady = false;
