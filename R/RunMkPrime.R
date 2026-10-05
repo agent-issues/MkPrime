@@ -61,7 +61,10 @@
 #'
 #' @return An `MkPosterior` object. Each run adapts its move schedule
 #'   independently, so `$moveWeights` holds run 1's frozen schedule;
-#'   `$runMoveWeights` lists every run's.
+#'   `$runMoveWeights` lists every run's. `$stop_reason` says why the job
+#'   stopped; with `nRuns > 1`, each `$per_run` entry's `stop_reason` says why
+#'   that run did, and is `"cancelled"` for a parallel run stopped by the
+#'   job's own decision.
 #'
 #' @section Inline MCMC options:
 #'
@@ -489,9 +492,19 @@ RunMkPrime <- function(data, tree = NULL,
       actualIter <- serialResult$actualIter
     } else {
       # Simple sequential path (1 run or no maxRhat)
+      startTime <- proc.time()["elapsed"]
+      runMcmc   <- mcmc
+      lastRun   <- nRuns
       for (run in seq_len(nRuns)) {
+        # maxTime bounds the job, not each run (#13).
+        runMcmc$maxTime <- .RemainingBudget(mcmc$maxTime, startTime)
+        if (.BudgetSpent(runMcmc$maxTime, run, nRuns)) {
+          lastRun    <- run - 1L
+          stopReason <- "max_time"
+          break
+        }
         runs[[run]] <- .RunMkPrimeSingleRun(
-          mkd, model, mcmc, runs[[run]], moves, tipLabels, run,
+          mkd, model, runMcmc, runs[[run]], moves, tipLabels, run,
           paramNames, nEdge, brColStart,
           logFilePath    = logFilePaths[run],
           cancelFile     = mcmc$cancelFile,
@@ -507,12 +520,18 @@ RunMkPrime <- function(data, tree = NULL,
         stopReason <- runs[[run]]$stop_reason
         actualIter <- runs[[run]]$actual_iter
         if (stopReason == "cancelled") break
+        if (.BudgetSpentDuring(stopReason, run, nRuns)) {
+          lastRun <- run
+          break
+        }
       }
 
+      # Unstarted runs stay in the checkpoint, so a resume can run them.
       if (nRuns > 1L && !is.null(mcmc$checkpointFile)) {
         .SaveCheckpoint(runs, mcmc, actualIter, paramNames,
                         mcmc$checkpointFile, model = model)
       }
+      runs <- runs[seq_len(lastRun)]
     }
 
     list(runs        = runs,
@@ -953,6 +972,8 @@ RunMkPrime <- function(data, tree = NULL,
 #' @param essRuns Integer number of runs whose pooled samples meet
 #'   `mcmc$minEss`, so the share of it this run must collect when tuning
 #'   prices its payback.
+#' @param verdictFile Path to which each convergence check writes the run's
+#'   `minTreeEss` verdict for a parallel parent, or `NULL`.
 #' @keywords internal
 .RunMkPrimeSingleRun <- function(mkd, model, mcmc, initialState, moves,
                                   tipLabels, runIdx, paramNames, nEdge,
@@ -960,7 +981,8 @@ RunMkPrime <- function(data, tree = NULL,
                                   checkpointFile, startIter = 1L,
                                   isStreaming = FALSE, convWindowSize = 0L,
                                   treeFile = NULL, shared = NULL,
-                                  resumeMoveWeights = NULL, essRuns = 1L) {
+                                  resumeMoveWeights = NULL, essRuns = 1L,
+                                  verdictFile = NULL) {
   nChains <- mcmc$nChains
   # Thin adapts within a run, so the value in force travels on the run state;
   # `mcmc` holds the value the job started with.
@@ -1921,8 +1943,10 @@ RunMkPrime <- function(data, tree = NULL,
         Checkpoint(r)
       }
 
-      diagCheck <- .CheckConvergence(list(r), paramNames, mcmc, isStreaming)
+      diagCheck <- .CheckConvergence(list(r), paramNames, mcmc, isStreaming,
+                                     essRuns)
       if (!is.null(diagCheck)) {
+        .WriteTreeVerdict(verdictFile, diagCheck, mcmc, batchEnd)
         elapsedSample <- proc.time()["elapsed"] - sampleWallStart
 
         # M-141: ETA from worst-case ESS accumulation rate, projected against
@@ -2050,6 +2074,32 @@ RunMkPrime <- function(data, tree = NULL,
 }
 
 
+# Has the job's budget run out before run `run` of `nRuns` starts? A run that
+# never started has no buffers, which downstream assembly dereferences, so the
+# caller returns the runs before it; `requested_nRuns` records the shortfall.
+.BudgetSpent <- function(remaining, run, nRuns) {
+  if (run == 1L || is.null(remaining) || remaining > 0) return(FALSE)
+  cli::cli_warn(c(
+    "{.arg maxTime} reached after {run - 1L} of {nRuns} runs.",
+    i = "Returning the completed runs; {.arg maxTime} bounds the job,
+         not each run."
+  ))
+  TRUE
+}
+
+
+# Did run `run` of `nRuns` spend the job's budget, leaving later runs unrun?
+.BudgetSpentDuring <- function(stopReason, run, nRuns) {
+  if (!identical(stopReason, "max_time") || run >= nRuns) return(FALSE)
+  cli::cli_warn(c(
+    "{.arg maxTime} reached during run {run} of {nRuns}.",
+    i = "Returning the completed runs; {.arg maxTime} bounds the job,
+         not each run."
+  ))
+  TRUE
+}
+
+
 # The first multiple of any of `every` at or after `iter`; Inf for none.
 .NextMultiple <- function(iter, every) {
   min(Inf, ((iter - 1L) %/% every + 1L) * every)
@@ -2096,20 +2146,12 @@ RunMkPrime <- function(data, tree = NULL,
       # maxTime bounds the job, not each run: without this the true ceiling
       # is nRuns * maxTime, which overruns an external wall clock.
       innerMcmc$maxTime <- .RemainingBudget(mcmc$maxTime, startTime)
-      if (!is.null(innerMcmc$maxTime) && innerMcmc$maxTime <= 0) {
-        # A run that never started has no buffers, and downstream assembly
-        # dereferences them; `requested_nRuns` records the shortfall.
-        cli::cli_warn(c(
-          "{.arg maxTime} reached after {run - 1L} of {nRuns} runs.",
-          i = "Returning the completed runs; {.arg maxTime} bounds the job,
-               not each run."
-        ))
+      if (.BudgetSpent(innerMcmc$maxTime, run, nRuns)) {
         return(list(runs = runs[seq_len(run - 1L)],
                     stopReason = "max_time",
-                    actualIter = if (run > 1L) {
-                      max(vapply(runs[seq_len(run - 1L)],
-                                 function(r) r$actual_iter %||% 0L, numeric(1)))
-                    } else 0L))
+                    actualIter = max(vapply(runs[seq_len(run - 1L)],
+                                            function(r) r$actual_iter %||% 0L,
+                                            numeric(1)))))
       }
 
       runs[[run]] <- .RunMkPrimeSingleRun(
@@ -2136,12 +2178,7 @@ RunMkPrime <- function(data, tree = NULL,
       startIters[run] <- runs[[run]]$actual_iter + 1L
 
       # The budget is spent; remaining runs would each start a fresh one.
-      if (identical(runs[[run]]$stop_reason, "max_time") && run < nRuns) {
-        cli::cli_warn(c(
-          "{.arg maxTime} reached during run {run} of {nRuns}.",
-          i = "Returning the completed runs; {.arg maxTime} bounds the job,
-               not each run."
-        ))
+      if (.BudgetSpentDuring(runs[[run]]$stop_reason, run, nRuns)) {
         return(list(runs = runs[seq_len(run)],
                     stopReason = "max_time",
                     actualIter = runs[[run]]$actual_iter))
@@ -2315,6 +2352,12 @@ RunMkPrime <- function(data, tree = NULL,
 
   # Per-run cancel files (orchestrator signals each worker individually).
   cancelFiles <- vapply(seq_len(nRuns), function(i) tempfile(), character(1L))
+  # Trees are not in the logs, so each worker reports its own minTreeEss
+  # verdict; the parent may not stop on convergence before every run meets it.
+  verdictFiles <- if (!is.null(mcmc$minTreeEss)) {
+    vapply(seq_len(nRuns), function(i) tempfile(), character(1L))
+  }
+  on.exit(unlink(verdictFiles), add = TRUE)
 
   # Per-run checkpoint paths.  When mcmc$checkpointFile is set, each worker
   # writes its own .ckp every checkEvery iters; on SIGKILL/walltime overrun
@@ -2354,7 +2397,7 @@ RunMkPrime <- function(data, tree = NULL,
       func = function(mkd, model, mcmc, runState, moves, tipLabels, run,
                       paramNames, nEdge, brColStart, logPath, cfPath,
                       ckpPath, treePath, convWindowSize, seed, verbosity,
-                      startIter, essRuns) {
+                      startIter, essRuns, verdictPath) {
         options(MkPrime.verbosity = verbosity)
         assign(".Random.seed", seed, envir = globalenv())
         .RunMkPrimeSingleRun(
@@ -2368,7 +2411,8 @@ RunMkPrime <- function(data, tree = NULL,
           convWindowSize = convWindowSize,
           treeFile       = treePath,
           resumeMoveWeights = runState$moveWeights,
-          essRuns        = essRuns
+          essRuns        = essRuns,
+          verdictFile    = verdictPath
         )
       },
       args = list(
@@ -2392,7 +2436,8 @@ RunMkPrime <- function(data, tree = NULL,
         startIter      = startIters[run],
         # The orchestrator stops on the pooled logs, so each worker need
         # collect only its share of minEss.
-        essRuns        = nRuns
+        essRuns        = nRuns,
+        verdictPath    = verdictFiles[run]
       ),
       supervise = TRUE,
       package   = TRUE
@@ -2420,6 +2465,8 @@ RunMkPrime <- function(data, tree = NULL,
   checkedRows  <- 0L
   freshRows    <- max(1L, (mcmc$checkEvery %||% 1000L) %/% mcmc$thin)
   stopReason   <- "max_iter"
+  # Set when no parent-side criterion fired: the job's reason is then theirs.
+  workersStopped <- FALSE
   actualIter   <- if (is.finite(mcmc$nIter)) mcmc$nIter else mcmc$warmup
 
   # Progress display and live trace plot
@@ -2479,8 +2526,12 @@ RunMkPrime <- function(data, tree = NULL,
       elStr  <- .FormatElapsed(elapsed)
       essStr <- round(diagCheck$minEss)
       etaCrit <- .EtaCriterion(diagCheck, mcmc)
-      etaStr <- .EstimateEta(etaCrit$current, etaCrit$target,
-                             .SampleElapsed(sampleStarts, sampleEnds, now))
+      treeMet <- .ReadTreeVerdicts(verdictFiles)
+      # The scalars cannot say when the runs' tree ESS will be met.
+      etaStr <- if (all(treeMet)) {
+        .EstimateEta(etaCrit$current, etaCrit$target,
+                     .SampleElapsed(sampleStarts, sampleEnds, now))
+      }
       pollStatus <- paste0(
         elStr, " | min ESS = ", essStr,
         if (!is.null(mcmc$minEss)) paste0(" / ", mcmc$minEss) else "",
@@ -2488,6 +2539,9 @@ RunMkPrime <- function(data, tree = NULL,
           paste0(" | max Rhat = ", round(diagCheck$maxRhat, 3),
                  if (!is.null(mcmc$maxRhat))
                    paste0(" / ", mcmc$maxRhat))
+        else "",
+        if (!is.null(verdictFiles))
+          paste0(" | minTreeEss met: ", sum(treeMet), " / ", nRuns)
         else "",
         if (!is.null(etaStr)) paste0(" | ETA: ", etaStr) else ""
       )
@@ -2523,7 +2577,9 @@ RunMkPrime <- function(data, tree = NULL,
 
       fresh <- sum(diagCheck$nRows) - checkedRows >= freshRows
       if (fresh) checkedRows <- sum(diagCheck$nRows)
-      convVerdict <- .ConvergenceStreak(convStreak, diagCheck$converged, fresh)
+      convVerdict <- .ConvergenceStreak(
+        convStreak, diagCheck$converged && all(treeMet), fresh
+      )
       convStreak  <- convVerdict[["streak"]]
       if (convVerdict[["stop"]]) {
         for (cf in cancelFiles) file.create(cf)
@@ -2533,12 +2589,16 @@ RunMkPrime <- function(data, tree = NULL,
     }
 
     # Every run launched and every launched run finished?
-    if (all(launched) && all(finished)) break
+    if (all(launched) && all(finished)) {
+      workersStopped <- TRUE
+      break
+    }
   }
 
   pollStatus <- paste0(
     "Parallel MCMC (", nRuns, " runs) -- ",
-    stopReason, " [", .FormatElapsed(proc.time()["elapsed"] - startTime), "]"
+    if (workersStopped) "all runs stopped" else stopReason,
+    " [", .FormatElapsed(proc.time()["elapsed"] - startTime), "]"
   )
   .ProgressDone()
 
@@ -2640,6 +2700,14 @@ RunMkPrime <- function(data, tree = NULL,
     ))
   }
 
+  if (workersStopped) {
+    stopReason <- .WorkersStopReason(
+      vapply(completedRuns, function(r) r$stop_reason %||% "max_iter",
+             character(1L)),
+      nRuns
+    )
+  }
+
   # Take the furthest iteration any surviving run reached: run 1 may have been
   # dropped, and on resume each run starts from its own recorded position.
   if (length(completedRuns) > 0L) {
@@ -2703,8 +2771,12 @@ RunMkPrime <- function(data, tree = NULL,
 #' Works for any number of runs. ESS is always computed on combined samples;
 #' R-hat is computed only when `nRuns >= 2`. Returns full per-parameter `ess`
 #' and `rhat` vectors so the caller can display a progress table.
+#' @param essRuns Integer number of runs whose pooled samples meet
+#'   `mcmc$minEss`. A run's share of it decides when its tree ESS is worth
+#'   computing; it does not change the verdict.
 #' @keywords internal
-.CheckConvergence <- function(runs, paramNames, mcmc, isStreaming = FALSE) {
+.CheckConvergence <- function(runs, paramNames, mcmc, isStreaming = FALSE,
+                              essRuns = 1L) {
   nRuns <- length(runs)
   keyCols <- .KeyParamCols(
     matrix(0, 1, length(paramNames), dimnames = list(NULL, paramNames))
@@ -2759,9 +2831,12 @@ RunMkPrime <- function(data, tree = NULL,
   if (!is.null(mcmc$minTreeEss) &&
       requireNamespace("TreeDist", quietly = TRUE)) {
 
-    scalarsFarOff <- !is.null(mcmc$minEss) && isTRUE(minEss < 0.5 * mcmc$minEss)
+    # A parallel parent stops on its pooled check once each run holds its
+    # share of minEss, and needs each run's tree verdict by then.
+    essTarget <- mcmc$minEss / essRuns
+    scalarsFarOff <- !is.null(mcmc$minEss) && isTRUE(minEss < 0.5 * essTarget)
     scalarsConverged <-
-      (is.null(mcmc$minEss)  || isTRUE(minEss >= mcmc$minEss)) &&
+      (is.null(mcmc$minEss)  || isTRUE(minEss >= essTarget)) &&
       (is.null(mcmc$maxRhat) || (nRuns >= 2L &&
                                   isTRUE(maxRhat <= mcmc$maxRhat)))
 
@@ -2816,11 +2891,11 @@ RunMkPrime <- function(data, tree = NULL,
 #' and computes ESS (all runs combined) and R-hat (when `nRuns >= 2`).
 #' Returns `NULL` if any log is missing or has fewer than 10 rows.
 #'
-#' Tree ESS is deliberately absent: trees are not written to the log files, so
-#' this path cannot evaluate `minTreeEss` and returns `treeEss = NA_real_`. The
-#' criterion is enforced per run by [.CheckConvergence()] instead. Documented
-#' on `minTreeEss` in [MkPrimeMCMC()]; whether the silent non-enforcement also
-#' deserves a warning is a maintainer call, not settled here.
+#' Tree ESS is absent: trees are not written to the log files, so this check
+#' cannot evaluate `minTreeEss` and returns `treeEss = NA_real_`. Each run
+#' judges it with [.CheckConvergence()]: a parallel worker reports its verdict
+#' through [.WriteTreeVerdict()], and [.RunParallelRuns()] stops on
+#' convergence only when this check and every run's verdict pass.
 #' @keywords internal
 .CheckConvergenceFromLogs <- function(logFilePaths, paramNames, mcmc) {
   nRuns   <- length(logFilePaths)
@@ -2867,8 +2942,6 @@ RunMkPrime <- function(data, tree = NULL,
                         dropNA = FALSE)
   }
 
-  # Tree ESS not available in log-based mode (scalar logs don't contain trees).
-  # minTreeEss is only enforced by .CheckConvergence() which has in-memory trees.
   hasCriteria <- !is.null(mcmc$minEss) || !is.null(mcmc$maxRhat)
   converged   <- hasCriteria &&
     (is.null(mcmc$minEss)  || isTRUE(minEss >= mcmc$minEss)) &&
@@ -3112,7 +3185,8 @@ RunMkPrime <- function(data, tree = NULL,
       saved_idx  = r$saved_idx,
       # SBC-WARMUP-002: surface final adapted weights for diagnostics
       # (also used as ground truth in the scalar-floor regression test).
-      moveWeights = r$moveWeights
+      moveWeights = r$moveWeights,
+      stop_reason = r$stop_reason
     )
     if (mcmc$nChains > 1L) {
       result$betas      <- r$betas
@@ -3957,14 +4031,24 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       stopReason <- serialResult$stopReason
       actualIter <- serialResult$actualIter
     } else {
+      # A run not reached keeps its checkpointed state; .BuildResult() omits
+      # it only if it never started sampling.
+      startTime <- proc.time()["elapsed"]
+      runMcmc   <- mcmc
       for (run in seq_len(nRuns)) {
         if (.StillConverged(runs[[run]], mcmc)) {
           stopReason <- "converged"
           actualIter <- runs[[run]]$actual_iter
           next
         }
+        # maxTime bounds the resumed job, not each run (#13).
+        runMcmc$maxTime <- .RemainingBudget(mcmc$maxTime, startTime)
+        if (.BudgetSpent(runMcmc$maxTime, run, nRuns)) {
+          stopReason <- "max_time"
+          break
+        }
         runs[[run]] <- .RunMkPrimeSingleRun(
-          mkd, model, mcmc, runs[[run]], moves, tipLabels, run,
+          mkd, model, runMcmc, runs[[run]], moves, tipLabels, run,
           paramNames, nEdge, brColStart,
           logFilePath    = if (isStreaming) logFilePaths[run] else NULL,
           cancelFile     = mcmc$cancelFile,
@@ -3979,7 +4063,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         shared$runs[[run]] <- runs[[run]]
         stopReason <- runs[[run]]$stop_reason
         actualIter <- runs[[run]]$actual_iter
-        if (stopReason == "cancelled") break
+        if (stopReason == "cancelled" ||
+            .BudgetSpentDuring(stopReason, run, nRuns)) break
       }
       if (nRuns > 1L && !is.null(mcmc$checkpointFile)) {
         .SaveCheckpoint(runs, mcmc, actualIter, paramNames,

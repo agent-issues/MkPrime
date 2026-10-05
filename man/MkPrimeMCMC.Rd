@@ -115,8 +115,8 @@ Chain 1 is the cold chain (beta = 1).}
 \code{beta_i = heat^((i-1)/(nChains-1))} for i = 1, ..., nChains.
 Ignored when \code{nChains = 1}.}
 
-\item{maxTime}{Maximum wall-clock time in seconds. \code{NULL} (default)
-means no time limit.}
+\item{maxTime}{Maximum wall-clock time in seconds for the whole job, shared
+by all its runs. \code{NULL} (default) means no time limit.}
 
 \item{minEss}{Numeric specifying the effective sample size every monitored
 parameter must reach before sampling stops; \code{NULL} disables ESS-based
@@ -410,12 +410,12 @@ towards the pair only once the logs have gained a \code{checkEvery}'s worth of
 samples.
 
 \code{minTreeEss} is judged per run, on up to \code{max(1000, 1.5 * minTreeEss)}
-evenly spaced trees. Trees are not written to the logs, so the cross-run
-decision rests on \code{minEss} and \code{maxRhat} alone; set one of them when
-running more than one run. A run that has sampled a single topology has
-no tree ESS: it cannot tell a stuck chain from a posterior concentrated on
-one topology, so it cannot meet \code{minTreeEss} until it samples another,
-and warns.
+evenly spaced trees. With \code{nCore > 1}, each run reports its verdict to the
+cross-run check, which stops the job only once every run meets
+\code{minTreeEss}; with \code{minTreeEss} alone, each run stops when it meets it. A
+run that has sampled a single topology has no tree ESS: it cannot tell a
+stuck chain from a posterior concentrated on one topology, so it cannot
+meet \code{minTreeEss} until it samples another, and warns.
 
 A criterion that can never be met -- \code{maxRhat} with one run, or
 \code{minTreeEss} with a fixed topology -- does
