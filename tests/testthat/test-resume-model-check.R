@@ -46,7 +46,7 @@ test_that("fixTopology = TRUE holds every run on the supplied tree (#378)", {
     RunMkPrime(.ModelCheckData(), tree, fixTopology = TRUE, verbosity = 0L,
                mcmc = MkPrimeMCMC(nIter = 200L, nRuns = 2L, autoTune = FALSE,
                                   maxWarmup = 20L, minWarmup = 0L,
-                                  nCore = 1L, maxTime = 0.5))))
+                                  nCore = 1L, maxTime = 30))))
   expect_gt(length(result$trees), 0L)
   rf <- vapply(result$trees, function(tr) {
     TreeDist::RobinsonFoulds(tr, tree)

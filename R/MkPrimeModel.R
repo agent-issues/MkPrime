@@ -377,7 +377,8 @@ MkPrimeModel <- function(
     cli::cli_abort(c(
       "{.code likelihoodMode = \"marginal_k\"} cannot be combined with
        known-state characters.",
-      i = "Character{?s} {known} {?is/are} pinned by {.arg knownStates}.",
+      i = "Character{cli::qty(length(known))}{?s} {.val {known}}
+           {cli::qty(length(known))}{?is/are} pinned by {.arg knownStates}.",
       i = "Known-k partitions are deferred (plan section 11); the marginal
            evaluator would drop them from the likelihood entirely.",
       i = "Use {.code likelihoodMode = \"sampled_k\"}, or drop
