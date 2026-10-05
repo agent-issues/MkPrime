@@ -135,7 +135,7 @@ test_that("a run that ends at nIter checkpoints its final rows (#318)", {
 test_that("an interrupt flushes before it checkpoints (#317)", {
   fx <- .RecoveryFixture()
   dir <- withr::local_tempdir()
-  # The first Sample batch runs 201-5200.
+  # Sample batches end on each plotEvery boundary, so the run stops at 5000.
   mcmc <- .RecoveryJob(dir, nIter = 8000L, checkEvery = 10000L,
                        bufferSize = 2000L, plotEvery = 100L,
                        progressFn = .InterruptWhen(function(info) {
@@ -154,7 +154,7 @@ test_that("an interrupt flushes before it checkpoints (#317)", {
   )
   ck <- readRDS(mcmc$checkpointFile)
   run <- ck$runs[[1]]
-  expect_identical(as.integer(run$actual_iter), 5200L)
+  expect_identical(as.integer(run$actual_iter), 5000L)
   expect_identical(run$flush_idx, 0L)
   expect_identical(run$saved_idx, .DataRows(mcmc$logFile))
   # Comment lines are not samples.
@@ -186,9 +186,9 @@ test_that("a resume interrupted mid-run checkpoints the run in progress (#317)",
     "interrupted|without stabilisation|Resuming"
   )
   ck <- readRDS(mcmc$checkpointFile)
-  # Run 2's first batch runs 401-5400.
+  # Run 2 stops at the plotEvery boundary where the callback interrupts it.
   expect_identical(as.integer(ck$runs[[1]]$actual_iter), 8000L)
-  expect_identical(as.integer(ck$runs[[2]]$actual_iter), 5400L)
+  expect_identical(as.integer(ck$runs[[2]]$actual_iter), 5000L)
   expect_identical(ck$runs[[2]]$saved_idx,
                    .DataRows(sub("\\.log$", "_2.log", mcmc$logFile)))
 })
