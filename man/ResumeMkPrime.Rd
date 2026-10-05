@@ -33,7 +33,9 @@ length does not change mid-chain; an unset \code{treeLengthRate} is the
 checkpoint's too, unless \code{treeLengthShape} differs from the
 checkpoint's, when the rate is resolved from the new shape.
 Fields that a checkpoint predates are filled with current defaults,
-with a warning.}
+with a warning.  A \code{coding}, \code{relabel}, \code{kPrimePrior}, \code{priorVariant},
+\code{likelihoodMode}, \code{qHeterogeneity}, \code{nCat} or \code{nBetaCat} that differs
+from the checkpoint's is an error.}
 
 \item{mcmc}{\code{NULL} (the default) to continue with the checkpoint's MCMC
 settings, or an \code{MkPrimeMCMC} object (or a named list of its fields)
