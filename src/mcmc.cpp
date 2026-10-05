@@ -3479,7 +3479,7 @@ static double eval_slice_target(McmcData* data, McmcState* state,
 // Updates state in place, including logLik, logPrior, and partLogLik cache.
 static bool slice_scalar_impl(McmcData* data, McmcState* state,
                                int paramIdx, double width,
-                               double beta, int maxSteps = 10,
+                               double beta, int maxSteps = 20,
                                int* nExpansionsOut = nullptr) {
   double x0 = get_scalar(state, paramIdx);
 
@@ -3491,18 +3491,23 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
   // Slice height
   double logZ = logY0 + std::log(R::unif_rand());
 
-  // Stepping out on log scale (count expansions for width adaptation)
+  // Stepping out on log scale (count expansions for width adaptation).
+  // Neal (2003, Fig. 3) splits the budget of maxSteps steps at random between
+  // the sides, so any point in the final interval could have generated it;
+  // a fixed cap per side is not reversible once it binds (#281).
   int nExp = 0;
   double L = u0 - width * R::unif_rand();
   double R_bound = L + width;
+  const int stepsLeft = static_cast<int>(maxSteps * R::unif_rand());
+  const int stepsRight = (maxSteps - 1) - stepsLeft;
 
-  for (int j = 0; j < maxSteps; ++j) {
+  for (int j = 0; j < stepsLeft; ++j) {
     set_scalar(state, paramIdx, std::exp(L));
     if (eval_slice_target(data, state, paramIdx, beta) + L <= logZ) break;
     L -= width;
     ++nExp;
   }
-  for (int j = 0; j < maxSteps; ++j) {
+  for (int j = 0; j < stepsRight; ++j) {
     set_scalar(state, paramIdx, std::exp(R_bound));
     if (eval_slice_target(data, state, paramIdx, beta) + R_bound <= logZ)
       break;
@@ -3630,7 +3635,7 @@ static inline double bg_sigma_stable(double r) {
 
 static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
                                      int paramCode, double width,
-                                     int maxSteps = 10,
+                                     int maxSteps = 20,
                                      int* nExpansionsOut = nullptr) {
   double alpha0 = state->kprimeAlpha;
   double beta0  = state->kprimeBeta;
@@ -3681,16 +3686,18 @@ static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
 
   double v0 = (paramCode == 0) ? s0 : r0;
 
-  // Stepping out
+  // Stepping out, with Neal's randomised split of the budget (#281)
   int nExp = 0;
   double L = v0 - width * R::unif_rand();
   double R_bound = L + width;
-  for (int j = 0; j < maxSteps; ++j) {
+  const int stepsLeft = static_cast<int>(maxSteps * R::unif_rand());
+  const int stepsRight = (maxSteps - 1) - stepsLeft;
+  for (int j = 0; j < stepsLeft; ++j) {
     if (evalTarget(L) <= logZ) break;
     L -= width;
     ++nExp;
   }
-  for (int j = 0; j < maxSteps; ++j) {
+  for (int j = 0; j < stepsRight; ++j) {
     if (evalTarget(R_bound) <= logZ) break;
     R_bound += width;
     ++nExp;
@@ -4727,8 +4734,9 @@ IntegerVector kprime_sweep_candidates(SEXP dataPtr, SEXP statePtr,
 // ---------------------------------------------------------------------------
 // Gibbs kPrime sweep (moveType 25)
 //
-// Samples each k'_i from its full conditional in a single random-order scan
-// of all transformational characters. Always accepts (Gibbs update).
+// Samples each k'_i from its full conditional, restricted to the candidate
+// window phase 1 enumerates, in a single random-order scan of all
+// transformational characters. Always accepts (Gibbs update).
 //
 // Phase 1 (per-(char, k') weight precomputation) lives in
 // compute_per_kprime_log_lik above; phase 2 (categorical sampling + cache
@@ -4814,6 +4822,12 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
         if (!R_FINITE(maxW)) continue;
       }
     }
+
+    // The candidate window [kObs_i, kObs_i + nCand) does not depend on k'_i,
+    // so a draw restricted to it from inside it, and no move from outside it,
+    // leaves the untruncated conditional invariant (#278). A k'_i beyond the
+    // window is moved by int_walk and block_kprime_shift instead.
+    if (state->kPrime[gi] - kObs_i >= nCand) continue;
 
     // Sample from categorical (log-sum-exp)
     double sumExp = 0.0;
@@ -6332,14 +6346,14 @@ List run_mcmc_batch_cpp(
         int nExp = 0;
         accepted = slice_scalar_impl(
           data, states[ch], charIdx,
-          sliceWidths(ch, moveIdx), betas[ch], 10, &nExp);
+          sliceWidths(ch, moveIdx), betas[ch], 20, &nExp);
         sliceExpansions(ch, moveIdx) += nExp;
       } else if (moveType == 29) {
         // Prior-only slice sampler for BG hyperparameters (M-163)
         int nExp = 0;
         accepted = slice_kprime_hyper_impl(
           data, states[ch], sliceParamCodes[moveIdx],
-          sliceWidths(ch, moveIdx), 10, &nExp);
+          sliceWidths(ch, moveIdx), 20, &nExp);
         sliceExpansions(ch, moveIdx) += nExp;
       } else {
         // Per-move int param overrides chain-level intWalkWindow
