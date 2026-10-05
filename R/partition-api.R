@@ -126,7 +126,7 @@
     if (!identical(observed, expected)) {
       missingCls <- setdiff(expected, observed)
       cli::cli_abort(c(
-        "{.arg partition} skips class id{?s} {.val {missingCls}}.",
+        "{.arg partition} skips class id{cli::qty(length(missingCls))}{?s} {.val {missingCls}}.",
         "i" = "Class labels must form a contiguous range {.val 1}:{.val nClasses}."
       ))
     }
