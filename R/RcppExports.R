@@ -129,8 +129,8 @@ eval_log_prior_cpp <- function(dataPtr, statePtr) {
     .Call(`_MkPrime_eval_log_prior_cpp`, dataPtr, statePtr)
 }
 
-eval_log_prior_partitioned_cpp <- function(dataPtr, statePtr, classRateLogSd, classW, etaNeo, useHyperpriorOnSigma = FALSE, hyperTau = 1.0, classZ = as.numeric( c())) {
-    .Call(`_MkPrime_eval_log_prior_partitioned_cpp`, dataPtr, statePtr, classRateLogSd, classW, etaNeo, useHyperpriorOnSigma, hyperTau, classZ)
+eval_log_prior_partitioned_cpp <- function(dataPtr, statePtr, classRateLogSd, classW, classRate, etaNeo, useHyperpriorOnSigma = FALSE, hyperTau = 1.0, classZ = as.numeric( c())) {
+    .Call(`_MkPrime_eval_log_prior_partitioned_cpp`, dataPtr, statePtr, classRateLogSd, classW, classRate, etaNeo, useHyperpriorOnSigma, hyperTau, classZ)
 }
 
 set_class_rate_concentration <- function(dataPtr, concentration) {

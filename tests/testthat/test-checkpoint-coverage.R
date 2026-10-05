@@ -256,3 +256,90 @@ test_that(".RunDirectory recovers the directory a run started in", {
   expect_identical(.AbsolutePath(character(0)), character(0))
   expect_null(.AbsolutePath(NULL))
 })
+
+test_that("a checkpoint without a log keeps its samples past the session (#31)", {
+  d <- CkpData()
+  dir <- withr::local_tempdir()
+  ckp <- file.path(dir, "run.ckp")
+  set.seed(8)
+  expect_error(allow_warning(RunMkPrime(
+    d$pd, d$tree,
+    mcmc = MkPrimeMCMC(
+      nRuns = 1L, nIter = 3000L, thin = 5L, minWarmup = 500L,
+      maxWarmup = 500L, autoTune = FALSE, bufferSize = 50L,
+      checkpointFile = ckp, maxTime = 60, plotEvery = 500L,
+      progressFn = Killer(function(info) info$iter >= 3000L)
+    )
+  ), "maxWarmup"), "killed")
+
+  log <- readRDS(ckp)$logFilePaths
+  expect_identical(dirname(log), dirname(.AbsolutePath(ckp)))
+  expect_true(file.exists(log))
+  rows <- LogRows(log)
+  expect_gt(rows, 0L)
+
+  resumed <- ResumeMkPrime(
+    ckp, d$pd, d$tree,
+    mcmc = list(progressFn = function(info) NULL, nIter = 3500L)
+  )
+  expect_gt(LogRows(log), rows)
+  expect_true(all(diff(LogIters(log)) > 0L))
+})
+
+test_that("a completed run deletes the log it kept beside the checkpoint", {
+  d <- CkpData()
+  dir <- withr::local_tempdir()
+  ckp <- file.path(dir, "run.ckp")
+  set.seed(9)
+  res <- allow_warning(RunMkPrime(
+    d$pd, d$tree,
+    mcmc = MkPrimeMCMC(
+      nRuns = 1L, nIter = 1000L, thin = 5L, minWarmup = 500L,
+      maxWarmup = 500L, autoTune = FALSE, checkpointFile = ckp, maxTime = 60
+    )
+  ), "maxWarmup")
+  expect_gt(nrow(res$samples), 0L)
+  expect_null(res$logFile)
+  expect_identical(list.files(dir), "run.ckp")
+})
+
+test_that("MkPrimeRecover() keeps a log the user named", {
+  d <- CkpData()
+  dir <- withr::local_tempdir()
+  log <- file.path(dir, "run.log")
+  set.seed(10)
+  expect_warning(allow_warning(RunMkPrime(
+    d$pd, d$tree,
+    mcmc = MkPrimeMCMC(
+      nRuns = 1L, nIter = 3000L, thin = 5L, minWarmup = 500L,
+      maxWarmup = 500L, autoTune = FALSE, bufferSize = 50L, logFile = log,
+      maxTime = 60, plotEvery = 500L,
+      progressFn = function(info) if (info$iter >= 3000L) rlang::interrupt()
+    )
+  ), "maxWarmup"), "interrupted")
+  recovered <- MkPrimeRecover()
+  expect_gt(nrow(recovered$samples), 0L)
+  expect_true(file.exists(log))
+})
+
+test_that("a run paused on maxTime keeps the log beside its checkpoint", {
+  d <- CkpData()
+  dir <- withr::local_tempdir()
+  ckp <- file.path(dir, "run.ckp")
+  set.seed(11)
+  res <- allow_warning(RunMkPrime(
+    d$pd, d$tree,
+    mcmc = MkPrimeMCMC(
+      nRuns = 1L, nIter = Inf, thin = 5L, minWarmup = 500L, maxWarmup = 500L,
+      autoTune = FALSE, bufferSize = 50L, checkpointFile = ckp, maxTime = 0.5
+    )
+  ), "maxWarmup")
+  expect_identical(res$stop_reason, "max_time")
+  log <- readRDS(ckp)$logFilePaths
+  expect_true(file.exists(log))
+  rows <- LogRows(log)
+
+  allow_warning(ResumeMkPrime(ckp, d$pd, d$tree, mcmc = list(maxTime = 0.5)),
+                "maxWarmup")
+  expect_gt(LogRows(log), rows)
+})

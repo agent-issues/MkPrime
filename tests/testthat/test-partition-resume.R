@@ -93,6 +93,11 @@ test_that("resume applies the marginal_k partition guard (#242)", {
     fx$pd, fx$tree, mcmc = .PartitionResumeMcmc(ckp, lg, 200L),
     model = MkPrimeModel(kPrimePrior = "geometric"),
     partition = fx$partition, unlink = "shape")))
+  # A changed likelihoodMode aborts earlier (#379), so plant it in the
+  # checkpoint to reach the partition guard.
+  cp <- readRDS(ckp)
+  cp$model$likelihoodMode <- "marginal_k"
+  saveRDS(cp, ckp)
   expect_error(
     suppressWarnings(suppressMessages(ResumeMkPrime(
       ckp, fx$pd, fx$tree,
@@ -142,7 +147,9 @@ test_that("classRateConcentration reaches the C++ prior (#240)", {
     expect_equal(
       eval_log_prior_partitioned_cpp(dp, statePtr,
                                      classRateLogSd = state$class_rate_log_sd,
-                                     classW = state$class_w, etaNeo = 1),
+                                     classW = state$class_w,
+                                     classRate = state$class_rate,
+                                     etaNeo = 1),
       rPrior, tolerance = 1e-10)
 
     # The first MH ratio uses the C++ prior, whatever the state was given.

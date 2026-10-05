@@ -127,9 +127,15 @@ Ignored when \code{qHeterogeneity = FALSE}.}
 on \code{beta_scale} (the symmetric Dirichlet concentration parameter).
 Defaults: shape = 1, rate = 1. Ignored when \code{qHeterogeneity = FALSE}.}
 
-\item{classRateConcentration}{Numeric specifying the concentration of the
-symmetric Dirichlet prior on per-class relative rate weights; values below
-one favour uneven class rates, values above one pull them together.}
+\item{classRateConcentration}{Positive number specifying the concentration
+of the symmetric Dirichlet prior on per-class relative rate weights \code{w};
+values below one favour uneven class rates, values above one pull them
+together. Used only when the rate multiplier is unlinked. Class \code{c}'s
+effective rate is its rate \code{r_c} times its partition's
+neomorphic or transformational scale, divided by the character-weighted
+mean of that product; so when classes differ in their mix of neomorphic
+and transformational characters, the \code{w_} columns are not exactly the
+relative class rates.}
 
 \item{priorOnClassRateLogSd}{Prior structure on per-class ACRV
 dispersion \code{σ_c = class_rate_log_sd[c]} when \code{unlink = "shape"} is
@@ -161,7 +167,7 @@ marginalised out of the likelihood at every evaluation. The
 posterior is over \verb{(tree, mu, sigma, p)} only; the slow discrete
 coordinate is removed. Required when chain mixing on \verb{k'_i} is
 known to be uninformative (per finding EG-003 in
-\code{dev/red-team/findings.md}). v1 supports
+\code{dev/red-team/findings-archive.md}). v1 supports
 \code{kPrimePrior = "geometric"} only — other arms are §11 follow-ups
 in \code{dev/notes/2026-05-28-marginal-k-plan.md}. Het + marginal-k and
 partition-API + marginal-k are deferred (§13 of the plan).
