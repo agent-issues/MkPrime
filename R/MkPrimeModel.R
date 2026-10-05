@@ -117,7 +117,7 @@
 #'     posterior is over `(tree, mu, sigma, p)` only; the slow discrete
 #'     coordinate is removed. Required when chain mixing on `k'_i` is
 #'     known to be uninformative (per finding EG-003 in
-#'     `dev/red-team/findings.md`). v1 supports
+#'     `dev/red-team/findings-archive.md`). v1 supports
 #'     `kPrimePrior = "geometric"` only — other arms are §11 follow-ups
 #'     in `dev/notes/2026-05-28-marginal-k-plan.md`. Het + marginal-k and
 #'     partition-API + marginal-k are deferred (§13 of the plan).
