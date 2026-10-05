@@ -117,7 +117,8 @@ test_that("Resume keeps the labelling and the prior of the run (#224)", {
 
   # A model passed on resume (as the RB harness does) used to trigger a
   # fresh random-order start tree.
-  resumed <- ResumeMkPrime(ckpFile, o$pd, model = MkPrimeModel())
+  resumed <- allow_warning(ResumeMkPrime(ckpFile, o$pd, model = MkPrimeModel()),
+                           "without stabilisation")
   expect_identical(resumed$model$expSteps, ck$model$expSteps)
   written <- ape::read.tree(treeFile)
   logged <- ReadMkLog(logFile)
