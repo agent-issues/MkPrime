@@ -47,7 +47,8 @@ options passed on to \code{\link[=ResumeMkPrime]{ResumeMkPrime()}}.
 Set to \code{TRUE} to discard the existing checkpoint and start fresh.}
 
 \item{partition}{Optional integer vector of length \code{mkd$nChar} (after
-invariant-character drop) assigning each character to a user class.
+invariant-character drop, but before \code{coding = "informative"} drops
+uninformative characters) assigning each character to a user class.
 Values must form a contiguous range \code{1:nClasses}. \code{NULL} (the default)
 routes through the unchanged legacy code path; see the §7a bit-identity
 contract in \code{NOTES/partition-api-plan.md}.

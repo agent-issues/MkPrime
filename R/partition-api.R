@@ -5,12 +5,10 @@
 # (which groups characters by (type, kObs) for the C++ pruning loop). The
 # user-class layer wraps that grouping with an additional `classIdx` axis.
 #
-# Layer 1 currently implements:
-#   - argument validation (partition shape, unlink token resolution)
-#   - silent coercion of `unlink` when nothing is partitioned across
-# and routes EVERY partition != NULL case to a deferred-implementation
-# cli_abort. That keeps the §7a bit-identity guarantee for partition = NULL
-# in force while later commits add the user-class state and C++ surface.
+# Layer 1 implements argument validation (partition shape, unlink token
+# resolution), coercion of `unlink` when nothing is partitioned across, and
+# the per-class state, moves and column names for the "shape" and
+# "ratemultiplier" tokens. `partition = NULL` stays on the legacy path (§7a).
 
 # Valid `unlink` tokens for Layer 1. `brlens` is reserved for Layer 2
 # (T3 treatment) and rejected here with a "not yet implemented" message —

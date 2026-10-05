@@ -37,7 +37,9 @@ MkPrimeModel(
 }
 \arguments{
 \item{coding}{Ascertainment bias correction: \code{"variable"} (default),
-\code{"informative"}, or \code{"none"}.}
+\code{"informative"}, or \code{"none"}. Under \code{"informative"}, characters that
+are not parsimony-informative among their observed tips are dropped
+with a message.}
 
 \item{nCat}{Number of ACRV rate categories (default 6).}
 
@@ -50,9 +52,11 @@ so that the prior mean tree length is \code{expSteps}.}
 
 \item{expSteps}{Expected number of state changes per character: the prior
 mean tree length, in the per-character units of branch length. Default
-\code{NULL} computes it from the data as the parsimony score of the starting
-tree divided by the number of characters. Parsimony misses multiple hits,
-so this underestimates the true tree length.}
+\code{NULL} computes it from the data as the parsimony score of the
+neighbour-joining tree of the data (not the starting tree, so that
+\code{\link[=RunMkPrime]{RunMkPrime()}} and \code{\link[=mkp_stepping_stone]{mkp_stepping_stone()}} share one prior whatever tree
+each starts from) divided by the number of characters. Parsimony misses
+multiple hits, so this underestimates the true tree length.}
 
 \item{rateLossMeanlog, rateLossSdlog}{Parameters for the LogNormal prior
 on \code{rate_loss} (neomorphic asymmetry). Defaults: meanlog = 0, sdlog = 2.}
@@ -123,9 +127,15 @@ Ignored when \code{qHeterogeneity = FALSE}.}
 on \code{beta_scale} (the symmetric Dirichlet concentration parameter).
 Defaults: shape = 1, rate = 1. Ignored when \code{qHeterogeneity = FALSE}.}
 
-\item{classRateConcentration}{Numeric specifying the concentration of the
-symmetric Dirichlet prior on per-class relative rate weights; values below
-one favour uneven class rates, values above one pull them together.}
+\item{classRateConcentration}{Positive number specifying the concentration
+of the symmetric Dirichlet prior on per-class relative rate weights \code{w};
+values below one favour uneven class rates, values above one pull them
+together. Used only when the rate multiplier is unlinked. Class \code{c}'s
+effective rate is its rate \code{r_c} times its partition's
+neomorphic or transformational scale, divided by the character-weighted
+mean of that product; so when classes differ in their mix of neomorphic
+and transformational characters, the \code{w_} columns are not exactly the
+relative class rates.}
 
 \item{priorOnClassRateLogSd}{Prior structure on per-class ACRV
 dispersion \code{σ_c = class_rate_log_sd[c]} when \code{unlink = "shape"} is
@@ -192,8 +202,8 @@ Default (\code{NULL}): \code{"unconditional"} for both \code{"empirical_geometri
 \verb{k' ~ 2 + Geo(p)}, so the default aligns inference with the validated SBC
 forward model); \code{"conditional"} for \code{"beta_geometric"}, which has no
 unconditional form and rejects \code{"unconditional"}. Consulted for
-\code{empirical_geometric} and for \code{geometric} under
-\code{likelihoodMode = "marginal_k"}; ignored for \code{logseries}.}
+\code{empirical_geometric} and \code{geometric} under either \code{likelihoodMode};
+ignored for \code{logseries}.}
 
 \item{kprimeTruncK}{Integer specifying the cap \code{K} at which the geometric
 arm's \verb{k'} prior is truncated and renormalised over \verb{[2, K]}, bounded

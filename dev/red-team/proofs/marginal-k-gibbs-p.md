@@ -51,6 +51,8 @@ A single `p`-update sweep, run **only when the per-(char,k′) cache is valid**
    $$Z_i(p) = \begin{cases} 1-(1-p)^{K-1} & \text{Model A (shared} \Rightarrow \log\alpha = n[\log Z^A(p)-\log Z^A(p^\star)])\\[2pt] 1-(1-p)^{K-k_{\mathrm{obs},i}+1} & \text{Model B (per-char sum)}\end{cases}$$
    $K=\texttt{kprimeTruncK}$ (default 200). On accept set `state->p = p*`, recompute
    `logLik` (cache-valid re-marginalise, cheap) and `logPrior`; on reject leave all three.
+   Because the early-terminated support $S_i$ depends on $p$, $\alpha$ also carries
+   the indicator $\prod_i\mathbf 1\{u_i<|S_i(p^\star)|\}$ (§6.7, #372).
 
 **Why it is fast.** For the default $K=200$ and any non-tiny $p$, $(1-p)^{K-1}$
 underflows to $0$, so $Z_i\approx 1$, $\log\alpha\approx 0$, and the move is a
@@ -150,6 +152,9 @@ $$\boxed{\ \log\alpha = \sum_i\big[\log Z_i(p) - \log Z_i(p^\star)\big].\ }$$
 and cancel, so the boxed result is **exact**, not merely proportional.)
 This is a valid MH step targeting $\pi(p\mid\{u_i\})$ $\Rightarrow$ leaves
 $\pi_{\mathrm{aug}}$ invariant.
+(This treats the candidate set as fixed. With the early-terminated support of
+§6.7, $S_i$ moves with $p$ and $\alpha$ gains the indicator
+$\prod_i\mathbf 1\{u_i<|S_i(p^\star)|\}$.)
 
 ### 3.3 Closed forms for $\sum_i\log Z_i$
 * **Model A (unconditional).** $Z_i(p)=1-(1-p)^{K-1}$ is shared $\Rightarrow$
@@ -272,10 +277,19 @@ What this means for invariance:
   preceding move, or this move's own prior cold refill on accept, leaves the
   cache filled at the current $p$), so $S_i$ is the early-termination-appropriate
   support for $p$ and the imputed $u_i$ capture all mass down to $e^{-25}$.
-* The **accept ratio** (§3.2) is the analytic $Z$-ratio and does *not* reference
-  the cached support at $p^\star$ at all — so it is exact regardless.
-* The move therefore leaves invariant $\pi_{S_i(p)}$ (the target with support
-  frozen at the imputation-$p$). This differs from the ideal full-support
+* Because the support moves with $p$, the augmented target the move samples is
+  $\pi(p,u)\propto\pi(p)\prod_i w_i(u_i,p)/Z_i(p)\cdot\mathbf 1\{u_i<|S_i(p)|\}$,
+  and the exact accept ratio for the conjugate proposal is the analytic
+  $Z$-ratio of §3.2 **times** $\prod_i\mathbf 1\{u_i<|S_i(p^\star)|\}$. The
+  $Z$-ratio alone is not exact: it can accept into a state of zero augmented
+  density (#372; the violation rate is $\lesssim10^{-10}$ per move, of the
+  order of the $e^{-25}$ truncation itself). The code applies the indicator:
+  on a would-be accept it replays `marginal_support_at_p` at $p^\star$ on the
+  raw (p-independent) cached LLs and rejects if some $u_i\ge|S_i(p^\star)|$;
+  a return of $-1$ means $S_i(p^\star)$ extends past the evaluated candidates,
+  which contain $u_i$, so the indicator holds.
+* The move therefore leaves invariant $\pi_{S(p)}$, the target whose support at
+  each $p$ is that $p$'s early-termination support. This differs from the ideal full-support
   $\pi_{\mathrm{full}}$ only by the early-termination tail ($\le e^{-25}$ per
   dropped candidate at the appropriate $p$; the $\sim10^{-6}$ figure above is the
   *warm-cache* artefact, which the cold refill removes from the committed state).
