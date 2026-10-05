@@ -17,7 +17,8 @@
 #'   `TreeSearch::AdditionTree`) when the `TreeSearch` package is
 #'   installed, falling back to a neighbour-joining tree otherwise.
 #'   The tree must be binary, rooted or unrooted; polytomies are resolved
-#'   at random with [ape::multi2di()], with a warning.
+#'   at random with [TreeTools::MakeTreeBinary()], with a warning. Edges
+#'   inserted to resolve them get length 1e-8; others keep their lengths.
 #' @param neomorphic,knownStates Passed to [MkPrimeData()] if `data` is
 #'   a `phyDat` object.
 #' @param model An `MkPrimeModel` object, or `NULL` for defaults.
@@ -717,6 +718,15 @@ RunMkPrime <- function(data, tree = NULL,
 }
 
 
+# The tips below each edge, which identify an edge across resolutions of a
+# polytomy.
+.CladeKeys <- function(tree) {
+  tips <- TreeTools::DescendantTips(tree$edge[, 1], tree$edge[, 2],
+                                    edge = seq_len(nrow(tree$edge)))
+  apply(tips, 1, function(x) paste(sort(tree$tip.label[x]), collapse = "\r"))
+}
+
+
 # Validates a user or default start tree and returns it as every sampler
 # indexes it: tip i is data row i (#224), edges in canonical preorder, which
 # all topology proposals maintain.
@@ -749,8 +759,11 @@ RunMkPrime <- function(data, tree = NULL,
     ))
   }
   if (nPoly > 0L) {
-    tree <- ape::multi2di(tree)
-    tree$edge.length[tree$edge.length <= 0] <- 1e-8
+    binary <- TreeTools::MakeTreeBinary(tree)
+    binary$edge.length <- tree$edge.length[
+      match(.CladeKeys(binary), .CladeKeys(tree))]
+    binary$edge.length[is.na(binary$edge.length)] <- 1e-8
+    tree <- binary
     cli::cli_warn(c(
       "{nPoly} polytom{?y/ies} in {.arg tree} resolved at random.",
       "i" = "The tree moves need a binary tree; new edges have length 1e-8."

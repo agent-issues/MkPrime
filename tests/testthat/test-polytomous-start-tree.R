@@ -33,6 +33,10 @@ test_that(".PrepareStartTree resolves polytomies with one warning", {
     expect_equal(ChildCounts(out)$root, 2L)
     expect_true(all(ChildCounts(out)$other == 2L))
     expect_true(all(out$edge.length > 0))
+    # Inserted edges are near-zero; every original edge keeps its length.
+    inserted <- out$edge.length == 1e-8
+    expect_equal(sum(inserted), nrow(out$edge) - nrow(tree$edge))
+    expect_equal(sort(out$edge.length[!inserted]), sort(tree$edge.length))
   }
 })
 
