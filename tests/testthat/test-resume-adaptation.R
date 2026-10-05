@@ -72,6 +72,7 @@ test_that(".SchedulePins keeps stored auto-pins over capped weights", {
 })
 
 test_that("a mid-warmup resume freezes the same gibbs_kPrime weight (#302)", {
+  skip_under_memcheck()
   skip_on_cran()
   data <- .ResumeAdaptData()
   ckpFile <- tempfile(fileext = ".ckp")
@@ -133,6 +134,7 @@ test_that("a mid-Tuning resume does not charge the interrupted window (#302)", {
 })
 
 test_that("tuning is priced on the full minEss and all spend (#201)", {
+  skip_under_memcheck()
   skip_on_cran()
   data <- .ResumeAdaptData()
   ckpFile <- tempfile(fileext = ".ckp")

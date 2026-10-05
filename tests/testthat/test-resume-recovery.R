@@ -133,6 +133,7 @@ test_that("a run that ends at nIter checkpoints its final rows (#318)", {
 })
 
 test_that("an interrupt flushes before it checkpoints (#317)", {
+  skip_under_memcheck()
   fx <- .RecoveryFixture()
   dir <- withr::local_tempdir()
   # Sample batches end on each plotEvery boundary, so the run stops at 5000.
@@ -162,6 +163,7 @@ test_that("an interrupt flushes before it checkpoints (#317)", {
 })
 
 test_that("a resume interrupted mid-run checkpoints the run in progress (#317)", {
+  skip_under_memcheck()
   fx <- .RecoveryFixture()
   dir <- withr::local_tempdir()
   mcmc <- .RecoveryJob(dir, nRuns = 2L, checkEvery = 10000L,
