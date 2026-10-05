@@ -127,9 +127,15 @@ Ignored when \code{qHeterogeneity = FALSE}.}
 on \code{beta_scale} (the symmetric Dirichlet concentration parameter).
 Defaults: shape = 1, rate = 1. Ignored when \code{qHeterogeneity = FALSE}.}
 
-\item{classRateConcentration}{Numeric specifying the concentration of the
-symmetric Dirichlet prior on per-class relative rate weights; values below
-one favour uneven class rates, values above one pull them together.}
+\item{classRateConcentration}{Positive number specifying the concentration
+of the symmetric Dirichlet prior on per-class relative rate weights \code{w};
+values below one favour uneven class rates, values above one pull them
+together. Used only when the rate multiplier is unlinked. Class \code{c}'s
+effective rate is its rate \code{r_c} times its partition's
+neomorphic or transformational scale, divided by the character-weighted
+mean of that product; so when classes differ in their mix of neomorphic
+and transformational characters, the \code{w_} columns are not exactly the
+relative class rates.}
 
 \item{priorOnClassRateLogSd}{Prior structure on per-class ACRV
 dispersion \code{σ_c = class_rate_log_sd[c]} when \code{unlink = "shape"} is

@@ -29,9 +29,15 @@
 #'   `priorOnClassRateLogSd = "gamma_independent"` per-class prior.
 #'   Not consulted by the default pooled hyperprior (see
 #'   `priorOnClassRateLogSd`).
-#' @param classRateConcentration Numeric specifying the concentration of the
-#'   symmetric Dirichlet prior on per-class relative rate weights; values below
-#'   one favour uneven class rates, values above one pull them together.
+#' @param classRateConcentration Positive number specifying the concentration
+#'   of the symmetric Dirichlet prior on per-class relative rate weights `w`;
+#'   values below one favour uneven class rates, values above one pull them
+#'   together. Used only when the rate multiplier is unlinked. Class `c`'s
+#'   effective rate is its rate `r_c` times its partition's
+#'   neomorphic or transformational scale, divided by the character-weighted
+#'   mean of that product; so when classes differ in their mix of neomorphic
+#'   and transformational characters, the `w_` columns are not exactly the
+#'   relative class rates.
 #' @param kprimeTruncK Integer specifying the cap `K` at which the geometric
 #'   arm's `k'` prior is truncated and renormalised over `[2, K]`, bounded
 #'   above by the compile-time candidate cap of 256.
@@ -293,6 +299,7 @@ MkPrimeModel <- function(
                     kprimeBeta)
 
   .CheckLogseriesC(kPrimePrior, kprimeLogseriesC)
+  .CheckClassRateConcentration(classRateConcentration)
 
   # M-052: validate Het parameters
   if (isTRUE(qHeterogeneity)) {
@@ -474,6 +481,21 @@ MkPrimeModel <- function(
 }
 
 
+# Checked at finalisation too: a model list can be edited after construction.
+.CheckClassRateConcentration <- function(classRateConcentration) {
+  if (!(is.numeric(classRateConcentration) &&
+        length(classRateConcentration) == 1L &&
+        is.finite(classRateConcentration) && classRateConcentration > 0)) {
+    cli::cli_abort(
+      "{.arg classRateConcentration} must be a single positive finite number,
+       not {.val {classRateConcentration}}."
+    )
+  }
+  # Return:
+  invisible(NULL)
+}
+
+
 # beta_geometric offsets k' from kObs_i (u = k' - kObs_i), so its prior is
 # conditional by construction and has no unconditional form to switch to.
 # Checked at finalisation too, for a model whose priorVariant was set by hand.
@@ -526,6 +548,8 @@ MkPrimeModel <- function(
   # A model saved before this field existed takes the constructor's default.
   model$priorOnClassRateLogSd <- model$priorOnClassRateLogSd %||%
     "hyperprior_pooled"
+  model$classRateConcentration <- model$classRateConcentration %||% 1
+  .CheckClassRateConcentration(model$classRateConcentration)
   model
 }
 
@@ -1013,7 +1037,9 @@ LogPrior <- function(state, model, mkd) {
 
     # 1. Dirichlet(alpha) on class_w (§5.1)
     #    K == 1: degenerate Dirichlet — contribution is 0.
-    if (K > 1) {
+    #    Scalar class_rate: the rate multiplier is linked (#244), so class_w
+    #    is fixed and the model is the unpartitioned one.
+    if (K > 1 && length(state$class_rate) > 1) {
       if (any(classW <= 0)) return(-Inf)
       alpha <- model$classRateConcentration %||% 1.0
       logDirConst <- lgamma(K * alpha) - K * lgamma(alpha)
