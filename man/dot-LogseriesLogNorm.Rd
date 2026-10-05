@@ -4,10 +4,12 @@
 \alias{.LogseriesLogNorm}
 \title{Log normalising constant of the logseries prior on \verb{k' >= 2}}
 \usage{
-.LogseriesLogNorm(c)
+.LogseriesLogNorm(c, K = Inf)
 }
 \arguments{
 \item{c}{Scalar in (0, 1).}
+
+\item{K}{Upper limit of the support.}
 }
 \value{
 Scalar.
@@ -15,6 +17,7 @@ Scalar.
 \description{
 \verb{log(sum_\{k >= 2\} c^k / k) = log(-log(1 - c) - c)}. The subtraction
 cancels at small \code{c}, where the series is summed directly instead. Mirrors
-\code{mkp::logseries_log_norm()} in \code{src/prior_math.h}.
+\code{mkp::logseries_log_norm()} in \code{src/prior_math.h}; with a finite \code{K}, the
+sum over \verb{2 <= k <= K}, mirroring \code{mkp::logseries_log_norm_capped()}.
 }
 \keyword{internal}

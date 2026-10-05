@@ -38,9 +38,9 @@
 #'   mean of that product; so when classes differ in their mix of neomorphic
 #'   and transformational characters, the `w_` columns are not exactly the
 #'   relative class rates.
-#' @param kprimeTruncK Integer specifying the cap `K` at which the geometric
-#'   arm's `k'` prior is truncated and renormalised over `[2, K]`, bounded
-#'   above by the compile-time candidate cap of 256.
+#' @param kprimeTruncK Integer specifying the cap `K` at which every `k'`
+#'   prior is truncated and renormalised, bounded above by the compile-time
+#'   candidate cap of 256. Must be at least the largest observed state count.
 #' @param priorOnClassRateLogSd Prior structure on per-class ACRV
 #'   dispersion `σ_c = class_rate_log_sd[c]` when `unlink = "shape"` is
 #'   active with two or more user classes. One of:
@@ -250,18 +250,14 @@ MkPrimeModel <- function(
       ))
     }
   }
-  # kprimeTruncK is the truncation cap K on k' for the GEOMETRIC arm: the prior
-  # is a truncated geometric on [2, K] renormalised by Z(p)
-  # (MARGINAL-K-TRUNC-001). Stage 2 applies the truncation under sampled_k as
-  # well as marginal_k (RB-consistency), so validate [2, 256] whenever the
-  # geometric arm is in use (marginal_k requires it). The C++ candidate cap
+  # kprimeTruncK is the truncation cap K on k' for every prior (#392), each
+  # renormalised over its capped support (MARGINAL-K-TRUNC-001), so the Gibbs
+  # sweep enumerates the whole support. The C++ candidate cap
   # kMaxKprimeCand = 256 bounds it above (set_kprime_trunc_k enforces K <= 256
   # so the numerator can reach the full support); K MUST equal the SBC forward's
   # K_MAX_PRIOR for calibration, and K >= max(kObs) is enforced data-side in
   # .InitMcmcData.
-  if (identical(kPrimePrior, "geometric")) {
-    kprimeTruncK <- .CheckKprimeTruncK(kprimeTruncK)
-  }
+  kprimeTruncK <- .CheckKprimeTruncK(kprimeTruncK)
 
   # empiricalNObs is only relevant under the empirical_geometric prior; warn
   # if supplied for other priors so the user knows it will be ignored.
@@ -600,8 +596,7 @@ MkPrimeModel <- function(
   model <- .ResolvePriorDefaults(model)
   .CheckPriorEnums(model$kPrimePrior, model$priorVariant)
   .CheckPriorVariant(model$kPrimePrior, model$priorVariant)
-  if (identical(model$kPrimePrior, "geometric") &&
-      !is.null(model$kprimeTruncK)) {
+  if (!is.null(model$kprimeTruncK)) {
     model$kprimeTruncK <- .CheckKprimeTruncK(model$kprimeTruncK)
   }
   if (identical(model$kPrimePrior, "empirical_geometric")) {
@@ -740,12 +735,17 @@ MkPrimeModel <- function(
 #'
 #' `log(sum_{k >= 2} c^k / k) = log(-log(1 - c) - c)`. The subtraction
 #' cancels at small `c`, where the series is summed directly instead. Mirrors
-#' `mkp::logseries_log_norm()` in `src/prior_math.h`.
+#' `mkp::logseries_log_norm()` in `src/prior_math.h`; with a finite `K`, the
+#' sum over `2 <= k <= K`, mirroring `mkp::logseries_log_norm_capped()`.
 #' @param c Scalar in (0, 1).
+#' @param K Upper limit of the support.
 #' @return Scalar.
 #' @keywords internal
-.LogseriesLogNorm <- function(c) {
-  s <- if (c < 0.25) {
+.LogseriesLogNorm <- function(c, K = Inf) {
+  s <- if (is.finite(K)) {
+    k <- seq.int(2L, K)
+    sum(c ^ k / k)
+  } else if (c < 0.25) {
     sum(c ^ (2:60) / (2:60))
   } else {
     -log1p(-c) - c
@@ -805,18 +805,28 @@ MkPrimeModel <- function(
 #'   `Z_i` correction; the `k' >= kObs` floor is then enforced by the
 #'   likelihood, not the prior. The two agree whenever every `kObs == 2`. See
 #'   `dev/notes/2026-05-28-kprime-viability.md`.
+#' @param K Upper limit of the support. A finite `K` truncates the prior to
+#'   `[2, K]` (Model A) or `[kObs_i, K]` (Model B) and renormalises over it,
+#'   mirroring `cpp_log_prior`.
 #' @return Scalar log density `sum_i log P(k'_i)`. Returns `-Inf` if any
-#'   `k'_i < 2`.
+#'   `k'_i < 2` or `k'_i > K`.
 #' @keywords internal
 .LogPriorEmpiricalGeometric <- function(kPrime, emp, p, kObs = 2L,
-                                        unconditional = FALSE) {
+                                        unconditional = FALSE, K = Inf) {
   if (p <= 0 || p >= 1) {
     # Return:
     return(-Inf)
   }
-  if (any(kPrime < 2L)) {
+  if (any(kPrime < 2L) || any(kPrime > K)) {
     # Return:
     return(-Inf)
+  }
+  if (is.finite(K)) {
+    # Return:
+    return(.LogPriorEmpiricalGeometricCapped(kPrime, emp, p,
+                                             rep_len(as.integer(kObs),
+                                                     length(kPrime)),
+                                             unconditional, as.integer(K)))
   }
   kObs <- rep_len(as.integer(kObs), length(kPrime))
   logP <- log(p)
@@ -883,6 +893,47 @@ MkPrimeModel <- function(
   }
   # Return:
   total
+}
+
+
+# The empirical_geometric prior truncated at K (#392). Mirrors cpp_log_prior.
+.LogPriorEmpiricalGeometricCapped <- function(kPrime, emp, p, kObs,
+                                              unconditional, K) {
+  tab <- .LogEmpGeomCapped(emp, p, K)
+  logZi <- if (unconditional) rep(tab$logZ[2], length(kPrime)) else tab$logZ[kObs]
+  if (any(!is.finite(tab$logPk[kPrime])) || any(!is.finite(logZi))) {
+    # Return:
+    return(-Inf)
+  }
+  # Return:
+  sum(tab$logPk[kPrime] - logZi)
+}
+
+
+# Untruncated log P(k | p) for k = 2..K (`logPk[k]`), and `logZ[m]`, the log
+# of sum_{k=m}^{K} P(k | p), under the empirical_geometric prior. Built from
+# P(k | p) = p P_emp(k) + (1 - p) P(k - 1 | p) and summed downwards as
+# positive terms, so no 1 - (...) cancels (#259).
+.LogEmpGeomCapped <- function(emp, p, K) {
+  logP <- log(p)
+  log1mP <- log1p(-p)
+  logEmp <- .LogPemp(K, emp)
+  LogAdd <- function(a, b) {
+    mx <- max(a, b)
+    if (is.finite(mx)) mx + log(exp(a - mx) + exp(b - mx)) else -Inf
+  }
+  logPk <- rep(-Inf, K)
+  prev <- -Inf
+  for (k in seq.int(2L, K)) {
+    prev <- LogAdd(logP + logEmp[k - 1L], log1mP + prev)
+    logPk[k] <- prev
+  }
+  logZ <- rep(-Inf, K + 1L)
+  for (k in seq.int(K, 2L)) {
+    logZ[k] <- LogAdd(logPk[k], logZ[k + 1L])
+  }
+  # Return:
+  list(logPk = logPk, logZ = logZ)
 }
 
 
@@ -958,6 +1009,11 @@ LogPrior <- function(state, model, mkd) {
       )
     }
     if (any(state$kPrime[transIdx] < mkd$kObs[transIdx])) return(-Inf)
+    # Every k' prior is truncated at K (#392); under marginal_k k' is pinned to
+    # kObs and the marginal evaluator applies the cap.
+    K <- as.integer(model$kprimeTruncK %||% 200L)
+    if (!identical(model$likelihoodMode, "marginal_k") &&
+        any(state$kPrime[transIdx] > K)) return(-Inf)
 
     if (identical(model$kPrimePrior, "geometric") ||
         identical(model$kPrimePrior, "empirical_geometric")) {
@@ -1027,10 +1083,8 @@ LogPrior <- function(state, model, mkd) {
       # posterior (RB-consistency). Under marginal_k the per-character mass is
       # consumed by the marginal evaluator; only the p hyperprior is added here.
       if (!marginalK) {
-        K      <- as.integer(model$kprimeTruncK %||% 200L)
         kp     <- state$kPrime[transIdx]
         kobs   <- mkd$kObs[transIdx]
-        if (any(kp > K)) return(-Inf)            # truncated support: k' in [.., K]
         logP   <- log(state$p)
         log1mP <- log1p(-state$p)
         if (identical(model$priorVariant, "unconditional")) {
@@ -1058,7 +1112,8 @@ LogPrior <- function(state, model, mkd) {
       lp <- lp + .LogPriorEmpiricalGeometric(
         state$kPrime[transIdx], model$empiricalNObs, state$p,
         mkd$kObs[transIdx],
-        unconditional = identical(model$priorVariant, "unconditional")
+        unconditional = identical(model$priorVariant, "unconditional"),
+        K = K
       )
 
       # p: Beta hyperprior
@@ -1069,24 +1124,29 @@ LogPrior <- function(state, model, mkd) {
     } else if (identical(model$kPrimePrior, "beta_geometric")) {
       # Per-character p_i marginalized → Beta-Geometric(α, β)
       # log P(k'_i = kObs_i + u | α, β) = lbeta(α+1, β+u) - lbeta(α, β)
+      # on u in [0, K - kObs_i], renormalised by
+      # Z_i = 1 - B(α, β + n_i) / B(α, β), n_i = K - kObs_i + 1.
       alpha <- state$kprime_alpha %||% 1.0
       beta_ <- state$kprime_beta %||% 1.0
       u <- state$kPrime[transIdx] - mkd$kObs[transIdx]
-      lp <- lp + sum(lbeta(alpha + 1, beta_ + u) - lbeta(alpha, beta_))
+      n <- K - mkd$kObs[transIdx] + 1
+      lbAB <- lbeta(alpha, beta_)
+      lp <- lp + sum(lbeta(alpha + 1, beta_ + u) - lbAB -
+                       .Log1mExp(lbeta(alpha, beta_ + n) - lbAB))
 
       # Hyperprior on (α, β): Exponential(1)
       lp <- lp + dexp(alpha, rate = 1, log = TRUE)
       lp <- lp + dexp(beta_, rate = 1, log = TRUE)
     } else {
-      # k'_i: Logseries(c), normalised over its support k' >= 2:
-      # log P(k; c) = k*log(c) - log(k) - log(-log(1-c) - c).
+      # k'_i: Logseries(c), normalised over its support 2 <= k' <= K:
+      # log P(k; c) = k*log(c) - log(k) - log(sum_{k=2}^K c^k / k).
       # The further truncation to k' >= kObs_i is not renormalised: with c
       # fixed it is a constant that cancels in every MH ratio, but it means
-      # log_prior is the untruncated density.
+      # log_prior is not normalised on k' >= kObs_i.
       c_ls <- model$kprimeLogseriesC
       kp <- state$kPrime[transIdx]
       lp <- lp + sum(kp * log(c_ls) - log(kp)) -
-            length(transIdx) * .LogseriesLogNorm(c_ls)
+            length(transIdx) * .LogseriesLogNorm(c_ls, K)
     }
   }
 
@@ -1227,7 +1287,7 @@ print.MkPrimeModel <- function(x, ...) {
     paste0("Tree length prior: ", tlPriorStr),
     "rate_loss prior: LogNormal({x$rateLossMeanlog}, {x$rateLossSdlog})",
     "rate_log_sd prior: Gamma({x$rateLogSdShape}, {x$rateLogSdRate})",
-    paste0("k' prior: ", k_prior_str),
+    paste0("k' prior: ", k_prior_str, "; k' <= {x$kprimeTruncK %||% 200}"),
     "rate_neo prior: LogNormal({x$rateNeoMeanlog}, {x$rateNeoSdlog})",
     paste0("Q-matrix heterogeneity: ", het_str),
     paste0("Likelihood mode: ", lik_mode_str)
