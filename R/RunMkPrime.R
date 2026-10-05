@@ -196,6 +196,7 @@ RunMkPrime <- function(data, tree = NULL,
   # writes wholesale, which reaches every save site without an extra argument.
   mcmc$fixTopology <- isTRUE(fixTopology)
   mcmc$partitionSpec <- partitionSpec
+  mcmc$dataFingerprint <- .DataFingerprint(mkd)
 
   # When a user partition is supplied, rebuild mkd$partitions with classIdx
   # populated for each PartInfo. The C++ McmcData uses classIdx to map each
@@ -3322,6 +3323,47 @@ RunMkPrime <- function(data, tree = NULL,
 
 # --- Checkpointing ---
 
+#' Fingerprint of the data a chain was built on
+#'
+#' Per-character chain state (`kPrime`) is indexed by character, so a resume
+#' on reordered or different characters would apply it to the wrong columns.
+#' The matrix is hashed in character order, rows by tip label.
+#'
+#' @keywords internal
+.DataFingerprint <- function(mkd) {
+  charMatrix <- mkd$matrix
+  charMatrix <- charMatrix[order(rownames(charMatrix)), , drop = FALSE]
+  storage.mode(charMatrix) <- "integer"
+  list(nChar = as.integer(mkd$nChar),
+       kObs = as.integer(mkd$kObs),
+       hash = rlang::hash(unname(charMatrix)))
+}
+
+#' Abort a resume whose data differ from the checkpoint's
+#' @keywords internal
+.CheckDataFingerprint <- function(saved, mkd) {
+  if (is.null(saved)) {
+    .AlertInfo("Checkpoint predates data fingerprints; not checking that \\
+                {.arg data} matches the data it was run on.")
+    return(invisible())
+  }
+  now <- .DataFingerprint(mkd)
+  if (identical(saved, now)) return(invisible())
+  what <- if (!identical(saved$nChar, now$nChar)) {
+    "character count ({saved$nChar} in checkpoint, {now$nChar} in {.arg data})"
+  } else if (!identical(saved$kObs, now$kObs)) {
+    "observed state counts (kObs) per character"
+  } else {
+    "character states or order"
+  }
+  cli::cli_abort(c(
+    "{.arg data} differs from the data this chain was run on.",
+    "x" = paste("The", what, "differ."),
+    "i" = "Resume with the original data, or start a fresh run with \\
+           {.code RunMkPrime(..., overwrite = TRUE)}."
+  ))
+}
+
 #' Save MCMC checkpoint to RDS
 #'
 #' Version 1 (in-memory mode): stores full run history (samples, trees).
@@ -3794,6 +3836,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   if (identical(model$coding, "informative")) {
     mkd <- .DropUninformable(mkd)
   }
+  .CheckDataFingerprint(checkpoint$mcmc$dataFingerprint, mkd)
   model <- .FinalizeModel(model, NULL, mkd)
 
   if (!is.null(tree)) .CheckTipLabels(tree, mkd)
