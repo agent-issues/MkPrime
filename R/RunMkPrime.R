@@ -31,7 +31,8 @@
 #'   options passed on to [ResumeMkPrime()].
 #'   Set to `TRUE` to discard the existing checkpoint and start fresh.
 #' @param partition Optional integer vector of length `mkd$nChar` (after
-#'   invariant-character drop) assigning each character to a user class.
+#'   invariant-character drop, but before `coding = "informative"` drops
+#'   uninformative characters) assigning each character to a user class.
 #'   Values must form a contiguous range `1:nClasses`. `NULL` (the default)
 #'   routes through the unchanged legacy code path; see the §7a bit-identity
 #'   contract in `NOTES/partition-api-plan.md`.
@@ -173,6 +174,10 @@ RunMkPrime <- function(data, tree = NULL,
     mkd <- MkPrimeData(data, neomorphic = neomorphic,
                        knownStates = knownStates)
   }
+  if (identical(model$coding, "informative")) {
+    if (!is.null(partition)) partition <- partition[.Informable(mkd)]
+    mkd <- .DropUninformable(mkd)
+  }
 
   # --- Partition API (Layer 1 plumbing; see NOTES/partition-api-plan.md) ---
   # Validation and silent coercion happen here so any error is raised before
@@ -212,60 +217,16 @@ RunMkPrime <- function(data, tree = NULL,
         "i" = "Install {.pkg TreeSearch} to use the preferred parsimony \\
                addition tree."))
     }
-  } else if (!inherits(tree, "phylo")) {
-    cli::cli_abort("{.arg tree} must be a {.cls phylo} object, or {.val NULL} to use a default starting tree.")
-  }
-  if (is.null(tree$edge.length)) {
-    cli::cli_abort(c(
-      "{.arg tree} has no branch lengths.",
-      "i" = "Supply a tree with edge lengths, e.g. \\
-             {.code TreeSearch::AdditionTree(data)} (then set \\
-             {.code tree$edge.length <- rep(0.1, nrow(tree$edge))})."
-    ))
-  }
-  nNeg <- sum(tree$edge.length <= 0)
-  if (nNeg > 0L) {
-    cli::cli_warn(c(
-      "{nNeg} non-positive branch length{?s} clamped to 1e-8.",
-      "i" = "Zero or negative lengths arise in NJ trees when taxa are very similar. \\
-             They are invalid for likelihood computation."
-    ))
-    tree$edge.length[tree$edge.length <= 0] <- 1e-8
   }
 
-  # Tip labels must match data taxon names
-  treeTips <- tree$tip.label
-  dataTaxa <- rownames(mkd$matrix)
-  missing  <- setdiff(dataTaxa, treeTips)
-  extra    <- setdiff(treeTips, dataTaxa)
-  if (length(missing) > 0L || length(extra) > 0L) {
-    msgs <- character(0)
-    if (length(missing) > 0L) {
-      msgs <- c(msgs,
-        "x" = "{length(missing)} taxon{?/a} in data but not in tree: {.val {missing}}.")
-    }
-    if (length(extra) > 0L) {
-      msgs <- c(msgs,
-        "x" = "{length(extra)} tip{?s} in tree but not in data: {.val {extra}}.")
-    }
-    cli::cli_abort(c(
-      "Tip labels in {.arg tree} do not match taxa in {.arg data}.",
-      msgs,
-      "i" = "Every taxon in the data must appear as a tip label in the tree, and vice versa."
-    ))
-  }
+  tree <- .PrepareStartTree(tree, mkd)
 
   if (is.null(model)) model <- MkPrimeModel()
   # mcmc already defaulted above (before auto-resume check)
 
-  model <- .FinalizeModel(model, tree, mkd)
-
-  # Below the API, tip i is data row i; AdditionTree() adds tips in random order.
-  tree <- TreeTools::RenumberTips(tree, dataTaxa)
-  # PREORDER INVARIANT: all topology proposals maintain canonical preorder.
-  tree <- TreeTools::Preorder(tree)
+  model <- .FinalizeModel(model, NULL, mkd)
   nEdge <- nrow(tree$edge)
-  tipLabels <- dataTaxa
+  tipLabels <- rownames(mkd$matrix)
 
   hasNeo <- any(mkd$type == "neomorphic")
   transIdx <- which(mkd$type == "transformational")
@@ -713,6 +674,60 @@ RunMkPrime <- function(data, tree = NULL,
 
 
 # --- Run initialization ---
+
+.CheckTipLabels <- function(tree, mkd) {
+  treeTips <- tree$tip.label
+  dataTaxa <- rownames(mkd$matrix)
+  missing  <- setdiff(dataTaxa, treeTips)
+  extra    <- setdiff(treeTips, dataTaxa)
+  if (length(missing) > 0L || length(extra) > 0L) {
+    msgs <- character(0)
+    if (length(missing) > 0L) {
+      msgs <- c(msgs,
+        "x" = "{length(missing)} taxon{?/a} in data but not in tree: {.val {missing}}.")
+    }
+    if (length(extra) > 0L) {
+      msgs <- c(msgs,
+        "x" = "{length(extra)} tip{?s} in tree but not in data: {.val {extra}}.")
+    }
+    cli::cli_abort(c(
+      "Tip labels in {.arg tree} do not match taxa in {.arg data}.",
+      msgs,
+      "i" = "Every taxon in the data must appear as a tip label in the tree, and vice versa."
+    ))
+  }
+  invisible(tree)
+}
+
+
+# Validates a user or default start tree and returns it as every sampler
+# indexes it: tip i is data row i (#224), edges in canonical preorder, which
+# all topology proposals maintain.
+.PrepareStartTree <- function(tree, mkd) {
+  if (!inherits(tree, "phylo")) {
+    cli::cli_abort("{.arg tree} must be a {.cls phylo} object, or {.val NULL} to use a default starting tree.")
+  }
+  if (is.null(tree$edge.length)) {
+    cli::cli_abort(c(
+      "{.arg tree} has no branch lengths.",
+      "i" = "Supply a tree with edge lengths, e.g. \\
+             {.code TreeSearch::AdditionTree(data)} (then set \\
+             {.code tree$edge.length <- rep(0.1, nrow(tree$edge))})."
+    ))
+  }
+  nNeg <- sum(tree$edge.length <= 0)
+  if (nNeg > 0L) {
+    cli::cli_warn(c(
+      "{nNeg} non-positive branch length{?s} clamped to 1e-8.",
+      "i" = "Zero or negative lengths arise in NJ trees when taxa are very similar. \\
+             They are invalid for likelihood computation."
+    ))
+    tree$edge.length[tree$edge.length <= 0] <- 1e-8
+  }
+  .CheckTipLabels(tree, mkd)
+  TreeTools::Preorder(TreeTools::RenumberTips(tree, rownames(mkd$matrix)))
+}
+
 
 #' Initialize state for a single run
 #'
@@ -3403,13 +3418,15 @@ RunMkPrime <- function(data, tree = NULL,
 #' @param checkpointFile Path to the checkpoint RDS file.
 #' @param data A `phyDat` or `MkPrimeData` object (must match original).
 #' @param model An `MkPrimeModel` object.  If `NULL` (the default),
-#'   the model stored in the checkpoint is used.  Otherwise its unset
-#'   data-derived defaults (`expSteps`, `treeLengthRate`) are taken from the
-#'   checkpoint's model, so the prior does not change mid-chain.
+#'   the model stored in the checkpoint is used.  Otherwise, if it leaves
+#'   `expSteps` unset, the checkpoint's is used, so the prior mean tree
+#'   length does not change mid-chain; an unset `treeLengthRate` is the
+#'   checkpoint's too, unless `treeLengthShape` differs from the
+#'   checkpoint's, when the rate is resolved from the new shape.
 #'   Fields that a checkpoint predates are filled with current defaults,
 #'   with a warning.
-#' @param tree A `phylo` object, used only to check tip labels and, for a
-#'   checkpoint with no stored model, to derive `expSteps`.  Usually `NULL`.
+#' @param tree A `phylo` object, used only to check tip labels.  Usually
+#'   `NULL`.
 #' @param mcmc `NULL` (the default) to continue with the checkpoint's MCMC
 #'   settings, or an `MkPrimeMCMC` object (or a named list of its fields)
 #'   whose run-bounding settings -- `nIter`, `maxTime`, `minEss`,
@@ -3495,43 +3512,18 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     model <- ckModel %||% MkPrimeModel()
   } else if (!is.null(ckModel) && is.null(model$expSteps)) {
     model$expSteps <- ckModel$expSteps
-    if (is.null(model$treeLengthRate)) {
+    # A changed shape re-derives the rate from expSteps.
+    if (is.null(model$treeLengthRate) &&
+        identical(model$treeLengthShape, ckModel$treeLengthShape)) {
       model$treeLengthRate <- ckModel$treeLengthRate
     }
   }
-  if (is.null(model$expSteps)) {
-    # Only a checkpoint that predates stored models reaches here.
-    ch1 <- checkpoint$runs[[1]]$chains[[1]]
-    fitchTree <- tree %||% .EdgeToTree(
-      ch1$edge, ch1$rel_br_lengths * ch1$tree_length, rownames(mkd$matrix))
-    model <- .FinalizeModel(model, fitchTree, mkd)
-  } else {
-    model <- .FinalizeModel(model, NULL, mkd)
+  if (identical(model$coding, "informative")) {
+    mkd <- .DropUninformable(mkd)
   }
+  model <- .FinalizeModel(model, NULL, mkd)
 
-  # Validate tip labels when a tree is available
-  if (!is.null(tree)) {
-    treeTips <- tree$tip.label
-    dataTaxa <- rownames(mkd$matrix)
-    missing  <- setdiff(dataTaxa, treeTips)
-    extra    <- setdiff(treeTips, dataTaxa)
-    if (length(missing) > 0L || length(extra) > 0L) {
-      msgs <- character(0)
-      if (length(missing) > 0L) {
-        msgs <- c(msgs,
-          "x" = "{length(missing)} taxon{?/a} in data but not in tree: {.val {missing}}.")
-      }
-      if (length(extra) > 0L) {
-        msgs <- c(msgs,
-          "x" = "{length(extra)} tip{?s} in tree but not in data: {.val {extra}}.")
-      }
-      cli::cli_abort(c(
-        "Tip labels in {.arg tree} do not match taxa in {.arg data}.",
-        msgs,
-        "i" = "Every taxon in the data must appear as a tip label in the tree, and vice versa."
-      ))
-    }
-  }
+  if (!is.null(tree)) .CheckTipLabels(tree, mkd)
 
   runs <- checkpoint$runs
   mcmc <- .ResumeMcmc(checkpoint$mcmc, mcmcOverride)

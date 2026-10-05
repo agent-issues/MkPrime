@@ -96,6 +96,8 @@ MkPrimeData <- function(data,
     length(unique(col[!is.na(col)]))
   })
 
+  origCol <- seq_len(nChar)
+
   # Drop invariant characters (kObs <= 1) before further validation
   invariant <- which(kObs <= 1L)
   if (length(invariant)) {
@@ -109,6 +111,7 @@ MkPrimeData <- function(data,
     }
     charMatrix <- charMatrix[, keep, drop = FALSE]
     kObs <- kObs[keep]
+    origCol <- keep
 
     # Remap neomorphic and knownStates indices
     oldToNew <- rep(NA_integer_, nChar)
@@ -128,10 +131,10 @@ MkPrimeData <- function(data,
   if (length(neomorphic)) {
     neoNotBinary <- neomorphic[kObs[neomorphic] != 2L]
     if (length(neoNotBinary)) {
-      cli::cli_warn(
+      cli::cli_abort(
         "Neomorphic character{cli::qty(length(neoNotBinary))}{?s}
-        {.val {neoNotBinary}} {cli::qty(length(neoNotBinary))}{?has/have} kObs != 2.
-        Neomorphic model assumes exactly 2 states."
+        {.val {neoNotBinary}} {cli::qty(length(neoNotBinary))}{?has/have}
+        kObs != 2. The neomorphic model requires exactly 2 observed states."
       )
     }
   }
@@ -169,6 +172,7 @@ MkPrimeData <- function(data,
       type = type,
       kObs = kObs,
       known_k = knownK,
+      orig_col = origCol,
       levels = levels,
       phyDat = data
     ),
@@ -181,11 +185,32 @@ MkPrimeData <- function(data,
 
 
 # coding = "informative" conditions each character on being parsimony-
-# informative among its observed tips. With fewer than four observed tips no
-# pattern is, so 1 - P(uninformative) is zero and the correction undefined.
+# informative among its observed tips, so a character that is not has zero
+# likelihood under the model; with fewer than four observed tips, the
+# correction itself is undefined.
 .Informable <- function(mkd) {
   # Return:
-  colSums(!is.na(mkd$matrix)) >= 4L
+  apply(mkd$matrix, 2, function(col) {
+    sum(tabulate(col[!is.na(col)] + 1L) >= 2L) >= 2L
+  })
+}
+
+.DropUninformable <- function(mkd) {
+  keep <- .Informable(mkd)
+  if (all(keep)) return(mkd)
+  if (!any(keep)) {
+    cli::cli_abort(
+      "No character is parsimony-informative, as
+      {.code coding = \"informative\"} requires."
+    )
+  }
+  dropped <- if (is.null(mkd$orig_col)) which(!keep) else mkd$orig_col[!keep]
+  cli::cli_inform(
+    "Dropping {sum(!keep)} parsimony-uninformative character{?s} (fewer than
+    two states each on two or more observed tips): {?column/columns}
+    {dropped}."
+  )
+  .SubsetMkPrimeData(mkd, keep)
 }
 
 .SubsetMkPrimeData <- function(mkd, keep) {
@@ -194,6 +219,7 @@ MkPrimeData <- function(data,
   mkd$type <- mkd$type[keep]
   mkd$kObs <- mkd$kObs[keep]
   mkd$known_k <- mkd$known_k[keep]
+  mkd$orig_col <- mkd$orig_col[keep]
   mkd$partitions <- .BuildPartitions(mkd)
   mkd
 }
@@ -244,7 +270,7 @@ AutoDetectNeomorphic <- function(data) {
   if (!inherits(data, "phyDat")) {
     cli::cli_abort("{.arg data} must be a {.cls phyDat} object.")
   }
-  mat <- .PhyDatToIntMatrix(data)
+  mat <- .PhyDatToIntMatrix(data, remap = FALSE)
   # Real levels (gap excluded) — matches the 0-based indexing in .PhyDatToIntMatrix
   lvls <- attr(data, "levels")
   lvls <- lvls[lvls != "-"]
@@ -275,7 +301,10 @@ AutoDetectNeomorphic <- function(data) {
 # and shifts all actual states up by one, causing out-of-bounds access in the
 # C++ pruning code. We handle this by building an explicit mapping from
 # contrast column to clean 0-based state, excluding the gap character.
-.PhyDatToIntMatrix <- function(data) {
+#
+# With `remap = FALSE` the per-column contiguity remap is skipped, so state
+# codes index the real levels and keep their labels.
+.PhyDatToIntMatrix <- function(data, remap = TRUE) {
   contrast  <- attr(data, "contrast")
   levels    <- attr(data, "levels")
   weight    <- attr(data, "weight")
@@ -314,7 +343,7 @@ AutoDetectNeomorphic <- function(data) {
   # with "0" never observed), leaving state values that exceed kObs - 1 and
   # cause out-of-bounds access in the C++ pruning arrays. For symmetric models
   # (Mk, Mk') the label assignment is arbitrary, so this remapping is valid.
-  for (j in seq_len(ncol(charMatrix))) {
+  for (j in if (remap) seq_len(ncol(charMatrix))) {
     col <- charMatrix[, j]
     notNa <- !is.na(col)
     observed <- sort(unique(col[notNa]))

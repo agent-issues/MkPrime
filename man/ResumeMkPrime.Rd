@@ -20,16 +20,18 @@ ResumeMkPrime(
 
 \item{data}{A \code{phyDat} or \code{MkPrimeData} object (must match original).}
 
-\item{tree}{A \code{phylo} object, used only to check tip labels and, for a
-checkpoint with no stored model, to derive \code{expSteps}.  Usually \code{NULL}.}
+\item{tree}{A \code{phylo} object, used only to check tip labels.  Usually
+\code{NULL}.}
 
 \item{neomorphic, knownStates}{Passed to \code{\link[=MkPrimeData]{MkPrimeData()}} if \code{data}
 is a \code{phyDat} object.}
 
 \item{model}{An \code{MkPrimeModel} object.  If \code{NULL} (the default),
-the model stored in the checkpoint is used.  Otherwise its unset
-data-derived defaults (\code{expSteps}, \code{treeLengthRate}) are taken from the
-checkpoint's model, so the prior does not change mid-chain.
+the model stored in the checkpoint is used.  Otherwise, if it leaves
+\code{expSteps} unset, the checkpoint's is used, so the prior mean tree
+length does not change mid-chain; an unset \code{treeLengthRate} is the
+checkpoint's too, unless \code{treeLengthShape} differs from the
+checkpoint's, when the rate is resolved from the new shape.
 Fields that a checkpoint predates are filled with current defaults,
 with a warning.}
 
