@@ -5290,6 +5290,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       break;
     }
     case 7: { // int_walk kPrime — O(1) rollback (save single element, not full clone)
+      // marginal_k sums k' out of the likelihood, so nothing bounds the walk;
+      // .BuildMoves drops it, and so must a direct dispatch (#367).
+      if (data->marginalK) return false;
       kPrimeCharIdx = charIdx;
       oldKPrimeVal  = state->kPrime[charIdx];
       int oldK      = oldKPrimeVal;
