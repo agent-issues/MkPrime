@@ -6,7 +6,9 @@
 #' posterior (beta = 1), then combines the results into a marginal likelihood
 #' estimate.
 #'
-#' @param data A `phyDat` object or `MkPrimeData` object.
+#' @param data A `phyDat` object or `MkPrimeData` object. To fix the number
+#'   of states of some characters, as `knownStates` does in [RunMkPrime()],
+#'   pass `MkPrimeData(data, knownStates = ...)`.
 #' @param tree A starting tree (`phylo` object), or `NULL` (default) to use a
 #'   neighbour-joining tree built from the data.
 #' @param neomorphic Integer vector of neomorphic character indices (if `data`
@@ -32,12 +34,13 @@
 #'
 #' @return A list with components:
 #'   \describe{
-#'     \item{log_marginal}{Log marginal likelihood estimate, pooling the
-#'       runs.}
+#'     \item{log_marginal}{Log marginal likelihood estimate: the mean of
+#'       `run_log_marginal`.}
 #'     \item{se}{Standard error of the estimate (see Details); `NA` when
 #'       `nRuns = 1`.}
 #'     \item{run_log_marginal}{The estimate from each run alone (length `nRuns`).}
-#'     \item{log_ratios}{Per-stone log ratios (length `nStones`).}
+#'     \item{log_ratios}{Per-stone log ratios, averaged over runs (length
+#'       `nStones`).}
 #'     \item{betas}{The beta schedule used.}
 #'   }
 #'   If any stone of any run has no finite log-likelihood, or an infinite one,
@@ -59,15 +62,19 @@
 #' `k' >= kObs` alone; the estimate adds back the log prior mass of that
 #' region, integrated over `p` numerically.
 #'
-#' Each run is one chain that carries its state from stone to stone, starting
-#' from `tree`. The estimate pools the draws of every run at each stone; the
-#' standard error is \eqn{s / \sqrt{n}}, where \eqn{s} is the standard
-#' deviation of the `n = nRuns` runs' own estimates. Within a run, the
-#' autocorrelation of the chain commonly outlasts a stone and carries into
-#' the next, so an error computed from each stone's draws alone (the delta
-#' method of Xie et al. 2011) can understate the true error several-fold;
-#' independent runs capture both. With few runs the standard error is itself
-#' uncertain: with the default two it rests on one degree of freedom.
+#' Each run is one chain that carries its state from stone to stone. The first
+#' starts from `tree`; later runs start from a perturbed copy (a few random
+#' nearest-neighbour interchanges, unless `fixTopology`, and jittered branch
+#' lengths) and, under a geometric `k'` prior, a random `p`, so that their
+#' spread reflects how far the estimate depends on the start. The estimate is
+#' the mean of the `n = nRuns` runs' own estimates; its standard error is
+#' \eqn{s / \sqrt{n}}, where \eqn{s} is their standard deviation. Within a
+#' run, the autocorrelation of the chain commonly outlasts a stone and carries
+#' into the next, so an error computed from each stone's draws alone (the
+#' delta method of Xie et al. 2011) can understate the true error
+#' several-fold; independent runs capture both. With few runs the standard
+#' error is itself uncertain: with the default two it rests on one degree of
+#' freedom.
 #'
 #' @references
 #' Xie, W., Lewis, P.O., Fan, Y., Kuo, L., & Chen, M.-H. (2011).
@@ -129,12 +136,15 @@ mkp_stepping_stone <- function(data, tree = NULL,
   }
   model <- .FinalizeModel(model, NULL, mkd)
 
-  nStones <- as.integer(nStones)
-  nIter <- as.integer(nIter)
-  warmup <- as.integer(warmup)
-  nRuns <- as.integer(nRuns)
-  if (length(nRuns) != 1L || is.na(nRuns) || nRuns < 1L) {
-    cli::cli_abort("{.arg nRuns} must be a positive integer.")
+  nStones <- .CheckWholeNumber(nStones, "nStones")
+  nIter <- .CheckWholeNumber(nIter, "nIter")
+  warmup <- .CheckWholeNumber(warmup, "warmup", minimum = 0L)
+  nRuns <- .CheckWholeNumber(nRuns, "nRuns")
+  if (!(is.numeric(alpha) && length(alpha) == 1L && is.finite(alpha) &&
+        alpha > 0)) {
+    cli::cli_abort(
+      "{.arg alpha} must be a single positive finite number, not {.val {alpha}}."
+    )
   }
 
   # --- Beta schedule: quantiles of Beta(alpha, 1) ---
@@ -143,7 +153,7 @@ mkp_stepping_stone <- function(data, tree = NULL,
   betas <- ((seq_len(nStones + 1L) - 1L) / nStones)^(1 / alpha)
   # betas[1] = 0 (prior only), betas[nStones + 1] = 1 (full posterior)
 
-  state <- .InitState(tree, mkd, model)
+  starts <- .SteppingStoneStarts(tree, nRuns, fixTopology, mkd, model)
 
   nEdge <- nrow(tree$edge)
   nTrans <- sum(mkd$type == "transformational")
@@ -179,7 +189,7 @@ mkp_stepping_stone <- function(data, tree = NULL,
   # One chain per run walks the whole ladder, carrying its state from stone
   # to stone; that carry-over is why runs, not stones, are the replicates.
   logLiks <- lapply(seq_len(nRuns), function(run) {
-    statePtr <- .InitMcmcChain(state)
+    statePtr <- .InitMcmcChain(starts[[run]])
     fill_partition_cache(mcmcData, statePtr)
     allocate_cl_workspace(mcmcData, statePtr)  # M-063
     runLogLiks <- matrix(NA_real_, nIter, nStones)
@@ -206,7 +216,7 @@ mkp_stepping_stone <- function(data, tree = NULL,
   if (verbose) {
     cli::cli_alert_success(
       "Log marginal likelihood: {round(result$log_marginal, 2)} \\
-       (SE: {round(result$se, 2)})"
+       (SE: {round(result$se, 2)}, on {nRuns - 1L} df)"
     )
   }
 
@@ -215,16 +225,57 @@ mkp_stepping_stone <- function(data, tree = NULL,
 }
 
 
-# `logLiks` holds one draws x stones matrix per run. The estimate pools every
-# run's draws at each stone; its standard error is that of the mean of the
-# runs' own estimates, which are independent where a run's stones are not.
+# Run 1 starts from `tree`; later runs from an overdispersed state, as in
+# RunMkPrime(), so that the spread of the runs, and with it the standard
+# error, includes any transient that a shared start would hide (#382).
+.SteppingStoneStarts <- function(tree, nRuns, fixTopology, mkd, model) {
+  lapply(seq_len(nRuns), function(run) {
+    if (run == 1L) {
+      # Return:
+      return(.InitState(tree, mkd, model))
+    }
+    start <- if (fixTopology) {
+      tree$edge.length <- tree$edge.length *
+        exp(stats::rnorm(length(tree$edge.length), sd = 0.1))
+      tree
+    } else {
+      .PerturbStart(tree)
+    }
+    state <- .InitState(start, mkd, model)
+    if (!is.null(state$p)) {
+      state$p <- stats::runif(1L, 0.2, 0.8)
+      state$log_prior <- LogPrior(state, model, mkd)
+      state$log_post <- state$log_lik + state$log_prior
+    }
+    # Return:
+    state
+  })
+}
+
+
+.CheckWholeNumber <- function(value, name, minimum = 1L) {
+  if (!(is.numeric(value) && length(value) == 1L && is.finite(value) &&
+        value == round(value) && value >= minimum)) {
+    cli::cli_abort(
+      "{.arg {name}} must be a whole number no less than {minimum}, not
+       {.val {value}}."
+    )
+  }
+  # Return:
+  as.integer(value)
+}
+
+
+# `logLiks` holds one draws x stones matrix per run. The estimate is the mean
+# of the runs' own estimates, which are independent where a run's stones are
+# not, so its standard error is the standard error of that mean (#382).
 .SteppingStoneEstimate <- function(logLiks, betas, logZ0) {
   nStones <- length(betas) - 1L
   nRuns <- length(logLiks)
   runRatios <- matrix(vapply(logLiks, .StoneLogRatios, numeric(nStones),
                              betas), nStones)
   runLogMarginal <- colSums(runRatios) + logZ0
-  logRatios <- .StoneLogRatios(do.call(rbind, logLiks), betas)
+  logRatios <- rowMeans(runRatios)
   degenerate <- which(rowSums(is.na(runRatios)) > 0L)
   if (length(degenerate) > 0L) {
     cli::cli_warn(c(
@@ -235,7 +286,7 @@ mkp_stepping_stone <- function(data, tree = NULL,
     logMarginal <- NA_real_
     se <- NA_real_
   } else {
-    logMarginal <- sum(logRatios) + logZ0
+    logMarginal <- mean(runLogMarginal)
     se <- if (nRuns > 1L) stats::sd(runLogMarginal) / sqrt(nRuns) else NA_real_
   }
   # Return:

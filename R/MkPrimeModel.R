@@ -315,6 +315,7 @@ MkPrimeModel <- function(
     }
   }
 
+  .CheckTreeLengthPrior(treeLengthShape, treeLengthRate, expSteps)
   if (is.null(treeLengthRate) && !is.null(expSteps)) {
     treeLengthRate <- treeLengthShape / expSteps
   }
@@ -469,6 +470,28 @@ MkPrimeModel <- function(
 }
 
 
+# A non-positive value makes the Gamma tree-length prior NaN or -Inf, which
+# freezes the tree-length moves without an error (#380). Checked at
+# finalisation too, as is the next; rate and expSteps may still be NULL.
+.CheckTreeLengthPrior <- function(shape, rate, expSteps) {
+  values <- list(treeLengthShape = shape, treeLengthRate = rate,
+                 expSteps = expSteps)
+  for (field in names(values)) {
+    value <- values[[field]]
+    if (is.null(value) && field != "treeLengthShape") next
+    if (!(is.numeric(value) && length(value) == 1L && is.finite(value) &&
+          value > 0)) {
+      cli::cli_abort(
+        "{.arg {field}} must be a single positive finite number, not
+         {.val {value}}."
+      )
+    }
+  }
+  # Return:
+  invisible(NULL)
+}
+
+
 # Checked at finalisation too: a model list can be edited after construction.
 .CheckClassRateConcentration <- function(classRateConcentration) {
   if (!(is.numeric(classRateConcentration) &&
@@ -587,6 +610,8 @@ MkPrimeModel <- function(
   .CheckKPrimeHyper(model$kPrimePrior, model$kprimeHyperA, model$kprimeHyperB,
                     model$kprimeAlpha, model$kprimeBeta)
   .CheckLogseriesC(model$kPrimePrior, model$kprimeLogseriesC)
+  .CheckTreeLengthPrior(model$treeLengthShape, model$treeLengthRate,
+                        model$expSteps)
   if (is.null(model$expSteps)) {
     tree <- tree %||% TreeTools::NJTree(mkd$phyDat)
     model$expSteps <- max(1, .FitchScore(tree, mkd) / ncol(mkd$matrix))
