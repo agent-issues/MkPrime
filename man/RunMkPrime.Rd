@@ -47,7 +47,8 @@ options passed on to \code{\link[=ResumeMkPrime]{ResumeMkPrime()}}.
 Set to \code{TRUE} to discard the existing checkpoint and start fresh.}
 
 \item{partition}{Optional integer vector of length \code{mkd$nChar} (after
-invariant-character drop) assigning each character to a user class.
+invariant-character drop, but before \code{coding = "informative"} drops
+uninformative characters) assigning each character to a user class.
 Values must form a contiguous range \code{1:nClasses}. \code{NULL} (the default)
 routes through the unchanged legacy code path; see the §7a bit-identity
 contract in \code{NOTES/partition-api-plan.md}.
@@ -80,7 +81,10 @@ explicit \code{mcmc} argument.}
 \value{
 An \code{MkPosterior} object. Each run adapts its move schedule
 independently, so \verb{$moveWeights} holds run 1's frozen schedule;
-\verb{$runMoveWeights} lists every run's.
+\verb{$runMoveWeights} lists every run's. \verb{$stop_reason} says why the job
+stopped; with \code{nRuns > 1}, each \verb{$per_run} entry's \code{stop_reason} says why
+that run did, and is \code{"cancelled"} for a parallel run stopped by the
+job's own decision.
 }
 \description{
 Metropolis-Hastings MCMC sampling tree topology, branch lengths, model

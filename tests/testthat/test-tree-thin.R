@@ -87,7 +87,7 @@ test_that("treeThin stored in result object", {
 # was off-by-two, the reconstructed tree's first 1-2 edge lengths were
 # taken from kPrime / topo_hash cells (one of them an FNV hash ~1e16) and
 # the last actual br_* were dropped.  Trees still parsed via ape, but with
-# garbage edge lengths.  See dev/red-team/findings.md (TREEMOVE / STREAM-003).
+# garbage edge lengths.  See dev/red-team/findings-archive.md (TREEMOVE / STREAM-003).
 test_that("streamed trees have finite, non-negative, plausible edge lengths", {
   tree <- .mkp_test_tree()
   pd   <- .mkp_test_pd()
