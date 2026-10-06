@@ -45,7 +45,7 @@
 # is by tolerance rather than by bits.
 #
 # The reference RDS was last generated on x86_64 Linux (glibc), on
-# 2026-09-30. The measurements below were taken against its predecessor,
+# 2026-10-06. The measurements below were taken against its predecessor,
 # generated on x86_64 Windows (mingw-w64). Run against that on 2026-09-19 the
 # six CI jobs split cleanly, each group internally bit-identical:
 #
@@ -221,6 +221,15 @@
     # hostage to that fix. Its correctness is covered by
     # test-cache-aware-scheduling.R.
     cacheBonus       = 1,
+    #
+    # localDirichlet is pinned off for the same reason: issue #335's fix makes
+    # local_dirichlet choose its edges by tree shape rather than by edge-row
+    # order, so on the non-canonical row orders an in-place NNI or TBR leaves
+    # behind it selects different edges, and leaving it on made the reference
+    # hostage to that fix. local_dirichlet correctness is covered by
+    # test-local-dirichlet-representation.R and
+    # test-branch-hastings-invariance.R.
+    localDirichlet   = FALSE,
     gibbsSubtreeSwap = FALSE,
     joint2d          = FALSE
   )
