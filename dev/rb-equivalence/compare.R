@@ -4,7 +4,11 @@
 # Usage:
 #   Rscript dev/rb-equivalence/compare.R <pid> <model> \
 #     [--target-rhat=1.025] [--target-ess=256] [--tolerance=0.25] [--alpha=0.05]
-#     [--out-dir=dev/rb-equivalence/out]
+#     [--max-trees=500] [--out-dir=dev/rb-equivalence/out]
+#
+# --max-trees caps the trees per source used to pick the pooled median tree
+# and to report tree ESS; both are quadratic in the pool. CID to that median
+# is still gated on every post-burn-in tree.
 #
 # Loads mkprime_<pid>_<model>.rds and rb_<pid>_<model>.rds. For each scalar
 # parameter and for CID to the pooled median tree, GateParam() (R/gate.R)
@@ -35,7 +39,8 @@ source(file.path(script_dir, "R", "utils.R"))
 source(file.path(script_dir, "R", "gate.R"))
 
 opt <- list(target_rhat = 1.025, target_ess = 256, tolerance = 0.25,
-            alpha = 0.05, out_dir = file.path(script_dir, "out"))
+            alpha = 0.05, max_trees = 500,
+            out_dir = file.path(script_dir, "out"))
 # target_rhat = 1.025 is the canonical equivalence threshold. Cross-sampler
 # rhat above this currently flags two known source-level asymmetries (see
 # dev/rb-equivalence/notes/cross-sampler-rhat-investigation.md) which are
@@ -49,6 +54,7 @@ opt$target_rhat <- as.numeric(opt$target_rhat)
 opt$target_ess <- as.numeric(opt$target_ess)
 opt$tolerance <- as.numeric(opt$tolerance)
 opt$alpha <- as.numeric(opt$alpha)
+opt$max_trees <- as.integer(opt$max_trees)
 
 # --- Load both rds ---------------------------------------------------------
 
@@ -123,7 +129,7 @@ if (is.null(mk_trees) || !length(mk_trees)) {
   stop("mk$per_run_trees missing; rerun run_mkprime.R")
 }
 source_lengths <- lengths(c(mk_trees, rb$per_run_trees))
-n_common <- min(source_lengths)
+n_common <- min(source_lengths, opt$max_trees) # nolint: object_name_linter. # file-wide snake_case
 cat(sprintf("[compare] %d tree sources; common N = %d\n",
             length(source_lengths), n_common))
 source_labels <- c(paste0("mkp_", seq_along(mk_trees)),
