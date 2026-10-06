@@ -93,6 +93,11 @@ test_that("resume applies the marginal_k partition guard (#242)", {
     fx$pd, fx$tree, mcmc = .PartitionResumeMcmc(ckp, lg, 200L),
     model = MkPrimeModel(kPrimePrior = "geometric"),
     partition = fx$partition, unlink = "shape")))
+  # A changed likelihoodMode aborts earlier (#379), so plant it in the
+  # checkpoint to reach the partition guard.
+  cp <- readRDS(ckp)
+  cp$model$likelihoodMode <- "marginal_k"
+  saveRDS(cp, ckp)
   expect_error(
     suppressWarnings(suppressMessages(ResumeMkPrime(
       ckp, fx$pd, fx$tree,

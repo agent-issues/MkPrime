@@ -6313,6 +6313,8 @@ List run_mcmc_batch_cpp(
   int nScalarCols = 4 + (hasNeo ? 2 : 0) + nKpHyperCols +
                     (includeBS ? 1 : 0) + 2 + nTrans + nEdge +
                     nClassRLS + nClassW + nHyperTauCol + nClassZ;
+  // A negative count would size the reserve below as a huge unsigned value.
+  nBatch = std::max(nBatch, 0);
   int maxSaved    = nBatch / thin + 2;
   std::vector<std::vector<double>> scalarRows;
   scalarRows.reserve(maxSaved);

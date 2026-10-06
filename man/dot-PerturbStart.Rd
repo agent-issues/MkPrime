@@ -4,7 +4,10 @@
 \alias{.PerturbStart}
 \title{Generate a perturbed starting tree for independent runs}
 \usage{
-.PerturbStart(tree)
+.PerturbStart(tree, topology = TRUE)
+}
+\arguments{
+\item{topology}{Logical; if \code{FALSE}, perturb branch lengths only.}
 }
 \description{
 Generate a perturbed starting tree for independent runs
