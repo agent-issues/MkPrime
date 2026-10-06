@@ -253,7 +253,34 @@ jobs:
         # `Error: Failure in <tempdir>/testthat.Rout.fail` — a path that no
         # longer exists by the time anyone reads the log. The per-file summary
         # and line tally keep the result readable if the upload fails.
+        #
+        # Every process that loads the instrumented package writes a trace
+        # file as it exits, callr workers included. A worker that RunMkPrime
+        # hard-kills (cancelGrace, or its on.exit clean-up) while it is
+        # already exiting leaves a truncated trace, and covr's merge then
+        # dies with `error reading from connection`, discarding the whole
+        # run. Such traces are dropped instead, and named in the log; the
+        # coverage lost is that of a worker being killed anyway.
         run: |
+          MergeReadableTraces <- function(x) {
+            traces <- lapply(x, function(f) {
+              tryCatch(as.list(suppressWarnings(readRDS(f))),
+                       error = function(e) {
+                         message("Dropping unreadable covr trace ", basename(f),
+                                 " (", file.size(f), " bytes): ",
+                                 conditionMessage(e))
+                         NULL
+                       })
+            })
+            traces <- Filter(Negate(is.null), traces)
+            if (length(traces) == 0L) stop("No covr trace file was readable.")
+            covr:::merge_coverage(traces)
+          }
+          utils::assignInNamespace("merge_coverage.character",
+                                   MergeReadableTraces, "covr")
+          registerS3method("merge_coverage", "character", MergeReadableTraces,
+                           envir = asNamespace("covr"))
+          message("covr trace merge now drops unreadable trace files.")
           cov <- covr::package_coverage(quiet = FALSE)
           print(cov)
           saveRDS(covr::tally_coverage(cov, by = "line"), "coverage-lines.rds")

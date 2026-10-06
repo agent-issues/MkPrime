@@ -489,8 +489,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // eval_log_prior_partitioned_cpp
-double eval_log_prior_partitioned_cpp(SEXP dataPtr, SEXP statePtr, Rcpp::NumericVector classRateLogSd, Rcpp::NumericVector classW, double etaNeo, bool useHyperpriorOnSigma, double hyperTau, Rcpp::NumericVector classZ);
-RcppExport SEXP _MkPrime_eval_log_prior_partitioned_cpp(SEXP dataPtrSEXP, SEXP statePtrSEXP, SEXP classRateLogSdSEXP, SEXP classWSEXP, SEXP etaNeoSEXP, SEXP useHyperpriorOnSigmaSEXP, SEXP hyperTauSEXP, SEXP classZSEXP) {
+double eval_log_prior_partitioned_cpp(SEXP dataPtr, SEXP statePtr, Rcpp::NumericVector classRateLogSd, Rcpp::NumericVector classW, Rcpp::NumericVector classRate, double etaNeo, bool useHyperpriorOnSigma, double hyperTau, Rcpp::NumericVector classZ);
+RcppExport SEXP _MkPrime_eval_log_prior_partitioned_cpp(SEXP dataPtrSEXP, SEXP statePtrSEXP, SEXP classRateLogSdSEXP, SEXP classWSEXP, SEXP classRateSEXP, SEXP etaNeoSEXP, SEXP useHyperpriorOnSigmaSEXP, SEXP hyperTauSEXP, SEXP classZSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -498,11 +498,12 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< SEXP >::type statePtr(statePtrSEXP);
     Rcpp::traits::input_parameter< Rcpp::NumericVector >::type classRateLogSd(classRateLogSdSEXP);
     Rcpp::traits::input_parameter< Rcpp::NumericVector >::type classW(classWSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type classRate(classRateSEXP);
     Rcpp::traits::input_parameter< double >::type etaNeo(etaNeoSEXP);
     Rcpp::traits::input_parameter< bool >::type useHyperpriorOnSigma(useHyperpriorOnSigmaSEXP);
     Rcpp::traits::input_parameter< double >::type hyperTau(hyperTauSEXP);
     Rcpp::traits::input_parameter< Rcpp::NumericVector >::type classZ(classZSEXP);
-    rcpp_result_gen = Rcpp::wrap(eval_log_prior_partitioned_cpp(dataPtr, statePtr, classRateLogSd, classW, etaNeo, useHyperpriorOnSigma, hyperTau, classZ));
+    rcpp_result_gen = Rcpp::wrap(eval_log_prior_partitioned_cpp(dataPtr, statePtr, classRateLogSd, classW, classRate, etaNeo, useHyperpriorOnSigma, hyperTau, classZ));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -1116,7 +1117,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_get_marginal_cache_state", (DL_FUNC) &_MkPrime_get_marginal_cache_state, 1},
     {"_MkPrime_invalidate_marginal_cache", (DL_FUNC) &_MkPrime_invalidate_marginal_cache, 1},
     {"_MkPrime_eval_log_prior_cpp", (DL_FUNC) &_MkPrime_eval_log_prior_cpp, 2},
-    {"_MkPrime_eval_log_prior_partitioned_cpp", (DL_FUNC) &_MkPrime_eval_log_prior_partitioned_cpp, 8},
+    {"_MkPrime_eval_log_prior_partitioned_cpp", (DL_FUNC) &_MkPrime_eval_log_prior_partitioned_cpp, 9},
     {"_MkPrime_set_class_rate_concentration", (DL_FUNC) &_MkPrime_set_class_rate_concentration, 2},
     {"_MkPrime_eval_full_loglik_cpp", (DL_FUNC) &_MkPrime_eval_full_loglik_cpp, 2},
     {"_MkPrime_eval_full_loglik_at_cpp", (DL_FUNC) &_MkPrime_eval_full_loglik_at_cpp, 5},

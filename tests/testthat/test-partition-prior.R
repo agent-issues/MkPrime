@@ -133,6 +133,7 @@ test_that("(A) trivial spec: eval_log_prior_partitioned_cpp == eval_log_prior_cp
     s$dataPtr, statePtr,
     classRateLogSd = s$state$rate_log_sd,  # length-1, == rate_log_sd
     classW         = 1.0,                   # length-1 trivial simplex
+    classRate      = 1.0,
     etaNeo         = 1.0
   )
 
@@ -173,6 +174,7 @@ test_that("(B) multi-class partition: partitioned prior is finite at w = nChar_c
     s$dataPtr, statePtr,
     classRateLogSd = class_rls,
     classW         = class_w,
+    classRate      = class_w * nChar / nChar_c,
     etaNeo         = 1.0
   )
 
@@ -221,12 +223,14 @@ test_that("(C) perturbing class_rate_log_sd[2] changes prior by Gamma density di
     s$dataPtr, statePtr,
     classRateLogSd = c(sd_base, sd_base),
     classW         = class_w,
+    classRate      = class_w * nChar / nChar_c,
     etaNeo         = 1.0
   )
   lp_pert <- eval_log_prior_partitioned_cpp(
     s$dataPtr, statePtr,
     classRateLogSd = c(sd_base, sd_pert),
     classW         = class_w,
+    classRate      = class_w * nChar / nChar_c,
     etaNeo         = 1.0
   )
 
@@ -266,6 +270,7 @@ test_that("(D) R-side LogPrior agrees with eval_log_prior_partitioned_cpp to 1e-
     s$dataPtr, statePtr,
     classRateLogSd = class_rls,
     classW         = class_w,
+    classRate      = class_w * nChar / nChar_c,
     etaNeo         = 1.0
   )
 
