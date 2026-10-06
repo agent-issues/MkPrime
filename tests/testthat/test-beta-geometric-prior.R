@@ -60,7 +60,12 @@ test_that("LogPrior: beta_geometric matches manual computation", {
   u <- state$kPrime[transIdx] - f$mkd$kObs[transIdx]
   a <- state$kprime_alpha
   b <- state$kprime_beta
-  kp_part <- sum(lbeta(a + 1, b + u) - lbeta(a, b))
+  # Truncated at K and renormalised over u in [0, K - kObs] (#392).
+  K <- f$model$kprimeTruncK
+  logZ <- vapply(f$mkd$kObs[transIdx], function(ko) {
+    log(sum(exp(lbeta(a + 1, b + 0:(K - ko)) - lbeta(a, b))))
+  }, 0)
+  kp_part <- sum(lbeta(a + 1, b + u) - lbeta(a, b) - logZ)
   hyper_part <- dexp(a, 1, log = TRUE) + dexp(b, 1, log = TRUE)
 
   # Other components

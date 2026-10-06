@@ -5121,30 +5121,22 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   )
   # Wire the truncation cap K from the model into the McmcData
   # (set_kprime_trunc_k; mirrors set_branch_bins, avoiding a prepare_mcmc_data
-  # signature change). K is the declared cap for the GEOMETRIC arm: the prior
-  # is a truncated geometric on [2, K] renormalised by Z(p)
-  # (MARGINAL-K-TRUNC-001). It MUST equal the SBC forward's K_MAX_PRIOR for
-  # calibration. Stage 2 extends the truncation from marginal_k to sampled_k so
-  # the two likelihoodModes target the same posterior (RB-consistency); the
-  # setter therefore fires for the geometric arm under BOTH modes. (marginal_k
-  # requires geometric; sampled_k geometric previously left the C++ default in
-  # place, which would now over-truncate at K=30.) Guard K >= max(kObs) for a
-  # friendly message; otherwise a character has empty truncated support [2, K]
-  # and a -Inf prior/likelihood. Non-geometric arms (empirical_geometric /
-  # beta_geometric / logseries) are not truncated and never consult K.
-  if (identical(model$kPrimePrior, "geometric")) {
-    K <- as.integer(model$kprimeTruncK %||% 200L)
-    maxKObs <- max(as.integer(mkd$kObs))
-    if (K < maxKObs) {
-      cli::cli_abort(c(
-        "{.arg kprimeTruncK} = {.val {K}} is below the largest observed
-         state count max(kObs) = {.val {maxKObs}}.",
-        i = "That character would have empty truncated support [2, K] and a
-             -Inf likelihood. Raise {.arg kprimeTruncK} to >= {maxKObs}."
-      ))
-    }
-    set_kprime_trunc_k(dp, K)
+  # signature change). Every k' prior is truncated at K and renormalised over
+  # its capped support (MARGINAL-K-TRUNC-001, #392), under both likelihood
+  # modes. K MUST equal the SBC forward's K_MAX_PRIOR for calibration. Guard
+  # K >= max(kObs) for a friendly message; otherwise a character has empty
+  # truncated support and a -Inf prior/likelihood.
+  K <- as.integer(model$kprimeTruncK %||% 200L)
+  maxKObs <- max(as.integer(mkd$kObs))
+  if (K < maxKObs) {
+    cli::cli_abort(c(
+      "{.arg kprimeTruncK} = {.val {K}} is below the largest observed
+       state count max(kObs) = {.val {maxKObs}}.",
+      i = "That character would have empty truncated support and a -Inf
+           likelihood. Raise {.arg kprimeTruncK} to >= {maxKObs}."
+    ))
   }
+  set_kprime_trunc_k(dp, K)
   set_class_rate_concentration(dp, model$classRateConcentration %||% 1)
   dp
 }

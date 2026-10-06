@@ -45,16 +45,19 @@ test_that("narrow slice_kprime_hyper holds the beta_geometric prior", {
   skip_under_memcheck()
   fx <- SliceFixture("beta_geometric")
   trans <- which(fx$mkd$type == "transformational")
-  # Exact joint draws of (alpha, beta, u); the move updates (alpha, beta)
-  # given u, so conditioning the draws on u keeps them exact.
+  # Exact joint draws of (alpha, beta, u) under the prior capped at K: each u
+  # by rejection from the untruncated mixture.
+  n <- fx$model$kprimeTruncK - fx$mkd$kObs[trans] + 1L
   Draw <- function() {
-    repeat {
-      a <- rexp(1)
-      b <- rexp(1)
-      u <- floor(log(runif(length(trans))) /
-                   log1p(-rbeta(length(trans), a, b)))
-      if (all(u < 1e6)) return(list(a = a, b = b, u = u))
+    a <- rexp(1)
+    b <- rexp(1)
+    u <- rep(NA_real_, length(trans))
+    while (anyNA(u)) {
+      todo <- which(is.na(u))
+      d <- floor(log(runif(length(todo))) / log1p(-rbeta(length(todo), a, b)))
+      u[todo] <- ifelse(d < n[todo], d, NA_real_)
     }
+    list(a = a, b = b, u = u)
   }
   set.seed(2811)
   s <- vapply(seq_len(3000), function(r) {
@@ -73,10 +76,7 @@ test_that("narrow slice_kprime_hyper holds the beta_geometric prior", {
     st <- MkPrime:::get_mcmc_state(statePtr)
     log(st$kprimeAlpha + st$kprimeBeta)
   }, numeric(1))
-  reference <- vapply(seq_len(30000), function(i) {
-    d <- Draw()
-    log(d$a + d$b)
-  }, numeric(1))
-  p <- ks.test(s, reference)$p.value
+  # alpha + beta ~ Gamma(2, 1).
+  p <- ks.test(exp(s), "pgamma", 2)$p.value
   expect_gt(p, 1e-4, label = paste("KS p =", signif(p, 2)))
 })

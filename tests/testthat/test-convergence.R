@@ -133,13 +133,7 @@ test_that("ConvergenceDiagnostics trees=FALSE skips tree ESS", {
 
 test_that("ConvergenceDiagnostics tree ESS computed with TreeDist (#202)", {
   skip_if_not_installed("TreeDist")
-  # O(n^2) in tree count and requires topological variability to return
-  # finite ESS. Skip unless explicitly opted in (needs a real dataset, not
-  # the tiny 4-tip fixture).
-  skip_if(
-    !nzchar(Sys.getenv("MKP_TREE_ESS_TESTS")),
-    "tree ESS tests skipped by default; set MKP_TREE_ESS_TESTS=1 to enable"
-  )
+  # O(n^2) in tree count.
 
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
