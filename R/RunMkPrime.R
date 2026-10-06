@@ -1228,7 +1228,14 @@ RunMkPrime <- function(data, tree = NULL,
   windowStartIter  <- tuningIterUsed
   # Rho is estimated from the first Tuning window, then frozen for the bandit.
   rhoPending       <- r$rhoPending %||% FALSE
-  effectiveTuningBudget <- r$effectiveTuningBudget %||% mcmc$tuningBudget
+  # Tuning may spend at most half the iterations left when it began. Derived
+  # from nIter each time, so a resume that lowers nIter lowers the cap (#402).
+  TuningCap <- function(tuningStart) {
+    if (is.finite(mcmc$nIter)) (mcmc$nIter - tuningStart) %/% 2L else Inf
+  }
+  tuningStartIter  <- r$tuningStartIter %||% (startIter - 1L - tuningIterUsed)
+  effectiveTuningBudget <- min(r$effectiveTuningBudget %||% mcmc$tuningBudget,
+                               TuningCap(tuningStartIter))
   nTuningWindows   <- 4L
   tuningWindowSamples <- .TuningWindowSamples(
     effectiveTuningBudget, mcmc$thin, tuningBatch, nTuningWindows
@@ -1641,6 +1648,8 @@ RunMkPrime <- function(data, tree = NULL,
               baseBudget
             }
             r$effectiveTuningBudget <- effectiveTuningBudget
+            tuningStartIter   <- batchEnd
+            r$tuningStartIter <- tuningStartIter
             tuningWindowSamples <- .TuningWindowSamples(
               effectiveTuningBudget, mcmc$thin, tuningBatch, nTuningWindows
             )
@@ -1694,6 +1703,7 @@ RunMkPrime <- function(data, tree = NULL,
       }
     } else if (phase == "Tuning") {
       # --- Tuning: min-ESS/s perturbation bandit ---
+      endTuning <- FALSE
       tuningIterUsed <- tuningIterUsed + nBatch
       r$tuningIterUsed <- tuningIterUsed
       tuningWindowSec <- tuningWindowSec + batchSec
@@ -1798,21 +1808,7 @@ RunMkPrime <- function(data, tree = NULL,
           if (tuningRoundsDone >= mcmc$tuningRounds ||
               2 * tuningIterUsed - roundStartIter > effectiveTuningBudget ||
               payback[["freeze"]]) {
-            # Transition: Tuning -> Sample
-            phase      <- "Sample"
-            r$phase    <- phase
-            phaseLabel <- "Sample"
-            sampleWallStart <- proc.time()["elapsed"]
-            if (isStreaming && !is.null(logFilePath))
-              .LogMoveWeights(moveWeights, moveNames, logFilePath)
-            .PrintMoveWeights(moveWeights, moveNames)
-            if (bestMinEssPerSec > 0) {
-              .AlertInfo(
-                "Tuning complete ({tuningRoundsDone} round{?s}). Best minESS/s: {sprintf('%.2f', bestMinEssPerSec)}"
-              )
-            }
-            weightsLogged <- TRUE
-            tickerPages   <- "minESS: ?"
+            endTuning <- TRUE
           } else {
             # Start new round with fresh perturbations
             tuningCandidates <- .PerturbMoveWeights(
@@ -1837,6 +1833,32 @@ RunMkPrime <- function(data, tree = NULL,
             }
           }
         }
+      }
+
+      # The rho window and a round's windows each span whole batches, so on
+      # a short run they can outlast the iterations left; stop at the cap,
+      # on the best weights scored so far (the incumbent if none beat it).
+      if (!endTuning && tuningIterUsed >= TuningCap(tuningStartIter)) {
+        moveWeights <- bestWeights
+        endTuning   <- TRUE
+      }
+
+      if (endTuning) {
+        # Transition: Tuning -> Sample
+        phase      <- "Sample"
+        r$phase    <- phase
+        phaseLabel <- "Sample"
+        sampleWallStart <- proc.time()["elapsed"]
+        if (isStreaming && !is.null(logFilePath))
+          .LogMoveWeights(moveWeights, moveNames, logFilePath)
+        .PrintMoveWeights(moveWeights, moveNames)
+        if (bestMinEssPerSec > 0) {
+          .AlertInfo(
+            "Tuning complete ({tuningRoundsDone} round{?s}). Best minESS/s: {sprintf('%.2f', bestMinEssPerSec)}"
+          )
+        }
+        weightsLogged <- TRUE
+        tickerPages   <- "minESS: ?"
       }
     }
     # Sample phase: no adaptation needed (weights frozen)
@@ -4249,7 +4271,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
           convWindowSize = convWindowSize,
           treeFile       = if (is.null(treeFilePaths)) NULL else treeFilePaths[run],
           shared         = shared,
-          resumeMoveWeights = runs[[run]]$moveWeights %||% checkpoint$moveWeights
+          # A run the checkpoint never started builds its weights afresh;
+          # another run's carry the warmup cap on gibbs_kPrime (#403).
+          resumeMoveWeights = if (!is.null(runs[[run]]$actual_iter)) {
+            runs[[run]]$moveWeights %||% checkpoint$moveWeights
+          }
         )
         shared$runs[[run]] <- runs[[run]]
         stopReason <- runs[[run]]$stop_reason

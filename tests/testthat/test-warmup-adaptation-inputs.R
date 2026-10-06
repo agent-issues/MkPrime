@@ -72,3 +72,15 @@ test_that("joint-proposal correlations freeze before the bandit (#83, #301)", {
   expect_equal(seen$calls[1:4], c("rho", "rho", "rho", "bandit"))
   expect_false("rho" %in% seen$calls[-(1:3)])
 })
+
+
+test_that("Tuning ends within half the iterations left, so Sample runs (#402)", {
+  skip_on_cran()
+  skip_under_memcheck()
+  set.seed(402)
+  res <- .AdaptInputsRun(MkPrimeMCMC(nIter = 5000L, nRuns = 1L, nCore = 1L,
+                                     maxTime = 120))
+  # Warmup ends by maxWarmup = 2500, so Tuning stops within a 500-iteration
+  # batch of 1250 iterations, leaving Sample at least 750.
+  expect_gte(nrow(res$samples) * res$mcmc$thin, 750L - res$mcmc$thin)
+})
