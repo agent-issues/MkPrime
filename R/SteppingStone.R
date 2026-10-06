@@ -317,7 +317,8 @@ mkp_stepping_stone <- function(data, tree = NULL,
 # Under the unconditional (Model A) prior, sampled_k gives k'_i < kObs_i zero
 # likelihood and no move proposes it, so the beta = 0 stone samples the prior
 # restricted to k' >= kObs and the stones multiply to Z1 / Z0 (#267), with
-#   Z0 = E_prior[prod_i P(k'_i >= kObs_i | hyperparameters)].
+#   Z0 = E_prior[prod_i P(k'_i >= kObs_i | hyperparameters)],
+# each prior taken on its support capped at K (#377, #392).
 # logseries has that form whatever priorVariant says, since the sampler ignores
 # the field for it (#365). Model B already normalises on k' >= kObs, and
 # marginal_k carries that mass in its per-character sum, so Z0 = 1 for both.
@@ -336,11 +337,12 @@ mkp_stepping_stone <- function(data, tree = NULL,
   counts <- table(kObs)
   ko <- as.integer(names(counts))
   counts <- as.vector(counts)
+  K <- as.integer(model$kprimeTruncK %||% 200L)
 
   if (identical(model$kPrimePrior, "logseries")) {
     # Return:
     return(sum(counts * vapply(ko, .LogseriesLogTail, 0,
-                               model$kprimeLogseriesC)))
+                               model$kprimeLogseriesC, K)))
   }
   if (!identical(model$priorVariant, "unconditional")) {
     # Return:
@@ -349,7 +351,6 @@ mkp_stepping_stone <- function(data, tree = NULL,
   LogTail <- switch(
     model$kPrimePrior,
     geometric = {
-      K <- as.integer(model$kprimeTruncK %||% 200L)
       function(k, p, log1mP) {
         (k - 2) * log1mP + .Log1mExp((K - k + 1) * log1mP) -
           .Log1mExp((K - 1) * log1mP)
@@ -357,11 +358,12 @@ mkp_stepping_stone <- function(data, tree = NULL,
     },
     empirical_geometric = {
       emp <- model$empiricalNObs
-      # The two variants differ by exactly the Model B normaliser log Z_i(p).
+      # P(k' >= k | p) on [2, K]: the ratio of the Model B and Model A
+      # normalisers.
       function(k, p, log1mP) {
         vapply(p, function(pj) {
-          .LogPriorEmpiricalGeometric(k, emp, pj, k, unconditional = TRUE) -
-            .LogPriorEmpiricalGeometric(k, emp, pj, k, unconditional = FALSE)
+          logZ <- .LogEmpGeomCapped(emp, pj, K)$logZ
+          logZ[k] - logZ[2]
         }, 0)
       }
     },
@@ -395,21 +397,12 @@ mkp_stepping_stone <- function(data, tree = NULL,
 }
 
 
-# log P(k' >= ko; logseriesC) under the logseries prior on k' >= 2. The complement is
-# summed while it is small; otherwise the tail, whose terms fall by at least
-# logseriesC.
-.LogseriesLogTail <- function(ko, logseriesC) {
-  logC <- log(logseriesC)
-  logNorm <- .LogseriesLogNorm(logseriesC)
-  below <- seq.int(2L, ko - 1L)
-  lower <- sum(exp(below * logC - log(below) - logNorm))
-  if (lower < 0.99) {
-    # Return:
-    return(log1p(-lower))
-  }
-  kk <- seq.int(ko, ko + ceiling(-60 / logC))
-  logTerms <- kk * logC - log(kk)
+# log P(k' >= ko; logseriesC) under the logseries prior on 2 <= k' <= K: a sum
+# of positive terms over [ko, K].
+.LogseriesLogTail <- function(ko, logseriesC, K) {
+  kk <- seq.int(ko, K)
+  logTerms <- kk * log(logseriesC) - log(kk)
   mx <- max(logTerms)
   # Return:
-  mx + log(sum(exp(logTerms - mx))) - logNorm
+  mx + log(sum(exp(logTerms - mx))) - .LogseriesLogNorm(logseriesC, K)
 }

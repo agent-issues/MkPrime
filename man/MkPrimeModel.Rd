@@ -205,9 +205,9 @@ unconditional form and rejects \code{"unconditional"}. Consulted for
 \code{empirical_geometric} and \code{geometric} under either \code{likelihoodMode};
 ignored for \code{logseries}.}
 
-\item{kprimeTruncK}{Integer specifying the cap \code{K} at which the geometric
-arm's \verb{k'} prior is truncated and renormalised over \verb{[2, K]}, bounded
-above by the compile-time candidate cap of 256.}
+\item{kprimeTruncK}{Integer specifying the cap \code{K} at which every \verb{k'}
+prior is truncated and renormalised, bounded above by the compile-time
+candidate cap of 256. Must be at least the largest observed state count.}
 }
 \value{
 An S3 object of class \code{MkPrimeModel}.

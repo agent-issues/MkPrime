@@ -369,6 +369,39 @@ from a fixed hyperparameter to a sampled parameter.
 All values in the tables above match direct numerical sums to 4+ decimal
 places.
 
+### 4.6 Upper cap $K$ on every arm (#392)
+
+Since #392 every arm puts its prior on $k' \le K$ (`kprimeTruncK`, default 200,
+at most `kMaxKprimeCand` = 256) and renormalises over the capped support. The
+Gibbs sweep then enumerates the whole support, so it is plain Gibbs; without
+the cap a $k'$ beyond the 256-candidate window could only leave by `int_walk`
+(#278, #296). Each normaliser depends on the arm's hyperparameters, so it must
+stay in every hyperparameter move (`mh_logit_p`, `slice_kprime_hyper`), which
+take it from `cpp_log_prior`.
+
+* **Geometric** — unchanged (§4.1; MARGINAL-K-TRUNC-001).
+* **Beta-Geometric** (Model B only). With $n_i = K - k_{\text{obs},i} + 1$,
+  $P(u \ge n \mid \alpha, \beta) = E[(1-p)^n] = B(\alpha, \beta + n)/B(\alpha, \beta)$,
+  so $\log Z_i = \log(1 - B(\alpha, \beta + n_i)/B(\alpha, \beta))$, evaluated
+  with `log1m_exp`.
+* **Empirical-Geometric.** $P(k \mid p) = p\,P_{\text{emp}}(k) + (1-p)\,P(k-1 \mid p)$
+  with $P(1 \mid p) = 0$, which is the convolution in §4.3. The suffix sums
+  $Z(m) = \sum_{k=m}^{K} P(k \mid p)$ are sums of positive terms, so the
+  cancellation of §4.3 (#259) cannot occur. Model A divides by $Z(2)$, Model B
+  by $Z(k_{\text{obs},i})$.
+* **Logseries.** $\sum_{k=2}^{K} c^k/k$ replaces $-\log(1-c) - c$. With $c$
+  fixed it cancels in every MH ratio, but stepping stone's $Z_0$ uses it.
+
+Stepping stone's $\log Z_0$ (`.LogZ0`) integrates the same capped tails, so
+the $\beta = 0$ stone and $Z_0$ describe one prior (#377).
+
+Verification: `test-kprime-sweep-truncation.R` starts from exact draws of the
+capped joint prior and runs the sweep and hyperparameter moves at $\beta = 0$.
+With the Beta-Geometric or Empirical-Geometric normaliser removed, the
+hyperparameter marginals fail KS at $p < 10^{-4}$. `test-stepping-stone-z0.R`
+compares Empirical-Geometric stepping stone with the exact log marginal
+likelihood, enumerated over $k' \le K = 8$.
+
 ## 5. Implementation cross-check
 
 ### 5.1 No relabelling-correction leak in `LogPrior`
