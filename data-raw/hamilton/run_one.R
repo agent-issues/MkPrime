@@ -55,6 +55,25 @@ dir.create(ckp_dir, showWarnings = FALSE)
   }, error = function(e) FALSE)
 }
 
+# A task is finished once its final `<arm>_<tag>.rds` exists, but only a
+# checkpoint lets a fresh submission extend rather than redo it. summarize_
+# streamed.R tells the user to delete checkpoints before its cleanup pass, after
+# which resubmitting the array would silently restart every finished task and
+# overwrite its result (#388). Restarting one on purpose needs MKP_FORCE_RESTART=1.
+.CheckNotFinished <- function(arm, tag, outDir, ckpDir) {
+  final <- file.path(outDir, sprintf("%s_%s.rds", arm, tag))
+  saved <- list.files(ckpDir, sprintf("^%s_checkpoint(_[0-9]+)?\\.rds$", arm))
+  if (file.exists(final) && !length(saved) &&
+      !identical(Sys.getenv("MKP_FORCE_RESTART"), "1")) {
+    stop(sprintf(paste(
+      "Refusing to restart %s %s: %s exists and there is no checkpoint to",
+      "resume, so a fresh start would overwrite a finished result (#388).",
+      "Set MKP_FORCE_RESTART=1 to rerun it from scratch."),
+      arm, tag, basename(final)), call. = FALSE)
+  }
+  invisible(NULL)
+}
+
 # Files an arm owns inside the shared `ckp_dir`.
 #
 # `ckp_dir` is per (tree, rep), NOT per arm, so all fourteen arms share one flat
@@ -81,6 +100,8 @@ dir.create(ckp_dir, showWarnings = FALSE)
   )
 }
 
+.CheckNotFinished(arm, tag, out_dir, ckp_dir)
+
 .sentinel  <- file.path(ckp_dir, ".slurm_job_id")
 .cur_job   <- Sys.getenv("SLURM_JOB_ID", "")
 # A SIGKILL during writeLines() at the foot of this block leaves a zero-byte
@@ -102,6 +123,12 @@ if (.cur_job != .prev_job) {
             " -> new job ", .cur_job, ")")
   }
   if (.cur_job != "") writeLines(.cur_job, .sentinel)
+}
+# The per-tag sentinel above is shared by every arm of the task directory, so it
+# cannot say whether THIS arm has started since its result was written; this
+# marker can (#388).
+if (.cur_job != "") {
+  writeLines(.cur_job, file.path(ckp_dir, sprintf(".%s_slurm_job_id", arm)))
 }
 
 # ---- Shared helpers ----------------------------------------------------------
@@ -174,7 +201,14 @@ if (.cur_job != .prev_job) {
 # pre- and post-resume segments of one log then describe different characters
 # (#286). The order is recorded at first start and a resume under any other is
 # refused rather than purged -- whether to discard the run is the user's call.
-# State with no record predates the record and used lexical order.
+#
+# Between dcd7398 and 5a890df this file was rewritten on every start, resumes
+# included, so an unstamped record says nothing about the order its checkpoint
+# was born under. Only a fresh start writes the stamped columns, and a resume
+# against an unstamped record is refused unless `check_kprime_order.R` has
+# passed and MKP_ACCEPT_UNSTAMPED_ORDER=1 says so (#388). Unrecorded state
+# predates the record and used lexical order.
+.CHAR_ORDER_STAMP <- "lifecycle"
 .CheckCharOrder <- function(arm, nexFiles) {
   orderFile <- file.path(ckp_dir, sprintf("%s_char_order.csv", arm))
   current   <- basename(nexFiles)
@@ -183,16 +217,31 @@ if (.cur_job != .prev_job) {
   if (!length(saved)) {
     write.csv(
       data.frame(
-        position = seq_along(current),
-        file     = current,
-        char_idx = as.integer(sub("^chr([0-9]+)\\.nex$", "\\1", current))
+        position  = seq_along(current),
+        file      = current,
+        char_idx  = as.integer(sub("^chr([0-9]+)\\.nex$", "\\1", current)),
+        lifecycle = 2L,
+        build_sha = .BUILD_SHA
       ),
       orderFile,
       row.names = FALSE
     )
     return(invisible(orderFile))
   }
-  recorded <- if (file.exists(orderFile)) as.character(read.csv(orderFile)$file)
+  record   <- if (file.exists(orderFile)) read.csv(orderFile)
+  recorded <- if (!is.null(record)) as.character(record$file)
+  if (!is.null(record) && !(.CHAR_ORDER_STAMP %in% names(record)) &&
+      !identical(Sys.getenv("MKP_ACCEPT_UNSTAMPED_ORDER"), "1")) {
+    stop(sprintf(paste(
+      "Refusing to resume %s in %s: %s was written without a birth stamp, so",
+      "it may have been rewritten by a resume under another character order",
+      "(#388). Run check_kprime_order.R on the results; if it passes, rerun",
+      "with MKP_ACCEPT_UNSTAMPED_ORDER=1. To discard the run instead, delete",
+      "%s."),
+      arm, ckp_dir, basename(orderFile),
+      paste(basename(.arm_own_files(arm)), collapse = " ")),
+      call. = FALSE)
+  }
   if (!identical(recorded, current)) {
     Shown <- function(x) paste(c(head(x, 12L), if (length(x) > 12L) "..."),
                                collapse = " ")
@@ -226,6 +275,7 @@ if (.cur_job != .prev_job) {
 .SaveResult <- function(partial) {
   partial$char_idx  <- var_char_idx
   partial$build_sha <- .BUILD_SHA
+  partial$tree_length_prior <- .PIN
   saveRDS(partial, file.path(out_dir, sprintf("%s_%s.rds", arm, tag)))
 }
 
@@ -278,6 +328,27 @@ var_char_idx <- .VariableCharIdx(
 
 # ---- Starting tree: NJ ------------------------------------------------------
 start_tree <- NJTree(pd, edgeLengths = TRUE)
+.PIN <- .PinnedTreeLengthPrior(pd, start_tree)
+
+# The tree-length prior every arm fits, pinned to what `.FinalizeModel` derived
+# before 3c091f9 (2026-09-29): expSteps = max(1, total Fitch score of the
+# prepared start tree), rate = shape / expSteps. 3c091f9 divided the default by
+# nChar, so an unpinned arm fits a different prior from the recorded May-June
+# results, and a resume (which keeps the checkpoint's expSteps) would pool two
+# priors in one arm (#389).
+.PinnedTreeLengthPrior <- function(pd, tree, shape = 2) {
+  mkd      <- suppressWarnings(MkPrimeData(pd))
+  tree     <- MkPrime:::.PrepareStartTree(tree, mkd)
+  expSteps <- max(1, MkPrime:::.FitchScore(tree, mkd))
+  list(treeLengthShape = shape, expSteps = expSteps,
+       treeLengthRate = shape / expSteps)
+}
+
+# An arm that sets its own tree-length prior overrides the pin through `...`.
+.PinnedModel <- function(...) {
+  do.call(MkPrimeModel,
+          utils::modifyList(c(list(coding = "variable"), .PIN), list(...)))
+}
 
 # ---- MCMC config ------------------------------------------------------------
 # `thin_iters` used to default to 10 while every arm added since 2026-05 passed
@@ -349,7 +420,7 @@ if (arm == "mk") {
       pd,
       start_tree,
       knownStates = kObs_for_mk,
-      model = MkPrimeModel(coding = "variable"),
+      model = .PinnedModel(),
       mcmc  = make_mcmc("mk")
     )
   }, "mk")
@@ -378,7 +449,7 @@ if (arm == "mk") {
       pd,
       start_tree,
       knownStates = kObs_for_mk + 1L,
-      model = MkPrimeModel(coding = "variable"),
+      model = .PinnedModel(),
       mcmc  = make_mcmc("mk_kp1")
     )
   }, "mk_kp1")
@@ -400,7 +471,7 @@ if (arm == "mk") {
     RunMkPrime(
       mkd_mkp,
       start_tree,
-      model = MkPrimeModel(coding = "variable"),
+      model = .PinnedModel(),
       mcmc  = make_mcmc("mkp")
     )
   }, "mkp")
@@ -437,7 +508,7 @@ if (arm == "mk") {
     RunMkPrime(
       mkd_mkp,
       start_tree,
-      model = MkPrimeModel(coding = "variable",
+      model = .PinnedModel(
                             kPrimePrior = "empirical_geometric"),
       mcmc  = make_mcmc("mkp_eg")
     )
@@ -476,7 +547,7 @@ if (arm == "mk") {
     RunMkPrime(
       mkd_mkp,
       start_tree,
-      model = MkPrimeModel(coding = "variable",
+      model = .PinnedModel(
                             kPrimePrior = "geometric"),
       mcmc  = make_mcmc("mkp_geo", thin_iters = 500L)
     )
@@ -516,7 +587,7 @@ if (arm == "mk") {
     RunMkPrime(
       pd, start_tree,
       knownStates = kObs_for_mk + 2L,
-      model = MkPrimeModel(coding = "variable"),
+      model = .PinnedModel(),
       mcmc  = make_mcmc("mk_kp2", thin_iters = 500L)
     )
   }, "mk_kp2")
@@ -541,7 +612,7 @@ if (arm == "mk") {
     RunMkPrime(
       pd, start_tree,
       knownStates = k9_for_mk,
-      model = MkPrimeModel(coding = "variable"),
+      model = .PinnedModel(),
       mcmc  = make_mcmc("mk_k9", thin_iters = 500L)
     )
   }, "mk_k9")
@@ -566,7 +637,7 @@ if (arm == "mk") {
     RunMkPrime(
       pd, start_tree,
       knownStates = k15_for_mk,
-      model = MkPrimeModel(coding = "variable"),
+      model = .PinnedModel(),
       mcmc  = make_mcmc("mk_k15", thin_iters = 500L)
     )
   }, "mk_k15")
@@ -590,7 +661,7 @@ if (arm == "mk") {
     RunMkPrime(
       pd, start_tree,
       knownStates = k24_for_mk,
-      model = MkPrimeModel(coding = "variable"),
+      model = .PinnedModel(),
       mcmc  = make_mcmc("mk_k24", thin_iters = 500L)
     )
   }, "mk_k24")
@@ -613,7 +684,7 @@ if (arm == "mk") {
     RunMkPrime(
       pd, start_tree,
       knownStates = k40_for_mk,
-      model = MkPrimeModel(coding = "variable"),
+      model = .PinnedModel(),
       mcmc  = make_mcmc("mk_k40", thin_iters = 500L)
     )
   }, "mk_k40")
@@ -635,7 +706,7 @@ if (arm == "mk") {
     RunMkPrime(
       mkd_mkp,
       start_tree,
-      model = MkPrimeModel(coding = "variable",
+      model = .PinnedModel(
                             kPrimePrior = "geometric",
                             kprimeHyperA = 1,
                             kprimeHyperB = 20),
@@ -675,7 +746,7 @@ if (arm == "mk") {
     RunMkPrime(
       mkd_mkp,
       start_tree,
-      model = MkPrimeModel(coding = "variable",
+      model = .PinnedModel(
                             kPrimePrior = "logseries",
                             kprimeLogseriesC = 0.95),
       mcmc  = make_mcmc("mkp_logs", thin_iters = 500L)
@@ -736,7 +807,7 @@ if (arm == "mk") {
     RunMkPrime(
       pd, start_tree,
       knownStates = k_for_mk,
-      model = MkPrimeModel(coding = "variable"),
+      model = .PinnedModel(),
       mcmc  = make_mcmc("mk_ktrue", thin_iters = 500L)
     )
   }, "mk_ktrue")
@@ -773,9 +844,8 @@ if (arm == "mk") {
     RunMkPrime(
       pd, start_tree,
       knownStates = kObs_for_mk,
-      model = MkPrimeModel(coding = "variable",
-                            treeLengthShape = 20,
-                            treeLengthRate  = 20 / 0.7),
+      model = .PinnedModel(treeLengthShape = 20,
+                           treeLengthRate  = 20 / 0.7),
       mcmc  = make_mcmc("mk_tlshrink", thin_iters = 500L)
     )
   }, "mk_tlshrink")

@@ -27,7 +27,10 @@
 # Tree streams are deleted and logs gzipped only once the task's checkpoint is
 # gone, i.e. once nobody will extend the run. To reclaim the space, run
 #   rm <results_root>/*/<arm>_checkpoint*.rds
-# and then this script again.
+# and then this script again. Do that only for tasks you will not resubmit:
+# run_one.R refuses to start a task that has a final result and no checkpoint
+# (set MKP_FORCE_RESTART=1 to redo one from scratch), so a resubmitted
+# `--array` fails on every task cleaned this way rather than restarting it.
 
 .libPaths(c("/nobackup/pjjg18/mkp-study/lib", .libPaths()))
 suppressPackageStartupMessages({
@@ -114,16 +117,20 @@ stopifnot(length(log_files) > 0L, all(file.exists(log_files)),
 # are gone (#289). run_one.R writes `<arm>_<tag>.rds` only after the MCMC
 # returns, so that file, newer than everything the run writes, marks a task
 # done. A resubmitted task extending an earlier run leaves the earlier .rds in
-# place, hence the mtime test.
+# place, hence the mtime test. run_one.R also rewrites `.<arm>_slurm_job_id` on
+# every start, before its first flush, so a resumed task that has not yet
+# written anything is still seen as live (#388).
 final_file <- file.path(results_root, sprintf("%s_%s.rds", arm, tag))
 ckp_files  <- list.files(task_dir,
                          sprintf("^%s_checkpoint(_[0-9]+)?\\.rds$", arm),
                          full.names = TRUE)
+job_file   <- file.path(task_dir, sprintf(".%s_slurm_job_id", arm))
 final_res  <- if (file.exists(final_file)) {
   tryCatch(readRDS(final_file), error = function(e) NULL)
 }
 task_done  <- !is.null(final_res$stop_reason) &&
-  file.mtime(final_file) >= max(file.mtime(c(log_files, tree_files, ckp_files)))
+  file.mtime(final_file) >=
+    max(file.mtime(c(log_files, tree_files, ckp_files, job_file[file.exists(job_file)])))
 if (!task_done && !incomplete) {
   stop("No up-to-date ", basename(final_file), " with a stop_reason in ",
        results_root, ": the task may still be running. If `sacct` shows its ",

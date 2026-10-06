@@ -218,10 +218,13 @@ this dispute started:
 3. Otherwise, PASS is reported **only** if the power ladder established a
    detection floor; without one the verdict is **INCONCLUSIVE**. PASS is never
    reported without a power statement.
-4. `gibbs_spr+br_*` failing → **Q2 = FAIL**. Their passing is always reported
-   against the ladder's detection floor, never as a bare PASS.
+4. `gibbs_spr+br_1to1` or `gibbs_spr+br_1to10` failing → **Q2 = FAIL**, and the
+   verdict is FAIL. Their passing is always reported against the ladder's
+   detection floor, never as a bare PASS.
 
-Exit status is 1 on FAIL, so the script can be used directly as a CI-style gate.
+Exit status is 0 only on PASS: 1 on FAIL, 2 on WARN or INCONCLUSIVE (a suspect
+or underpowered harness has certified nothing), so the script can be used
+directly as a CI-style gate.
 
 ## How to run
 
@@ -238,13 +241,16 @@ startup. Exactness comes from tiny trees, not long chains.
   its power ladder still establishes a floor (c = 0.50), so quick mode returns
   PASS rather than INCONCLUSIVE on a corrected kernel — it is a usable
   post-fix gate on its own.
-* **Headline configuration (what the committed `verdict.txt` was produced with):**
+* **Headline configuration:**
   `Rscript dev/red-team/heavy-tests/gibbs-spr-db.R --reps 5000 --sweeps 150`
   Estimated ~19 min by linear scaling from the quick run (state construction
   1.6 ms/replicate; 0.016–0.036 ms per C++ move; 0.28 ms per `weighted_spr`
   move); **measured 18.8 min** of arm time plus 14 s reference generation.
   The two most expensive arms are `gibbs_spr+br_1to30` (466 s) and
   `weighted_spr` (212 s); dropping those halves the run.
+  The committed `verdict.txt` is the quick-mode run (600 × 40) from a1ceb37,
+  not this configuration; the pre-fix headline FAIL is in 30e3f98's
+  `verdict.txt`.
 * **Full default:** `Rscript dev/red-team/heavy-tests/gibbs-spr-db.R`
   (20 000 replicates, 150 sweeps) — **estimated ~75 min** local, single-threaded.
   Adds nothing to the Q1 verdict; it buys a lower power floor and tighter

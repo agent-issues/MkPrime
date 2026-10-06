@@ -13,7 +13,8 @@ src   <- parse("data-raw/hamilton/run_one.R")
 wanted <- c(".kObsFromMatrix", ".UPostMeans", ".BURNIN_FRAC", ".arm_own_files",
             ".validate_ckp", ".IsCorruptCheckpoint", ".run_arm",
             ".CheckCharOrder", ".VariableCharIdx", ".SaveResult", ".BuildSha",
-            ".BUILD_SHA")
+            ".BUILD_SHA", ".CHAR_ORDER_STAMP", ".CheckNotFinished",
+            ".PinnedTreeLengthPrior", ".PinnedModel")
 env   <- new.env(parent = globalenv())
 ## The helpers close over the script's ckp_dir.
 env$ckp_dir <- tempfile("ckp"); dir.create(env$ckp_dir)
@@ -235,6 +236,53 @@ env$.CheckCharOrder("mkp_eg", lexical)
 ok("with no saved state, the new order is recorded",
    identical(read.csv(orderCsv)$file, basename(lexical)))
 
+## ---- Birth stamp on the order record (#388) --------------------------------
+ok("a fresh start stamps the record",
+   all(c("lifecycle", "build_sha") %in% names(rec)))
+
+## A record rewritten by a pre-5a890df resume: right order, no stamp.
+unstamped <- rec[, c("position", "file", "char_idx")]
+write.csv(unstamped, orderCsv, row.names = FALSE)
+saveRDS(validCkp, ckpFile)
+Sys.unsetenv("MKP_ACCEPT_UNSTAMPED_ORDER")
+refusal <- tryCatch(env$.CheckCharOrder("mkp_eg", numeric), error = identity)
+ok("resume against an unstamped record is refused even in the same order",
+   inherits(refusal, "error") && grepl("birth stamp", conditionMessage(refusal)))
+ok("the refusal names check_kprime_order.R",
+   grepl("check_kprime_order.R", conditionMessage(refusal)))
+ok("refusal leaves the record and the checkpoint alone",
+   file.exists(ckpFile) && !("lifecycle" %in% names(read.csv(orderCsv))))
+Sys.setenv(MKP_ACCEPT_UNSTAMPED_ORDER = "1")
+ok("MKP_ACCEPT_UNSTAMPED_ORDER=1 lets it through in the same order",
+   !inherits(tryCatch(env$.CheckCharOrder("mkp_eg", numeric), error = identity),
+             "error"))
+ok("but never under another order",
+   inherits(tryCatch(env$.CheckCharOrder("mkp_eg", lexical), error = identity),
+            "error"))
+Sys.unsetenv("MKP_ACCEPT_UNSTAMPED_ORDER")
+invisible(file.remove(ckpFile))
+env$.CheckCharOrder("mkp_eg", numeric)
+ok("a fresh start over an unstamped record re-stamps it",
+   "lifecycle" %in% names(read.csv(orderCsv)))
+
+## ---- .CheckNotFinished (#388) ------------------------------------------------
+fin <- tempfile("fin"); dir.create(fin)
+ckpD <- file.path(fin, "t01_r01"); dir.create(ckpD)
+Refused <- function(arm = "mkp")
+  inherits(tryCatch(env$.CheckNotFinished(arm, "t01_r01", fin, ckpD),
+                    error = identity), "error")
+Sys.unsetenv("MKP_FORCE_RESTART")
+ok("no final result: a fresh start is allowed", !Refused())
+saveRDS(list(stop_reason = "max_time"), file.path(fin, "mkp_t01_r01.rds"))
+ok("final result and no checkpoint: a fresh start is refused", Refused())
+ok("another arm's finished result is not this arm's", !Refused("mkp_eg"))
+invisible(file.create(file.path(ckpD, "mkp_checkpoint_2.rds")))
+ok("final result with a checkpoint: it resumes", !Refused())
+invisible(file.remove(file.path(ckpD, "mkp_checkpoint_2.rds")))
+Sys.setenv(MKP_FORCE_RESTART = "1")
+ok("MKP_FORCE_RESTART=1 permits the restart", !Refused())
+Sys.unsetenv("MKP_FORCE_RESTART")
+
 ## ---- .VariableCharIdx -------------------------------------------------------
 ## 11 characters, character 5 invariant: the variable subset is not 1:10.
 taxa <- paste0("t", 1:6)
@@ -256,6 +304,7 @@ ok("wrong-length index is refused",
    inherits(tryCatch(env$.VariableCharIdx(pd, 1:10), error = identity), "error"))
 
 ## ---- .SaveResult ------------------------------------------------------------
+env$.PIN <- list()
 env$out_dir <- tempfile("out"); dir.create(env$out_dir)
 env$arm <- "mkp_eg"
 env$tag <- "t01_r01"
@@ -278,5 +327,36 @@ ok("a stamped build reports its sha",
 ok("an unstamped build reports NA",
    identical(env$.BuildSha(FakeLib(character(0L))), NA_character_))
 ok("result keeps its own fields", identical(saved$stop_reason, "max_time"))
+
+## ---- Pinned tree-length prior (#389) ----------------------------------------
+tree <- TreeTools::NJTree(pd, edgeLengths = TRUE)
+mkd  <- suppressWarnings(MkPrimeData(pd))
+oldDefault <- max(1, MkPrime:::.FitchScore(tree, mkd))      # before 3c091f9
+headDefault <- MkPrime:::.FinalizeModel(MkPrimeModel(coding = "variable"),
+                                        NULL, mkd)$expSteps
+ok("fixture discriminates the old default from HEAD's",
+   !isTRUE(all.equal(oldDefault, headDefault)))
+pin <- env$.PinnedTreeLengthPrior(pd, tree)
+ok("the pin is the pre-3c091f9 expSteps", identical(pin$expSteps, oldDefault))
+ok("the pin is not HEAD's default", !isTRUE(all.equal(pin$expSteps, headDefault)))
+ok("the pin's rate keeps the prior mean at expSteps",
+   isTRUE(all.equal(pin$treeLengthRate, 2 / oldDefault)))
+env$.PIN <- pin
+fin <- MkPrime:::.FinalizeModel(env$.PinnedModel(), NULL, mkd)
+ok("an arm's resolved model carries the pin, not the new default",
+   identical(fin$expSteps, oldDefault) &&
+     isTRUE(all.equal(fin$treeLengthRate, 2 / oldDefault)))
+fin <- MkPrime:::.FinalizeModel(
+  env$.PinnedModel(treeLengthShape = 20, treeLengthRate = 20 / 0.7), NULL, mkd)
+ok("an arm with its own tree-length prior keeps it",
+   fin$treeLengthShape == 20 && isTRUE(all.equal(fin$treeLengthRate, 20 / 0.7)))
+ok("no arm calls MkPrimeModel() unpinned",
+   !any(grepl("MkPrimeModel(", readLines("data-raw/hamilton/run_one.R"),
+              fixed = TRUE)))
+env$arm <- "mkp"; env$var_char_idx <- 1:3
+env$.SaveResult(list(stop_reason = "max_time"))
+ok("result records the resolved tree-length prior",
+   identical(readRDS(file.path(env$out_dir, "mkp_t01_r01.rds"))$tree_length_prior,
+             pin))
 
 cat("\nALL CHECKS PASSED\n")

@@ -89,3 +89,8 @@ cat(sprintf(
   "%d log(s) checked; %d with a row below kObs; %d unreadable or unpaired\n",
   nrow(out), sum(out$n_bad_rows > 0L, na.rm = TRUE), sum(is.na(out$n_bad_rows))
 ))
+# Exit status is what run_one.R's MKP_ACCEPT_UNSTAMPED_ORDER=1 relies on: only
+# a clean check licenses resuming a task whose order record has no birth stamp.
+if (any(out$n_bad_rows > 0L, na.rm = TRUE) || anyNA(out$n_bad_rows)) {
+  quit(status = 1L)
+}
