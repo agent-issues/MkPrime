@@ -275,6 +275,11 @@ Sys.unsetenv("MKP_FORCE_RESTART")
 ok("no final result: a fresh start is allowed", !Refused())
 saveRDS(list(stop_reason = "max_time"), file.path(fin, "mkp_t01_r01.rds"))
 ok("final result and no checkpoint: a fresh start is refused", Refused())
+msg <- conditionMessage(tryCatch(env$.CheckNotFinished("mkp", "t01_r01", fin, ckpD),
+                                 error = identity))
+ok("the refusal names MKP_FORCE_RESTART and the files to delete",
+   grepl("MKP_FORCE_RESTART=1", msg, fixed = TRUE) &&
+     grepl("delete", msg, fixed = TRUE))
 ok("another arm's finished result is not this arm's", !Refused("mkp_eg"))
 invisible(file.create(file.path(ckpD, "mkp_checkpoint_2.rds")))
 ok("final result with a checkpoint: it resumes", !Refused())

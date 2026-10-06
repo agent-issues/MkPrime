@@ -248,9 +248,10 @@ startup. Exactness comes from tiny trees, not long chains.
   move); **measured 18.8 min** of arm time plus 14 s reference generation.
   The two most expensive arms are `gibbs_spr+br_1to30` (466 s) and
   `weighted_spr` (212 s); dropping those halves the run.
-  The committed `verdict.txt` is the quick-mode run (600 × 40) from a1ceb37,
-  not this configuration; the pre-fix headline FAIL is in 30e3f98's
-  `verdict.txt`.
+  The committed `verdict.txt` is this configuration (`--reps 5000 --sweeps 150`)
+  re-run on the corrected kernel in a cloud container: PASS, exit 0. The
+  pre-fix headline FAIL is in 30e3f98's `verdict.txt`; a1ceb37's was a
+  quick-mode (600 × 40) run.
 * **Full default:** `Rscript dev/red-team/heavy-tests/gibbs-spr-db.R`
   (20 000 replicates, 150 sweeps) — **estimated ~75 min** local, single-threaded.
   Adds nothing to the Q1 verdict; it buys a lower power floor and tighter

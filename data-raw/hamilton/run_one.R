@@ -68,8 +68,12 @@ dir.create(ckp_dir, showWarnings = FALSE)
     stop(sprintf(paste(
       "Refusing to restart %s %s: %s exists and there is no checkpoint to",
       "resume, so a fresh start would overwrite a finished result (#388).",
-      "Set MKP_FORCE_RESTART=1 to rerun it from scratch."),
-      arm, tag, basename(final)), call. = FALSE)
+      "To rerun it from scratch, delete %s and set MKP_FORCE_RESTART=1: a",
+      "log or tree stream left beside a gzipped one makes the summariser",
+      "refuse the task (#289)."),
+      arm, tag, basename(final),
+      paste(basename(.arm_own_files(arm)), collapse = " ")),
+      call. = FALSE)
   }
   invisible(NULL)
 }
@@ -123,12 +127,6 @@ if (.cur_job != .prev_job) {
             " -> new job ", .cur_job, ")")
   }
   if (.cur_job != "") writeLines(.cur_job, .sentinel)
-}
-# The per-tag sentinel above is shared by every arm of the task directory, so it
-# cannot say whether THIS arm has started since its result was written; this
-# marker can (#388).
-if (.cur_job != "") {
-  writeLines(.cur_job, file.path(ckp_dir, sprintf(".%s_slurm_job_id", arm)))
 }
 
 # ---- Shared helpers ----------------------------------------------------------
@@ -405,6 +403,14 @@ make_mcmc <- function(prefix, thin_iters = 500L) {
       stop(e)
     }
   })
+}
+
+# The per-tag sentinel is shared by every arm of the task directory, so it
+# cannot say whether THIS arm has started since its result was written; this
+# marker can (#388). Written only now, after every guard that can refuse the
+# start, so a refused resume does not make a finished task look live.
+if (.cur_job != "") {
+  writeLines(.cur_job, file.path(ckp_dir, sprintf(".%s_slurm_job_id", arm)))
 }
 
 # ---- Run the requested arm ---------------------------------------------------
