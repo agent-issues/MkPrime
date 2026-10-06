@@ -29,9 +29,15 @@
 #'   `priorOnClassRateLogSd = "gamma_independent"` per-class prior.
 #'   Not consulted by the default pooled hyperprior (see
 #'   `priorOnClassRateLogSd`).
-#' @param classRateConcentration Numeric specifying the concentration of the
-#'   symmetric Dirichlet prior on per-class relative rate weights; values below
-#'   one favour uneven class rates, values above one pull them together.
+#' @param classRateConcentration Positive number specifying the concentration
+#'   of the symmetric Dirichlet prior on per-class relative rate weights `w`;
+#'   values below one favour uneven class rates, values above one pull them
+#'   together. Used only when the rate multiplier is unlinked. Class `c`'s
+#'   effective rate is its rate `r_c` times its partition's
+#'   neomorphic or transformational scale, divided by the character-weighted
+#'   mean of that product; so when classes differ in their mix of neomorphic
+#'   and transformational characters, the `w_` columns are not exactly the
+#'   relative class rates.
 #' @param kprimeTruncK Integer specifying the cap `K` at which the geometric
 #'   arm's `k'` prior is truncated and renormalised over `[2, K]`, bounded
 #'   above by the compile-time candidate cap of 256.
@@ -111,7 +117,7 @@
 #'     posterior is over `(tree, mu, sigma, p)` only; the slow discrete
 #'     coordinate is removed. Required when chain mixing on `k'_i` is
 #'     known to be uninformative (per finding EG-003 in
-#'     `dev/red-team/findings.md`). v1 supports
+#'     `dev/red-team/findings-archive.md`). v1 supports
 #'     `kPrimePrior = "geometric"` only — other arms are §11 follow-ups
 #'     in `dev/notes/2026-05-28-marginal-k-plan.md`. Het + marginal-k and
 #'     partition-API + marginal-k are deferred (§13 of the plan).
@@ -254,15 +260,7 @@ MkPrimeModel <- function(
   # K_MAX_PRIOR for calibration, and K >= max(kObs) is enforced data-side in
   # .InitMcmcData.
   if (identical(kPrimePrior, "geometric")) {
-    kprimeTruncK <- as.integer(kprimeTruncK)
-    if (is.na(kprimeTruncK) || kprimeTruncK < 2L || kprimeTruncK > 256L) {
-      cli::cli_abort(c(
-        "{.arg kprimeTruncK} must be an integer in [2, 256] (got
-         {.val {kprimeTruncK}}).",
-        i = "256 is the compile-time candidate cap {.code kMaxKprimeCand}
-             in {.file src/mcmc_state.h}; raise it there to go higher."
-      ))
-    }
+    kprimeTruncK <- .CheckKprimeTruncK(kprimeTruncK)
   }
 
   # empiricalNObs is only relevant under the empirical_geometric prior; warn
@@ -273,12 +271,8 @@ MkPrimeModel <- function(
        {.arg kPrimePrior = \"{kPrimePrior}\"}."
     )
   }
-  if (kPrimePrior == "empirical_geometric" && !is.null(empiricalNObs) &&
-      !inherits(empiricalNObs, "MkPrimeEmpiricalPrior")) {
-    cli::cli_abort(
-      "{.arg empiricalNObs} must be an {.cls MkPrimeEmpiricalPrior} object;
-       build one with {.fn MkPrimeEmpiricalPrior}."
-    )
+  if (kPrimePrior == "empirical_geometric" && !is.null(empiricalNObs)) {
+    .CheckEmpiricalNObs(empiricalNObs)
   }
 
   # Warn if logseries-specific param is supplied for geometric prior
@@ -293,6 +287,7 @@ MkPrimeModel <- function(
                     kprimeBeta)
 
   .CheckLogseriesC(kPrimePrior, kprimeLogseriesC)
+  .CheckClassRateConcentration(classRateConcentration)
 
   # M-052: validate Het parameters
   if (isTRUE(qHeterogeneity)) {
@@ -320,6 +315,7 @@ MkPrimeModel <- function(
     }
   }
 
+  .CheckTreeLengthPrior(treeLengthShape, treeLengthRate, expSteps)
   if (is.null(treeLengthRate) && !is.null(expSteps)) {
     treeLengthRate <- treeLengthShape / expSteps
   }
@@ -381,7 +377,8 @@ MkPrimeModel <- function(
     cli::cli_abort(c(
       "{.code likelihoodMode = \"marginal_k\"} cannot be combined with
        known-state characters.",
-      i = "Character{?s} {known} {?is/are} pinned by {.arg knownStates}.",
+      i = "Character{cli::qty(length(known))}{?s} {.val {known}}
+           {cli::qty(length(known))}{?is/are} pinned by {.arg knownStates}.",
       i = "Known-k partitions are deferred (plan section 11); the marginal
            evaluator would drop them from the likelihood entirely.",
       i = "Use {.code likelihoodMode = \"sampled_k\"}, or drop
@@ -474,6 +471,96 @@ MkPrimeModel <- function(
 }
 
 
+# A non-positive value makes the Gamma tree-length prior NaN or -Inf, which
+# freezes the tree-length moves without an error (#380). Checked at
+# finalisation too, as is the next; rate and expSteps may still be NULL.
+.CheckTreeLengthPrior <- function(shape, rate, expSteps) {
+  values <- list(treeLengthShape = shape, treeLengthRate = rate,
+                 expSteps = expSteps)
+  for (field in names(values)) {
+    value <- values[[field]]
+    if (is.null(value) && field != "treeLengthShape") next
+    if (!(is.numeric(value) && length(value) == 1L && is.finite(value) &&
+          value > 0)) {
+      cli::cli_abort(
+        "{.arg {field}} must be a single positive finite number, not
+         {.val {value}}."
+      )
+    }
+  }
+  # Return:
+  invisible(NULL)
+}
+
+
+# Checked at finalisation too: a model list can be edited after construction.
+.CheckClassRateConcentration <- function(classRateConcentration) {
+  if (!(is.numeric(classRateConcentration) &&
+        length(classRateConcentration) == 1L &&
+        is.finite(classRateConcentration) && classRateConcentration > 0)) {
+    cli::cli_abort(
+      "{.arg classRateConcentration} must be a single positive finite number,
+       not {.val {classRateConcentration}}."
+    )
+  }
+  # Return:
+  invisible(NULL)
+}
+
+
+# The constructor match.arg()s these; a model edited by hand is checked
+# exactly, because LogPrior, cpp_log_prior and .LogZ0 compare them with
+# identical() and fall through to a different arm on any other value (#366).
+.CheckPriorEnums <- function(kPrimePrior, priorVariant) {
+  arms <- c("empirical_geometric", "geometric", "beta_geometric", "logseries")
+  if (!(is.character(kPrimePrior) && length(kPrimePrior) == 1L &&
+        kPrimePrior %in% arms)) {
+    cli::cli_abort(
+      "{.field kPrimePrior} must be one of {.val {arms}}, not
+       {.code {deparse(kPrimePrior)}}."
+    )
+  }
+  variants <- c("conditional", "unconditional")
+  if (!(is.character(priorVariant) && length(priorVariant) == 1L &&
+        priorVariant %in% variants)) {
+    cli::cli_abort(
+      "{.field priorVariant} must be one of {.val {variants}}, not
+       {.code {deparse(priorVariant)}}."
+    )
+  }
+  # Return:
+  invisible(NULL)
+}
+
+
+# Returns the cap as an integer. 256 is the C++ candidate cap kMaxKprimeCand.
+.CheckKprimeTruncK <- function(kprimeTruncK) {
+  K <- suppressWarnings(as.integer(kprimeTruncK))
+  if (length(K) != 1L || is.na(K) || K < 2L || K > 256L) {
+    cli::cli_abort(c(
+      "{.arg kprimeTruncK} must be an integer in [2, 256] (got
+       {.val {kprimeTruncK}}).",
+      i = "256 is the compile-time candidate cap {.code kMaxKprimeCand}
+           in {.file src/mcmc_state.h}; raise it there to go higher."
+    ))
+  }
+  # Return:
+  K
+}
+
+
+.CheckEmpiricalNObs <- function(empiricalNObs) {
+  if (!inherits(empiricalNObs, "MkPrimeEmpiricalPrior")) {
+    cli::cli_abort(
+      "{.arg empiricalNObs} must be an {.cls MkPrimeEmpiricalPrior} object;
+       build one with {.fn MkPrimeEmpiricalPrior}."
+    )
+  }
+  # Return:
+  invisible(NULL)
+}
+
+
 # beta_geometric offsets k' from kObs_i (u = k' - kObs_i), so its prior is
 # conditional by construction and has no unconditional form to switch to.
 # Checked at finalisation too, for a model whose priorVariant was set by hand.
@@ -512,10 +599,20 @@ MkPrimeModel <- function(
 #' @keywords internal
 .FinalizeModel <- function(model, tree, mkd) {
   model <- .ResolvePriorDefaults(model)
+  .CheckPriorEnums(model$kPrimePrior, model$priorVariant)
   .CheckPriorVariant(model$kPrimePrior, model$priorVariant)
+  if (identical(model$kPrimePrior, "geometric") &&
+      !is.null(model$kprimeTruncK)) {
+    model$kprimeTruncK <- .CheckKprimeTruncK(model$kprimeTruncK)
+  }
+  if (identical(model$kPrimePrior, "empirical_geometric")) {
+    .CheckEmpiricalNObs(model$empiricalNObs)
+  }
   .CheckKPrimeHyper(model$kPrimePrior, model$kprimeHyperA, model$kprimeHyperB,
                     model$kprimeAlpha, model$kprimeBeta)
   .CheckLogseriesC(model$kPrimePrior, model$kprimeLogseriesC)
+  .CheckTreeLengthPrior(model$treeLengthShape, model$treeLengthRate,
+                        model$expSteps)
   if (is.null(model$expSteps)) {
     tree <- tree %||% TreeTools::NJTree(mkd$phyDat)
     model$expSteps <- max(1, .FitchScore(tree, mkd) / ncol(mkd$matrix))
@@ -526,6 +623,8 @@ MkPrimeModel <- function(
   # A model saved before this field existed takes the constructor's default.
   model$priorOnClassRateLogSd <- model$priorOnClassRateLogSd %||%
     "hyperprior_pooled"
+  model$classRateConcentration <- model$classRateConcentration %||% 1
+  .CheckClassRateConcentration(model$classRateConcentration)
   model
 }
 
@@ -1013,7 +1112,9 @@ LogPrior <- function(state, model, mkd) {
 
     # 1. Dirichlet(alpha) on class_w (§5.1)
     #    K == 1: degenerate Dirichlet — contribution is 0.
-    if (K > 1) {
+    #    Scalar class_rate: the rate multiplier is linked (#244), so class_w
+    #    is fixed and the model is the unpartitioned one.
+    if (K > 1 && length(state$class_rate) > 1) {
       if (any(classW <= 0)) return(-Inf)
       alpha <- model$classRateConcentration %||% 1.0
       logDirConst <- lgamma(K * alpha) - K * lgamma(alpha)

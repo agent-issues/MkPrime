@@ -569,22 +569,23 @@ static double cpp_log_prior(
 // ---------------------------------------------------------------------------
 // cpp_log_prior_partitioned — plan v4 §5.1 + §5.4
 //
-// Adds three per-class prior contributions on top of the legacy log-prior:
+// Adds per-class prior contributions on top of the legacy log-prior:
 //
 //   1. Dirichlet(α) on classW (unit simplex) — plan §5.1.
 //      α == 1 gives a flat Dirichlet whose log-density is a constant;
 //      at K == 1 (trivial spec) the Dirichlet degenerates and its
 //      contribution is 0 — matching the legacy scalar path (§7b contract).
+//      Skipped when classRate has length 1 (rate multiplier linked, #244):
+//      classW is then fixed, and the model is the unpartitioned one.
 //
-//   2. Gamma(rateLogSdShape, rateLogSdRate) i.i.d. on each
-//      classRateLogSd[c] — plan §5.4. Skipped when classRateLogSd has
-//      length 1 (linked shape) because the legacy rateLogSd prior already
-//      covers that value — no double-counting.
+//   2. Per-class ACRV shape (unlinked "shape", K >= 2): either the pooled
+//      half-normal hierarchy on (tau, z_c), or Gamma(rateLogSdShape,
+//      rateLogSdRate) i.i.d. on classRateLogSd[1..K-1] — plan §5.4. Skipped
+//      when classRateLogSd has length 1 (linked shape) because the legacy
+//      rateLogSd prior already covers that value — no double-counting.
 //
-//   3. LogNormal(0, rateNeoSdlog) on etaNeo — §5.2. Included for
-//      forward compatibility; in Layer 1 etaNeo is frozen at 1.0 so
-//      the contribution is the constant LogNormal-mode density.
-//      Skipped entirely when !data.hasNeo.
+//   etaNeo (§5.2) is reserved and contributes nothing; rate_neo's prior
+//   comes from cpp_log_prior.
 //
 // All other legacy contributions are identical to cpp_log_prior — the
 // same scalar state variables are consumed.
@@ -597,6 +598,7 @@ static double cpp_log_prior_partitioned(
     double p, const IntegerVector& kPrime,
     const NumericVector& classRateLogSd,  // length 1 (linked) or nClasses
     const NumericVector& classW,          // length 1 or nClasses (simplex)
+    const NumericVector& classRate,       // length 1 (linked) or nClasses
     double etaNeo,
     bool useHyperpriorOnSigma,
     double hyperTau,
@@ -619,7 +621,7 @@ static double cpp_log_prior_partitioned(
   //    simplex. The Dirichlet log-density is 0 (normalising constant = 0 for
   //    K=1 after the lgamma(1*α)-1*lgamma(α) = 0 identity). Skip the loop.
   int K = classW.size();
-  if (K > 1) {
+  if (K > 1 && classRate.size() > 1) {
     double alpha = data.classRateConcentration;
     // log Dir(w; α) = lgamma(K*α) - K*lgamma(α) + (α-1)*sum(log(w))
     double logDirConst = std::lgamma(K * alpha) - K * std::lgamma(alpha);
@@ -759,15 +761,25 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
 static double compute_full_loglik(const McmcData& data, McmcState& state);
 static double compute_log_prior(const McmcData& data, const McmcState& state);
 
+// The class-rate normaliser for the state's parameters; an evaluator that
+// visits several partitions computes it once and passes it to each
+// part_eval_params() call.
+static inline double state_class_rate_norm(
+    const McmcData& data, const McmcState& state) {
+  return state.usePartitioned
+    ? class_rate_norm(data, state.classRate, state.rateNeo) : 1.0;
+}
+
 // The parameters the state scores partition `partIdx` under. Every evaluator
 // takes them from here so that all of them score the model state->logLik
 // holds (compute_full_loglik_at).
 static inline PartEvalParams part_eval_params(
-    const McmcData& data, const McmcState& state, int partIdx) {
+    const McmcData& data, const McmcState& state, int partIdx,
+    double classRateNorm) {
   if (state.usePartitioned) {
     return partitioned_eval_params(data, partIdx,
                                    state.classRateLogSd, state.classRate,
-                                   state.rateNeo);
+                                   state.rateNeo, classRateNorm);
   }
   PartEvalParams pe;
   pe.rateLogSd = state.rateLogSd;
@@ -788,8 +800,9 @@ static inline bool class_params_free(const McmcState& state) {
 static double partition_loglik(
     const McmcData& data, const McmcState& state, int partIdx,
     const IntegerVector& parent, const IntegerVector& child,
-    const NumericVector& edgeLen, ClWorkspace* ws) {
-  const PartEvalParams pe = part_eval_params(data, state, partIdx);
+    const NumericVector& edgeLen, ClWorkspace* ws, double classRateNorm) {
+  const PartEvalParams pe =
+    part_eval_params(data, state, partIdx, classRateNorm);
   NumericVector el = edgeLen;
   if (pe.classRate != 1.0) {
     el = NumericVector(edgeLen.size());
@@ -817,11 +830,12 @@ void fill_partition_cache(SEXP dataPtr, SEXP statePtr) {
   for (int i = 0; i < nEdge; ++i)
     edgeLen[i] = state->treeLength * state->relBrLengths[i];
   state->partLogLik.resize(nParts);
+  const double classRateNorm = state_class_rate_norm(*data, *state);
   double totalLogLik = 0.0;
   for (int pi = 0; pi < nParts; ++pi) {
     state->partLogLik[pi] = partition_loglik(
       *data, *state, pi, state->parent, state->child, edgeLen,
-      state->clWs.ready() ? &state->clWs : nullptr);
+      state->clWs.ready() ? &state->clWs : nullptr, classRateNorm);
     totalLogLik += state->partLogLik[pi];
   }
   // Sync state->logLik with the C++ partition sum.  The R-computed initial
@@ -1053,13 +1067,15 @@ double eval_log_prior_cpp(SEXP dataPtr, SEXP statePtr) {
 // Mirrors eval_log_prior_cpp (legacy scalar surface) for the partitioned path.
 // classRateLogSd: length 1 (linked) or nClasses (unlinked).
 // classW: length 1 (trivial) or nClasses (simplex).
-// When classRateLogSd and classW each have length 1, the result must equal
+// classRate: length 1 (rate multiplier linked) or nClasses (unlinked).
+// When classRateLogSd and classRate each have length 1, the result must equal
 // eval_log_prior_cpp to ~1e-10 (§7b analogue for the prior).
 // [[Rcpp::export]]
 double eval_log_prior_partitioned_cpp(
     SEXP dataPtr, SEXP statePtr,
     Rcpp::NumericVector classRateLogSd,
     Rcpp::NumericVector classW,
+    Rcpp::NumericVector classRate,
     double etaNeo,
     bool useHyperpriorOnSigma = false,
     double hyperTau = 1.0,
@@ -1070,7 +1086,7 @@ double eval_log_prior_partitioned_cpp(
     *d, s->treeLength, s->relBrLengths,
     s->rateLoss, s->rateLogSd, s->rateNeo,
     s->p, s->kPrime,
-    classRateLogSd, classW, etaNeo,
+    classRateLogSd, classW, classRate, etaNeo,
     useHyperpriorOnSigma, hyperTau, classZ,
     s->betaScale, s->kprimeAlpha, s->kprimeBeta);
 }
@@ -1110,7 +1126,7 @@ static double compute_log_prior_at(
       data, state.treeLength, relBrLengths,
       state.rateLoss, state.rateLogSd, state.rateNeo,
       state.p, state.kPrime,
-      state.classRateLogSd, state.classW, state.etaNeo,
+      state.classRateLogSd, state.classW, state.classRate, state.etaNeo,
       state.useHyperpriorOnSigma, state.hyperTau, state.classZ,
       state.betaScale, state.kprimeAlpha, state.kprimeBeta);
   }
@@ -1361,9 +1377,10 @@ static void build_cl_groups(const McmcData* data, const McmcState* state,
   groups.clear();
   groupRates.clear();
 
+  const double classRateNorm = state_class_rate_norm(*data, *state);
   for (int pi = 0; pi < (int)data->parts.size(); ++pi) {
     const PartInfo& part = data->parts[pi];
-    const PartEvalParams pe = part_eval_params(*data, *state, pi);
+    const PartEvalParams pe = part_eval_params(*data, *state, pi, classRateNorm);
     const bool useAcrv = (pe.rateLogSd > 0.0);
     const int nCat = useAcrv ? data->nCat : 1;
     const NumericVector rates = useAcrv
@@ -3440,11 +3457,13 @@ static double eval_slice_target(McmcData* data, McmcState* state,
   // so trans partitions are stale and we must fall through to full eval.)
   if (hasPLC && paramIdx == 1) {
     logLik = state->logLik;
+    const double classRateNorm = state_class_rate_norm(*data, *state);
     for (size_t ni = 0; ni < data->neoPartIndices.size(); ++ni) {
       int pi = data->neoPartIndices[ni];
       double oldPart = state->partLogLik[pi];
       double newPart = partition_loglik(
-        *data, *state, pi, state->parent, state->child, edgeLen, wsPtr);
+        *data, *state, pi, state->parent, state->child, edgeLen, wsPtr,
+        classRateNorm);
       logLik += (newPart - oldPart);
     }
   } else if (data->marginalK) {
@@ -3479,7 +3498,7 @@ static double eval_slice_target(McmcData* data, McmcState* state,
 // Updates state in place, including logLik, logPrior, and partLogLik cache.
 static bool slice_scalar_impl(McmcData* data, McmcState* state,
                                int paramIdx, double width,
-                               double beta, int maxSteps = 10,
+                               double beta, int maxSteps = 20,
                                int* nExpansionsOut = nullptr) {
   double x0 = get_scalar(state, paramIdx);
 
@@ -3491,18 +3510,23 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
   // Slice height
   double logZ = logY0 + std::log(R::unif_rand());
 
-  // Stepping out on log scale (count expansions for width adaptation)
+  // Stepping out on log scale (count expansions for width adaptation).
+  // Neal (2003, Fig. 3) splits the budget of maxSteps steps at random between
+  // the sides, so any point in the final interval could have generated it;
+  // a fixed cap per side is not reversible once it binds (#281).
   int nExp = 0;
   double L = u0 - width * R::unif_rand();
   double R_bound = L + width;
+  const int stepsLeft = static_cast<int>(maxSteps * R::unif_rand());
+  const int stepsRight = (maxSteps - 1) - stepsLeft;
 
-  for (int j = 0; j < maxSteps; ++j) {
+  for (int j = 0; j < stepsLeft; ++j) {
     set_scalar(state, paramIdx, std::exp(L));
     if (eval_slice_target(data, state, paramIdx, beta) + L <= logZ) break;
     L -= width;
     ++nExp;
   }
-  for (int j = 0; j < maxSteps; ++j) {
+  for (int j = 0; j < stepsRight; ++j) {
     set_scalar(state, paramIdx, std::exp(R_bound));
     if (eval_slice_target(data, state, paramIdx, beta) + R_bound <= logZ)
       break;
@@ -3532,10 +3556,12 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
         // rate_loss: only neo partitions change. Partial cache update.
         // (paramIdx == 3 / rate_neo intentionally excluded — audit Issue 1:
         // rate_neo now shifts transScale and so makes every partition stale.)
+        const double classRateNorm = state_class_rate_norm(*data, *state);
         for (size_t ni = 0; ni < data->neoPartIndices.size(); ++ni) {
           int pi = data->neoPartIndices[ni];
           state->partLogLik[pi] = partition_loglik(
-            *data, *state, pi, state->parent, state->child, edgeLen, wsPtr);
+            *data, *state, pi, state->parent, state->child, edgeLen, wsPtr,
+            classRateNorm);
         }
         state->logLik = 0.0;
         for (size_t pi = 0; pi < state->partLogLik.size(); ++pi)
@@ -3630,7 +3656,7 @@ static inline double bg_sigma_stable(double r) {
 
 static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
                                      int paramCode, double width,
-                                     int maxSteps = 10,
+                                     int maxSteps = 20,
                                      int* nExpansionsOut = nullptr) {
   double alpha0 = state->kprimeAlpha;
   double beta0  = state->kprimeBeta;
@@ -3681,16 +3707,18 @@ static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
 
   double v0 = (paramCode == 0) ? s0 : r0;
 
-  // Stepping out
+  // Stepping out, with Neal's randomised split of the budget (#281)
   int nExp = 0;
   double L = v0 - width * R::unif_rand();
   double R_bound = L + width;
-  for (int j = 0; j < maxSteps; ++j) {
+  const int stepsLeft = static_cast<int>(maxSteps * R::unif_rand());
+  const int stepsRight = (maxSteps - 1) - stepsLeft;
+  for (int j = 0; j < stepsLeft; ++j) {
     if (evalTarget(L) <= logZ) break;
     L -= width;
     ++nExp;
   }
-  for (int j = 0; j < maxSteps; ++j) {
+  for (int j = 0; j < stepsRight; ++j) {
     if (evalTarget(R_bound) <= logZ) break;
     R_bound += width;
     ++nExp;
@@ -3965,13 +3993,15 @@ void compute_per_kprime_log_lik(
   };
   std::vector<EvalSlot> slots(state->usePartitioned ? data->nClasses : 1);
   std::vector<bool> slotReady(slots.size(), false);
+  const double classRateNorm = state_class_rate_norm(*data, *state);
   auto slotFor = [&](int partIdx) -> int {
     const int si = state->usePartitioned
       ? data->parts[partIdx].classIdx - 1 : 0;
     if (slotReady[si]) return si;
     EvalSlot& slot = slots[si];
     if (state->usePartitioned) {
-      const PartEvalParams pe = part_eval_params(*data, *state, partIdx);
+      const PartEvalParams pe =
+        part_eval_params(*data, *state, partIdx, classRateNorm);
       const double transScale =
         compute_partition_scales(pe.rateNeo, data->nNeo, data->nTrans).trans;
       slot.edgeLen = NumericVector(edgeLen.size());
@@ -4390,7 +4420,9 @@ void compute_per_kprime_log_lik(
         if (data->relabel && R_FINITE(ll))
           ll += mk_prime_relabel_log(k, tp.kObs);
 
-        double w = beta * ll + logPrior_k;
+        // At beta = 0, 0 * -Inf is NaN, which the categorical draw would
+        // pick by default (#383); the support is L > 0, as in mh_accept.
+        double w = R_FINITE(ll) ? beta * ll + logPrior_k : R_NegInf;
 
         // Update per-character tracking for every character sharing this pattern
         for (int ti : pa.patTrans[localPat]) {
@@ -4727,8 +4759,9 @@ IntegerVector kprime_sweep_candidates(SEXP dataPtr, SEXP statePtr,
 // ---------------------------------------------------------------------------
 // Gibbs kPrime sweep (moveType 25)
 //
-// Samples each k'_i from its full conditional in a single random-order scan
-// of all transformational characters. Always accepts (Gibbs update).
+// Samples each k'_i from its full conditional, restricted to the candidate
+// window phase 1 enumerates, in a single random-order scan of all
+// transformational characters. Always accepts (Gibbs update).
 //
 // Phase 1 (per-(char, k') weight precomputation) lives in
 // compute_per_kprime_log_lik above; phase 2 (categorical sampling + cache
@@ -4815,6 +4848,12 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
       }
     }
 
+    // The candidate window [kObs_i, kObs_i + nCand) does not depend on k'_i,
+    // so a draw restricted to it from inside it, and no move from outside it,
+    // leaves the untruncated conditional invariant (#278). A k'_i beyond the
+    // window is moved by int_walk and block_kprime_shift instead.
+    if (state->kPrime[gi] - kObs_i >= nCand) continue;
+
     // Sample from categorical (log-sum-exp)
     double sumExp = 0.0;
     for (int c = 0; c < nCand; ++c)
@@ -4835,10 +4874,12 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
   int nParts = (int)data->parts.size();
   std::vector<double> newPLC(nParts);
+  const double classRateNorm = state_class_rate_norm(*data, *state);
   double newLL = 0.0;
   for (int pi = 0; pi < nParts; ++pi) {
     newPLC[pi] = partition_loglik(
-      *data, *state, pi, state->parent, state->child, edgeLen, wsPtr);
+      *data, *state, pi, state->parent, state->child, edgeLen, wsPtr,
+      classRateNorm);
     newLL += newPLC[pi];
   }
   state->logLik = newLL;
@@ -4903,6 +4944,7 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
   int nParts = (int)data->parts.size();
   std::vector<double> newPC;
   double newLogLik;
+  const double classRateNorm = state_class_rate_norm(*data, *state);
 
   if (hasPLC) {
     newPC = state->partLogLik;
@@ -4910,7 +4952,8 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
     for (int pi = 0; pi < nParts; ++pi) {
       if (data->parts[pi].type == 1) {  // transformational only
         double v = partition_loglik(
-          *data, *state, pi, state->parent, state->child, edgeLen, wsPtr);
+          *data, *state, pi, state->parent, state->child, edgeLen, wsPtr,
+          classRateNorm);
         newLogLik += (v - newPC[pi]);
         newPC[pi] = v;
       }
@@ -4920,7 +4963,8 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
     newLogLik = 0.0;
     for (int pi = 0; pi < nParts; ++pi) {
       newPC[pi] = partition_loglik(
-        *data, *state, pi, state->parent, state->child, edgeLen, wsPtr);
+        *data, *state, pi, state->parent, state->child, edgeLen, wsPtr,
+        classRateNorm);
       newLogLik += newPC[pi];
     }
   }
@@ -5077,7 +5121,8 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   //
   // Read before the proposal: valid for the partial evaluations below only
   // because no partial-CL move changes rateLogSd or rateNeo.
-  const PartEvalParams cachePe = part_eval_params(*data, *state, 0);
+  const PartEvalParams cachePe =
+    part_eval_params(*data, *state, 0, state_class_rate_norm(*data, *state));
   if ((moveType == 5 || moveType == 4 || moveType == 23 || moveType == 24
        || moveType == 6) &&
       !data->qHeterogeneity && !data->marginalK &&
@@ -5247,6 +5292,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       break;
     }
     case 7: { // int_walk kPrime — O(1) rollback (save single element, not full clone)
+      // marginal_k sums k' out of the likelihood, so nothing bounds the walk;
+      // .BuildMoves drops it, and so must a direct dispatch (#367).
+      if (data->marginalK) return false;
       kPrimeCharIdx = charIdx;
       oldKPrimeVal  = state->kPrime[charIdx];
       int oldK      = oldKPrimeVal;
@@ -5436,8 +5484,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       // p-update for the marginal_k geometric arm. Self-contained (does its own
       // accept/reject and returns), like the Gibbs cases — it does NOT fall
       // through to the generic MH machinery, because the accept ratio is the
-      // truncation-normaliser ratio Σ_i[logZ_i(p) − logZ_i(p*)], not the
-      // marginal-LL ratio. Derivation + math-prover verification + numerical
+      // truncation-normaliser ratio Σ_i[logZ_i(p) − logZ_i(p*)] times the
+      // support indicator ∏_i 1{u_i < S_i(p*)}, not the marginal-LL ratio.
+      // Derivation + math-prover verification + numerical
       // invariance check: dev/red-team/proofs/marginal-k-gibbs-p.md and
       // dev/red-team/numerical/gibbs-p-identity-check.R.
       if (!data->marginalK) return false;
@@ -5495,6 +5544,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       //     Z_i(p) are u-independent and cancel out of the categorical.
       double sumU = 0.0;
       double cA   = 0.0;
+      std::vector<int> imputedU(nTrans);
       for (int i = 0; i < nTrans; ++i) {
         const int gi    = data->transIdxGlobal[i];
         const int kObsi = data->kObs[gi];
@@ -5526,6 +5576,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         }
         // ui >= 0 guaranteed: mx finite => at least one finite candidate exists,
         // and only finite candidates are ever assigned to ui.
+        imputedU[i] = ui;
         sumU += (double)ui;
         if (uncond) cA += (double)(kObsi - 2);
       }
@@ -5563,6 +5614,18 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       const double logAlpha = sumLogZ_old - sumLogZ_new;
 
       if (std::log(R::unif_rand()) < logAlpha) {
+        // The support depends on p, so the augmented target is zero unless
+        // every u_i lies in S_i(p*) (proof §6.7). -1 means S_i(p*) extends
+        // past the nRaw candidates the fill evaluated, which contain u_i.
+        const double logPstar = std::log(pStar);
+        for (int i = 0; i < nTrans; ++i) {
+          const int kObsi = data->kObs[data->transIdxGlobal[i]];
+          const int koMax = std::max(0, std::min(kMaxKprimeCand, K - kObsi + 1));
+          const int sStar = marginal_support_at_p(
+            &state->charLLCache[(size_t)i * kMaxKprimeCand],
+            state->charLLNCand[i], koMax, logPstar, log1mPstar);
+          if (sStar >= 0 && imputedU[i] >= sStar) return false;
+        }
         state->p = pStar;
         // Commit the cold marginal at p*, refilling the cache there.
         state->charLLCacheReady = false;
@@ -5910,6 +5973,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     for (int i = 0; i < nEdge; ++i)
       propEdgeLen[i] = state->treeLength * evalRelBr[i];
     newPC = state->partLogLik;
+    const double classRateNorm = state_class_rate_norm(*data, *state);
     switch (moveType) {
       case 1: {
         // rate_loss: enters mkn stationary frequencies + Q-matrix; only
@@ -5919,7 +5983,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         for (size_t ni = 0; ni < data->neoPartIndices.size(); ++ni) {
           int pi = data->neoPartIndices[ni];
           double v = partition_loglik(*data, *state, pi,
-            evalParent, evalChild, propEdgeLen, wsPtr);
+            evalParent, evalChild, propEdgeLen, wsPtr, classRateNorm);
           newLogLik += (v - newPC[pi]);
           newPC[pi] = v;
         }
@@ -5935,7 +5999,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         newLogLik = state->logLik;
         if (ap >= 0) {
           double v = partition_loglik(*data, *state, ap,
-            evalParent, evalChild, propEdgeLen, wsPtr);
+            evalParent, evalChild, propEdgeLen, wsPtr, classRateNorm);
           newLogLik += (v - newPC[ap]);
           newPC[ap] = v;
         }
@@ -5946,7 +6010,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         newLogLik = 0.0;
         for (int pi = 0; pi < nParts; ++pi) {
           newPC[pi] = partition_loglik(*data, *state, pi,
-            evalParent, evalChild, propEdgeLen, wsPtr);
+            evalParent, evalChild, propEdgeLen, wsPtr, classRateNorm);
           newLogLik += newPC[pi];
         }
         break;
@@ -6266,6 +6330,8 @@ List run_mcmc_batch_cpp(
   int nScalarCols = 4 + (hasNeo ? 2 : 0) + nKpHyperCols +
                     (includeBS ? 1 : 0) + 2 + nTrans + nEdge +
                     nClassRLS + nClassW + nHyperTauCol + nClassZ;
+  // A negative count would size the reserve below as a huge unsigned value.
+  nBatch = std::max(nBatch, 0);
   int maxSaved    = nBatch / thin + 2;
   std::vector<std::vector<double>> scalarRows;
   scalarRows.reserve(maxSaved);
@@ -6332,14 +6398,14 @@ List run_mcmc_batch_cpp(
         int nExp = 0;
         accepted = slice_scalar_impl(
           data, states[ch], charIdx,
-          sliceWidths(ch, moveIdx), betas[ch], 10, &nExp);
+          sliceWidths(ch, moveIdx), betas[ch], 20, &nExp);
         sliceExpansions(ch, moveIdx) += nExp;
       } else if (moveType == 29) {
         // Prior-only slice sampler for BG hyperparameters (M-163)
         int nExp = 0;
         accepted = slice_kprime_hyper_impl(
           data, states[ch], sliceParamCodes[moveIdx],
-          sliceWidths(ch, moveIdx), 10, &nExp);
+          sliceWidths(ch, moveIdx), 20, &nExp);
         sliceExpansions(ch, moveIdx) += nExp;
       } else {
         // Per-move int param overrides chain-level intWalkWindow
