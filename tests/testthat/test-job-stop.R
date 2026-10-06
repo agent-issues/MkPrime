@@ -7,6 +7,16 @@
   !isTRUE(pkgload::is_dev_package("MkPrime"))
 }
 
+# Valgrind inflates the warmup and set-up that precede the clock's first
+# check, so a job that honours maxTime still overruns any margin that would
+# tell one budget from two.
+.ExpectWithinBudget <- function(elapsed, budget) {
+  if (identical(Sys.getenv("MKPRIME_MEMCHECK"), "true")) {
+    return(invisible())
+  }
+  expect_lt(elapsed, 1.6 * budget)
+}
+
 test_that(".WorkersStopReason() takes the job's reason from its runs (#355)", {
   expect_identical(.WorkersStopReason(c("converged", "converged"), 2L),
                    "converged")
@@ -85,7 +95,7 @@ test_that("maxTime bounds a sequential job without maxRhat (#356)", {
   expect_identical(res$requested_nRuns, 2L)
   expect_true(any(grepl("maxTime.+run 1 of 2", warns)))
   # A fresh budget per run took about 2 * budget.
-  expect_lt(elapsed, 1.6 * budget)
+  .ExpectWithinBudget(elapsed, budget)
 })
 
 test_that("maxTime bounds a sequential resume (#356)", {
@@ -117,7 +127,7 @@ test_that("maxTime bounds a sequential resume (#356)", {
 
   expect_identical(res$stop_reason, "max_time")
   expect_true(any(grepl("maxTime.+run 1 of 2", warns)))
-  expect_lt(elapsed, 1.6 * budget)
+  .ExpectWithinBudget(elapsed, budget)
 })
 
 test_that("a parallel job does not stop converged short of minTreeEss (#355)", {
