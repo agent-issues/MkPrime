@@ -72,11 +72,11 @@ test_that("MkPrimeData rejects invalid neomorphic indices", {
 })
 
 
-test_that("MkPrimeData warns for non-binary neomorphic characters", {
+test_that("MkPrimeData aborts for non-binary neomorphic characters", {
   mat <- matrix(c(0, 1, 2, 1, 0), nrow = 5, ncol = 1,
                 dimnames = list(paste0("t", 1:5), NULL))
   pd <- MatrixToPhyDat(mat)
-  expect_warning(MkPrimeData(pd, neomorphic = 1L), "kObs != 2")
+  expect_error(MkPrimeData(pd, neomorphic = 1L), "kObs != 2")
 })
 
 
@@ -165,4 +165,37 @@ test_that("AutoDetectNeomorphic works on real Nexus data", {
 
 test_that("AutoDetectNeomorphic rejects non-phyDat input", {
   expect_error(AutoDetectNeomorphic("not_phyDat"), "phyDat")
+})
+
+test_that("MkPrimeData pluralises messages for several characters", {
+  mat <- matrix(c(0, 1, 2, 1, 0), nrow = 5, ncol = 2,
+                dimnames = list(paste0("t", 1:5), NULL))
+  pd <- MatrixToPhyDat(mat)
+  expect_error(MkPrimeData(pd, neomorphic = 1:2), "characters 1 and 2 have")
+  expect_error(MkPrimeData(pd, neomorphic = 1L), "character 1 has")
+  expect_error(MkPrimeData(pd, knownStates = c("1" = 2L, "2" = 2L)),
+               "Characters 1 and 2:")
+  mat2 <- matrix(c(0, 1, 0, 1, 0), nrow = 5, ncol = 2,
+                 dimnames = list(paste0("t", 1:5), NULL))
+  expect_error(
+    MkPrimeData(MatrixToPhyDat(mat2), neomorphic = 1:2,
+                knownStates = c("1" = 2L, "2" = 2L)),
+    "Characters 1 and 2 appear in both"
+  )
+})
+
+test_that("AutoDetectNeomorphic reads real state labels, not remapped codes", {
+  mat <- cbind(c(0, 2, 0, 2, 0), c(1, 2, 1, 2, 1), c(0, 1, 0, 1, 0),
+               c(0, 1, 0, 1, 2))
+  dimnames(mat) <- list(paste0("t", 1:5), NULL)
+  expect_equal(AutoDetectNeomorphic(MatrixToPhyDat(mat)), 3L)
+})
+
+test_that(".DropUninformable reports the user's column numbers", {
+  mat <- cbind(rep(0, 5), c(0, 0, 1, 1, 1), rep(1, 5), c(0, 0, 0, 0, 1))
+  dimnames(mat) <- list(paste0("t", 1:5), NULL)
+  mkd <- suppressWarnings(MkPrimeData(MatrixToPhyDat(mat)))
+  expect_equal(mkd$orig_col, c(2L, 4L))
+  expect_message(.DropUninformable(mkd), "column 4", fixed = TRUE)
+  expect_equal(.DropUninformable(mkd)$orig_col, 2L)
 })

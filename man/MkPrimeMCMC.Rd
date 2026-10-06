@@ -115,8 +115,8 @@ Chain 1 is the cold chain (beta = 1).}
 \code{beta_i = heat^((i-1)/(nChains-1))} for i = 1, ..., nChains.
 Ignored when \code{nChains = 1}.}
 
-\item{maxTime}{Maximum wall-clock time in seconds. \code{NULL} (default)
-means no time limit.}
+\item{maxTime}{Maximum wall-clock time in seconds for the whole job, shared
+by all its runs. \code{NULL} (default) means no time limit.}
 
 \item{minEss}{Numeric specifying the effective sample size every monitored
 parameter must reach before sampling stops; \code{NULL} disables ESS-based
@@ -136,17 +136,24 @@ pseudo-ESS, via \strong{TreeDist}) each run must reach before it may stop;
 of which two in a row must pass before sampling stops.}
 
 \item{cancelFile}{Path to a cancel-signal file. \code{NULL} (default) disables
-cancel-file checking. When set, \code{\link[=RunMkPrime]{RunMkPrime()}} checks every 200
-iterations whether this file exists. If it does, the run flushes any
-buffered samples, saves a checkpoint (if \code{checkpointFile} is set), and
-exits with \code{stop_reason = "cancelled"}. Create the file to request a
-clean stop: \code{file.create(cancelFile)}. See also \code{\link[=MkCancelPath]{MkCancelPath()}}.}
+cancel-file checking. When set, \code{\link[=RunMkPrime]{RunMkPrime()}} checks whether this file
+exists between batches: every 500 iterations or fewer during warmup and
+tuning, and every 5000 or fewer during sampling. A batch also ends at
+each multiple of \code{checkEvery}, and of \code{plotEvery} when a progress
+callback is set. The \code{maxTime} limit is checked at the same points.
+If the file exists, the run flushes any buffered samples, saves a
+checkpoint (if \code{checkpointFile} is set), and exits with
+\code{stop_reason = "cancelled"}. Create the file to request a clean stop:
+\code{file.create(cancelFile)}. See also \code{\link[=MkCancelPath]{MkCancelPath()}}.}
 
 \item{checkpointFile}{Path to write checkpoint RDS files. \code{NULL}
 (default) auto-derives from \code{logFile} when set
 (e.g. \code{"run.log"} -> \code{"run.ckp"}). Set to \code{FALSE} to
 disable checkpointing. Checkpoints are saved at each
-convergence check interval and on cancel.}
+convergence check interval and on cancel.
+Without a \code{logFile}, samples stream to a log beside the checkpoint
+(\code{"run.ckp"} -> \code{"run_mkp_run.log"}); \code{\link[=RunMkPrime]{RunMkPrime()}} deletes it when
+sampling finishes, but keeps it through a \code{maxTime} or cancel stop.}
 
 \item{treeFile}{Path to write sampled trees in Newick format.
 \code{NULL} (default) auto-derives from \code{logFile} when set
@@ -403,12 +410,12 @@ towards the pair only once the logs have gained a \code{checkEvery}'s worth of
 samples.
 
 \code{minTreeEss} is judged per run, on up to \code{max(1000, 1.5 * minTreeEss)}
-evenly spaced trees. Trees are not written to the logs, so the cross-run
-decision rests on \code{minEss} and \code{maxRhat} alone; set one of them when
-running more than one run. A run that has sampled a single topology has
-no tree ESS: it cannot tell a stuck chain from a posterior concentrated on
-one topology, so it cannot meet \code{minTreeEss} until it samples another,
-and warns.
+evenly spaced trees. With \code{nCore > 1}, each run reports its verdict to the
+cross-run check, which stops the job only once every run meets
+\code{minTreeEss}; with \code{minTreeEss} alone, each run stops when it meets it. A
+run that has sampled a single topology has no tree ESS: it cannot tell a
+stuck chain from a posterior concentrated on one topology, so it cannot
+meet \code{minTreeEss} until it samples another, and warns.
 
 A criterion that can never be met -- \code{maxRhat} with one run, or
 \code{minTreeEss} with a fixed topology -- does

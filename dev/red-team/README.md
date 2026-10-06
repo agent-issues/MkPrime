@@ -76,5 +76,12 @@ suspended). There is no project legend; its history is archived in [discussion #
 Run outputs under `heavy-tests/` and `numerical/` (`*-results/`, `*.log`, experiment
 `*.rds`) are regenerable. Only `heavy-tests/*-results/summary.rds` is git-ignored;
 about 25 result files under `numerical/*-results/`, `heavy-tests/gibbs-spr-db-results/`
-and `sbc-results-mixed/` are tracked, and whether each is a fixture or a stray is
-undecided.
+and `sbc-results-mixed/` are tracked (as are eight under `inst/simulations/`), and
+whether each is a fixture or a stray is undecided.
+
+The four remaining `patches/` no longer apply: `D3-*` and `L5-*` were recorded as landed (neither applies forward), and
+`N1-*` and `N2-*` are corrupt. They stay because the frozen archive cites them by path;
+read them as a record of the proposed change, not as something to `git apply`.
+
+Count open findings with the query, never by hand:
+`gh issue list --label red-team --state open --json number --jq length`.

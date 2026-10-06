@@ -12,15 +12,14 @@
 }
 
 # P(constant [or parsimony-uninformative] among the observed tips), by
-# enumerating every completion of the missing tips: independent of the
-# masked kernels.
+# enumerating every observed pattern and leaving the missing tips ambiguous in
+# plain pruning: independent of the masked kernels.
 .BruteAscProb <- function(tree, missing, k, neo, rateLoss, rates,
                           informative) {
   parent <- tree$edge[, 1]
   child <- tree$edge[, 2]
   nTip <- NTip(tree)
   obs <- which(!missing)
-  mis <- which(missing)
   SiteLik <- function(pattern) {
     m <- matrix(as.integer(pattern), nTip, 1)
     exp(if (neo) {
@@ -35,22 +34,15 @@
   # Uninformative: fewer than two states each occur twice or more.
   obsPatterns <- as.matrix(expand.grid(rep(list(seq_len(k) - 1L),
                                            length(obs))))
-  keep <- apply(obsPatterns, 1, function(x) {
-    counts <- tabulate(x + 1L, k)
-    if (informative) sum(counts >= 2L) < 2L else sum(counts > 0L) == 1L
-  })
-  patterns <- lapply(which(keep), function(i) {
-    p <- integer(nTip)
-    p[obs] <- obsPatterns[i, ]
-    p
-  })
-  fills <- as.matrix(expand.grid(rep(list(seq_len(k) - 1L), length(mis))))
+  counts <- vapply(seq_len(k) - 1L, function(s) rowSums(obsPatterns == s),
+                   double(nrow(obsPatterns)))
+  keep <- if (informative) rowSums(counts >= 2L) < 2L else
+    rowSums(counts > 0L) == 1L
   # Return:
-  sum(vapply(patterns, function(p) {
-    sum(apply(fills, 1, function(f) {
-      p[mis] <- f
-      SiteLik(p)
-    }))
+  sum(vapply(which(keep), function(i) {
+    p <- rep(-1L, nTip)
+    p[obs] <- obsPatterns[i, ]
+    SiteLik(p)
   }, double(1)))
 }
 
@@ -233,9 +225,11 @@ test_that("cached and Gibbs paths carry the per-mask correction", {
     expect_lt(.MissingDrift(d, MkPrimeModel(coding = coding), moveNames),
               1e-6, label = coding)
   }
+  # A qHeterogeneity move costs ~40 ms natively, ~2 s under valgrind.
+  nMoveQ <- if (identical(Sys.getenv("MKPRIME_MEMCHECK"), "true")) 50L else 300L
   expect_lt(.MissingDrift(d, MkPrimeModel(qHeterogeneity = TRUE),
                           c("gibbs_spr", "gibbs_subtree_swap",
-                            "gibbs_kPrime", "branch_lengths")),
+                            "gibbs_kPrime", "branch_lengths"), nMoveQ),
             1e-6, label = "qHeterogeneity")
 })
 

@@ -20,7 +20,9 @@ mkp_stepping_stone(
 )
 }
 \arguments{
-\item{data}{A \code{phyDat} object or \code{MkPrimeData} object.}
+\item{data}{A \code{phyDat} object or \code{MkPrimeData} object. To fix the number
+of states of some characters, as \code{knownStates} does in \code{\link[=RunMkPrime]{RunMkPrime()}},
+pass \code{MkPrimeData(data, knownStates = ...)}.}
 
 \item{tree}{A starting tree (\code{phylo} object), or \code{NULL} (default) to use a
 neighbour-joining tree built from the data.}
@@ -58,12 +60,13 @@ see \code{\link[=MkPrimeVerbosity]{MkPrimeVerbosity()}}.}
 \value{
 A list with components:
 \describe{
-\item{log_marginal}{Log marginal likelihood estimate, pooling the
-runs.}
+\item{log_marginal}{Log marginal likelihood estimate: the mean of
+\code{run_log_marginal}.}
 \item{se}{Standard error of the estimate (see Details); \code{NA} when
 \code{nRuns = 1}.}
 \item{run_log_marginal}{The estimate from each run alone (length \code{nRuns}).}
-\item{log_ratios}{Per-stone log ratios (length \code{nStones}).}
+\item{log_ratios}{Per-stone log ratios, averaged over runs (length
+\code{nStones}).}
 \item{betas}{The beta schedule used.}
 }
 If any stone of any run has no finite log-likelihood, or an infinite one,
@@ -92,15 +95,19 @@ stone visits \verb{k'_i < kObs_i}, so the prior-only stone is normalised on
 \verb{k' >= kObs} alone; the estimate adds back the log prior mass of that
 region, integrated over \code{p} numerically.
 
-Each run is one chain that carries its state from stone to stone, starting
-from \code{tree}. The estimate pools the draws of every run at each stone; the
-standard error is \eqn{s / \sqrt{n}}, where \eqn{s} is the standard
-deviation of the \code{n = nRuns} runs' own estimates. Within a run, the
-autocorrelation of the chain commonly outlasts a stone and carries into
-the next, so an error computed from each stone's draws alone (the delta
-method of Xie et al. 2011) can understate the true error several-fold;
-independent runs capture both. With few runs the standard error is itself
-uncertain: with the default two it rests on one degree of freedom.
+Each run is one chain that carries its state from stone to stone. The first
+starts from \code{tree}; later runs start from a perturbed copy (a few random
+nearest-neighbour interchanges, unless \code{fixTopology}, and jittered branch
+lengths) and, under a geometric \verb{k'} prior, a random \code{p}, so that their
+spread reflects how far the estimate depends on the start. The estimate is
+the mean of the \code{n = nRuns} runs' own estimates; its standard error is
+\eqn{s / \sqrt{n}}, where \eqn{s} is their standard deviation. Within a
+run, the autocorrelation of the chain commonly outlasts a stone and carries
+into the next, so an error computed from each stone's draws alone (the
+delta method of Xie et al. 2011) can understate the true error
+several-fold; independent runs capture both. With few runs the standard
+error is itself uncertain: with the default two it rests on one degree of
+freedom.
 }
 \references{
 Xie, W., Lewis, P.O., Fan, Y., Kuo, L., & Chen, M.-H. (2011).
