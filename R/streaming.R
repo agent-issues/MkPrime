@@ -475,7 +475,7 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
       "Log {cli::qty(length(rec$logFiles))}file{?s} contain{?s/} no samples \\
        (run may have been interrupted before any were flushed)."
     )
-    .CleanupTempLogs(rec$logFiles)
+    if (isTRUE(rec$isTempLog)) .CleanupTempLogs(rec$logFiles)
     return(invisible(NULL))
   }
 
@@ -494,8 +494,8 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
   result$nSamples   <- nrow(samples)
   result$stop_reason <- "interrupted"
 
-  # Clean up
-  .CleanupTempLogs(rec$logFiles)
+  # A log the user named, or one a checkpoint still needs, is not ours to delete.
+  if (isTRUE(rec$isTempLog)) .CleanupTempLogs(rec$logFiles)
 
   .AlertSuccess(
     "Recovered {nrow(samples)} sample{?s} from interrupted run."

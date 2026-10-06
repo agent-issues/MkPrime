@@ -80,7 +80,7 @@ Previous session:
        oracle (mk_ktrue) loses to mk_k40.
     2. Mk with fixed large k monotonically wins (the ramp).
     3. Mechanism is saturation regularisation, not TL inflation
-       (TL_HYPOTHESIS_TEST.md) and not explicit TL shrinkage (mk_tlshrink).
+       (dev/pilots/2026-05-12-prior-validation/TL_HYPOTHESIS_TEST.md) and not explicit TL shrinkage (mk_tlshrink).
   Supporting CSV digest at `mkprime/report-data/cid_thirteen_arm_digest.csv`
   (2941 rows across 13 arms; pulled from
   `/nobackup/pjjg18/mkp-study/summary/*.rds`).

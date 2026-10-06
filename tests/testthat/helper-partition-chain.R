@@ -35,7 +35,7 @@
   }
   classZ <- if (hyperprior) classRateLogSd else numeric(0)
   statePtr <- NewState(eval_log_prior_partitioned_cpp(
-    dataPtr, NewState(0), classRateLogSd, classW, 1,
+    dataPtr, NewState(0), classRateLogSd, classW, classRate, 1,
     useHyperpriorOnSigma = hyperprior, hyperTau = 1, classZ = classZ))
   fill_partition_cache(dataPtr, statePtr)
   allocate_cl_workspace(dataPtr, statePtr)
