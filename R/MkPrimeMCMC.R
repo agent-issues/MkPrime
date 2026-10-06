@@ -47,9 +47,13 @@
 #' @param nChains Number of chains in the temperature ladder (parallel
 #'   tempering). Default 1 (no tempering). Set to 4 for typical analyses.
 #'   Chain 1 is the cold chain (beta = 1).
-#' @param heat Temperature of the hottest chain (0 < heat < 1). Default
-#'   0.2. The temperature ladder uses geometric spacing:
-#'   `beta_i = heat^((i-1)/(nChains-1))` for i = 1, ..., nChains.
+#' @param heat Inverse temperature of the hottest chain (0 < heat < 1),
+#'   from which warmup starts. Default 0.2. The temperature ladder uses
+#'   geometric spacing: `beta_i = heat^((i-1)/(nChains-1))` for
+#'   i = 1, ..., nChains. Warmup adapts `heat` towards a 25% swap
+#'   acceptance rate, keeping it between 0.01 and 0.5: a value outside that
+#'   range is moved into it at the first adaptation, with a warning. The
+#'   ladder is then fixed for the Tuning and Sample phases.
 #'   Ignored when `nChains = 1`.
 #' @param maxTime Maximum wall-clock time in seconds for the whole job, shared
 #'   by all its runs. `NULL` (default) means no time limit.
@@ -270,6 +274,12 @@
 #' - `scale_p`: 0.5
 #' - `int_walk_window`: 1
 #' - `block_kprime_window`: 1
+#' - `dirichlet_class_w_alpha`: 10, the concentration of the Dirichlet
+#'   proposal on the partition class weights; larger values take smaller
+#'   steps.
+#'
+#' Warmup adapts each value towards its move's target acceptance rate, and
+#' each chain of a tempered ladder adapts its own.
 #'
 #' ## Stopping criteria
 #'
@@ -504,6 +514,13 @@ MkPrimeMCMC <- function(
   if (nChains > 1L) {
     if (heat <= 0 || heat >= 1) {
       cli::cli_abort("{.arg heat} must be in (0, 1), got {heat}.")
+    }
+    if (heat < 0.01 || heat > 0.5) {
+      cli::cli_warn(c(
+        "{.arg heat} = {heat} lies outside [0.01, 0.5].",
+        "i" = "Warmup will move it to {max(0.01, min(heat, 0.5))} when it \\
+               first adapts the temperature ladder."
+      ))
     }
   }
   if (!is.null(cancelFile)) {

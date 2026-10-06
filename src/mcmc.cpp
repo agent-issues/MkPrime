@@ -4876,6 +4876,17 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
 }
 
 
+// Uniform on {-W, ..., -1, 1, ..., W}. A null shift is a wasted evaluation
+// that the window controllers would score as an acceptance or a rejection,
+// biasing the window whichever way they count it (#304).
+static int draw_nonzero_shift(int window) {
+  int w = std::max(window, 1);
+  int d = 1 + static_cast<int>(R::unif_rand() * 2 * w);
+  if (d > 2 * w) d = 2 * w;
+  return d <= w ? -d : d - w;
+}
+
+
 // ---------------------------------------------------------------------------
 // Block kPrime shift (moveType 26)
 //
@@ -4888,10 +4899,7 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
   int nTrans = (int)data->transIdxGlobal.size();
   if (nTrans == 0) return false;
 
-  // Propose delta ~ Uniform({-W, ..., W})
-  int range = 2 * intWalkWindow + 1;
-  int delta = static_cast<int>(R::unif_rand() * range) - intWalkWindow;
-  if (delta == 0) return false;
+  int delta = draw_nonzero_shift(intWalkWindow);
 
   // Feasibility: all k'_i + delta >= kObs_i
   for (int i = 0; i < nTrans; ++i) {
@@ -5282,8 +5290,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       oldKPrimeVal  = state->kPrime[charIdx];
       int oldK      = oldKPrimeVal;
       int lowerK = data->kObs[charIdx];
-      int range  = 2 * intWalkWindow + 1;
-      int delta  = static_cast<int>(R::unif_rand() * range) - intWalkWindow;
+      int delta  = draw_nonzero_shift(intWalkWindow);
       int newK   = oldK + delta;
       if (newK < lowerK) return false;
       state->kPrime[charIdx] = newK;
@@ -5664,7 +5671,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       std::vector<int> dummyEdges;
       NumericVector tmpSnap = clone(state->classW);
       if (!dirichlet_simplex_impl(state->classW, nC,
-                                  betaSimplexTuning, logHastings,
+                                  scaleTuning, logHastings,
                                   tmpSnap, dummyEdges)) {
         state->classW = classWSnapshot;
         return false;
@@ -6192,6 +6199,22 @@ bool do_move_cpp(SEXP dataPtr, SEXP statePtr,
 }
 
 
+static SEXP check_interrupt_body(void*) {
+  R_CheckUserInterrupt();
+  return R_NilValue;
+}
+
+static SEXP return_condition(SEXP cond, void*) {
+  return cond;
+}
+
+// The interrupt or error condition pending in R, or R_NilValue if none.
+static SEXP poll_interrupt(SEXP classes) {
+  return R_tryCatch(check_interrupt_body, nullptr, classes,
+                    return_condition, nullptr, nullptr, nullptr);
+}
+
+
 // Moves that can score through the node CL cache: beta_simplex, NNI, SPR,
 // dirichlet_branch, local_dirichlet.
 static inline bool is_partial_cl_move(int moveType) {
@@ -6228,7 +6251,9 @@ List run_mcmc_batch_cpp(
     int thin,
     bool hasNeo,
     int nEdge,
-    double cacheBonus = 1.0
+    double cacheBonus = 1.0,
+    IntegerVector chainBlockKpWins = IntegerVector::create(),
+    Nullable<List> ptCarry = R_NilValue
 ) {
   McmcData* data = Rcpp::XPtr<McmcData>(dataPtr).get();
   int nChains    = stateXPtrs.size();
@@ -6336,13 +6361,41 @@ List run_mcmc_batch_cpp(
   enum ParticleState : char { PS_NONE = 0, PS_AT_COLD = 1, PS_AT_HOT = 2 };
   std::vector<char> particleState(nChains, PS_NONE);
   if (nChains > 0) particleState[0] = PS_AT_COLD;
+  // A trip or a cold swap that straddles a batch boundary still counts.
+  if (ptCarry.isNotNull()) {
+    List carry(ptCarry);
+    IntegerVector atSlot = carry["particle_at_slot"];
+    IntegerVector pState = carry["particle_state"];
+    if (atSlot.size() == nChains && pState.size() == nChains) {
+      for (int s = 0; s < nChains; ++s) {
+        particleAtSlot[s] = atSlot[s];
+        particleState[s] = static_cast<char>(pState[s]);
+      }
+      coldSwapsSinceSample = as<int>(carry["cold_swaps"]);
+    }
+  }
   int roundTripCount = 0;
+
+  // An interrupt or time limit caught here, rather than longjmping out of
+  // R_CheckUserInterrupt, lets this frame's destructors run (#398) and
+  // RNGScope write .Random.seed back (#317). Nothing is thrown, either:
+  // unwinding an exception out of a large frame segfaults on aarch64.
+  CharacterVector pollClasses = CharacterVector::create("interrupt", "error");
+  RObject interrupted;
+  auto lastPoll = std::chrono::steady_clock::now();
 
   // Main iteration loop
   for (int i = 0; i < nBatch; ++i) {
-    // Check for user interrupt every 10 iterations (expensive moves can take
-    // seconds each, so we want to stay responsive to Ctrl-C / ESC).
-    if (i % 10 == 0) R_CheckUserInterrupt();
+    // Expensive moves can take seconds each, so poll every 10 iterations;
+    // a cheap one takes microseconds, so at most every 20 ms.
+    if (i % 10 == 0) {
+      auto now = std::chrono::steady_clock::now();
+      if (now - lastPoll >= std::chrono::milliseconds(20)) {
+        lastPoll = now;
+        interrupted = poll_interrupt(pollClasses);
+        if (!interrupted.isNULL()) break;
+      }
+    }
 
     int iter = startIter + i;
 
@@ -6395,6 +6448,8 @@ List run_mcmc_batch_cpp(
         int iww = moveIntParams[moveIdx] > 0
                     ? moveIntParams[moveIdx]
                     : chainIntWalkWins[ch];
+        if (moveType == 26 && chainBlockKpWins.size() == nChains)
+          iww = chainBlockKpWins[ch];
         accepted = do_move_impl(
           data, states[ch],
           moveType, charIdx,
@@ -6424,7 +6479,8 @@ List run_mcmc_batch_cpp(
       if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
         std::swap(*states[iPair], *states[jPair]);
         swapAccept[iPair]++;
-        if (iPair == 0) coldSwapsSinceSample++;
+        // Warmup saves nothing, so its swaps would all land on the first sample.
+        if (iPair == 0 && iter > warmup) coldSwapsSinceSample++;
 
         // PT-RT-001: update particle-at-slot map and possibly count round trip.
         std::swap(particleAtSlot[iPair], particleAtSlot[jPair]);
@@ -6503,6 +6559,15 @@ List run_mcmc_batch_cpp(
     _["bs_partial"] = states[0]->diagBsPartialCount
   );
 
+  IntegerVector carryState(nChains);
+  for (int s = 0; s < nChains; ++s) carryState[s] = particleState[s];
+  List carryOut = List::create(
+    _["particle_at_slot"] = IntegerVector(particleAtSlot.begin(),
+                                          particleAtSlot.end()),
+    _["particle_state"]   = carryState,
+    _["cold_swaps"]       = coldSwapsSinceSample
+  );
+
   return List::create(
     _["accept_counts"]    = acceptCounts,
     _["propose_counts"]   = proposeCounts,
@@ -6516,7 +6581,9 @@ List run_mcmc_batch_cpp(
     _["n_saved"]          = nSaved,
     _["diag_counters"]    = diagCounters,
     _["cache_hits"]       = cacheHits,
-    _["cache_misses"]     = cacheMisses
+    _["cache_misses"]     = cacheMisses,
+    _["pt_carry"]         = carryOut,
+    _["interrupted"]      = interrupted
   );
 }
 
