@@ -36,6 +36,7 @@ test_that(".EstimateJointRhos keeps rhos it cannot re-estimate", {
 })
 
 test_that("a default-length run adapts every joint-move correlation", {
+  skip_under_memcheck()
   skip_on_cran()
   set.seed(301)
   tree <- ape::rtree(20)

@@ -196,6 +196,8 @@ RunMkPrime <- function(data, tree = NULL,
   # writes wholesale, which reaches every save site without an extra argument.
   mcmc$fixTopology <- isTRUE(fixTopology)
   mcmc$partitionSpec <- partitionSpec
+  mcmc$dataFingerprint <- .DataFingerprint(mkd)
+  mcmc$tipLabels <- rownames(mkd$matrix)
 
   # When a user partition is supplied, rebuild mkd$partitions with classIdx
   # populated for each PartInfo. The C++ McmcData uses classIdx to map each
@@ -277,7 +279,9 @@ RunMkPrime <- function(data, tree = NULL,
   # --- Initialize per-run state ---
   runs <- vector("list", nRuns)
   for (run in seq_len(nRuns)) {
-    startTree <- if (run == 1L) tree else .PerturbStart(tree)
+    startTree <- if (run == 1L) tree else {
+      .PerturbStart(tree, topology = !mcmc$fixTopology)
+    }
     runs[[run]] <- .InitRun(startTree, mkd, model, mcmc, moves,
                             partitionSpec = partitionSpec)
     runs[[run]]$run_index <- run
@@ -784,6 +788,7 @@ RunMkPrime <- function(data, tree = NULL,
     } else {
       s <- .InitState(tree, mkd, model)
     }
+    .CheckStartLogLik(s, tree, mkd, model)
     ch_list <- list(
       edge           = s$tree$edge,
       rel_br_lengths = s$rel_br_lengths,
@@ -3322,6 +3327,152 @@ RunMkPrime <- function(data, tree = NULL,
 
 # --- Checkpointing ---
 
+#' Fingerprint of the data a chain was built on
+#'
+#' Per-character chain state (`kPrime`) is indexed by character, so a resume
+#' on reordered or different characters would apply it to the wrong columns.
+#' The matrix is hashed in character order, rows by tip label.
+#'
+#' @keywords internal
+.DataFingerprint <- function(mkd) {
+  charMatrix <- mkd$matrix
+  charMatrix <- charMatrix[order(rownames(charMatrix)), , drop = FALSE]
+  storage.mode(charMatrix) <- "integer"
+  list(nChar = as.integer(mkd$nChar),
+       kObs = as.integer(mkd$kObs),
+       hash = rlang::hash(unname(charMatrix)),
+       type = as.character(mkd$type),
+       knownK = as.integer(mkd$known_k))
+}
+
+#' Abort a resume whose data differ from the checkpoint's
+#' @keywords internal
+.CheckDataFingerprint <- function(saved, mkd) {
+  if (is.null(saved)) {
+    .AlertInfo("Checkpoint predates data fingerprints; not checking that \\
+                {.arg data} matches the data it was run on.")
+    return(invisible())
+  }
+  # A fingerprint saved before a field existed is checked on the rest.
+  now <- .DataFingerprint(mkd)[names(saved)]
+  if (identical(saved, now)) return(invisible())
+  what <- if (!identical(saved$nChar, now$nChar)) {
+    "character count ({saved$nChar} in checkpoint, {now$nChar} in {.arg data})"
+  } else if (!identical(saved$kObs, now$kObs)) {
+    "observed state counts (kObs) per character"
+  } else if (!identical(saved$type, now$type) ||
+             !identical(saved$knownK, now$knownK)) {
+    "character types ({.arg neomorphic}, {.arg knownStates})"
+  } else {
+    "character states or order"
+  }
+  cli::cli_abort(c(
+    "{.arg data} differs from the data this chain was run on.",
+    "x" = paste("The", what, "differ."),
+    "i" = "Resume with the original data, or start a fresh run with \\
+           {.code RunMkPrime(..., overwrite = TRUE)}."
+  ))
+}
+
+# Fields that size the chain's state or fix its move set or likelihood engine.
+.resumeStructuralFields <- c("coding", "relabel", "kPrimePrior",
+                             "priorVariant", "likelihoodMode",
+                             "qHeterogeneity", "nCat", "nBetaCat")
+
+#' Abort a resume whose model differs structurally from the checkpoint's
+#'
+#' Compares only fields the checkpoint recorded, so a checkpoint that predates
+#' a field still resumes.
+#' @keywords internal
+.CheckResumeModel <- function(saved, model) {
+  for (field in .resumeStructuralFields) {
+    was <- saved[[field]]
+    now <- model[[field]]
+    if (is.null(was) || is.null(now)) next
+    if (field == "nBetaCat" && !isTRUE(model$qHeterogeneity)) next
+    if (isTRUE(all.equal(unname(was), unname(now)))) next
+    cli::cli_abort(c(
+      "{.arg model} differs from the model this chain was run on.",
+      "x" = "{.field {field}} is {.val {now}}, but {.val {was}} in the \\
+             checkpoint.",
+      "i" = "Resume with the original model (or {.code model = NULL}), or \\
+             start a fresh run with {.code RunMkPrime(..., overwrite = TRUE)}."
+    ))
+  }
+  invisible()
+}
+
+# Chain state numbers tips by data row, so data supplied on resume must take
+# the checkpoint's row order.
+.OrderTipsAs <- function(mkd, tipLabels) {
+  if (is.null(tipLabels)) {
+    .AlertInfo("Checkpoint predates stored tip labels; pairing its tips \\
+                with the rows of {.arg data} by position.")
+    return(mkd)
+  }
+  dataLabels <- rownames(mkd$matrix)
+  rowOrder <- match(tipLabels, dataLabels)
+  if (anyNA(rowOrder) || length(tipLabels) != length(dataLabels)) {
+    cli::cli_abort(c(
+      "{.arg data} holds different taxa from the data this chain was run on.",
+      "x" = if (anyNA(rowOrder)) {
+        "Not in {.arg data}: {.val {tipLabels[is.na(rowOrder)]}}."
+      },
+      "x" = if (!all(dataLabels %in% tipLabels)) {
+        "Not in checkpoint: {.val {setdiff(dataLabels, tipLabels)}}."
+      },
+      "i" = "Resume with the original data, or start a fresh run with \\
+             {.code RunMkPrime(..., overwrite = TRUE)}."
+    ))
+  }
+  if (identical(rowOrder, seq_along(rowOrder))) return(mkd)
+  mkd$matrix <- mkd$matrix[rowOrder, , drop = FALSE]
+  mkd$taxon_names <- mkd$taxon_names[rowOrder]
+  mkd$partitions <- .BuildPartitions(mkd)
+  # Return:
+  mkd
+}
+
+# A serialised chain's tree, tips labelled by data row.
+.ChainTree <- function(chain, mkd) {
+  .EdgeToTree(chain$edge, chain$tree_length * chain$rel_br_lengths,
+              rownames(mkd$matrix))
+}
+
+# Pruning does not rescale conditional likelihoods, so many tips with a
+# near-random character underflow the whole state to -Inf (#346); a chain
+# started there can sample -Inf throughout.
+.CheckStartLogLik <- function(state, tree, mkd, model) {
+  logLik <- state$log_lik
+  if (is.null(logLik) || isTRUE(logLik > -Inf)) return(invisible())
+  culprits <- tryCatch(
+    which(vapply(seq_len(mkd$nChar), function(i) {
+      !isTRUE(.MkpLogLikelihood(
+        tree, .SubsetMkPrimeData(mkd, i),
+        kPrime = state$kPrime[i],
+        rate_loss = state$rate_loss,
+        rate_log_sd = state$rate_log_sd,
+        nCat = model$nCat,
+        coding = model$coding,
+        rate_neo = state$rate_neo %||% 1,
+        relabel = model$relabel
+      ) > -Inf)
+    }, logical(1))),
+    error = function(e) integer(0)
+  )
+  cli::cli_abort(c(
+    "Starting log-likelihood is {logLik}, so the chain cannot score moves.",
+    "i" = "Conditional likelihoods underflow when many tips carry a \\
+           near-random character with many observed states.",
+    "i" = if (length(culprits)) {
+      "Underflowing character{?s}: {culprits}."
+    },
+    "i" = "Try a start tree with shorter branches, rate variation \\
+           ({.code MkPrimeModel(nCat > 1)}), or dropping the underflowing \\
+           characters."
+  ))
+}
+
 #' Save MCMC checkpoint to RDS
 #'
 #' Version 1 (in-memory mode): stores full run history (samples, trees).
@@ -3697,7 +3848,9 @@ RunMkPrime <- function(data, tree = NULL,
 #'   checkpoint's too, unless `treeLengthShape` differs from the
 #'   checkpoint's, when the rate is resolved from the new shape.
 #'   Fields that a checkpoint predates are filled with current defaults,
-#'   with a warning.
+#'   with a warning.  A `coding`, `relabel`, `kPrimePrior`, `priorVariant`,
+#'   `likelihoodMode`, `qHeterogeneity`, `nCat` or `nBetaCat` that differs
+#'   from the checkpoint's is an error.
 #' @param tree A `phylo` object, used only to check tip labels.  Usually
 #'   `NULL`.
 #' @param mcmc `NULL` (the default) to continue with the checkpoint's MCMC
@@ -3775,6 +3928,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                        knownStates = knownStates)
   }
 
+  # Before migration fills fields the checkpoint predates with defaults.
+  savedModel <- checkpoint$model
   checkpoint <- .MigrateCheckpoint(checkpoint)
 
   # The prior's data-derived defaults are fixed when the chain starts, so a
@@ -3787,19 +3942,24 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     model$expSteps <- ckModel$expSteps
     # A changed shape re-derives the rate from expSteps.
     if (is.null(model$treeLengthRate) &&
-        identical(model$treeLengthShape, ckModel$treeLengthShape)) {
+        isTRUE(all.equal(as.numeric(model$treeLengthShape),
+                         as.numeric(ckModel$treeLengthShape)))) {
       model$treeLengthRate <- ckModel$treeLengthRate
     }
   }
+  .CheckResumeModel(savedModel, model)
   if (identical(model$coding, "informative")) {
     mkd <- .DropUninformable(mkd)
   }
+  .CheckDataFingerprint(checkpoint$mcmc$dataFingerprint, mkd)
+  mkd <- .OrderTipsAs(mkd, checkpoint$mcmc$tipLabels)
   model <- .FinalizeModel(model, NULL, mkd)
 
   if (!is.null(tree)) .CheckTipLabels(tree, mkd)
 
   runs <- checkpoint$runs
   mcmc <- .ResumeMcmc(checkpoint$mcmc, mcmcOverride)
+  mcmc$tipLabels <- rownames(mkd$matrix)
   runDir <- .RunDirectory(mcmc$checkpointFile, checkpointFile)
   for (f in c("logFile", "treeFile", "checkpointFile")) {
     mcmc[f] <- list(.AbsolutePath(mcmc[[f]], runDir))
@@ -3826,6 +3986,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     ))
   }
   for (i in seq_len(nRuns)) runs[[i]]$run_index <- i
+  for (ch in unlist(lapply(runs, `[[`, "chains"), recursive = FALSE)) {
+    .CheckStartLogLik(ch, .ChainTree(ch, mkd), mkd, model)
+  }
   if (is.finite(mcmc$nIter) && mcmc$nIter < startIter) {
     .AlertWarning(
       "Checkpoint is at iteration {startIter - 1L}, past {.arg nIter} = \\
@@ -4185,12 +4348,13 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 # --- Start perturbation ---
 
 #' Generate a perturbed starting tree for independent runs
+#' @param topology Logical; if `FALSE`, perturb branch lengths only.
 #' @keywords internal
-.PerturbStart <- function(tree) {
+.PerturbStart <- function(tree, topology = TRUE) {
   nTip <- length(tree$tip.label)
   if (nTip < 4L) return(tree)
 
-  nNni <- sample(2:5, 1)
+  nNni <- if (topology) sample(2:5, 1) else 0L
   for (i in seq_len(nNni)) {
     treeLength <- sum(tree$edge.length)
     relBr <- tree$edge.length / treeLength
