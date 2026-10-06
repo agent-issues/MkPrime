@@ -1124,7 +1124,6 @@ RunMkPrime <- function(data, tree = NULL,
   scalarFloorMoves <- .ScalarFloorMoves(moves)
   # M-171: index for warmup-phase sweep frequency reduction (NA = no trans chars)
   gibbsKpIdx <- match("gibbs_kPrime", moveNames)
-  blockKpIdx <- match("block_kPrime", moveNames)
   moveTypeCodes <- vapply(moves, .MoveTypeCode, integer(1L))
   # Slice param index: 0=treeLength, 1=rateLoss, 2=rateLogSd, 3=rateNeo, 4=betaScale
   sliceParamCodes <- vapply(moves, function(m) m$sliceParamIdx %||% 0L, integer(1L))
@@ -2142,7 +2141,7 @@ RunMkPrime <- function(data, tree = NULL,
   cond <- result$interrupted
   if (is.null(cond)) return(result)
   # Its call is R's internal tryCatch frame, which means nothing to a user.
-  cond$call <- NULL
+  cond["call"] <- list(NULL)
   if (inherits(cond, "interrupt")) {
     # As R does for an interrupt: handlers first, then the top level.
     signalCondition(cond)
