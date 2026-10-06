@@ -1,6 +1,7 @@
 # Moves that cannot score the marginal_k target must refuse it in C++ as well
 # as being left out by .BuildMoves: gibbs_p_marginal (case 35) under a heated
-# chain (#269), and the fixed-k' moves 11, 25 and 26 (#270).
+# chain (#269), the fixed-k' moves 11, 25 and 26 (#270), and int_walk, case 7,
+# whose walk on k' nothing bounds once k' is summed out (#367).
 
 .GuardTree <- function() {
   Preorder(read.tree(text = paste0(
@@ -79,8 +80,8 @@ test_that("case 35 leaves a heated chain on its tempered target (#269)", {
   expect_true(any(replicate(5L, .GuardMove(cold, 35L, beta = 1))))
 })
 
-test_that("fixed-k' moves refuse marginal_k on direct dispatch (#270)", {
-  for (moveType in c(11L, 25L, 26L)) {
+test_that("k' moves refuse marginal_k on direct dispatch (#270, #367)", {
+  for (moveType in c(7L, 11L, 25L, 26L)) {
     x <- .GuardBuild(0.3)
     before <- get_mcmc_state(x$statePtr)
     set.seed(3L)

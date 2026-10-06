@@ -114,6 +114,7 @@ test_that("(A) K=1 hyperprior collapses to eval_log_prior_cpp to 1e-10", {
     s$dataPtr, statePtr,
     classRateLogSd = s$state$rate_log_sd,
     classW         = 1.0,
+    classRate      = 1.0,
     etaNeo         = 1.0,
     useHyperpriorOnSigma = TRUE,
     hyperTau = 1.0,
@@ -163,6 +164,7 @@ test_that("(B) perturbing z[1] changes prior by HN(z) log-density diff", {
     s$dataPtr, statePtr,
     classRateLogSd = classRateLogSd0,
     classW         = class_w,
+    classRate      = class_w * nChar / nChar_c,
     etaNeo         = 1.0,
     useHyperpriorOnSigma = TRUE, hyperTau = tau, classZ = z0
   )
@@ -170,6 +172,7 @@ test_that("(B) perturbing z[1] changes prior by HN(z) log-density diff", {
     s$dataPtr, statePtr,
     classRateLogSd = classRateLogSd1,
     classW         = class_w,
+    classRate      = class_w * nChar / nChar_c,
     etaNeo         = 1.0,
     useHyperpriorOnSigma = TRUE, hyperTau = tau, classZ = z1
   )
@@ -219,6 +222,7 @@ test_that("(C) perturbing τ changes prior by HN(τ) diff + σ_0 Gamma swap", {
     s$dataPtr, statePtr,
     classRateLogSd = classRateLogSd0,
     classW         = class_w,
+    classRate      = class_w * nChar / nChar_c,
     etaNeo         = 1.0,
     useHyperpriorOnSigma = TRUE, hyperTau = tau0, classZ = z
   )
@@ -226,6 +230,7 @@ test_that("(C) perturbing τ changes prior by HN(τ) diff + σ_0 Gamma swap", {
     s$dataPtr, statePtr,
     classRateLogSd = classRateLogSd1,
     classW         = class_w,
+    classRate      = class_w * nChar / nChar_c,
     etaNeo         = 1.0,
     useHyperpriorOnSigma = TRUE, hyperTau = tau1, classZ = z
   )
@@ -293,6 +298,7 @@ test_that("(D) R LogPrior agrees with cpp across a (τ, z) grid", {
       s$dataPtr, statePtr2,
       classRateLogSd = classRateLogSd,
       classW         = class_w,
+      classRate      = class_w * nChar / nChar_c,
       etaNeo         = 1.0,
       useHyperpriorOnSigma = TRUE,
       hyperTau = tau, classZ = z
@@ -428,7 +434,8 @@ test_that("(F) prior-only MCMC marginals match HN(1) for τ and each z_c", {
   fill_partition_cache(s$dataPtr, statePtr)
   lp_init <- eval_log_prior_partitioned_cpp(
     s$dataPtr, statePtr,
-    classRateLogSd = classRLS, classW = class_w, etaNeo = 1.0,
+    classRateLogSd = classRLS, classW = class_w, classRate = classRate,
+    etaNeo = 1.0,
     useHyperpriorOnSigma = TRUE, hyperTau = hyperTau, classZ = classZ
   )
   # No setter for logPrior — do_move_impl reads state->logPrior on every
