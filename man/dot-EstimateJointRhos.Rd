@@ -4,9 +4,10 @@
 \alias{.EstimateJointRhos}
 \title{Estimate posterior correlations for 2D joint proposals from recent samples}
 \usage{
-.EstimateJointRhos(samples, hasNeo)
+.EstimateJointRhos(samples, hasNeo, prior = NULL)
 }
 \description{
-Estimate posterior correlations for 2D joint proposals from recent samples
+A pair the samples cannot estimate keeps its value in \code{prior}, the rhos in
+force, so a short buffer never resets an adapted correlation to zero.
 }
 \keyword{internal}

@@ -4,7 +4,12 @@
 \alias{.CheckConvergence}
 \title{Check convergence criteria (called during the loop)}
 \usage{
-.CheckConvergence(runs, paramNames, mcmc, isStreaming = FALSE)
+.CheckConvergence(runs, paramNames, mcmc, isStreaming = FALSE, essRuns = 1L)
+}
+\arguments{
+\item{essRuns}{Integer number of runs whose pooled samples meet
+\code{mcmc$minEss}. A run's share of it decides when its tree ESS is worth
+computing; it does not change the verdict.}
 }
 \description{
 Works for any number of runs. ESS is always computed on combined samples;

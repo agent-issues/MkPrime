@@ -51,8 +51,8 @@
 #'   0.2. The temperature ladder uses geometric spacing:
 #'   `beta_i = heat^((i-1)/(nChains-1))` for i = 1, ..., nChains.
 #'   Ignored when `nChains = 1`.
-#' @param maxTime Maximum wall-clock time in seconds. `NULL` (default)
-#'   means no time limit.
+#' @param maxTime Maximum wall-clock time in seconds for the whole job, shared
+#'   by all its runs. `NULL` (default) means no time limit.
 #' @param minEss Numeric specifying the effective sample size every monitored
 #'   parameter must reach before sampling stops; `NULL` disables ESS-based
 #'   stopping.
@@ -67,16 +67,23 @@
 #' @param checkEvery Integer giving the iterations between convergence checks,
 #'   of which two in a row must pass before sampling stops.
 #' @param cancelFile Path to a cancel-signal file. `NULL` (default) disables
-#'   cancel-file checking. When set, [RunMkPrime()] checks every 200
-#'   iterations whether this file exists. If it does, the run flushes any
-#'   buffered samples, saves a checkpoint (if `checkpointFile` is set), and
-#'   exits with `stop_reason = "cancelled"`. Create the file to request a
-#'   clean stop: `file.create(cancelFile)`. See also [MkCancelPath()].
+#'   cancel-file checking. When set, [RunMkPrime()] checks whether this file
+#'   exists between batches: every 500 iterations or fewer during warmup and
+#'   tuning, and every 5000 or fewer during sampling. A batch also ends at
+#'   each multiple of `checkEvery`, and of `plotEvery` when a progress
+#'   callback is set. The `maxTime` limit is checked at the same points.
+#'   If the file exists, the run flushes any buffered samples, saves a
+#'   checkpoint (if `checkpointFile` is set), and exits with
+#'   `stop_reason = "cancelled"`. Create the file to request a clean stop:
+#'   `file.create(cancelFile)`. See also [MkCancelPath()].
 #' @param checkpointFile Path to write checkpoint RDS files. `NULL`
 #'   (default) auto-derives from `logFile` when set
 #'   (e.g. `"run.log"` -> `"run.ckp"`). Set to `FALSE` to
 #'   disable checkpointing. Checkpoints are saved at each
 #'   convergence check interval and on cancel.
+#'   Without a `logFile`, samples stream to a log beside the checkpoint
+#'   (`"run.ckp"` -> `"run_mkp_run.log"`); [RunMkPrime()] deletes it when
+#'   sampling finishes, but keeps it through a `maxTime` or cancel stop.
 #' @param treeFile Path to write sampled trees in Newick format.
 #'   `NULL` (default) auto-derives from `logFile` when set
 #'   (e.g. `"run.log"` → `"run_trees.nwk"`). Set to `FALSE` to
@@ -297,12 +304,12 @@
 #' samples.
 #'
 #' `minTreeEss` is judged per run, on up to `max(1000, 1.5 * minTreeEss)`
-#' evenly spaced trees. Trees are not written to the logs, so the cross-run
-#' decision rests on `minEss` and `maxRhat` alone; set one of them when
-#' running more than one run. A run that has sampled a single topology has
-#' no tree ESS: it cannot tell a stuck chain from a posterior concentrated on
-#' one topology, so it cannot meet `minTreeEss` until it samples another,
-#' and warns.
+#' evenly spaced trees. With `nCore > 1`, each run reports its verdict to the
+#' cross-run check, which stops the job only once every run meets
+#' `minTreeEss`; with `minTreeEss` alone, each run stops when it meets it. A
+#' run that has sampled a single topology has no tree ESS: it cannot tell a
+#' stuck chain from a posterior concentrated on one topology, so it cannot
+#' meet `minTreeEss` until it samples another, and warns.
 #'
 #' A criterion that can never be met -- `maxRhat` with one run, or
 #' `minTreeEss` with a fixed topology -- does
