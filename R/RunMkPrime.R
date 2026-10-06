@@ -1228,14 +1228,7 @@ RunMkPrime <- function(data, tree = NULL,
   windowStartIter  <- tuningIterUsed
   # Rho is estimated from the first Tuning window, then frozen for the bandit.
   rhoPending       <- r$rhoPending %||% FALSE
-  # Tuning may spend at most half the iterations left when it began. Derived
-  # from nIter each time, so a resume that lowers nIter lowers the cap (#402).
-  TuningCap <- function(tuningStart) {
-    if (is.finite(mcmc$nIter)) (mcmc$nIter - tuningStart) %/% 2L else Inf
-  }
-  tuningStartIter  <- r$tuningStartIter %||% (startIter - 1L - tuningIterUsed)
-  effectiveTuningBudget <- min(r$effectiveTuningBudget %||% mcmc$tuningBudget,
-                               TuningCap(tuningStartIter))
+  effectiveTuningBudget <- r$effectiveTuningBudget %||% mcmc$tuningBudget
   nTuningWindows   <- 4L
   tuningWindowSamples <- .TuningWindowSamples(
     effectiveTuningBudget, mcmc$thin, tuningBatch, nTuningWindows
@@ -1648,8 +1641,6 @@ RunMkPrime <- function(data, tree = NULL,
               baseBudget
             }
             r$effectiveTuningBudget <- effectiveTuningBudget
-            tuningStartIter   <- batchEnd
-            r$tuningStartIter <- tuningStartIter
             tuningWindowSamples <- .TuningWindowSamples(
               effectiveTuningBudget, mcmc$thin, tuningBatch, nTuningWindows
             )
@@ -1686,6 +1677,18 @@ RunMkPrime <- function(data, tree = NULL,
             rhoPending       <- any(moveTypes == "joint_2d")
             r$rhoPending     <- rhoPending
             tickerPages      <- "minESS/s: ?"
+            minTuningIter <- .MinTuningIter(tuningWindowSamples, mcmc$thin,
+                                            tuningBatch, nTuningWindows,
+                                            rhoPending)
+            if (minTuningIter >= remainingIter) {
+              cli::cli_warn(c(
+                "Tuning needs at least {minTuningIter} iterations, but only \
+                 {remainingIter} remain after warmup.",
+                "!" = "Run {runIdx} will reach {.arg nIter} before sampling \
+                       begins.",
+                "i" = "Raise {.arg nIter}, or set {.code autoTune = FALSE}."
+              ))
+            }
           } else {
             # Skip tuning, go straight to Sample
             phase      <- "Sample"
@@ -1703,7 +1706,6 @@ RunMkPrime <- function(data, tree = NULL,
       }
     } else if (phase == "Tuning") {
       # --- Tuning: min-ESS/s perturbation bandit ---
-      endTuning <- FALSE
       tuningIterUsed <- tuningIterUsed + nBatch
       r$tuningIterUsed <- tuningIterUsed
       tuningWindowSec <- tuningWindowSec + batchSec
@@ -1808,7 +1810,21 @@ RunMkPrime <- function(data, tree = NULL,
           if (tuningRoundsDone >= mcmc$tuningRounds ||
               2 * tuningIterUsed - roundStartIter > effectiveTuningBudget ||
               payback[["freeze"]]) {
-            endTuning <- TRUE
+            # Transition: Tuning -> Sample
+            phase      <- "Sample"
+            r$phase    <- phase
+            phaseLabel <- "Sample"
+            sampleWallStart <- proc.time()["elapsed"]
+            if (isStreaming && !is.null(logFilePath))
+              .LogMoveWeights(moveWeights, moveNames, logFilePath)
+            .PrintMoveWeights(moveWeights, moveNames)
+            if (bestMinEssPerSec > 0) {
+              .AlertInfo(
+                "Tuning complete ({tuningRoundsDone} round{?s}). Best minESS/s: {sprintf('%.2f', bestMinEssPerSec)}"
+              )
+            }
+            weightsLogged <- TRUE
+            tickerPages   <- "minESS: ?"
           } else {
             # Start new round with fresh perturbations
             tuningCandidates <- .PerturbMoveWeights(
@@ -1833,32 +1849,6 @@ RunMkPrime <- function(data, tree = NULL,
             }
           }
         }
-      }
-
-      # The rho window and a round's windows each span whole batches, so on
-      # a short run they can outlast the iterations left; stop at the cap,
-      # on the best weights scored so far (the incumbent if none beat it).
-      if (!endTuning && tuningIterUsed >= TuningCap(tuningStartIter)) {
-        moveWeights <- bestWeights
-        endTuning   <- TRUE
-      }
-
-      if (endTuning) {
-        # Transition: Tuning -> Sample
-        phase      <- "Sample"
-        r$phase    <- phase
-        phaseLabel <- "Sample"
-        sampleWallStart <- proc.time()["elapsed"]
-        if (isStreaming && !is.null(logFilePath))
-          .LogMoveWeights(moveWeights, moveNames, logFilePath)
-        .PrintMoveWeights(moveWeights, moveNames)
-        if (bestMinEssPerSec > 0) {
-          .AlertInfo(
-            "Tuning complete ({tuningRoundsDone} round{?s}). Best minESS/s: {sprintf('%.2f', bestMinEssPerSec)}"
-          )
-        }
-        weightsLogged <- TRUE
-        tickerPages   <- "minESS: ?"
       }
     }
     # Sample phase: no adaptation needed (weights frozen)
@@ -3126,6 +3116,16 @@ RunMkPrime <- function(data, tree = NULL,
 }
 
 
+# Iterations Tuning spends before it can first exit: the rho window, when a
+# joint proposal needs one, then one window per candidate in the first round.
+.MinTuningIter <- function(windowSamples, thin, batch, nWindows, rho) {
+  WindowIter <- function(nSamples) batch * ceiling(nSamples * thin / batch)
+  # Return:
+  nWindows * WindowIter(windowSamples) +
+    if (rho) WindowIter(max(windowSamples, 50L)) else 0
+}
+
+
 # --- Build final result ---
 
 #' Build MkPosterior from all runs
@@ -3142,6 +3142,18 @@ RunMkPrime <- function(data, tree = NULL,
   # the test belongs here rather than in each of them (PAR-001).  Each hands
   # `runs` over dense, so a position here is the run number `drops` uses.
   usable <- vapply(runs, function(r) !is.null(r$saved_idx), logical(1L))
+  unsampled <- which(usable & vapply(runs, function(r) {
+    identical(r$saved_idx, 0L) && !identical(r$stop_reason, "cancelled")
+  }, logical(1L)))
+  if (length(unsampled) > 0L) {
+    cli::cli_warn(c(
+      "{cli::qty(length(unsampled))}Run{?s} {unsampled} stopped \
+       ({.val {stopReason}}) without drawing any posterior samples.",
+      "i" = "Raise {.arg nIter} (or {.arg maxTime}) so that sampling has \
+             room, or set {.code autoTune = FALSE}."
+    ))
+  }
+
   if (!all(usable)) {
     unstarted <- which(!usable)
     cli::cli_warn(c(

@@ -74,13 +74,26 @@ test_that("joint-proposal correlations freeze before the bandit (#83, #301)", {
 })
 
 
-test_that("Tuning ends within half the iterations left, so Sample runs (#402)", {
+test_that("a run that cannot reach Sample says so (#402)", {
   skip_on_cran()
   skip_under_memcheck()
+  seen <- new.env()
+  seen$warnings <- character(0)
   set.seed(402)
-  res <- .AdaptInputsRun(MkPrimeMCMC(nIter = 5000L, nRuns = 1L, nCore = 1L,
-                                     maxTime = 120))
-  # Warmup ends by maxWarmup = 2500, so Tuning stops within a 500-iteration
-  # batch of 1250 iterations, leaving Sample at least 750.
-  expect_gte(nrow(res$samples) * res$mcmc$thin, 750L - res$mcmc$thin)
+  res <- withCallingHandlers(
+    .AdaptInputsRun(MkPrimeMCMC(nIter = 5000L, nRuns = 1L, nCore = 1L,
+                                maxTime = 120)),
+    warning = function(w) {
+      seen$warnings <- c(seen$warnings, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    }
+  )
+  # Warmup ends at maxWarmup = 2500; the rho window and one bandit round
+  # need more than the 2500 left, so Tuning reaches nIter.
+  expect_equal(nrow(res$samples), 0L)
+  expect_match(seen$warnings,
+               "Tuning needs at least \\d+ iterations, but only 2500",
+               all = FALSE)
+  expect_match(seen$warnings, "without drawing any posterior samples",
+               all = FALSE)
 })
