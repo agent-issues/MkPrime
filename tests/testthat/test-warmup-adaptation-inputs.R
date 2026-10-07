@@ -74,7 +74,7 @@ test_that("joint-proposal correlations freeze before the bandit (#83, #301)", {
 })
 
 
-test_that("a run that cannot reach Sample says so (#402)", {
+test_that("a run whose Tuning cannot end stops at once, and says so (#402)", {
   skip_on_cran()
   skip_under_memcheck()
   seen <- new.env()
@@ -88,12 +88,25 @@ test_that("a run that cannot reach Sample says so (#402)", {
       invokeRestart("muffleWarning")
     }
   )
-  # Warmup ends at maxWarmup = 2500; the rho window and one bandit round
-  # need more than the 2500 left, so Tuning reaches nIter.
+  # Warmup ends at maxWarmup = 2500; Tuning's first round cannot end in the
+  # 2500 left, so the run stops there rather than tune to nIter.
   expect_equal(nrow(res$samples), 0L)
+  expect_identical(res$stop_reason, "too_short")
+  expect_equal(res$actual_iter, 2500L)
   expect_match(seen$warnings,
-               "Tuning needs at least \\d+ iterations, but only 2500",
+               "Tuning needs \\d+ more iterations .* only 2500 remain",
                all = FALSE)
-  expect_match(seen$warnings, "without drawing any posterior samples",
-               all = FALSE)
+})
+
+
+test_that("a default run too short to tune stops, rather than skip Tuning (#402)", {
+  skip_on_cran()
+  set.seed(4021)
+  expect_warning(
+    res <- .AdaptInputsRun(MkPrimeMCMC(nIter = 1000L, nRuns = 1L, nCore = 1L,
+                                       maxTime = 60)),
+    "Tuning needs \\d+ more iterations"
+  )
+  expect_identical(res$stop_reason, "too_short")
+  expect_equal(nrow(res$samples), 0L)
 })

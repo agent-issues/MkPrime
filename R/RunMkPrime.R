@@ -64,7 +64,8 @@
 #'   `$runMoveWeights` lists every run's. `$stop_reason` says why the job
 #'   stopped; with `nRuns > 1`, each `$per_run` entry's `stop_reason` says why
 #'   that run did, and is `"cancelled"` for a parallel run stopped by the
-#'   job's own decision.
+#'   job's own decision. A run stops with `"too_short"`, and a warning, when
+#'   a tuning round cannot end before `nIter`.
 #'
 #' @section Inline MCMC options:
 #'
@@ -1347,6 +1348,26 @@ RunMkPrime <- function(data, tree = NULL,
   repeat {
     # A resume may start past a lowered nIter, with nothing left to run.
     if (is.finite(mcmc$nIter) && batchStart > mcmc$nIter) break
+    # A Tuning round that cannot end before nIter would spend the rest of the
+    # run without sampling: stop now, and say so.
+    if (phase == "Tuning" && tuningIterUsed == roundStartIter &&
+        is.finite(mcmc$nIter)) {
+      needIter <- .MinTuningIter(tuningWindowSamples, mcmc$thin, tuningBatch,
+                                 nTuningWindows, rhoPending)
+      leftIter <- mcmc$nIter - batchStart + 1L
+      if (needIter >= leftIter) {
+        cli::cli_warn(c(
+          "Tuning needs {needIter} more iterations before it can end, but \
+           only {leftIter} remain.",
+          "!" = "Run {runIdx} stops at iteration {batchStart - 1L} without \
+                 sampling.",
+          "i" = "Raise {.arg nIter}, or set {.code autoTune = FALSE}."
+        ))
+        Checkpoint(r)
+        stopReason <- "too_short"
+        break
+      }
+    }
     batchPhase <- phase
     # Batch size depends on phase
     batchSize <- switch(phase,
@@ -1614,16 +1635,7 @@ RunMkPrime <- function(data, tree = NULL,
             )
           }
 
-          # Check if there's enough remaining budget for tuning + sampling
-          remainingIter <- if (is.finite(mcmc$nIter)) {
-            mcmc$nIter - batchEnd
-          } else {
-            Inf
-          }
-          # Need at least tuningBatch * 2 for tuning + some for sampling
-          canTune <- mcmc$autoTune && remainingIter > tuningBatch * 4L
-
-          if (canTune) {
+          if (mcmc$autoTune) {
             phase      <- "Tuning"
             r$phase    <- phase
             phaseLabel <- "Tuning"
@@ -1634,11 +1646,11 @@ RunMkPrime <- function(data, tree = NULL,
             scaledBudget <- as.integer(
               mcmc$thin * .kTuningWindowSamples * nTuningWindows
             )
-            baseBudget <- max(mcmc$tuningBudget, scaledBudget)
-            effectiveTuningBudget <- if (is.finite(remainingIter)) {
-              min(baseBudget, as.integer(remainingIter / 2))
-            } else {
-              baseBudget
+            # On a finite run, size windows to half the iterations left.
+            effectiveTuningBudget <- max(mcmc$tuningBudget, scaledBudget)
+            if (is.finite(mcmc$nIter)) {
+              effectiveTuningBudget <- min(effectiveTuningBudget,
+                                           (mcmc$nIter - batchEnd) %/% 2L)
             }
             r$effectiveTuningBudget <- effectiveTuningBudget
             tuningWindowSamples <- .TuningWindowSamples(
@@ -1677,18 +1689,6 @@ RunMkPrime <- function(data, tree = NULL,
             rhoPending       <- any(moveTypes == "joint_2d")
             r$rhoPending     <- rhoPending
             tickerPages      <- "minESS/s: ?"
-            minTuningIter <- .MinTuningIter(tuningWindowSamples, mcmc$thin,
-                                            tuningBatch, nTuningWindows,
-                                            rhoPending)
-            if (minTuningIter >= remainingIter) {
-              cli::cli_warn(c(
-                "Tuning needs at least {minTuningIter} iterations, but only \
-                 {remainingIter} remain after warmup.",
-                "!" = "Run {runIdx} will reach {.arg nIter} before sampling \
-                       begins.",
-                "i" = "Raise {.arg nIter}, or set {.code autoTune = FALSE}."
-              ))
-            }
           } else {
             # Skip tuning, go straight to Sample
             phase      <- "Sample"
@@ -3143,7 +3143,8 @@ RunMkPrime <- function(data, tree = NULL,
   # `runs` over dense, so a position here is the run number `drops` uses.
   usable <- vapply(runs, function(r) !is.null(r$saved_idx), logical(1L))
   unsampled <- which(usable & vapply(runs, function(r) {
-    identical(r$saved_idx, 0L) && !identical(r$stop_reason, "cancelled")
+    identical(r$saved_idx, 0L) &&
+      !any(r$stop_reason %in% c("cancelled", "too_short"))
   }, logical(1L)))
   if (length(unsampled) > 0L) {
     cli::cli_warn(c(

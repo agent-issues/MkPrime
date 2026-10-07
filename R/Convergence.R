@@ -367,8 +367,9 @@ print.MkpDiagnostics <- function(x, ...) {
 #' Stop reason of a parallel job whose workers all stopped on their own
 #'
 #' The job converged only if every requested run returned and converged.
-#' Otherwise the first of `"cancelled"`, `"max_time"` that a run reports
-#' explains why the job stopped short, and `"max_iter"` is the default.
+#' Otherwise the first of `"cancelled"`, `"max_time"`, `"too_short"` that a
+#' run reports explains why the job stopped short, and `"max_iter"` is the
+#' default.
 #'
 #' @param runReasons Character `stop_reason` of each returned run.
 #' @param nRuns Integer number of runs requested.
@@ -378,7 +379,7 @@ print.MkpDiagnostics <- function(x, ...) {
   if (length(runReasons) == nRuns && all(runReasons == "converged")) {
     return("converged")
   }
-  for (reason in c("cancelled", "max_time")) {
+  for (reason in c("cancelled", "max_time", "too_short")) {
     if (reason %in% runReasons) return(reason)
   }
   # Return:
