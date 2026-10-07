@@ -174,6 +174,28 @@ test_that("block_kprime_shift leaves logLik/logPrior finite", {
   expect_true(is.finite(st$logPrior))
 })
 
+test_that("int_walk never proposes a null shift (#304)", {
+  set.seed(304)
+  setup <- .setup_cpp(.trans_tree(), .trans_pd())
+  nTrans <- sum(setup$mkd$type == "transformational")
+  transIdx0 <- which(setup$mkd$type == "transformational") - 1L
+  nNull <- 0L
+  for (i in seq_len(300L)) {
+    ci <- transIdx0[(i - 1L) %% nTrans + 1L]
+    # `+ 0L` copies: the returned vector shares the live state's memory.
+    before <- get_mcmc_state(setup$statePtr)$kPrime + 0L
+    accepted <- do_move_cpp(setup$dataPtr, setup$statePtr, 7L, ci,
+                            0.5, 0.5, 1L, 1.0)
+    if (accepted && identical(get_mcmc_state(setup$statePtr)$kPrime, before)) {
+      nNull <- nNull + 1L
+    }
+  }
+  # A null shift scored as an acceptance would hold the window controller
+  # at >= 1/3 acceptance whatever the posterior; block_kPrime draws its
+  # shift from the same helper.
+  expect_identical(nNull, 0L)
+})
+
 test_that("block_kprime_shift logLik matches full recomputation", {
   set.seed(4207)
   setup <- .setup_cpp(.trans_tree(), .trans_pd())
