@@ -138,6 +138,58 @@ test_that("a run with no recorded position resumes from iteration 1 (#94)", {
 })
 
 
+test_that("a never-started run builds its own move weights on resume (#403)", {
+  skip_on_cran()
+  skip_under_memcheck()
+  tree <- .mkp_test_tree()
+  pd   <- .mkp_test_pd()
+
+  ckpFile  <- tempfile(fileext = ".ckp")
+  logFile  <- tempfile(fileext = ".log")
+  logPaths <- .LogFilePaths(logFile, 2L)
+  on.exit(unlink(c(ckpFile, logPaths)), add = TRUE)
+
+  set.seed(403)
+  setTimeLimit(elapsed = 300, transient = TRUE)
+  on.exit(setTimeLimit(elapsed = Inf, transient = TRUE), add = TRUE)
+
+  allow_warning(
+    RunMkPrime(pd, tree,
+      mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 600L, thin = 5L,
+                         maxWarmup = 200L, minWarmup = 200L,
+                         autoTune = FALSE, maxTime = 120, checkEvery = 200L,
+                         checkpointFile = ckpFile, logFile = logFile)),
+    "stabilis"
+  )
+  cp <- readRDS(ckpFile)
+  cp$runs[[2]] <- cp$runs[[2]][c(
+    "chains", "betas", "chain_accept", "chain_propose", "chain_time_ns",
+    "chain_slice_exp", "chain_tuning", "chain_rhos", "swap_accept",
+    "swap_propose"
+  )]
+  # As an in-run checkpoint stores it: the saving run's weights.
+  cp$moveWeights <- cp$runs[[1]]$moveWeights
+  cp$mcmc$nIter <- 1200L
+  saveRDS(cp, ckpFile)
+
+  seen <- new.env()
+  seen$weights <- list()
+  singleRun <- .RunMkPrimeSingleRun
+  local_mocked_bindings(
+    .RunMkPrimeSingleRun = function(mkd, model, mcmc, initialState, moves,
+                                    tipLabels, runIdx, ...,
+                                    resumeMoveWeights = NULL) {
+      seen$weights[[runIdx]] <- list(resumeMoveWeights)
+      singleRun(mkd, model, mcmc, initialState, moves, tipLabels, runIdx, ...,
+                resumeMoveWeights = resumeMoveWeights)
+    }
+  )
+  allow_warning(ResumeMkPrime(ckpFile, pd), "stabilis")
+  expect_false(is.null(seen$weights[[1]][[1]]))
+  expect_null(seen$weights[[2]][[1]])
+})
+
+
 skip_slow_tests()
 
 test_that("a fixTopology run resumes with the same move set (#23)", {
@@ -371,3 +423,4 @@ test_that("interrupting a resumed run does not rewind the checkpoint (#96)", {
   # every later resume of the file.
   expect_false(is.null(after$moveWeights))
 })
+

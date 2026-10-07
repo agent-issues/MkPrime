@@ -174,6 +174,28 @@ test_that("block_kprime_shift leaves logLik/logPrior finite", {
   expect_true(is.finite(st$logPrior))
 })
 
+test_that("int_walk never proposes a null shift (#304)", {
+  set.seed(304)
+  setup <- .setup_cpp(.trans_tree(), .trans_pd())
+  nTrans <- sum(setup$mkd$type == "transformational")
+  transIdx0 <- which(setup$mkd$type == "transformational") - 1L
+  nNull <- 0L
+  for (i in seq_len(300L)) {
+    ci <- transIdx0[(i - 1L) %% nTrans + 1L]
+    # `+ 0L` copies: the returned vector shares the live state's memory.
+    before <- get_mcmc_state(setup$statePtr)$kPrime + 0L
+    accepted <- do_move_cpp(setup$dataPtr, setup$statePtr, 7L, ci,
+                            0.5, 0.5, 1L, 1.0)
+    if (accepted && identical(get_mcmc_state(setup$statePtr)$kPrime, before)) {
+      nNull <- nNull + 1L
+    }
+  }
+  # A null shift scored as an acceptance would hold the window controller
+  # at >= 1/3 acceptance whatever the posterior; block_kPrime draws its
+  # shift from the same helper.
+  expect_identical(nNull, 0L)
+})
+
 test_that("block_kprime_shift logLik matches full recomputation", {
   set.seed(4207)
   setup <- .setup_cpp(.trans_tree(), .trans_pd())
@@ -184,4 +206,59 @@ test_that("block_kprime_shift logLik matches full recomputation", {
   st <- get_mcmc_state(setup$statePtr)
   fresh_ll <- eval_full_loglik_cpp(setup$dataPtr, setup$statePtr)
   expect_equal(st$logLik, fresh_ll, tolerance = 1e-10)
+})
+
+
+test_that("Gibbs kPrime sweep at beta = 0 never draws a zero-likelihood k' (#383)", {
+  # Near 1e-15 the informative-coding ascertainment correction is finite for
+  # k' = 2 but rounds to -Inf for k' = 3, where 0 * -Inf would give k' = 3 a
+  # NaN weight that the categorical draw picks. The exact window depends on
+  # floating-point rounding, so it is located rather than hard-coded.
+  tree <- Preorder(.trans_tree())
+  pd <- MatrixToPhyDat(matrix(c(0, 0, 1, 1), 4, 1,
+                              dimnames = list(paste0("t", 1:4), NULL)))
+  mkd <- MkPrimeData(pd)
+  model <- MkPrime:::.FinalizeModel(
+    MkPrimeModel(coding = "informative", kPrimePrior = "geometric",
+                 expSteps = 1), tree, mkd)
+  dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
+  StateAt <- function(treeLength) {
+    state0 <- MkPrime:::.InitState(tree, mkd, model)
+    state0$tree_length <- treeLength
+    statePtr <- MkPrime:::.InitMcmcChain(state0)
+    fill_partition_cache(dataPtr, statePtr)
+    allocate_cl_workspace(dataPtr, statePtr)
+    statePtr
+  }
+  NCand <- function(logLength) {
+    MkPrime:::kprime_sweep_candidates(dataPtr, StateAt(10^logLength), 0)
+  }
+  # Bisect on log10(tree length) between a length at which k' = 3 is
+  # evaluated and one at which k' = 2 already has zero likelihood.
+  hi <- -12
+  lo <- -20
+  expect_gt(NCand(hi), 2L)
+  expect_equal(NCand(lo), 1L)
+  for (i in 1:60) {
+    mid <- (hi + lo) / 2
+    nCand <- NCand(mid)
+    if (nCand == 2L) break
+    if (nCand > 2L) hi <- mid else lo <- mid
+  }
+  if (nCand != 2L) {
+    skip(paste("k' = 2 and 3 lose their likelihood at the same tree length",
+               "on this platform; no state isolates a zero-likelihood k'."))
+  }
+  statePtr <- StateAt(10^mid)
+
+  sweep <- list(name = "gibbs_kPrime", type = "gibbs_kprime_sweep",
+                target = NULL, weight = 1, dim = 1L)
+  set.seed(3830)
+  for (i in 1:10) {
+    MkPrime:::.DoMove(sweep, statePtr, tuning = MkPrimeMCMC()$tuning,
+                      beta = 0, transIdx = 1L, mcmcData = dataPtr)
+    state <- get_mcmc_state(statePtr)
+    expect_equal(state$kPrime, 2L)
+    expect_true(is.finite(state$logLik))
+  }
 })

@@ -152,11 +152,12 @@ struct McmcData {
   //                     a per-character factor (1-p)^(kObs_i - 2).
   bool unconditionalPrior = false;
 
-  // MARGINAL-K-TRUNC-001: declared truncation cap K on k' for the geometric
-  // prior under BOTH likelihoodModes (sampled_k truncates the prior; marginal_k
-  // truncates the marginal sum). The prior is a truncated geometric on
-  // k' in [2, K], renormalised by log Z(p) (Model A: Z = 1-(1-p)^(K-1), shared;
-  // Model B: Z_i = 1-(1-p)^(K-kObs_i+1), per kObs). MUST equal the SBC forward's
+  // MARGINAL-K-TRUNC-001: declared truncation cap K on k' for every prior
+  // (#392) under BOTH likelihoodModes (sampled_k truncates the prior;
+  // marginal_k, geometric only, truncates the marginal sum). Each prior is
+  // renormalised over its capped support; e.g. the geometric on k' in [2, K]
+  // by log Z(p) (Model A: Z = 1-(1-p)^(K-1), shared; Model B:
+  // Z_i = 1-(1-p)^(K-kObs_i+1), per kObs). MUST equal the SBC forward's
   // K_MAX_PRIOR for calibration. Setup must enforce K >= max(kObs) (else a
   // character has empty support -> -Inf).
   //
@@ -279,16 +280,18 @@ static inline double class_rate_norm(
   return sum / static_cast<double>(data.nNeo + data.nTrans);
 }
 
+// classRateNorm is class_rate_norm(data, classRate, rateNeo), computed once
+// per evaluation by the caller: it sums over every partition.
 static inline PartEvalParams partitioned_eval_params(
     const McmcData& data, int partIdx,
     const Rcpp::NumericVector& rateLogSd,
     const Rcpp::NumericVector& classRate,
-    double rateNeo) {
+    double rateNeo, double classRateNorm) {
   const int ci = data.parts[partIdx].classIdx - 1;
   PartEvalParams pe;
   pe.rateLogSd = (rateLogSd.size() == 1) ? rateLogSd[0] : rateLogSd[ci];
   pe.classRate = ((classRate.size() == 1) ? classRate[0] : classRate[ci]) /
-    class_rate_norm(data, classRate, rateNeo);
+    classRateNorm;
   pe.rateNeo   = rateNeo;
   return pe;
 }

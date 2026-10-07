@@ -8,8 +8,9 @@
 # Tuning on a 4-tip tree, 20000 iterations after a 500-iteration warmup, so a
 # budget of 9750. The progress callback sleeps once per 2000-iteration window
 # during tuning, so that time charged to a window shows in its `sec`. The pause
-# dwarfs a window's own sampling time (~0.1 s on Linux; more on Windows CI).
-.tuningPause <- 1
+# dwarfs a window's own sampling time (~0.1 s on Linux; up to ~1.1 s seen on
+# Windows CI).
+.tuningPause <- 2.5
 
 .TuningWindows <- function(pause = .tuningPause) {
   if (!is.null(.windowRecord$windows)) return(.windowRecord$windows)

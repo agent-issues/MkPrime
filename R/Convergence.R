@@ -320,6 +320,141 @@ print.MkpDiagnostics <- function(x, ...) {
 }
 
 
+#' Record whether a parallel worker's run meets `minTreeEss`
+#'
+#' Trees are not in the logs, so a parallel parent cannot judge `minTreeEss`
+#' itself. Each worker writes its run's tree verdict at every check, and the
+#' parent stops on convergence only once every run's verdict is met.
+#'
+#' @param verdictFile Path to write, or `NULL` to do nothing.
+#' @param diagCheck A [.CheckConvergence()] result for one run.
+#' @param mcmc The `MkPrimeMCMC` settings.
+#' @param iter Integer iteration of the check.
+#' @return `NULL`, invisibly.
+#' @keywords internal
+.WriteTreeVerdict <- function(verdictFile, diagCheck, mcmc, iter) {
+  if (is.null(verdictFile)) return(invisible())
+  verdict <- list(
+    iter = iter,
+    treeEss = diagCheck$treeEss,
+    met = is.null(mcmc$minTreeEss) ||
+      identical(diagCheck$treeEssStatus, "agree") ||
+      isTRUE(diagCheck$treeEss >= mcmc$minTreeEss)
+  )
+  # The parent may read at any moment, so it must never see a partial file.
+  tmp <- paste0(verdictFile, ".tmp")
+  saveRDS(verdict, tmp)
+  file.rename(tmp, verdictFile)
+  invisible()
+}
+
+
+#' Which parallel runs have met `minTreeEss`?
+#'
+#' @param verdictFiles Paths written by [.WriteTreeVerdict()].
+#' @return Logical, one per file; `FALSE` where no verdict is readable yet.
+#' @keywords internal
+.ReadTreeVerdicts <- function(verdictFiles) {
+  vapply(verdictFiles, function(f) {
+    verdict <- if (file.exists(f)) {
+      tryCatch(readRDS(f), error = function(e) NULL)
+    }
+    isTRUE(verdict$met)
+  }, logical(1L), USE.NAMES = FALSE)
+}
+
+
+#' Stop reason of a parallel job whose workers all stopped on their own
+#'
+#' The job converged only if every requested run returned and converged.
+#' Otherwise the first of `"cancelled"`, `"max_time"`, `"too_short"` that a
+#' run reports explains why the job stopped short, and `"max_iter"` is the
+#' default.
+#'
+#' @param runReasons Character `stop_reason` of each returned run.
+#' @param nRuns Integer number of runs requested.
+#' @return Character scalar.
+#' @keywords internal
+.WorkersStopReason <- function(runReasons, nRuns) {
+  if (length(runReasons) == nRuns && all(runReasons == "converged")) {
+    return("converged")
+  }
+  for (reason in c("cancelled", "max_time", "too_short")) {
+    if (reason %in% runReasons) return(reason)
+  }
+  # Return:
+  "max_iter"
+}
+
+
+#' Does a run that stopped as converged still meet the stopping criteria?
+#'
+#' A resume may raise `minEss` or `minTreeEss`, or drop both to run to
+#' `nIter`. A run whose state does not record the criteria it converged under
+#' is run on, to check them afresh.
+#'
+#' @param r A run state.
+#' @param mcmc The `MkPrimeMCMC` settings now in force.
+#' @return Logical.
+#' @keywords internal
+.StillConverged <- function(r, mcmc) {
+  was <- r$conv_criteria
+  if (!identical(r$stop_reason, "converged") || is.null(was)) return(FALSE)
+  now <- list(mcmc$minEss, mcmc$minTreeEss)
+  before <- list(was$minEss, was$minTreeEss)
+  Met <- function(target, met) is.null(target) || isTRUE(target <= met)
+  # Return:
+  !all(vapply(now, is.null, logical(1))) && all(mapply(Met, now, before))
+}
+
+
+#' Samples the convergence window of a run being carried on should hold
+#'
+#' A run carried on from memory keeps its window. One resumed from a
+#' checkpoint, which omits the window, takes the last `size` rows of its log,
+#' which a resume has already rewound to the checkpoint. Without them,
+#' `minEss` would be earned again from post-resume samples alone.
+#'
+#' @param r A run state.
+#' @param logFile Path to the run's log, or `NULL`.
+#' @param paramNames Character vector naming the window's columns.
+#' @param size Integer rows the window holds.
+#' @return A matrix of up to `size` rows, oldest first, or `NULL`.
+#' @keywords internal
+.PriorWindowRows <- function(r, logFile, paramNames, size) {
+  if (!is.null(r$conv_window)) {
+    rows <- .ConvWindowRows(r, minRows = 1L)
+  } else if (isTRUE(r$saved_idx > 0L) && !is.null(logFile) &&
+             file.exists(logFile)) {
+    rows <- tryCatch(ReadMkLog(logFile), error = function(e) NULL)
+    if (!identical(colnames(rows), paramNames)) return(NULL)
+  } else {
+    return(NULL)
+  }
+  n <- NROW(rows)
+  if (n == 0L) return(NULL)
+  # Return:
+  rows[seq.int(to = n, length.out = min(n, size)), , drop = FALSE]
+}
+
+
+#' Fill an empty convergence window with earlier samples
+#'
+#' @param r A run state holding an empty `conv_window`.
+#' @param rows Matrix of samples, oldest first, no longer than the window;
+#'   or `NULL`.
+#' @return `r`, with `rows` at the head of its window.
+#' @keywords internal
+.SeedConvWindow <- function(r, rows) {
+  n <- NROW(rows)
+  if (n == 0L) return(r)
+  r$conv_window[seq_len(n), ] <- rows
+  r$conv_head   <- n
+  r$conv_filled <- n == nrow(r$conv_window)
+  r
+}
+
+
 #' Identify key parameter columns (exclude branch lengths)
 #' @keywords internal
 .KeyParamCols <- function(samples) {

@@ -4,7 +4,14 @@
 \alias{.LogPriorEmpiricalGeometric}
 \title{Log convolution prior on \verb{k'} for the \code{"empirical_geometric"} option}
 \usage{
-.LogPriorEmpiricalGeometric(kPrime, emp, p, kObs = 2L, unconditional = FALSE)
+.LogPriorEmpiricalGeometric(
+  kPrime,
+  emp,
+  p,
+  kObs = 2L,
+  unconditional = FALSE,
+  K = Inf
+)
 }
 \arguments{
 \item{kPrime}{Integer vector of proposed \verb{k'} values (one per
@@ -26,10 +33,14 @@ the SBC harness) places the prior on the full support \verb{k' >= 2} with no
 \code{Z_i} correction; the \verb{k' >= kObs} floor is then enforced by the
 likelihood, not the prior. The two agree whenever every \code{kObs == 2}. See
 \code{dev/notes/2026-05-28-kprime-viability.md}.}
+
+\item{K}{Upper limit of the support. A finite \code{K} truncates the prior to
+\verb{[2, K]} (Model A) or \verb{[kObs_i, K]} (Model B) and renormalises over it,
+mirroring \code{cpp_log_prior}.}
 }
 \value{
 Scalar log density \verb{sum_i log P(k'_i)}. Returns \code{-Inf} if any
-\verb{k'_i < 2}.
+\verb{k'_i < 2} or \verb{k'_i > K}.
 }
 \description{
 Computes \verb{sum_i log P(k'_i)} where

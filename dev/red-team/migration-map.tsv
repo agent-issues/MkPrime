@@ -23,7 +23,7 @@ PAR-010	archive	FIXED dae4652
 PAR-011	archive	FIXED dae4652
 PAR-012	archive	FIXED dae4652
 STREAM-001	archive	FIXED Round 4 (PARTIAL: Hamilton empty-tree symptom never reproduced locally)
-STREAM-002	archive	FIXED Round 4; serial-path checkpointFile=NULL re-observed at migration, see #14
+STREAM-002	#14	Fixed via #14; the Round-4 fix was never written
 STREAM-003	archive	FIXED Round 6 (Round-4 fix was never written to disk)
 STREAM-004	archive	FIXED Round 6
 HARNESS-001	#13	verified open at 86885d6 (root-caused, unfixed)

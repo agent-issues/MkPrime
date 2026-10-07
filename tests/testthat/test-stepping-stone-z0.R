@@ -21,10 +21,10 @@
 }
 
 # log of sum_{k'} exp(LL(k')) prod_i P(k'_i | p), integrated against Beta(1, 1)
-.Z0ExactLogMl <- function() {
+.Z0ExactLogMl <- function(prior = "geometric") {
   tree <- .Z0Tree()
   mkd <- .Z0Data()
-  model <- MkPrime:::.FinalizeModel(.Z0Model(), tree, mkd)
+  model <- MkPrime:::.FinalizeModel(.Z0Model(prior = prior), tree, mkd)
   state <- MkPrime:::.InitState(tree, mkd, model)
   dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
   LogLik <- function(kPrime) {
@@ -38,8 +38,17 @@
   grid <- as.matrix(expand.grid(lapply(kObs, seq.int, to = K)))
   logLiks <- apply(grid, 1, LogLik)
   logLik0 <- max(logLiks)
-  LogPk <- function(k, p) {
-    log(p) + (k - 2) * log1p(-p) - log1p(-(1 - p) ^ (K - 1))
+  LogPk <- if (prior == "geometric") {
+    function(k, p) log(p) + (k - 2) * log1p(-p) - log1p(-(1 - p) ^ (K - 1))
+  } else {
+    # The untruncated convolution pmf, renormalised on [2, K].
+    emp <- model$empiricalNObs
+    function(k, p) {
+      logPk <- vapply(2:K, function(kk) {
+        MkPrime:::.LogPriorEmpiricalGeometric(kk, emp, p, unconditional = TRUE)
+      }, 0)
+      matrix(logPk[k - 1L] - log(sum(exp(logPk))), nrow(k))
+    }
   }
   Integrand <- function(p) {
     vapply(p, function(pp) {
@@ -49,7 +58,7 @@
   logLik0 + log(stats::integrate(Integrand, 0, 1, rel.tol = 1e-10)$value)
 }
 
-.Z0SteppingStone <- function(mode) {
+.Z0SteppingStone <- function(mode, prior = "geometric") {
   weights <- if (mode == "sampled_k") {
     c(mh_logit_p = 0.4, kPrime = 0.2, gibbs_kPrime = 0.3, block_kPrime = 0.1)
   } else {
@@ -62,7 +71,7 @@
     .package = "MkPrime"
   )
   set.seed(1L)
-  mkp_stepping_stone(.Z0Data(), .Z0Tree(), model = .Z0Model(mode),
+  mkp_stepping_stone(.Z0Data(), .Z0Tree(), model = .Z0Model(mode, prior),
                      mcmc = MkPrimeMCMC(moveWeights = weights),
                      nStones = 20L, nIter = 2000L, warmup = 200L,
                      fixTopology = TRUE, nRuns = 1L, verbose = FALSE)
@@ -76,6 +85,14 @@ test_that("stepping stone matches the exact log ML in both modes (#267)", {
     # The tolerance allows for seed spread.
     expect_lt(abs(ss$log_marginal - exact), 0.25)
   }
+})
+
+test_that("empirical_geometric stepping stone matches the exact log ML (#377)", {
+  # The beta = 0 stone samples the prior capped at K, so log Z0 must integrate
+  # the capped tail: integrating it to infinity was 2 nats out (#377).
+  exact <- .Z0ExactLogMl("empirical_geometric")
+  ss <- .Z0SteppingStone("sampled_k", "empirical_geometric")
+  expect_lt(abs(ss$log_marginal - exact), 0.25)
 })
 
 # log Z0 = log integral of prod_i P(k'_i >= kObs_i | p) dBeta(p), from the
@@ -107,14 +124,18 @@ test_that(".LogZ0 integrates the Model A tail mass of each k' prior (#267)", {
     tolerance = 1e-8
   )
 
+  # The empirical_geometric pmf is renormalised on [2, K] (#377).
   eg <- .Z0Model(prior = "empirical_geometric")
   emp <- MkPrime:::.EmpiricalNObs()
+  LogPmf <- function(k, p) {
+    vapply(k, function(kk) {
+      MkPrime:::.LogPriorEmpiricalGeometric(kk, emp, p, unconditional = TRUE)
+    }, 0)
+  }
   expect_equal(
     MkPrime:::.LogZ0(eg, mkd),
     .Z0ByComplement(function(k, p) {
-      vapply(k, function(kk) {
-        MkPrime:::.LogPriorEmpiricalGeometric(kk, emp, p, unconditional = TRUE)
-      }, 0)
+      LogPmf(k, p) - log(sum(exp(LogPmf(2:8, p))))
     }, kObs),
     tolerance = 1e-8
   )
@@ -122,8 +143,9 @@ test_that(".LogZ0 integrates the Model A tail mass of each k' prior (#267)", {
   logseries <- MkPrimeModel(kPrimePrior = "logseries",
                             priorVariant = "unconditional")
   lsC <- logseries$kprimeLogseriesC
+  lsK <- logseries$kprimeTruncK
   lsTail <- vapply(kObs, function(k) {
-    1 - sum(lsC ^ (2:(k - 1)) / (2:(k - 1))) / (-log1p(-lsC) - lsC)
+    1 - sum(lsC ^ (2:(k - 1)) / (2:(k - 1))) / sum(lsC ^ (2:lsK) / (2:lsK))
   }, 0)
   expect_equal(MkPrime:::.LogZ0(logseries, mkd), sum(log(lsTail)),
                tolerance = 1e-12)
@@ -140,4 +162,37 @@ test_that(".LogZ0 integrates the Model A tail mass of each k' prior (#267)", {
                                 type = rep("transformational", 2))),
     0
   )
+})
+
+test_that("default logseries subtracts log Z0 (#365)", {
+  mkd <- list(kObs = c(3L, 3L, 4L, 2L, 6L),
+              type = c(rep("transformational", 4), "neomorphic"))
+  default <- MkPrimeModel(kPrimePrior = "logseries")
+  unconditional <- MkPrimeModel(kPrimePrior = "logseries",
+                                priorVariant = "unconditional")
+  expect_lt(MkPrime:::.LogZ0(default, mkd), 0)
+  expect_equal(MkPrime:::.LogZ0(default, mkd),
+               MkPrime:::.LogZ0(unconditional, mkd))
+  expect_equal(MkPrime:::.LogZ0(default, .Z0Data()), -2.579877,
+               tolerance = 1e-6)
+})
+
+test_that("default logseries stepping stone matches the exact log ML (#365)", {
+  # Exact value by enumerating k'_i in [kObs_i, 30] under the untruncated
+  # logseries pmf (c = 0.7); the omitted tail is 3e-6 per character.
+  exact <- -13.63322
+  local_mocked_bindings(
+    .SchedulePins = function(moveWeights, moveTypes, userPins) userPins,
+    .package = "MkPrime"
+  )
+  set.seed(1L)
+  ss <- mkp_stepping_stone(
+    .Z0Data(), .Z0Tree(), model = MkPrimeModel(kPrimePrior = "logseries"),
+    mcmc = MkPrimeMCMC(moveWeights = c(kPrime = 0.4, gibbs_kPrime = 0.6)),
+    nStones = 20L, nIter = 2000L, warmup = 200L, fixTopology = TRUE,
+    nRuns = 1L, verbose = FALSE
+  )
+  # Before the fix it sat -log Z0 = 2.58 above the exact value; seeds spread
+  # by about 0.01.
+  expect_lt(abs(ss$log_marginal - exact), 0.25)
 })

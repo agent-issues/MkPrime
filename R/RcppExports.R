@@ -129,8 +129,8 @@ eval_log_prior_cpp <- function(dataPtr, statePtr) {
     .Call(`_MkPrime_eval_log_prior_cpp`, dataPtr, statePtr)
 }
 
-eval_log_prior_partitioned_cpp <- function(dataPtr, statePtr, classRateLogSd, classW, etaNeo, useHyperpriorOnSigma = FALSE, hyperTau = 1.0, classZ = as.numeric( c())) {
-    .Call(`_MkPrime_eval_log_prior_partitioned_cpp`, dataPtr, statePtr, classRateLogSd, classW, etaNeo, useHyperpriorOnSigma, hyperTau, classZ)
+eval_log_prior_partitioned_cpp <- function(dataPtr, statePtr, classRateLogSd, classW, classRate, etaNeo, useHyperpriorOnSigma = FALSE, hyperTau = 1.0, classZ = as.numeric( c())) {
+    .Call(`_MkPrime_eval_log_prior_partitioned_cpp`, dataPtr, statePtr, classRateLogSd, classW, classRate, etaNeo, useHyperpriorOnSigma, hyperTau, classZ)
 }
 
 set_class_rate_concentration <- function(dataPtr, concentration) {
@@ -165,8 +165,8 @@ do_move_cpp <- function(dataPtr, statePtr, moveType, charIdx, scaleTuning, betaS
     .Call(`_MkPrime_do_move_cpp`, dataPtr, statePtr, moveType, charIdx, scaleTuning, betaSimplexTuning, intWalkWindow, beta)
 }
 
-run_mcmc_batch_cpp <- function(dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, sliceParamCodes, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, moveIntParams, sliceWidths, jointRhos, nBatch, startIter, warmup, thin, hasNeo, nEdge, cacheBonus = 1.0) {
-    .Call(`_MkPrime_run_mcmc_batch_cpp`, dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, sliceParamCodes, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, moveIntParams, sliceWidths, jointRhos, nBatch, startIter, warmup, thin, hasNeo, nEdge, cacheBonus)
+run_mcmc_batch_cpp <- function(dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, sliceParamCodes, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, moveIntParams, sliceWidths, jointRhos, nBatch, startIter, warmup, thin, hasNeo, nEdge, cacheBonus = 1.0, chainBlockKpWins = integer(0), ptCarry = NULL) {
+    .Call(`_MkPrime_run_mcmc_batch_cpp`, dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, sliceParamCodes, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, moveIntParams, sliceWidths, jointRhos, nBatch, startIter, warmup, thin, hasNeo, nEdge, cacheBonus, chainBlockKpWins, ptCarry)
 }
 
 debug_mcmc_data <- function(dataPtr) {
