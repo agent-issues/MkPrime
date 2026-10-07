@@ -100,6 +100,7 @@ test_that("a mid-warmup resume keeps gibbs_kPrime capped (#404)", {
 })
 
 test_that("resumes shorter than a tuning window still advance Tuning (#404)", {
+  skip_under_memcheck()
   skip_on_cran()
   data <- .PhaseStateData()
   ckpFile <- tempfile(fileext = ".ckp")

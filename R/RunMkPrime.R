@@ -359,8 +359,8 @@ RunMkPrime <- function(data, tree = NULL,
   }
   # Recovery reads `base_N` files in preference to `base`, so a discarded
   # job's extra runs would be read as this job's.
-  if (overwrite) {
-    staleRuns <- max(oldNRuns, length(.DiscoverLogFiles(mcmc$logFile)))
+  staleRuns <- max(oldNRuns, length(.DiscoverLogFiles(mcmc$logFile)))
+  if (overwrite && staleRuns > 1L) {
     unlink(setdiff(.LogFilePaths(mcmc$logFile, staleRuns), logFilePaths))
     unlink(setdiff(.TreeFilePaths(treeFile, staleRuns), treeFilePaths))
   }
@@ -1186,7 +1186,8 @@ RunMkPrime <- function(data, tree = NULL,
   # from them would shrink by the cap at every resume (#302).
   if (is.null(r$autoPins)) {
     r$autoPins <- moveWeights[moveTypes %in% .kAlwaysAcceptTypes]
-    if (resumedCapped && !is.na(gibbsKpIdx) && gibbsWarmupFactor < 1) {
+    if (resumedCapped && "gibbs_kPrime" %in% names(r$autoPins) &&
+        gibbsWarmupFactor < 1) {
       r$autoPins[["gibbs_kPrime"]] <-
         r$autoPins[["gibbs_kPrime"]] / gibbsWarmupFactor
     }
