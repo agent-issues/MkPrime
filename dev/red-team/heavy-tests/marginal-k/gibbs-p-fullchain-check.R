@@ -9,6 +9,9 @@ suppressMessages(pkgload::load_all("C:/Users/pjjg18/GitHub/worktrees/mkp/margina
 library("ape"); library("TreeTools")
 
 P_TRUE <- 0.25
+# Pinned: MkPrimeModel()'s default changed from Model B to Model A on 2026-06-04;
+# the recorded "3.2x p-ESS" (2026-06-03) was Model B.
+PRIOR_VARIANT <- Sys.getenv("MARGINAL_K_PRIOR_VARIANT", unset = "unconditional")
 .simJCchar <- function(tree, kTrue) {
   nTip <- length(tree$tip.label); states <- integer(2L*nTip-1L)
   rootIdx <- nTip + 1L; states[rootIdx] <- sample.int(kTrue, 1L) - 1L
@@ -54,7 +57,8 @@ sim <- simulate_dataset(16L, 48L, 1648L)
 #  D sampled_k      : reference CEILING (conjugate Gibbs is the primary p-move)
 run_cfg <- function(mode, gpm, mw = NULL) {
   model <- suppressMessages(MkPrimeModel(kPrimePrior = "geometric",
-                                         likelihoodMode = mode, coding = "variable"))
+                                         likelihoodMode = mode, coding = "variable",
+                                         priorVariant = PRIOR_VARIANT))
   args <- list(nIter = N_ITER, thin = thin_n, minWarmup = 2000L, maxWarmup = 2000L,
                autoTune = FALSE, nRuns = 1L, nChains = 1L, gibbsPMarginal = gpm)
   if (!is.null(mw)) args$moveWeights <- mw
@@ -71,7 +75,7 @@ B <- run_cfg("marginal_k", TRUE)               # flag ON => gibbs_p_marginal PRI
 D <- run_cfg("sampled_k",  FALSE)              # conjugate-Gibbs ceiling reference
 fmt <- function(tag, r) sprintf("%-34s nsamp=%.0f  p-ESS=%.0f  tl-ESS=%.0f  E[p]=%.3f sd=%.3f",
                                 tag, r["nsamp"], r["ess_p"], r["ess_tl"], r["mean_p"], r["sd_p"])
-out <- c(sprintf("n16_c48 free-topology, N_ITER=%d thin=%d  (p-posterior ~ narrow near-boundary)", N_ITER, thin_n),
+out <- c(sprintf("n16_c48 free-topology, N_ITER=%d thin=%d priorVariant=%s  (p-posterior ~ narrow near-boundary)", N_ITER, thin_n, PRIOR_VARIANT),
          fmt("A marginal mh_logit_p only", A),
          fmt("B marginal gibbsPMarginal=TRUE", B),
          fmt("D sampled_k (ceiling ref)", D),

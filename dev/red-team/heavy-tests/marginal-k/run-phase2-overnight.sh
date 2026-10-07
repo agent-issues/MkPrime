@@ -7,6 +7,9 @@
 #     to push marginal-p-ESS >> floor; if d_sd resolves it was a low-ESS sd-MCSE
 #     artifact, if it persists it is a real mh_logit_p spread bias to investigate.
 cd /c/Users/pjjg18/GitHub/worktrees/mkp/marginal-k || exit 1
+# These runs (2026-06-02) predate the 2026-06-04 switch of the geometric default
+# to Model A; pin Model B so a rerun reproduces what was recorded.
+export MARGINAL_K_PRIOR_VARIANT=conditional
 H=dev/red-team/heavy-tests/marginal-k
 S=$H/T-OVL-sampled-vs-marginal.R
 

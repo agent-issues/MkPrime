@@ -41,7 +41,8 @@ cd "${SRC}"
 Rscript "${SRC}/dev/red-team/heavy-tests/sbc-mixed.R" \
   --full \
   --out "${RT}/results/sbc-mixed" \
-  --seed 20260528
+  --seed 20260528 \
+  --run-id "${RUN_ID:-${SLURM_JOB_ID}}"
 
 du -hs "${TMPDIR}" > "${RT}/logs/sbc_mixed_${SLURM_JOB_ID}_tmpdir.log" || true
 

@@ -11,11 +11,14 @@
 # PR-C / plan §7.2 (Rung 2) — Hamilton posterior-overlap test:
 # sampled_k vs marginal_k geometric arm. By Rao-Blackwell the two modes target
 # the SAME marginal posterior on (tree_length, rate_log_sd, p); this driver runs
-# matched-seed chains across a 2x2 (nTip x nChar) grid x N_REP and KS-tests the
-# marginals. Pass bar: KS p > 0.01 on every parameter in every cell.
+# matched-seed chains across a 2x2 (nTip x nChar) grid x N_REP and tests each
+# marginal's mean and sd for equivalence within Z_BAR = 3 batch-means standard
+# errors. A cell/param below the ESS floor is INCONCLUSIVE; the gate PASSes only
+# with no FAIL and at least half the cell/params conclusive.
 #
-# Single task (the driver loops the 16-cell grid serially, ~10-30 min total at
-# 12k iter; it saveRDS()s after every cell so a timeout keeps completed cells).
+# Single task (the driver loops the 16-cell grid serially at N_ITER = 60000 by
+# default; it saveRDS()s after every cell so a timeout keeps completed cells).
+# The prior variant is MARGINAL_K_PRIOR_VARIANT (default "unconditional").
 # A FAIL here, given the RB proof + both-variant prior bit-check, indicates
 # MIXING/convergence (try longer chains), not a target-posterior difference.
 #
@@ -60,5 +63,9 @@ cd "${SRC}"
 Rscript "${SRC}/dev/red-team/heavy-tests/marginal-k/T-OVL-sampled-vs-marginal.R"
 
 echo "[$(date)] marginal-k T-OVL complete"
-echo "--- T-OVL-verdict.txt ---"
-cat "${SRC}/dev/red-team/heavy-tests/marginal-k/T-OVL-verdict.txt" || true
+# The driver names its verdict for the move schedule it ran.
+TAG="${MARGINAL_K_OVL_EXTRA:-gated}"
+TAG="${TAG//,/+}"
+VERDICT="${SRC}/dev/red-team/heavy-tests/marginal-k/T-OVL-${TAG}-verdict.txt"
+echo "--- $(basename "${VERDICT}") ---"
+cat "${VERDICT}"
