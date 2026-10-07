@@ -195,8 +195,10 @@ tree_ess_per_source <- vapply(all_trees_list, function(trs) {
 cellinfo_hash <- rlang::hash(mk$cell_info)
 
 # RevBayes always runs to srMaxTime, so its time to target is pro-rated from
-# its ESS (RB-112); MkPrime's is NA unless it stopped on convergence.
-wallRbEst <- rb$wall_total * opt$target_ess / rb$diag_scalar$minEss
+# its ESS (RB-112) to the ESS the MkPrime run targeted, so both walls are to
+# the same target; MkPrime's is NA unless it stopped on convergence.
+mkRunEss <- mk$posterior$mcmc$minEss %||% opt$target_ess
+wallRbEst <- rb$wall_total * mkRunEss / rb$diag_scalar$minEss
 rows <- data.frame(
   pid = pid, model = model,
   param = c(scalar_cols, "cid_to_median"),
