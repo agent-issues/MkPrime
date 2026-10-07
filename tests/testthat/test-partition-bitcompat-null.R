@@ -39,7 +39,10 @@
 # regenerated again on 2026-09-30 when slice stepping out took Neal's
 # randomised split of its budget (issue #281), which draws one more uniform
 # per slice call: with every slice move dropped from the schedule, the merge
-# base and the branch give bit-identical payloads. The 2026-05-20 reference delegated its starting
+# base and the branch give bit-identical payloads. It was regenerated again on
+# 2026-10-06 when both k' walks (`kPrime`, `block_kPrime`) stopped drawing a
+# null shift (issue #304): with those two moves dropped from the schedule, the
+# merge base and the branch give bit-identical payloads. The 2026-05-20 reference delegated its starting
 # topology to TreeSearch::AdditionTree(), so it silently depended on the
 # installed version of a Suggests package and no CI job could ever reproduce
 # it; see helper-partition-ref.R.

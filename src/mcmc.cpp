@@ -354,20 +354,14 @@ static double cpp_log_prior(
     // kprimeAlpha, kprimeBeta must be positive for beta_geometric
     if (data.kPriorBetaGeometric &&
         (kprimeAlpha <= 0.0 || kprimeBeta <= 0.0)) return R_NegInf;
-    // The (plain) geometric arm is truncated at K (k' in [2, K],
-    // MARGINAL-K-TRUNC-001): k' > K carries zero prior mass under sampled_k so
-    // the joint marginalises to the marginal-k value (RB-consistency). Other
-    // arms (logseries / beta_geometric / empirical_geometric) are NOT
-    // K-truncated; under marginal_k k'_i is pinned to kObs_i and the evaluator
-    // applies the cap itself, so the upper guard is scoped to sampled_k.
-    const bool isPlainGeom = !data.kPriorLogseries &&
-                             !data.kPriorBetaGeometric &&
-                             !data.kPriorEmpiricalGeometric;
+    // Every arm is truncated at K (k' <= K, MARGINAL-K-TRUNC-001, #392) and
+    // renormalised below, so the Gibbs sweep enumerates the whole support.
+    // Under marginal_k k'_i is pinned to kObs_i and the evaluator applies the
+    // cap itself, so the upper guard is scoped to sampled_k.
     for (int i = 0; i < data.transIdxGlobal.size(); ++i) {
       int gi = data.transIdxGlobal[i];
       if (kPrime[gi] < data.kObs[gi]) return R_NegInf;
-      if (isPlainGeom && !data.marginalK && kPrime[gi] > data.kprimeTruncK)
-        return R_NegInf;
+      if (!data.marginalK && kPrime[gi] > data.kprimeTruncK) return R_NegInf;
     }
   }
 
@@ -395,13 +389,13 @@ static double cpp_log_prior(
   if (hasTrans) {
     int nTrans = data.transIdxGlobal.size();
     if (data.kPriorLogseries) {
-      // Logseries on k' >= 2 (k' = 1 is impossible):
-      //   log P(k'_i; c) = k'_i*log(c) - log(k'_i) - log(-log(1-c) - c)
+      // Logseries on 2 <= k' <= K (k' = 1 is impossible):
+      //   log P(k'_i; c) = k'_i*log(c) - log(k'_i) - log(sum_{k=2}^K c^k / k)
       // The truncation to k'_i >= kObs_i is not renormalised; with c fixed it
       // is a constant, as in LogPrior().
       double c = data.kprimeLogseriesC;
       double logC   = std::log(c);
-      double logNorm = mkp::logseries_log_norm(c);
+      double logNorm = mkp::logseries_log_norm_capped(c, data.kprimeTruncK);
       for (int i = 0; i < nTrans; ++i) {
         int kp = kPrime[data.transIdxGlobal[i]];
         lp += kp * logC - std::log(static_cast<double>(kp)) - logNorm;
@@ -409,13 +403,19 @@ static double cpp_log_prior(
       // No p / Beta term
     } else if (data.kPriorBetaGeometric) {
       // Per-character Beta-Geometric: P(u | α, β) = B(α+1, β+u) / B(α, β)
+      // on u in [0, K - kObs_i], renormalised by
+      //   Z_i = 1 - P(u >= n_i) = 1 - B(α, β + n_i) / B(α, β),
+      // n_i = K - kObs_i + 1. Z_i depends on (α, β), so it is NOT absorbed by
+      // the hyperparameter moves.
       double a = kprimeAlpha;
       double b = kprimeBeta;
       double lbAB = R::lbeta(a, b);
       for (int i = 0; i < nTrans; ++i) {
         int gi = data.transIdxGlobal[i];
         int u = kPrime[gi] - data.kObs[gi];
-        lp += R::lbeta(a + 1.0, b + static_cast<double>(u)) - lbAB;
+        int n = data.kprimeTruncK - data.kObs[gi] + 1;
+        lp += R::lbeta(a + 1.0, b + static_cast<double>(u)) - lbAB
+            - mkp::log1m_exp(R::lbeta(a, b + static_cast<double>(n)) - lbAB);
       }
       // Hyperprior: Exp(1) on α and β
       lp += R::dexp(a, 1.0, 1);
@@ -433,6 +433,16 @@ static double cpp_log_prior(
       double logQ    = (data.empTailDecay > 0.0) ? std::log(data.empTailDecay)
                                                  : R_NegInf;
       int    bodyLen = static_cast<int>(data.empLogBody.size());
+      // log P_emp(j), or -Inf where the pmf has no mass. The body takes
+      // precedence over the tail wherever both define a j.
+      auto logPempAt = [&](int j) -> double {
+        const int bodyIdx = j - 2;
+        if (bodyIdx < bodyLen) return data.empLogBody[bodyIdx];
+        if (data.empTailStartK > 0 && j >= data.empTailStartK &&
+            std::isfinite(data.empLogTailStartP) && std::isfinite(logQ))
+          return data.empLogTailStartP + (j - data.empTailStartK) * logQ;
+        return R_NegInf;
+      };
       // Scratch buffer for logSumExp (reused per call)
       std::vector<double> terms;
       terms.reserve(64);
@@ -441,18 +451,7 @@ static double cpp_log_prior(
         terms.clear();
         double mx = R_NegInf;
         for (int j = 2; j <= m; ++j) {
-          double logPemp;
-          int bodyIdx = j - 2;
-          if (bodyIdx < bodyLen) {
-            logPemp = data.empLogBody[bodyIdx];
-          } else if (data.empTailStartK > 0 && j >= data.empTailStartK &&
-                     std::isfinite(data.empLogTailStartP) &&
-                     std::isfinite(logQ)) {
-            logPemp = data.empLogTailStartP +
-                      (j - data.empTailStartK) * logQ;
-          } else {
-            continue;  // no mass at this j
-          }
+          const double logPemp = logPempAt(j);
           if (!std::isfinite(logPemp)) continue;
           double term = logPemp + logP + (m - j) * log1mP;
           terms.push_back(term);
@@ -463,57 +462,45 @@ static double cpp_log_prior(
         for (double t : terms) sumExp += std::exp(t - mx);
         return mx + std::log(sumExp);
       };
+      // Truncation normalisers over the capped support (#392): logZ[m] is
+      // log sum_{k=m}^{K} P(k | p), built from the recurrence
+      //   P(k | p) = p P_emp(k) + (1 - p) P(k - 1 | p)
+      // and summed downwards as positive terms, so no 1 - (...) cancels (#259).
+      // Model A (unconditional) puts the prior on [2, K] and divides by
+      // logZ[2]; the likelihood enforces the k' >= kObs floor. Model B
+      // (EG-001) puts it on [kObs_i, K] and divides by logZ[kObs_i]. Both
+      // depend on p, so neither is absorbed by p-varying MH.
+      const int K = data.kprimeTruncK;
+      std::vector<double> logZ(K + 2, R_NegInf);
+      {
+        std::vector<double> logPk(K + 1, R_NegInf);
+        double prev = R_NegInf;
+        for (int k = 2; k <= K; ++k) {
+          const double fresh = logP + logPempAt(k);
+          const double carry = log1mP + prev;
+          const double mx = std::max(fresh, carry);
+          prev = std::isfinite(mx)
+            ? mx + std::log(std::exp(fresh - mx) + std::exp(carry - mx))
+            : R_NegInf;
+          logPk[k] = prev;
+        }
+        for (int k = K; k >= 2; --k) {
+          const double mx = std::max(logPk[k], logZ[k + 1]);
+          logZ[k] = std::isfinite(mx)
+            ? mx + std::log(std::exp(logPk[k] - mx) + std::exp(logZ[k + 1] - mx))
+            : R_NegInf;
+        }
+      }
       for (int i = 0; i < nTrans; ++i) {
         int gi = data.transIdxGlobal[i];
         int m = kPrime[gi];
         if (m < 2) return R_NegInf;
         double numer = logPconv(m);             // untruncated convolution log-pmf
         if (!std::isfinite(numer)) return R_NegInf;
-        lp += numer;
-        // EG-001: under the conditional variant (Model B), LogPrior enforces
-        // k'_i >= kObs_i, so renormalise over that truncated support.
-        //   Z_i(p) = sum_{k>=kObs_i} P(k|p)
-        //          = sum_{j<kObs_i} P_emp(j) (1-p)^(kObs_i-j) + sum_{j>=kObs_i} P_emp(j)
-        // summed as positive terms: 1 - sum_{m'<kObs_i} P(m'|p) cancels
-        // catastrophically once kObs_i nears 50 (#259). No-op when
-        // kObs_i <= 2. Z_i depends on p, so it is NOT absorbed by p-varying MH.
-        // Under the unconditional variant (Model A) the prior lives on the full
-        // support k' >= 2 with Z_i == 1; the likelihood enforces the k' >= kObs
-        // floor. Mirrors the geometric arm's Model A/B split above.
-        if (!data.unconditionalPrior) {
-          int kobs_i = data.kObs[gi];
-          if (kobs_i > 2) {
-            terms.clear();
-            // Every j below kObs_i, and body entries at or above it.
-            for (int j = 2; j < std::max(kobs_i, bodyLen + 2); ++j) {
-              const int bodyIdx = j - 2;
-              const double logPemp = bodyIdx < bodyLen
-                ? data.empLogBody[bodyIdx]
-                : (data.empTailStartK > 0 && j >= data.empTailStartK &&
-                   std::isfinite(data.empLogTailStartP) && std::isfinite(logQ))
-                  ? data.empLogTailStartP + (j - data.empTailStartK) * logQ
-                  : R_NegInf;
-              if (!std::isfinite(logPemp)) continue;
-              terms.push_back(j < kobs_i ? logPemp + (kobs_i - j) * log1mP
-                                         : logPemp);
-            }
-            // Geometric tail beyond the body, from j0 = max(kObs_i, tail start).
-            const int tailFrom = std::max(data.empTailStartK, bodyLen + 2);
-            if (data.empTailStartK > 0 && std::isfinite(data.empLogTailStartP) &&
-                std::isfinite(logQ)) {
-              const int j0 = std::max(kobs_i, tailFrom);
-              terms.push_back(data.empLogTailStartP +
-                              (j0 - data.empTailStartK) * logQ -
-                              std::log1p(-data.empTailDecay));
-            }
-            double mx = R_NegInf;
-            for (double t : terms) if (t > mx) mx = t;
-            if (!std::isfinite(mx)) return R_NegInf;
-            double sumExp = 0.0;
-            for (double t : terms) sumExp += std::exp(t - mx);
-            lp -= mx + std::log(sumExp);
-          }
-        }
+        const double logZi = data.unconditionalPrior ? logZ[2]
+                                                     : logZ[data.kObs[gi]];
+        if (!std::isfinite(logZi)) return R_NegInf;
+        lp += numer - logZi;
       }
       // p: Beta hyperprior (same as plain geometric)
       lp += R::dbeta(p, data.kprimeHyperA, data.kprimeHyperB, 1);
@@ -4175,15 +4162,13 @@ void compute_per_kprime_log_lik(
     if (nUniq > maxNUniqPart) maxNUniqPart = nUniq;
   }
 
-  // MARGINAL-K-TRUNC-001: the plain geometric prior is truncated at K, so
+  // MARGINAL-K-TRUNC-001: every k' prior is truncated at K (#392), so
   // candidates with k' > K carry zero mass and phase 2 discards them (#66).
   std::vector<int> partKoMax(transParts.size(), kMaxKprimeCand);
-  if (isGeometric) {
-    for (int pi = 0; pi < (int)transParts.size(); ++pi) {
-      int nEff = data->kprimeTruncK - transParts[pi].kObs + 1;
-      if (nEff < 0) nEff = 0;
-      if (nEff < kMaxKprimeCand) partKoMax[pi] = nEff;
-    }
+  for (int pi = 0; pi < (int)transParts.size(); ++pi) {
+    int nEff = data->kprimeTruncK - transParts[pi].kObs + 1;
+    if (nEff < 0) nEff = 0;
+    if (nEff < kMaxKprimeCand) partKoMax[pi] = nEff;
   }
 
   // Ensure Gibbs workspace is large enough for the worst-case stride.
@@ -4846,15 +4831,12 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
   // precomputed log-weights in charLogW[].
   // ---------------------------------------------------------------
 
-  // MARGINAL-K-TRUNC-001: for the (plain) geometric arm the prior is truncated
-  // at K, so candidates with k' = kObs_i + c > K carry zero mass and must be
-  // dropped from the Gibbs draw. This move always-accepts, so an out-of-support
-  // draw would NOT be MH-rejected downstream; the cap must happen here. Mirrors
-  // the marginal evaluator's nEff cap (compute over [0, nEff), nEff = min(nCand,
-  // K - kObs_i + 1)). Other arms are not K-truncated and keep the full range.
-  const bool isPlainGeom = !data->kPriorLogseries &&
-                           !data->kPriorBetaGeometric &&
-                           !data->kPriorEmpiricalGeometric;
+  // MARGINAL-K-TRUNC-001: every k' prior is truncated at K (#392), so
+  // candidates with k' = kObs_i + c > K carry zero mass and must be dropped
+  // from the Gibbs draw. This move always-accepts, so an out-of-support draw
+  // would NOT be MH-rejected downstream; the cap must happen here. Mirrors the
+  // marginal evaluator's nEff cap (compute over [0, nEff), nEff = min(nCand,
+  // K - kObs_i + 1)).
   const int  truncK = data->kprimeTruncK;
 
   // Random permutation of transformational character indices
@@ -4876,28 +4858,29 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
     double maxW = charMaxLogW[ti];
     const double* logW = &charLogW[ti * kMaxKprimeCand];
 
-    // MARGINAL-K-TRUNC-001 cap (geometric only). When truncation actually bites
-    // (nEff < nCand), recompute maxW over the retained range: the cached
-    // charMaxLogW is the max over the FULL pre-cap range and may sit above K,
-    // which would skew the logSumExp toward an empty tail. Untruncated and
-    // not-geometric paths keep the original maxW for bit-reproducibility.
-    if (isPlainGeom) {
-      int nEff = truncK - kObs_i + 1;
-      if (nEff <= 0) continue;            // empty support: kObs_i > K
-      if (nEff < nCand) {
-        nCand = nEff;
-        maxW = R_NegInf;
-        for (int c = 0; c < nCand; ++c)
-          if (R_FINITE(logW[c]) && logW[c] > maxW) maxW = logW[c];
-        if (!R_FINITE(maxW)) continue;
-      }
+    // MARGINAL-K-TRUNC-001 cap. When truncation actually bites (nEff < nCand),
+    // recompute maxW over the retained range: the cached charMaxLogW is the
+    // max over the FULL pre-cap range and may sit above K, which would skew
+    // the logSumExp toward an empty tail. Untruncated paths keep the original
+    // maxW for bit-reproducibility.
+    int nEff = truncK - kObs_i + 1;
+    if (nEff <= 0) continue;              // empty support: kObs_i > K
+    if (nEff < nCand) {
+      nCand = nEff;
+      maxW = R_NegInf;
+      for (int c = 0; c < nCand; ++c)
+        if (R_FINITE(logW[c]) && logW[c] > maxW) maxW = logW[c];
+      if (!R_FINITE(maxW)) continue;
     }
 
     // The candidate window [kObs_i, kObs_i + nCand) does not depend on k'_i,
     // so a draw restricted to it from inside it, and no move from outside it,
-    // leaves the untruncated conditional invariant (#278). A k'_i beyond the
-    // window is moved by int_walk and block_kprime_shift instead.
-    if (state->kPrime[gi] - kObs_i >= nCand) continue;
+    // leaves the conditional invariant (#278). The window is the whole support
+    // unless the M-164 cutoff ended the enumeration early; a k'_i in the
+    // support beyond it is moved by int_walk and block_kprime_shift instead. A
+    // k'_i above K has zero prior mass (an old checkpoint), so it is redrawn.
+    const int kp = state->kPrime[gi];
+    if (kp - kObs_i >= nCand && kp <= truncK) continue;
 
     // Sample from categorical (log-sum-exp)
     double sumExp = 0.0;
@@ -4938,6 +4921,17 @@ static bool gibbs_kprime_sweep_impl(McmcData* data, McmcState* state,
 }
 
 
+// Uniform on {-W, ..., -1, 1, ..., W}. A null shift is a wasted evaluation
+// that the window controllers would score as an acceptance or a rejection,
+// biasing the window whichever way they count it (#304).
+static int draw_nonzero_shift(int window) {
+  int w = std::max(window, 1);
+  int d = 1 + static_cast<int>(R::unif_rand() * 2 * w);
+  if (d > 2 * w) d = 2 * w;
+  return d <= w ? -d : d - w;
+}
+
+
 // ---------------------------------------------------------------------------
 // Block kPrime shift (moveType 26)
 //
@@ -4950,10 +4944,7 @@ static bool block_kprime_shift_impl(McmcData* data, McmcState* state,
   int nTrans = (int)data->transIdxGlobal.size();
   if (nTrans == 0) return false;
 
-  // Propose delta ~ Uniform({-W, ..., W})
-  int range = 2 * intWalkWindow + 1;
-  int delta = static_cast<int>(R::unif_rand() * range) - intWalkWindow;
-  if (delta == 0) return false;
+  int delta = draw_nonzero_shift(intWalkWindow);
 
   // Feasibility: all k'_i + delta >= kObs_i
   for (int i = 0; i < nTrans; ++i) {
@@ -5344,8 +5335,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       oldKPrimeVal  = state->kPrime[charIdx];
       int oldK      = oldKPrimeVal;
       int lowerK = data->kObs[charIdx];
-      int range  = 2 * intWalkWindow + 1;
-      int delta  = static_cast<int>(R::unif_rand() * range) - intWalkWindow;
+      int delta  = draw_nonzero_shift(intWalkWindow);
       int newK   = oldK + delta;
       if (newK < lowerK) return false;
       state->kPrime[charIdx] = newK;
@@ -5726,7 +5716,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       std::vector<int> dummyEdges;
       NumericVector tmpSnap = clone(state->classW);
       if (!dirichlet_simplex_impl(state->classW, nC,
-                                  betaSimplexTuning, logHastings,
+                                  scaleTuning, logHastings,
                                   tmpSnap, dummyEdges)) {
         state->classW = classWSnapshot;
         return false;
@@ -6256,6 +6246,22 @@ bool do_move_cpp(SEXP dataPtr, SEXP statePtr,
 }
 
 
+static SEXP check_interrupt_body(void*) {
+  R_CheckUserInterrupt();
+  return R_NilValue;
+}
+
+static SEXP return_condition(SEXP cond, void*) {
+  return cond;
+}
+
+// The interrupt or error condition pending in R, or R_NilValue if none.
+static SEXP poll_interrupt(SEXP classes) {
+  return R_tryCatch(check_interrupt_body, nullptr, classes,
+                    return_condition, nullptr, nullptr, nullptr);
+}
+
+
 // Moves that can score through the node CL cache: beta_simplex, NNI, SPR,
 // dirichlet_branch, local_dirichlet.
 static inline bool is_partial_cl_move(int moveType) {
@@ -6292,7 +6298,9 @@ List run_mcmc_batch_cpp(
     int thin,
     bool hasNeo,
     int nEdge,
-    double cacheBonus = 1.0
+    double cacheBonus = 1.0,
+    IntegerVector chainBlockKpWins = IntegerVector::create(),
+    Nullable<List> ptCarry = R_NilValue
 ) {
   McmcData* data = Rcpp::XPtr<McmcData>(dataPtr).get();
   int nChains    = stateXPtrs.size();
@@ -6400,13 +6408,41 @@ List run_mcmc_batch_cpp(
   enum ParticleState : char { PS_NONE = 0, PS_AT_COLD = 1, PS_AT_HOT = 2 };
   std::vector<char> particleState(nChains, PS_NONE);
   if (nChains > 0) particleState[0] = PS_AT_COLD;
+  // A trip or a cold swap that straddles a batch boundary still counts.
+  if (ptCarry.isNotNull()) {
+    List carry(ptCarry);
+    IntegerVector atSlot = carry["particle_at_slot"];
+    IntegerVector pState = carry["particle_state"];
+    if (atSlot.size() == nChains && pState.size() == nChains) {
+      for (int s = 0; s < nChains; ++s) {
+        particleAtSlot[s] = atSlot[s];
+        particleState[s] = static_cast<char>(pState[s]);
+      }
+      coldSwapsSinceSample = as<int>(carry["cold_swaps"]);
+    }
+  }
   int roundTripCount = 0;
+
+  // An interrupt or time limit caught here, rather than longjmping out of
+  // R_CheckUserInterrupt, lets this frame's destructors run (#398) and
+  // RNGScope write .Random.seed back (#317). Nothing is thrown, either:
+  // unwinding an exception out of a large frame segfaults on aarch64.
+  CharacterVector pollClasses = CharacterVector::create("interrupt", "error");
+  RObject interrupted;
+  auto lastPoll = std::chrono::steady_clock::now();
 
   // Main iteration loop
   for (int i = 0; i < nBatch; ++i) {
-    // Check for user interrupt every 10 iterations (expensive moves can take
-    // seconds each, so we want to stay responsive to Ctrl-C / ESC).
-    if (i % 10 == 0) R_CheckUserInterrupt();
+    // Expensive moves can take seconds each, so poll every 10 iterations;
+    // a cheap one takes microseconds, so at most every 20 ms.
+    if (i % 10 == 0) {
+      auto now = std::chrono::steady_clock::now();
+      if (now - lastPoll >= std::chrono::milliseconds(20)) {
+        lastPoll = now;
+        interrupted = poll_interrupt(pollClasses);
+        if (!interrupted.isNULL()) break;
+      }
+    }
 
     int iter = startIter + i;
 
@@ -6459,6 +6495,8 @@ List run_mcmc_batch_cpp(
         int iww = moveIntParams[moveIdx] > 0
                     ? moveIntParams[moveIdx]
                     : chainIntWalkWins[ch];
+        if (moveType == 26 && chainBlockKpWins.size() == nChains)
+          iww = chainBlockKpWins[ch];
         accepted = do_move_impl(
           data, states[ch],
           moveType, charIdx,
@@ -6488,7 +6526,8 @@ List run_mcmc_batch_cpp(
       if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
         std::swap(*states[iPair], *states[jPair]);
         swapAccept[iPair]++;
-        if (iPair == 0) coldSwapsSinceSample++;
+        // Warmup saves nothing, so its swaps would all land on the first sample.
+        if (iPair == 0 && iter > warmup) coldSwapsSinceSample++;
 
         // PT-RT-001: update particle-at-slot map and possibly count round trip.
         std::swap(particleAtSlot[iPair], particleAtSlot[jPair]);
@@ -6567,6 +6606,15 @@ List run_mcmc_batch_cpp(
     _["bs_partial"] = states[0]->diagBsPartialCount
   );
 
+  IntegerVector carryState(nChains);
+  for (int s = 0; s < nChains; ++s) carryState[s] = particleState[s];
+  List carryOut = List::create(
+    _["particle_at_slot"] = IntegerVector(particleAtSlot.begin(),
+                                          particleAtSlot.end()),
+    _["particle_state"]   = carryState,
+    _["cold_swaps"]       = coldSwapsSinceSample
+  );
+
   return List::create(
     _["accept_counts"]    = acceptCounts,
     _["propose_counts"]   = proposeCounts,
@@ -6580,7 +6628,9 @@ List run_mcmc_batch_cpp(
     _["n_saved"]          = nSaved,
     _["diag_counters"]    = diagCounters,
     _["cache_hits"]       = cacheHits,
-    _["cache_misses"]     = cacheMisses
+    _["cache_misses"]     = cacheMisses,
+    _["pt_carry"]         = carryOut,
+    _["interrupted"]      = interrupted
   );
 }
 

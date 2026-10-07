@@ -110,9 +110,13 @@ own set of \code{nChains} chains. Convergence diagnostics (R-hat) require
 tempering). Default 1 (no tempering). Set to 4 for typical analyses.
 Chain 1 is the cold chain (beta = 1).}
 
-\item{heat}{Temperature of the hottest chain (0 < heat < 1). Default
-0.2. The temperature ladder uses geometric spacing:
-\code{beta_i = heat^((i-1)/(nChains-1))} for i = 1, ..., nChains.
+\item{heat}{Inverse temperature of the hottest chain (0 < heat < 1),
+from which warmup starts. Default 0.2. The temperature ladder uses
+geometric spacing: \code{beta_i = heat^((i-1)/(nChains-1))} for
+i = 1, ..., nChains. Warmup adapts \code{heat} towards a 25\% swap
+acceptance rate, keeping it between 0.01 and 0.5: a value outside that
+range is moved into it at the first adaptation, with a warning. The
+ladder is then fixed for the Tuning and Sample phases.
 Ignored when \code{nChains = 1}.}
 
 \item{maxTime}{Maximum wall-clock time in seconds for the whole job, shared
@@ -376,7 +380,13 @@ Default tuning values:
 \item \code{scale_p}: 0.5
 \item \code{int_walk_window}: 1
 \item \code{block_kprime_window}: 1
+\item \code{dirichlet_class_w_alpha}: 10, the concentration of the Dirichlet
+proposal on the partition class weights; larger values take smaller
+steps.
 }
+
+Warmup adapts each value towards its move's target acceptance rate, and
+each chain of a tempered ladder adapts its own.
 \subsection{Stopping criteria}{
 
 Sampling stops when two consecutive convergence checks, \code{checkEvery}
@@ -483,6 +493,10 @@ is set, sooner once tuning stops paying for itself: when, in two
 consecutive rounds, the
 time already spent on warmup and tuning exceeds the time the best
 kernel needs to collect this run's share of \code{minEss}.
+With finite \code{nIter}, its windows are sized so that it uses at most about
+half the iterations left after warmup. If even one round cannot end before
+\code{nIter}, the run stops there with a warning and \code{stop_reason} \code{"too_short"},
+rather than spend the rest of its iterations without sampling.
 Set \code{autoTune = FALSE} to skip this phase.
 
 \strong{Sample.} Move weights are frozen and posterior samples are

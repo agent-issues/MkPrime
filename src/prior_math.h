@@ -36,6 +36,20 @@ inline double logseries_log_norm(double c) {
   return std::log(s);
 }
 
+// log of the logseries normaliser over the capped support 2 <= k' <= K:
+//   sum_{k=2}^{K} c^k / k.
+// Terms are positive and K <= 256, so the direct sum is exact to rounding.
+// Mirrored by .LogseriesLogNorm(c, K) in R/MkPrimeModel.R.
+inline double logseries_log_norm_capped(double c, int K) {
+  double s = 0.0;
+  double ck = c;
+  for (int k = 2; k <= K; ++k) {
+    ck *= c;
+    s += ck / k;
+  }
+  return std::log(s);
+}
+
 }  // namespace mkp
 
 #endif  // MKP_PRIOR_MATH_H

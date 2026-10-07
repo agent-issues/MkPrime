@@ -67,7 +67,8 @@
 #'   `$runMoveWeights` lists every run's. `$stop_reason` says why the job
 #'   stopped; with `nRuns > 1`, each `$per_run` entry's `stop_reason` says why
 #'   that run did, and is `"cancelled"` for a parallel run stopped by the
-#'   job's own decision.
+#'   job's own decision. A run stops with `"too_short"`, and a warning, when
+#'   a tuning round cannot end before `nIter`.
 #'
 #' @section Inline MCMC options:
 #'
@@ -1169,7 +1170,6 @@ RunMkPrime <- function(data, tree = NULL,
   scalarFloorMoves <- .ScalarFloorMoves(moves)
   # M-171: index for warmup-phase sweep frequency reduction (NA = no trans chars)
   gibbsKpIdx <- match("gibbs_kPrime", moveNames)
-  blockKpIdx <- match("block_kPrime", moveNames)
   moveTypeCodes <- vapply(moves, .MoveTypeCode, integer(1L))
   # Slice param index: 0=treeLength, 1=rateLoss, 2=rateLogSd, 3=rateNeo, 4=betaScale
   sliceParamCodes <- vapply(moves, function(m) m$sliceParamIdx %||% 0L, integer(1L))
@@ -1392,6 +1392,26 @@ RunMkPrime <- function(data, tree = NULL,
   repeat {
     # A resume may start past a lowered nIter, with nothing left to run.
     if (is.finite(mcmc$nIter) && batchStart > mcmc$nIter) break
+    # A Tuning round that cannot end before nIter would spend the rest of the
+    # run without sampling: stop now, and say so.
+    if (phase == "Tuning" && tuningIterUsed == roundStartIter &&
+        is.finite(mcmc$nIter)) {
+      needIter <- .MinTuningIter(tuningWindowSamples, mcmc$thin, tuningBatch,
+                                 nTuningWindows, rhoPending)
+      leftIter <- mcmc$nIter - batchStart + 1L
+      if (needIter >= leftIter) {
+        cli::cli_warn(c(
+          "Tuning needs {needIter} more iterations before it can end, but \
+           only {leftIter} remain.",
+          "!" = "Run {runIdx} stops at iteration {batchStart - 1L} without \
+                 sampling.",
+          "i" = "Raise {.arg nIter}, or set {.code autoTune = FALSE}."
+        ))
+        Checkpoint(r)
+        stopReason <- "too_short"
+        break
+      }
+    }
     batchPhase <- phase
     # Batch size depends on phase
     batchSize <- switch(phase,
@@ -1405,10 +1425,7 @@ RunMkPrime <- function(data, tree = NULL,
     if (phase == "Warmup" && batchEnd > mcmc$warmup)
       batchEnd <- mcmc$warmup
     if (phase == "Warmup") {
-      if (warmupBatchEnd < batchStart) {
-        warmupBatchEnd <- batchEnd
-        warmupCounts   <- NULL
-      }
+      if (warmupBatchEnd < batchStart) warmupBatchEnd <- batchEnd
       batchEnd <- warmupBatchEnd
     }
     batchEnd <- as.integer(min(batchEnd, .NextMultiple(batchStart, callEvery)))
@@ -1422,24 +1439,22 @@ RunMkPrime <- function(data, tree = NULL,
     iwWins       <- vapply(r$chain_tuning,
                            function(t) .IntWalkWindow(t$int_walk_window),
                            integer(1L))
-    # block_kPrime's window travels as its per-move int param, which C++
-    # shares across chains: heated chains shift by the cold chain's window.
-    if (!is.na(blockKpIdx)) {
-      moveIntParams[blockKpIdx] <-
-        .IntWalkWindow(r$chain_tuning[[1]]$block_kprime_window)
-    }
+    blockKpWins  <- vapply(r$chain_tuning,
+                           function(t) .IntWalkWindow(t$block_kprime_window),
+                           integer(1L))
 
     .CheckMoveWeights(moveWeights)
     batchClock <- proc.time()[["elapsed"]]
-    result <- run_mcmc_batch_cpp(
+    result <- .RunBatch(
       mcmcData, r$chainStates, r$betas,
       moveTypeCodes, transIdx0, sliceParamCodes, moveWeights,
       scaleTunings, bsTunings, iwWins, moveIntParams,
       sliceWidths, jointRhos,
       nBatch, batchStart, cppWarmup, mcmc$thin,
       hasNeo, nEdge,
-      mcmc$cacheBonus
+      mcmc$cacheBonus, blockKpWins, r$pt_carry
     )
+    r$pt_carry <- result$pt_carry
     # A tuning window is charged for its batches alone: checkpoints and
     # progress callbacks between them would fall on fixed slots (#220).
     batchSec <- proc.time()[["elapsed"]] - batchClock
@@ -1557,10 +1572,10 @@ RunMkPrime <- function(data, tree = NULL,
 
     if (phase == "Warmup" && batchEnd == warmupBatchEnd) {
       # --- Warmup: adapt tuning, temperatures, and move weights ---
-      # Step sizes and slice widths read this batch's counts alone: a
-      # cumulative rate is dominated by steps already replaced, so a
-      # per-batch multiplicative update driven by it keeps correcting an
-      # error that has gone (#79). Move weights keep the cumulative counts.
+      # Step sizes and slice widths read the counts since their last
+      # update: a cumulative rate is dominated by steps already replaced, so
+      # a multiplicative update driven by it keeps correcting an error that
+      # has gone (#79). Move weights keep the cumulative counts.
       for (ch in seq_len(nChains)) {
         batchAccept <- stats::setNames(
           as.integer(warmupCounts$accept_counts[ch, ]), moveNames)
@@ -1574,9 +1589,21 @@ RunMkPrime <- function(data, tree = NULL,
         r$chain_tuning[[ch]] <- .AdaptSliceWidths(
           r$chain_tuning[[ch]], batchPropose, batchSliceExp, moves
         )
+        spent <- .TuningWindowSpent(batchPropose, moves)
+        for (counts in names(warmupCounts)) {
+          warmupCounts[[counts]][ch, spent] <- 0L
+        }
       }
       if (nChains > 1L) {
+        oldBetas <- r$betas
         r$betas <- .AdaptTemperatures(r$betas, r$swap_accept, r$swap_propose)
+        # Swap rates are measured on the current ladder alone, so they
+        # restart whenever it moves; result$swap_rates then reports the
+        # ladder that Sample ran on (#306).
+        if (!identical(as.numeric(r$betas), as.numeric(oldBetas))) {
+          r$swap_accept[]  <- 0L
+          r$swap_propose[] <- 0L
+        }
         # PT-RT-001: surface ladder-too-coarse warning at most once per run.
         lw <- attr(r$betas, "ladder_warning")
         if (!is.null(lw) && !isTRUE(r$ladder_warning_emitted)) {
@@ -1659,16 +1686,7 @@ RunMkPrime <- function(data, tree = NULL,
             )
           }
 
-          # Check if there's enough remaining budget for tuning + sampling
-          remainingIter <- if (is.finite(mcmc$nIter)) {
-            mcmc$nIter - batchEnd
-          } else {
-            Inf
-          }
-          # Need at least tuningBatch * 2 for tuning + some for sampling
-          canTune <- mcmc$autoTune && remainingIter > tuningBatch * 4L
-
-          if (canTune) {
+          if (mcmc$autoTune) {
             phase      <- "Tuning"
             r$phase    <- phase
             phaseLabel <- "Tuning"
@@ -1679,11 +1697,11 @@ RunMkPrime <- function(data, tree = NULL,
             scaledBudget <- as.integer(
               mcmc$thin * .kTuningWindowSamples * nTuningWindows
             )
-            baseBudget <- max(mcmc$tuningBudget, scaledBudget)
-            effectiveTuningBudget <- if (is.finite(remainingIter)) {
-              min(baseBudget, as.integer(remainingIter / 2))
-            } else {
-              baseBudget
+            # On a finite run, size windows to half the iterations left.
+            effectiveTuningBudget <- max(mcmc$tuningBudget, scaledBudget)
+            if (is.finite(mcmc$nIter)) {
+              effectiveTuningBudget <- min(effectiveTuningBudget,
+                                           (mcmc$nIter - batchEnd) %/% 2L)
             }
             r$effectiveTuningBudget <- effectiveTuningBudget
             tuningWindowSamples <- .TuningWindowSamples(
@@ -2168,6 +2186,25 @@ RunMkPrime <- function(data, tree = NULL,
 # The first multiple of any of `every` at or after `iter`; Inf for none.
 .NextMultiple <- function(iter, every) {
   min(Inf, ((iter - 1L) %/% every + 1L) * every)
+}
+
+
+# run_mcmc_batch_cpp() returns an interrupt or error caught part way through a
+# batch rather than longjmping out of its frame (#398); raise it again here.
+# The part-batch is dropped: the interrupt handlers checkpoint the state saved
+# at the last batch end.
+.RunBatch <- function(...) {
+  result <- run_mcmc_batch_cpp(...)
+  cond <- result$interrupted
+  if (is.null(cond)) return(result)
+  # Its call is R's internal tryCatch frame, which means nothing to a user.
+  cond["call"] <- list(NULL)
+  if (inherits(cond, "interrupt")) {
+    # As R does for an interrupt: handlers first, then the top level.
+    signalCondition(cond)
+    invokeRestart("abort")
+  }
+  stop(cond)
 }
 
 
@@ -3149,6 +3186,16 @@ RunMkPrime <- function(data, tree = NULL,
 }
 
 
+# Iterations Tuning spends before it can first exit: the rho window, when a
+# joint proposal needs one, then one window per candidate in the first round.
+.MinTuningIter <- function(windowSamples, thin, batch, nWindows, rho) {
+  WindowIter <- function(nSamples) batch * ceiling(nSamples * thin / batch)
+  # Return:
+  nWindows * WindowIter(windowSamples) +
+    if (rho) WindowIter(max(windowSamples, 50L)) else 0
+}
+
+
 # --- Build final result ---
 
 #' Build MkPosterior from all runs
@@ -3165,6 +3212,19 @@ RunMkPrime <- function(data, tree = NULL,
   # the test belongs here rather than in each of them (PAR-001).  Each hands
   # `runs` over dense, so a position here is the run number `drops` uses.
   usable <- vapply(runs, function(r) !is.null(r$saved_idx), logical(1L))
+  unsampled <- which(usable & vapply(runs, function(r) {
+    identical(r$saved_idx, 0L) &&
+      !any(r$stop_reason %in% c("cancelled", "too_short"))
+  }, logical(1L)))
+  if (length(unsampled) > 0L) {
+    cli::cli_warn(c(
+      "{cli::qty(length(unsampled))}Run{?s} {unsampled} stopped \
+       ({.val {stopReason}}) without drawing any posterior samples.",
+      "i" = "Raise {.arg nIter} (or {.arg maxTime}) so that sampling has \
+             room, or set {.code autoTune = FALSE}."
+    ))
+  }
+
   if (!all(usable)) {
     unstarted <- which(!usable)
     cli::cli_warn(c(
@@ -4294,7 +4354,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
           convWindowSize = convWindowSize,
           treeFile       = if (is.null(treeFilePaths)) NULL else treeFilePaths[run],
           shared         = shared,
-          resumeMoveWeights = runs[[run]]$moveWeights %||% checkpoint$moveWeights
+          # A run the checkpoint never started builds its weights afresh;
+          # another run's carry the warmup cap on gibbs_kPrime (#403).
+          resumeMoveWeights = if (!is.null(runs[[run]]$actual_iter)) {
+            runs[[run]]$moveWeights %||% checkpoint$moveWeights
+          }
         )
         shared$runs[[run]] <- runs[[run]]
         stopReason <- runs[[run]]$stop_reason
@@ -4480,6 +4544,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         joint_tl_rn  = tun$scale_joint_tl_rn %||% 0.5,
         dirichlet_branch = tun$dirichlet_alpha %||% 10,
         local_dirichlet  = tun$local_dirichlet_alpha %||% 10,
+        dirichlet_simplex_class_w = tun$dirichlet_class_w_alpha %||% 10,
         p           = 0.5,  # Gibbs move: scale ignored by C++; placeholder
         gibbs_p_marginal = 0.5,  # data-aug Gibbs: scale ignored by C++
         mh_logit_p  = tun$scale_logit_p %||% 1.0,
@@ -5166,30 +5231,22 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   )
   # Wire the truncation cap K from the model into the McmcData
   # (set_kprime_trunc_k; mirrors set_branch_bins, avoiding a prepare_mcmc_data
-  # signature change). K is the declared cap for the GEOMETRIC arm: the prior
-  # is a truncated geometric on [2, K] renormalised by Z(p)
-  # (MARGINAL-K-TRUNC-001). It MUST equal the SBC forward's K_MAX_PRIOR for
-  # calibration. Stage 2 extends the truncation from marginal_k to sampled_k so
-  # the two likelihoodModes target the same posterior (RB-consistency); the
-  # setter therefore fires for the geometric arm under BOTH modes. (marginal_k
-  # requires geometric; sampled_k geometric previously left the C++ default in
-  # place, which would now over-truncate at K=30.) Guard K >= max(kObs) for a
-  # friendly message; otherwise a character has empty truncated support [2, K]
-  # and a -Inf prior/likelihood. Non-geometric arms (empirical_geometric /
-  # beta_geometric / logseries) are not truncated and never consult K.
-  if (identical(model$kPrimePrior, "geometric")) {
-    K <- as.integer(model$kprimeTruncK %||% 200L)
-    maxKObs <- max(as.integer(mkd$kObs))
-    if (K < maxKObs) {
-      cli::cli_abort(c(
-        "{.arg kprimeTruncK} = {.val {K}} is below the largest observed
-         state count max(kObs) = {.val {maxKObs}}.",
-        i = "That character would have empty truncated support [2, K] and a
-             -Inf likelihood. Raise {.arg kprimeTruncK} to >= {maxKObs}."
-      ))
-    }
-    set_kprime_trunc_k(dp, K)
+  # signature change). Every k' prior is truncated at K and renormalised over
+  # its capped support (MARGINAL-K-TRUNC-001, #392), under both likelihood
+  # modes. K MUST equal the SBC forward's K_MAX_PRIOR for calibration. Guard
+  # K >= max(kObs) for a friendly message; otherwise a character has empty
+  # truncated support and a -Inf prior/likelihood.
+  K <- as.integer(model$kprimeTruncK %||% 200L)
+  maxKObs <- max(as.integer(mkd$kObs))
+  if (K < maxKObs) {
+    cli::cli_abort(c(
+      "{.arg kprimeTruncK} = {.val {K}} is below the largest observed
+       state count max(kObs) = {.val {maxKObs}}.",
+      i = "That character would have empty truncated support and a -Inf
+           likelihood. Raise {.arg kprimeTruncK} to >= {maxKObs}."
+    ))
   }
+  set_kprime_trunc_k(dp, K)
   set_class_rate_concentration(dp, model$classRateConcentration %||% 1)
   dp
 }
@@ -6045,6 +6102,64 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 }
 
 
+# The tuning parameter each move's acceptance rate adapts; NA for none.
+.kTuningKeys <- c(
+  tree_length = "scale_tree_length",
+  branch_lengths = "beta_simplex",
+  nni = NA_character_,
+  spr = NA_character_,
+  kPrime = "int_walk_window",
+  p = NA_character_,       # Gibbs move: no tuning needed
+  mh_logit_p = "scale_logit_p",  # MH move: tune the logit-scale step
+  rate_loss = "scale_rate_loss",
+  rate_log_sd = "scale_rate_log_sd",
+  rate_neo = "scale_rate_neo",
+  pspr = NA_character_,
+  joint_tl_rls = "scale_joint_tl_rls",
+  joint_tl_rl = "scale_joint_tl_rl",
+  joint_tl_rn = "scale_joint_tl_rn",
+  scale_class_rate_log_sd = "scale_class_rate_log_sd",
+  scale_hyper_tau = "scale_hyper_tau",
+  dirichlet_branch = "dirichlet_alpha",
+  local_dirichlet = "local_dirichlet_alpha",
+  dirichlet_simplex_class_w = "dirichlet_class_w_alpha",
+  # Gibbs/weighted/block/kPrime/slice moves: no tuning to adapt
+  gibbs_kPrime = NA_character_,
+  block_kPrime = "block_kprime_window",
+  gibbs_spr = NA_character_, gibbs_subtree_swap = NA_character_,
+  weighted_branch_lengths = NA_character_,
+  weighted_spr = NA_character_, weighted_subtree_swap = NA_character_,
+  block_gibbs_branch = NA_character_,
+  beta_scale = "scale_beta_scale",
+  slice_rate_loss = NA_character_, slice_rate_neo = NA_character_,
+  slice_rate_log_sd = NA_character_, slice_tree_length = NA_character_,
+  slice_beta_scale = NA_character_
+)
+
+
+# The key under which .AdaptTuning() pools each move's counts: per-class
+# instances ("<type>_<c>") share their type's rule and step size.
+.TuningRuleKeys <- function(moves) {
+  vapply(moves, function(m) {
+    if (m$name %in% names(.kTuningKeys)) m$name else m$type %||% m$name
+  }, character(1))
+}
+
+
+# Which moves' counts the warmup controllers used, and so start afresh: those
+# whose pooled rule (or, for a slice move, whose own count) reached the
+# 10-proposal gate. Below it, counts accumulate across batches, so a move
+# proposed a few times a batch still adapts (#304).
+.TuningWindowSpent <- function(proposeCount, moves) {
+  moveNames <- vapply(moves, `[[`, character(1), "name")
+  ruleKeys <- .TuningRuleKeys(moves)
+  pooled <- vapply(ruleKeys, function(nm) sum(proposeCount[ruleKeys == nm]),
+                   numeric(1))
+  ifelse(moveNames %in% names(.kSliceWidthKeys), proposeCount >= 10,
+         pooled >= 10)
+}
+
+
 #' Adapt tuning parameters based on acceptance rates
 #' @keywords internal
 .AdaptTuning <- function(tuning, acceptCount, proposeCount, moves) {
@@ -6061,6 +6176,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     pspr = 0.10,
     dirichlet_branch = 0.234,
     local_dirichlet = 0.234,
+    dirichlet_simplex_class_w = 0.234,
     joint_tl_rls = 0.25, joint_tl_rl = 0.25, joint_tl_rn = 0.25,
     scale_class_rate_log_sd = 0.35, scale_hyper_tau = 0.35,
     # Gibbs/weighted/block/kPrime/slice moves: no MH tuning to adapt
@@ -6075,47 +6191,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     slice_kprime_s = NA_real_, slice_kprime_r = NA_real_
   )
 
-  tuningKeys <- c(
-    tree_length = "scale_tree_length",
-    branch_lengths = "beta_simplex",
-    nni = NA_character_,
-    spr = NA_character_,
-    kPrime = "int_walk_window",
-    p = NA_character_,       # Gibbs move: no tuning needed
-    mh_logit_p = "scale_logit_p",  # MH move: tune the logit-scale step
-    rate_loss = "scale_rate_loss",
-    rate_log_sd = "scale_rate_log_sd",
-    rate_neo = "scale_rate_neo",
-    pspr = NA_character_,
-    joint_tl_rls = "scale_joint_tl_rls",
-    joint_tl_rl = "scale_joint_tl_rl",
-    joint_tl_rn = "scale_joint_tl_rn",
-    scale_class_rate_log_sd = "scale_class_rate_log_sd",
-    scale_hyper_tau = "scale_hyper_tau",
-    dirichlet_branch = "dirichlet_alpha",
-    local_dirichlet = "local_dirichlet_alpha",
-    # Gibbs/weighted/block/kPrime/slice moves: no tuning to adapt
-    gibbs_kPrime = NA_character_,
-    block_kPrime = "block_kprime_window",
-    gibbs_spr = NA_character_, gibbs_subtree_swap = NA_character_,
-    weighted_branch_lengths = NA_character_,
-    weighted_spr = NA_character_, weighted_subtree_swap = NA_character_,
-    block_gibbs_branch = NA_character_,
-    beta_scale = "scale_beta_scale",
-    slice_rate_loss = NA_character_, slice_rate_neo = NA_character_,
-    slice_rate_log_sd = NA_character_, slice_tree_length = NA_character_,
-    slice_beta_scale = NA_character_
-  )
-
   # Checkpoints written before block_kPrime had its own window lack the key.
   tuning$block_kprime_window <- tuning$block_kprime_window %||% 1
 
-  # Per-class instances ("<type>_<c>") share their type's rule and step size,
-  # so their counts are pooled and the step is updated once.
   moveNames <- vapply(moves, `[[`, character(1), "name")
-  ruleKeys <- vapply(moves, function(m) {
-    if (m$name %in% names(tuningKeys)) m$name else m$type %||% m$name
-  }, character(1))
+  ruleKeys <- .TuningRuleKeys(moves)
 
   for (nm in unique(ruleKeys)) {
     ruleMoves <- moveNames[ruleKeys == nm]
@@ -6123,7 +6203,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     if (proposed < 10) next
     rate <- sum(acceptCount[ruleMoves]) / proposed
     target <- targets[nm]
-    tk <- tuningKeys[nm]
+    tk <- .kTuningKeys[nm]
 
     if (!is.na(tk) && !is.null(tuning[[tk]])) {
       adj <- exp(0.5 * (rate - target))
@@ -6135,7 +6215,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       } else if (nm == "branch_lengths") {
         tuning[[tk]] <- tuning[[tk]] / adj
         tuning[[tk]] <- max(2, tuning[[tk]])
-      } else if (nm %in% c("dirichlet_branch", "local_dirichlet")) {
+      } else if (nm %in% c("dirichlet_branch", "local_dirichlet",
+                           "dirichlet_simplex_class_w")) {
         # Inverted: higher alpha = tighter concentration = more conservative
         tuning[[tk]] <- tuning[[tk]] / adj
         tuning[[tk]] <- max(1.0, min(tuning[[tk]], 1000))
@@ -6152,6 +6233,18 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 }
 
 
+# The width each slice move adapts.
+.kSliceWidthKeys <- c(
+  slice_rate_loss    = "slice_width_rate_loss",
+  slice_rate_neo     = "slice_width_rate_neo",
+  slice_rate_log_sd  = "slice_width_rate_log_sd",
+  slice_tree_length  = "slice_width_tree_length",
+  slice_beta_scale   = "slice_width_beta_scale",
+  slice_kprime_s = "slice_width_kprime_s",
+  slice_kprime_r = "slice_width_kprime_r"
+)
+
+
 #' Adapt slice sampler widths based on stepping-out expansion counts
 #'
 #' Targets ~3 total expansions (left + right) per slice call. Fewer
@@ -6166,18 +6259,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' @keywords internal
 .AdaptSliceWidths <- function(tuning, proposeCount, sliceExpCount,
                                moves, target = 3.0) {
-  sliceKeys <- c(
-    slice_rate_loss    = "slice_width_rate_loss",
-    slice_rate_neo     = "slice_width_rate_neo",
-    slice_rate_log_sd  = "slice_width_rate_log_sd",
-    slice_tree_length  = "slice_width_tree_length",
-    slice_beta_scale   = "slice_width_beta_scale",
-    slice_kprime_s = "slice_width_kprime_s",
-    slice_kprime_r = "slice_width_kprime_r"
-  )
   for (move in moves) {
     nm <- move$name
-    tk <- sliceKeys[nm]
+    tk <- .kSliceWidthKeys[nm]
     if (is.na(tk) || is.null(tuning[[tk]])) next
     nProp <- proposeCount[nm]
     if (nProp < 10) next

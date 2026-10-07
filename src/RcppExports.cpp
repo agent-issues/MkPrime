@@ -618,8 +618,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // run_mcmc_batch_cpp
-List run_mcmc_batch_cpp(SEXP dataPtr, List stateXPtrs, NumericVector betas, IntegerVector moveTypeCodes, IntegerVector transIdxCpp, IntegerVector sliceParamCodes, NumericVector moveWeights, NumericMatrix chainScaleTunings, NumericVector chainBsmpTunings, IntegerVector chainIntWalkWins, IntegerVector moveIntParams, NumericMatrix sliceWidths, NumericMatrix jointRhos, int nBatch, int startIter, int warmup, int thin, bool hasNeo, int nEdge, double cacheBonus);
-RcppExport SEXP _MkPrime_run_mcmc_batch_cpp(SEXP dataPtrSEXP, SEXP stateXPtrsSEXP, SEXP betasSEXP, SEXP moveTypeCodesSEXP, SEXP transIdxCppSEXP, SEXP sliceParamCodesSEXP, SEXP moveWeightsSEXP, SEXP chainScaleTuningsSEXP, SEXP chainBsmpTuningsSEXP, SEXP chainIntWalkWinsSEXP, SEXP moveIntParamsSEXP, SEXP sliceWidthsSEXP, SEXP jointRhosSEXP, SEXP nBatchSEXP, SEXP startIterSEXP, SEXP warmupSEXP, SEXP thinSEXP, SEXP hasNeoSEXP, SEXP nEdgeSEXP, SEXP cacheBonusSEXP) {
+List run_mcmc_batch_cpp(SEXP dataPtr, List stateXPtrs, NumericVector betas, IntegerVector moveTypeCodes, IntegerVector transIdxCpp, IntegerVector sliceParamCodes, NumericVector moveWeights, NumericMatrix chainScaleTunings, NumericVector chainBsmpTunings, IntegerVector chainIntWalkWins, IntegerVector moveIntParams, NumericMatrix sliceWidths, NumericMatrix jointRhos, int nBatch, int startIter, int warmup, int thin, bool hasNeo, int nEdge, double cacheBonus, IntegerVector chainBlockKpWins, Nullable<List> ptCarry);
+RcppExport SEXP _MkPrime_run_mcmc_batch_cpp(SEXP dataPtrSEXP, SEXP stateXPtrsSEXP, SEXP betasSEXP, SEXP moveTypeCodesSEXP, SEXP transIdxCppSEXP, SEXP sliceParamCodesSEXP, SEXP moveWeightsSEXP, SEXP chainScaleTuningsSEXP, SEXP chainBsmpTuningsSEXP, SEXP chainIntWalkWinsSEXP, SEXP moveIntParamsSEXP, SEXP sliceWidthsSEXP, SEXP jointRhosSEXP, SEXP nBatchSEXP, SEXP startIterSEXP, SEXP warmupSEXP, SEXP thinSEXP, SEXP hasNeoSEXP, SEXP nEdgeSEXP, SEXP cacheBonusSEXP, SEXP chainBlockKpWinsSEXP, SEXP ptCarrySEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -643,7 +643,9 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< bool >::type hasNeo(hasNeoSEXP);
     Rcpp::traits::input_parameter< int >::type nEdge(nEdgeSEXP);
     Rcpp::traits::input_parameter< double >::type cacheBonus(cacheBonusSEXP);
-    rcpp_result_gen = Rcpp::wrap(run_mcmc_batch_cpp(dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, sliceParamCodes, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, moveIntParams, sliceWidths, jointRhos, nBatch, startIter, warmup, thin, hasNeo, nEdge, cacheBonus));
+    Rcpp::traits::input_parameter< IntegerVector >::type chainBlockKpWins(chainBlockKpWinsSEXP);
+    Rcpp::traits::input_parameter< Nullable<List> >::type ptCarry(ptCarrySEXP);
+    rcpp_result_gen = Rcpp::wrap(run_mcmc_batch_cpp(dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, sliceParamCodes, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, moveIntParams, sliceWidths, jointRhos, nBatch, startIter, warmup, thin, hasNeo, nEdge, cacheBonus, chainBlockKpWins, ptCarry));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -1126,7 +1128,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_bin_mixture_log_density", (DL_FUNC) &_MkPrime_bin_mixture_log_density, 3},
     {"_MkPrime_kprime_sweep_candidates", (DL_FUNC) &_MkPrime_kprime_sweep_candidates, 3},
     {"_MkPrime_do_move_cpp", (DL_FUNC) &_MkPrime_do_move_cpp, 8},
-    {"_MkPrime_run_mcmc_batch_cpp", (DL_FUNC) &_MkPrime_run_mcmc_batch_cpp, 20},
+    {"_MkPrime_run_mcmc_batch_cpp", (DL_FUNC) &_MkPrime_run_mcmc_batch_cpp, 22},
     {"_MkPrime_debug_mcmc_data", (DL_FUNC) &_MkPrime_debug_mcmc_data, 1},
     {"_MkPrime_validate_swap_partial_cl", (DL_FUNC) &_MkPrime_validate_swap_partial_cl, 3},
     {"_MkPrime_test_persite_uncollapsed", (DL_FUNC) &_MkPrime_test_persite_uncollapsed, 6},
