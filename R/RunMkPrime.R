@@ -156,9 +156,11 @@ RunMkPrime <- function(data, tree = NULL,
 
   # A discarded run's per-run checkpoints would otherwise be merged into this
   # run's state if it is interrupted before its own workers replace them.
+  oldNRuns <- 1L
   if (overwrite && !is.null(cpFile)) {
     oldNRuns <- tryCatch(readRDS(cpFile)$mcmc$nRuns, error = function(e) NULL)
-    perRun <- .CkpFilePaths(cpFile, max(mcmc$nRuns, oldNRuns %||% 1L))
+    oldNRuns <- oldNRuns %||% 1L
+    perRun <- .CkpFilePaths(cpFile, max(mcmc$nRuns, oldNRuns))
     unlink(paste0(cpFile, ".tmp"))
     if (length(perRun) > 1L) unlink(c(perRun, paste0(perRun, ".tmp")))
   }
@@ -337,9 +339,7 @@ RunMkPrime <- function(data, tree = NULL,
   # Logs beside a user-supplied checkpoint go only once the run completes: the
   # checkpoint cannot resume without them.
   tempFiles <- if (isTempCkp) {
-    ckpFiles <- unique(c(mcmc$checkpointFile,
-                         .CkpFilePaths(mcmc$checkpointFile, nRuns)))
-    c(logFilePaths, ckpFiles, paste0(ckpFiles, ".tmp"))
+    .TempRunFiles(logFilePaths, mcmc$checkpointFile, nRuns)
   }
   .mkp_env$active_temp_logs <- tempFiles
 
@@ -356,6 +356,13 @@ RunMkPrime <- function(data, tree = NULL,
   treeFilePaths <- .TreeFilePaths(treeFile, nRuns)
   if (!is.null(treeFilePaths)) {
     for (p in treeFilePaths) writeLines(character(0), p)
+  }
+  # Recovery reads `base_N` files in preference to `base`, so a discarded
+  # job's extra runs would be read as this job's.
+  if (overwrite) {
+    staleRuns <- max(oldNRuns, length(.DiscoverLogFiles(mcmc$logFile)))
+    unlink(setdiff(.LogFilePaths(mcmc$logFile, staleRuns), logFilePaths))
+    unlink(setdiff(.TreeFilePaths(treeFile, staleRuns), treeFilePaths))
   }
 
   # Index of br_1 in the stored layout; .RunMkPrimeSingleRun() maps it onto
@@ -598,6 +605,9 @@ RunMkPrime <- function(data, tree = NULL,
       data       = mkd,
       mcmc       = mcmc,
       isTempLog  = isTempLog,
+      tempFiles  = if (isTempLog) {
+        .TempRunFiles(logFilePaths, mcmc$checkpointFile, nRuns)
+      },
       time       = Sys.time()
     )
     .mkp_env$active_temp_logs <- NULL  # prevent on.exit cleanup
@@ -675,6 +685,14 @@ RunMkPrime <- function(data, tree = NULL,
   }
   # Return:
   dir
+}
+
+
+# A temp-log run's files: its logs, and its checkpoints with their part-written
+# `.tmp` copies.
+.TempRunFiles <- function(logFilePaths, checkpointFile, nRuns) {
+  ckpFiles <- unique(c(checkpointFile, .CkpFilePaths(checkpointFile, nRuns)))
+  c(logFilePaths, ckpFiles, paste0(ckpFiles, ".tmp"))
 }
 
 
@@ -1159,15 +1177,30 @@ RunMkPrime <- function(data, tree = NULL,
   rawBrColStart <- brColStart + length(kPrimeRawIdx)
 
   moveTypes <- vapply(moves, `[[`, character(1), "type")
+  phase <- r$phase %||% (if (startIter <= mcmc$warmup) "Warmup" else "Sample")
+  gibbsWarmupFactor <- mcmc$gibbsWarmupFactor %||% (1/3)
+  # Every warmup batch end caps gibbs_kPrime and extends logPostHistory.
+  resumedCapped <- !is.null(resumeMoveWeights) && phase == "Warmup" &&
+    length(r$logPostHistory) > 0L
   # Resumed weights may carry the warmup cap on gibbs_kPrime; pins derived
   # from them would shrink by the cap at every resume (#302).
-  r$autoPins <- r$autoPins %||% moveWeights[moveTypes %in% .kAlwaysAcceptTypes]
+  if (is.null(r$autoPins)) {
+    r$autoPins <- moveWeights[moveTypes %in% .kAlwaysAcceptTypes]
+    if (resumedCapped && !is.na(gibbsKpIdx) && gibbsWarmupFactor < 1) {
+      r$autoPins[["gibbs_kPrime"]] <-
+        r$autoPins[["gibbs_kPrime"]] / gibbsWarmupFactor
+    }
+  }
   pinnedWeights <- .SchedulePins(
     moveWeights, moveTypes, .ResolvePinnedWeights(mcmc$moveWeights, moveNames),
     basePins = r$autoPins
   )
   if (!is.null(pinnedWeights)) {
     moveWeights <- .NormalizeMoveWeights(moveWeights, pinnedWeights)
+    if (resumedCapped) {
+      moveWeights <- .WarmupGibbsCap(moveWeights, pinnedWeights, gibbsKpIdx,
+                                     factor = gibbsWarmupFactor)
+    }
   }
 
   # Ensure chain_time_ns exists (may be absent in older checkpoints)
@@ -1185,9 +1218,7 @@ RunMkPrime <- function(data, tree = NULL,
     mcmc$plotEvery > 0L
 
   # --- Three-phase state machine ---
-  # Determine initial phase from checkpoint or fresh start.
   # Phases: "Warmup" -> "Tuning" -> "Sample"
-  phase <- r$phase %||% (if (startIter <= mcmc$warmup) "Warmup" else "Sample")
   # M-141: wall-clock start of sample phase (for ETA estimation)
   sampleWallStart <- if (phase == "Sample") startTime else NA_real_
   etaStr          <- NULL
@@ -1256,10 +1287,20 @@ RunMkPrime <- function(data, tree = NULL,
       bestMinEss          <- savedRound$bestEss
       bestFrozen          <- savedRound$bestFrozen
       bestWeights         <- savedRound$bestWeights
-      # The interrupted window is run again, so its batches are not charged.
-      tuningIterUsed      <- savedRound$windowStart %||% tuningIterUsed
-      windowStartIter     <- tuningIterUsed
-      r$tuningIterUsed    <- tuningIterUsed
+      window <- r[["tuningWindow"]]
+      if (is.null(window)) {
+        # A checkpoint that predates `tuningWindow` runs the window again, so
+        # its batches are not charged.
+        tuningIterUsed   <- savedRound$windowStart %||% tuningIterUsed
+        r$tuningIterUsed <- tuningIterUsed
+      } else {
+        tuningBufIdx <- nrow(window$buf)
+        if (tuningBufIdx > nrow(tuningBuf)) tuningBuf <- window$buf
+        tuningBuf[seq_len(tuningBufIdx), ] <- window$buf
+        tuningTreeBuf   <- window$trees
+        tuningWindowSec <- window$sec
+      }
+      windowStartIter     <- savedRound$windowStart %||% tuningIterUsed
       moveWeights <- if (tuningCandIdx > 0L) {
         tuningCandidates[[tuningCandIdx]]
       } else {
@@ -1339,8 +1380,13 @@ RunMkPrime <- function(data, tree = NULL,
                  if (hasProgressFn) mcmc$plotEvery)
   # Warmup adapts on whole batches: a boundary splits the C++ call, not the
   # batch, so that a display setting cannot change when warmup ends.
-  warmupBatchEnd <- startIter - 1L
-  warmupCounts   <- NULL
+  # A checkpoint taken part way through a batch resumes it.
+  warmupBatchEnd <- as.integer(min(r$warmupBatchEnd %||% (startIter - 1L),
+                                   mcmc$nIter))
+  warmupCounts   <- r$warmupCounts
+  if (!identical(ncol(warmupCounts$propose_counts), length(moveNames))) {
+    warmupCounts <- NULL
+  }
 
   # --- Main batch loop ---
   batchStart <- startIter
@@ -1593,7 +1639,7 @@ RunMkPrime <- function(data, tree = NULL,
       # block_shift moves maintain k' exploration between sweeps. Full weight
       # is restored at the Warmup->Tuning/Sample transition below.
       moveWeights <- .WarmupGibbsCap(moveWeights, pinnedWeights, gibbsKpIdx,
-                                      factor = mcmc$gibbsWarmupFactor %||% (1/3))
+                                      factor = gibbsWarmupFactor)
 
       tickerPages <- sprintf("warmup: ~%d iter", max(warmupHorizon, batchEnd))
 
@@ -1869,6 +1915,14 @@ RunMkPrime <- function(data, tree = NULL,
 
     # Persist move weights in run state so checkpoints capture them (M-149 #2).
     r$moveWeights <- moveWeights
+    r$warmupBatchEnd <- if (phase == "Warmup") warmupBatchEnd
+    r$warmupCounts   <- if (phase == "Warmup") warmupCounts
+    r$tuningWindow   <- if (phase == "Tuning") {
+      list(buf = tuningBuf[seq_len(tuningBufIdx), , drop = FALSE],
+           trees = tuningTreeBuf[seq_len(min(tuningBufIdx,
+                                             length(tuningTreeBuf)))],
+           sec = tuningWindowSec)
+    }
 
     # This run's own position, so a checkpoint taken mid-run resumes it here
     # rather than at the job-wide maximum -- which for a run that lagged
@@ -3266,7 +3320,10 @@ RunMkPrime <- function(data, tree = NULL,
       # SBC-WARMUP-002: surface final adapted weights for diagnostics
       # (also used as ground truth in the scalar-floor regression test).
       moveWeights = r$moveWeights,
-      stop_reason = r$stop_reason
+      stop_reason = r$stop_reason,
+      # Thin adapts within a run, and each run adapts it on its own.
+      thin        = r[["thin"]] %||% mcmc$thin,
+      treeThin    = r[["treeThin"]] %||% mcmc$treeThin
     )
     if (mcmc$nChains > 1L) {
       result$betas      <- r$betas
@@ -3377,7 +3434,8 @@ RunMkPrime <- function(data, tree = NULL,
 
   result$stop_reason     <- stopReason
   result$actual_iter     <- actualIter
-  result$treeThin        <- mcmc$treeThin
+  result$thin            <- perRunSummaries[[1]]$thin
+  result$treeThin        <- perRunSummaries[[1]]$treeThin
   result$requested_nRuns <- requestedRuns    # PAR-009
   result$dropped_runs    <- drops            # PAR-008
   result$runMoveWeights <- lapply(perRunSummaries, `[[`, "moveWeights")
@@ -3547,6 +3605,8 @@ RunMkPrime <- function(data, tree = NULL,
   isStreaming <- !is.null(mcmc$logFile)
 
   serialRuns <- lapply(runs, function(r) {
+    # A slot a synthesised master could not fill stays empty.
+    if (is.null(r)) return(NULL)
     # Serialize C++ chain state (XPtrs cannot cross session boundaries).
     # Guard: .RunMkPrimeSingleRun() already serializes on return (chainStates
     # is NULL, chains is populated), so skip when chains are already R lists.
@@ -3581,6 +3641,10 @@ RunMkPrime <- function(data, tree = NULL,
     runIdx <- .RunIndices(runs)
     nNamed <- mcmc$nRuns %||% length(runs)
     payload$logFilePaths  <- .LogFilePaths(mcmc$logFile, nNamed)[runIdx]
+    # A resume that found a run's log lost writes to a fresh one.
+    ownLog <- lapply(runs, `[[`, "log_path")
+    hasOwn <- !vapply(ownLog, is.null, logical(1))
+    payload$logFilePaths[hasOwn] <- unlist(ownLog[hasOwn])
     payload$treeFilePaths <- .TreeFilePaths(mcmc$treeFile, nNamed)[runIdx]
     payload$paramNames    <- paramNames
   }
@@ -3728,11 +3792,12 @@ RunMkPrime <- function(data, tree = NULL,
   # this just restarts that run from scratch.  We do NOT clone from
   # another run's per-run ckp -- that would launch two chains from the
   # same state, defeating cross-run R-hat diagnostics.
+  # A per-run checkpoint standing in for the master holds only its own run.
+  initialRuns <- if (identical(refFile, checkpointFile)) ref$runs
   for (i in seq_len(nRuns)) {
     if (is.null(mergedRuns[[i]])) {
-      if (!is.null(ref$runs) && length(ref$runs) >= i &&
-          !is.null(ref$runs[[i]])) {
-        mergedRuns[[i]] <- ref$runs[[i]]
+      if (length(initialRuns) >= i && !is.null(initialRuns[[i]])) {
+        mergedRuns[[i]] <- initialRuns[[i]]
       }
       # else: leave NULL; ResumeMkPrime will fail with a clear error.
     }
@@ -3950,7 +4015,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     # Master missing or corrupt: discover per-run ckps via glob and infer
     # nRuns from the highest index.
     ext  <- tools::file_ext(checkpointFile)
-    base <- tools::file_path_sans_ext(basename(checkpointFile))
+    base <- gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1",
+                 tools::file_path_sans_ext(basename(checkpointFile)))
     pat  <- if (nzchar(ext)) {
       paste0("^", base, "_\\d+\\.", ext, "$")
     } else {
@@ -4086,7 +4152,10 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         logFilePaths[i] <- tempfile("mkp_resume_", fileext = ".log")
         writeLines(paste(c("Sample", paramNames), collapse = "\t"),
                    logFilePaths[i])
-        runs[[i]]$saved_idx <- 0L
+        runs[[i]]$log_path       <- logFilePaths[i]
+        runs[[i]]$saved_idx      <- 0L
+        runs[[i]]$tree_saved_idx <- 0L
+        runs[[i]]$tree_samples   <- NULL
         logsRecreated <- TRUE
       }
     }

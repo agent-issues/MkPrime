@@ -249,11 +249,16 @@ AutoBurnin <- function(posterior,
 
   bi <- burnin %||% (posterior$burnin %||% 0L)
 
-  # Differential tree thinning: compute tree-side burnin
-  thin     <- posterior$mcmc$thin %||% 1L
-  treeThin <- posterior$treeThin %||% thin
-  treeEvery <- max(1L, as.integer(treeThin / thin))
-  treeBi <- as.integer(floor(bi / treeEvery))
+  # Differential tree thinning: trees discarded with `bi` samples. Thin adapts
+  # per run, so a run's own values take precedence over the job's.
+  thin     <- posterior[["thin"]] %||% posterior$mcmc$thin %||% 1L
+  treeThin <- posterior[["treeThin"]] %||% thin
+  TreeBurnin <- function(run = NULL) {
+    runThin     <- run[["thin"]] %||% thin
+    runTreeThin <- run[["treeThin"]] %||% treeThin
+    treeEvery   <- max(1L, as.integer(runTreeThin / runThin))
+    as.integer(floor(bi / treeEvery))
+  }
 
   if (bi == 0L) {
     return(list(
@@ -274,7 +279,7 @@ AutoBurnin <- function(posterior,
 
     filteredRuns <- lapply(posterior$per_run, function(r) {
       keep <- .KeepAfter(bi, nrow(r$samples))
-      treeKeep <- .KeepAfter(treeBi, length(r$trees))
+      treeKeep <- .KeepAfter(TreeBurnin(r), length(r$trees))
       list(
         samples = r$samples[keep, , drop = FALSE],
         trees = r$trees[treeKeep],
@@ -292,7 +297,7 @@ AutoBurnin <- function(posterior,
     )
   } else {
     keep <- .KeepAfter(bi, nrow(posterior$samples))
-    treeKeep <- .KeepAfter(treeBi, length(posterior$trees))
+    treeKeep <- .KeepAfter(TreeBurnin(), length(posterior$trees))
     list(
       samples = posterior$samples[keep, , drop = FALSE],
       trees = posterior$trees[treeKeep],

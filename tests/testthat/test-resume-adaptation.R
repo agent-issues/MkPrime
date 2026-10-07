@@ -128,6 +128,7 @@ test_that("a mid-Tuning resume does not charge the interrupted window (#302)", {
   cp <- .InterruptAt(data, 2500L, ckpFile, nIter = 12000L)
   expect_identical(cp$phase, "Tuning")
   expect_equal(cp$runs[[1]]$tuningIterUsed, 500L)
+  cp$runs[[1]]$tuningWindow <- NULL  # A checkpoint from before #404
   after <- .ResumeOneBatch(cp, data, ckpFile)
   # The window restarts, so only the batch that re-runs it is charged.
   expect_equal(after$runs[[1]]$tuningIterUsed, 500L)
