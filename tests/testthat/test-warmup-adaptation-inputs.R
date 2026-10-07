@@ -72,3 +72,41 @@ test_that("joint-proposal correlations freeze before the bandit (#83, #301)", {
   expect_equal(seen$calls[1:4], c("rho", "rho", "rho", "bandit"))
   expect_false("rho" %in% seen$calls[-(1:3)])
 })
+
+
+test_that("a run whose Tuning cannot end stops at once, and says so (#402)", {
+  skip_on_cran()
+  skip_under_memcheck()
+  seen <- new.env()
+  seen$warnings <- character(0)
+  set.seed(402)
+  res <- withCallingHandlers(
+    .AdaptInputsRun(MkPrimeMCMC(nIter = 5000L, nRuns = 1L, nCore = 1L,
+                                maxTime = 120)),
+    warning = function(w) {
+      seen$warnings <- c(seen$warnings, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    }
+  )
+  # Warmup ends at maxWarmup = 2500; Tuning's first round cannot end in the
+  # 2500 left, so the run stops there rather than tune to nIter.
+  expect_equal(nrow(res$samples), 0L)
+  expect_identical(res$stop_reason, "too_short")
+  expect_equal(res$actual_iter, 2500L)
+  expect_match(seen$warnings,
+               "Tuning needs \\d+ more iterations .* only 2500 remain",
+               all = FALSE)
+})
+
+
+test_that("a default run too short to tune stops, rather than skip Tuning (#402)", {
+  skip_on_cran()
+  set.seed(4021)
+  expect_warning(
+    res <- .AdaptInputsRun(MkPrimeMCMC(nIter = 1000L, nRuns = 1L, nCore = 1L,
+                                       maxTime = 60)),
+    "Tuning needs \\d+ more iterations"
+  )
+  expect_identical(res$stop_reason, "too_short")
+  expect_equal(nrow(res$samples), 0L)
+})

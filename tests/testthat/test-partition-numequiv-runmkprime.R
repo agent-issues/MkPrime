@@ -76,7 +76,8 @@ test_that("trivial partition chain produces all-finite LL", {
         maxWarmup = 15L,
         minWarmup = 15L,
         nChains  = 1L,
-        thin     = 1L
+        thin     = 1L,
+        autoTune = FALSE
       ),
       partition  = rep(1L, d$mkd$nChar),
       unlink     = character(0)

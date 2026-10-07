@@ -16,7 +16,8 @@ Character scalar.
 }
 \description{
 The job converged only if every requested run returned and converged.
-Otherwise the first of \code{"cancelled"}, \code{"max_time"} that a run reports
-explains why the job stopped short, and \code{"max_iter"} is the default.
+Otherwise the first of \code{"cancelled"}, \code{"max_time"}, \code{"too_short"} that a
+run reports explains why the job stopped short, and \code{"max_iter"} is the
+default.
 }
 \keyword{internal}
