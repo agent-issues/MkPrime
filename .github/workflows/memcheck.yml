@@ -58,7 +58,7 @@ env:
   # the smoke budget, for statistical properties of kernels whose C++ the
   # cheaper weighted-spr / subtree-swap files already execute.
   PR_SKIP: >-
-    ^(marginal-k-free-topology|node-cl-cache|stepping-stone|stepping-stone-schedule|partition-moves-impl|partition-casali-smoke|auto-thin|tree-thin|beta-geometric-prior|marginal-k-truncation|weighted-spr-invariance|gibbs-subtree-swap-invariance)$
+    ^(marginal-k-free-topology|node-cl-cache|stepping-stone|stepping-stone-schedule|stepping-stone-z0|partition-moves-impl|partition-casali-smoke|auto-thin|tree-thin|beta-geometric-prior|marginal-k-truncation|weighted-spr-invariance|gibbs-subtree-swap-invariance)$
 
 jobs:
   changes:
