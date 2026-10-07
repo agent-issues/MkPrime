@@ -21,6 +21,9 @@
 ##   7. a task without an up-to-date final .rds is refused unless --incomplete
 ##   8. two files for one run index are refused, not pooled (#289)
 ##   9. nothing is cleaned while a checkpoint remains (#289)
+##  10. a task restarted after its final .rds was written is seen as live,
+##      before it has flushed a single log line (#388)
+##  11. check_kprime_order.R exits non-zero when it finds a violating row (#388)
 
 suppressPackageStartupMessages({library("ape"); library("TreeTools")})
 set.seed(1)
@@ -205,6 +208,47 @@ before <- TaskFiles(fx)
 rc <- Summarise(fx)
 ok("final .rds older than the logs: refused",
    !rc$ok && identical(TaskFiles(fx), before))
+
+## A resumed task rewrites its job marker on start, before any flush (#388).
+fx <- Fixture()
+marker <- file.path(fx$task, sprintf(".%s_slurm_job_id", arm))
+writeLines("123", marker)
+Sys.setFileTime(marker, file.mtime(fx$final) - 60)
+rc <- Summarise(fx)
+ok("a marker older than the final .rds leaves the task done", rc$ok)
+fx <- Fixture()
+marker <- file.path(fx$task, sprintf(".%s_slurm_job_id", arm))
+writeLines("124", marker)
+Sys.setFileTime(marker, file.mtime(fx$final) + 60)
+before <- TaskFiles(fx)
+rc <- Summarise(fx)
+ok("a marker newer than the final .rds: refused, nothing touched",
+   !rc$ok && any(grepl("--incomplete", rc$out)) &&
+     identical(TaskFiles(fx), before))
+
+## ---- check_kprime_order.R exit status ---------------------------------------
+checkScript <- normalizePath("data-raw/hamilton/check_kprime_order.R",
+                             winslash = "/")
+CheckOrder <- function(fx) {
+  wd <- tempfile("wd"); dir.create(wd)
+  old <- setwd(wd); on.exit(setwd(old))
+  out <- suppressWarnings(system2(
+    "Rscript", c(shQuote(checkScript), shQuote(fx$results), shQuote(fx$data),
+                 arm), stdout = TRUE, stderr = TRUE))
+  list(status = attr(out, "status") %||% 0L, out = out)
+}
+`%||%` <- function(a, b) if (is.null(a)) b else a
+fx <- Fixture()
+rc <- CheckOrder(fx)
+ok("a log with no k' below kObs passes the order check", rc$status == 0L)
+logPath <- file.path(fx$task, sprintf("%s_run_1.log", arm))
+lines  <- readLines(logPath)
+cols   <- strsplit(lines[length(lines)], "\t")[[1L]]
+cols[length(cols)] <- "0"
+lines[length(lines)] <- paste(cols, collapse = "\t")
+writeLines(lines, logPath)
+rc <- CheckOrder(fx)
+ok("a k' below kObs fails the order check", rc$status == 1L)
 
 ## ---- Output from before the order record: lexical ---------------------------
 fx <- Fixture()
