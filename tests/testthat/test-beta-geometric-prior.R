@@ -186,7 +186,9 @@ test_that("BuildMoves for geometric registers mh_logit_p, not gibbs_p or BG slic
 
 # --- Gibbs kPrime sweep correctness ------------------------------------------
 
-test_that("Gibbs sweep with beta_geometric samples from correct full conditional", {
+# test-gibbs-kprime-conditional.R checks the draws against the full
+# conditional.
+test_that("Gibbs sweep with beta_geometric keeps k' >= kObs", {
   f <- make_bg_fixture()
   state <- MkPrime:::.InitState(f$tree, f$mkd, f$model)
   mcmcData <- MkPrime:::.InitMcmcData(f$mkd, f$model)

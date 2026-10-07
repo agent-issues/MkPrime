@@ -384,6 +384,10 @@
 #' consecutive rounds, the
 #' time already spent on warmup and tuning exceeds the time the best
 #' kernel needs to collect this run's share of `minEss`.
+#' With finite `nIter`, its windows are sized so that it uses at most about
+#' half the iterations left after warmup. If even one round cannot end before
+#' `nIter`, the run stops there with a warning and `stop_reason` `"too_short"`,
+#' rather than spend the rest of its iterations without sampling.
 #' Set `autoTune = FALSE` to skip this phase.
 #'
 #' **Sample.** Move weights are frozen and posterior samples are

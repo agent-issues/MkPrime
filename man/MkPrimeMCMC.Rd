@@ -493,6 +493,10 @@ is set, sooner once tuning stops paying for itself: when, in two
 consecutive rounds, the
 time already spent on warmup and tuning exceeds the time the best
 kernel needs to collect this run's share of \code{minEss}.
+With finite \code{nIter}, its windows are sized so that it uses at most about
+half the iterations left after warmup. If even one round cannot end before
+\code{nIter}, the run stops there with a warning and \code{stop_reason} \code{"too_short"},
+rather than spend the rest of its iterations without sampling.
 Set \code{autoTune = FALSE} to skip this phase.
 
 \strong{Sample.} Move weights are frozen and posterior samples are
