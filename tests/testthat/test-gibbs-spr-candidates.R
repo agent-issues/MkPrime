@@ -28,6 +28,9 @@
   mat  <- matrix(sample(0:2, nTip * nChar, replace = TRUE), nrow = nTip,
                  dimnames = list(tree$tip.label, NULL))
   mkd   <- suppressWarnings(MkPrimeData(MatrixToPhyDat(mat)))
+  if (identical(model$coding, "informative")) {
+    mkd <- suppressMessages(MkPrime:::.DropUninformable(mkd))
+  }
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)
   list(mkd = mkd, model = model,
        dataPtr = MkPrime:::.InitMcmcData(mkd, model),

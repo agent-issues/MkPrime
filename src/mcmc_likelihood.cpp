@@ -12,7 +12,6 @@
 // avoiding edge matrix construction/decomposition round-trips.
 
 #include "mcmc_state.h"
-#include "fast_exp.h"
 #include "ascertainment.h"
 #include "mkn_rates.h"
 #include <cmath>
@@ -3014,50 +3013,20 @@ double cpp_log_likelihood_partitioned(
 // prepare_mcmc_data: convert R mkd + model -> XPtr<McmcData>
 // ---------------------------------------------------------------------------
 
-// [[Rcpp::export]]
-SEXP prepare_mcmc_data(List partitions_r,
-                       IntegerVector kObs_r,
-                       CharacterVector charTypes_r,
-                       bool hasNeo,
-                       int nCat,
-                       std::string codingStr,
-                       bool relabelFlag,
-                       double treeLengthShape, double treeLengthRate,
-                       double rateLossMeanlog, double rateLossSdlog,
-                       double rateLogSdShape,  double rateLogSdRate,
-                       double rateNeoMeanlog,  double rateNeoSdlog,
-                       double kprimeHyperA,    double kprimeHyperB,
-                       bool   kPriorLogseries, double kprimeLogseriesC,
-                       bool   kPriorBetaGeometric = false,
-                       bool   qHeterogeneity = false,
-                       int    nBetaCat = 4,
-                       double betaScaleShape = 1.0,
-                       double betaScaleRate = 1.0,
-                       bool   kPriorEmpiricalGeometric = false,
-                       NumericVector empLogBody = NumericVector(),
-                       int    empTailStartK = 0,
-                       double empTailDecay = 0.0,
-                       double empLogTailStartP = -1e308,
-                       bool   marginalK = false,
-                       bool   unconditionalPrior = false) {
-  if (codingStr == "informative") {
-    // With fewer than four observed tips no pattern is informative, so the
-    // correction's 1 - P(uninformative) is zero.
-    int nUninformable = 0;
-    for (R_xlen_t i = 0; i < partitions_r.size(); ++i) {
-      const IntegerMatrix ts = as<List>(partitions_r[i])["tip_states"];
-      for (int j = 0; j < ts.ncol(); ++j) {
-        int nObs = 0;
-        for (int t = 0; t < ts.nrow(); ++t) nObs += ts(t, j) >= 0;
-        nUninformable += nObs < 4;
-      }
-    }
-    if (nUninformable) {
-      Rcpp::stop("coding = \"informative\" needs four or more observed tips "
-                 "per character; %d character(s) have fewer. Remove them, "
-                 "or use coding = \"variable\".", nUninformable);
-    }
-  }
+static SEXP prepare_mcmc_data_impl(
+    List partitions_r, IntegerVector kObs_r, CharacterVector charTypes_r,
+    bool hasNeo, int nCat, std::string codingStr, bool relabelFlag,
+    double treeLengthShape, double treeLengthRate,
+    double rateLossMeanlog, double rateLossSdlog,
+    double rateLogSdShape,  double rateLogSdRate,
+    double rateNeoMeanlog,  double rateNeoSdlog,
+    double kprimeHyperA,    double kprimeHyperB,
+    bool   kPriorLogseries, double kprimeLogseriesC,
+    bool   kPriorBetaGeometric, bool qHeterogeneity, int nBetaCat,
+    double betaScaleShape, double betaScaleRate,
+    bool   kPriorEmpiricalGeometric, NumericVector empLogBody,
+    int    empTailStartK, double empTailDecay, double empLogTailStartP,
+    bool   marginalK, bool unconditionalPrior) {
   McmcData* d = new McmcData();
   d->hasNeo = hasNeo;
   d->nCat = nCat;
@@ -3207,6 +3176,88 @@ SEXP prepare_mcmc_data(List partitions_r,
   }
 
   return Rcpp::XPtr<McmcData>(d, true);
+}
+
+// R callers drop uninformable characters (.DropUninformable) and refuse
+// qHeterogeneity with informative coding (MkPrimeModel); these checks keep the
+// C++ contract for direct callers. The checks stay in this thin wrapper because
+// unwinding an exception out of the large impl frame can segfault on aarch64.
+// [[Rcpp::export]]
+SEXP prepare_mcmc_data(List partitions_r,
+                       IntegerVector kObs_r,
+                       CharacterVector charTypes_r,
+                       bool hasNeo,
+                       int nCat,
+                       std::string codingStr,
+                       bool relabelFlag,
+                       double treeLengthShape, double treeLengthRate,
+                       double rateLossMeanlog, double rateLossSdlog,
+                       double rateLogSdShape,  double rateLogSdRate,
+                       double rateNeoMeanlog,  double rateNeoSdlog,
+                       double kprimeHyperA,    double kprimeHyperB,
+                       bool   kPriorLogseries, double kprimeLogseriesC,
+                       bool   kPriorBetaGeometric = false,
+                       bool   qHeterogeneity = false,
+                       int    nBetaCat = 4,
+                       double betaScaleShape = 1.0,
+                       double betaScaleRate = 1.0,
+                       bool   kPriorEmpiricalGeometric = false,
+                       NumericVector empLogBody = NumericVector(),
+                       int    empTailStartK = 0,
+                       double empTailDecay = 0.0,
+                       double empLogTailStartP = -1e308,
+                       bool   marginalK = false,
+                       bool   unconditionalPrior = false) {
+  if (codingStr == "informative") {
+    // A character is informative when at least two states each occur on two
+    // or more observed tips (as .Informable). With fewer than four observed
+    // tips none is, so the correction's 1 - P(uninformative) is zero; above
+    // that, an uninformative character has zero conditional probability.
+    int nFewTips = 0;
+    int nUninformative = 0;
+    for (R_xlen_t i = 0; i < partitions_r.size(); ++i) {
+      const IntegerMatrix ts = as<List>(partitions_r[i])["tip_states"];
+      for (int j = 0; j < ts.ncol(); ++j) {
+        int nObs = 0;
+        std::map<int, int> stateCount;
+        for (int t = 0; t < ts.nrow(); ++t) {
+          if (ts(t, j) < 0) continue;
+          ++nObs;
+          ++stateCount[ts(t, j)];
+        }
+        int nShared = 0;
+        for (const auto& sc : stateCount) nShared += sc.second >= 2;
+        if (nObs < 4) {
+          ++nFewTips;
+        } else if (nShared < 2) {
+          ++nUninformative;
+        }
+      }
+    }
+    if (nFewTips) {
+      Rcpp::stop("coding = \"informative\" needs four or more observed tips "
+                 "per character; %d character(s) have fewer. Remove them, "
+                 "or use coding = \"variable\".", nFewTips);
+    }
+    if (nUninformative) {
+      Rcpp::stop("coding = \"informative\" needs parsimony-informative "
+                 "characters; %d character(s) are not. Remove them, "
+                 "or use coding = \"variable\".", nUninformative);
+    }
+    if (qHeterogeneity) {
+      Rcpp::stop("qHeterogeneity cannot be combined with "
+                 "coding = \"informative\": the singleton ascertainment "
+                 "correction under Q-heterogeneity is not implemented.");
+    }
+  }
+  return prepare_mcmc_data_impl(
+    partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag,
+    treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog,
+    rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog,
+    kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC,
+    kPriorBetaGeometric, qHeterogeneity, nBetaCat, betaScaleShape,
+    betaScaleRate, kPriorEmpiricalGeometric, empLogBody, empTailStartK,
+    empTailDecay, empLogTailStartP, marginalK, unconditionalPrior);
 }
 
 

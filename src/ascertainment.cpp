@@ -1,5 +1,4 @@
 #include <Rcpp.h>
-#include "fast_exp.h"
 #include "mkn_rates.h"
 #include "ascertainment.h"
 #include <algorithm>

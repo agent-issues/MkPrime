@@ -72,6 +72,9 @@ test_that("gibbs_subtree_swap samples its exact target", {
   mat <- matrix(sample(0:2, nTip * 10L, replace = TRUE), nrow = nTip,
                 dimnames = list(tree$tip.label, paste0("c", seq_len(10L))))
   mkd <- suppressWarnings(MkPrimeData(MatrixToPhyDat(mat)))
+  if (identical(model$coding, "informative")) {
+    mkd <- suppressMessages(MkPrime:::.DropUninformable(mkd))
+  }
   if (partitioned) {
     chain <- .PartitionedChain(tree, mkd, model)
     dataPtr <- chain$dataPtr
