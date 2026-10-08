@@ -130,6 +130,16 @@ test_that("GibbsSPR does not change scalar parameters", {
   expect_equal(s0$kPrime,      s1$kPrime)
 })
 
+test_that("get_mcmc_state returns copies, not live vectors (#337)", {
+  pts <- .gibbs_pts(seed = 104L)
+  s0  <- get_mcmc_state(pts$statePtr)
+  relBr0 <- s0$relBrLengths + 0
+  expect_true(.try_move(pts, 10L, max_try = 20L))
+  expect_false(isTRUE(all.equal(get_mcmc_state(pts$statePtr)$relBrLengths,
+                                relBr0)))
+  expect_identical(s0$relBrLengths, relBr0)
+})
+
 test_that("GibbsSPR relative branch lengths sum to 1 after move", {
   pts <- .gibbs_pts(seed = 105L)
   expect_true(.try_move(pts, 10L))
