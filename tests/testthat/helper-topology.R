@@ -8,7 +8,7 @@
                          Nnode = nrow(edge) - length(tips) + 1L,
                          edge.length = rep(1, nrow(edge))),
                     class = "phylo")
-  splits <- as.logical(as.Splits(tree))
+  splits <- as.logical(TreeTools::as.Splits(tree))
   tipNames <- colnames(splits)
   rowKeys <- apply(splits, 1, function(r) {
     sideA <- sort(tipNames[r])
