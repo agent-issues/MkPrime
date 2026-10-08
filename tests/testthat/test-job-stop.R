@@ -17,6 +17,15 @@
   expect_lt(elapsed, 1.6 * budget)
 }
 
+# A hang guard, not an assertion: valgrind runners vary enough in speed to
+# push a healthy sequential job past the native limit.
+.SetHangGuard <- function(seconds) {
+  if (identical(Sys.getenv("MKPRIME_MEMCHECK"), "true")) {
+    seconds <- 4 * seconds
+  }
+  setTimeLimit(elapsed = seconds, transient = TRUE)
+}
+
 test_that(".WorkersStopReason() takes the job's reason from its runs (#355)", {
   expect_identical(.WorkersStopReason(c("converged", "converged"), 2L),
                    "converged")
@@ -79,7 +88,7 @@ test_that("maxTime bounds a sequential job without maxRhat (#356)", {
 
   budget <- 6
   set.seed(2718)
-  setTimeLimit(elapsed = 120, transient = TRUE)
+  .SetHangGuard(120)
   on.exit(setTimeLimit(elapsed = Inf, transient = TRUE), add = TRUE)
 
   t0 <- proc.time()[["elapsed"]]
@@ -109,7 +118,7 @@ test_that("maxTime bounds a sequential resume (#356)", {
   ckpFile <- file.path(dir, "job.ckp")
 
   set.seed(1618)
-  setTimeLimit(elapsed = 120, transient = TRUE)
+  .SetHangGuard(120)
   on.exit(setTimeLimit(elapsed = Inf, transient = TRUE), add = TRUE)
   allow_warning(RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 2L, nCore = 1L, nIter = 400L, thin = 5L,
@@ -143,7 +152,7 @@ test_that("a parallel job does not stop converged short of minTreeEss (#355)", {
   pd <- MatrixToPhyDat(mat)
 
   budget <- 25
-  setTimeLimit(elapsed = 180, transient = TRUE)
+  .SetHangGuard(180)
   on.exit(setTimeLimit(elapsed = Inf, transient = TRUE), add = TRUE)
   set.seed(1)
   # The pooled scalar check passes within the budget, but no run can sample
@@ -168,7 +177,7 @@ test_that("a parallel job whose runs all converge reports it (#355)", {
                 dimnames = list(paste0("t", 1:10), NULL))
   pd <- MatrixToPhyDat(mat)
 
-  setTimeLimit(elapsed = 240, transient = TRUE)
+  .SetHangGuard(240)
   on.exit(setTimeLimit(elapsed = Inf, transient = TRUE), add = TRUE)
   set.seed(1)
   # minTreeEss alone gives the parent nothing to judge, so each run stops
