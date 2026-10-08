@@ -45,7 +45,7 @@
 # is by tolerance rather than by bits.
 #
 # The reference RDS was last generated on x86_64 Linux (glibc), on
-# 2026-10-06. The measurements below were taken against its predecessor,
+# 2026-10-08. The measurements below were taken against its predecessor,
 # generated on x86_64 Windows (mingw-w64). Run against that on 2026-09-19 the
 # six CI jobs split cleanly, each group internally bit-identical:
 #

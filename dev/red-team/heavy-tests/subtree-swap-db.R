@@ -1,5 +1,13 @@
 # dev/red-team/heavy-tests/subtree-swap-db.R
 #
+# RETIRED. This tests R re-implementations of the pre-fix subtree-swap kernels,
+# which dev/red-team/proofs/gibbs-subtree-swap-hastings.md section 4a records
+# as superseded; the gates now live in
+# tests/testthat/test-*-subtree-swap-invariance.R. It does not exercise the
+# shipped moves, so a pass here says nothing about them. Kept as the record of
+# how SWAP-001 / SWAP-002 were found; submit-swap-db-n6.sh refuses to run it
+# unless MKP_RUN_RETIRED=1.
+#
 # Sub-harness D2(b): β=0 detailed-balance test for the two subtree-swap
 #                    moves flagged OPEN by L3 (math-prover, Wave 1).
 #
@@ -38,8 +46,8 @@
 #   Pure R driver using two exported C++ helpers:
 #     - get_valid_swap_partners_cpp(edge, nTip, pruneNode)
 #     - swap_subtrees_cpp(edge, nTip, treeLength, relBrLengths, nodeA, nodeB)
-#   These are the SAME functions called by gibbs_subtree_swap_impl and
-#   weighted_subtree_swap_impl. Because the driver is pure R, the
+#   These were the functions called by the pre-fix gibbs_subtree_swap_impl
+#   and weighted_subtree_swap_impl. Because the driver is pure R, the
 #   "only this move is applied" check is trivial: no other proposals
 #   are constructed.
 #

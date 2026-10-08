@@ -72,7 +72,14 @@ run_one <- function(fixture, prior_kind,
                     n_gen = 20000L, n_warmup = 4000L,
                     seed = 1L) {
   set.seed(seed)
+  # Everything but the sigma prior is pinned, so the contrast does not move when
+  # a package default does: nCat, priorVariant, and the pre-3c091f9 expSteps
+  # (total Fitch score of the start tree, not the per-character default).
   model <- MkPrimeModel(kPrimePrior = "geometric",
+                        nCat = 6L,
+                        priorVariant = "unconditional",
+                        expSteps = max(1, MkPrime:::.FitchScore(
+                          fixture$tree, fixture$mkd)),
                         priorOnClassRateLogSd = prior_kind)
   mcmc <- MkPrimeMCMC(
     nIter      = n_gen,
@@ -151,7 +158,7 @@ cat("\n================== ESS per class (σ_c) ==================\n")
 print(tbl, row.names = FALSE)
 cat("=========================================================\n\n")
 
-# Headline summary (for NEWS.md / cherry-pick summary)
+# Summary: small-class ESS under each prior
 small_class <- which.min(tbl$size)
 cat(sprintf(
   "Small-class (size %d) ESS: %s (gamma_independent) -> %s (hyperprior_pooled)\n",

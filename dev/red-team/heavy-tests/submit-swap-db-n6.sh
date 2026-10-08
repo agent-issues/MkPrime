@@ -7,6 +7,10 @@
 #SBATCH --output=/nobackup/%u/mkp-study/red-team/logs/swap-db-n6_%j.out
 #SBATCH --error=/nobackup/%u/mkp-study/red-team/logs/swap-db-n6_%j.err
 #
+# RETIRED: subtree-swap-db.R tests R re-implementations of the pre-fix kernels
+# (see its header); the live gates are tests/testthat/test-*-subtree-swap-
+# invariance.R. Set MKP_RUN_RETIRED=1 to run it anyway.
+#
 # D2(b) escalation: n=6 (105 topologies) with the same 1M iter / thin=200
 # budget gives ~48 samples / bucket — sufficient power for chi² to detect
 # the math-prover predicted SWAP-001/SWAP-002 bias if it exists.
@@ -14,6 +18,10 @@
 # skipped per advisor.
 
 set -euo pipefail
+if [[ "${MKP_RUN_RETIRED:-}" != "1" ]]; then
+  echo "subtree-swap-db is retired; set MKP_RUN_RETIRED=1 to run it anyway" >&2
+  exit 1
+fi
 module load r/4.5.1
 module load gcc/14.2 || true
 export OMP_NUM_THREADS=1

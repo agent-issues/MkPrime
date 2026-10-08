@@ -196,6 +196,9 @@ test_that("batched masked correction matches per-character scoring", {
 # Cached, partial-CL and Gibbs paths each rebuild the correction; every one
 # must agree with a fresh full evaluation after every move.
 .MissingDrift <- function(d, model, moveNames, nMove = 300L) {
+  if (identical(model$coding, "informative")) {
+    d$mkd <- suppressMessages(MkPrime:::.DropUninformable(d$mkd))
+  }
   model <- MkPrime:::.FinalizeModel(model, d$tree, d$mkd)
   dataPtr <- MkPrime:::.InitMcmcData(d$mkd, model)
   statePtr <- MkPrime:::.InitMcmcChain(
