@@ -32,6 +32,7 @@ extract_one <- function(f) {
   lp <- if ("log_posterior" %in% names(sm)) unname(sm["log_posterior"]) else NA_real_
   # CID mean
   cid_mean <- if (!is.null(x$cid)) mean(x$cid, na.rm = TRUE) else NA_real_
+  mean_kobs <- if (!is.null(x$kObs)) mean(x$kObs) else NA_real_
   # tree size (n tips) from first thinned tree (cheap)
   n_tip <- if (!is.null(x$thinned_trees) && length(x$thinned_trees) > 0) {
     length(x$thinned_trees[[1]]$tip.label)
@@ -42,6 +43,7 @@ extract_one <- function(f) {
     rep_idx   = x$rep_idx,
     tag       = x$tag,
     n_tip     = n_tip,
+    mean_kobs = mean_kobs,
     tree_length = tl,
     mean_cid    = cid_mean,
     log_lik     = ll,
@@ -61,10 +63,18 @@ dt <- dt[!is.na(tree_length)]
 cat("After dropping NA TL:", nrow(dt), "rows\n")
 
 # Map arm -> k (fixed-k arms only; non-fixed arms get NA)
-arm_k <- c(mk = 2L, mk_kp1 = NA, mk_kp2 = NA, mk_k9 = 9L, mk_k15 = 15L,
+arm_k <- c(mk = NA, mk_kp1 = NA, mk_kp2 = NA, mk_k9 = 9L, mk_k15 = 15L,
            mk_k24 = 24L, mk_k40 = 40L, mk_ktrue = NA, mk_tlshrink = NA,
            mkp_eg = NA, mkp_geo = NA, mkp_highk = NA, mkp_logs = NA)
-dt[, k_fixed := arm_k[arm]]
+# The mk arm fixes k = kObs per character (run_one.R), so its k comes from the
+# data, not a constant; the task's mean kObs stands in for it.
+AssignFixedK <- function(dt, armK) {
+  dt[, k_fixed := as.numeric(armK[arm])]
+  stopifnot(!anyNA(dt[arm == "mk", mean_kobs]))
+  dt[arm == "mk", k_fixed := mean_kobs]
+  dt
+}
+dt <- AssignFixedK(dt, arm_k)
 
 # Order arms for plotting (full 12-arm cohort + tlshrink)
 arm_order <- c("mk", "mk_kp1", "mk_kp2", "mk_k9", "mk_k15", "mk_k24", "mk_k40",
@@ -99,24 +109,26 @@ ggsave(file.path(out_dir, "redteam_tl_1_boxplot.png"), p1,
 
 # ---- 4. Plot 2: TL ramp vs k for the fixed-k arms --------------------------
 dt_fixed <- dt[!is.na(k_fixed)]
-ramp <- dt_fixed[, .(mean_TL = mean(tree_length),
+ramp <- dt_fixed[, .(k_fixed = mean(k_fixed),
+                     mean_TL = mean(tree_length),
                      sd_TL   = sd(tree_length),
-                     n       = .N), keyby = .(arm, k_fixed)]
+                     n       = .N), keyby = arm]
 print(ramp)
 
 # theoretical: assume some observed substitution prob p_obs and compute T(k)
-# We pick p_obs such that T(k=2) matches the empirical mean_TL[k=2].
+# We pick p_obs such that T(kAnchor) matches the empirical mean_TL of the mk arm.
 # p_subst(T,k) = (k-1)/k * (1 - exp(-k T/(k-1)))
-# Solve for p_obs at k=2 using T2 = mean_TL[k=2] (TL is summed over branches;
+# Solve for p_obs at kAnchor using T2 = mean_TL[mk] (TL is summed over branches;
 # we use the mean *branch* substitution prob proxy — TL/n_branches roughly
 # scales with per-branch T, so we use TL as proxy and look at ratios).
-T2 <- ramp[k_fixed == 2L, mean_TL]
-# substitution prob implied at k=2 with branch length = T2 / n_internal_branches
+T2 <- ramp[arm == "mk", mean_TL]
+kAnchor <- ramp[arm == "mk", k_fixed]   # mean kObs, not 2
+# substitution prob implied at kAnchor with branch length = T2 / n_internal_branches
 # But TL totals over all branches; ratio across k is what matters. For a
 # constant data pattern, the implied *per-branch* T scales with k via:
-#   T(k) such that p_subst(T(k),k) = p_subst(T2,2)
+#   T(k) such that p_subst(T(k),k) = p_subst(T2,kAnchor)
 # At small p, T(k)/T2 -> k/2 . Plot theoretical curve.
-ks <- c(2, 9, 15, 24, 40)
+ks <- c(kAnchor, 9, 15, 24, 40)
 # We compute matched-T for a representative per-branch T2/n_branches.
 # But TL itself is sum of branches; ratios of TL across k = ratios of per-branch T
 # (same tree structure on average). So plot theoretical TL = T2 * ratio(k).
@@ -135,7 +147,7 @@ solve_T <- function(p, k) {
 n_tip_med <- median(dt$n_tip, na.rm = TRUE)
 n_br_med  <- 2 * n_tip_med - 3
 T2_per_branch <- T2 / n_br_med
-p_obs <- p_subst(T2_per_branch, 2)
+p_obs <- p_subst(T2_per_branch, kAnchor)
 cat(sprintf("Median n_tip=%g, n_branches=%g, TL(k=2)=%g => per-branch T=%g, implied p_obs=%g\n",
             n_tip_med, n_br_med, T2, T2_per_branch, p_obs))
 
@@ -152,7 +164,7 @@ p2 <- ggplot(ramp, aes(x = k_fixed, y = mean_TL)) +
   geom_line(data = theo, aes(y = mean_TL_theo),
             colour = "firebrick", linetype = "dashed") +
   geom_point(data = theo, aes(y = mean_TL_theo), colour = "firebrick", shape = 4) +
-  labs(title = "TL vs k: empirical (blue) vs JC(k) theory anchored at k=2 (red)",
+  labs(title = "TL vs k: empirical (blue) vs JC(k) theory anchored at the mk arm (red)",
        subtitle = sprintf("Theory: matched per-branch substitution prob p=%.3f (n_br=%.0f)",
                           p_obs, n_br_med),
        x = "k (fixed-k arm)", y = "Posterior mean tree length") +
