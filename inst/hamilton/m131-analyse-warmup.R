@@ -7,8 +7,6 @@
 #
 # Usage: Rscript m131-analyse-warmup.R [results_dir]
 
-library(ggplot2)
-
 results_dir <- commandArgs(trailingOnly = TRUE)[1]
 if (is.na(results_dir)) results_dir <- "inst/hamilton/results"
 
