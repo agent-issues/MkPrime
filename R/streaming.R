@@ -386,6 +386,7 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
     }
     runTrees <- lapply(treeFiles, .ReadTreeFile)
     trees <- unlist(runTrees, recursive = FALSE) %||% list()
+    runThins <- .RecoveredThins(ckp$runs, mcmc, length(logPaths))
 
     result <- MkPosterior(
       samples    = samples,
@@ -401,26 +402,7 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
     result$nSamples    <- nrow(samples)
     result$stop_reason <- "recovered"
     result$logFile     <- logPaths
-
-    if (length(logPaths) > 1L) {
-      perRun <- lapply(logPaths, function(f) {
-        s <- tryCatch(ReadMkLog(f), error = function(e) {
-          matrix(numeric(0), nrow = 0, ncol = ncol(samples))
-        })
-        list(samples = s, trees = list(), acceptance = numeric(0),
-             saved_idx = nrow(s))
-      })
-      for (i in seq_along(perRun)) {
-        if (i <= length(runTrees)) perRun[[i]]$trees <- runTrees[[i]]
-      }
-      # Drop runs with no samples (e.g. stale log from a prior attempt)
-      hasData <- vapply(perRun, function(r) nrow(r$samples) > 0L, logical(1))
-      perRun <- perRun[hasData]
-      if (length(perRun) > 1L) {
-        result$nRuns   <- length(perRun)
-        result$per_run <- perRun
-      }
-    }
+    result <- .AddRecoveredRuns(result, logPaths, runTrees, runThins)
 
     .AlertSuccess(
       "Recovered {nrow(samples)} sample{?s} from \\
@@ -442,6 +424,7 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
   # Check that the temp log files still exist
   nFiles <- length(rec$logFiles)
   missing <- !file.exists(rec$logFiles)
+  tempFiles <- rec$tempFiles %||% rec$logFiles
   if (all(missing)) {
     .AlertDanger(
       "Temporary log {cli::qty(nFiles)}file{?s} no longer exist{?s/}. \\
@@ -459,6 +442,23 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
     rec$logFiles <- rec$logFiles[!missing]
   }
 
+  # In-memory trees are in the checkpoint written on interrupt.
+  ckpFile <- rec$mcmc$checkpointFile
+  ckp <- if (!is.null(ckpFile) && file.exists(ckpFile)) {
+    tryCatch(readRDS(ckpFile), error = function(e) NULL)
+  }
+  runTrees <- lapply(seq_len(nFiles), function(i) {
+    run <- if (length(ckp$runs) >= i) ckp$runs[[i]]
+    treeFile <- if (length(ckp$treeFilePaths) >= i) ckp$treeFilePaths[[i]]
+    trees <- if (is.null(run$tree_samples) && !is.null(treeFile)) {
+      .ReadTreeFile(treeFile)
+    } else {
+      run$tree_samples[seq_len(run$tree_saved_idx %||% 0L)]
+    }
+    Filter(Negate(is.null), trees)
+  })[!missing]
+  runThins <- .RecoveredThins(ckp$runs, rec$mcmc, nFiles)[!missing]
+
   # Read samples
   samples <- tryCatch(
     ReadMkLog(rec$logFiles),
@@ -475,14 +475,14 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
       "Log {cli::qty(length(rec$logFiles))}file{?s} contain{?s/} no samples \\
        (run may have been interrupted before any were flushed)."
     )
-    if (isTRUE(rec$isTempLog)) .CleanupTempLogs(rec$logFiles)
+    if (isTRUE(rec$isTempLog)) .CleanupTempLogs(tempFiles)
     return(invisible(NULL))
   }
 
   # Build a minimal MkPosterior
   result <- MkPosterior(
     samples    = samples,
-    trees      = list(),
+    trees      = unlist(runTrees, recursive = FALSE) %||% list(),
     acceptance = numeric(0),
     model      = rec$model,
     data       = rec$data,
@@ -493,13 +493,50 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
   result$partial    <- TRUE
   result$nSamples   <- nrow(samples)
   result$stop_reason <- "interrupted"
+  result <- .AddRecoveredRuns(result, rec$logFiles, runTrees, runThins)
 
   # A log the user named, or one a checkpoint still needs, is not ours to delete.
-  if (isTRUE(rec$isTempLog)) .CleanupTempLogs(rec$logFiles)
+  if (isTRUE(rec$isTempLog)) .CleanupTempLogs(tempFiles)
 
   .AlertSuccess(
     "Recovered {nrow(samples)} sample{?s} from interrupted run."
   )
+  result
+}
+
+
+# Each run's thin and treeThin, which adapt per run; the job's where the
+# checkpoint holds no run.
+.RecoveredThins <- function(ckpRuns, mcmc, nRuns) {
+  lapply(seq_len(nRuns), function(i) {
+    run <- if (length(ckpRuns) >= i) ckpRuns[[i]]
+    list(thin = run[["thin"]] %||% mcmc[["thin"]],
+         treeThin = run[["treeThin"]] %||% mcmc[["treeThin"]])
+  })
+}
+
+
+# Per-run thin metadata and, for more than one run with samples, `per_run`.
+.AddRecoveredRuns <- function(result, logPaths, runTrees, runThins) {
+  result$thin     <- runThins[[1]]$thin
+  result$treeThin <- runThins[[1]]$treeThin
+  if (length(logPaths) < 2L) return(result)
+  perRun <- lapply(seq_along(logPaths), function(i) {
+    s <- tryCatch(ReadMkLog(logPaths[i]), error = function(e) {
+      matrix(numeric(0), nrow = 0, ncol = ncol(result$samples))
+    })
+    c(list(samples = s, trees = runTrees[[i]] %||% list(),
+           acceptance = numeric(0), saved_idx = nrow(s)),
+      runThins[[i]])
+  })
+  # Drop runs with no samples (e.g. stale log from a prior attempt)
+  hasData <- vapply(perRun, function(r) nrow(r$samples) > 0L, logical(1))
+  perRun <- perRun[hasData]
+  if (length(perRun) > 1L) {
+    result$nRuns   <- length(perRun)
+    result$per_run <- perRun
+  }
+  # Return:
   result
 }
 
