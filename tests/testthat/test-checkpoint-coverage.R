@@ -286,7 +286,7 @@ test_that("a checkpoint without a log keeps its samples past the session (#31)",
   expect_true(all(diff(LogIters(log)) > 0L))
 })
 
-test_that("a completed run deletes the log it kept beside the checkpoint", {
+test_that("a completed run keeps the log beside its checkpoint", {
   d <- CkpData()
   dir <- withr::local_tempdir()
   ckp <- file.path(dir, "run.ckp")
@@ -300,7 +300,9 @@ test_that("a completed run deletes the log it kept beside the checkpoint", {
   ), "maxWarmup")
   expect_gt(nrow(res$samples), 0L)
   expect_null(res$logFile)
-  expect_identical(list.files(dir), "run.ckp")
+  # A resume that raises nIter extends it (#423).
+  expect_setequal(list.files(dir), c("run.ckp", "run_mkp_run.log"))
+  expect_equal(LogRows(file.path(dir, "run_mkp_run.log")), nrow(res$samples))
 })
 
 test_that("MkPrimeRecover() keeps a log the user named", {

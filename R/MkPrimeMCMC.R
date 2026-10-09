@@ -86,8 +86,8 @@
 #'   disable checkpointing. Checkpoints are saved at each
 #'   convergence check interval and on cancel.
 #'   Without a `logFile`, samples stream to a log beside the checkpoint
-#'   (`"run.ckp"` -> `"run_mkp_run.log"`); [RunMkPrime()] deletes it when
-#'   sampling finishes, but keeps it through a `maxTime` or cancel stop.
+#'   (`"run.ckp"` -> `"run_mkp_run.log"`), which a resume extends; samples
+#'   are also returned in memory.
 #' @param treeFile Path to write sampled trees in Newick format.
 #'   `NULL` (default) auto-derives from `logFile` when set
 #'   (e.g. `"run.log"` → `"run_trees.nwk"`). Set to `FALSE` to

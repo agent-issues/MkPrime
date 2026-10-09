@@ -156,8 +156,8 @@ checkpoint (if \code{checkpointFile} is set), and exits with
 disable checkpointing. Checkpoints are saved at each
 convergence check interval and on cancel.
 Without a \code{logFile}, samples stream to a log beside the checkpoint
-(\code{"run.ckp"} -> \code{"run_mkp_run.log"}); \code{\link[=RunMkPrime]{RunMkPrime()}} deletes it when
-sampling finishes, but keeps it through a \code{maxTime} or cancel stop.}
+(\code{"run.ckp"} -> \code{"run_mkp_run.log"}), which a resume extends; samples
+are also returned in memory.}
 
 \item{treeFile}{Path to write sampled trees in Newick format.
 \code{NULL} (default) auto-derives from \code{logFile} when set
