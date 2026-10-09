@@ -29,6 +29,27 @@ goes on `gh api graphql` for **Discussions** too, not just issues and PRs: a
 discussion posted under the wrong account must be deleted and rewritten, there is
 no re-attribution.
 
+**From a cloud session** neither the prefix nor `gh api graphql` works: the proxy
+blocks GraphQL and replaces any token with the maintainer's, so a finding filed
+with `gh issue create` is authored by `ms609`. Dispatch a workflow, which posts
+as `ms609-agent`:
+
+```bash
+gh api repos/agent-issues/MkPrime/actions/workflows/post-discussion.yml/dispatches --method POST --input payload.json
+```
+
+- **Round record** — `post-discussion.yml`, payload
+  `{"ref":"main","inputs":{"category":"<slug>","title":"...","body":"..."}}`.
+- **Finding or comment** — `post-as-agent.yml`, inputs `action` (`issue` or
+  `comment`), `body`, and `title` + comma-separated `labels` (issue) or `number`
+  (comment).
+- **Confirm** the newest run of that workflow concluded `success`, then read the
+  record back with `gh api repos/agent-issues/MkPrime/discussions` (or the
+  issue's comments) and check its author.
+- **Limit** — the payload must stay under about 65 KB; a 50 KB body worked.
+
+Full recipe: `discussion-categories.md` → *From a cloud session*.
+
 ## Layout
 
 ```

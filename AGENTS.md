@@ -19,7 +19,8 @@ only when the human syncs the fork — that sync *is* the "everything on
 
 **Everything you create on GitHub must be authored by `ms609-agent`**.
 `~/.claude/CLAUDE.md` holds the mechanism and the token table; for this repo the token is
-`CLAUDE_GH_TOKEN`:
+`CLAUDE_GH_TOKEN` (cloud sessions: the token route fails silently, use
+[From a cloud session](#from-a-cloud-session)):
 
 ```bash
 GH_TOKEN=$CLAUDE_GH_TOKEN gh pr create --base main --head <branch> --reviewer ms609 ...
@@ -40,6 +41,35 @@ TOKEN="$TOKEN" git -c credential.helper= -c credential.helper='!f() { echo usern
 ```
 
 Keep both the `TOKEN="$TOKEN"` prefix and the empty `credential.helper=`; without either, the push silently goes out as `ms609`.
+
+### From a cloud session
+
+The `GH_TOKEN` prefix does nothing there: the cloud proxy blocks GraphQL and swaps any
+token, `CLAUDE_GH_TOKEN` included, for the maintainer's, so whatever plain `gh` or REST
+creates is authored by `ms609`. Dispatch a workflow instead; it posts as `ms609-agent`:
+
+```bash
+gh api repos/agent-issues/MkPrime/actions/workflows/post-as-agent.yml/dispatches --method POST --input payload.json
+```
+
+| Workflow | `inputs` |
+|----------|----------|
+| `post-as-agent.yml` | `action` (`issue`, `comment` or `pr`) and `body`; plus `title` and comma-separated `labels` for an issue, `number` for a comment, `title` and `head` for a PR |
+| `post-discussion.yml` | `category` (slug), `title` and `body`; or `discussion` (its number) and `body` to comment |
+
+`payload.json` is `{"ref":"main","inputs":{...}}` with every value a string. Keep it under
+about 65 KB; a 50 KB body worked.
+
+The dispatch returns no run id. Confirm the newest run concluded `success`, then read the
+item back and check that its author is `ms609-agent`:
+
+```bash
+gh api "repos/agent-issues/MkPrime/actions/workflows/post-as-agent.yml/runs?per_page=1" --jq '.workflow_runs[0] | {status, conclusion}'
+gh api "repos/agent-issues/MkPrime/issues/<n>/comments?per_page=100" --jq '.[-1] | {user: .user.login, html_url}'
+```
+
+Discussions are read back with `gh api repos/agent-issues/MkPrime/discussions`; the recipe
+is in `dev/red-team/discussion-categories.md`.
 
 **Never commit in `C:/Users/pjjg18/GitHub/mkp` itself.**
 Every change — including documentation — goes on a branch in a worktree under
