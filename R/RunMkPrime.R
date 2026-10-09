@@ -68,7 +68,9 @@
 #'   stopped; with `nRuns > 1`, each `$per_run` entry's `stop_reason` says why
 #'   that run did, and is `"cancelled"` for a parallel run stopped by the
 #'   job's own decision. A run stops with `"too_short"`, and a warning, when
-#'   a tuning round cannot end before `nIter`.
+#'   a tuning round cannot end before `nIter`. `$acceptance`, and with
+#'   `nChains > 1` `$chain_acceptance`, give each move's acceptance rate over
+#'   the Sample phase alone.
 #'
 #' @section Inline MCMC options:
 #'
@@ -161,8 +163,9 @@ RunMkPrime <- function(data, tree = NULL,
   # run's state if it is interrupted before its own workers replace them.
   oldNRuns <- 1L
   if (overwrite && !is.null(cpFile)) {
-    oldNRuns <- tryCatch(readRDS(cpFile)$mcmc$nRuns, error = function(e) NULL)
-    oldNRuns <- oldNRuns %||% 1L
+    oldCkp <- tryCatch(as.list(readRDS(cpFile)), error = function(e) NULL)
+    .ClearObeyedCancelFile(mcmc$cancelFile, oldCkp$runs)
+    oldNRuns <- oldCkp$mcmc$nRuns %||% 1L
     perRun <- .CkpFilePaths(cpFile, max(mcmc$nRuns, oldNRuns))
     unlink(paste0(cpFile, ".tmp"))
     if (length(perRun) > 1L) unlink(c(perRun, paste0(perRun, ".tmp")))
@@ -438,6 +441,29 @@ RunMkPrime <- function(data, tree = NULL,
 }
 
 
+# A run that stops for a cancel file records the file's time, so that the same
+# file, left in place, does not stop the run that carries on from its
+# checkpoint after one batch. Comparing it with the checkpoint's timestamp
+# instead fails: the file system's coarse clock can date it earlier.
+.ClearObeyedCancelFile <- function(cancelFile, runs) {
+  if (is.null(cancelFile) || !file.exists(cancelFile)) return(invisible())
+  mtime <- file.mtime(cancelFile)
+  Obeyed <- function(r) {
+    seen <- if (is.list(r)) r$cancelSeen
+    identical(seen$file, cancelFile) &&
+      isTRUE(as.numeric(seen$mtime) == as.numeric(mtime))
+  }
+  if (any(vapply(runs, Obeyed, logical(1)))) {
+    unlink(cancelFile)
+    .AlertInfo(
+      "Removed cancel file {.file {cancelFile}}: the run that wrote the \\
+       checkpoint already stopped for it."
+    )
+  }
+  invisible()
+}
+
+
 # --- Interrupt recovery helpers ---
 
 #' Execute MCMC with interrupt recovery
@@ -472,8 +498,11 @@ RunMkPrime <- function(data, tree = NULL,
 
   # the interrupt fires before the first batch boundary update.
   if (!is.null(mcmc$checkpointFile)) {
+    initialWeights <- vapply(moves, `[[`, numeric(1), "weight")
+    names(initialWeights) <- vapply(moves, `[[`, character(1), "name")
     .SaveCheckpoint(runs, mcmc, 0L, paramNames, mcmc$checkpointFile,
-                    model = model)
+                    moveWeights = initialWeights / sum(initialWeights),
+                    phase = "Warmup", model = model)
   }
 
   tryCatch({
@@ -625,6 +654,15 @@ RunMkPrime <- function(data, tree = NULL,
                error = function(e) 0L)
     }, integer(1L)))
 
+    # A re-run would write a fresh temporary checkpoint, not resume this one.
+    resumeHint <- if (isTempLog) {
+      "Resume it in this session with \\
+       {.code ResumeMkPrime(\"{mcmc$checkpointFile}\")}, or load the \\
+       partial samples with {.code MkPrimeRecover()}."
+    } else {
+      "Re-run the same {.fn RunMkPrime} call to resume."
+    }
+
     # PAR-007: use cli_warn (not cli_alert_warning) so the "!" / "i" /
     # "x" prefix keys in the c(...) vector actually render as bullets
     # instead of being concatenated into the lead line.
@@ -634,7 +672,7 @@ RunMkPrime <- function(data, tree = NULL,
          {nSaved} sample{?s} saved to log file{?s}.",
         "i" = "Master checkpoint synthesised from per-run ckps and saved \\
                to {.file {mcmc$checkpointFile}}.",
-        "i" = "Re-run the same {.fn RunMkPrime} call to resume."
+        "i" = resumeHint
       ))
     } else if (isParallel) {
       cli::cli_warn(c(
@@ -650,7 +688,7 @@ RunMkPrime <- function(data, tree = NULL,
         "Run interrupted at iteration {ckpIter}. \\
          {nSaved} sample{?s} saved to log file{?s}.",
         "i" = "Checkpoint saved to {.file {mcmc$checkpointFile}}.",
-        "i" = "Re-run the same {.fn RunMkPrime} call to resume."
+        "i" = resumeHint
       ))
     } else {
       cli::cli_warn(c(
@@ -1827,6 +1865,19 @@ RunMkPrime <- function(data, tree = NULL,
             r$phase    <- phase
             phaseLabel <- "Sample"
             cppWarmup  <- 0L
+            # Warmup snapshots rho's inputs once a batch, too sparsely to
+            # estimate it in under 50 batches, so the first Sample rows do.
+            rhoPending   <- any(moveTypes == "joint_2d") &&
+              NROW(rhoSampleBuf) < 50L
+            r$rhoPending <- rhoPending
+            rhoSampleBuf <- NULL
+            # Acceptance is reported for the Sample phase alone.
+            for (ch in seq_len(nChains)) {
+              r$chain_accept[[ch]][]    <- 0L
+              r$chain_propose[[ch]][]   <- 0L
+              r$chain_time_ns[[ch]][]   <- 0
+              r$chain_slice_exp[[ch]][] <- 0
+            }
             sampleWallStart <- proc.time()["elapsed"]
             if (isStreaming && !is.null(logFilePath))
               .LogMoveWeights(moveWeights, moveNames, logFilePath)
@@ -1946,6 +1997,12 @@ RunMkPrime <- function(data, tree = NULL,
             phase      <- "Sample"
             r$phase    <- phase
             phaseLabel <- "Sample"
+            for (ch in seq_len(nChains)) {
+              r$chain_accept[[ch]][]    <- 0L
+              r$chain_propose[[ch]][]   <- 0L
+              r$chain_time_ns[[ch]][]   <- 0
+              r$chain_slice_exp[[ch]][] <- 0
+            }
             sampleWallStart <- proc.time()["elapsed"]
             if (isStreaming && !is.null(logFilePath))
               .LogMoveWeights(moveWeights, moveNames, logFilePath)
@@ -1982,8 +2039,24 @@ RunMkPrime <- function(data, tree = NULL,
           }
         }
       }
+    } else if (phase == "Sample" && rhoPending && nSaved > 0L) {
+      rows <- result$scalar_samples[seq_len(nSaved), , drop = FALSE]
+      if (length(kPrimeRawIdx) > 0L) rows <- rows[, -kPrimeRawIdx, drop = FALSE]
+      colnames(rows) <- paramNames
+      rhoSampleBuf <- rbind(rhoSampleBuf, rows[, rhoCols, drop = FALSE])
+      r$rhoSampleBuf <- rhoSampleBuf
+      if (nrow(rhoSampleBuf) >= 50L) {
+        newRhos <- .EstimateJointRhos(rhoSampleBuf, hasNeo,
+                                      prior = r$chain_rhos[[1L]])
+        for (ch in seq_len(nChains)) {
+          r$chain_rhos[[ch]] <- newRhos
+        }
+        rhoPending     <- FALSE
+        r$rhoPending   <- FALSE
+        r$rhoSampleBuf <- NULL
+      }
     }
-    # Sample phase: no adaptation needed (weights frozen)
+    # Sample phase: no other adaptation (weights frozen)
 
     r$tuningRound <- if (phase == "Tuning") {
       list(candidates = tuningCandidates, candIdx = tuningCandIdx,
@@ -2087,6 +2160,7 @@ RunMkPrime <- function(data, tree = NULL,
 
     # Stopping: cancel file
     if (!is.null(cancelFile) && file.exists(cancelFile)) {
+      r$cancelSeen <- list(file = cancelFile, mtime = file.mtime(cancelFile))
       if (isStreaming && r$flush_idx > 0L) {
         .FlushBuffer(r$flush_buf, r$flush_idx, r$flush_iter, logFilePath)
         r$flush_idx <- 0L
@@ -2561,7 +2635,7 @@ RunMkPrime <- function(data, tree = NULL,
   verdictFiles <- if (!is.null(mcmc$minTreeEss)) {
     vapply(seq_len(nRuns), function(i) tempfile(), character(1L))
   }
-  on.exit(unlink(verdictFiles), add = TRUE)
+  on.exit(unlink(c(cancelFiles, verdictFiles)), add = TRUE)
 
   # Per-run checkpoint paths.  When mcmc$checkpointFile is set, each worker
   # writes its own .ckp every checkEvery iters; on SIGKILL/walltime overrun
@@ -2669,6 +2743,7 @@ RunMkPrime <- function(data, tree = NULL,
   checkedRows  <- 0L
   freshRows    <- max(1L, (mcmc$checkEvery %||% 1000L) %/% mcmc$thin)
   stopReason   <- "max_iter"
+  cancelSeen   <- NULL
   # Set when no parent-side criterion fired: the job's reason is then theirs.
   workersStopped <- FALSE
   actualIter   <- if (is.finite(mcmc$nIter)) mcmc$nIter else mcmc$warmup
@@ -2690,6 +2765,8 @@ RunMkPrime <- function(data, tree = NULL,
     if (!is.null(mcmc$cancelFile) && file.exists(mcmc$cancelFile)) {
       for (cf in cancelFiles) file.create(cf)
       stopReason <- "cancelled"
+      cancelSeen <- list(file = mcmc$cancelFile,
+                         mtime = file.mtime(mcmc$cancelFile))
       break
     }
 
@@ -2918,6 +2995,13 @@ RunMkPrime <- function(data, tree = NULL,
     furthest <- max(vapply(completedRuns,
                            function(r) r$actual_iter %||% 0, numeric(1L)))
     if (furthest > 0) actualIter <- furthest
+  }
+
+  if (!is.null(cancelSeen)) {
+    completedRuns <- lapply(completedRuns, function(r) {
+      r$cancelSeen <- cancelSeen
+      r
+    })
   }
 
   list(
@@ -3741,6 +3825,13 @@ RunMkPrime <- function(data, tree = NULL,
     payload$treeFilePaths <- .TreeFilePaths(mcmc$treeFile, nNamed)[runIdx]
     payload$paramNames    <- paramNames
   }
+  # A master save names the move set from its runs, so that a resume can check
+  # it rebuilt the same one.
+  ref <- Filter(function(r) !is.null(r$moveWeights), runs)
+  if (length(ref)) {
+    moveWeights <- moveWeights %||% ref[[length(ref)]]$moveWeights
+    phase       <- phase %||% ref[[length(ref)]]$phase
+  }
   if (!is.null(moveWeights))  payload$moveWeights  <- moveWeights
   if (!is.null(phase))        payload$phase        <- phase
   if (!is.null(model))        payload$model        <- model
@@ -4178,6 +4269,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
   runs <- checkpoint$runs
   mcmc <- .ResumeMcmc(checkpoint$mcmc, mcmcOverride)
+  .ClearObeyedCancelFile(mcmc$cancelFile, checkpoint$runs)
   mcmc$tipLabels <- rownames(mkd$matrix)
   runDir <- .RunDirectory(mcmc$checkpointFile, checkpointFile)
   for (f in c("logFile", "treeFile", "checkpointFile")) {
@@ -4455,7 +4547,6 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       runMcmc   <- mcmc
       for (run in seq_len(nRuns)) {
         if (.StillConverged(runs[[run]], mcmc)) {
-          stopReason <- "converged"
           actualIter <- runs[[run]]$actual_iter
           next
         }
@@ -4487,6 +4578,14 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         actualIter <- runs[[run]]$actual_iter
         if (stopReason == "cancelled" ||
             .BudgetSpentDuring(stopReason, run, nRuns)) break
+      }
+      # The job converged only if every run did, not only the last.
+      if (run == nRuns && !stopReason %in% c("cancelled", "max_time")) {
+        stopReason <- .WorkersStopReason(
+          vapply(runs, function(r) r$stop_reason %||% "max_iter",
+                 character(1L)),
+          nRuns
+        )
       }
       if (nRuns > 1L && !is.null(mcmc$checkpointFile)) {
         .SaveCheckpoint(runs, mcmc, actualIter, paramNames,
@@ -4549,12 +4648,26 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       }, error = function(e) NULL)
     }
     ckpIter <- max(bestIter, diskIter)
+    # A bare MkPrimeRecover() reads the interrupted job's logs, as after
+    # RunMkPrime(); they belong to the checkpoint, so it must not delete them.
+    if (!is.null(logFilePaths)) {
+      .mkp_env$recovery <- list(
+        logFiles   = logFilePaths,
+        paramNames = paramNames,
+        model      = model,
+        data       = mkd,
+        mcmc       = mcmc,
+        isTempLog  = FALSE,
+        time       = Sys.time()
+      )
+    }
     if (ckpSaved) {
       # PAR-007: cli_warn (not cli_alert_warning) renders bullet items.
       cli::cli_warn(c(
         "Run interrupted at iteration {ckpIter}.",
         "i" = "Checkpoint saved to {.file {mcmc$checkpointFile}}.",
-        "i" = "Re-run the same {.fn RunMkPrime} call to resume."
+        "i" = "Resume with \\
+               {.code ResumeMkPrime(\"{mcmc$checkpointFile}\")}."
       ))
     } else {
       .AlertWarning("Run interrupted.")

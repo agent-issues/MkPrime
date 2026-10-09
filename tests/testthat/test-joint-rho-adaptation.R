@@ -71,3 +71,109 @@ test_that("a default-length run adapts every joint-move correlation", {
   # estimate comes from Tuning; before #301 all three stayed at 0.
   expect_true(all(unlist(seen$rhos) != 0))
 })
+
+.RhoData <- function() {
+  set.seed(302)
+  tree <- ape::rtree(10)
+  mat <- replicate(25, as.character(
+    ape::rTraitDisc(tree, k = 3, rate = 2, states = c("0", "1", "2"))
+  ))
+  rownames(mat) <- tree$tip.label
+  list(tree = tree, pd = MatrixToPhyDat(mat))
+}
+
+test_that("without tuning, rho is estimated from the first Sample rows (#405)", {
+  skip_under_memcheck()
+  skip_on_cran()
+  data <- .RhoData()
+  seen <- new.env()
+  buildRhos <- MkPrime:::.BuildJointRhoMatrix
+  local_mocked_bindings(
+    .BuildJointRhoMatrix = function(chainRhos, moves, nChains) {
+      seen$rhos <- chainRhos[[1]]
+      buildRhos(chainRhos, moves, nChains)
+    }
+  )
+  setTimeLimit(elapsed = 240, transient = TRUE)
+  on.exit(setTimeLimit(elapsed = Inf, transient = TRUE), add = TRUE)
+  set.seed(4051)
+  # Default warmup, nIter / 2, holds at most 20 of the 50 snapshots it needs.
+  result <- allow_warning(
+    RunMkPrime(data$pd, data$tree, mcmc = MkPrimeMCMC(
+      nIter = 20000L, nRuns = 1L, nCore = 1L, autoTune = FALSE,
+      maxTime = 180
+    )),
+    "stabilis"
+  )
+  expect_gt(nrow(result$samples), 0L)
+  expect_true(seen$rhos$rho_tl_rls != 0)
+})
+
+test_that("a rho pending in Sample survives a checkpoint (#405)", {
+  skip_on_cran()
+  data <- .RhoData()
+  ckpFile <- tempfile(fileext = ".ckp")
+  cancelFile <- tempfile()
+  on.exit(unlink(c(ckpFile, cancelFile)), add = TRUE)
+  setTimeLimit(elapsed = 240, transient = TRUE)
+  on.exit(setTimeLimit(elapsed = Inf, transient = TRUE), add = TRUE)
+  Job <- function(...) {
+    MkPrimeMCMC(nIter = 4000L, minWarmup = 2000L, maxWarmup = 2000L,
+                nRuns = 1L, nCore = 1L, thin = 20L, autoTune = FALSE,
+                maxTime = 100, checkpointFile = ckpFile,
+                cancelFile = cancelFile, ...)
+  }
+  # 500 iterations at thin 20 save 25 rows: half of what rho needs.
+  Stopper <- function(info) if (info$iter >= 2500L) file.create(cancel)
+  environment(Stopper) <- list2env(list(cancel = cancelFile),
+                                   parent = baseenv())
+  set.seed(4052)
+  allow_warning(
+    RunMkPrime(data$pd, data$tree,
+               mcmc = Job(progressFn = Stopper, plotEvery = 500L)),
+    "stabilis"
+  )
+  cp <- readRDS(ckpFile)
+  expect_identical(cp$runs[[1]]$phase, "Sample")
+  expect_true(cp$runs[[1]]$rhoPending)
+  expect_equal(nrow(cp$runs[[1]]$rhoSampleBuf), 25L)
+  expect_equal(cp$runs[[1]]$chain_rhos[[1]]$rho_tl_rls, 0)
+
+  # The next 25 rows complete the estimate.
+  cp$mcmc$progressFn <- NULL
+  saveRDS(cp, ckpFile)
+  file.create(cancelFile)
+  allow_warning(
+    ResumeMkPrime(ckpFile, data$pd, mcmc = list(plotEvery = 500L,
+                                                progressFn = function(i) NULL)),
+    "stabilis"
+  )
+  after <- readRDS(ckpFile)$runs[[1]]
+  expect_false(after$rhoPending)
+  expect_null(after$rhoSampleBuf)
+  expect_true(after$chain_rhos[[1]]$rho_tl_rls != 0)
+})
+
+test_that("reported acceptance covers the Sample phase alone (#405)", {
+  skip_on_cran()
+  data <- .RhoData()
+  ckpFile <- tempfile(fileext = ".ckp")
+  on.exit(unlink(ckpFile), add = TRUE)
+  setTimeLimit(elapsed = 240, transient = TRUE)
+  on.exit(setTimeLimit(elapsed = Inf, transient = TRUE), add = TRUE)
+  for (autoTune in c(FALSE, TRUE)) {
+    set.seed(4053)
+    allow_warning(
+      RunMkPrime(data$pd, data$tree, overwrite = TRUE, mcmc = MkPrimeMCMC(
+        nIter = 6000L, minWarmup = 2000L, maxWarmup = 2000L, nRuns = 1L,
+        nCore = 1L, thin = 10L, autoTune = autoTune, maxTime = 100,
+        checkpointFile = ckpFile
+      )),
+      "stabilis"
+    )
+    r <- readRDS(ckpFile)$runs[[1]]
+    expect_identical(r$phase, "Sample")
+    tuningIter <- if (autoTune) r$tuningIterUsed else 0L
+    expect_equal(sum(r$chain_propose[[1]]), 6000L - 2000L - tuningIter)
+  }
+})
