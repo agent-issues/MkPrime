@@ -20,7 +20,7 @@ DoubleThin <- function(env = parent.frame()) {
     .AdaptThinning = function(sampleMatrix, currentThin, nMoves) {
       2L * currentThin
     },
-    .package = "MkPrime", .env = env
+    .env = env
   )
 }
 

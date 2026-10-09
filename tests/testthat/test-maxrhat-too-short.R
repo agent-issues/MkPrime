@@ -12,16 +12,27 @@ RhatData <- function() {
 test_that("a run too short to tune ends the job rather than each epoch", {
   skip_under_memcheck()
   d <- RhatData()
-  setTimeLimit(elapsed = 120, transient = TRUE)
+  dir <- withr::local_tempdir()
+  ckp <- file.path(dir, "run.ckp")
+  setTimeLimit(elapsed = 180, transient = TRUE)
   on.exit(setTimeLimit(elapsed = Inf), add = TRUE)
   set.seed(2)
   res <- allow_warning(RunMkPrime(
     d$pd, d$tree,
     mcmc = MkPrimeMCMC(nRuns = 2L, nCore = 1L, nIter = 1500L,
                        minWarmup = 500L, maxWarmup = 500L, maxRhat = 1.01,
-                       maxTime = 20)
+                       maxTime = 20, checkpointFile = ckp)
   ), "Tuning needs|without drawing|maxWarmup")
   expect_identical(res$stop_reason, "too_short")
+
+  # Given room, a resume tunes across Phase 2's shorter epochs and samples.
+  res <- allow_warning(
+    ResumeMkPrime(ckp, d$pd, d$tree,
+                  mcmc = list(nIter = 8000L, maxTime = 60)),
+    "maxWarmup"
+  )
+  expect_false(res$stop_reason == "too_short")
+  expect_gt(res$nSamples, 0L)
 })
 
 test_that("Phase 2 runs every run to nIter", {

@@ -1,4 +1,5 @@
 # An interrupt must not write a batch to the log twice (#419).
+skip_under_memcheck()
 
 SnapData <- function() {
   set.seed(1)
@@ -19,7 +20,7 @@ LoggedIters <- function(logFile) {
 InterruptAtCheck <- function(env = parent.frame()) {
   local_mocked_bindings(
     .CheckConvergence = function(...) rlang::interrupt(),
-    .package = "MkPrime", .env = env
+    .env = env
   )
 }
 

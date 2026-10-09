@@ -1,4 +1,5 @@
 # Extending a finished run that kept only a checkpoint (#423).
+skip_under_memcheck()
 
 DoneData <- function() {
   set.seed(1)
