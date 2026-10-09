@@ -703,8 +703,12 @@ MkBayesianServer <- function(id, dataset, startTree = NULL) {
                        ylim = range(unlist(vals), finite = TRUE),
                        ylab = colnames(mat)[i], xlab = "")
         for (k in seq_along(vals)) {
-          graphics::lines(vals[[k]], col = grDevices::hcl.colors(
-            max(2L, length(vals)), "Dark 3")[k], lwd = 0.8)
+          graphics::lines(vals[[k]], col = k + 1L, lwd = 0.8)
+        }
+        if (i == 1L && length(vals) > 1L) {
+          graphics::legend("topleft", legend = paste("Run", seq_along(vals)),
+                           col = seq_along(vals) + 1L, lty = 1L, bty = "n",
+                           horiz = TRUE)
         }
       }
     })
