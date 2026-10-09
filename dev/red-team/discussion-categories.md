@@ -58,6 +58,9 @@ context `baselines.md` regressions are read against).
 
 ## Reading the category ids
 
+Desktop sessions only. A cloud session cannot reach GraphQL and does not need the
+ids: see [From a cloud session](#from-a-cloud-session).
+
 Reads need no token prefix, but PowerShell 5.1 mangles an inline GraphQL query
 (it strips the inner double quotes, and `owner: agent-issues` then fails to parse).
 Write the query to a file and pass it with `-F query=@<file>`:
@@ -76,6 +79,10 @@ gh api graphql -F query=@/tmp/cats.graphql
 
 ## Posting a round record
 
+**In a cloud session, skip to [From a cloud session](#from-a-cloud-session)** —
+the command below cannot run there, and a round record filed as an issue instead
+lands under `ms609`.
+
 The `createDiscussion` mutation needs the repository id and the category id from
 the query above, and **must** carry the agent token — a discussion posted under the
 maintainer's account cannot be re-attributed, only deleted and rewritten:
@@ -88,3 +95,54 @@ Title format stamps the rung **and the version that ran**, per the skill:
 `RT <date> - area <N> - <rung> (<Version>) - yield <n> (<h>h/<m>m/<l>l)`.
 `yield` counts confirmed candidates, and the `h/m/l` split is by confirmed
 candidate too, not by filed issue; say in the body how many issues they became.
+
+### From a cloud session
+
+The cloud proxy blocks GraphQL and replaces any token, `CLAUDE_GH_TOKEN` included,
+with the maintainer's own, so nothing above runs and anything created directly
+over REST is authored by `ms609`. Two workflows post as `ms609-agent` instead,
+triggered by a REST `workflow_dispatch`:
+
+```bash
+gh api repos/agent-issues/MkPrime/actions/workflows/post-discussion.yml/dispatches --method POST --input payload.json
+```
+
+| Workflow | `inputs` |
+|----------|----------|
+| `post-discussion.yml` | `category` (a slug from the table above), `title`, `body`. To comment on an existing record: `discussion` (its number) and `body` |
+| `post-as-agent.yml` | `action` (`issue`, `comment` or `pr`), `body`; `title` and comma-separated `labels` for an issue; `number` for a comment on an issue or PR; `title`, `head`, `base`, `draft` for a PR |
+
+The workflow resolves the slug to the category id itself. The payload is
+`{"ref":"main","inputs":{...}}` with every value a string; build it with `jq`
+so the Markdown body is escaped for you:
+
+```bash
+jq -n --arg c 09-convergence-diagnostics-ess --arg t "RT <date> - area 9 - ..." --rawfile b body.md \
+  '{ref: "main", inputs: {category: $c, title: $t, body: $b}}' > payload.json
+```
+
+**Payload limit.** A `workflow_dispatch` payload must stay under about 65 KB; a
+50 KB body worked. Put the overflow of a longer record in a comment on it.
+
+**Confirm the result.** The dispatch returns 204 and no run id, so read the
+newest run of the workflow until it is `completed` with conclusion `success`:
+
+```bash
+gh api "repos/agent-issues/MkPrime/actions/workflows/post-discussion.yml/runs?per_page=1" \
+  --jq '.workflow_runs[0] | {status, conclusion, html_url}'
+```
+
+Then read the record back and check that its author is `ms609-agent`. The REST
+list is oldest first, so the new discussion is the last line:
+
+```bash
+gh api --paginate "repos/agent-issues/MkPrime/discussions?per_page=100" \
+  --jq '.[] | "\(.number) \(.user.login) \(.title)"' | tail -1
+```
+
+For an issue or a comment posted through `post-as-agent.yml`:
+
+```bash
+gh api "repos/agent-issues/MkPrime/issues?creator=ms609-agent&state=all&per_page=1" --jq '.[0] | {number, title}'
+gh api "repos/agent-issues/MkPrime/issues/<n>/comments?per_page=100" --jq '.[-1] | {user: .user.login, html_url}'
+```
