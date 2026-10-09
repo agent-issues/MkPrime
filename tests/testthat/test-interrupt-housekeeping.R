@@ -12,7 +12,7 @@
 .HousekeepingMcmc <- function(...) {
   do.call(MkPrimeMCMC, utils::modifyList(list(
     nRuns = 1L, nIter = 3000L, thin = 5L, minWarmup = 500L, maxWarmup = 500L,
-    autoTune = FALSE, checkEvery = 1000L, maxTime = 60
+    autoTune = FALSE, checkEvery = 1000L
   ), list(...)))
 }
 

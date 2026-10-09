@@ -100,8 +100,7 @@ test_that("without tuning, rho is estimated from the first Sample rows (#405)", 
   # Default warmup, nIter / 2, holds at most 20 of the 50 snapshots it needs.
   result <- allow_warning(
     RunMkPrime(data$pd, data$tree, mcmc = MkPrimeMCMC(
-      nIter = 20000L, nRuns = 1L, nCore = 1L, autoTune = FALSE,
-      maxTime = 180
+      nIter = 20000L, nRuns = 1L, nCore = 1L, autoTune = FALSE
     )),
     "stabilis"
   )
@@ -120,8 +119,7 @@ test_that("a rho pending in Sample survives a checkpoint (#405)", {
   Job <- function(...) {
     MkPrimeMCMC(nIter = 4000L, minWarmup = 2000L, maxWarmup = 2000L,
                 nRuns = 1L, nCore = 1L, thin = 20L, autoTune = FALSE,
-                maxTime = 100, checkpointFile = ckpFile,
-                cancelFile = cancelFile, ...)
+                checkpointFile = ckpFile, cancelFile = cancelFile, ...)
   }
   # 500 iterations at thin 20 save 25 rows: half of what rho needs.
   Stopper <- function(info) if (info$iter >= 2500L) file.create(cancel)
@@ -156,6 +154,7 @@ test_that("a rho pending in Sample survives a checkpoint (#405)", {
 
 test_that("reported acceptance covers the Sample phase alone (#405)", {
   skip_on_cran()
+  skip_under_memcheck()
   data <- .RhoData()
   ckpFile <- tempfile(fileext = ".ckp")
   on.exit(unlink(ckpFile), add = TRUE)
@@ -166,8 +165,7 @@ test_that("reported acceptance covers the Sample phase alone (#405)", {
     allow_warning(
       RunMkPrime(data$pd, data$tree, overwrite = TRUE, mcmc = MkPrimeMCMC(
         nIter = 6000L, minWarmup = 2000L, maxWarmup = 2000L, nRuns = 1L,
-        nCore = 1L, thin = 10L, autoTune = autoTune, maxTime = 100,
-        checkpointFile = ckpFile
+        nCore = 1L, thin = 10L, autoTune = autoTune, checkpointFile = ckpFile
       )),
       "stabilis"
     )
