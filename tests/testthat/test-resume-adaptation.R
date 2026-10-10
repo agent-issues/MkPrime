@@ -158,8 +158,11 @@ test_that("tuning is priced on the full minEss and all spend (#201)", {
   set.seed(2011)
   cp <- .InterruptAt(data, 2500L, ckpFile, nIter = 12000L, nRuns = 2L,
                      tuningBudget = 4000L, minEss = 1e6)
-  spentBefore <- cp$runs[[1]]$adaptSec
-  expect_gt(spentBefore, 0)
+  expect_gt(cp$runs[[1]]$adaptSec, 0)
+  # Far more than the resume itself can take, so only the carried spend can
+  # account for it (#406).
+  spentBefore <- 1000
+  cp$runs[[1]]$adaptSec <- spentBefore
   saveRDS(cp, ckpFile)
   seen$nRuns <- integer(0)
   seen$spent <- numeric(0)
@@ -170,6 +173,46 @@ test_that("tuning is priced on the full minEss and all spend (#201)", {
   expect_true(all(seen$nRuns == 1L))
   # The resumed run is charged for what it spent before the interruption.
   expect_gt(seen$spent[[1]], spentBefore)
+})
+
+test_that("rho is frozen before the bandit scores a short window (#406)", {
+  skip_under_memcheck()
+  skip_on_cran()
+  data <- .ResumeAdaptData()
+  setTimeLimit(elapsed = 240, transient = TRUE)
+  on.exit(setTimeLimit(elapsed = Inf, transient = TRUE), add = TRUE)
+
+  seen <- new.env()
+  windowSamples <- MkPrime:::.TuningWindowSamples
+  buildRhos <- MkPrime:::.BuildJointRhoMatrix
+  minEssRate <- MkPrime:::.MinEssRate
+  local_mocked_bindings(
+    .TuningWindowSamples = function(...) {
+      seen$tws <- windowSamples(...)
+      seen$tws
+    },
+    .BuildJointRhoMatrix = function(chainRhos, moves, nChains) {
+      seen$rhos <- chainRhos[[1]]
+      buildRhos(chainRhos, moves, nChains)
+    },
+    .MinEssRate = function(...) {
+      if (is.null(seen$scored)) seen$scored <- seen$rhos
+      minEssRate(...)
+    }
+  )
+  set.seed(4062)
+  # thin = 20 and a 3500-iteration budget give windows of 25 samples, fewer
+  # than the 50 rho is estimated from.
+  allow_warning(
+    RunMkPrime(data$pd, data$tree,
+               mcmc = .ResumeAdaptMcmc(nIter = 9000L, thin = 20L)),
+    "stabilis"
+  )
+  expect_lt(seen$tws, 50L)
+  expect_false(is.null(seen$scored))
+  # Warmup's four snapshots cannot estimate rho, so a window scored before
+  # Tuning estimated it would run at 0.
+  expect_true(seen$scored$rho_tl_rls != 0)
 })
 
 test_that(".SampleElapsed averages sampling time over runs still sampling", {

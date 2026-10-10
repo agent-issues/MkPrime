@@ -362,8 +362,7 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
     }
 
     # Try to load metadata from checkpoint
-    ckpFile <- checkpointFile %||%
-      sub("(_\\d+)?\\.[^.]+$", ".ckp", logPaths[1])
+    ckpFile <- checkpointFile %||% .DerivedCkpFile(logPaths[1])
     ckp <- NULL
     if (file.exists(ckpFile)) {
       ckp <- tryCatch(readRDS(ckpFile), error = function(e) NULL)
@@ -502,6 +501,16 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
     "Recovered {nrow(samples)} sample{?s} from interrupted run."
   )
   result
+}
+
+
+# The checkpoint for a log: `x.ckp` for `x.log` or `x_1.log`, and also for the
+# `x_mkp_run.log` or `x_mkp_run_1.log` that RunMkPrime() writes beside a
+# checkpoint the user named.
+.DerivedCkpFile <- function(logPath) {
+  beside <- sub("_mkp_run(_\\d+)?\\.log$", ".ckp", logPath)
+  if (beside != logPath && file.exists(beside)) return(beside)
+  sub("(_\\d+)?\\.[^.]+$", ".ckp", logPath)
 }
 
 

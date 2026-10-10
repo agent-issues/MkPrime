@@ -148,7 +148,12 @@ callback is set. The \code{maxTime} limit is checked at the same points.
 If the file exists, the run flushes any buffered samples, saves a
 checkpoint (if \code{checkpointFile} is set), and exits with
 \code{stop_reason = "cancelled"}. Create the file to request a clean stop:
-\code{file.create(cancelFile)}. See also \code{\link[=MkCancelPath]{MkCancelPath()}}.}
+\code{file.create(cancelFile)}. See also \code{\link[=MkCancelPath]{MkCancelPath()}}.
+A resume, or a \code{RunMkPrime(overwrite = TRUE)} over an old checkpoint,
+deletes, with a message, a cancel file that the run which wrote that
+checkpoint stopped for, unless the file has been touched since. Delete
+the file yourself before any other fresh run, or it stops after one
+batch.}
 
 \item{checkpointFile}{Path to write checkpoint RDS files. \code{NULL}
 (default) auto-derives from \code{logFile} when set
@@ -221,9 +226,11 @@ See Yang & Rodríguez (2013); Ronquist et al. (2020).}
 correlated parameter pairs (default \code{TRUE}). Proposes correlated
 updates to tree_length × rate_log_sd (and tree_length × rate_loss
 when neomorphic characters are present) using a bivariate Bactrian
-kernel. The correlation is learned adaptively during warmup from
-posterior sample correlations. No effect when parameters are
-uncorrelated (degenerates to independent proposals).}
+kernel. The correlation is estimated from the chain's samples, last
+from the first tuning window, or with \code{autoTune = FALSE} from the first
+sampling batch if warmup was too short to estimate it; it is then
+fixed. No effect when parameters are uncorrelated (degenerates to
+independent proposals).}
 
 \item{weightedBranchScale}{Logical; include the weighted branch-length
 scale move (default \code{FALSE}). Cost: O(B) likelihood evaluations, where
@@ -486,8 +493,9 @@ size per second across parameters) using a perturbation bandit.
 Each round evaluates the current and perturbed weight vectors
 over short windows, adopting a candidate only when it beats the
 incumbent by more than the noise in its ESS estimate. Tuning samples
-are discarded. Step sizes and joint-proposal correlations are frozen at
-their warmup values. The phase ends after
+are discarded. Step sizes are frozen at their warmup values, and
+joint-proposal correlations at their estimate from the first tuning
+window. The phase ends after
 \code{tuningRounds} rounds or \code{tuningBudget} iterations, or, when \code{minEss}
 is set, sooner once tuning stops paying for itself: when, in two
 consecutive rounds, the

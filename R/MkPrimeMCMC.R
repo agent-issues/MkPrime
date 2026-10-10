@@ -80,6 +80,11 @@
 #'   checkpoint (if `checkpointFile` is set), and exits with
 #'   `stop_reason = "cancelled"`. Create the file to request a clean stop:
 #'   `file.create(cancelFile)`. See also [MkCancelPath()].
+#'   A resume, or a `RunMkPrime(overwrite = TRUE)` over an old checkpoint,
+#'   deletes, with a message, a cancel file that the run which wrote that
+#'   checkpoint stopped for, unless the file has been touched since. Delete
+#'   the file yourself before any other fresh run, or it stops after one
+#'   batch.
 #' @param checkpointFile Path to write checkpoint RDS files. `NULL`
 #'   (default) auto-derives from `logFile` when set
 #'   (e.g. `"run.log"` -> `"run.ckp"`). Set to `FALSE` to
@@ -167,9 +172,11 @@
 #'   correlated parameter pairs (default `TRUE`). Proposes correlated
 #'   updates to tree_length × rate_log_sd (and tree_length × rate_loss
 #'   when neomorphic characters are present) using a bivariate Bactrian
-#'   kernel. The correlation is learned adaptively during warmup from
-#'   posterior sample correlations. No effect when parameters are
-#'   uncorrelated (degenerates to independent proposals).
+#'   kernel. The correlation is estimated from the chain's samples, last
+#'   from the first tuning window, or with `autoTune = FALSE` from the first
+#'   sampling batch if warmup was too short to estimate it; it is then
+#'   fixed. No effect when parameters are uncorrelated (degenerates to
+#'   independent proposals).
 #' @param blockGibbsBranch Logical; include the block Gibbs branch-length
 #'   sweep move (default `FALSE`). Each call sweeps over all edge pairs
 #'   in random-permutation order, sampling each from an approximate
@@ -377,8 +384,9 @@
 #' Each round evaluates the current and perturbed weight vectors
 #' over short windows, adopting a candidate only when it beats the
 #' incumbent by more than the noise in its ESS estimate. Tuning samples
-#' are discarded. Step sizes and joint-proposal correlations are frozen at
-#' their warmup values. The phase ends after
+#' are discarded. Step sizes are frozen at their warmup values, and
+#' joint-proposal correlations at their estimate from the first tuning
+#' window. The phase ends after
 #' `tuningRounds` rounds or `tuningBudget` iterations, or, when `minEss`
 #' is set, sooner once tuning stops paying for itself: when, in two
 #' consecutive rounds, the

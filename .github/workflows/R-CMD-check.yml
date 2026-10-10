@@ -281,7 +281,15 @@ jobs:
           registerS3method("merge_coverage", "character", MergeReadableTraces,
                            envir = asNamespace("covr"))
           message("covr trace merge now drops unreadable trace files.")
-          cov <- covr::package_coverage(quiet = FALSE)
+          cov <- withCallingHandlers(
+            covr::package_coverage(quiet = FALSE),
+            error = function(e) {
+              fail <- regmatches(conditionMessage(e),
+                                 regexpr("[^`]+\\.Rout\\.fail", conditionMessage(e)))
+              if (length(fail) && file.exists(fail)) {
+                writeLines(tail(readLines(fail), 400))
+              }
+            })
           print(cov)
           saveRDS(covr::tally_coverage(cov, by = "line"), "coverage-lines.rds")
           covr::codecov(coverage = cov)
