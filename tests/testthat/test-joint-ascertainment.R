@@ -251,3 +251,85 @@ test_that("interpolated k tail matches the direct sum", {
     }
   }
 })
+
+# Joint Mk'v forward: k' and the pattern are drawn together, and an invariant
+# pair is discarded whole.
+.SimJointMkv <- function(tree, nChar, p, K) {
+  nTip <- NTip(tree)
+  edge <- tree$edge
+  mat <- matrix(0L, nTip, nChar, dimnames = list(tree$tip.label, NULL))
+  i <- 0L
+  while (i < nChar) {
+    k <- 2L + rgeom(1L, p)
+    if (k > K) next
+    state <- integer(max(edge))
+    state[nTip + 1L] <- sample.int(k, 1L)
+    for (e in seq_len(nrow(edge))) {
+      stay <- 1 / k + (1 - 1 / k) * exp(-k * tree$edge.length[e] / (k - 1))
+      from <- state[edge[e, 1]]
+      others <- seq_len(k)[-from]
+      state[edge[e, 2]] <- if (runif(1) < stay) from else
+        others[sample.int(k - 1L, 1L)]
+    }
+    tips <- state[seq_len(nTip)]
+    if (length(unique(tips)) < 2L) next
+    i <- i + 1L
+    mat[, i] <- match(tips, unique(tips)) - 1L
+  }
+  mat
+}
+
+test_that("marginal_k scores the joint Mk'v marginal and recovers p", {
+  K <- 20L
+  p0 <- 0.35
+  tree <- .JointTree(8, 10L)
+  tree$edge.length <- tree$edge.length * 1.5 / sum(tree$edge.length)
+  set.seed(2027)
+  mat <- .SimJointMkv(tree, 600L, p0, K)
+  mkd <- MkPrimeData(MatrixToPhyDat(mat))
+  model <- MkPrime:::.FinalizeModel(
+    MkPrimeModel(nCat = 1L, kPrimePrior = "geometric",
+                 priorVariant = "unconditional", likelihoodMode = "marginal_k",
+                 kprimeTruncK = K),
+    tree, mkd)
+  dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
+  LogLik <- function(p) {
+    state <- MkPrime:::.InitState(tree, mkd, model)
+    state$p <- p
+    statePtr <- MkPrime:::.InitMcmcChain(state)
+    fill_partition_cache(dataPtr, statePtr)
+    eval_full_loglik_cpp(dataPtr, statePtr)
+  }
+
+  # Sum over k' of each pattern's likelihood, from the per-k kernels.
+  parent <- tree$edge[, 1]
+  child <- tree$edge[, 2]
+  len <- tree$edge.length
+  k <- 2:K
+  kObs <- apply(mat, 2, max) + 1L
+  logL <- vapply(k, function(kk) {
+    vapply(seq_len(ncol(mat)), function(i) {
+      if (kk < kObs[i]) return(-Inf)
+      MkPrime:::pruning_jc(parent, child, len, mat[, i, drop = FALSE], kk,
+                           rep(1 / kk, kk)) +
+        lfactorial(kk) - lfactorial(kk - kObs[i])
+    }, double(1))
+  }, double(ncol(mat)))
+  logA <- log1p(-vapply(k, function(kk) {
+    MkPrime:::constant_site_prob_jc(parent, child, len, NTip(tree), kk,
+                                    rep(1 / kk, kk), 1)
+  }, double(1)))
+  Lse <- function(x) max(x) + log(sum(exp(x - max(x))))
+  Reference <- function(p) {
+    logPrior <- .LogPriorTable((k - 2) * log1p(-p))
+    sum(apply(logL, 1, function(row) Lse(row + logPrior))) -
+      ncol(mat) * Lse(logA + logPrior)
+  }
+  for (p in c(0.2, 0.35, 0.6)) {
+    expect_equal(LogLik(p), Reference(p), tolerance = 1e-9)
+  }
+
+  grid <- seq(0.1, 0.7, by = 0.02)
+  pHat <- grid[which.max(vapply(grid, LogLik, double(1)))]
+  expect_lt(abs(pHat - p0), 0.07)
+})

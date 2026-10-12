@@ -27,7 +27,8 @@
 #   2. rateLogSd    ~ Gamma(1, 1)
 #   3. tree         ~ rtree(N_TIP) with edge lengths from Gamma · Dirichlet
 #   4. u_i          ~ Geo(p_true)              (i = 1..N_CHAR)
-#   5. kTrue_i      = pmin(2 + u_i, K_MAX_PRIOR)
+#   5. kTrue_i      = 2 + u_i, redrawn until kTrue_i <= K_MAX_PRIOR (a pmin
+#                    cap would pile mass at K and break calibration)
 #   6. y_i          ~ JC(kTrue_i) on the tree
 #   7. canonicalise y_i → kObs_i (= number of distinct realised states)
 #   8. redraw kTrue_i and y_i together while y_i is invariant (joint Mk'v)
@@ -158,7 +159,7 @@ seedBase       <- {
 
   # Pure geometric Model A forward (per proof §2 + §7.4):
   #   u_i   ~ Geo(p_true)         (location-free; full support on u >= 0)
-  #   kTrue = pmin(2 + u, K_MAX_PRIOR)
+  #   kTrue = 2 + u, truncated to [2, K_MAX_PRIOR] by rejection
   #
   # Joint Mk'v forward (pair rejection): each character draws k' from the
   # truncated geometric on [2, K_MAX_PRIOR] and data under JC(k'), and an
@@ -190,7 +191,7 @@ seedBase       <- {
     sim_mat[, j] <- cv
     kObs[j] <- attr(cv, "kObs")
   }
-  u_true <- kTrue - 2L
+  uTrue <- kTrue - 2L
   n_char <- N_CHAR
   pd  <- TreeTools::MatrixToPhyDat(sim_mat)
   mkd <- MkPrimeData(pd)
@@ -255,7 +256,7 @@ seedBase       <- {
 
   list(skipped = FALSE, L = nrow(samples), wall = dt,
        p_true = p_true, tl_true = tl_true, rateLogSd_true = rateLogSd_true,
-       kTrue = kTrue, kObs = kObs, u_true = u_true,
+       kTrue = kTrue, kObs = kObs, u_true = uTrue,
        n_kPrime_cols = length(kp_cols),
        ranks = rk)
 }
