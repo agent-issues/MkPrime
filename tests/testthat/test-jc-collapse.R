@@ -173,15 +173,14 @@ test_that("MkpLogLikelihood (auto-dispatched) matches uncollapsed reference", {
     child  <- tr$edge[, 2L]
     el     <- tr$edge.length
     rf <- rep(1.0 / kp, kp)
-    ll <- pruning_jc(parent, child, el, tip_states, kp, rf)
-    # ascertainment: variable coding
-    puninf <- constant_site_prob_jc(parent, child, el, nTip, kp, rf, 1.0)
-    ll - log(1 - puninf)
+    pruning_jc(parent, child, el, tip_states, kp, rf)
   }
 
+  # Transformational ascertainment sums over k', so does not route through
+  # the collapsed kernels.
   for (kp in c(3L, 5L, 8L, 13L)) {
     ll_disp <- MkpLogLikelihood(tr, mkd, kPrime = kp,
-                                rate_log_sd = 0, coding = "variable",
+                                rate_log_sd = 0, coding = "none",
                                 relabel = FALSE)
     expect_equal(ll_disp, manual_ll(kp), tolerance = 1e-10,
                  info = sprintf("auto-dispatched kPrime=%d", kp))
@@ -266,9 +265,9 @@ test_that("MkpLogLikelihood collapse-path informative coding matches uncollapsed
     mkdKnown <- MkPrimeData(pd, knownStates = c("1" = kp))
     for (rs in c(0, 0.5)) {
       for (cd in c("variable", "informative")) {
-        ll_disp <- MkpLogLikelihood(tr, mkdKnown, rate_log_sd = rs,
-                                    coding = cd, relabel = FALSE)
-        expect_equal(ll_disp, manual_ll(kp, rs, cd), tolerance = 1e-10,
+        llDisp <- MkpLogLikelihood(tr, mkdKnown, rate_log_sd = rs,
+                                   coding = cd, relabel = FALSE)
+        expect_equal(llDisp, manual_ll(kp, rs, cd), tolerance = 1e-10,
                      info = sprintf("kp=%d rs=%g cd=%s", kp, rs, cd))
       }
     }

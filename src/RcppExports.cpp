@@ -442,6 +442,21 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// joint_asc_at_cpp
+double joint_asc_at_cpp(SEXP dataPtr, SEXP statePtr, IntegerVector parent, IntegerVector child, NumericVector edgeLen);
+RcppExport SEXP _MkPrime_joint_asc_at_cpp(SEXP dataPtrSEXP, SEXP statePtrSEXP, SEXP parentSEXP, SEXP childSEXP, SEXP edgeLenSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type dataPtr(dataPtrSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type statePtr(statePtrSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type parent(parentSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type child(childSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type edgeLen(edgeLenSEXP);
+    rcpp_result_gen = Rcpp::wrap(joint_asc_at_cpp(dataPtr, statePtr, parent, child, edgeLen));
+    return rcpp_result_gen;
+END_RCPP
+}
 // fill_partition_cache
 void fill_partition_cache(SEXP dataPtr, SEXP statePtr);
 RcppExport SEXP _MkPrime_fill_partition_cache(SEXP dataPtrSEXP, SEXP statePtrSEXP) {
@@ -1174,6 +1189,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_fitch_score_r", (DL_FUNC) &_MkPrime_fitch_score_r, 5},
     {"_MkPrime_fitch_score_candidates_r", (DL_FUNC) &_MkPrime_fitch_score_candidates_r, 12},
     {"_MkPrime_init_mcmc_state", (DL_FUNC) &_MkPrime_init_mcmc_state, 22},
+    {"_MkPrime_joint_asc_at_cpp", (DL_FUNC) &_MkPrime_joint_asc_at_cpp, 5},
     {"_MkPrime_fill_partition_cache", (DL_FUNC) &_MkPrime_fill_partition_cache, 2},
     {"_MkPrime_allocate_cl_workspace", (DL_FUNC) &_MkPrime_allocate_cl_workspace, 2},
     {"_MkPrime_get_mcmc_state", (DL_FUNC) &_MkPrime_get_mcmc_state, 1},

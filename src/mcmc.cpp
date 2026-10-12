@@ -920,6 +920,17 @@ static double joint_asc_shift(const McmcData& data, McmcState& state,
   return std::isnan(total) ? R_NegInf : total;
 }
 
+// joint_asc_at for tests: tree-move weights that omit the joint term differ
+// from the log-likelihood by exactly this.
+// [[Rcpp::export]]
+double joint_asc_at_cpp(SEXP dataPtr, SEXP statePtr, IntegerVector parent,
+                        IntegerVector child, NumericVector edgeLen) {
+  const McmcData* data = Rcpp::XPtr<McmcData>(dataPtr).get();
+  McmcState* state = Rcpp::XPtr<McmcState>(statePtr).get();
+  // Return:
+  return joint_asc_at(*data, *state, parent, child, edgeLen);
+}
+
 // [[Rcpp::export]]
 void fill_partition_cache(SEXP dataPtr, SEXP statePtr) {
   McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
@@ -6767,6 +6778,7 @@ List debug_mcmc_data(SEXP dataPtr) {
 // M-111: Validation — compare partial CL vs full evaluation for all swap
 // candidates of a given nodeA.  Returns a data.frame with columns:
 //   nodeA, nodeB, ll_partial, ll_full
+// ll_full omits the joint ascertainment term, as the partial weights do.
 // [[Rcpp::export]]
 DataFrame validate_swap_partial_cl(SEXP dataPtr, SEXP statePtr, int nodeA) {
   McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
@@ -6805,7 +6817,8 @@ DataFrame validate_swap_partial_cl(SEXP dataPtr, SEXP statePtr, int nodeA) {
     if (!preorder_into(workPar, state->child, absLen, nTip,
                        INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs)))
       stop("Tree is not binary.");
-    llFull[pi] = compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs);
+    llFull[pi] = compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs) +
+      joint_asc_at(*data, *state, ordPar, ordCh, ordAbs);
 
     workPar[rowA] = origParA;  workPar[rowB] = origParB;
     absLen[rowA]  = origAbsA;  absLen[rowB]  = origAbsB;

@@ -127,7 +127,9 @@ test_that("marginal-k LL == full uncapped/uncutoff reference at low p (C-i guard
     fill_partition_cache(dp, sp); eval_full_loglik_cpp(dp, sp)
   }
   evalMarg <- function(mkd, p)   evalLL(modM, mkd, function(s) { s$p <- p; s })
-  LLfixed  <- function(mkd, kp)  evalLL(modS, mkd, function(s) { s$p <- 0.1
+  # The joint ascertainment term depends on p, so the fixed-k' reference is
+  # scored at the p it is compared at.
+  LLfixed  <- function(mkd, kp, p = 0.1) evalLL(modS, mkd, function(s) { s$p <- p
                                     s$kPrime <- rep_len(as.integer(kp), length(s$kPrime)); s })
   defaultLL <- function(mkd)     evalLL(modS, mkd, function(s) { s$p <- 0.1; s })   # default init kPrime == kObs
 
@@ -141,7 +143,8 @@ test_that("marginal-k LL == full uncapped/uncutoff reference at low p (C-i guard
                  label = sprintf("[%s] G2 LLfixed(kObs) == package default-init LL", nm))
     # MAIN: package marginal == full uncapped/uncutoff reference, at low p (heavy tail)
     for (p in c(0.01, 0.05)) {
-      ref <- lse((ks - 2) * log1p(-p) + log(p) + FX) - logZA(p)
+      FXp <- vapply(ks, function(kp) LLfixed(mkd, kp, p), numeric(1))
+      ref <- lse((ks - 2) * log1p(-p) + log(p) + FXp) - logZA(p)
       expect_equal(evalMarg(mkd, p), ref, tolerance = 1e-7,
                    label = sprintf("[%s] package marginal == full reference at p=%.2f", nm, p))
     }
@@ -191,7 +194,7 @@ test_that("marginal-k numerator reaches the full support at K=200 (Stage 1b cap 
     fill_partition_cache(dp, sp); eval_full_loglik_cpp(dp, sp)
   }
   evalMarg <- function() evalLL(modM, function(s) { s$p <- p; s })
-  LLfixed  <- function(kp) evalLL(modS, function(s) { s$p <- 0.1
+  LLfixed  <- function(kp, pp = 0.1) evalLL(modS, function(s) { s$p <- pp
                               s$kPrime <- rep_len(as.integer(kp), length(s$kPrime)); s })
   defaultLL <- evalLL(modS, function(s) { s$p <- 0.1; s })
 
@@ -202,10 +205,11 @@ test_that("marginal-k numerator reaches the full support at K=200 (Stage 1b cap 
   expect_equal(unname(FX[as.character(kobs)]), defaultLL, tolerance = 1e-9,
                label = "G2 LLfixed(kObs) == package default-init LL")
 
-  logw    <- (ks - 2) * log1p(-p) + log(p) + FX
+  FXp     <- vapply(ks, LLfixed, numeric(1), pp = p)
+  logw    <- (ks - 2) * log1p(-p) + log(p) + FXp
   refFull <- lse(logw)            - logZA(p, K)   # numerator over the full [2,200]
   refCap  <- lse(logw[ks <= 51])  - logZA(p, K)   # what an old cap=50 numerator gives
-  # The likelihood P(data | k') DECAYS in k' (FX: -5.87 at k'=2 down to -16.9 at
+  # The likelihood P(data | k') DECAYS in k' (FXp: -5.90 at k'=2 down to -16.9 at
   # k'=200), so the numerator's >k'=51 tail is small in absolute terms
   # (refFull - refCap ~ 1.3e-3 nats here) even though the *prior* mass there is
   # large -- a useful bound on the cap's practical impact for low-kObs chars.

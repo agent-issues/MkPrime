@@ -88,13 +88,15 @@
   len[sibRow]         <- (1 - tau) * lReg
   tree$edge        <- edge
   tree$edge.length <- len
+  attr(tree, "order") <- NULL
   Preorder(tree)
 }
 
 # The reference weights must be the partitioned likelihood of the regrafted
 # tree -- each class scored with its own shape and rate multiplier -- or the
 # selection weights and the selection term of the MH ratio target a different
-# model from state$logLik (#153).
+# model from state$logLik (#153). They omit the joint ascertainment term of
+# transformational partitions, which the finisher scores exactly.
 test_that("gibbs_spr weights candidates under the partitioned likelihood", {
   ctx   <- .CandContext(seed = 7L, nChar = 12L)
   chain <- .PartitionedChain(ctx$tree, ctx$mkd)
@@ -108,7 +110,9 @@ test_that("gibbs_spr weights candidates under the partitioned likelihood", {
   nCand <- nrow(en$edges) - 1L
 
   RegraftLogLik <- function(y) {
-    .PartitionedLogLik(chain, y$edge, y$edge.length)
+    .PartitionedLogLik(chain, y$edge, y$edge.length) +
+      joint_asc_at_cpp(chain$dataPtr, chain$statePtr, y$edge[, 1L],
+                       y$edge[, 2L], y$edge.length)
   }
   candLL <- vapply(seq_len(nCand), function(j) {
     candRow <- which(x$edge[, 1L] == en$edges[j, 1L] &

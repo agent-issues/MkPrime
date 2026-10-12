@@ -120,9 +120,10 @@ MkpLogLikelihood <- function(tree, mkd,
 # Internal fast-path likelihood — no validation, no reorder.
 # INVARIANT: tree$edge must already be in canonical preorder. Guaranteed by
 # .InitState() and all topology proposals (C++ preorder_weighted_impl).
+# Argument names follow MkpLogLikelihood()'s.
 .MkpLogLikelihood <- function(tree, mkd, kPrime, rate_loss, rate_log_sd,
-                               nCat, coding, rate_neo, relabel, model, p,
-                               kprimeAlpha, kprimeBeta) {
+                               nCat, coding, rate_neo, relabel, # nolint: object_name_linter.
+                               model, p, kprimeAlpha, kprimeBeta) {
   parent <- tree$edge[, 1]
   child <- tree$edge[, 2]
   edgeLength <- tree$edge.length

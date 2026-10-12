@@ -54,6 +54,23 @@ test_that("lumped JC kernel matches the per-k constant-site probability", {
   }
 })
 
+test_that("lumped kernel handles complete data and rejects unordered edges", {
+  tree <- .JointTree(6, 7L)
+  complete <- matrix(0L, 7L, 1L)
+  expect_equal(
+    MkPrime:::lumped_const_probs(
+      tree$edge[, 1], tree$edge[, 2], tree$edge.length, 7L, 1, complete,
+      as.numeric(2:4))[1, ],
+    vapply(2:4, function(k) .PerKConstProb(tree, complete, k, 1), double(1)),
+    tolerance = 1e-12)
+  shuffled <- rev(seq_len(nrow(tree$edge)))
+  expect_error(
+    MkPrime:::lumped_const_probs(
+      tree$edge[shuffled, 1], tree$edge[shuffled, 2],
+      tree$edge.length[shuffled], 7L, 1, complete, 2),
+    "preorder")
+})
+
 test_that("masks beyond the dense class table share partials by hashing", {
   tree <- .JointTree(11, 40L)
   masks <- .JointMasks(40L, 300L, 99)

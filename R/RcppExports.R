@@ -105,6 +105,10 @@ init_mcmc_state <- function(parent, child, relBrLengths, treeLength, rateLoss, r
     .Call(`_MkPrime_init_mcmc_state`, parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta, classRateLogSd, classW, classRate, nCharPerClass, etaNeo, useHyperpriorOnSigma, hyperTau, classZ)
 }
 
+joint_asc_at_cpp <- function(dataPtr, statePtr, parent, child, edgeLen) {
+    .Call(`_MkPrime_joint_asc_at_cpp`, dataPtr, statePtr, parent, child, edgeLen)
+}
+
 fill_partition_cache <- function(dataPtr, statePtr) {
     invisible(.Call(`_MkPrime_fill_partition_cache`, dataPtr, statePtr))
 }

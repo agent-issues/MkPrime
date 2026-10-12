@@ -661,6 +661,30 @@ double trans_joint_asc_log(const McmcData& data, int partIdx,
 }
 
 
+// The kernels fold each node's children in reverse edge order, so a node
+// must be reached from the root before its own edges are listed.
+static void check_preorder(const IntegerVector& parent,
+                           const IntegerVector& child, int nTip) {
+  const int nEdge = parent.size();
+  if (child.size() != nEdge) stop("parent and child differ in length.");
+  int maxNode = nTip + 1;
+  for (int e = 0; e < nEdge; ++e) {
+    maxNode = std::max({maxNode, (int)parent[e], (int)child[e]});
+    if (parent[e] <= nTip || child[e] < 1) {
+      stop("Edges must join internal nodes to their children.");
+    }
+  }
+  std::vector<uint8_t> reached(maxNode + 1, 0);
+  reached[nTip + 1] = 1;
+  for (int e = 0; e < nEdge; ++e) {
+    if (!reached[parent[e]] || reached[child[e]]) {
+      stop("Edges must be in preorder; a stale `order` attribute can hide "
+           "this from `Preorder()`.");
+    }
+    reached[child[e]] = 1;
+  }
+}
+
 // Pr(all observed tips in one state | k) for each mask (columns of `masks`,
 // 1 = missing) at each k in kVals, under JC(k), or under the
 // qHeterogeneity mixture when betaScale > 0. For tests of the kernels.
@@ -670,6 +694,7 @@ NumericMatrix lumped_const_probs(IntegerVector parent, IntegerVector child,
                                  NumericVector rates, IntegerMatrix masks,
                                  NumericVector kVals, double betaScale = 0.0,
                                  int nBetaCat = 4) {
+  check_preorder(parent, child, nTip);
   const int nMask = masks.ncol();
   std::vector<std::vector<uint8_t>> store(nMask, std::vector<uint8_t>(nTip));
   std::vector<const uint8_t*> ptr(nMask);
@@ -709,6 +734,7 @@ NumericVector joint_asc_log_cpp(SEXP dataPtr, int partIdx,
       data->parts[partIdx - 1].type != 1) {
     stop("partIdx must name a transformational partition.");
   }
+  check_preorder(parent, child, data->nTip);
   KprimeHyper hyper;
   hyper.p = p;
   hyper.alpha = alpha;
