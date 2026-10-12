@@ -57,6 +57,18 @@ mkp_hello <- function() {
     .Call(`_MkPrime_mkp_hello`)
 }
 
+lumped_const_probs <- function(parent, child, edgeLen, nTip, rates, masks, kVals, betaScale = 0.0, nBetaCat = 4L) {
+    .Call(`_MkPrime_lumped_const_probs`, parent, child, edgeLen, nTip, rates, masks, kVals, betaScale, nBetaCat)
+}
+
+joint_asc_log_cpp <- function(dataPtr, partIdx, parent, child, scaledEdge, rates, betaScale, p, alpha, beta, direct = FALSE) {
+    .Call(`_MkPrime_joint_asc_log_cpp`, dataPtr, partIdx, parent, child, scaledEdge, rates, betaScale, p, alpha, beta, direct)
+}
+
+kprime_log_prior_table_cpp <- function(dataPtr, kObs, p, alpha, beta) {
+    .Call(`_MkPrime_kprime_log_prior_table_cpp`, dataPtr, kObs, p, alpha, beta)
+}
+
 pruning_jc <- function(parent, child, edge_length, tip_states, kStates, root_freqs) {
     .Call(`_MkPrime_pruning_jc`, parent, child, edge_length, tip_states, kStates, root_freqs)
 }

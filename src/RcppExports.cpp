@@ -233,6 +233,61 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// lumped_const_probs
+NumericMatrix lumped_const_probs(IntegerVector parent, IntegerVector child, NumericVector edgeLen, int nTip, NumericVector rates, IntegerMatrix masks, NumericVector kVals, double betaScale, int nBetaCat);
+RcppExport SEXP _MkPrime_lumped_const_probs(SEXP parentSEXP, SEXP childSEXP, SEXP edgeLenSEXP, SEXP nTipSEXP, SEXP ratesSEXP, SEXP masksSEXP, SEXP kValsSEXP, SEXP betaScaleSEXP, SEXP nBetaCatSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< IntegerVector >::type parent(parentSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type child(childSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type edgeLen(edgeLenSEXP);
+    Rcpp::traits::input_parameter< int >::type nTip(nTipSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type rates(ratesSEXP);
+    Rcpp::traits::input_parameter< IntegerMatrix >::type masks(masksSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type kVals(kValsSEXP);
+    Rcpp::traits::input_parameter< double >::type betaScale(betaScaleSEXP);
+    Rcpp::traits::input_parameter< int >::type nBetaCat(nBetaCatSEXP);
+    rcpp_result_gen = Rcpp::wrap(lumped_const_probs(parent, child, edgeLen, nTip, rates, masks, kVals, betaScale, nBetaCat));
+    return rcpp_result_gen;
+END_RCPP
+}
+// joint_asc_log_cpp
+NumericVector joint_asc_log_cpp(SEXP dataPtr, int partIdx, IntegerVector parent, IntegerVector child, NumericVector scaledEdge, NumericVector rates, double betaScale, double p, double alpha, double beta, bool direct);
+RcppExport SEXP _MkPrime_joint_asc_log_cpp(SEXP dataPtrSEXP, SEXP partIdxSEXP, SEXP parentSEXP, SEXP childSEXP, SEXP scaledEdgeSEXP, SEXP ratesSEXP, SEXP betaScaleSEXP, SEXP pSEXP, SEXP alphaSEXP, SEXP betaSEXP, SEXP directSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type dataPtr(dataPtrSEXP);
+    Rcpp::traits::input_parameter< int >::type partIdx(partIdxSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type parent(parentSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type child(childSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type scaledEdge(scaledEdgeSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type rates(ratesSEXP);
+    Rcpp::traits::input_parameter< double >::type betaScale(betaScaleSEXP);
+    Rcpp::traits::input_parameter< double >::type p(pSEXP);
+    Rcpp::traits::input_parameter< double >::type alpha(alphaSEXP);
+    Rcpp::traits::input_parameter< double >::type beta(betaSEXP);
+    Rcpp::traits::input_parameter< bool >::type direct(directSEXP);
+    rcpp_result_gen = Rcpp::wrap(joint_asc_log_cpp(dataPtr, partIdx, parent, child, scaledEdge, rates, betaScale, p, alpha, beta, direct));
+    return rcpp_result_gen;
+END_RCPP
+}
+// kprime_log_prior_table_cpp
+NumericVector kprime_log_prior_table_cpp(SEXP dataPtr, int kObs, double p, double alpha, double beta);
+RcppExport SEXP _MkPrime_kprime_log_prior_table_cpp(SEXP dataPtrSEXP, SEXP kObsSEXP, SEXP pSEXP, SEXP alphaSEXP, SEXP betaSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type dataPtr(dataPtrSEXP);
+    Rcpp::traits::input_parameter< int >::type kObs(kObsSEXP);
+    Rcpp::traits::input_parameter< double >::type p(pSEXP);
+    Rcpp::traits::input_parameter< double >::type alpha(alphaSEXP);
+    Rcpp::traits::input_parameter< double >::type beta(betaSEXP);
+    rcpp_result_gen = Rcpp::wrap(kprime_log_prior_table_cpp(dataPtr, kObs, p, alpha, beta));
+    return rcpp_result_gen;
+END_RCPP
+}
 // pruning_jc
 double pruning_jc(Rcpp::IntegerVector parent, Rcpp::IntegerVector child, Rcpp::NumericVector edge_length, Rcpp::IntegerMatrix tip_states, int kStates, Rcpp::NumericVector root_freqs);
 RcppExport SEXP _MkPrime_pruning_jc(SEXP parentSEXP, SEXP childSEXP, SEXP edge_lengthSEXP, SEXP tip_statesSEXP, SEXP kStatesSEXP, SEXP root_freqsSEXP) {
@@ -1101,6 +1156,9 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_mk_prime_relabel_log", (DL_FUNC) &_MkPrime_mk_prime_relabel_log, 2},
     {"_MkPrime_mk_prime_relabel_log_batch", (DL_FUNC) &_MkPrime_mk_prime_relabel_log_batch, 2},
     {"_MkPrime_mkp_hello", (DL_FUNC) &_MkPrime_mkp_hello, 0},
+    {"_MkPrime_lumped_const_probs", (DL_FUNC) &_MkPrime_lumped_const_probs, 9},
+    {"_MkPrime_joint_asc_log_cpp", (DL_FUNC) &_MkPrime_joint_asc_log_cpp, 11},
+    {"_MkPrime_kprime_log_prior_table_cpp", (DL_FUNC) &_MkPrime_kprime_log_prior_table_cpp, 5},
     {"_MkPrime_pruning_jc", (DL_FUNC) &_MkPrime_pruning_jc, 6},
     {"_MkPrime_pruning_jc_collapsed", (DL_FUNC) &_MkPrime_pruning_jc_collapsed, 6},
     {"_MkPrime_pruning_mkn", (DL_FUNC) &_MkPrime_pruning_mkn, 6},
