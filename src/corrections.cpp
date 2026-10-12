@@ -1,5 +1,5 @@
 #include <Rcpp.h>
-#include <cmath>
+#include "../inst/include/MkPrime/corrections.h"
 
 // Mk' relabelling correction
 //
@@ -41,7 +41,7 @@ double mk_prime_relabel_log(int kPrime, int kObs) {
   }
 
   // log P(k', kObs) = lgamma(k'+1) - lgamma(k'-kObs+1)
-  return std::lgamma(kPrime + 1.0) - std::lgamma(kPrime - kObs + 1.0);
+  return MkPrime::relabel_log(kPrime, kObs);
 }
 
 
@@ -65,7 +65,7 @@ Rcpp::NumericVector mk_prime_relabel_log_batch(
     if (kp < kObs) {
       Rcpp::stop("kPrime[%d] = %d is less than kObs = %d", i + 1, kp, kObs);
     }
-    result[i] = std::lgamma(kp + 1.0) - std::lgamma(kp - kObs + 1.0);
+    result[i] = MkPrime::relabel_log(kp, kObs);
   }
 
   return result;
