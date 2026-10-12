@@ -3750,7 +3750,11 @@ RunMkPrime <- function(data, tree = NULL,
         nCat = model$nCat,
         coding = model$coding,
         rate_neo = state$rate_neo %||% 1,
-        relabel = model$relabel
+        relabel = model$relabel,
+        model = model,
+        p = state$p %||% 0.5,
+        kprimeAlpha = state$kprime_alpha %||% 1,
+        kprimeBeta = state$kprime_beta %||% 1
       ) > -Inf)
     }, logical(1))),
     error = function(e) integer(0)
@@ -4959,7 +4963,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     nCat = model$nCat,
     coding = model$coding,
     rate_neo = state$rate_neo %||% 1.0,
-    relabel = model$relabel
+    relabel = model$relabel,
+    model = model,
+    p = state$p %||% 0.5,
+    kprimeAlpha = state$kprime_alpha %||% 1,
+    kprimeBeta = state$kprime_beta %||% 1
   )
   state$log_prior <- LogPrior(state, model, mkd)
   state$log_post <- state$log_lik + state$log_prior
@@ -5644,7 +5652,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     nCat = model$nCat,
     coding = model$coding,
     rate_neo = proposed$rate_neo %||% 1.0,
-    relabel = model$relabel
+    relabel = model$relabel,
+    model = model,
+    p = proposed$p %||% 0.5,
+    kprimeAlpha = proposed$kprime_alpha %||% 1,
+    kprimeBeta = proposed$kprime_beta %||% 1
   )
   proposed$log_post <- proposed$log_lik + proposed$log_prior
 

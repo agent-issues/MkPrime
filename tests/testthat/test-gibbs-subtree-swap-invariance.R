@@ -71,8 +71,13 @@ test_that("gibbs_subtree_swap samples its exact target", {
   tree <- TreeTools::Preorder(ape::rtree(nTip, rooted = rooted))
   mat <- matrix(sample(0:2, nTip * 10L, replace = TRUE), nrow = nTip,
                 dimnames = list(tree$tip.label, paste0("c", seq_len(10L))))
-  mkd <- suppressWarnings(MkPrimeData(MatrixToPhyDat(mat)))
-  if (identical(model$coding, "informative")) {
+  informative <- identical(model$coding, "informative")
+  # Informative coding needs a fixed k.
+  known <- if (informative) setNames(rep(3L, 10L), seq_len(10L)) else
+    integer(0)
+  mkd <- suppressWarnings(MkPrimeData(MatrixToPhyDat(mat),
+                                      knownStates = known))
+  if (informative) {
     mkd <- suppressMessages(MkPrime:::.DropUninformable(mkd))
   }
   if (partitioned) {
@@ -91,7 +96,8 @@ test_that("gibbs_subtree_swap samples its exact target", {
       cpp_log_likelihood_xptr(
         dataPtr, st$edge[, 1], st$edge[, 2],
         st$treeLength * st$relBrLengths, st$kPrime,
-        st$rateLoss, st$rateLogSd, st$rateNeo, st$betaScale)
+        st$rateLoss, st$rateLogSd, st$rateNeo, st$p, st$kprimeAlpha,
+        st$kprimeBeta, st$betaScale)
     }
   }
 

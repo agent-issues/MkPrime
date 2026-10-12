@@ -32,10 +32,13 @@ std::vector<double> cheb_nodes_u(int n) {
 // partial there. Children fold into their parent one at a time, so a node may
 // have any number of children: the first child's classes are copied, and
 // each later child combines the parent's running class foldA[j] with its own
-// class foldB[j] into running class j.
+// class foldB[j] into running class j. A tip has two nominal classes
+// (observed, missing) whether or not each occurs, so a fold can leave a node
+// fewer classes than the copy before it: cap holds the most it ever has.
 struct MaskClasses {
   int nTip = 0, maxNode = 0, root = 0;
   std::vector<int> nCls;                  // by node, after its last fold
+  std::vector<int> cap;                   // by node
   std::vector<int> rootCls;               // by mask
   std::vector<uint8_t> first;             // by edge
   std::vector<int> nOut;                  // by edge: parent classes after it
@@ -56,12 +59,14 @@ MaskClasses build_mask_classes(const IntegerVector& parent,
   }
   std::vector<std::vector<int>> cls(mc.maxNode + 1);
   mc.nCls.assign(mc.maxNode + 1, 0);
+  mc.cap.assign(mc.maxNode + 1, 0);
   for (int t = 1; t <= nTip; ++t) {
     cls[t].resize(nMask);
     for (int m = 0; m < nMask; ++m) {
       cls[t][m] = (!masks.empty() && masks[m] && masks[m][t - 1]) ? 1 : 0;
     }
     mc.nCls[t] = 2;
+    mc.cap[t] = 2;
   }
   mc.first.assign(nEdge, 0);
   mc.nOut.assign(nEdge, 0);
@@ -77,6 +82,7 @@ MaskClasses build_mask_classes(const IntegerVector& parent,
       seen[par] = 1;
       cls[par] = cls[ch];
       mc.nCls[par] = mc.nCls[ch];
+      mc.cap[par] = mc.nCls[ch];
       mc.first[e] = 1;
       mc.nOut[e] = mc.nCls[ch];
       continue;
@@ -119,6 +125,7 @@ MaskClasses build_mask_classes(const IntegerVector& parent,
       }
     }
     mc.nCls[par] = nNew;
+    mc.cap[par] = std::max(mc.cap[par], nNew);
     mc.nOut[e] = nNew;
   }
   mc.rootCls = cls[mc.root];
@@ -128,7 +135,7 @@ MaskClasses build_mask_classes(const IntegerVector& parent,
 // Offsets of each node's classes in a flat per-class buffer.
 std::vector<int> class_offsets(const MaskClasses& mc, int* total) {
   std::vector<int> off(mc.maxNode + 2, 0);
-  for (int v = 1; v <= mc.maxNode; ++v) off[v + 1] = off[v] + mc.nCls[v];
+  for (int v = 1; v <= mc.maxNode; ++v) off[v + 1] = off[v] + mc.cap[v];
   *total = off[mc.maxNode + 1];
   return off;
 }
@@ -147,7 +154,7 @@ void lumped_jc_values(const MaskClasses& mc, const IntegerVector& parent,
   const std::vector<int> off = class_offsets(mc, &total);
   std::vector<double> x(total), y(total);
   int maxCls = 0;
-  for (int v = 1; v <= mc.maxNode; ++v) maxCls = std::max(maxCls, mc.nCls[v]);
+  for (int v = 1; v <= mc.maxNode; ++v) maxCls = std::max(maxCls, mc.cap[v]);
   std::vector<double> mx(maxCls), my(maxCls), tx(maxCls), ty(maxCls);
   for (int t = 1; t <= mc.nTip; ++t) {
     x[off[t]] = 1.0;
@@ -252,7 +259,7 @@ void lumped_het_values(const MaskClasses& mc, const IntegerVector& parent,
   constexpr int nV = 5;
   std::vector<double> v(total * nV);
   int maxCls = 0;
-  for (int n = 1; n <= mc.maxNode; ++n) maxCls = std::max(maxCls, mc.nCls[n]);
+  for (int n = 1; n <= mc.maxNode; ++n) maxCls = std::max(maxCls, mc.cap[n]);
   std::vector<double> msg(maxCls * nV), tmp(maxCls * nV);
   for (int t = 1; t <= mc.nTip; ++t) {
     double* obs = &v[off[t] * nV];
@@ -589,16 +596,63 @@ double joint_asc_log(const JointAscTable& table,
 }
 
 
+const JointAscTable& JointAscCache::table(const McmcData& data, int partIdx,
+                                          const IntegerVector& parent,
+                                          const IntegerVector& child,
+                                          const NumericVector& scaledEdge,
+                                          const NumericVector& rates,
+                                          double betaScale) {
+  if ((int)slots_.size() <= partIdx) {
+    slots_.resize(partIdx + 1);
+    recent_.resize(partIdx + 1, 0);
+  }
+  const NumericVector useRates = rates.size() ? rates : NumericVector(1, 1.0);
+  const double bs = data.qHeterogeneity ? betaScale : 0.0;
+  auto same = [](const auto& a, const auto& b) {
+    return std::equal(a.begin(), a.end(), b.begin(), b.end());
+  };
+  std::array<Slot, 2>& pair = slots_[partIdx];
+  const int last = recent_[partIdx];
+  for (int i : {last, 1 - last}) {
+    const Slot& s = pair[i];
+    if (s.data == &data && s.betaScale == bs && same(parent, s.parent) &&
+        same(child, s.child) && same(scaledEdge, s.edge) &&
+        same(useRates, s.rates)) {
+      recent_[partIdx] = i;
+      return s.table;
+    }
+  }
+  Slot& s = pair[1 - last];
+  s.data = &data;
+  s.parent.assign(parent.begin(), parent.end());
+  s.child.assign(child.begin(), child.end());
+  s.edge.assign(scaledEdge.begin(), scaledEdge.end());
+  s.rates.assign(useRates.begin(), useRates.end());
+  s.betaScale = bs;
+  s.table = joint_asc_table(data, partIdx, parent, child, scaledEdge,
+                            useRates, bs);
+  recent_[partIdx] = 1 - last;
+  // Return:
+  return s.table;
+}
+
+
 double trans_joint_asc_log(const McmcData& data, int partIdx,
                            const IntegerVector& parent,
                            const IntegerVector& child,
                            const NumericVector& scaledEdge,
                            const NumericVector& rates,
-                           double betaScale, const KprimeHyper& hyper) {
+                           double betaScale, const KprimeHyper& hyper,
+                           JointAscCache* cache) {
   const PartInfo& part = data.parts[partIdx];
   int lo;
   const std::vector<double> logPrior = kprime_log_prior_table(
     data, data.kObs[part.globalCharIdx[0]], hyper, &lo);
+  if (cache) {
+    return joint_asc_log(cache->table(data, partIdx, parent, child,
+                                      scaledEdge, rates, betaScale),
+                         logPrior);
+  }
   // Return:
   return joint_asc_log(
     joint_asc_table(data, partIdx, parent, child, scaledEdge, rates,

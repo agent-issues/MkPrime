@@ -262,11 +262,12 @@ test_that("MkpLogLikelihood collapse-path informative coding matches uncollapsed
   }
 
   for (kp in c(4L, 7L)) {
+    # Per-k ascertainment applies where k is fixed.
+    mkdKnown <- MkPrimeData(pd, knownStates = c("1" = kp))
     for (rs in c(0, 0.5)) {
       for (cd in c("variable", "informative")) {
-        ll_disp <- MkpLogLikelihood(tr, mkd, kPrime = kp,
-                                    rate_log_sd = rs, coding = cd,
-                                    relabel = FALSE)
+        ll_disp <- MkpLogLikelihood(tr, mkdKnown, rate_log_sd = rs,
+                                    coding = cd, relabel = FALSE)
         expect_equal(ll_disp, manual_ll(kp, rs, cd), tolerance = 1e-10,
                      info = sprintf("kp=%d rs=%g cd=%s", kp, rs, cd))
       }

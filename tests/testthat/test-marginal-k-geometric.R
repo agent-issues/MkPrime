@@ -109,7 +109,8 @@ test_that("marginal-k LL equals brute-force sum-of-products at small nTrans", {
     kP   <- as.integer(kObs + uVec)
     ll <- cpp_log_likelihood_xptr(
       samp$dataPtr, edge[, 1L], edge[, 2L], edgeLen, kP,
-      rateLoss = 1.0, rateLogSd = 0.0, rateNeo = 1.0, betaScale = 1.0
+      rateLoss = 1.0, rateLogSd = 0.0, rateNeo = 1.0, p = p_test,
+      kprimeAlpha = 1, kprimeBeta = 1, betaScale = 1.0
     )
     logTerms[idx] <- ll + sum(logPu[uVec + 1L])
   }

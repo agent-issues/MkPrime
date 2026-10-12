@@ -27,8 +27,13 @@
   tree <- Preorder(ape::rtree(nTip, rooted = rooted))
   mat  <- matrix(sample(0:2, nTip * nChar, replace = TRUE), nrow = nTip,
                  dimnames = list(tree$tip.label, NULL))
-  mkd   <- suppressWarnings(MkPrimeData(MatrixToPhyDat(mat)))
-  if (identical(model$coding, "informative")) {
+  informative <- identical(model$coding, "informative")
+  # Informative coding needs a fixed k.
+  known <- if (informative) setNames(rep(3L, nChar), seq_len(nChar)) else
+    integer(0)
+  mkd   <- suppressWarnings(MkPrimeData(MatrixToPhyDat(mat),
+                                        knownStates = known))
+  if (informative) {
     mkd <- suppressMessages(MkPrime:::.DropUninformable(mkd))
   }
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)

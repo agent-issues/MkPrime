@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include "joint_asc.h"
 
 // Per-partition data: tip states and character mapping.
 struct PartInfo {
@@ -315,6 +316,8 @@ struct ClWorkspace {
   std::vector<double>  siteLikSum;  // per-character site likelihood accumulator
   int siteLikMax = 0;
 
+  JointAscCache joint;
+
   bool ready() const { return !buf.empty(); }
 
   // True iff workspace can serve a call needing nNode nodes and stride cols.
@@ -367,6 +370,7 @@ double cpp_log_likelihood(
     Rcpp::IntegerVector child,
     Rcpp::NumericVector edgeLen,
     const Rcpp::IntegerVector& kPrime,
+    const KprimeHyper& hyper,
     double rateLoss,
     double rateLogSd,
     double rateNeo,
@@ -393,6 +397,7 @@ double cpp_log_likelihood_partitioned(
     Rcpp::IntegerVector child,
     Rcpp::NumericVector edgeLen,
     const Rcpp::IntegerVector& kPrime,
+    const KprimeHyper& hyper,
     double rateLoss,
     Rcpp::NumericVector rateLogSd,    // length 1 (linked) or data.nClasses
     Rcpp::NumericVector classRate,    // length 1 (linked) or data.nClasses
@@ -404,14 +409,27 @@ double cpp_log_likelihood_partitioned(
 
 // Per-partition log-likelihood for partial recomputation (M-064).
 // M-063: optional ClWorkspace* eliminates per-call heap allocation.
+// hyper is the k' prior's, which a transformational partition's joint
+// ascertainment term (joint_asc.h) integrates over.
 double cpp_partition_log_likelihood(
     const McmcData& data, int partIdx,
     Rcpp::IntegerVector parent, Rcpp::IntegerVector child,
     Rcpp::NumericVector edgeLen,
     const Rcpp::IntegerVector& kPrime,
+    const KprimeHyper& hyper,
     double rateLoss, double rateLogSd, double rateNeo,
     double betaScale = 1.0,
     ClWorkspace* ws = nullptr);
+
+// The joint ascertainment term of transformational partition partIdx at
+// edge lengths that carry any class rate but not the partition scale, under
+// the partition's rate parameters.
+double trans_joint_asc(
+    const McmcData& data, int partIdx,
+    const Rcpp::IntegerVector& parent, const Rcpp::IntegerVector& child,
+    const Rcpp::NumericVector& edgeLen,
+    double rateLogSd, double rateNeo, double betaScale,
+    const KprimeHyper& hyper, JointAscCache* cache);
 
 // ACRV rate computation (exposed for Gibbs kPrime sweep).
 Rcpp::NumericVector cpp_acrv_rates(double rateLogSd, int nCat,
@@ -450,15 +468,6 @@ void pruning_jc_acrv_persite_collapsed(
     double* buf, uint8_t* initFlg, int stride,
     double* siteLL);
 
-
-// Constant-site probability for a given kStates (cache helper for Gibbs sweep).
-double const_site_prob_for_k(
-    const McmcData& data,
-    const Rcpp::IntegerVector& parent,
-    const Rcpp::IntegerVector& child,
-    const Rcpp::NumericVector& edgeLen,
-    int kStates, double betaScale,
-    const Rcpp::NumericVector& acrvRates);
 
 // Ascertainment probability (constant, plus singleton under informative
 // coding) for each mask in maskIds, under the model of a partition of type

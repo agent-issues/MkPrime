@@ -55,6 +55,6 @@
   # Return:
   cpp_log_likelihood_partitioned_xptr(
     chain$dataPtr, edge[, 1L], edge[, 2L], edgeLen, st$kPrime,
-    st$rateLoss, st$classRateLogSd, st$classRate, st$etaNeo, st$betaScale,
-    st$rateNeo)
+    st$rateLoss, st$classRateLogSd, st$classRate, st$etaNeo, st$p,
+    st$kprimeAlpha, st$kprimeBeta, st$betaScale, st$rateNeo)
 }

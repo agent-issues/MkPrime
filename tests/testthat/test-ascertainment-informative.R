@@ -179,12 +179,22 @@ test_that("informative Sun2018 likelihood matches the per-tip kernels", {
     mkd <- suppressWarnings(MkPrimeData(sun, neomorphic = neo))
     # As the R entry points do; reference from the per-tip kernels (9da52ce).
     mkd <- suppressMessages(MkPrime:::.DropUninformable(mkd))
+    # The reference scored the other characters as transformational at
+    # k' = kObs; declared known at kObs, they lose only the relabelling term.
+    isTrans <- mkd$type == "transformational"
+    relabel <- sum(vapply(mkd$kObs[isTrans], function(k) {
+      MkPrime:::mk_prime_relabel_log_batch(k, k)
+    }, double(1)))
+    mkd$type[isTrans] <- "known"
+    mkd$known_k[isTrans] <- mkd$kObs[isTrans]
+    mkd$partitions <- MkPrime:::.BuildPartitions(mkd)
     model <- MkPrime:::.FinalizeModel(MkPrimeModel(coding = "informative"),
                                       tree, mkd)
-    cpp_log_likelihood_xptr(MkPrime:::.InitMcmcData(mkd, model),
-                            tree$edge[, 1], tree$edge[, 2], tree$edge.length,
-                            as.integer(mkd$kObs), rateLoss = 0.6,
-                            rateLogSd = 0.4, rateNeo = 1.3)
+    relabel + cpp_log_likelihood_xptr(
+      MkPrime:::.InitMcmcData(mkd, model), tree$edge[, 1], tree$edge[, 2],
+      tree$edge.length, as.integer(mkd$kObs), rateLoss = 0.6,
+      rateLogSd = 0.4, rateNeo = 1.3, p = 0.5, kprimeAlpha = 1,
+      kprimeBeta = 1)
   }, double(1))
   expect_lt(max(abs(ll - c(-2751.0193475561714, -2761.1086807231436))),
             1e-10)
@@ -218,16 +228,23 @@ test_that("k = 2 uninformative mass is exact with one or two observed tips", {
   MatrixToPhyDat(mat)
 }
 
+# Informative coding needs a fixed k: three states per character.
+.SixTipMkd <- function(extra) {
+  nChar <- 2L + !is.null(extra)
+  MkPrimeData(.SixTipData(extra),
+              knownStates = setNames(rep(3L, nChar), seq_len(nChar)))
+}
+
 test_that("informative coding drops parsimony-uninformative characters", {
   tree <- Preorder(ape::read.tree(
     text = "((t1:0.2,t2:0.3):0.1,(t3:0.25,t4:0.15):0.2,(t5:0.3,t6:0.1):0.05);"
   ))
-  ref <- MkpLogLikelihood(tree, MkPrimeData(.SixTipData(NULL)),
+  ref <- MkpLogLikelihood(tree, .SixTipMkd(NULL),
                           coding = "informative")
   extras <- list(c(0, 1, "?", "?", "?", "?"), c(0, 1, 1, "?", "?", "?"),
                  c(0, 0, 0, 0, 0, 1), c(0, 0, 1, 2, "?", 0))
   for (extra in extras) {
-    mkd <- MkPrimeData(.SixTipData(extra))
+    mkd <- .SixTipMkd(extra)
     expect_message(
       ll <- MkpLogLikelihood(tree, mkd, coding = "informative"),
       "Dropping 1 parsimony-uninformative character .*column 3"
@@ -237,7 +254,7 @@ test_that("informative coding drops parsimony-uninformative characters", {
   # With under four observed tips the correction is undefined, so the
   # sampler's data setup refuses what the R entry points failed to drop.
   for (extra in extras[1:2]) {
-    mkd <- MkPrimeData(.SixTipData(extra))
+    mkd <- .SixTipMkd(extra)
     model <- MkPrime:::.FinalizeModel(MkPrimeModel(coding = "informative"),
                                       tree, mkd)
     expect_error(MkPrime:::.InitMcmcData(mkd, model),
@@ -262,14 +279,14 @@ test_that("informative coding drops parsimony-uninformative characters", {
 
 test_that("prepare_mcmc_data refuses what informative coding cannot score", {
   # #348: R entry points guard these; direct C++ callers must be refused too.
-  expect_type(.PrepareData(MkPrimeData(.SixTipData(NULL))), "externalptr")
+  expect_type(.PrepareData(.SixTipMkd(NULL)), "externalptr")
   for (extra in list(c(0, 0, 0, 0, 0, 1), c(0, 0, 1, 2, "?", 0))) {
-    mkd <- MkPrimeData(.SixTipData(extra))
+    mkd <- .SixTipMkd(extra)
     expect_error(.PrepareData(mkd),
                  "parsimony-informative characters; 1 character")
     expect_type(.PrepareData(mkd, coding = "variable"), "externalptr")
   }
-  mkd <- MkPrimeData(.SixTipData(NULL))
+  mkd <- .SixTipMkd(NULL)
   expect_error(.PrepareData(mkd, qHet = TRUE), "qHeterogeneity cannot")
   expect_type(.PrepareData(mkd, coding = "variable", qHet = TRUE),
               "externalptr")
@@ -278,7 +295,7 @@ test_that("prepare_mcmc_data refuses what informative coding cannot score", {
 test_that("RunMkPrime drops parsimony-uninformative characters", {
   # A run this short warns that warmup did not stabilise.
   suppressWarnings(expect_message(
-    result <- RunMkPrime(.SixTipData(c(0, 0, 0, 0, 0, 1)),
+    result <- RunMkPrime(.SixTipMkd(c(0, 0, 0, 0, 0, 1)),
                          model = MkPrimeModel(coding = "informative"),
                          nIter = 20L, nRuns = 1L, autoTune = FALSE,
                          checkpointFile = FALSE, maxTime = 30),
@@ -288,7 +305,7 @@ test_that("RunMkPrime drops parsimony-uninformative characters", {
 })
 
 test_that("ResumeMkPrime and mkp_stepping_stone drop them too", {
-  data <- .SixTipData(c(0, 0, 0, 0, 0, 1))
+  data <- .SixTipMkd(c(0, 0, 0, 0, 0, 1))
   model <- MkPrimeModel(coding = "informative")
   cp <- tempfile(fileext = ".ckp")
   on.exit(unlink(cp))
@@ -307,4 +324,18 @@ test_that("ResumeMkPrime and mkp_stepping_stone drop them too", {
     "Dropping 1 parsimony-uninformative character"
   ))
   expect_true(is.finite(ss$log_marginal))
+})
+
+test_that("informative coding refuses transformational characters", {
+  tree <- Preorder(ape::read.tree(
+    text = "((t1:0.2,t2:0.3):0.1,(t3:0.25,t4:0.15):0.2,(t5:0.3,t6:0.1):0.05);"
+  ))
+  mkd <- MkPrimeData(.SixTipData(NULL))
+  model <- MkPrimeModel(coding = "informative")
+  expect_error(MkpLogLikelihood(tree, mkd, coding = "informative"),
+               "not yet available for transformational")
+  expect_error(MkPrime:::.FinalizeModel(model, tree, mkd),
+               "not yet available for transformational")
+  expect_error(.PrepareData(mkd), "not yet available for transformational")
+  expect_type(.PrepareData(mkd, coding = "variable"), "externalptr")
 })

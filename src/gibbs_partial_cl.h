@@ -93,6 +93,9 @@ struct CLGroup {
   int kStates, nChar, nCat, maxNode;
   int stride;       // nChar * kStates
   bool isMkN;       // true → asymmetric binary model (uses rateLoss)
+  // Whether the group carries its own ascertainment term; a transformational
+  // group's is its partition's joint term (joint_asc.h).
+  bool ownAsc = false;
   double rateLoss;  // only for isMkN
   double rateScale; // partition-rate scale (audit Issue 1):
                     //   neoScale = r/(1+r) * (n_neo+n_trans)/n_neo  for neo

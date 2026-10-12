@@ -16,6 +16,14 @@
 #' Felsenstein pruning \insertCite{Felsenstein1981}{MkPrime}, with optional
 #' ACRV \insertCite{Harrison2014}{MkPrime} and ascertainment bias correction.
 #'
+#' A transformational character's \eqn{k'} is drawn from the \eqn{k'} prior
+#' together with its pattern, and an invariant pair goes unrecorded whatever
+#' its \eqn{k'}. Its ascertainment correction therefore averages over that
+#' prior, given by `model`, `p`, `kprimeAlpha` and `kprimeBeta`:
+#' \deqn{\Pr(k', y \mid V) = \pi(k') \Pr(y \mid k') /
+#'   \sum_k \pi(k) \Pr(V \mid k),}
+#' so the correction does not change with `kPrime`.
+#'
 #' @references \insertAllCited{}
 #' @param tree A `phylo` object (from ape). Must be unrooted or rooted.
 #'   Its tip labels must be the taxa of `mkd`, in any order.
@@ -40,6 +48,12 @@
 #' @param relabel Logical. Apply Mk' relabelling correction for
 #'   transformational characters? Set to `FALSE` for standard Mk
 #'   likelihood (e.g., for validation against phangorn). Default `TRUE`.
+#' @param model [MkPrimeModel()] object whose \eqn{k'} prior enters the
+#'   ascertainment correction of transformational characters.
+#' @param p Numeric specifying the `p` of a geometric or empirical geometric
+#'   \eqn{k'} prior.
+#' @param kprimeAlpha,kprimeBeta Numeric specifying the shape parameters of a
+#'   beta-geometric \eqn{k'} prior.
 #'
 #' @return Scalar log-likelihood.
 #' @export
@@ -47,10 +61,14 @@ MkpLogLikelihood <- function(tree, mkd,
                                kPrime = NULL,
                                rate_loss = 1.0,
                                rate_log_sd = 0,
-                               nCat = 6L,
-                               coding = "variable",
+                               nCat = model$nCat,
+                               coding = model$coding,
                                rate_neo = 1.0,
-                               relabel = TRUE) {
+                               relabel = model$relabel,
+                               model = MkPrimeModel(),
+                               p = 0.5,
+                               kprimeAlpha = model$kprimeAlpha,
+                               kprimeBeta = model$kprimeBeta) {
   if (!inherits(tree, "phylo")) {
     cli::cli_abort("{.arg tree} must be a {.cls phylo} object.")
   }
@@ -58,6 +76,7 @@ MkpLogLikelihood <- function(tree, mkd,
     cli::cli_abort("{.arg mkd} must be a {.cls MkPrimeData} object.")
   }
   coding <- match.arg(coding, c("variable", "informative", "none"))
+  .CheckInformativeCoding(coding, mkd)
   # Pruning pairs tip i with data row i.
   dataTaxa <- rownames(mkd$matrix)
   if (!identical(tree$tip.label, dataTaxa)) {
@@ -94,14 +113,16 @@ MkpLogLikelihood <- function(tree, mkd,
   tree <- TreeTools::Preorder(tree)
 
   .MkpLogLikelihood(tree, mkd, kPrime, rate_loss, rate_log_sd,
-                    nCat, coding, rate_neo, relabel)
+                    nCat, coding, rate_neo, relabel, model, p, kprimeAlpha,
+                    kprimeBeta)
 }
 
 # Internal fast-path likelihood — no validation, no reorder.
 # INVARIANT: tree$edge must already be in canonical preorder. Guaranteed by
 # .InitState() and all topology proposals (C++ preorder_weighted_impl).
 .MkpLogLikelihood <- function(tree, mkd, kPrime, rate_loss, rate_log_sd,
-                               nCat, coding, rate_neo, relabel) {
+                               nCat, coding, rate_neo, relabel, model, p,
+                               kprimeAlpha, kprimeBeta) {
   parent <- tree$edge[, 1]
   child <- tree$edge[, 2]
   edgeLength <- tree$edge.length
@@ -132,6 +153,9 @@ MkpLogLikelihood <- function(tree, mkd,
   }
   neoEdge   <- edgeLength * neoScale
   transEdge <- edgeLength * transScale
+  if (coding != "none" && any(partTypes == "transformational")) {
+    model <- .ResolvePriorDefaults(model)
+  }
 
   totalLoglik <- 0.0
 
@@ -235,7 +259,6 @@ MkpLogLikelihood <- function(tree, mkd,
       for (kp in sort(unique(kPrimePart))) {
         cols <- which(kPrimePart == kp)
         subStates <- tipStates[, cols, drop = FALSE]
-        nCharSub <- length(cols)
 
         # Derive kObsMax from per-char kObs of *this sub-batch* so the
         # dispatch survives future partition refactors that mix kObs.
@@ -249,20 +272,6 @@ MkpLogLikelihood <- function(tree, mkd,
             subLl <- pruning_jc_collapsed(parent, child, transEdge,
                                           subStates, kp, kObsMaxSub)
           }
-
-          if (coding != "none") {
-            puninf <- constant_site_prob_jc_collapsed(
-              parent, child, transEdge, nTip, kp, kObsMaxSub, rates
-            )
-            if (coding == "informative") {
-              puninf <- puninf + uninf_nonconst_prob_jc(
-                parent, child, transEdge, nTip, kp, rates
-              )
-            }
-            subLl <- subLl - .MaskedAscLog1m(subStates, puninf, parent, child,
-                                             transEdge, nTip, kp, FALSE, 1,
-                                             rates, coding)
-          }
         } else {
           rootFreqs <- rep(1.0 / kp, kp)
           if (rate_log_sd > 0) {
@@ -272,22 +281,16 @@ MkpLogLikelihood <- function(tree, mkd,
             subLl <- pruning_jc(parent, child, transEdge,
                                  subStates, kp, rootFreqs)
           }
-
-          if (coding != "none") {
-            puninf <- constant_site_prob_jc(parent, child, transEdge,
-                                            nTip, kp, rootFreqs, rates)
-            if (coding == "informative") {
-              puninf <- puninf + uninf_nonconst_prob_jc(
-                parent, child, transEdge, nTip, kp, rates
-              )
-            }
-            subLl <- subLl - .MaskedAscLog1m(subStates, puninf, parent, child,
-                                             transEdge, nTip, kp, FALSE, 1,
-                                             rates, coding)
-          }
         }
 
         ll <- ll + subLl
+      }
+
+      if (coding != "none") {
+        logPrior <- .KprimeLogPriorTable(model, part$kObs, p, kprimeAlpha,
+                                         kprimeBeta)
+        ll <- ll - .JointAscLog(tipStates, logPrior, parent, child, transEdge,
+                                nTip, rates)
       }
 
       # Relabelling correction (per character)
@@ -329,4 +332,60 @@ MkpLogLikelihood <- function(tree, mkd,
   }, double(1))
   # Return:
   sum(as.integer(counts) * log(1 - p))
+}
+
+
+# log pi(k) over the support lo..K of the k' prior, for a transformational
+# character observed in kObs states, with lo as attribute "lo". A prior that
+# conditions on kObs starts its support there; the others start at 2.
+.KprimeLogPriorTable <- function(model, kObs, p, kprimeAlpha, kprimeBeta) {
+  K <- as.integer(model$kprimeTruncK %||% 200L)
+  arm <- model$kPrimePrior %||% "geometric"
+  conditional <- arm == "beta_geometric" ||
+    (arm != "logseries" && !identical(model$priorVariant, "unconditional"))
+  lo <- if (conditional) as.integer(kObs) else 2L
+  if (lo > K) return(structure(numeric(0), lo = lo))
+  k <- lo:K
+  logW <- switch(arm,
+    geometric = (k - lo) * log1p(-p),
+    beta_geometric = lbeta(kprimeAlpha + 1, kprimeBeta + k - lo),
+    logseries = k * log(model$kprimeLogseriesC) - log(k),
+    empirical_geometric = .LogEmpGeomCapped(model$empiricalNObs, p, K)$logPk[k]
+  )
+  top <- max(logW)
+  # Return:
+  structure(logW - top - log(sum(exp(logW - top))), lo = lo)
+}
+
+
+# Sum over missing-data masks of n_m * log D_m, D_m = sum_k pi(k) Pr(V | k, m):
+# the amount the joint ascertainment correction subtracts from a
+# transformational partition, summing every k in the prior's support.
+.JointAscLog <- function(tipStates, logPrior, parent, child, edgeLength, nTip,
+                         rates) {
+  if (!length(logPrior)) return(Inf)
+  missing <- tipStates < 0L
+  maskKey <- apply(missing, 2, function(x) paste(which(x), collapse = " "))
+  counts <- table(maskKey)
+  masks <- missing[, match(names(counts), maskKey), drop = FALSE]
+  k <- attr(logPrior, "lo") + seq_along(logPrior) - 1
+  constProb <- lumped_const_probs(parent, child, edgeLength, nTip, rates,
+                                  masks * 1L, as.numeric(k))
+  # Return:
+  sum(as.integer(counts) * log(drop((1 - constProb) %*% exp(logPrior))))
+}
+
+
+# The ascertainment of a transformational character sums over its k', which
+# the informative correction cannot yet do.
+.CheckInformativeCoding <- function(coding, mkd) {
+  if (identical(coding, "informative") &&
+      any(mkd$type == "transformational")) {
+    cli::cli_abort(c(
+      "{.code coding = \"informative\"} is not yet available for
+       transformational characters.",
+      "i" = "Use {.code coding = \"variable\"}, or declare the characters
+             {.arg neomorphic} or {.arg knownStates} in {.fun MkPrimeData}."
+    ))
+  }
 }

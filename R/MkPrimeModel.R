@@ -595,6 +595,7 @@ MkPrimeModel <- function(
 #' @keywords internal
 .FinalizeModel <- function(model, tree, mkd) {
   model <- .ResolvePriorDefaults(model)
+  .CheckInformativeCoding(model$coding, mkd)
   .CheckPriorEnums(model$kPrimePrior, model$priorVariant)
   .CheckPriorVariant(model$kPrimePrior, model$priorVariant)
   if (!is.null(model$kprimeTruncK)) {
