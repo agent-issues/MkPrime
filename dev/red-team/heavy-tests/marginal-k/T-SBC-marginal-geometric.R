@@ -30,6 +30,7 @@
 #   5. kTrue_i      = pmin(2 + u_i, K_MAX_PRIOR)
 #   6. y_i          ~ JC(kTrue_i) on the tree
 #   7. canonicalise y_i → kObs_i (= number of distinct realised states)
+#   8. redraw kTrue_i and y_i together while y_i is invariant (joint Mk'v)
 #
 # Inference:
 #   MkPrimeModel(kPrimePrior = "geometric",
@@ -159,37 +160,21 @@ seedBase       <- {
   #   u_i   ~ Geo(p_true)         (location-free; full support on u >= 0)
   #   kTrue = pmin(2 + u, K_MAX_PRIOR)
   #
-  # 2026-05-29 LEWIS-MKV FORWARD (Model I-a). Mk' implements the standard
-  # Lewis-Mkv ascertainment: k' ~ w_k(p) UNCONDITIONALLY (intrinsic property),
-  # and each character's likelihood is conditioned on being variable GIVEN its
-  # k, i.e. L(y|k)/a_k with a_k = P(variable|k,tree). Marginalising k gives
-  # Σ_k w_k(p) L(y|k)/a_k (sum-of-ratios), which is exactly what the C++
-  # marginal path computes — so the inference is CORRECT for this model (no
-  # code change). Confirmed: MkPrimeData drops invariant characters
-  # unconditionally, so the data path always conditions on variability.
-  #
-  # The MATCHING forward (what earlier runs got wrong by jointly redrawing k
-  # and y, a different "filtered-pool" model giving ratio-of-sums): draw
-  # kTrue_j ONCE from the unconditional prior, then redraw the DATA ONLY
-  # (k held fixed) until the character is variable. This yields k ~ w_k and
-  # y ~ P(y | k, variable) — Model I-a. All characters are variable, so
-  # MkPrimeData drops nothing and the coding="variable" /a_k correction
-  # applies cleanly. SBC must pass if the marginal-k core + Mkv are correct.
+  # Joint Mk'v forward (pair rejection): each character draws k' from the
+  # truncated geometric on [2, K_MAX_PRIOR] and data under JC(k'), and an
+  # invariant pair is discarded whole, k' included. Recorded characters then
+  # follow Pr(K = k, y | V) = w_k(p) L(y | k) / Pr(V), the model MkPrime
+  # conditions on. (Before 2026-10, MkPrime used the per-k' Lewis form,
+  # w_k(p) L(y | k) / a_k, whose forward holds k' fixed and redraws only y.)
   # MARGINAL-K-TRUNC-001: draw k' from a TRUNCATED geometric on [2, K_MAX_PRIOR]
   # by rejection-redraw — NOT pmin(2+Geom, K) which piles a point mass at K.
   # The inference (cpp_log_likelihood_marginal) caps its marginal sum at k<=K
   # AND renormalises by Z(p)=1-(1-p)^(K-1); the forward must match for SBC
   # validity (proof dev/red-team/proofs/marginal-k-truncation-normaliser.md).
-  kTrue <- integer(N_CHAR)
-  for (jj in seq_len(N_CHAR)) {
-    repeat { kk <- 2L + stats::rgeom(1L, p_true); if (kk <= K_MAX_PRIOR) break }
-    kTrue[jj] <- kk
-  }
-  u_true <- kTrue - 2L                             # offset (k held FIXED below)
   MAX_REDRAW <- 100000L
   sim_mat <- matrix(NA_integer_, N_TIP, N_CHAR,
                     dimnames = list(tr$tip.label, NULL))
-  kObs <- integer(N_CHAR)
+  kTrue <- kObs <- integer(N_CHAR)
   for (j in seq_len(N_CHAR)) {
     attempt <- 0L
     repeat {
@@ -197,12 +182,15 @@ seedBase       <- {
       if (attempt > MAX_REDRAW) {
         return(list(skipped = TRUE, reason = "redraw_cap"))
       }
-      cv <- .canon(.simJCchar(tr, kTrue[j]))        # redraw DATA only; k fixed
+      repeat { kk <- 2L + stats::rgeom(1L, p_true); if (kk <= K_MAX_PRIOR) break }
+      cv <- .canon(.simJCchar(tr, kk))              # redraw k' AND data
       if (attr(cv, "kObs") >= 2L) break
     }
+    kTrue[j] <- kk
     sim_mat[, j] <- cv
     kObs[j] <- attr(cv, "kObs")
   }
+  u_true <- kTrue - 2L
   n_char <- N_CHAR
   pd  <- TreeTools::MatrixToPhyDat(sim_mat)
   mkd <- MkPrimeData(pd)
@@ -211,9 +199,7 @@ seedBase       <- {
   start_tree$edge.length <- rep_len(0.1, nrow(tr$edge))
 
   model <- suppressMessages(MkPrimeModel(
-    # Lewis-Mkv (Model I-a): per-char likelihood conditioned on variable given
-    # k. Matches the redraw-data-only forward; this is the model the C++
-    # marginal path (sum-of-ratios Σ_k w_k L/a_k) actually implements.
+    # Joint Mk'v: conditions on Pr(K, V), as the pair-rejection forward does.
     coding         = "variable",
     nCat           = 1L,
     kPrimePrior    = "geometric",
@@ -457,9 +443,9 @@ cat(sprintf("Prior variant: unconditional (Model A: k' = 2 + Geo(p))\n"))
 cat(sprintf("Hyperprior:    p ~ Beta(%g, %g)\n", A_PRIOR, B_PRIOR))
 cat(sprintf("Forward draw:  kTrue_i ~ TRUNCATED Geo(p_true) on [2, %d] via rejection\n",
             K_MAX_PRIOR))
-cat("               redraw (NOT pmin-cap; MARGINAL-K-TRUNC-001), drawn ONCE\n")
-cat("               (uncond.); then redraw DATA only (k fixed) until variable\n")
-cat("               (Lewis-Mkv, Model I-a). Inference coding='variable',\n")
+cat("               redraw (NOT pmin-cap; MARGINAL-K-TRUNC-001); (k', y)\n")
+cat("               pairs redrawn together until variable (joint Mk'v).\n")
+cat("               Inference coding='variable',\n")
 cat(sprintf("               marginal sum capped at k<=%d + renormalised by Z(p).\n", K_MAX_PRIOR))
 cat("\nAD p-values vs Uniform(0, 1) [full-mode pass gate: > 0.4]:\n")
 for (nm in names(ad)) {

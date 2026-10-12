@@ -10,10 +10,14 @@ MkpLogLikelihood(
   kPrime = NULL,
   rate_loss = 1,
   rate_log_sd = 0,
-  nCat = 6L,
-  coding = "variable",
+  nCat = model$nCat,
+  coding = model$coding,
   rate_neo = 1,
-  relabel = TRUE
+  relabel = model$relabel,
+  model = MkPrimeModel(),
+  p = 0.5,
+  kprimeAlpha = model$kprimeAlpha,
+  kprimeBeta = model$kprimeBeta
 )
 }
 \arguments{
@@ -40,7 +44,8 @@ correction, \code{"variable"} for conditioning on variable characters,
 \code{"informative"} for conditioning on parsimony-informative characters
 (excludes every pattern in which fewer than two states each occur
 twice or more; characters that are not parsimony-informative are
-dropped with a message). Default \code{"variable"}.}
+dropped with a message, and every character must be neomorphic or of
+known state). Default \code{"variable"}.}
 
 \item{rate_neo}{Rate scalar for the neomorphic partition relative to
 transformational (which is fixed at 1.0). Default 1.0 (equal rates).}
@@ -48,6 +53,15 @@ transformational (which is fixed at 1.0). Default 1.0 (equal rates).}
 \item{relabel}{Logical. Apply Mk' relabelling correction for
 transformational characters? Set to \code{FALSE} for standard Mk
 likelihood (e.g., for validation against phangorn). Default \code{TRUE}.}
+
+\item{model}{\code{\link[=MkPrimeModel]{MkPrimeModel()}} object whose \eqn{k'} prior enters the
+ascertainment correction of transformational characters.}
+
+\item{p}{Numeric specifying the \code{p} of a geometric or empirical geometric
+\eqn{k'} prior.}
+
+\item{kprimeAlpha, kprimeBeta}{Numeric specifying the shape parameters of a
+beta-geometric \eqn{k'} prior.}
 }
 \value{
 Scalar log-likelihood.
@@ -56,6 +70,15 @@ Scalar log-likelihood.
 Evaluates the Mk' likelihood \insertCite{Lewis2001}{MkPrime} via
 Felsenstein pruning \insertCite{Felsenstein1981}{MkPrime}, with optional
 ACRV \insertCite{Harrison2014}{MkPrime} and ascertainment bias correction.
+}
+\details{
+A transformational character's \eqn{k'} is drawn from the \eqn{k'} prior
+together with its pattern, and an invariant pair goes unrecorded whatever
+its \eqn{k'}. Its ascertainment correction therefore averages over that
+prior, given by \code{model}, \code{p}, \code{kprimeAlpha} and \code{kprimeBeta}:
+\deqn{\Pr(k', y \mid V) = \pi(k') \Pr(y \mid k') /
+  \sum_k \pi(k) \Pr(V \mid k),}
+so the correction does not change with \code{kPrime}.
 }
 \references{
 \insertAllCited{}
