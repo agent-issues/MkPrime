@@ -40,12 +40,15 @@ struct KprimeHyper {
 // k below this value is summed exactly.
 constexpr int kJointExactBelow = 8;
 
-// Pr(V | k) for one transformational partition's missing-data masks, at the
-// k values the normaliser needs, on one tree.
+// Pr(V | k) on one tree for the missing-data masks of the transformational
+// partitions in one rate class, at the k values their normalisers need.
+// Pr(V | k) depends on the mask, not the partition, so one traversal serves
+// every partition in the class.
 struct JointAscTable {
-  int lo = 2;                    // smallest k in the prior's support
+  int lo = 2;                    // smallest k any partition's prior supports
   int K = 2;                     // largest k in the prior's support
-  std::vector<int> counts;       // characters per mask
+  int nMask = 0;
+  std::vector<int> row;          // row of g by data.missingMasks id; -1 if none
   // Exact k: integers exactLo .. exactHi; g is nMask x nK, row-major by mask.
   int exactLo = 0, exactHi = -1;
   // Chebyshev nodes in u over [0, 1 / (kJointExactBelow - 1)]: nNode > 0
@@ -81,9 +84,9 @@ void lumped_const_probs_het(const Rcpp::IntegerVector& parent,
 std::vector<double> kprime_log_prior_table(const McmcData& data, int kObs,
                                            const KprimeHyper& hyper, int* lo);
 
-// Pr(V | k) table for transformational partition partIdx; scaledEdge carries
-// the partition scale and rates the ACRV rates (length >= 1). forceDirect
-// evaluates every k exactly.
+// Pr(V | k) table for the rate class of transformational partition partIdx;
+// scaledEdge carries the partition scale and rates the ACRV rates (length
+// >= 1). forceDirect evaluates every k exactly.
 JointAscTable joint_asc_table(const McmcData& data, int partIdx,
                               const Rcpp::IntegerVector& parent,
                               const Rcpp::IntegerVector& child,
@@ -91,15 +94,17 @@ JointAscTable joint_asc_table(const McmcData& data, int partIdx,
                               const Rcpp::NumericVector& rates,
                               double betaScale, bool forceDirect = false);
 
-// sum_m n_m log D_m from a table and the log prior table over [lo, K]; +Inf
-// when some D_m vanishes, so that subtracting it gives a -Inf likelihood.
-double joint_asc_log(const JointAscTable& table,
-                     const std::vector<double>& logPrior);
+// sum_m n_m log D_m over partition partIdx's masks, from its class's table
+// and its log prior table over [lo, K]; +Inf when some D_m vanishes, so that
+// subtracting it gives a -Inf likelihood.
+double joint_asc_log(const McmcData& data, int partIdx,
+                     const JointAscTable& table,
+                     const std::vector<double>& logPrior, int lo);
 
-// Pr(V | k) tables by transformational partition, for the last two trees
-// each was scored on. A move that changes neither the tree nor the rates (a
-// k' or hyperparameter update, or a return to the current tree after a
-// rejected proposal) reuses a table rather than rebuilding it.
+// Pr(V | k) tables by rate class, for the last two trees each was scored on.
+// A move that changes neither the tree nor the rates (a k' or hyperparameter
+// update, or a return to the current tree after a rejected proposal) reuses
+// a table rather than rebuilding it.
 class JointAscCache {
  public:
   const JointAscTable& table(const McmcData& data, int partIdx,
@@ -117,7 +122,7 @@ class JointAscCache {
     double betaScale = 0.0;
     JointAscTable table;
   };
-  std::vector<std::array<Slot, 2>> slots_;
+  std::vector<std::array<Slot, 2>> slots_;  // by classIdx
   std::vector<int> recent_;
 };
 

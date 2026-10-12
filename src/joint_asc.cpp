@@ -352,19 +352,31 @@ void append_variable_probs(const MaskClasses& mc, const McmcData& data,
   table.g = std::move(g);
 }
 
+// The smallest k' the prior supports for a character observed in kObs
+// states: kObs under a prior that conditions on it, else 2.
+int prior_lo(const McmcData& data, int kObs) {
+  const bool conditional = data.kPriorBetaGeometric ||
+    (!data.kPriorLogseries && !data.unconditionalPrior);
+  return conditional ? kObs : 2;
+}
+
 // Whether every mask's interpolant through its last n values has converged:
 // its two highest Chebyshev coefficients are negligible.
 bool cheb_converged(const JointAscTable& table, int n) {
   const int nK = table.kVals.size();
-  const int nMask = table.counts.size();
+  const int nMask = table.nMask;
+  std::vector<double> basis(n * n);
+  for (int q = 0; q < n; ++q) {
+    for (int j = 0; j < n; ++j) {
+      basis[q * n + j] = std::cos(q * (2.0 * j + 1.0) * M_PI / (2.0 * n));
+    }
+  }
   for (int m = 0; m < nMask; ++m) {
     const double* gv = &table.g[m * nK + nK - n];
     double scale = 0.0, tail = 0.0;
     for (int q = 0; q < n; ++q) {
       double cq = 0.0;
-      for (int j = 0; j < n; ++j) {
-        cq += gv[j] * std::cos(q * (2.0 * j + 1.0) * M_PI / (2.0 * n));
-      }
+      for (int j = 0; j < n; ++j) cq += gv[j] * basis[q * n + j];
       cq *= (q == 0 ? 1.0 : 2.0) / n;
       scale = std::max(scale, std::abs(cq));
       if (q >= n - 2) tail += std::abs(cq);
@@ -406,9 +418,7 @@ void lumped_const_probs_het(const IntegerVector& parent,
 std::vector<double> kprime_log_prior_table(const McmcData& data, int kObs,
                                            const KprimeHyper& hyper, int* lo) {
   const int K = data.kprimeTruncK;
-  const bool conditional = data.kPriorBetaGeometric ||
-    (!data.kPriorLogseries && !data.unconditionalPrior);
-  *lo = conditional ? kObs : 2;
+  *lo = prior_lo(data, kObs);
   if (*lo > K) return {};
   const int n = K - *lo + 1;
   std::vector<double> lw(n);
@@ -470,19 +480,32 @@ JointAscTable joint_asc_table(const McmcData& data, int partIdx,
                               const NumericVector& scaledEdge,
                               const NumericVector& rates,
                               double betaScale, bool forceDirect) {
-  const PartInfo& part = data.parts[partIdx];
-  const int nChar = part.tipStates.ncol();
+  const int classIdx = data.parts[partIdx].classIdx;
   JointAscTable table;
   table.K = data.kprimeTruncK;
-  const bool conditional = data.kPriorBetaGeometric ||
-    (!data.kPriorLogseries && !data.unconditionalPrior);
-  table.lo = conditional ? (int)data.kObs[part.globalCharIdx[0]] : 2;
-  const MaskTally tally = tally_masks(data, part.globalCharIdx, nChar);
-  table.counts = tally.counts;
+  table.lo = table.K + 1;
+  std::vector<uint8_t> used(data.missingMasks.size(), 0);
+  for (const PartInfo& part : data.parts) {
+    const int nChar = part.tipStates.ncol();
+    if (part.type != 1 || part.classIdx != classIdx || nChar == 0) continue;
+    table.lo = std::min(table.lo,
+                        prior_lo(data, data.kObs[part.globalCharIdx[0]]));
+    for (int c = 0; c < nChar; ++c) {
+      used[data.charMask[part.globalCharIdx[c]]] = 1;
+    }
+  }
+  table.row.assign(used.size(), -1);
+  std::vector<int> ids;
+  for (int id = 0; id < (int)used.size(); ++id) {
+    if (!used[id]) continue;
+    table.row[id] = ids.size();
+    ids.push_back(id);
+  }
+  table.nMask = ids.size();
   if (table.lo > table.K) return table;
 
   std::vector<const uint8_t*> masks;
-  for (int id : tally.ids) {
+  for (int id : ids) {
     masks.push_back(id == 0 ? nullptr : data.missingMasks[id].data());
   }
   const int nMask = masks.size();
@@ -545,16 +568,17 @@ JointAscTable joint_asc_table(const McmcData& data, int partIdx,
 }
 
 
-double joint_asc_log(const JointAscTable& table,
-                     const std::vector<double>& logPrior) {
-  if (table.lo > table.K || logPrior.empty()) return R_PosInf;
+double joint_asc_log(const McmcData& data, int partIdx,
+                     const JointAscTable& table,
+                     const std::vector<double>& logPrior, int lo) {
+  if (lo > table.K || logPrior.empty()) return R_PosInf;
   const int nK = table.kVals.size();
-  const int nMask = table.counts.size();
   std::vector<double> w(nK, 0.0);
   const int nExact = table.exactHi >= table.exactLo
     ? table.exactHi - table.exactLo + 1 : 0;
   for (int i = 0; i < nExact; ++i) {
-    w[i] = std::exp(logPrior[table.exactLo + i - table.lo]);
+    const int k = table.exactLo + i;
+    if (k >= lo) w[i] = std::exp(logPrior[k - lo]);
   }
   if (table.nNode > 0) {
     const int n = table.nNode;
@@ -566,8 +590,8 @@ double joint_asc_log(const JointAscTable& table,
     }
     double* W = &w[nExact];
     std::vector<double> q(n);
-    for (int k = std::max(table.lo, kJointExactBelow); k <= table.K; ++k) {
-      const double pk = std::exp(logPrior[k - table.lo]);
+    for (int k = std::max(lo, kJointExactBelow); k <= table.K; ++k) {
+      const double pk = std::exp(logPrior[k - lo]);
       if (pk == 0.0) continue;
       const double uk = 1.0 / (k - 1.0);
       double s = 0.0;
@@ -585,12 +609,16 @@ double joint_asc_log(const JointAscTable& table,
       for (int j = 0; j < n; ++j) W[j] += pk * q[j] / s;
     }
   }
+  const PartInfo& part = data.parts[partIdx];
+  const MaskTally tally = tally_masks(data, part.globalCharIdx,
+                                      part.tipStates.ncol());
   double total = 0.0;
-  for (int m = 0; m < nMask; ++m) {
+  for (size_t i = 0; i < tally.ids.size(); ++i) {
+    const double* gm = &table.g[table.row[tally.ids[i]] * nK];
     double D = 0.0;
-    for (int i = 0; i < nK; ++i) D += w[i] * table.g[m * nK + i];
+    for (int j = 0; j < nK; ++j) D += w[j] * gm[j];
     if (!(D > 0.0)) return R_PosInf;
-    total += table.counts[m] * std::log(D);
+    total += tally.counts[i] * std::log(D);
   }
   return total;
 }
@@ -602,23 +630,24 @@ const JointAscTable& JointAscCache::table(const McmcData& data, int partIdx,
                                           const NumericVector& scaledEdge,
                                           const NumericVector& rates,
                                           double betaScale) {
-  if ((int)slots_.size() <= partIdx) {
-    slots_.resize(partIdx + 1);
-    recent_.resize(partIdx + 1, 0);
+  const int cls = data.parts[partIdx].classIdx;
+  if ((int)slots_.size() <= cls) {
+    slots_.resize(cls + 1);
+    recent_.resize(cls + 1, 0);
   }
   const NumericVector useRates = rates.size() ? rates : NumericVector(1, 1.0);
   const double bs = data.qHeterogeneity ? betaScale : 0.0;
   auto same = [](const auto& a, const auto& b) {
     return std::equal(a.begin(), a.end(), b.begin(), b.end());
   };
-  std::array<Slot, 2>& pair = slots_[partIdx];
-  const int last = recent_[partIdx];
+  std::array<Slot, 2>& pair = slots_[cls];
+  const int last = recent_[cls];
   for (int i : {last, 1 - last}) {
     const Slot& s = pair[i];
     if (s.data == &data && s.betaScale == bs && same(parent, s.parent) &&
         same(child, s.child) && same(scaledEdge, s.edge) &&
         same(useRates, s.rates)) {
-      recent_[partIdx] = i;
+      recent_[cls] = i;
       return s.table;
     }
   }
@@ -631,7 +660,7 @@ const JointAscTable& JointAscCache::table(const McmcData& data, int partIdx,
   s.betaScale = bs;
   s.table = joint_asc_table(data, partIdx, parent, child, scaledEdge,
                             useRates, bs);
-  recent_[partIdx] = 1 - last;
+  recent_[cls] = 1 - last;
   // Return:
   return s.table;
 }
@@ -649,15 +678,17 @@ double trans_joint_asc_log(const McmcData& data, int partIdx,
   const std::vector<double> logPrior = kprime_log_prior_table(
     data, data.kObs[part.globalCharIdx[0]], hyper, &lo);
   if (cache) {
-    return joint_asc_log(cache->table(data, partIdx, parent, child,
+    return joint_asc_log(data, partIdx,
+                         cache->table(data, partIdx, parent, child,
                                       scaledEdge, rates, betaScale),
-                         logPrior);
+                         logPrior, lo);
   }
   // Return:
   return joint_asc_log(
+    data, partIdx,
     joint_asc_table(data, partIdx, parent, child, scaledEdge, rates,
                     betaScale),
-    logPrior);
+    logPrior, lo);
 }
 
 
@@ -745,7 +776,8 @@ NumericVector joint_asc_log_cpp(SEXP dataPtr, int partIdx,
     *data, data->kObs[part.globalCharIdx[0]], hyper, &lo);
   const JointAscTable table = joint_asc_table(
     *data, partIdx - 1, parent, child, scaledEdge, rates, betaScale, direct);
-  NumericVector res(1, joint_asc_log(table, logPrior));
+  NumericVector res(1, joint_asc_log(*data, partIdx - 1, table, logPrior,
+                                     lo));
   res.attr("nNode") = table.nNode;
   // Return:
   return res;
