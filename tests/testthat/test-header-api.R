@@ -121,7 +121,7 @@ test_that("rooting does not change reversible likelihoods", {
   fx <- .HeaderFixture(nTip = 9)
   unrooted <- fx$tree
   rooted <- Preorder(ape::root(unrooted, 3, resolve.root = TRUE))
-  expect_true(TreeTools::IsRooted(rooted))
+  expect_true(TreeIsRooted(rooted))
   expect_equal(sum(rooted$edge.length), sum(unrooted$edge.length))
   ll <- function(tr) {
     pruning_jc(tr$edge[, 1], tr$edge[, 2], tr$edge.length, fx$states, 3L,
