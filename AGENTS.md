@@ -241,11 +241,11 @@ mkp/
 │   ├── mcmc_state.h         # McmcData / McmcState structs, function declarations
 │   ├── node_cl_cache.h      # Partial conditional likelihood cache (dirty-flag invalidation)
 │   ├── gibbs_partial_cl.h   # Gibbs topology move CL helpers
-│   ├── likelihood.cpp       # R-callable likelihood functions
+│   ├── likelihood.cpp       # R-callable pruning (wraps MkPrime::Pruner)
 │   ├── rate_matrix.cpp      # JC(k') construction, analytical P(t) = exp(Qt)
+│   ├── header_api.cpp       # Test hooks for the public headers
 │   ├── tree_moves.cpp       # SPR, NNI, TBR, pSPR proposals in C++
 │   ├── proposals.cpp        # Scalar/branch proposals (scale, Dirichlet, etc.)
-│   ├── acrv.cpp             # Among-character rate variation (lognormal)
 │   ├── ascertainment.cpp    # Constant-site / singleton-site corrections
 │   ├── corrections.cpp      # Relabelling correction for Mk'
 │   ├── tree_ess.cpp         # Tree-distance ESS computation
@@ -253,6 +253,7 @@ mkp/
 │   ├── fitch.h              # Fitch parsimony (for starting tree score)
 │   └── RcppExports.cpp      # Auto-generated
 ├── inst/
+│   ├── include/MkPrime/     # Public header-only kernels (LinkingTo: MkPrime)
 │   └── REFERENCES.bib
 ├── tests/testthat/          # ~4000 tests
 ├── man/
@@ -263,6 +264,23 @@ mkp/
 └── vignettes/
     └── hyoliths.qmd         # Full worked example (Sun2018, 54 taxa)
 ```
+
+---
+
+## Public C++ headers (`inst/include/MkPrime`)
+
+Downstream packages (first consumer: EvoTempo) reach the likelihood kernels via
+`LinkingTo: MkPrime` and `#include <MkPrime/MkPrime.h>`. They are header-only,
+C++11, Rcpp-free, in namespace `MkPrime`; `src/` includes the same files
+(`"../inst/include/MkPrime/..."`), so there is one copy of each kernel.
+
+- **Behaviour change = API change.** Any edit that alters a signature *or* a
+  numerical result must bump `MKPRIME_HEADER_API_VERSION` in `MkPrime.h`.
+- `tests/testthat/legacy/pruning-legacy.cpp` is a frozen oracle of the pre-move
+  code; `test-header-legacy.R` requires bit-identical results. Never edit it to
+  make a test pass.
+- JC has two roundings of `p_same - p_diff` in use (`JCProbs::diffCoeff` vs
+  `expTerm`); keep each call site on the one it was validated with.
 
 ---
 
