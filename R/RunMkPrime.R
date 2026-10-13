@@ -739,6 +739,7 @@ RunMkPrime <- function(data, tree = NULL,
 # have written some of them (#419).
 .FlushUnlogged <- function(r, logFile) {
   if (is.null(r$flush_buf) || !isTRUE(r$flush_idx > 0L)) return(r)
+  .DropTornRow(logFile)
   lines <- readLines(logFile, warn = FALSE)
   rows  <- lines[!startsWith(lines, "#") & !startsWith(lines, "Sample\t")]
   lastIter <- if (length(rows)) {

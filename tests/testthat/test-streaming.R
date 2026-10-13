@@ -422,6 +422,58 @@ test_that(".TruncateLogToN warns when log has fewer rows than expected", {
 })
 
 
+# --- Torn final rows (a write cut short by a killed process) ---
+
+.TornLog <- function() {
+  tf <- tempfile(fileext = ".log")
+  writeLines(c("Sample\tA\tB", "1\t0.1\t0.2", "2\t0.3\t0.4"), tf)
+  cat("3\t0.5", file = tf, append = TRUE)
+  tf
+}
+
+test_that(".TornTailBytes measures an unterminated final row", {
+  tf <- .TornLog()
+  on.exit(unlink(tf), add = TRUE)
+  expect_identical(.TornTailBytes(tf), 5)
+  cat("\n", file = tf, append = TRUE)
+  expect_identical(.TornTailBytes(tf), 0)
+  empty <- tempfile()
+  file.create(empty)
+  on.exit(unlink(empty), add = TRUE)
+  expect_identical(.TornTailBytes(empty), 0)
+})
+
+test_that("ReadMkLog ignores a torn final row without changing the file", {
+  tf <- .TornLog()
+  on.exit(unlink(tf), add = TRUE)
+  size <- file.size(tf)
+  expect_warning(mat <- ReadMkLog(tf), "incomplete final row")
+  expect_identical(dim(mat), c(2L, 2L))
+  expect_identical(rownames(mat), c("1", "2"))
+  expect_identical(file.size(tf), size)
+})
+
+test_that(".TruncateLogToN drops a torn row before counting", {
+  local_mkp_verbosity()
+  tf <- .TornLog()
+  on.exit(unlink(tf), add = TRUE)
+  expect_warning(.TruncateLogToN(tf, 2L), "incomplete final row")
+  expect_identical(readLines(tf), c("Sample\tA\tB", "1\t0.1\t0.2",
+                                    "2\t0.3\t0.4"))
+})
+
+test_that(".FlushUnlogged rewrites a sample whose row was torn", {
+  tf <- .TornLog()
+  on.exit(unlink(tf), add = TRUE)
+  buf <- matrix(c(0.5, 0.7, 0.6, 0.8), 2, dimnames = list(NULL, c("A", "B")))
+  r <- list(flush_buf = buf, flush_idx = 2L, flush_iter = c(3L, 4L))
+  expect_warning(r <- .FlushUnlogged(r, tf), "incomplete final row")
+  expect_identical(r$flush_idx, 0L)
+  expect_identical(.TornTailBytes(tf), 0)
+  expect_identical(rownames(ReadMkLog(tf)), as.character(1:4))
+})
+
+
 # --- Resume truncation integration ---
 
 test_that("Resume truncates post-checkpoint rows from log file", {
