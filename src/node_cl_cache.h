@@ -51,15 +51,8 @@ double mk_prime_relabel_log(int kPrime, int kObs);
 // ---------------------------------------------------------------------------
 static inline NumericVector ncl_acrv_rates(double rateLogSd, int nCat,
                                            const std::vector<double>& acrvZ) {
-  if (rateLogSd <= 0.0) return NumericVector(nCat, 1.0);
-  double mu = -rateLogSd * rateLogSd / 2.0;
   NumericVector rates(nCat);
-  double total = 0.0;
-  for (int i = 0; i < nCat; ++i) {
-    rates[i] = std::exp(mu + rateLogSd * acrvZ[i]);
-    total += rates[i];
-  }
-  for (int i = 0; i < nCat; ++i) rates[i] *= nCat / total;
+  MkPrime::lognormal_rates(rateLogSd, nCat, acrvZ.data(), rates.begin());
   return rates;
 }
 
