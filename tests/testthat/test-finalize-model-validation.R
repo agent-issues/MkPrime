@@ -30,9 +30,17 @@ test_that("finalisation rejects a prior that conditions on kObs", {
     model$priorVariant <- bad
     expect_error(.Finalize(model), "priorVariant")
   }
-  # A model saved before the field was retired.
+  # Models saved before the field was retired.
   model$priorVariant <- "unconditional"
   expect_no_error(.Finalize(model))
+  for (arm in c("logseries", "beta_geometric")) {
+    model <- MkPrimeModel(kPrimePrior = arm, expSteps = 1)
+    model$priorVariant <- "conditional"
+    expect_no_error(.Finalize(model))
+  }
+  model <- MkPrimeModel(kPrimePrior = "empirical_geometric", expSteps = 1)
+  model$priorVariant <- "conditional"
+  expect_error(.Finalize(model), "priorVariant")
 })
 
 test_that("finalisation checks kprimeTruncK and empiricalNObs", {

@@ -499,9 +499,14 @@ MkPrimeModel <- function(
 
 
 # A model saved before the k' prior stopped conditioning on kObs_i can still
-# carry the field that selected it.
-.CheckPriorVariant <- function(priorVariant) {
-  if (!is.null(priorVariant) && !identical(priorVariant, "unconditional")) {
+# carry the field that selected it. Saved logseries and beta_geometric models
+# carry "conditional" whatever the user chose: logseries ignored it, and
+# beta_geometric had no other form.
+.CheckPriorVariant <- function(priorVariant, kPrimePrior) {
+  forced <- kPrimePrior %in% c("logseries", "beta_geometric") &&
+    identical(priorVariant, "conditional")
+  if (!is.null(priorVariant) && !identical(priorVariant, "unconditional") &&
+      !forced) {
     cli::cli_abort(c(
       "{.field priorVariant} {.val {priorVariant}} is no longer supported.",
       i = "A {.arg kPrimePrior} that conditions on the observed state count
@@ -534,7 +539,7 @@ MkPrimeModel <- function(
   model <- .ResolvePriorDefaults(model)
   .CheckTransformationalCoding(model$coding, model$relabel, mkd)
   .CheckPriorEnums(model$kPrimePrior)
-  .CheckPriorVariant(model$priorVariant)
+  .CheckPriorVariant(model$priorVariant, model$kPrimePrior)
   if (!is.null(model$kprimeTruncK)) {
     model$kprimeTruncK <- .CheckKprimeTruncK(model$kprimeTruncK)
   }
