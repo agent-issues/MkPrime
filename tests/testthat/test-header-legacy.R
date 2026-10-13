@@ -4,6 +4,10 @@
 # exactly on a fixed dataset.
 
 skip_on_cran()
+# covr builds the package at -O0; sourceCpp() builds the oracle at R's default
+# flags. On FMA hardware (arm64) only optimised builds contract a * b + c, so
+# the two differ in the last bit for reasons unrelated to the source.
+skip_on_covr()
 legacy <- new.env()
 Rcpp::sourceCpp(test_path("legacy", "pruning-legacy.cpp"), env = legacy,
                 cacheDir = file.path(tempdir(), "mkp-legacy"))
