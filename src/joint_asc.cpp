@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 using namespace Rcpp;
@@ -765,6 +766,10 @@ const JointAscTable& JointAscCache::table(const McmcData& data, int partIdx,
     }
   }
   if (!layout) layout = build_joint_layout(data, cls, parent, child);
+  // Built before the slot's keys change, so a build that throws cannot leave
+  // new keys on an old table.
+  JointAscTable built = joint_asc_table_on(*layout, data, parent, child,
+                                           scaledEdge, useRates, bs, false);
   Slot& s = pair[1 - last];
   s.data = &data;
   s.parent.assign(parent.begin(), parent.end());
@@ -773,8 +778,7 @@ const JointAscTable& JointAscCache::table(const McmcData& data, int partIdx,
   s.rates.assign(useRates.begin(), useRates.end());
   s.betaScale = bs;
   s.layout = layout;
-  s.table = joint_asc_table_on(*layout, data, parent, child, scaledEdge,
-                               useRates, bs, false);
+  s.table = std::move(built);
   recent_[cls] = 1 - last;
   // Return:
   return s.table;
