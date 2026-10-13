@@ -17,6 +17,7 @@ MkPrimeMCMC(
   nRuns = 2L,
   nChains = 1L,
   heat = 0.2,
+  heatMax = 0.5,
   maxTime = NULL,
   minEss = NULL,
   maxRhat = NULL,
@@ -114,10 +115,14 @@ Chain 1 is the cold chain (beta = 1).}
 from which warmup starts. Default 0.2. The temperature ladder uses
 geometric spacing: \code{beta_i = heat^((i-1)/(nChains-1))} for
 i = 1, ..., nChains. Warmup adapts \code{heat} towards a 25\% swap
-acceptance rate, keeping it between 0.01 and 0.5: a value outside that
-range is moved into it at the first adaptation, with a warning. The
+acceptance rate, keeping it between 0.01 and \code{heatMax}: a value outside
+that range is moved into it at the first adaptation, with a warning. The
 ladder is then fixed for the Tuning and Sample phases.
 Ignored when \code{nChains = 1}.}
+
+\item{heatMax}{Numeric in \verb{(0.01, 1)} giving the largest inverse temperature
+that warmup may give the hottest chain; larger values allow a narrower
+ladder. Ignored when \code{nChains = 1}.}
 
 \item{maxTime}{Maximum wall-clock time in seconds for the whole job, shared
 by all its runs. \code{NULL} (default) means no time limit.}
