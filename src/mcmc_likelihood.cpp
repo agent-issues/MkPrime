@@ -3041,16 +3041,6 @@ static SEXP prepare_mcmc_data_impl(
     for (int ci = 0; ci < nCharPart; ++ci) {
       pinfo.kObsLocal[ci] = kObs_r[pinfo.globalCharIdx[ci]];
     }
-    // The joint normaliser takes a transformational partition's k' support
-    // from its first character.
-    if (pinfo.type == 1) {
-      for (int ci = 1; ci < nCharPart; ++ci) {
-        if (pinfo.kObsLocal[ci] != pinfo.kObsLocal[0]) {
-          Rcpp::stop("Transformational partition %d mixes observed state "
-                     "counts.", pi + 1);
-        }
-      }
-    }
 
     // Partition-rate normalisation (audit Issue 1): accumulate per-partition
     // character counts so compute_partition_scales() can build RB-style
@@ -3153,6 +3143,19 @@ SEXP prepare_mcmc_data(List partitions_r,
                        double empLogTailStartP = -1e308,
                        bool   marginalK = false,
                        bool   unconditionalPrior = false) {
+  // The joint normaliser takes a transformational partition's k' support
+  // from its first character.
+  for (R_xlen_t i = 0; i < partitions_r.size(); ++i) {
+    const List part = partitions_r[i];
+    if (as<std::string>(part["type"]) != "transformational") continue;
+    const IntegerVector ci = part["char_indices"];
+    for (R_xlen_t j = 1; j < ci.size(); ++j) {
+      if (kObs_r[ci[j] - 1] != kObs_r[ci[0] - 1]) {
+        Rcpp::stop("Transformational partition %d mixes observed state "
+                   "counts.", (int)i + 1);
+      }
+    }
+  }
   if (codingStr == "informative") {
     // A character is informative when at least two states each occur on two
     // or more observed tips (as .Informable). With fewer than four observed
