@@ -252,7 +252,7 @@ test_that("batched masked correction matches per-mask scoring", {
   for (move in sample(moves, nMove, replace = TRUE)) {
     do_move_cpp(dataPtr, statePtr, move, 0L, 0.5, 10, 1L, 1.0)
     drift <- max(drift, abs(get_state_log_lik(statePtr) -
-                              eval_full_loglik_cpp(dataPtr, statePtr)))
+                              .ColdLogLik(dataPtr, statePtr)))
   }
   # Return:
   drift

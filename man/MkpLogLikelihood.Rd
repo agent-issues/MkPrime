@@ -51,8 +51,10 @@ known state). Default \code{"variable"}.}
 transformational (which is fixed at 1.0). Default 1.0 (equal rates).}
 
 \item{relabel}{Logical. Apply Mk' relabelling correction for
-transformational characters? Set to \code{FALSE} for standard Mk
-likelihood (e.g., for validation against phangorn). Default \code{TRUE}.}
+transformational characters? \code{FALSE} with \code{coding = "none"} gives the
+standard Mk likelihood (e.g., for validation against phangorn); under
+\code{coding = "variable"}, declare each character's k through \code{knownStates}
+in \code{\link[=MkPrimeData]{MkPrimeData()}} instead. Default \code{TRUE}.}
 
 \item{model}{\code{\link[=MkPrimeModel]{MkPrimeModel()}} object whose \eqn{k'} prior enters the
 ascertainment correction of transformational characters.}

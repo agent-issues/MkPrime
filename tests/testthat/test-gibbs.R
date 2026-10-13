@@ -144,8 +144,9 @@ test_that("R fallback refuses gibbs_p as the C++ engine does", {
 
 test_that("mh_logit_p (case 30) targets the correct p full-conditional (KS test)", {
   # mh_logit_p only ever touches p -- it never re-proposes kPrime, the tree
-  # or rates -- so state$logLik never depends on it: holding kPrime fixed
-  # makes the likelihood genuinely constant across p-moves, and the
+  # or rates -- and without an ascertainment correction p enters only the k'
+  # prior: holding kPrime fixed makes the likelihood genuinely constant
+  # across p-moves, and the
   # distribution mh_logit_p should sample from is the closed-form full
   # conditional p | kPrime ~ Beta(kprimeAlpha + nTrans, kprimeBeta +
   # sum(kPrime - 2)) that the retired conjugate gibbs_p (case 9) used to draw
@@ -159,7 +160,8 @@ test_that("mh_logit_p (case 30) targets the correct p full-conditional (KS test)
   pd   <- .small_trans_pd()
   mkd  <- MkPrimeData(pd)
   model <- MkPrimeModel(kPrimePrior = "geometric", priorVariant = "unconditional",
-                        kprimeAlpha = 1, kprimeBeta = 1, kprimeTruncK = 256L)
+                        kprimeAlpha = 1, kprimeBeta = 1, kprimeTruncK = 256L,
+                        coding = "none")
   model  <- MkPrime:::.FinalizeModel(model, tree, mkd)
   state0 <- MkPrime:::.InitState(tree, mkd, model)
 

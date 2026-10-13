@@ -7,8 +7,15 @@
 > derived below, in `sampled_k` and `marginal_k` alike and under every k'
 > prior; the SBC forwards are back to pair rejection. Model B priors
 > (`priorVariant = "conditional"`, `beta_geometric`) normalise $D$ over their
-> own support $[k_{\mathrm{obs}}, K]$. The "implementation bug" wording below
-> describes the code of May 2026.
+> own support $[k_{\mathrm{obs}}, K]$; for $k_{\mathrm{obs}} \ge 3$ that is not
+> the likelihood of any generative model (summed over variable patterns it
+> exceeds 1), as the per-k' form was not, and the $D^B_i$ below is not derived.
+> Line numbers and the "implementation bug" wording below describe the code of
+> May 2026. Caveat (1) is settled: $\log D$ is tempered with the likelihood on
+> every move, and `gibbs_p_marginal` runs only at $\beta = 1$. The proof
+> assumes JC and complete data; missing data, ACRV and Q-heterogeneity apply
+> it per mask and rate category, and were checked numerically (Model A sums
+> to 1) in the review of agent-issues/MkPrime#440.
 
 ## Theorem (informal title)
 

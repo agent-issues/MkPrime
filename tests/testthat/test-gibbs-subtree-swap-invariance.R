@@ -12,12 +12,19 @@
 # chain visits, every state carrying the same exchangeable Dirichlet prior.
 
 
-.SwapChain <- function(nTip = 5L, nIter = 60000L, seed = 7L, rooted = FALSE) {
+.SwapChain <- function(nTip = 5L, nIter = 60000L, seed = 7L, rooted = FALSE,
+                       sparse = FALSE) {
   set.seed(seed)
   tree <- TreeTools::Preorder(ape::rtree(nTip, rooted = rooted))
   tree$edge.length <- rep(1 / nrow(tree$edge), nrow(tree$edge))
   mat <- matrix(sample(0:1, nTip * 8L, replace = TRUE), nrow = nTip,
                 dimnames = list(tree$tip.label, NULL))
+  if (sparse) {
+    # Two observed tips per character: the joint ascertainment term then
+    # varies by nats between trees.
+    mat <- matrix("?", nTip, 30L, dimnames = list(tree$tip.label, NULL))
+    for (j in seq_len(30L)) mat[sample(nTip, 2L), j] <- c("0", "1")
+  }
   mkd   <- suppressWarnings(MkPrimeData(MatrixToPhyDat(mat)))
   model <- MkPrime:::.FinalizeModel(MkPrimeModel(), tree, mkd)
   statePtr <- MkPrime:::.InitMcmcChain(MkPrime:::.InitState(tree, mkd, model))
@@ -37,7 +44,13 @@
   tab <- table(keys)
   uk  <- names(tab)
   tgt <- exp(lls[match(uk, keys)] - max(lls))
-  list(empirical = as.numeric(tab) / nIter, target = tgt / sum(tgt))
+  st <- get_mcmc_state(statePtr)
+  J <- vapply(uk, function(key) {
+    edge <- matrix(as.integer(strsplit(key, ",")[[1]]), ncol = 2L)
+    joint_asc_at_cpp(dataPtr, statePtr, edge[, 1], edge[, 2],
+                     st$treeLength * st$relBrLengths)
+  }, double(1))
+  list(empirical = as.numeric(tab) / nIter, target = tgt / sum(tgt), J = J)
 }
 
 
@@ -56,6 +69,17 @@ test_that("gibbs_subtree_swap samples its exact target", {
   # corrected and uncorrected values (0.016 and 0.029 here) are a single RNG
   # stream apart.  The slope above is the discriminating statistic.
   expect_lt(sum(abs(chain$empirical - chain$target)) / 2, 0.05)
+})
+
+
+test_that("gibbs_subtree_swap weighs the joint ascertainment term", {
+  skip_on_cran()
+  skip_under_memcheck()
+  chain <- .SwapChain(nIter = 30000L, sparse = TRUE)
+  # Dropping J from the accept step would target target * exp(J), at a total
+  # variation of 0.3 from the target here.
+  expect_gt(diff(range(chain$J)), 2)
+  expect_lt(sum(abs(chain$empirical - chain$target)) / 2, 0.08)
 })
 
 

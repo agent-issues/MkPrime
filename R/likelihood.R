@@ -47,8 +47,10 @@
 #' @param rate_neo Rate scalar for the neomorphic partition relative to
 #'   transformational (which is fixed at 1.0). Default 1.0 (equal rates).
 #' @param relabel Logical. Apply Mk' relabelling correction for
-#'   transformational characters? Set to `FALSE` for standard Mk
-#'   likelihood (e.g., for validation against phangorn). Default `TRUE`.
+#'   transformational characters? `FALSE` with `coding = "none"` gives the
+#'   standard Mk likelihood (e.g., for validation against phangorn); under
+#'   `coding = "variable"`, declare each character's k through `knownStates`
+#'   in [MkPrimeData()] instead. Default `TRUE`.
 #' @param model [MkPrimeModel()] object whose \eqn{k'} prior enters the
 #'   ascertainment correction of transformational characters.
 #' @param p Numeric specifying the `p` of a geometric or empirical geometric

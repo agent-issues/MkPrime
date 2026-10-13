@@ -645,7 +645,8 @@ const JointAscTable& JointAscCache::table(const McmcData& data, int partIdx,
   const int last = recent_[cls];
   for (int i : {last, 1 - last}) {
     const Slot& s = pair[i];
-    if (s.data == &data && s.betaScale == bs && same(parent, s.parent) &&
+    if (s.data == &data && s.table.K == data.kprimeTruncK &&
+        s.betaScale == bs && same(parent, s.parent) &&
         same(child, s.child) && same(scaledEdge, s.edge) &&
         same(useRates, s.rates)) {
       recent_[cls] = i;

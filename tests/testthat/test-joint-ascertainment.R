@@ -333,3 +333,131 @@ test_that("marginal_k scores the joint Mk'v marginal and recovers p", {
   pHat <- grid[which.max(vapply(grid, LogLik, double(1)))]
   expect_lt(abs(pHat - p0), 0.07)
 })
+
+test_that("a new k' cap rebuilds the cached joint table", {
+  d <- .JointData()
+  Chain <- function(K) {
+    model <- MkPrime:::.FinalizeModel(
+      MkPrimeModel(kPrimePrior = "geometric", priorVariant = "unconditional",
+                   kprimeTruncK = K),
+      d$tree, d$mkd)
+    dataPtr <- MkPrime:::.InitMcmcData(d$mkd, model)
+    state <- MkPrime:::.InitState(d$tree, d$mkd, model)
+    statePtr <- MkPrime:::.InitMcmcChain(state)
+    fill_partition_cache(dataPtr, statePtr)
+    allocate_cl_workspace(dataPtr, statePtr)
+    list(data = dataPtr, state = statePtr)
+  }
+  ch <- Chain(12L)
+  eval_full_loglik_cpp(ch$data, ch$state)
+  MkPrime:::set_kprime_trunc_k(ch$data, 30L)
+  fresh <- Chain(30L)
+  expect_equal(eval_full_loglik_cpp(ch$data, ch$state),
+               eval_full_loglik_cpp(fresh$data, fresh$state),
+               tolerance = 1e-12)
+})
+
+# Sparse characters, two to four tips observed, make J move by several nats
+# across the k' prior's hyperparameters, which every move on them must weigh.
+.SparseChain <- function(kPrimePrior, ...) {
+  set.seed(5)
+  nTip <- 12L
+  tree <- Preorder(ape::rtree(nTip, rooted = FALSE,
+                              br = function(n) runif(n, 0.02, 0.15)))
+  tokens <- matrix("?", nTip, 60L, dimnames = list(tree$tip.label, NULL))
+  for (j in seq_len(60L)) {
+    obs <- sample(nTip, sample(2:4, 1L))
+    tokens[obs, j] <- c("0", "1", sample(c("0", "1"), length(obs) - 2L, TRUE))
+  }
+  mkd <- MkPrimeData(MatrixToPhyDat(tokens))
+  model <- MkPrime:::.FinalizeModel(
+    MkPrimeModel(nCat = 1L, kPrimePrior = kPrimePrior, kprimeTruncK = 30L,
+                 ...),
+    tree, mkd)
+  state <- MkPrime:::.InitState(tree, mkd, model)
+  state$kPrime <- as.integer(mkd$kObs + rgeom(mkd$nChar, 0.3))
+  list(mkd = mkd, model = model, state = state,
+       data = MkPrime:::.InitMcmcData(mkd, model))
+}
+
+.StartSparse <- function(ch, state) {
+  state$log_prior <- MkPrime:::LogPrior(state, ch$model, ch$mkd)
+  statePtr <- MkPrime:::.InitMcmcChain(state)
+  fill_partition_cache(ch$data, statePtr)
+  allocate_cl_workspace(ch$data, statePtr)
+  statePtr
+}
+
+# Posterior mean of x on a grid, with and without J.
+.GridMeans <- function(ch, Set, x, logJacobian = 0) {
+  scores <- vapply(x, function(xi) {
+    statePtr <- .StartSparse(ch, Set(ch$state, xi))
+    st <- get_mcmc_state(statePtr)
+    c(eval_log_prior_cpp(ch$data, statePtr) +
+        eval_full_loglik_cpp(ch$data, statePtr),
+      joint_asc_at_cpp(ch$data, statePtr, st$edge[, 1], st$edge[, 2],
+                       st$treeLength * st$relBrLengths))
+  }, double(2))
+  logPost <- scores[1, ] + logJacobian
+  Mean <- function(logW) {
+    w <- exp(logW - max(logW))
+    sum(x * w) / sum(w)
+  }
+  c(joint = Mean(logPost), ignored = Mean(logPost + scores[2, ]))
+}
+
+test_that("mh_logit_p weighs the joint ascertainment term", {
+  skip_on_cran()
+  skip_under_memcheck()
+  ch <- .SparseChain("geometric", priorVariant = "unconditional")
+  expected <- .GridMeans(ch, function(st, p) {
+    st$p <- p
+    st
+  }, seq(0.0025, 0.9975, by = 0.0025))
+  statePtr <- .StartSparse(ch, ch$state)
+  set.seed(9)
+  p <- vapply(seq_len(42000L), function(i) {
+    do_move_cpp(ch$data, statePtr, 30L, 0L, 1, 0.5, 1L, 1)
+    get_mcmc_state(statePtr)$p
+  }, double(1))[-seq_len(2000L)]
+  # Monte Carlo error is 0.0003; dropping J shifts the mean by 0.008.
+  expect_gt(abs(expected[["ignored"]] - expected[["joint"]]), 0.005)
+  expect_lt(abs(mean(p) - expected[["joint"]]), 0.0015)
+})
+
+test_that("slice_kprime_r weighs the joint ascertainment term", {
+  skip_on_cran()
+  skip_under_memcheck()
+  ch <- .SparseChain("beta_geometric")
+  total <- ch$state$kprime_alpha + ch$state$kprime_beta
+  r <- seq(-6, 6, by = 0.01)
+  expected <- .GridMeans(ch, function(st, r) {
+    st$kprime_alpha <- total * plogis(r)
+    st$kprime_beta <- total * plogis(-r)
+    st
+  }, r, logJacobian = log(plogis(r)) + log(plogis(-r)))
+  statePtr <- .StartSparse(ch, ch$state)
+  set.seed(11)
+  draws <- vapply(seq_len(6000L), function(i) {
+    do_move_cpp(ch$data, statePtr, 29L, 1L, 0.5, 0.5, 1L, 1)
+    st <- get_mcmc_state(statePtr)
+    log(st$kprimeAlpha / st$kprimeBeta)
+  }, double(1))[-seq_len(200L)]
+  # Monte Carlo error is 0.004; dropping J shifts the mean by 0.09.
+  expect_gt(abs(expected[["ignored"]] - expected[["joint"]]), 0.06)
+  expect_lt(abs(mean(draws) - expected[["joint"]]), 0.02)
+})
+
+test_that("a transformational partition holds one kObs", {
+  d <- .JointData()
+  model <- MkPrime:::.FinalizeModel(MkPrimeModel(), d$tree, d$mkd)
+  parts <- d$mkd$partitions
+  trans <- which(vapply(parts, `[[`, "", "type") == "transformational")
+  merged <- parts[[trans[1]]]
+  merged$tip_states <- cbind(merged$tip_states, parts[[trans[2]]]$tip_states)
+  merged$char_indices <- c(merged$char_indices,
+                           parts[[trans[2]]]$char_indices)
+  mkd <- d$mkd
+  mkd$partitions <- c(list(merged), parts[-trans[1:2]])
+  expect_error(MkPrime:::.InitMcmcData(mkd, model), "mixes observed state")
+})

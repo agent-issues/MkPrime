@@ -5442,8 +5442,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       break;
     }
     case 9: { // gibbs_p — conjugate Beta draw, acceptance = 1
-      // Full conditional: p | k' ~ Beta(a + nTrans, b + sum(k'_i - kObs_i))
-      // p does not enter the likelihood, only the prior on k' and p itself.
+      // Full conditional, were p to enter only the prior on k' and p itself:
+      // p | k' ~ Beta(a + nTrans, b + sum(k'_i - kObs_i)). The joint
+      // ascertainment term (joint_asc.h) also depends on p.
       // Empirical-geometric breaks conjugacy: p enters the prior via the
       // convolution, so the full conditional is no longer Beta.  Reject
       // any misrouted call rather than silently producing wrong samples.

@@ -197,7 +197,7 @@ test_that("partial-CL path carries the transformational ascertainment term", {
     do_move_cpp(dataPtr, statePtr, moves[i, "type"], moves[i, "param"],
                 0.5, 10, 1L, 1.0)
     drift <- max(drift, abs(get_state_log_lik(statePtr) -
-                              eval_full_loglik_cpp(dataPtr, statePtr)))
+                              .ColdLogLik(dataPtr, statePtr)))
   }
   st <- get_mcmc_state(statePtr)
   list(drift = drift,
@@ -385,7 +385,7 @@ test_that("whole-tree dirichlet_branch keeps the CL cache coherent", {
                                         100, 10, nEdge, 1.0))
     do_move_cpp(dataPtr, statePtr, betaSimplex, 0L, 0.5, 10, 1L, 1.0)
     drift <- max(drift, abs(get_state_log_lik(statePtr) -
-                              eval_full_loglik_cpp(dataPtr, statePtr)))
+                              .ColdLogLik(dataPtr, statePtr)))
   }
   st <- get_mcmc_state(statePtr)
   expect_true(any(accepted) && !all(accepted))

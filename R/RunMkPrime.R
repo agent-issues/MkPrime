@@ -5617,7 +5617,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       return(list(accept = FALSE, state = state))
     },
     scale_p = {
-      # Bactrian multiplicative MH on p; standard accept/reject via prior.
+      # Bactrian multiplicative MH on p.
       prop <- ProposeScale(state$p, tuning = tuning$scale_p %||% 0.5)
       proposed$p <- prop$value
       logHastings <- prop$logHastings

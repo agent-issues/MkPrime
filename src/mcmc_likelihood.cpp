@@ -3041,6 +3041,16 @@ static SEXP prepare_mcmc_data_impl(
     for (int ci = 0; ci < nCharPart; ++ci) {
       pinfo.kObsLocal[ci] = kObs_r[pinfo.globalCharIdx[ci]];
     }
+    // The joint normaliser takes a transformational partition's k' support
+    // from its first character.
+    if (pinfo.type == 1) {
+      for (int ci = 1; ci < nCharPart; ++ci) {
+        if (pinfo.kObsLocal[ci] != pinfo.kObsLocal[0]) {
+          Rcpp::stop("Transformational partition %d mixes observed state "
+                     "counts.", pi + 1);
+        }
+      }
+    }
 
     // Partition-rate normalisation (audit Issue 1): accumulate per-partition
     // character counts so compute_partition_scales() can build RB-style
