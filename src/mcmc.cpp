@@ -3445,39 +3445,89 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
 
 
 // ---------------------------------------------------------------------------
-// Slice sampler for scalar parameters.
-// paramIdx: 0=treeLength, 1=rateLoss, 2=rateLogSd, 3=rateNeo, 4=betaScale
+// Scalar parameter registry (#441 S1).
+//
+// One row per continuous scalar that moves address by index: the slice
+// sampler (move 19, index from sliceParamCodes) and the generic Bactrian
+// scale move (40). The index order is part of the R interface
+// (`.kScalarParams` in R/RunMkPrime.R); append, never reorder.
 // ---------------------------------------------------------------------------
 
+enum class ScalarCacheScope {
+  All,     // topology-level invalidation (tree_length rescales every edge)
+  AllCls,  // every unit's CLs
+  NeoCls   // neomorphic units' CLs only
+};
+
+struct ScalarParam {
+  const char* name;              // R and log-column name
+  double McmcState::* field;
+  bool mirrorsClass0;            // keep classRateLogSd[0] in lockstep
+  ScalarCacheScope cacheScope;   // node-CL invalidation after a change
+};
+
+static const ScalarParam kScalarParams[] = {
+  {"tree_length", &McmcState::treeLength, false, ScalarCacheScope::All},
+  {"rate_loss",   &McmcState::rateLoss,   false, ScalarCacheScope::NeoCls},
+  {"rate_log_sd", &McmcState::rateLogSd,  true,  ScalarCacheScope::AllCls},
+  // rate_neo shifts both neo and trans unit scales (audit Issue 1).
+  {"rate_neo",    &McmcState::rateNeo,    false, ScalarCacheScope::AllCls},
+  {"beta_scale",  &McmcState::betaScale,  false, ScalarCacheScope::AllCls}
+};
+static const int kNScalarParams =
+  static_cast<int>(sizeof(kScalarParams) / sizeof(kScalarParams[0]));
+
+static inline bool valid_scalar(int paramIdx) {
+  return paramIdx >= 0 && paramIdx < kNScalarParams;
+}
+
 static double get_scalar(const McmcState* state, int paramIdx) {
-  switch (paramIdx) {
-    case 0: return state->treeLength;
-    case 1: return state->rateLoss;
-    case 2: return state->rateLogSd;
-    case 3: return state->rateNeo;
-    case 4: return state->betaScale;
-    default: return 0.0;
-  }
+  if (!valid_scalar(paramIdx)) return 0.0;
+  return state->*(kScalarParams[paramIdx].field);
 }
 
 static void set_scalar(McmcState* state, int paramIdx, double val) {
-  switch (paramIdx) {
-    case 0: state->treeLength = val; break;
-    case 1: state->rateLoss = val; break;
-    case 2:
-      state->rateLogSd = val;
-      // Lockstep invariant: classRateLogSd[0] == rateLogSd when partitioned.
-      // The partitioned prior (cpp_log_prior_partitioned) skips c==0 on the
-      // assumption this invariant holds; without the mirror, classRateLogSd[0]
-      // would be unconstrained and the likelihood (which reads classRateLogSd)
-      // would diverge from the prior path.
-      if (state->usePartitioned && state->classRateLogSd.size() > 0)
-        state->classRateLogSd[0] = val;
-      break;
-    case 3: state->rateNeo = val; break;
-    case 4: state->betaScale = val; break;
+  if (!valid_scalar(paramIdx)) return;
+  const ScalarParam& sp = kScalarParams[paramIdx];
+  state->*(sp.field) = val;
+  // Lockstep invariant: classRateLogSd[0] == rateLogSd when partitioned.
+  // The partitioned prior (cpp_log_prior_partitioned) skips c==0 on the
+  // assumption this invariant holds; without the mirror, classRateLogSd[0]
+  // would be unconstrained and the likelihood (which reads classRateLogSd)
+  // would diverge from the prior path.
+  if (sp.mirrorsClass0 && state->usePartitioned &&
+      state->classRateLogSd.size() > 0)
+    state->classRateLogSd[0] = val;
+}
+
+static void invalidate_scalar_caches(McmcState* state, int paramIdx) {
+  if (!valid_scalar(paramIdx)) return;
+  switch (kScalarParams[paramIdx].cacheScope) {
+    case ScalarCacheScope::NeoCls: state->nodeCL.invalidate_neo_cls(); break;
+    case ScalarCacheScope::AllCls: state->nodeCL.invalidate_all_cls(); break;
+    case ScalarCacheScope::All:    state->nodeCL.invalidate_all();     break;
   }
 }
+
+// Bactrian multiplicative proposal on a registered scalar; returns the log
+// Hastings ratio. Callers snapshot the old value for rollback.
+static double scale_scalar(McmcState* state, int paramIdx, double tuning) {
+  double mult = std::exp(tuning * bactrian_perturbation());
+  set_scalar(state, paramIdx, get_scalar(state, paramIdx) * mult);
+  return std::log(mult);
+}
+
+// [[Rcpp::export]]
+CharacterVector scalar_param_names() {
+  CharacterVector out(kNScalarParams);
+  for (int i = 0; i < kNScalarParams; ++i) out[i] = kScalarParams[i].name;
+  return out;
+}
+
+
+// ---------------------------------------------------------------------------
+// Slice sampler for scalar parameters (index into kScalarParams).
+// ---------------------------------------------------------------------------
 
 // Evaluate beta * logLik + logPrior for current state, using partial cache
 // when the parameter only affects a subset of partitions.
@@ -5176,29 +5226,24 @@ static bool do_move_impl(McmcData* data, McmcState* state,
 
   switch (moveType) {
     case 0: { // scale tree_length (Bactrian, M-118)
-      double mult = std::exp(scaleTuning * bactrian_perturbation());
-      state->treeLength = oldTL * mult;
-      logHastings = std::log(mult);
+      logHastings = scale_scalar(state, 0, scaleTuning);
       break;
     }
     case 1: { // scale rate_loss (Bactrian, M-118)
-      double mult = std::exp(scaleTuning * bactrian_perturbation());
-      state->rateLoss = oldRL * mult;
-      logHastings = std::log(mult);
+      logHastings = scale_scalar(state, 1, scaleTuning);
       break;
     }
-    case 2: { // scale rate_log_sd (Bactrian, M-118)
-      double mult = std::exp(scaleTuning * bactrian_perturbation());
-      state->rateLogSd = oldRLSD * mult;
-      if (state->usePartitioned && state->classRateLogSd.size() > 0)
-        state->classRateLogSd[0] = state->rateLogSd;  // lockstep
-      logHastings = std::log(mult);
+    case 2: { // scale rate_log_sd (Bactrian, M-118); mirrors classRateLogSd[0]
+      logHastings = scale_scalar(state, 2, scaleTuning);
       break;
     }
     case 3: { // scale rate_neo (Bactrian, M-118)
-      double mult = std::exp(scaleTuning * bactrian_perturbation());
-      state->rateNeo = oldRN * mult;
-      logHastings = std::log(mult);
+      logHastings = scale_scalar(state, 3, scaleTuning);
+      break;
+    }
+    case 40: { // scale_param: Bactrian scale on registered scalar `charIdx`
+      if (!valid_scalar(charIdx)) return false;
+      logHastings = scale_scalar(state, charIdx, scaleTuning);
       break;
     }
     case 4: { // beta_simplex — O(1) rollback: save 2 modified elements
@@ -5408,9 +5453,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       return block_gibbs_branch_sweep_impl(data, state, beta);
     }
     case 16: { // M-052: scale beta_scale (Bactrian, M-118)
-      double mult = std::exp(scaleTuning * bactrian_perturbation());
-      state->betaScale = oldBS * mult;
-      logHastings = std::log(mult);
+      logHastings = scale_scalar(state, 4, scaleTuning);
       break;
     }
     case 20: { // pSPR — M-119: parsimony-guided SPR
@@ -6121,6 +6164,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
           // beta_scale: Q-het parameter, all units stale
           state->nodeCL.invalidate_all_cls();
           break;
+        case 40:
+          invalidate_scalar_caches(state, charIdx);
+          break;
         default:
           // tree_length (0), topology, etc.: full invalidation
           state->nodeCL.invalidate_all();
@@ -6461,14 +6507,15 @@ List run_mcmc_batch_cpp(
 
       int moveType = moveTypeCodes[moveIdx];
 
-      // charIdx: for int_walk → random trans character; for slice → paramIdx;
+      // charIdx: for int_walk → random trans character; for slice and
+      //          scale_param (40) → kScalarParams index;
       //          for scale_class_rate_log_sd (31) → 1-based classIdx from moveIntParams.
       int charIdx = 0;
       if (moveType == 7 && nTrans > 0) {
         int r = static_cast<int>(R::unif_rand() * nTrans);
         if (r >= nTrans) r = nTrans - 1;
         charIdx = transIdxCpp[r];
-      } else if (moveType == 19) {
+      } else if (moveType == 19 || moveType == 40) {
         charIdx = sliceParamCodes[moveIdx];
       } else if (moveType == 31) {
         charIdx = moveIntParams[moveIdx];  // 1-based classIdx

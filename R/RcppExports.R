@@ -157,6 +157,10 @@ bin_mixture_log_density <- function(weights, f, nBins) {
     .Call(`_MkPrime_bin_mixture_log_density`, weights, f, nBins)
 }
 
+scalar_param_names <- function() {
+    .Call(`_MkPrime_scalar_param_names`)
+}
+
 kprime_sweep_candidates <- function(dataPtr, statePtr, beta = 1.0) {
     .Call(`_MkPrime_kprime_sweep_candidates`, dataPtr, statePtr, beta)
 }

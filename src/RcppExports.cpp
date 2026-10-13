@@ -586,6 +586,16 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// scalar_param_names
+CharacterVector scalar_param_names();
+RcppExport SEXP _MkPrime_scalar_param_names() {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    rcpp_result_gen = Rcpp::wrap(scalar_param_names());
+    return rcpp_result_gen;
+END_RCPP
+}
 // kprime_sweep_candidates
 IntegerVector kprime_sweep_candidates(SEXP dataPtr, SEXP statePtr, double beta);
 RcppExport SEXP _MkPrime_kprime_sweep_candidates(SEXP dataPtrSEXP, SEXP statePtrSEXP, SEXP betaSEXP) {
@@ -1126,6 +1136,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_eval_preorder_paths_cpp", (DL_FUNC) &_MkPrime_eval_preorder_paths_cpp, 5},
     {"_MkPrime_gibbs_spr_enumerate_cpp", (DL_FUNC) &_MkPrime_gibbs_spr_enumerate_cpp, 3},
     {"_MkPrime_bin_mixture_log_density", (DL_FUNC) &_MkPrime_bin_mixture_log_density, 3},
+    {"_MkPrime_scalar_param_names", (DL_FUNC) &_MkPrime_scalar_param_names, 0},
     {"_MkPrime_kprime_sweep_candidates", (DL_FUNC) &_MkPrime_kprime_sweep_candidates, 3},
     {"_MkPrime_do_move_cpp", (DL_FUNC) &_MkPrime_do_move_cpp, 8},
     {"_MkPrime_run_mcmc_batch_cpp", (DL_FUNC) &_MkPrime_run_mcmc_batch_cpp, 22},

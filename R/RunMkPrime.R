@@ -5262,23 +5262,23 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   if (hasNeo) {
     moves <- c(moves, list(
       list(name = "slice_rate_loss", type = "slice", target = "rate_loss",
-           weight = 1.5, dim = 1L, sliceParamIdx = 1L)
+           weight = 1.5, dim = 1L, sliceParamIdx = .ScalarParamIndex("rate_loss"))
     ))
   }
   if (rateNeoLive) {
     moves <- c(moves, list(
       list(name = "slice_rate_neo", type = "slice", target = "rate_neo",
-           weight = 1, dim = 1L, sliceParamIdx = 3L)
+           weight = 1, dim = 1L, sliceParamIdx = .ScalarParamIndex("rate_neo"))
     ))
   }
   moves <- c(moves, list(
     list(name = "slice_rate_log_sd", type = "slice", target = "rate_log_sd",
-         weight = 1.5, dim = 1L, sliceParamIdx = 2L)
+         weight = 1.5, dim = 1L, sliceParamIdx = .ScalarParamIndex("rate_log_sd"))
   ))
   if (isTRUE(qHeterogeneity)) {
     moves <- c(moves, list(
       list(name = "slice_beta_scale", type = "slice", target = "beta_scale",
-           weight = 1, dim = 1L, sliceParamIdx = 4L)
+           weight = 1, dim = 1L, sliceParamIdx = .ScalarParamIndex("beta_scale"))
     ))
   }
 
@@ -5358,6 +5358,30 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #    half-normal hyperprior σ_c = τ · z_c)
 # 35=gibbs_p_marginal (data-augmentation Metropolis-within-Gibbs p-update for
 #    the marginal_k geometric arm; dev/red-team/proofs/marginal-k-gibbs-p.md)
+# Scalars that moves address by index: the slice sampler and the generic
+# Bactrian scale move (code 40). Mirrors `kScalarParams` in src/mcmc.cpp,
+# whose order is the index; append, never reorder.
+.kScalarParams <- c("tree_length", "rate_loss", "rate_log_sd", "rate_neo",
+                    "beta_scale")
+
+# 0-based registry index of scalar `name`, as the C++ engine expects.
+.ScalarParamIndex <- function(name) {
+  idx <- match(name, .kScalarParams)
+  if (is.na(idx)) {
+    cli::cli_abort("{.val {name}} is not a registered scalar parameter.")
+  }
+  # Return:
+  idx - 1L
+}
+
+# A Bactrian scale move on any registered scalar, dispatched by code 40 rather
+# than a dedicated move type.
+.ScaleParamMove <- function(param, weight = 1) {
+  list(name = paste0("scale_param_", param), type = "scale_param",
+       target = param, weight = weight, dim = 1L, code = 40L,
+       sliceParamIdx = .ScalarParamIndex(param))
+}
+
 .kMoveTypes <- c(
   tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
   rate_neo = 3L, branch_lengths = 4L,
@@ -5394,6 +5418,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 # For per-class moves (e.g. scale_class_rate_log_sd_1) the unique name is not
 # in .kMoveTypes; fall back to the move's type, which is registered.
 .MoveTypeCode <- function(move) {
+  if (!is.null(move$code)) return(as.integer(move$code))
   key <- if (move$name %in% names(.kMoveTypes)) move$name else
     move$type %||% move$name
   .kMoveTypes[[key]]
