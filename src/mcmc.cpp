@@ -199,6 +199,8 @@ struct McmcState {
   ClWorkspace clWs;
   // M-052: Q-matrix heterogeneity — Dirichlet-marginal beta_scale parameter.
   double betaScale = 1.0;
+  // Extension parameters (#441), laid out as McmcData::extOffset describes.
+  std::vector<double> extParams;
   // M-155: dedicated workspace for Gibbs kPrime batched pruning
   ClWorkspace gibbsWs;
   // M-121: persistent node-level CL cache for partial evaluation
@@ -729,7 +731,8 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
                      double etaNeo = 1.0,
                      bool useHyperpriorOnSigma   = false,
                      double hyperTau             = 1.0,
-                     NumericVector classZ        = NumericVector(0)) {
+                     NumericVector classZ        = NumericVector(0),
+                     NumericVector extParams     = NumericVector(0)) {
   if (!is_binary_tree(parent, child)) {
     stop("Tree must be binary, with tips 1..nTip and root nTip + 1 "
          "(two children per internal node; two or three at the root).");
@@ -751,6 +754,7 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
   s->betaScale    = betaScale;
   s->brSnapshot   = NumericVector(relBrLengths.size());
   s->etaNeo       = etaNeo;
+  s->extParams.assign(extParams.begin(), extParams.end());
   // Partition-API (Layer 1): when per-class vectors are supplied, activate
   // the partitioned likelihood path. Legacy callers pass no per-class args;
   // their behaviour is unchanged (usePartitioned stays false).
@@ -782,6 +786,7 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
 // set a marginal-aware initial logLik under marginal_k (MARGINAL-K-INIT-001).
 static double compute_full_loglik(const McmcData& data, McmcState& state);
 static double compute_log_prior(const McmcData& data, const McmcState& state);
+static double extension_log_prior(const McmcData& data, const McmcState& state);
 
 // The class-rate normaliser for the state's parameters; an evaluator that
 // visits several partitions computes it once and passes it to each
@@ -1010,7 +1015,8 @@ List get_mcmc_state(SEXP statePtr) {
     _["etaNeo"]             = s->etaNeo,
     _["useHyperpriorOnSigma"] = s->useHyperpriorOnSigma,
     _["hyperTau"]           = s->hyperTau,
-    _["classZ"]             = clone(s->classZ)
+    _["classZ"]             = clone(s->classZ),
+    _["extParams"]          = NumericVector(s->extParams.begin(), s->extParams.end())
   );
 }
 
@@ -1079,11 +1085,13 @@ void invalidate_marginal_cache(SEXP statePtr) {
 double eval_log_prior_cpp(SEXP dataPtr, SEXP statePtr) {
   McmcData* d = Rcpp::XPtr<McmcData>(dataPtr);
   McmcState* s = Rcpp::XPtr<McmcState>(statePtr);
-  return cpp_log_prior(
+  double lp = cpp_log_prior(
     *d, s->treeLength, s->relBrLengths,
     s->rateLoss, s->rateLogSd, s->rateNeo,
     s->p, s->kPrime, s->betaScale,
     s->kprimeAlpha, s->kprimeBeta);
+  if (d->nExtParams > 0 || !s->extParams.empty()) lp += extension_log_prior(*d, *s);
+  return lp;
 }
 
 
@@ -1106,13 +1114,15 @@ double eval_log_prior_partitioned_cpp(
     Rcpp::NumericVector classZ = Rcpp::NumericVector::create()) {
   McmcData*  d = Rcpp::XPtr<McmcData>(dataPtr);
   McmcState* s = Rcpp::XPtr<McmcState>(statePtr);
-  return cpp_log_prior_partitioned(
+  double lp = cpp_log_prior_partitioned(
     *d, s->treeLength, s->relBrLengths,
     s->rateLoss, s->rateLogSd, s->rateNeo,
     s->p, s->kPrime,
     classRateLogSd, classW, classRate, etaNeo,
     useHyperpriorOnSigma, hyperTau, classZ,
     s->betaScale, s->kprimeAlpha, s->kprimeBeta);
+  if (d->nExtParams > 0 || !s->extParams.empty()) lp += extension_log_prior(*d, *s);
+  return lp;
 }
 
 
@@ -1142,23 +1152,43 @@ void set_class_rate_concentration(SEXP dataPtr, double concentration) {
 //
 // ---------------------------------------------------------------------------
 
+// Sum of the attached extensions' log priors (#441); 0 when none.
+static double extension_log_prior(const McmcData& data,
+                                  const McmcState& state) {
+  if (static_cast<int>(state.extParams.size()) != data.nExtParams) {
+    return R_NegInf;
+  }
+  double lp = 0.0;
+  for (size_t e = 0; e < data.extensions.size(); ++e) {
+    const MkPrimeExtension* ext = data.extensions[e];
+    lp += ext->log_prior(state.extParams.data() + data.extOffset[e], ext->user);
+  }
+  return lp;
+}
+
 static double compute_log_prior_at(
     const McmcData& data, const McmcState& state,
     const NumericVector& relBrLengths) {
+  double lp;
   if (state.usePartitioned) {
-    return cpp_log_prior_partitioned(
+    lp = cpp_log_prior_partitioned(
       data, state.treeLength, relBrLengths,
       state.rateLoss, state.rateLogSd, state.rateNeo,
       state.p, state.kPrime,
       state.classRateLogSd, state.classW, state.classRate, state.etaNeo,
       state.useHyperpriorOnSigma, state.hyperTau, state.classZ,
       state.betaScale, state.kprimeAlpha, state.kprimeBeta);
+  } else {
+    lp = cpp_log_prior(
+      data, state.treeLength, relBrLengths,
+      state.rateLoss, state.rateLogSd, state.rateNeo,
+      state.p, state.kPrime, state.betaScale,
+      state.kprimeAlpha, state.kprimeBeta);
   }
-  return cpp_log_prior(
-    data, state.treeLength, relBrLengths,
-    state.rateLoss, state.rateLogSd, state.rateNeo,
-    state.p, state.kPrime, state.betaScale,
-    state.kprimeAlpha, state.kprimeBeta);
+  if (data.nExtParams > 0 || !state.extParams.empty()) {
+    lp += extension_log_prior(data, state);
+  }
+  return lp;
 }
 
 static double compute_log_prior(const McmcData& data, const McmcState& state) {
@@ -3477,17 +3507,29 @@ static const ScalarParam kScalarParams[] = {
 static const int kNScalarParams =
   static_cast<int>(sizeof(kScalarParams) / sizeof(kScalarParams[0]));
 
-static inline bool valid_scalar(int paramIdx) {
-  return paramIdx >= 0 && paramIdx < kNScalarParams;
+// Indices past the core table address extension parameters (#441):
+// kNScalarParams + j is state->extParams[j]. They enter only the prior.
+static inline bool is_ext_scalar(int paramIdx) {
+  return paramIdx >= kNScalarParams;
+}
+
+static inline bool valid_scalar(const McmcState* state, int paramIdx) {
+  return paramIdx >= 0 &&
+    paramIdx < kNScalarParams + static_cast<int>(state->extParams.size());
 }
 
 static double get_scalar(const McmcState* state, int paramIdx) {
-  if (!valid_scalar(paramIdx)) return 0.0;
+  if (!valid_scalar(state, paramIdx)) return 0.0;
+  if (is_ext_scalar(paramIdx)) return state->extParams[paramIdx - kNScalarParams];
   return state->*(kScalarParams[paramIdx].field);
 }
 
 static void set_scalar(McmcState* state, int paramIdx, double val) {
-  if (!valid_scalar(paramIdx)) return;
+  if (!valid_scalar(state, paramIdx)) return;
+  if (is_ext_scalar(paramIdx)) {
+    state->extParams[paramIdx - kNScalarParams] = val;
+    return;
+  }
   const ScalarParam& sp = kScalarParams[paramIdx];
   state->*(sp.field) = val;
   // Lockstep invariant: classRateLogSd[0] == rateLogSd when partitioned.
@@ -3501,7 +3543,7 @@ static void set_scalar(McmcState* state, int paramIdx, double val) {
 }
 
 static void invalidate_scalar_caches(McmcState* state, int paramIdx) {
-  if (!valid_scalar(paramIdx)) return;
+  if (!valid_scalar(state, paramIdx) || is_ext_scalar(paramIdx)) return;
   switch (kScalarParams[paramIdx].cacheScope) {
     case ScalarCacheScope::NeoCls: state->nodeCL.invalidate_neo_cls(); break;
     case ScalarCacheScope::AllCls: state->nodeCL.invalidate_all_cls(); break;
@@ -5126,6 +5168,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   double oldBS   = state->betaScale;  // M-052
   double oldKpA  = state->kprimeAlpha;
   double oldKpB  = state->kprimeBeta;
+  // Extension parameter changed by case 40 (#441), for rollback.
+  int    extRollIdx = -1;
+  double extRollOld = 0.0;
 
   // Marginal-k: the charLL cache holds raw per-(char, k') LLs derived
   // from (parent, child, edgeLen, rateLoss, rateLogSd, rateNeo, betaScale)
@@ -5242,7 +5287,11 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       break;
     }
     case 40: { // scale_param: Bactrian scale on registered scalar `charIdx`
-      if (!valid_scalar(charIdx)) return false;
+      if (!valid_scalar(state, charIdx)) return false;
+      if (is_ext_scalar(charIdx)) {
+        extRollIdx = charIdx - kNScalarParams;
+        extRollOld = state->extParams[extRollIdx];
+      }
       logHastings = scale_scalar(state, charIdx, scaleTuning);
       break;
     }
@@ -5823,6 +5872,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     state->treeLength = oldTL; state->rateLoss = oldRL;
     state->rateLogSd = oldRLSD; state->rateNeo = oldRN; state->p = oldP;
     state->betaScale = oldBS; state->kprimeAlpha = oldKpA; state->kprimeBeta = oldKpB;
+    if (extRollIdx >= 0) state->extParams[extRollIdx] = extRollOld;
     if (bsIdx1 >= 0) {
       state->relBrLengths[bsIdx1] = bsOldVal1;
       state->relBrLengths[bsIdx2] = bsOldVal2;
@@ -5875,6 +5925,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     state->treeLength = oldTL; state->rateLoss = oldRL;
     state->rateLogSd = oldRLSD; state->rateNeo = oldRN; state->p = oldP;
     state->betaScale = oldBS; state->kprimeAlpha = oldKpA; state->kprimeBeta = oldKpB;
+    if (extRollIdx >= 0) state->extParams[extRollIdx] = extRollOld;
     if (bsIdx1 >= 0) {
       state->relBrLengths[bsIdx1] = bsOldVal1;
       state->relBrLengths[bsIdx2] = bsOldVal2;
@@ -5935,7 +5986,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   // ignoring data (flat-prior + zero-LL → guaranteed acceptance mod
   // Jacobian). See dev/red-team/heavy-tests/marginal-k-* and the FU-1
   // side-finding for the diagnostic.
-  bool likChanges = data->marginalK || (moveType != 8 && moveType != 30);
+  // Extension parameters enter only the prior (#441, ABI v1).
+  bool likChanges = extRollIdx < 0 &&
+    (data->marginalK || (moveType != 8 && moveType != 30));
   // Under marginal-k mode the per-partition cache (partLogLik) is built
   // for sampled-k semantics (cpp_partition_log_likelihood with fixed
   // state->kPrime). The marginal evaluator does NOT update it. Force
@@ -6190,6 +6243,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   state->betaScale    = oldBS;
   state->kprimeAlpha  = oldKpA;
   state->kprimeBeta   = oldKpB;
+  if (extRollIdx >= 0) state->extParams[extRollIdx] = extRollOld;
   if (bsIdx1 >= 0) {
     state->relBrLengths[bsIdx1] = bsOldVal1;
     state->relBrLengths[bsIdx2] = bsOldVal2;
@@ -6424,13 +6478,15 @@ List run_mcmc_batch_cpp(
                   states[0]->useHyperpriorOnSigma);
   int nHyperTauCol = hyperOn ? 1 : 0;
   int nClassZ      = hyperOn ? (int)states[0]->classZ.size() : 0;
+  // Extension parameters (#441), appended after every core column.
+  int nExtCols     = (int)states[0]->extParams.size();
   // Base columns: log_post, log_lik, tree_length, rate_log_sd (4).
   // rate_loss included only when hasNeo (like rate_neo, p, beta_scale).
   // +2 diagnostic columns: swap_cold (cold-chain swaps since last sample),
   // topo_hash (topology fingerprint for change detection).
   int nScalarCols = 4 + (hasNeo ? 2 : 0) + nKpHyperCols +
                     (includeBS ? 1 : 0) + 2 + nTrans + nEdge +
-                    nClassRLS + nClassW + nHyperTauCol + nClassZ;
+                    nClassRLS + nClassW + nHyperTauCol + nClassZ + nExtCols;
   // A negative count would size the reserve below as a huge unsigned value.
   nBatch = std::max(nBatch, 0);
   int maxSaved    = nBatch / thin + 2;
@@ -6627,6 +6683,8 @@ List run_mcmc_batch_cpp(
       if (nHyperTauCol > 0) row[col++] = s0->hyperTau;
       for (int k = 0; k < nClassZ; ++k)
         row[col++] = s0->classZ[k];
+      for (int k = 0; k < nExtCols; ++k)
+        row[col++] = s0->extParams[k];
       scalarRows.push_back(row);
 
       // Edge matrix for tree reconstruction in R

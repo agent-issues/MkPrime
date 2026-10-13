@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include "../inst/include/MkPrime/extension.h"
 
 // Per-partition data: tip states and character mapping.
 struct PartInfo {
@@ -175,6 +176,12 @@ struct McmcData {
   // maps a global character to its mask.
   std::vector<std::vector<uint8_t>> missingMasks;
   std::vector<int> charMask;
+
+  // Engine extensions (#441), attached by attach_extensions_cpp(). Extension
+  // e owns state.extParams[extOffset[e] .. extOffset[e] + n_params - 1].
+  std::vector<const MkPrimeExtension*> extensions;
+  std::vector<int> extOffset;
+  int nExtParams = 0;
 };
 
 // Characters counted by missing-data mask, in increasing mask order.

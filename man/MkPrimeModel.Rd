@@ -32,7 +32,8 @@ MkPrimeModel(
   priorOnClassRateLogSd = c("hyperprior_pooled", "gamma_independent"),
   likelihoodMode = c("sampled_k", "marginal_k"),
   priorVariant = NULL,
-  kprimeTruncK = 200L
+  kprimeTruncK = 200L,
+  extensions = NULL
 )
 }
 \arguments{
@@ -208,6 +209,9 @@ ignored for \code{logseries}.}
 \item{kprimeTruncK}{Integer specifying the cap \code{K} at which every \verb{k'}
 prior is truncated and renormalised, bounded above by the compile-time
 candidate cap of 256. Must be at least the largest observed state count.}
+
+\item{extensions}{List of \code{\link[=MkPrimeExtension]{MkPrimeExtension()}} objects whose parameters,
+and their priors, join the model; \code{NULL} for none.}
 }
 \value{
 An S3 object of class \code{MkPrimeModel}.

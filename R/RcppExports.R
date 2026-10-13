@@ -53,6 +53,26 @@ mk_prime_relabel_log_batch <- function(kPrime_vec, kObs) {
     .Call(`_MkPrime_mk_prime_relabel_log_batch`, kPrime_vec, kObs)
 }
 
+extension_info_cpp <- function(ext) {
+    .Call(`_MkPrime_extension_info_cpp`, ext)
+}
+
+extension_log_prior_cpp <- function(ext, params) {
+    .Call(`_MkPrime_extension_log_prior_cpp`, ext, params)
+}
+
+attach_extensions_cpp <- function(dataPtr, extensions) {
+    invisible(.Call(`_MkPrime_attach_extensions_cpp`, dataPtr, extensions))
+}
+
+extension_abi_version <- function() {
+    .Call(`_MkPrime_extension_abi_version`)
+}
+
+toy_extension_cpp <- function() {
+    .Call(`_MkPrime_toy_extension_cpp`)
+}
+
 mkp_hello <- function() {
     .Call(`_MkPrime_mkp_hello`)
 }
@@ -89,8 +109,8 @@ fitch_score_candidates_r <- function(parent, child, tipStates, nTip, kStates, pr
     .Call(`_MkPrime_fitch_score_candidates_r`, parent, child, tipStates, nTip, kStates, pruneRow, parentRow, sibRow, u, v, sibNode, candidates)
 }
 
-init_mcmc_state <- function(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale = 1.0, kprimeAlpha = 1.0, kprimeBeta = 1.0, classRateLogSd = numeric(0), classW = numeric(0), classRate = numeric(0), nCharPerClass = integer(0), etaNeo = 1.0, useHyperpriorOnSigma = FALSE, hyperTau = 1.0, classZ = numeric(0)) {
-    .Call(`_MkPrime_init_mcmc_state`, parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta, classRateLogSd, classW, classRate, nCharPerClass, etaNeo, useHyperpriorOnSigma, hyperTau, classZ)
+init_mcmc_state <- function(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale = 1.0, kprimeAlpha = 1.0, kprimeBeta = 1.0, classRateLogSd = numeric(0), classW = numeric(0), classRate = numeric(0), nCharPerClass = integer(0), etaNeo = 1.0, useHyperpriorOnSigma = FALSE, hyperTau = 1.0, classZ = numeric(0), extParams = numeric(0)) {
+    .Call(`_MkPrime_init_mcmc_state`, parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta, classRateLogSd, classW, classRate, nCharPerClass, etaNeo, useHyperpriorOnSigma, hyperTau, classZ, extParams)
 }
 
 fill_partition_cache <- function(dataPtr, statePtr) {
