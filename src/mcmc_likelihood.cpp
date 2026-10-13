@@ -3085,6 +3085,10 @@ static SEXP prepare_mcmc_data_impl(
       d->charMask[pinfo.globalCharIdx[ci]] = m;
     }
   }
+  for (const PartInfo& pinfo : d->parts) {
+    d->partMaskTally.push_back(
+      tally_masks(*d, pinfo.globalCharIdx, pinfo.tipStates.ncol()));
+  }
 
   // Initialize branchBins with the default so weighted/block-Gibbs moves
   // work even if set_branch_bins() is never called (e.g. in unit tests).

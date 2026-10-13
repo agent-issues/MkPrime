@@ -232,22 +232,28 @@ test_that("joint normaliser sums Pr(V | k) over the k' prior", {
 
 test_that("interpolated k tail matches the direct sum", {
   d <- .JointData()
+  nChar <- d$mkd$partitions[[2]]$nChar
+  wide <- MkPrime:::DiscreteLognormalRates(3, 6L)
   for (het in c(FALSE, TRUE)) {
+    levels <- if (het) c(12L, 36L) else c(8L, 24L)
     for (arm in c("geometric", "beta_geometric")) {
       ptr <- .JointDataPtr(d, kPrimePrior = arm, kprimeTruncK = 200L,
-                           qHeterogeneity = het)
+                           qHeterogeneity = het, nBetaCat = 8L)
+      nNode <- integer(0)
       for (scale in c(0.05, 1, 6)) {
-        args <- list(ptr, 2L, d$tree$edge[, 1], d$tree$edge[, 2],
-                     d$tree$edge.length * scale, c(0.5, 1.5),
-                     if (het) 0.7 else 0, 0.02, 0.5, 2)
-        quad <- do.call(MkPrime:::joint_asc_log_cpp, args)
-        expect_gt(attr(quad, "nNode"), 0L)
-        expect_equal(
-          as.numeric(quad),
-          as.numeric(do.call(MkPrime:::joint_asc_log_cpp,
-                             c(args, direct = TRUE))),
-          tolerance = 1e-12, info = paste(het, arm, scale))
+        for (rates in list(c(0.5, 1.5), wide)) {
+          args <- list(ptr, 2L, d$tree$edge[, 1], d$tree$edge[, 2],
+                       d$tree$edge.length * scale, rates,
+                       if (het) 0.15 else 0, 0.02, 0.5, 2)
+          quad <- do.call(MkPrime:::joint_asc_log_cpp, args)
+          direct <- do.call(MkPrime:::joint_asc_log_cpp, c(args, direct = TRUE))
+          nNode <- c(nNode, attr(quad, "nNode"))
+          # J tends to 0 on long trees, so bound its error per character.
+          expect_lt(abs(as.numeric(quad) - as.numeric(direct)), 1e-9 * nChar)
+        }
       }
+      # Both levels of nodes are reached; the second reuses the first's.
+      expect_true(all(levels %in% nNode), info = paste(het, arm))
     }
   }
 })

@@ -58,6 +58,13 @@ struct BranchBins {
   }
 };
 
+// Characters counted by missing-data mask, in increasing mask order.
+struct MaskTally {
+  std::vector<int> ids;
+  std::vector<int> counts;
+  bool complete() const { return ids.size() == 1 && ids[0] == 0; }
+};
+
 // Pre-processed MCMC data: created once before the MCMC loop.
 struct McmcData {
   int nTip;
@@ -176,13 +183,7 @@ struct McmcData {
   // maps a global character to its mask.
   std::vector<std::vector<uint8_t>> missingMasks;
   std::vector<int> charMask;
-};
-
-// Characters counted by missing-data mask, in increasing mask order.
-struct MaskTally {
-  std::vector<int> ids;
-  std::vector<int> counts;
-  bool complete() const { return ids.size() == 1 && ids[0] == 0; }
+  std::vector<MaskTally> partMaskTally;  // by partition
 };
 
 template <class GlobalIdx>

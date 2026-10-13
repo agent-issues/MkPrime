@@ -3,7 +3,9 @@
 #include <Rcpp.h>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
+#include <memory>
 #include <unordered_map>
 #include <vector>
 
@@ -11,22 +13,42 @@ using namespace Rcpp;
 
 namespace {
 
-// Chebyshev node counts tried in turn before the direct sum.
-constexpr int kChebLevels[] = {12, 32};
-constexpr double kChebRelTol = 1e-12;
+// Chebyshev node counts tried in turn before the direct sum, by kernel. The
+// second level triples the first, so its nodes include the first's.
+constexpr int kJcLevels[] = {8, 24};
+constexpr int kHetLevels[] = {12, 36};
+static_assert(kJcLevels[1] == 3 * kJcLevels[0], "levels must nest");
+static_assert(kHetLevels[1] == 3 * kHetLevels[0], "levels must nest");
+constexpr double kChebRelTol = 1e-9;
 constexpr double kChebAbsTol = 1e-15;
 
 inline double cheb_width() { return 1.0 / (kJointExactBelow - 1.0); }
+
+// The angle (2j + 1) pi / (2n) of node j of n, from the fraction in lowest
+// terms, so that the nodes of n recur bit for bit among those of 3n.
+double cheb_angle(int j, int n) {
+  const int num = 2 * j + 1, den = 2 * n;
+  int a = num, b = den;
+  while (b) {
+    const int t = a % b;
+    a = b;
+    b = t;
+  }
+  // Return:
+  return (num / a) * M_PI / (den / a);
+}
 
 // Chebyshev points of the first kind on [0, cheb_width()], in u = 1/(k - 1).
 std::vector<double> cheb_nodes_u(int n) {
   std::vector<double> u(n);
   const double h = cheb_width();
   for (int j = 0; j < n; ++j) {
-    u[j] = 0.5 * h * (1.0 + std::cos((2.0 * j + 1.0) * M_PI / (2.0 * n)));
+    u[j] = 0.5 * h * (1.0 + std::cos(cheb_angle(j, n)));
   }
   return u;
 }
+
+}  // namespace
 
 // Masks that agree on which tips below a node are missing share one lumped
 // partial there. Children fold into their parent one at a time, so a node may
@@ -35,7 +57,7 @@ std::vector<double> cheb_nodes_u(int n) {
 // class foldB[j] into running class j. A tip has two nominal classes
 // (observed, missing) whether or not each occurs, so a fold can leave a node
 // fewer classes than the copy before it: cap holds the most it ever has.
-struct MaskClasses {
+struct JointMaskClasses {
   int nTip = 0, maxNode = 0, root = 0;
   std::vector<int> nCls;                  // by node, after its last fold
   std::vector<int> cap;                   // by node
@@ -46,12 +68,14 @@ struct MaskClasses {
   std::vector<std::vector<int>> foldA, foldB;  // by edge
 };
 
-MaskClasses build_mask_classes(const IntegerVector& parent,
-                               const IntegerVector& child, int nTip,
-                               const std::vector<const uint8_t*>& masks) {
+namespace {
+
+JointMaskClasses build_mask_classes(const IntegerVector& parent,
+                                    const IntegerVector& child, int nTip,
+                                    const std::vector<const uint8_t*>& masks) {
   const int nEdge = parent.size();
   const int nMask = std::max<int>(1, masks.size());
-  MaskClasses mc;
+  JointMaskClasses mc;
   mc.nTip = nTip;
   mc.root = nTip + 1;
   mc.maxNode = 2 * nTip - 1;
@@ -142,7 +166,7 @@ MaskClasses build_mask_classes(const IntegerVector& parent,
 }
 
 // Offsets of each node's classes in a flat per-class buffer.
-std::vector<int> class_offsets(const MaskClasses& mc, int* total) {
+std::vector<int> class_offsets(const JointMaskClasses& mc, int* total) {
   std::vector<int> off(mc.maxNode + 2, 0);
   for (int v = 1; v <= mc.maxNode; ++v) off[v + 1] = off[v] + mc.cap[v];
   *total = off[mc.maxNode + 1];
@@ -153,7 +177,8 @@ std::vector<int> class_offsets(const MaskClasses& mc, int* total) {
 // all being in state 0 given the node is in state 0, y the same given the
 // node is in some other (fixed) state. A constant pattern then has
 // probability x + (k - 1) y at the root, summed over its k states.
-void lumped_jc_values(const MaskClasses& mc, const IntegerVector& parent,
+void lumped_jc_values(const JointMaskClasses& mc,
+                      const IntegerVector& parent,
                       const IntegerVector& child, const NumericVector& edgeLen,
                       const NumericVector& rates, const double* kVals, int nK,
                       int nMask, double* out, int outStride) {
@@ -254,7 +279,8 @@ const std::vector<double>& het_bins(double alpha, double k, int nBins) {
 // need its value at a spike node (a0) and at any other node (a1); those in a
 // non-spike target state (B) need it at the spike (b0), the target (b1) and
 // any of the k - 2 other states (b2). Averaged over ACRV rates and bins.
-void lumped_het_values(const MaskClasses& mc, const IntegerVector& parent,
+void lumped_het_values(const JointMaskClasses& mc,
+                       const IntegerVector& parent,
                        const IntegerVector& child, const NumericVector& edgeLen,
                        const NumericVector& rates, double betaScale,
                        int nBetaCat, const double* kVals, int nK, int nMask,
@@ -326,7 +352,7 @@ void lumped_het_values(const MaskClasses& mc, const IntegerVector& parent,
 }
 
 // Pr(V | k) = 1 - Pr(constant | k) at kVals, appended to g (nMask rows).
-void append_variable_probs(const MaskClasses& mc, const McmcData& data,
+void append_variable_probs(const JointMaskClasses& mc, const McmcData& data,
                            const IntegerVector& parent,
                            const IntegerVector& child,
                            const NumericVector& scaledEdge,
@@ -363,17 +389,26 @@ int prior_lo(const McmcData& data, int kObs) {
   return conditional ? kObs : 2;
 }
 
-// Whether every mask's interpolant through its last n values has converged:
-// its two highest Chebyshev coefficients are negligible.
-bool cheb_converged(const JointAscTable& table, int n) {
-  const int nK = table.kVals.size();
-  const int nMask = table.nMask;
+// cos(q (2j + 1) pi / (2n)), row q: the n-node Chebyshev transform.
+const std::vector<double>& cheb_basis(int n) {
+  static std::map<int, std::vector<double>> cache;
+  auto found = cache.find(n);
+  if (found != cache.end()) return found->second;
   std::vector<double> basis(n * n);
   for (int q = 0; q < n; ++q) {
     for (int j = 0; j < n; ++j) {
       basis[q * n + j] = std::cos(q * (2.0 * j + 1.0) * M_PI / (2.0 * n));
     }
   }
+  return cache.emplace(n, std::move(basis)).first->second;
+}
+
+// Whether every mask's interpolant through its last n values has converged:
+// its two highest Chebyshev coefficients are negligible.
+bool cheb_converged(const JointAscTable& table, int n) {
+  const int nK = table.kVals.size();
+  const int nMask = table.nMask;
+  const std::vector<double>& basis = cheb_basis(n);
   for (int m = 0; m < nMask; ++m) {
     const double* gv = &table.g[m * nK + nK - n];
     double scale = 0.0, tail = 0.0;
@@ -389,6 +424,45 @@ bool cheb_converged(const JointAscTable& table, int n) {
   return true;
 }
 
+// The barycentric weight of node j of the n-node interpolant at each integer
+// k from kJointExactBelow to K, row by k. Cached: it depends on neither the
+// tree nor the prior.
+const std::vector<double>& bary_matrix(int n, int K) {
+  static std::map<std::pair<int, int>, std::vector<double>> cache;
+  const std::pair<int, int> key(n, K);
+  auto found = cache.find(key);
+  if (found != cache.end()) return found->second;
+  const std::vector<double> u = cheb_nodes_u(n);
+  std::vector<double> bw(n);
+  for (int j = 0; j < n; ++j) {
+    bw[j] = ((j % 2) ? -1.0 : 1.0) * std::sin(cheb_angle(j, n));
+  }
+  const int nRow = std::max(0, K - kJointExactBelow + 1);
+  std::vector<double> L(nRow * n, 0.0);
+  for (int r = 0; r < nRow; ++r) {
+    const double uk = 1.0 / (kJointExactBelow + r - 1.0);
+    double* row = &L[r * n];
+    double s = 0.0;
+    int hit = -1;
+    for (int j = 0; j < n; ++j) {
+      const double d = uk - u[j];
+      if (d == 0.0) {
+        hit = j;
+        break;
+      }
+      row[j] = bw[j] / d;
+      s += row[j];
+    }
+    if (hit >= 0) {
+      std::fill_n(row, n, 0.0);
+      row[hit] = 1.0;
+      continue;
+    }
+    for (int j = 0; j < n; ++j) row[j] /= s;
+  }
+  return cache.emplace(key, std::move(L)).first->second;
+}
+
 }  // namespace
 
 
@@ -398,7 +472,7 @@ void lumped_const_probs_jc(const IntegerVector& parent,
                            const NumericVector& rates,
                            const std::vector<const uint8_t*>& masks,
                            const std::vector<double>& kVals, double* out) {
-  const MaskClasses mc = build_mask_classes(parent, child, nTip, masks);
+  const JointMaskClasses mc = build_mask_classes(parent, child, nTip, masks);
   lumped_jc_values(mc, parent, child, edgeLen, rates, kVals.data(),
                    kVals.size(), std::max<int>(1, masks.size()), out,
                    kVals.size());
@@ -411,7 +485,7 @@ void lumped_const_probs_het(const IntegerVector& parent,
                             double betaScale, int nBetaCat,
                             const std::vector<const uint8_t*>& masks,
                             const std::vector<double>& kVals, double* out) {
-  const MaskClasses mc = build_mask_classes(parent, child, nTip, masks);
+  const JointMaskClasses mc = build_mask_classes(parent, child, nTip, masks);
   lumped_het_values(mc, parent, child, edgeLen, rates, betaScale, nBetaCat,
                     kVals.data(), kVals.size(),
                     std::max<int>(1, masks.size()), out, kVals.size());
@@ -477,78 +551,116 @@ std::vector<double> kprime_log_prior_table(const McmcData& data, int kObs,
 }
 
 
-JointAscTable joint_asc_table(const McmcData& data, int partIdx,
-                              const IntegerVector& parent,
-                              const IntegerVector& child,
-                              const NumericVector& scaledEdge,
-                              const NumericVector& rates,
-                              double betaScale, bool forceDirect) {
-  const int classIdx = data.parts[partIdx].classIdx;
-  JointAscTable table;
-  table.K = data.kprimeTruncK;
-  table.lo = table.K + 1;
+// The missing-data masks of one rate class's transformational partitions,
+// the classes they share partials in on one topology, and the smallest k'
+// their priors support.
+struct JointLayout {
+  const McmcData* data = nullptr;
+  int classIdx = 0;
+  int lo = std::numeric_limits<int>::max();
+  std::vector<int> row, ids;
+  std::vector<int> parent, child;
+  JointMaskClasses mc;
+};
+
+namespace {
+
+std::shared_ptr<const JointLayout> build_joint_layout(
+    const McmcData& data, int classIdx, const IntegerVector& parent,
+    const IntegerVector& child) {
+  auto layout = std::make_shared<JointLayout>();
+  layout->data = &data;
+  layout->classIdx = classIdx;
   std::vector<uint8_t> used(data.missingMasks.size(), 0);
   for (const PartInfo& part : data.parts) {
     const int nChar = part.tipStates.ncol();
     if (part.type != 1 || part.classIdx != classIdx || nChar == 0) continue;
-    table.lo = std::min(table.lo,
-                        prior_lo(data, data.kObs[part.globalCharIdx[0]]));
+    layout->lo = std::min(layout->lo,
+                          prior_lo(data, data.kObs[part.globalCharIdx[0]]));
     for (int c = 0; c < nChar; ++c) {
       used[data.charMask[part.globalCharIdx[c]]] = 1;
     }
   }
-  table.row.assign(used.size(), -1);
-  std::vector<int> ids;
+  layout->row.assign(used.size(), -1);
+  std::vector<const uint8_t*> masks;
   for (int id = 0; id < (int)used.size(); ++id) {
     if (!used[id]) continue;
-    table.row[id] = ids.size();
-    ids.push_back(id);
-  }
-  table.nMask = ids.size();
-  if (table.lo > table.K) return table;
-
-  std::vector<const uint8_t*> masks;
-  for (int id : ids) {
+    layout->row[id] = layout->ids.size();
+    layout->ids.push_back(id);
     masks.push_back(id == 0 ? nullptr : data.missingMasks[id].data());
   }
-  const int nMask = masks.size();
-  const MaskClasses mc = build_mask_classes(parent, child, data.nTip, masks);
-  const NumericVector useRates = rates.size() ? rates : NumericVector(1, 1.0);
+  layout->parent.assign(parent.begin(), parent.end());
+  layout->child.assign(child.begin(), child.end());
+  layout->mc = build_mask_classes(parent, child, data.nTip, masks);
+  // Return:
+  return layout;
+}
 
+// Puts the table's last 3n columns, the n nodes of one level followed by the
+// 2n the next adds between them, into the order of the next level's nodes.
+void interleave_level(JointAscTable& table, int n) {
+  const int nK = table.kVals.size();
+  const int base = nK - 3 * n;
+  std::vector<int> from(3 * n);
+  for (int i = 0, added = 0; i < 3 * n; ++i) {
+    from[i] = i % 3 == 1 ? base + (i - 1) / 3 : base + n + added++;
+  }
+  std::vector<double> tmp(3 * n);
+  auto permute = [&](double* row) {
+    for (int i = 0; i < 3 * n; ++i) tmp[i] = row[from[i]];
+    std::copy(tmp.begin(), tmp.end(), row + base);
+  };
+  for (int m = 0; m < table.nMask; ++m) permute(&table.g[m * nK]);
+  permute(table.kVals.data());
+}
+
+JointAscTable joint_asc_table_on(const JointLayout& layout,
+                                 const McmcData& data,
+                                 const IntegerVector& parent,
+                                 const IntegerVector& child,
+                                 const NumericVector& scaledEdge,
+                                 const NumericVector& rates,
+                                 double betaScale, bool forceDirect) {
+  JointAscTable table;
+  table.K = data.kprimeTruncK;
+  table.lo = std::min(layout.lo, table.K + 1);
+  table.row = layout.row;
+  table.nMask = layout.ids.size();
+  if (table.lo > table.K) return table;
+
+  const int nMask = table.nMask;
+  const NumericVector useRates = rates.size() ? rates : NumericVector(1, 1.0);
+  const int* levels = data.qHeterogeneity ? kHetLevels : kJcLevels;
   const int tailLo = std::max(table.lo, kJointExactBelow);
   const int nTail = table.K - tailLo + 1;
-  const bool direct = forceDirect || nTail <= kChebLevels[0];
+  const bool direct = forceDirect || nTail <= levels[0];
   table.exactLo = table.lo;
   table.exactHi = direct ? table.K
                          : std::min(table.K, kJointExactBelow - 1);
   std::vector<double> kNew;
   for (int k = table.exactLo; k <= table.exactHi; ++k) kNew.push_back(k);
-  if (direct) {
-    append_variable_probs(mc, data, parent, child, scaledEdge, useRates,
-                          betaScale, kNew, nMask, table);
+  if (!direct) {
+    for (double u : cheb_nodes_u(levels[0])) kNew.push_back(1.0 + 1.0 / u);
+  }
+  append_variable_probs(layout.mc, data, parent, child, scaledEdge, useRates,
+                        betaScale, kNew, nMask, table);
+  if (direct) return table;
+  if (cheb_converged(table, levels[0])) {
+    table.nNode = levels[0];
     return table;
   }
-  for (int n : kChebLevels) {
-    for (double u : cheb_nodes_u(n)) kNew.push_back(1.0 + 1.0 / u);
-    append_variable_probs(mc, data, parent, child, scaledEdge, useRates,
-                          betaScale, kNew, nMask, table);
+  // More nodes than the tail has k would cost more than the direct sum.
+  if (levels[1] < nTail) {
+    const std::vector<double> u = cheb_nodes_u(levels[1]);
     kNew.clear();
-    if (cheb_converged(table, n)) {
-      // Keep the exact block and this level's nodes only.
-      const int nKeep = table.exactHi >= table.exactLo
-        ? table.exactHi - table.exactLo + 1 : 0;
-      const int nK = table.kVals.size();
-      std::vector<double> g(nMask * (nKeep + n));
-      for (int m = 0; m < nMask; ++m) {
-        std::copy_n(&table.g[m * nK], nKeep, &g[m * (nKeep + n)]);
-        std::copy_n(&table.g[m * nK + nK - n], n, &g[m * (nKeep + n) + nKeep]);
-      }
-      std::vector<double> kv(table.kVals.begin(),
-                             table.kVals.begin() + nKeep);
-      kv.insert(kv.end(), table.kVals.end() - n, table.kVals.end());
-      table.kVals = std::move(kv);
-      table.g = std::move(g);
-      table.nNode = n;
+    for (int i = 0; i < levels[1]; ++i) {
+      if (i % 3 != 1) kNew.push_back(1.0 + 1.0 / u[i]);
+    }
+    append_variable_probs(layout.mc, data, parent, child, scaledEdge,
+                          useRates, betaScale, kNew, nMask, table);
+    interleave_level(table, levels[0]);
+    if (cheb_converged(table, levels[1])) {
+      table.nNode = levels[1];
       return table;
     }
   }
@@ -562,12 +674,30 @@ JointAscTable joint_asc_table(const McmcData& data, int partIdx,
   }
   table.kVals.resize(nKeep);
   table.g = std::move(g);
+  kNew.clear();
   for (int k = tailLo; k <= table.K; ++k) kNew.push_back(k);
-  append_variable_probs(mc, data, parent, child, scaledEdge, useRates,
+  append_variable_probs(layout.mc, data, parent, child, scaledEdge, useRates,
                         betaScale, kNew, nMask, table);
   table.exactLo = table.lo;
   table.exactHi = table.K;
+  // Return:
   return table;
+}
+
+}  // namespace
+
+
+JointAscTable joint_asc_table(const McmcData& data, int partIdx,
+                              const IntegerVector& parent,
+                              const IntegerVector& child,
+                              const NumericVector& scaledEdge,
+                              const NumericVector& rates,
+                              double betaScale, bool forceDirect) {
+  const auto layout = build_joint_layout(
+    data, data.parts[partIdx].classIdx, parent, child);
+  // Return:
+  return joint_asc_table_on(*layout, data, parent, child, scaledEdge, rates,
+                            betaScale, forceDirect);
 }
 
 
@@ -585,36 +715,16 @@ double joint_asc_log(const McmcData& data, int partIdx,
   }
   if (table.nNode > 0) {
     const int n = table.nNode;
-    const std::vector<double> u = cheb_nodes_u(n);
-    std::vector<double> bw(n);
-    for (int j = 0; j < n; ++j) {
-      bw[j] = ((j % 2) ? -1.0 : 1.0) *
-        std::sin((2.0 * j + 1.0) * M_PI / (2.0 * n));
-    }
+    const std::vector<double>& L = bary_matrix(n, table.K);
     double* W = &w[nExact];
-    std::vector<double> q(n);
     for (int k = std::max(lo, kJointExactBelow); k <= table.K; ++k) {
       const double pk = std::exp(logPrior[k - lo]);
       if (pk == 0.0) continue;
-      const double uk = 1.0 / (k - 1.0);
-      double s = 0.0;
-      int hit = -1;
-      for (int j = 0; j < n; ++j) {
-        const double d = uk - u[j];
-        if (d == 0.0) { hit = j; break; }
-        q[j] = bw[j] / d;
-        s += q[j];
-      }
-      if (hit >= 0) {
-        W[hit] += pk;
-        continue;
-      }
-      for (int j = 0; j < n; ++j) W[j] += pk * q[j] / s;
+      const double* row = &L[(k - kJointExactBelow) * n];
+      for (int j = 0; j < n; ++j) W[j] += pk * row[j];
     }
   }
-  const PartInfo& part = data.parts[partIdx];
-  const MaskTally tally = tally_masks(data, part.globalCharIdx,
-                                      part.tipStates.ncol());
+  const MaskTally& tally = data.partMaskTally[partIdx];
   double total = 0.0;
   for (size_t i = 0; i < tally.ids.size(); ++i) {
     const double* gm = &table.g[table.row[tally.ids[i]] * nK];
@@ -655,6 +765,17 @@ const JointAscTable& JointAscCache::table(const McmcData& data, int partIdx,
       return s.table;
     }
   }
+  // A move that keeps the topology keeps the layout.
+  std::shared_ptr<const JointLayout> layout;
+  for (int i : {last, 1 - last}) {
+    const std::shared_ptr<const JointLayout>& l = pair[i].layout;
+    if (l && l->data == &data && same(parent, l->parent) &&
+        same(child, l->child)) {
+      layout = l;
+      break;
+    }
+  }
+  if (!layout) layout = build_joint_layout(data, cls, parent, child);
   Slot& s = pair[1 - last];
   s.data = &data;
   s.parent.assign(parent.begin(), parent.end());
@@ -662,8 +783,9 @@ const JointAscTable& JointAscCache::table(const McmcData& data, int partIdx,
   s.edge.assign(scaledEdge.begin(), scaledEdge.end());
   s.rates.assign(useRates.begin(), useRates.end());
   s.betaScale = bs;
-  s.table = joint_asc_table(data, partIdx, parent, child, scaledEdge,
-                            useRates, bs);
+  s.layout = layout;
+  s.table = joint_asc_table_on(*layout, data, parent, child, scaledEdge,
+                               useRates, bs, false);
   recent_[cls] = 1 - last;
   // Return:
   return s.table;

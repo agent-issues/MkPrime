@@ -19,15 +19,17 @@
 // D needs Pr(V | k) at every k in the prior's support [lo, K]. Pr(V | k) is
 // smooth in u = 1 / (k - 1), so k < kJointExactBelow is summed exactly and
 // the tail by interpolation at Chebyshev nodes in u, with a check on the
-// interpolant's coefficients that falls back to more nodes, then to the
-// direct sum.
+// interpolant's coefficients that falls back to three times as many nodes
+// (reusing the first set), then to the direct sum.
 
 #include <Rcpp.h>
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 struct McmcData;
+struct JointLayout;
 
 // Hyperparameters of the k' prior: p (geometric, empirical_geometric) and
 // alpha, beta (beta_geometric). The logseries prior carries none.
@@ -104,7 +106,8 @@ double joint_asc_log(const McmcData& data, int partIdx,
 // Pr(V | k) tables by rate class, for the last two trees each was scored on.
 // A move that changes neither the tree nor the rates (a k' or hyperparameter
 // update, or a return to the current tree after a rejected proposal) reuses
-// a table rather than rebuilding it.
+// a table rather than rebuilding it; one that keeps the topology reuses the
+// way the masks share partials on it.
 class JointAscCache {
  public:
   const JointAscTable& table(const McmcData& data, int partIdx,
@@ -120,6 +123,7 @@ class JointAscCache {
     std::vector<int> parent, child;
     std::vector<double> edge, rates;
     double betaScale = 0.0;
+    std::shared_ptr<const JointLayout> layout;
     JointAscTable table;
   };
   std::vector<std::array<Slot, 2>> slots_;  // by classIdx
