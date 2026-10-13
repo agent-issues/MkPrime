@@ -40,6 +40,7 @@ struct MaskClasses {
   std::vector<int> nCls;                  // by node, after its last fold
   std::vector<int> cap;                   // by node
   std::vector<int> rootCls;               // by mask
+  std::vector<uint8_t> tipMissing;        // by tip: the class of a missing tip
   std::vector<uint8_t> first;             // by edge
   std::vector<int> nOut;                  // by edge: parent classes after it
   std::vector<std::vector<int>> foldA, foldB;  // by edge
@@ -60,10 +61,18 @@ MaskClasses build_mask_classes(const IntegerVector& parent,
   std::vector<std::vector<int>> cls(mc.maxNode + 1);
   mc.nCls.assign(mc.maxNode + 1, 0);
   mc.cap.assign(mc.maxNode + 1, 0);
+  // Classes are numbered by first appearance over the masks, at tips as at
+  // folds, so a fold's output class j draws on parent class foldA[j] <= j.
+  mc.tipMissing.assign(nTip + 1, 1);
   for (int t = 1; t <= nTip; ++t) {
+    auto missing = [&](int m) {
+      return !masks.empty() && masks[m] && masks[m][t - 1];
+    };
+    const bool missFirst = missing(0);
+    mc.tipMissing[t] = missFirst ? 0 : 1;
     cls[t].resize(nMask);
     for (int m = 0; m < nMask; ++m) {
-      cls[t][m] = (!masks.empty() && masks[m] && masks[m][t - 1]) ? 1 : 0;
+      cls[t][m] = missing(m) == missFirst ? 0 : 1;
     }
     mc.nCls[t] = 2;
     mc.cap[t] = 2;
@@ -155,12 +164,11 @@ void lumped_jc_values(const MaskClasses& mc, const IntegerVector& parent,
   std::vector<double> x(total), y(total);
   int maxCls = 0;
   for (int v = 1; v <= mc.maxNode; ++v) maxCls = std::max(maxCls, mc.cap[v]);
-  std::vector<double> mx(maxCls), my(maxCls), tx(maxCls), ty(maxCls);
+  std::vector<double> mx(maxCls), my(maxCls);
   for (int t = 1; t <= mc.nTip; ++t) {
-    x[off[t]] = 1.0;
-    y[off[t]] = 0.0;
-    x[off[t] + 1] = 1.0;
-    y[off[t] + 1] = 1.0;
+    x[off[t]] = x[off[t] + 1] = 1.0;
+    y[off[t] + mc.tipMissing[t]] = 1.0;
+    y[off[t] + 1 - mc.tipMissing[t]] = 0.0;
   }
   for (int ki = 0; ki < nK; ++ki) {
     const double k = kVals[ki];
@@ -176,27 +184,24 @@ void lumped_jc_values(const MaskClasses& mc, const IntegerVector& parent,
         const double b = invK * omE;
         const double* xc = &x[off[ch]];
         const double* yc = &y[off[ch]];
+        double* xp = &x[off[par]];
+        double* yp = &y[off[par]];
+        // A first child's message is the parent's value.
+        double* dx = mc.first[e] ? xp : mx.data();
+        double* dy = mc.first[e] ? yp : my.data();
         const int nc = mc.nCls[ch];
         for (int j = 0; j < nc; ++j) {
           const double d = yc[j] - xc[j];
-          mx[j] = xc[j] + a * d;
-          my[j] = yc[j] - b * d;
+          dx[j] = xc[j] + a * d;
+          dy[j] = yc[j] - b * d;
         }
-        double* xp = &x[off[par]];
-        double* yp = &y[off[par]];
-        const int nOut = mc.nOut[e];
-        if (mc.first[e]) {
-          std::copy_n(mx.data(), nOut, xp);
-          std::copy_n(my.data(), nOut, yp);
-        } else {
-          const int* fa = mc.foldA[e].data();
-          const int* fb = mc.foldB[e].data();
-          for (int j = 0; j < nOut; ++j) {
-            tx[j] = xp[fa[j]] * mx[fb[j]];
-            ty[j] = yp[fa[j]] * my[fb[j]];
-          }
-          std::copy_n(tx.data(), nOut, xp);
-          std::copy_n(ty.data(), nOut, yp);
+        if (mc.first[e]) continue;
+        // In place, from the top: class j reads only foldA[j] <= j.
+        const int* fa = mc.foldA[e].data();
+        const int* fb = mc.foldB[e].data();
+        for (int j = mc.nOut[e] - 1; j >= 0; --j) {
+          xp[j] = xp[fa[j]] * mx[fb[j]];
+          yp[j] = yp[fa[j]] * my[fb[j]];
         }
       }
       const double* xr = &x[off[mc.root]];
@@ -260,11 +265,11 @@ void lumped_het_values(const MaskClasses& mc, const IntegerVector& parent,
   std::vector<double> v(total * nV);
   int maxCls = 0;
   for (int n = 1; n <= mc.maxNode; ++n) maxCls = std::max(maxCls, mc.cap[n]);
-  std::vector<double> msg(maxCls * nV), tmp(maxCls * nV);
+  std::vector<double> msg(maxCls * nV);
   for (int t = 1; t <= mc.nTip; ++t) {
-    double* obs = &v[off[t] * nV];
+    std::fill_n(&v[off[t] * nV], 2 * nV, 1.0);
+    double* obs = &v[(off[t] + 1 - mc.tipMissing[t]) * nV];
     obs[0] = 1.0; obs[1] = 0.0; obs[2] = 0.0; obs[3] = 1.0; obs[4] = 0.0;
-    std::fill_n(obs + nV, nV, 1.0);
   }
   const double norm = 1.0 / (nCat * nBetaCat);
   for (int ki = 0; ki < nK; ++ki) {
@@ -282,10 +287,12 @@ void lumped_het_values(const MaskClasses& mc, const IntegerVector& parent,
           const double omd = -std::expm1(-mu * edgeLen[e] * rate);
           const double d = 1.0 - omd;
           const double* vc = &v[off[ch] * nV];
+          double* vp = &v[off[par] * nV];
+          double* dst = mc.first[e] ? vp : msg.data();
           const int nc = mc.nCls[ch];
           for (int j = 0; j < nc; ++j) {
             const double* s = vc + j * nV;
-            double* o = &msg[j * nV];
+            double* o = dst + j * nV;
             const double sA = omd * (beta * s[0] + (1.0 - beta) * s[1]);
             const double sB = omd * (beta * s[2] + r * s[3]
                                      + (k - 2.0) * r * s[4]);
@@ -295,19 +302,13 @@ void lumped_het_values(const MaskClasses& mc, const IntegerVector& parent,
             o[3] = d * s[3] + sB;
             o[4] = d * s[4] + sB;
           }
-          double* vp = &v[off[par] * nV];
-          const int nOut = mc.nOut[e];
-          if (mc.first[e]) {
-            std::copy_n(msg.data(), nOut * nV, vp);
-          } else {
-            const int* fa = mc.foldA[e].data();
-            const int* fb = mc.foldB[e].data();
-            for (int j = 0; j < nOut; ++j) {
-              for (int q = 0; q < nV; ++q) {
-                tmp[j * nV + q] = vp[fa[j] * nV + q] * msg[fb[j] * nV + q];
-              }
+          if (mc.first[e]) continue;
+          const int* fa = mc.foldA[e].data();
+          const int* fb = mc.foldB[e].data();
+          for (int j = mc.nOut[e] - 1; j >= 0; --j) {
+            for (int q = 0; q < nV; ++q) {
+              vp[j * nV + q] = vp[fa[j] * nV + q] * msg[fb[j] * nV + q];
             }
-            std::copy_n(tmp.data(), nOut * nV, vp);
           }
         }
         const double* vr = &v[off[mc.root] * nV];
