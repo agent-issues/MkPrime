@@ -3206,6 +3206,16 @@ SEXP prepare_mcmc_data(List partitions_r,
       }
     }
   }
+  // The ascertainment correction sums over labelled patterns, which the data
+  // record only up to relabelling.
+  if (codingStr != "none" && !relabelFlag) {
+    for (R_xlen_t i = 0; i < charTypes_r.size(); ++i) {
+      if (charTypes_r[i] == "transformational") {
+        Rcpp::stop("relabel = FALSE needs coding = \"none\" when there are "
+                   "transformational characters.");
+      }
+    }
+  }
   return prepare_mcmc_data_impl(
     partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag,
     treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog,

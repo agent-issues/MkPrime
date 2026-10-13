@@ -3697,6 +3697,25 @@ RunMkPrime <- function(data, tree = NULL,
   invisible()
 }
 
+# Bumped whenever the likelihood a chain targets changes. A resume appends to
+# the checkpoint's samples, so the two must share a target. Version 2 is the
+# joint ascertainment correction; a checkpoint without the field predates it.
+.likelihoodVersion <- 2L
+
+#' Abort a resume across a change of likelihood
+#' @keywords internal
+.CheckLikelihoodVersion <- function(saved) {
+  saved <- saved %||% 1L
+  now <- .likelihoodVersion
+  if (identical(as.integer(saved), now)) return(invisible())
+  cli::cli_abort(c(
+    "This checkpoint was run under a different likelihood.",
+    "x" = "Its samples target likelihood version {saved}; this version of \\
+           MkPrime targets version {now}.",
+    "i" = "Start a fresh run with {.code RunMkPrime(..., overwrite = TRUE)}."
+  ))
+}
+
 # Chain state numbers tips by data row, so data supplied on resume must take
 # the checkpoint's row order.
 .OrderTipsAs <- function(mkd, tipLabels) {
@@ -3782,7 +3801,8 @@ RunMkPrime <- function(data, tree = NULL,
 #' @keywords internal
 .SaveCheckpoint <- function(runs, mcmc, iter, paramNames, file,
                             moveWeights = NULL, phase = NULL,
-                            model = NULL, serialPhase = NULL) {
+                            model = NULL, serialPhase = NULL,
+                            likelihoodVersion = .likelihoodVersion) {
   isStreaming <- !is.null(mcmc$logFile)
 
   serialRuns <- lapply(runs, function(r) {
@@ -3814,7 +3834,8 @@ RunMkPrime <- function(data, tree = NULL,
   # when reading v2 checkpoints (which never had a treeFilePaths field).
   version <- if (isStreaming) 3L else 1L
   payload <- list(runs = serialRuns, mcmc = mcmc, iter = iter,
-                  timestamp = Sys.time(), version = version)
+                  timestamp = Sys.time(), version = version,
+                  likelihoodVersion = likelihoodVersion)
   if (isStreaming) {
     # Looked up by each run's own index: a parallel job keeps only the runs
     # that returned, and renumbering the survivors pairs one with another's
@@ -4005,7 +4026,8 @@ RunMkPrime <- function(data, tree = NULL,
   .SaveCheckpoint(mergedRuns, ref$mcmc, maxIter, ref$paramNames,
                   checkpointFile, moveWeights = ref$moveWeights,
                   phase = ref$phase, model = ref$model,
-                  serialPhase = ref$serialPhase)
+                  serialPhase = ref$serialPhase,
+                  likelihoodVersion = ref$likelihoodVersion %||% 1L)
   invisible(maxIter)
 }
 
@@ -4234,6 +4256,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     cli::cli_abort("Unsupported checkpoint version: {version}.")
   }
   isStreaming <- version >= 2L
+  .CheckLikelihoodVersion(checkpoint$likelihoodVersion)
 
   if (inherits(data, "MkPrimeData")) {
     mkd <- data

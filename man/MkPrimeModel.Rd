@@ -44,7 +44,8 @@ with a message; every character must be neomorphic or of known state.}
 \item{nCat}{Number of ACRV rate categories (default 6).}
 
 \item{relabel}{Apply Mk' relabelling correction for transformational
-characters? Default \code{TRUE}.}
+characters? \code{FALSE} needs \code{coding = "none"} when there are
+transformational characters. Default \code{TRUE}.}
 
 \item{treeLengthShape, treeLengthRate}{Shape and rate for the Gamma prior
 on tree length. Defaults: shape = 2, rate = \code{treeLengthShape / expSteps},

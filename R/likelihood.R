@@ -47,14 +47,15 @@
 #' @param rate_neo Rate scalar for the neomorphic partition relative to
 #'   transformational (which is fixed at 1.0). Default 1.0 (equal rates).
 #' @param relabel Logical. Apply Mk' relabelling correction for
-#'   transformational characters? `FALSE` with `coding = "none"` gives the
-#'   standard Mk likelihood (e.g., for validation against phangorn); under
-#'   `coding = "variable"`, declare each character's k through `knownStates`
-#'   in [MkPrimeData()] instead. Default `TRUE`.
+#'   transformational characters? `FALSE` gives the standard Mk likelihood
+#'   (e.g., for validation against phangorn), and needs `coding = "none"` when
+#'   there are transformational characters; for standard Mkv, declare each
+#'   character's k through `knownStates` in [MkPrimeData()] instead.
+#'   Default `TRUE`.
 #' @param model [MkPrimeModel()] object whose \eqn{k'} prior enters the
 #'   ascertainment correction of transformational characters.
 #' @param p Numeric specifying the `p` of a geometric or empirical geometric
-#'   \eqn{k'} prior.
+#'   \eqn{k'} prior; `NULL` uses the mean of its prior in `model`.
 #' @param kprimeAlpha,kprimeBeta Numeric specifying the shape parameters of a
 #'   beta-geometric \eqn{k'} prior.
 #'
@@ -69,7 +70,7 @@ MkpLogLikelihood <- function(tree, mkd,
                                rate_neo = 1.0,
                                relabel = model$relabel,
                                model = MkPrimeModel(),
-                               p = 0.5,
+                               p = NULL,
                                kprimeAlpha = model$kprimeAlpha,
                                kprimeBeta = model$kprimeBeta) {
   if (!inherits(tree, "phylo")) {
@@ -78,8 +79,16 @@ MkpLogLikelihood <- function(tree, mkd,
   if (!inherits(mkd, "MkPrimeData")) {
     cli::cli_abort("{.arg mkd} must be a {.cls MkPrimeData} object.")
   }
+  edgeLength <- tree$edge.length
+  if (length(edgeLength) != nrow(tree$edge) ||
+      !all(is.finite(edgeLength) & edgeLength >= 0)) {
+    cli::cli_abort(
+      "{.arg tree} must have a finite, non-negative length on every edge."
+    )
+  }
   coding <- match.arg(coding, c("variable", "informative", "none"))
-  .CheckInformativeCoding(coding, mkd)
+  .CheckTransformationalCoding(coding, relabel, mkd)
+  p <- p %||% .DefaultP(model, mkd, coding)
   # Pruning pairs tip i with data row i.
   dataTaxa <- rownames(mkd$matrix)
   if (!identical(tree$tip.label, dataTaxa)) {
@@ -381,10 +390,13 @@ MkpLogLikelihood <- function(tree, mkd,
 
 
 # The ascertainment of a transformational character sums over its k', which
-# the informative correction cannot yet do.
-.CheckInformativeCoding <- function(coding, mkd) {
-  if (identical(coding, "informative") &&
-      any(mkd$type == "transformational")) {
+# the informative correction cannot yet do, and over labelled patterns, which
+# the data record only up to relabelling.
+.CheckTransformationalCoding <- function(coding, relabel, mkd) {
+  if (identical(coding, "none") || !any(mkd$type == "transformational")) {
+    return(invisible())
+  }
+  if (identical(coding, "informative")) {
     cli::cli_abort(c(
       "{.code coding = \"informative\"} is not yet available for
        transformational characters.",
@@ -392,4 +404,31 @@ MkpLogLikelihood <- function(tree, mkd,
              {.arg neomorphic} or {.arg knownStates} in {.fun MkPrimeData}."
     ))
   }
+  if (!isTRUE(relabel)) {
+    cli::cli_abort(c(
+      "{.code relabel = FALSE} needs {.code coding = \"none\"} when there
+       are transformational characters.",
+      "i" = "For a standard Mkv likelihood, declare each character's number
+             of states with {.arg knownStates} in {.fun MkPrimeData}."
+    ))
+  }
+}
+
+
+# The mean of p's prior, announced once a session where p sets the
+# likelihood.
+.DefaultP <- function(model, mkd, coding) {
+  hyperA <- model$kprimeHyperA %||% 1
+  p <- hyperA / (hyperA + (model$kprimeHyperB %||% 1))
+  arm <- model$kPrimePrior %||% "geometric"
+  if (coding != "none" && any(mkd$type == "transformational") &&
+      arm %in% c("geometric", "empirical_geometric")) {
+    cli::cli_inform(
+      c("i" = "{.fn MkpLogLikelihood} sets {.arg p} to {p}, the mean of its
+               prior in {.arg model}."),
+      .frequency = "once", .frequency_id = "MkpLogLikelihood_p"
+    )
+  }
+  # Return:
+  p
 }

@@ -15,7 +15,7 @@ MkpLogLikelihood(
   rate_neo = 1,
   relabel = model$relabel,
   model = MkPrimeModel(),
-  p = 0.5,
+  p = NULL,
   kprimeAlpha = model$kprimeAlpha,
   kprimeBeta = model$kprimeBeta
 )
@@ -51,16 +51,17 @@ known state). Default \code{"variable"}.}
 transformational (which is fixed at 1.0). Default 1.0 (equal rates).}
 
 \item{relabel}{Logical. Apply Mk' relabelling correction for
-transformational characters? \code{FALSE} with \code{coding = "none"} gives the
-standard Mk likelihood (e.g., for validation against phangorn); under
-\code{coding = "variable"}, declare each character's k through \code{knownStates}
-in \code{\link[=MkPrimeData]{MkPrimeData()}} instead. Default \code{TRUE}.}
+transformational characters? \code{FALSE} gives the standard Mk likelihood
+(e.g., for validation against phangorn), and needs \code{coding = "none"} when
+there are transformational characters; for standard Mkv, declare each
+character's k through \code{knownStates} in \code{\link[=MkPrimeData]{MkPrimeData()}} instead.
+Default \code{TRUE}.}
 
 \item{model}{\code{\link[=MkPrimeModel]{MkPrimeModel()}} object whose \eqn{k'} prior enters the
 ascertainment correction of transformational characters.}
 
 \item{p}{Numeric specifying the \code{p} of a geometric or empirical geometric
-\eqn{k'} prior.}
+\eqn{k'} prior; \code{NULL} uses the mean of its prior in \code{model}.}
 
 \item{kprimeAlpha, kprimeBeta}{Numeric specifying the shape parameters of a
 beta-geometric \eqn{k'} prior.}

@@ -10,7 +10,8 @@
 #'   with a message; every character must be neomorphic or of known state.
 #' @param nCat Number of ACRV rate categories (default 6).
 #' @param relabel Apply Mk' relabelling correction for transformational
-#'   characters? Default `TRUE`.
+#'   characters? `FALSE` needs `coding = "none"` when there are
+#'   transformational characters. Default `TRUE`.
 #' @param treeLengthShape,treeLengthRate Shape and rate for the Gamma prior
 #'   on tree length. Defaults: shape = 2, rate = `treeLengthShape / expSteps`,
 #'   so that the prior mean tree length is `expSteps`.
@@ -595,7 +596,7 @@ MkPrimeModel <- function(
 #' @keywords internal
 .FinalizeModel <- function(model, tree, mkd) {
   model <- .ResolvePriorDefaults(model)
-  .CheckInformativeCoding(model$coding, mkd)
+  .CheckTransformationalCoding(model$coding, model$relabel, mkd)
   .CheckPriorEnums(model$kPrimePrior, model$priorVariant)
   .CheckPriorVariant(model$kPrimePrior, model$priorVariant)
   if (!is.null(model$kprimeTruncK)) {

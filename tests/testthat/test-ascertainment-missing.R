@@ -283,8 +283,7 @@ test_that("the k' sweep conditions each character on its observed tips", {
   Ptrs <- function(mode) {
     model <- MkPrime:::.FinalizeModel(
       MkPrimeModel(kPrimePrior = "geometric", likelihoodMode = mode,
-                   priorVariant = "conditional", coding = "variable",
-                   relabel = FALSE),
+                   priorVariant = "conditional", coding = "variable"),
       d$tree, d$mkd)
     state <- MkPrime:::.InitState(d$tree, d$mkd, model)
     state$p <- p

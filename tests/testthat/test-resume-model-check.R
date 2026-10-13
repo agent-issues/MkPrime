@@ -139,3 +139,17 @@ test_that("Resume aborts on changed neomorphic characters", {
     "character types"
   )
 })
+
+test_that("A resume aborts across a change of likelihood", {
+  ck <- .ModelCheckpoint(MkPrimeModel())
+  on.exit(unlink(ck$files), add = TRUE)
+  cp <- readRDS(ck$cpFile)
+  expect_identical(cp$likelihoodVersion, .likelihoodVersion)
+  cp$likelihoodVersion <- NULL
+  saveRDS(cp, ck$cpFile)
+  expect_error(
+    ResumeMkPrime(ck$cpFile, .ModelCheckData(), mcmc = list(nIter = 400L),
+                  verbosity = 0L),
+    "different likelihood"
+  )
+})

@@ -461,3 +461,36 @@ test_that("a transformational partition holds one kObs", {
   mkd$partitions <- c(list(merged), parts[-trans[1:2]])
   expect_error(MkPrime:::.InitMcmcData(mkd, model), "mixes observed state")
 })
+
+test_that("relabel = FALSE needs coding = \"none\" for transformational chars", {
+  d <- .JointData()
+  msg <- "relabel = FALSE`? needs"
+  expect_error(MkpLogLikelihood(d$tree, d$mkd, relabel = FALSE), msg)
+  expect_error(
+    MkPrime:::.FinalizeModel(MkPrimeModel(relabel = FALSE), d$tree, d$mkd),
+    msg
+  )
+  model <- MkPrime:::.FinalizeModel(MkPrimeModel(), d$tree, d$mkd)
+  model$relabel <- FALSE
+  expect_error(MkPrime:::.InitMcmcData(d$mkd, model), msg)
+  expect_true(is.finite(
+    MkpLogLikelihood(d$tree, d$mkd, coding = "none", relabel = FALSE)
+  ))
+})
+
+test_that("MkpLogLikelihood() takes p from its prior, and says so once", {
+  d <- .JointData()
+  model <- MkPrimeModel(kPrimePrior = "geometric", kprimeHyperA = 3,
+                        kprimeHyperB = 1)
+  rlang::reset_message_verbosity("MkpLogLikelihood_p")
+  expect_message(ll <- MkpLogLikelihood(d$tree, d$mkd, model = model),
+                 "mean of its")
+  expect_equal(ll, MkpLogLikelihood(d$tree, d$mkd, model = model, p = 0.75))
+  expect_no_message(MkpLogLikelihood(d$tree, d$mkd, model = model))
+  rlang::reset_message_verbosity("MkpLogLikelihood_p")
+  expect_no_message(MkpLogLikelihood(d$tree, d$mkd, model = model,
+                                     coding = "none"))
+  expect_no_message(MkpLogLikelihood(
+    d$tree, d$mkd, model = MkPrimeModel(kPrimePrior = "logseries")
+  ))
+})
