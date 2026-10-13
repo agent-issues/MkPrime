@@ -1716,7 +1716,8 @@ static void compute_het_bins(double alpha, int k, int nBins, double* bins) {
     if (denom < 1e-300) {
       bins[i] = 0.5 * (lo + hi);
     } else {
-      bins[i] = (a / (a + b)) * (p_hi - p_lo) / denom;
+      // A mean can round above 1, whose rate would overflow.
+      bins[i] = std::min(1.0, (a / (a + b)) * (p_hi - p_lo) / denom);
     }
   }
 }

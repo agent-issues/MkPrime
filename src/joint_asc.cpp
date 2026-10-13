@@ -241,8 +241,10 @@ const std::vector<double>& het_bins(double alpha, double k, int nBins) {
     const double pLo = R::pbeta(lo, a + 1.0, b, 1, 0);
     const double pHi = R::pbeta(hi, a + 1.0, b, 1, 0);
     const double denom = R::pbeta(hi, a, b, 1, 0) - R::pbeta(lo, a, b, 1, 0);
-    bins[i] = denom < 1e-300 ? 0.5 * (lo + hi)
-                             : (a / (a + b)) * (pHi - pLo) / denom;
+    // A mean can round above 1, whose rate would overflow.
+    bins[i] = denom < 1e-300
+      ? 0.5 * (lo + hi)
+      : std::min(1.0, (a / (a + b)) * (pHi - pLo) / denom);
   }
   return cache.emplace(k, std::move(bins)).first->second;
 }

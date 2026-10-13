@@ -15,6 +15,7 @@
 // For nCand=100, depth=6, nEdge=105: 20× reduction.
 
 #include "mcmc_state.h"
+#include <algorithm>
 #include <cstring>
 #include <array>
 #include <cmath>
@@ -1106,7 +1107,8 @@ static void gibbs_compute_het_bins(double alpha, int k, int nBins,
     if (denom < 1e-300) {
       bins[i] = 0.5 * (lo + hi);
     } else {
-      bins[i] = (a / (a + b)) * (p_hi - p_lo) / denom;
+      // A mean can round above 1, whose rate would overflow.
+      bins[i] = std::min(1.0, (a / (a + b)) * (p_hi - p_lo) / denom);
     }
   }
 }
