@@ -5532,7 +5532,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     state$log_lik, state$log_prior,
     state$beta_scale %||% 1.0,
     state$kprime_alpha %||% 1.0,
-    state$kprime_beta %||% 1.0
+    state$kprime_beta %||% 1.0,
+    extParams = as.numeric(state$ext_params %||% numeric(0))
   )
 }
 

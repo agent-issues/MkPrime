@@ -114,6 +114,16 @@ test_that("scale moves on extension parameters touch only the prior", {
   # A state whose extension block does not fit the attached extensions.
   expect_identical(eval_log_prior_cpp(fx$dataPtr, base), -Inf)
 
+  # .InitMcmcChain() (stepping stone) carries the extension block.
+  edgeLen <- fx$tree$edge.length
+  rState <- list(tree = fx$tree, rel_br_lengths = edgeLen / sum(edgeLen),
+                 tree_length = sum(edgeLen), rate_loss = 0.8,
+                 rate_log_sd = 0.5, rate_neo = 1.2, p = 0.5,
+                 kPrime = as.integer(fx$mkd$kObs), log_lik = 0, log_prior = 0,
+                 ext_params = c(1, 0.5))
+  expect_identical(get_mcmc_state(MkPrime:::.InitMcmcChain(rState))$extParams,
+                   c(1, 0.5))
+
   statePtr <- ExtState(fx, c(1, 0.5))
   start <- get_mcmc_state(statePtr)
   expect_equal(start$logPrior - baseLP, ToyPrior(c(1, 0.5)),
