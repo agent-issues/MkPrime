@@ -67,6 +67,29 @@ test_that("MkPrimeMCMC stores nChains and heat", {
 })
 
 
+test_that("heatMax is validated, stored and bounds the adapted ladder", {
+  expect_identical(MkPrimeMCMC(nChains = 4L)$heatMax, 0.5)
+  expect_identical(MkPrimeMCMC(nChains = 4L, heatMax = 0.8)$heatMax, 0.8)
+  for (bad in list(0.01, 1, -1, NA_real_, c(0.6, 0.7), "0.6")) {
+    expect_error(MkPrimeMCMC(nChains = 4L, heatMax = bad), "heatMax")
+  }
+  expect_no_warning(MkPrimeMCMC(nChains = 4L, heat = 0.7, heatMax = 0.8))
+  expect_warning(MkPrimeMCMC(nChains = 4L, heat = 0.7), "outside \\[0.01, 0.5\\]")
+
+  # No swaps push the hot chain's inverse temperature up, against the clamp.
+  betas <- MkPrime:::.BuildTemperatureLadder(4L, 0.49)
+  accept <- c(0L, 0L, 0L)
+  propose <- c(100L, 100L, 100L)
+  hot <- function(...) {
+    b <- MkPrime:::.AdaptTemperatures(betas, accept, propose, ...)
+    b[length(b)]
+  }
+  expect_equal(hot(), 0.5)
+  expect_identical(hot(heatMax = 0.5), hot())
+  expect_equal(hot(heatMax = 0.9), 0.49 ^ exp(-0.125))
+})
+
+
 # --- Chain swap proposal ---
 
 test_that(".ProposeChainSwap is no-op for single chain", {

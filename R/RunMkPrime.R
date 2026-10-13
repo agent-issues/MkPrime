@@ -1715,7 +1715,8 @@ RunMkPrime <- function(data, tree = NULL,
       }
       if (nChains > 1L) {
         oldBetas <- r$betas
-        r$betas <- .AdaptTemperatures(r$betas, r$swap_accept, r$swap_propose)
+        r$betas <- .AdaptTemperatures(r$betas, r$swap_accept, r$swap_propose,
+                                      heatMax = mcmc$heatMax %||% 0.5)
         # Swap rates are measured on the current ladder alone, so they
         # restart whenever it moves; result$swap_rates then reports the
         # ladder that Sample ran on (#306).
