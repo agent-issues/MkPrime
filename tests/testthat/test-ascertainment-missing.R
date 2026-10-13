@@ -118,14 +118,13 @@ test_that("fixture has missing cells in every partition", {
                   c("neomorphic", "transformational", "known"))
 })
 
-# A transformational character's k' prior: geometric from kObs, capped low
+# A transformational character's k' prior: geometric from 2, capped low
 # enough to sum by hand.
 .kMissPrior <- list(p = 0.4, K = 12L)
 
 .MissingModel <- function(coding, ...) {
   MkPrimeModel(coding = coding, kPrimePrior = "geometric",
-               priorVariant = "conditional", kprimeTruncK = .kMissPrior$K,
-               ...)
+               kprimeTruncK = .kMissPrior$K, ...)
 }
 
 .DirectLogLik <- function(d, coding, rateLoss, rateLogSd, rateNeo,
@@ -142,9 +141,9 @@ test_that("fixture has missing cells in every partition", {
 
 # log Pr(V) for a transformational character, whose k' is drawn from the
 # prior with its pattern: Pr(V | k) averaged over the prior's support.
-.BruteJointAsc <- function(tree, missing, kObs, rates) {
-  k <- kObs:.kMissPrior$K
-  w <- (1 - .kMissPrior$p)^(k - kObs)
+.BruteJointAsc <- function(tree, missing, rates) {
+  k <- 2:.kMissPrior$K
+  w <- (1 - .kMissPrior$p)^(k - 2)
   pV <- 1 - vapply(k, function(kk) {
     MkPrime:::asc_site_prob_missing(
       tree$edge[, 1], tree$edge[, 2], tree$edge.length, NTip(tree), kk, FALSE,
@@ -187,7 +186,7 @@ test_that("each character is conditioned on its own observed tips", {
         scaled$edge.length <- tree$edge.length *
           if (isNeo[i]) neoScale else transScale
         if (isTrans[i]) {
-          .BruteJointAsc(scaled, is.na(col), mkd$kObs[i], rates)
+          .BruteJointAsc(scaled, is.na(col), rates)
         } else {
           k <- if (mkd$type[i] == "known") part$k else 2L
           log1p(-.BruteAscProb(scaled, is.na(col), k, isNeo[i], par[["rl"]],
@@ -283,7 +282,7 @@ test_that("the k' sweep conditions each character on its observed tips", {
   Ptrs <- function(mode) {
     model <- MkPrime:::.FinalizeModel(
       MkPrimeModel(kPrimePrior = "geometric", likelihoodMode = mode,
-                   priorVariant = "conditional", coding = "variable"),
+                   coding = "variable"),
       d$tree, d$mkd)
     state <- MkPrime:::.InitState(d$tree, d$mkd, model)
     state$p <- p
@@ -306,14 +305,14 @@ test_that("the k' sweep conditions each character on its observed tips", {
                             kprimeAlpha = 1, kprimeBeta = 1, betaScale = 1)
   }
   base <- LogLik(kObs)
-  # Weights p (1 - p)^u, u = k' - kObs; the tail beyond u = 14 is negligible.
+  # Weights p (1 - p)^(k' - 2); the tail beyond k' = kObs + 14 is negligible.
   u <- 0:14
   perChar <- vapply(which(d$mkd$type == "transformational"), function(i) {
     terms <- vapply(u, function(ui) {
       kPrime <- kObs
       kPrime[i] <- kObs[i] + ui
       LogLik(kPrime) - base
-    }, double(1)) + log(p) + u * log1p(-p)
+    }, double(1)) + log(p) + (kObs[i] - 2 + u) * log1p(-p)
     max(terms) + log(sum(exp(terms - max(terms))))
   }, double(1))
   expect_equal(eval_full_loglik_cpp(marg$dataPtr, marg$statePtr),

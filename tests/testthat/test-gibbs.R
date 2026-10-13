@@ -159,7 +159,7 @@ test_that("mh_logit_p (case 30) targets the correct p full-conditional (KS test)
   tree <- .small_trans_tree()
   pd   <- .small_trans_pd()
   mkd  <- MkPrimeData(pd)
-  model <- MkPrimeModel(kPrimePrior = "geometric", priorVariant = "unconditional",
+  model <- MkPrimeModel(kPrimePrior = "geometric",
                         kprimeAlpha = 1, kprimeBeta = 1, kprimeTruncK = 256L,
                         coding = "none")
   model  <- MkPrime:::.FinalizeModel(model, tree, mkd)

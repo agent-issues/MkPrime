@@ -381,14 +381,6 @@ void append_variable_probs(const JointMaskClasses& mc, const McmcData& data,
   table.g = std::move(g);
 }
 
-// The smallest k' the prior supports for a character observed in kObs
-// states: kObs under a prior that conditions on it, else 2.
-int prior_lo(const McmcData& data, int kObs) {
-  const bool conditional = data.kPriorBetaGeometric ||
-    (!data.kPriorLogseries && !data.unconditionalPrior);
-  return conditional ? kObs : 2;
-}
-
 // cos(q (2j + 1) pi / (2n)), row q: the n-node Chebyshev transform.
 const std::vector<double>& cheb_basis(int n) {
   static std::map<int, std::vector<double>> cache;
@@ -492,17 +484,16 @@ void lumped_const_probs_het(const IntegerVector& parent,
 }
 
 
-std::vector<double> kprime_log_prior_table(const McmcData& data, int kObs,
-                                           const KprimeHyper& hyper, int* lo) {
+std::vector<double> kprime_log_prior_table(const McmcData& data,
+                                           const KprimeHyper& hyper) {
   const int K = data.kprimeTruncK;
-  *lo = prior_lo(data, kObs);
-  if (*lo > K) return {};
-  const int n = K - *lo + 1;
+  if (K < 2) return {};
+  const int n = K - 1;
   std::vector<double> lw(n);
   if (data.kPriorLogseries) {
     const double logC = std::log(data.kprimeLogseriesC);
     for (int i = 0; i < n; ++i) {
-      const int k = *lo + i;
+      const int k = 2 + i;
       lw[i] = k * logC - std::log((double)k);
     }
   } else if (data.kPriorBetaGeometric) {
@@ -531,7 +522,7 @@ std::vector<double> kprime_log_prior_table(const McmcData& data, int kObs,
       prev = std::isfinite(mx)
         ? mx + std::log(std::exp(fresh - mx) + std::exp(carry - mx))
         : R_NegInf;
-      if (k >= *lo) lw[k - *lo] = prev;
+      lw[k - 2] = prev;
     }
   } else {
     const double log1mP = std::log1p(-hyper.p);
@@ -553,7 +544,7 @@ std::vector<double> kprime_log_prior_table(const McmcData& data, int kObs,
 
 // The missing-data masks of one rate class's transformational partitions,
 // the classes they share partials in on one topology, and the smallest k'
-// their priors support.
+// their prior supports: 2, or INT_MAX when the class has none.
 struct JointLayout {
   const McmcData* data = nullptr;
   int classIdx = 0;
@@ -575,8 +566,7 @@ std::shared_ptr<const JointLayout> build_joint_layout(
   for (const PartInfo& part : data.parts) {
     const int nChar = part.tipStates.ncol();
     if (part.type != 1 || part.classIdx != classIdx || nChar == 0) continue;
-    layout->lo = std::min(layout->lo,
-                          prior_lo(data, data.kObs[part.globalCharIdx[0]]));
+    layout->lo = 2;
     for (int c = 0; c < nChar; ++c) {
       used[data.charMask[part.globalCharIdx[c]]] = 1;
     }
@@ -703,22 +693,21 @@ JointAscTable joint_asc_table(const McmcData& data, int partIdx,
 
 double joint_asc_log(const McmcData& data, int partIdx,
                      const JointAscTable& table,
-                     const std::vector<double>& logPrior, int lo) {
-  if (lo > table.K || logPrior.empty()) return R_PosInf;
+                     const std::vector<double>& logPrior) {
+  if (table.lo > table.K || logPrior.empty()) return R_PosInf;
   const int nK = table.kVals.size();
   std::vector<double> w(nK, 0.0);
   const int nExact = table.exactHi >= table.exactLo
     ? table.exactHi - table.exactLo + 1 : 0;
   for (int i = 0; i < nExact; ++i) {
-    const int k = table.exactLo + i;
-    if (k >= lo) w[i] = std::exp(logPrior[k - lo]);
+    w[i] = std::exp(logPrior[table.exactLo + i - 2]);
   }
   if (table.nNode > 0) {
     const int n = table.nNode;
     const std::vector<double>& L = bary_matrix(n, table.K);
     double* W = &w[nExact];
-    for (int k = std::max(lo, kJointExactBelow); k <= table.K; ++k) {
-      const double pk = std::exp(logPrior[k - lo]);
+    for (int k = kJointExactBelow; k <= table.K; ++k) {
+      const double pk = std::exp(logPrior[k - 2]);
       if (pk == 0.0) continue;
       const double* row = &L[(k - kJointExactBelow) * n];
       for (int j = 0; j < n; ++j) W[j] += pk * row[j];
@@ -799,22 +788,19 @@ double trans_joint_asc_log(const McmcData& data, int partIdx,
                            const NumericVector& rates,
                            double betaScale, const KprimeHyper& hyper,
                            JointAscCache* cache) {
-  const PartInfo& part = data.parts[partIdx];
-  int lo;
-  const std::vector<double> logPrior = kprime_log_prior_table(
-    data, data.kObs[part.globalCharIdx[0]], hyper, &lo);
+  const std::vector<double> logPrior = kprime_log_prior_table(data, hyper);
   if (cache) {
     return joint_asc_log(data, partIdx,
                          cache->table(data, partIdx, parent, child,
                                       scaledEdge, rates, betaScale),
-                         logPrior, lo);
+                         logPrior);
   }
   // Return:
   return joint_asc_log(
     data, partIdx,
     joint_asc_table(data, partIdx, parent, child, scaledEdge, rates,
                     betaScale),
-    logPrior, lo);
+    logPrior);
 }
 
 
@@ -896,34 +882,25 @@ NumericVector joint_asc_log_cpp(SEXP dataPtr, int partIdx,
   hyper.p = p;
   hyper.alpha = alpha;
   hyper.beta = beta;
-  const PartInfo& part = data->parts[partIdx - 1];
-  int lo;
-  const std::vector<double> logPrior = kprime_log_prior_table(
-    *data, data->kObs[part.globalCharIdx[0]], hyper, &lo);
+  const std::vector<double> logPrior = kprime_log_prior_table(*data, hyper);
   const JointAscTable table = joint_asc_table(
     *data, partIdx - 1, parent, child, scaledEdge, rates, betaScale, direct);
-  NumericVector res(1, joint_asc_log(*data, partIdx - 1, table, logPrior,
-                                     lo));
+  NumericVector res(1, joint_asc_log(*data, partIdx - 1, table, logPrior));
   res.attr("nNode") = table.nNode;
   // Return:
   return res;
 }
 
-// log pi(k) over the support the joint normaliser sums, for a character
-// observed in kObs states; attribute "lo" gives its first k. For tests.
+// log pi(k) for k = 2 .. K, the support the joint normaliser sums. For tests.
 // [[Rcpp::export]]
-NumericVector kprime_log_prior_table_cpp(SEXP dataPtr, int kObs, double p,
-                                         double alpha, double beta) {
+NumericVector kprime_log_prior_table_cpp(SEXP dataPtr, double p, double alpha,
+                                         double beta) {
   const McmcData* data = XPtr<McmcData>(dataPtr).get();
   KprimeHyper hyper;
   hyper.p = p;
   hyper.alpha = alpha;
   hyper.beta = beta;
-  int lo;
-  const std::vector<double> lp = kprime_log_prior_table(*data, kObs, hyper,
-                                                        &lo);
-  NumericVector res(lp.begin(), lp.end());
-  res.attr("lo") = lo;
+  const std::vector<double> lp = kprime_log_prior_table(*data, hyper);
   // Return:
-  return res;
+  return NumericVector(lp.begin(), lp.end());
 }

@@ -180,10 +180,8 @@ test_that("k' and p moves hold the capped empirical_geometric prior", {
   p <- vapply(seq_len(400), function(r) {
     state <- ch$state
     state$p <- rbeta(1, a, b)
-    # Every kObs is 2, so the Model A prior on [2, K] is the conditional.
     pmf <- vapply(2:truncK, function(k) {
-      MkPrime:::.LogPriorEmpiricalGeometric(k, emp, state$p, K = truncK,
-                                            unconditional = TRUE)
+      MkPrime:::.LogPriorEmpiricalGeometric(k, emp, state$p, K = truncK)
     }, 0)
     state$kPrime[ch$trans] <- sample(2:truncK, length(ch$trans),
                                      replace = TRUE, prob = exp(pmf))

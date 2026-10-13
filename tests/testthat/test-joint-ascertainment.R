@@ -166,55 +166,74 @@ test_that("lumped het kernel matches F81 pruning over constant patterns", {
 
 .LogPriorTable <- function(lw) lw - log(sum(exp(lw - max(lw)))) - max(lw)
 
-test_that("k' prior table matches each arm on its support", {
+test_that("k' prior table matches each arm on [2, K]", {
   d <- .JointData()
   K <- 30L
   p <- 0.3
-  for (kObs in 2:4) {
-    lo <- c(A = 2L, B = kObs)
-    k <- list(A = 2:K, B = kObs:K)
-    for (variant in c("unconditional", "conditional")) {
-      v <- if (variant == "conditional") "B" else "A"
-      ptr <- .JointDataPtr(d, kPrimePrior = "geometric",
-                           priorVariant = variant, kprimeTruncK = K)
-      got <- MkPrime:::kprime_log_prior_table_cpp(ptr, kObs, p, 1, 1)
-      expect_equal(attr(got, "lo"), lo[[v]])
-      expect_equal(as.numeric(got),
-                   .LogPriorTable((k[[v]] - lo[[v]]) * log1p(-p)))
-    }
-    ptr <- .JointDataPtr(d, kPrimePrior = "beta_geometric", kprimeTruncK = K)
-    expect_equal(
-      as.numeric(MkPrime:::kprime_log_prior_table_cpp(ptr, kObs, p, 0.7, 2)),
-      .LogPriorTable(lbeta(1.7, 2 + k$B - kObs)))
-    ptr <- .JointDataPtr(d, kPrimePrior = "logseries", kprimeTruncK = K)
-    expect_equal(
-      as.numeric(MkPrime:::kprime_log_prior_table_cpp(ptr, kObs, p, 1, 1)),
-      .LogPriorTable(k$A * log(0.7) - log(k$A)))
+  k <- 2:K
+  Table <- function(ptr, alpha = 1, beta = 1) {
+    as.numeric(MkPrime:::kprime_log_prior_table_cpp(ptr, p, alpha, beta))
+  }
+  ptr <- .JointDataPtr(d, kPrimePrior = "geometric", kprimeTruncK = K)
+  expect_equal(Table(ptr), .LogPriorTable((k - 2) * log1p(-p)))
+  ptr <- .JointDataPtr(d, kPrimePrior = "beta_geometric", kprimeTruncK = K)
+  expect_equal(Table(ptr, 0.7, 2), .LogPriorTable(lbeta(1.7, 2 + k - 2)))
+  ptr <- .JointDataPtr(d, kPrimePrior = "logseries", kprimeTruncK = K)
+  expect_equal(Table(ptr), .LogPriorTable(k * log(0.7) - log(k)))
+  model <- MkPrime:::.FinalizeModel(
+    MkPrimeModel(kPrimePrior = "empirical_geometric", kprimeTruncK = K),
+    d$tree, d$mkd)
+  ptr <- MkPrime:::.InitMcmcData(d$mkd, model)
+  expect_equal(
+    Table(ptr),
+    .LogPriorTable(MkPrime:::.LogEmpGeomCapped(model$empiricalNObs, p, K)$logPk[k])
+  )
+})
+
+test_that("k' prior table is the prior that LogPrior scores", {
+  # Whatever the hyperparameters, the prior less the table's terms and the
+  # hyperprior is the same: J and the prior weigh one pmf.
+  d <- .JointData()
+  K <- 30L
+  trans <- which(d$mkd$type == "transformational")
+  hypers <- list(list(p = 0.3, kprime_alpha = 0.7, kprime_beta = 2),
+                 list(p = 0.05, kprime_alpha = 3, kprime_beta = 0.4))
+  for (arm in c("geometric", "empirical_geometric", "beta_geometric")) {
     model <- MkPrime:::.FinalizeModel(
-      MkPrimeModel(kPrimePrior = "empirical_geometric",
-                   priorVariant = "conditional", kprimeTruncK = K),
-      d$tree, d$mkd)
+      MkPrimeModel(kPrimePrior = arm, kprimeTruncK = K), d$tree, d$mkd)
     ptr <- MkPrime:::.InitMcmcData(d$mkd, model)
-    expect_equal(
-      as.numeric(MkPrime:::kprime_log_prior_table_cpp(ptr, kObs, p, 1, 1)),
-      .LogPriorTable(
-        MkPrime:::.LogEmpGeomCapped(model$empiricalNObs, p, K)$logPk[k$B]))
+    state <- MkPrime:::.InitState(d$tree, d$mkd, model)
+    state$kPrime[trans] <- pmin(d$mkd$kObs[trans] + seq_along(trans) %% 4L, K)
+    residual <- vapply(hypers, function(hyper) {
+      state[names(hyper)] <- hyper
+      statePtr <- MkPrime:::.InitMcmcChain(state)
+      fill_partition_cache(ptr, statePtr)
+      table <- MkPrime:::kprime_log_prior_table_cpp(
+        ptr, hyper$p, hyper$kprime_alpha, hyper$kprime_beta)
+      hyperprior <- if (arm == "beta_geometric") {
+        -hyper$kprime_alpha - hyper$kprime_beta
+      } else {
+        dbeta(hyper$p, model$kprimeHyperA, model$kprimeHyperB, log = TRUE)
+      }
+      eval_log_prior_cpp(ptr, statePtr) -
+        sum(table[state$kPrime[trans] - 1L]) - hyperprior
+    }, 0)
+    expect_equal(residual[[1]], residual[[2]], tolerance = 1e-10, label = arm)
   }
 })
 
 test_that("joint normaliser sums Pr(V | k) over the k' prior", {
   d <- .JointData()
   K <- 20L
-  ptr <- .JointDataPtr(d, kPrimePrior = "geometric",
-                       priorVariant = "conditional", kprimeTruncK = K)
+  ptr <- .JointDataPtr(d, kPrimePrior = "geometric", kprimeTruncK = K)
   rates <- MkPrime:::DiscreteLognormalRates(0.8, 4L)
   for (partIdx in seq_along(d$mkd$partitions)) {
     part <- d$mkd$partitions[[partIdx]]
     if (part$type != "transformational") next
     missing <- is.na(part$tip_states)
     key <- apply(missing, 2, paste, collapse = "")
-    k <- part$kObs:K
-    prior <- exp(.LogPriorTable((k - part$kObs) * log1p(-0.3)))
+    k <- 2:K
+    prior <- exp(.LogPriorTable((k - 2) * log1p(-0.3)))
     expected <- sum(vapply(unique(key), function(mask) {
       masks <- matrix(as.integer(missing[, match(mask, key)]))
       pV <- 1 - vapply(k, function(kk) {
@@ -295,8 +314,7 @@ test_that("marginal_k scores the joint Mk'v marginal and recovers p", {
   mkd <- MkPrimeData(MatrixToPhyDat(mat))
   model <- MkPrime:::.FinalizeModel(
     MkPrimeModel(nCat = 1L, kPrimePrior = "geometric",
-                 priorVariant = "unconditional", likelihoodMode = "marginal_k",
-                 kprimeTruncK = K),
+                 likelihoodMode = "marginal_k", kprimeTruncK = K),
     tree, mkd)
   dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
   LogLik <- function(p) {
@@ -344,8 +362,7 @@ test_that("a new k' cap rebuilds the cached joint table", {
   d <- .JointData()
   Chain <- function(K) {
     model <- MkPrime:::.FinalizeModel(
-      MkPrimeModel(kPrimePrior = "geometric", priorVariant = "unconditional",
-                   kprimeTruncK = K),
+      MkPrimeModel(kPrimePrior = "geometric", kprimeTruncK = K),
       d$tree, d$mkd)
     dataPtr <- MkPrime:::.InitMcmcData(d$mkd, model)
     state <- MkPrime:::.InitState(d$tree, d$mkd, model)
@@ -415,7 +432,7 @@ test_that("a new k' cap rebuilds the cached joint table", {
 test_that("mh_logit_p weighs the joint ascertainment term", {
   skip_on_cran()
   skip_under_memcheck()
-  ch <- .SparseChain("geometric", priorVariant = "unconditional")
+  ch <- .SparseChain("geometric")
   expected <- .GridMeans(ch, function(st, p) {
     st$p <- p
     st

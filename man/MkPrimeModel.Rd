@@ -31,7 +31,6 @@ MkPrimeModel(
   classRateConcentration = 1,
   priorOnClassRateLogSd = c("hyperprior_pooled", "gamma_independent"),
   likelihoodMode = c("sampled_k", "marginal_k"),
-  priorVariant = NULL,
   kprimeTruncK = 200L
 )
 }
@@ -75,10 +74,7 @@ Not consulted by the default pooled hyperprior (see
 states with a \code{Geometric(p)} prior on the number of unobserved states,
 so \verb{k' = N_obs + N_unobs}),
 \code{"beta_geometric"} (per-character Beta-Geometric with shared
-hyperparameters \code{alpha}, \code{beta}, on the number of states beyond those
-observed, \verb{k' - kObs_i}; this prior conditions on the data, so the arm
-cannot be calibrated by simulation-based calibration, and it accepts only
-\code{priorVariant = "conditional"}),
+hyperparameters \code{alpha}, \code{beta}, on \verb{k' - 2}),
 \code{"geometric"} (hierarchical geometric with Beta hyperprior on \code{p}),
 or \code{"logseries"} (logarithmic series with fixed parameter \code{c}; matches
 the RevBayes default).
@@ -177,34 +173,6 @@ more than 25 below the largest so far, so each discarded candidate
 carries under about \code{exp(-25)} of that character's largest term (a
 bound that loosens as \code{kObs_i} grows when \code{relabel = TRUE}).
 }}
-
-\item{priorVariant}{Whether the \verb{k'} prior conditions on the observed state
-count \code{kObs_i}. One of \code{"unconditional"} (Model A) or \code{"conditional"}
-(Model B), or \code{NULL} (default) to select per \code{kPrimePrior} (see below).
-A prior is pre-data, so \code{kObs_i} — an observation — should not enter it:
-\itemize{
-\item \code{"unconditional"} (Model A): the prior lives on the full support
-\verb{k' >= 2}, unconditional on \code{kObs_i}. For \code{empirical_geometric} the
-convolution is used with no per-character \code{Z_i(p)} truncation; for
-\code{geometric} the marginal weight for state count \code{k} is \code{p (1-p)^(k - 2)}.
-The \verb{k' >= kObs_i} floor (you cannot have fewer states than observed) is
-enforced by the likelihood, not the prior. This is the correct pre-data
-prior and matches the forward simulator used by the SBC harness.
-\item \code{"conditional"} (Model B): the prior conditions on \code{kObs_i} —
-\verb{k'_i ~ kObs_i + Geometric(p)} for \code{geometric}, and for
-\code{empirical_geometric} the convolution is renormalised by
-\verb{Z_i(p) = sum_\{k >= kObs_i\} P(k | p)}. Model B is data-dependent and
-fails SBC on \code{p} (see \code{project_sbc_kprime_structural}); retained only for
-backward comparison.
-}
-
-Default (\code{NULL}): \code{"unconditional"} for both \code{"empirical_geometric"} and
-\code{"geometric"} (the correct pre-data prior; the geometric SBC harness uses
-\verb{k' ~ 2 + Geo(p)}, so the default aligns inference with the validated SBC
-forward model); \code{"conditional"} for \code{"beta_geometric"}, which has no
-unconditional form and rejects \code{"unconditional"}. Consulted for
-\code{empirical_geometric} and \code{geometric} under either \code{likelihoodMode};
-ignored for \code{logseries}.}
 
 \item{kprimeTruncK}{Integer specifying the cap \code{K} at which every \verb{k'}
 prior is truncated and renormalised, bounded above by the compile-time

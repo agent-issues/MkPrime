@@ -51,24 +51,17 @@ test_that("Resume fills a missing mcmc$nCore instead of crashing (#225)", {
 })
 
 
-test_that("Resume restores the prior variant a checkpoint omits (#55)", {
+test_that("Resume restores a model field a checkpoint omits (#55)", {
   f <- SchemaFixture()
   on.exit(unlink(f$dir, recursive = TRUE), add = TRUE)
-  expect_identical(readRDS(f$ckpFile)$model$priorVariant, "unconditional")
-  StripField(f$ckpFile, "model", "priorVariant")
+  expect_identical(readRDS(f$ckpFile)$model$kprimeTruncK, 200L)
+  StripField(f$ckpFile, "model", "kprimeTruncK")
 
   expect_warning(
     resumed <- ResumeMkPrime(f$ckpFile, f$pd),
-    "priorVariant"
+    "kprimeTruncK"
   )
-  expect_identical(resumed$model$priorVariant, "unconditional")
-
-  # The default follows the checkpoint's own k' prior.
-  ck <- readRDS(f$ckpFile)
-  ck$model$kPrimePrior <- "logseries"
-  ck$model$priorVariant <- NULL
-  expect_warning(migrated <- .MigrateCheckpoint(ck), "priorVariant")
-  expect_identical(migrated$model$priorVariant, "conditional")
+  expect_identical(resumed$model$kprimeTruncK, 200L)
 })
 
 

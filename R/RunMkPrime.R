@@ -3671,8 +3671,8 @@ RunMkPrime <- function(data, tree = NULL,
 
 # Fields that size the chain's state or fix its move set or likelihood engine.
 .resumeStructuralFields <- c("coding", "relabel", "kPrimePrior",
-                             "priorVariant", "likelihoodMode",
-                             "qHeterogeneity", "nCat", "nBetaCat")
+                             "likelihoodMode", "qHeterogeneity", "nCat",
+                             "nBetaCat")
 
 #' Abort a resume whose model differs structurally from the checkpoint's
 #'
@@ -3699,7 +3699,8 @@ RunMkPrime <- function(data, tree = NULL,
 
 # Bumped whenever the likelihood a chain targets changes. A resume appends to
 # the checkpoint's samples, so the two must share a target. Version 2 is the
-# joint ascertainment correction; a checkpoint without the field predates it.
+# joint ascertainment correction, with every k' prior on k' >= 2; a checkpoint
+# without the field predates it.
 .likelihoodVersion <- 2L
 
 #' Abort a resume across a change of likelihood
@@ -4183,7 +4184,7 @@ RunMkPrime <- function(data, tree = NULL,
 #'   checkpoint's too, unless `treeLengthShape` differs from the
 #'   checkpoint's, when the rate is resolved from the new shape.
 #'   Fields that a checkpoint predates are filled with current defaults,
-#'   with a warning.  A `coding`, `relabel`, `kPrimePrior`, `priorVariant`,
+#'   with a warning.  A `coding`, `relabel`, `kPrimePrior`,
 #'   `likelihoodMode`, `qHeterogeneity`, `nCat` or `nBetaCat` that differs
 #'   from the checkpoint's is an error.
 #' @param tree A `phylo` object, used only to check tip labels.  Usually
@@ -5489,8 +5490,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     empTailStartK,
     empTailDecay,
     empLogTailStartP,
-    identical(model$likelihoodMode, "marginal_k"),
-    identical(model$priorVariant, "unconditional")
+    identical(model$likelihoodMode, "marginal_k")
   )
   # Wire the truncation cap K from the model into the McmcData
   # (set_kprime_trunc_k; mirrors set_branch_bins, avoiding a prepare_mcmc_data

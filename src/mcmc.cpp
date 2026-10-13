@@ -409,20 +409,19 @@ static double cpp_log_prior(
       }
       // No p / Beta term
     } else if (data.kPriorBetaGeometric) {
-      // Per-character Beta-Geometric: P(u | α, β) = B(α+1, β+u) / B(α, β)
-      // on u in [0, K - kObs_i], renormalised by
-      //   Z_i = 1 - P(u >= n_i) = 1 - B(α, β + n_i) / B(α, β),
-      // n_i = K - kObs_i + 1. Z_i depends on (α, β), so it is NOT absorbed by
-      // the hyperparameter moves.
+      // Beta-Geometric on u = k' - 2: P(u | α, β) = B(α+1, β+u) / B(α, β)
+      // on u in [0, K - 2], renormalised by
+      //   Z = 1 - P(u >= K - 1) = 1 - B(α, β + K - 1) / B(α, β),
+      // shared by every character. Z depends on (α, β), so it is NOT absorbed
+      // by the hyperparameter moves.
       double a = kprimeAlpha;
       double b = kprimeBeta;
       double lbAB = R::lbeta(a, b);
+      const double logZ = mkp::log1m_exp(
+        R::lbeta(a, b + static_cast<double>(data.kprimeTruncK - 1)) - lbAB);
       for (int i = 0; i < nTrans; ++i) {
-        int gi = data.transIdxGlobal[i];
-        int u = kPrime[gi] - data.kObs[gi];
-        int n = data.kprimeTruncK - data.kObs[gi] + 1;
-        lp += R::lbeta(a + 1.0, b + static_cast<double>(u)) - lbAB
-            - mkp::log1m_exp(R::lbeta(a, b + static_cast<double>(n)) - lbAB);
+        int u = kPrime[data.transIdxGlobal[i]] - 2;
+        lp += R::lbeta(a + 1.0, b + static_cast<double>(u)) - lbAB - logZ;
       }
       // Hyperprior: Exp(1) on α and β
       lp += R::dexp(a, 1.0, 1);
@@ -469,14 +468,12 @@ static double cpp_log_prior(
         for (double t : terms) sumExp += std::exp(t - mx);
         return mx + std::log(sumExp);
       };
-      // Truncation normalisers over the capped support (#392): logZ[m] is
-      // log sum_{k=m}^{K} P(k | p), built from the recurrence
+      // Truncation normaliser over the capped support (#392): logZ[2] is
+      // log sum_{k=2}^{K} P(k | p), built from the recurrence
       //   P(k | p) = p P_emp(k) + (1 - p) P(k - 1 | p)
       // and summed downwards as positive terms, so no 1 - (...) cancels (#259).
-      // Model A (unconditional) puts the prior on [2, K] and divides by
-      // logZ[2]; the likelihood enforces the k' >= kObs floor. Model B
-      // (EG-001) puts it on [kObs_i, K] and divides by logZ[kObs_i]. Both
-      // depend on p, so neither is absorbed by p-varying MH.
+      // The likelihood enforces the k' >= kObs floor. logZ[2] depends on p,
+      // so it is not absorbed by p-varying MH.
       const int K = data.kprimeTruncK;
       std::vector<double> logZ(K + 2, R_NegInf);
       {
@@ -498,16 +495,13 @@ static double cpp_log_prior(
             : R_NegInf;
         }
       }
+      if (!std::isfinite(logZ[2])) return R_NegInf;
       for (int i = 0; i < nTrans; ++i) {
-        int gi = data.transIdxGlobal[i];
-        int m = kPrime[gi];
+        int m = kPrime[data.transIdxGlobal[i]];
         if (m < 2) return R_NegInf;
         double numer = logPconv(m);             // untruncated convolution log-pmf
         if (!std::isfinite(numer)) return R_NegInf;
-        const double logZi = data.unconditionalPrior ? logZ[2]
-                                                     : logZ[data.kObs[gi]];
-        if (!std::isfinite(logZi)) return R_NegInf;
-        lp += numer - logZi;
+        lp += numer - logZ[2];
       }
       // p: Beta hyperprior (same as plain geometric)
       lp += R::dbeta(p, data.kprimeHyperA, data.kprimeHyperB, 1);
@@ -519,8 +513,8 @@ static double cpp_log_prior(
       // term + that character's LL) over k'_i in [kObs_i, K] reproduces the
       // marginal-k per-character value, so likelihoodMode "sampled_k" and
       // "marginal_k" target the SAME posterior (Rao-Blackwell consistency).
-      // The two Model A/B branches and the log1m_exp forms below mirror the
-      // marginal evaluator so the deterministic logSumExp bit-check matches.
+      // The log1m_exp form below mirrors the marginal evaluator so the
+      // deterministic logSumExp bit-check matches.
       //
       // Under marginal-k mode the per-character P(k'_i | p) mass (incl. the
       // truncation normaliser) is consumed by cpp_log_likelihood_marginal, so
@@ -529,23 +523,12 @@ static double cpp_log_prior(
         const int    K      = data.kprimeTruncK;
         const double logP   = std::log(p);
         const double log1mP = std::log1p(-p);
-        if (data.unconditionalPrior) {
-          // Model A: P(k'_i = k | p) propto p (1-p)^(k-2), k in [2, K].
-          // logZA = log(1 - (1-p)^(K-1)) is shared across all characters.
-          const double logZA = mkp::log1m_exp((K - 1) * log1mP);
-          for (int i = 0; i < nTrans; ++i) {
-            int gi = data.transIdxGlobal[i];
-            lp += logP + (kPrime[gi] - 2) * log1mP - logZA;
-          }
-        } else {
-          // Model B: P(k'_i = kObs_i + u | p) propto p (1-p)^u,
-          // u in [0, K - kObs_i]; logZB_i = log(1 - (1-p)^(K - kObs_i + 1)).
-          for (int i = 0; i < nTrans; ++i) {
-            int gi = data.transIdxGlobal[i];
-            int u  = kPrime[gi] - data.kObs[gi];
-            lp += logP + u * log1mP
-                - mkp::log1m_exp((K - data.kObs[gi] + 1) * log1mP);
-          }
+        // P(k'_i = k | p) propto p (1-p)^(k-2), k in [2, K];
+        // logZA = log(1 - (1-p)^(K-1)) is shared across all characters.
+        const double logZA = mkp::log1m_exp((K - 1) * log1mP);
+        for (int i = 0; i < nTrans; ++i) {
+          int gi = data.transIdxGlobal[i];
+          lp += logP + (kPrime[gi] - 2) * log1mP - logZA;
         }
       }
       lp += R::dbeta(p, data.kprimeHyperA, data.kprimeHyperB, 1);
@@ -4213,22 +4196,6 @@ void compute_per_kprime_log_lik(
   // candidate k into a single partition-level pruning call.
   // ---------------------------------------------------------------
 
-  // Beta-Geometric: precompute incremental log-prior for ko = 0..kMaxKprimeCand-1
-  // logPrior(u=0) = log(α) - log(α+β)
-  // logPrior(u=k) = logPrior(u=k-1) + log(β+k-1) - log(α+β+k)
-  std::vector<double> bgLogPrior;
-  if (isBetaGeometric) {
-    double a = state->kprimeAlpha;
-    double b = state->kprimeBeta;
-    bgLogPrior.resize(kMaxKprimeCand);
-    bgLogPrior[0] = std::log(a) - std::log(a + b);
-    for (int ko = 1; ko < kMaxKprimeCand; ++ko) {
-      bgLogPrior[ko] = bgLogPrior[ko - 1]
-                      + std::log(b + ko - 1)
-                      - std::log(a + b + ko);
-    }
-  }
-
   // Empirical-geometric: declared here, populated after transParts is built.
   std::vector<double> egLogPriorByK;
 
@@ -4276,6 +4243,27 @@ void compute_per_kprime_log_lik(
   }
   if (!state->gibbsWs.fits(maxNode, gibbsMaxStride))
     state->gibbsWs.allocate(maxNode, gibbsMaxStride);
+
+  // Beta-Geometric: log P(u | α, β) on u = k' - 2, up to the shared
+  // normaliser, over every partition's candidates:
+  //   logPrior(u=0) = log(α) - log(α+β)
+  //   logPrior(u=j) = logPrior(u=j-1) + log(β+j-1) - log(α+β+j)
+  std::vector<double> bgLogPrior;
+  if (isBetaGeometric) {
+    int nU = 0;
+    for (auto& tp_ : transParts) {
+      nU = std::max(nU, tp_.kObs - 2 + kMaxKprimeCand);
+    }
+    double a = state->kprimeAlpha;
+    double b = state->kprimeBeta;
+    bgLogPrior.resize(nU);
+    if (nU > 0) bgLogPrior[0] = std::log(a) - std::log(a + b);
+    for (int j = 1; j < nU; ++j) {
+      bgLogPrior[j] = bgLogPrior[j - 1]
+                      + std::log(b + j - 1)
+                      - std::log(a + b + j);
+    }
+  }
 
   // Empirical-geometric: precompute log P(k' = m) for all m in the candidate
   // range across all partitions.  The convolution depends only on k', not on
@@ -4411,7 +4399,7 @@ void compute_per_kprime_log_lik(
           int ti0 = pa.patTrans[localPat][0];
           double logPrior_k;
           if (isBetaGeometric) {
-            logPrior_k = bgLogPrior[ko];
+            logPrior_k = bgLogPrior[tp.kObs - 2 + ko];
           } else if (isGeometric) {
             logPrior_k = logP + ko * log1mP;
           } else if (isEmpGeom) {
@@ -4510,7 +4498,7 @@ void compute_per_kprime_log_lik(
       // termination can be decided from one representative.
       double logPrior_k;
       if (isBetaGeometric) {
-        logPrior_k = bgLogPrior[ko];
+        logPrior_k = bgLogPrior[k - 2];
       } else if (isGeometric) {
         logPrior_k = logP + ko * log1mP;
       } else if (isEmpGeom) {
@@ -4686,27 +4674,22 @@ double cpp_log_likelihood_marginal(
     logPriorByU[ko] = logP + ko * log1mP;
   }
 
-  // Model A (unconditional) vs Model B (conditional) differ only by a
-  // per-character constant factor (1-p)^(kObs_i - 2). Under Model B the
-  // marginal weight for state count k is p (1-p)^(k - kObs_i); under Model A
-  // it is p (1-p)^(k - 2). Since k = kObs_i + ko, the Model A weight equals
-  // the Model B weight times (1-p)^(kObs_i - 2), and that factor is constant
-  // across all candidates ko of a given character, so it factors straight out
-  // of the per-character logSumExp. We therefore keep logPriorByU (and the
-  // cached raw LL) as Model B and add (kObs_i - 2)·log(1-p) to each
-  // character's marginal contribution when unconditionalPrior is true.
+  // The marginal weight for state count k is p (1-p)^(k - 2). Since
+  // k = kObs_i + ko, it equals the weight p (1-p)^ko the sweep uses times
+  // (1-p)^(kObs_i - 2), a factor constant across a character's candidates
+  // that factors straight out of its logSumExp. So logPriorByU (and the
+  // cached raw LL) keep the sweep's form, and each character's marginal
+  // contribution gains (kObs_i - 2)·log(1-p).
   //
   // MARGINAL-K-TRUNC-001 (geometric truncation normaliser; proof
   // dev/red-team/proofs/marginal-k-truncation-normaliser.md). The geometric
   // prior is truncated at the declared cap K = data.kprimeTruncK (matching the
   // forward). The marginal is therefore BOTH (a) summed only over candidates
   // with k = kObs_i + c <= K, AND (b) renormalised by the truncated-tail mass
-  //   Model A: logZA      = log(1 - (1-p)^(K-1))            [shared]
-  //   Model B: logZB(kObs) = log(1 - (1-p)^(K - kObs_i + 1)) [per kObs]
+  //   logZA = log(1 - (1-p)^(K-1)),
   // subtracted once per character. Both are required: -logZ alone over-corrects
   // (biases p low at small p); the cap alone leaves the p-high bias. (Proof §5.3
   // as corrected 2026-05-30; R spec-check cap-z-spec-check.R.)
-  const bool uncond = data.unconditionalPrior;
   const int    K     = data.kprimeTruncK;
   const double logZA = mkp::log1m_exp((K - 1) * log1mP);
 
@@ -4753,12 +4736,7 @@ double cpp_log_likelihood_marginal(
         if (R_FINITE(wBuf[c])) s += std::exp(wBuf[c] - mx);
       // MARGINAL-K-TRUNC-001: nCand <= koMax applies the k<=K cap; only the
       // -logZ renormaliser is applied here.
-      double charLL = mx + std::log(s);
-      if (uncond) {
-        charLL += (kObs_ti - 2) * log1mP - logZA;                       // Model A
-      } else {
-        charLL -= mkp::log1m_exp((K - kObs_ti + 1) * log1mP);           // Model B
-      }
+      const double charLL = mx + std::log(s) + (kObs_ti - 2) * log1mP - logZA;
       if (R_FINITE(cachedLL)) cachedLL += charLL;
     }
     if (useCache) return cachedLL - jointAsc();
@@ -4832,12 +4810,7 @@ double cpp_log_likelihood_marginal(
         double w = kw.charLogW[ti * kMaxKprimeCand + c];
         if (R_FINITE(w)) s += std::exp(w - mx);
       }
-      double charLL = mx + std::log(s);
-      if (uncond) {
-        charLL += (kObs_ti - 2) * log1mP - logZA;                       // Model A
-      } else {
-        charLL -= mkp::log1m_exp((K - kObs_ti + 1) * log1mP);           // Model B
-      }
+      const double charLL = mx + std::log(s) + (kObs_ti - 2) * log1mP - logZA;
       if (R_FINITE(totalLL)) totalLL += charLL;
     }
     // Scratch evals leave the cache cold (charLLCacheReady stays whatever the
@@ -5443,17 +5416,16 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     }
     case 9: { // gibbs_p — conjugate Beta draw, acceptance = 1
       // Full conditional, were p to enter only the prior on k' and p itself:
-      // p | k' ~ Beta(a + nTrans, b + sum(k'_i - kObs_i)). The joint
+      // p | k' ~ Beta(a + nTrans, b + sum(k'_i - 2)). The joint
       // ascertainment term (joint_asc.h) also depends on p.
       // Empirical-geometric breaks conjugacy: p enters the prior via the
       // convolution, so the full conditional is no longer Beta.  Reject
       // any misrouted call rather than silently producing wrong samples.
       if (data->kPriorEmpiricalGeometric) return false;
       // MARGINAL-K-TRUNC-001: the plain geometric prior is now truncated at K,
-      // whose normaliser Z(p) = 1 - (1-p)^(K - kObs_i + 1) (Model B) or
-      // 1 - (1-p)^(K-1) (Model A) is p-dependent, so the p full-conditional is
-      // likewise non-Beta. p is sampled via case 30 (mh_logit_p) instead; reject
-      // any misrouted gibbs_p call. (logseries / beta_geometric carry no scalar
+      // whose normaliser Z(p) = 1 - (1-p)^(K-1) is p-dependent, so the p
+      // full-conditional is likewise non-Beta. p is sampled via case 30
+      // (mh_logit_p) instead; reject any misrouted gibbs_p call. (logseries / beta_geometric carry no scalar
       // p and never schedule gibbs_p, so the plain geometric is the only arm
       // that can reach here past the empirical guard above.)
       {
@@ -5467,7 +5439,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       double sumU = 0.0;
       for (int i = 0; i < nTrans; ++i) {
         int gi = data->transIdxGlobal[i];
-        sumU += static_cast<double>(state->kPrime[gi] - data->kObs[gi]);
+        sumU += static_cast<double>(state->kPrime[gi] - 2);
       }
       double shape1 = data->kprimeHyperA + nTrans;
       double shape2 = data->kprimeHyperB + sumU;
@@ -5643,7 +5615,6 @@ static bool do_move_impl(McmcData* data, McmcState* state,
 
       const double logP   = std::log(oldP);
       const double log1mP = std::log1p(-oldP);
-      const bool   uncond = data->unconditionalPrior;
       const int    K      = data->kprimeTruncK;
 
       // Impute over the support the marginal sums at oldP. A cache filled at a
@@ -5667,7 +5638,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       }
 
       // --- Step 1: impute u_i ~ Categorical(charLogW[i,·]) over the
-      //     support {0..nEff_i-1} at oldP; accumulate S = Σ u_i and (Model A) the shift
+      //     support {0..nEff_i-1} at oldP; accumulate S = Σ u_i and the shift
       //     c_A = Σ (kObs_i - 2). charLogW[i,c] = charLLCache[i,c] + logP +
       //     c·log1mP (the evaluator's per-char logSumExp argument); g_i(p) and
       //     Z_i(p) are u-independent and cancel out of the categorical.
@@ -5707,7 +5678,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         // and only finite candidates are ever assigned to ui.
         imputedU[i] = ui;
         sumU += (double)ui;
-        if (uncond) cA += (double)(kObsi - 2);
+        cA += (double)(kObsi - 2);
       }
 
       // --- Step 2: propose p* from the untruncated conjugate Beta.
@@ -5718,24 +5689,11 @@ static bool do_move_impl(McmcData* data, McmcState* state,
 
       // --- Accept ratio: log α = Σ_i[ logZ_i(oldP) − logZ_i(pStar) ].
       const double log1mPstar = std::log1p(-pStar);
-      double sumLogZ_old, sumLogZ_new;
-      if (uncond) {
-        // Model A: Z = 1 − (1−p)^(K−1), shared across all trans chars.
-        sumLogZ_old =
-          (double)nTrans * mkp::log1m_exp((K - 1) * log1mP);
-        sumLogZ_new =
-          (double)nTrans * mkp::log1m_exp((K - 1) * log1mPstar);
-      } else {
-        // Model B: Z_i = 1 − (1−p)^(K − kObs_i + 1), per character.
-        sumLogZ_old = 0.0;
-        sumLogZ_new = 0.0;
-        for (int i = 0; i < nTrans; ++i) {
-          const int kObsi = data->kObs[data->transIdxGlobal[i]];
-          const int e     = K - kObsi + 1;
-          sumLogZ_old += mkp::log1m_exp(e * log1mP);
-          sumLogZ_new += mkp::log1m_exp(e * log1mPstar);
-        }
-      }
+      // Z = 1 − (1−p)^(K−1), shared across all trans chars.
+      const double sumLogZ_old =
+        (double)nTrans * mkp::log1m_exp((K - 1) * log1mP);
+      const double sumLogZ_new =
+        (double)nTrans * mkp::log1m_exp((K - 1) * log1mPstar);
       // log1m_exp keeps logZ finite for every p in (0, 1), so this guard is
       // defensive; being symmetric in (oldP, pStar) it preserves detailed
       // balance should it ever fire. (See proof §6.4.)

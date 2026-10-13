@@ -39,8 +39,7 @@
 
   # expSteps resolves treeLengthRate; the likelihood never reads it, but the
   # model must carry a resolved value.
-  model <- MkPrimeModel(expSteps = 10, kPrimePrior = "geometric",
-                        priorVariant = "conditional")
+  model <- MkPrimeModel(expSteps = 10, kPrimePrior = "geometric")
   # Build the C++ McmcData XPtr.
   dataPtr <- prepare_mcmc_data(
     partitions_r              = mkd$partitions,

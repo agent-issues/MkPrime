@@ -189,20 +189,14 @@ test_that("LogPrior under marginal_k omits the per-character P(u | p) term", {
 })
 
 # ---------------------------------------------------------------------------
-# Model A (unconditional) vs Model B (conditional) marginal-weight factor
-#
-# Model B weight for state count k is p (1-p)^(k - kObs_i); Model A weight is
-# p (1-p)^(k - 2). The two differ by a per-character constant (1-p)^(kObs_i-2)
-# that factors out of the per-character logSumExp, so the total marginal LL
-# under priorVariant="unconditional" exceeds the "conditional" total by
-# Σ_i (kObs_i - 2) · log(1-p). Characters with kObs == 2 contribute nothing.
+# The marginal weight for state count k is p (1-p)^(k - 2): the evaluator sums
+# p (1-p)^(k - kObs_i) and adds the constant (kObs_i - 2) log(1-p) per
+# character, which characters with kObs > 2 exercise.
 # ---------------------------------------------------------------------------
 
-test_that("priorVariant='unconditional' shifts marginal LL by (kObs-2)log(1-p)", {
+test_that("marginal-k LL weights each k' by p (1-p)^(k' - 2)", {
   tips <- paste0("t", 1:8)
   tree <- Preorder(.marg_make_tree())
-  # Two characters with kObs > 2 (one 3-state, one 4-state) plus two binary,
-  # so the factor (1-p)^(kObs-2) is non-trivial.
   mat <- matrix(
     c(0, 1, 2, 0, 1, 2, 0, 1,   # kObs = 3
       0, 1, 2, 3, 0, 1, 2, 3,   # kObs = 4
@@ -210,14 +204,11 @@ test_that("priorVariant='unconditional' shifts marginal LL by (kObs-2)log(1-p)",
       1, 0, 1, 0, 1, 1, 0, 0),  # kObs = 2
     nrow = 8, ncol = 4, dimnames = list(tips, NULL)
   )
-  pd  <- MatrixToPhyDat(mat)
-  mkd <- MkPrimeData(pd)
+  mkd <- MkPrimeData(MatrixToPhyDat(mat))
   p_test <- 0.6
 
-  build <- function(variant) {
-    model <- MkPrimeModel(kPrimePrior = "geometric",
-                          likelihoodMode = "marginal_k",
-                          priorVariant = variant,
+  build <- function(mode) {
+    model <- MkPrimeModel(kPrimePrior = "geometric", likelihoodMode = mode,
                           coding = "none", relabel = FALSE)
     model <- MkPrime:::.FinalizeModel(model, tree, mkd)
     state0 <- MkPrime:::.InitState(tree, mkd, model)
@@ -228,17 +219,31 @@ test_that("priorVariant='unconditional' shifts marginal LL by (kObs-2)log(1-p)",
     dataPtr  <- MkPrime:::.InitMcmcData(mkd, model)
     statePtr <- MkPrime:::.InitMcmcChain(state0)
     fill_partition_cache(dataPtr, statePtr)
-    eval_full_loglik_cpp(dataPtr, statePtr)
+    list(dataPtr = dataPtr, statePtr = statePtr)
   }
+  marg <- build("marginal_k")
+  samp <- build("sampled_k")
 
-  L_cond   <- build("conditional")
-  L_uncond <- build("unconditional")
-  expect_true(is.finite(L_cond) && is.finite(L_uncond))
-
-  trans_idx <- which(mkd$type == "transformational")
-  expected_diff <- sum((mkd$kObs[trans_idx] - 2) * log1p(-p_test))
-  expect_equal(L_uncond - L_cond, expected_diff, tolerance = 1e-9)
-
-  # Default (no priorVariant) now equals "unconditional" (Model A).
-  expect_equal(L_cond, build("conditional"), tolerance = 1e-12)
+  # Uncorrected, the log-likelihood is a sum over characters.
+  kObs <- mkd$kObs
+  LogLik <- function(kPrime) {
+    cpp_log_likelihood_xptr(samp$dataPtr, tree$edge[, 1], tree$edge[, 2],
+                            tree$edge.length, as.integer(kPrime),
+                            rateLoss = 1, rateLogSd = 0, rateNeo = 1,
+                            p = p_test, kprimeAlpha = 1, kprimeBeta = 1,
+                            betaScale = 1)
+  }
+  base <- LogLik(kObs)
+  u <- 0:40
+  perChar <- vapply(which(mkd$type == "transformational"), function(i) {
+    terms <- vapply(u, function(ui) {
+      kPrime <- kObs
+      kPrime[i] <- kObs[i] + ui
+      LogLik(kPrime) - base
+    }, double(1)) + log(p_test) + (kObs[i] - 2 + u) * log1p(-p_test)
+    max(terms) + log(sum(exp(terms - max(terms))))
+  }, double(1))
+  expect_true(any(kObs > 2L))
+  expect_equal(eval_full_loglik_cpp(marg$dataPtr, marg$statePtr),
+               base + sum(perChar), tolerance = 1e-9)
 })

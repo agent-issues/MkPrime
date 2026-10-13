@@ -33,7 +33,7 @@ length does not change mid-chain; an unset \code{treeLengthRate} is the
 checkpoint's too, unless \code{treeLengthShape} differs from the
 checkpoint's, when the rate is resolved from the new shape.
 Fields that a checkpoint predates are filled with current defaults,
-with a warning.  A \code{coding}, \code{relabel}, \code{kPrimePrior}, \code{priorVariant},
+with a warning.  A \code{coding}, \code{relabel}, \code{kPrimePrior},
 \code{likelihoodMode}, \code{qHeterogeneity}, \code{nCat} or \code{nBetaCat} that differs
 from the checkpoint's is an error.}
 

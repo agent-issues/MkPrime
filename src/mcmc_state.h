@@ -149,23 +149,11 @@ struct McmcData {
   // the geometric arm only — prepare_mcmc_data enforces this.
   bool marginalK = false;
 
-  // Prior parameterisation for the geometric k' prior under marginal-k.
-  //   false (default) = Model B (conditional): k'_i ~ kObs_i + Geometric(p),
-  //                     marginal weight p (1-p)^(k - kObs_i).
-  //   true            = Model A (unconditional): k'_i ~ 2 + Geometric(p),
-  //                     marginal weight p (1-p)^(k - 2); the weight exponent
-  //                     base shifts from kObs to 2. The sum is capped at
-  //                     k <= kprimeTruncK and renormalised by log Z(p)
-  //                     (MARGINAL-K-TRUNC-001). Model A and Model B differ by
-  //                     a per-character factor (1-p)^(kObs_i - 2).
-  bool unconditionalPrior = false;
-
   // MARGINAL-K-TRUNC-001: declared truncation cap K on k' for every prior
   // (#392) under BOTH likelihoodModes (sampled_k truncates the prior;
   // marginal_k, geometric only, truncates the marginal sum). Each prior is
   // renormalised over its capped support; e.g. the geometric on k' in [2, K]
-  // by log Z(p) (Model A: Z = 1-(1-p)^(K-1), shared; Model B:
-  // Z_i = 1-(1-p)^(K-kObs_i+1), per kObs). MUST equal the SBC forward's
+  // by log Z(p) = log(1-(1-p)^(K-1)), shared. MUST equal the SBC forward's
   // K_MAX_PRIOR for calibration. Setup must enforce K >= max(kObs) (else a
   // character has empty support -> -Inf).
   //

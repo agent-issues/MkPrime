@@ -12,11 +12,10 @@
 // where L(y | k) is the unconditioned pattern probability (relabelling
 // factor included). The per-character likelihood therefore carries no
 // ascertainment term at its own k'; each character instead contributes
-// -log D, shared by every character with the same missing-data mask (and,
-// under a prior that conditions on kObs, the same kObs). D depends on the
-// tree, the rates and the k' prior, but not on k'.
+// -log D, shared by every character with the same missing-data mask. D
+// depends on the tree, the rates and the k' prior, but not on k'.
 //
-// D needs Pr(V | k) at every k in the prior's support [lo, K]. Pr(V | k) is
+// D needs Pr(V | k) at every k in the prior's support [2, K]. Pr(V | k) is
 // smooth in u = 1 / (k - 1), so k < kJointExactBelow is summed exactly and
 // the tail by interpolation at Chebyshev nodes in u, with a check on the
 // interpolant's coefficients that falls back to three times as many nodes
@@ -47,7 +46,7 @@ constexpr int kJointExactBelow = 8;
 // Pr(V | k) depends on the mask, not the partition, so one traversal serves
 // every partition in the class.
 struct JointAscTable {
-  int lo = 2;                    // smallest k any partition's prior supports
+  int lo = 2;                    // 2, or K + 1 when the class has no partition
   int K = 2;                     // largest k in the prior's support
   int nMask = 0;
   std::vector<int> row;          // row of g by data.missingMasks id; -1 if none
@@ -55,7 +54,7 @@ struct JointAscTable {
   int exactLo = 0, exactHi = -1;
   // Chebyshev nodes in u over [0, 1 / (kJointExactBelow - 1)]: nNode > 0
   // means the k >= kJointExactBelow tail is interpolated, nNode == 0 that
-  // every k in [lo, K] is exact.
+  // every k in [2, K] is exact.
   int nNode = 0;
   std::vector<double> kVals;
   std::vector<double> g;
@@ -80,11 +79,10 @@ void lumped_const_probs_het(const Rcpp::IntegerVector& parent,
                             const std::vector<const uint8_t*>& masks,
                             const std::vector<double>& kVals, double* out);
 
-// log pi(k) for k = *lo .. data.kprimeTruncK under the data's k' prior, for
-// a character observed in kObs states, normalised over that support. *lo is
-// 2 for a prior on the full support and kObs for one that conditions on it.
-std::vector<double> kprime_log_prior_table(const McmcData& data, int kObs,
-                                           const KprimeHyper& hyper, int* lo);
+// log pi(k) for k = 2 .. data.kprimeTruncK under the data's k' prior,
+// normalised over that support.
+std::vector<double> kprime_log_prior_table(const McmcData& data,
+                                           const KprimeHyper& hyper);
 
 // Pr(V | k) table for the rate class of transformational partition partIdx;
 // scaledEdge carries the partition scale and rates the ACRV rates (length
@@ -97,11 +95,11 @@ JointAscTable joint_asc_table(const McmcData& data, int partIdx,
                               double betaScale, bool forceDirect = false);
 
 // sum_m n_m log D_m over partition partIdx's masks, from its class's table
-// and its log prior table over [lo, K]; +Inf when some D_m vanishes, so that
+// and the log prior table over [2, K]; +Inf when some D_m vanishes, so that
 // subtracting it gives a -Inf likelihood.
 double joint_asc_log(const McmcData& data, int partIdx,
                      const JointAscTable& table,
-                     const std::vector<double>& logPrior, int lo);
+                     const std::vector<double>& logPrior);
 
 // Pr(V | k) tables by rate class, for the last two trees each was scored on.
 // A move that changes neither the tree nor the rates (a k' or hyperparameter

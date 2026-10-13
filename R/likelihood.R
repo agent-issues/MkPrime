@@ -300,8 +300,7 @@ MkpLogLikelihood <- function(tree, mkd,
       }
 
       if (coding != "none") {
-        logPrior <- .KprimeLogPriorTable(model, part$kObs, p, kprimeAlpha,
-                                         kprimeBeta)
+        logPrior <- .KprimeLogPriorTable(model, p, kprimeAlpha, kprimeBeta)
         ll <- ll - .JointAscLog(tipStates, logPrior, parent, child, transEdge,
                                 nTip, rates)
       }
@@ -348,26 +347,19 @@ MkpLogLikelihood <- function(tree, mkd,
 }
 
 
-# log pi(k) over the support lo..K of the k' prior, for a transformational
-# character observed in kObs states, with lo as attribute "lo". A prior that
-# conditions on kObs starts its support there; the others start at 2.
-.KprimeLogPriorTable <- function(model, kObs, p, kprimeAlpha, kprimeBeta) {
+# log pi(k) for k = 2..K under the k' prior.
+.KprimeLogPriorTable <- function(model, p, kprimeAlpha, kprimeBeta) {
   K <- as.integer(model$kprimeTruncK %||% 200L)
-  arm <- model$kPrimePrior %||% "geometric"
-  conditional <- arm == "beta_geometric" ||
-    (arm != "logseries" && !identical(model$priorVariant, "unconditional"))
-  lo <- if (conditional) as.integer(kObs) else 2L
-  if (lo > K) return(structure(numeric(0), lo = lo))
-  k <- lo:K
-  logW <- switch(arm,
-    geometric = (k - lo) * log1p(-p),
-    beta_geometric = lbeta(kprimeAlpha + 1, kprimeBeta + k - lo),
+  k <- 2:K
+  logW <- switch(model$kPrimePrior %||% "geometric",
+    geometric = (k - 2) * log1p(-p),
+    beta_geometric = lbeta(kprimeAlpha + 1, kprimeBeta + k - 2),
     logseries = k * log(model$kprimeLogseriesC) - log(k),
     empirical_geometric = .LogEmpGeomCapped(model$empiricalNObs, p, K)$logPk[k]
   )
   top <- max(logW)
   # Return:
-  structure(logW - top - log(sum(exp(logW - top))), lo = lo)
+  logW - top - log(sum(exp(logW - top)))
 }
 
 
@@ -376,12 +368,11 @@ MkpLogLikelihood <- function(tree, mkd,
 # transformational partition, summing every k in the prior's support.
 .JointAscLog <- function(tipStates, logPrior, parent, child, edgeLength, nTip,
                          rates) {
-  if (!length(logPrior)) return(Inf)
   missing <- tipStates < 0L
   maskKey <- apply(missing, 2, function(x) paste(which(x), collapse = " "))
   counts <- table(maskKey)
   masks <- missing[, match(names(counts), maskKey), drop = FALSE]
-  k <- attr(logPrior, "lo") + seq_along(logPrior) - 1
+  k <- seq_along(logPrior) + 1
   constProb <- lumped_const_probs(parent, child, edgeLength, nTip, rates,
                                   masks * 1L, as.numeric(k))
   # Return:

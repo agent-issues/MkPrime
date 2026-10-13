@@ -2962,7 +2962,7 @@ static SEXP prepare_mcmc_data_impl(
     double betaScaleShape, double betaScaleRate,
     bool   kPriorEmpiricalGeometric, NumericVector empLogBody,
     int    empTailStartK, double empTailDecay, double empLogTailStartP,
-    bool   marginalK, bool unconditionalPrior) {
+    bool   marginalK) {
   McmcData* d = new McmcData();
   d->hasNeo = hasNeo;
   d->nCat = nCat;
@@ -2995,7 +2995,6 @@ static SEXP prepare_mcmc_data_impl(
   d->empLogTailStartP  = (empLogTailStartP <= -1e300) ? R_NegInf
                                                        : empLogTailStartP;
   d->marginalK = marginalK;
-  d->unconditionalPrior = unconditionalPrior;
   d->kObs = kObs_r;
   d->nChar = kObs_r.size();
   d->nTip = 0;
@@ -3146,10 +3145,9 @@ SEXP prepare_mcmc_data(List partitions_r,
                        int    empTailStartK = 0,
                        double empTailDecay = 0.0,
                        double empLogTailStartP = -1e308,
-                       bool   marginalK = false,
-                       bool   unconditionalPrior = false) {
-  // The joint normaliser takes a transformational partition's k' support
-  // from its first character.
+                       bool   marginalK = false) {
+  // The k' sweep takes a transformational partition's candidates from its
+  // first character's observed state count.
   for (R_xlen_t i = 0; i < partitions_r.size(); ++i) {
     const List part = partitions_r[i];
     if (as<std::string>(part["type"]) != "transformational") continue;
@@ -3227,7 +3225,7 @@ SEXP prepare_mcmc_data(List partitions_r,
     kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC,
     kPriorBetaGeometric, qHeterogeneity, nBetaCat, betaScaleShape,
     betaScaleRate, kPriorEmpiricalGeometric, empLogBody, empTailStartK,
-    empTailDecay, empLogTailStartP, marginalK, unconditionalPrior);
+    empTailDecay, empLogTailStartP, marginalK);
 }
 
 
