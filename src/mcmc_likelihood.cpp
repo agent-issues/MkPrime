@@ -12,6 +12,8 @@
 // avoiding edge matrix construction/decomposition round-trips.
 
 #include "mcmc_state.h"
+#include "../inst/include/MkPrime/transition.h"
+#include "../inst/include/MkPrime/acrv.h"
 #include "ascertainment.h"
 #include "mkn_rates.h"
 #include <cmath>
@@ -80,15 +82,8 @@ double mk_prime_relabel_log(int kPrime, int kObs);
 // transcendental calls per iteration; only exp() + scaling remain.
 NumericVector cpp_acrv_rates(double rateLogSd, int nCat,
                              const std::vector<double>& acrvZ) {
-  if (rateLogSd <= 0.0) return NumericVector(nCat, 1.0);
-  double mu = -rateLogSd * rateLogSd / 2.0;
   NumericVector rates(nCat);
-  double total = 0.0;
-  for (int i = 0; i < nCat; ++i) {
-    rates[i] = std::exp(mu + rateLogSd * acrvZ[i]);
-    total += rates[i];
-  }
-  for (int i = 0; i < nCat; ++i) rates[i] *= nCat / total;
+  MkPrime::lognormal_rates(rateLogSd, nCat, acrvZ.data(), rates.begin());
   return rates;
 }
 
@@ -207,19 +202,15 @@ static double pruning_jc_flat(
     }
   }
 
-  double inv_k = 1.0 / kStates;
-  double km1   = kStates - 1.0;
+  const MkPrime::JCRates jcRates(kStates);
 
   for (int e = nEdge - 1; e >= 0; --e) {
     int par = parPtr[e];
     int ch  = chPtr[e];
     double t        = elPtr[e];
-    // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
-    double arg      = -kStates * t / km1;
-    double neg_expm1 = -std::expm1(arg);
-    double exp_term = 1.0 - neg_expm1;
-    double p_same   = inv_k + (1.0 - inv_k) * exp_term;
-    double p_diff   = inv_k * neg_expm1;
+    const MkPrime::JCProbs jc = jcRates.probs(t);
+    double p_same   = jc.pSame;
+    double p_diff   = jc.pDiff;
     double* clPar   = buf + par * stride;
     double* clCh    = buf + ch  * stride;
 
@@ -326,8 +317,7 @@ static double pruning_jc_acrv_flat(
     siteLikLocal.assign(nChar, 0.0);
     siteLikPtr = siteLikLocal.data();
   }
-  double inv_k = 1.0 / kStates;
-  double km1   = kStates - 1.0;
+  const MkPrime::JCRates jcRates(kStates);
 
   // OPP-CL: tips are constant across rate categories — init once, not per cat.
   std::memset(initFlg, 0, (maxNode + 1) * sizeof(uint8_t));
@@ -384,12 +374,9 @@ static double pruning_jc_acrv_flat(
       int par = parPtr[e];
       int ch  = chPtr[e];
       double t        = elPtr[e] * rate;
-      // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
-      double arg      = -kStates * t / km1;
-      double neg_expm1 = -std::expm1(arg);
-      double exp_term = 1.0 - neg_expm1;
-      double p_same   = inv_k + (1.0 - inv_k) * exp_term;
-      double p_diff   = inv_k * neg_expm1;
+      const MkPrime::JCProbs jc = jcRates.probs(t);
+      double p_same   = jc.pSame;
+      double p_diff   = jc.pDiff;
       double* clPar   = buf + par * stride;
       double* clCh    = buf + ch  * stride;
 
@@ -490,7 +477,7 @@ static inline void persite_impl(
   // K_TPL == 0, K is the runtime kRuntime and loops stay variable-bounded.
   const int K = (K_TPL > 0) ? K_TPL : kRuntime;
   const double inv_k = 1.0 / K;
-  const double km1   = K - 1.0;
+  const MkPrime::JCRates jcRates(K);
 
   std::vector<double> site_lik_sum(nChar, 0.0);
   int clCols = nChar * K;
@@ -520,12 +507,9 @@ static inline void persite_impl(
       int par = parPtr[e];
       int ch  = chPtr[e];
       double t        = elPtr[e] * rate;
-      // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
-      double arg      = -K * t / km1;
-      double neg_expm1 = -std::expm1(arg);
-      double exp_term = 1.0 - neg_expm1;
-      double p_same   = inv_k + (1.0 - inv_k) * exp_term;
-      double p_diff   = inv_k * neg_expm1;
+      const MkPrime::JCProbs jc = jcRates.probs(t);
+      double p_same   = jc.pSame;
+      double p_diff   = jc.pDiff;
       double* __restrict__ clPar = buf + par * stride;
       const double* __restrict__ clCh = buf + ch * stride;
       double diff_coeff = p_same - p_diff;
@@ -682,7 +666,7 @@ static inline void persite_collapsed_impl(
   const int lumpIdx   = kEff - 1;          // kObs == lumpIdx
   const double n_U    = static_cast<double>(kFull - kObs);
   const double inv_k  = 1.0 / kFull;
-  const double km1    = kFull - 1.0;
+  const MkPrime::JCRates jcRates(kFull);
 
   std::vector<double> site_lik_sum(nChar, 0.0);
   int clCols = nChar * kEff;
@@ -716,12 +700,9 @@ static inline void persite_collapsed_impl(
       int par = parPtr[e];
       int ch  = chPtr[e];
       double t        = elPtr[e] * rate;
-      // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
-      double arg      = -kFull * t / km1;
-      double neg_expm1 = -std::expm1(arg);
-      double exp_term = 1.0 - neg_expm1;
-      double p_same   = inv_k + (1.0 - inv_k) * exp_term;
-      double p_diff   = inv_k * neg_expm1;
+      const MkPrime::JCProbs jc = jcRates.probs(t);
+      double p_same   = jc.pSame;
+      double p_diff   = jc.pDiff;
       double* __restrict__ clPar = buf + par * stride;
       const double* __restrict__ clCh = buf + ch * stride;
       double diff_coeff = p_same - p_diff;
@@ -993,18 +974,15 @@ static double pruning_jc_flat_collapsed(
   }
 
   const double inv_k = 1.0 / kFull;
-  const double km1   = kFull - 1.0;
+  const MkPrime::JCRates jcRates(kFull);
 
   for (int e = nEdge - 1; e >= 0; --e) {
     int par = parPtr[e];
     int ch  = chPtr[e];
     double t        = elPtr[e];
-    // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
-    double arg      = -kFull * t / km1;
-    double neg_expm1 = -std::expm1(arg);
-    double exp_term = 1.0 - neg_expm1;
-    double p_same   = inv_k + (1.0 - inv_k) * exp_term;
-    double p_diff   = inv_k * neg_expm1;
+    const MkPrime::JCProbs jc = jcRates.probs(t);
+    double p_same   = jc.pSame;
+    double p_diff   = jc.pDiff;
     double diff_coeff = p_same - p_diff;
     double* clPar = buf + par * stride;
     double* clCh  = buf + ch  * stride;
@@ -1116,7 +1094,7 @@ static double pruning_jc_acrv_flat_collapsed(
   }
 
   const double inv_k = 1.0 / kFull;
-  const double km1   = kFull - 1.0;
+  const MkPrime::JCRates jcRates(kFull);
 
   std::memset(initFlg, 0, (maxNode + 1) * sizeof(uint8_t));
   for (int tip = 1; tip <= nTip; ++tip) {
@@ -1168,12 +1146,9 @@ static double pruning_jc_acrv_flat_collapsed(
       int par = parPtr[e];
       int ch  = chPtr[e];
       double t        = elPtr[e] * rate;
-      // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
-      double arg      = -kFull * t / km1;
-      double neg_expm1 = -std::expm1(arg);
-      double exp_term = 1.0 - neg_expm1;
-      double p_same   = inv_k + (1.0 - inv_k) * exp_term;
-      double p_diff   = inv_k * neg_expm1;
+      const MkPrime::JCProbs jc = jcRates.probs(t);
+      double p_same   = jc.pSame;
+      double p_diff   = jc.pDiff;
       double diff_coeff = p_same - p_diff;
       double* clPar = buf + par * stride;
       double* clCh  = buf + ch  * stride;
@@ -1409,24 +1384,17 @@ static double pruning_mkn_flat(
     }
   }
 
-  double rate01, rate10;
-  mkn_rates(rate_loss, rate01, rate10);
-  double lambda     = rate01 + rate10;
-  double inv_lam_01 = rate01 / lambda;
-  double inv_lam_10 = rate10 / lambda;
+  const MkPrime::MkNRates mknRates(rate_loss);
 
   for (int e = nEdge - 1; e >= 0; --e) {
     int par = parPtr[e];
     int ch  = chPtr[e];
     double t        = elPtr[e];
-    // FAST-EXP-001: expm1 form avoids cancellation in P01/P10 at small lambda*t.
-    double arg      = -lambda * t;
-    double neg_expm1 = -std::expm1(arg);
-    double exp_term = 1.0 - neg_expm1;
-    double P00 = inv_lam_10 + inv_lam_01 * exp_term;
-    double P01 = inv_lam_01 * neg_expm1;
-    double P10 = inv_lam_10 * neg_expm1;
-    double P11 = inv_lam_01 + inv_lam_10 * exp_term;
+    const MkPrime::MkNProbs mkn = mknRates.probs(t);
+    double P00 = mkn.p00;
+    double P01 = mkn.p01;
+    double P10 = mkn.p10;
+    double P11 = mkn.p11;
     double* clPar = buf + par * stride;
     double* clCh  = buf + ch  * stride;
 
@@ -1533,11 +1501,7 @@ static double pruning_mkn_acrv_flat(
     siteLikLocal.assign(nChar, 0.0);
     siteLikPtr = siteLikLocal.data();
   }
-  double rate01, rate10;
-  mkn_rates(rate_loss, rate01, rate10);
-  double lambda     = rate01 + rate10;
-  double inv_lam_01 = rate01 / lambda;
-  double inv_lam_10 = rate10 / lambda;
+  const MkPrime::MkNRates mknRates(rate_loss);
 
   // OPP-CL: init tips once (constant across rate categories)
   std::memset(initFlg, 0, (maxNode + 1) * sizeof(uint8_t));
@@ -1596,14 +1560,11 @@ static double pruning_mkn_acrv_flat(
       int par = parPtr[e];
       int ch  = chPtr[e];
       double t        = elPtr[e] * rate;
-      // FAST-EXP-001: expm1 form avoids cancellation in P01/P10 at small lambda*t.
-      double arg      = -lambda * t;
-      double neg_expm1 = -std::expm1(arg);
-      double exp_term = 1.0 - neg_expm1;
-      double P00 = inv_lam_10 + inv_lam_01 * exp_term;
-      double P01 = inv_lam_01 * neg_expm1;
-      double P10 = inv_lam_10 * neg_expm1;
-      double P11 = inv_lam_01 + inv_lam_10 * exp_term;
+      const MkPrime::MkNProbs mkn = mknRates.probs(t);
+      double P00 = mkn.p00;
+      double P01 = mkn.p01;
+      double P10 = mkn.p10;
+      double P11 = mkn.p11;
       double* clPar = buf + par * stride;
       double* clCh  = buf + ch  * stride;
 
