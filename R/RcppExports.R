@@ -69,6 +69,18 @@ header_site_likelihoods <- function(model, parent, child, edge_length, tip_state
     .Call(`_MkPrime_header_site_likelihoods`, model, parent, child, edge_length, tip_states, kStates, param, pi, rates)
 }
 
+header_transition_matrices <- function(model, kStates, param, pi, t) {
+    .Call(`_MkPrime_header_transition_matrices`, model, kStates, param, pi, t)
+}
+
+header_marginals <- function(model, parent, child, edge_length, tip_states, kStates, param, pi, rates, edge_scale) {
+    .Call(`_MkPrime_header_marginals`, model, parent, child, edge_length, tip_states, kStates, param, pi, rates, edge_scale)
+}
+
+header_edge_renumber <- function(parent, child, edge_length, tip_states, kStates, edge_scale, perm) {
+    .Call(`_MkPrime_header_edge_renumber`, parent, child, edge_length, tip_states, kStates, edge_scale, perm)
+}
+
 mkp_hello <- function() {
     .Call(`_MkPrime_mkp_hello`)
 }
@@ -193,7 +205,7 @@ do_move_cpp <- function(dataPtr, statePtr, moveType, charIdx, scaleTuning, betaS
     .Call(`_MkPrime_do_move_cpp`, dataPtr, statePtr, moveType, charIdx, scaleTuning, betaSimplexTuning, intWalkWindow, beta)
 }
 
-run_mcmc_batch_cpp <- function(dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, sliceParamCodes, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, moveIntParams, sliceWidths, jointRhos, nBatch, startIter, warmup, thin, hasNeo, nEdge, cacheBonus = 1.0, chainBlockKpWins = as.integer( c()), ptCarry = NULL) {
+run_mcmc_batch_cpp <- function(dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, sliceParamCodes, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, moveIntParams, sliceWidths, jointRhos, nBatch, startIter, warmup, thin, hasNeo, nEdge, cacheBonus = 1.0, chainBlockKpWins = integer(0), ptCarry = NULL) {
     .Call(`_MkPrime_run_mcmc_batch_cpp`, dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, sliceParamCodes, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, moveIntParams, sliceWidths, jointRhos, nBatch, startIter, warmup, thin, hasNeo, nEdge, cacheBonus, chainBlockKpWins, ptCarry)
 }
 
