@@ -117,10 +117,20 @@ test_that("claimed characters are scored by the extension alone", {
   expect_false(do_move_cpp(claim$dataPtr, claim$statePtr, 19L,
                            MkPrime:::.ScalarParamIndex("rate_loss"), 0.6, 1.0,
                            1L, 1.0))
+
+  # The flip move alone samples the integer prior, P(toy_switch = 1) = 0.7.
+  n <- 20000L
+  sw <- integer(n)
+  for (i in seq_len(n)) {
+    Move(41L, 0L)
+    sw[i] <- get_mcmc_state(claim$statePtr)$extInts
+  }
+  expect_lt(abs(mean(sw) - 0.7), 0.02)
 })
 
-test_that("RunMkPrime samples and checkpoints integer parameters", {
+test_that("RunMkPrime logs and checkpoints integer parameters", {
   skip_on_cran()
+  skip_under_memcheck()
   fx <- ClaimFixture(4424L)
   dir <- withr::local_tempdir()
   ckp <- file.path(dir, "run.ckp")
@@ -136,8 +146,6 @@ test_that("RunMkPrime samples and checkpoints integer parameters", {
   expect_true(all(c("toy_mu", "toy_switch", "rate_loss", "rate_neo") %in%
                     colnames(s)))
   expect_true(all(s[, "toy_switch"] %in% 0:1))
-  # Prior P(toy_switch = 1) = 0.7; nothing else involves it.
-  expect_lt(abs(mean(s[, "toy_switch"]) - 0.7), 0.1)
   expect_true(all(is.finite(s[, "log_likelihood"])))
   expect_gt(length(unique(s[, "rate_loss"])), 10L)
   expect_false(any(c("slice_rate_loss", "slice_tree_length") %in%
