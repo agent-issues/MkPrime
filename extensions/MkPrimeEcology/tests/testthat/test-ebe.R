@@ -254,7 +254,8 @@ test_that("gibbs_z draws from the exact full conditional", {
   mat <- matrix(sample.int(3, nTip * 16, replace = TRUE) - 1L, nTip, 16,
                 dimnames = list(paste0("t", seq_len(nTip)), NULL))
   mat[, 1:8] <- pmin(mat[, 1:8], 1L)
-  mat[2, 3] <- NA
+  mat <- matrix(as.character(mat), nrow(mat), dimnames = dimnames(mat))
+  mat[2, 3] <- "?"
   pd <- TreeTools::MatrixToPhyDat(mat)
   tree <- TreeTools::Preorder(ape::rtree(nTip, tip.label = rownames(mat),
                                          br = function(n) runif(n, 0.05, 0.3)))
