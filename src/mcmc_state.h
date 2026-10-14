@@ -186,14 +186,56 @@ struct McmcData {
   bool extLik = false;
   struct ExtMove { int ext; int move; };
   std::vector<ExtMove> extMoves;
+  // ABI v3: integer parameters, laid out in McmcState::extInts as extIntOffset
+  // describes, with their numbers of levels.
+  std::vector<int> extIntOffset;
+  std::vector<int> extIntLevels;
+  int nExtInts = 0;
+  // ABI v3 claims: the extension that scores the neomorphic characters
+  // (-1 for none), their tip states (nTip x n, column-major) and 1-based
+  // global character numbers. Their partitions are removed from `parts`.
+  int extClaimNeo = -1;
+  std::vector<int> extClaimStates;
+  std::vector<int> extClaimChar;
+  // The extensions' external pointers, kept alive while attached.
+  std::vector<Rcpp::RObject> extKeep;
 };
 
-// Version-2 fields of an extension, read only when it was built for ABI 2+.
+// Fields of a later ABI version are read only when the extension was built
+// for it (#441).
 inline bool ext_has_log_lik(const MkPrimeExtension* e) {
-  return e->abi_version >= 2 && e->log_lik;
+  return (e->abi_version >= 2 && e->log_lik) ||
+    (e->abi_version >= 3 && e->log_lik_ints);
 }
 inline int ext_n_moves(const MkPrimeExtension* e) {
   return e->abi_version >= 2 ? e->n_moves : 0;
+}
+inline int ext_n_ints(const MkPrimeExtension* e) {
+  return e->abi_version >= 3 ? e->n_ints : 0;
+}
+inline int ext_claims(const MkPrimeExtension* e) {
+  return e->abi_version >= 3 ? e->claims : 0;
+}
+inline double ext_log_prior(const MkPrimeExtension* e, const double* params,
+                            const int* ints) {
+  if (e->abi_version >= 3 && e->log_prior_ints) {
+    return e->log_prior_ints(params, ints, e->user);
+  }
+  return e->log_prior(params, e->user);
+}
+inline double ext_log_lik(const MkPrimeExtension* e, const MkPrimeTreeView* v,
+                          const double* params, const int* ints) {
+  if (e->abi_version >= 3 && e->log_lik_ints) {
+    return e->log_lik_ints(v, params, ints, e->user);
+  }
+  return e->log_lik(v, params, e->user);
+}
+inline double ext_propose(const MkPrimeExtension* e, int move,
+                          const MkPrimeTreeView* v, double* params, int* ints) {
+  if (e->abi_version >= 3 && e->propose_ints) {
+    return e->propose_ints(move, v, params, ints, e->user);
+  }
+  return e->propose(move, v, params, e->user);
 }
 
 template <class GlobalIdx>

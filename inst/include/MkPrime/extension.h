@@ -1,7 +1,7 @@
 #ifndef MKPRIME_EXTENSION_H
 #define MKPRIME_EXTENSION_H
 
-/* Engine extension interface (#441), ABI version 2.
+/* Engine extension interface (#441), ABI version 3.
  *
  * An extension package describes itself in a static MkPrimeExtension and
  * returns MkPrimeExtensionPtr(&ext) from a registered .Call entry point.
@@ -26,11 +26,25 @@
  * edge or character, and from a single thread per chain. They must not
  * keep pointers into the MkPrimeTreeView after returning.
  *
- * A struct built against version 1 remains valid: MkPrime reads the
- * version 2 fields only when abi_version >= 2.
+ * Version 3 adds:
+ *  - integer parameters (e.g. latent categories), each in 0..levels - 1,
+ *    logged, checkpointed and carried through tempering like the real ones;
+ *    the *_ints callbacks see them and, when given, replace the v1/v2 ones;
+ *  - MkPrime's own scalars, the neomorphic edge-length scale and the ACRV
+ *    rate multipliers in the tree view, so an extension can share them;
+ *  - claims: an extension may score MkPrime's neomorphic characters itself
+ *    (MKPRIME_CLAIM_NEOMORPHIC). MkPrime then leaves them out of its own
+ *    likelihood, but still counts them when it normalises rate_neo, samples
+ *    rate_loss and rate_neo, and logs them. Their tip states arrive in the
+ *    tree view. The extension owns any ascertainment correction for them.
+ *
+ * A struct built against an earlier version remains valid: MkPrime reads
+ * the fields of version v only when abi_version >= v.
  *
  * Plain C, so that C and C++ packages can use it. The struct and everything
- * it points to must outlive the R session (static storage).
+ * it points to must outlive every chain that uses it: static storage, or
+ * memory owned by the external pointer, which MkPrime keeps alive for as
+ * long as it holds the pointer.
  */
 
 #ifndef R_NO_REMAP
@@ -38,9 +52,19 @@
 #endif
 #include <Rinternals.h>
 
-#define MKPRIME_EXTENSION_ABI_VERSION 2
+#define MKPRIME_EXTENSION_ABI_VERSION 3
 /* Oldest ABI version this MkPrime still accepts. */
 #define MKPRIME_EXTENSION_ABI_MIN 1
+
+/* Indices into MkPrimeTreeView::core (ABI 3). */
+#define MKPRIME_CORE_TREE_LENGTH 0
+#define MKPRIME_CORE_RATE_LOSS 1
+#define MKPRIME_CORE_RATE_LOG_SD 2
+#define MKPRIME_CORE_RATE_NEO 3
+#define MKPRIME_CORE_BETA_SCALE 4
+
+/* MkPrimeExtension::claims (ABI 3). */
+#define MKPRIME_CLAIM_NEOMORPHIC 1
 
 #ifdef __cplusplus
 extern "C" {
@@ -58,6 +82,26 @@ typedef struct MkPrimeTreeView {
   /* Uniform(0, 1) deviate from the chain's random number stream. Use it,
    * not another generator, so that runs are reproducible. */
   double (*unif_rand)(void);
+
+  /* ---- ABI version 3; read only by extensions built for 3 or later ---- */
+
+  /* MkPrime's scalars, indexed by MKPRIME_CORE_*; n_core entries. */
+  int n_core;
+  const double* core;
+  /* Multiplier of edge_length for neomorphic characters: rate_neo's share
+   * of the rate, normalised over all characters, claimed ones included. */
+  double neo_scale;
+  /* Among-character rate variation: n_rate_cat equally weighted rate
+   * multipliers from rate_log_sd ({1} when rate_log_sd is 0). */
+  int n_rate_cat;
+  const double* rate_cat;
+  /* Ascertainment coding: 0 none, 1 variable, 2 informative. */
+  int coding;
+  /* Characters claimed by this extension: tip states (n_tip x n_claimed,
+   * column-major, -1 = missing) and their 1-based column in the data. */
+  int n_claimed;
+  const int* claimed_states;
+  const int* claimed_char;
 } MkPrimeTreeView;
 
 typedef struct MkPrimeExtension {
@@ -94,12 +138,39 @@ typedef struct MkPrimeExtension {
    * ratio; it is then always accepted in the cold chain. */
   double (*propose)(int move, const MkPrimeTreeView* tree, double* params,
                     void* user);
+
+  /* ---- ABI version 3 ---- */
+
+  /* MKPRIME_CLAIM_* flags; 0 for none. At most one extension may claim
+   * a given kind of character. */
+  int claims;
+  /* Integer parameters, each in 0 .. int_levels[i] - 1. Names become log
+   * columns. MkPrime gives them no moves of its own. */
+  int n_ints;
+  const char* const* int_names;
+  const int* int_init;
+  const int* int_levels;
+  /* As log_prior, log_lik and propose, with the integer parameters. When
+   * given they are used instead of those; propose_ints may change both
+   * blocks, and MkPrime restores both on rejection. */
+  double (*log_prior_ints)(const double* params, const int* ints, void* user);
+  double (*log_lik_ints)(const MkPrimeTreeView* tree, const double* params,
+                         const int* ints, void* user);
+  double (*propose_ints)(int move, const MkPrimeTreeView* tree,
+                         double* params, int* ints, void* user);
 } MkPrimeExtension;
 
 /* External pointer handed back to R by the extension's entry point. */
 static inline SEXP MkPrimeExtensionPtr(const MkPrimeExtension* ext) {
   return R_MakeExternalPtr((void*) ext, Rf_install("MkPrimeExtension"),
                            R_NilValue);
+}
+
+/* As MkPrimeExtensionPtr(), keeping `prot` (e.g. the R object that owns a
+ * heap-allocated struct and its data) alive as long as the pointer. */
+static inline SEXP MkPrimeExtensionPtrProtect(const MkPrimeExtension* ext,
+                                              SEXP prot) {
+  return R_MakeExternalPtr((void*) ext, Rf_install("MkPrimeExtension"), prot);
 }
 
 #ifdef __cplusplus

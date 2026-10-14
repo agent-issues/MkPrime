@@ -302,7 +302,7 @@ RunMkPrime <- function(data, tree = NULL,
                              qHeterogeneity = qHet,
                              priorOnClassRateLogSd =
                                model$priorOnClassRateLogSd)
-  paramNames <- c(paramNames, .ExtensionParamNames(model))
+  paramNames <- c(paramNames, .ExtensionColumns(model))
 
   # Plan §7.4: under marginal_k mode kPrime_i is pinned to kObs_i throughout
   # the chain -- emitting those columns bloats the trace and misleads readers.
@@ -935,6 +935,7 @@ RunMkPrime <- function(data, tree = NULL,
       log_post       = s$log_post
     )
     if (!is.null(s$ext_params)) ch_list$ext_params <- as.numeric(s$ext_params)
+    if (!is.null(s$ext_ints)) ch_list$ext_ints <- as.integer(s$ext_ints)
     # Partition-API extra fields (absent for legacy chains — §7a contract).
     if (usePartitioned) {
       ch_list$class_rate_log_sd <- as.numeric(s$class_rate_log_sd)
@@ -1017,6 +1018,7 @@ RunMkPrime <- function(data, tree = NULL,
     beta_scale     = s$betaScale
   )
   if (length(s$extParams)) ch$ext_params <- as.numeric(s$extParams)
+  if (length(s$extInts)) ch$ext_ints <- as.integer(s$extInts)
   # Partition-API extras, absent for legacy chains (§7a contract).
   if (isTRUE(s$usePartitioned)) {
     ch$class_rate_log_sd <- as.numeric(s$classRateLogSd)
@@ -1054,7 +1056,8 @@ RunMkPrime <- function(data, tree = NULL,
     useHyperpriorOnSigma = isTRUE(ch_r$use_hyperprior_on_sigma),
     hyperTau       = ch_r$hyper_tau %||% 1.0,
     classZ         = as.numeric(ch_r$class_rate_log_sd_z %||% numeric(0)),
-    extParams      = as.numeric(ch_r$ext_params %||% numeric(0))
+    extParams      = as.numeric(ch_r$ext_params %||% numeric(0)),
+    extInts        = as.integer(ch_r$ext_ints %||% integer(0))
   )
 }
 
@@ -4986,7 +4989,10 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     state$beta_scale <- 1.0
   }
 
-  if (length(model$extensions)) state$ext_params <- .ExtensionInit(model)
+  if (length(model$extensions)) {
+    state$ext_params <- .ExtensionInit(model)
+    state$ext_ints <- .ExtensionInitInts(model)
+  }
 
   # Tree is already preorder (reordered at init); use internal fast-path
   state$log_lik <- .MkpLogLikelihood(
@@ -5564,7 +5570,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     state$beta_scale %||% 1.0,
     state$kprime_alpha %||% 1.0,
     state$kprime_beta %||% 1.0,
-    extParams = as.numeric(state$ext_params %||% numeric(0))
+    extParams = as.numeric(state$ext_params %||% numeric(0)),
+    extInts = as.integer(state$ext_ints %||% integer(0))
   )
 }
 

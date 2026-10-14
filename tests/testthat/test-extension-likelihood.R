@@ -13,7 +13,7 @@ ToyLogPrior <- function(lambda) stats::dgamma(lambda, 2, 4, log = TRUE)
 
 test_that("a likelihood extension describes its term and moves", {
   info <- extension_info_cpp(toy_lik_extension_cpp())
-  expect_identical(info$abi_version, 2L)
+  expect_identical(info$abi_version, 3L)
   expect_true(info$log_lik)
   expect_identical(info$moves, c("gibbs", "jump"))
   expect_identical(info$move_weights, c(1, 0.5))
@@ -33,10 +33,9 @@ test_that("extension moves join, and core-likelihood moves leave", {
   )
   moves <- MkPrime:::.WithExtensionMoves(core, model)
   names <- vapply(moves, `[[`, "", "name")
-  expect_identical(names, c("nni", "slice_rate_loss",
-                            "scale_param_toy_lambda", "toylik_gibbs",
+  expect_identical(names, c("nni", "scale_param_toy_lambda", "toylik_gibbs",
                             "toylik_jump"))
-  own <- moves[4:5]
+  own <- moves[3:4]
   expect_identical(vapply(own, MkPrime:::.MoveTypeCode, 0L), c(41L, 41L))
   expect_identical(vapply(own, `[[`, 0L, "sliceParamIdx"), 0:1)
   expect_identical(vapply(own, `[[`, 0, "weight"), c(1, 0.5))
