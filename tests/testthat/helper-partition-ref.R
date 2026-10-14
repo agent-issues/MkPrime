@@ -129,7 +129,9 @@
     classRateConcentration = 1,
     priorOnClassRateLogSd  = "hyperprior_pooled",
     likelihoodMode         = "sampled_k",
-    kprimeTruncK           = 200L
+    kprimeTruncK           = 200L,
+    # No extensions (#441): MkPrimeModel() is then identical to before.
+    extensions             = NULL
   )
 }
 

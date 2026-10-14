@@ -41,6 +41,38 @@ mk_prime_relabel_log_batch <- function(kPrime_vec, kObs) {
     .Call(`_MkPrime_mk_prime_relabel_log_batch`, kPrime_vec, kObs)
 }
 
+extension_info_cpp <- function(ext) {
+    .Call(`_MkPrime_extension_info_cpp`, ext)
+}
+
+extension_log_prior_cpp <- function(ext, params, ints = integer(0)) {
+    .Call(`_MkPrime_extension_log_prior_cpp`, ext, params, ints)
+}
+
+attach_extensions_cpp <- function(dataPtr, extensions) {
+    invisible(.Call(`_MkPrime_attach_extensions_cpp`, dataPtr, extensions))
+}
+
+extension_abi_version <- function() {
+    .Call(`_MkPrime_extension_abi_version`)
+}
+
+toy_extension_cpp <- function() {
+    .Call(`_MkPrime_toy_extension_cpp`)
+}
+
+toy_v1_extension_cpp <- function() {
+    .Call(`_MkPrime_toy_v1_extension_cpp`)
+}
+
+toy_lik_extension_cpp <- function() {
+    .Call(`_MkPrime_toy_lik_extension_cpp`)
+}
+
+toy_claim_extension_cpp <- function() {
+    .Call(`_MkPrime_toy_claim_extension_cpp`)
+}
+
 header_api_version <- function() {
     .Call(`_MkPrime_header_api_version`)
 }
@@ -129,8 +161,8 @@ fitch_score_candidates_r <- function(parent, child, tipStates, nTip, kStates, pr
     .Call(`_MkPrime_fitch_score_candidates_r`, parent, child, tipStates, nTip, kStates, pruneRow, parentRow, sibRow, u, v, sibNode, candidates)
 }
 
-init_mcmc_state <- function(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale = 1.0, kprimeAlpha = 1.0, kprimeBeta = 1.0, classRateLogSd = numeric(0), classW = numeric(0), classRate = numeric(0), nCharPerClass = integer(0), etaNeo = 1.0, useHyperpriorOnSigma = FALSE, hyperTau = 1.0, classZ = numeric(0)) {
-    .Call(`_MkPrime_init_mcmc_state`, parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta, classRateLogSd, classW, classRate, nCharPerClass, etaNeo, useHyperpriorOnSigma, hyperTau, classZ)
+init_mcmc_state <- function(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale = 1.0, kprimeAlpha = 1.0, kprimeBeta = 1.0, classRateLogSd = numeric(0), classW = numeric(0), classRate = numeric(0), nCharPerClass = integer(0), etaNeo = 1.0, useHyperpriorOnSigma = FALSE, hyperTau = 1.0, classZ = numeric(0), extParams = numeric(0), extInts = integer(0)) {
+    .Call(`_MkPrime_init_mcmc_state`, parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta, classRateLogSd, classW, classRate, nCharPerClass, etaNeo, useHyperpriorOnSigma, hyperTau, classZ, extParams, extInts)
 }
 
 joint_asc_at_cpp <- function(dataPtr, statePtr, parent, child, edgeLen) {
@@ -181,6 +213,10 @@ set_class_rate_concentration <- function(dataPtr, concentration) {
     invisible(.Call(`_MkPrime_set_class_rate_concentration`, dataPtr, concentration))
 }
 
+refresh_extension_log_lik_cpp <- function(dataPtr, statePtr) {
+    .Call(`_MkPrime_refresh_extension_log_lik_cpp`, dataPtr, statePtr)
+}
+
 eval_full_loglik_cpp <- function(dataPtr, statePtr) {
     .Call(`_MkPrime_eval_full_loglik_cpp`, dataPtr, statePtr)
 }
@@ -201,6 +237,10 @@ bin_mixture_log_density <- function(weights, f, nBins) {
     .Call(`_MkPrime_bin_mixture_log_density`, weights, f, nBins)
 }
 
+scalar_param_names <- function() {
+    .Call(`_MkPrime_scalar_param_names`)
+}
+
 kprime_sweep_candidates <- function(dataPtr, statePtr, beta = 1.0) {
     .Call(`_MkPrime_kprime_sweep_candidates`, dataPtr, statePtr, beta)
 }
@@ -209,7 +249,7 @@ do_move_cpp <- function(dataPtr, statePtr, moveType, charIdx, scaleTuning, betaS
     .Call(`_MkPrime_do_move_cpp`, dataPtr, statePtr, moveType, charIdx, scaleTuning, betaSimplexTuning, intWalkWindow, beta)
 }
 
-run_mcmc_batch_cpp <- function(dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, sliceParamCodes, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, moveIntParams, sliceWidths, jointRhos, nBatch, startIter, warmup, thin, hasNeo, nEdge, cacheBonus = 1.0, chainBlockKpWins = as.integer( c()), ptCarry = NULL) {
+run_mcmc_batch_cpp <- function(dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, sliceParamCodes, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, moveIntParams, sliceWidths, jointRhos, nBatch, startIter, warmup, thin, hasNeo, nEdge, cacheBonus = 1.0, chainBlockKpWins = integer(0), ptCarry = NULL) {
     .Call(`_MkPrime_run_mcmc_batch_cpp`, dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, sliceParamCodes, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, moveIntParams, sliceWidths, jointRhos, nBatch, startIter, warmup, thin, hasNeo, nEdge, cacheBonus, chainBlockKpWins, ptCarry)
 }
 

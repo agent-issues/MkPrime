@@ -42,6 +42,8 @@
 #' @param kprimeTruncK Integer specifying the cap `K` at which every `k'`
 #'   prior is truncated and renormalised, bounded above by the compile-time
 #'   candidate cap of 256. Must be at least the largest observed state count.
+#' @param extensions List of [MkPrimeExtension()] objects whose parameters,
+#'   and their priors, join the model; `NULL` for none.
 #' @param priorOnClassRateLogSd Prior structure on per-class ACRV
 #'   dispersion `σ_c = class_rate_log_sd[c]` when `unlink = "shape"` is
 #'   active with two or more user classes. One of:
@@ -186,7 +188,8 @@ MkPrimeModel <- function(
     classRateConcentration = 1,
     priorOnClassRateLogSd = c("hyperprior_pooled", "gamma_independent"),
     likelihoodMode = c("sampled_k", "marginal_k"),
-    kprimeTruncK = 200L
+    kprimeTruncK = 200L,
+    extensions = NULL
 ) {
   coding <- match.arg(coding, c("variable", "informative", "none"))
   kPrimePrior <- match.arg(
@@ -282,7 +285,7 @@ MkPrimeModel <- function(
     treeLengthRate <- treeLengthShape / expSteps
   }
 
-  structure(
+  model <- structure(
     list(
       coding = coding,
       nCat = as.integer(nCat),
@@ -314,6 +317,9 @@ MkPrimeModel <- function(
     ),
     class = "MkPrimeModel"
   )
+  if (length(extensions)) model$extensions <- .CheckExtensions(extensions)
+  # Return:
+  model
 }
 
 
@@ -1118,6 +1124,10 @@ LogPrior <- function(state, model, mkd) {
         }
       }
     }
+  }
+
+  if (length(model$extensions)) {
+    lp <- lp + .ExtensionLogPrior(state$ext_params, model, state$ext_ints)
   }
 
   lp

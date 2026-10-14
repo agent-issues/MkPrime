@@ -256,6 +256,7 @@ RunMkPrime <- function(data, tree = NULL,
                          model$priorOnClassRateLogSd,
                        likelihoodMode = model$likelihoodMode %||% "sampled_k",
                        rateNeoLive = .RateNeoLive(mkd))
+  moves <- .WithExtensionMoves(moves, model)
 
   # Fail before any run starts, rather than inside each one.
   initialWeights <- vapply(moves, `[[`, numeric(1), "weight")
@@ -301,6 +302,7 @@ RunMkPrime <- function(data, tree = NULL,
                              qHeterogeneity = qHet,
                              priorOnClassRateLogSd =
                                model$priorOnClassRateLogSd)
+  paramNames <- c(paramNames, .ExtensionColumns(model))
 
   # Plan §7.4: under marginal_k mode kPrime_i is pinned to kObs_i throughout
   # the chain -- emitting those columns bloats the trace and misleads readers.
@@ -932,6 +934,8 @@ RunMkPrime <- function(data, tree = NULL,
       log_prior      = s$log_prior,
       log_post       = s$log_post
     )
+    if (!is.null(s$ext_params)) ch_list$ext_params <- as.numeric(s$ext_params)
+    if (!is.null(s$ext_ints)) ch_list$ext_ints <- as.integer(s$ext_ints)
     # Partition-API extra fields (absent for legacy chains — §7a contract).
     if (usePartitioned) {
       ch_list$class_rate_log_sd <- as.numeric(s$class_rate_log_sd)
@@ -1013,6 +1017,8 @@ RunMkPrime <- function(data, tree = NULL,
     edge           = s$edge,
     beta_scale     = s$betaScale
   )
+  if (length(s$extParams)) ch$ext_params <- as.numeric(s$extParams)
+  if (length(s$extInts)) ch$ext_ints <- as.integer(s$extInts)
   # Partition-API extras, absent for legacy chains (§7a contract).
   if (isTRUE(s$usePartitioned)) {
     ch$class_rate_log_sd <- as.numeric(s$classRateLogSd)
@@ -1049,7 +1055,9 @@ RunMkPrime <- function(data, tree = NULL,
     etaNeo         = ch_r$eta_neo %||% 1.0,
     useHyperpriorOnSigma = isTRUE(ch_r$use_hyperprior_on_sigma),
     hyperTau       = ch_r$hyper_tau %||% 1.0,
-    classZ         = as.numeric(ch_r$class_rate_log_sd_z %||% numeric(0))
+    classZ         = as.numeric(ch_r$class_rate_log_sd_z %||% numeric(0)),
+    extParams      = as.numeric(ch_r$ext_params %||% numeric(0)),
+    extInts        = as.integer(ch_r$ext_ints %||% integer(0))
   )
 }
 
@@ -4422,6 +4430,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                 likelihoodMode = model$likelihoodMode %||% "sampled_k",
                 rateNeoLive = .RateNeoLive(mkd))
   }
+  moves <- .WithExtensionMoves(moves, model)
   mcmc$fixedCols <- .FixedCols(paramNames, moves)
   .WarnUnreachableCriteria(mcmc)
 
@@ -4816,6 +4825,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
           if (!is.null(mv$type) &&
               mv$type == "scale_class_rate_log_sd") {
             tun$scale_class_rate_log_sd %||% 0.5
+          } else if (identical(mv$type, "scale_param")) {
+            tun[[mv$name]] %||% 0.5
           } else {
             0.5
           }
@@ -4976,6 +4987,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   # M-052: beta_scale for Q-matrix heterogeneity
   if (isTRUE(model$qHeterogeneity)) {
     state$beta_scale <- 1.0
+  }
+
+  if (length(model$extensions)) {
+    state$ext_params <- .ExtensionInit(model)
+    state$ext_ints <- .ExtensionInitInts(model)
   }
 
   # Tree is already preorder (reordered at init); use internal fast-path
@@ -5294,23 +5310,23 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   if (hasNeo) {
     moves <- c(moves, list(
       list(name = "slice_rate_loss", type = "slice", target = "rate_loss",
-           weight = 1.5, dim = 1L, sliceParamIdx = 1L)
+           weight = 1.5, dim = 1L, sliceParamIdx = .ScalarParamIndex("rate_loss"))
     ))
   }
   if (rateNeoLive) {
     moves <- c(moves, list(
       list(name = "slice_rate_neo", type = "slice", target = "rate_neo",
-           weight = 1, dim = 1L, sliceParamIdx = 3L)
+           weight = 1, dim = 1L, sliceParamIdx = .ScalarParamIndex("rate_neo"))
     ))
   }
   moves <- c(moves, list(
     list(name = "slice_rate_log_sd", type = "slice", target = "rate_log_sd",
-         weight = 1.5, dim = 1L, sliceParamIdx = 2L)
+         weight = 1.5, dim = 1L, sliceParamIdx = .ScalarParamIndex("rate_log_sd"))
   ))
   if (isTRUE(qHeterogeneity)) {
     moves <- c(moves, list(
       list(name = "slice_beta_scale", type = "slice", target = "beta_scale",
-           weight = 1, dim = 1L, sliceParamIdx = 4L)
+           weight = 1, dim = 1L, sliceParamIdx = .ScalarParamIndex("beta_scale"))
     ))
   }
 
@@ -5390,6 +5406,31 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #    half-normal hyperprior σ_c = τ · z_c)
 # 35=gibbs_p_marginal (data-augmentation Metropolis-within-Gibbs p-update for
 #    the marginal_k geometric arm; dev/red-team/proofs/marginal-k-gibbs-p.md)
+# Scalars that moves address by index: the slice sampler and the generic
+# Bactrian scale move (code 40). Mirrors `kScalarParams` in src/mcmc.cpp,
+# whose order is the index; append, never reorder.
+.kScalarParams <- c("tree_length", "rate_loss", "rate_log_sd", "rate_neo",
+                    "beta_scale")
+
+# 0-based registry index of scalar `name`, as the C++ engine expects.
+.ScalarParamIndex <- function(name) {
+  idx <- match(name, .kScalarParams)
+  if (is.na(idx)) {
+    cli::cli_abort("{.val {name}} is not a registered scalar parameter.")
+  }
+  # Return:
+  idx - 1L
+}
+
+# A Bactrian scale move on any registered scalar, dispatched by code 40 rather
+# than a dedicated move type.
+.ScaleParamMove <- function(param, weight = 1,
+                            index = .ScalarParamIndex(param)) {
+  list(name = paste0("scale_param_", param), type = "scale_param",
+       target = param, weight = weight, dim = 1L, code = 40L,
+       sliceParamIdx = as.integer(index))
+}
+
 .kMoveTypes <- c(
   tree_length = 0L, rate_loss = 1L, rate_log_sd = 2L,
   rate_neo = 3L, branch_lengths = 4L,
@@ -5426,6 +5467,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 # For per-class moves (e.g. scale_class_rate_log_sd_1) the unique name is not
 # in .kMoveTypes; fall back to the move's type, which is registered.
 .MoveTypeCode <- function(move) {
+  if (!is.null(move$code)) return(as.integer(move$code))
   key <- if (move$name %in% names(.kMoveTypes)) move$name else
     move$type %||% move$name
   .kMoveTypes[[key]]
@@ -5511,6 +5553,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   }
   set_kprime_trunc_k(dp, K)
   set_class_rate_concentration(dp, model$classRateConcentration %||% 1)
+  if (length(model$extensions)) attach_extensions_cpp(dp, .ExtensionPointers(model))
   dp
 }
 
@@ -5526,7 +5569,9 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     state$log_lik, state$log_prior,
     state$beta_scale %||% 1.0,
     state$kprime_alpha %||% 1.0,
-    state$kprime_beta %||% 1.0
+    state$kprime_beta %||% 1.0,
+    extParams = as.numeric(state$ext_params %||% numeric(0)),
+    extInts = as.integer(state$ext_ints %||% integer(0))
   )
 }
 
@@ -6494,6 +6539,16 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
         tuning[[tk]] <- max(0.01, min(tuning[[tk]] * adj, 10))
       }
     }
+  }
+  # Scale moves on registered scalars (extension parameters): one step size
+  # per move, kept under the move's own name.
+  for (m in moves) {
+    if (!identical(m$type, "scale_param")) next
+    proposed <- proposeCount[m$name]
+    if (is.na(proposed) || proposed < 10) next
+    rate <- acceptCount[m$name] / proposed
+    step <- tuning[[m$name]] %||% 0.5
+    tuning[[m$name]] <- max(0.01, min(step * exp(0.5 * (rate - 0.35)), 10))
   }
 
   tuning
