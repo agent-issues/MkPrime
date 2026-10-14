@@ -14,7 +14,8 @@ ClaimFixture <- function(seed = 4422L) {
                 nrow = ntax, ncol = 14,
                 dimnames = list(paste0("t", seq_len(ntax)), NULL))
   mat[, 1:6] <- pmin(mat[, 1:6], 1L)
-  mat[2, 3] <- NA
+  mat <- matrix(as.character(mat), nrow(mat), dimnames = dimnames(mat))
+  mat[2, 3] <- "?"
   pd <- TreeTools::MatrixToPhyDat(mat)
   tree <- TreeTools::Preorder(
     ape::rtree(ntax, tip.label = rownames(mat),
