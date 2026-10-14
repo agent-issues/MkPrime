@@ -34,13 +34,75 @@
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace MkPrime {
 
+namespace detail {
+
+// Header API v2: a model may define transition_edge(edge, src, dst, nChar, t)
+// (and transition_transpose_edge) to receive the index of the edge, as given
+// to set_tree(); Pruner then calls it in place of transition().
+template <class M>
+class has_transition_edge {
+  template <class T>
+  static auto test(int) -> decltype(std::declval<const T&>().transition_edge(
+    0, static_cast<const double*>(nullptr), static_cast<double*>(nullptr), 0,
+    0.0), std::true_type());
+  template <class>
+  static std::false_type test(...);
+
+ public:
+  static const bool value = decltype(test<M>(0))::value;
+};
+
+template <class M>
+class has_transition_transpose_edge {
+  template <class T>
+  static auto test(int) -> decltype(
+    std::declval<const T&>().transition_transpose_edge(
+      0, static_cast<const double*>(nullptr), static_cast<double*>(nullptr), 0,
+      0.0), std::true_type());
+  template <class>
+  static std::false_type test(...);
+
+ public:
+  static const bool value = decltype(test<M>(0))::value;
+};
+
+template <class M>
+inline void transition(const M& m, int edge, const double* src, double* dst,
+                       int nChar, double t, std::true_type) {
+  m.transition_edge(edge, src, dst, nChar, t);
+}
+template <class M>
+inline void transition(const M& m, int, const double* src, double* dst,
+                       int nChar, double t, std::false_type) {
+  m.transition(src, dst, nChar, t);
+}
+template <class M>
+inline void transition_transpose(const M& m, int edge, const double* src,
+                                 double* dst, int nChar, double t,
+                                 std::true_type) {
+  m.transition_transpose_edge(edge, src, dst, nChar, t);
+}
+template <class M>
+inline void transition_transpose(const M& m, int, const double* src,
+                                 double* dst, int nChar, double t,
+                                 std::false_type) {
+  m.transition_transpose(src, dst, nChar, t);
+}
+
+}  // namespace detail
+
 template <class Model>
 class Pruner {
  public:
+  // True when Model defines transition_edge() (header API v2).
+  static const bool kEdgeAware = detail::has_transition_edge<Model>::value;
+
   // tipStates: nTip x nChar, column-major (an R integer matrix); entries
   // 0..n_states()-1 or negative for missing (all states equally possible).
   // rates: one multiplier per ACRV category; {1.0} for none.
@@ -112,7 +174,8 @@ class Pruner {
     for (int n = nTip_ + 1; n <= nNode; ++n) {
       bool changed = fresh || kids[n] != kids_[n];
       for (std::size_t i = 0; !changed && i < kids[n].size(); ++i) {
-        changed = len[kids[n][i]] != len_[kids[n][i]];
+        changed = len[kids[n][i]] != len_[kids[n][i]] ||
+          (kEdgeAware && edgeOf[kids[n][i]] != edgeOf_[kids[n][i]]);
       }
       if (changed) dirty_[n] = 1;
     }
@@ -145,6 +208,16 @@ class Pruner {
   }
 
   double edge_length(int edge) const { return len_[edgeChild_.at(edge)]; }
+
+  // Mark the CLs that depend on one edge's transition kernel stale, e.g.
+  // after an edge-aware model's weights for that edge change.
+  void invalidate_edge(int edge) {
+    require_tree();
+    if (edge < 0 || edge >= static_cast<int>(edgeChild_.size())) {
+      throw std::out_of_range("Pruner: edge index out of range");
+    }
+    mark_dirty(parentOf_[edgeChild_[edge]]);
+  }
 
   void set_model(const Model& model) {
     if (model.n_states() != k_) {
@@ -244,6 +317,88 @@ class Pruner {
     double total = 0.0;
     for (int c = 0; c < nChar_; ++c) total += siteLik_[c];
     return total;
+  }
+
+  // Upward (pre-order) pass, header API v2. For every node v, rate category
+  // and character, up(v)[s] is the likelihood of the data outside the clade
+  // below v, jointly with state s at v; at the root it holds the root
+  // frequencies, read from root_site_lik(). Then down(v) . up(v) is the
+  // site likelihood for every v, and node_marginals() normalises the
+  // products. Needs Model::transition_transpose(src, dst, nChar, t), dst =
+  // P(t)' src (or transition_transpose_edge() for edge-aware models).
+  // Reflects the tree, model and rates at the time of the call; call again
+  // after any change, including reject().
+  void update_marginals() {
+    update();
+    up_.assign(cl_.size(), 0.0);
+    std::vector<double> rootFreq(k_), unit(k_, 0.0);
+    for (int s = 0; s < k_; ++s) {
+      unit[s] = 1.0;
+      rootFreq[s] = model_.root_site_lik(unit.data());
+      unit[s] = 0.0;
+    }
+    std::vector<double> below, outside(stride_);
+    for (int cat = 0; cat < n_cat(); ++cat) {
+      const double rate = rates_[cat];
+      double* upRoot = node_up_mut(cat, root_);
+      for (int c = 0; c < nChar_; ++c) {
+        for (int s = 0; s < k_; ++s) {
+          upRoot[static_cast<std::size_t>(c) * k_ + s] = rootFreq[s];
+        }
+      }
+      // post_ holds internal nodes, children first: walk it backwards.
+      for (std::size_t i = post_.size(); i-- > 0;) {
+        const int n = post_[i];
+        const std::vector<int>& nk = kids_[n];
+        below.resize(nk.size() * stride_);
+        for (std::size_t j = 0; j < nk.size(); ++j) {
+          apply_transition(nk[j], node_cl(cat, nk[j]), below.data() + j * stride_,
+                           len_[nk[j]] * rate);
+        }
+        const double* upN = up_.data() +
+          (static_cast<std::size_t>(cat) * (nNode_ + 1) + n) * stride_;
+        for (std::size_t j = 0; j < nk.size(); ++j) {
+          for (std::size_t x = 0; x < stride_; ++x) outside[x] = upN[x];
+          for (std::size_t o = 0; o < nk.size(); ++o) {
+            if (o == j) continue;
+            const double* b = below.data() + o * stride_;
+            for (std::size_t x = 0; x < stride_; ++x) outside[x] *= b[x];
+          }
+          apply_transpose(nk[j], outside.data(), node_up_mut(cat, nk[j]),
+                          len_[nk[j]] * rate);
+        }
+      }
+    }
+  }
+
+  // Upward-pass vectors of `node` in category `cat`, laid out as node_cl().
+  const double* node_up(int cat, int node) const {
+    if (up_.size() != cl_.size()) {
+      throw std::logic_error("Pruner: call update_marginals() first");
+    }
+    return up_.data() + (static_cast<std::size_t>(cat) * (nNode_ + 1) + node) * stride_;
+  }
+
+  // Posterior probability of each state at `node` (1-based, tips included),
+  // given all the data: out[c * n_states() + s], averaged over rate
+  // categories with weights proportional to their site likelihoods.
+  void node_marginals(int node, double* out) const {
+    if (node < 1 || node > nNode_) throw std::out_of_range("Pruner: bad node");
+    for (std::size_t x = 0; x < stride_; ++x) out[x] = 0.0;
+    for (int cat = 0; cat < n_cat(); ++cat) {
+      const double* down = node_cl(cat, node);
+      const double* up = node_up(cat, node);
+      for (std::size_t x = 0; x < stride_; ++x) out[x] += down[x] * up[x];
+    }
+    for (int c = 0; c < nChar_; ++c) {
+      double* o = out + static_cast<std::size_t>(c) * k_;
+      double total = 0.0;
+      for (int s = 0; s < k_; ++s) total += o[s];
+      for (int s = 0; s < k_; ++s) {
+        o[s] = total > 0.0 ? o[s] / total
+                           : std::numeric_limits<double>::quiet_NaN();
+      }
+    }
   }
 
   // Start a proposal. Until accept() or reject(), every CL that is
@@ -424,13 +579,32 @@ class Pruner {
     for (int cat = 0; cat < n_cat(); ++cat) {
       const double rate = rates_[cat];
       double* dst = node_cl_mut(cat, n);
-      model_.transition(node_cl(cat, nk[0]), dst, nChar_, len_[nk[0]] * rate);
+      apply_transition(nk[0], node_cl(cat, nk[0]), dst, len_[nk[0]] * rate);
       for (std::size_t i = 1; i < nk.size(); ++i) {
-        model_.transition(node_cl(cat, nk[i]), scratch_.data(), nChar_,
-                          len_[nk[i]] * rate);
+        apply_transition(nk[i], node_cl(cat, nk[i]), scratch_.data(),
+                         len_[nk[i]] * rate);
         for (std::size_t j = 0; j < stride_; ++j) dst[j] *= scratch_[j];
       }
     }
+  }
+
+  // P(t) src for the edge above `childNode`.
+  void apply_transition(int childNode, const double* src, double* dst,
+                        double t) const {
+    detail::transition(model_, edgeOf_[childNode], src, dst, nChar_, t,
+                       std::integral_constant<bool, kEdgeAware>());
+  }
+
+  void apply_transpose(int childNode, const double* src, double* dst,
+                       double t) const {
+    detail::transition_transpose(
+      model_, edgeOf_[childNode], src, dst, nChar_, t,
+      std::integral_constant<bool,
+        detail::has_transition_transpose_edge<Model>::value>());
+  }
+
+  double* node_up_mut(int cat, int node) {
+    return up_.data() + (static_cast<std::size_t>(cat) * (nNode_ + 1) + node) * stride_;
   }
 
   Model model_;
@@ -453,6 +627,7 @@ class Pruner {
   std::vector<double> cl_;
   std::vector<double> scratch_;
   std::vector<double> siteLik_;
+  std::vector<double> up_;  // upward-pass vectors (update_marginals())
   int nRecomputed_ = 0;
 
   bool inProposal_ = false;

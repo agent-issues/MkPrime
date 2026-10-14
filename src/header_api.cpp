@@ -217,3 +217,173 @@ Rcpp::NumericVector header_site_likelihoods(std::string model,
   }
   return out;
 }
+
+namespace {
+
+// Test-only edge-aware model (header API v2): `Base` with each edge's length
+// multiplied by its own factor.
+template <class Base>
+class EdgeScaled {
+ public:
+  EdgeScaled(const Base& base, const std::vector<double>& scale)
+    : base_(base), scale_(scale) {}
+  int n_states() const { return base_.n_states(); }
+  void transition(const double* src, double* dst, int nChar, double t) const {
+    base_.transition(src, dst, nChar, t);
+  }
+  void transition_edge(int edge, const double* src, double* dst, int nChar,
+                       double t) const {
+    base_.transition(src, dst, nChar, t * scale_.at(edge));
+  }
+  void transition_transpose_edge(int edge, const double* src, double* dst,
+                                 int nChar, double t) const {
+    base_.transition_transpose(src, dst, nChar, t * scale_.at(edge));
+  }
+  double root_site_lik(const double* cl) const {
+    return base_.root_site_lik(cl);
+  }
+
+ private:
+  Base base_;
+  std::vector<double> scale_;
+};
+
+template <class Model>
+Rcpp::List marginals_of(const Model& model, const Rcpp::IntegerVector& parent,
+                        const Rcpp::IntegerVector& child,
+                        const Rcpp::NumericVector& edgeLength,
+                        const Rcpp::IntegerMatrix& tipStates,
+                        const std::vector<double>& rates) {
+  const int nTip = tipStates.nrow(), nChar = tipStates.ncol();
+  MkPrime::Pruner<Model> pr(model, nTip, nChar, tipStates.begin(), rates);
+  pr.set_tree(parent.begin(), child.begin(), edgeLength.begin(), parent.size());
+  Rcpp::NumericVector site(nChar);
+  pr.site_likelihoods(site.begin());
+  pr.update_marginals();
+  const int nNode = pr.n_node(), k = pr.n_states(), nCat = pr.n_cat();
+  Rcpp::NumericVector marg(static_cast<R_xlen_t>(k) * nChar * nNode);
+  Rcpp::NumericMatrix nodeLik(nChar, nNode);
+  for (int node = 1; node <= nNode; ++node) {
+    pr.node_marginals(node, marg.begin() +
+                      static_cast<R_xlen_t>(node - 1) * k * nChar);
+    for (int cat = 0; cat < nCat; ++cat) {
+      const double* down = pr.node_cl(cat, node);
+      const double* up = pr.node_up(cat, node);
+      for (int c = 0; c < nChar; ++c) {
+        double s = 0.0;
+        for (int x = 0; x < k; ++x) s += down[c * k + x] * up[c * k + x];
+        nodeLik(c, node - 1) += s / nCat;
+      }
+    }
+  }
+  marg.attr("dim") = Rcpp::IntegerVector::create(k, nChar, nNode);
+  return Rcpp::List::create(Rcpp::Named("marginals") = marg,
+                            Rcpp::Named("node_lik") = nodeLik,
+                            Rcpp::Named("site_lik") = site);
+}
+
+}  // namespace
+
+// P(t) and the kernel applied by transition_transpose(), as k x k matrices
+// built column by column from unit vectors; `model` as for
+// header_site_likelihoods().
+// [[Rcpp::export]]
+Rcpp::List header_transition_matrices(std::string model, int kStates,
+                                      double param, Rcpp::NumericVector pi,
+                                      double t) {
+  Rcpp::NumericMatrix P(kStates, kStates), Pt(kStates, kStates);
+  std::vector<double> unit(kStates), out(kStates);
+  for (int j = 0; j < kStates; ++j) {
+    std::fill(unit.begin(), unit.end(), 0.0);
+    unit[j] = 1.0;
+    for (int pass = 0; pass < 2; ++pass) {
+      if (model == "jc") {
+        const MkPrime::JCModel m(kStates);
+        if (pass) m.transition_transpose(unit.data(), out.data(), 1, t);
+        else m.transition(unit.data(), out.data(), 1, t);
+      } else if (model == "mkn") {
+        const MkPrime::MkNModel m(param);
+        if (pass) m.transition_transpose(unit.data(), out.data(), 1, t);
+        else m.transition(unit.data(), out.data(), 1, t);
+      } else if (model == "f81") {
+        const MkPrime::F81Model m(pi.begin(), pi.size(), param);
+        if (pass) m.transition_transpose(unit.data(), out.data(), 1, t);
+        else m.transition(unit.data(), out.data(), 1, t);
+      } else {
+        Rcpp::stop("Unknown model `%s`.", model);
+      }
+      for (int i = 0; i < kStates; ++i) (pass ? Pt : P)(i, j) = out[i];
+    }
+  }
+  return Rcpp::List::create(Rcpp::Named("P") = P, Rcpp::Named("Pt") = Pt);
+}
+
+// Node marginals from Pruner::update_marginals(): `marginals` is a
+// k x nChar x nNode array, `node_lik` the nChar x nNode products
+// down(v) . up(v), averaged over categories, `site_lik` the site likelihoods.
+// A non-empty `edge_scale` wraps the model in an edge-aware kernel that
+// multiplies edge e's length by edge_scale[e].
+// [[Rcpp::export]]
+Rcpp::List header_marginals(std::string model, Rcpp::IntegerVector parent,
+                            Rcpp::IntegerVector child,
+                            Rcpp::NumericVector edge_length,
+                            Rcpp::IntegerMatrix tip_states, int kStates,
+                            double param, Rcpp::NumericVector pi,
+                            Rcpp::NumericVector rates,
+                            Rcpp::NumericVector edge_scale) {
+  const std::vector<double> r(rates.begin(), rates.end());
+  const std::vector<double> sc(edge_scale.begin(), edge_scale.end());
+  const bool edge = !sc.empty();
+  if (model == "jc") {
+    const MkPrime::JCModel m(kStates);
+    return edge ? marginals_of(EdgeScaled<MkPrime::JCModel>(m, sc), parent,
+                               child, edge_length, tip_states, r)
+                : marginals_of(m, parent, child, edge_length, tip_states, r);
+  }
+  if (model == "mkn") {
+    const MkPrime::MkNModel m(param);
+    return edge ? marginals_of(EdgeScaled<MkPrime::MkNModel>(m, sc), parent,
+                               child, edge_length, tip_states, r)
+                : marginals_of(m, parent, child, edge_length, tip_states, r);
+  }
+  if (model == "f81") {
+    const MkPrime::F81Model m(pi.begin(), pi.size(), param);
+    return edge ? marginals_of(EdgeScaled<MkPrime::F81Model>(m, sc), parent,
+                               child, edge_length, tip_states, r)
+                : marginals_of(m, parent, child, edge_length, tip_states, r);
+  }
+  Rcpp::stop("Unknown model `%s`.", model);
+}
+
+// An edge-aware Pruner given the same tree with its edges renumbered by
+// `perm` (1-based): its cached likelihood against a fresh evaluation.
+// [[Rcpp::export]]
+Rcpp::NumericVector header_edge_renumber(Rcpp::IntegerVector parent,
+                                         Rcpp::IntegerVector child,
+                                         Rcpp::NumericVector edge_length,
+                                         Rcpp::IntegerMatrix tip_states,
+                                         int kStates,
+                                         Rcpp::NumericVector edge_scale,
+                                         Rcpp::IntegerVector perm) {
+  typedef EdgeScaled<MkPrime::JCModel> Model;
+  const Model m(MkPrime::JCModel(kStates),
+                std::vector<double>(edge_scale.begin(), edge_scale.end()));
+  const int nTip = tip_states.nrow(), nChar = tip_states.ncol();
+  const int nEdge = parent.size();
+  MkPrime::Pruner<Model> pr(m, nTip, nChar, tip_states.begin());
+  pr.set_tree(parent.begin(), child.begin(), edge_length.begin(), nEdge);
+  const double before = pr.log_likelihood();
+  Rcpp::IntegerVector p2(nEdge), c2(nEdge);
+  Rcpp::NumericVector l2(nEdge);
+  for (int e = 0; e < nEdge; ++e) {
+    p2[e] = parent[perm[e] - 1];
+    c2[e] = child[perm[e] - 1];
+    l2[e] = edge_length[perm[e] - 1];
+  }
+  pr.set_tree(p2.begin(), c2.begin(), l2.begin(), nEdge);
+  const double cached = pr.log_likelihood();
+  const double fresh = MkPrime::log_likelihood(m, p2.begin(), c2.begin(),
+                                               l2.begin(), nEdge, nTip, nChar,
+                                               tip_states.begin());
+  return Rcpp::NumericVector::create(before, cached, fresh);
+}

@@ -12,10 +12,26 @@
 //   double root_site_lik(const double* cl) const;
 //     Likelihood of one character given its CL at the root.
 //
+//
+// Optional (header API v2):
+//
+//   void transition_transpose(const double* src, double* dst, int nChar,
+//                             double t) const;
+//     dst = P(t)' src; needed by Pruner::update_marginals(). JCModel,
+//     MkNModel and F81Model provide it; JCLumpedModel does not.
+//   void transition_edge(int edge, const double* src, double* dst,
+//                        int nChar, double t) const;
+//   void transition_transpose_edge(int edge, ...) const;
+//     Edge-aware kernels: when defined, Pruner calls these with the edge
+//     index given to set_tree() instead of transition() (and
+//     transition_transpose()), so each edge may have its own kernel.
+//     Call Pruner::invalidate_edge() when an edge's kernel changes.
+//
 // All four models here are time-reversible, so a rooted tree gives the same
 // likelihood as the unrooted tree obtained by merging the root's two edges.
 
 #include "transition.h"
+#include <cmath>
 #include <stdexcept>
 #include <vector>
 
@@ -33,6 +49,12 @@ class JCModel {
   void transition(const double* src, double* dst, int nChar, double t) const {
     const JCProbs p = rates_.probs(t);
     jc_transition(src, dst, nChar, rates_.k(), p.pDiff, p.diffCoeff);
+  }
+
+  // P(t) is symmetric.
+  void transition_transpose(const double* src, double* dst, int nChar,
+                            double t) const {
+    transition(src, dst, nChar, t);
   }
 
   double root_site_lik(const double* cl) const {
@@ -109,6 +131,12 @@ class MkNModel {
     mkn_transition(src, dst, nChar, p.p00, p.p01, p.p10, p.p11);
   }
 
+  void transition_transpose(const double* src, double* dst, int nChar,
+                            double t) const {
+    const MkNProbs p = rates_.probs(t);
+    mkn_transition(src, dst, nChar, p.p00, p.p10, p.p01, p.p11);
+  }
+
   double root_site_lik(const double* cl) const {
     return rf0_ * cl[0] + rf1_ * cl[1];
   }
@@ -135,6 +163,22 @@ class F81Model {
 
   void transition(const double* src, double* dst, int nChar, double t) const {
     f81_transition(src, dst, nChar, n_states(), pi_.data(), mu_, t);
+  }
+
+  // (P(t)' v)_j = (1 - e^{-mu t}) pi_j sum(v) + e^{-mu t} v_j.
+  void transition_transpose(const double* src, double* dst, int nChar,
+                            double t) const {
+    const int k = n_states();
+    const double oneMinusExp = -std::expm1(-mu_ * t);
+    const double expT = 1.0 - oneMinusExp;
+    for (int c = 0; c < nChar; ++c) {
+      const int off = c * k;
+      double sum = 0.0;
+      for (int s = 0; s < k; ++s) sum += src[off + s];
+      for (int s = 0; s < k; ++s) {
+        dst[off + s] = oneMinusExp * pi_[s] * sum + expT * src[off + s];
+      }
+    }
   }
 
   double root_site_lik(const double* cl) const {

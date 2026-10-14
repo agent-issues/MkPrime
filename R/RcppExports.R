@@ -101,6 +101,18 @@ header_site_likelihoods <- function(model, parent, child, edge_length, tip_state
     .Call(`_MkPrime_header_site_likelihoods`, model, parent, child, edge_length, tip_states, kStates, param, pi, rates)
 }
 
+header_transition_matrices <- function(model, kStates, param, pi, t) {
+    .Call(`_MkPrime_header_transition_matrices`, model, kStates, param, pi, t)
+}
+
+header_marginals <- function(model, parent, child, edge_length, tip_states, kStates, param, pi, rates, edge_scale) {
+    .Call(`_MkPrime_header_marginals`, model, parent, child, edge_length, tip_states, kStates, param, pi, rates, edge_scale)
+}
+
+header_edge_renumber <- function(parent, child, edge_length, tip_states, kStates, edge_scale, perm) {
+    .Call(`_MkPrime_header_edge_renumber`, parent, child, edge_length, tip_states, kStates, edge_scale, perm)
+}
+
 mkp_hello <- function() {
     .Call(`_MkPrime_mkp_hello`)
 }
