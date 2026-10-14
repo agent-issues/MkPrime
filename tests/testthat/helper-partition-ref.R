@@ -131,7 +131,9 @@
     likelihoodMode         = "sampled_k",
     # Resolved, not left to MkPrimeModel() to derive from kPrimePrior.
     priorVariant           = "unconditional",
-    kprimeTruncK           = 200L
+    kprimeTruncK           = 200L,
+    # No extensions (#441): MkPrimeModel() is then identical to before.
+    extensions             = NULL
   )
 }
 
