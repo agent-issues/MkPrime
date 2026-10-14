@@ -1,4 +1,4 @@
-# Open an issue or PR, or comment on one, as ms609-agent.
+# Open an issue or PR, or comment on one, as ms609-agent; or delete a branch.
 #
 # Exists because cloud Claude Code sessions reach GitHub only through a
 # proxy whose credential they cannot choose: items they create land under
@@ -9,6 +9,11 @@
 # Fails rather than falling back to github.token: an item posted under the
 # wrong account cannot be re-attributed.
 #
+# delete-branch exists because the proxy refuses branch deletes. It runs
+# in its own job with github.token (a deletion has no author to attribute),
+# and refuses the default branch, protected branches, and the head of any
+# open PR.
+#
 # Must be on `main`: workflow_dispatch runs only workflows on the default
 # branch (or the ref it is dispatched against).
 name: Post as agent
@@ -17,13 +22,14 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "issue (open an issue), comment (on an issue or PR), or pr (open a PR from a pushed branch)"
+        description: "issue (open an issue), comment (on an issue or PR), pr (open a PR from a pushed branch), or delete-branch"
         required: true
         type: choice
-        options: [issue, comment, pr]
+        options: [issue, comment, pr, delete-branch]
       body:
-        description: "Markdown body"
-        required: true
+        description: "Markdown body (issue, comment, pr)"
+        required: false
+        default: ""
       title:
         description: "Title (issue, pr)"
         required: false
@@ -49,12 +55,17 @@ on:
         required: false
         type: boolean
         default: false
+      branch:
+        description: "Branch to delete (delete-branch)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
 jobs:
   post:
+    if: inputs.action != 'delete-branch'
     runs-on: ubuntu-latest
     steps:
       - name: Post
@@ -92,14 +103,17 @@ jobs:
 
           case "$ACTION" in
             issue)
+              need BODY
               need TITLE
               url=$(gh issue create --repo "$REPO" --title "$TITLE" --body "$BODY" "${labelArgs[@]}")
               ;;
             comment)
+              need BODY
               need NUMBER
               url=$(gh issue comment "$NUMBER" --repo "$REPO" --body "$BODY")
               ;;
             pr)
+              need BODY
               need TITLE
               need HEAD
               draftArgs=()
@@ -114,3 +128,43 @@ jobs:
 
           echo "Posted: $url"
           echo "Posted: $url" >> "$GITHUB_STEP_SUMMARY"
+
+  delete-branch:
+    if: inputs.action == 'delete-branch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Delete branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$BRANCH" ]; then
+            echo "::error::'branch' is required for action 'delete-branch'"
+            exit 1
+          fi
+          ref=$(jq -rn --arg b "$BRANCH" '$b|@uri|gsub("%2F"; "/")')
+
+          default=$(gh api "repos/$REPO" --jq .default_branch)
+          if [ "$BRANCH" = "$default" ]; then
+            echo "::error::refusing to delete the default branch '$default'"
+            exit 1
+          fi
+          if [ "$(gh api "repos/$REPO/branches/$ref" --jq .protected)" = "true" ]; then
+            echo "::error::refusing to delete protected branch '$BRANCH'"
+            exit 1
+          fi
+          openPrs=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json url --jq '.[].url')
+          if [ -n "$openPrs" ]; then
+            echo "::error::refusing to delete '$BRANCH', head of open PR(s): $openPrs"
+            exit 1
+          fi
+
+          gh api -X DELETE "repos/$REPO/git/refs/heads/$ref"
+          echo "Deleted branch: $BRANCH"
+          echo "Deleted branch: $BRANCH" >> "$GITHUB_STEP_SUMMARY"

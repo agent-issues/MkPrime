@@ -8,8 +8,7 @@
 
 # Build a marginal-k state at a given p and truncation cap K, return its
 # full marginal log-likelihood. K is injected via the model's kprimeTruncK.
-.trunc_eval <- function(p, K, seed = 11L, nTip = 10L, nChar = 40L, simP = p,
-                        priorVariant = "unconditional") {
+.TruncEval <- function(p, K, seed = 11L, nTip = 10L, nChar = 40L, simP = p) {
   set.seed(seed)
   tr <- rtree(nTip, tip.label = paste0("t", seq_len(nTip)))
   tr$edge.length <- rep_len(0.3, nrow(tr$edge))
@@ -35,7 +34,7 @@
   trp <- Preorder(tr)
   mod <- suppressMessages(MkPrimeModel(
     coding = "variable", nCat = 1L, kPrimePrior = "geometric",
-    likelihoodMode = "marginal_k", priorVariant = priorVariant,
+    likelihoodMode = "marginal_k",
     kprimeTruncK = 30L,   # Stage 1b: model default is now 200; pin to the
                           # forward K_MAX_PRIOR (30) these references assume.
     kprimeHyperA = 1, kprimeHyperB = 1, expSteps = 1.4))
@@ -56,7 +55,7 @@
 
 test_that("marginal-k truncation: per-char -log Z is folded in at low p (K=30 default)", {
   p <- 0.05
-  r <- .trunc_eval(p, K = 30L)
+  r <- .TruncEval(p, K = 30L)
   expect_true(is.finite(r$LL))
   # The fix folds -nTrans * log(Z(p)) into the total, Z(p)=1-(1-p)^(K-1).
   # At p=0.05, K=30: -log Z = -log(1-0.95^29) = +0.2561 nats PER character.
@@ -83,7 +82,7 @@ test_that("marginal-k LL responds to the truncation cap K (live-binary guard)", 
   expect_gt(abs(logZ_K30 - logZ_Kinf), 0.2,
             label = "K=30 vs K=inf per-char normaliser gap at p=0.05")
   # And the live LL is finite and the fixture exercises low p.
-  r <- .trunc_eval(p, K = 30L)
+  r <- .TruncEval(p, K = 30L)
   expect_true(is.finite(r$LL))
 })
 
@@ -116,7 +115,7 @@ test_that("marginal-k LL == full uncapped/uncutoff reference at low p (C-i guard
 
   mk <- function(mode) suppressMessages(MkPrimeModel(
     coding = "variable", nCat = 1L, kPrimePrior = "geometric", likelihoodMode = mode,
-    priorVariant = "unconditional", kprimeTruncK = 30L,   # pin to this test's K
+    kprimeTruncK = 30L,   # pin to this test's K
     kprimeHyperA = 1, kprimeHyperB = 1, expSteps = 1.4))
   modM <- mk("marginal_k"); modS <- mk("sampled_k")
 
@@ -127,7 +126,9 @@ test_that("marginal-k LL == full uncapped/uncutoff reference at low p (C-i guard
     fill_partition_cache(dp, sp); eval_full_loglik_cpp(dp, sp)
   }
   evalMarg <- function(mkd, p)   evalLL(modM, mkd, function(s) { s$p <- p; s })
-  LLfixed  <- function(mkd, kp)  evalLL(modS, mkd, function(s) { s$p <- 0.1
+  # The joint ascertainment term depends on p, so the fixed-k' reference is
+  # scored at the p it is compared at.
+  LLfixed  <- function(mkd, kp, p = 0.1) evalLL(modS, mkd, function(s) { s$p <- p
                                     s$kPrime <- rep_len(as.integer(kp), length(s$kPrime)); s })
   defaultLL <- function(mkd)     evalLL(modS, mkd, function(s) { s$p <- 0.1; s })   # default init kPrime == kObs
 
@@ -141,7 +142,8 @@ test_that("marginal-k LL == full uncapped/uncutoff reference at low p (C-i guard
                  label = sprintf("[%s] G2 LLfixed(kObs) == package default-init LL", nm))
     # MAIN: package marginal == full uncapped/uncutoff reference, at low p (heavy tail)
     for (p in c(0.01, 0.05)) {
-      ref <- lse((ks - 2) * log1p(-p) + log(p) + FX) - logZA(p)
+      FXp <- vapply(ks, function(kp) LLfixed(mkd, kp, p), numeric(1))
+      ref <- lse((ks - 2) * log1p(-p) + log(p) + FXp) - logZA(p)
       expect_equal(evalMarg(mkd, p), ref, tolerance = 1e-7,
                    label = sprintf("[%s] package marginal == full reference at p=%.2f", nm, p))
     }
@@ -180,7 +182,7 @@ test_that("marginal-k numerator reaches the full support at K=200 (Stage 1b cap 
 
   mk <- function(mode, KK) suppressMessages(MkPrimeModel(
     coding = "variable", nCat = 1L, kPrimePrior = "geometric", likelihoodMode = mode,
-    priorVariant = "unconditional", kprimeTruncK = KK,
+    kprimeTruncK = KK,
     kprimeHyperA = 1, kprimeHyperB = 1, expSteps = 1.4))
   modM <- mk("marginal_k", K); modS <- mk("sampled_k", K)
 
@@ -191,7 +193,7 @@ test_that("marginal-k numerator reaches the full support at K=200 (Stage 1b cap 
     fill_partition_cache(dp, sp); eval_full_loglik_cpp(dp, sp)
   }
   evalMarg <- function() evalLL(modM, function(s) { s$p <- p; s })
-  LLfixed  <- function(kp) evalLL(modS, function(s) { s$p <- 0.1
+  LLfixed  <- function(kp, pp = 0.1) evalLL(modS, function(s) { s$p <- pp
                               s$kPrime <- rep_len(as.integer(kp), length(s$kPrime)); s })
   defaultLL <- evalLL(modS, function(s) { s$p <- 0.1; s })
 
@@ -202,10 +204,11 @@ test_that("marginal-k numerator reaches the full support at K=200 (Stage 1b cap 
   expect_equal(unname(FX[as.character(kobs)]), defaultLL, tolerance = 1e-9,
                label = "G2 LLfixed(kObs) == package default-init LL")
 
-  logw    <- (ks - 2) * log1p(-p) + log(p) + FX
+  FXp     <- vapply(ks, LLfixed, numeric(1), pp = p)
+  logw    <- (ks - 2) * log1p(-p) + log(p) + FXp
   refFull <- lse(logw)            - logZA(p, K)   # numerator over the full [2,200]
   refCap  <- lse(logw[ks <= 51])  - logZA(p, K)   # what an old cap=50 numerator gives
-  # The likelihood P(data | k') DECAYS in k' (FX: -5.87 at k'=2 down to -16.9 at
+  # The likelihood P(data | k') DECAYS in k' (FXp: -5.90 at k'=2 down to -16.9 at
   # k'=200), so the numerator's >k'=51 tail is small in absolute terms
   # (refFull - refCap ~ 1.3e-3 nats here) even though the *prior* mass there is
   # large -- a useful bound on the cap's practical impact for low-kObs chars.
@@ -234,8 +237,8 @@ test_that("marginal-k numerator reaches the full support at K=200 (Stage 1b cap 
 #   logSumExp_{k' in [kObs, K]} [ logPrior_S(k') + logLik_S(k') ]
 #        ==  logPrior_M + logLik_M
 #
-# i.e. summing the full sampled-k JOINT over k' reproduces the marginal-k joint,
-# for BOTH Model A (unconditional) and Model B (conditional). Unlike the C-i
+# i.e. summing the full sampled-k JOINT over k' reproduces the marginal-k joint.
+# Unlike the C-i
 # guard above (which tests the marginal evaluator against ANALYTIC prior weights
 # added in R), this exercises the EDITED cpp_log_prior via eval_log_prior_cpp.
 #
@@ -264,9 +267,9 @@ test_that("sampled_k joint marginalises to marginal_k (Stage 2 RB-consistency)",
   cases <- list(kObs2 = mkChar(c(0, 0, 1, 1, 0, 1, 0, 1)),   # low-kObs (heaviest tail)
                 kObs6 = mkChar(c(0, 1, 2, 3, 4, 5, 0, 1)))    # high-kObs
 
-  mk <- function(mode, variant, KK = K) suppressMessages(MkPrimeModel(
+  mk <- function(mode, KK = K) suppressMessages(MkPrimeModel(
     coding = "variable", nCat = 1L, kPrimePrior = "geometric", likelihoodMode = mode,
-    priorVariant = variant, kprimeTruncK = KK,
+    kprimeTruncK = KK,
     kprimeHyperA = 1, kprimeHyperB = 1, expSteps = 1.4))
 
   # Evaluate (logPrior, logLik) at a given mode/state via the package's own C++
@@ -282,49 +285,47 @@ test_that("sampled_k joint marginalises to marginal_k (Stage 2 RB-consistency)",
     evalPL(modS, mkd, function(s) { s$p <- p
       s$kPrime <- rep_len(as.integer(kp), length(s$kPrime)); s })[["prior"]]
 
-  for (variant in c("unconditional", "conditional")) {
-    modS <- mk("sampled_k", variant); modM <- mk("marginal_k", variant)
-    for (nm in names(cases)) {
-      mkd <- cases[[nm]]; kobs <- mkd$kObs[1]; ks <- kobs:K
-      for (p in c(0.02, 0.08)) {
-        # Sampled-k FULL joint (edited prior + likelihood) at each fixed k'.
-        J <- vapply(ks, function(kp) {
-          pl <- evalPL(modS, mkd, function(s) { s$p <- p
-                       s$kPrime <- rep_len(as.integer(kp), length(s$kPrime)); s })
-          pl[["prior"]] + pl[["lik"]]
-        }, numeric(1)); names(J) <- ks
-        # Marginal-k FULL joint.
-        plM <- evalPL(modM, mkd, function(s) { s$p <- p; s })
-        M <- plM[["prior"]] + plM[["lik"]]
+  modS <- mk("sampled_k"); modM <- mk("marginal_k")
+  for (nm in names(cases)) {
+    mkd <- cases[[nm]]; kobs <- mkd$kObs[1]; ks <- kobs:K
+    for (p in c(0.02, 0.08)) {
+      # Sampled-k FULL joint (edited prior + likelihood) at each fixed k'.
+      J <- vapply(ks, function(kp) {
+        pl <- evalPL(modS, mkd, function(s) { s$p <- p
+                     s$kPrime <- rep_len(as.integer(kp), length(s$kPrime)); s })
+        pl[["prior"]] + pl[["lik"]]
+      }, numeric(1)); names(J) <- ks
+      # Marginal-k FULL joint.
+      plM <- evalPL(modM, mkd, function(s) { s$p <- p; s })
+      M <- plM[["prior"]] + plM[["lik"]]
 
-        # G1 (anti-vacuity): the joint genuinely varies with k'.
-        expect_gt(stats::sd(J), 1e-6,
-                  label = sprintf("[%s/%s p=%.2f] G1 sd(joint) over k'", nm, variant, p))
-        # MAIN: full sampled-k sum == marginal-k joint (RB-consistency).
-        expect_equal(lse(J), M, tolerance = 1e-7,
-                     label = sprintf("[%s/%s p=%.2f] lse(sampled joint) == marginal joint", nm, variant, p))
-      }
-      # G2 (anti-vacuity): the geometric prior is live -- adjacent-k' prior slope
-      # == log(1-p) (logP and -logZ cancel; holds for Model A and B alike).
-      expect_equal(priorS(modS, mkd, kobs + 1L, 0.08) - priorS(modS, mkd, kobs, 0.08),
-                   log1p(-0.08), tolerance = 1e-9,
-                   label = sprintf("[%s/%s] G2 sampled-k prior slope == log(1-p)", nm, variant))
+      # G1 (anti-vacuity): the joint genuinely varies with k'.
+      expect_gt(stats::sd(J), 1e-6,
+                label = sprintf("[%s p=%.2f] G1 sd(joint) over k'", nm, p))
+      # MAIN: full sampled-k sum == marginal-k joint (RB-consistency).
+      expect_equal(lse(J), M, tolerance = 1e-7,
+                   label = sprintf("[%s p=%.2f] lse(sampled joint) == marginal joint", nm, p))
     }
+    # G2 (anti-vacuity): the geometric prior is live -- adjacent-k' prior slope
+    # == log(1-p) (logP and -logZ cancel).
+    expect_equal(priorS(modS, mkd, kobs + 1L, 0.08) - priorS(modS, mkd, kobs, 0.08),
+                 log1p(-0.08), tolerance = 1e-9,
+                 label = sprintf("[%s] G2 sampled-k prior slope == log(1-p)", nm))
   }
 
   # STALE-BINARY GUARD: the truncation normaliser Z(p) must be live in the
   # sampled-k prior. logPrior_S(K=30) - logPrior_S(K=200) == -logZA(30)+logZA(200)
-  # (Model A, single char, fixed k'/p). A stale/untruncated binary -> gap 0.
+  # (single char, fixed k'/p). A stale/untruncated binary -> gap 0.
   p <- 0.05; logZA <- function(pp, KK) log1p(-(1 - pp)^(KK - 1))
-  gap <- priorS(mk("sampled_k", "unconditional", 30L),  cases$kObs2, 2L, p) -
-         priorS(mk("sampled_k", "unconditional", 200L), cases$kObs2, 2L, p)
+  gap <- priorS(mk("sampled_k", 30L),  cases$kObs2, 2L, p) -
+         priorS(mk("sampled_k", 200L), cases$kObs2, 2L, p)
   expect_equal(gap, -logZA(p, 30L) + logZA(p, 200L), tolerance = 1e-7,
                label = "sampled-k prior K-sensitivity == truncation-normaliser gap")
   expect_gt(abs(gap), 0.2,
             label = "K=30 vs K=200 sampled-k prior gap is material (stale-binary guard)")
 
   # SUPPORT CAP: k' > K carries zero prior mass (-Inf) under sampled_k.
-  prOver <- priorS(mk("sampled_k", "unconditional", 30L), cases$kObs2, 31L, 0.1)
+  prOver <- priorS(mk("sampled_k", 30L), cases$kObs2, 31L, 0.1)
   expect_true(is.infinite(prOver) && prOver < 0,
               label = "sampled-k prior at k' = K+1 is -Inf (truncated support guard)")
 })
@@ -336,7 +337,7 @@ test_that("sampled_k joint marginalises to marginal_k (Stage 2 RB-consistency)",
 # product-of-sums (conditional-independence) factorisation; the deterministic
 # tests above are n=1. This test makes the n=2 case EMPIRICAL: it sums the
 # sampled-k JOINT over the FULL 2-D grid (k'_1, k'_2) in [kObs_i, K]^2 and
-# checks it equals the marginal-k joint, for Model A and Model B. K is small
+# checks it equals the marginal-k joint. K is small
 # (8) so truncation bites hard (-logZ_A ~ 1.6 nats at p=0.03) and the grid stays
 # cheap.
 test_that("sampled_k 2-character joint marginalises to marginal_k (multi-char RB)", {
@@ -353,10 +354,9 @@ test_that("sampled_k 2-character joint marginalises to marginal_k (multi-char RB
   ti  <- which(mkd$type == "transformational")
   ko  <- mkd$kObs[ti]
 
-  mk <- function(mode, variant) suppressMessages(MkPrimeModel(
+  mk <- function(mode) suppressMessages(MkPrimeModel(
     coding = "variable", nCat = 1L, kPrimePrior = "geometric", likelihoodMode = mode,
-    priorVariant = variant, kprimeTruncK = K, kprimeHyperA = 1, kprimeHyperB = 1,
-    expSteps = 1.4))
+    kprimeTruncK = K, kprimeHyperA = 1, kprimeHyperB = 1, expSteps = 1.4))
 
   # Build data/model once per mode; the returned closure varies only the state.
   buildEval <- function(model) {
@@ -373,22 +373,19 @@ test_that("sampled_k 2-character joint marginalises to marginal_k (multi-char RB
   }
 
   grid <- expand.grid(k1 = ko[1]:K, k2 = ko[2]:K)
-  for (variant in c("unconditional", "conditional")) {
-    evalS <- buildEval(mk("sampled_k",  variant))
-    evalM <- buildEval(mk("marginal_k", variant))
-    for (p in c(0.03, 0.1)) {
-      M <- evalM(function(s) { s$p <- p; s })                 # marginal joint
-      J <- vapply(seq_len(nrow(grid)), function(g) {          # sampled grid
-        kp <- mkd$kObs
-        kp[ti[1]] <- grid$k1[g]; kp[ti[2]] <- grid$k2[g]
-        evalS(function(s) { s$p <- p; s$kPrime <- as.integer(kp); s })
-      }, numeric(1))
-      expect_gt(stats::sd(J), 1e-6,
-                label = sprintf("[%s p=%.2f] G1 2-char joint varies over grid", variant, p))
-      expect_equal(lse(J), M, tolerance = 1e-7,
-                   label = sprintf("[%s p=%.2f] lse(2-char sampled grid) == marginal joint",
-                                   variant, p))
-    }
+  evalS <- buildEval(mk("sampled_k"))
+  evalM <- buildEval(mk("marginal_k"))
+  for (p in c(0.03, 0.1)) {
+    M <- evalM(function(s) { s$p <- p; s })                 # marginal joint
+    J <- vapply(seq_len(nrow(grid)), function(g) {          # sampled grid
+      kp <- mkd$kObs
+      kp[ti[1]] <- grid$k1[g]; kp[ti[2]] <- grid$k2[g]
+      evalS(function(s) { s$p <- p; s$kPrime <- as.integer(kp); s })
+    }, numeric(1))
+    expect_gt(stats::sd(J), 1e-6,
+              label = sprintf("[p=%.2f] G1 2-char joint varies over grid", p))
+    expect_equal(lse(J), M, tolerance = 1e-7,
+                 label = sprintf("[p=%.2f] lse(2-char sampled grid) == marginal joint", p))
   }
 })
 
@@ -424,7 +421,7 @@ test_that("gibbs_kprime_sweep respects the truncation cap K (case-25 cap fires)"
   sweep_kprimes <- function(K, p, nIter = 400L, seed = 99L) {
     model <- suppressMessages(MkPrimeModel(
       coding = "variable", nCat = 1L, kPrimePrior = "geometric",
-      likelihoodMode = "sampled_k", priorVariant = "unconditional",
+      likelihoodMode = "sampled_k",
       kprimeTruncK = K, kprimeHyperA = 1, kprimeHyperB = 1, expSteps = 1.4))
     modf <- MkPrime:::.FinalizeModel(model, tr, mkd)
     st0  <- MkPrime:::.InitState(tr, mkd, modf)
@@ -460,8 +457,6 @@ test_that("gibbs_kprime_sweep respects the truncation cap K (case-25 cap fires)"
 
 test_that("marginal-k truncation normaliser stays finite at tiny p", {
   # Z(p) = 1 - (1-p)^(K-1) ~ (K-1) p: log1p(-exp(.)) rounds it to log(0).
-  for (variant in c("unconditional", "conditional")) {
-    r <- .trunc_eval(1e-19, K = 30L, simP = 0.3, priorVariant = variant)
-    expect_true(is.finite(r$LL), info = variant)
-  }
+  r <- .TruncEval(1e-19, K = 30L, simP = 0.3)
+  expect_true(is.finite(r$LL))
 })

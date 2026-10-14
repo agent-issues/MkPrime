@@ -364,8 +364,7 @@ test_that("hardcoded kPriorEmpiricalGeometric would change the prior", {
     kPriorLogseries          = FALSE,
     kprimeLogseriesC         = model$kprimeLogseriesC,
     kPriorEmpiricalGeometric = FALSE,
-    empLogBody               = numeric(0),
-    unconditionalPrior       = identical(model$priorVariant, "unconditional")
+    empLogBody               = numeric(0)
   )
   gap <- eval_log_prior_cpp(hardcoded, statePtr) - fromModel
   expect_true(is.finite(gap))

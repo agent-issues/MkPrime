@@ -24,12 +24,23 @@ test_that("finalisation rejects a kPrimePrior that is not an arm", {
   }
 })
 
-test_that("finalisation rejects a priorVariant other than the two values", {
-  for (bad in list("Unconditional", "uncond", NA_character_)) {
+test_that("finalisation rejects a prior that conditions on kObs", {
+  for (bad in list("conditional", "Unconditional", NA_character_)) {
     model <- MkPrimeModel(kPrimePrior = "geometric", expSteps = 1)
     model$priorVariant <- bad
     expect_error(.Finalize(model), "priorVariant")
   }
+  # Models saved before the field was retired.
+  model$priorVariant <- "unconditional"
+  expect_no_error(.Finalize(model))
+  for (arm in c("logseries", "beta_geometric")) {
+    model <- MkPrimeModel(kPrimePrior = arm, expSteps = 1)
+    model$priorVariant <- "conditional"
+    expect_no_error(.Finalize(model))
+  }
+  model <- MkPrimeModel(kPrimePrior = "empirical_geometric", expSteps = 1)
+  model$priorVariant <- "conditional"
+  expect_error(.Finalize(model), "priorVariant")
 })
 
 test_that("finalisation checks kprimeTruncK and empiricalNObs", {
@@ -52,9 +63,6 @@ test_that("valid models still finalise", {
     model <- .Finalize(MkPrimeModel(kPrimePrior = arm, expSteps = 1))
     expect_identical(model$kPrimePrior, arm)
   }
-  model <- MkPrimeModel(kPrimePrior = "geometric", expSteps = 1)
-  model$priorVariant <- NULL
-  expect_identical(.Finalize(model)$priorVariant, "unconditional")
 })
 
 test_that("the tree-length prior must be positive (#380)", {

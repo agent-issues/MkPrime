@@ -59,8 +59,7 @@ Calls <- function(x, name) {
 modelCalls <- unlist(lapply(fsrc, Calls, "MkPrimeModel"), recursive = FALSE)
 ok("funnel-stress builds exactly one model", length(modelCalls) == 1L)
 pinned <- names(as.list(modelCalls[[1L]]))
-ok("it pins nCat, expSteps and priorVariant",
-   all(c("nCat", "expSteps", "priorVariant") %in% pinned))
+ok("it pins nCat and expSteps", all(c("nCat", "expSteps") %in% pinned))
 ok("it no longer prints a headline claimed for NEWS.md",
    !any(grepl("NEWS", readLines(file.path(hdir,
                                           "funnel-stress-hyperprior-sigma.R")))))
