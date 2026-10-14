@@ -120,26 +120,44 @@ test_that("the extension likelihood is tracked through every kind of move", {
   expect_identical(get_mcmc_state(statePtr), before)
 })
 
-test_that("RunMkPrime samples an extension likelihood correctly", {
+test_that("exact Gibbs draws of an extension parameter hit the target", {
   skip_on_cran()
+  fx <- ExtFixture()
+  attach_extensions_cpp(fx$dataPtr, list(toy_lik_extension_cpp()))
+  statePtr <- ExtState(fx, 0.5)
+  # toy_lambda | T ~ Gamma(5, 4 + T): after each draw toy_lambda * (4 + T) is
+  # a fresh Gamma(5, 1) variate, whatever tree-length moves did in between.
+  set.seed(4426L)
+  n <- 4000L
+  z <- numeric(n)
+  for (i in seq_len(n)) {
+    do_move_cpp(fx$dataPtr, statePtr, 0L, 0L, 0.6, 1.0, 1L, 1.0)
+    expect_true(do_move_cpp(fx$dataPtr, statePtr, 41L, 0L, 0.6, 1.0, 1L, 1.0))
+    s <- get_mcmc_state(statePtr)
+    z[i] <- s$extParams * (4 + s$treeLength)
+  }
+  expect_lt(abs(mean(z) - 5), 0.15)
+  expect_lt(abs(var(z) - 5), 0.8)
+})
+
+test_that("RunMkPrime runs an extension likelihood", {
+  skip_on_cran()
+  skip_under_memcheck()
   d <- ExtRunData()
   model <- MkPrimeModel(extensions = list(ToyLik()))
   set.seed(4417L)
   res <- allow_warning(RunMkPrime(
     d$pd, d$tree, model = model,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 20000L, thin = 5L,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 6000L, thin = 5L,
                        minWarmup = 1000L, maxWarmup = 1000L,
                        autoTune = FALSE, maxTime = 120)
   ), "maxWarmup|stabilis")
   s <- res$samples
   expect_true("toy_lambda" %in% colnames(s))
+  expect_true(all(is.finite(s[, "log_likelihood"])))
   expect_false(any(c("gibbs_spr", "gibbs_subtree_swap") %in%
                      names(res$acceptance)))
   expect_gt(res$acceptance[["toylik_gibbs"]], 0.9)
-  # toy_lambda | T ~ Gamma(5, 4 + T), so E[toy_lambda * (4 + T)] = 5 whatever
-  # the posterior of T.
-  z <- s[, "toy_lambda"] * (4 + s[, "tree_length"])
-  expect_lt(abs(mean(z) - 5), 0.6)
 
   expect_error(mkp_stepping_stone(d$pd, d$tree, model = model),
                "extension likelihoods")
