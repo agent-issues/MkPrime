@@ -168,10 +168,12 @@ test_that("scale moves on extension parameters sample their prior", {
   set.seed(4421L)
   # A long run of the kernel alone samples the prior: toy_sigma ~
   # LogNormal(0, 0.5), toy_rate ~ Gamma(2, 4).
+  # A Bactrian step has sd 0.29 x tuning on the log scale; tuning 3 mixes
+  # well enough here for an effective sample size in the thousands.
   n <- 20000L
   draws <- matrix(NA_real_, n, 2)
   for (i in seq_len(n)) {
-    do_move_cpp(fx$dataPtr, statePtr, 40L, nScalar + (i %% 2L), 0.6, 1.0, 1L,
+    do_move_cpp(fx$dataPtr, statePtr, 40L, nScalar + (i %% 2L), 3.0, 1.0, 1L,
                 1.0)
     if (i %% 2L == 0L) draws[i, ] <- get_mcmc_state(statePtr)$extParams
   }
