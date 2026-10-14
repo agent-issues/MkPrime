@@ -122,6 +122,29 @@ test_that("scale moves on extension parameters touch only the prior", {
   expect_lt(nAccept, 60L)
 })
 
+test_that("scale moves on extension parameters sample their prior", {
+  skip_on_cran()
+  skip_under_memcheck()
+  fx <- ExtFixture()
+  attach_extensions_cpp(fx$dataPtr, list(toy_extension_cpp()))
+  statePtr <- ExtState(fx, c(1, 0.5))
+  nScalar <- length(MkPrime:::.kScalarParams)
+  set.seed(4421L)
+  # A long run of the kernel alone samples the prior: toy_sigma ~
+  # LogNormal(0, 0.5), toy_rate ~ Gamma(2, 4).
+  n <- 20000L
+  draws <- matrix(NA_real_, n, 2)
+  for (i in seq_len(n)) {
+    do_move_cpp(fx$dataPtr, statePtr, 40L, nScalar + (i %% 2L), 0.6, 1.0, 1L,
+                1.0)
+    if (i %% 2L == 0L) draws[i, ] <- get_mcmc_state(statePtr)$extParams
+  }
+  draws <- draws[!is.na(draws[, 1]), ]
+  expect_lt(abs(mean(log(draws[, 1]))), 0.06)
+  expect_lt(abs(sd(log(draws[, 1])) - 0.5), 0.05)
+  expect_lt(abs(mean(draws[, 2]) - 0.5), 0.05)
+})
+
 test_that("RunMkPrime samples extension parameters from their prior", {
   skip_on_cran()
   d <- ExtRunData()
@@ -137,9 +160,8 @@ test_that("RunMkPrime samples extension parameters from their prior", {
   expect_true(all(c("toy_sigma", "toy_rate") %in% colnames(s)))
   expect_true(all(s[, "toy_sigma"] > 0 & s[, "toy_rate"] > 0))
   expect_gt(length(unique(s[, "toy_rate"])), 20L)
-  # Prior: E[log toy_sigma] = 0 (sd 0.5); E[toy_rate] = 0.5 (sd 0.35).
-  expect_lt(abs(mean(log(s[, "toy_sigma"]))), 0.35)
-  expect_lt(abs(mean(s[, "toy_rate"]) - 0.5), 0.25)
+  expect_gt(length(unique(s[, "toy_sigma"])), 20L)
+  expect_gt(res$acceptance[["scale_param_toy_sigma"]], 0)
 })
 
 test_that("extension parameters survive tempering and checkpoint resume", {
