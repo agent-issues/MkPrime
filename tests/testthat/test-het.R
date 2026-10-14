@@ -570,6 +570,27 @@ test_that("Het with very small beta_scale produces finite likelihood", {
               label = "Small beta_scale should not produce NaN likelihood")
 })
 
+test_that("Het bin means that round above 1 give a finite likelihood", {
+  # Here the top k = 2 bin's conditional mean computes as 1 + 4e-16.
+  betaScale <- 0.040776276170953731
+  set.seed(4)
+  tree <- Preorder(ape::rtree(12L, rooted = FALSE,
+                              br = function(n) runif(n, 0.05, 0.5)))
+  mat <- matrix(sample(0:2, 12L * 30L, TRUE, prob = c(3, 3, 1)), 12L,
+                dimnames = list(tree$tip.label, NULL))
+  model <- MkPrimeModel(qHeterogeneity = TRUE, nBetaCat = 8L,
+                        kPrimePrior = "geometric")
+  pts <- .het_ptrs(tree, MatrixToPhyDat(mat), model, beta_scale = betaScale)
+  expect_true(is.finite(eval_full_loglik_cpp(pts$dataPtr, pts$statePtr)))
+  constProb <- MkPrime:::lumped_const_probs(
+    pts$parent, pts$child, pts$treeLen * pts$relBr, 12L, 1,
+    matrix(0L, 12L, 1L), 2, betaScale = betaScale, nBetaCat = 8L)
+  expect_true(constProb > 0 && constProb < 1)
+  set.seed(1)
+  do_move_cpp(pts$dataPtr, pts$statePtr, 25L, 0L, 0.5, 10, 1L, 1)
+  expect_true(is.finite(get_mcmc_state(pts$statePtr)$logLik))
+})
+
 # ===========================================================================
 # 13. Het with nBetaCat = 1 (single bin, edge case)
 # ===========================================================================

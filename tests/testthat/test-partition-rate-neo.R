@@ -79,7 +79,8 @@ test_that("class rates compose with rate_neo at a char-weighted mean of 1", {
     legacy <- cpp_log_likelihood_xptr(
       legacyData, st$edge[, 1], st$edge[, 2],
       st$treeLength * st$relBrLengths, st$kPrime, st$rateLoss, 0.5,
-      rateNeo * classRate[[1]] / classRate[[2]], st$betaScale)
+      rateNeo * classRate[[1]] / classRate[[2]], st$p, st$kprimeAlpha,
+      st$kprimeBeta, st$betaScale)
     expect_equal(eval_full_loglik_cpp(chain$dataPtr, chain$statePtr), legacy,
                  tolerance = 1e-10, label = paste("rate_neo", rateNeo))
   }

@@ -23,7 +23,10 @@
               checkpointFile = cpFile, logFile = logFile)
 }
 
-.ModelCheckpoint <- function(model) {
+# Informative coding needs a fixed k.
+.kModelCheckKnown <- setNames(rep(3L, 7L), 1:7)
+
+.ModelCheckpoint <- function(model, knownStates = integer(0)) {
   cpFile <- tempfile(fileext = ".ckp")
   logFile <- tempfile(fileext = ".log")
   setTimeLimit(elapsed = 120, transient = TRUE)
@@ -31,6 +34,7 @@
   set.seed(379)
   suppressWarnings(suppressMessages(
     RunMkPrime(.ModelCheckData(), .ModelCheckTree(), model = model,
+               knownStates = knownStates,
                mcmc = .ModelCheckMcmc(cpFile, logFile), verbosity = 0L)))
   list(cpFile = cpFile, logFile = logFile,
        files = c(cpFile, logFile, sub("\\.[^.]+$", "_1.log", logFile),
@@ -63,10 +67,12 @@ test_that(".PerturbStart(topology = FALSE) keeps the topology (#378)", {
 })
 
 test_that("Resume aborts on informative -> variable coding (#379)", {
-  ck <- .ModelCheckpoint(MkPrimeModel(coding = "informative"))
+  ck <- .ModelCheckpoint(MkPrimeModel(coding = "informative"),
+                         .kModelCheckKnown)
   on.exit(unlink(ck$files), add = TRUE)
   expect_error(
     ResumeMkPrime(ck$cpFile, .ModelCheckData(), model = MkPrimeModel(),
+                  knownStates = .kModelCheckKnown,
                   mcmc = list(nIter = 400L), verbosity = 0L),
     "coding.*informative.*checkpoint"
   )
@@ -84,10 +90,12 @@ test_that("Resume aborts on none -> informative coding (#379)", {
 })
 
 test_that("RunMkPrime auto-resume checks the model too (#379)", {
-  ck <- .ModelCheckpoint(MkPrimeModel(coding = "informative"))
+  ck <- .ModelCheckpoint(MkPrimeModel(coding = "informative"),
+                         .kModelCheckKnown)
   on.exit(unlink(ck$files), add = TRUE)
   expect_error(
     RunMkPrime(.ModelCheckData(), .ModelCheckTree(),
+               knownStates = .kModelCheckKnown,
                model = MkPrimeModel(kPrimePrior = "geometric",
                                     coding = "informative"),
                mcmc = .ModelCheckMcmc(ck$cpFile, ck$logFile), verbosity = 0L),
@@ -96,23 +104,26 @@ test_that("RunMkPrime auto-resume checks the model too (#379)", {
 })
 
 test_that("A checkpoint that predates a model field still resumes (#379)", {
-  ck <- .ModelCheckpoint(MkPrimeModel(coding = "informative"))
+  ck <- .ModelCheckpoint(MkPrimeModel(coding = "informative"),
+                         .kModelCheckKnown)
   on.exit(unlink(ck$files), add = TRUE)
   cp <- readRDS(ck$cpFile)
   cp$model$coding <- NULL
   saveRDS(cp, ck$cpFile)
   expect_no_error(suppressWarnings(suppressMessages(
     ResumeMkPrime(ck$cpFile, .ModelCheckData(),
+                  knownStates = .kModelCheckKnown,
                   model = MkPrimeModel(coding = "informative"),
                   mcmc = list(nIter = 400L), verbosity = 0L))))
 })
 
 test_that("An integer treeLengthShape keeps the checkpoint's rate", {
   model <- MkPrimeModel(coding = "informative", treeLengthRate = 0.37)
-  ck <- .ModelCheckpoint(model)
+  ck <- .ModelCheckpoint(model, .kModelCheckKnown)
   on.exit(unlink(ck$files), add = TRUE)
   res <- suppressWarnings(suppressMessages(
     ResumeMkPrime(ck$cpFile, .ModelCheckData(),
+                  knownStates = .kModelCheckKnown,
                   model = MkPrimeModel(coding = "informative",
                                        treeLengthShape = 2L),
                   mcmc = list(nIter = 400L), verbosity = 0L)))
@@ -126,5 +137,19 @@ test_that("Resume aborts on changed neomorphic characters", {
     ResumeMkPrime(ck$cpFile, .ModelCheckData(), neomorphic = 1L,
                   mcmc = list(nIter = 400L), verbosity = 0L),
     "character types"
+  )
+})
+
+test_that("A resume aborts across a change of likelihood", {
+  ck <- .ModelCheckpoint(MkPrimeModel())
+  on.exit(unlink(ck$files), add = TRUE)
+  cp <- readRDS(ck$cpFile)
+  expect_identical(cp$likelihoodVersion, .likelihoodVersion)
+  cp$likelihoodVersion <- NULL
+  saveRDS(cp, ck$cpFile)
+  expect_error(
+    ResumeMkPrime(ck$cpFile, .ModelCheckData(), mcmc = list(nIter = 400L),
+                  verbosity = 0L),
+    "different likelihood"
   )
 })

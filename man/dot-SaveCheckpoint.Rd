@@ -13,12 +13,14 @@
   moveWeights = NULL,
   phase = NULL,
   model = NULL,
-  serialPhase = NULL
+  serialPhase = NULL,
+  likelihoodVersion = .likelihoodVersion
 )
 }
 \description{
 Version 1 (in-memory mode): stores full run history (samples, trees).
 Version 2 (streaming mode): stores chain state only; samples live in the
-log file.  The large flush_buf and conv_window matrices are excluded.
+log file, and trees in the tree file when there is one.  The large
+flush_buf and conv_window matrices are excluded.
 }
 \keyword{internal}

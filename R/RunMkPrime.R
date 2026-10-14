@@ -3676,8 +3676,8 @@ RunMkPrime <- function(data, tree = NULL,
 
 # Fields that size the chain's state or fix its move set or likelihood engine.
 .resumeStructuralFields <- c("coding", "relabel", "kPrimePrior",
-                             "priorVariant", "likelihoodMode",
-                             "qHeterogeneity", "nCat", "nBetaCat")
+                             "likelihoodMode", "qHeterogeneity", "nCat",
+                             "nBetaCat")
 
 #' Abort a resume whose model differs structurally from the checkpoint's
 #'
@@ -3700,6 +3700,26 @@ RunMkPrime <- function(data, tree = NULL,
     ))
   }
   invisible()
+}
+
+# Bumped whenever the likelihood a chain targets changes. A resume appends to
+# the checkpoint's samples, so the two must share a target. Version 2 is the
+# joint ascertainment correction, with every k' prior on k' >= 2; a checkpoint
+# without the field predates it.
+.likelihoodVersion <- 2L
+
+#' Abort a resume across a change of likelihood
+#' @keywords internal
+.CheckLikelihoodVersion <- function(saved) {
+  saved <- saved %||% 1L
+  now <- .likelihoodVersion
+  if (identical(as.integer(saved), now)) return(invisible())
+  cli::cli_abort(c(
+    "This checkpoint was run under a different likelihood.",
+    "x" = "Its samples target likelihood version {saved}; this version of \\
+           MkPrime targets version {now}.",
+    "i" = "Start a fresh run with {.code RunMkPrime(..., overwrite = TRUE)}."
+  ))
 }
 
 # Chain state numbers tips by data row, so data supplied on resume must take
@@ -3755,7 +3775,11 @@ RunMkPrime <- function(data, tree = NULL,
         nCat = model$nCat,
         coding = model$coding,
         rate_neo = state$rate_neo %||% 1,
-        relabel = model$relabel
+        relabel = model$relabel,
+        model = model,
+        p = state$p %||% 0.5,
+        kprimeAlpha = state$kprime_alpha %||% 1,
+        kprimeBeta = state$kprime_beta %||% 1
       ) > -Inf)
     }, logical(1))),
     error = function(e) integer(0)
@@ -3783,7 +3807,8 @@ RunMkPrime <- function(data, tree = NULL,
 #' @keywords internal
 .SaveCheckpoint <- function(runs, mcmc, iter, paramNames, file,
                             moveWeights = NULL, phase = NULL,
-                            model = NULL, serialPhase = NULL) {
+                            model = NULL, serialPhase = NULL,
+                            likelihoodVersion = .likelihoodVersion) {
   isStreaming <- !is.null(mcmc$logFile)
 
   serialRuns <- lapply(runs, function(r) {
@@ -3815,7 +3840,8 @@ RunMkPrime <- function(data, tree = NULL,
   # when reading v2 checkpoints (which never had a treeFilePaths field).
   version <- if (isStreaming) 3L else 1L
   payload <- list(runs = serialRuns, mcmc = mcmc, iter = iter,
-                  timestamp = Sys.time(), version = version)
+                  timestamp = Sys.time(), version = version,
+                  likelihoodVersion = likelihoodVersion)
   if (isStreaming) {
     # Looked up by each run's own index: a parallel job keeps only the runs
     # that returned, and renumbering the survivors pairs one with another's
@@ -4006,7 +4032,8 @@ RunMkPrime <- function(data, tree = NULL,
   .SaveCheckpoint(mergedRuns, ref$mcmc, maxIter, ref$paramNames,
                   checkpointFile, moveWeights = ref$moveWeights,
                   phase = ref$phase, model = ref$model,
-                  serialPhase = ref$serialPhase)
+                  serialPhase = ref$serialPhase,
+                  likelihoodVersion = ref$likelihoodVersion %||% 1L)
   invisible(maxIter)
 }
 
@@ -4162,7 +4189,7 @@ RunMkPrime <- function(data, tree = NULL,
 #'   checkpoint's too, unless `treeLengthShape` differs from the
 #'   checkpoint's, when the rate is resolved from the new shape.
 #'   Fields that a checkpoint predates are filled with current defaults,
-#'   with a warning.  A `coding`, `relabel`, `kPrimePrior`, `priorVariant`,
+#'   with a warning.  A `coding`, `relabel`, `kPrimePrior`,
 #'   `likelihoodMode`, `qHeterogeneity`, `nCat` or `nBetaCat` that differs
 #'   from the checkpoint's is an error.
 #' @param tree A `phylo` object, used only to check tip labels.  Usually
@@ -4235,6 +4262,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     cli::cli_abort("Unsupported checkpoint version: {version}.")
   }
   isStreaming <- version >= 2L
+  .CheckLikelihoodVersion(checkpoint$likelihoodVersion)
 
   if (inherits(data, "MkPrimeData")) {
     mkd <- data
@@ -4969,7 +4997,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     nCat = model$nCat,
     coding = model$coding,
     rate_neo = state$rate_neo %||% 1.0,
-    relabel = model$relabel
+    relabel = model$relabel,
+    model = model,
+    p = state$p %||% 0.5,
+    kprimeAlpha = state$kprime_alpha %||% 1,
+    kprimeBeta = state$kprime_beta %||% 1
   )
   state$log_prior <- LogPrior(state, model, mkd)
   state$log_post <- state$log_lik + state$log_prior
@@ -5494,8 +5526,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     empTailStartK,
     empTailDecay,
     empLogTailStartP,
-    identical(model$likelihoodMode, "marginal_k"),
-    identical(model$priorVariant, "unconditional")
+    identical(model$likelihoodMode, "marginal_k")
   )
   # Wire the truncation cap K from the model into the McmcData
   # (set_kprime_trunc_k; mirrors set_branch_bins, avoiding a prepare_mcmc_data
@@ -5647,7 +5678,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       return(list(accept = FALSE, state = state))
     },
     scale_p = {
-      # Bactrian multiplicative MH on p; standard accept/reject via prior.
+      # Bactrian multiplicative MH on p.
       prop <- ProposeScale(state$p, tuning = tuning$scale_p %||% 0.5)
       proposed$p <- prop$value
       logHastings <- prop$logHastings
@@ -5682,7 +5713,11 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     nCat = model$nCat,
     coding = model$coding,
     rate_neo = proposed$rate_neo %||% 1.0,
-    relabel = model$relabel
+    relabel = model$relabel,
+    model = model,
+    p = proposed$p %||% 0.5,
+    kprimeAlpha = proposed$kprime_alpha %||% 1,
+    kprimeBeta = proposed$kprime_beta %||% 1
   )
   proposed$log_post <- proposed$log_lik + proposed$log_prior
 

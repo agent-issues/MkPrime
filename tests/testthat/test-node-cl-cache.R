@@ -197,7 +197,7 @@ test_that("partial-CL path carries the transformational ascertainment term", {
     do_move_cpp(dataPtr, statePtr, moves[i, "type"], moves[i, "param"],
                 0.5, 10, 1L, 1.0)
     drift <- max(drift, abs(get_state_log_lik(statePtr) -
-                              eval_full_loglik_cpp(dataPtr, statePtr)))
+                              .ColdLogLik(dataPtr, statePtr)))
   }
   st <- get_mcmc_state(statePtr)
   list(drift = drift,
@@ -283,7 +283,7 @@ test_that("slice sampler invalidates CL cache (M-145 regression)", {
 # partial-CL pipeline, dropping the singleton-site term required by
 # coding="informative".  Fixed by guarding both functions to fall back
 # to their _full variants when codingType == 2.  This test exercises the
-# fallback at the RunMkPrime level (an 8-tip 10-char trans-only dataset)
+# fallback at the RunMkPrime level (8 tips, 10 three-state characters)
 # and asserts the chain produces finite log-posteriors with both Gibbs
 # topology moves enabled.
 # ---------------------------------------------------------------------------
@@ -295,7 +295,8 @@ test_that("LIKE-001: gibbs_spr + gibbs_subtree_swap run under coding=\"informati
                 nrow = 8L,
                 dimnames = list(tree$tip.label, paste0("c", seq_len(10L))))
   pd <- MatrixToPhyDat(mat)
-  mkd <- MkPrimeData(pd)
+  # Informative coding needs a fixed k.
+  mkd <- MkPrimeData(pd, knownStates = setNames(rep(3L, 10L), 1:10))
   model <- MkPrimeModel(coding = "informative")
 
   mcmc <- MkPrimeMCMC(
@@ -323,7 +324,8 @@ test_that("LIKE-001: partial-CL paths carry the singleton term", {
   mat <- matrix(sample(0:2, 8L * 10L, replace = TRUE),
                 nrow = 8L,
                 dimnames = list(tree$tip.label, paste0("c", seq_len(10L))))
-  mkd <- MkPrimeData(MatrixToPhyDat(mat))
+  mkd <- MkPrimeData(MatrixToPhyDat(mat),
+                     knownStates = setNames(rep(3L, 10L), 1:10))
   moves <- rbind(
     .kCacheMoves,
     cbind(type = MkPrime:::.kMoveTypes[c("gibbs_spr", "gibbs_subtree_swap")],
@@ -336,10 +338,9 @@ test_that("LIKE-001: partial-CL paths carry the singleton term", {
   expect_lt(result$drift, 1e-6)
 })
 
-# cache_total_loglik() computes the JC ascertainment term once per k and
-# reuses it for every cache unit with that k.  Resampling k' splits each
-# kObs partition into several units, and units in different partitions come
-# to share a k; each must still carry its own correction.
+# Resampling k' splits each kObs partition into several cache units, and
+# units in different partitions come to share a k; each partition must still
+# carry its own ascertainment term, once.
 test_that("partial-CL ascertainment is right when units share k", {
   set.seed(5190)
   tree <- Preorder(ape::rtree(10L, rooted = FALSE))
@@ -354,12 +355,9 @@ test_that("partial-CL ascertainment is right when units share k", {
     .kCacheMoves,
     cbind(type = MkPrime:::.kMoveTypes[["gibbs_kPrime"]], param = 0L)
   )
-  for (coding in c("variable", "informative")) {
-    result <- .CachedLogLikDrift(tree, mkd, MkPrimeModel(coding = coding),
-                                 moves)
-    expect_gt(result$partial, 100)
-    expect_lt(result$drift, 1e-6)
-  }
+  result <- .CachedLogLikDrift(tree, mkd, MkPrimeModel(), moves)
+  expect_gt(result$partial, 100)
+  expect_lt(result$drift, 1e-6)
 })
 
 # A Dirichlet over every edge dirties almost every internal node. It must
@@ -387,7 +385,7 @@ test_that("whole-tree dirichlet_branch keeps the CL cache coherent", {
                                         100, 10, nEdge, 1.0))
     do_move_cpp(dataPtr, statePtr, betaSimplex, 0L, 0.5, 10, 1L, 1.0)
     drift <- max(drift, abs(get_state_log_lik(statePtr) -
-                              eval_full_loglik_cpp(dataPtr, statePtr)))
+                              .ColdLogLik(dataPtr, statePtr)))
   }
   st <- get_mcmc_state(statePtr)
   expect_true(any(accepted) && !all(accepted))

@@ -65,7 +65,8 @@ test_that("gibbs_spr samples its exact target at beta = 1", {
   logZ <- vapply(edges, function(edge) {
     logLik <- apply(fractions, 1, function(f) cpp_log_likelihood_xptr(
       dataPtr, edge[, 1], edge[, 2], st0$treeLength * f, st0$kPrime,
-      st0$rateLoss, st0$rateLogSd, st0$rateNeo, st0$betaScale))
+      st0$rateLoss, st0$rateLogSd, st0$rateNeo, st0$p, st0$kprimeAlpha,
+      st0$kprimeBeta, st0$betaScale))
     max(logLik) + log(mean(exp(logLik - max(logLik))))
   }, double(1))
   target <- exp(logZ - max(logZ))

@@ -57,10 +57,10 @@
 #' many branch lengths share those weights, needs a correspondingly larger
 #' `nIter`.
 #'
-#' Under `likelihoodMode = "sampled_k"` and the unconditional `k'` prior, no
-#' stone visits `k'_i < kObs_i`, so the prior-only stone is normalised on
-#' `k' >= kObs` alone; the estimate adds back the log prior mass of that
-#' region, integrated over `p` numerically.
+#' Under `likelihoodMode = "sampled_k"`, no stone visits `k'_i < kObs_i`, so
+#' the prior-only stone is normalised on `k' >= kObs` alone; the estimate adds
+#' back the log prior mass of that region, integrated numerically over the
+#' `k'` prior's hyperparameters.
 #'
 #' Each run is one chain that carries its state from stone to stone. The first
 #' starts from `tree`; later runs start from a perturbed copy (a few random
@@ -320,14 +320,12 @@ mkp_stepping_stone <- function(data, tree = NULL,
 }
 
 
-# Under the unconditional (Model A) prior, sampled_k gives k'_i < kObs_i zero
-# likelihood and no move proposes it, so the beta = 0 stone samples the prior
-# restricted to k' >= kObs and the stones multiply to Z1 / Z0 (#267), with
+# sampled_k gives k'_i < kObs_i zero likelihood and no move proposes it, so
+# the beta = 0 stone samples the prior restricted to k' >= kObs and the stones
+# multiply to Z1 / Z0 (#267), with
 #   Z0 = E_prior[prod_i P(k'_i >= kObs_i | hyperparameters)],
-# each prior taken on its support capped at K (#377, #392).
-# logseries has that form whatever priorVariant says, since the sampler ignores
-# the field for it (#365). Model B already normalises on k' >= kObs, and
-# marginal_k carries that mass in its per-character sum, so Z0 = 1 for both.
+# each prior taken on its support capped at K (#377, #392). marginal_k carries
+# that mass in its per-character sum, so Z0 = 1 there.
 .LogZ0 <- function(model, mkd) {
   model <- .ResolvePriorDefaults(model)
   if (identical(model$likelihoodMode, "marginal_k")) {
@@ -350,9 +348,9 @@ mkp_stepping_stone <- function(data, tree = NULL,
     return(sum(counts * vapply(ko, .LogseriesLogTail, 0,
                                model$kprimeLogseriesC, K)))
   }
-  if (!identical(model$priorVariant, "unconditional")) {
+  if (identical(model$kPrimePrior, "beta_geometric")) {
     # Return:
-    return(0)
+    return(.LogZ0BetaGeometric(ko, counts, K))
   }
   LogTail <- switch(
     model$kPrimePrior,
@@ -364,8 +362,7 @@ mkp_stepping_stone <- function(data, tree = NULL,
     },
     empirical_geometric = {
       emp <- model$empiricalNObs
-      # P(k' >= k | p) on [2, K]: the ratio of the Model B and Model A
-      # normalisers.
+      # P(k' >= k | p) on [2, K]: the mass above k over the whole.
       function(k, p, log1mP) {
         vapply(p, function(pj) {
           logZ <- .LogEmpGeomCapped(emp, pj, K)$logZ
@@ -373,7 +370,7 @@ mkp_stepping_stone <- function(data, tree = NULL,
         }, 0)
       }
     },
-    cli::cli_abort("No unconditional form for {.val {model$kPrimePrior}}.")
+    cli::cli_abort("Unknown {.field kPrimePrior} {.val {model$kPrimePrior}}.")
   )
 
   a <- model$kprimeHyperA
@@ -400,6 +397,43 @@ mkp_stepping_stone <- function(data, tree = NULL,
     stats::integrate(Integrand, xMax, Inf, rel.tol = 1e-10)$value
   # Return:
   fMax + log(mass)
+}
+
+
+# Z0 under beta_geometric, whose alpha and beta carry Exp(1) priors. On
+# [2, K], with u = k' - 2,
+#   P(k' >= c) = (S(c - 2) - S(K - 1)) / (1 - S(K - 1)),
+#   S(m) = P(u >= m) = prod_{j < m} (beta + j) / (alpha + beta + j),
+# each difference taken from the logs of the factors it spans, so neither
+# cancels. Integrated over x = log(alpha), y = log(beta).
+.LogZ0BetaGeometric <- function(ko, counts, K) {
+  j <- seq.int(0L, K - 2L)
+  LogF <- function(x, y) {
+    vapply(x, function(xi) {
+      alpha <- exp(xi)
+      beta <- exp(y)
+      r <- alpha / (alpha + beta + j)
+      logFactor <- ifelse(r < 0.5, log1p(-r), log((beta + j) / (alpha + beta + j)))
+      head <- c(0, cumsum(logFactor))
+      tail <- rev(cumsum(rev(logFactor)))
+      logTail <- head[ko - 1L] + .Log1mExp(tail[ko - 1L]) - .Log1mExp(tail[1])
+      lf <- xi + y - alpha - beta + sum(counts * logTail)
+      # Return:
+      if (is.na(lf)) -Inf else lf
+    }, 0)
+  }
+  mode <- stats::optim(c(0, 0), function(v) -LogF(v[1], v[2]))$par
+  fMax <- LogF(mode[1], mode[2])
+  Mass <- function(f, at) {
+    stats::integrate(f, -Inf, at, rel.tol = 1e-8)$value +
+      stats::integrate(f, at, Inf, rel.tol = 1e-8)$value
+  }
+  Inner <- function(y) {
+    vapply(y, function(yi) Mass(function(x) exp(LogF(x, yi) - fMax), mode[1]),
+           0)
+  }
+  # Return:
+  fMax + log(Mass(Inner, mode[2]))
 }
 
 

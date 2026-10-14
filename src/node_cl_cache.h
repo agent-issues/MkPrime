@@ -179,14 +179,15 @@ static double cache_total_loglik(
     const NodeCLCache& cache, const McmcData& data,
     const IntegerVector& parent, const IntegerVector& child,
     const NumericVector& absEdgeLen, int nTip,
-    double rateLoss, double rateLogSd, double rateNeo, double betaScale);
+    double rateLoss, double rateLogSd, double rateNeo, double betaScale,
+    const KprimeHyper& hyper, JointAscCache* joint);
 
 static double partial_eval_dirty(
     NodeCLCache& cache, const McmcData& data,
     const IntegerVector& parent, const IntegerVector& child,
     const NumericVector& absEdgeLen,
     double rateLoss, double rateNeo, double rateLogSd,
-    double betaScale,
+    double betaScale, const KprimeHyper& hyper, JointAscCache* joint,
     const std::vector<int>& dirtyNodes);
 
 static void restore_dirty_cls(
@@ -617,13 +618,16 @@ static void populate_cache(
 
 // ---------------------------------------------------------------------------
 // cache_total_loglik: compute total log-likelihood from cached CLs.
-// Includes ascertainment correction (computed fully, not cached).
+// Includes ascertainment correction (computed fully, not cached; a
+// transformational partition's joint term comes from `joint`, which may be
+// null).
 // ---------------------------------------------------------------------------
 static double cache_total_loglik(
     const NodeCLCache& cache, const McmcData& data,
     const IntegerVector& parent, const IntegerVector& child,
     const NumericVector& absEdgeLen, int nTip,
-    double rateLoss, double rateLogSd, double rateNeo, double betaScale) {
+    double rateLoss, double rateLogSd, double rateNeo, double betaScale,
+    const KprimeHyper& hyper, JointAscCache* joint) {
 
   int root = cache.topo.root;
   double totalLL = 0.0;
@@ -713,7 +717,10 @@ static double cache_total_loglik(
 
   for (int pi = 0; pi < nParts; ++pi) {
     double ll = partRawLL[pi];
-    if (cache.coding != 0 && partNChar[pi] > 0) {
+    if (cache.coding != 0 && partNChar[pi] > 0 && data.parts[pi].type == 1) {
+      ll -= trans_joint_asc_log(data, pi, parent, child, transAscEl, rates,
+                                betaScale, hyper, joint);
+    } else if (cache.coding != 0 && partNChar[pi] > 0) {
       for (int ui = 0; ui < (int)cache.units.size(); ++ui) {
         const CacheUnit& unit = cache.units[ui];
         if (unit.partIdx != pi) continue;
@@ -972,7 +979,7 @@ static double partial_eval_dirty(
     const IntegerVector& parent, const IntegerVector& child,
     const NumericVector& absEdgeLen,
     double rateLoss, double rateNeo, double rateLogSd,
-    double betaScale,
+    double betaScale, const KprimeHyper& hyper, JointAscCache* joint,
     const std::vector<int>& dirtyNodes) {
 
   // 1. Save CLs at dirty nodes for rollback
@@ -984,7 +991,7 @@ static double partial_eval_dirty(
   // 3. Compute total log-likelihood from (partially updated) cache
   return cache_total_loglik(cache, data, parent, child, absEdgeLen,
                              data.nTip, rateLoss, rateLogSd, rateNeo,
-                             betaScale);
+                             betaScale, hyper, joint);
 }
 
 

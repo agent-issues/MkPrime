@@ -46,7 +46,9 @@
       tree, mkd, kPrime = chain$kPrime, rate_loss = chain$rate_loss,
       rate_log_sd = chain$rate_log_sd, nCat = model$nCat,
       coding = model$coding, rate_neo = chain$rate_neo %||% 1,
-      relabel = model$relabel
+      relabel = model$relabel, model = model, p = chain$p %||% 0.5,
+      kprimeAlpha = chain$kprime_alpha %||% 1,
+      kprimeBeta = chain$kprime_beta %||% 1
     )
   )
 }

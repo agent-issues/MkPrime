@@ -15,6 +15,7 @@
 // For nCand=100, depth=6, nEdge=105: 20× reduction.
 
 #include "mcmc_state.h"
+#include <algorithm>
 #include <cstring>
 #include <array>
 #include <cmath>
@@ -94,6 +95,9 @@ struct CLGroup {
   int kStates, nChar, nCat, maxNode;
   int stride;       // nChar * kStates
   bool isMkN;       // true → asymmetric binary model (uses rateLoss)
+  // Whether the group carries its own ascertainment term; a transformational
+  // group's is its partition's joint term (joint_asc.h).
+  bool ownAsc = false;
   double rateLoss;  // only for isMkN
   double rateScale; // partition-rate scale (audit Issue 1):
                     //   neoScale = r/(1+r) * (n_neo+n_trans)/n_neo  for neo
@@ -1064,7 +1068,8 @@ static void gibbs_compute_het_bins(double alpha, int k, int nBins,
     if (denom < 1e-300) {
       bins[i] = 0.5 * (lo + hi);
     } else {
-      bins[i] = (a / (a + b)) * (p_hi - p_lo) / denom;
+      // A mean can round above 1, whose rate would overflow.
+      bins[i] = std::min(1.0, (a / (a + b)) * (p_hi - p_lo) / denom);
     }
   }
 }

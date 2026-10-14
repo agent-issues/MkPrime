@@ -313,6 +313,13 @@ struct McmcState {
   }
 };
 
+// The k' prior's hyperparameters, which the joint ascertainment term of a
+// transformational partition integrates over (joint_asc.h).
+static inline KprimeHyper state_hyper(const McmcState& state) {
+  // Return:
+  return KprimeHyper{state.p, state.kprimeAlpha, state.kprimeBeta};
+}
+
 // MH accept/reject. A finite proposal from a -Inf current state (bad start
 // tree, k' < kObs seed, ...) must be accepted or the chain can never leave it
 // (#145, F7-08). This is decided from the components, because logAlpha is
@@ -408,20 +415,19 @@ static double cpp_log_prior(
       }
       // No p / Beta term
     } else if (data.kPriorBetaGeometric) {
-      // Per-character Beta-Geometric: P(u | α, β) = B(α+1, β+u) / B(α, β)
-      // on u in [0, K - kObs_i], renormalised by
-      //   Z_i = 1 - P(u >= n_i) = 1 - B(α, β + n_i) / B(α, β),
-      // n_i = K - kObs_i + 1. Z_i depends on (α, β), so it is NOT absorbed by
-      // the hyperparameter moves.
+      // Beta-Geometric on u = k' - 2: P(u | α, β) = B(α+1, β+u) / B(α, β)
+      // on u in [0, K - 2], renormalised by
+      //   Z = 1 - P(u >= K - 1) = 1 - B(α, β + K - 1) / B(α, β),
+      // shared by every character. Z depends on (α, β), so it is NOT absorbed
+      // by the hyperparameter moves.
       double a = kprimeAlpha;
       double b = kprimeBeta;
       double lbAB = R::lbeta(a, b);
+      const double logZ = mkp::log1m_exp(
+        R::lbeta(a, b + static_cast<double>(data.kprimeTruncK - 1)) - lbAB);
       for (int i = 0; i < nTrans; ++i) {
-        int gi = data.transIdxGlobal[i];
-        int u = kPrime[gi] - data.kObs[gi];
-        int n = data.kprimeTruncK - data.kObs[gi] + 1;
-        lp += R::lbeta(a + 1.0, b + static_cast<double>(u)) - lbAB
-            - mkp::log1m_exp(R::lbeta(a, b + static_cast<double>(n)) - lbAB);
+        int u = kPrime[data.transIdxGlobal[i]] - 2;
+        lp += R::lbeta(a + 1.0, b + static_cast<double>(u)) - lbAB - logZ;
       }
       // Hyperprior: Exp(1) on α and β
       lp += R::dexp(a, 1.0, 1);
@@ -468,14 +474,12 @@ static double cpp_log_prior(
         for (double t : terms) sumExp += std::exp(t - mx);
         return mx + std::log(sumExp);
       };
-      // Truncation normalisers over the capped support (#392): logZ[m] is
-      // log sum_{k=m}^{K} P(k | p), built from the recurrence
+      // Truncation normaliser over the capped support (#392): logZ[2] is
+      // log sum_{k=2}^{K} P(k | p), built from the recurrence
       //   P(k | p) = p P_emp(k) + (1 - p) P(k - 1 | p)
       // and summed downwards as positive terms, so no 1 - (...) cancels (#259).
-      // Model A (unconditional) puts the prior on [2, K] and divides by
-      // logZ[2]; the likelihood enforces the k' >= kObs floor. Model B
-      // (EG-001) puts it on [kObs_i, K] and divides by logZ[kObs_i]. Both
-      // depend on p, so neither is absorbed by p-varying MH.
+      // The likelihood enforces the k' >= kObs floor. logZ[2] depends on p,
+      // so it is not absorbed by p-varying MH.
       const int K = data.kprimeTruncK;
       std::vector<double> logZ(K + 2, R_NegInf);
       {
@@ -497,16 +501,13 @@ static double cpp_log_prior(
             : R_NegInf;
         }
       }
+      if (!std::isfinite(logZ[2])) return R_NegInf;
       for (int i = 0; i < nTrans; ++i) {
-        int gi = data.transIdxGlobal[i];
-        int m = kPrime[gi];
+        int m = kPrime[data.transIdxGlobal[i]];
         if (m < 2) return R_NegInf;
         double numer = logPconv(m);             // untruncated convolution log-pmf
         if (!std::isfinite(numer)) return R_NegInf;
-        const double logZi = data.unconditionalPrior ? logZ[2]
-                                                     : logZ[data.kObs[gi]];
-        if (!std::isfinite(logZi)) return R_NegInf;
-        lp += numer - logZi;
+        lp += numer - logZ[2];
       }
       // p: Beta hyperprior (same as plain geometric)
       lp += R::dbeta(p, data.kprimeHyperA, data.kprimeHyperB, 1);
@@ -518,8 +519,8 @@ static double cpp_log_prior(
       // term + that character's LL) over k'_i in [kObs_i, K] reproduces the
       // marginal-k per-character value, so likelihoodMode "sampled_k" and
       // "marginal_k" target the SAME posterior (Rao-Blackwell consistency).
-      // The two Model A/B branches and the log1m_exp forms below mirror the
-      // marginal evaluator so the deterministic logSumExp bit-check matches.
+      // The log1m_exp form below mirrors the marginal evaluator so the
+      // deterministic logSumExp bit-check matches.
       //
       // Under marginal-k mode the per-character P(k'_i | p) mass (incl. the
       // truncation normaliser) is consumed by cpp_log_likelihood_marginal, so
@@ -528,23 +529,12 @@ static double cpp_log_prior(
         const int    K      = data.kprimeTruncK;
         const double logP   = std::log(p);
         const double log1mP = std::log1p(-p);
-        if (data.unconditionalPrior) {
-          // Model A: P(k'_i = k | p) propto p (1-p)^(k-2), k in [2, K].
-          // logZA = log(1 - (1-p)^(K-1)) is shared across all characters.
-          const double logZA = mkp::log1m_exp((K - 1) * log1mP);
-          for (int i = 0; i < nTrans; ++i) {
-            int gi = data.transIdxGlobal[i];
-            lp += logP + (kPrime[gi] - 2) * log1mP - logZA;
-          }
-        } else {
-          // Model B: P(k'_i = kObs_i + u | p) propto p (1-p)^u,
-          // u in [0, K - kObs_i]; logZB_i = log(1 - (1-p)^(K - kObs_i + 1)).
-          for (int i = 0; i < nTrans; ++i) {
-            int gi = data.transIdxGlobal[i];
-            int u  = kPrime[gi] - data.kObs[gi];
-            lp += logP + u * log1mP
-                - mkp::log1m_exp((K - data.kObs[gi] + 1) * log1mP);
-          }
+        // P(k'_i = k | p) propto p (1-p)^(k-2), k in [2, K];
+        // logZA = log(1 - (1-p)^(K-1)) is shared across all characters.
+        const double logZA = mkp::log1m_exp((K - 1) * log1mP);
+        for (int i = 0; i < nTrans; ++i) {
+          int gi = data.transIdxGlobal[i];
+          lp += logP + (kPrime[gi] - 2) * log1mP - logZA;
         }
       }
       lp += R::dbeta(p, data.kprimeHyperA, data.kprimeHyperB, 1);
@@ -847,8 +837,96 @@ static double partition_loglik(
       el[e] = edgeLen[e] * pe.classRate;
   }
   return cpp_partition_log_likelihood(
-    data, partIdx, parent, child, el, state.kPrime,
+    data, partIdx, parent, child, el, state.kPrime, state_hyper(state),
     state.rateLoss, pe.rateLogSd, pe.rateNeo, state.betaScale, ws);
+}
+
+// Whether a change to the k' prior's hyperparameters changes the likelihood,
+// through the joint ascertainment term of a transformational partition.
+static inline bool joint_asc_on(const McmcData& data) {
+  return data.codingType != 0 && data.transIdxGlobal.size() > 0;
+}
+
+// The joint ascertainment term of transformational partition partIdx
+// (joint_asc.h) at the tree (parent, child, edgeLen) under the state's rates
+// and hyperparameters `hyper`.
+static double partition_joint_asc(const McmcData& data, McmcState& state,
+                                  int partIdx, const IntegerVector& parent,
+                                  const IntegerVector& child,
+                                  const NumericVector& edgeLen,
+                                  const KprimeHyper& hyper) {
+  const PartEvalParams pe = part_eval_params(
+    data, state, partIdx, state_class_rate_norm(data, state));
+  NumericVector el = edgeLen;
+  if (pe.classRate != 1.0) {
+    el = NumericVector(edgeLen.size());
+    for (int e = 0; e < edgeLen.size(); ++e)
+      el[e] = edgeLen[e] * pe.classRate;
+  }
+  // Return:
+  return trans_joint_asc(data, partIdx, parent, child, el, pe.rateLogSd,
+                         pe.rateNeo, state.betaScale, hyper,
+                         &state.clWs.joint);
+}
+
+// The same at the state's own tree.
+static double state_joint_asc(const McmcData& data, McmcState& state,
+                              int partIdx, const KprimeHyper& hyper) {
+  const int nEdge = state.relBrLengths.size();
+  NumericVector edgeLen(nEdge);
+  for (int i = 0; i < nEdge; ++i)
+    edgeLen[i] = state.treeLength * state.relBrLengths[i];
+  // Return:
+  return partition_joint_asc(data, state, partIdx, state.parent, state.child,
+                             edgeLen, hyper);
+}
+
+// The joint ascertainment terms of all transformational partitions, summed,
+// at the tree (parent, child, edgeLen) under the state's parameters.
+static double joint_asc_at(const McmcData& data, McmcState& state,
+                           const IntegerVector& parent,
+                           const IntegerVector& child,
+                           const NumericVector& edgeLen) {
+  if (!joint_asc_on(data)) return 0.0;
+  double J = 0.0;
+  for (int pi = 0; pi < (int)data.parts.size(); ++pi) {
+    if (data.parts[pi].type != 1) continue;
+    J += partition_joint_asc(data, state, pi, parent, child, edgeLen,
+                             state_hyper(state));
+  }
+  // Return:
+  return J;
+}
+
+// The change in each transformational partition's log-likelihood, and in
+// their sum, when the state's k' hyperparameters move from `from` to `to`.
+static double joint_asc_shift(const McmcData& data, McmcState& state,
+                              const KprimeHyper& from, const KprimeHyper& to,
+                              std::vector<double>* partShift = nullptr) {
+  if (partShift) partShift->assign(data.parts.size(), 0.0);
+  if (!joint_asc_on(data)) return 0.0;
+  double total = 0.0;
+  for (int pi = 0; pi < (int)data.parts.size(); ++pi) {
+    if (data.parts[pi].type != 1) continue;
+    const double d = state_joint_asc(data, state, pi, from) -
+      state_joint_asc(data, state, pi, to);
+    if (partShift) (*partShift)[pi] = d;
+    total += d;
+  }
+  // A partition whose term is infinite at both is -Inf throughout.
+  // Return:
+  return std::isnan(total) ? R_NegInf : total;
+}
+
+// joint_asc_at for tests: tree-move weights that omit the joint term differ
+// from the log-likelihood by exactly this.
+// [[Rcpp::export]]
+double joint_asc_at_cpp(SEXP dataPtr, SEXP statePtr, IntegerVector parent,
+                        IntegerVector child, NumericVector edgeLen) {
+  const McmcData* data = Rcpp::XPtr<McmcData>(dataPtr).get();
+  McmcState* state = Rcpp::XPtr<McmcState>(statePtr).get();
+  // Return:
+  return joint_asc_at(*data, *state, parent, child, edgeLen);
 }
 
 // [[Rcpp::export]]
@@ -1397,15 +1475,15 @@ static double compute_full_loglik_at(
   if (state.usePartitioned) {
     return cpp_log_likelihood_partitioned(
       data, parent, child, edgeLen,
-      state.kPrime, state.rateLoss,
+      state.kPrime, state_hyper(state), state.rateLoss,
       state.classRateLogSd, state.classRate,
       state.rateNeo, state.etaNeo, state.betaScale,
       state.clWs.ready() ? &state.clWs : nullptr);
   }
   return cpp_log_likelihood(
     data, parent, child, edgeLen,
-    state.kPrime, state.rateLoss, state.rateLogSd, state.rateNeo,
-    state.betaScale,
+    state.kPrime, state_hyper(state), state.rateLoss, state.rateLogSd,
+    state.rateNeo, state.betaScale,
     state.clWs.ready() ? &state.clWs : nullptr);
 }
 
@@ -1546,6 +1624,7 @@ static void build_cl_groups(const McmcData* data, const McmcState* state,
                    MaskTally masks) {
       CLGroup g;
       g.isMkN     = isMkN;
+      g.ownAsc    = data->codingType != 0 && part.type != 1;
       g.rateLoss  = isMkN ? state->rateLoss : 1.0;
       g.rateScale = rateScale;
       g.tipData   = tips;
@@ -1837,6 +1916,7 @@ static void gibbs_spr_eval_partial(McmcData* data, McmcState* state,
     pseudoGroups.resize(groups.size());
     pseudoResiduals.resize(groups.size());
     for (size_t gi = 0; gi < groups.size(); ++gi) {
+      if (!groups[gi].ownAsc) continue;
       pseudoGroups[gi] = create_const_pseudo_group(
         groups[gi], nTip, topo.maxNode, groups[gi].nCat,
         data->missingMasks);
@@ -1873,8 +1953,10 @@ static void gibbs_spr_eval_partial(McmcData* data, McmcState* state,
       // (informative) additionally requires a singleton-site term that
       // this partial-CL path does not yet evaluate. The caller short-
       // circuits to gibbs_spr_impl_full when codingType == 2 (LIKE-001
-      // interim), so we only reach this branch under coding == 1.
-      if (coding != 0 && groups[gi].nChar > 0) {
+      // interim), so we only reach this branch under coding == 1. The
+      // weights omit the joint term of a transformational partition: the
+      // finisher scores the proposal exactly, so they need not be exact.
+      if (groups[gi].ownAsc && groups[gi].nChar > 0) {
         if (groups[gi].masks.complete()) {
           double constP = evaluate_const_prob(
             pseudoGroups[gi], topo, pseudoResiduals[gi], groupRates[gi],
@@ -2019,7 +2101,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
   if (coding != 0) {
     pseudoGroups.resize(groups.size());
     for (size_t gi = 0; gi < groups.size(); ++gi)
-      pseudoGroups[gi] = create_const_pseudo_group(
+      if (groups[gi].ownAsc) pseudoGroups[gi] = create_const_pseudo_group(
         groups[gi], nTip, maxNode, groups[gi].nCat,
         data->missingMasks);
   }
@@ -2034,7 +2116,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
   std::vector<std::vector<double>> constProbAccums(groups.size());
   for (size_t gi = 0; gi < groups.size(); ++gi) {
     siteLikAccums[gi].assign((size_t)nEval * groups[gi].nChar, 0.0);
-    if (coding != 0)
+    if (groups[gi].ownAsc)
       constProbAccums[gi].assign(
         (size_t)nEval * pseudoGroups[gi].nChar, 0.0);
   }
@@ -2065,7 +2147,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
                             plan.u, plan.sibNode, plan.lMerge);
 
         // Same for pseudo-group (ascertainment)
-        if (coding != 0) {
+        if (grp.ownAsc) {
           set_f81_component(pseudoGroups[gi], hetBins[bi], rot, baseRL);
           caching_downpass(pseudoGroups[gi], topo, state->parent,
                            state->child, rates);
@@ -2088,7 +2170,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
             plan.lPrune,
             siteLikAccums[gi].data() + (size_t)ci * grp.nChar, merged);
 
-          if (coding != 0) {
+          if (grp.ownAsc) {
             evaluate_const_prob(
               pseudoGroups[gi], topo, pseudoRes, rates,
               plan.v, plan.u, plan.sibNode, plan.lMerge, a, b, lHalf,
@@ -2115,7 +2197,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
         siteLikAccums[gi].data() + (size_t)ci * nChar_gi,
         nChar_gi, totalComp);
 
-      if (coding != 0 && nChar_gi > 0) {
+      if (grp.ownAsc && nChar_gi > 0) {
         int nPseudo = pseudoGroups[gi].nChar;
         const double* cpa =
           constProbAccums[gi].data() + (size_t)ci * nPseudo;
@@ -2328,6 +2410,7 @@ static bool swap_neighbourhood_partial(McmcData* data, McmcState* state,
   if (coding != 0) {
     pseudoGroups.resize(groups.size());
     for (size_t gi = 0; gi < groups.size(); ++gi) {
+      if (!groups[gi].ownAsc) continue;
       pseudoGroups[gi] = create_const_pseudo_group(
         groups[gi], nTip, maxNode, groups[gi].nCat,
         data->missingMasks);
@@ -2359,7 +2442,7 @@ static bool swap_neighbourhood_partial(McmcData* data, McmcState* state,
         pA, slotA, lenA, pathA, pathAIdx);
 
       // Ascertainment correction
-      if (coding != 0 && groups[gi].nChar > 0) {
+      if (groups[gi].ownAsc && groups[gi].nChar > 0) {
         if (groups[gi].masks.complete()) {
           double constP = evaluate_swap_const_prob(
             pseudoGroups[gi], topo, groupRates[gi], nodeA, partners[pi],
@@ -2432,6 +2515,11 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
                     : (data->qHeterogeneity ? SwapEval::Het
                                             : SwapEval::Partial);
 
+  // Neighbourhood weights from the partial evaluators omit the joint
+  // ascertainment terms (joint_asc.h), which would cost a full pass per
+  // neighbour; the acceptance ratio below corrects for them.
+  const bool joint = joint_asc_on(*data) && ev != SwapEval::Full;
+
   const int nEdge = state->parent.size();
   const int nTip  = data->nTip;
 
@@ -2453,7 +2541,9 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
   const int nPart = (int)partners.size();
 
   // 3. Sampling weights: exp(beta * logLik), current state included
-  const double llOrig = state->logLik;
+  const double jointOrig = joint
+    ? joint_asc_at(*data, *state, state->parent, state->child, absLen) : 0.0;
+  const double llOrig = state->logLik + jointOrig;
   double maxLL = llOrig;
   for (int pi = 0; pi < nPart; ++pi)
     if (R_FINITE(candLL[pi])) maxLL = std::max(maxLL, candLL[pi]);
@@ -2500,15 +2590,22 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
                           ordPar, ordCh, ordAbs))
     return false;
 
-  // 6. Accept with min(1, Z_x / Z_y)
+  // 6. Accept with min(1, Z_x / Z_y), times exp(-beta * (J_y - J_x)) when
+  //    the weights omit the joint terms J.
   std::vector<int> revPartners;
   std::vector<double> revLL;
   if (!swap_neighbourhood(data, state, ev, ordPar, ordCh, ordAbs,
                           nodeA, revPartners, revLL))
     return false;
 
-  const double logAlpha = swap_neighbourhood_logz(llOrig, beta, candLL)
-                        - swap_neighbourhood_logz(candLL[chosen], beta, revLL);
+  double logAlpha = swap_neighbourhood_logz(llOrig, beta, candLL)
+                  - swap_neighbourhood_logz(candLL[chosen], beta, revLL);
+  double newLogLik = candLL[chosen];
+  if (joint) {
+    const double jointNew = joint_asc_at(*data, *state, ordPar, ordCh, ordAbs);
+    newLogLik -= jointNew;
+    logAlpha -= beta * (jointNew - jointOrig);
+  }
   if (!(R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha))
     return false;
 
@@ -2529,7 +2626,7 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
     state->relBrLengths[k] = ordAbsFinal[k] / state->treeLength;
   }
 
-  state->logLik = candLL[chosen];
+  state->logLik = newLogLik;
   state->partLogLik.clear();
   state->nodeCL.invalidate_all();  // M-143/M-161: topology/branches changed
   return true;
@@ -2565,7 +2662,7 @@ static bool swap_neighbourhood_het(McmcData* data, McmcState* state,
   if (coding != 0) {
     pseudoGroups.resize(groups.size());
     for (size_t gi = 0; gi < groups.size(); ++gi)
-      pseudoGroups[gi] = create_const_pseudo_group(
+      if (groups[gi].ownAsc) pseudoGroups[gi] = create_const_pseudo_group(
         groups[gi], nTip, maxNode, groups[gi].nCat,
         data->missingMasks);
   }
@@ -2589,7 +2686,7 @@ static bool swap_neighbourhood_het(McmcData* data, McmcState* state,
   std::vector<std::vector<double>> constProbAccums(groups.size());
   for (size_t gi = 0; gi < groups.size(); ++gi) {
     siteLikAccums[gi].assign((size_t)nPart * groups[gi].nChar, 0.0);
-    if (coding != 0)
+    if (groups[gi].ownAsc)
       constProbAccums[gi].assign(
         (size_t)nPart * pseudoGroups[gi].nChar, 0.0);
   }
@@ -2610,7 +2707,7 @@ static bool swap_neighbourhood_het(McmcData* data, McmcState* state,
         set_f81_component(grp, hetBins[bi], rot, baseRL);
         caching_downpass(grp, topo, parent, child, rates);
 
-        if (coding != 0) {
+        if (grp.ownAsc) {
           set_f81_component(pseudoGroups[gi], hetBins[bi], rot, baseRL);
           caching_downpass(pseudoGroups[gi], topo, parent, child, rates);
         }
@@ -2621,7 +2718,7 @@ static bool swap_neighbourhood_het(McmcData* data, McmcState* state,
             pA, slotA, lenA, pathA, pathAIdx, false,
             siteLikAccums[gi].data() + (size_t)pi2 * grp.nChar);
 
-          if (coding != 0) {
+          if (grp.ownAsc) {
             evaluate_swap_impl(
               pseudoGroups[gi], topo, rates, nodeA, partners[pi2],
               pA, slotA, lenA, pathA, pathAIdx, true,
@@ -2648,7 +2745,7 @@ static bool swap_neighbourhood_het(McmcData* data, McmcState* state,
         siteLikAccums[gi].data() + (size_t)pi2 * nChar_gi,
         nChar_gi, totalComp);
 
-      if (coding != 0 && nChar_gi > 0) {
+      if (grp.ownAsc && nChar_gi > 0) {
         int nPseudo = pseudoGroups[gi].nChar;
         const double* cpa =
           constProbAccums[gi].data() + (size_t)pi2 * nPseudo;
@@ -3692,13 +3789,13 @@ static double eval_slice_target(McmcData* data, McmcState* state,
     logLik = state->usePartitioned
       ? cpp_log_likelihood_partitioned(
           *data, state->parent, state->child, edgeLen,
-          state->kPrime, state->rateLoss,
+          state->kPrime, state_hyper(*state), state->rateLoss,
           state->classRateLogSd, state->classRate,
           state->rateNeo, state->etaNeo, state->betaScale, wsPtr)
       : cpp_log_likelihood(
           *data, state->parent, state->child, edgeLen,
-          state->kPrime, state->rateLoss, state->rateLogSd,
-          state->rateNeo, state->betaScale, wsPtr);
+          state->kPrime, state_hyper(*state), state->rateLoss,
+          state->rateLogSd, state->rateNeo, state->betaScale, wsPtr);
   }
   if (!R_FINITE(logLik)) return R_NegInf;
   return beta * logLik + logPrior;
@@ -3797,13 +3894,13 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
         state->logLik = state->usePartitioned
           ? cpp_log_likelihood_partitioned(
               *data, state->parent, state->child, edgeLen,
-              state->kPrime, state->rateLoss,
+              state->kPrime, state_hyper(*state), state->rateLoss,
               state->classRateLogSd, state->classRate,
               state->rateNeo, state->etaNeo, state->betaScale, wsPtr)
           : cpp_log_likelihood(
               *data, state->parent, state->child, edgeLen,
-              state->kPrime, state->rateLoss, state->rateLogSd,
-              state->rateNeo, state->betaScale, wsPtr);
+              state->kPrime, state_hyper(*state), state->rateLoss,
+              state->rateLogSd, state->rateNeo, state->betaScale, wsPtr);
         // Invalidate partition cache (full recompute was done)
         state->partLogLik.clear();
       }
@@ -3842,7 +3939,7 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
 }
 
 // ---------------------------------------------------------------------------
-// Prior-only slice sampler for Beta-Geometric hyperparameters
+// Slice sampler for Beta-Geometric hyperparameters
 // — reparameterised in (s, r) coordinates.
 //
 // s = log(α + β)            (size / concentration; unconstrained)
@@ -3872,11 +3969,15 @@ static inline double bg_sigma_stable(double r) {
 
 static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
                                      int paramCode, double width,
-                                     int maxSteps = 20,
+                                     double beta, int maxSteps = 20,
                                      int* nExpansionsOut = nullptr) {
   double alpha0 = state->kprimeAlpha;
   double beta0  = state->kprimeBeta;
   if (alpha0 <= 0.0 || beta0 <= 0.0) return false;
+  const KprimeHyper hyper0 = state_hyper(*state);
+  // (alpha, beta) also enter the likelihood through the joint ascertainment
+  // term (joint_asc.h), whose change the target carries at heat `beta`.
+  const bool joint = joint_asc_on(*data) && data->kPriorBetaGeometric;
 
   // Current (s, r) and the held-fixed coordinate
   double s0 = std::log(alpha0 + beta0);
@@ -3903,7 +4004,8 @@ static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
     return R_FINITE(aOut) && R_FINITE(bOut) && aOut > 0.0 && bOut > 0.0;
   };
 
-  // Target at current point: logPrior(α0, β0) + log|J| = logPrior + log α + log β
+  // Target at current point: logPrior(α0, β0) + log|J| = logPrior + log α + log β,
+  // relative to which a candidate's likelihood enters as its shift.
   double logY0 = state->logPrior + std::log(alpha0) + std::log(beta0);
   double logZ = logY0 + std::log(R::unif_rand());
 
@@ -3918,6 +4020,12 @@ static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
     state->kprimeAlpha = oldA;
     state->kprimeBeta  = oldB;
     if (!R_FINITE(lp)) return R_NegInf;
+    if (joint) {
+      const double shift = joint_asc_shift(
+        *data, *state, hyper0, KprimeHyper{state->p, aCand, bCand});
+      if (!R_FINITE(shift)) return R_NegInf;
+      lp += beta * shift;
+    }
     return lp + std::log(aCand) + std::log(bCand);
   };
 
@@ -3948,6 +4056,15 @@ static bool slice_kprime_hyper_impl(McmcData* data, McmcState* state,
     if (logTarget1 >= logZ) {
       double a1, b1;
       if (!srToAlphaBeta(v1, a1, b1)) return false;
+      if (joint) {
+        std::vector<double> shift;
+        state->logLik += joint_asc_shift(
+          *data, *state, hyper0, KprimeHyper{state->p, a1, b1}, &shift);
+        if (state->partLogLik.size() == shift.size()) {
+          for (size_t pi = 0; pi < shift.size(); ++pi)
+            state->partLogLik[pi] += shift[pi];
+        }
+      }
       state->kprimeAlpha = a1;
       state->kprimeBeta  = b1;
       state->logPrior = compute_log_prior(*data, *state);
@@ -4188,11 +4305,10 @@ void compute_per_kprime_log_lik(
   // partition-rate normalisation (issue #25; pruning at raw lengths made
   // marginal_k and the case-25 sweep target the unscaled conditional). Under
   // the partition API each user class has its own slot (part_eval_params).
-  // Each slot caches the constant-site probability by kStates.
+  // A character's weights carry no ascertainment term: under the joint form
+  // (joint_asc.h) that term is shared by every k'.
   struct EvalSlot {
     NumericVector edgeLen, rates;
-    std::vector<double> csp;
-    std::map<std::pair<int, int>, double> cspMasked;  // by (kStates, mask)
   };
   std::vector<EvalSlot> slots(state->usePartitioned ? data->nClasses : 1);
   std::vector<bool> slotReady(slots.size(), false);
@@ -4228,44 +4344,6 @@ void compute_per_kprime_log_lik(
     return si;
   };
 
-  // Masks among transformational characters, filled for all of them in one
-  // batched traversal per (slot, kStates).
-  std::vector<int> transMaskIds;
-  {
-    std::vector<bool> seen(data->missingMasks.size(), false);
-    for (int ti = 0; ti < nTrans; ++ti) {
-      const int m = data->charMask[data->transIdxGlobal[ti]];
-      if (m != 0 && !seen[m]) {
-        seen[m] = true;
-        transMaskIds.push_back(m);
-      }
-    }
-  }
-
-  auto getCSP = [&](int si, int kStates, int mask) -> double {
-    if (data->codingType == 0) return 0.0;
-    if (mask != 0) {
-      auto& cache = slots[si].cspMasked;
-      auto found = cache.find({kStates, mask});
-      if (found != cache.end()) return found->second;
-      const std::vector<double> p = asc_probs_masked(
-        *data, parent, child, slots[si].edgeLen, 1, kStates, 1.0,
-        state->betaScale, slots[si].rates, transMaskIds);
-      for (size_t i = 0; i < transMaskIds.size(); ++i) {
-        cache[{kStates, transMaskIds[i]}] = p[i];
-      }
-      return cache.at({kStates, mask});
-    }
-    std::vector<double>& cspCache = slots[si].csp;
-    if (kStates >= (int)cspCache.size()) cspCache.resize(kStates + 20, -1.0);
-    if (cspCache[kStates] < 0.0) {
-      cspCache[kStates] = const_site_prob_for_k(
-        *data, parent, child, slots[si].edgeLen,
-        kStates, state->betaScale, slots[si].rates);
-    }
-    return cspCache[kStates];
-  };
-
   // Prior components (fixed during sweep)
   bool isBetaGeometric = data->kPriorBetaGeometric;
   bool isEmpGeom       = data->kPriorEmpiricalGeometric;
@@ -4288,22 +4366,6 @@ void compute_per_kprime_log_lik(
   // character per candidate k'), batch all characters sharing the same
   // candidate k into a single partition-level pruning call.
   // ---------------------------------------------------------------
-
-  // Beta-Geometric: precompute incremental log-prior for ko = 0..kMaxKprimeCand-1
-  // logPrior(u=0) = log(α) - log(α+β)
-  // logPrior(u=k) = logPrior(u=k-1) + log(β+k-1) - log(α+β+k)
-  std::vector<double> bgLogPrior;
-  if (isBetaGeometric) {
-    double a = state->kprimeAlpha;
-    double b = state->kprimeBeta;
-    bgLogPrior.resize(kMaxKprimeCand);
-    bgLogPrior[0] = std::log(a) - std::log(a + b);
-    for (int ko = 1; ko < kMaxKprimeCand; ++ko) {
-      bgLogPrior[ko] = bgLogPrior[ko - 1]
-                      + std::log(b + ko - 1)
-                      - std::log(a + b + ko);
-    }
-  }
 
   // Empirical-geometric: declared here, populated after transParts is built.
   std::vector<double> egLogPriorByK;
@@ -4353,6 +4415,27 @@ void compute_per_kprime_log_lik(
   if (!state->gibbsWs.fits(maxNode, gibbsMaxStride))
     state->gibbsWs.allocate(maxNode, gibbsMaxStride);
 
+  // Beta-Geometric: log P(u | α, β) on u = k' - 2, up to the shared
+  // normaliser, over every partition's candidates:
+  //   logPrior(u=0) = log(α) - log(α+β)
+  //   logPrior(u=j) = logPrior(u=j-1) + log(β+j-1) - log(α+β+j)
+  std::vector<double> bgLogPrior;
+  if (isBetaGeometric) {
+    int nU = 0;
+    for (auto& tp_ : transParts) {
+      nU = std::max(nU, tp_.kObs - 2 + kMaxKprimeCand);
+    }
+    double a = state->kprimeAlpha;
+    double b = state->kprimeBeta;
+    bgLogPrior.resize(nU);
+    if (nU > 0) bgLogPrior[0] = std::log(a) - std::log(a + b);
+    for (int j = 1; j < nU; ++j) {
+      bgLogPrior[j] = bgLogPrior[j - 1]
+                      + std::log(b + j - 1)
+                      - std::log(a + b + j);
+    }
+  }
+
   // Empirical-geometric: precompute log P(k' = m) for all m in the candidate
   // range across all partitions.  The convolution depends only on k', not on
   // kObs, so tabulate once and look up by k'.
@@ -4399,7 +4482,6 @@ void compute_per_kprime_log_lik(
 
   bool useHet = data->qHeterogeneity;
   int nBC = data->nBetaCat;
-  int coding = data->codingType;
   double hetBins[16];
   int nTip = data->nTip;
 
@@ -4464,10 +4546,6 @@ void compute_per_kprime_log_lik(
       const int si = slotFor(tp.partIdx);
       const NumericVector& partEdgeLen = slots[si].edgeLen;
       const NumericVector& partRates   = slots[si].rates;
-      double csp = getCSP(si, k, 0);
-      double logAscCorr = (coding != 0 && csp < 1.0)
-        ? -std::log(1.0 - csp) : 0.0;
-      if (coding != 0 && csp >= 1.0) logAscCorr = R_NegInf;
 
       const PartInfo& part = data->parts[tp.partIdx];
 
@@ -4492,7 +4570,7 @@ void compute_per_kprime_log_lik(
           int ti0 = pa.patTrans[localPat][0];
           double logPrior_k;
           if (isBetaGeometric) {
-            logPrior_k = bgLogPrior[ko];
+            logPrior_k = bgLogPrior[tp.kObs - 2 + ko];
           } else if (isGeometric) {
             logPrior_k = logP + ko * log1mP;
           } else if (isEmpGeom) {
@@ -4586,13 +4664,12 @@ void compute_per_kprime_log_lik(
       }
 
       // M-172: scatter siteLL[ai] to all characters sharing the active pattern.
-      // The ascertainment correction depends only on (k, mask) and relabelling
-      // on (k, kObs) — same for all characters sharing a pattern — so
-      // corrected LL is identical across the group and termination can be
-      // decided from one representative.
+      // Relabelling depends only on (k, kObs) — the same for all characters
+      // sharing a pattern — so the LL is identical across the group and
+      // termination can be decided from one representative.
       double logPrior_k;
       if (isBetaGeometric) {
-        logPrior_k = bgLogPrior[ko];
+        logPrior_k = bgLogPrior[k - 2];
       } else if (isGeometric) {
         logPrior_k = logP + ko * log1mP;
       } else if (isEmpGeom) {
@@ -4607,17 +4684,6 @@ void compute_per_kprime_log_lik(
       for (int ai = 0; ai < nAct; ++ai) {
         int localPat = pa.activePatterns[ai];
         double ll = siteLL[ai];
-        const int mask = data->charMask[
-          data->transIdxGlobal[pa.patTrans[localPat][0]]];
-        double patAscCorr = logAscCorr;
-        if (coding != 0 && mask != 0) {
-          const double cspMask = getCSP(si, k, mask);
-          patAscCorr = cspMask < 1.0 ? -std::log(1.0 - cspMask) : R_NegInf;
-        }
-        if (R_FINITE(ll) && R_FINITE(patAscCorr))
-          ll += patAscCorr;
-        else if (!R_FINITE(patAscCorr))
-          ll = R_NegInf;
         if (data->relabel && R_FINITE(ll))
           ll += mk_prime_relabel_log(k, tp.kObs);
 
@@ -4761,7 +4827,7 @@ double cpp_log_likelihood_marginal(
     if (data.parts[pi].type == 0) {
       totalLL += cpp_partition_log_likelihood(
         data, pi, parent, child, edgeLen,
-        state.kPrime, rateLoss, rateLogSd, rateNeo,
+        state.kPrime, state_hyper(state), rateLoss, rateLogSd, rateNeo,
         state.betaScale, ws);
     }
   }
@@ -4779,29 +4845,39 @@ double cpp_log_likelihood_marginal(
     logPriorByU[ko] = logP + ko * log1mP;
   }
 
-  // Model A (unconditional) vs Model B (conditional) differ only by a
-  // per-character constant factor (1-p)^(kObs_i - 2). Under Model B the
-  // marginal weight for state count k is p (1-p)^(k - kObs_i); under Model A
-  // it is p (1-p)^(k - 2). Since k = kObs_i + ko, the Model A weight equals
-  // the Model B weight times (1-p)^(kObs_i - 2), and that factor is constant
-  // across all candidates ko of a given character, so it factors straight out
-  // of the per-character logSumExp. We therefore keep logPriorByU (and the
-  // cached raw LL) as Model B and add (kObs_i - 2)·log(1-p) to each
-  // character's marginal contribution when unconditionalPrior is true.
+  // The marginal weight for state count k is p (1-p)^(k - 2). Since
+  // k = kObs_i + ko, it equals the weight p (1-p)^ko the sweep uses times
+  // (1-p)^(kObs_i - 2), a factor constant across a character's candidates
+  // that factors straight out of its logSumExp. So logPriorByU (and the
+  // cached raw LL) keep the sweep's form, and each character's marginal
+  // contribution gains (kObs_i - 2)·log(1-p).
   //
   // MARGINAL-K-TRUNC-001 (geometric truncation normaliser; proof
   // dev/red-team/proofs/marginal-k-truncation-normaliser.md). The geometric
   // prior is truncated at the declared cap K = data.kprimeTruncK (matching the
   // forward). The marginal is therefore BOTH (a) summed only over candidates
   // with k = kObs_i + c <= K, AND (b) renormalised by the truncated-tail mass
-  //   Model A: logZA      = log(1 - (1-p)^(K-1))            [shared]
-  //   Model B: logZB(kObs) = log(1 - (1-p)^(K - kObs_i + 1)) [per kObs]
+  //   logZA = log(1 - (1-p)^(K-1)),
   // subtracted once per character. Both are required: -logZ alone over-corrects
   // (biases p low at small p); the cap alone leaves the p-high bias. (Proof §5.3
   // as corrected 2026-05-30; R spec-check cap-z-spec-check.R.)
-  const bool uncond = data.unconditionalPrior;
   const int    K     = data.kprimeTruncK;
   const double logZA = mkp::log1m_exp((K - 1) * log1mP);
+
+  // Joint ascertainment (joint_asc.h): the per-character marginals carry
+  // none, so each partition gives up its shared term at the same p.
+  auto jointAsc = [&]() {
+    double J = 0.0;
+    if (data.codingType == 0) return J;
+    for (int pi = 0; pi < nParts; ++pi) {
+      if (data.parts[pi].type != 1) continue;
+      J += trans_joint_asc(data, pi, parent, child, edgeLen, rateLogSd,
+                           rateNeo, state.betaScale, state_hyper(state),
+                           ws ? &ws->joint : nullptr);
+    }
+    // Return:
+    return J;
+  };
 
   // Cache fast-path: if the charLL cache is valid, skip the helper call
   // and recompute the per-char logSumExp against the current p-weights, over
@@ -4831,15 +4907,10 @@ double cpp_log_likelihood_marginal(
         if (R_FINITE(wBuf[c])) s += std::exp(wBuf[c] - mx);
       // MARGINAL-K-TRUNC-001: nCand <= koMax applies the k<=K cap; only the
       // -logZ renormaliser is applied here.
-      double charLL = mx + std::log(s);
-      if (uncond) {
-        charLL += (kObs_ti - 2) * log1mP - logZA;                       // Model A
-      } else {
-        charLL -= mkp::log1m_exp((K - kObs_ti + 1) * log1mP);           // Model B
-      }
+      const double charLL = mx + std::log(s) + (kObs_ti - 2) * log1mP - logZA;
       if (R_FINITE(cachedLL)) cachedLL += charLL;
     }
-    if (useCache) return cachedLL;
+    if (useCache) return cachedLL - jointAsc();
   }
 
   {
@@ -4910,19 +4981,14 @@ double cpp_log_likelihood_marginal(
         double w = kw.charLogW[ti * kMaxKprimeCand + c];
         if (R_FINITE(w)) s += std::exp(w - mx);
       }
-      double charLL = mx + std::log(s);
-      if (uncond) {
-        charLL += (kObs_ti - 2) * log1mP - logZA;                       // Model A
-      } else {
-        charLL -= mkp::log1m_exp((K - kObs_ti + 1) * log1mP);           // Model B
-      }
+      const double charLL = mx + std::log(s) + (kObs_ti - 2) * log1mP - logZA;
       if (R_FINITE(totalLL)) totalLL += charLL;
     }
     // Scratch evals leave the cache cold (charLLCacheReady stays whatever the
     // entry invalidation set — false for every non-p move), so no rejected or
     // self-accepting multi-config move can poison a subsequent mh_logit_p.
     if (fillCharLLCache) state.charLLCacheReady = true;
-    return totalLL;
+    return totalLL - jointAsc();
   }
 }
 
@@ -5556,17 +5622,17 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       break;
     }
     case 9: { // gibbs_p — conjugate Beta draw, acceptance = 1
-      // Full conditional: p | k' ~ Beta(a + nTrans, b + sum(k'_i - kObs_i))
-      // p does not enter the likelihood, only the prior on k' and p itself.
+      // Full conditional, were p to enter only the prior on k' and p itself:
+      // p | k' ~ Beta(a + nTrans, b + sum(k'_i - 2)). The joint
+      // ascertainment term (joint_asc.h) also depends on p.
       // Empirical-geometric breaks conjugacy: p enters the prior via the
       // convolution, so the full conditional is no longer Beta.  Reject
       // any misrouted call rather than silently producing wrong samples.
       if (data->kPriorEmpiricalGeometric) return false;
       // MARGINAL-K-TRUNC-001: the plain geometric prior is now truncated at K,
-      // whose normaliser Z(p) = 1 - (1-p)^(K - kObs_i + 1) (Model B) or
-      // 1 - (1-p)^(K-1) (Model A) is p-dependent, so the p full-conditional is
-      // likewise non-Beta. p is sampled via case 30 (mh_logit_p) instead; reject
-      // any misrouted gibbs_p call. (logseries / beta_geometric carry no scalar
+      // whose normaliser Z(p) = 1 - (1-p)^(K-1) is p-dependent, so the p
+      // full-conditional is likewise non-Beta. p is sampled via case 30
+      // (mh_logit_p) instead; reject any misrouted gibbs_p call. (logseries / beta_geometric carry no scalar
       // p and never schedule gibbs_p, so the plain geometric is the only arm
       // that can reach here past the empirical guard above.)
       {
@@ -5580,7 +5646,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       double sumU = 0.0;
       for (int i = 0; i < nTrans; ++i) {
         int gi = data->transIdxGlobal[i];
-        sumU += static_cast<double>(state->kPrime[gi] - data->kObs[gi]);
+        sumU += static_cast<double>(state->kPrime[gi] - 2);
       }
       double shape1 = data->kprimeHyperA + nTrans;
       double shape2 = data->kprimeHyperB + sumU;
@@ -5682,7 +5748,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     case 19:
       return slice_scalar_impl(data, state, charIdx, scaleTuning, beta);
     case 29:
-      return slice_kprime_hyper_impl(data, state, charIdx, scaleTuning);
+      return slice_kprime_hyper_impl(data, state, charIdx, scaleTuning, beta);
 
     case 25: { // gibbs_kprime_sweep — Gibbs update of all k'_i
       if (data->marginalK) return false;  // k' is pinned to kObs (#270)
@@ -5754,7 +5820,6 @@ static bool do_move_impl(McmcData* data, McmcState* state,
 
       const double logP   = std::log(oldP);
       const double log1mP = std::log1p(-oldP);
-      const bool   uncond = data->unconditionalPrior;
       const int    K      = data->kprimeTruncK;
 
       // Impute over the support the marginal sums at oldP. A cache filled at a
@@ -5778,7 +5843,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       }
 
       // --- Step 1: impute u_i ~ Categorical(charLogW[i,·]) over the
-      //     support {0..nEff_i-1} at oldP; accumulate S = Σ u_i and (Model A) the shift
+      //     support {0..nEff_i-1} at oldP; accumulate S = Σ u_i and the shift
       //     c_A = Σ (kObs_i - 2). charLogW[i,c] = charLLCache[i,c] + logP +
       //     c·log1mP (the evaluator's per-char logSumExp argument); g_i(p) and
       //     Z_i(p) are u-independent and cancel out of the categorical.
@@ -5818,7 +5883,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         // and only finite candidates are ever assigned to ui.
         imputedU[i] = ui;
         sumU += (double)ui;
-        if (uncond) cA += (double)(kObsi - 2);
+        cA += (double)(kObsi - 2);
       }
 
       // --- Step 2: propose p* from the untruncated conjugate Beta.
@@ -5829,29 +5894,19 @@ static bool do_move_impl(McmcData* data, McmcState* state,
 
       // --- Accept ratio: log α = Σ_i[ logZ_i(oldP) − logZ_i(pStar) ].
       const double log1mPstar = std::log1p(-pStar);
-      double sumLogZ_old, sumLogZ_new;
-      if (uncond) {
-        // Model A: Z = 1 − (1−p)^(K−1), shared across all trans chars.
-        sumLogZ_old =
-          (double)nTrans * mkp::log1m_exp((K - 1) * log1mP);
-        sumLogZ_new =
-          (double)nTrans * mkp::log1m_exp((K - 1) * log1mPstar);
-      } else {
-        // Model B: Z_i = 1 − (1−p)^(K − kObs_i + 1), per character.
-        sumLogZ_old = 0.0;
-        sumLogZ_new = 0.0;
-        for (int i = 0; i < nTrans; ++i) {
-          const int kObsi = data->kObs[data->transIdxGlobal[i]];
-          const int e     = K - kObsi + 1;
-          sumLogZ_old += mkp::log1m_exp(e * log1mP);
-          sumLogZ_new += mkp::log1m_exp(e * log1mPstar);
-        }
-      }
+      // Z = 1 − (1−p)^(K−1), shared across all trans chars.
+      const double sumLogZ_old =
+        (double)nTrans * mkp::log1m_exp((K - 1) * log1mP);
+      const double sumLogZ_new =
+        (double)nTrans * mkp::log1m_exp((K - 1) * log1mPstar);
       // log1m_exp keeps logZ finite for every p in (0, 1), so this guard is
       // defensive; being symmetric in (oldP, pStar) it preserves detailed
       // balance should it ever fire. (See proof §6.4.)
       if (!R_FINITE(sumLogZ_old) || !R_FINITE(sumLogZ_new)) return false;
-      const double logAlpha = sumLogZ_old - sumLogZ_new;
+      // p also moves the joint ascertainment term (joint_asc.h).
+      const double logAlpha = sumLogZ_old - sumLogZ_new + joint_asc_shift(
+        *data, *state, state_hyper(*state),
+        KprimeHyper{pStar, state->kprimeAlpha, state->kprimeBeta});
 
       if (std::log(R::unif_rand()) < logAlpha) {
         // The support depends on p, so the augmented target is zero unless
@@ -6107,9 +6162,14 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   // ignoring data (flat-prior + zero-LL → guaranteed acceptance mod
   // Jacobian). See dev/red-team/heavy-tests/marginal-k-* and the FU-1
   // side-finding for the diagnostic.
+  // Under the joint form p also enters the likelihood through the
+  // ascertainment term of a transformational partition (joint_asc.h).
+  const bool pOnly = moveType == 8 || moveType == 30;
+  const bool pJoint = pOnly && !data->marginalK && joint_asc_on(*data) &&
+    !data->kPriorLogseries && !data->kPriorBetaGeometric;
   // Extension parameters and moves leave the core likelihood unchanged (#441).
   bool likChanges = extRollIdx < 0 && extBlockOff < 0 &&
-    (data->marginalK || (moveType != 8 && moveType != 30));
+    (data->marginalK || pJoint || !pOnly);
   // Under marginal-k mode the per-partition cache (partLogLik) is built
   // for sampled-k semantics (cpp_partition_log_likelihood with fixed
   // state->kPrime). The marginal evaluator does NOT update it. Force
@@ -6122,6 +6182,15 @@ static bool do_move_impl(McmcData* data, McmcState* state,
 
   if (!likChanges) {
     newLogLik = state->logLik;
+  } else if (pJoint) {
+    const KprimeHyper oldHyper{oldP, state->kprimeAlpha, state->kprimeBeta};
+    std::vector<double> shift;
+    newLogLik = state->logLik +
+      joint_asc_shift(*data, *state, oldHyper, state_hyper(*state), &shift);
+    if (hasPLC) {
+      newPC = state->partLogLik;
+      for (size_t pi = 0; pi < newPC.size(); ++pi) newPC[pi] += shift[pi];
+    }
   } else if (nniInPlace && state->nodeCL.ready()) {
     // M-121: NNI with valid node CL cache → partial evaluation
     int nEdge = evalRelBr.size();
@@ -6137,7 +6206,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     newLogLik = partial_eval_dirty(state->nodeCL, *data,
                                     evalParent, evalChild, propEdgeLen,
                                     state->rateLoss, cachePe.rateNeo,
-                                    cachePe.rateLogSd, state->betaScale, dirty);
+                                    cachePe.rateLogSd, state->betaScale,
+                                    state_hyper(*state), &state->clWs.joint,
+                                    dirty);
     usedPartialCL = true;
     state->diagNniPartialCount++;
 
@@ -6159,7 +6230,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     newLogLik = partial_eval_dirty(state->nodeCL, *data,
                                     evalParent, evalChild, propEdgeLen,
                                     state->rateLoss, cachePe.rateNeo,
-                                    cachePe.rateLogSd, state->betaScale, dirty);
+                                    cachePe.rateLogSd, state->betaScale,
+                                    state_hyper(*state), &state->clWs.joint,
+                                    dirty);
     usedPartialCL = true;
     state->diagBsPartialCount++;
 
@@ -6179,7 +6252,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     newLogLik = partial_eval_dirty(state->nodeCL, *data,
                                     evalParent, evalChild, propEdgeLen,
                                     state->rateLoss, cachePe.rateNeo,
-                                    cachePe.rateLogSd, state->betaScale, dirty);
+                                    cachePe.rateLogSd, state->betaScale,
+                                    state_hyper(*state), &state->clWs.joint,
+                                    dirty);
     usedPartialCL = true;
     state->diagDirPartialCount++;
 
@@ -6206,7 +6281,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     newLogLik = partial_eval_dirty(state->nodeCL, *data,
                                     sprParent, sprChild, propEdgeLen,
                                     state->rateLoss, cachePe.rateNeo,
-                                    cachePe.rateLogSd, state->betaScale, dirty);
+                                    cachePe.rateLogSd, state->betaScale,
+                                    state_hyper(*state), &state->clWs.joint,
+                                    dirty);
     usedPartialCL = true;
 
   } else if (!hasPLC) {
@@ -6355,6 +6432,11 @@ static bool do_move_impl(McmcData* data, McmcState* state,
           break;
         case 40:
           invalidate_scalar_caches(state, charIdx);
+          break;
+        case 8:
+        case 30:
+          // p: enters only the joint ascertainment term, which the cache
+          // does not hold
           break;
         default:
           // tree_length (0), topology, etc.: full invalidation
@@ -6732,11 +6814,11 @@ List run_mcmc_batch_cpp(
           sliceWidths(ch, moveIdx), betas[ch], 20, &nExp);
         sliceExpansions(ch, moveIdx) += nExp;
       } else if (moveType == 29) {
-        // Prior-only slice sampler for BG hyperparameters (M-163)
+        // Slice sampler for BG hyperparameters (M-163)
         int nExp = 0;
         accepted = slice_kprime_hyper_impl(
           data, states[ch], sliceParamCodes[moveIdx],
-          sliceWidths(ch, moveIdx), 20, &nExp);
+          sliceWidths(ch, moveIdx), betas[ch], 20, &nExp);
         sliceExpansions(ch, moveIdx) += nExp;
       } else {
         // Per-move int param overrides chain-level intWalkWindow
@@ -6909,6 +6991,7 @@ List debug_mcmc_data(SEXP dataPtr) {
 // M-111: Validation — compare partial CL vs full evaluation for all swap
 // candidates of a given nodeA.  Returns a data.frame with columns:
 //   nodeA, nodeB, ll_partial, ll_full
+// ll_full omits the joint ascertainment term, as the partial weights do.
 // [[Rcpp::export]]
 DataFrame validate_swap_partial_cl(SEXP dataPtr, SEXP statePtr, int nodeA) {
   McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
@@ -6947,7 +7030,8 @@ DataFrame validate_swap_partial_cl(SEXP dataPtr, SEXP statePtr, int nodeA) {
     if (!preorder_into(workPar, state->child, absLen, nTip,
                        INTEGER(ordPar), INTEGER(ordCh), REAL(ordAbs)))
       stop("Tree is not binary.");
-    llFull[pi] = compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs);
+    llFull[pi] = compute_full_loglik_at(*data, *state, ordPar, ordCh, ordAbs) +
+      joint_asc_at(*data, *state, ordPar, ordCh, ordAbs);
 
     workPar[rowA] = origParA;  workPar[rowB] = origParB;
     absLen[rowA]  = origAbsA;  absLen[rowB]  = origAbsB;

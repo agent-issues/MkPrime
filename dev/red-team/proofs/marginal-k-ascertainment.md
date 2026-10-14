@@ -1,16 +1,21 @@
 # Ascertainment correction for the marginal-k (Rao-Blackwellised) likelihood under `coding="variable"`
 
-> **⚠ SUPERSEDED (2026-06-02).** This proof derives the **ratio-of-sums**
-> $P = \frac{\sum_k w_k L(y\mid k)}{\sum_k w_k a_k}$ for the **pair-rejection**
-> forward (`e321036`), where the simulator rejects-and-redraws *both* `k'` and
-> the data jointly. HEAD uses the **redraw-data-only** forward (`d337750`:
-> `k'_i` drawn once unconditionally, then only the *data* is redrawn until the
-> character is variable). Under that forward the correct estimator is the
-> **sum-of-ratios** $\sum_k w_k L(y\mid k)/a_k$ — which is what the production
-> code computes — and the only missing factor was the truncation normaliser
-> `Z(p)` (fixed in MARGINAL-K-TRUNC-001, proof
-> `marginal-k-truncation-normaliser.md`). Kept for the record; do **not** treat
-> the ratio-of-sums conclusion below as describing current code.
+> **Current again (2026-10-12).** From 2026-06-02 MkPrime used the per-k'
+> Lewis form, the **sum-of-ratios** $\sum_k w_k L(y\mid k)/a_k$, with a
+> redraw-data-only SBC forward (`d337750`). It now conditions every
+> transformational character on the joint $\Pr(K, V)$, the **ratio-of-sums**
+> derived below, in `sampled_k` and `marginal_k` alike and under every k'
+> prior; the SBC forwards are back to pair rejection. Model B priors
+> (`priorVariant = "conditional"`, `beta_geometric`) normalise $D$ over their
+> own support $[k_{\mathrm{obs}}, K]$; for $k_{\mathrm{obs}} \ge 3$ that is not
+> the likelihood of any generative model (summed over variable patterns it
+> exceeds 1), as the per-k' form was not, and the $D^B_i$ below is not derived.
+> Line numbers and the "implementation bug" wording below describe the code of
+> May 2026. Caveat (1) is settled: $\log D$ is tempered with the likelihood on
+> every move, and `gibbs_p_marginal` runs only at $\beta = 1$. The proof
+> assumes JC and complete data; missing data, ACRV and Q-heterogeneity apply
+> it per mask and rate category, and were checked numerically (Model A sums
+> to 1) in the review of agent-issues/MkPrime#440.
 
 ## Theorem (informal title)
 

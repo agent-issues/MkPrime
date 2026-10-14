@@ -39,7 +39,7 @@
 
   # expSteps resolves treeLengthRate; the likelihood never reads it, but the
   # model must carry a resolved value.
-  model <- MkPrimeModel(expSteps = 10)
+  model <- MkPrimeModel(expSteps = 10, kPrimePrior = "geometric")
   # Build the C++ McmcData XPtr.
   dataPtr <- prepare_mcmc_data(
     partitions_r              = mkd$partitions,
@@ -95,7 +95,8 @@ test_that("§7b: trivial partition reproduces legacy log-likelihood (~1e-10)", {
 
   ll_legacy <- cpp_log_likelihood_xptr(
     s$dataPtr, s$parent, s$child, s$edgeLen, s$kPrime,
-    rateLoss = 1.0, rateLogSd = 0.5, rateNeo = 1.0
+    rateLoss = 1.0, rateLogSd = 0.5, rateNeo = 1.0,
+    p = 0.5, kprimeAlpha = 1, kprimeBeta = 1
   )
 
   ll_part <- cpp_log_likelihood_partitioned_xptr(
@@ -103,7 +104,8 @@ test_that("§7b: trivial partition reproduces legacy log-likelihood (~1e-10)", {
     rateLoss   = 1.0,
     rateLogSd  = 0.5,                   # length-1 vector — collapses to scalar
     classRate  = 1.0,                   # length-1 vector
-    etaNeo     = 1.0
+    etaNeo     = 1.0,
+    p = 0.5, kprimeAlpha = 1, kprimeBeta = 1
   )
 
   expect_equal(ll_part, ll_legacy, tolerance = 1e-10)
@@ -116,7 +118,8 @@ test_that("§7b: trivial partition agrees with R-side .MkpLogLikelihood", {
   ll_part <- cpp_log_likelihood_partitioned_xptr(
     s$dataPtr, s$parent, s$child, s$edgeLen, s$kPrime,
     rateLoss = 1.0, rateLogSd = 0.5,
-    classRate = 1.0, etaNeo = 1.0
+    classRate = 1.0, etaNeo = 1.0,
+    p = 0.5, kprimeAlpha = 1, kprimeBeta = 1
   )
 
   ll_r <- MkPrime:::.MkpLogLikelihood(
@@ -126,7 +129,11 @@ test_that("§7b: trivial partition agrees with R-side .MkpLogLikelihood", {
     nCat        = s$model$nCat,
     coding      = s$model$coding,
     rate_neo    = 1.0,
-    relabel     = isTRUE(s$model$relabel)
+    relabel     = isTRUE(s$model$relabel),
+    model       = s$model,
+    p           = 0.5,
+    kprimeAlpha = 1,
+    kprimeBeta  = 1
   )
 
   expect_equal(ll_part, ll_r, tolerance = 1e-10)
@@ -143,7 +150,8 @@ test_that("multi-class partition with all classRate = 1 reproduces legacy", {
 
   ll_legacy <- cpp_log_likelihood_xptr(
     s$dataPtr, s$parent, s$child, s$edgeLen, s$kPrime,
-    rateLoss = 1.0, rateLogSd = 0.5, rateNeo = 1.0
+    rateLoss = 1.0, rateLogSd = 0.5, rateNeo = 1.0,
+    p = 0.5, kprimeAlpha = 1, kprimeBeta = 1
   )
 
   ll_part <- cpp_log_likelihood_partitioned_xptr(
@@ -151,7 +159,8 @@ test_that("multi-class partition with all classRate = 1 reproduces legacy", {
     rateLoss  = 1.0,
     rateLogSd = c(0.5, 0.5),           # both classes share — equals scalar 0.5
     classRate = c(1.0, 1.0),
-    etaNeo    = 1.0
+    etaNeo    = 1.0,
+    p = 0.5, kprimeAlpha = 1, kprimeBeta = 1
   )
 
   expect_equal(ll_part, ll_legacy, tolerance = 1e-10)
@@ -168,7 +177,8 @@ test_that("per-class rateLogSd differs from scalar when classes diverge", {
     rateLoss  = 1.0,
     rateLogSd = c(0.5, 0.5),
     classRate = c(1.0, 1.0),
-    etaNeo    = 1.0
+    etaNeo    = 1.0,
+    p = 0.5, kprimeAlpha = 1, kprimeBeta = 1
   )
 
   ll_split <- cpp_log_likelihood_partitioned_xptr(
@@ -176,7 +186,8 @@ test_that("per-class rateLogSd differs from scalar when classes diverge", {
     rateLoss  = 1.0,
     rateLogSd = c(0.5, 1.5),
     classRate = c(1.0, 1.0),
-    etaNeo    = 1.0
+    etaNeo    = 1.0,
+    p = 0.5, kprimeAlpha = 1, kprimeBeta = 1
   )
 
   expect_false(isTRUE(all.equal(ll_uniform, ll_split, tolerance = 1e-8)))
@@ -199,7 +210,8 @@ test_that("char-weighted mean-1 classRate is honoured and produces finite LL", {
     rateLoss  = 1.0,
     rateLogSd = c(0.5, 0.5),
     classRate = c(1.4, 0.6),
-    etaNeo    = 1.0
+    etaNeo    = 1.0,
+    p = 0.5, kprimeAlpha = 1, kprimeBeta = 1
   )
   expect_true(is.finite(ll))
 })

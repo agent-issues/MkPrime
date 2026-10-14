@@ -73,11 +73,10 @@ run_one <- function(fixture, prior_kind,
                     seed = 1L) {
   set.seed(seed)
   # Everything but the sigma prior is pinned, so the contrast does not move when
-  # a package default does: nCat, priorVariant, and the pre-3c091f9 expSteps
+  # a package default does: nCat and the pre-3c091f9 expSteps
   # (total Fitch score of the start tree, not the per-character default).
   model <- MkPrimeModel(kPrimePrior = "geometric",
                         nCat = 6L,
-                        priorVariant = "unconditional",
                         expSteps = max(1, MkPrime:::.FitchScore(
                           fixture$tree, fixture$mkd)),
                         priorOnClassRateLogSd = prior_kind)

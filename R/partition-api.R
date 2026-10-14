@@ -349,12 +349,15 @@
 
   state$log_lik <- cpp_log_likelihood_partitioned_xptr(
     dataPtr, parent, child, edgeLen, as.integer(state$kPrime),
-    rateLoss   = state$rate_loss,
-    rateLogSd  = state$class_rate_log_sd,
-    classRate  = state$class_rate,
-    etaNeo     = state$eta_neo,
-    betaScale  = state$beta_scale %||% 1.0,
-    rateNeo    = state$rate_neo %||% 1.0
+    rateLoss    = state$rate_loss,
+    rateLogSd   = state$class_rate_log_sd,
+    classRate   = state$class_rate,
+    etaNeo      = state$eta_neo,
+    p           = state$p %||% 0.5,
+    kprimeAlpha = state$kprime_alpha %||% 1,
+    kprimeBeta  = state$kprime_beta %||% 1,
+    betaScale   = state$beta_scale %||% 1.0,
+    rateNeo     = state$rate_neo %||% 1.0
   )
   # Recompute log_prior with the extended LogPrior() that handles per-class
   # fields (class_w, class_rate_log_sd). At the initial point (class_w ==

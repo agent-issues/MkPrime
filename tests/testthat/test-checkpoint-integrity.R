@@ -223,6 +223,17 @@ test_that("per-run checkpoints that disagree are not merged (#92)", {
   expect_error(.SynthesiseMasterFromPerRun(job$ckp, 2L), "run index")
 })
 
+test_that("a synthesised master keeps its likelihood version", {
+  job <- .TwoRunCheckpoint()
+  ck <- job$master
+  ck$likelihoodVersion <- NULL
+  saveRDS(ck, job$ckp)
+  .SynthesiseMasterFromPerRun(job$ckp, 2L)
+  expect_identical(readRDS(job$ckp)$likelihoodVersion, 1L)
+  expect_error(ResumeMkPrime(job$ckp, job$pd, mcmc = list(nIter = 600L)),
+               "different likelihood")
+})
+
 test_that(".CheckPerRunCkps compares shapes, not storage types (#92)", {
   Run <- function(edge, i) {
     list(chains = list(list(edge = edge)), run_index = i)

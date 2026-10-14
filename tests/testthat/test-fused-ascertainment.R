@@ -14,7 +14,8 @@ test_that("fused JC ascertainment matches standalone", {
                       dimnames = list(tree$tip.label, NULL))
   pd <- MatrixToPhyDat(tipStates)
 
-  mkd <- MkPrimeData(pd, knownStates = rep(kStates, nChar))
+  knownStates <- setNames(rep(kStates, nChar), seq_len(nChar))
+  mkd <- MkPrimeData(pd, knownStates = knownStates)
 
   ll_none <- MkpLogLikelihood(tree, mkd, coding = "none", relabel = FALSE)
   ll_var  <- MkpLogLikelihood(tree, mkd, coding = "variable", relabel = FALSE)
@@ -77,7 +78,8 @@ test_that("fused JC ACRV ascertainment matches standalone", {
                       dimnames = list(tree$tip.label, NULL))
   pd <- MatrixToPhyDat(tipStates)
 
-  mkd <- MkPrimeData(pd, knownStates = rep(kStates, nChar))
+  knownStates <- setNames(rep(kStates, nChar), seq_len(nChar))
+  mkd <- MkPrimeData(pd, knownStates = knownStates)
 
   rateLogSd <- 0.5
   nCat <- 4L

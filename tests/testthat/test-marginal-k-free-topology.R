@@ -269,12 +269,12 @@ test_that("marginal-k: candidate (preorder_into) and commit (preorder_weighted) 
     nrow = 8, ncol = 4, dimnames = list(tips, NULL))
   MatrixToPhyDat(m)
 }
-.gp_build <- function(p = 0.5, variant = "conditional", mkdFn = .ft_make_mkd) {
+.GpBuild <- function(p = 0.5, mkdFn = .ft_make_mkd) {
   tree  <- Preorder(.ft_make_tree())
   mkd   <- MkPrimeData(mkdFn())
   model <- MkPrime:::.FinalizeModel(
     MkPrimeModel(kPrimePrior = "geometric", likelihoodMode = "marginal_k",
-                 priorVariant = variant, coding = "variable"),
+                 coding = "variable"),
     tree, mkd)
   s0 <- MkPrime:::.InitState(tree, mkd, model)
   s0$p              <- p
@@ -312,41 +312,39 @@ test_that("marginal-k gibbs_p_marginal (case 35): committed==cold & warm==cold (
   # leaves the cache ready; on reject nothing changes. After EACH fire the
   # committed state->logLik must equal a cold recompute, and a warm eval must
   # equal a cold eval (no stale cache for a subsequent mh_logit_p to consume).
-  for (variant in c("conditional", "unconditional")) {
-    fx <- .gp_build(p = 0.5, variant = variant)
-    accepts <- 0L
-    for (i in seq_len(300L)) {
-      ok <- do_move_cpp(fx$dataPtr, fx$statePtr, moveType = 35L, charIdx = 0L,
-                        scaleTuning = 0.5, betaSimplexTuning = 0.5,
-                        intWalkWindow = 1L, beta = 1.0)
-      if (isTRUE(ok)) accepts <- accepts + 1L
-      committed <- get_state_log_lik(fx$statePtr)
-      warm      <- eval_full_loglik_cpp(fx$dataPtr, fx$statePtr)
-      invalidate_marginal_cache(fx$statePtr)
-      cold      <- eval_full_loglik_cpp(fx$dataPtr, fx$statePtr)
-      # Re-prime the cache for the next iteration (the invalidate above cleared it).
-      expect_equal(committed, cold, tolerance = 1e-8,
-                   info = paste(variant, "committed==cold, iter", i))
-      expect_equal(warm, cold, tolerance = 1e-8,
-                   info = paste(variant, "warm==cold, iter", i))
-    }
-    # K=200 default: Z ~ 1, so the move is near-pure Gibbs and accepts readily.
-    expect_gt(accepts, 150L)
+  fx <- .GpBuild(p = 0.5)
+  accepts <- 0L
+  for (i in seq_len(300L)) {
+    ok <- do_move_cpp(fx$dataPtr, fx$statePtr, moveType = 35L, charIdx = 0L,
+                      scaleTuning = 0.5, betaSimplexTuning = 0.5,
+                      intWalkWindow = 1L, beta = 1.0)
+    if (isTRUE(ok)) accepts <- accepts + 1L
+    committed <- get_state_log_lik(fx$statePtr)
+    warm      <- eval_full_loglik_cpp(fx$dataPtr, fx$statePtr)
+    invalidate_marginal_cache(fx$statePtr)
+    cold      <- eval_full_loglik_cpp(fx$dataPtr, fx$statePtr)
+    # Re-prime the cache for the next iteration (the invalidate above cleared it).
+    expect_equal(committed, cold, tolerance = 1e-8,
+                 info = paste("committed==cold, iter", i))
+    expect_equal(warm, cold, tolerance = 1e-8,
+                 info = paste("warm==cold, iter", i))
   }
+  # K=200 default: Z ~ 1, so the move is near-pure Gibbs and accepts readily.
+  expect_gt(accepts, 150L)
 })
 
 # Ground-truth oracle: the marginal_k posterior on p at the FIXED fixture tree is
 # pi(p|theta,tree) ∝ exp(marginal_LL_cold(p)) · Beta(p; a, b). Tabulate it by COLD
-# marginal evals on a p-grid (each .gp_build cold-primes the marginal at its p),
+# marginal evals on a p-grid (each .GpBuild cold-primes the marginal at its p),
 # add the Beta prior, normalise, take E[p]. (A pure mh_logit_p chain is NOT a valid
 # oracle in isolation: with no cache-refilling move interleaved its warm cache
 # sticks at the prime-p support and undercounts as p wanders -- the very drift
 # case 35 fixes via force-cold. The grid oracle sidesteps both moves.)
-.gp_analytic_Ep <- function(variant, mkdFn) {
+.GpAnalyticEp <- function(mkdFn) {
   grid <- seq(0.02, 0.98, by = 0.02)
   a <- NULL; b <- NULL
   logpost <- vapply(grid, function(pg) {
-    fxg <- .gp_build(p = pg, variant = variant, mkdFn = mkdFn)
+    fxg <- .GpBuild(p = pg, mkdFn = mkdFn)
     a <<- fxg$a; b <<- fxg$b
     eval_full_loglik_cpp(fxg$dataPtr, fxg$statePtr) + stats::dbeta(pg, a, b, log = TRUE)
   }, numeric(1L))
@@ -356,50 +354,33 @@ test_that("marginal-k gibbs_p_marginal (case 35): committed==cold & warm==cold (
 
 test_that("marginal-k gibbs_p_marginal (case 35): p-target matches analytic (binary fixture, c_A=0)", {
   skip_under_memcheck()
-  # Binary fixture -> all kObs=2 -> c_A=0 -> Model A == Model B. The case-35 chain
+  # Binary fixture -> all kObs=2 -> c_A=0. The case-35 chain
   # (force-cold-on-commit -> correct target, even under large p-jumps) must match
   # the grid oracle within MC error. A flipped Z-sign biases E[p] by ~0.2
   # (gibbs-p-identity-check.R controls), far outside the tolerance.
-  for (variant in c("conditional", "unconditional")) {
-    Ep_analytic <- .gp_analytic_Ep(variant, .ft_make_mkd)
-    set.seed(2026L)
-    fx <- .gp_build(p = 0.5, variant = variant)
-    r  <- .gp_run_pmove(fx, moveType = 35L, nIter = 40000L)
-    Ep_emp <- mean(r$p[-seq_len(length(r$p) %/% 5L)])
-    expect_equal(Ep_emp, Ep_analytic, tolerance = 0.02,
-                 info = paste("binary", variant, ": case-35 E[p]=", round(Ep_emp, 4),
-                              "vs analytic E[p]=", round(Ep_analytic, 4)))
-    expect_gt(r$accept, 0.5)
-  }
+  epAnalytic <- .GpAnalyticEp(.ft_make_mkd)
+  set.seed(2026L)
+  fx <- .GpBuild(p = 0.5)
+  r  <- .gp_run_pmove(fx, moveType = 35L, nIter = 40000L)
+  epEmp <- mean(r$p[-seq_len(length(r$p) %/% 5L)])
+  expect_equal(epEmp, epAnalytic, tolerance = 0.02,
+               info = paste("binary: case-35 E[p]=", round(epEmp, 4),
+                            "vs analytic E[p]=", round(epAnalytic, 4)))
+  expect_gt(r$accept, 0.5)
 })
 
-test_that("marginal-k gibbs_p_marginal (case 35): Model-A c_A shift is exercised (multistate fixture)", {
+test_that("marginal-k gibbs_p_marginal (case 35): c_A shift is exercised (multistate fixture)", {
   skip_under_memcheck()
-  # Multistate fixture -> c_A = Sum(kObs_i - 2) = 2 > 0, so Model A's proposal
-  # shape2 = b + Sum(u) + c_A differs from Model B's b + Sum(u). This is the ONLY
-  # test that executes the c_A branch of case 35 (the disabled case-9 bug).
-  Ep_A <- .gp_analytic_Ep("unconditional", .gp_make_mkd_ms)   # Model A (c_A>0)
-  Ep_B <- .gp_analytic_Ep("conditional",   .gp_make_mkd_ms)   # Model B (c_A=0)
-  # Sanity: c_A actually shifts the posterior, so the test is SENSITIVE to it.
-  # (If A==B here the comparison below could not detect a dropped c_A.)
-  expect_gt(abs(Ep_A - Ep_B), 0.01,
-            label = sprintf("Model-A vs Model-B E[p] gap (A=%.4f B=%.4f)", Ep_A, Ep_B))
-  # case-35 chain under Model A must match the Model-A analytic (NOT the Model-B
-  # one): a dropped c_A would make the chain track Ep_B instead -> caught.
+  # Multistate fixture -> c_A = Sum(kObs_i - 2) = 2 > 0, so the proposal's
+  # shape2 = b + Sum(u) + c_A. This is the ONLY test that executes a nonzero c_A
+  # in case 35 (the disabled case-9 bug).
+  epA <- .GpAnalyticEp(.gp_make_mkd_ms)
   set.seed(2027L)
-  fxA <- .gp_build(p = 0.5, variant = "unconditional", mkdFn = .gp_make_mkd_ms)
+  fxA <- .GpBuild(p = 0.5, mkdFn = .gp_make_mkd_ms)
   rA  <- .gp_run_pmove(fxA, moveType = 35L, nIter = 40000L)
-  EpA_emp <- mean(rA$p[-seq_len(length(rA$p) %/% 5L)])
-  expect_equal(EpA_emp, Ep_A, tolerance = 0.02,
-               info = sprintf("Model A: case-35 E[p]=%.4f vs analytic A=%.4f (B=%.4f)",
-                              EpA_emp, Ep_A, Ep_B))
-  # And Model B matches the Model-B analytic.
-  set.seed(2028L)
-  fxB <- .gp_build(p = 0.5, variant = "conditional", mkdFn = .gp_make_mkd_ms)
-  rB  <- .gp_run_pmove(fxB, moveType = 35L, nIter = 40000L)
-  EpB_emp <- mean(rB$p[-seq_len(length(rB$p) %/% 5L)])
-  expect_equal(EpB_emp, Ep_B, tolerance = 0.02,
-               info = sprintf("Model B: case-35 E[p]=%.4f vs analytic B=%.4f", EpB_emp, Ep_B))
+  epAEmp <- mean(rA$p[-seq_len(length(rA$p) %/% 5L)])
+  expect_equal(epAEmp, epA, tolerance = 0.02,
+               info = sprintf("case-35 E[p]=%.4f vs analytic %.4f", epAEmp, epA))
 })
 
 test_that("marginal-k gibbs_p_marginal is opt-in (default off; present only when enabled)", {

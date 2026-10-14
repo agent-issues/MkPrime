@@ -237,7 +237,8 @@ test_that("MkpLogLikelihood accepts coding='informative'", {
                 nrow = 6,
                 dimnames = list(tree$tip.label, NULL))
   pd <- MatrixToPhyDat(mat)
-  mkd <- MkPrimeData(pd)
+  # Informative coding needs a fixed k.
+  mkd <- MkPrimeData(pd, knownStates = c("1" = 2L, "2" = 2L, "3" = 2L))
 
   ll_none <- MkpLogLikelihood(tree, mkd, coding = "none", relabel = FALSE)
   ll_var  <- MkpLogLikelihood(tree, mkd, coding = "variable", relabel = FALSE)
@@ -258,7 +259,7 @@ test_that("Informative correction matches manual calculation", {
                 nrow = 4,
                 dimnames = list(c("t1", "t2", "t3", "t4"), NULL))
   pd <- MatrixToPhyDat(mat)
-  mkd <- MkPrimeData(pd)
+  mkd <- MkPrimeData(pd, knownStates = c("1" = 2L, "2" = 2L))
 
   ll_none <- MkpLogLikelihood(tree, mkd, coding = "none", relabel = FALSE)
   ll_inf  <- MkpLogLikelihood(tree, mkd, coding = "informative", relabel = FALSE)
