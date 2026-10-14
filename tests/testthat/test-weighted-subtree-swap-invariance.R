@@ -86,7 +86,8 @@ test_that("weighted_subtree_swap samples its topology posterior at beta = 1", {
 
   LogLik <- function(edge, f) {
     cpp_log_likelihood_xptr(dataPtr, edge[, 1], edge[, 2], st$treeLength * f,
-                            st$kPrime, st$rateLoss, st$rateLogSd, st$rateNeo)
+                            st$kPrime, st$rateLoss, st$rateLogSd, st$rateNeo,
+                            st$p, st$kprimeAlpha, st$kprimeBeta)
   }
   expect_equal(LogLik(st$edge, st$relBrLengths), st$logLik)
 

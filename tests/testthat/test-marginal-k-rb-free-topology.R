@@ -33,7 +33,7 @@
 .rb_eval_closure <- function(mode, trp, mkd, K) {
   mod  <- suppressMessages(MkPrimeModel(
     coding = "variable", nCat = 4L, kPrimePrior = "geometric",
-    likelihoodMode = mode, priorVariant = "unconditional",
+    likelihoodMode = mode,
     kprimeTruncK = K, kprimeHyperA = 1, kprimeHyperB = 1, expSteps = 1.4))
   modf <- MkPrime:::.FinalizeModel(mod, trp, mkd)
   dp   <- MkPrime:::.InitMcmcData(mkd, modf)

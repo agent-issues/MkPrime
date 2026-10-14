@@ -210,16 +210,16 @@ test_that("block_kprime_shift logLik matches full recomputation", {
 
 
 test_that("Gibbs kPrime sweep at beta = 0 never draws a zero-likelihood k' (#383)", {
-  # Near 1e-15 the informative-coding ascertainment correction is finite for
-  # k' = 2 but rounds to -Inf for k' = 3, where 0 * -Inf would give k' = 3 a
-  # NaN weight that the categorical draw picks. The exact window depends on
+  # Near a tree length of 1e-322 the likelihood is subnormal for k' = 2 but
+  # underflows to zero for k' = 3, where 0 * -Inf would give k' = 3 a NaN
+  # weight that the categorical draw picks. The exact window depends on
   # floating-point rounding, so it is located rather than hard-coded.
   tree <- Preorder(.trans_tree())
   pd <- MatrixToPhyDat(matrix(c(0, 0, 1, 1), 4, 1,
                               dimnames = list(paste0("t", 1:4), NULL)))
   mkd <- MkPrimeData(pd)
   model <- MkPrime:::.FinalizeModel(
-    MkPrimeModel(coding = "informative", kPrimePrior = "geometric",
+    MkPrimeModel(coding = "none", kPrimePrior = "geometric",
                  expSteps = 1), tree, mkd)
   dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
   StateAt <- function(treeLength) {
@@ -235,8 +235,8 @@ test_that("Gibbs kPrime sweep at beta = 0 never draws a zero-likelihood k' (#383
   }
   # Bisect on log10(tree length) between a length at which k' = 3 is
   # evaluated and one at which k' = 2 already has zero likelihood.
-  hi <- -12
-  lo <- -20
+  hi <- -310
+  lo <- -324
   expect_gt(NCand(hi), 2L)
   expect_equal(NCand(lo), 1L)
   for (i in 1:60) {

@@ -29,7 +29,10 @@ ScoresWrittenTree <- function(tree, row, o, model) {
                          rate_log_sd = row[["rate_log_sd"]],
                          nCat = model$nCat, coding = model$coding,
                          rate_neo = Param("rate_neo"),
-                         relabel = model$relabel)
+                         relabel = model$relabel, model = model,
+                         p = if ("p" %in% names(row)) row[["p"]] else 0.5,
+                         kprimeAlpha = Param("kprime_alpha"),
+                         kprimeBeta = Param("kprime_beta"))
   isTRUE(all.equal(ll, row[["log_likelihood"]], tolerance = 1e-8))
 }
 

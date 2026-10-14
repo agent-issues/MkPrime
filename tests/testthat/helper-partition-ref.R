@@ -129,8 +129,6 @@
     classRateConcentration = 1,
     priorOnClassRateLogSd  = "hyperprior_pooled",
     likelihoodMode         = "sampled_k",
-    # Resolved, not left to MkPrimeModel() to derive from kPrimePrior.
-    priorVariant           = "unconditional",
     kprimeTruncK           = 200L
   )
 }

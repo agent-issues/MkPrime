@@ -11,7 +11,7 @@ PriorInputFixture <- function() {
 }
 
 # R LogPrior and the C++ prior built by .InitMcmcData, at a state with k' above
-# kObs and kObs > 2, where Model A and Model B differ.
+# kObs and kObs > 2.
 PriorPair <- function(model, f, rawModel = model) {
   modf <- MkPrime:::.FinalizeModel(model, f$tree, f$mkd)
   state <- MkPrime:::.InitState(f$tree, f$mkd, modf)
@@ -25,20 +25,14 @@ PriorPair <- function(model, f, rawModel = model) {
     cpp = eval_log_prior_cpp(dp, sp))
 }
 
-test_that("a priorVariant-less model gets the same prior in R and C++ (#256)", {
+test_that("R and C++ score the same k' prior (#256)", {
   skip_if_not_installed("phangorn")
   f <- PriorInputFixture()
   expect_true(any(f$mkd$kObs > 2L))
-  for (arm in c("geometric", "empirical_geometric")) {
-    model <- MkPrimeModel(kPrimePrior = arm, expSteps = 1)
-    model$priorVariant <- NULL
-    lp <- PriorPair(model, f)
+  for (arm in c("geometric", "empirical_geometric", "beta_geometric")) {
+    lp <- PriorPair(MkPrimeModel(kPrimePrior = arm, expSteps = 1), f)
     expect_equal(lp[["rFinal"]], lp[["cpp"]], tolerance = 1e-10, label = arm)
     expect_equal(lp[["rRaw"]], lp[["cpp"]], tolerance = 1e-10, label = arm)
-    # Anti-vacuity: the conditional variant gives a different value here.
-    cond <- PriorPair(MkPrimeModel(kPrimePrior = arm, expSteps = 1,
-                                   priorVariant = "conditional"), f)
-    expect_gt(abs(cond[["cpp"]] - lp[["cpp"]]), 1e-3)
   }
 })
 

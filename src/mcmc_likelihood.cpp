@@ -1677,7 +1677,8 @@ static void compute_het_bins(double alpha, int k, int nBins, double* bins) {
     if (denom < 1e-300) {
       bins[i] = 0.5 * (lo + hi);
     } else {
-      bins[i] = (a / (a + b)) * (p_hi - p_lo) / denom;
+      // A mean can round above 1, whose rate would overflow.
+      bins[i] = std::min(1.0, (a / (a + b)) * (p_hi - p_lo) / denom);
     }
   }
 }
@@ -2292,42 +2293,6 @@ static double het_singleton_site_prob(
 }
 
 
-// Constant-site probability for a given kStates, handling JC and Het paths.
-double const_site_prob_for_k(
-    const McmcData& data,
-    const IntegerVector& parent, const IntegerVector& child,
-    const NumericVector& edgeLen,
-    int kStates, double betaScale,
-    const NumericVector& acrvRates) {
-
-  if (data.codingType == 0) return 0.0;
-
-  if (data.qHeterogeneity) {
-    double hetBins[16];
-    compute_het_bins(betaScale, kStates, data.nBetaCat, hetBins);
-    NumericVector rates = acrvRates;
-    if (rates.size() == 0) rates = NumericVector(1, 1.0);
-    double p = het_constant_site_prob(
-      parent, child, edgeLen, data.nTip,
-      kStates, 1.0, hetBins, data.nBetaCat, rates);
-    // Phase 7: add het_singleton_site_prob when coding == 2
-    return p;
-  } else {
-    NumericVector rootFreqs(kStates, 1.0 / kStates);
-    double p = constant_site_prob_jc(parent, child, edgeLen, data.nTip,
-                                      kStates, rootFreqs, acrvRates);
-    // Informative coding adds the non-constant parsimony-uninformative mass.
-    // Het+informative remains gated upstream (see het_singleton_site_prob).
-    if (data.codingType == 2) {
-      p += uninf_nonconst_prob_jc(parent, child, edgeLen, data.nTip,
-                                  kStates, acrvRates);
-    }
-    return p;
-  }
-}
-
-
-
 std::vector<double> asc_probs_masked(
     const McmcData& data,
     const IntegerVector& parent, const IntegerVector& child,
@@ -2398,6 +2363,7 @@ double cpp_partition_log_likelihood(
     IntegerVector parent, IntegerVector child,
     NumericVector edgeLen,
     const IntegerVector& kPrime,
+    const KprimeHyper& hyper,
     double rateLoss, double rateLogSd, double rateNeo,
     double betaScale,
     ClWorkspace* ws) {
@@ -2668,10 +2634,6 @@ double cpp_partition_log_likelihood(
         }
       }
 
-      // M-157: fused ascertainment
-      double transConstProb = 0.0;
-      double* transCPtr = (coding != 0) ? &transConstProb : nullptr;
-
       if (useHet) {
         double hetBinsSub[16];
         compute_het_bins(betaScale, kp0, nBC, hetBinsSub);
@@ -2680,7 +2642,7 @@ double cpp_partition_log_likelihood(
           ll += pruning_f81_het_acrv_flat(
             parent, child, scaledEdge, part.tipStates,
             kp0, 1.0, hetBinsSub, nBC, rates,
-            ws->buf.data(), ws->init.data(), ws->strideMax, transCPtr,
+            ws->buf.data(), ws->init.data(), ws->strideMax, nullptr,
             scrAsc, scrAscI, scrSite);
         } else {
           int tmpStride = nCharPart * kp0;
@@ -2689,18 +2651,7 @@ double cpp_partition_log_likelihood(
           ll += pruning_f81_het_acrv_flat(
             parent, child, scaledEdge, part.tipStates,
             kp0, 1.0, hetBinsSub, nBC, rates,
-            tmpBuf.data(), tmpInit.data(), tmpStride, transCPtr);
-        }
-        if (coding != 0) {
-          double p = transConstProb;
-          if (coding == 2) p += het_singleton_site_prob(
-            parent, child, scaledEdge, nTip, kp0, 1.0, hetBinsSub, nBC, rates);
-          {
-            const MaskTally masks = tally_masks(data, part.globalCharIdx, nCharPart);
-            ll -= masked_asc_log1m(masks, p, asc_probs_masked(
-              data, parent, child, scaledEdge, 1, kp0, rateLoss, betaScale,
-              ascRates, masks.ids));
-          }
+            tmpBuf.data(), tmpInit.data(), tmpStride, nullptr);
         }
       } else {
         // JC-COLLAPSE (stage 2): transformational allSame at kp0; collapse
@@ -2715,42 +2666,28 @@ double cpp_partition_log_likelihood(
             ? pruning_jc_acrv_flat_collapsed(parent, child, scaledEdge, part.tipStates,
                                               kp0, kObsMaxLocal, rates,
                                               ws->buf.data(), ws->init.data(),
-                                              ws->strideMax, transCPtr,
+                                              ws->strideMax, nullptr,
                                               scrAsc, scrAscI, scrSite)
             : pruning_jc_flat_collapsed(parent, child, scaledEdge, part.tipStates,
                                          kp0, kObsMaxLocal,
                                          ws->buf.data(), ws->init.data(),
-                                         ws->strideMax, transCPtr,
+                                         ws->strideMax, nullptr,
                                          scrAsc, scrAscI);
         } else if (wsOk) {
           ll += useAcrv
             ? pruning_jc_acrv_flat(parent, child, scaledEdge, part.tipStates,
                                     kp0, rootFreqs, rates,
                                     ws->buf.data(), ws->init.data(), ws->strideMax,
-                                    transCPtr, scrAsc, scrAscI, scrSite)
+                                    nullptr, scrAsc, scrAscI, scrSite)
             : pruning_jc_flat(parent, child, scaledEdge, part.tipStates,
                                kp0, rootFreqs,
                                ws->buf.data(), ws->init.data(), ws->strideMax,
-                               transCPtr, scrAsc, scrAscI);
+                               nullptr, scrAsc, scrAscI);
         } else {
           ll += useAcrv ? pruning_jc_acrv(parent, child, scaledEdge, part.tipStates,
                                            kp0, rootFreqs, rates)
                         : pruning_jc(parent, child, scaledEdge, part.tipStates,
                                       kp0, rootFreqs);
-          if (coding != 0)
-            transConstProb = constant_site_prob_jc(parent, child, scaledEdge, nTip,
-                                                    kp0, rootFreqs, rates);
-        }
-        if (coding != 0) {
-          double p = transConstProb;
-          if (coding == 2) p += uninf_nonconst_prob_jc(parent, child, scaledEdge, nTip,
-                                                        kp0, rates);
-          {
-            const MaskTally masks = tally_masks(data, part.globalCharIdx, nCharPart);
-            ll -= masked_asc_log1m(masks, p, asc_probs_masked(
-              data, parent, child, scaledEdge, 1, kp0, rateLoss, betaScale,
-              ascRates, masks.ids));
-          }
         }
       }
       if (data.relabel) {
@@ -2791,12 +2728,7 @@ double cpp_partition_log_likelihood(
         IntegerMatrix sub(nTip, nSub);
         for (int c = 0; c < nSub; ++c)
           for (int t = 0; t < nTip; ++t) sub(t, c) = part.tipStates(t, cols[c]);
-        std::vector<int> subGlobal(nSub);
-        for (int c = 0; c < nSub; ++c) subGlobal[c] = part.globalCharIdx[cols[c]];
 
-        // M-157: fused ascertainment per k' sub-group
-        double subConstProb = 0.0;
-        double* subCPtr = (coding != 0) ? &subConstProb : nullptr;
         double subLl;
 
         if (useHet) {
@@ -2807,7 +2739,7 @@ double cpp_partition_log_likelihood(
             subLl = pruning_f81_het_acrv_flat(
               parent, child, scaledEdge, sub,
               kp, 1.0, hetBinsSub, nBC, rates,
-              ws->buf.data(), ws->init.data(), ws->strideMax, subCPtr,
+              ws->buf.data(), ws->init.data(), ws->strideMax, nullptr,
               scrAsc, scrAscI, scrSite);
           } else {
             int tmpStride = nSub * kp;
@@ -2816,18 +2748,7 @@ double cpp_partition_log_likelihood(
             subLl = pruning_f81_het_acrv_flat(
               parent, child, scaledEdge, sub,
               kp, 1.0, hetBinsSub, nBC, rates,
-              tmpBuf.data(), tmpInit.data(), tmpStride, subCPtr);
-          }
-          if (coding != 0) {
-            double p = subConstProb;
-            if (coding == 2) p += het_singleton_site_prob(
-              parent, child, scaledEdge, nTip, kp, 1.0, hetBinsSub, nBC, rates);
-            {
-              const MaskTally masks = tally_masks(data, subGlobal, nSub);
-              subLl -= masked_asc_log1m(masks, p, asc_probs_masked(
-                data, parent, child, scaledEdge, 1, kp, rateLoss, betaScale,
-                ascRates, masks.ids));
-            }
+              tmpBuf.data(), tmpInit.data(), tmpStride, nullptr);
           }
         } else {
           // JC-COLLAPSE (stage 2): per sub-group, collapse when
@@ -2844,42 +2765,28 @@ double cpp_partition_log_likelihood(
               ? pruning_jc_acrv_flat_collapsed(parent, child, scaledEdge, sub,
                                                 kp, kObsMaxSub, rates,
                                                 ws->buf.data(), ws->init.data(),
-                                                ws->strideMax, subCPtr,
+                                                ws->strideMax, nullptr,
                                                 scrAsc, scrAscI, scrSite)
               : pruning_jc_flat_collapsed(parent, child, scaledEdge, sub,
                                            kp, kObsMaxSub,
                                            ws->buf.data(), ws->init.data(),
-                                           ws->strideMax, subCPtr,
+                                           ws->strideMax, nullptr,
                                            scrAsc, scrAscI);
           } else if (wsOk) {
             subLl = useAcrv
               ? pruning_jc_acrv_flat(parent, child, scaledEdge, sub,
                                       kp, rootFreqs, rates,
                                       ws->buf.data(), ws->init.data(), ws->strideMax,
-                                      subCPtr, scrAsc, scrAscI, scrSite)
+                                      nullptr, scrAsc, scrAscI, scrSite)
               : pruning_jc_flat(parent, child, scaledEdge, sub,
                                  kp, rootFreqs,
                                  ws->buf.data(), ws->init.data(), ws->strideMax,
-                                 subCPtr, scrAsc, scrAscI);
+                                 nullptr, scrAsc, scrAscI);
           } else {
             subLl = useAcrv ? pruning_jc_acrv(parent, child, scaledEdge, sub,
                                                kp, rootFreqs, rates)
                             : pruning_jc(parent, child, scaledEdge, sub,
                                           kp, rootFreqs);
-            if (coding != 0)
-              subConstProb = constant_site_prob_jc(parent, child, scaledEdge, nTip,
-                                                    kp, rootFreqs, rates);
-          }
-          if (coding != 0) {
-            double p = subConstProb;
-            if (coding == 2) p += uninf_nonconst_prob_jc(parent, child, scaledEdge, nTip,
-                                                          kp, rates);
-            {
-              const MaskTally masks = tally_masks(data, subGlobal, nSub);
-              subLl -= masked_asc_log1m(masks, p, asc_probs_masked(
-                data, parent, child, scaledEdge, 1, kp, rateLoss, betaScale,
-                ascRates, masks.ids));
-            }
           }
         }
         ll += subLl;
@@ -2888,6 +2795,13 @@ double cpp_partition_log_likelihood(
         for (int ci = 0; ci < nCharPart; ++ci)
           ll += mk_prime_relabel_log(kPrimePart[ci], part.kObsLocal[ci]);
       }
+    }
+    // Joint ascertainment (joint_asc.h): one term for the partition, shared
+    // by every k'.
+    if (coding != 0) {
+      ll -= trans_joint_asc_log(data, partIdx, parent, child, scaledEdge,
+                                ascRates, betaScale, hyper,
+                                ws ? &ws->joint : nullptr);
     }
   }
   return ll;
@@ -2903,6 +2817,7 @@ double cpp_log_likelihood(
     IntegerVector child,
     NumericVector edgeLen,
     const IntegerVector& kPrime,
+    const KprimeHyper& hyper,
     double rateLoss,
     double rateLogSd,
     double rateNeo,
@@ -2912,10 +2827,30 @@ double cpp_log_likelihood(
   double totalLoglik = 0.0;
   for (int pi = 0; pi < (int)data.parts.size(); ++pi) {
     totalLoglik += cpp_partition_log_likelihood(
-      data, pi, parent, child, edgeLen, kPrime,
+      data, pi, parent, child, edgeLen, kPrime, hyper,
       rateLoss, rateLogSd, rateNeo, betaScale, ws);
   }
   return totalLoglik;
+}
+
+
+double trans_joint_asc(
+    const McmcData& data, int partIdx,
+    const IntegerVector& parent, const IntegerVector& child,
+    const NumericVector& edgeLen,
+    double rateLogSd, double rateNeo, double betaScale,
+    const KprimeHyper& hyper, JointAscCache* cache) {
+  const double transScale =
+    compute_partition_scales(rateNeo, data.nNeo, data.nTrans).trans;
+  NumericVector scaledEdge(edgeLen.size());
+  for (int i = 0; i < edgeLen.size(); ++i)
+    scaledEdge[i] = edgeLen[i] * transScale;
+  const NumericVector rates = rateLogSd > 0.0
+    ? cpp_acrv_rates(rateLogSd, data.nCat, data.acrvZ)
+    : NumericVector(1, 1.0);
+  // Return:
+  return trans_joint_asc_log(data, partIdx, parent, child, scaledEdge, rates,
+                             betaScale, hyper, cache);
 }
 
 
@@ -2938,6 +2873,7 @@ double cpp_log_likelihood_partitioned(
     IntegerVector child,
     NumericVector edgeLen,
     const IntegerVector& kPrime,
+    const KprimeHyper& hyper,
     double rateLoss,
     NumericVector rateLogSd,
     NumericVector classRate,
@@ -2963,7 +2899,7 @@ double cpp_log_likelihood_partitioned(
     for (int e = 0; e < nEdge; ++e) scaledEdge[e] = edgeLen[e] * pe.classRate;
 
     totalLoglik += cpp_partition_log_likelihood(
-      data, pi, parent, child, scaledEdge, kPrime,
+      data, pi, parent, child, scaledEdge, kPrime, hyper,
       rateLoss, pe.rateLogSd, pe.rateNeo, betaScale, ws);
   }
   return totalLoglik;
@@ -2987,7 +2923,7 @@ static SEXP prepare_mcmc_data_impl(
     double betaScaleShape, double betaScaleRate,
     bool   kPriorEmpiricalGeometric, NumericVector empLogBody,
     int    empTailStartK, double empTailDecay, double empLogTailStartP,
-    bool   marginalK, bool unconditionalPrior) {
+    bool   marginalK) {
   McmcData* d = new McmcData();
   d->hasNeo = hasNeo;
   d->nCat = nCat;
@@ -3020,7 +2956,6 @@ static SEXP prepare_mcmc_data_impl(
   d->empLogTailStartP  = (empLogTailStartP <= -1e300) ? R_NegInf
                                                        : empLogTailStartP;
   d->marginalK = marginalK;
-  d->unconditionalPrior = unconditionalPrior;
   d->kObs = kObs_r;
   d->nChar = kObs_r.size();
   d->nTip = 0;
@@ -3110,6 +3045,10 @@ static SEXP prepare_mcmc_data_impl(
       d->charMask[pinfo.globalCharIdx[ci]] = m;
     }
   }
+  for (const PartInfo& pinfo : d->parts) {
+    d->partMaskTally.push_back(
+      tally_masks(*d, pinfo.globalCharIdx, pinfo.tipStates.ncol()));
+  }
 
   // Initialize branchBins with the default so weighted/block-Gibbs moves
   // work even if set_branch_bins() is never called (e.g. in unit tests).
@@ -3167,8 +3106,20 @@ SEXP prepare_mcmc_data(List partitions_r,
                        int    empTailStartK = 0,
                        double empTailDecay = 0.0,
                        double empLogTailStartP = -1e308,
-                       bool   marginalK = false,
-                       bool   unconditionalPrior = false) {
+                       bool   marginalK = false) {
+  // The k' sweep takes a transformational partition's candidates from its
+  // first character's observed state count.
+  for (R_xlen_t i = 0; i < partitions_r.size(); ++i) {
+    const List part = partitions_r[i];
+    if (as<std::string>(part["type"]) != "transformational") continue;
+    const IntegerVector ci = part["char_indices"];
+    for (R_xlen_t j = 1; j < ci.size(); ++j) {
+      if (kObs_r[ci[j] - 1] != kObs_r[ci[0] - 1]) {
+        Rcpp::stop("Transformational partition %d mixes observed state "
+                   "counts.", (int)i + 1);
+      }
+    }
+  }
   if (codingStr == "informative") {
     // A character is informative when at least two states each occur on two
     // or more observed tips (as .Informable). With fewer than four observed
@@ -3210,6 +3161,23 @@ SEXP prepare_mcmc_data(List partitions_r,
                  "coding = \"informative\": the singleton ascertainment "
                  "correction under Q-heterogeneity is not implemented.");
     }
+    for (R_xlen_t i = 0; i < charTypes_r.size(); ++i) {
+      if (charTypes_r[i] == "transformational") {
+        Rcpp::stop("coding = \"informative\" is not yet available for "
+                   "transformational characters, whose ascertainment sums "
+                   "over k'. Use coding = \"variable\".");
+      }
+    }
+  }
+  // The ascertainment correction sums over labelled patterns, which the data
+  // record only up to relabelling.
+  if (codingStr != "none" && !relabelFlag) {
+    for (R_xlen_t i = 0; i < charTypes_r.size(); ++i) {
+      if (charTypes_r[i] == "transformational") {
+        Rcpp::stop("relabel = FALSE needs coding = \"none\" when there are "
+                   "transformational characters.");
+      }
+    }
   }
   return prepare_mcmc_data_impl(
     partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag,
@@ -3218,7 +3186,7 @@ SEXP prepare_mcmc_data(List partitions_r,
     kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC,
     kPriorBetaGeometric, qHeterogeneity, nBetaCat, betaScaleShape,
     betaScaleRate, kPriorEmpiricalGeometric, empLogBody, empTailStartK,
-    empTailDecay, empLogTailStartP, marginalK, unconditionalPrior);
+    empTailDecay, empLogTailStartP, marginalK);
 }
 
 
@@ -3269,9 +3237,13 @@ double cpp_log_likelihood_xptr(SEXP dataPtr,
                                double rateLoss,
                                double rateLogSd,
                                double rateNeo,
+                               double p,
+                               double kprimeAlpha,
+                               double kprimeBeta,
                                double betaScale = 1.0) {
   McmcData* d = Rcpp::XPtr<McmcData>(dataPtr);
-  return cpp_log_likelihood(*d, parent, child, edgeLen, kPrime,
+  const KprimeHyper hyper{p, kprimeAlpha, kprimeBeta};
+  return cpp_log_likelihood(*d, parent, child, edgeLen, kPrime, hyper,
                             rateLoss, rateLogSd, rateNeo, betaScale, nullptr);
 }
 
@@ -3287,11 +3259,15 @@ double cpp_log_likelihood_partitioned_xptr(SEXP dataPtr,
                                            Rcpp::NumericVector rateLogSd,
                                            Rcpp::NumericVector classRate,
                                            double etaNeo,
+                                           double p,
+                                           double kprimeAlpha,
+                                           double kprimeBeta,
                                            double betaScale = 1.0,
                                            double rateNeo = 1.0) {
   McmcData* d = Rcpp::XPtr<McmcData>(dataPtr);
+  const KprimeHyper hyper{p, kprimeAlpha, kprimeBeta};
   return cpp_log_likelihood_partitioned(*d, parent, child, edgeLen, kPrime,
-                                        rateLoss, rateLogSd, classRate,
+                                        hyper, rateLoss, rateLogSd, classRate,
                                         rateNeo, etaNeo, betaScale, nullptr);
 }
 

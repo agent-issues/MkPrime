@@ -335,12 +335,14 @@ test_that("gibbs_kprime_sweep samples the partitioned conditional", {
   Partitioned <- function(kPrime) {
     cpp_log_likelihood_partitioned_xptr(
       chain$dataPtr, st$edge[, 1], st$edge[, 2], edgeLen, kPrime,
-      st$rateLoss, st$classRateLogSd, st$classRate, st$etaNeo, st$betaScale)
+      st$rateLoss, st$classRateLogSd, st$classRate, st$etaNeo, st$p,
+      st$kprimeAlpha, st$kprimeBeta, st$betaScale)
   }
   ClassBlind <- function(kPrime) {
     cpp_log_likelihood_xptr(
       chain$dataPtr, st$edge[, 1], st$edge[, 2], edgeLen, kPrime,
-      st$rateLoss, st$rateLogSd, st$rateNeo, st$betaScale)
+      st$rateLoss, st$rateLogSd, st$rateNeo, st$p, st$kprimeAlpha,
+      st$kprimeBeta, st$betaScale)
   }
 
   set.seed(25L)

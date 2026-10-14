@@ -37,8 +37,8 @@ test_that("gibbs_kprime_sweep draws from the k' full conditional", {
       priorState$kPrime[[i]] <- k
       cpp_log_likelihood_partitioned_xptr(
         chain$dataPtr, st$edge[, 1], st$edge[, 2], edgeLen, kPrime,
-        st$rateLoss, st$classRateLogSd, st$classRate, st$etaNeo,
-        st$betaScale) +
+        st$rateLoss, st$classRateLogSd, st$classRate, st$etaNeo, st$p,
+        st$kprimeAlpha, st$kprimeBeta, st$betaScale) +
         eval_log_prior_cpp(legacyData, MkPrime:::.InitMcmcChain(priorState))
     }, double(1))
     w <- exp(lw - max(lw))

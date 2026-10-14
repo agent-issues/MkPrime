@@ -90,10 +90,10 @@ One iteration performs one move, so a stone updates a parameter about
 many branch lengths share those weights, needs a correspondingly larger
 \code{nIter}.
 
-Under \code{likelihoodMode = "sampled_k"} and the unconditional \verb{k'} prior, no
-stone visits \verb{k'_i < kObs_i}, so the prior-only stone is normalised on
-\verb{k' >= kObs} alone; the estimate adds back the log prior mass of that
-region, integrated over \code{p} numerically.
+Under \code{likelihoodMode = "sampled_k"}, no stone visits \verb{k'_i < kObs_i}, so
+the prior-only stone is normalised on \verb{k' >= kObs} alone; the estimate adds
+back the log prior mass of that region, integrated numerically over the
+\verb{k'} prior's hyperparameters.
 
 Each run is one chain that carries its state from stone to stone. The first
 starts from \code{tree}; later runs start from a perturbed copy (a few random

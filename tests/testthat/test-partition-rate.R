@@ -145,13 +145,15 @@ test_that("R and C++ direct-eval likelihoods agree on mixed data, rate_neo != 1"
                                 kPrime      = kPrime,
                                 rate_loss   = 1.3,
                                 rate_log_sd = rls,
-                                rate_neo    = rn)
+                                rate_neo    = rn,
+                                model = MkPrimeModel(kPrimePrior = "logseries"))
       ll_cpp <- cpp_log_likelihood_xptr(
         dataPtr, parent, child, edgeLen,
         as.integer(kPrime),
         rateLoss   = 1.3,
         rateLogSd  = rls,
-        rateNeo    = rn
+        rateNeo    = rn,
+        p = 0.5, kprimeAlpha = 1, kprimeBeta = 1
       )
       expect_equal(ll_r, ll_cpp, tolerance = 1e-10,
         label = sprintf("rate_neo=%g rate_log_sd=%g", rn, rls))
@@ -301,7 +303,8 @@ test_that("partLogLik stays in sync after rate_neo moves (F1)", {
   # Initial full-eval log_lik (no cache yet).
   init_ll <- cpp_log_likelihood_xptr(
     dataPtr, parent, child, edgeLen, as.integer(kPrime),
-    rateLoss = 1.3, rateLogSd = 0.5, rateNeo = 1.0
+    rateLoss = 1.3, rateLogSd = 0.5, rateNeo = 1.0,
+    p = 0.5, kprimeAlpha = 1, kprimeBeta = 1
   )
 
   # Two-stage init: first state to compute logPrior properly, then re-init

@@ -95,7 +95,6 @@ run_mode <- function(sim, mode, seed) {
     nCat           = 1L,
     kPrimePrior    = "geometric",
     likelihoodMode = mode,
-    priorVariant   = "unconditional",
     kprimeHyperA   = A_PRIOR,
     kprimeHyperB   = B_PRIOR,
     expSteps       = EXPSTEPS_FIXED

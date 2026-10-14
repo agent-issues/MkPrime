@@ -42,7 +42,12 @@
 # base and the branch give bit-identical payloads. It was regenerated again on
 # 2026-10-06 when both k' walks (`kPrime`, `block_kPrime`) stopped drawing a
 # null shift (issue #304): with those two moves dropped from the schedule, the
-# merge base and the branch give bit-identical payloads. The 2026-05-20 reference delegated its starting
+# merge base and the branch give bit-identical payloads. It was regenerated
+# again on 2026-10-12 when transformational characters began conditioning on
+# the joint Pr(K, V), summed over k', in place of Pr(V | k'), a likelihood
+# change that no pin can undo: with `coding = "none"`, which has no
+# ascertainment term, the merge base and the branch give bit-identical
+# payloads. The 2026-05-20 reference delegated its starting
 # topology to TreeSearch::AdditionTree(), so it silently depended on the
 # installed version of a Suggests package and no CI job could ever reproduce
 # it; see helper-partition-ref.R.

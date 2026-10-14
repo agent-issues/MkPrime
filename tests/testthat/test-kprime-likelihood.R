@@ -132,14 +132,12 @@ test_that("kPrime with ascertainment correction and k' > kObs", {
   mkd <- MkPrimeData(pd)
 
   ll <- MkpLogLikelihood(tree, mkd, kPrime = 4L,
-                           coding = "variable", rate_log_sd = 0,
-                           relabel = FALSE)
+                           coding = "variable", rate_log_sd = 0)
   expect_true(is.finite(ll))
 
   # Ascertainment correction should still increase likelihood
   ll_none <- MkpLogLikelihood(tree, mkd, kPrime = 4L,
-                                coding = "none", rate_log_sd = 0,
-                                relabel = FALSE)
+                                coding = "none", rate_log_sd = 0)
   expect_gt(ll, ll_none)
 })
 

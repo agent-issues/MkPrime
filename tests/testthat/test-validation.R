@@ -79,13 +79,11 @@ test_that("Ascertainment correction increases likelihood", {
   pd <- MatrixToPhyDat(mat)
   mkd <- MkPrimeData(pd)
 
-  ll_none <- MkpLogLikelihood(tree, mkd, coding = "none",
-                               rate_log_sd = 0, relabel = FALSE)
-  ll_var <- MkpLogLikelihood(tree, mkd, coding = "variable",
-                              rate_log_sd = 0, relabel = FALSE)
+  llNone <- MkpLogLikelihood(tree, mkd, coding = "none", rate_log_sd = 0)
+  llVar <- MkpLogLikelihood(tree, mkd, coding = "variable", rate_log_sd = 0)
 
   # Variable coding divides by P(variable) < 1, so logL increases
-  expect_gt(ll_var, ll_none)
+  expect_gt(llVar, llNone)
 })
 
 
@@ -172,4 +170,19 @@ test_that("RunMkPrime aborts on tip label / data taxon mismatch", {
   expect_error(suppressWarnings(
     RunMkPrime(dat, ok, mcmc = MkPrimeMCMC(nIter = 100L, minWarmup = 50L))
   ), "do not match")
+})
+
+
+test_that("MkpLogLikelihood needs a length on every edge", {
+  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,t3:0.3);")
+  mkd <- MkPrimeData(MatrixToPhyDat(
+    matrix(c(0, 1, 0), 3, 1, dimnames = list(c("t1", "t2", "t3"), NULL))
+  ))
+  bare <- tree
+  bare$edge.length <- NULL
+  expect_error(MkpLogLikelihood(bare, mkd), "length on every edge")
+  bare$edge.length <- -tree$edge.length
+  expect_error(MkpLogLikelihood(bare, mkd), "length on every edge")
+  bare$edge.length <- c(tree$edge.length, 0.1)
+  expect_error(MkpLogLikelihood(bare, mkd), "length on every edge")
 })
