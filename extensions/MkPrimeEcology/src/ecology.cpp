@@ -6,10 +6,13 @@
 // an edge, the MkN equilibrium is tilted in each ecology s by
 //   logit(pi1) = logit(pi1_base) + s_z log(phi_s),
 // s_z = +1 (z = 1), -1 (z = 2), 0 (z = 0 or s = reference ecology), with
-// pi1_base = 1 / (1 + rate_loss) and the decay rate fixed at 2. The edge's
-// kernel mixes these over ecology with weights wEdge(e, s): the mean of the
-// JC(K) marginals of tip ecology at the edge's two ends, on the tree's own
-// edge lengths with a uniform root. The root takes the base equilibrium.
+// pi1_base = 1 / (1 + rate_loss); the decay rate stays MkPrime's base MkN rate
+// lambda(rate_loss) = (1 + r)^2 / (2 r), as the spec's "tilt the attractor, not
+// the tempo" (its fixed 2 is lambda at r = 1, before MkPrime rescaled MkN).
+// The edge's kernel mixes these over ecology with weights wEdge(e, s): the
+// mean of the JC(K) marginals of tip ecology at the edge's two ends, on the
+// tree's own edge lengths with a uniform root. The root takes the base
+// equilibrium.
 // Neomorphic edge lengths are MkPrime's: edge length x neo_scale x ACRV rate.
 #include <Rcpp.h>
 #include <MkPrime/MkPrime.h>
@@ -72,12 +75,13 @@ inline double tilted_pi1(const EcoData& d, int z, int s, double pi1Base,
 // Edge-aware EBE kernel (header API v2). Column c uses influence row
 // colZ[c * nNonRef ...]. With weights summing to one, the mixture
 // sum_s w(e, s) P_s equals ex I + (1 - ex) 1 pibar', where
-// pibar = sum_s w(e, s) (pi0_s, pi1_s) and ex = exp(-2 t).
+// pibar = sum_s w(e, s) (pi0_s, pi1_s) and ex = exp(-lambda t).
 class EbeModel {
  public:
   EbeModel(const EcoData& d, const double* phi, double rateLoss,
            const std::vector<double>* wEdge, const std::vector<int>* colZ)
     : d_(&d), wEdge_(wEdge), colZ_(colZ), pi1Base_(1.0 / (1.0 + rateLoss)),
+      lambda_(MkPrime::MkNRates(rateLoss).lambda()),
       pi1_(3 * d.kEco) {
     for (int z = 0; z < 3; ++z) {
       for (int s = 0; s < d.kEco; ++s) {
@@ -94,7 +98,7 @@ class EbeModel {
 
   void transition_edge(int edge, const double* src, double* dst, int nChar,
                        double t) const {
-    const double oneMinus = -std::expm1(-2.0 * t);
+    const double oneMinus = -std::expm1(-lambda_ * t);
     const double ex = 1.0 - oneMinus;
     const int K = d_->kEco, nNR = d_->nNonRef;
     const double* w = wEdge_->data() + static_cast<std::size_t>(edge) * K;
@@ -122,6 +126,7 @@ class EbeModel {
   const std::vector<double>* wEdge_;
   const std::vector<int>* colZ_;
   double pi1Base_;
+  double lambda_;
   std::vector<double> pi1_;
 };
 

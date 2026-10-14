@@ -53,6 +53,8 @@
   wEdge <- (marg[edge[, 1], , drop = FALSE] + marg[edge[, 2], , drop = FALSE]) / 2
   nonRef <- setdiff(seq_len(K), ref)
   pi1b <- 1 / (1 + rateLoss)
+  # MkPrime's MkN, rescaled to mean rate 1: lambda = rate01 + rate10.
+  lambda <- (1 + rateLoss)^2 / (2 * rateLoss)
   root <- setdiff(edge[, 1], edge[, 2])
   nTip <- nrow(x)
   post <- rev(seq_len(nrow(edge)))  # tree is in preorder
@@ -70,7 +72,7 @@
       }
       for (e in post) {
         t <- tree$edge.length[e] * neoScale * rate
-        ex <- exp(-2 * t)
+        ex <- exp(-lambda * t)
         Pmix <- matrix(0, 2, 2)
         for (s in seq_len(K)) {
           p1 <- Pi1(s)
@@ -306,7 +308,8 @@ test_that("with every z = 0 the model is MkPrime's MkN (T1)", {
 test_that("RunMkPrime samples the ecology model", {
   skip_on_cran()
   fx <- .EbeRunFixture(8108L)
-  ext <- EcologyExtension(fx$pd, fx$ecology, neomorphic = 1:8)
+  ext <- EcologyExtension(fx$pd, fx$ecology, neomorphic = 1:8,
+                          refEcology = "land")
   model <- MkPrime::MkPrimeModel(extensions = list(ext))
   set.seed(8109L)
   res <- suppressWarnings(MkPrime::RunMkPrime(

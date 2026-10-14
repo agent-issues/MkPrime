@@ -19,7 +19,8 @@ samples <- CanonicaliseEcology(res$samples, ext)
 As `dev/ecology/ebe-spec.md` on the archived branch, sections 1-3 and 7:
 
 - an equilibrium tilt `logit(pi1) += s_z log(phi)` per (character, non-reference
-  ecology), with the decay rate fixed at 2, so `z = 0` is MkN exactly;
+  ecology), with the decay rate held at the base MkN rate, so `z = 0` is MkN
+  exactly;
 - edge ecology weights: the mean of the JC(K) marginals of tip ecology at the
   edge's two ends (raw edge lengths, uniform root);
 - root frequencies `(pi0_base, pi1_base)`; rooted trees, with the root sampled
@@ -28,6 +29,12 @@ As `dev/ecology/ebe-spec.md` on the archived branch, sections 1-3 and 7:
   `theta ~ Beta(2, 2)`, `P(z = 0) = pi0`, `P(z = 1) = (1 - pi0) theta`.
 
 ## Differences from the archived branch
+
+- MkPrime's MkN is now rescaled to mean rate 1 (as RevBayes'
+  `fnFreeK(rescaled = TRUE)`), so the base decay rate is
+  `lambda = (1 + rate_loss)^2 / (2 rate_loss)`, not 2. The tilt keeps
+  `lambda` at that base value, which is the spec's "tilt the attractor, not the
+  tempo"; the archived branch's fixed 2 is `lambda` at `rate_loss = 1`.
 
 - Neomorphic edge lengths use MkPrime's normalised `neo_scale` (the RB-style
   rate_neo split now on `main`), so `z = 0` reproduces `main`'s neomorphic
