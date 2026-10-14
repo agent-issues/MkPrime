@@ -72,16 +72,21 @@ test_that("tree ESS enters the tuning score without minTreeEss (#222)", {
 test_that("a mid-round resume keeps the round's best so far (#221)", {
   cpFile <- tempfile(fileext = ".ckp")
   snapFile <- tempfile(fileext = ".ckp")
-  on.exit(unlink(c(cpFile, snapFile)), add = TRUE)
+  cancelFile <- tempfile()
+  on.exit(unlink(c(cpFile, snapFile, cancelFile)), add = TRUE)
 
-  # Keep the last checkpoint written during tuning: mid-way through the last
-  # candidate's window, with the incumbent and earlier candidates scored.
+  # Keep the first checkpoint taken mid-way through a candidate's window, with
+  # the incumbent scored, then cancel. A wall-clock limit would let a slow
+  # build (valgrind) stop before any candidate is on trial.
   RealSave <- MkPrime:::.SaveCheckpoint
   local_mocked_bindings(
     .SaveCheckpoint = function(runs, mcmc, iter, paramNames, file, ...) {
       RealSave(runs, mcmc, iter, paramNames, file, ...)
-      if (identical(runs[[1]]$phase, "Tuning")) {
-        file.copy(file, snapFile, overwrite = TRUE)
+      run <- runs[[1]]
+      if (!file.exists(snapFile) && isTRUE(run$tuningRound$candIdx > 0L) &&
+          NROW(run$tuningWindow$buf) > 0L) {
+        file.copy(file, snapFile)
+        file.create(cancelFile)
       }
     },
     .package = "MkPrime"
@@ -93,7 +98,7 @@ test_that("a mid-round resume keeps the round's best so far (#221)", {
                                   maxWarmup = 500L, minWarmup = 500L,
                                   autoTune = TRUE, tuningRounds = 1L,
                                   checkEvery = 500L, checkpointFile = cpFile,
-                                  maxTime = 60)),
+                                  cancelFile = cancelFile)),
     "maxWarmup"
   )
   expect_true(file.exists(snapFile))
@@ -105,10 +110,12 @@ test_that("a mid-round resume keeps the round's best so far (#221)", {
   local_mocked_bindings(
     .BeatsIncumbent = function(candRate, candEss, bestRate, bestEss, ...) {
       if (is.null(seen$bestRate)) seen$bestRate <- bestRate
+      file.create(cancelFile)
       FALSE
     },
     .package = "MkPrime"
   )
+  unlink(cancelFile)
   ResumeMkPrime(snapFile, .tuningData, .tuningTree)
   # The candidate on trial is judged against the best found before the
   # checkpoint, not against nothing.

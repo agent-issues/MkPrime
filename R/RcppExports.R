@@ -93,6 +93,18 @@ mkp_hello <- function() {
     .Call(`_MkPrime_mkp_hello`)
 }
 
+lumped_const_probs <- function(parent, child, edgeLen, nTip, rates, masks, kVals, betaScale = 0.0, nBetaCat = 4L) {
+    .Call(`_MkPrime_lumped_const_probs`, parent, child, edgeLen, nTip, rates, masks, kVals, betaScale, nBetaCat)
+}
+
+joint_asc_log_cpp <- function(dataPtr, partIdx, parent, child, scaledEdge, rates, betaScale, p, alpha, beta, direct = FALSE) {
+    .Call(`_MkPrime_joint_asc_log_cpp`, dataPtr, partIdx, parent, child, scaledEdge, rates, betaScale, p, alpha, beta, direct)
+}
+
+kprime_log_prior_table_cpp <- function(dataPtr, p, alpha, beta) {
+    .Call(`_MkPrime_kprime_log_prior_table_cpp`, dataPtr, p, alpha, beta)
+}
+
 pruning_jc <- function(parent, child, edge_length, tip_states, kStates, root_freqs) {
     .Call(`_MkPrime_pruning_jc`, parent, child, edge_length, tip_states, kStates, root_freqs)
 }
@@ -139,6 +151,10 @@ fitch_score_candidates_r <- function(parent, child, tipStates, nTip, kStates, pr
 
 init_mcmc_state <- function(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale = 1.0, kprimeAlpha = 1.0, kprimeBeta = 1.0, classRateLogSd = numeric(0), classW = numeric(0), classRate = numeric(0), nCharPerClass = integer(0), etaNeo = 1.0, useHyperpriorOnSigma = FALSE, hyperTau = 1.0, classZ = numeric(0), extParams = numeric(0)) {
     .Call(`_MkPrime_init_mcmc_state`, parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta, classRateLogSd, classW, classRate, nCharPerClass, etaNeo, useHyperpriorOnSigma, hyperTau, classZ, extParams)
+}
+
+joint_asc_at_cpp <- function(dataPtr, statePtr, parent, child, edgeLen) {
+    .Call(`_MkPrime_joint_asc_at_cpp`, dataPtr, statePtr, parent, child, edgeLen)
 }
 
 fill_partition_cache <- function(dataPtr, statePtr) {
@@ -253,8 +269,8 @@ het_const_site_prob <- function(parent, child, edgeLength, nTip, kStates, baseRa
     .Call(`_MkPrime_het_const_site_prob`, parent, child, edgeLength, nTip, kStates, baseRateLoss, betaBins, rateMultipliers)
 }
 
-prepare_mcmc_data <- function(partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, kPriorBetaGeometric = FALSE, qHeterogeneity = FALSE, nBetaCat = 4L, betaScaleShape = 1.0, betaScaleRate = 1.0, kPriorEmpiricalGeometric = FALSE, empLogBody = numeric(), empTailStartK = 0L, empTailDecay = 0.0, empLogTailStartP = -1e308, marginalK = FALSE, unconditionalPrior = FALSE) {
-    .Call(`_MkPrime_prepare_mcmc_data`, partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, kPriorBetaGeometric, qHeterogeneity, nBetaCat, betaScaleShape, betaScaleRate, kPriorEmpiricalGeometric, empLogBody, empTailStartK, empTailDecay, empLogTailStartP, marginalK, unconditionalPrior)
+prepare_mcmc_data <- function(partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, kPriorBetaGeometric = FALSE, qHeterogeneity = FALSE, nBetaCat = 4L, betaScaleShape = 1.0, betaScaleRate = 1.0, kPriorEmpiricalGeometric = FALSE, empLogBody = numeric(), empTailStartK = 0L, empTailDecay = 0.0, empLogTailStartP = -1e308, marginalK = FALSE) {
+    .Call(`_MkPrime_prepare_mcmc_data`, partitions_r, kObs_r, charTypes_r, hasNeo, nCat, codingStr, relabelFlag, treeLengthShape, treeLengthRate, rateLossMeanlog, rateLossSdlog, rateLogSdShape, rateLogSdRate, rateNeoMeanlog, rateNeoSdlog, kprimeHyperA, kprimeHyperB, kPriorLogseries, kprimeLogseriesC, kPriorBetaGeometric, qHeterogeneity, nBetaCat, betaScaleShape, betaScaleRate, kPriorEmpiricalGeometric, empLogBody, empTailStartK, empTailDecay, empLogTailStartP, marginalK)
 }
 
 set_branch_bins <- function(dataPtr, nBins) {
@@ -265,12 +281,12 @@ set_kprime_trunc_k <- function(dataPtr, K) {
     invisible(.Call(`_MkPrime_set_kprime_trunc_k`, dataPtr, K))
 }
 
-cpp_log_likelihood_xptr <- function(dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, betaScale = 1.0) {
-    .Call(`_MkPrime_cpp_log_likelihood_xptr`, dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, betaScale)
+cpp_log_likelihood_xptr <- function(dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, p, kprimeAlpha, kprimeBeta, betaScale = 1.0) {
+    .Call(`_MkPrime_cpp_log_likelihood_xptr`, dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, rateNeo, p, kprimeAlpha, kprimeBeta, betaScale)
 }
 
-cpp_log_likelihood_partitioned_xptr <- function(dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, classRate, etaNeo, betaScale = 1.0, rateNeo = 1.0) {
-    .Call(`_MkPrime_cpp_log_likelihood_partitioned_xptr`, dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, classRate, etaNeo, betaScale, rateNeo)
+cpp_log_likelihood_partitioned_xptr <- function(dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, classRate, etaNeo, p, kprimeAlpha, kprimeBeta, betaScale = 1.0, rateNeo = 1.0) {
+    .Call(`_MkPrime_cpp_log_likelihood_partitioned_xptr`, dataPtr, parent, child, edgeLen, kPrime, rateLoss, rateLogSd, classRate, etaNeo, p, kprimeAlpha, kprimeBeta, betaScale, rateNeo)
 }
 
 cpp_data_nclasses <- function(dataPtr) {

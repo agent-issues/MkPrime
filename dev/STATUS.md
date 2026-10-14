@@ -360,6 +360,10 @@ as opt-in for backward comparison. **Posterior samples on `p` under `geometric` 
 post-flip runs** (see NEWS.md). EG-002 simultaneously reclassified NOT-A-BUG by the
 same principle; see `findings.md`.
 
+**Model B retired (2026-10-13, agent-issues/MkPrime#440).** A model carrying
+`priorVariant = "conditional"` now errors: every k′ prior sits on k′ ≥ 2, and
+`beta_geometric` moved onto k′ − 2.
+
 **Deploy note (Hamilton).** GitHub auth is dead on the cluster (SSH publickey
 denied; HTTPS creds empty) and `/nobackup` had purged the stale `mkp-source`
 worktree — so deploy is **auth-free**: `git archive <sha> | scp | extract` into

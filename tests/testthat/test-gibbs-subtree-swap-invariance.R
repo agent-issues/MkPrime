@@ -12,12 +12,19 @@
 # chain visits, every state carrying the same exchangeable Dirichlet prior.
 
 
-.SwapChain <- function(nTip = 5L, nIter = 60000L, seed = 7L, rooted = FALSE) {
+.SwapChain <- function(nTip = 5L, nIter = 60000L, seed = 7L, rooted = FALSE,
+                       sparse = FALSE) {
   set.seed(seed)
   tree <- TreeTools::Preorder(ape::rtree(nTip, rooted = rooted))
   tree$edge.length <- rep(1 / nrow(tree$edge), nrow(tree$edge))
   mat <- matrix(sample(0:1, nTip * 8L, replace = TRUE), nrow = nTip,
                 dimnames = list(tree$tip.label, NULL))
+  if (sparse) {
+    # Two observed tips per character: the joint ascertainment term then
+    # varies by nats between trees.
+    mat <- matrix("?", nTip, 30L, dimnames = list(tree$tip.label, NULL))
+    for (j in seq_len(30L)) mat[sample(nTip, 2L), j] <- c("0", "1")
+  }
   mkd   <- suppressWarnings(MkPrimeData(MatrixToPhyDat(mat)))
   model <- MkPrime:::.FinalizeModel(MkPrimeModel(), tree, mkd)
   statePtr <- MkPrime:::.InitMcmcChain(MkPrime:::.InitState(tree, mkd, model))
@@ -37,7 +44,13 @@
   tab <- table(keys)
   uk  <- names(tab)
   tgt <- exp(lls[match(uk, keys)] - max(lls))
-  list(empirical = as.numeric(tab) / nIter, target = tgt / sum(tgt))
+  st <- get_mcmc_state(statePtr)
+  J <- vapply(uk, function(key) {
+    edge <- matrix(as.integer(strsplit(key, ",")[[1]]), ncol = 2L)
+    joint_asc_at_cpp(dataPtr, statePtr, edge[, 1], edge[, 2],
+                     st$treeLength * st$relBrLengths)
+  }, double(1))
+  list(empirical = as.numeric(tab) / nIter, target = tgt / sum(tgt), J = J)
 }
 
 
@@ -59,6 +72,17 @@ test_that("gibbs_subtree_swap samples its exact target", {
 })
 
 
+test_that("gibbs_subtree_swap weighs the joint ascertainment term", {
+  skip_on_cran()
+  skip_under_memcheck()
+  chain <- .SwapChain(nIter = 30000L, sparse = TRUE)
+  # Dropping J from the accept step would target target * exp(J), at a total
+  # variation of 0.3 from the target here.
+  expect_gt(diff(range(chain$J)), 2)
+  expect_lt(sum(abs(chain$empirical - chain$target)) / 2, 0.08)
+})
+
+
 # Each of the three evaluation paths -- partial CL, Q-heterogeneity, and the
 # full evaluator that coding = "informative" forces -- must score the tree the
 # commit then writes.  The evaluator attaches each subtree with the stem of
@@ -71,8 +95,13 @@ test_that("gibbs_subtree_swap samples its exact target", {
   tree <- TreeTools::Preorder(ape::rtree(nTip, rooted = rooted))
   mat <- matrix(sample(0:2, nTip * 10L, replace = TRUE), nrow = nTip,
                 dimnames = list(tree$tip.label, paste0("c", seq_len(10L))))
-  mkd <- suppressWarnings(MkPrimeData(MatrixToPhyDat(mat)))
-  if (identical(model$coding, "informative")) {
+  informative <- identical(model$coding, "informative")
+  # Informative coding needs a fixed k.
+  known <- if (informative) setNames(rep(3L, 10L), seq_len(10L)) else
+    integer(0)
+  mkd <- suppressWarnings(MkPrimeData(MatrixToPhyDat(mat),
+                                      knownStates = known))
+  if (informative) {
     mkd <- suppressMessages(MkPrime:::.DropUninformable(mkd))
   }
   if (partitioned) {
@@ -91,7 +120,8 @@ test_that("gibbs_subtree_swap samples its exact target", {
       cpp_log_likelihood_xptr(
         dataPtr, st$edge[, 1], st$edge[, 2],
         st$treeLength * st$relBrLengths, st$kPrime,
-        st$rateLoss, st$rateLogSd, st$rateNeo, st$betaScale)
+        st$rateLoss, st$rateLogSd, st$rateNeo, st$p, st$kprimeAlpha,
+        st$kprimeBeta, st$betaScale)
     }
   }
 
