@@ -4,9 +4,10 @@
 # (.Rbuildignore), so R-CMD-check.yml does not see it.
 #
 # agent-issues/EcoAware is private and this repository is public, so the
-# default GITHUB_TOKEN cannot fetch the submodule: set the repository secret
-# ECOAWARE_READ_TOKEN to a token with read access to agent-issues/EcoAware.
-# Without it the job stops at checkout with an explicit message.
+# default GITHUB_TOKEN cannot fetch the submodule. The job uses the secret
+# ECOAWARE_READ_TOKEN (preferred: read-only access to agent-issues/EcoAware)
+# and otherwise falls back to CLAUDE_GH_TOKEN. Neither reaches pull requests
+# from forks, and checkout does not persist the token.
 on:
   workflow_dispatch:
   pull_request:
@@ -39,10 +40,10 @@ jobs:
     steps:
       - name: Require the submodule token
         env:
-          ECOAWARE_READ_TOKEN: ${{ secrets.ECOAWARE_READ_TOKEN }}
+          ECOAWARE_READ_TOKEN: ${{ secrets.ECOAWARE_READ_TOKEN || secrets.CLAUDE_GH_TOKEN }}
         run: |
           if [ -z "$ECOAWARE_READ_TOKEN" ]; then
-            echo "::error::Secret ECOAWARE_READ_TOKEN is not set; it is needed to check out the private agent-issues/EcoAware submodule."
+            echo "::error::Neither ECOAWARE_READ_TOKEN nor CLAUDE_GH_TOKEN is available; one is needed to check out the private agent-issues/EcoAware submodule."
             exit 1
           fi
         shell: bash
@@ -50,7 +51,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           submodules: true
-          token: ${{ secrets.ECOAWARE_READ_TOKEN }}
+          token: ${{ secrets.ECOAWARE_READ_TOKEN || secrets.CLAUDE_GH_TOKEN }}
           persist-credentials: false
 
       - name: Report the EcoAware commit under test
