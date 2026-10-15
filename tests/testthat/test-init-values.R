@@ -35,7 +35,9 @@ test_that("initValues set the state and its likelihood", {
   expected <- MkPrime:::.MkpLogLikelihood(
     st$tree, fx$mkd, kPrime = kp, rate_loss = 1.7, rate_log_sd = 0.2,
     nCat = fx$model$nCat, coding = fx$model$coding, rate_neo = 1,
-    relabel = fx$model$relabel
+    relabel = fx$model$relabel, model = fx$model,
+    p = st$p %||% 0.5, kprimeAlpha = st$kprime_alpha %||% 1,
+    kprimeBeta = st$kprime_beta %||% 1
   )
   expect_identical(st$log_lik, expected)
   expect_identical(st$log_prior, LogPrior(st, fx$model, fx$mkd))
