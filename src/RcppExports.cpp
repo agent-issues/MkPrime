@@ -269,6 +269,58 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// header_transition_matrices
+Rcpp::List header_transition_matrices(std::string model, int kStates, double param, Rcpp::NumericVector pi, double t);
+RcppExport SEXP _MkPrime_header_transition_matrices(SEXP modelSEXP, SEXP kStatesSEXP, SEXP paramSEXP, SEXP piSEXP, SEXP tSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< std::string >::type model(modelSEXP);
+    Rcpp::traits::input_parameter< int >::type kStates(kStatesSEXP);
+    Rcpp::traits::input_parameter< double >::type param(paramSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type pi(piSEXP);
+    Rcpp::traits::input_parameter< double >::type t(tSEXP);
+    rcpp_result_gen = Rcpp::wrap(header_transition_matrices(model, kStates, param, pi, t));
+    return rcpp_result_gen;
+END_RCPP
+}
+// header_marginals
+Rcpp::List header_marginals(std::string model, Rcpp::IntegerVector parent, Rcpp::IntegerVector child, Rcpp::NumericVector edge_length, Rcpp::IntegerMatrix tip_states, int kStates, double param, Rcpp::NumericVector pi, Rcpp::NumericVector rates, Rcpp::NumericVector edge_scale);
+RcppExport SEXP _MkPrime_header_marginals(SEXP modelSEXP, SEXP parentSEXP, SEXP childSEXP, SEXP edge_lengthSEXP, SEXP tip_statesSEXP, SEXP kStatesSEXP, SEXP paramSEXP, SEXP piSEXP, SEXP ratesSEXP, SEXP edge_scaleSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< std::string >::type model(modelSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type parent(parentSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type child(childSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type edge_length(edge_lengthSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerMatrix >::type tip_states(tip_statesSEXP);
+    Rcpp::traits::input_parameter< int >::type kStates(kStatesSEXP);
+    Rcpp::traits::input_parameter< double >::type param(paramSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type pi(piSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type rates(ratesSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type edge_scale(edge_scaleSEXP);
+    rcpp_result_gen = Rcpp::wrap(header_marginals(model, parent, child, edge_length, tip_states, kStates, param, pi, rates, edge_scale));
+    return rcpp_result_gen;
+END_RCPP
+}
+// header_edge_renumber
+Rcpp::NumericVector header_edge_renumber(Rcpp::IntegerVector parent, Rcpp::IntegerVector child, Rcpp::NumericVector edge_length, Rcpp::IntegerMatrix tip_states, int kStates, Rcpp::NumericVector edge_scale, Rcpp::IntegerVector perm);
+RcppExport SEXP _MkPrime_header_edge_renumber(SEXP parentSEXP, SEXP childSEXP, SEXP edge_lengthSEXP, SEXP tip_statesSEXP, SEXP kStatesSEXP, SEXP edge_scaleSEXP, SEXP permSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type parent(parentSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type child(childSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type edge_length(edge_lengthSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerMatrix >::type tip_states(tip_statesSEXP);
+    Rcpp::traits::input_parameter< int >::type kStates(kStatesSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type edge_scale(edge_scaleSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type perm(permSEXP);
+    rcpp_result_gen = Rcpp::wrap(header_edge_renumber(parent, child, edge_length, tip_states, kStates, edge_scale, perm));
+    return rcpp_result_gen;
+END_RCPP
+}
 // mkp_hello
 double mkp_hello();
 RcppExport SEXP _MkPrime_mkp_hello() {
@@ -1285,6 +1337,9 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_header_constant_patterns", (DL_FUNC) &_MkPrime_header_constant_patterns, 3},
     {"_MkPrime_header_pruner_trace", (DL_FUNC) &_MkPrime_header_pruner_trace, 9},
     {"_MkPrime_header_site_likelihoods", (DL_FUNC) &_MkPrime_header_site_likelihoods, 9},
+    {"_MkPrime_header_transition_matrices", (DL_FUNC) &_MkPrime_header_transition_matrices, 5},
+    {"_MkPrime_header_marginals", (DL_FUNC) &_MkPrime_header_marginals, 10},
+    {"_MkPrime_header_edge_renumber", (DL_FUNC) &_MkPrime_header_edge_renumber, 7},
     {"_MkPrime_mkp_hello", (DL_FUNC) &_MkPrime_mkp_hello, 0},
     {"_MkPrime_lumped_const_probs", (DL_FUNC) &_MkPrime_lumped_const_probs, 9},
     {"_MkPrime_joint_asc_log_cpp", (DL_FUNC) &_MkPrime_joint_asc_log_cpp, 11},

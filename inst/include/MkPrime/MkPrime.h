@@ -10,15 +10,21 @@
 //
 //   transition.h     JC(k) / Mk(k) / Mk', MkN and F81 transition kernels
 //   models.h         JCModel, JCLumpedModel, MkNModel, F81Model
-//   pruning.h        Pruner<Model>: cached pruning, checkpoint / reject
+//   pruning.h        Pruner<Model>: cached pruning, checkpoint / reject,
+//                    node marginals (upward pass), edge-aware models
 //   acrv.h           lognormal_rates()
 //   corrections.h    relabel_log(), ascertainment_log_correction()
 //   ascertainment.h  constant_patterns()
 //
 // MKPRIME_HEADER_API_VERSION increases on any change to these signatures or
 // to their numerical results.
+//
+// Version 2 (additive; version 1 code compiles and gives the same results):
+// edge-aware models (transition_edge()), Pruner::invalidate_edge(),
+// Pruner::update_marginals() / node_up() / node_marginals(), and
+// transition_transpose() on JCModel, MkNModel and F81Model.
 
-#define MKPRIME_HEADER_API_VERSION 1
+#define MKPRIME_HEADER_API_VERSION 2
 
 #include "transition.h"
 #include "models.h"
