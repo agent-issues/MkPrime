@@ -725,9 +725,9 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
          "(two children per internal node; two or three at the root).");
   }
   McmcState* s = new McmcState();
-  s->parent       = clone(parent);
-  s->child        = clone(child);
-  s->relBrLengths = clone(relBrLengths);
+  s->parent       = owned_integer(parent);
+  s->child        = owned_integer(child);
+  s->relBrLengths = owned_numeric(relBrLengths);
   s->treeLength   = treeLength;
   s->rateLoss     = rateLoss;
   s->rateLogSd    = rateLogSd;
@@ -735,7 +735,7 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
   s->p            = p;
   s->kprimeAlpha  = kprimeAlpha;
   s->kprimeBeta   = kprimeBeta;
-  s->kPrime       = clone(kPrime);
+  s->kPrime       = owned_integer(kPrime);
   s->logLik       = logLik;
   s->logPrior     = logPrior;
   s->betaScale    = betaScale;
@@ -746,10 +746,10 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
   // their behaviour is unchanged (usePartitioned stays false).
   if (classRate.size() > 0) {
     s->usePartitioned  = true;
-    s->classRateLogSd  = clone(classRateLogSd);
-    s->classW          = clone(classW);
-    s->classRate       = clone(classRate);
-    s->nCharPerClass   = clone(nCharPerClass);
+    s->classRateLogSd  = owned_numeric(classRateLogSd);
+    s->classW          = owned_numeric(classW);
+    s->classRate       = owned_numeric(classRate);
+    s->nCharPerClass   = owned_integer(nCharPerClass);
     s->etaNeo          = etaNeo;
     // Invariant: keep legacy scalar in lockstep with classRateLogSd[0].
     if (classRateLogSd.size() > 0)
@@ -761,7 +761,7 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
     if (useHyperpriorOnSigma && classRateLogSd.size() >= 2) {
       s->useHyperpriorOnSigma = true;
       s->hyperTau             = hyperTau;
-      s->classZ               = clone(classZ);
+      s->classZ               = owned_numeric(classZ);
     }
   }
   return Rcpp::XPtr<McmcState>(s, true);
@@ -1118,6 +1118,27 @@ bool node_cl_ready(SEXP statePtr) {
 // [[Rcpp::export]]
 double get_state_log_lik(SEXP statePtr) {
   return Rcpp::XPtr<McmcState>(statePtr).get()->logLik;
+}
+
+// Test hook (#433): which of the R vectors that McmcData and McmcState hold
+// across .Call()s are ALTREP objects?  All should be FALSE: see
+// owned_integer() in mcmc_state.h.
+// [[Rcpp::export]]
+LogicalVector mcmc_altrep_storage(SEXP dataPtr, SEXP statePtr) {
+  const McmcData*  d = Rcpp::XPtr<McmcData>(dataPtr).get();
+  const McmcState* s = Rcpp::XPtr<McmcState>(statePtr).get();
+  bool tips = false, uniq = false, pat = false;
+  for (const PartInfo& p : d->parts) {
+    tips = tips || ALTREP(p.tipStates);
+    uniq = uniq || ALTREP(p.uniqueTipStates);
+    pat  = pat  || ALTREP(p.patternIndex);
+  }
+  return LogicalVector::create(
+    _["kObs"] = (bool)ALTREP(d->kObs), _["tipStates"] = tips,
+    _["uniqueTipStates"] = uniq, _["patternIndex"] = pat,
+    _["parent"] = (bool)ALTREP(s->parent), _["child"] = (bool)ALTREP(s->child),
+    _["relBrLengths"] = (bool)ALTREP(s->relBrLengths),
+    _["kPrime"] = (bool)ALTREP(s->kPrime));
 }
 
 

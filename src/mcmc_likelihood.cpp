@@ -2956,7 +2956,7 @@ static SEXP prepare_mcmc_data_impl(
   d->empLogTailStartP  = (empLogTailStartP <= -1e300) ? R_NegInf
                                                        : empLogTailStartP;
   d->marginalK = marginalK;
-  d->kObs = kObs_r;
+  d->kObs = owned_integer(kObs_r);
   d->nChar = kObs_r.size();
   d->nTip = 0;
 
@@ -2982,12 +2982,12 @@ static SEXP prepare_mcmc_data_impl(
     pinfo.k = (Rf_isNull(k_sexp) || IntegerVector::is_na(as<int>(k_sexp))) ? 0
                                                                             : as<int>(k_sexp);
 
-    pinfo.tipStates = as<IntegerMatrix>(p_r["tip_states"]);
+    pinfo.tipStates = owned_integer_matrix(p_r["tip_states"]);
     if (d->nTip == 0) d->nTip = pinfo.tipStates.nrow();
 
     // M-172: unique tip-state patterns for Gibbs sweep deduplication
-    pinfo.uniqueTipStates = as<IntegerMatrix>(p_r["unique_tip_states"]);
-    pinfo.patternIndex    = as<IntegerVector>(p_r["pattern_index"]);
+    pinfo.uniqueTipStates = owned_integer_matrix(p_r["unique_tip_states"]);
+    pinfo.patternIndex    = owned_integer(p_r["pattern_index"]);
     pinfo.nUniquePatterns = pinfo.uniqueTipStates.ncol();
 
     IntegerVector ci_r = as<IntegerVector>(p_r["char_indices"]);

@@ -11,6 +11,50 @@
 #include <cstdint>
 #include <string>
 #include "joint_asc.h"
+#include <algorithm>
+
+// Copy an R vector into freshly allocated, plain (non-ALTREP) storage,
+// keeping its attributes (dim, names).
+//
+// Rcpp caches a vector's data pointer when an object is constructed.  An
+// ALTREP wrapper -- which `storage.mode<-`, `dim<-`, `structure()` and
+// friends return for vectors of more than 64 elements -- replaces its
+// payload with a fresh copy on the next writable DATAPTR() once that payload
+// is shared, so an Rcpp object built on the wrapper earlier is left pointing
+// at the old payload, which the GC is then free to collect (#433).  clone()
+// does not help: duplicating a wrapper returns another wrapper.  Anything
+// held across .Call()s (McmcData, McmcState) must therefore own plain
+// storage; build it with these helpers rather than by wrapping the R object.
+inline Rcpp::IntegerVector owned_integer(SEXP x) {
+  Rcpp::Shield<SEXP> s(Rf_coerceVector(x, INTSXP));
+  const R_xlen_t n = Rf_xlength(s);
+  Rcpp::IntegerVector out(n);
+  if (n > 0) {
+    const int* src = INTEGER_RO(s);
+    std::copy(src, src + n, out.begin());
+  }
+  DUPLICATE_ATTRIB(out, s);
+  return out;
+}
+
+inline Rcpp::NumericVector owned_numeric(SEXP x) {
+  Rcpp::Shield<SEXP> s(Rf_coerceVector(x, REALSXP));
+  const R_xlen_t n = Rf_xlength(s);
+  Rcpp::NumericVector out(n);
+  if (n > 0) {
+    const double* src = REAL_RO(s);
+    std::copy(src, src + n, out.begin());
+  }
+  DUPLICATE_ATTRIB(out, s);
+  return out;
+}
+
+inline Rcpp::IntegerMatrix owned_integer_matrix(SEXP x) {
+  if (!Rf_isMatrix(x)) Rcpp::stop("Expected a matrix of tip states.");
+  Rcpp::IntegerVector v = owned_integer(x);
+  return Rcpp::IntegerMatrix(static_cast<SEXP>(v));
+}
+
 
 // Per-partition data: tip states and character mapping.
 struct PartInfo {
