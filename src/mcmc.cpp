@@ -202,6 +202,7 @@ struct McmcState {
   double betaScale = 1.0;
   // Extension parameters (#441), laid out as McmcData::extOffset describes.
   std::vector<double> extParams;
+  std::vector<int> extInts;  // ABI v3 integer parameters
   // Sum of the extensions' log_lik terms (ABI v2) at this state; 0 when
   // none declares one. state.logLik stays the core likelihood.
   double extLogLik = 0.0;
@@ -726,7 +727,8 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
                      bool useHyperpriorOnSigma   = false,
                      double hyperTau             = 1.0,
                      NumericVector classZ        = NumericVector(0),
-                     NumericVector extParams     = NumericVector(0)) {
+                     NumericVector extParams     = NumericVector(0),
+                     IntegerVector extInts       = IntegerVector(0)) {
   if (!is_binary_tree(parent, child)) {
     stop("Tree must be binary, with tips 1..nTip and root nTip + 1 "
          "(two children per internal node; two or three at the root).");
@@ -749,6 +751,7 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
   s->brSnapshot   = NumericVector(relBrLengths.size());
   s->etaNeo       = etaNeo;
   s->extParams.assign(extParams.begin(), extParams.end());
+  s->extInts.assign(extInts.begin(), extInts.end());
   // Partition-API (Layer 1): when per-class vectors are supplied, activate
   // the partitioned likelihood path. Legacy callers pass no per-class args;
   // their behaviour is unchanged (usePartitioned stays false).
@@ -1106,6 +1109,7 @@ List get_mcmc_state(SEXP statePtr) {
     _["hyperTau"]           = s->hyperTau,
     _["classZ"]             = clone(s->classZ),
     _["extParams"]          = NumericVector(s->extParams.begin(), s->extParams.end()),
+    _["extInts"]            = IntegerVector(s->extInts.begin(), s->extInts.end()),
     _["extLogLik"]          = s->extLogLik
   );
 }
@@ -1180,7 +1184,9 @@ double eval_log_prior_cpp(SEXP dataPtr, SEXP statePtr) {
     s->rateLoss, s->rateLogSd, s->rateNeo,
     s->p, s->kPrime, s->betaScale,
     s->kprimeAlpha, s->kprimeBeta);
-  if (d->nExtParams > 0 || !s->extParams.empty()) lp += extension_log_prior(*d, *s);
+  if (!d->extensions.empty() || !s->extParams.empty() || !s->extInts.empty()) {
+    lp += extension_log_prior(*d, *s);
+  }
   return lp;
 }
 
@@ -1211,7 +1217,9 @@ double eval_log_prior_partitioned_cpp(
     classRateLogSd, classW, classRate, etaNeo,
     useHyperpriorOnSigma, hyperTau, classZ,
     s->betaScale, s->kprimeAlpha, s->kprimeBeta);
-  if (d->nExtParams > 0 || !s->extParams.empty()) lp += extension_log_prior(*d, *s);
+  if (!d->extensions.empty() || !s->extParams.empty() || !s->extInts.empty()) {
+    lp += extension_log_prior(*d, *s);
+  }
   return lp;
 }
 
@@ -1245,40 +1253,76 @@ void set_class_rate_concentration(SEXP dataPtr, double concentration) {
 // Sum of the attached extensions' log priors (#441); 0 when none.
 static double extension_log_prior(const McmcData& data,
                                   const McmcState& state) {
-  if (static_cast<int>(state.extParams.size()) != data.nExtParams) {
+  if (static_cast<int>(state.extParams.size()) != data.nExtParams ||
+      static_cast<int>(state.extInts.size()) != data.nExtInts) {
     return R_NegInf;
+  }
+  for (int i = 0; i < data.nExtInts; ++i) {
+    if (state.extInts[i] < 0 || state.extInts[i] >= data.extIntLevels[i]) {
+      return R_NegInf;
+    }
   }
   double lp = 0.0;
   for (size_t e = 0; e < data.extensions.size(); ++e) {
-    const MkPrimeExtension* ext = data.extensions[e];
-    lp += ext->log_prior(state.extParams.data() + data.extOffset[e], ext->user);
+    lp += ext_log_prior(data.extensions[e],
+                        state.extParams.data() + data.extOffset[e],
+                        state.extInts.data() + data.extIntOffset[e]);
   }
   return lp;
 }
 
-// Absolute edge lengths for an extension's tree view.
-static std::vector<double> extension_edge_lengths(double treeLength,
-                                                  const NumericVector& relBr) {
-  std::vector<double> len(relBr.size());
-  for (R_xlen_t i = 0; i < relBr.size(); ++i) len[i] = treeLength * relBr[i];
-  return len;
-}
-
-static MkPrimeTreeView extension_tree_view(const McmcData& data,
-                                           const IntegerVector& parent,
-                                           const IntegerVector& child,
-                                           const std::vector<double>& len) {
+// The tree view an extension sees (#441), with the buffers it points into.
+// Core scalars follow MKPRIME_CORE_* (the order of kScalarParams).
+struct ExtensionView {
   MkPrimeTreeView view;
-  view.n_tip = data.nTip;
-  view.n_edge = static_cast<int>(len.size());
-  view.parent = parent.begin();
-  view.child = child.begin();
-  view.edge_length = len.data();
-  view.unif_rand = &::unif_rand;
-  return view;
+  std::vector<double> len, core, rates;
+};
+
+static void extension_view(const McmcData& data, const McmcState& state,
+                           const IntegerVector& parent,
+                           const IntegerVector& child,
+                           const NumericVector& relBr, ExtensionView& out) {
+  out.len.resize(relBr.size());
+  for (R_xlen_t i = 0; i < relBr.size(); ++i) {
+    out.len[i] = state.treeLength * relBr[i];
+  }
+  out.core.assign({state.treeLength, state.rateLoss, state.rateLogSd,
+                   state.rateNeo, state.betaScale});
+  if (state.rateLogSd > 0.0) {
+    const NumericVector r = cpp_acrv_rates(state.rateLogSd, data.nCat, data.acrvZ);
+    out.rates.assign(r.begin(), r.end());
+  } else {
+    out.rates.assign(1, 1.0);
+  }
+  MkPrimeTreeView& v = out.view;
+  v.n_tip = data.nTip;
+  v.n_edge = static_cast<int>(out.len.size());
+  v.parent = parent.begin();
+  v.child = child.begin();
+  v.edge_length = out.len.data();
+  v.unif_rand = &::unif_rand;
+  v.n_core = static_cast<int>(out.core.size());
+  v.core = out.core.data();
+  v.neo_scale = compute_partition_scales(state.rateNeo, data.nNeo,
+                                         data.nTrans).neo;
+  v.n_rate_cat = static_cast<int>(out.rates.size());
+  v.rate_cat = out.rates.data();
+  v.coding = data.codingType;
+  v.n_claimed = 0;
+  v.claimed_states = nullptr;
+  v.claimed_char = nullptr;
 }
 
-// Sum of the extensions' log-likelihood terms (#441 ABI v2) on the tree
+// Point the view at extension e's claimed characters, if any.
+static void extension_view_claims(const McmcData& data, int e,
+                                  MkPrimeTreeView& v) {
+  const bool owner = e == data.extClaimNeo;
+  v.n_claimed = owner ? static_cast<int>(data.extClaimChar.size()) : 0;
+  v.claimed_states = owner ? data.extClaimStates.data() : nullptr;
+  v.claimed_char = owner ? data.extClaimChar.data() : nullptr;
+}
+
+// Sum of the extensions' log-likelihood terms (#441 ABI v2+) on the tree
 // (parent, child, state.treeLength * relBr); 0 when none declares one.
 static double extension_log_lik_at(const McmcData& data,
                                    const McmcState& state,
@@ -1286,18 +1330,19 @@ static double extension_log_lik_at(const McmcData& data,
                                    const IntegerVector& child,
                                    const NumericVector& relBr) {
   if (!data.extLik) return 0.0;
-  if (static_cast<int>(state.extParams.size()) != data.nExtParams) {
+  if (static_cast<int>(state.extParams.size()) != data.nExtParams ||
+      static_cast<int>(state.extInts.size()) != data.nExtInts) {
     return R_NegInf;
   }
-  const std::vector<double> len =
-    extension_edge_lengths(state.treeLength, relBr);
-  const MkPrimeTreeView view = extension_tree_view(data, parent, child, len);
+  ExtensionView ev;
+  extension_view(data, state, parent, child, relBr, ev);
   double ll = 0.0;
   for (size_t e = 0; e < data.extensions.size(); ++e) {
     const MkPrimeExtension* ext = data.extensions[e];
     if (!ext_has_log_lik(ext)) continue;
-    ll += ext->log_lik(&view, state.extParams.data() + data.extOffset[e],
-                       ext->user);
+    extension_view_claims(data, static_cast<int>(e), ev.view);
+    ll += ext_log_lik(ext, &ev.view, state.extParams.data() + data.extOffset[e],
+                      state.extInts.data() + data.extIntOffset[e]);
   }
   return ll;
 }
@@ -1337,7 +1382,8 @@ static double compute_log_prior_at(
       state.p, state.kPrime, state.betaScale,
       state.kprimeAlpha, state.kprimeBeta);
   }
-  if (data.nExtParams > 0 || !state.extParams.empty()) {
+  if (!data.extensions.empty() || !state.extParams.empty() ||
+      !state.extInts.empty()) {
     lp += extension_log_prior(data, state);
   }
   return lp;
@@ -3808,9 +3854,9 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
                                int paramIdx, double width,
                                double beta, int maxSteps = 20,
                                int* nExpansionsOut = nullptr) {
-  // The slice target holds the core likelihood only; refuse parameters that
-  // an extension likelihood (#441 ABI v2) depends on.
-  if (data->extLik && (paramIdx == 0 || is_ext_scalar(paramIdx))) {
+  // The slice target holds the core likelihood only, while an extension
+  // likelihood (#441) may read any scalar: refuse slice moves beside one.
+  if (data->extLik) {
     return false;
   }
   double x0 = get_scalar(state, paramIdx);
@@ -5319,6 +5365,7 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   // Extension move (case 41): the extension's parameter block, for rollback.
   int    extBlockOff = -1;
   std::vector<double> extBlockOld;
+  std::vector<int> extIntBlockOld;
 
   // An extension likelihood (ABI v2) depends on the tree. Moves that score
   // their candidates with the core likelihood alone would sample the wrong
@@ -5452,24 +5499,34 @@ static bool do_move_impl(McmcData* data, McmcState* state,
       logHastings = scale_scalar(state, charIdx, scaleTuning);
       break;
     }
-    case 41: { // extension move (#441 ABI v2); charIdx indexes extMoves
+    case 41: { // extension move (#441 ABI v2+); charIdx indexes extMoves
       if (charIdx < 0 ||
           charIdx >= static_cast<int>(data->extMoves.size()) ||
-          static_cast<int>(state->extParams.size()) != data->nExtParams) {
+          static_cast<int>(state->extParams.size()) != data->nExtParams ||
+          static_cast<int>(state->extInts.size()) != data->nExtInts) {
         return false;
       }
       const McmcData::ExtMove& em = data->extMoves[charIdx];
       const MkPrimeExtension* ext = data->extensions[em.ext];
       extBlockOff = data->extOffset[em.ext];
+      const int intOff = data->extIntOffset[em.ext];
       double* block = state->extParams.data() + extBlockOff;
+      int* intBlock = state->extInts.data() + intOff;
       extBlockOld.assign(block, block + ext->n_params);
-      const std::vector<double> len =
-        extension_edge_lengths(state->treeLength, state->relBrLengths);
-      const MkPrimeTreeView view =
-        extension_tree_view(*data, state->parent, state->child, len);
-      logHastings = ext->propose(em.move, &view, block, ext->user);
-      if (!R_FINITE(logHastings)) {
+      extIntBlockOld.assign(intBlock, intBlock + ext_n_ints(ext));
+      ExtensionView ev;
+      extension_view(*data, *state, state->parent, state->child,
+                     state->relBrLengths, ev);
+      extension_view_claims(*data, em.ext, ev.view);
+      logHastings = ext_propose(ext, em.move, &ev.view, block, intBlock);
+      bool inRange = true;
+      for (int i = 0; i < ext_n_ints(ext); ++i) {
+        inRange = inRange && intBlock[i] >= 0 &&
+          intBlock[i] < data->extIntLevels[intOff + i];
+      }
+      if (!R_FINITE(logHastings) || !inRange) {
         std::copy(extBlockOld.begin(), extBlockOld.end(), block);
+        std::copy(extIntBlockOld.begin(), extIntBlockOld.end(), intBlock);
         return false;
       }
       break;
@@ -6044,6 +6101,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     if (extBlockOff >= 0) {
       std::copy(extBlockOld.begin(), extBlockOld.end(),
                 state->extParams.begin() + extBlockOff);
+      std::copy(extIntBlockOld.begin(), extIntBlockOld.end(),
+                state->extInts.begin() +
+                  data->extIntOffset[data->extMoves[charIdx].ext]);
     }
     if (bsIdx1 >= 0) {
       state->relBrLengths[bsIdx1] = bsOldVal1;
@@ -6101,6 +6161,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     if (extBlockOff >= 0) {
       std::copy(extBlockOld.begin(), extBlockOld.end(),
                 state->extParams.begin() + extBlockOff);
+      std::copy(extIntBlockOld.begin(), extIntBlockOld.end(),
+                state->extInts.begin() +
+                  data->extIntOffset[data->extMoves[charIdx].ext]);
     }
     if (bsIdx1 >= 0) {
       state->relBrLengths[bsIdx1] = bsOldVal1;
@@ -6465,6 +6528,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   if (extBlockOff >= 0) {
     std::copy(extBlockOld.begin(), extBlockOld.end(),
               state->extParams.begin() + extBlockOff);
+    std::copy(extIntBlockOld.begin(), extIntBlockOld.end(),
+              state->extInts.begin() +
+                data->extIntOffset[data->extMoves[charIdx].ext]);
   }
   if (bsIdx1 >= 0) {
     state->relBrLengths[bsIdx1] = bsOldVal1;
@@ -6706,7 +6772,7 @@ List run_mcmc_batch_cpp(
   int nHyperTauCol = hyperOn ? 1 : 0;
   int nClassZ      = hyperOn ? (int)states[0]->classZ.size() : 0;
   // Extension parameters (#441), appended after every core column.
-  int nExtCols     = (int)states[0]->extParams.size();
+  int nExtCols     = (int)(states[0]->extParams.size() + states[0]->extInts.size());
   // Base columns: log_post, log_lik, tree_length, rate_log_sd (4).
   // rate_loss included only when hasNeo (like rate_neo, p, beta_scale).
   // +2 diagnostic columns: swap_cold (cold-chain swaps since last sample),
@@ -6914,8 +6980,10 @@ List run_mcmc_batch_cpp(
       if (nHyperTauCol > 0) row[col++] = s0->hyperTau;
       for (int k = 0; k < nClassZ; ++k)
         row[col++] = s0->classZ[k];
-      for (int k = 0; k < nExtCols; ++k)
+      for (size_t k = 0; k < s0->extParams.size(); ++k)
         row[col++] = s0->extParams[k];
+      for (size_t k = 0; k < s0->extInts.size(); ++k)
+        row[col++] = s0->extInts[k];
       scalarRows.push_back(row);
 
       // Edge matrix for tree reconstruction in R
@@ -7065,5 +7133,4 @@ DataFrame validate_swap_partial_cl(SEXP dataPtr, SEXP statePtr, int nodeA) {
     _["ll_full"]    = llFull
   );
 }
-
 

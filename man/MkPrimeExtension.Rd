@@ -28,6 +28,16 @@ an extension likelihood, moves that score candidates with MkPrime's
 likelihood alone (Gibbs and weighted topology moves, the block Gibbs
 branch move, and slice sampling of tree length) are not used, and
 \code{\link[=mkp_stepping_stone]{mkp_stepping_stone()}} is unavailable.
+
+Extensions may also carry integer parameters (such as latent categories),
+logged and checkpointed alongside the real ones and updated by the
+extension's own moves; read MkPrime's scalars (\code{tree_length}, \code{rate_loss},
+\code{rate_log_sd}, \code{rate_neo}, \code{beta_scale}); and claim MkPrime's neomorphic
+characters. MkPrime then leaves claimed characters out of its own
+likelihood and passes their tip states to the extension, which scores
+them, including any ascertainment correction. They still count towards
+the normalisation of \code{rate_neo}, which MkPrime keeps sampling, together
+with \code{rate_loss}. Claims are not available with a user partition.
 }
 \details{
 Extensions are written in C or C++ against

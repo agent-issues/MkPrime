@@ -184,14 +184,15 @@ BEGIN_RCPP
 END_RCPP
 }
 // extension_log_prior_cpp
-double extension_log_prior_cpp(SEXP ext, Rcpp::NumericVector params);
-RcppExport SEXP _MkPrime_extension_log_prior_cpp(SEXP extSEXP, SEXP paramsSEXP) {
+double extension_log_prior_cpp(SEXP ext, Rcpp::NumericVector params, Rcpp::IntegerVector ints);
+RcppExport SEXP _MkPrime_extension_log_prior_cpp(SEXP extSEXP, SEXP paramsSEXP, SEXP intsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< SEXP >::type ext(extSEXP);
     Rcpp::traits::input_parameter< Rcpp::NumericVector >::type params(paramsSEXP);
-    rcpp_result_gen = Rcpp::wrap(extension_log_prior_cpp(ext, params));
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type ints(intsSEXP);
+    rcpp_result_gen = Rcpp::wrap(extension_log_prior_cpp(ext, params, ints));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -243,6 +244,16 @@ BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     rcpp_result_gen = Rcpp::wrap(toy_lik_extension_cpp());
+    return rcpp_result_gen;
+END_RCPP
+}
+// toy_claim_extension_cpp
+SEXP toy_claim_extension_cpp();
+RcppExport SEXP _MkPrime_toy_claim_extension_cpp() {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    rcpp_result_gen = Rcpp::wrap(toy_claim_extension_cpp());
     return rcpp_result_gen;
 END_RCPP
 }
@@ -581,8 +592,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // init_mcmc_state
-SEXP init_mcmc_state(IntegerVector parent, IntegerVector child, NumericVector relBrLengths, double treeLength, double rateLoss, double rateLogSd, double rateNeo, double p, IntegerVector kPrime, double logLik, double logPrior, double betaScale, double kprimeAlpha, double kprimeBeta, NumericVector classRateLogSd, NumericVector classW, NumericVector classRate, IntegerVector nCharPerClass, double etaNeo, bool useHyperpriorOnSigma, double hyperTau, NumericVector classZ, NumericVector extParams);
-RcppExport SEXP _MkPrime_init_mcmc_state(SEXP parentSEXP, SEXP childSEXP, SEXP relBrLengthsSEXP, SEXP treeLengthSEXP, SEXP rateLossSEXP, SEXP rateLogSdSEXP, SEXP rateNeoSEXP, SEXP pSEXP, SEXP kPrimeSEXP, SEXP logLikSEXP, SEXP logPriorSEXP, SEXP betaScaleSEXP, SEXP kprimeAlphaSEXP, SEXP kprimeBetaSEXP, SEXP classRateLogSdSEXP, SEXP classWSEXP, SEXP classRateSEXP, SEXP nCharPerClassSEXP, SEXP etaNeoSEXP, SEXP useHyperpriorOnSigmaSEXP, SEXP hyperTauSEXP, SEXP classZSEXP, SEXP extParamsSEXP) {
+SEXP init_mcmc_state(IntegerVector parent, IntegerVector child, NumericVector relBrLengths, double treeLength, double rateLoss, double rateLogSd, double rateNeo, double p, IntegerVector kPrime, double logLik, double logPrior, double betaScale, double kprimeAlpha, double kprimeBeta, NumericVector classRateLogSd, NumericVector classW, NumericVector classRate, IntegerVector nCharPerClass, double etaNeo, bool useHyperpriorOnSigma, double hyperTau, NumericVector classZ, NumericVector extParams, IntegerVector extInts);
+RcppExport SEXP _MkPrime_init_mcmc_state(SEXP parentSEXP, SEXP childSEXP, SEXP relBrLengthsSEXP, SEXP treeLengthSEXP, SEXP rateLossSEXP, SEXP rateLogSdSEXP, SEXP rateNeoSEXP, SEXP pSEXP, SEXP kPrimeSEXP, SEXP logLikSEXP, SEXP logPriorSEXP, SEXP betaScaleSEXP, SEXP kprimeAlphaSEXP, SEXP kprimeBetaSEXP, SEXP classRateLogSdSEXP, SEXP classWSEXP, SEXP classRateSEXP, SEXP nCharPerClassSEXP, SEXP etaNeoSEXP, SEXP useHyperpriorOnSigmaSEXP, SEXP hyperTauSEXP, SEXP classZSEXP, SEXP extParamsSEXP, SEXP extIntsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -609,7 +620,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< double >::type hyperTau(hyperTauSEXP);
     Rcpp::traits::input_parameter< NumericVector >::type classZ(classZSEXP);
     Rcpp::traits::input_parameter< NumericVector >::type extParams(extParamsSEXP);
-    rcpp_result_gen = Rcpp::wrap(init_mcmc_state(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta, classRateLogSd, classW, classRate, nCharPerClass, etaNeo, useHyperpriorOnSigma, hyperTau, classZ, extParams));
+    Rcpp::traits::input_parameter< IntegerVector >::type extInts(extIntsSEXP);
+    rcpp_result_gen = Rcpp::wrap(init_mcmc_state(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta, classRateLogSd, classW, classRate, nCharPerClass, etaNeo, useHyperpriorOnSigma, hyperTau, classZ, extParams, extInts));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -1366,12 +1378,13 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_mk_prime_relabel_log", (DL_FUNC) &_MkPrime_mk_prime_relabel_log, 2},
     {"_MkPrime_mk_prime_relabel_log_batch", (DL_FUNC) &_MkPrime_mk_prime_relabel_log_batch, 2},
     {"_MkPrime_extension_info_cpp", (DL_FUNC) &_MkPrime_extension_info_cpp, 1},
-    {"_MkPrime_extension_log_prior_cpp", (DL_FUNC) &_MkPrime_extension_log_prior_cpp, 2},
+    {"_MkPrime_extension_log_prior_cpp", (DL_FUNC) &_MkPrime_extension_log_prior_cpp, 3},
     {"_MkPrime_attach_extensions_cpp", (DL_FUNC) &_MkPrime_attach_extensions_cpp, 2},
     {"_MkPrime_extension_abi_version", (DL_FUNC) &_MkPrime_extension_abi_version, 0},
     {"_MkPrime_toy_extension_cpp", (DL_FUNC) &_MkPrime_toy_extension_cpp, 0},
     {"_MkPrime_toy_v1_extension_cpp", (DL_FUNC) &_MkPrime_toy_v1_extension_cpp, 0},
     {"_MkPrime_toy_lik_extension_cpp", (DL_FUNC) &_MkPrime_toy_lik_extension_cpp, 0},
+    {"_MkPrime_toy_claim_extension_cpp", (DL_FUNC) &_MkPrime_toy_claim_extension_cpp, 0},
     {"_MkPrime_header_api_version", (DL_FUNC) &_MkPrime_header_api_version, 0},
     {"_MkPrime_header_jc_probs", (DL_FUNC) &_MkPrime_header_jc_probs, 2},
     {"_MkPrime_header_mkn_probs", (DL_FUNC) &_MkPrime_header_mkn_probs, 2},
@@ -1394,7 +1407,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_bactrian_2d_draws", (DL_FUNC) &_MkPrime_bactrian_2d_draws, 2},
     {"_MkPrime_fitch_score_r", (DL_FUNC) &_MkPrime_fitch_score_r, 5},
     {"_MkPrime_fitch_score_candidates_r", (DL_FUNC) &_MkPrime_fitch_score_candidates_r, 12},
-    {"_MkPrime_init_mcmc_state", (DL_FUNC) &_MkPrime_init_mcmc_state, 23},
+    {"_MkPrime_init_mcmc_state", (DL_FUNC) &_MkPrime_init_mcmc_state, 24},
     {"_MkPrime_joint_asc_at_cpp", (DL_FUNC) &_MkPrime_joint_asc_at_cpp, 5},
     {"_MkPrime_fill_partition_cache", (DL_FUNC) &_MkPrime_fill_partition_cache, 2},
     {"_MkPrime_allocate_cl_workspace", (DL_FUNC) &_MkPrime_allocate_cl_workspace, 2},

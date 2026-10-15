@@ -10,10 +10,10 @@ ToyPrior <- function(x) {
 Toy <- function() MkPrimeExtension(function() toy_extension_cpp())
 
 test_that("an extension pointer describes itself", {
-  expect_identical(extension_abi_version(), 2L)
+  expect_identical(extension_abi_version(), 3L)
   info <- extension_info_cpp(toy_extension_cpp())
   expect_identical(info$name, "toy")
-  expect_identical(info$abi_version, 2L)
+  expect_identical(info$abi_version, 3L)
   expect_identical(info$params, c("toy_sigma", "toy_rate"))
   expect_identical(info$init, c(1, 0.5))
   expect_false(info$log_lik)

@@ -1127,7 +1127,7 @@ LogPrior <- function(state, model, mkd) {
   }
 
   if (length(model$extensions)) {
-    lp <- lp + .ExtensionLogPrior(state$ext_params, model)
+    lp <- lp + .ExtensionLogPrior(state$ext_params, model, state$ext_ints)
   }
 
   lp
