@@ -14,6 +14,7 @@ RunMkPrime(
   fixTopology = FALSE,
   overwrite = FALSE,
   partition = NULL,
+  initValues = NULL,
   unlink = character(0),
   verbosity = MkPrimeVerbosity(),
   ...
@@ -60,6 +61,11 @@ rate exactly as without a partition, and class rates act on top of it,
 rescaled so that the rate averaged over characters remains 1.
 \code{rate_neo} is held at 1 unless the data contain both neomorphic and
 other characters, as it cannot then affect the likelihood.}
+
+\item{initValues}{Named list giving starting values for any of
+\code{tree_length}, \code{rel_br_lengths}, \code{rate_loss}, \code{rate_log_sd}, \code{rate_neo}
+and \code{kPrime}, applied to every chain of every run; \code{NULL} uses the
+defaults. Ignored when resuming from a checkpoint.}
 
 \item{unlink}{Character vector of model-component tokens to unlink
 across classes. Layer 1 honours \code{"shape"} (per-class \code{rate_log_sd}) and
