@@ -4,7 +4,7 @@
 \alias{.InitState}
 \title{Initialize MCMC state from tree and data}
 \usage{
-.InitState(tree, mkd, model)
+.InitState(tree, mkd, model, initValues = NULL)
 }
 \description{
 Initialize MCMC state from tree and data
