@@ -760,6 +760,18 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// mcmc_altrep_storage
+LogicalVector mcmc_altrep_storage(SEXP dataPtr, SEXP statePtr);
+RcppExport SEXP _MkPrime_mcmc_altrep_storage(SEXP dataPtrSEXP, SEXP statePtrSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type dataPtr(dataPtrSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type statePtr(statePtrSEXP);
+    rcpp_result_gen = Rcpp::wrap(mcmc_altrep_storage(dataPtr, statePtr));
+    return rcpp_result_gen;
+END_RCPP
+}
 // get_marginal_cache_state
 List get_marginal_cache_state(SEXP statePtr);
 RcppExport SEXP _MkPrime_get_marginal_cache_state(SEXP statePtrSEXP) {
@@ -1470,6 +1482,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_compute_topo_hash", (DL_FUNC) &_MkPrime_compute_topo_hash, 3},
     {"_MkPrime_node_cl_ready", (DL_FUNC) &_MkPrime_node_cl_ready, 1},
     {"_MkPrime_get_state_log_lik", (DL_FUNC) &_MkPrime_get_state_log_lik, 1},
+    {"_MkPrime_mcmc_altrep_storage", (DL_FUNC) &_MkPrime_mcmc_altrep_storage, 2},
     {"_MkPrime_get_marginal_cache_state", (DL_FUNC) &_MkPrime_get_marginal_cache_state, 1},
     {"_MkPrime_invalidate_marginal_cache", (DL_FUNC) &_MkPrime_invalidate_marginal_cache, 1},
     {"_MkPrime_eval_log_prior_cpp", (DL_FUNC) &_MkPrime_eval_log_prior_cpp, 2},

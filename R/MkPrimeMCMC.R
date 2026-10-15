@@ -51,10 +51,13 @@
 #'   from which warmup starts. Default 0.2. The temperature ladder uses
 #'   geometric spacing: `beta_i = heat^((i-1)/(nChains-1))` for
 #'   i = 1, ..., nChains. Warmup adapts `heat` towards a 25% swap
-#'   acceptance rate, keeping it between 0.01 and 0.5: a value outside that
-#'   range is moved into it at the first adaptation, with a warning. The
+#'   acceptance rate, keeping it between 0.01 and `heatMax`: a value outside
+#'   that range is moved into it at the first adaptation, with a warning. The
 #'   ladder is then fixed for the Tuning and Sample phases.
 #'   Ignored when `nChains = 1`.
+#' @param heatMax Numeric in `(0.01, 1)` giving the largest inverse temperature
+#'   that warmup may give the hottest chain; larger values allow a narrower
+#'   ladder. Ignored when `nChains = 1`.
 #' @param maxTime Maximum wall-clock time in seconds for the whole job, shared
 #'   by all its runs. `NULL` (default) means no time limit.
 #' @param minEss Numeric specifying the effective sample size every monitored
@@ -422,6 +425,7 @@ MkPrimeMCMC <- function(
     nRuns = 2L,
     nChains = 1L,
     heat = 0.2,
+    heatMax = 0.5,
     maxTime = NULL,
     minEss = NULL,
     maxRhat = NULL,
@@ -524,13 +528,17 @@ MkPrimeMCMC <- function(
     cli::cli_abort("{.arg nChains} must be at least 1.")
   }
   if (nChains > 1L) {
+    if (!is.numeric(heatMax) || length(heatMax) != 1L || is.na(heatMax) ||
+        heatMax <= 0.01 || heatMax >= 1) {
+      cli::cli_abort("{.arg heatMax} must be a number in (0.01, 1), got {heatMax}.")
+    }
     if (heat <= 0 || heat >= 1) {
       cli::cli_abort("{.arg heat} must be in (0, 1), got {heat}.")
     }
-    if (heat < 0.01 || heat > 0.5) {
+    if (heat < 0.01 || heat > heatMax) {
       cli::cli_warn(c(
-        "{.arg heat} = {heat} lies outside [0.01, 0.5].",
-        "i" = "Warmup will move it to {max(0.01, min(heat, 0.5))} when it \\
+        "{.arg heat} = {heat} lies outside [0.01, {heatMax}].",
+        "i" = "Warmup will move it to {max(0.01, min(heat, heatMax))} when it \\
                first adapts the temperature ladder."
       ))
     }
@@ -725,7 +733,7 @@ MkPrimeMCMC <- function(
          minWarmup = minWarmup, maxWarmup = maxWarmup,
          autoTune = autoTune, tuningBudget = tuningBudget,
          tuningRounds = tuningRounds,
-         nRuns = nRuns, nChains = nChains, heat = heat,
+         nRuns = nRuns, nChains = nChains, heat = heat, heatMax = heatMax,
          maxTime = maxTime, minEss = minEss, maxRhat = maxRhat,
          minTreeEss = minTreeEss, checkEvery = checkEvery,
          cancelFile = cancelFile, checkpointFile = checkpointFile,

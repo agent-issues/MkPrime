@@ -267,10 +267,11 @@
 # log_lik is recomputed via cpp_log_likelihood_partitioned (sibling) so
 # the initial likelihood reflects the partition-aware path even when
 # class_rate is identically 1 (the §7b numeric-equivalence regime).
-.InitStatePartitioned <- function(tree, mkd, model, partitionSpec) {
+.InitStatePartitioned <- function(tree, mkd, model, partitionSpec,
+                                  initValues = NULL) {
   # Build base state via the existing legacy initializer (bit-identical
   # to the §7a-locked path).
-  state <- .InitState(tree, mkd, model)
+  state <- .InitState(tree, mkd, model, initValues)
 
   # Trivial spec: nothing to add. Caller can treat as legacy.
   if (is.null(partitionSpec$partition) || partitionSpec$nClasses == 1L) {

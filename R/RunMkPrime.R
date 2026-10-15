@@ -44,6 +44,10 @@
 #'   rescaled so that the rate averaged over characters remains 1.
 #'   `rate_neo` is held at 1 unless the data contain both neomorphic and
 #'   other characters, as it cannot then affect the likelihood.
+#' @param initValues Named list giving starting values for any of
+#'   `tree_length`, `rel_br_lengths`, `rate_loss`, `rate_log_sd`, `rate_neo`
+#'   and `kPrime`, applied to every chain of every run; `NULL` uses the
+#'   defaults. Ignored when resuming from a checkpoint.
 #' @param unlink Character vector of model-component tokens to unlink
 #'   across classes. Layer 1 honours `"shape"` (per-class `rate_log_sd`) and
 #'   `"ratemultiplier"` (char-weighted mean-1 Dirichlet on class rates).
@@ -119,6 +123,7 @@ RunMkPrime <- function(data, tree = NULL,
                        fixTopology = FALSE,
                        overwrite = FALSE,
                        partition = NULL,
+                       initValues = NULL,
                        unlink = character(0),
                        verbosity = MkPrimeVerbosity(),
                        ...) {
@@ -293,7 +298,8 @@ RunMkPrime <- function(data, tree = NULL,
       .PerturbStart(tree, topology = !mcmc$fixTopology)
     }
     runs[[run]] <- .InitRun(startTree, mkd, model, mcmc, moves,
-                            partitionSpec = partitionSpec)
+                            partitionSpec = partitionSpec,
+                            initValues = initValues)
     runs[[run]]$run_index <- run
   }
 
@@ -741,6 +747,7 @@ RunMkPrime <- function(data, tree = NULL,
 # have written some of them (#419).
 .FlushUnlogged <- function(r, logFile) {
   if (is.null(r$flush_buf) || !isTRUE(r$flush_idx > 0L)) return(r)
+  .DropTornRow(logFile)
   lines <- readLines(logFile, warn = FALSE)
   rows  <- lines[!startsWith(lines, "#") & !startsWith(lines, "Sample\t")]
   lastIter <- if (length(rows)) {
@@ -898,7 +905,7 @@ RunMkPrime <- function(data, tree = NULL,
 #' to `callr` workers without serialisation errors.
 #' @keywords internal
 .InitRun <- function(tree, mkd, model, mcmc, moves,
-                     partitionSpec = NULL) {
+                     partitionSpec = NULL, initValues = NULL) {
   nChains <- mcmc$nChains
   betas <- .BuildTemperatureLadder(nChains, mcmc$heat)
 
@@ -913,9 +920,9 @@ RunMkPrime <- function(data, tree = NULL,
   chains <- vector("list", nChains)
   for (ch in seq_len(nChains)) {
     if (usePartitioned) {
-      s <- .InitStatePartitioned(tree, mkd, model, partitionSpec)
+      s <- .InitStatePartitioned(tree, mkd, model, partitionSpec, initValues)
     } else {
-      s <- .InitState(tree, mkd, model)
+      s <- .InitState(tree, mkd, model, initValues)
     }
     .CheckStartLogLik(s, tree, mkd, model)
     ch_list <- list(
@@ -1723,7 +1730,8 @@ RunMkPrime <- function(data, tree = NULL,
       }
       if (nChains > 1L) {
         oldBetas <- r$betas
-        r$betas <- .AdaptTemperatures(r$betas, r$swap_accept, r$swap_propose)
+        r$betas <- .AdaptTemperatures(r$betas, r$swap_accept, r$swap_propose,
+                                      heatMax = mcmc$heatMax %||% 0.5)
         # Swap rates are measured on the current ladder alone, so they
         # restart whenever it moves; result$swap_rates then reports the
         # ladder that Sample ran on (#306).
@@ -4951,7 +4959,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
 #' Initialize MCMC state from tree and data
 #' @keywords internal
-.InitState <- function(tree, mkd, model) {
+.InitState <- function(tree, mkd, model, initValues = NULL) {
   treeLength <- sum(tree$edge.length)
   relBr <- tree$edge.length / treeLength
 
@@ -4994,6 +5002,12 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     state$ext_ints <- .ExtensionInitInts(model)
   }
 
+  if (length(initValues)) {
+    state <- .ApplyInitValues(state, initValues, mkd)
+    tree$edge.length <- state$rel_br_lengths * state$tree_length
+    state$tree <- tree
+  }
+
   # Tree is already preorder (reordered at init); use internal fast-path
   state$log_lik <- .MkpLogLikelihood(
     tree, mkd,
@@ -5015,6 +5029,72 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
   state
 }
 
+
+
+# Starting values chosen by the user (`RunMkPrime(initValues)`), checked
+# against the data so that a typo or a parameter the model lacks is an error
+# rather than a silently ignored setting.
+.ApplyInitValues <- function(state, initValues, mkd) {
+  if (!is.list(initValues) || is.null(names(initValues)) ||
+      any(!nzchar(names(initValues)))) {
+    cli::cli_abort("{.arg initValues} must be a named list.")
+  }
+  known <- c("tree_length", "rel_br_lengths", "rate_loss", "rate_log_sd",
+             "rate_neo", "kPrime")
+  bad <- setdiff(names(initValues), known)
+  if (length(bad)) {
+    cli::cli_abort(c(
+      "Unknown {.arg initValues} entr{?y/ies}: {.val {bad}}.",
+      "i" = "Recognised: {.val {known}}."
+    ))
+  }
+  if (!is.null(initValues$rate_neo) && is.null(state$rate_neo)) {
+    cli::cli_abort(
+      "{.code rate_neo} is not a parameter here: no character is neomorphic."
+    )
+  }
+  positive <- function(x) is.numeric(x) && length(x) == 1L && is.finite(x) && x > 0
+  for (key in c("tree_length", "rate_loss", "rate_neo")) {
+    if (!is.null(initValues[[key]]) && !positive(initValues[[key]])) {
+      cli::cli_abort("{.code initValues${key}} must be a positive number.")
+    }
+  }
+  sd <- initValues$rate_log_sd
+  if (!is.null(sd) && !(is.numeric(sd) && length(sd) == 1L && is.finite(sd) &&
+                        sd >= 0)) {
+    cli::cli_abort("{.code initValues$rate_log_sd} must be a non-negative number.")
+  }
+  rel <- initValues$rel_br_lengths
+  if (!is.null(rel)) {
+    if (!is.numeric(rel) || length(rel) != length(state$rel_br_lengths) ||
+        any(!is.finite(rel)) || any(rel <= 0)) {
+      cli::cli_abort(c(
+        "{.code initValues$rel_br_lengths} must hold one positive value per edge.",
+        "i" = "The start tree has {length(state$rel_br_lengths)} edges."
+      ))
+    }
+    initValues$rel_br_lengths <- rel / sum(rel)
+  }
+  kp <- initValues$kPrime
+  if (!is.null(kp)) {
+    kp <- suppressWarnings(as.integer(kp))
+    minK <- ifelse(mkd$type == "neomorphic", 2L, mkd$kObs)
+    maxK <- ifelse(mkd$type == "transformational", .Machine$integer.max, minK)
+    isKnown <- mkd$type == "known"
+    minK[isKnown] <- maxK[isKnown] <- mkd$known_k[isKnown]
+    if (length(kp) != mkd$nChar || anyNA(kp) || any(kp < minK | kp > maxK)) {
+      cli::cli_abort(c(
+        "{.code initValues$kPrime} must give a valid k' for each of the \\
+         {mkd$nChar} characters.",
+        "i" = "Transformational: k' >= kObs; neomorphic: 2; known: their k."
+      ))
+    }
+    initValues$kPrime <- kp
+  }
+  for (key in names(initValues)) state[[key]] <- initValues[[key]]
+  # Return:
+  state
+}
 
 # rate_neo splits the rate between neomorphic and other characters, so it
 # can move the likelihood only when the data hold both (issue #241).

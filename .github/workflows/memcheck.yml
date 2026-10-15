@@ -13,6 +13,9 @@
 # before merging, dispatch this workflow on that branch; tick `smoke` to run
 # the PR smoke set instead.
 #
+# `build` compiles the package once; each matrix entry installs that binary.
+# The first failing entry cancels the rest of the run.
+#
 # `tests` is a matrix of groups of test files, balanced by the per-file times
 # in .github/memcheck-times.tsv (unlisted files, e.g. new ones, assume 120 s).
 # A new test file needs no workflow edit; refresh the table when a file's
@@ -148,9 +151,56 @@ jobs:
           echo "$matrix" | jq .
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
-  valgrind:
+  build:
+    # Compile the -O0 -g package once; every valgrind entry installs this
+    # binary instead of rebuilding it.
     needs: changes
     if: needs.changes.outputs.run == 'true'
+    name: build package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
+      _R_CHECK_FORCE_SUGGESTS_: false
+      RSPM: https://packagemanager.rstudio.com/cran/__linux__/noble/latest
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release # CRAN uses devel, but takes ages to load deps.
+          use-public-rspm: true
+
+      - name: Configure compiler flags for debugging
+        run: |
+          mkdir -p ~/.R
+          echo "PKG_CFLAGS = -g -O0" > ~/.R/Makevars
+          echo "PKG_CXXFLAGS = -g -O0" >> ~/.R/Makevars
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          dependencies: '"hard"'
+          needs: memcheck
+
+      - name: Build binary package
+        run: |
+          mkdir -p "$RUNNER_TEMP/build-lib" "$RUNNER_TEMP/binary"
+          cd "$RUNNER_TEMP/binary"
+          R CMD INSTALL --build --preclean --clean --library="$RUNNER_TEMP/build-lib" "$GITHUB_WORKSPACE"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: memcheck-binary
+          path: ${{ runner.temp }}/binary/MkPrime_*.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
+  valgrind:
+    needs: [changes, build]
+    # `skipped` would read as "valgrind not required" to the gate, so a failed
+    # build must fail this job rather than skip it.
+    if: ${{ !cancelled() && needs.changes.outputs.run == 'true' }}
 
     runs-on: ubuntu-24.04
 
@@ -162,7 +212,9 @@ jobs:
     timeout-minutes: ${{ needs.changes.outputs.smoke == 'true' && 90 || 240 }}
 
     strategy:
-      fail-fast: false
+      # The first failure cancels the batches still running; failures rarely
+      # come in twos, and the rest of the run is wasted valgrind time.
+      fail-fast: true
       max-parallel: 10
       matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
 
@@ -176,13 +228,82 @@ jobs:
       # reach: valgrind costs ~30x gcc-ASAN, so the full suite needs ~18 h
       # against GitHub's 6 h job ceiling. See tests/testthat/helper-slow.R.
       MKPRIME_MEMCHECK: true
+      VALGRIND: >-
+        valgrind --tool=memcheck --leak-check=full
+        --errors-for-leak-kinds=definite
+        --suppressions=suppressions.supp --gen-suppressions=all
+        --error-exitcode=1
 
     steps:
-      - uses: ms609/actions/memcheck@main
+      - name: Require a successful build
+        if: needs.build.result != 'success'
+        run: |
+          echo "::error::Package build ${{ needs.build.result }}."
+          exit 1
+
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
         with:
-          test: ${{ matrix.config.test}}
-          filter: ${{ matrix.config.filter || '' }}
-          invert: ${{ matrix.config.invert || 'false' }}
+          name: memcheck-binary
+          path: ${{ runner.temp }}/binary
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+          use-public-rspm: true
+
+      - name: Install valgrind and suppressions
+        run: |
+          sudo apt-get install -y valgrind
+          curl -fo suppressions.supp https://raw.githubusercontent.com/ms609/actions/refs/heads/main/memcheck/suppressions.supp
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          dependencies: ${{ matrix.config.test == 'vignettes' && '"soft"' || '"hard"' }}
+          extra-packages: ${{ matrix.config.test == 'examples' && 'devtools' || '' }}
+          needs: memcheck
+
+      - name: Reinstall ASan-linked packages from source
+        # RSPM binaries may link to libasan.so, which crashes under valgrind
+        # (shadow memory conflict).
+        run: |
+          r_libs="${R_LIBS_USER:-$(Rscript -e 'cat(.libPaths()[1])')}"
+          for so in $(find "$r_libs" -name "*.so" -type f 2>/dev/null); do
+            if ldd "$so" 2>/dev/null | grep -q libasan; then
+              pkg=$(basename "$(dirname "$(dirname "$so")")")
+              echo "::warning::$pkg links to libasan: reinstalling from source"
+              Rscript -e "install.packages('$pkg', lib = '$r_libs', type = 'source')"
+            fi
+          done
+
+      - name: Install the prebuilt package
+        run: |
+          lib="$RUNNER_TEMP/memcheck-lib"
+          mkdir -p "$lib"
+          R CMD INSTALL --library="$lib" "$RUNNER_TEMP"/binary/MkPrime_*.tar.gz
+          echo "R_LIBS=$lib" >> "$GITHUB_ENV"
+
+      - name: valgrind - memcheck tests
+        if: matrix.config.test == 'tests'
+        env:
+          MEMCHECK_FILTER: ${{ matrix.config.filter }}
+        run: |
+          R -d "$VALGRIND --track-origins=yes" --vanilla \
+            -e "testthat::test_local(filter = Sys.getenv('MEMCHECK_FILTER'), load_package = 'installed')"
+
+      - name: valgrind - memcheck examples
+        if: matrix.config.test == 'examples'
+        run: |
+          R -d "$VALGRIND --track-origins=yes" --vanilla -e "devtools::run_examples()"
+
+      - uses: r-lib/actions/setup-pandoc@v2
+        if: matrix.config.test == 'vignettes'
+
+      - name: valgrind - memcheck vignettes
+        if: matrix.config.test == 'vignettes'
+        run: |
+          R -d "$VALGRIND" --vanilla -e "tools::buildVignettes(dir = '.')"
 
   report:
     # A full-suite failure after merge blocks nothing, so make it visible:

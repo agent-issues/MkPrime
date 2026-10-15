@@ -205,6 +205,10 @@ get_state_log_lik <- function(statePtr) {
     .Call(`_MkPrime_get_state_log_lik`, statePtr)
 }
 
+mcmc_altrep_storage <- function(dataPtr, statePtr) {
+    .Call(`_MkPrime_mcmc_altrep_storage`, dataPtr, statePtr)
+}
+
 get_marginal_cache_state <- function(statePtr) {
     .Call(`_MkPrime_get_marginal_cache_state`, statePtr)
 }
