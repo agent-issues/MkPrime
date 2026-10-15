@@ -201,6 +201,10 @@ bin_mixture_log_density <- function(weights, f, nBins) {
     .Call(`_MkPrime_bin_mixture_log_density`, weights, f, nBins)
 }
 
+scalar_param_names <- function() {
+    .Call(`_MkPrime_scalar_param_names`)
+}
+
 kprime_sweep_candidates <- function(dataPtr, statePtr, beta = 1.0) {
     .Call(`_MkPrime_kprime_sweep_candidates`, dataPtr, statePtr, beta)
 }
@@ -209,7 +213,7 @@ do_move_cpp <- function(dataPtr, statePtr, moveType, charIdx, scaleTuning, betaS
     .Call(`_MkPrime_do_move_cpp`, dataPtr, statePtr, moveType, charIdx, scaleTuning, betaSimplexTuning, intWalkWindow, beta)
 }
 
-run_mcmc_batch_cpp <- function(dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, sliceParamCodes, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, moveIntParams, sliceWidths, jointRhos, nBatch, startIter, warmup, thin, hasNeo, nEdge, cacheBonus = 1.0, chainBlockKpWins = as.integer( c()), ptCarry = NULL) {
+run_mcmc_batch_cpp <- function(dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, sliceParamCodes, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, moveIntParams, sliceWidths, jointRhos, nBatch, startIter, warmup, thin, hasNeo, nEdge, cacheBonus = 1.0, chainBlockKpWins = integer(0), ptCarry = NULL) {
     .Call(`_MkPrime_run_mcmc_batch_cpp`, dataPtr, stateXPtrs, betas, moveTypeCodes, transIdxCpp, sliceParamCodes, moveWeights, chainScaleTunings, chainBsmpTunings, chainIntWalkWins, moveIntParams, sliceWidths, jointRhos, nBatch, startIter, warmup, thin, hasNeo, nEdge, cacheBonus, chainBlockKpWins, ptCarry)
 }
 
