@@ -226,6 +226,26 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// toy_v1_extension_cpp
+SEXP toy_v1_extension_cpp();
+RcppExport SEXP _MkPrime_toy_v1_extension_cpp() {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    rcpp_result_gen = Rcpp::wrap(toy_v1_extension_cpp());
+    return rcpp_result_gen;
+END_RCPP
+}
+// toy_lik_extension_cpp
+SEXP toy_lik_extension_cpp();
+RcppExport SEXP _MkPrime_toy_lik_extension_cpp() {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    rcpp_result_gen = Rcpp::wrap(toy_lik_extension_cpp());
+    return rcpp_result_gen;
+END_RCPP
+}
 // header_api_version
 int header_api_version();
 RcppExport SEXP _MkPrime_header_api_version() {
@@ -737,6 +757,18 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< double >::type concentration(concentrationSEXP);
     set_class_rate_concentration(dataPtr, concentration);
     return R_NilValue;
+END_RCPP
+}
+// refresh_extension_log_lik_cpp
+double refresh_extension_log_lik_cpp(SEXP dataPtr, SEXP statePtr);
+RcppExport SEXP _MkPrime_refresh_extension_log_lik_cpp(SEXP dataPtrSEXP, SEXP statePtrSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type dataPtr(dataPtrSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type statePtr(statePtrSEXP);
+    rcpp_result_gen = Rcpp::wrap(refresh_extension_log_lik_cpp(dataPtr, statePtr));
+    return rcpp_result_gen;
 END_RCPP
 }
 // eval_full_loglik_cpp
@@ -1338,6 +1370,8 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_attach_extensions_cpp", (DL_FUNC) &_MkPrime_attach_extensions_cpp, 2},
     {"_MkPrime_extension_abi_version", (DL_FUNC) &_MkPrime_extension_abi_version, 0},
     {"_MkPrime_toy_extension_cpp", (DL_FUNC) &_MkPrime_toy_extension_cpp, 0},
+    {"_MkPrime_toy_v1_extension_cpp", (DL_FUNC) &_MkPrime_toy_v1_extension_cpp, 0},
+    {"_MkPrime_toy_lik_extension_cpp", (DL_FUNC) &_MkPrime_toy_lik_extension_cpp, 0},
     {"_MkPrime_header_api_version", (DL_FUNC) &_MkPrime_header_api_version, 0},
     {"_MkPrime_header_jc_probs", (DL_FUNC) &_MkPrime_header_jc_probs, 2},
     {"_MkPrime_header_mkn_probs", (DL_FUNC) &_MkPrime_header_mkn_probs, 2},
@@ -1373,6 +1407,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_eval_log_prior_cpp", (DL_FUNC) &_MkPrime_eval_log_prior_cpp, 2},
     {"_MkPrime_eval_log_prior_partitioned_cpp", (DL_FUNC) &_MkPrime_eval_log_prior_partitioned_cpp, 9},
     {"_MkPrime_set_class_rate_concentration", (DL_FUNC) &_MkPrime_set_class_rate_concentration, 2},
+    {"_MkPrime_refresh_extension_log_lik_cpp", (DL_FUNC) &_MkPrime_refresh_extension_log_lik_cpp, 2},
     {"_MkPrime_eval_full_loglik_cpp", (DL_FUNC) &_MkPrime_eval_full_loglik_cpp, 2},
     {"_MkPrime_eval_full_loglik_at_cpp", (DL_FUNC) &_MkPrime_eval_full_loglik_at_cpp, 5},
     {"_MkPrime_eval_preorder_paths_cpp", (DL_FUNC) &_MkPrime_eval_preorder_paths_cpp, 5},

@@ -61,6 +61,14 @@ toy_extension_cpp <- function() {
     .Call(`_MkPrime_toy_extension_cpp`)
 }
 
+toy_v1_extension_cpp <- function() {
+    .Call(`_MkPrime_toy_v1_extension_cpp`)
+}
+
+toy_lik_extension_cpp <- function() {
+    .Call(`_MkPrime_toy_lik_extension_cpp`)
+}
+
 header_api_version <- function() {
     .Call(`_MkPrime_header_api_version`)
 }
@@ -199,6 +207,10 @@ eval_log_prior_partitioned_cpp <- function(dataPtr, statePtr, classRateLogSd, cl
 
 set_class_rate_concentration <- function(dataPtr, concentration) {
     invisible(.Call(`_MkPrime_set_class_rate_concentration`, dataPtr, concentration))
+}
+
+refresh_extension_log_lik_cpp <- function(dataPtr, statePtr) {
+    .Call(`_MkPrime_refresh_extension_log_lik_cpp`, dataPtr, statePtr)
 }
 
 eval_full_loglik_cpp <- function(dataPtr, statePtr) {

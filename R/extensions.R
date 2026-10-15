@@ -1,10 +1,17 @@
-#' Extend the model with parameters from another package
+#' Extend the model with parameters and data from another package
 #'
 #' An extension contributes parameters, and their prior, to an MkPrime
 #' analysis. Each parameter is a positive real that is logged alongside
 #' MkPrime's own, checkpointed, carried through tempered-chain swaps and
-#' updated by a Bactrian scale move. In this version extension parameters do not
-#' enter the likelihood.
+#' updated by a Bactrian scale move.
+#'
+#' An extension may also contribute a log-likelihood term for its own data
+#' given the tree, and moves of its own on its parameters. Characters an
+#' extension models are given to the extension, not to [MkPrimeData()]. Beside
+#' an extension likelihood, moves that score candidates with MkPrime's
+#' likelihood alone (Gibbs and weighted topology moves, the block Gibbs
+#' branch move, and slice sampling of tree length) are not used, and
+#' [mkp_stepping_stone()] is unavailable.
 #'
 #' Extensions are written in C or C++ against
 #' `system.file("include/MkPrime/extension.h", package = "MkPrime")`
@@ -26,7 +33,9 @@ MkPrimeExtension <- function(pointer) {
   # Return:
   structure(
     list(pointer = pointer, name = info$name, params = info$params,
-         init = stats::setNames(info$init, info$params)),
+         init = stats::setNames(info$init, info$params),
+         log_lik = isTRUE(info$log_lik),
+         moves = stats::setNames(info$move_weights, info$moves)),
     class = "MkPrimeExtension"
   )
 }
@@ -85,11 +94,46 @@ MkPrimeExtension <- function(pointer) {
   lp
 }
 
-# One scale move per extension parameter, addressed past the core scalars.
+# Move types that score candidates with the core likelihood alone, so cannot
+# run beside an extension likelihood; slice_tree_length likewise.
+.kCoreLikOnlyMoveTypes <- c(
+  "gibbs_spr", "gibbs_subtree_swap", "weighted_branch_scale",
+  "weighted_spr", "weighted_subtree_swap", "block_gibbs_branch"
+)
+
+.ExtensionHasLik <- function(model) {
+  any(vapply(model$extensions, function(ext) isTRUE(ext$log_lik), logical(1)))
+}
+
+# One scale move per extension parameter, addressed past the core scalars;
+# then each extension's own moves (code 41), addressed by their position
+# across extensions.
 .WithExtensionMoves <- function(moves, model) {
   extNames <- .ExtensionParamNames(model)
   if (!length(extNames)) return(moves)
-  c(moves, lapply(seq_along(extNames), function(j) {
+  if (.ExtensionHasLik(model)) {
+    blocked <- vapply(moves, function(m) {
+      isTRUE(m$type %in% .kCoreLikOnlyMoveTypes) ||
+        identical(m$name, "slice_tree_length")
+    }, logical(1))
+    if (any(blocked)) {
+      dropped <- vapply(moves[blocked], `[[`, "", "name")
+      .Inform("{length(dropped)} move{?s} not used beside an extension \\
+               likelihood: {.val {dropped}}.")
+      moves <- moves[!blocked]
+    }
+  }
+  scaleMoves <- lapply(seq_along(extNames), function(j) {
     .ScaleParamMove(extNames[j], index = length(.kScalarParams) + j - 1L)
-  }))
+  })
+  own <- unlist(lapply(model$extensions, function(ext) {
+    lapply(names(ext$moves), function(mv) {
+      list(name = paste0(ext$name, "_", mv), type = "extension_move",
+           target = ext$name, weight = ext$moves[[mv]], dim = 1L,
+           code = 41L)
+    })
+  }), recursive = FALSE)
+  for (j in seq_along(own)) own[[j]]$sliceParamIdx <- j - 1L
+  # Return:
+  c(moves, scaleMoves, own)
 }

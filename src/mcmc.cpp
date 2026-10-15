@@ -21,6 +21,7 @@
 #include <chrono>
 #include <cstdio>
 #include <algorithm>
+#include <R_ext/Random.h>
 
 using namespace Rcpp;
 
@@ -201,6 +202,9 @@ struct McmcState {
   double betaScale = 1.0;
   // Extension parameters (#441), laid out as McmcData::extOffset describes.
   std::vector<double> extParams;
+  // Sum of the extensions' log_lik terms (ABI v2) at this state; 0 when
+  // none declares one. state.logLik stays the core likelihood.
+  double extLogLik = 0.0;
   // M-155: dedicated workspace for Gibbs kPrime batched pruning
   ClWorkspace gibbsWs;
   // M-121: persistent node-level CL cache for partial evaluation
@@ -777,6 +781,12 @@ SEXP init_mcmc_state(IntegerVector parent, IntegerVector child,
 static double compute_full_loglik(const McmcData& data, McmcState& state);
 static double compute_log_prior(const McmcData& data, const McmcState& state);
 static double extension_log_prior(const McmcData& data, const McmcState& state);
+static double extension_log_lik_at(const McmcData& data,
+                                  const McmcState& state,
+                                  const IntegerVector& parent,
+                                  const IntegerVector& child,
+                                  const NumericVector& relBr);
+static void refresh_extension_log_lik(const McmcData& data, McmcState& state);
 
 // The class-rate normaliser for the state's parameters; an evaluator that
 // visits several partitions computes it once and passes it to each
@@ -971,6 +981,7 @@ void fill_partition_cache(SEXP dataPtr, SEXP statePtr) {
     state->logLik = compute_full_loglik(*data, *state);
     state->partLogLik.clear();
   }
+  refresh_extension_log_lik(*data, *state);
 }
 
 
@@ -1078,7 +1089,7 @@ List get_mcmc_state(SEXP statePtr) {
     _["kPrime"]        = clone(s->kPrime),
     _["logLik"]        = s->logLik,
     _["logPrior"]      = s->logPrior,
-    _["logPost"]       = s->logLik + s->logPrior,
+    _["logPost"]       = s->logLik + s->extLogLik + s->logPrior,
     _["betaScale"]     = s->betaScale,
     _["diagDirPartial"] = s->diagDirPartialCount,
     _["diagNniPartial"] = s->diagNniPartialCount,
@@ -1094,7 +1105,8 @@ List get_mcmc_state(SEXP statePtr) {
     _["useHyperpriorOnSigma"] = s->useHyperpriorOnSigma,
     _["hyperTau"]           = s->hyperTau,
     _["classZ"]             = clone(s->classZ),
-    _["extParams"]          = NumericVector(s->extParams.begin(), s->extParams.end())
+    _["extParams"]          = NumericVector(s->extParams.begin(), s->extParams.end()),
+    _["extLogLik"]          = s->extLogLik
   );
 }
 
@@ -1242,6 +1254,68 @@ static double extension_log_prior(const McmcData& data,
     lp += ext->log_prior(state.extParams.data() + data.extOffset[e], ext->user);
   }
   return lp;
+}
+
+// Absolute edge lengths for an extension's tree view.
+static std::vector<double> extension_edge_lengths(double treeLength,
+                                                  const NumericVector& relBr) {
+  std::vector<double> len(relBr.size());
+  for (R_xlen_t i = 0; i < relBr.size(); ++i) len[i] = treeLength * relBr[i];
+  return len;
+}
+
+static MkPrimeTreeView extension_tree_view(const McmcData& data,
+                                           const IntegerVector& parent,
+                                           const IntegerVector& child,
+                                           const std::vector<double>& len) {
+  MkPrimeTreeView view;
+  view.n_tip = data.nTip;
+  view.n_edge = static_cast<int>(len.size());
+  view.parent = parent.begin();
+  view.child = child.begin();
+  view.edge_length = len.data();
+  view.unif_rand = &::unif_rand;
+  return view;
+}
+
+// Sum of the extensions' log-likelihood terms (#441 ABI v2) on the tree
+// (parent, child, state.treeLength * relBr); 0 when none declares one.
+static double extension_log_lik_at(const McmcData& data,
+                                   const McmcState& state,
+                                   const IntegerVector& parent,
+                                   const IntegerVector& child,
+                                   const NumericVector& relBr) {
+  if (!data.extLik) return 0.0;
+  if (static_cast<int>(state.extParams.size()) != data.nExtParams) {
+    return R_NegInf;
+  }
+  const std::vector<double> len =
+    extension_edge_lengths(state.treeLength, relBr);
+  const MkPrimeTreeView view = extension_tree_view(data, parent, child, len);
+  double ll = 0.0;
+  for (size_t e = 0; e < data.extensions.size(); ++e) {
+    const MkPrimeExtension* ext = data.extensions[e];
+    if (!ext_has_log_lik(ext)) continue;
+    ll += ext->log_lik(&view, state.extParams.data() + data.extOffset[e],
+                       ext->user);
+  }
+  return ll;
+}
+
+static void refresh_extension_log_lik(const McmcData& data, McmcState& state) {
+  if (!data.extLik) return;
+  state.extLogLik = extension_log_lik_at(data, state, state.parent,
+                                         state.child, state.relBrLengths);
+}
+
+// The extensions' log-likelihood at a state, stored in it (for tests and
+// for callers that build states outside a run).
+// [[Rcpp::export]]
+double refresh_extension_log_lik_cpp(SEXP dataPtr, SEXP statePtr) {
+  McmcData* d = Rcpp::XPtr<McmcData>(dataPtr);
+  McmcState* s = Rcpp::XPtr<McmcState>(statePtr);
+  refresh_extension_log_lik(*d, *s);
+  return s->extLogLik;
 }
 
 static double compute_log_prior_at(
@@ -3734,6 +3808,11 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
                                int paramIdx, double width,
                                double beta, int maxSteps = 20,
                                int* nExpansionsOut = nullptr) {
+  // The slice target holds the core likelihood only; refuse parameters that
+  // an extension likelihood (#441 ABI v2) depends on.
+  if (data->extLik && (paramIdx == 0 || is_ext_scalar(paramIdx))) {
+    return false;
+  }
   double x0 = get_scalar(state, paramIdx);
 
   // Work on log scale: u = log(x).
@@ -5237,6 +5316,18 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   // Extension parameter changed by case 40 (#441), for rollback.
   int    extRollIdx = -1;
   double extRollOld = 0.0;
+  // Extension move (case 41): the extension's parameter block, for rollback.
+  int    extBlockOff = -1;
+  std::vector<double> extBlockOld;
+
+  // An extension likelihood (ABI v2) depends on the tree. Moves that score
+  // their candidates with the core likelihood alone would sample the wrong
+  // target, so they are refused (R does not schedule them).
+  if (data->extLik &&
+      (moveType == 10 || moveType == 11 || moveType == 12 ||
+       moveType == 13 || moveType == 14 || moveType == 15)) {
+    return false;
+  }
 
   // Marginal-k: the charLL cache holds raw per-(char, k') LLs derived
   // from (parent, child, edgeLen, rateLoss, rateLogSd, rateNeo, betaScale)
@@ -5359,6 +5450,28 @@ static bool do_move_impl(McmcData* data, McmcState* state,
         extRollOld = state->extParams[extRollIdx];
       }
       logHastings = scale_scalar(state, charIdx, scaleTuning);
+      break;
+    }
+    case 41: { // extension move (#441 ABI v2); charIdx indexes extMoves
+      if (charIdx < 0 ||
+          charIdx >= static_cast<int>(data->extMoves.size()) ||
+          static_cast<int>(state->extParams.size()) != data->nExtParams) {
+        return false;
+      }
+      const McmcData::ExtMove& em = data->extMoves[charIdx];
+      const MkPrimeExtension* ext = data->extensions[em.ext];
+      extBlockOff = data->extOffset[em.ext];
+      double* block = state->extParams.data() + extBlockOff;
+      extBlockOld.assign(block, block + ext->n_params);
+      const std::vector<double> len =
+        extension_edge_lengths(state->treeLength, state->relBrLengths);
+      const MkPrimeTreeView view =
+        extension_tree_view(*data, state->parent, state->child, len);
+      logHastings = ext->propose(em.move, &view, block, ext->user);
+      if (!R_FINITE(logHastings)) {
+        std::copy(extBlockOld.begin(), extBlockOld.end(), block);
+        return false;
+      }
       break;
     }
     case 4: { // beta_simplex — O(1) rollback: save 2 modified elements
@@ -5928,6 +6041,10 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     state->rateLogSd = oldRLSD; state->rateNeo = oldRN; state->p = oldP;
     state->betaScale = oldBS; state->kprimeAlpha = oldKpA; state->kprimeBeta = oldKpB;
     if (extRollIdx >= 0) state->extParams[extRollIdx] = extRollOld;
+    if (extBlockOff >= 0) {
+      std::copy(extBlockOld.begin(), extBlockOld.end(),
+                state->extParams.begin() + extBlockOff);
+    }
     if (bsIdx1 >= 0) {
       state->relBrLengths[bsIdx1] = bsOldVal1;
       state->relBrLengths[bsIdx2] = bsOldVal2;
@@ -5981,6 +6098,10 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     state->rateLogSd = oldRLSD; state->rateNeo = oldRN; state->p = oldP;
     state->betaScale = oldBS; state->kprimeAlpha = oldKpA; state->kprimeBeta = oldKpB;
     if (extRollIdx >= 0) state->extParams[extRollIdx] = extRollOld;
+    if (extBlockOff >= 0) {
+      std::copy(extBlockOld.begin(), extBlockOld.end(),
+                state->extParams.begin() + extBlockOff);
+    }
     if (bsIdx1 >= 0) {
       state->relBrLengths[bsIdx1] = bsOldVal1;
       state->relBrLengths[bsIdx2] = bsOldVal2;
@@ -6046,8 +6167,9 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   const bool pOnly = moveType == 8 || moveType == 30;
   const bool pJoint = pOnly && !data->marginalK && joint_asc_on(*data) &&
     !data->kPriorLogseries && !data->kPriorBetaGeometric;
-  // Extension parameters enter only the prior (#441, ABI v1).
-  bool likChanges = extRollIdx < 0 && (data->marginalK || pJoint || !pOnly);
+  // Extension parameters and moves leave the core likelihood unchanged (#441).
+  bool likChanges = extRollIdx < 0 && extBlockOff < 0 &&
+    (data->marginalK || pJoint || !pOnly);
   // Under marginal-k mode the per-partition cache (partLogLik) is built
   // for sampled-k semantics (cpp_partition_log_likelihood with fixed
   // state->kPrime). The marginal evaluator does NOT update it. Force
@@ -6225,11 +6347,26 @@ static bool do_move_impl(McmcData* data, McmcState* state,
     }
   }
 
-  double logAlpha = beta * (newLogLik - state->logLik) +
+  // Extension likelihood (#441 ABI v2), tempered with the core likelihood.
+  // Without one this block is skipped and the ratio is unchanged.
+  double dLogLik = newLogLik - state->logLik;
+  double curTotalLL = state->logLik, newTotalLL = newLogLik;
+  double newExtLogLik = state->extLogLik;
+  if (data->extLik) {
+    if (likChanges || extRollIdx >= 0 || extBlockOff >= 0) {
+      newExtLogLik = extension_log_lik_at(*data, *state, evalParent, evalChild,
+                                          evalRelBr);
+    }
+    dLogLik += newExtLogLik - state->extLogLik;
+    curTotalLL += state->extLogLik;
+    newTotalLL += newExtLogLik;
+  }
+  double logAlpha = beta * dLogLik +
                     (newLogPrior - state->logPrior) + logHastings;
-  if (mh_accept(logAlpha, state->logLik, state->logPrior,
-                newLogLik, newLogPrior)) {
+  if (mh_accept(logAlpha, curTotalLL, state->logPrior,
+                newTotalLL, newLogPrior)) {
     state->logLik   = newLogLik;
+    state->extLogLik = newExtLogLik;
     state->logPrior = newLogPrior;
     if (!newPC.empty()) state->partLogLik = std::move(newPC);
     // OPP-6: commit proposed topology to state on acceptance
@@ -6325,6 +6462,10 @@ static bool do_move_impl(McmcData* data, McmcState* state,
   state->kprimeAlpha  = oldKpA;
   state->kprimeBeta   = oldKpB;
   if (extRollIdx >= 0) state->extParams[extRollIdx] = extRollOld;
+  if (extBlockOff >= 0) {
+    std::copy(extBlockOld.begin(), extBlockOld.end(),
+              state->extParams.begin() + extBlockOff);
+  }
   if (bsIdx1 >= 0) {
     state->relBrLengths[bsIdx1] = bsOldVal1;
     state->relBrLengths[bsIdx2] = bsOldVal2;
@@ -6492,6 +6633,11 @@ List run_mcmc_batch_cpp(
   std::vector<McmcState*> states(nChains);
   for (int ch = 0; ch < nChains; ++ch)
     states[ch] = Rcpp::XPtr<McmcState>(stateXPtrs[ch]).get();
+  // Extension likelihood (#441 ABI v2): score each chain afresh, so that a
+  // state rebuilt from R starts coherent.
+  for (int ch = 0; ch < nChains; ++ch) {
+    refresh_extension_log_lik(*data, *states[ch]);
+  }
 
   // Cumulative move weights for O(nMoves) weighted sampling
   // Base weights (used when node CL cache is invalid)
@@ -6652,7 +6798,7 @@ List run_mcmc_batch_cpp(
         int r = static_cast<int>(R::unif_rand() * nTrans);
         if (r >= nTrans) r = nTrans - 1;
         charIdx = transIdxCpp[r];
-      } else if (moveType == 19 || moveType == 40) {
+      } else if (moveType == 19 || moveType == 40 || moveType == 41) {
         charIdx = sliceParamCodes[moveIdx];
       } else if (moveType == 31) {
         charIdx = moveIntParams[moveIdx];  // 1-based classIdx
@@ -6707,6 +6853,10 @@ List run_mcmc_batch_cpp(
       swapPropose[iPair]++;
       double logAlpha = (betas[iPair] - betas[jPair]) *
                         (states[jPair]->logLik - states[iPair]->logLik);
+      if (data->extLik) {
+        logAlpha += (betas[iPair] - betas[jPair]) *
+          (states[jPair]->extLogLik - states[iPair]->extLogLik);
+      }
       if (R_FINITE(logAlpha) && std::log(R::unif_rand()) < logAlpha) {
         std::swap(*states[iPair], *states[jPair]);
         swapAccept[iPair]++;
@@ -6733,8 +6883,8 @@ List run_mcmc_batch_cpp(
       McmcState* s0 = states[0];
       std::vector<double> row(nScalarCols);
       int col = 0;
-      row[col++] = s0->logLik + s0->logPrior;   // log_post
-      row[col++] = s0->logLik;
+      row[col++] = s0->logLik + s0->extLogLik + s0->logPrior;   // log_post
+      row[col++] = s0->logLik + s0->extLogLik;
       row[col++] = s0->treeLength;
       if (hasNeo) row[col++] = s0->rateLoss;
       row[col++] = s0->rateLogSd;

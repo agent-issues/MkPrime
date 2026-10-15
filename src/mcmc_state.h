@@ -179,7 +179,22 @@ struct McmcData {
   std::vector<const MkPrimeExtension*> extensions;
   std::vector<int> extOffset;
   int nExtParams = 0;
+  // ABI v2: true when any attached extension declares log_lik; then
+  // McmcState::extLogLik holds their sum and moves that score only the core
+  // likelihood are refused. extMoves lists the extensions' own moves, which
+  // move code 41 addresses by position.
+  bool extLik = false;
+  struct ExtMove { int ext; int move; };
+  std::vector<ExtMove> extMoves;
 };
+
+// Version-2 fields of an extension, read only when it was built for ABI 2+.
+inline bool ext_has_log_lik(const MkPrimeExtension* e) {
+  return e->abi_version >= 2 && e->log_lik;
+}
+inline int ext_n_moves(const MkPrimeExtension* e) {
+  return e->abi_version >= 2 ? e->n_moves : 0;
+}
 
 template <class GlobalIdx>
 inline MaskTally tally_masks(const McmcData& data, const GlobalIdx& globalIdx,

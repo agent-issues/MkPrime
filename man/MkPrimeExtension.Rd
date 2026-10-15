@@ -2,7 +2,7 @@
 % Please edit documentation in R/extensions.R
 \name{MkPrimeExtension}
 \alias{MkPrimeExtension}
-\title{Extend the model with parameters from another package}
+\title{Extend the model with parameters and data from another package}
 \usage{
 MkPrimeExtension(pointer)
 }
@@ -19,8 +19,15 @@ An \code{MkPrimeExtension} object, to pass to
 An extension contributes parameters, and their prior, to an MkPrime
 analysis. Each parameter is a positive real that is logged alongside
 MkPrime's own, checkpointed, carried through tempered-chain swaps and
-updated by a Bactrian scale move. In this version extension parameters do not
-enter the likelihood.
+updated by a Bactrian scale move.
+
+An extension may also contribute a log-likelihood term for its own data
+given the tree, and moves of its own on its parameters. Characters an
+extension models are given to the extension, not to \code{\link[=MkPrimeData]{MkPrimeData()}}. Beside
+an extension likelihood, moves that score candidates with MkPrime's
+likelihood alone (Gibbs and weighted topology moves, the block Gibbs
+branch move, and slice sampling of tree length) are not used, and
+\code{\link[=mkp_stepping_stone]{mkp_stepping_stone()}} is unavailable.
 }
 \details{
 Extensions are written in C or C++ against
