@@ -1,11 +1,18 @@
-# Builds MkPrime from this branch, then the ecology extension against it,
-# and runs the extension's tests. The extension lives outside the MkPrime
-# package (.Rbuildignore), so R-CMD-check.yml does not see it.
+# Builds MkPrime from this branch, then EcoAware (git submodule at
+# extensions/EcoAware, from agent-issues/EcoAware) against it, and runs
+# EcoAware's tests. The submodule is outside the MkPrime package
+# (.Rbuildignore), so R-CMD-check.yml does not see it.
+#
+# agent-issues/EcoAware is private and this repository is public, so the
+# default GITHUB_TOKEN cannot fetch the submodule: set the repository secret
+# ECOAWARE_READ_TOKEN to a token with read access to agent-issues/EcoAware.
+# Without it the job stops at checkout with an explicit message.
 on:
   workflow_dispatch:
   pull_request:
     paths:
       - "extensions/**"
+      - ".gitmodules"
       - "inst/include/**"
       - "src/**"
       - "R/**"
@@ -14,19 +21,41 @@ on:
     branches: [main]
     paths:
       - "extensions/**"
+      - ".gitmodules"
       - "inst/include/**"
 
 name: ecology-extension
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-24.04
-    name: MkPrimeEcology tests
+    name: EcoAware tests
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       RSPM: "https://packagemanager.posit.co/cran/__linux__/noble/latest"
     steps:
+      - name: Require the submodule token
+        env:
+          ECOAWARE_READ_TOKEN: ${{ secrets.ECOAWARE_READ_TOKEN }}
+        run: |
+          if [ -z "$ECOAWARE_READ_TOKEN" ]; then
+            echo "::error::Secret ECOAWARE_READ_TOKEN is not set; it is needed to check out the private agent-issues/EcoAware submodule."
+            exit 1
+          fi
+        shell: bash
+
       - uses: actions/checkout@v6
+        with:
+          submodules: true
+          token: ${{ secrets.ECOAWARE_READ_TOKEN }}
+          persist-credentials: false
+
+      - name: Report the EcoAware commit under test
+        run: git -C extensions/EcoAware log -1 --format='EcoAware %H %s'
+        shell: bash
 
       - uses: r-lib/actions/setup-r@v2
 
@@ -40,13 +69,13 @@ jobs:
             any::TreeTools
             any::ape
 
-      - name: Install MkPrime and MkPrimeEcology
+      - name: Install MkPrime and EcoAware
         run: |
           R CMD INSTALL .
-          R CMD INSTALL extensions/MkPrimeEcology
+          R CMD INSTALL extensions/EcoAware
         shell: bash
 
-      - name: Test MkPrimeEcology
+      - name: Test EcoAware
         run: |
-          Rscript -e 'res <- as.data.frame(testthat::test_dir("extensions/MkPrimeEcology/tests/testthat", package = "MkPrimeEcology", load_package = "installed", stop_on_failure = TRUE)); print(res[, c("test", "nb", "failed", "skipped", "error")])'
+          Rscript -e 'res <- as.data.frame(testthat::test_dir("extensions/EcoAware/tests/testthat", package = "EcoAware", load_package = "installed", stop_on_failure = TRUE)); print(res[, c("test", "nb", "failed", "skipped", "error")])'
         shell: bash
