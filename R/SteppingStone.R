@@ -120,6 +120,12 @@ mkp_stepping_stone <- function(data, tree = NULL,
   }
 
   if (is.null(model)) model <- MkPrimeModel()
+  if (.ExtensionHasLik(model)) {
+    cli::cli_abort(c(
+      "{.fn mkp_stepping_stone} does not support extension likelihoods.",
+      "i" = "Extensions that contribute only parameters and priors are fine."
+    ))
+  }
   if (identical(model$coding, "informative")) {
     mkd <- .DropUninformable(mkd)
   }

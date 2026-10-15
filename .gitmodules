@@ -1,0 +1,4 @@
+[submodule "extensions/EcoAware"]
+	path = extensions/EcoAware
+	url = https://github.com/agent-issues/EcoAware.git
+	branch = main

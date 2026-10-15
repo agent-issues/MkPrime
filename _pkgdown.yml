@@ -41,6 +41,7 @@ reference:
       - MkPrimeModel
       - MkPrimeMCMC
       - MkPrimeEmpiricalPrior
+      - MkPrimeExtension
       - empiricalNObs
       - AutoDetectNeomorphic
       - MkPrimeVerbosity

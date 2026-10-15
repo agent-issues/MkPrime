@@ -30,3 +30,5 @@
 ^RESUME\.md$
 ^relabelling-correction-proof\.md$
 ^research-mcmc-optimizations\.md$
+^extensions$
+^\.gitmodules$

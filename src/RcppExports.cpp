@@ -172,6 +172,91 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// extension_info_cpp
+Rcpp::List extension_info_cpp(SEXP ext);
+RcppExport SEXP _MkPrime_extension_info_cpp(SEXP extSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type ext(extSEXP);
+    rcpp_result_gen = Rcpp::wrap(extension_info_cpp(ext));
+    return rcpp_result_gen;
+END_RCPP
+}
+// extension_log_prior_cpp
+double extension_log_prior_cpp(SEXP ext, Rcpp::NumericVector params, Rcpp::IntegerVector ints);
+RcppExport SEXP _MkPrime_extension_log_prior_cpp(SEXP extSEXP, SEXP paramsSEXP, SEXP intsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type ext(extSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type params(paramsSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type ints(intsSEXP);
+    rcpp_result_gen = Rcpp::wrap(extension_log_prior_cpp(ext, params, ints));
+    return rcpp_result_gen;
+END_RCPP
+}
+// attach_extensions_cpp
+void attach_extensions_cpp(SEXP dataPtr, Rcpp::List extensions);
+RcppExport SEXP _MkPrime_attach_extensions_cpp(SEXP dataPtrSEXP, SEXP extensionsSEXP) {
+BEGIN_RCPP
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type dataPtr(dataPtrSEXP);
+    Rcpp::traits::input_parameter< Rcpp::List >::type extensions(extensionsSEXP);
+    attach_extensions_cpp(dataPtr, extensions);
+    return R_NilValue;
+END_RCPP
+}
+// extension_abi_version
+int extension_abi_version();
+RcppExport SEXP _MkPrime_extension_abi_version() {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    rcpp_result_gen = Rcpp::wrap(extension_abi_version());
+    return rcpp_result_gen;
+END_RCPP
+}
+// toy_extension_cpp
+SEXP toy_extension_cpp();
+RcppExport SEXP _MkPrime_toy_extension_cpp() {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    rcpp_result_gen = Rcpp::wrap(toy_extension_cpp());
+    return rcpp_result_gen;
+END_RCPP
+}
+// toy_v1_extension_cpp
+SEXP toy_v1_extension_cpp();
+RcppExport SEXP _MkPrime_toy_v1_extension_cpp() {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    rcpp_result_gen = Rcpp::wrap(toy_v1_extension_cpp());
+    return rcpp_result_gen;
+END_RCPP
+}
+// toy_lik_extension_cpp
+SEXP toy_lik_extension_cpp();
+RcppExport SEXP _MkPrime_toy_lik_extension_cpp() {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    rcpp_result_gen = Rcpp::wrap(toy_lik_extension_cpp());
+    return rcpp_result_gen;
+END_RCPP
+}
+// toy_claim_extension_cpp
+SEXP toy_claim_extension_cpp();
+RcppExport SEXP _MkPrime_toy_claim_extension_cpp() {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    rcpp_result_gen = Rcpp::wrap(toy_claim_extension_cpp());
+    return rcpp_result_gen;
+END_RCPP
+}
 // header_api_version
 int header_api_version();
 RcppExport SEXP _MkPrime_header_api_version() {
@@ -559,8 +644,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // init_mcmc_state
-SEXP init_mcmc_state(IntegerVector parent, IntegerVector child, NumericVector relBrLengths, double treeLength, double rateLoss, double rateLogSd, double rateNeo, double p, IntegerVector kPrime, double logLik, double logPrior, double betaScale, double kprimeAlpha, double kprimeBeta, NumericVector classRateLogSd, NumericVector classW, NumericVector classRate, IntegerVector nCharPerClass, double etaNeo, bool useHyperpriorOnSigma, double hyperTau, NumericVector classZ);
-RcppExport SEXP _MkPrime_init_mcmc_state(SEXP parentSEXP, SEXP childSEXP, SEXP relBrLengthsSEXP, SEXP treeLengthSEXP, SEXP rateLossSEXP, SEXP rateLogSdSEXP, SEXP rateNeoSEXP, SEXP pSEXP, SEXP kPrimeSEXP, SEXP logLikSEXP, SEXP logPriorSEXP, SEXP betaScaleSEXP, SEXP kprimeAlphaSEXP, SEXP kprimeBetaSEXP, SEXP classRateLogSdSEXP, SEXP classWSEXP, SEXP classRateSEXP, SEXP nCharPerClassSEXP, SEXP etaNeoSEXP, SEXP useHyperpriorOnSigmaSEXP, SEXP hyperTauSEXP, SEXP classZSEXP) {
+SEXP init_mcmc_state(IntegerVector parent, IntegerVector child, NumericVector relBrLengths, double treeLength, double rateLoss, double rateLogSd, double rateNeo, double p, IntegerVector kPrime, double logLik, double logPrior, double betaScale, double kprimeAlpha, double kprimeBeta, NumericVector classRateLogSd, NumericVector classW, NumericVector classRate, IntegerVector nCharPerClass, double etaNeo, bool useHyperpriorOnSigma, double hyperTau, NumericVector classZ, NumericVector extParams, IntegerVector extInts);
+RcppExport SEXP _MkPrime_init_mcmc_state(SEXP parentSEXP, SEXP childSEXP, SEXP relBrLengthsSEXP, SEXP treeLengthSEXP, SEXP rateLossSEXP, SEXP rateLogSdSEXP, SEXP rateNeoSEXP, SEXP pSEXP, SEXP kPrimeSEXP, SEXP logLikSEXP, SEXP logPriorSEXP, SEXP betaScaleSEXP, SEXP kprimeAlphaSEXP, SEXP kprimeBetaSEXP, SEXP classRateLogSdSEXP, SEXP classWSEXP, SEXP classRateSEXP, SEXP nCharPerClassSEXP, SEXP etaNeoSEXP, SEXP useHyperpriorOnSigmaSEXP, SEXP hyperTauSEXP, SEXP classZSEXP, SEXP extParamsSEXP, SEXP extIntsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -586,7 +671,9 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< bool >::type useHyperpriorOnSigma(useHyperpriorOnSigmaSEXP);
     Rcpp::traits::input_parameter< double >::type hyperTau(hyperTauSEXP);
     Rcpp::traits::input_parameter< NumericVector >::type classZ(classZSEXP);
-    rcpp_result_gen = Rcpp::wrap(init_mcmc_state(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta, classRateLogSd, classW, classRate, nCharPerClass, etaNeo, useHyperpriorOnSigma, hyperTau, classZ));
+    Rcpp::traits::input_parameter< NumericVector >::type extParams(extParamsSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type extInts(extIntsSEXP);
+    rcpp_result_gen = Rcpp::wrap(init_mcmc_state(parent, child, relBrLengths, treeLength, rateLoss, rateLogSd, rateNeo, p, kPrime, logLik, logPrior, betaScale, kprimeAlpha, kprimeBeta, classRateLogSd, classW, classRate, nCharPerClass, etaNeo, useHyperpriorOnSigma, hyperTau, classZ, extParams, extInts));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -746,6 +833,18 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< double >::type concentration(concentrationSEXP);
     set_class_rate_concentration(dataPtr, concentration);
     return R_NilValue;
+END_RCPP
+}
+// refresh_extension_log_lik_cpp
+double refresh_extension_log_lik_cpp(SEXP dataPtr, SEXP statePtr);
+RcppExport SEXP _MkPrime_refresh_extension_log_lik_cpp(SEXP dataPtrSEXP, SEXP statePtrSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type dataPtr(dataPtrSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type statePtr(statePtrSEXP);
+    rcpp_result_gen = Rcpp::wrap(refresh_extension_log_lik_cpp(dataPtr, statePtr));
+    return rcpp_result_gen;
 END_RCPP
 }
 // eval_full_loglik_cpp
@@ -1342,6 +1441,14 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_asc_site_prob_missing", (DL_FUNC) &_MkPrime_asc_site_prob_missing, 10},
     {"_MkPrime_mk_prime_relabel_log", (DL_FUNC) &_MkPrime_mk_prime_relabel_log, 2},
     {"_MkPrime_mk_prime_relabel_log_batch", (DL_FUNC) &_MkPrime_mk_prime_relabel_log_batch, 2},
+    {"_MkPrime_extension_info_cpp", (DL_FUNC) &_MkPrime_extension_info_cpp, 1},
+    {"_MkPrime_extension_log_prior_cpp", (DL_FUNC) &_MkPrime_extension_log_prior_cpp, 3},
+    {"_MkPrime_attach_extensions_cpp", (DL_FUNC) &_MkPrime_attach_extensions_cpp, 2},
+    {"_MkPrime_extension_abi_version", (DL_FUNC) &_MkPrime_extension_abi_version, 0},
+    {"_MkPrime_toy_extension_cpp", (DL_FUNC) &_MkPrime_toy_extension_cpp, 0},
+    {"_MkPrime_toy_v1_extension_cpp", (DL_FUNC) &_MkPrime_toy_v1_extension_cpp, 0},
+    {"_MkPrime_toy_lik_extension_cpp", (DL_FUNC) &_MkPrime_toy_lik_extension_cpp, 0},
+    {"_MkPrime_toy_claim_extension_cpp", (DL_FUNC) &_MkPrime_toy_claim_extension_cpp, 0},
     {"_MkPrime_header_api_version", (DL_FUNC) &_MkPrime_header_api_version, 0},
     {"_MkPrime_header_jc_probs", (DL_FUNC) &_MkPrime_header_jc_probs, 2},
     {"_MkPrime_header_mkn_probs", (DL_FUNC) &_MkPrime_header_mkn_probs, 2},
@@ -1367,7 +1474,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_bactrian_2d_draws", (DL_FUNC) &_MkPrime_bactrian_2d_draws, 2},
     {"_MkPrime_fitch_score_r", (DL_FUNC) &_MkPrime_fitch_score_r, 5},
     {"_MkPrime_fitch_score_candidates_r", (DL_FUNC) &_MkPrime_fitch_score_candidates_r, 12},
-    {"_MkPrime_init_mcmc_state", (DL_FUNC) &_MkPrime_init_mcmc_state, 22},
+    {"_MkPrime_init_mcmc_state", (DL_FUNC) &_MkPrime_init_mcmc_state, 24},
     {"_MkPrime_joint_asc_at_cpp", (DL_FUNC) &_MkPrime_joint_asc_at_cpp, 5},
     {"_MkPrime_fill_partition_cache", (DL_FUNC) &_MkPrime_fill_partition_cache, 2},
     {"_MkPrime_allocate_cl_workspace", (DL_FUNC) &_MkPrime_allocate_cl_workspace, 2},
@@ -1381,6 +1488,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_eval_log_prior_cpp", (DL_FUNC) &_MkPrime_eval_log_prior_cpp, 2},
     {"_MkPrime_eval_log_prior_partitioned_cpp", (DL_FUNC) &_MkPrime_eval_log_prior_partitioned_cpp, 9},
     {"_MkPrime_set_class_rate_concentration", (DL_FUNC) &_MkPrime_set_class_rate_concentration, 2},
+    {"_MkPrime_refresh_extension_log_lik_cpp", (DL_FUNC) &_MkPrime_refresh_extension_log_lik_cpp, 2},
     {"_MkPrime_eval_full_loglik_cpp", (DL_FUNC) &_MkPrime_eval_full_loglik_cpp, 2},
     {"_MkPrime_eval_full_loglik_at_cpp", (DL_FUNC) &_MkPrime_eval_full_loglik_at_cpp, 5},
     {"_MkPrime_eval_preorder_paths_cpp", (DL_FUNC) &_MkPrime_eval_preorder_paths_cpp, 5},
