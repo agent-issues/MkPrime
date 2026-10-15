@@ -272,10 +272,43 @@
 }
 
 
+# Bytes after the last newline: a row cut short when a process was killed
+# mid-write. Every row the writers produce ends in a newline.
+.TornTailBytes <- function(file) {
+  size <- file.size(file)
+  if (is.na(size) || size == 0) return(0)
+  con <- file(file, "rb")
+  on.exit(close(con))
+  seek(con, size - 1)
+  if (identical(readBin(con, "raw", 1L), as.raw(10L))) return(0)
+  seek(con, 0)
+  newline <- which(readBin(con, "raw", size) == as.raw(10L))
+  # Return:
+  size - if (length(newline)) max(newline) else 0
+}
+
+
+# Remove an incomplete final row, so that the next append starts a new line
+# rather than extending the torn one.
+.DropTornRow <- function(file) {
+  torn <- .TornTailBytes(file)
+  if (torn > 0) {
+    keep <- file.size(file) - torn
+    writeBin(readBin(file, "raw", keep), file)
+    cli::cli_warn(c(
+      "Dropped an incomplete final row ({torn} byte{?s}) from {.file {file}}.",
+      "i" = "The write was interrupted, e.g. by a job time limit."
+    ))
+  }
+  invisible(torn)
+}
+
+
 # Truncate a log file to exactly nDataRows data lines (plus header).
 # Used on resume to discard samples written after the last checkpoint.
 # @keywords internal
 .TruncateLogToN <- function(logFile, nDataRows) {
+  .DropTornRow(logFile)
   lines <- readLines(logFile, warn = FALSE)
   # Separate header/comment lines from data rows.
   # Move-weight log entries start with "#"; the header starts with "Sample".
@@ -633,8 +666,18 @@ ReadMkLog <- function(logFile) {
     cli::cli_abort("Log file not found: {.file {logFile}}")
   }
 
-  dat <- utils::read.table(logFile, header = TRUE, sep = "\t",
-                           check.names = FALSE, comment.char = "#")
+  input <- list(file = logFile)
+  if (.TornTailBytes(logFile) > 0) {
+    cli::cli_warn(c(
+      "Ignoring an incomplete final row in {.file {logFile}}.",
+      "i" = "The write was interrupted, e.g. by a job time limit."
+    ))
+    lines <- readLines(logFile, warn = FALSE)
+    input <- list(text = lines[-length(lines)])
+  }
+  dat <- do.call(utils::read.table, c(input, list(
+    header = TRUE, sep = "\t", check.names = FALSE, comment.char = "#"
+  )))
 
   if (!"Sample" %in% names(dat)) {
     cli::cli_abort(
