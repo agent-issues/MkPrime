@@ -60,6 +60,7 @@ result <- list(
   nTip          = nTip,
   nEdge         = nEdge,
   nChar         = mkd$nChar,
+  remoteSha     = utils::packageDescription("MkPrime")$RemoteSha,
   warmup_trace  = posterior$warmup_trace[[1]],
   wall_time_sec = as.numeric(difftime(Sys.time(), .start, units = "secs"))
 )

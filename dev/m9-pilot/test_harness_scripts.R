@@ -87,6 +87,7 @@ if (requireNamespace("MkPrime", quietly = TRUE) && requireNamespace("TreeTools",
   rds <- readRDS(file.path(work, "res", "m131_Toy_seed1.rds"))
   Check("m131 result records taxa and characters", rds$nTip == 6L && rds$nChar == 12L)
   Check("m131 result holds a warmup trace", length(rds$warmup_trace) > 0L)
+  Check("m131 result records the build SHA field", "remoteSha" %in% names(rds))
 } else {
   Skip("m131-warmup-validation.R end to end (MkPrime not installed)")
 }
