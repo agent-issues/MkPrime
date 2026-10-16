@@ -1,6 +1,4 @@
 # Tests for parallel tempering (Phase 5: M-029, M-030)
-skip_slow_tests()
-
 # --- Temperature ladder ---
 
 test_that(".BuildTemperatureLadder gives correct structure", {
@@ -177,6 +175,7 @@ test_that("Chain swap acceptance follows correct formula", {
 # --- Multi-chain MCMC integration ---
 
 test_that("RunMkPrime with nChains=1 matches Phase 4 behavior", {
+  skip_slow_tests()
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -197,6 +196,7 @@ test_that("RunMkPrime with nChains=1 matches Phase 4 behavior", {
 
 
 test_that("RunMkPrime with nChains=4 runs successfully", {
+  skip_slow_tests()
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -224,6 +224,7 @@ test_that("RunMkPrime with nChains=4 runs successfully", {
 
 
 test_that("RunMkPrime with nChains=2 and topology moves works", {
+  skip_slow_tests()
   set.seed(8103)
   tree <- rtree(8)
   tree <- unroot(tree)
@@ -247,6 +248,7 @@ test_that("RunMkPrime with nChains=2 and topology moves works", {
 
 
 test_that("Cold chain samples have valid posteriors under tempering", {
+  skip_slow_tests()
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -337,6 +339,7 @@ test_that(".AdaptTemperatures respects heat bounds", {
 
 
 test_that("Adaptive temps integrated into MCMC warmup", {
+  skip_slow_tests()
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -364,6 +367,7 @@ test_that("MkPrimeMCMC validates nRuns", {
 
 
 test_that("RunMkPrime with nRuns=2 runs successfully", {
+  skip_slow_tests()
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -386,6 +390,7 @@ test_that("RunMkPrime with nRuns=2 runs successfully", {
 
 
 test_that("RunMkPrime with nRuns=1 has no per_run field", {
+  skip_slow_tests()
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -402,6 +407,7 @@ test_that("RunMkPrime with nRuns=1 has no per_run field", {
 
 
 test_that("Independent runs start from different states", {
+  skip_slow_tests()
   set.seed(6334)
   tree <- rtree(6)
   tree <- unroot(tree)
@@ -428,6 +434,7 @@ test_that("Independent runs start from different states", {
 
 
 test_that("Multi-run with tempering works", {
+  skip_slow_tests()
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -469,6 +476,7 @@ test_that(".PerturbStart handles small trees", {
 
 
 test_that("Heated chains accept at higher rates", {
+  skip_slow_tests()
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
