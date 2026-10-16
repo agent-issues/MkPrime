@@ -89,12 +89,9 @@ debugging runs.}
 chain stabilises OR this ceiling is reached (with a warning).
 Default 50 000 when \code{nIter = Inf}; \code{nIter / 2} when finite.}
 
-\item{autoTune}{Logical; enable the tuning phase after warmup
-(default \code{TRUE}). When \code{TRUE}, a short tuning phase optimises
-move weights by maximising min-ESS/s using a perturbation bandit.
-When \code{FALSE}, move weights are frozen at the end of warmup, where
-they adapt to acceptances per second of wall-clock time. See section
-\strong{Three-phase MCMC} below.}
+\item{autoTune}{Logical; if \code{TRUE}, a tuning phase after warmup optimises
+move weights for min-ESS/s, which otherwise keep their warmup values
+(see \strong{Three-phase MCMC}).}
 
 \item{tuningBudget}{Integer giving the most iterations the tuning phase may
 use; tuning can end sooner (see \strong{Three-phase MCMC}).}

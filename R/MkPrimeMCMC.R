@@ -30,12 +30,9 @@
 #' @param maxWarmup Maximum warmup iterations. Warmup ends when the
 #'   chain stabilises OR this ceiling is reached (with a warning).
 #'   Default 50 000 when `nIter = Inf`; `nIter / 2` when finite.
-#' @param autoTune Logical; enable the tuning phase after warmup
-#'   (default `TRUE`). When `TRUE`, a short tuning phase optimises
-#'   move weights by maximising min-ESS/s using a perturbation bandit.
-#'   When `FALSE`, move weights are frozen at the end of warmup, where
-#'   they adapt to acceptances per second of wall-clock time. See section
-#'   **Three-phase MCMC** below.
+#' @param autoTune Logical; if `TRUE`, a tuning phase after warmup optimises
+#'   move weights for min-ESS/s, which otherwise keep their warmup values
+#'   (see **Three-phase MCMC**).
 #' @param tuningBudget Integer giving the most iterations the tuning phase may
 #'   use; tuning can end sooner (see **Three-phase MCMC**).
 #' @param tuningRounds Integer giving the most perturbation-evaluation rounds
