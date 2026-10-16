@@ -136,19 +136,23 @@ and $n_{\mathrm{rot}} = k$ for $k \geq 3$.
 ### Composition with `rate_loss` (neomorphic characters)
 
 Neomorphic characters use an asymmetric binary model parameterised by
-`rate_loss` ($\rho$), where the gain rate is $1/(1 + \rho)$ and the loss
-rate is $\rho/(1 + \rho)$, normalised so the total rate is 1.
+`rate_loss` ($\rho$), where the gain rate is $(1 + \rho)/(2\rho)$ and the
+loss rate is $(1 + \rho)/2$. The stationary frequencies are
+$\pi_0 = \rho/(1 + \rho)$ and $\pi_1 = 1/(1 + \rho)$, and the rates are scaled
+so that their $\pi$-weighted mean is 1: branch lengths count expected changes.
 
 Under heterogeneity, the equilibrium frequency for bin $b$ modulates
-the asymmetry. The effective gain and loss rates become:
+the asymmetry. Up to a common scale factor, which cancels in the
+equilibrium frequency, the effective gain and loss rates become:
 
 $$
-\text{gain}_b = \frac{1}{1 + \rho} \cdot 2\beta_b, \qquad
-\text{loss}_b = \frac{\rho}{1 + \rho} \cdot 2(1 - \beta_b)
+\text{gain}_b \propto \beta_b, \qquad
+\text{loss}_b \propto \rho \, (1 - \beta_b)
 $$
 
 This is algebraically equivalent to an F81 model with
-$\pi_1 = \text{gain}_b / (\text{gain}_b + \text{loss}_b)$.
+$\pi_1 = \text{gain}_b / (\text{gain}_b + \text{loss}_b) =
+\beta_b / (\beta_b + \rho(1 - \beta_b))$.
 The `rate_loss` parameter retains its interpretation as the global
 asymmetry between gains and losses; `beta_scale` modulates how much
 that asymmetry can vary across characters.

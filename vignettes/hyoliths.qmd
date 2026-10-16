@@ -122,9 +122,10 @@ model
 ```
 
 `expSteps = NULL` (default) sets the prior mean tree length automatically
-to the Fitch parsimony score of the starting tree divided by the number of
-characters, since branch lengths count expected changes per character.
-Parsimony misses multiple hits, so this errs low.
+to the Fitch parsimony score of a neighbour-joining tree built from the data,
+divided by the number of characters, since branch lengths count expected
+changes per character. The prior therefore depends on the data alone, not on
+the starting tree. Parsimony misses multiple hits, so this errs low.
 
 ### Q-matrix heterogeneity (optional)
 
@@ -184,7 +185,9 @@ mcmcProduction <- MkPrimeMCMC(
 Pass the `phyDat` object directly to `RunMkPrime()` together with the
 neomorphic character indices. The function calls `MkPrimeData()` internally if
 you pass a `phyDat` rather than a pre-built `MkPrimeData` object. A
-neighbour-joining starting tree is built automatically from the data;
+starting tree is built automatically from the data (an addition tree via
+`TreeSearch::AdditionTree()`, or neighbour-joining if \**TreeSearch** is
+unavailable);
 pass `tree =` explicitly if you prefer a different starting topology.
 
 MCMC options can be passed inline or via a pre-built `MkPrimeMCMC` object.
@@ -348,8 +351,11 @@ allTrees <- posteriorDemo$trees
 
 
 # Identify rogue taxa
-rogues <- Rogue::QuickRogue(sample(allTrees, 10))
-rogueNames <- rogues$taxon[nzchar(rogues$taxon, keepNA = FALSE)]
+rogueNames <- character(0)
+if (requireNamespace("Rogue", quietly = TRUE)) {
+  rogues <- Rogue::QuickRogue(sample(allTrees, 10))
+  rogueNames <- rogues$taxon[nzchar(rogues$taxon, keepNA = FALSE)]
+}
 if (length(rogueNames) > 0L) {
   cat("Rogue taxa:", paste(rogueNames, collapse = ", "), "\n")
   allTrees <- lapply(allTrees, ape::drop.tip, tip = rogueNames)
