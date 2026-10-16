@@ -12,8 +12,8 @@
 // kRescaleBelow is 2^-256. A binary node multiplies the CLs of two
 // children, and the root of an unrooted tree three, none of which has been
 // left below 2^-256, so a product stays above 2^-768 times the spread across
-// states -- far from the subnormal range at 2^-1022. A polytomy of more than
-// three children has less headroom. A character must reach a
+// states -- far from the subnormal range at 2^-1022. Pruner also checks a
+// polytomy after each further child. A character must reach a
 // log-likelihood below about -177 before any of its CLs is rescaled.
 
 #include <cmath>

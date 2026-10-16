@@ -316,3 +316,33 @@ test_that("Pruner restores shifts on reject() and keeps marginals finite", {
     tolerance = 1e-10
   )
 })
+
+test_that("Pruner rescales within a polytomy", {
+  set.seed(3)
+  nSub <- 6L
+  k <- 64L
+  subs <- lapply(seq_len(nSub), function(i) {
+    sub <- ape::rtree(40, tip.label = paste0("s", i, "_", 1:40))
+    sub$edge.length <- rep(5, nrow(sub$edge))
+    sub$root.edge <- 0.01
+    sub
+  })
+  tree <- ape::stree(nSub)
+  tree$edge.length <- rep(0.01, nSub)
+  tree$tip.label <- paste0("X", seq_len(nSub))
+  for (i in seq_len(nSub)) {
+    tree <- ape::bind.tree(tree, subs[[i]],
+                           where = which(tree$tip.label == paste0("X", i)))
+  }
+  tree <- Preorder(tree)
+  states <- matrix(sample(0:(k - 1), NTip(tree), replace = TRUE),
+                   dimnames = list(tree$tip.label, NULL))
+  storage.mode(states) <- "integer"
+  expect_equal(sum(tree$edge[, 1] == NTip(tree) + 1L), nSub)
+  expect_equal(
+    header_site_likelihoods("jc", tree$edge[, 1], tree$edge[, 2],
+                            tree$edge.length, states, k, 0, 0, 1, log = TRUE),
+    .LogPruneRef(tree, states, .JcP(k), rep(1 / k, k)),
+    tolerance = 1e-12
+  )
+})

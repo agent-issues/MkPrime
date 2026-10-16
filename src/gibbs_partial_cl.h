@@ -103,9 +103,13 @@ inline void rescale_small(double* cl, int nChar, int k, Ensure ensure) {
   }
 }
 
-// cur *= f, then rescale cur as rescale_small().
+// cur *= f, then, if `check`, rescale cur as rescale_small().
 inline void mul_rescale(double* cur, const double* f, int nChar, int k,
-                        CLShifts& sh) {
+                        CLShifts& sh, bool check) {
+  if (!check) {
+    for (int i = 0; i < nChar * k; ++i) cur[i] *= f[i];
+    return;
+  }
   for (int c = 0; c < nChar; ++c) {
     double* block = cur + c * k;
     const double* fb = f + c * k;
@@ -119,6 +123,22 @@ inline void mul_rescale(double* cur, const double* f, int nChar, int k,
       if (s) sh.ensure()[c] += s;
     }
   }
+}
+
+// Candidate paths are first multiplied out without rescaling. No entry of a
+// path vector exceeds the largest entry of the vector before it (transition
+// rows sum to 1 and every factor is at most 1), so if each character's root
+// block sums to at least 2^-700, its largest entry is at least 2^-700 / k and
+// any entry that underflowed on the way was negligible beside it. Otherwise
+// the path is recomputed with rescaling.
+inline bool path_needs_check(const double* root, int nChar, int k) {
+  const double kPathRecheckBelow = 1.90109156629516e-211;  // 2^-700
+  for (int c = 0; c < nChar; ++c) {
+    double sum = 0.0;
+    for (int s = 0; s < k; ++s) sum += root[c * k + s];
+    if (!(sum >= kPathRecheckBelow)) return true;
+  }
+  return false;
 }
 
 inline int shift_at(const int* s, int c) { return s ? s[c] : 0; }
@@ -684,101 +704,109 @@ static double evaluate_candidate(
   for (int cat = 0; cat < nCat; ++cat) {
     double rate = rates[cat];
 
-    // Contribution from v (pruned subtree) at u
-    grp.transition(grp.I(cat, v), from_v.data(), lPrune * rate * sc);
+    // Unchecked first; again with rescaling if the root is small.
+    for (int pass = 0; pass < 2; ++pass) {
+      const bool check = pass > 0;
+      // Contribution from v (pruned subtree) at u
+      grp.transition(grp.I(cat, v), from_v.data(), lPrune * rate * sc);
 
-    // Contribution from b at u (via half regraft edge)
-    int bResIdx = res.pathIndex(b);
-    const double* Ib = (bResIdx >= 0) ? res.I(cat, bResIdx) : grp.I(cat, b);
-    grp.transition(Ib, from_b.data(), lHalfReg * rate * sc);
+      // Contribution from b at u (via half regraft edge)
+      int bResIdx = res.pathIndex(b);
+      const double* Ib = (bResIdx >= 0) ? res.I(cat, bResIdx) : grp.I(cat, b);
+      grp.transition(Ib, from_b.data(), lHalfReg * rate * sc);
 
-    // I at u = from_v × from_b
-    for (int i = 0; i < stride; ++i) Iu[i] = from_v[i] * from_b[i];
-    shU.reset();
-    shU.add(grp.IS(cat, v));
-    shU.add((bResIdx >= 0) ? res.IS(cat, bResIdx) : grp.IS(cat, b));
-    rescale_small(Iu.data(), nChar, k, [&]() { return shU.ensure(); });
+      // I at u = from_v × from_b
+      for (int i = 0; i < stride; ++i) Iu[i] = from_v[i] * from_b[i];
+      shU.reset();
+      shU.add(grp.IS(cat, v));
+      shU.add((bResIdx >= 0) ? res.IS(cat, bResIdx) : grp.IS(cat, b));
+      if (check) {
+        rescale_small(Iu.data(), nChar, k, [&]() { return shU.ensure(); });
+      }
 
-    // from_u at a: transition through half regraft edge from u to a
-    grp.transition(Iu.data(), contrib.data(), lHalfReg * rate * sc);
+      // from_u at a: transition through half regraft edge from u to a
+      grp.transition(Iu.data(), contrib.data(), lHalfReg * rate * sc);
 
-    // Helper lambda: compute the product of all sibling contributions at node
-    // 'par' EXCEPT the child in slot 'excludeSlot', with their shifts.
-    //
-    // Three cases for each sibling slot:
-    //   1. par is on the residual path and slot == replacedSlot → use res.F
-    //   2. Sibling node is on the residual path → recompute P(t) × res.I
-    //   3. Otherwise → use original cached F
-    auto siblingProduct = [&](int par, int excludeSlot, double* out,
-                              CLShifts& sh) {
-      int nChild = (topo.ch2[par] >= 0) ? 3 : 2;
-      std::fill(out, out + stride, 1.0);
-      sh.reset();
-      int parResIdx = res.pathIndex(par);
-      for (int sl = 0; sl < nChild; ++sl) {
-        if (sl == excludeSlot) continue;
+      // Helper lambda: compute the product of all sibling contributions at node
+      // 'par' EXCEPT the child in slot 'excludeSlot', with their shifts.
+      //
+      // Three cases for each sibling slot:
+      //   1. par is on the residual path and slot == replacedSlot → use res.F
+      //   2. Sibling node is on the residual path → recompute P(t) × res.I
+      //   3. Otherwise → use original cached F
+      auto siblingProduct = [&](int par, int excludeSlot, double* out,
+                                CLShifts& sh) {
+        int nChild = (topo.ch2[par] >= 0) ? 3 : 2;
+        std::fill(out, out + stride, 1.0);
+        sh.reset();
+        int parResIdx = res.pathIndex(par);
+        for (int sl = 0; sl < nChild; ++sl) {
+          if (sl == excludeSlot) continue;
 
-        // Case 1: this slot was replaced during residual computation
-        if (parResIdx >= 0 && sl == res.replacedSlot[parResIdx]) {
-          const double* f = res.F(cat, parResIdx);
+          // Case 1: this slot was replaced during residual computation
+          if (parResIdx >= 0 && sl == res.replacedSlot[parResIdx]) {
+            const double* f = res.F(cat, parResIdx);
+            for (int i = 0; i < stride; ++i) out[i] *= f[i];
+            sh.add(res.FS(grp, cat, parResIdx));
+            continue;
+          }
+
+          // Case 2: sibling node is on the residual path
+          int cn = (sl == 0) ? topo.ch0[par] :
+                   (sl == 1) ? topo.ch1[par] : topo.ch2[par];
+          int cnResIdx = res.pathIndex(cn);
+          if (cnResIdx >= 0) {
+            double t_sib = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
+            const double* sibI = res.I(cat, cnResIdx);
+            grp.transition(sibI, from_v.data(), t_sib);
+            for (int i = 0; i < stride; ++i) out[i] *= from_v[i];
+            sh.add(res.IS(cat, cnResIdx));
+            continue;
+          }
+
+          // Case 3: use original cached F
+          const double* f = grp.Fslot(cat, par, sl);
           for (int i = 0; i < stride; ++i) out[i] *= f[i];
-          sh.add(res.FS(grp, cat, parResIdx));
+          sh.add(grp.IS(cat, cn));
+        }
+      };
+
+      // At a: I_cand[a] = from_u_at_a × product_of_siblings(a, exclude b).
+      // For the merged edge (a = g, b = sibNode), b occupies u's original slot.
+      int bSlot = mergedEdge ? uSlot : topo.childSlot(a, b);
+      siblingProduct(a, bSlot, curI.data(), shCur);
+      shCur.add(shU.get());
+      mul_rescale(curI.data(), contrib.data(), nChar, k, shCur, check);
+
+      // Propagate up from a to root.
+      // Key: if we encounter u as a parent, skip it — u doesn't exist on
+      // this path in the new topology.  Instead connect to g via lMerge.
+      int curNode = a;
+      int parNode = topo.parentNode[a];
+      while (parNode >= 1) {
+        if (parNode == u) {
+          grp.transition(curI.data(), contrib.data(), lMerge * rate * sc);
+          std::swap(shBelow, shCur);
+          siblingProduct(g, uSlot, curI.data(), shCur);
+          shCur.add(shBelow.get());
+          mul_rescale(curI.data(), contrib.data(), nChar, k, shCur, check);
+          curNode = g;
+          parNode = topo.parentNode[g];
           continue;
         }
 
-        // Case 2: sibling node is on the residual path
-        int cn = (sl == 0) ? topo.ch0[par] :
-                 (sl == 1) ? topo.ch1[par] : topo.ch2[par];
-        int cnResIdx = res.pathIndex(cn);
-        if (cnResIdx >= 0) {
-          double t_sib = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
-          const double* sibI = res.I(cat, cnResIdx);
-          grp.transition(sibI, from_v.data(), t_sib);
-          for (int i = 0; i < stride; ++i) out[i] *= from_v[i];
-          sh.add(res.IS(cat, cnResIdx));
-          continue;
-        }
-
-        // Case 3: use original cached F
-        const double* f = grp.Fslot(cat, par, sl);
-        for (int i = 0; i < stride; ++i) out[i] *= f[i];
-        sh.add(grp.IS(cat, cn));
-      }
-    };
-
-    // At a: I_cand[a] = from_u_at_a × product_of_siblings(a, exclude b).
-    // For the merged edge (a = g, b = sibNode), b occupies u's original slot.
-    int bSlot = mergedEdge ? uSlot : topo.childSlot(a, b);
-    siblingProduct(a, bSlot, curI.data(), shCur);
-    shCur.add(shU.get());
-    mul_rescale(curI.data(), contrib.data(), nChar, k, shCur);
-
-    // Propagate up from a to root.
-    // Key: if we encounter u as a parent, skip it — u doesn't exist on
-    // this path in the new topology.  Instead connect to g via lMerge.
-    int curNode = a;
-    int parNode = topo.parentNode[a];
-    while (parNode >= 1) {
-      if (parNode == u) {
-        grp.transition(curI.data(), contrib.data(), lMerge * rate * sc);
+        int curSlot = topo.childSlot(parNode, curNode);
+        double t = topo.edgeLen[topo.edgeToPar[curNode]] * rate * sc;
+        grp.transition(curI.data(), contrib.data(), t);
         std::swap(shBelow, shCur);
-        siblingProduct(g, uSlot, curI.data(), shCur);
+        siblingProduct(parNode, curSlot, curI.data(), shCur);
         shCur.add(shBelow.get());
-        mul_rescale(curI.data(), contrib.data(), nChar, k, shCur);
-        curNode = g;
-        parNode = topo.parentNode[g];
-        continue;
+        mul_rescale(curI.data(), contrib.data(), nChar, k, shCur, check);
+        curNode = parNode;
+        parNode = topo.parentNode[parNode];
       }
 
-      int curSlot = topo.childSlot(parNode, curNode);
-      double t = topo.edgeLen[topo.edgeToPar[curNode]] * rate * sc;
-      grp.transition(curI.data(), contrib.data(), t);
-      std::swap(shBelow, shCur);
-      siblingProduct(parNode, curSlot, curI.data(), shCur);
-      shCur.add(shBelow.get());
-      mul_rescale(curI.data(), contrib.data(), nChar, k, shCur);
-      curNode = parNode;
-      parNode = topo.parentNode[parNode];
+      if (check || !path_needs_check(curI.data(), nChar, k)) break;
     }
 
     // curI now holds I_cand[root].  Accumulate per-site likelihood.
@@ -899,79 +927,87 @@ static double evaluate_const_prob(
   for (int cat = 0; cat < nCat; ++cat) {
     double rate = rates[cat];
 
-    pg.transition(pg.I(cat, v), from_v.data(), lPrune * rate * sc);
+    // Unchecked first; again with rescaling if the root is small.
+    for (int pass = 0; pass < 2; ++pass) {
+      const bool check = pass > 0;
+      pg.transition(pg.I(cat, v), from_v.data(), lPrune * rate * sc);
 
-    int bResIdx = res.pathIndex(b);
-    const double* Ib = (bResIdx >= 0) ? res.I(cat, bResIdx) : pg.I(cat, b);
-    pg.transition(Ib, from_b.data(), lHalfReg * rate * sc);
+      int bResIdx = res.pathIndex(b);
+      const double* Ib = (bResIdx >= 0) ? res.I(cat, bResIdx) : pg.I(cat, b);
+      pg.transition(Ib, from_b.data(), lHalfReg * rate * sc);
 
-    for (int i = 0; i < stride; ++i) Iu[i] = from_v[i] * from_b[i];
-    shU.reset();
-    shU.add(pg.IS(cat, v));
-    shU.add((bResIdx >= 0) ? res.IS(cat, bResIdx) : pg.IS(cat, b));
-    rescale_small(Iu.data(), nChar, k, [&]() { return shU.ensure(); });
+      for (int i = 0; i < stride; ++i) Iu[i] = from_v[i] * from_b[i];
+      shU.reset();
+      shU.add(pg.IS(cat, v));
+      shU.add((bResIdx >= 0) ? res.IS(cat, bResIdx) : pg.IS(cat, b));
+      if (check) {
+        rescale_small(Iu.data(), nChar, k, [&]() { return shU.ensure(); });
+      }
 
-    pg.transition(Iu.data(), contrib.data(), lHalfReg * rate * sc);
+      pg.transition(Iu.data(), contrib.data(), lHalfReg * rate * sc);
 
-    // siblingProduct lambda (same as evaluate_candidate)
-    auto siblingProduct = [&](int par, int excludeSlot, double* out,
-                              CLShifts& sh) {
-      int nChild = (topo.ch2[par] >= 0) ? 3 : 2;
-      std::fill(out, out + stride, 1.0);
-      sh.reset();
-      int parResIdx = res.pathIndex(par);
-      for (int sl = 0; sl < nChild; ++sl) {
-        if (sl == excludeSlot) continue;
-        if (parResIdx >= 0 && sl == res.replacedSlot[parResIdx]) {
-          const double* f = res.F(cat, parResIdx);
+      // siblingProduct lambda (same as evaluate_candidate)
+      auto siblingProduct = [&](int par, int excludeSlot, double* out,
+                                CLShifts& sh) {
+        int nChild = (topo.ch2[par] >= 0) ? 3 : 2;
+        std::fill(out, out + stride, 1.0);
+        sh.reset();
+        int parResIdx = res.pathIndex(par);
+        for (int sl = 0; sl < nChild; ++sl) {
+          if (sl == excludeSlot) continue;
+          if (parResIdx >= 0 && sl == res.replacedSlot[parResIdx]) {
+            const double* f = res.F(cat, parResIdx);
+            for (int i = 0; i < stride; ++i) out[i] *= f[i];
+            sh.add(res.FS(pg, cat, parResIdx));
+            continue;
+          }
+          int cn = (sl == 0) ? topo.ch0[par] :
+                   (sl == 1) ? topo.ch1[par] : topo.ch2[par];
+          int cnResIdx = res.pathIndex(cn);
+          if (cnResIdx >= 0) {
+            double t_sib = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
+            const double* sibI = res.I(cat, cnResIdx);
+            pg.transition(sibI, from_v.data(), t_sib);
+            for (int i = 0; i < stride; ++i) out[i] *= from_v[i];
+            sh.add(res.IS(cat, cnResIdx));
+            continue;
+          }
+          const double* f = pg.Fslot(cat, par, sl);
           for (int i = 0; i < stride; ++i) out[i] *= f[i];
-          sh.add(res.FS(pg, cat, parResIdx));
+          sh.add(pg.IS(cat, cn));
+        }
+      };
+
+      int bSlot = mergedEdge ? uSlot : topo.childSlot(a, b);
+      siblingProduct(a, bSlot, curI.data(), shCur);
+      shCur.add(shU.get());
+      mul_rescale(curI.data(), contrib.data(), nChar, k, shCur, check);
+
+      int curNode = a;
+      int parNode = topo.parentNode[a];
+      while (parNode >= 1) {
+        if (parNode == u) {
+          pg.transition(curI.data(), contrib.data(), lMerge * rate * sc);
+          std::swap(shBelow, shCur);
+          siblingProduct(g, uSlot, curI.data(), shCur);
+          shCur.add(shBelow.get());
+          mul_rescale(curI.data(), contrib.data(), nChar, k, shCur, check);
+          curNode = g;
+          parNode = topo.parentNode[g];
           continue;
         }
-        int cn = (sl == 0) ? topo.ch0[par] :
-                 (sl == 1) ? topo.ch1[par] : topo.ch2[par];
-        int cnResIdx = res.pathIndex(cn);
-        if (cnResIdx >= 0) {
-          double t_sib = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
-          const double* sibI = res.I(cat, cnResIdx);
-          pg.transition(sibI, from_v.data(), t_sib);
-          for (int i = 0; i < stride; ++i) out[i] *= from_v[i];
-          sh.add(res.IS(cat, cnResIdx));
-          continue;
-        }
-        const double* f = pg.Fslot(cat, par, sl);
-        for (int i = 0; i < stride; ++i) out[i] *= f[i];
-        sh.add(pg.IS(cat, cn));
-      }
-    };
-
-    int bSlot = mergedEdge ? uSlot : topo.childSlot(a, b);
-    siblingProduct(a, bSlot, curI.data(), shCur);
-    shCur.add(shU.get());
-    mul_rescale(curI.data(), contrib.data(), nChar, k, shCur);
-
-    int curNode = a;
-    int parNode = topo.parentNode[a];
-    while (parNode >= 1) {
-      if (parNode == u) {
-        pg.transition(curI.data(), contrib.data(), lMerge * rate * sc);
+        int curSlot = topo.childSlot(parNode, curNode);
+        double t = topo.edgeLen[topo.edgeToPar[curNode]] * rate * sc;
+        pg.transition(curI.data(), contrib.data(), t);
         std::swap(shBelow, shCur);
-        siblingProduct(g, uSlot, curI.data(), shCur);
+        siblingProduct(parNode, curSlot, curI.data(), shCur);
         shCur.add(shBelow.get());
-        mul_rescale(curI.data(), contrib.data(), nChar, k, shCur);
-        curNode = g;
-        parNode = topo.parentNode[g];
-        continue;
+        mul_rescale(curI.data(), contrib.data(), nChar, k, shCur, check);
+        curNode = parNode;
+        parNode = topo.parentNode[parNode];
       }
-      int curSlot = topo.childSlot(parNode, curNode);
-      double t = topo.edgeLen[topo.edgeToPar[curNode]] * rate * sc;
-      pg.transition(curI.data(), contrib.data(), t);
-      std::swap(shBelow, shCur);
-      siblingProduct(parNode, curSlot, curI.data(), shCur);
-      shCur.add(shBelow.get());
-      mul_rescale(curI.data(), contrib.data(), nChar, k, shCur);
-      curNode = parNode;
-      parNode = topo.parentNode[parNode];
+
+      if (check || !path_needs_check(curI.data(), nChar, k)) break;
     }
 
     const int* shRoot = shCur.get();
@@ -1079,10 +1115,11 @@ static double evaluate_swap_impl(
     accum = localSiteLik.data();
   }
 
-  // curI *= contrib; the last factor of a node also rescales.
+  // curI *= contrib; the last factor of a node also rescales when checking.
+  bool check = false;
   auto combine = [&](bool last) {
     if (last) {
-      mul_rescale(curI.data(), contrib.data(), nChar, k, shCur);
+      mul_rescale(curI.data(), contrib.data(), nChar, k, shCur, check);
     } else {
       for (int i = 0; i < stride; ++i) curI[i] *= contrib[i];
     }
@@ -1095,129 +1132,135 @@ static double evaluate_swap_impl(
   for (int cat = 0; cat < nCat; ++cat) {
     double rate = rates[cat];
 
-    // ============ Segment A: pathA[0 .. lcaIdxA-1] ============
-    for (int ai = 0; ai < nSegA; ++ai) {
-      int n = pathA[ai];
-      int nChild = (topo.ch2[n] >= 0) ? 3 : 2;
-      std::fill(curI.begin(), curI.end(), 1.0);
-      shCur.reset();
+    // Unchecked first; again with rescaling if the root is small.
+    for (int pass = 0; pass < 2; ++pass) {
+      check = pass > 0;
+      // ============ Segment A: pathA[0 .. lcaIdxA-1] ============
+      for (int ai = 0; ai < nSegA; ++ai) {
+        int n = pathA[ai];
+        int nChild = (topo.ch2[n] >= 0) ? 3 : 2;
+        std::fill(curI.begin(), curI.end(), 1.0);
+        shCur.reset();
 
-      for (int sl = 0; sl < nChild; ++sl) {
-        int cn = childAt(n, sl);
+        for (int sl = 0; sl < nChild; ++sl) {
+          int cn = childAt(n, sl);
 
-        if (n == pA && sl == slotA) {
-          // SWAP: nodeB replaces nodeA at pA
-          grp.transition(grp.I(cat, nodeB), contrib.data(),
-                          lenA * rate * sc);
-          shCur.add(grp.IS(cat, nodeB));
-        } else if (ai > 0 && cn == pathA[ai - 1]) {
-          // Propagated from previous segA node
-          double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
-          grp.transition(lastA.data(), contrib.data(), t);
-          shCur.add(shLastA.get());
-        } else {
-          std::memcpy(contrib.data(), grp.Fslot(cat, n, sl),
-                      stride * sizeof(double));
-          shCur.add(grp.IS(cat, cn));
+          if (n == pA && sl == slotA) {
+            // SWAP: nodeB replaces nodeA at pA
+            grp.transition(grp.I(cat, nodeB), contrib.data(),
+                            lenA * rate * sc);
+            shCur.add(grp.IS(cat, nodeB));
+          } else if (ai > 0 && cn == pathA[ai - 1]) {
+            // Propagated from previous segA node
+            double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
+            grp.transition(lastA.data(), contrib.data(), t);
+            shCur.add(shLastA.get());
+          } else {
+            std::memcpy(contrib.data(), grp.Fslot(cat, n, sl),
+                        stride * sizeof(double));
+            shCur.add(grp.IS(cat, cn));
+          }
+          combine(sl + 1 == nChild);
         }
-        combine(sl + 1 == nChild);
-      }
-      std::memcpy(lastA.data(), curI.data(), stride * sizeof(double));
-      std::swap(shLastA, shCur);
-    }
-
-    // ============ Segment B: pathBbelow[0 .. nSegB-1] ============
-    for (int bi = 0; bi < nSegB; ++bi) {
-      int n = pathBbelow[bi];
-      int nChild = (topo.ch2[n] >= 0) ? 3 : 2;
-      std::fill(curI.begin(), curI.end(), 1.0);
-      shCur.reset();
-
-      for (int sl = 0; sl < nChild; ++sl) {
-        int cn = childAt(n, sl);
-
-        if (n == pB && sl == slotB) {
-          // SWAP: nodeA replaces nodeB at pB
-          grp.transition(grp.I(cat, nodeA), contrib.data(),
-                          lenB * rate * sc);
-          shCur.add(grp.IS(cat, nodeA));
-        } else if (bi > 0 && cn == pathBbelow[bi - 1]) {
-          // Propagated from previous segB node
-          double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
-          grp.transition(lastB.data(), contrib.data(), t);
-          shCur.add(shLastB.get());
-        } else {
-          std::memcpy(contrib.data(), grp.Fslot(cat, n, sl),
-                      stride * sizeof(double));
-          shCur.add(grp.IS(cat, cn));
-        }
-        combine(sl + 1 == nChild);
-      }
-      std::memcpy(lastB.data(), curI.data(), stride * sizeof(double));
-      std::swap(shLastB, shCur);
-    }
-
-    // ============ Shared segment: pathA[lcaIdxA .. end] ============
-    int nPathA = (int)pathA.size();
-    for (int ai = lcaIdxA; ai < nPathA; ++ai) {
-      int n = pathA[ai];
-      int nChild = (topo.ch2[n] >= 0) ? 3 : 2;
-      std::fill(curI.begin(), curI.end(), 1.0);
-      shCur.reset();
-
-      for (int sl = 0; sl < nChild; ++sl) {
-        int cn = childAt(n, sl);
-        bool handled = false;
-
-        // Swap conditions (fire at LCA when pA or pB IS the LCA)
-        if (n == pA && sl == slotA) {
-          grp.transition(grp.I(cat, nodeB), contrib.data(),
-                          lenA * rate * sc);
-          shCur.add(grp.IS(cat, nodeB));
-          handled = true;
-        }
-        if (!handled && n == pB && sl == slotB) {
-          grp.transition(grp.I(cat, nodeA), contrib.data(),
-                          lenB * rate * sc);
-          shCur.add(grp.IS(cat, nodeA));
-          handled = true;
-        }
-
-        // Dirty children feeding into LCA from segments below
-        if (!handled && nSegA > 0 && ai == lcaIdxA &&
-            cn == pathA[lcaIdxA - 1]) {
-          double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
-          grp.transition(lastA.data(), contrib.data(), t);
-          shCur.add(shLastA.get());
-          handled = true;
-        }
-        if (!handled && nSegB > 0 && ai == lcaIdxA &&
-            cn == pathBbelow.back()) {
-          double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
-          grp.transition(lastB.data(), contrib.data(), t);
-          shCur.add(shLastB.get());
-          handled = true;
-        }
-
-        // Previous shared-segment node
-        if (!handled && ai > lcaIdxA && cn == pathA[ai - 1]) {
-          double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
-          grp.transition(prevShared.data(), contrib.data(), t);
-          shCur.add(shPrev.get());
-          handled = true;
-        }
-
-        if (!handled) {
-          std::memcpy(contrib.data(), grp.Fslot(cat, n, sl),
-                      stride * sizeof(double));
-          shCur.add(grp.IS(cat, cn));
-        }
-
-        combine(sl + 1 == nChild);
+        std::memcpy(lastA.data(), curI.data(), stride * sizeof(double));
+        std::swap(shLastA, shCur);
       }
 
-      std::memcpy(prevShared.data(), curI.data(), stride * sizeof(double));
-      std::swap(shPrev, shCur);
+      // ============ Segment B: pathBbelow[0 .. nSegB-1] ============
+      for (int bi = 0; bi < nSegB; ++bi) {
+        int n = pathBbelow[bi];
+        int nChild = (topo.ch2[n] >= 0) ? 3 : 2;
+        std::fill(curI.begin(), curI.end(), 1.0);
+        shCur.reset();
+
+        for (int sl = 0; sl < nChild; ++sl) {
+          int cn = childAt(n, sl);
+
+          if (n == pB && sl == slotB) {
+            // SWAP: nodeA replaces nodeB at pB
+            grp.transition(grp.I(cat, nodeA), contrib.data(),
+                            lenB * rate * sc);
+            shCur.add(grp.IS(cat, nodeA));
+          } else if (bi > 0 && cn == pathBbelow[bi - 1]) {
+            // Propagated from previous segB node
+            double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
+            grp.transition(lastB.data(), contrib.data(), t);
+            shCur.add(shLastB.get());
+          } else {
+            std::memcpy(contrib.data(), grp.Fslot(cat, n, sl),
+                        stride * sizeof(double));
+            shCur.add(grp.IS(cat, cn));
+          }
+          combine(sl + 1 == nChild);
+        }
+        std::memcpy(lastB.data(), curI.data(), stride * sizeof(double));
+        std::swap(shLastB, shCur);
+      }
+
+      // ============ Shared segment: pathA[lcaIdxA .. end] ============
+      int nPathA = (int)pathA.size();
+      for (int ai = lcaIdxA; ai < nPathA; ++ai) {
+        int n = pathA[ai];
+        int nChild = (topo.ch2[n] >= 0) ? 3 : 2;
+        std::fill(curI.begin(), curI.end(), 1.0);
+        shCur.reset();
+
+        for (int sl = 0; sl < nChild; ++sl) {
+          int cn = childAt(n, sl);
+          bool handled = false;
+
+          // Swap conditions (fire at LCA when pA or pB IS the LCA)
+          if (n == pA && sl == slotA) {
+            grp.transition(grp.I(cat, nodeB), contrib.data(),
+                            lenA * rate * sc);
+            shCur.add(grp.IS(cat, nodeB));
+            handled = true;
+          }
+          if (!handled && n == pB && sl == slotB) {
+            grp.transition(grp.I(cat, nodeA), contrib.data(),
+                            lenB * rate * sc);
+            shCur.add(grp.IS(cat, nodeA));
+            handled = true;
+          }
+
+          // Dirty children feeding into LCA from segments below
+          if (!handled && nSegA > 0 && ai == lcaIdxA &&
+              cn == pathA[lcaIdxA - 1]) {
+            double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
+            grp.transition(lastA.data(), contrib.data(), t);
+            shCur.add(shLastA.get());
+            handled = true;
+          }
+          if (!handled && nSegB > 0 && ai == lcaIdxA &&
+              cn == pathBbelow.back()) {
+            double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
+            grp.transition(lastB.data(), contrib.data(), t);
+            shCur.add(shLastB.get());
+            handled = true;
+          }
+
+          // Previous shared-segment node
+          if (!handled && ai > lcaIdxA && cn == pathA[ai - 1]) {
+            double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
+            grp.transition(prevShared.data(), contrib.data(), t);
+            shCur.add(shPrev.get());
+            handled = true;
+          }
+
+          if (!handled) {
+            std::memcpy(contrib.data(), grp.Fslot(cat, n, sl),
+                        stride * sizeof(double));
+            shCur.add(grp.IS(cat, cn));
+          }
+
+          combine(sl + 1 == nChild);
+        }
+
+        std::memcpy(prevShared.data(), curI.data(), stride * sizeof(double));
+        std::swap(shPrev, shCur);
+      }
+
+      if (check || !path_needs_check(curI.data(), nChar, k)) break;
     }
 
     // ============ Root CL → accumulate site likelihoods ============
