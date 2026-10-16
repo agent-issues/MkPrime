@@ -48,3 +48,40 @@ test_that("MkpTracePlot draws topology panel and tree ESS", {
   info$iter <- 2000L
   expect_no_error(MkpTracePlot(info))
 })
+
+test_that(".RecentConsensus prunes a rogue taxon", {
+  skip_if_not_installed("Rogue")
+  set.seed(1)
+  base <- TreeTools::BalancedTree(paste0("t", 1:16))
+  trees <- lapply(1:12, function(i) {
+    TreeTools::AddTip(base, where = sample(30, 1), label = "rogue")
+  })
+  cons <- MkPrime:::.RecentConsensus(trees)
+  expect_s3_class(cons, "phylo")
+  expect_false("rogue" %in% cons$tip.label)
+})
+
+test_that("tree ESS of odd shapes is ignored without error", {
+  MkPrime:::.ResetEssHistory()
+  env <- MkPrime:::.tracePlotEnv
+  env$lastIter <- 0L
+  samp <- cbind(log_posterior = rnorm(50), tree_length = rnorm(50))
+  info <- list(
+    iter = 10L, nIter = 100L, warmup = 1L, inWarmup = FALSE,
+    phase = "Sample", nRuns = 1L, nChains = 1L, runSamples = list(samp),
+    currentState = NULL, recentAcceptance = 0.3, elapsed = 1,
+    paramNames = colnames(samp), treeEss = list(3)
+  )
+  pdf(NULL)
+  on.exit(dev.off(), add = TRUE)
+  expect_no_error(MkpTracePlot(info))
+  expect_true(is.na(env$essHistory[[1]]["tree_ess"]))
+})
+
+test_that(".RecentConsensus accepts a compressed multiPhylo", {
+  trees <- ape::.compressTipLabel(
+    structure(lapply(1:5, function(i) TreeTools::BalancedTree(8)),
+              class = "multiPhylo")
+  )
+  expect_s3_class(MkPrime:::.RecentConsensus(trees), "phylo")
+})

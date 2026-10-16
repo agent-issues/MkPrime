@@ -157,9 +157,9 @@ MkpTracePlot <- function(info) {
       .EssVector(col)
     }, numeric(1))
     treeEss <- info$treeEss
-    essSnap <- c(essSnap, tree_ess = if (length(treeEss) == 1L &&
-                                         is.finite(treeEss)) treeEss
-                                     else NA_real_)
+    treeEssVal <- if (is.numeric(treeEss) && length(treeEss) == 1L &&
+                      is.finite(treeEss)) unname(treeEss) else NA_real_
+    essSnap <- c(essSnap, tree_ess = treeEssVal)
     .tracePlotEnv$essHistory  <- c(.tracePlotEnv$essHistory, list(essSnap))
     .tracePlotEnv$iterHistory <- c(.tracePlotEnv$iterHistory, info$iter)
   }
@@ -411,20 +411,28 @@ MkpTracePlot <- function(info) {
 #' @return A `phylo` object, or `NULL` if no consensus can be formed.
 #' @keywords internal
 .RecentConsensus <- function(trees, nMax = 12L) {
-  trees <- utils::tail(unclass(trees), nMax)
-  if (length(trees) == 0L) return(NULL)
+  nTrees <- length(trees)
+  if (nTrees == 0L) return(NULL)
+  trees <- trees[seq.int(max(1L, nTrees - nMax + 1L), nTrees)]
+  trees <- tryCatch(.DropRogues(trees), error = function(e) trees)
+  tryCatch(TreeTools::Consensus(trees, p = 0.5), error = function(e) NULL)
+}
+
+
+#' Drop rogue taxa identified by `Rogue::QuickRogue()`, if available
+#' @keywords internal
+.DropRogues <- function(trees) {
+  if (length(trees) <= 3L || !requireNamespace("Rogue", quietly = TRUE)) {
+    return(trees)
+  }
+  rogues <- Rogue::QuickRogue(trees)
+  drop <- rogues$taxon[!is.na(rogues$taxon)]
+  if (length(drop) == 0L || length(drop) > TreeTools::NTip(trees[[1]]) - 3L) {
+    return(trees)
+  }
+  trees <- lapply(trees, ape::drop.tip, tip = drop)
   class(trees) <- "multiPhylo"
-  tryCatch({
-    if (requireNamespace("Rogue", quietly = TRUE) && length(trees) > 3L) {
-      rogues <- Rogue::QuickRogue(trees)
-      drop <- rogues$taxon[nzchar(rogues$taxon, keepNA = FALSE)]
-      if (length(drop) > 0L && length(drop) < TreeTools::NTip(trees[[1]]) - 3L) {
-        trees <- lapply(trees, ape::drop.tip, tip = drop)
-        class(trees) <- "multiPhylo"
-      }
-    }
-    TreeTools::Consensus(trees, p = 0.5)
-  }, error = function(e) NULL)
+  trees
 }
 
 
