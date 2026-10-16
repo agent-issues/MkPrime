@@ -191,6 +191,7 @@ test_that("a never-started run builds its own move weights on resume (#403)", {
 
 
 test_that("resumed trees have finite edge lengths on neo-free data (#64)", {
+  skip_on_cran()
   # A wrong brColStart shifts every edge length by one column and reads past
   # the end, writing `t_last:NA` into each post-resume tree; the newick still
   # parses, so nothing downstream fails. Only neo-free data is affected, and
@@ -221,15 +222,16 @@ test_that("resumed trees have finite edge lengths on neo-free data (#64)", {
   on.exit(setTimeLimit(elapsed = Inf, transient = TRUE), add = TRUE)
 
   # Stop on the clock so there is sampling left to resume into.
-  first <- RunMkPrime(pd, tree,
+  first <- allow_warning(RunMkPrime(pd, tree,
     mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 200000L, thin = 5L,
                        maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
                        maxTime = 8, checkEvery = 500L,
                        checkpointFile = ckpFile, logFile = logFile,
-                       treeFile = treeFile))
+                       treeFile = treeFile)), "stabilis")
+  expect_identical(first$stop_reason, "max_time")
   expect_false(anyNA(unlist(lapply(first$trees, `[[`, "edge.length"))))
 
-  resumed <- ResumeMkPrime(ckpFile, pd)
+  resumed <- allow_warning(ResumeMkPrime(ckpFile, pd), "stabilis")
   postEdges <- unlist(lapply(resumed$trees, `[[`, "edge.length"))
   expect_gt(length(postEdges), 0L)
   expect_false(anyNA(postEdges))
