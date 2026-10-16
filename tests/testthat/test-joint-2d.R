@@ -39,13 +39,18 @@ test_that("2D Bactrian correlation tracks rho parameter", {
   }
 })
 
-test_that("2D Bactrian is symmetric: P(z1,z2) = P(-z1,-z2)", {
+test_that("2D Bactrian is point-symmetric: P(z1, z2) = P(-z1, -z2)", {
   set.seed(2914)
   draws <- bactrian_2d_draws(100000L, 0.5)
-  # Mean of z1*z2 should be positive (correlated modes), but
-  # mean of z1 and z2 should both be ≈ 0
-  expect_lt(abs(mean(draws[, 1])), 0.01)
-  expect_lt(abs(mean(draws[, 2])), 0.01)
+  # Opposite quadrants are equiprobable and every projection is symmetric
+  # about zero; z1 * z2, being invariant under negation, cannot see either.
+  pos <- draws > 0
+  expect_gt(binom.test(sum(pos[, 1] & pos[, 2]),
+                       sum(pos[, 1] == pos[, 2]))$p.value, 1e-4)
+  expect_gt(binom.test(sum(pos[, 1] & !pos[, 2]),
+                       sum(pos[, 1] != pos[, 2]))$p.value, 1e-4)
+  expect_gt(wilcox.test(draws[, 1] + draws[, 2])$p.value, 1e-4)
+  expect_gt(wilcox.test(draws[, 1] - draws[, 2])$p.value, 1e-4)
 })
 
 test_that("2D Bactrian with rho=0 produces approximately uncorrelated draws", {
@@ -155,78 +160,26 @@ test_that(".BuildJointRhoMatrix fills correctly", {
 
 
 # --- Integration test ---
+# The kernels are checked at beta = 0 in test-scalar-hastings-invariance.R;
+# here, only that `joint2d` reaches the move schedule.
 
-test_that("Joint 2D moves produce valid posterior", {
+test_that("joint2d switches the joint moves on and off", {
   skip_under_memcheck()
-  skip_on_cran()
-
-  nexFile <- system.file("datasets/Sun2018.nex", package = "TreeSearch")
-  pd <- ReadAsPhyDat(nexFile)
-  mkd <- MkPrimeData(pd)
-
-  cfg <- MkPrimeMCMC(
-    nIter = 3000L, nRuns = 1L, nChains = 1L,
-    minWarmup = 500L, maxWarmup = 1000L,
-    autoTune = FALSE, thin = 10L,
-    joint2d = TRUE
-  )
-
-  set.seed(7382)
-  res <- RunMkPrime(mkd, mcmc = cfg)
-
-  expect_s3_class(res, "MkPosterior")
-  expect_gt(nrow(res$samples), 0)
-  expect_true("joint_tl_rls" %in% names(res$acceptance))
-  expect_gt(res$acceptance[["joint_tl_rls"]], 0)
-})
-
-test_that("joint2d = FALSE excludes joint moves", {
-  skip_under_memcheck()
-  skip_on_cran()
-
-  nexFile <- system.file("datasets/Sun2018.nex", package = "TreeSearch")
-  pd <- ReadAsPhyDat(nexFile)
-  mkd <- MkPrimeData(pd)
-
-  cfg <- MkPrimeMCMC(
-    nIter = 2000L, nRuns = 1L, nChains = 1L,
-    minWarmup = 500L, maxWarmup = 1000L,
-    autoTune = FALSE, thin = 10L,
-    joint2d = FALSE
-  )
-
-  set.seed(3896)
-  res <- RunMkPrime(mkd, mcmc = cfg)
-
-  expect_s3_class(res, "MkPosterior")
-  expect_false("joint_tl_rls" %in% names(res$acceptance))
-  expect_false("joint_tl_rl" %in% names(res$acceptance))
-  expect_false("joint_tl_rn" %in% names(res$acceptance))
-})
-
-test_that("joint_tl_rn runs and produces acceptance on mixed data", {
-  skip_under_memcheck()
-  skip_on_cran()
-
-  # Force a binary character to be neomorphic so hasNeo gates joint_tl_rn in.
-  nexFile <- system.file("datasets/Sun2018.nex", package = "TreeSearch")
-  pd <- ReadAsPhyDat(nexFile)
-  mkdBase <- MkPrimeData(pd)
-  binaryChars <- which(mkdBase$kObs == 2L)
-  skip_if(length(binaryChars) == 0L, "no binary characters to mark neomorphic")
-  mkd <- MkPrimeData(pd, neomorphic = binaryChars[1])
-
-  cfg <- MkPrimeMCMC(
-    nIter = 3000L, nRuns = 1L, nChains = 1L,
-    minWarmup = 500L, maxWarmup = 1000L,
-    autoTune = FALSE, thin = 10L,
-    joint2d = TRUE
-  )
-
-  set.seed(4719)
-  res <- RunMkPrime(mkd, mcmc = cfg)
-
-  expect_s3_class(res, "MkPosterior")
-  expect_true("joint_tl_rn" %in% names(res$acceptance))
-  expect_gt(res$acceptance[["joint_tl_rn"]], 0)
+  tree <- Preorder(read.tree(
+    text = "(((t1:0.1,t2:0.2):0.1,(t3:0.1,t4:0.3):0.2):0.1,(t5:0.2,t6:0.1):0.1);"
+  ))
+  mat <- matrix(c(0, 0, 1, 1, 0, 1,
+                  0, 1, 2, 0, 1, 2), 6,
+                dimnames = list(paste0("t", 1:6), NULL))
+  mkd <- MkPrimeData(MatrixToPhyDat(mat), neomorphic = 1L)
+  jointMoves <- c("joint_tl_rls", "joint_tl_rl", "joint_tl_rn")
+  Moves <- function(joint2d) {
+    cfg <- MkPrimeMCMC(nIter = 100L, nRuns = 1L, nChains = 1L, thin = 10L,
+                       minWarmup = 50L, maxWarmup = 50L, autoTune = FALSE,
+                       maxTime = 30, joint2d = joint2d)
+    res <- allow_warning(RunMkPrime(mkd, tree, mcmc = cfg), "maxWarmup")
+    names(res$acceptance)
+  }
+  expect_true(all(jointMoves %in% Moves(TRUE)))
+  expect_false(any(jointMoves %in% Moves(FALSE)))
 })

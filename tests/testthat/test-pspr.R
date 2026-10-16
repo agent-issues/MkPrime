@@ -117,6 +117,7 @@ test_that("pSPR Hastings formula includes normalization correction", {
 test_that("pSPR move produces valid trees", {
   skip_under_memcheck()
   skip_on_cran()
+  skip_if_not_installed("TreeSearch")
 
   nexFile <- system.file("datasets/Sun2018.nex", package = "TreeSearch")
   pd <- ReadAsPhyDat(nexFile)
@@ -147,6 +148,7 @@ test_that("pSPR move produces valid trees", {
 test_that("pSPR can be disabled", {
   skip_under_memcheck()
   skip_on_cran()
+  skip_if_not_installed("TreeSearch")
 
   nexFile <- system.file("datasets/Sun2018.nex", package = "TreeSearch")
   pd <- ReadAsPhyDat(nexFile)
