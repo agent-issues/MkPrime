@@ -173,22 +173,27 @@ ok("an NA AD fails clause (a)",
    naRls$status != 0L && grepl("\\(a\\) global AD\\s+: FAIL", naRls$text))
 
 ## ---- #467: sbc.R start state and retained draws ------------------------------
-# The configuration block and the lines after it, evaluated as sbc.R would.
+# sbc.R's mode-dependent configuration block, then L_SAMPLES and N_ITER
+# wherever they are defined.
 SbcConfig <- function(mode) {
   exprs <- as.list(parse(sbcR, keep.source = FALSE))
-  first <- which(vapply(exprs, function(e) {
+  config <- Filter(function(e) {
     is.call(e) && identical(e[[1L]], as.name("if")) &&
       identical(e[[2L]], quote(mode == "quick"))
-  }, logical(1L)))
+  }, exprs)
   env <- new.env(parent = globalenv())
   env$mode <- mode
-  for (e in exprs[first:(first + 2L)]) eval(e, env)
+  eval(config[[1L]], env)
+  for (nm in c("L_SAMPLES", "N_ITER")) {
+    if (!exists(nm, env, inherits = FALSE)) Definition(sbcR, nm, env)
+  }
   env
 }
+# Guards against a hard-coded N_ITER; the smoke below checks the real count.
 RetainedDraws <- function(cfg) ceiling((cfg$N_ITER - cfg$N_WARM) / cfg$N_THIN)
 for (m in c("quick", "full")) {
   cfg <- SbcConfig(m)
-  ok(sprintf("sbc.R %s mode keeps the nominal L_SAMPLES (nIter counts warmup)", m),
+  ok(sprintf("sbc.R %s mode keeps L_SAMPLES (nIter counts warmup)", m),
      RetainedDraws(cfg) == cfg$L_SAMPLES)
 }
 lQuick <- SbcConfig("quick")$L_SAMPLES
@@ -231,8 +236,8 @@ if (!nzchar(Sys.getenv("MKP_SKIP_SBC_SMOKE")) && canLoad) {
   mknt <- Good("MkNT_geometric")
   ok("MkNT characters are simulated at their drawn k",
      length(mknt) >= 3L && any(unlist(lapply(mknt, `[[`, "kObs")) > 2L))
-  ok("every Mk' chain keeps the L_SAMPLES draws the ranks assume",
-     all(vapply(mkp, `[[`, 0L, "L") == lQuick))
+  ok("every chain keeps the L_SAMPLES draws the ranks assume",
+     all(vapply(c(mkp, mknt), `[[`, 0L, "L") == lQuick))
   ok("the verdict is stamped with the run id",
      any(readLines(file.path(smokeOut, "verdict-MkNT_geometric.txt")) ==
            "run_id:   smoke"))

@@ -142,9 +142,9 @@ Full scale: `N_sim = 200`, 2000 warmup iterations, then `thin = 60` for
 counts the warmup). This matches Talts et al.'s
 recommended L ≈ 100. The 8-tip, `expSteps = 50` regime is near saturation
 (`T-SBC-marginal-geometric.R` moved off it for that reason); poor mixing
-there can pile ranks at the extremes even with a correct forward model: the
-old start of 0.1 per edge trapped ACRV chains in a short-tree, high
-`rate_log_sd` basin and failed every arm (#467).
+there can pile ranks at the extremes even with a correct forward model; a start
+far below the prior-mean tree length traps ACRV chains in a short-tree, high
+`rate_log_sd` basin (#467).
 
 To run a single arm at full scale locally (e.g. to debug):
 

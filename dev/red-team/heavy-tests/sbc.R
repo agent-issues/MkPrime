@@ -92,8 +92,7 @@ if (mode == "quick") {
   N_RUNS   <- 1L
   N_CHAINS <- 1L
 }
-# Samples kept per chain (Talts et al. recommend L ~ 100). nIter counts the
-# warmup, so it is derived from L rather than the other way round (#467).
+# Samples kept per chain (Talts et al. recommend L ~ 100); nIter counts warmup.
 L_SAMPLES <- 100L
 N_ITER    <- N_WARM + L_SAMPLES * N_THIN
 
@@ -140,10 +139,9 @@ N_CAT          <- 4L
   TreeTools::Preorder(tr)
 }
 
-# The true topology with every edge at its prior mean length, so the start
-# carries no information about the true lengths. The old start of 0.1 per edge
-# (tree length ~1 against a prior mean of 50) trapped ACRV chains in a
-# short-tree, high-rate_log_sd basin they did not leave during the run (#467).
+# The true topology with every edge at its prior mean length: the start
+# carries no information about the true lengths, and a start far below the
+# prior mean traps ACRV chains in a short-tree, high-rate_log_sd basin (#467).
 .StartTree <- function(trueTree) {
   nEdge <- nrow(trueTree$edge)
   trueTree$edge.length <- rep_len(EXPSTEPS_FIXED / nEdge, nEdge)
