@@ -658,8 +658,9 @@ static bool compute_residual_cl_pass(
     if (!check) {
       const double* rootCl = res.I(cat, res.nPathNodes - 1);
       for (int c = 0; c < nChar; ++c) {
+        // Unreached: the residual likelihood is a marginal of the full one.
         if (!(grp.rootSiteLik(rootCl, c) >= MkPrime::kRescaleBelow)) {
-          return false;
+          return false;  // # nocov
         }
       }
     }
