@@ -10,11 +10,11 @@
 #   1. p_true       ~ Beta(a, b)
 #   2. tree         ~ rtree(N_TIP) with edge lengths from Gamma·Dirichlet
 #   3. kTrue_i      = N_obs_i + N_unobs_i, N_obs_i ~ empiricalNObs,
-#                     N_unobs_i ~ Geo(p_true), the pair redrawn until
+#                     N_unobs_i ~ Geo(p_true), redrawn until
 #                     kTrue_i <= K_MAX_PRIOR (truncation, not a clamp; #57)
-#   4. y_i          ~ JC(kTrue_i) on the tree, redrawn with kTrue_i fixed
-#                     until variable (coding = "variable")
-#   5. canonicalise y_i → kObs_i (= number of distinct realised states)
+#   4. y_i          ~ JC(kTrue_i) on the tree; an invariant (kTrue_i, y_i)
+#                     pair is redrawn whole (joint Pr(K, y | V), 57628cf)
+#   5. canonicalize y_i → kObs_i (= number of distinct realized states)
 #
 # Inference: MkPrime with kPrimePrior="empirical_geometric",
 #            kprimeTruncK=K_MAX_PRIOR,
@@ -24,8 +24,8 @@
 # tree_length (continuous), rate_log_sd (continuous).
 #
 # Pass: AD p > 0.4 on p and tree_length at N_SIM = 200.  rate_log_sd is
-# prior-only (nCat = 1, so it never enters the likelihood): its PASS is
-# vacuous.  The kPrime_pooled rank suffers the same Talts boundary artefact
+# prior-only (nCat = 1, so it never enters the likelihood): its rank checks
+# only that its moves sample the Gamma prior.  The kPrime_pooled rank suffers the same Talts boundary artefact
 # as the geometric arm (kObs is at the support floor for many chars);
 # diagnostic only.
 #
@@ -45,6 +45,13 @@ source("dev/red-team/heavy-tests/kprime-viability/T-EG-C-forward.R")
 OUT_DIR <- "dev/red-team/heavy-tests/kprime-viability"
 CONFIG_DIR <- file.path(OUT_DIR, "T-EG-C")
 dir.create(CONFIG_DIR, recursive = TRUE, showWarnings = FALSE)
+# An aborted run must not leave an earlier verdict beside its sims.rds.
+unlink(file.path(CONFIG_DIR, "verdict.txt"))
+gitSha <- tryCatch(
+  system2("git", c("rev-parse", "HEAD"), stdout = TRUE, stderr = FALSE),
+  error = function(e) "unknown", warning = function(w) "unknown"
+)
+runId <- Sys.getenv("SLURM_JOB_ID", "local")
 
 args <- commandArgs(trailingOnly = TRUE)
 mode <- if (any(args %in% c("--quick", "-q"))) "quick" else "full"
@@ -72,7 +79,7 @@ if (mode == "quick") {
 
 EXPSTEPS_FIXED <- 50
 TREE_SHAPE     <- 2
-K_MAX_PRIOR    <- 30L          # cap on kTrue (matches T0/T4)
+K_MAX_PRIOR    <- 30L          # truncation K, forward and inference
 A_PRIOR        <- 1
 B_PRIOR        <- 1
 seedBase       <- 20260528L
@@ -98,18 +105,18 @@ EMP <- MkPrime::empiricalNObs
   rateLogSd_true <- stats::rgamma(1, shape = 1, rate = 1)
   tr             <- .SimTree(N_TIP, TREE_SHAPE, EXPSTEPS_FIXED)
   tl_true        <- sum(tr$edge.length)
-  kTrue          <- .DrawKTrue(N_CHAR, p_true, EMP, K_MAX_PRIOR)
 
   sim_mat <- matrix(NA_integer_, N_TIP, N_CHAR,
                     dimnames = list(tr$tip.label, NULL))
-  kObs <- integer(N_CHAR)
+  kTrue <- kObs <- integer(N_CHAR)
   for (j in seq_len(N_CHAR)) {
-    cv <- .SimVariableChar(tr, kTrue[j])
-    if (is.null(cv)) return(list(skipped = TRUE, reason = "redraw_cap"))
-    sim_mat[, j] <- cv
-    kObs[j] <- attr(cv, "kObs")
+    ch <- .SimVariableChar(tr, p_true, EMP, K_MAX_PRIOR)
+    if (is.null(ch)) return(list(skipped = TRUE, reason = "redraw_cap"))
+    kTrue[j] <- ch$k
+    sim_mat[, j] <- ch$states
+    kObs[j] <- attr(ch$states, "kObs")
   }
-  pd  <-TreeTools::MatrixToPhyDat(sim_mat)
+  pd  <- TreeTools::MatrixToPhyDat(sim_mat)
   mkd <- MkPrimeData(pd)
 
   start_tree <- tr
@@ -122,7 +129,8 @@ EMP <- MkPrime::empiricalNObs
     kprimeHyperA = A_PRIOR,
     kprimeHyperB = B_PRIOR,
     kprimeTruncK = K_MAX_PRIOR,
-    expSteps    = EXPSTEPS_FIXED
+    empiricalNObs = EMP,
+    expSteps     = EXPSTEPS_FIXED
   ))
   mcmc <- MkPrimeMCMC(
     nIter = N_ITER, thin = N_THIN,
@@ -138,8 +146,6 @@ EMP <- MkPrime::empiricalNObs
     return(list(skipped = TRUE, reason = paste0("mcmc:", res$error)))
   }
   dt <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
-  # A truncated chain would give this sim a different L from the rest.
-  if (dt >= maxTimeSim) return(list(skipped = TRUE, reason = "max_time"))
   samples <- res$samples
   if (is.null(samples) || nrow(samples) < 10L) {
     return(list(skipped = TRUE, reason = "no_samples"))
@@ -176,18 +182,28 @@ for (i in seq_len(N_SIM)) {
     cat(sprintf("L=%d wall=%.1fs\n", s$L, s$wall))
   }
   sims[[i]] <- s
+  saveRDS(sims[seq_len(i)], file.path(CONFIG_DIR, "sims.rds"))
 }
 
 good <- sapply(sims, function(s) !isTRUE(s$skipped))
 cat(sprintf("\n[T-EG-C] Good sims: %d / %d\n", sum(good), N_SIM))
-saveRDS(sims, file.path(CONFIG_DIR, "sims.rds"))
 
 if (sum(good) < 20L) {
   cat("[T-EG-C] Too few good sims; aborting AD analysis.\n")
   quit(status = 1L)
 }
 goods <- sims[good]
-L_used <- max(sapply(goods, `[[`, "L"))
+chainLen <- vapply(goods, `[[`, integer(1), "L")
+fullLen <- max(chainLen)
+# A chain cut short by maxTime has fewer draws; slow sims are high-k', low-p
+# ones, so these exclusions are not random and are reported in the verdict.
+truncatedP <- vapply(goods[chainLen < fullLen], `[[`, numeric(1), "p_true")
+goods <- goods[chainLen == fullLen]
+L_used <- fullLen
+if (length(goods) < 20L) {
+  cat("[T-EG-C] Too few full-length chains; aborting AD analysis.\n")
+  quit(status = 1L)
+}
 
 tl_ranks  <- sapply(goods, function(s) s$ranks$tree_length)
 rls_ranks <- sapply(goods, function(s) s$ranks$rate_log_sd)
@@ -241,8 +257,13 @@ dev.off()
 
 sink(file.path(CONFIG_DIR, "verdict.txt"))
 cat(sprintf("Config:        T-EG-C — empirical_geometric Model A SBC\n"))
+cat(sprintf("Commit:        %s  run_id: %s\n", gitSha, runId))
 cat(sprintf("Mode:          %s\n", mode))
 cat(sprintf("N_SIM:         %d (good = %d)\n", N_SIM, sum(good)))
+cat(sprintf(
+  "Truncated:     %d chain(s) cut by maxTime, excluded; p_true: %s\n",
+  length(truncatedP), paste(signif(truncatedP, 3), collapse = ", ")
+))
 cat(sprintf("L_used:        %d\n", L_used))
 cat(sprintf("N_TIP:         %d  N_CHAR (target): %d\n", N_TIP, N_CHAR))
 cat(sprintf("Prior:         empirical_geometric (Model A)\n"))
@@ -252,7 +273,7 @@ cat(sprintf("               N_unobs ~ Geo(p_true)\n"))
 cat(sprintf(
   "               kTrue = N_obs + N_unobs, truncated to <= %d\n", K_MAX_PRIOR
 ))
-cat("               y redrawn with kTrue fixed until variable\n")
+cat("               invariant (kTrue, y) pairs redrawn whole\n")
 cat(sprintf("Inference K:   kprimeTruncK = %d\n", K_MAX_PRIOR))
 cat("\nAD p-values vs Uniform(0, 1) [pass gate: > 0.4]:\n")
 for (nm in names(ad)) {
@@ -265,7 +286,7 @@ for (nm in names(ad)) {
 cat("\nNote: kPrime_pooled is expected to show a Talts boundary artefact when\n")
 cat("kObs == kTrue (the truth lies at the support floor) — diagnostic only;\n")
 cat("the headline pass criterion is on tree_length and p.  rate_log_sd is\n")
-cat("prior-only under nCat = 1, so its rank is uniform whatever the sampler.\n")
+cat("prior-only under nCat = 1: its rank checks only its moves.\n")
 sink()
 
 cat(sprintf("\n[T-EG-C] artefacts in %s\n", CONFIG_DIR))

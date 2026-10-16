@@ -26,7 +26,7 @@
 
 # JC(k) root-to-tip on a preordered tree; rate convention as
 # inst/include/MkPrime/transition.h (exp(-k t / (k - 1))).
-.SimJCchar <- function(tree, k) {
+.SimJCChar <- function(tree, k) {
   nTip <- length(tree$tip.label)
   states <- integer(2L * nTip - 1L)
   states[nTip + 1L] <- sample.int(k, 1L) - 1L
@@ -49,20 +49,24 @@
   uvals <- sort(unique(v))
   out <- match(v, uvals) - 1L
   attr(out, "kObs") <- length(uvals)
+  # Return:
   out
 }
 
-# coding = "variable" conditions the data, not k', on variability: the
-# likelihood is P(y | k') / P(variable | k'). So k' stays fixed and only y is
-# redrawn; dropping invariant characters would tilt k' by P(variable | k').
-# NULL when maxTries draws are all invariant.
-.SimVariableChar <- function(tree, k, maxTries = 1e5L) {
+# One recorded character as list(k, states). coding = "variable" conditions
+# on the joint Pr(K = k, y | V) = pi(k) L(y | k) / D (src/joint_asc.h), so an
+# invariant (k', y) pair is discarded whole; holding k' fixed and redrawing y
+# alone simulates the per-k' Lewis form MkPrime dropped in 57628cf.
+# NULL when maxTries pairs are all invariant.
+.SimVariableChar <- function(tree, p, emp, K, maxTries = 1e5L) {
   for (i in seq_len(maxTries)) {
-    cv <- .Canon(.SimJCchar(tree, k))
+    k <- .DrawKTrue(1L, p, emp, K)
+    cv <- .Canon(.SimJCChar(tree, k))
     if (attr(cv, "kObs") >= 2L) {
       # Return:
-      return(cv)
+      return(list(k = k, states = cv))
     }
   }
+  # Return:
   NULL
 }

@@ -1,12 +1,13 @@
 #!/usr/bin/env Rscript
-# Checks that the T-EG-C forward draws k' from the prior the inference uses
-# under kprimeTruncK = K: empirical_geometric truncated to [2, K] and
-# renormalised (#57, #392). A pmin() clamp must fail the same gate.
+# Checks that the T-EG-C forward matches the model MkPrime infers under:
+# k' from empirical_geometric truncated to [2, K] and renormalized (#57, #392),
+# and each recorded character from the joint Pr(K = k, y | V) (57628cf).
+# A pmin() clamp, and redrawing y with k' held fixed, must fail the gates.
 #
-# Run from the repository root (about 10 s):
+# Run from the repository root (about 20 s):
 #   Rscript dev/red-team/heavy-tests/test-t-eg-c-forward.R
 
-ok <- function(label, cond) {
+.Ok <- function(label, cond) {
   cat(sprintf("%-66s %s\n", label, if (isTRUE(cond)) "PASS" else "*** FAIL"))
   if (!isTRUE(cond)) stop(label)
 }
@@ -26,12 +27,18 @@ nDraw <- 2e5L
   exp(tab$logPk[2:K] - tab$logZ[2])
 }
 
-.ChisqP <- function(k, p) {
-  counts <- tabulate(k, nbins = K)[2:K]
-  expected <- length(k) * .InferencePmf(p)
-  keep <- expected > 0
-  stat <- sum((counts[keep] - expected[keep])^2 / expected[keep])
-  stats::pchisq(stat, df = sum(keep) - 1L, lower.tail = FALSE)
+# Chi-square p-value of k' draws against a pmf on 2..K; cells expecting
+# fewer than 5 draws are pooled so the asymptotic null holds.
+.ChisqP <- function(k, pmf) {
+  observed <- tabulate(k, nbins = K)[2:K]
+  expected <- length(k) * pmf
+  small <- expected < 5
+  if (any(small)) {
+    observed <- c(observed[!small], sum(observed[small]))
+    expected <- c(expected[!small], sum(expected[small]))
+  }
+  stat <- sum((observed - expected)^2 / expected)
+  stats::pchisq(stat, df = length(expected) - 1L, lower.tail = FALSE)
 }
 
 .Clamped <- function(n, p) {
@@ -41,28 +48,30 @@ nDraw <- 2e5L
 set.seed(5701)
 for (p in c(0.02, 0.1, 0.5)) {
   k <- .DrawKTrue(nDraw, p, emp, K)
-  ok(sprintf("p = %.2f: support is [2, K]", p), min(k) >= 2L && max(k) <= K)
-  ok(
+  .Ok(sprintf("p = %.2f: support is [2, K]", p), min(k) >= 2L && max(k) <= K)
+  .Ok(
     sprintf("p = %.2f: forward pmf matches the inference prior", p),
-    .ChisqP(k, p) > 1e-3
+    .ChisqP(k, .InferencePmf(p)) > 1e-3
   )
 }
-
-p <- 0.02
-k <- .DrawKTrue(nDraw, p, emp, K)
-ok(
-  "p = 0.02: no point mass at K (within 4 SE of the inference prior)",
-  abs(mean(k == K) - .InferencePmf(p)[K - 1L]) <
-    4 * sqrt(.InferencePmf(p)[K - 1L] / nDraw)
-)
-ok(
-  "negative control: pmin() clamp fails the gate",
-  .ChisqP(.Clamped(nDraw, p), p) < 1e-10
+.Ok(
+  "negative control: pmin() clamp fails the prior gate",
+  .ChisqP(.Clamped(nDraw, 0.02), .InferencePmf(0.02)) < 1e-10
 )
 
-tr <- .SimTree(8L, shape = 2, expSteps = 0.05)
-kObs <- vapply(seq_len(200L), function(i) {
-  attr(.SimVariableChar(tr, 5L), "kObs")
+# On a 2-tip tree with saturated edges the tip states are iid uniform, so
+# Pr(V | k) = 1 - 1 / k exactly and recorded k' follow pi(k) (1 - 1 / k) / D.
+saturated <- .SimTree(2L, shape = 2, expSteps = 50)
+saturated$edge.length[] <- 1e3
+p <- 0.5
+nChar <- 2e4L
+recorded <- vapply(seq_len(nChar), function(i) {
+  .SimVariableChar(saturated, p, emp, K)$k
 }, integer(1))
-ok("variable redraw: every character varies on a short tree", all(kObs >= 2L))
-ok("variable redraw: kObs never exceeds k", all(kObs <= 5L))
+joint <- .InferencePmf(p) * (1 - 1 / (2:K))
+joint <- joint / sum(joint)
+.Ok("recorded k' follow the joint Pr(K, y | V)", .ChisqP(recorded, joint) > 1e-3)
+.Ok(
+  "negative control: k' held fixed (per-k' Lewis form) fails",
+  .ChisqP(.DrawKTrue(nChar, p, emp, K), joint) < 1e-10
+)

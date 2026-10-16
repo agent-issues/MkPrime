@@ -12,19 +12,16 @@
 # Single non-array task (one configuration: Model A, kprimeTruncK=30,
 # N_SIM=200, N_ITER=12000, N_TIP=8, N_CHAR=30).
 #
-# IMPORTANT: pre-build the package once on the login node before submitting:
-#
-#   cd ${SRC} && Rscript -e 'devtools::load_all(".")'
-#
-# Otherwise pkgload::load_all races to recompile in the shared src/
-# directory (feedback_pkgload_prebuild memory).  This is a single task so
-# the race is not as catastrophic as a 6-task array, but it is still wasted
-# work on the compute node.
-#
-# Submit:
+# Build the shared tree first; a non-array task would otherwise compile it
+# silently on the compute node (load-mkprime.R guards arrays only):
 #
 #   cd ${SRC}
-#   sbatch dev/red-team/heavy-tests/submit-t-eg-c-modelA.sh
+#   BUILD=$(sbatch --parsable dev/red-team/heavy-tests/submit-build.sh)
+#   sbatch --dependency=afterok:$BUILD \
+#     dev/red-team/heavy-tests/submit-t-eg-c-modelA.sh
+#
+# sims.rds is rewritten after every sim, so a walltime kill keeps the sims
+# already done.
 #
 # Output artefacts land in
 # ${SRC}/dev/red-team/heavy-tests/kprime-viability/T-EG-C/:
