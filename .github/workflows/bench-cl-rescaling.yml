@@ -1,12 +1,16 @@
-# Before/after timings for CL rescaling (#346): main and `ref`, installed
+# Before/after timings for CL rescaling (#346): `base` and `ref`, installed
 # side by side and benchmarked in alternation on one runner.
 on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Branch, tag or SHA to compare with main"
+        description: "Branch, tag or SHA to compare with base"
         required: true
         default: "claude/cl-rescaling-346-68fdba"
+      base:
+        description: "Branch or SHA to compare against"
+        required: true
+        default: "main"
 
 name: bench-cl-rescaling
 
@@ -34,9 +38,12 @@ jobs:
           dependencies: '"hard"'
           extra-packages: any::TreeSearch
 
-      - name: Install main and this commit
+      - name: Install base and this commit
+        env:
+          BASE: ${{ inputs.base }}
         run: |
-          git worktree add ../main origin/main
+          base=$(git rev-parse --verify -q "origin/$BASE" || echo "$BASE")
+          git worktree add ../main "$base"
           mkdir -p ../lib-main ../lib-branch
           R CMD INSTALL --library=../lib-main ../main
           R CMD INSTALL --library=../lib-branch .
@@ -56,6 +63,8 @@ jobs:
 
       - name: Summarise
         shell: Rscript {0}
+        env:
+          BASE: ${{ inputs.base }}
         run: |
           x <- read.csv("../bench.csv")
           med <- tapply(x$value, list(x$metric, x$label), median)
@@ -64,7 +73,7 @@ jobs:
           out$ratio <- out$branch / out$main
           lines <- c(
             paste("Runner:", Sys.getenv("RUNNER_OS"), Sys.getenv("RUNNER_ARCH"),
-                  "- medians of 5 alternating runs"),
+                  "- medians of 5 alternating runs; main =", Sys.getenv("BASE")),
             "", "| metric | main | branch | branch / main |",
             "|---|---|---|---|",
             sprintf("| %s | %.4g | %.4g | %.3f |", out$metric, out$main,

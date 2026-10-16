@@ -706,8 +706,9 @@ static void compute_residual_cl(
 // product at g, and the upward propagation — is the generic code path.
 // ---------------------------------------------------------------------------
 // If siteLikAccum is non-null (M-114 Q-het streaming mode): accumulate
-// per-site raw likelihoods into it (no log, no /nCat) and return 0.0.
-// If null (default): return the log-likelihood as before.
+// per-site likelihoods into it, scaled by 2^siteLikShift as add_scaled()
+// keeps them (no log, no /nCat), and return 0.0.
+// If null (default): return the log-likelihood.
 static double evaluate_candidate(
     const CLGroup& grp, const TreeNav& topo,
     const ResidualCL& res,
@@ -719,6 +720,7 @@ static double evaluate_candidate(
     double lHalfReg,        // lReg / 2 (half the regraft edge length)
     double lPrune,          // prune edge length (u→v)
     double* siteLikAccum = nullptr,
+    int* siteLikShift = nullptr,
     bool mergedEdge = false)
 {
   int nChar   = grp.nChar;
@@ -728,18 +730,20 @@ static double evaluate_candidate(
   int g       = topo.parentNode[u];
   int uSlot   = topo.childSlot(g, u);
 
-  // Per-site likelihood accumulator: external (Q-het streaming) or local.
-  // The external one holds true likelihoods, so a character below ~1e-308
-  // underflows there; the local one carries shifts.
+  // Per-site likelihood accumulator, with shifts: external (Q-het
+  // streaming) or local.
   std::vector<double> localSiteLik;
   std::vector<int> localSiteShift;
   double* accum;
+  int* accumShift;
   if (siteLikAccum) {
     accum = siteLikAccum;  // caller manages zeroing
+    accumShift = siteLikShift;
   } else {
     localSiteLik.assign(nChar, 0.0);
     localSiteShift.assign(nChar, 0);
     accum = localSiteLik.data();
+    accumShift = localSiteShift.data();
   }
 
   // Buffers for per-character computations
@@ -863,13 +867,8 @@ static double evaluate_candidate(
     // curI now holds I_cand[root].  Accumulate per-site likelihood.
     const int* shRoot = shCur.get();
     for (int c = 0; c < nChar; ++c) {
-      const double sl = rootSl[c];
-      if (siteLikAccum) {
-        accum[c] += unscale(sl, shift_at(shRoot, c));
-      } else {
-        MkPrime::add_scaled(accum[c], localSiteShift[c], sl,
-                            shift_at(shRoot, c));
-      }
+      MkPrime::add_scaled(accum[c], accumShift[c], rootSl[c],
+                          shift_at(shRoot, c));
     }
   }
 
@@ -1104,9 +1103,9 @@ static double evaluate_const_prob(
 // constProbMode: false → return log-likelihood
 //                true  → return P(constant site) for ascertainment
 // ---------------------------------------------------------------------------
-// M-114: added siteLikAccum / constProbAccum for Q-het streaming.
-// When siteLikAccum is non-null and !constProbMode, per-site raw likelihoods
-// are accumulated into siteLikAccum and return 0.0.
+// Q-het streaming (M-114): when siteLikAccum is non-null and !constProbMode, per-site likelihoods
+// are accumulated into siteLikAccum, with shifts in siteLikShift, and return
+// 0.0.
 // When constProbAccum is non-null and constProbMode, per-pseudo-char raw
 // const-prob likelihoods are accumulated and return 0.0.
 static double evaluate_swap_impl(
@@ -1118,6 +1117,7 @@ static double evaluate_swap_impl(
     const std::vector<int>& pathAIdx,
     bool constProbMode,
     double* siteLikAccum = nullptr,
+    int* siteLikShift = nullptr,
     double* constProbAccum = nullptr)
 {
   int nChar   = grp.nChar;
@@ -1155,20 +1155,25 @@ static double evaluate_swap_impl(
   std::vector<double> rootSl(nChar);
   const int k = grp.kStates;
 
-  // Accumulators; only the local one carries shifts (see evaluate_candidate)
+  // Site-likelihood accumulators carry shifts (see evaluate_candidate);
+  // constant-site probabilities enter only as log(1 - P), so underflow to 0
+  // is their exact limit.
   std::vector<double> localSiteLik;
   std::vector<int> localSiteShift;
   double totalConstProb = 0.0;
   double* accum = nullptr;
+  int* accumShift = nullptr;
   if (constProbMode) {
     // constProbAccum: accumulate raw const-prob per pseudo-char if streaming
     // (otherwise accumulate into totalConstProb as before)
   } else if (siteLikAccum) {
     accum = siteLikAccum;
+    accumShift = siteLikShift;
   } else {
     localSiteLik.assign(nChar, 0.0);
     localSiteShift.assign(nChar, 0);
     accum = localSiteLik.data();
+    accumShift = localSiteShift.data();
   }
 
   // curI *= contrib; the last factor of a node also rescales when checking.
@@ -1333,11 +1338,8 @@ static double evaluate_swap_impl(
           constProbAccum[c] += sl;
         else
           totalConstProb += sl;
-      } else if (siteLikAccum) {
-        accum[c] += unscale(sl, shift_at(shRoot, c));
       } else {
-        MkPrime::add_scaled(accum[c], localSiteShift[c], sl,
-                            shift_at(shRoot, c));
+        MkPrime::add_scaled(accum[c], accumShift[c], sl, shift_at(shRoot, c));
       }
     }
   }  // end category loop
@@ -1450,25 +1452,27 @@ static void set_f81_component(CLGroup& grp, double betaVal, int rot,
   grp.useF81 = true;
 }
 
-// Convert per-site raw likelihood accumulators to log-likelihood.
-// siteLikSum[c] was accumulated across totalComp components; divide by
-// totalComp and take log. The accumulators hold true likelihoods, without
-// shifts, so a character below the normal range (~1e-308) cannot be scored:
-// its candidate would silently weigh nothing, so stop the run instead.
-static double siteLikAccum_to_logLik(const double* siteLikSum, int nChar,
-                                      int totalComp) {
+// Convert per-site likelihood accumulators to log-likelihood.
+// siteLikSum[c] * 2^-siteLikShift[c] was accumulated across totalComp
+// components; divide by totalComp and take log. A zero average scores -Inf,
+// as in the standalone evaluators; a non-finite one stops the run.
+static double siteLikAccum_to_logLik(const double* siteLikSum,
+                                     const int* siteLikShift, int nChar,
+                                     int totalComp) {
   double logLik = 0.0;
   double inv_comp = 1.0 / totalComp;
   for (int c = 0; c < nChar; ++c) {
     double avg = siteLikSum[c] * inv_comp;
-    if (avg < std::numeric_limits<double>::min()) {
+    if (!std::isfinite(avg)) {
+      // # nocov start: rescaled likelihoods are finite
       Rcpp::stop(
-        "A character's likelihood is below 1e-308, which the "
-        "Q-heterogeneity Gibbs topology moves cannot represent (#346). Set "
-        "`gibbs_spr` and `gibbs_subtree_swap` to 0 in `moveWeights`, or drop "
-        "near-random characters with many states.");
+        "A character's likelihood is not finite in a Q-heterogeneity Gibbs "
+        "topology move (#346). Set `gibbs_spr` and `gibbs_subtree_swap` to 0 "
+        "in `moveWeights`.");
+      // # nocov end
     }
-    logLik += std::log(avg);
+    if (avg <= 0.0) return R_NegInf;  // # nocov: needs a zero-length edge
+    logLik += MkPrime::log_scaled(avg, siteLikShift[c]);
   }
   return logLik;
 }
