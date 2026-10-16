@@ -1,0 +1,7 @@
+"window","changes","rawPseudoESS","rateNoHash","frozenNoHash","rateProd","frozenProd"
+"iid topologies",196,199.8,8.81,FALSE,8.81,FALSE
+"sticky, stay 0.9",15,13,1.3,FALSE,1.3,FALSE
+"sticky, stay 0.99",1,3.1,0.31,FALSE,0.2,FALSE
+"frozen",0,NA,8.81,TRUE,8.81,TRUE
+"frozen, one spike at end",1,200,8.81,FALSE,0.2,FALSE
+"frozen, one spike mid",2,200,8.81,FALSE,0.3,FALSE

@@ -1,0 +1,8 @@
+"dataset","tips","chars","trees","distinct","mapFreq","changes","wall"
+"6 tips, 160 congruent (sim)",6,160,5000,1,1,0,35.7
+"Vinther2008 (23 x 50)",23,57,5000,23,0.181,24,22.1
+"Longrich2010 (20 x 80)",20,93,5000,33,0.096,36,30.5
+"Sansom2010 (23 x 97)",23,109,5000,45,0.116,45,37.6
+"Longrich2010, first 8 taxa",8,93,5000,21,0.253,37,20.6
+"Zhu2013, first 8 taxa",8,253,5000,6,0.291,13,35
+"8 tips, 200 chars Mk(3), br 0.15 (sim)",8,200,5000,1,1,0,50.6

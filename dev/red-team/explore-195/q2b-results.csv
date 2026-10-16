@@ -1,0 +1,5 @@
+"seed","budget","mainDistinct","lenient","strict","nniShare","randShare","costIter","costWall"
+1,600,1,"stuck","stuck","1/1/1","0/0.96/1",0.6,0.46
+1,1500,1,"favoured","stuck","1/1/1","0.97/1/1",1.5,1.48
+2,600,1,"stuck","stuck","0/1/1","0/1/0",0.6,0.44
+2,1500,1,"favoured","stuck","1/1/1","0.99/1/0.72",1.5,1.46

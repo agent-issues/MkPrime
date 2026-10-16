@@ -1,0 +1,13 @@
+"case","seed","truth","mainDistinct","mainWall","lenient","strict","nniShare","randShare","assessWall","costIter","costWall"
+"(a) 6-tip congruent, normal moves",1,"favoured",1,39.4,"favoured","favoured","1/1/1","1/1/1",55.1,1.5,1.4
+"(a) 6-tip congruent, normal moves",2,"favoured",1,48.6,"favoured","favoured","1/1/1","1/1/1",60.9,1.5,1.25
+"(a) 6-tip congruent, normal moves",3,"favoured",1,45.7,"favoured","favoured","1/1/1","1/1/1",65.6,1.5,1.44
+"(b1) Longrich2010, topology moves ~0, random start",1,"stuck",1,36.5,"stuck","stuck","0/0/0","0/0/0",58.7,1.5,1.61
+"(b1) Longrich2010, topology moves ~0, random start",2,"stuck",2,41.9,"stuck","stuck","0/0/0","0/0/0",69.8,1.5,1.66
+"(b1) Longrich2010, topology moves ~0, random start",3,"stuck",2,38.6,"stuck","stuck","0/0/0","0/0/0",60.7,1.5,1.57
+"(b2) Longrich2010, topology moves ~0, parsimony start",1,"stuck",1,32.9,"stuck","stuck","0/0/0","0/0/0",64,1.5,1.95
+"(b2) Longrich2010, topology moves ~0, parsimony start",2,"stuck",2,40.6,"stuck","stuck","0/0/0","0/0/0",69,1.5,1.7
+"(b2) Longrich2010, topology moves ~0, parsimony start",3,"stuck",1,43.8,"stuck","stuck","0/0/0","0/0/0",66.8,1.5,1.52
+"(c) Longrich2010, normal moves",1,"mixing",52,40.4,"stuck","stuck","0/0/0","0/0/0",71.5,1.5,1.77
+"(c) Longrich2010, normal moves",2,"mixing",44,41.5,"stuck","stuck","0/0/0","0/0/0",70.9,1.5,1.71
+"(c) Longrich2010, normal moves",3,"mixing",38,42.1,"stuck","stuck","0/0/0","0/0/0",65.3,1.5,1.55

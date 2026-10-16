@@ -1,0 +1,4 @@
+"config","wall","stopReason","nTrees","distinct","stuckWarnings","budgetWarning"
+"nRuns = 1",62,"max_time",114,1,1,FALSE
+"serial nRuns = 2",61,"max_time",120,1,1,TRUE
+"parallel nRuns = 2",12,"max_iter",0,0,0,FALSE

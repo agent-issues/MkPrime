@@ -1,0 +1,9 @@
+"candidate","incumbent","everMoved","topologyCut","adopted"
+"frozen","sticky, stay 0.9",FALSE,FALSE,FALSE
+"frozen (2x faster)","sticky, stay 0.99",FALSE,FALSE,FALSE
+"frozen, one spike at end","sticky, stay 0.9",FALSE,FALSE,FALSE
+"frozen, one spike mid","sticky, stay 0.99",FALSE,FALSE,FALSE
+"sticky, stay 0.99","frozen",FALSE,FALSE,TRUE
+"frozen (2x faster)","frozen",FALSE,FALSE,TRUE
+"frozen (2x faster)","frozen",TRUE,FALSE,FALSE
+"frozen (2x faster)","(none yet)",FALSE,TRUE,FALSE
