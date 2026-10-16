@@ -226,7 +226,14 @@ test_that("gibbs_spr_enumerate_cpp rejects invalid prune rows and non-partial pa
                                               coding = "none"))
   spHet <- .StateFor(ctxHet, ctxHet$tree)
   eligibleHet <- which(ctxHet$tree$edge[, 1L] != root)[1L]
-  expect_error(gibbs_spr_enumerate_cpp(ctxHet$dataPtr, spHet, eligibleHet),
+  expect_true(all(is.finite(
+    gibbs_spr_enumerate_cpp(ctxHet$dataPtr, spHet, eligibleHet)$logLik
+  )))
+
+  ctxInf <- .CandContext(seed = 11L,
+                         model = MkPrimeModel(coding = "informative"))
+  spInf <- .StateFor(ctxInf, ctxInf$tree)
+  expect_error(gibbs_spr_enumerate_cpp(ctxInf$dataPtr, spInf, eligibleHet),
                "partial-CL")
 })
 

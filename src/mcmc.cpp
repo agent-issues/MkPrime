@@ -1740,9 +1740,6 @@ static void build_cl_groups(const McmcData* data, const McmcState* state,
 
 // Old full-evaluation path (used as fallback and for validation)
 static bool gibbs_spr_impl_full(McmcData* data, McmcState* state, double beta);
-// M-114: partial CL path for Q-heterogeneity
-static bool gibbs_spr_impl_het(McmcData* data, McmcState* state, double beta);
-
 // Shared plan: prune-edge choice and candidate enumeration.
 struct GibbsSprPlan {
   int pruneRow = -1;             // edge u -> v
@@ -1754,6 +1751,11 @@ struct GibbsSprPlan {
   double lMerge = 0.0;           // absLen[parentRow] + absLen[sibRow]
   double lPrune = 0.0;           // absLen[pruneRow]
 };
+
+// M-114: partial CL path for Q-heterogeneity
+static void gibbs_spr_eval_het(McmcData* data, McmcState* state,
+                               const GibbsSprPlan& plan,
+                               std::vector<double>& candLL);
 
 // Deterministic part: fill the plan for a GIVEN prune edge.  Returns false
 // when the prune edge is degenerate (malformed rows or no regular
@@ -2013,7 +2015,7 @@ static void gibbs_spr_eval_partial(McmcData* data, McmcState* state,
       double grpLL = evaluate_candidate(
         groups[gi], topo, residuals[gi], groupRates[gi],
         plan.v, plan.u, plan.sibNode, plan.lMerge, a, b, lHalf, plan.lPrune,
-        nullptr, merged);
+        nullptr, nullptr, merged);
 
       // Ascertainment correction via pseudo-character partial CLs.
       // Note: only the constant-site term is computed here; coding == 2
@@ -2079,15 +2081,16 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
   if (data->codingType == 2)
     return gibbs_spr_impl_full(data, state, beta);
 
-  // M-114: Q-heterogeneity uses streaming partial CL
-  if (data->qHeterogeneity)
-    return gibbs_spr_impl_het(data, state, beta);
-
   GibbsSprPlan plan;
   if (!gibbs_spr_plan(data, state, plan)) return false;
 
+  // M-114: Q-heterogeneity uses streaming partial CL
   std::vector<double> candLL;
-  gibbs_spr_eval_partial(data, state, plan, candLL);
+  if (data->qHeterogeneity) {
+    gibbs_spr_eval_het(data, state, plan, candLL);
+  } else {
+    gibbs_spr_eval_partial(data, state, plan, candLL);
+  }
   return gibbs_spr_finish(data, state, beta, plan, candLL);
 }
 
@@ -2101,8 +2104,8 @@ static bool gibbs_spr_impl(McmcData* data, McmcState* state, double beta) {
 List gibbs_spr_enumerate_cpp(SEXP dataPtr, SEXP statePtr, int pruneRow) {
   McmcData*  data  = Rcpp::XPtr<McmcData>(dataPtr).get();
   McmcState* state = Rcpp::XPtr<McmcState>(statePtr).get();
-  if (data->qHeterogeneity || data->codingType == 2)
-    Rcpp::stop("gibbs_spr_enumerate_cpp drives the partial-CL path only");
+  if (data->codingType == 2)
+    Rcpp::stop("gibbs_spr_enumerate_cpp drives the partial-CL paths only");
   const int nEdge = state->parent.size();
   if (pruneRow < 1 || pruneRow > nEdge)
     Rcpp::stop("pruneRow out of range");
@@ -2114,7 +2117,11 @@ List gibbs_spr_enumerate_cpp(SEXP dataPtr, SEXP statePtr, int pruneRow) {
     Rcpp::stop("degenerate prune edge");  // # nocov: needs nTip < 4, but the root guard above fires first
 
   std::vector<double> candLL;
-  gibbs_spr_eval_partial(data, state, plan, candLL);
+  if (data->qHeterogeneity) {
+    gibbs_spr_eval_het(data, state, plan, candLL);
+  } else {
+    gibbs_spr_eval_partial(data, state, plan, candLL);
+  }
 
   const int nCand = (int)plan.cands.size();
   IntegerMatrix edges(nCand + 1, 2);
@@ -2140,14 +2147,13 @@ List gibbs_spr_enumerate_cpp(SEXP dataPtr, SEXP statePtr, int pruneRow) {
 //
 // Same plan/selection/MH/commit logic as gibbs_spr_impl, but evaluates the
 // tau = 1/2 reference weights under a mixture of F81 components by streaming
-// over (betaBin, rotation) and accumulating per-site raw likelihoods.
+// over (betaBin, rotation) and accumulating per-site likelihoods with their
+// shifts.  Fills candLL as gibbs_spr_eval_partial does.
 // ---------------------------------------------------------------------------
-static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
-                                double beta) {
+static void gibbs_spr_eval_het(McmcData* data, McmcState* state,
+                               const GibbsSprPlan& plan,
+                               std::vector<double>& candLL) {
   const int nTip = data->nTip;
-
-  GibbsSprPlan plan;
-  if (!gibbs_spr_plan(data, state, plan)) return false;
   const int nCand = (int)plan.cands.size();
   // Evaluation slots: plan.cands first, the merged edge last.
   const int nEval = nCand + 1;
@@ -2180,9 +2186,11 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
   // Per-group, per-candidate accumulators for raw site likelihoods
   // siteLikAccums[gi][ci * nChar_gi .. (ci+1)*nChar_gi - 1]
   std::vector<std::vector<double>> siteLikAccums(groups.size());
+  std::vector<std::vector<int>> siteLikShifts(groups.size());
   std::vector<std::vector<double>> constProbAccums(groups.size());
   for (size_t gi = 0; gi < groups.size(); ++gi) {
     siteLikAccums[gi].assign((size_t)nEval * groups[gi].nChar, 0.0);
+    siteLikShifts[gi].assign((size_t)nEval * groups[gi].nChar, 0);
     if (groups[gi].ownAsc)
       constProbAccums[gi].assign(
         (size_t)nEval * pseudoGroups[gi].nChar, 0.0);
@@ -2235,7 +2243,8 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
             grp, topo, res, rates,
             plan.v, plan.u, plan.sibNode, plan.lMerge, a, b, lHalf,
             plan.lPrune,
-            siteLikAccums[gi].data() + (size_t)ci * grp.nChar, merged);
+            siteLikAccums[gi].data() + (size_t)ci * grp.nChar,
+            siteLikShifts[gi].data() + (size_t)ci * grp.nChar, merged);
 
           if (grp.ownAsc) {
             evaluate_const_prob(
@@ -2251,7 +2260,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
   }
 
   // Convert accumulators to per-candidate log-likelihoods
-  std::vector<double> candLL(nEval, 0.0);
+  candLL.assign(nEval, 0.0);
   for (size_t gi = 0; gi < groups.size(); ++gi) {
     const CLGroup& grp = groups[gi];
     int k     = grp.kStates;
@@ -2262,6 +2271,7 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
     for (int ci = 0; ci < nEval; ++ci) {
       double grpLL = siteLikAccum_to_logLik(
         siteLikAccums[gi].data() + (size_t)ci * nChar_gi,
+        siteLikShifts[gi].data() + (size_t)ci * nChar_gi,
         nChar_gi, totalComp);
 
       if (grp.ownAsc && nChar_gi > 0) {
@@ -2298,8 +2308,6 @@ static bool gibbs_spr_impl_het(McmcData* data, McmcState* state,
     for (int ci = 0; ci < nEval; ++ci)
       candLL[ci] += relabelCorr;
   }
-
-  return gibbs_spr_finish(data, state, beta, plan, candLL);
 }
 
 
@@ -2750,9 +2758,11 @@ static bool swap_neighbourhood_het(McmcData* data, McmcState* state,
 
   // Per-group, per-candidate accumulators
   std::vector<std::vector<double>> siteLikAccums(groups.size());
+  std::vector<std::vector<int>> siteLikShifts(groups.size());
   std::vector<std::vector<double>> constProbAccums(groups.size());
   for (size_t gi = 0; gi < groups.size(); ++gi) {
     siteLikAccums[gi].assign((size_t)nPart * groups[gi].nChar, 0.0);
+    siteLikShifts[gi].assign((size_t)nPart * groups[gi].nChar, 0);
     if (groups[gi].ownAsc)
       constProbAccums[gi].assign(
         (size_t)nPart * pseudoGroups[gi].nChar, 0.0);
@@ -2783,7 +2793,8 @@ static bool swap_neighbourhood_het(McmcData* data, McmcState* state,
           evaluate_swap_impl(
             grp, topo, rates, nodeA, partners[pi2],
             pA, slotA, lenA, pathA, pathAIdx, false,
-            siteLikAccums[gi].data() + (size_t)pi2 * grp.nChar);
+            siteLikAccums[gi].data() + (size_t)pi2 * grp.nChar, nullptr,
+            siteLikShifts[gi].data() + (size_t)pi2 * grp.nChar);
 
           if (grp.ownAsc) {
             evaluate_swap_impl(
@@ -2810,6 +2821,7 @@ static bool swap_neighbourhood_het(McmcData* data, McmcState* state,
     for (int pi2 = 0; pi2 < nPart; ++pi2) {
       double grpLL = siteLikAccum_to_logLik(
         siteLikAccums[gi].data() + (size_t)pi2 * nChar_gi,
+        siteLikShifts[gi].data() + (size_t)pi2 * nChar_gi,
         nChar_gi, totalComp);
 
       if (grp.ownAsc && nChar_gi > 0) {
@@ -7134,8 +7146,10 @@ DataFrame validate_swap_partial_cl(SEXP dataPtr, SEXP statePtr, int nodeA) {
 
   std::vector<int> partialPartners;
   std::vector<double> partialLL;
-  swap_neighbourhood_partial(data, state, state->parent, state->child,
-                             absLen, nodeA, partialPartners, partialLL);
+  swap_neighbourhood(data, state,
+                     data->qHeterogeneity ? SwapEval::Het : SwapEval::Partial,
+                     state->parent, state->child, absLen, nodeA,
+                     partialPartners, partialLL);
 
   NumericVector llPartial(nPart);
   for (int pi = 0; pi < nPart; ++pi)

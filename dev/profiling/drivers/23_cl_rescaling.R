@@ -109,6 +109,19 @@ Out("gibbs_spr_enumerate_ms", MsPerCall(function() {
   ns$gibbs_spr_enumerate_cpp(chain$dataPtr, chain$statePtr, pruneRow)
 }))
 
+# Q-het Gibbs moves stream per-site likelihoods over F81 components
+model <- ns$.FinalizeModel(MkPrimeModel(nCat = 4L, qHeterogeneity = TRUE),
+                           tree, mkd)
+gibbsMoves <- c(gibbs_spr = 10L, gibbs_subtree_swap = 11L)
+for (i in seq_along(gibbsMoves)) {
+  chain <- NewChain()
+  metric <- paste0("move_qhet_", names(gibbsMoves)[i], "_ms")
+  Out(metric, MsPerCall(function() {
+    ns$do_move_cpp(chain$dataPtr, chain$statePtr, gibbsMoves[[i]], 0L, 0.5, 2,
+                   1L, 1.0)
+  }))
+}
+
 nIter <- 800L
 t0 <- proc.time()[["elapsed"]]
 res <- RunMkPrime(

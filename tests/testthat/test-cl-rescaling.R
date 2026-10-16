@@ -284,16 +284,45 @@ test_that("Q-heterogeneity kernel rescales", {
   )
 })
 
-test_that("Q-het Gibbs topology moves stop rather than drop a character", {
+test_that("Q-het Gibbs topology moves rescale their mixture accumulators", {
   chain <- .UnderflowChain(
-    MkPrimeModel(coding = "none", nCat = 1L, qHeterogeneity = TRUE)
+    MkPrimeModel(coding = "none", nCat = 2L, qHeterogeneity = TRUE)
   )
-  expect_true(is.finite(get_state_log_lik(chain$statePtr)))
   for (move in c(10L, 11L)) {
-    expect_error(
-      do_move_cpp(chain$dataPtr, chain$statePtr, move, 0L, 0.5, 2, 1L, 1.0),
-      "Q-heterogeneity Gibbs topology moves"
+    expect_no_error(
+      do_move_cpp(chain$dataPtr, chain$statePtr, move, 0L, 0.5, 2, 1L, 1.0)
     )
+    expect_true(is.finite(get_state_log_lik(chain$statePtr)))
+  }
+
+  st <- get_mcmc_state(chain$statePtr)
+  edge <- st$edge
+  len <- st$treeLength * st$relBrLengths
+  nTip <- NTip(chain$x$tree)
+  .Cold <- function(el) {
+    cpp_log_likelihood_xptr(
+      chain$dataPtr, edge[, 1], edge[, 2], el, st$kPrime, st$rateLoss,
+      st$rateLogSd, st$rateNeo, st$p, st$kprimeAlpha, st$kprimeBeta,
+      st$betaScale
+    )
+  }
+  expect_lt(.Cold(len), -800)
+  expect_equal(get_state_log_lik(chain$statePtr), .Cold(len), tolerance = 1e-12)
+
+  pruneRow <- which(edge[, 1] != nTip + 1L & edge[, 2] > nTip)[3]
+  en <- gibbs_spr_enumerate_cpp(chain$dataPtr, chain$statePtr, pruneRow)
+  expect_true(all(is.finite(en$logLik)))
+  parentRow <- which(edge[, 2] == en$u)
+  sibRow <- which(edge[, 1] == en$u & edge[, 2] != en$v)
+  merged <- len
+  merged[c(parentRow, sibRow)] <- en$lMerge / 2
+  expect_equal(en$logLik[length(en$logLik)], .Cold(merged), tolerance = 1e-12)
+
+  for (nodeA in edge[c(5, 60, 150), 2]) {
+    res <- validate_swap_partial_cl(chain$dataPtr, chain$statePtr, nodeA)
+    expect_gt(nrow(res), 0)
+    expect_true(all(is.finite(res$ll_partial)))
+    expect_equal(res$ll_partial, res$ll_full, tolerance = 1e-12)
   }
 })
 
