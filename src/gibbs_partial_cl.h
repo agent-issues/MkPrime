@@ -708,7 +708,7 @@ static void compute_residual_cl(
 // If siteLikAccum is non-null (M-114 Q-het streaming mode): accumulate
 // per-site likelihoods into it, scaled by 2^siteLikShift as add_scaled()
 // keeps them (no log, no /nCat), and return 0.0.
-// If null (default): return the log-likelihood as before.
+// If null (default): return the log-likelihood.
 static double evaluate_candidate(
     const CLGroup& grp, const TreeNav& topo,
     const ResidualCL& res,
@@ -1103,8 +1103,7 @@ static double evaluate_const_prob(
 // constProbMode: false → return log-likelihood
 //                true  → return P(constant site) for ascertainment
 // ---------------------------------------------------------------------------
-// M-114: added siteLikAccum / constProbAccum for Q-het streaming.
-// When siteLikAccum is non-null and !constProbMode, per-site likelihoods
+// Q-het streaming (M-114): when siteLikAccum is non-null and !constProbMode, per-site likelihoods
 // are accumulated into siteLikAccum, with shifts in siteLikShift, and return
 // 0.0.
 // When constProbAccum is non-null and constProbMode, per-pseudo-char raw
@@ -1118,8 +1117,8 @@ static double evaluate_swap_impl(
     const std::vector<int>& pathAIdx,
     bool constProbMode,
     double* siteLikAccum = nullptr,
-    double* constProbAccum = nullptr,
-    int* siteLikShift = nullptr)
+    int* siteLikShift = nullptr,
+    double* constProbAccum = nullptr)
 {
   int nChar   = grp.nChar;
   int stride  = grp.stride;
@@ -1455,9 +1454,8 @@ static void set_f81_component(CLGroup& grp, double betaVal, int rot,
 
 // Convert per-site likelihood accumulators to log-likelihood.
 // siteLikSum[c] * 2^-siteLikShift[c] was accumulated across totalComp
-// components; divide by totalComp and take log. A zero or non-finite
-// average cannot be scored: its candidate would silently weigh nothing, so
-// stop the run instead.
+// components; divide by totalComp and take log. A zero average scores -Inf,
+// as in the standalone evaluators; a non-finite one stops the run.
 static double siteLikAccum_to_logLik(const double* siteLikSum,
                                      const int* siteLikShift, int nChar,
                                      int totalComp) {
@@ -1465,12 +1463,15 @@ static double siteLikAccum_to_logLik(const double* siteLikSum,
   double inv_comp = 1.0 / totalComp;
   for (int c = 0; c < nChar; ++c) {
     double avg = siteLikSum[c] * inv_comp;
-    if (!(avg > 0.0) || !std::isfinite(avg)) {
+    if (!std::isfinite(avg)) {
+      // # nocov start: rescaled likelihoods are finite
       Rcpp::stop(
-        "A character's likelihood is zero or not finite, which the "
-        "Q-heterogeneity Gibbs topology moves cannot score (#346). Set "
-        "`gibbs_spr` and `gibbs_subtree_swap` to 0 in `moveWeights`.");
+        "A character's likelihood is not finite in a Q-heterogeneity Gibbs "
+        "topology move (#346). Set `gibbs_spr` and `gibbs_subtree_swap` to 0 "
+        "in `moveWeights`.");
+      // # nocov end
     }
+    if (avg <= 0.0) return R_NegInf;  // # nocov: needs a zero-length edge
     logLik += MkPrime::log_scaled(avg, siteLikShift[c]);
   }
   return logLik;

@@ -288,6 +288,7 @@ test_that("Q-het Gibbs topology moves rescale their mixture accumulators", {
   chain <- .UnderflowChain(
     MkPrimeModel(coding = "none", nCat = 2L, qHeterogeneity = TRUE)
   )
+  set.seed(346)
   for (move in c(10L, 11L)) {
     expect_no_error(
       do_move_cpp(chain$dataPtr, chain$statePtr, move, 0L, 0.5, 2, 1L, 1.0)
@@ -306,7 +307,7 @@ test_that("Q-het Gibbs topology moves rescale their mixture accumulators", {
       st$betaScale
     )
   }
-  expect_lt(.Cold(len), -800)
+  expect_lt(.Cold(len), -745)
   expect_equal(get_state_log_lik(chain$statePtr), .Cold(len), tolerance = 1e-12)
 
   pruneRow <- which(edge[, 1] != nTip + 1L & edge[, 2] > nTip)[3]

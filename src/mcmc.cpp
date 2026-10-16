@@ -2143,12 +2143,11 @@ List gibbs_spr_enumerate_cpp(SEXP dataPtr, SEXP statePtr, int pruneRow) {
 
 
 // ---------------------------------------------------------------------------
-// M-114: gibbs_spr with streaming partial CL for Q-heterogeneity.
+// M-114: gibbs_spr reference weights under Q-heterogeneity.
 //
-// Same plan/selection/MH/commit logic as gibbs_spr_impl, but evaluates the
-// tau = 1/2 reference weights under a mixture of F81 components by streaming
-// over (betaBin, rotation) and accumulating per-site likelihoods with their
-// shifts.  Fills candLL as gibbs_spr_eval_partial does.
+// Fills candLL as gibbs_spr_eval_partial does, but under a mixture of F81
+// components, streaming over (betaBin, rotation) and accumulating per-site
+// likelihoods with their shifts.
 // ---------------------------------------------------------------------------
 static void gibbs_spr_eval_het(McmcData* data, McmcState* state,
                                const GibbsSprPlan& plan,
@@ -2183,7 +2182,7 @@ static void gibbs_spr_eval_het(McmcData* data, McmcState* state,
 
   // ===== M-114: Streaming evaluation over (betaBin, rotation) =====
   //
-  // Per-group, per-candidate accumulators for raw site likelihoods
+  // Per-group, per-candidate accumulators for site likelihoods, with shifts
   // siteLikAccums[gi][ci * nChar_gi .. (ci+1)*nChar_gi - 1]
   std::vector<std::vector<double>> siteLikAccums(groups.size());
   std::vector<std::vector<int>> siteLikShifts(groups.size());
@@ -2528,7 +2527,8 @@ static bool swap_neighbourhood_partial(McmcData* data, McmcState* state,
           std::vector<double> accum(pseudoGroups[gi].nChar, 0.0);
           evaluate_swap_impl(
             pseudoGroups[gi], topo, groupRates[gi], nodeA, partners[pi],
-            pA, slotA, lenA, pathA, pathAIdx, true, nullptr, accum.data());
+            pA, slotA, lenA, pathA, pathAIdx, true, nullptr, nullptr,
+            accum.data());
           grpLL -= pseudo_asc_log1m(pseudoGroups[gi], accum.data(),
                                     pseudoGroups[gi].nCat);
         }
@@ -2793,14 +2793,14 @@ static bool swap_neighbourhood_het(McmcData* data, McmcState* state,
           evaluate_swap_impl(
             grp, topo, rates, nodeA, partners[pi2],
             pA, slotA, lenA, pathA, pathAIdx, false,
-            siteLikAccums[gi].data() + (size_t)pi2 * grp.nChar, nullptr,
+            siteLikAccums[gi].data() + (size_t)pi2 * grp.nChar,
             siteLikShifts[gi].data() + (size_t)pi2 * grp.nChar);
 
           if (grp.ownAsc) {
             evaluate_swap_impl(
               pseudoGroups[gi], topo, rates, nodeA, partners[pi2],
               pA, slotA, lenA, pathA, pathAIdx, true,
-              nullptr,
+              nullptr, nullptr,
               constProbAccums[gi].data() +
                 (size_t)pi2 * pseudoGroups[gi].nChar);
           }
@@ -7089,7 +7089,8 @@ List debug_mcmc_data(SEXP dataPtr) {
 }
 
 
-// M-111: Validation — compare partial CL vs full evaluation for all swap
+// M-111: Validation — compare the partial-CL evaluator the move uses
+// (Q-het streaming under qHeterogeneity) with full evaluation for all swap
 // candidates of a given nodeA.  Returns a data.frame with columns:
 //   nodeA, nodeB, ll_partial, ll_full
 // ll_full omits the joint ascertainment term, as the partial weights do.

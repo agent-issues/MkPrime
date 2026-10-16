@@ -63,6 +63,8 @@ jobs:
 
       - name: Summarise
         shell: Rscript {0}
+        env:
+          BASE: ${{ inputs.base }}
         run: |
           x <- read.csv("../bench.csv")
           med <- tapply(x$value, list(x$metric, x$label), median)
@@ -71,7 +73,7 @@ jobs:
           out$ratio <- out$branch / out$main
           lines <- c(
             paste("Runner:", Sys.getenv("RUNNER_OS"), Sys.getenv("RUNNER_ARCH"),
-                  "- medians of 5 alternating runs; main = ${{ inputs.base }}"),
+                  "- medians of 5 alternating runs; main =", Sys.getenv("BASE")),
             "", "| metric | main | branch | branch / main |",
             "|---|---|---|---|",
             sprintf("| %s | %.4g | %.4g | %.3f |", out$metric, out$main,

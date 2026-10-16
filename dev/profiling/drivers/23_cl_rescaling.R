@@ -87,14 +87,14 @@ Out("persite_rescaling_ms", MsPerCall(function() {
 
 mkd <- MkPrimeData(pd)
 model <- ns$.FinalizeModel(MkPrimeModel(nCat = 4L), tree, mkd)
-NewChain <- function() {
+NewChain <- function(model) {
   dataPtr <- ns$.InitMcmcData(mkd, model)
   statePtr <- ns$.InitMcmcChain(ns$.InitState(tree, mkd, model))
   ns$fill_partition_cache(dataPtr, statePtr)
   ns$allocate_cl_workspace(dataPtr, statePtr)
   list(dataPtr = dataPtr, statePtr = statePtr)
 }
-chain <- NewChain()
+chain <- NewChain(model)
 moves <- c(nni = 5L, beta_simplex = 4L)
 for (i in seq_along(moves)) {
   Out(paste0("move_", names(moves)[i], "_ms"), MsPerCall(function() {
@@ -102,7 +102,7 @@ for (i in seq_along(moves)) {
                    1.0)
   }))
 }
-chain <- NewChain()
+chain <- NewChain(model)
 edge <- ns$get_mcmc_state(chain$statePtr)$edge
 pruneRow <- which(edge[, 1] != NTip(tree) + 1L & edge[, 2] > NTip(tree))[3]
 Out("gibbs_spr_enumerate_ms", MsPerCall(function() {
@@ -110,11 +110,12 @@ Out("gibbs_spr_enumerate_ms", MsPerCall(function() {
 }))
 
 # Q-het Gibbs moves stream per-site likelihoods over F81 components
-model <- ns$.FinalizeModel(MkPrimeModel(nCat = 4L, qHeterogeneity = TRUE),
-                           tree, mkd)
+hetModel <- ns$.FinalizeModel(
+  MkPrimeModel(nCat = 4L, qHeterogeneity = TRUE), tree, mkd
+)
 gibbsMoves <- c(gibbs_spr = 10L, gibbs_subtree_swap = 11L)
 for (i in seq_along(gibbsMoves)) {
-  chain <- NewChain()
+  chain <- NewChain(hetModel)
   metric <- paste0("move_qhet_", names(gibbsMoves)[i], "_ms")
   Out(metric, MsPerCall(function() {
     ns$do_move_cpp(chain$dataPtr, chain$statePtr, gibbsMoves[[i]], 0L, 0.5, 2,
