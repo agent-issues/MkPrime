@@ -227,6 +227,10 @@ PackageP01 <- function(r, t) {
 rTrue <- 4
 tBranch <- 0.3
 lambdaPkg <- (1 + rTrue)^2 / (2 * rTrue)
+ratesH <- readLines("src/mkn_rates.h")
+ok("src/mkn_rates.h still has the rates the oracle assumes",
+   any(grepl("rate01 = half / rateLoss", ratesH, fixed = TRUE)) &&
+     any(grepl("half = 0.5 * (1.0 + rateLoss)", ratesH, fixed = TRUE)))
 ok("lambda = (1+r)^2/(2r) reproduces the package P01",
    abs(PackageP01(rTrue, tBranch) -
          (1 / (1 + rTrue)) * (1 - exp(-lambdaPkg * tBranch))) < 1e-9)

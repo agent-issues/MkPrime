@@ -256,7 +256,7 @@ MixedVerdict <- function(sims, expected, L, fwer, minGoodFrac, minRanks, adP) {
     if (!length(ranks)) {
       return(list(p = NA_real_, n = 0L, decision = "MISSING"))
     }
-    if (length(ranks) < minRanks) {
+    if (length(ranks) < max(minRanks, minGoodFrac * length(sims))) {
       return(list(p = NA_real_, n = length(ranks), decision = "INSUFFICIENT"))
     }
     norm <- (ranks + 0.5) / (lActual + 1)
@@ -412,7 +412,7 @@ pool_param <- function(name) {
   out <- unlist(lapply(goodSims, function(s) s$ranks[[name]]), use.names = FALSE)
   out[is.finite(out)]
 }
-armVerdict <- if (mode == "quick") "EXEC_OK" else V$verdict
+armVerdict <- if (mode != "quick") V$verdict else if (nGood >= 3L) "EXEC_OK" else "FAIL"
 
 # --- Write artefacts ---
 verdictLines <- c(
@@ -471,5 +471,5 @@ topLines <- c(
 writeLines(topLines, file.path(outRoot, "verdict-MkNT_mixed.txt"))
 cat("\n", paste0(topLines, "\n"), sep = "")
 
-status <- if (mode == "quick" || armVerdict %in% c("PASS", "EXEC_OK")) 0L else 1L
+status <- if (armVerdict %in% c("PASS", "EXEC_OK")) 0L else 1L
 quit(save = "no", status = status)
