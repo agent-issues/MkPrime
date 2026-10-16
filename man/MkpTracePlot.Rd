@@ -21,6 +21,10 @@ MkpTracePlot(info)
 \item{recentAcceptance}{Rolling acceptance rate.}
 \item{elapsed}{Elapsed wall-clock seconds.}
 \item{paramNames}{Column names of the sample matrix.}
+\item{recentTrees}{Optional list (or \code{multiPhylo}) of recent
+posterior trees; when present, a topology panel is drawn.}
+\item{treeEss}{Optional numeric tree ESS; when finite, it is added
+to the ESS panel.}
 }}
 }
 \value{
@@ -41,6 +45,10 @@ by the callback itself. After warmup, multi-panel traces show
 log-posterior plus key model parameters from the saved samples, with
 each parameter in a distinct color. A final panel shows ESS over time
 for all tracked parameters, using matching colors.
+
+If \code{info$recentTrees} is supplied, a further panel shows the majority-rule
+consensus of the last 12 trees, pruned of rogue taxa where \pkg{Rogue} is
+installed.
 
 When \code{nRuns > 1}, trace panels use per-run colors (from
 \code{\link[grDevices:hcl.colors]{grDevices::hcl.colors()}} with the \code{"Set 2"} palette) while the

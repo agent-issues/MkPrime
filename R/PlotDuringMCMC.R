@@ -78,6 +78,10 @@
 #'     \item{recentAcceptance}{Rolling acceptance rate.}
 #'     \item{elapsed}{Elapsed wall-clock seconds.}
 #'     \item{paramNames}{Column names of the sample matrix.}
+#'     \item{recentTrees}{Optional list (or `multiPhylo`) of recent
+#'       posterior trees; when present, a topology panel is drawn.}
+#'     \item{treeEss}{Optional numeric tree ESS; when finite, it is added
+#'       to the ESS panel.}
 #'   }
 #'
 #' @details
@@ -87,6 +91,10 @@
 #' log-posterior plus key model parameters from the saved samples, with
 #' each parameter in a distinct color. A final panel shows ESS over time
 #' for all tracked parameters, using matching colors.
+#'
+#' If `info$recentTrees` is supplied, a further panel shows the majority-rule
+#' consensus of the last 12 trees, pruned of rogue taxa where \pkg{Rogue} is
+#' installed.
 #'
 #' When `nRuns > 1`, trace panels use per-run colors (from
 #' [grDevices::hcl.colors()] with the `"Set 2"` palette) while the
@@ -112,6 +120,8 @@ MkpTracePlot <- function(info) {
   }
 
   paramColors <- .ParamColors(keyParams)
+  essColors <- c(paramColors, tree_ess = "grey30")
+  hasTrees <- length(info$recentTrees) > 0L
 
   showEss <- hasSamples
 
@@ -146,6 +156,10 @@ MkpTracePlot <- function(info) {
       if (is.na(s) || s == 0) return(NA_real_)
       .EssVector(col)
     }, numeric(1))
+    treeEss <- info$treeEss
+    essSnap <- c(essSnap, tree_ess = if (length(treeEss) == 1L &&
+                                         is.finite(treeEss)) treeEss
+                                     else NA_real_)
     .tracePlotEnv$essHistory  <- c(.tracePlotEnv$essHistory, list(essSnap))
     .tracePlotEnv$iterHistory <- c(.tracePlotEnv$iterHistory, info$iter)
   }
@@ -154,6 +168,7 @@ MkpTracePlot <- function(info) {
 
   # Panel layout: trace panels + ESS panel (if applicable)
   nPanels <- length(keyParams) + if (showEss) 1L else 0L
+  if (hasTrees) nPanels <- nPanels + 1L
   nCol <- min(3L, nPanels)
   nRow <- ceiling(nPanels / nCol)
 
@@ -193,7 +208,11 @@ MkpTracePlot <- function(info) {
   if (showEss && length(.tracePlotEnv$essHistory) > 0L) {
     .PlotEssPanel(.tracePlotEnv$iterHistory,
                   .tracePlotEnv$essHistory,
-                  paramColors)
+                  essColors)
+  }
+
+  if (hasTrees) {
+    tryCatch(.PlotTopologyPanel(info$recentTrees), error = function(e) NULL)
   }
 
   # Overall title
@@ -345,9 +364,11 @@ MkpTracePlot <- function(info) {
   oldMar <- par("mar")
   par(mar = c(oldMar[1:3], max(oldMar[4], 5)))
 
-  plot(iters, essMat[, 1], type = "n", ylim = ylim,
+  plot(iters, essMat[, 1], type = "n", ylim = ylim, xaxt = "n",
        main = "ESS", xlab = "iter", ylab = "",
        cex.main = 0.95, las = 1)
+  xTicks <- pretty(iters)
+  axis(1, at = xTicks, labels = .FormatIterLabel(xTicks))
 
   for (p in params) {
     vals <- essMat[, p]
@@ -362,6 +383,67 @@ MkpTracePlot <- function(info) {
   }
 
   par(mar = oldMar)
+}
+
+
+#' Format iteration counts with a `k` / `M` suffix
+#' @param x Numeric vector of iteration counts.
+#' @return Character vector, e.g. `"100k"`, `"1.1M"`.
+#' @keywords internal
+.FormatIterLabel <- function(x) {
+  vapply(x, function(v) {
+    if (!is.finite(v)) return(NA_character_)
+    if (abs(v) >= 1e6) {
+      paste0(format(round(v / 1e6, 2), trim = TRUE), "M")
+    } else if (abs(v) >= 1e3) {
+      paste0(format(round(v / 1e3, 2), trim = TRUE), "k")
+    } else {
+      format(v, trim = TRUE)
+    }
+  }, character(1))
+}
+
+
+#' Majority-rule consensus of the most recent trees
+#'
+#' @param trees List or `multiPhylo` of trees sharing tip labels.
+#' @param nMax Integer giving the number of most recent trees to use.
+#' @return A `phylo` object, or `NULL` if no consensus can be formed.
+#' @keywords internal
+.RecentConsensus <- function(trees, nMax = 12L) {
+  trees <- utils::tail(unclass(trees), nMax)
+  if (length(trees) == 0L) return(NULL)
+  class(trees) <- "multiPhylo"
+  tryCatch({
+    if (requireNamespace("Rogue", quietly = TRUE) && length(trees) > 3L) {
+      rogues <- Rogue::QuickRogue(trees)
+      drop <- rogues$taxon[nzchar(rogues$taxon, keepNA = FALSE)]
+      if (length(drop) > 0L && length(drop) < TreeTools::NTip(trees[[1]]) - 3L) {
+        trees <- lapply(trees, ape::drop.tip, tip = drop)
+        class(trees) <- "multiPhylo"
+      }
+    }
+    TreeTools::Consensus(trees, p = 0.5)
+  }, error = function(e) NULL)
+}
+
+
+#' Plot an approximate topology panel
+#' @inheritParams .RecentConsensus
+#' @keywords internal
+.PlotTopologyPanel <- function(trees, nMax = 12L) {
+  cons <- .RecentConsensus(trees, nMax)
+  oldMar <- par(mar = rep(0, 4))
+  on.exit(par(oldMar))
+  if (is.null(cons)) {
+    plot.new()
+    return(invisible(NULL))
+  }
+  tryCatch(
+    plot(cons, cex = 0.7, no.margin = TRUE, edge.width = 1),
+    error = function(e) plot.new()
+  )
+  invisible(NULL)
 }
 
 
