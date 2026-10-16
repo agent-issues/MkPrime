@@ -22,8 +22,110 @@
 #include "mkn_rates.h"
 #include "f81.h"
 #include "../inst/include/MkPrime/acrv.h"
+#include "../inst/include/MkPrime/scaling.h"
 
 using namespace Rcpp;
+
+// ---------------------------------------------------------------------------
+// CL rescaling (scaling.h). Every CL vector here -- cached I, residual I, and
+// the working vectors of a candidate evaluation -- has per-character shifts:
+// its block for character c is the true CL times 2^shift[c]. A vector with
+// no shifts recorded has all of them 0. A child's F-slot contribution
+// carries the shifts of that child's I.
+// ---------------------------------------------------------------------------
+
+// Shifts of one working CL vector.
+struct CLShifts {
+  int nChar;
+  std::vector<int> v;
+  bool on = false;
+
+  explicit CLShifts(int nChar_) : nChar(nChar_) {}
+  void reset() { on = false; }
+  int* ensure() {
+    if (!on) {
+      v.assign(nChar, 0);
+      on = true;
+    }
+    return v.data();
+  }
+  void add(const int* s) {
+    if (!s) return;
+    int* p = ensure();
+    for (int c = 0; c < nChar; ++c) p[c] += s[c];
+  }
+  const int* get() const { return on ? v.data() : nullptr; }
+};
+
+// Shifts of an array of CL vectors, one slot per vector.
+struct ShiftStore {
+  int nChar = 0;
+  std::vector<int> v;
+  std::vector<uint8_t> on;
+
+  void allocate(size_t nSlot, int nChar_) {
+    nChar = nChar_;
+    v.assign(nSlot * nChar, 0);
+    on.assign(nSlot, 0);
+  }
+  const int* get(size_t i) const {
+    return on[i] ? v.data() + i * nChar : nullptr;
+  }
+  void clear(size_t i) { on[i] = 0; }
+  int* ensure(size_t i) {
+    int* p = v.data() + i * nChar;
+    if (!on[i]) {
+      std::fill(p, p + nChar, 0);
+      on[i] = 1;
+    }
+    return p;
+  }
+  void add(size_t i, const int* s) {
+    if (!s) return;
+    int* p = ensure(i);
+    for (int c = 0; c < nChar; ++c) p[c] += s[c];
+  }
+};
+
+// Rescales each character block of cl (nChar blocks of k) that has fallen
+// below kRescaleBelow; ensure() gives the shifts to add to.
+template <class Ensure>
+inline void rescale_small(double* cl, int nChar, int k, Ensure ensure) {
+  for (int c = 0; c < nChar; ++c) {
+    double* block = cl + c * k;
+    double sum = 0.0;
+    for (int s = 0; s < k; ++s) sum += block[s];
+    if (sum < MkPrime::kRescaleBelow) {
+      const int sh = MkPrime::rescale_cl(block, k);
+      if (sh) ensure()[c] += sh;
+    }
+  }
+}
+
+// cur *= f, then rescale cur as rescale_small().
+inline void mul_rescale(double* cur, const double* f, int nChar, int k,
+                        CLShifts& sh) {
+  for (int c = 0; c < nChar; ++c) {
+    double* block = cur + c * k;
+    const double* fb = f + c * k;
+    double sum = 0.0;
+    for (int s = 0; s < k; ++s) {
+      block[s] *= fb[s];
+      sum += block[s];
+    }
+    if (sum < MkPrime::kRescaleBelow) {
+      const int s = MkPrime::rescale_cl(block, k);
+      if (s) sh.ensure()[c] += s;
+    }
+  }
+}
+
+inline int shift_at(const int* s, int c) { return s ? s[c] : 0; }
+
+// x * 2^-shift, the true value of a scaled site likelihood.
+inline double unscale(double x, int shift) {
+  return shift ? std::ldexp(x, -shift) : x;
+}
 
 // ---------------------------------------------------------------------------
 // TreeNav: parent–child navigation built from canonical preorder edge table
@@ -131,6 +233,13 @@ struct CLGroup {
   const double* F2(int cat, int node) const { return from2.data()  + ((size_t)cat * (maxNode+1) + node) * stride; }
 
   // Get F for a given slot (0, 1, or 2)
+  // Shifts of I(cat, node), in slot ISlot(cat, node).
+  ShiftStore Ish;
+  size_t ISlot(int cat, int node) const {
+    return (size_t)cat * (maxNode + 1) + node;
+  }
+  const int* IS(int cat, int node) const { return Ish.get(ISlot(cat, node)); }
+
   double* Fslot(int cat, int node, int slot) {
     return (slot == 0) ? F0(cat, node) : (slot == 1) ? F1(cat, node) : F2(cat, node);
   }
@@ -158,6 +267,7 @@ struct CLGroup {
     from0.assign(total, 0.0);
     from1.assign(total, 0.0);
     from2.assign(total, 0.0);
+    Ish.allocate((size_t)nCat * (maxNode + 1), nChar);
     f81Pi.assign(kStates, 0.0);
   }
 
@@ -314,10 +424,21 @@ static void caching_downpass(CLGroup& grp, const TreeNav& topo,
       int ch_ = child[e];
       double t = topo.edgeLen[e] * rate * grp.rateScale;
 
+      // ch_ is complete once its own edge is reached.
+      if (ch_ > nTip) {
+        const size_t slot = grp.ISlot(cat, ch_);
+        rescale_small(grp.I(cat, ch_), nChar, kStates,
+                      [&]() { return grp.Ish.ensure(slot); });
+      }
+
       // Compute transition: contrib = P(t) × I[ch_]
       grp.transition(grp.I(cat, ch_), contrib.data(), t);
 
       // Track how many children have been seen (0, 1, 2 for root's 3rd)
+      if (nChildSeen[par] == 0) {
+        grp.Ish.clear(grp.ISlot(cat, par));
+      }
+      grp.Ish.add(grp.ISlot(cat, par), grp.IS(cat, ch_));
       if (nChildSeen[par] == 0) {
         std::memcpy(grp.F0(cat, par), contrib.data(), stride * sizeof(double));
         std::memcpy(grp.I(cat, par),  contrib.data(), stride * sizeof(double));
@@ -365,6 +486,18 @@ struct ResidualCL {
   std::vector<int> replacedSlot;         // [nPathNodes]
   std::vector<double> replacedF;         // flat: [nCat * nPathNodes * stride]
 
+  // Shifts of I(cat, pathIdx), in slot cat * nPathNodes + pathIdx. F at
+  // path[0] carries the shifts of I(cat, sibNode) in the cached group; F at
+  // path[pi] those of I(cat, pi - 1).
+  ShiftStore Ish;
+  int sibNode;
+  const int* IS(int cat, int pathIdx) const {
+    return Ish.get((size_t)cat * nPathNodes + pathIdx);
+  }
+  const int* FS(const CLGroup& grp, int cat, int pathIdx) const {
+    return pathIdx ? IS(cat, pathIdx - 1) : grp.IS(cat, sibNode);
+  }
+
   double* I(int cat, int pathIdx) {
     return data.data() + ((size_t)cat * nPathNodes + pathIdx) * stride;
   }
@@ -408,8 +541,28 @@ static void compute_residual_cl(
   res.data.resize((size_t)nCat * res.nPathNodes * stride);
   res.replacedSlot.resize(res.nPathNodes);
   res.replacedF.resize((size_t)nCat * res.nPathNodes * stride);
+  res.Ish.allocate((size_t)nCat * res.nPathNodes, grp.nChar);
+  res.sibNode = sibNode;
 
   std::vector<double> contrib(stride);
+  const int nChar = grp.nChar, k = grp.kStates;
+
+  // Shifts of slot `pi` of the residual path: the cached children's at
+  // `node`, except `exclude`, plus `extra`; then rescale I(cat, pi).
+  auto finishPathNode = [&](int cat, int pi, int node, int exclude,
+                            const int* extra) {
+    const size_t slot = (size_t)cat * res.nPathNodes + pi;
+    res.Ish.clear(slot);
+    const int kids[3] = { topo.ch0[node], topo.ch1[node], topo.ch2[node] };
+    for (int sl = 0; sl < 3; ++sl) {
+      if (sl != exclude && kids[sl] >= 0) {
+        res.Ish.add(slot, grp.IS(cat, kids[sl]));
+      }
+    }
+    res.Ish.add(slot, extra);
+    rescale_small(res.I(cat, pi), nChar, k,
+                  [&]() { return res.Ish.ensure(slot); });
+  };
 
   // Record the replaced slot at g: u's slot is replaced by sibNode via lMerge
   int uSlot = topo.childSlot(g, u);
@@ -430,6 +583,7 @@ static void compute_residual_cl(
     int nChildG = (topo.ch2[g] >= 0) ? 3 : 2;
     grp.productExcluding(cat, g, uSlot, Ig, nChildG);
     for (int i = 0; i < stride; ++i) Ig[i] *= contrib[i];
+    finishPathNode(cat, 0, g, uSlot, grp.IS(cat, sibNode));
 
     // Propagate up: for each node on the path from g to root
     for (int pi = 1; pi < res.nPathNodes; ++pi) {
@@ -453,6 +607,7 @@ static void compute_residual_cl(
       int nChild = (topo.ch2[node] >= 0) ? 3 : 2;
       grp.productExcluding(cat, node, prevSlot, Inode, nChild);
       for (int i = 0; i < stride; ++i) Inode[i] *= contrib[i];
+      finishPathNode(cat, pi, node, prevSlot, res.IS(cat, pi - 1));
     }
   }
 }
@@ -504,19 +659,25 @@ static double evaluate_candidate(
   int g       = topo.parentNode[u];
   int uSlot   = topo.childSlot(g, u);
 
-  // Per-site likelihood accumulator: external (Q-het streaming) or local
+  // Per-site likelihood accumulator: external (Q-het streaming) or local.
+  // The external one holds true likelihoods, so a character below ~1e-308
+  // underflows there; the local one carries shifts.
   std::vector<double> localSiteLik;
+  std::vector<int> localSiteShift;
   double* accum;
   if (siteLikAccum) {
     accum = siteLikAccum;  // caller manages zeroing
   } else {
     localSiteLik.assign(nChar, 0.0);
+    localSiteShift.assign(nChar, 0);
     accum = localSiteLik.data();
   }
 
   // Buffers for per-character computations
   std::vector<double> from_v(stride), from_b(stride), Iu(stride), contrib(stride);
   std::vector<double> curI(stride);
+  CLShifts shU(nChar), shCur(nChar), shBelow(nChar);
+  const int k = grp.kStates;
 
   for (int cat = 0; cat < nCat; ++cat) {
     double rate = rates[cat];
@@ -531,20 +692,26 @@ static double evaluate_candidate(
 
     // I at u = from_v × from_b
     for (int i = 0; i < stride; ++i) Iu[i] = from_v[i] * from_b[i];
+    shU.reset();
+    shU.add(grp.IS(cat, v));
+    shU.add((bResIdx >= 0) ? res.IS(cat, bResIdx) : grp.IS(cat, b));
+    rescale_small(Iu.data(), nChar, k, [&]() { return shU.ensure(); });
 
     // from_u at a: transition through half regraft edge from u to a
     grp.transition(Iu.data(), contrib.data(), lHalfReg * rate * sc);
 
     // Helper lambda: compute the product of all sibling contributions at node
-    // 'par' EXCEPT the child in slot 'excludeSlot'.
+    // 'par' EXCEPT the child in slot 'excludeSlot', with their shifts.
     //
     // Three cases for each sibling slot:
     //   1. par is on the residual path and slot == replacedSlot → use res.F
     //   2. Sibling node is on the residual path → recompute P(t) × res.I
     //   3. Otherwise → use original cached F
-    auto siblingProduct = [&](int par, int excludeSlot, double* out) {
+    auto siblingProduct = [&](int par, int excludeSlot, double* out,
+                              CLShifts& sh) {
       int nChild = (topo.ch2[par] >= 0) ? 3 : 2;
       std::fill(out, out + stride, 1.0);
+      sh.reset();
       int parResIdx = res.pathIndex(par);
       for (int sl = 0; sl < nChild; ++sl) {
         if (sl == excludeSlot) continue;
@@ -553,6 +720,7 @@ static double evaluate_candidate(
         if (parResIdx >= 0 && sl == res.replacedSlot[parResIdx]) {
           const double* f = res.F(cat, parResIdx);
           for (int i = 0; i < stride; ++i) out[i] *= f[i];
+          sh.add(res.FS(grp, cat, parResIdx));
           continue;
         }
 
@@ -565,20 +733,23 @@ static double evaluate_candidate(
           const double* sibI = res.I(cat, cnResIdx);
           grp.transition(sibI, from_v.data(), t_sib);
           for (int i = 0; i < stride; ++i) out[i] *= from_v[i];
+          sh.add(res.IS(cat, cnResIdx));
           continue;
         }
 
         // Case 3: use original cached F
         const double* f = grp.Fslot(cat, par, sl);
         for (int i = 0; i < stride; ++i) out[i] *= f[i];
+        sh.add(grp.IS(cat, cn));
       }
     };
 
     // At a: I_cand[a] = from_u_at_a × product_of_siblings(a, exclude b).
     // For the merged edge (a = g, b = sibNode), b occupies u's original slot.
     int bSlot = mergedEdge ? uSlot : topo.childSlot(a, b);
-    siblingProduct(a, bSlot, curI.data());
-    for (int i = 0; i < stride; ++i) curI[i] *= contrib[i];
+    siblingProduct(a, bSlot, curI.data(), shCur);
+    shCur.add(shU.get());
+    mul_rescale(curI.data(), contrib.data(), nChar, k, shCur);
 
     // Propagate up from a to root.
     // Key: if we encounter u as a parent, skip it — u doesn't exist on
@@ -588,8 +759,10 @@ static double evaluate_candidate(
     while (parNode >= 1) {
       if (parNode == u) {
         grp.transition(curI.data(), contrib.data(), lMerge * rate * sc);
-        siblingProduct(g, uSlot, curI.data());
-        for (int i = 0; i < stride; ++i) curI[i] *= contrib[i];
+        std::swap(shBelow, shCur);
+        siblingProduct(g, uSlot, curI.data(), shCur);
+        shCur.add(shBelow.get());
+        mul_rescale(curI.data(), contrib.data(), nChar, k, shCur);
         curNode = g;
         parNode = topo.parentNode[g];
         continue;
@@ -598,15 +771,25 @@ static double evaluate_candidate(
       int curSlot = topo.childSlot(parNode, curNode);
       double t = topo.edgeLen[topo.edgeToPar[curNode]] * rate * sc;
       grp.transition(curI.data(), contrib.data(), t);
-      siblingProduct(parNode, curSlot, curI.data());
-      for (int i = 0; i < stride; ++i) curI[i] *= contrib[i];
+      std::swap(shBelow, shCur);
+      siblingProduct(parNode, curSlot, curI.data(), shCur);
+      shCur.add(shBelow.get());
+      mul_rescale(curI.data(), contrib.data(), nChar, k, shCur);
       curNode = parNode;
       parNode = topo.parentNode[parNode];
     }
 
     // curI now holds I_cand[root].  Accumulate per-site likelihood.
-    for (int c = 0; c < nChar; ++c)
-      accum[c] += grp.rootSiteLik(curI.data(), c);
+    const int* shRoot = shCur.get();
+    for (int c = 0; c < nChar; ++c) {
+      const double sl = grp.rootSiteLik(curI.data(), c);
+      if (siteLikAccum) {
+        accum[c] += unscale(sl, shift_at(shRoot, c));
+      } else {
+        MkPrime::add_scaled(accum[c], localSiteShift[c], sl,
+                            shift_at(shRoot, c));
+      }
+    }
   }
 
   if (siteLikAccum) return 0.0;  // caller takes log after all components
@@ -617,7 +800,7 @@ static double evaluate_candidate(
   for (int c = 0; c < nChar; ++c) {
     double avg = accum[c] * inv_nCat;
     if (avg <= 0.0) return R_NegInf;
-    logLik += std::log(avg);
+    logLik += MkPrime::log_scaled(avg, localSiteShift[c]);
   }
   return logLik;
 }
@@ -706,6 +889,8 @@ static double evaluate_const_prob(
 
   std::vector<double> from_v(stride), from_b(stride), Iu(stride), contrib(stride);
   std::vector<double> curI(stride);
+  CLShifts shU(nChar), shCur(nChar), shBelow(nChar);
+  const int k = pg.kStates;
 
   double totalConstProb = 0.0;
 
@@ -719,19 +904,26 @@ static double evaluate_const_prob(
     pg.transition(Ib, from_b.data(), lHalfReg * rate * sc);
 
     for (int i = 0; i < stride; ++i) Iu[i] = from_v[i] * from_b[i];
+    shU.reset();
+    shU.add(pg.IS(cat, v));
+    shU.add((bResIdx >= 0) ? res.IS(cat, bResIdx) : pg.IS(cat, b));
+    rescale_small(Iu.data(), nChar, k, [&]() { return shU.ensure(); });
 
     pg.transition(Iu.data(), contrib.data(), lHalfReg * rate * sc);
 
     // siblingProduct lambda (same as evaluate_candidate)
-    auto siblingProduct = [&](int par, int excludeSlot, double* out) {
+    auto siblingProduct = [&](int par, int excludeSlot, double* out,
+                              CLShifts& sh) {
       int nChild = (topo.ch2[par] >= 0) ? 3 : 2;
       std::fill(out, out + stride, 1.0);
+      sh.reset();
       int parResIdx = res.pathIndex(par);
       for (int sl = 0; sl < nChild; ++sl) {
         if (sl == excludeSlot) continue;
         if (parResIdx >= 0 && sl == res.replacedSlot[parResIdx]) {
           const double* f = res.F(cat, parResIdx);
           for (int i = 0; i < stride; ++i) out[i] *= f[i];
+          sh.add(res.FS(pg, cat, parResIdx));
           continue;
         }
         int cn = (sl == 0) ? topo.ch0[par] :
@@ -742,24 +934,29 @@ static double evaluate_const_prob(
           const double* sibI = res.I(cat, cnResIdx);
           pg.transition(sibI, from_v.data(), t_sib);
           for (int i = 0; i < stride; ++i) out[i] *= from_v[i];
+          sh.add(res.IS(cat, cnResIdx));
           continue;
         }
         const double* f = pg.Fslot(cat, par, sl);
         for (int i = 0; i < stride; ++i) out[i] *= f[i];
+        sh.add(pg.IS(cat, cn));
       }
     };
 
     int bSlot = mergedEdge ? uSlot : topo.childSlot(a, b);
-    siblingProduct(a, bSlot, curI.data());
-    for (int i = 0; i < stride; ++i) curI[i] *= contrib[i];
+    siblingProduct(a, bSlot, curI.data(), shCur);
+    shCur.add(shU.get());
+    mul_rescale(curI.data(), contrib.data(), nChar, k, shCur);
 
     int curNode = a;
     int parNode = topo.parentNode[a];
     while (parNode >= 1) {
       if (parNode == u) {
         pg.transition(curI.data(), contrib.data(), lMerge * rate * sc);
-        siblingProduct(g, uSlot, curI.data());
-        for (int i = 0; i < stride; ++i) curI[i] *= contrib[i];
+        std::swap(shBelow, shCur);
+        siblingProduct(g, uSlot, curI.data(), shCur);
+        shCur.add(shBelow.get());
+        mul_rescale(curI.data(), contrib.data(), nChar, k, shCur);
         curNode = g;
         parNode = topo.parentNode[g];
         continue;
@@ -767,14 +964,17 @@ static double evaluate_const_prob(
       int curSlot = topo.childSlot(parNode, curNode);
       double t = topo.edgeLen[topo.edgeToPar[curNode]] * rate * sc;
       pg.transition(curI.data(), contrib.data(), t);
-      siblingProduct(parNode, curSlot, curI.data());
-      for (int i = 0; i < stride; ++i) curI[i] *= contrib[i];
+      std::swap(shBelow, shCur);
+      siblingProduct(parNode, curSlot, curI.data(), shCur);
+      shCur.add(shBelow.get());
+      mul_rescale(curI.data(), contrib.data(), nChar, k, shCur);
       curNode = parNode;
       parNode = topo.parentNode[parNode];
     }
 
+    const int* shRoot = shCur.get();
     for (int c = 0; c < nChar; ++c) {
-      double sl = pg.rootSiteLik(curI.data(), c);
+      double sl = unscale(pg.rootSiteLik(curI.data(), c), shift_at(shRoot, c));
       if (constProbAccum)
         constProbAccum[c] += sl;
       else
@@ -858,9 +1058,12 @@ static double evaluate_swap_impl(
   std::vector<double> lastA(stride);
   std::vector<double> lastB(stride);
   std::vector<double> prevShared(stride);
+  CLShifts shCur(nChar), shLastA(nChar), shLastB(nChar), shPrev(nChar);
+  const int k = grp.kStates;
 
-  // Accumulators
+  // Accumulators; only the local one carries shifts (see evaluate_candidate)
   std::vector<double> localSiteLik;
+  std::vector<int> localSiteShift;
   double totalConstProb = 0.0;
   double* accum = nullptr;
   if (constProbMode) {
@@ -870,8 +1073,18 @@ static double evaluate_swap_impl(
     accum = siteLikAccum;
   } else {
     localSiteLik.assign(nChar, 0.0);
+    localSiteShift.assign(nChar, 0);
     accum = localSiteLik.data();
   }
+
+  // curI *= contrib; the last factor of a node also rescales.
+  auto combine = [&](bool last) {
+    if (last) {
+      mul_rescale(curI.data(), contrib.data(), nChar, k, shCur);
+    } else {
+      for (int i = 0; i < stride; ++i) curI[i] *= contrib[i];
+    }
+  };
 
   auto childAt = [&](int n, int sl) -> int {
     return (sl == 0) ? topo.ch0[n] : (sl == 1) ? topo.ch1[n] : topo.ch2[n];
@@ -885,6 +1098,7 @@ static double evaluate_swap_impl(
       int n = pathA[ai];
       int nChild = (topo.ch2[n] >= 0) ? 3 : 2;
       std::fill(curI.begin(), curI.end(), 1.0);
+      shCur.reset();
 
       for (int sl = 0; sl < nChild; ++sl) {
         int cn = childAt(n, sl);
@@ -893,17 +1107,21 @@ static double evaluate_swap_impl(
           // SWAP: nodeB replaces nodeA at pA
           grp.transition(grp.I(cat, nodeB), contrib.data(),
                           lenA * rate * sc);
+          shCur.add(grp.IS(cat, nodeB));
         } else if (ai > 0 && cn == pathA[ai - 1]) {
           // Propagated from previous segA node
           double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
           grp.transition(lastA.data(), contrib.data(), t);
+          shCur.add(shLastA.get());
         } else {
           std::memcpy(contrib.data(), grp.Fslot(cat, n, sl),
                       stride * sizeof(double));
+          shCur.add(grp.IS(cat, cn));
         }
-        for (int i = 0; i < stride; ++i) curI[i] *= contrib[i];
+        combine(sl + 1 == nChild);
       }
       std::memcpy(lastA.data(), curI.data(), stride * sizeof(double));
+      std::swap(shLastA, shCur);
     }
 
     // ============ Segment B: pathBbelow[0 .. nSegB-1] ============
@@ -911,6 +1129,7 @@ static double evaluate_swap_impl(
       int n = pathBbelow[bi];
       int nChild = (topo.ch2[n] >= 0) ? 3 : 2;
       std::fill(curI.begin(), curI.end(), 1.0);
+      shCur.reset();
 
       for (int sl = 0; sl < nChild; ++sl) {
         int cn = childAt(n, sl);
@@ -919,17 +1138,21 @@ static double evaluate_swap_impl(
           // SWAP: nodeA replaces nodeB at pB
           grp.transition(grp.I(cat, nodeA), contrib.data(),
                           lenB * rate * sc);
+          shCur.add(grp.IS(cat, nodeA));
         } else if (bi > 0 && cn == pathBbelow[bi - 1]) {
           // Propagated from previous segB node
           double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
           grp.transition(lastB.data(), contrib.data(), t);
+          shCur.add(shLastB.get());
         } else {
           std::memcpy(contrib.data(), grp.Fslot(cat, n, sl),
                       stride * sizeof(double));
+          shCur.add(grp.IS(cat, cn));
         }
-        for (int i = 0; i < stride; ++i) curI[i] *= contrib[i];
+        combine(sl + 1 == nChild);
       }
       std::memcpy(lastB.data(), curI.data(), stride * sizeof(double));
+      std::swap(shLastB, shCur);
     }
 
     // ============ Shared segment: pathA[lcaIdxA .. end] ============
@@ -938,6 +1161,7 @@ static double evaluate_swap_impl(
       int n = pathA[ai];
       int nChild = (topo.ch2[n] >= 0) ? 3 : 2;
       std::fill(curI.begin(), curI.end(), 1.0);
+      shCur.reset();
 
       for (int sl = 0; sl < nChild; ++sl) {
         int cn = childAt(n, sl);
@@ -947,11 +1171,13 @@ static double evaluate_swap_impl(
         if (n == pA && sl == slotA) {
           grp.transition(grp.I(cat, nodeB), contrib.data(),
                           lenA * rate * sc);
+          shCur.add(grp.IS(cat, nodeB));
           handled = true;
         }
         if (!handled && n == pB && sl == slotB) {
           grp.transition(grp.I(cat, nodeA), contrib.data(),
                           lenB * rate * sc);
+          shCur.add(grp.IS(cat, nodeA));
           handled = true;
         }
 
@@ -960,12 +1186,14 @@ static double evaluate_swap_impl(
             cn == pathA[lcaIdxA - 1]) {
           double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
           grp.transition(lastA.data(), contrib.data(), t);
+          shCur.add(shLastA.get());
           handled = true;
         }
         if (!handled && nSegB > 0 && ai == lcaIdxA &&
             cn == pathBbelow.back()) {
           double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
           grp.transition(lastB.data(), contrib.data(), t);
+          shCur.add(shLastB.get());
           handled = true;
         }
 
@@ -973,30 +1201,39 @@ static double evaluate_swap_impl(
         if (!handled && ai > lcaIdxA && cn == pathA[ai - 1]) {
           double t = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
           grp.transition(prevShared.data(), contrib.data(), t);
+          shCur.add(shPrev.get());
           handled = true;
         }
 
         if (!handled) {
           std::memcpy(contrib.data(), grp.Fslot(cat, n, sl),
                       stride * sizeof(double));
+          shCur.add(grp.IS(cat, cn));
         }
 
-        for (int i = 0; i < stride; ++i) curI[i] *= contrib[i];
+        combine(sl + 1 == nChild);
       }
 
       std::memcpy(prevShared.data(), curI.data(), stride * sizeof(double));
+      std::swap(shPrev, shCur);
     }
 
     // ============ Root CL → accumulate site likelihoods ============
+    // The root's shifts are in shPrev after the last swap.
+    const int* shRoot = shPrev.get();
     for (int c = 0; c < nChar; ++c) {
       double sl = grp.rootSiteLik(curI.data(), c);
       if (constProbMode) {
+        sl = unscale(sl, shift_at(shRoot, c));
         if (constProbAccum)
           constProbAccum[c] += sl;
         else
           totalConstProb += sl;
+      } else if (siteLikAccum) {
+        accum[c] += unscale(sl, shift_at(shRoot, c));
       } else {
-        accum[c] += sl;
+        MkPrime::add_scaled(accum[c], localSiteShift[c], sl,
+                            shift_at(shRoot, c));
       }
     }
   }  // end category loop
@@ -1013,7 +1250,7 @@ static double evaluate_swap_impl(
   for (int c = 0; c < nChar; ++c) {
     double avg = accum[c] * inv_nCat;
     if (avg <= 0.0) return R_NegInf;
-    logLik += std::log(avg);
+    logLik += MkPrime::log_scaled(avg, localSiteShift[c]);
   }
   return logLik;
 }

@@ -25,10 +25,13 @@
 // Partitions: use one Pruner per partition. Each holds its own CLs and dirty
 // flags, so an edge-length change must be applied to every Pruner.
 //
-// No rescaling is applied: CLs underflow only when a single character's
-// likelihood falls below about 1e-308.
+// A character's CLs at a node are rescaled by a power of two once they fall
+// below kRescaleBelow (scaling.h, header API v3), so a character's
+// likelihood may fall far below 1e-308. node_cl() and node_up() return the
+// stored, rescaled CLs; node_shift() and node_up_shift() give the shifts.
 
 #include "models.h"
+#include "scaling.h"
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -284,27 +287,32 @@ class Pruner {
   }
 
   // Per-character likelihoods, averaged over rate categories; out[nChar].
+  // A likelihood below about 1e-308 underflows: see log_site_likelihoods().
   void site_likelihoods(double* out) {
-    update();
-    const double invNCat = 1.0 / n_cat();
-    for (int c = 0; c < nChar_; ++c) out[c] = 0.0;
-    for (int cat = 0; cat < n_cat(); ++cat) {
-      const double* rootCl = node_cl(cat, root_);
-      for (int c = 0; c < nChar_; ++c) {
-        out[c] += model_.root_site_lik(rootCl + static_cast<std::size_t>(c) * k_);
-      }
+    scaled_site_likelihoods();
+    for (int c = 0; c < nChar_; ++c) {
+      out[c] = siteShift_[c] ? std::ldexp(siteLik_[c], -siteShift_[c])
+                             : siteLik_[c];
     }
-    for (int c = 0; c < nChar_; ++c) out[c] *= invNCat;
+  }
+
+  // Per-character log likelihoods, averaged over rate categories; out[nChar].
+  void log_site_likelihoods(double* out) {
+    scaled_site_likelihoods();
+    for (int c = 0; c < nChar_; ++c) {
+      out[c] = siteLik_[c] > 0.0
+        ? log_scaled(siteLik_[c], siteShift_[c])
+        : -std::numeric_limits<double>::infinity();
+    }
   }
 
   // Sum of log site likelihoods; -Inf if any character has likelihood <= 0.
   double log_likelihood() {
-    siteLik_.resize(nChar_);
-    site_likelihoods(siteLik_.data());
+    scaled_site_likelihoods();
     double logLik = 0.0;
     for (int c = 0; c < nChar_; ++c) {
       if (siteLik_[c] <= 0.0) return -std::numeric_limits<double>::infinity();
-      logLik += std::log(siteLik_[c]);
+      logLik += log_scaled(siteLik_[c], siteShift_[c]);
     }
     return logLik;
   }
@@ -312,10 +320,12 @@ class Pruner {
   // Sum of site likelihoods: with constant_patterns() (ascertainment.h) as
   // tip data, the probability that a character is constant.
   double sum_site_likelihoods() {
-    siteLik_.resize(nChar_);
-    site_likelihoods(siteLik_.data());
+    scaled_site_likelihoods();
     double total = 0.0;
-    for (int c = 0; c < nChar_; ++c) total += siteLik_[c];
+    for (int c = 0; c < nChar_; ++c) {
+      total += siteShift_[c] ? std::ldexp(siteLik_[c], -siteShift_[c])
+                             : siteLik_[c];
+    }
     return total;
   }
 
@@ -331,6 +341,7 @@ class Pruner {
   void update_marginals() {
     update();
     up_.assign(cl_.size(), 0.0);
+    upShift_.assign(shift_.size(), 0);
     std::vector<double> rootFreq(k_), unit(k_, 0.0);
     for (int s = 0; s < k_; ++s) {
       unit[s] = 1.0;
@@ -364,19 +375,32 @@ class Pruner {
             const double* b = below.data() + o * stride_;
             for (std::size_t x = 0; x < stride_; ++x) outside[x] *= b[x];
           }
-          apply_transpose(nk[j], outside.data(), node_up_mut(cat, nk[j]),
-                          len_[nk[j]] * rate);
+          double* upJ = node_up_mut(cat, nk[j]);
+          apply_transpose(nk[j], outside.data(), upJ, len_[nk[j]] * rate);
+          int* shJ = shift_slot(upShift_, cat, nk[j]);
+          const int* shN = shift_slot(upShift_, cat, n);
+          for (int c = 0; c < nChar_; ++c) shJ[c] = shN[c];
+          for (std::size_t o = 0; o < nk.size(); ++o) {
+            if (o == j) continue;
+            const int* shO = node_shift(cat, nk[o]);
+            for (int c = 0; c < nChar_; ++c) shJ[c] += shO[c];
+          }
+          rescale_node(upJ, shJ);
         }
       }
     }
   }
 
-  // Upward-pass vectors of `node` in category `cat`, laid out as node_cl().
+  // Upward-pass vectors of `node` in category `cat`, laid out as node_cl();
+  // character c's block is scaled by 2^node_up_shift(cat, node)[c].
   const double* node_up(int cat, int node) const {
-    if (up_.size() != cl_.size()) {
-      throw std::logic_error("Pruner: call update_marginals() first");
-    }
+    require_marginals();
     return up_.data() + (static_cast<std::size_t>(cat) * (nNode_ + 1) + node) * stride_;
+  }
+
+  const int* node_up_shift(int cat, int node) const {
+    require_marginals();
+    return upShift_.data() + (static_cast<std::size_t>(cat) * (nNode_ + 1) + node) * nChar_;
   }
 
   // Posterior probability of each state at `node` (1-based, tips included),
@@ -385,10 +409,29 @@ class Pruner {
   void node_marginals(int node, double* out) const {
     if (node < 1 || node > nNode_) throw std::out_of_range("Pruner: bad node");
     for (std::size_t x = 0; x < stride_; ++x) out[x] = 0.0;
+    // A category's weight is 2^-shift times its stored product; scale each
+    // character relative to its largest-weight (least-shifted) category.
+    std::vector<int> minShift(nChar_, std::numeric_limits<int>::max());
+    for (int cat = 0; cat < n_cat(); ++cat) {
+      const int* sd = node_shift(cat, node);
+      const int* su = node_up_shift(cat, node);
+      for (int c = 0; c < nChar_; ++c) {
+        if (sd[c] + su[c] < minShift[c]) minShift[c] = sd[c] + su[c];
+      }
+    }
     for (int cat = 0; cat < n_cat(); ++cat) {
       const double* down = node_cl(cat, node);
       const double* up = node_up(cat, node);
-      for (std::size_t x = 0; x < stride_; ++x) out[x] += down[x] * up[x];
+      const int* sd = node_shift(cat, node);
+      const int* su = node_up_shift(cat, node);
+      for (int c = 0; c < nChar_; ++c) {
+        const int rel = minShift[c] - sd[c] - su[c];
+        const std::size_t off = static_cast<std::size_t>(c) * k_;
+        for (int s = 0; s < k_; ++s) {
+          out[off + s] += rel ? std::ldexp(down[off + s] * up[off + s], rel)
+                              : down[off + s] * up[off + s];
+        }
+      }
     }
     for (int c = 0; c < nChar_; ++c) {
       double* o = out + static_cast<std::size_t>(c) * k_;
@@ -416,9 +459,11 @@ class Pruner {
     saved_.post = post_;
     saved_.dirty = dirty_;
     saved_.allCl.clear();
+    saved_.allShift.clear();
     saved_.hasAllCl = false;
     journalNodes_.clear();
     journalCl_.clear();
+    journalShift_.clear();
     journaled_.assign(nNode_ + 1, 0);
     inProposal_ = true;
   }
@@ -427,7 +472,9 @@ class Pruner {
     inProposal_ = false;
     journalNodes_.clear();
     journalCl_.clear();
+    journalShift_.clear();
     saved_.allCl.clear();
+    saved_.allShift.clear();
   }
 
   void reject() {
@@ -445,24 +492,34 @@ class Pruner {
     dirty_.swap(saved_.dirty);
     if (saved_.hasAllCl) {
       cl_.swap(saved_.allCl);
+      shift_.swap(saved_.allShift);
     } else {
       const std::size_t block = n_cat() * stride_;
+      const std::size_t shiftBlock = static_cast<std::size_t>(n_cat()) * nChar_;
       for (std::size_t i = 0; i < journalNodes_.size(); ++i) {
         const int n = journalNodes_[i];
         for (int cat = 0; cat < n_cat(); ++cat) {
           double* dst = node_cl_mut(cat, n);
           const double* src = journalCl_.data() + i * block + cat * stride_;
           for (std::size_t j = 0; j < stride_; ++j) dst[j] = src[j];
+          int* shDst = shift_slot(shift_, cat, n);
+          const int* shSrc = journalShift_.data() + i * shiftBlock + cat * nChar_;
+          for (int c = 0; c < nChar_; ++c) shDst[c] = shSrc[c];
         }
       }
     }
     accept();
   }
 
-  // CLs of `node` in rate category `cat`: nChar blocks of n_states() values.
-  // Up to date only after update() or a likelihood call.
+  // CLs of `node` in rate category `cat`: nChar blocks of n_states() values,
+  // block c scaled by 2^node_shift(cat, node)[c]. Up to date only after
+  // update() or a likelihood call.
   const double* node_cl(int cat, int node) const {
     return cl_.data() + (static_cast<std::size_t>(cat) * (nNode_ + 1) + node) * stride_;
+  }
+
+  const int* node_shift(int cat, int node) const {
+    return shift_.data() + (static_cast<std::size_t>(cat) * (nNode_ + 1) + node) * nChar_;
   }
 
   int n_tip() const { return nTip_; }
@@ -490,6 +547,7 @@ class Pruner {
     std::vector<int> post;
     std::vector<std::uint8_t> dirty;
     std::vector<double> allCl;
+    std::vector<int> allShift;
     bool hasAllCl = false;
   };
 
@@ -497,12 +555,53 @@ class Pruner {
     return cl_.data() + (static_cast<std::size_t>(cat) * (nNode_ + 1) + node) * stride_;
   }
 
+  int* shift_slot(std::vector<int>& shifts, int cat, int node) {
+    return shifts.data() + (static_cast<std::size_t>(cat) * (nNode_ + 1) + node) * nChar_;
+  }
+
   void require_tree() const {
     if (!nNode_) throw std::logic_error("Pruner: call set_tree() first");
   }
 
+  void require_marginals() const {
+    if (up_.size() != cl_.size()) {
+      throw std::logic_error("Pruner: call update_marginals() first");
+    }
+  }
+
+  // Rescales each character block of `cl` that has fallen below
+  // kRescaleBelow, adding the shift to shift[c].
+  void rescale_node(double* cl, int* shift) const {
+    for (int c = 0; c < nChar_; ++c) {
+      double* block = cl + static_cast<std::size_t>(c) * k_;
+      double sum = 0.0;
+      for (int s = 0; s < k_; ++s) sum += block[s];
+      if (sum < kRescaleBelow) shift[c] += rescale_cl(block, k_);
+    }
+  }
+
+  // Root site likelihoods averaged over categories, into siteLik_ scaled by
+  // 2^siteShift_.
+  void scaled_site_likelihoods() {
+    update();
+    const double invNCat = 1.0 / n_cat();
+    siteLik_.assign(nChar_, 0.0);
+    siteShift_.assign(nChar_, 0);
+    for (int cat = 0; cat < n_cat(); ++cat) {
+      const double* rootCl = node_cl(cat, root_);
+      const int* rootShift = node_shift(cat, root_);
+      for (int c = 0; c < nChar_; ++c) {
+        add_scaled(siteLik_[c], siteShift_[c],
+                   model_.root_site_lik(rootCl + static_cast<std::size_t>(c) * k_),
+                   rootShift[c]);
+      }
+    }
+    for (int c = 0; c < nChar_; ++c) siteLik_[c] *= invNCat;
+  }
+
   void allocate() {
     cl_.assign(static_cast<std::size_t>(n_cat()) * (nNode_ + 1) * stride_, 0.0);
+    shift_.assign(static_cast<std::size_t>(n_cat()) * (nNode_ + 1) * nChar_, 0);
     dirty_.assign(nNode_ + 1, 1);
     for (int t = 0; t <= nTip_; ++t) dirty_[t] = 0;
     if (static_cast<int>(kids_.size()) != nNode_ + 1) kids_.assign(nNode_ + 1, std::vector<int>());
@@ -535,6 +634,7 @@ class Pruner {
   void save_all_cls() {
     if (inProposal_ && !saved_.hasAllCl) {
       saved_.allCl = cl_;
+      saved_.allShift = shift_;
       saved_.hasAllCl = true;
     }
   }
@@ -546,6 +646,8 @@ class Pruner {
     for (int cat = 0; cat < n_cat(); ++cat) {
       const double* src = node_cl(cat, node);
       journalCl_.insert(journalCl_.end(), src, src + stride_);
+      const int* sh = node_shift(cat, node);
+      journalShift_.insert(journalShift_.end(), sh, sh + nChar_);
     }
   }
 
@@ -579,12 +681,18 @@ class Pruner {
     for (int cat = 0; cat < n_cat(); ++cat) {
       const double rate = rates_[cat];
       double* dst = node_cl_mut(cat, n);
+      int* shift = shift_slot(shift_, cat, n);
       apply_transition(nk[0], node_cl(cat, nk[0]), dst, len_[nk[0]] * rate);
+      const int* sh0 = node_shift(cat, nk[0]);
+      for (int c = 0; c < nChar_; ++c) shift[c] = sh0[c];
       for (std::size_t i = 1; i < nk.size(); ++i) {
         apply_transition(nk[i], node_cl(cat, nk[i]), scratch_.data(),
                          len_[nk[i]] * rate);
         for (std::size_t j = 0; j < stride_; ++j) dst[j] *= scratch_[j];
+        const int* shI = node_shift(cat, nk[i]);
+        for (int c = 0; c < nChar_; ++c) shift[c] += shI[c];
       }
+      rescale_node(dst, shift);
     }
   }
 
@@ -625,15 +733,19 @@ class Pruner {
   std::vector<int> post_;
   std::vector<std::uint8_t> dirty_;
   std::vector<double> cl_;
+  std::vector<int> shift_;  // per (cat, node, character), laid out as cl_
   std::vector<double> scratch_;
   std::vector<double> siteLik_;
+  std::vector<int> siteShift_;
   std::vector<double> up_;  // upward-pass vectors (update_marginals())
+  std::vector<int> upShift_;
   int nRecomputed_ = 0;
 
   bool inProposal_ = false;
   Saved saved_;
   std::vector<int> journalNodes_;
   std::vector<double> journalCl_;
+  std::vector<int> journalShift_;
   std::vector<std::uint8_t> journaled_;
 };
 

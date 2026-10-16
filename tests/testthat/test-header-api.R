@@ -64,7 +64,7 @@
 }
 
 test_that("header API version is exposed", {
-  expect_identical(header_api_version(), 2L)
+  expect_identical(header_api_version(), 3L)
 })
 
 test_that("transition kernels match the exported P(t) matrices", {

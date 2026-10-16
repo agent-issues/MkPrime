@@ -16,6 +16,7 @@
 #include "../inst/include/MkPrime/acrv.h"
 #include "ascertainment.h"
 #include "mkn_rates.h"
+#include "edge_shifts.h"
 #include <cmath>
 #include <cstring>
 #include <algorithm>
@@ -133,6 +134,15 @@ static void assert_valid_preorder(const IntegerVector& parent,
 }
 #endif
 
+// The F81 kernels test sum_j pi_j cl_j, which can fall below the threshold
+// while the CLs do not; rescale only when their plain sum does.
+static inline int f81_rescale(EdgeShifts& shifts, double* cl, int k, int ch,
+                              int c) {
+  double sum = 0.0;
+  for (int j = 0; j < k; ++j) sum += cl[j];
+  return sum < MkPrime::kRescaleBelow ? shifts.rescale(cl, k, ch, c) : 0;
+}
+
 static double pruning_jc_flat(
     IntegerVector parent, IntegerVector child,
     NumericVector edge_length, IntegerMatrix tip_states,
@@ -203,6 +213,7 @@ static double pruning_jc_flat(
   }
 
   const MkPrime::JCRates jcRates(kStates);
+  EdgeShifts shifts(maxNode, nChar);
 
   for (int e = nEdge - 1; e >= 0; --e) {
     int par = parPtr[e];
@@ -216,11 +227,16 @@ static double pruning_jc_flat(
 
     // OPP-1: JC symmetry → O(k) product: new_cl[i] = p_diff*sum + (p_same-p_diff)*cl[i]
     double diff_coeff = p_same - p_diff;
+    const bool firstChild = !initFlg[par];
     if (!initFlg[par]) {
       for (int c = 0; c < nChar; ++c) {
         int offset = c * kStates;
         double sum_cl = 0.0;
         for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+        if (sum_cl < MkPrime::kRescaleBelow) {
+          sum_cl = std::ldexp(sum_cl,
+                              shifts.rescale(clCh + offset, kStates, ch, c));
+        }
         for (int i = 0; i < kStates; ++i)
           clPar[offset + i] = p_diff * sum_cl + diff_coeff * clCh[offset + i];
       }
@@ -230,10 +246,15 @@ static double pruning_jc_flat(
         int offset = c * kStates;
         double sum_cl = 0.0;
         for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+        if (sum_cl < MkPrime::kRescaleBelow) {
+          sum_cl = std::ldexp(sum_cl,
+                              shifts.rescale(clCh + offset, kStates, ch, c));
+        }
         for (int i = 0; i < kStates; ++i)
           clPar[offset + i] *= p_diff * sum_cl + diff_coeff * clCh[offset + i];
       }
     }
+    if (shifts.on()) shifts.propagate(par, ch, firstChild);
 
     // M-157: fused ascertainment pseudo-char propagation
     if (outConstProb) {
@@ -261,7 +282,7 @@ static double pruning_jc_flat(
     for (int s = 0; s < kStates; ++s)
       sl += rfPtr[s] * clRoot[offset + s];
     if (sl <= 0.0) return R_NegInf;
-    logLik += std::log(sl);
+    logLik += MkPrime::log_scaled(sl, shifts.on() ? shifts.shift(root, c) : 0);
   }
 
   // M-157: extract fused constant-site probability
@@ -318,6 +339,7 @@ static double pruning_jc_acrv_flat(
     siteLikPtr = siteLikLocal.data();
   }
   const MkPrime::JCRates jcRates(kStates);
+  EdgeShifts shifts(maxNode, nChar);
 
   // OPP-CL: tips are constant across rate categories — init once, not per cat.
   std::memset(initFlg, 0, (maxNode + 1) * sizeof(uint8_t));
@@ -382,11 +404,16 @@ static double pruning_jc_acrv_flat(
 
       // OPP-1: JC symmetry → O(k) product
       double diff_coeff = p_same - p_diff;
+      const bool firstChild = !initFlg[par];
       if (!initFlg[par]) {
         for (int c = 0; c < nChar; ++c) {
           int offset = c * kStates;
           double sum_cl = 0.0;
           for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+          if (sum_cl < MkPrime::kRescaleBelow) {
+            sum_cl = std::ldexp(sum_cl,
+                                shifts.rescale(clCh + offset, kStates, ch, c));
+          }
           for (int i = 0; i < kStates; ++i)
             clPar[offset + i] = p_diff * sum_cl + diff_coeff * clCh[offset + i];
         }
@@ -396,10 +423,15 @@ static double pruning_jc_acrv_flat(
           int offset = c * kStates;
           double sum_cl = 0.0;
           for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+          if (sum_cl < MkPrime::kRescaleBelow) {
+            sum_cl = std::ldexp(sum_cl,
+                                shifts.rescale(clCh + offset, kStates, ch, c));
+          }
           for (int i = 0; i < kStates; ++i)
             clPar[offset + i] *= p_diff * sum_cl + diff_coeff * clCh[offset + i];
         }
       }
+      if (shifts.on()) shifts.propagate(par, ch, firstChild);
 
       // M-157: fused ascertainment pseudo-char propagation (same exp_term)
       if (outConstProb) {
@@ -424,7 +456,11 @@ static double pruning_jc_acrv_flat(
       double sl = 0.0;
       for (int s = 0; s < kStates; ++s)
         sl += rfPtr[s] * clRoot[offset + s];
-      siteLikPtr[c] += sl;
+      if (shifts.on()) {
+        shifts.add_site(siteLikPtr[c], c, sl, shifts.shift(root, c));
+      } else {
+        siteLikPtr[c] += sl;
+      }
     }
 
     // M-157: accumulate constant-site prob for this rate category
@@ -441,7 +477,7 @@ static double pruning_jc_acrv_flat(
   for (int c = 0; c < nChar; ++c) {
     double avg = siteLikPtr[c] * inv_nCat;
     if (avg <= 0.0) return R_NegInf;
-    logLik += std::log(avg);
+    logLik += MkPrime::log_scaled(avg, shifts.on() ? shifts.site_shift(c) : 0);
   }
 
   if (outConstProb)
@@ -478,6 +514,7 @@ static inline void persite_impl(
   const int K = (K_TPL > 0) ? K_TPL : kRuntime;
   const double inv_k = 1.0 / K;
   const MkPrime::JCRates jcRates(K);
+  EdgeShifts shifts(maxNode, nChar);
 
   std::vector<double> site_lik_sum(nChar, 0.0);
   int clCols = nChar * K;
@@ -511,8 +548,9 @@ static inline void persite_impl(
       double p_same   = jc.pSame;
       double p_diff   = jc.pDiff;
       double* __restrict__ clPar = buf + par * stride;
-      const double* __restrict__ clCh = buf + ch * stride;
+      double* __restrict__ clCh = buf + ch * stride;
       double diff_coeff = p_same - p_diff;
+      const bool firstChild = !initFlg[par];
 
       // T-006 (2026-05-19): tip-edge fast path.  When ch is a tip, the
       // child CL for each character is one-hot (known state) or uniform 1
@@ -552,6 +590,7 @@ static inline void persite_impl(
             }
           }
         }
+        if (shifts.on()) shifts.propagate(par, ch, firstChild);
         continue;
       }
 
@@ -562,6 +601,9 @@ static inline void persite_impl(
           double sum_cl = 0.0;
           #pragma GCC unroll 8
           for (int j = 0; j < K; ++j) sum_cl += clCh[offset + j];
+          if (sum_cl < MkPrime::kRescaleBelow) {
+            sum_cl = std::ldexp(sum_cl, shifts.rescale(clCh + offset, K, ch, c));
+          }
           #pragma GCC unroll 8
           for (int i = 0; i < K; ++i)
             clPar[offset + i] = p_diff * sum_cl + diff_coeff * clCh[offset + i];
@@ -573,11 +615,15 @@ static inline void persite_impl(
           double sum_cl = 0.0;
           #pragma GCC unroll 8
           for (int j = 0; j < K; ++j) sum_cl += clCh[offset + j];
+          if (sum_cl < MkPrime::kRescaleBelow) {
+            sum_cl = std::ldexp(sum_cl, shifts.rescale(clCh + offset, K, ch, c));
+          }
           #pragma GCC unroll 8
           for (int i = 0; i < K; ++i)
             clPar[offset + i] *= p_diff * sum_cl + diff_coeff * clCh[offset + i];
         }
       }
+      if (shifts.on()) shifts.propagate(par, ch, firstChild);
     }
 
     const double* clRoot = buf + root * stride;
@@ -587,14 +633,20 @@ static inline void persite_impl(
       #pragma GCC unroll 8
       for (int s = 0; s < K; ++s)
         sl += inv_k * clRoot[offset + s];
-      site_lik_sum[c] += sl;
+      if (shifts.on()) {
+        shifts.add_site(site_lik_sum[c], c, sl, shifts.shift(root, c));
+      } else {
+        site_lik_sum[c] += sl;
+      }
     }
   }
 
   double inv_nCat = 1.0 / nCat;
   for (int c = 0; c < nChar; ++c) {
     double avg = site_lik_sum[c] * inv_nCat;
-    siteLL[c] = (avg > 0.0) ? std::log(avg) : R_NegInf;
+    siteLL[c] = (avg > 0.0)
+      ? MkPrime::log_scaled(avg, shifts.on() ? shifts.site_shift(c) : 0)
+      : R_NegInf;
   }
 }
 
@@ -667,6 +719,7 @@ static inline void persite_collapsed_impl(
   const double n_U    = static_cast<double>(kFull - kObs);
   const double inv_k  = 1.0 / kFull;
   const MkPrime::JCRates jcRates(kFull);
+  EdgeShifts shifts(maxNode, nChar);
 
   std::vector<double> site_lik_sum(nChar, 0.0);
   int clCols = nChar * kEff;
@@ -704,8 +757,9 @@ static inline void persite_collapsed_impl(
       double p_same   = jc.pSame;
       double p_diff   = jc.pDiff;
       double* __restrict__ clPar = buf + par * stride;
-      const double* __restrict__ clCh = buf + ch * stride;
+      double* __restrict__ clCh = buf + ch * stride;
       double diff_coeff = p_same - p_diff;
+      const bool firstChild = !initFlg[par];
 
       // Tip-edge fast path (cf. T-006). Tips never carry a lumped state, so
       // observed-state child CL is one-hot in [0, kObs-1] with lumped col 0;
@@ -744,6 +798,7 @@ static inline void persite_collapsed_impl(
             }
           }
         }
+        if (shifts.on()) shifts.propagate(par, ch, firstChild);
         continue;
       }
 
@@ -755,6 +810,10 @@ static inline void persite_collapsed_impl(
           #pragma GCC unroll 8
           for (int j = 0; j < lumpIdx; ++j) sum_eff += clCh[offset + j];
           sum_eff += n_U * clCh[offset + lumpIdx];
+          if (sum_eff < MkPrime::kRescaleBelow) {
+            sum_eff = std::ldexp(sum_eff,
+                                 shifts.rescale(clCh + offset, kEff, ch, c));
+          }
           #pragma GCC unroll 8
           for (int i = 0; i < kEff; ++i)
             clPar[offset + i] = p_diff * sum_eff + diff_coeff * clCh[offset + i];
@@ -767,11 +826,16 @@ static inline void persite_collapsed_impl(
           #pragma GCC unroll 8
           for (int j = 0; j < lumpIdx; ++j) sum_eff += clCh[offset + j];
           sum_eff += n_U * clCh[offset + lumpIdx];
+          if (sum_eff < MkPrime::kRescaleBelow) {
+            sum_eff = std::ldexp(sum_eff,
+                                 shifts.rescale(clCh + offset, kEff, ch, c));
+          }
           #pragma GCC unroll 8
           for (int i = 0; i < kEff; ++i)
             clPar[offset + i] *= p_diff * sum_eff + diff_coeff * clCh[offset + i];
         }
       }
+      if (shifts.on()) shifts.propagate(par, ch, firstChild);
     }
 
     const double* clRoot = buf + root * stride;
@@ -781,14 +845,21 @@ static inline void persite_collapsed_impl(
       #pragma GCC unroll 8
       for (int s = 0; s < lumpIdx; ++s) sum_eff += clRoot[offset + s];
       sum_eff += n_U * clRoot[offset + lumpIdx];
-      site_lik_sum[c] += inv_k * sum_eff;
+      if (shifts.on()) {
+        shifts.add_site(site_lik_sum[c], c, inv_k * sum_eff,
+                        shifts.shift(root, c));
+      } else {
+        site_lik_sum[c] += inv_k * sum_eff;
+      }
     }
   }
 
   double inv_nCat = 1.0 / nCat;
   for (int c = 0; c < nChar; ++c) {
     double avg = site_lik_sum[c] * inv_nCat;
-    siteLL[c] = (avg > 0.0) ? std::log(avg) : R_NegInf;
+    siteLL[c] = (avg > 0.0)
+      ? MkPrime::log_scaled(avg, shifts.on() ? shifts.site_shift(c) : 0)
+      : R_NegInf;
   }
 }
 
@@ -975,6 +1046,7 @@ static double pruning_jc_flat_collapsed(
 
   const double inv_k = 1.0 / kFull;
   const MkPrime::JCRates jcRates(kFull);
+  EdgeShifts shifts(maxNode, nChar);
 
   for (int e = nEdge - 1; e >= 0; --e) {
     int par = parPtr[e];
@@ -987,12 +1059,17 @@ static double pruning_jc_flat_collapsed(
     double* clPar = buf + par * stride;
     double* clCh  = buf + ch  * stride;
 
+    const bool firstChild = !initFlg[par];
     if (!initFlg[par]) {
       for (int c = 0; c < nChar; ++c) {
         int offset = c * kEff;
         double sum_eff = 0.0;
         for (int j = 0; j < lumpIdx; ++j) sum_eff += clCh[offset + j];
         sum_eff += n_U * clCh[offset + lumpIdx];
+        if (sum_eff < MkPrime::kRescaleBelow) {
+          sum_eff = std::ldexp(sum_eff,
+                               shifts.rescale(clCh + offset, kEff, ch, c));
+        }
         for (int i = 0; i < kEff; ++i)
           clPar[offset + i] = p_diff * sum_eff + diff_coeff * clCh[offset + i];
       }
@@ -1003,10 +1080,15 @@ static double pruning_jc_flat_collapsed(
         double sum_eff = 0.0;
         for (int j = 0; j < lumpIdx; ++j) sum_eff += clCh[offset + j];
         sum_eff += n_U * clCh[offset + lumpIdx];
+        if (sum_eff < MkPrime::kRescaleBelow) {
+          sum_eff = std::ldexp(sum_eff,
+                               shifts.rescale(clCh + offset, kEff, ch, c));
+        }
         for (int i = 0; i < kEff; ++i)
           clPar[offset + i] *= p_diff * sum_eff + diff_coeff * clCh[offset + i];
       }
     }
+    if (shifts.on()) shifts.propagate(par, ch, firstChild);
 
     if (outConstProb) {
       double* aPar = ascBufPtr + par * kEff;
@@ -1035,7 +1117,7 @@ static double pruning_jc_flat_collapsed(
     sum_eff += n_U * clRoot[offset + lumpIdx];
     double sl = inv_k * sum_eff;
     if (sl <= 0.0) return R_NegInf;
-    logLik += std::log(sl);
+    logLik += MkPrime::log_scaled(sl, shifts.on() ? shifts.shift(root, c) : 0);
   }
 
   if (outConstProb) {
@@ -1095,6 +1177,7 @@ static double pruning_jc_acrv_flat_collapsed(
 
   const double inv_k = 1.0 / kFull;
   const MkPrime::JCRates jcRates(kFull);
+  EdgeShifts shifts(maxNode, nChar);
 
   std::memset(initFlg, 0, (maxNode + 1) * sizeof(uint8_t));
   for (int tip = 1; tip <= nTip; ++tip) {
@@ -1153,12 +1236,17 @@ static double pruning_jc_acrv_flat_collapsed(
       double* clPar = buf + par * stride;
       double* clCh  = buf + ch  * stride;
 
+      const bool firstChild = !initFlg[par];
       if (!initFlg[par]) {
         for (int c = 0; c < nChar; ++c) {
           int offset = c * kEff;
           double sum_eff = 0.0;
           for (int j = 0; j < lumpIdx; ++j) sum_eff += clCh[offset + j];
           sum_eff += n_U * clCh[offset + lumpIdx];
+          if (sum_eff < MkPrime::kRescaleBelow) {
+            sum_eff = std::ldexp(sum_eff,
+                                 shifts.rescale(clCh + offset, kEff, ch, c));
+          }
           for (int i = 0; i < kEff; ++i)
             clPar[offset + i] = p_diff * sum_eff + diff_coeff * clCh[offset + i];
         }
@@ -1169,10 +1257,15 @@ static double pruning_jc_acrv_flat_collapsed(
           double sum_eff = 0.0;
           for (int j = 0; j < lumpIdx; ++j) sum_eff += clCh[offset + j];
           sum_eff += n_U * clCh[offset + lumpIdx];
+          if (sum_eff < MkPrime::kRescaleBelow) {
+            sum_eff = std::ldexp(sum_eff,
+                                 shifts.rescale(clCh + offset, kEff, ch, c));
+          }
           for (int i = 0; i < kEff; ++i)
             clPar[offset + i] *= p_diff * sum_eff + diff_coeff * clCh[offset + i];
         }
       }
+      if (shifts.on()) shifts.propagate(par, ch, firstChild);
 
       if (outConstProb) {
         double* aPar = ascBufPtr + par * kEff;
@@ -1197,7 +1290,12 @@ static double pruning_jc_acrv_flat_collapsed(
       double sum_eff = 0.0;
       for (int s = 0; s < lumpIdx; ++s) sum_eff += clRoot[offset + s];
       sum_eff += n_U * clRoot[offset + lumpIdx];
-      siteLikPtr[c] += inv_k * sum_eff;
+      if (shifts.on()) {
+        shifts.add_site(siteLikPtr[c], c, inv_k * sum_eff,
+                        shifts.shift(root, c));
+      } else {
+        siteLikPtr[c] += inv_k * sum_eff;
+      }
     }
 
     if (outConstProb) {
@@ -1214,7 +1312,7 @@ static double pruning_jc_acrv_flat_collapsed(
   for (int c = 0; c < nChar; ++c) {
     double avg = siteLikPtr[c] * inv_nCat;
     if (avg <= 0.0) return R_NegInf;
-    logLik += std::log(avg);
+    logLik += MkPrime::log_scaled(avg, shifts.on() ? shifts.site_shift(c) : 0);
   }
 
   if (outConstProb)
@@ -1385,6 +1483,7 @@ static double pruning_mkn_flat(
   }
 
   const MkPrime::MkNRates mknRates(rate_loss);
+  EdgeShifts shifts(maxNode, nChar);
 
   for (int e = nEdge - 1; e >= 0; --e) {
     int par = parPtr[e];
@@ -1398,9 +1497,12 @@ static double pruning_mkn_flat(
     double* clPar = buf + par * stride;
     double* clCh  = buf + ch  * stride;
 
+    const bool firstChild = !initFlg[par];
     if (!initFlg[par]) {
       for (int c = 0; c < nChar; ++c) {
         int offset = c * kStates;
+        if (clCh[offset] + clCh[offset + 1] < MkPrime::kRescaleBelow)
+          shifts.rescale(clCh + offset, kStates, ch, c);
         double cl0 = clCh[offset]; double cl1 = clCh[offset + 1];
         clPar[offset]     = P00 * cl0 + P01 * cl1;
         clPar[offset + 1] = P10 * cl0 + P11 * cl1;
@@ -1409,11 +1511,14 @@ static double pruning_mkn_flat(
     } else {
       for (int c = 0; c < nChar; ++c) {
         int offset = c * kStates;
+        if (clCh[offset] + clCh[offset + 1] < MkPrime::kRescaleBelow)
+          shifts.rescale(clCh + offset, kStates, ch, c);
         double cl0 = clCh[offset]; double cl1 = clCh[offset + 1];
         clPar[offset]     *= P00 * cl0 + P01 * cl1;
         clPar[offset + 1] *= P10 * cl0 + P11 * cl1;
       }
     }
+    if (shifts.on()) shifts.propagate(par, ch, firstChild);
 
     // M-157: fused ascertainment (2 pseudo-chars, same P matrix)
     if (outConstProb) {
@@ -1441,7 +1546,7 @@ static double pruning_mkn_flat(
     int offset = c * kStates;
     double sl = rfPtr[0] * clRoot[offset] + rfPtr[1] * clRoot[offset + 1];
     if (sl <= 0.0) return R_NegInf;
-    logLik += std::log(sl);
+    logLik += MkPrime::log_scaled(sl, shifts.on() ? shifts.shift(root, c) : 0);
   }
 
   // M-157: extract fused constant-site probability
@@ -1502,6 +1607,7 @@ static double pruning_mkn_acrv_flat(
     siteLikPtr = siteLikLocal.data();
   }
   const MkPrime::MkNRates mknRates(rate_loss);
+  EdgeShifts shifts(maxNode, nChar);
 
   // OPP-CL: init tips once (constant across rate categories)
   std::memset(initFlg, 0, (maxNode + 1) * sizeof(uint8_t));
@@ -1568,9 +1674,12 @@ static double pruning_mkn_acrv_flat(
       double* clPar = buf + par * stride;
       double* clCh  = buf + ch  * stride;
 
+      const bool firstChild = !initFlg[par];
       if (!initFlg[par]) {
         for (int c = 0; c < nChar; ++c) {
           int offset = c * kStates;
+          if (clCh[offset] + clCh[offset + 1] < MkPrime::kRescaleBelow)
+            shifts.rescale(clCh + offset, kStates, ch, c);
           double cl0 = clCh[offset]; double cl1 = clCh[offset + 1];
           clPar[offset]     = P00 * cl0 + P01 * cl1;
           clPar[offset + 1] = P10 * cl0 + P11 * cl1;
@@ -1579,11 +1688,14 @@ static double pruning_mkn_acrv_flat(
       } else {
         for (int c = 0; c < nChar; ++c) {
           int offset = c * kStates;
+          if (clCh[offset] + clCh[offset + 1] < MkPrime::kRescaleBelow)
+            shifts.rescale(clCh + offset, kStates, ch, c);
           double cl0 = clCh[offset]; double cl1 = clCh[offset + 1];
           clPar[offset]     *= P00 * cl0 + P01 * cl1;
           clPar[offset + 1] *= P10 * cl0 + P11 * cl1;
         }
       }
+      if (shifts.on()) shifts.propagate(par, ch, firstChild);
 
       // M-157: fused ascertainment (2 pseudo-chars, same P matrix)
       if (outConstProb) {
@@ -1608,7 +1720,11 @@ static double pruning_mkn_acrv_flat(
     for (int c = 0; c < nChar; ++c) {
       int offset = c * kStates;
       double sl = rfPtr[0] * clRoot[offset] + rfPtr[1] * clRoot[offset + 1];
-      siteLikPtr[c] += sl;
+      if (shifts.on()) {
+        shifts.add_site(siteLikPtr[c], c, sl, shifts.shift(root, c));
+      } else {
+        siteLikPtr[c] += sl;
+      }
     }
 
     // M-157: accumulate constant-site prob for this rate category
@@ -1628,7 +1744,7 @@ static double pruning_mkn_acrv_flat(
   for (int c = 0; c < nChar; ++c) {
     double avg = siteLikPtr[c] * inv_nCat;
     if (avg <= 0.0) return R_NegInf;
-    logLik += std::log(avg);
+    logLik += MkPrime::log_scaled(avg, shifts.on() ? shifts.site_shift(c) : 0);
   }
 
   if (outConstProb)
@@ -1814,6 +1930,7 @@ static double pruning_f81_het_acrv_flat(
   }
 
   std::vector<double> pi(kStates);
+  EdgeShifts shifts(maxNode, nChar);
   for (int cat = 0; cat < nCat; ++cat) {
     double acrvRate = rmPtr[cat];
 
@@ -1863,12 +1980,17 @@ static double pruning_f81_het_acrv_flat(
           double* clCh  = buf + ch  * stride;
 
           // OPP-1 (F81): hoist Σ_j π_j·cl_j out of the i-loop → O(k) per char
+          const bool firstChild = !initFlg[par];
           if (!initFlg[par]) {
             for (int c = 0; c < nChar; ++c) {
               int offset = c * kStates;
               double sum_pi_cl = 0.0;
               for (int j = 0; j < kStates; ++j)
                 sum_pi_cl += pi[j] * clCh[offset + j];
+              if (sum_pi_cl < MkPrime::kRescaleBelow) {
+                sum_pi_cl = std::ldexp(
+                  sum_pi_cl, f81_rescale(shifts, clCh + offset, kStates, ch, c));
+              }
               double base = one_minus_d * sum_pi_cl;
               for (int i = 0; i < kStates; ++i)
                 clPar[offset + i] = base + d * clCh[offset + i];
@@ -1880,11 +2002,16 @@ static double pruning_f81_het_acrv_flat(
               double sum_pi_cl = 0.0;
               for (int j = 0; j < kStates; ++j)
                 sum_pi_cl += pi[j] * clCh[offset + j];
+              if (sum_pi_cl < MkPrime::kRescaleBelow) {
+                sum_pi_cl = std::ldexp(
+                  sum_pi_cl, f81_rescale(shifts, clCh + offset, kStates, ch, c));
+              }
               double base = one_minus_d * sum_pi_cl;
               for (int i = 0; i < kStates; ++i)
                 clPar[offset + i] *= base + d * clCh[offset + i];
             }
           }
+          if (shifts.on()) shifts.propagate(par, ch, firstChild);
 
           // M-157: fused ascertainment (k pseudo-chars, F81 transition)
           if (outConstProb) {
@@ -1915,7 +2042,11 @@ static double pruning_f81_het_acrv_flat(
           double sl = 0.0;
           for (int s = 0; s < kStates; ++s)
             sl += pi[s] * clRoot[offset + s];
-          siteLikPtr[c] += sl;
+          if (shifts.on()) {
+            shifts.add_site(siteLikPtr[c], c, sl, shifts.shift(root, c));
+          } else {
+            siteLikPtr[c] += sl;
+          }
         }
 
         // M-157: accumulate constant-site prob for this component
@@ -1939,7 +2070,7 @@ static double pruning_f81_het_acrv_flat(
   for (int c = 0; c < nChar; ++c) {
     double avg = siteLikPtr[c] * inv_comp;
     if (avg <= 0.0) return R_NegInf;
-    logLik += std::log(avg);
+    logLik += MkPrime::log_scaled(avg, shifts.on() ? shifts.site_shift(c) : 0);
   }
 
   if (outConstProb)
@@ -2007,6 +2138,7 @@ void pruning_f81_het_acrv_persite(
   }
 
   std::vector<double> pi(kStates);
+  EdgeShifts shifts(maxNode, nChar);
   for (int cat = 0; cat < nCat; ++cat) {
     double acrvRate = rmPtr[cat];
 
@@ -2048,12 +2180,17 @@ void pruning_f81_het_acrv_persite(
           double* clPar = buf + par * stride;
           double* clCh  = buf + ch  * stride;
 
+          const bool firstChild = !initFlg[par];
           if (!initFlg[par]) {
             for (int c = 0; c < nChar; ++c) {
               int offset = c * kStates;
               double sum_pi_cl = 0.0;
               for (int j = 0; j < kStates; ++j)
                 sum_pi_cl += pi[j] * clCh[offset + j];
+              if (sum_pi_cl < MkPrime::kRescaleBelow) {
+                sum_pi_cl = std::ldexp(
+                  sum_pi_cl, f81_rescale(shifts, clCh + offset, kStates, ch, c));
+              }
               double base = one_minus_d * sum_pi_cl;
               for (int i = 0; i < kStates; ++i)
                 clPar[offset + i] = base + d * clCh[offset + i];
@@ -2065,11 +2202,16 @@ void pruning_f81_het_acrv_persite(
               double sum_pi_cl = 0.0;
               for (int j = 0; j < kStates; ++j)
                 sum_pi_cl += pi[j] * clCh[offset + j];
+              if (sum_pi_cl < MkPrime::kRescaleBelow) {
+                sum_pi_cl = std::ldexp(
+                  sum_pi_cl, f81_rescale(shifts, clCh + offset, kStates, ch, c));
+              }
               double base = one_minus_d * sum_pi_cl;
               for (int i = 0; i < kStates; ++i)
                 clPar[offset + i] *= base + d * clCh[offset + i];
             }
           }
+          if (shifts.on()) shifts.propagate(par, ch, firstChild);
         }
 
         double* clRoot = buf + root * stride;
@@ -2078,7 +2220,11 @@ void pruning_f81_het_acrv_persite(
           double sl = 0.0;
           for (int s = 0; s < kStates; ++s)
             sl += pi[s] * clRoot[offset + s];
-          site_lik_sum[c] += sl;
+          if (shifts.on()) {
+            shifts.add_site(site_lik_sum[c], c, sl, shifts.shift(root, c));
+          } else {
+            site_lik_sum[c] += sl;
+          }
         }
 
       }  // rot
@@ -2088,7 +2234,9 @@ void pruning_f81_het_acrv_persite(
   double inv_comp = 1.0 / totalComp;
   for (int c = 0; c < nChar; ++c) {
     double avg = site_lik_sum[c] * inv_comp;
-    siteLL[c] = (avg > 0.0) ? std::log(avg) : R_NegInf;
+    siteLL[c] = (avg > 0.0)
+      ? MkPrime::log_scaled(avg, shifts.on() ? shifts.site_shift(c) : 0)
+      : R_NegInf;
   }
 }
 
