@@ -156,9 +156,10 @@
   model <- do.call(MkPrimeModel, modelArgs)
 
   # Warmup move weights score acceptances per second of wall-clock time, so
-  # they differ between processes (#328); a move is scored only once it has
-  # 20 proposals, which few reach in 50 warmup iterations. A longer test
-  # needing bit-identity must pin `moveWeights`.
+  # they differ between runs (#328) once two moves reach
+  # `.AdaptMoveWeights()`'s `minProposals`, which none does in 50 warmup
+  # iterations; a longer test needing bit-identity must pin every move's
+  # weight.
   mcmc <- MkPrimeMCMC(
     nIter        = 100L,
     maxWarmup    = 50L,

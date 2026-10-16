@@ -31,7 +31,7 @@
 #'   chain stabilises OR this ceiling is reached (with a warning).
 #'   Default 50 000 when `nIter = Inf`; `nIter / 2` when finite.
 #' @param autoTune Logical; if `TRUE`, a tuning phase after warmup optimises
-#'   move weights for min-ESS/s, which otherwise keep their warmup values
+#'   move weights for min-ESS/s; otherwise they stay as warmup left them
 #'   (see **Three-phase MCMC**).
 #' @param tuningBudget Integer giving the most iterations the tuning phase may
 #'   use; tuning can end sooner (see **Three-phase MCMC**).
@@ -174,7 +174,7 @@
 #'   when neomorphic characters are present) using a bivariate Bactrian
 #'   kernel. The correlation is estimated from the chain's samples, last
 #'   from the first tuning window, or with `autoTune = FALSE` from the first
-#'   sampling batch if warmup was too short to estimate it; it is then
+#'   50 samples if warmup was too short to estimate it; it is then
 #'   fixed. No effect when parameters are uncorrelated (degenerates to
 #'   independent proposals).
 #' @param blockGibbsBranch Logical; include the block Gibbs branch-length
@@ -221,7 +221,7 @@
 #'   `moveWeights = c(nni = 0.3, spr = 0.2)` fixes NNI at 30% and SPR at
 #'   20%, with the remaining 50% allocated adaptively among other moves.
 #'   To disable adaptive scheduling entirely, pin all moves (sum to 1).
-#'   See section **Adaptive move scheduling** below.
+#'   See section **Three-phase MCMC** below.
 #' @param nCore Integer. Number of parallel worker processes for independent
 #'   runs. Default `getOption("mc.cores", 1L)`, matching the convention used
 #'   by \pkg{TreeDist}. With `nCore = 1` (the default), runs execute serially.
@@ -399,7 +399,9 @@
 #' Set `autoTune = FALSE` to skip this phase.
 #'
 #' **Sample.** Move weights are frozen and posterior samples are
-#' collected. Convergence is checked every `checkEvery` iterations.
+#' collected; a joint-proposal correlation that warmup could not estimate is
+#' estimated from the first 50 samples, then fixed. Convergence is checked
+#' every `checkEvery` iterations.
 #' The run terminates when the stopping criteria are met (see
 #' **Stopping criteria**), `maxTime` is reached, or `nIter`
 #' iterations complete.
