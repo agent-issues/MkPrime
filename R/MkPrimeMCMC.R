@@ -33,8 +33,8 @@
 #' @param autoTune Logical; enable the tuning phase after warmup
 #'   (default `TRUE`). When `TRUE`, a short tuning phase optimises
 #'   move weights by maximising min-ESS/s using a perturbation bandit.
-#'   When `FALSE`, move weights are frozen at the end of warmup using
-#'   the acceptance-rate heuristic (legacy behaviour). See section
+#'   When `FALSE`, move weights are frozen at the end of warmup, where
+#'   they adapt to acceptances per second of wall-clock time. See section
 #'   **Three-phase MCMC** below.
 #' @param tuningBudget Integer giving the most iterations the tuning phase may
 #'   use; tuning can end sooner (see **Three-phase MCMC**).
@@ -374,7 +374,7 @@
 #' The MCMC engine runs in three phases, shown in the progress display:
 #'
 #' **Warmup.** Tuning parameters (scale, window), move weights
-#' (acceptance-rate/cost heuristic), and temperatures (parallel
+#' (acceptances per second of wall-clock time), and temperatures (parallel
 #' tempering) all adapt. Each chain tunes its own step sizes, but move
 #' weights are adapted from the cold chain alone and shared by every chain
 #' in the temperature ladder. The phase ends automatically when the cold

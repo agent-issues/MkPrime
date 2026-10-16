@@ -92,8 +92,8 @@ Default 50 000 when \code{nIter = Inf}; \code{nIter / 2} when finite.}
 \item{autoTune}{Logical; enable the tuning phase after warmup
 (default \code{TRUE}). When \code{TRUE}, a short tuning phase optimises
 move weights by maximising min-ESS/s using a perturbation bandit.
-When \code{FALSE}, move weights are frozen at the end of warmup using
-the acceptance-rate heuristic (legacy behaviour). See section
+When \code{FALSE}, move weights are frozen at the end of warmup, where
+they adapt to acceptances per second of wall-clock time. See section
 \strong{Three-phase MCMC} below.}
 
 \item{tuningBudget}{Integer giving the most iterations the tuning phase may
@@ -485,7 +485,7 @@ a \code{dim} field (= nEdge) in the score formula.
 The MCMC engine runs in three phases, shown in the progress display:
 
 \strong{Warmup.} Tuning parameters (scale, window), move weights
-(acceptance-rate/cost heuristic), and temperatures (parallel
+(acceptances per second of wall-clock time), and temperatures (parallel
 tempering) all adapt. Each chain tunes its own step sizes, but move
 weights are adapted from the cold chain alone and shared by every chain
 in the temperature ladder. The phase ends automatically when the cold
