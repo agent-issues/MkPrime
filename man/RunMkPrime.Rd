@@ -29,7 +29,9 @@ to start from a greedy parsimony stepwise-addition tree (via
 installed, falling back to a neighbour-joining tree otherwise.
 The tree must be binary, rooted or unrooted; polytomies are resolved
 at random with \code{\link[TreeTools:MakeTreeBinary]{TreeTools::MakeTreeBinary()}}, with a warning. Edges
-inserted to resolve them get length 1e-8; others keep their lengths.}
+inserted to resolve them get length 1e-8; others keep their lengths.
+A tree without edge lengths, like the default, starts with equal
+lengths totalling three times the prior mean tree length (\code{expSteps}).}
 
 \item{neomorphic, knownStates}{Passed to \code{\link[=MkPrimeData]{MkPrimeData()}} if \code{data} is
 a \code{phyDat} object.}

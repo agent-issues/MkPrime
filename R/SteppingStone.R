@@ -10,7 +10,8 @@
 #'   of states of some characters, as `knownStates` does in [RunMkPrime()],
 #'   pass `MkPrimeData(data, knownStates = ...)`.
 #' @param tree A starting tree (`phylo` object), or `NULL` (default) to use a
-#'   neighbour-joining tree built from the data.
+#'   neighbour-joining tree built from the data; missing edge lengths are
+#'   set as in [RunMkPrime()].
 #' @param neomorphic Integer vector of neomorphic character indices (if `data`
 #'   is `phyDat`). Ignored if `data` is `MkPrimeData`.
 #' @param model An `MkPrimeModel` object. Default: `MkPrimeModel()`.
@@ -108,7 +109,6 @@ mkp_stepping_stone <- function(data, tree = NULL,
       cli::cli_alert_info("No starting tree supplied; using neighbour-joining tree.")
     }
   }
-  tree <- .PrepareStartTree(tree, mkd)
 
   classIdx <- vapply(mkd$partitions, function(p) as.integer(p$classIdx %||% 1L),
                      integer(1))
@@ -141,6 +141,7 @@ mkp_stepping_stone <- function(data, tree = NULL,
     mcmc$gibbsPMarginal <- FALSE
   }
   model <- .FinalizeModel(model, NULL, mkd)
+  tree <- .PrepareStartTree(tree, mkd, model$expSteps)
 
   nStones <- .CheckWholeNumber(nStones, "nStones")
   nIter <- .CheckWholeNumber(nIter, "nIter")

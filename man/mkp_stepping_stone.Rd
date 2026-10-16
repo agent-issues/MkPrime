@@ -25,7 +25,8 @@ of states of some characters, as \code{knownStates} does in \code{\link[=RunMkPr
 pass \code{MkPrimeData(data, knownStates = ...)}.}
 
 \item{tree}{A starting tree (\code{phylo} object), or \code{NULL} (default) to use a
-neighbour-joining tree built from the data.}
+neighbour-joining tree built from the data; missing edge lengths are
+set as in \code{\link[=RunMkPrime]{RunMkPrime()}}.}
 
 \item{neomorphic}{Integer vector of neomorphic character indices (if \code{data}
 is \code{phyDat}). Ignored if \code{data} is \code{MkPrimeData}.}

@@ -19,6 +19,8 @@
 #'   The tree must be binary, rooted or unrooted; polytomies are resolved
 #'   at random with [TreeTools::MakeTreeBinary()], with a warning. Edges
 #'   inserted to resolve them get length 1e-8; others keep their lengths.
+#'   A tree without edge lengths, like the default, starts with equal
+#'   lengths totalling three times the prior mean tree length (`expSteps`).
 #' @param neomorphic,knownStates Passed to [MkPrimeData()] if `data` is
 #'   a `phyDat` object.
 #' @param model An `MkPrimeModel` object, or `NULL` for defaults.
@@ -221,15 +223,19 @@ RunMkPrime <- function(data, tree = NULL,
     mkd$partitions <- .BuildPartitions(mkd, partition = partitionSpec$partition)
   }
 
+  if (is.null(model)) model <- MkPrimeModel()
+  # mcmc already defaulted above (before auto-resume check)
+
+  model <- .FinalizeModel(model, NULL, mkd)
+
   if (is.null(tree)) {
     startInput <- if (inherits(data, "phyDat")) data else mkd$phyDat
     if (requireNamespace("TreeSearch", quietly = TRUE)) {
       tree <- TreeSearch::AdditionTree(startInput)
-      tree$edge.length <- rep(0.1, nrow(tree$edge))
       .AlertInfo(
         "No starting tree supplied; using greedy parsimony addition tree.")
     } else {
-      tree <- TreeTools::NJTree(startInput, edgeLengths = TRUE)
+      tree <- TreeTools::NJTree(startInput)
       .AlertInfo(c(
         "No starting tree supplied; using neighbour-joining tree.",
         "i" = "Install {.pkg TreeSearch} to use the preferred parsimony \\
@@ -237,12 +243,7 @@ RunMkPrime <- function(data, tree = NULL,
     }
   }
 
-  tree <- .PrepareStartTree(tree, mkd)
-
-  if (is.null(model)) model <- MkPrimeModel()
-  # mcmc already defaulted above (before auto-resume check)
-
-  model <- .FinalizeModel(model, NULL, mkd)
+  tree <- .PrepareStartTree(tree, mkd, model$expSteps)
   nEdge <- nrow(tree$edge)
   tipLabels <- rownames(mkd$matrix)
 
@@ -850,20 +851,25 @@ RunMkPrime <- function(data, tree = NULL,
 }
 
 
+# Equal edge lengths for a start tree that has none, summing to three times
+# the prior mean tree length. Parsimony undercounts changes on saturated
+# data, so the posterior tree length can exceed expSteps several-fold; under
+# ACRV a chain that starts below it can stick in a short-tree, high
+# rate_log_sd basin (#474). Starting long costs only a few hundred iterations.
+.StartEdgeLengths <- function(nEdge, expSteps) {
+  rep(3 * expSteps / nEdge, nEdge)
+}
+
+
 # Validates a user or default start tree and returns it as every sampler
 # indexes it: tip i is data row i (#224), edges in canonical preorder, which
 # all topology proposals maintain.
-.PrepareStartTree <- function(tree, mkd) {
+.PrepareStartTree <- function(tree, mkd, expSteps) {
   if (!inherits(tree, "phylo")) {
     cli::cli_abort("{.arg tree} must be a {.cls phylo} object, or {.val NULL} to use a default starting tree.")
   }
   if (is.null(tree$edge.length)) {
-    cli::cli_abort(c(
-      "{.arg tree} has no branch lengths.",
-      "i" = "Supply a tree with edge lengths, e.g. \\
-             {.code TreeSearch::AdditionTree(data)} (then set \\
-             {.code tree$edge.length <- rep(0.1, nrow(tree$edge))})."
-    ))
+    tree$edge.length <- .StartEdgeLengths(nrow(tree$edge), expSteps)
   }
   nNeg <- sum(tree$edge.length <= 0)
   if (nNeg > 0L) {
