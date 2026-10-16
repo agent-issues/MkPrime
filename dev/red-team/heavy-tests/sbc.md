@@ -110,7 +110,7 @@ Rscript dev/red-team/heavy-tests/sbc.R --quick
 
 Confirms the harness executes for every arm. Per-arm verdicts at
 quick scale are reported as `EXEC_OK` not `PASS`/`FAIL` because
-`N_sim = 5` and `L = 34` (after warmup) give the AD test insufficient
+`N_sim = 5` and `L = 100` give the AD test insufficient
 power; quick-scale AD p-values mean nothing.
 `test-heavy-test-gates.R` runs two quick arms and checks that characters
 are simulated at their drawn `k` and that `p` and `k'` are ranked.
@@ -137,11 +137,14 @@ Resources per arm (one SLURM array task each):
 | scratch | 4 GB | per-task checkpoints |
 | partition | shared | standard analysis class |
 
-Full scale: `N_sim = 200`, `N_iter = 6000`, `thin = 60` so
-`L = 100` posterior samples per simulation. This matches Talts et al.'s
+Full scale: `N_sim = 200`, 2000 warmup iterations, then `thin = 60` for
+`L = 100` retained samples per simulation (`N_ITER = 8000`, since `nIter`
+counts the warmup). This matches Talts et al.'s
 recommended L ≈ 100. The 8-tip, `expSteps = 50` regime is near saturation
 (`T-SBC-marginal-geometric.R` moved off it for that reason); poor mixing
-there can pile ranks at the extremes even with a correct forward model.
+there can pile ranks at the extremes even with a correct forward model: the
+old start of 0.1 per edge trapped ACRV chains in a short-tree, high
+`rate_log_sd` basin and failed every arm (#467).
 
 To run a single arm at full scale locally (e.g. to debug):
 
@@ -197,7 +200,8 @@ the sampler.
 
 - `feedback_no_oversample`: thinning chosen so `L ≈ 100` post-warmup,
   well below the 30k cap.
-- The starting tree is the true topology with uniform edge lengths
+- The starting tree is the true topology with every edge at its prior-mean
+  length, `expSteps / nEdge`, independent of the true lengths
   (SBC-HARNESS-005); inference holds the topology fixed.
 - `feedback_prior_modelling`: the forward draws `k'_j` from the
   unconditional prior; `kObs_j` is observed *after* simulation and enters
