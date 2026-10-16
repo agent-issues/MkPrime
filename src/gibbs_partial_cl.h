@@ -19,6 +19,7 @@
 #include <cstring>
 #include <array>
 #include <cmath>
+#include <limits>
 #include "mkn_rates.h"
 #include "f81.h"
 #include "../inst/include/MkPrime/acrv.h"
@@ -125,6 +126,21 @@ inline int shift_at(const int* s, int c) { return s ? s[c] : 0; }
 // x * 2^-shift, the true value of a scaled site likelihood.
 inline double unscale(double x, int shift) {
   return shift ? std::ldexp(x, -shift) : x;
+}
+
+// unscale() for a caller's accumulator of true site likelihoods (Q-het
+// streaming), which cannot hold one below the normal range. The candidate
+// would silently score -Inf, so stop the run instead.
+inline double unscale_to_accum(double x, int shift, int k) {
+  const double out = unscale(x, shift);
+  if (x > 0.0 && out < std::numeric_limits<double>::min()) {
+    Rcpp::stop(
+      "A character with %d states has a likelihood below 1e-308, which the "
+      "Q-heterogeneity Gibbs topology moves cannot represent (#346). Set "
+      "`gibbs_spr` and `gibbs_subtree_swap` to 0 in `moveWeights`, or drop "
+      "near-random characters with many states.", k);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -784,7 +800,7 @@ static double evaluate_candidate(
     for (int c = 0; c < nChar; ++c) {
       const double sl = grp.rootSiteLik(curI.data(), c);
       if (siteLikAccum) {
-        accum[c] += unscale(sl, shift_at(shRoot, c));
+        accum[c] += unscale_to_accum(sl, shift_at(shRoot, c), k);
       } else {
         MkPrime::add_scaled(accum[c], localSiteShift[c], sl,
                             shift_at(shRoot, c));
@@ -1230,7 +1246,7 @@ static double evaluate_swap_impl(
         else
           totalConstProb += sl;
       } else if (siteLikAccum) {
-        accum[c] += unscale(sl, shift_at(shRoot, c));
+        accum[c] += unscale_to_accum(sl, shift_at(shRoot, c), k);
       } else {
         MkPrime::add_scaled(accum[c], localSiteShift[c], sl,
                             shift_at(shRoot, c));

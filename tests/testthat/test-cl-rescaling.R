@@ -266,6 +266,19 @@ test_that("Q-heterogeneity kernel rescales", {
   )
 })
 
+test_that("Q-het Gibbs topology moves stop rather than drop a character", {
+  chain <- .UnderflowChain(
+    MkPrimeModel(coding = "none", nCat = 1L, qHeterogeneity = TRUE)
+  )
+  expect_true(is.finite(get_state_log_lik(chain$statePtr)))
+  for (move in c(10L, 11L)) {
+    expect_error(
+      do_move_cpp(chain$dataPtr, chain$statePtr, move, 0L, 0.5, 2, 1L, 1.0),
+      "Q-heterogeneity Gibbs topology moves"
+    )
+  }
+})
+
 test_that("Pruner restores shifts on reject() and keeps marginals finite", {
   x <- .UnderflowCase(nTip = 120L)
   k <- 32L
