@@ -16,7 +16,9 @@
 #include "../inst/include/MkPrime/acrv.h"
 #include "ascertainment.h"
 #include "mkn_rates.h"
+#include "edge_shifts.h"
 #include <cmath>
+#include <limits>
 #include <cstring>
 #include <algorithm>
 #include <set>
@@ -133,13 +135,27 @@ static void assert_valid_preorder(const IntegerVector& parent,
 }
 #endif
 
-static double pruning_jc_flat(
+// A kernel's unchecked pass returns this when some character's root site
+// likelihood is below MkPrime::kUncheckedFloor.
+static const double kRecheck = std::numeric_limits<double>::quiet_NaN();
+
+// The F81 kernels test sum_j pi_j cl_j, which can fall below the threshold
+// while the CLs do not; rescale only when their plain sum does.
+static inline int f81_rescale(EdgeShifts& shifts, double* cl, int k, int ch,
+                              int c) {
+  double sum = 0.0;
+  for (int j = 0; j < k; ++j) sum += cl[j];
+  return sum < MkPrime::kRescaleBelow ? shifts.rescale(cl, k, ch, c) : 0;
+}
+
+template <bool kCheck>
+static double pruning_jc_flat_pass(
     IntegerVector parent, IntegerVector child,
     NumericVector edge_length, IntegerMatrix tip_states,
     int kStates, NumericVector root_freqs,
     double* buf, uint8_t* initFlg, int stride,
-    double* outConstProb = nullptr,
-    double* preAscBuf = nullptr, uint8_t* preAscInit = nullptr) {
+    double* outConstProb,
+    double* preAscBuf, uint8_t* preAscInit) {
 
   int nEdge = parent.size();
   int nTip  = tip_states.nrow();
@@ -203,6 +219,7 @@ static double pruning_jc_flat(
   }
 
   const MkPrime::JCRates jcRates(kStates);
+  EdgeShifts shifts(maxNode, nChar);
 
   for (int e = nEdge - 1; e >= 0; --e) {
     int par = parPtr[e];
@@ -216,11 +233,16 @@ static double pruning_jc_flat(
 
     // OPP-1: JC symmetry → O(k) product: new_cl[i] = p_diff*sum + (p_same-p_diff)*cl[i]
     double diff_coeff = p_same - p_diff;
+    const bool firstChild = !initFlg[par];
     if (!initFlg[par]) {
       for (int c = 0; c < nChar; ++c) {
         int offset = c * kStates;
         double sum_cl = 0.0;
         for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+        if (kCheck && sum_cl < MkPrime::kRescaleBelow) {
+          sum_cl = std::ldexp(sum_cl,
+                              shifts.rescale(clCh + offset, kStates, ch, c));
+        }
         for (int i = 0; i < kStates; ++i)
           clPar[offset + i] = p_diff * sum_cl + diff_coeff * clCh[offset + i];
       }
@@ -230,10 +252,15 @@ static double pruning_jc_flat(
         int offset = c * kStates;
         double sum_cl = 0.0;
         for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+        if (kCheck && sum_cl < MkPrime::kRescaleBelow) {
+          sum_cl = std::ldexp(sum_cl,
+                              shifts.rescale(clCh + offset, kStates, ch, c));
+        }
         for (int i = 0; i < kStates; ++i)
           clPar[offset + i] *= p_diff * sum_cl + diff_coeff * clCh[offset + i];
       }
     }
+    if (kCheck && shifts.on()) shifts.propagate(par, ch, firstChild);
 
     // M-157: fused ascertainment pseudo-char propagation
     if (outConstProb) {
@@ -260,8 +287,9 @@ static double pruning_jc_flat(
     double sl = 0.0;
     for (int s = 0; s < kStates; ++s)
       sl += rfPtr[s] * clRoot[offset + s];
+    if (!kCheck && !(sl >= MkPrime::kUncheckedFloor)) return kRecheck;
     if (sl <= 0.0) return R_NegInf;
-    logLik += std::log(sl);
+    logLik += MkPrime::log_scaled(sl, kCheck && shifts.on() ? shifts.shift(root, c) : 0);
   }
 
   // M-157: extract fused constant-site probability
@@ -275,16 +303,33 @@ static double pruning_jc_flat(
   return logLik;
 }
 
+// Unchecked first; again with rescaling if a character is too small to trust.
+static double pruning_jc_flat(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    int kStates, NumericVector root_freqs,
+    double* buf, uint8_t* initFlg, int stride,
+    double* outConstProb = nullptr,
+    double* preAscBuf = nullptr, uint8_t* preAscInit = nullptr) {
+  const double ll = pruning_jc_flat_pass<false>(
+      parent, child, edge_length, tip_states, kStates, root_freqs, buf, initFlg,
+      stride, outConstProb, preAscBuf, preAscInit);
+  return std::isnan(ll) ? pruning_jc_flat_pass<true>(
+      parent, child, edge_length, tip_states, kStates, root_freqs, buf, initFlg,
+      stride, outConstProb, preAscBuf, preAscInit) : ll;
+}
 
-static double pruning_jc_acrv_flat(
+
+template <bool kCheck>
+static double pruning_jc_acrv_flat_pass(
     IntegerVector parent, IntegerVector child,
     NumericVector edge_length, IntegerMatrix tip_states,
     int kStates, NumericVector root_freqs,
     NumericVector rate_multipliers,
     double* buf, uint8_t* initFlg, int stride,
-    double* outConstProb = nullptr,
-    double* preAscBuf = nullptr, uint8_t* preAscInit = nullptr,
-    double* preSiteLikSum = nullptr) {
+    double* outConstProb,
+    double* preAscBuf, uint8_t* preAscInit,
+    double* preSiteLikSum) {
 
   int nEdge = parent.size();
   int nTip  = tip_states.nrow();
@@ -318,6 +363,7 @@ static double pruning_jc_acrv_flat(
     siteLikPtr = siteLikLocal.data();
   }
   const MkPrime::JCRates jcRates(kStates);
+  EdgeShifts shifts(maxNode, nChar);
 
   // OPP-CL: tips are constant across rate categories — init once, not per cat.
   std::memset(initFlg, 0, (maxNode + 1) * sizeof(uint8_t));
@@ -382,11 +428,16 @@ static double pruning_jc_acrv_flat(
 
       // OPP-1: JC symmetry → O(k) product
       double diff_coeff = p_same - p_diff;
+      const bool firstChild = !initFlg[par];
       if (!initFlg[par]) {
         for (int c = 0; c < nChar; ++c) {
           int offset = c * kStates;
           double sum_cl = 0.0;
           for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+          if (kCheck && sum_cl < MkPrime::kRescaleBelow) {
+            sum_cl = std::ldexp(sum_cl,
+                                shifts.rescale(clCh + offset, kStates, ch, c));
+          }
           for (int i = 0; i < kStates; ++i)
             clPar[offset + i] = p_diff * sum_cl + diff_coeff * clCh[offset + i];
         }
@@ -396,10 +447,15 @@ static double pruning_jc_acrv_flat(
           int offset = c * kStates;
           double sum_cl = 0.0;
           for (int j = 0; j < kStates; ++j) sum_cl += clCh[offset + j];
+          if (kCheck && sum_cl < MkPrime::kRescaleBelow) {
+            sum_cl = std::ldexp(sum_cl,
+                                shifts.rescale(clCh + offset, kStates, ch, c));
+          }
           for (int i = 0; i < kStates; ++i)
             clPar[offset + i] *= p_diff * sum_cl + diff_coeff * clCh[offset + i];
         }
       }
+      if (kCheck && shifts.on()) shifts.propagate(par, ch, firstChild);
 
       // M-157: fused ascertainment pseudo-char propagation (same exp_term)
       if (outConstProb) {
@@ -424,7 +480,12 @@ static double pruning_jc_acrv_flat(
       double sl = 0.0;
       for (int s = 0; s < kStates; ++s)
         sl += rfPtr[s] * clRoot[offset + s];
-      siteLikPtr[c] += sl;
+      if (!kCheck && !(sl >= MkPrime::kUncheckedFloor)) return kRecheck;
+      if (kCheck && shifts.on()) {
+        shifts.add_site(siteLikPtr[c], c, sl, shifts.shift(root, c));
+      } else {
+        siteLikPtr[c] += sl;
+      }
     }
 
     // M-157: accumulate constant-site prob for this rate category
@@ -441,13 +502,33 @@ static double pruning_jc_acrv_flat(
   for (int c = 0; c < nChar; ++c) {
     double avg = siteLikPtr[c] * inv_nCat;
     if (avg <= 0.0) return R_NegInf;
-    logLik += std::log(avg);
+    logLik += MkPrime::log_scaled(avg, kCheck && shifts.on() ? shifts.site_shift(c) : 0);
   }
 
   if (outConstProb)
     *outConstProb = constProbCatSum / nCat;
 
   return logLik;
+}
+
+// Unchecked first; again with rescaling if a character is too small to trust.
+static double pruning_jc_acrv_flat(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    int kStates, NumericVector root_freqs,
+    NumericVector rate_multipliers,
+    double* buf, uint8_t* initFlg, int stride,
+    double* outConstProb = nullptr,
+    double* preAscBuf = nullptr, uint8_t* preAscInit = nullptr,
+    double* preSiteLikSum = nullptr) {
+  const double ll = pruning_jc_acrv_flat_pass<false>(
+      parent, child, edge_length, tip_states, kStates, root_freqs,
+      rate_multipliers, buf, initFlg, stride, outConstProb, preAscBuf,
+      preAscInit, preSiteLikSum);
+  return std::isnan(ll) ? pruning_jc_acrv_flat_pass<true>(
+      parent, child, edge_length, tip_states, kStates, root_freqs,
+      rate_multipliers, buf, initFlg, stride, outConstProb, preAscBuf,
+      preAscInit, preSiteLikSum) : ll;
 }
 
 
@@ -463,8 +544,8 @@ static double pruning_jc_acrv_flat(
 // body keeps both paths bit-identical and maintainable as a single
 // algorithm — no duplicate code path to keep in sync.  Verified Δ on Sun2018
 // EG production workload: 17.39 s → 16.75 s wall (4.4 %, p < 0.01).
-template<int K_TPL>
-static inline void persite_impl(
+template<int K_TPL, bool kCheck>
+static inline bool persite_impl(
     int kRuntime,
     int nEdge, int nTip, int nChar, int nCat,
     const int* parPtr, const int* chPtr, const double* elPtr,
@@ -478,6 +559,7 @@ static inline void persite_impl(
   const int K = (K_TPL > 0) ? K_TPL : kRuntime;
   const double inv_k = 1.0 / K;
   const MkPrime::JCRates jcRates(K);
+  EdgeShifts shifts(maxNode, nChar);
 
   std::vector<double> site_lik_sum(nChar, 0.0);
   int clCols = nChar * K;
@@ -511,8 +593,9 @@ static inline void persite_impl(
       double p_same   = jc.pSame;
       double p_diff   = jc.pDiff;
       double* __restrict__ clPar = buf + par * stride;
-      const double* __restrict__ clCh = buf + ch * stride;
+      double* __restrict__ clCh = buf + ch * stride;
       double diff_coeff = p_same - p_diff;
+      const bool firstChild = !initFlg[par];
 
       // T-006 (2026-05-19): tip-edge fast path.  When ch is a tip, the
       // child CL for each character is one-hot (known state) or uniform 1
@@ -552,6 +635,7 @@ static inline void persite_impl(
             }
           }
         }
+        if (kCheck && shifts.on()) shifts.propagate(par, ch, firstChild);
         continue;
       }
 
@@ -562,6 +646,9 @@ static inline void persite_impl(
           double sum_cl = 0.0;
           #pragma GCC unroll 8
           for (int j = 0; j < K; ++j) sum_cl += clCh[offset + j];
+          if (kCheck && sum_cl < MkPrime::kRescaleBelow) {
+            sum_cl = std::ldexp(sum_cl, shifts.rescale(clCh + offset, K, ch, c));
+          }
           #pragma GCC unroll 8
           for (int i = 0; i < K; ++i)
             clPar[offset + i] = p_diff * sum_cl + diff_coeff * clCh[offset + i];
@@ -573,11 +660,15 @@ static inline void persite_impl(
           double sum_cl = 0.0;
           #pragma GCC unroll 8
           for (int j = 0; j < K; ++j) sum_cl += clCh[offset + j];
+          if (kCheck && sum_cl < MkPrime::kRescaleBelow) {
+            sum_cl = std::ldexp(sum_cl, shifts.rescale(clCh + offset, K, ch, c));
+          }
           #pragma GCC unroll 8
           for (int i = 0; i < K; ++i)
             clPar[offset + i] *= p_diff * sum_cl + diff_coeff * clCh[offset + i];
         }
       }
+      if (kCheck && shifts.on()) shifts.propagate(par, ch, firstChild);
     }
 
     const double* clRoot = buf + root * stride;
@@ -587,15 +678,23 @@ static inline void persite_impl(
       #pragma GCC unroll 8
       for (int s = 0; s < K; ++s)
         sl += inv_k * clRoot[offset + s];
-      site_lik_sum[c] += sl;
+      if (!kCheck && !(sl >= MkPrime::kUncheckedFloor)) return true;
+      if (kCheck && shifts.on()) {
+        shifts.add_site(site_lik_sum[c], c, sl, shifts.shift(root, c));
+      } else {
+        site_lik_sum[c] += sl;
+      }
     }
   }
 
   double inv_nCat = 1.0 / nCat;
   for (int c = 0; c < nChar; ++c) {
     double avg = site_lik_sum[c] * inv_nCat;
-    siteLL[c] = (avg > 0.0) ? std::log(avg) : R_NegInf;
+    siteLL[c] = (avg > 0.0)
+      ? MkPrime::log_scaled(avg, kCheck && shifts.on() ? shifts.site_shift(c) : 0)
+      : R_NegInf;
   }
+  return false;
 }
 
 void pruning_jc_acrv_persite(
@@ -626,10 +725,14 @@ void pruning_jc_acrv_persite(
   // src/mcmc.cpp:3322 is the absolute cap; progressive early termination
   // M-155 keeps the bulk of calls at K ≤ 24 for typical morphological
   // datasets; the runtime branch (K_TPL=0) handles K > 24).
+  #define PERSITE_ARGS nEdge, nTip, nChar, nCat, parPtr, chPtr, elPtr, \
+    tsPtr, rmPtr, maxNode, root, stride, buf, initFlg, siteLL
   #define DISPATCH_K(KVAL) \
-    case KVAL: persite_impl<KVAL>(0, nEdge, nTip, nChar, nCat, \
-                parPtr, chPtr, elPtr, tsPtr, rmPtr, \
-                maxNode, root, stride, buf, initFlg, siteLL); return
+    case KVAL: \
+      if (persite_impl<KVAL, false>(0, PERSITE_ARGS)) { \
+        persite_impl<KVAL, true>(0, PERSITE_ARGS); \
+      } \
+      return
   switch (kStates) {
     DISPATCH_K(2);  DISPATCH_K(3);  DISPATCH_K(4);  DISPATCH_K(5);
     DISPATCH_K(6);  DISPATCH_K(7);  DISPATCH_K(8);  DISPATCH_K(9);
@@ -638,12 +741,13 @@ void pruning_jc_acrv_persite(
     DISPATCH_K(18); DISPATCH_K(19); DISPATCH_K(20); DISPATCH_K(21);
     DISPATCH_K(22); DISPATCH_K(23); DISPATCH_K(24);
     default:
-      persite_impl<0>(kStates, nEdge, nTip, nChar, nCat,
-                      parPtr, chPtr, elPtr, tsPtr, rmPtr,
-                      maxNode, root, stride, buf, initFlg, siteLL);
+      if (persite_impl<0, false>(kStates, PERSITE_ARGS)) {
+        persite_impl<0, true>(kStates, PERSITE_ARGS);
+      }
       return;
   }
   #undef DISPATCH_K
+  #undef PERSITE_ARGS
 }
 
 
@@ -653,8 +757,8 @@ void pruning_jc_acrv_persite(
 // uncollapsed kernel; see src/likelihood.cpp::pruning_jc_collapsed for the
 // math. K_EFF_TPL = kObs + 1 is the per-character stride and the unroll
 // length; kFull stays runtime since it varies with ko in the Gibbs sweep.
-template<int K_EFF_TPL>
-static inline void persite_collapsed_impl(
+template<int K_EFF_TPL, bool kCheck>
+static inline bool persite_collapsed_impl(
     int kEffRuntime, int kFull, int kObs,
     int nEdge, int nTip, int nChar, int nCat,
     const int* parPtr, const int* chPtr, const double* elPtr,
@@ -667,6 +771,7 @@ static inline void persite_collapsed_impl(
   const double n_U    = static_cast<double>(kFull - kObs);
   const double inv_k  = 1.0 / kFull;
   const MkPrime::JCRates jcRates(kFull);
+  EdgeShifts shifts(maxNode, nChar);
 
   std::vector<double> site_lik_sum(nChar, 0.0);
   int clCols = nChar * kEff;
@@ -704,8 +809,9 @@ static inline void persite_collapsed_impl(
       double p_same   = jc.pSame;
       double p_diff   = jc.pDiff;
       double* __restrict__ clPar = buf + par * stride;
-      const double* __restrict__ clCh = buf + ch * stride;
+      double* __restrict__ clCh = buf + ch * stride;
       double diff_coeff = p_same - p_diff;
+      const bool firstChild = !initFlg[par];
 
       // Tip-edge fast path (cf. T-006). Tips never carry a lumped state, so
       // observed-state child CL is one-hot in [0, kObs-1] with lumped col 0;
@@ -744,6 +850,7 @@ static inline void persite_collapsed_impl(
             }
           }
         }
+        if (kCheck && shifts.on()) shifts.propagate(par, ch, firstChild);
         continue;
       }
 
@@ -755,6 +862,10 @@ static inline void persite_collapsed_impl(
           #pragma GCC unroll 8
           for (int j = 0; j < lumpIdx; ++j) sum_eff += clCh[offset + j];
           sum_eff += n_U * clCh[offset + lumpIdx];
+          if (kCheck && sum_eff < MkPrime::kRescaleBelow) {
+            sum_eff = std::ldexp(sum_eff,
+                                 shifts.rescale(clCh + offset, kEff, ch, c));
+          }
           #pragma GCC unroll 8
           for (int i = 0; i < kEff; ++i)
             clPar[offset + i] = p_diff * sum_eff + diff_coeff * clCh[offset + i];
@@ -767,11 +878,16 @@ static inline void persite_collapsed_impl(
           #pragma GCC unroll 8
           for (int j = 0; j < lumpIdx; ++j) sum_eff += clCh[offset + j];
           sum_eff += n_U * clCh[offset + lumpIdx];
+          if (kCheck && sum_eff < MkPrime::kRescaleBelow) {
+            sum_eff = std::ldexp(sum_eff,
+                                 shifts.rescale(clCh + offset, kEff, ch, c));
+          }
           #pragma GCC unroll 8
           for (int i = 0; i < kEff; ++i)
             clPar[offset + i] *= p_diff * sum_eff + diff_coeff * clCh[offset + i];
         }
       }
+      if (kCheck && shifts.on()) shifts.propagate(par, ch, firstChild);
     }
 
     const double* clRoot = buf + root * stride;
@@ -781,15 +897,24 @@ static inline void persite_collapsed_impl(
       #pragma GCC unroll 8
       for (int s = 0; s < lumpIdx; ++s) sum_eff += clRoot[offset + s];
       sum_eff += n_U * clRoot[offset + lumpIdx];
-      site_lik_sum[c] += inv_k * sum_eff;
+      if (!kCheck && !(inv_k * sum_eff >= MkPrime::kUncheckedFloor)) return true;
+      if (kCheck && shifts.on()) {
+        shifts.add_site(site_lik_sum[c], c, inv_k * sum_eff,
+                        shifts.shift(root, c));
+      } else {
+        site_lik_sum[c] += inv_k * sum_eff;
+      }
     }
   }
 
   double inv_nCat = 1.0 / nCat;
   for (int c = 0; c < nChar; ++c) {
     double avg = site_lik_sum[c] * inv_nCat;
-    siteLL[c] = (avg > 0.0) ? std::log(avg) : R_NegInf;
+    siteLL[c] = (avg > 0.0)
+      ? MkPrime::log_scaled(avg, kCheck && shifts.on() ? shifts.site_shift(c) : 0)
+      : R_NegInf;
   }
+  return false;
 }
 
 void pruning_jc_acrv_persite_collapsed(
@@ -822,23 +947,26 @@ void pruning_jc_acrv_persite_collapsed(
   // kEff = kObs + 1; for typical morphological data kObs ∈ {2,3,4,5}, so
   // template-specialise kEff over the common small range and fall through to
   // runtime for the long tail.
+  #define PERSITE_ARGS kFull, kObs, nEdge, nTip, nChar, nCat, parPtr, \
+    chPtr, elPtr, tsPtr, rmPtr, maxNode, root, stride, buf, initFlg, siteLL
   #define DISPATCH_KEFF(KE) \
-    case KE: persite_collapsed_impl<KE>(0, kFull, kObs, \
-                nEdge, nTip, nChar, nCat, \
-                parPtr, chPtr, elPtr, tsPtr, rmPtr, \
-                maxNode, root, stride, buf, initFlg, siteLL); return
+    case KE: \
+      if (persite_collapsed_impl<KE, false>(0, PERSITE_ARGS)) { \
+        persite_collapsed_impl<KE, true>(0, PERSITE_ARGS); \
+      } \
+      return
   switch (kEff) {
     DISPATCH_KEFF(2);  DISPATCH_KEFF(3);  DISPATCH_KEFF(4);  DISPATCH_KEFF(5);
     DISPATCH_KEFF(6);  DISPATCH_KEFF(7);  DISPATCH_KEFF(8);  DISPATCH_KEFF(9);
     DISPATCH_KEFF(10); DISPATCH_KEFF(11); DISPATCH_KEFF(12);
     default:
-      persite_collapsed_impl<0>(kEff, kFull, kObs,
-                                 nEdge, nTip, nChar, nCat,
-                                 parPtr, chPtr, elPtr, tsPtr, rmPtr,
-                                 maxNode, root, stride, buf, initFlg, siteLL);
+      if (persite_collapsed_impl<0, false>(kEff, PERSITE_ARGS)) {
+        persite_collapsed_impl<0, true>(kEff, PERSITE_ARGS);
+      }
       return;
   }
   #undef DISPATCH_KEFF
+  #undef PERSITE_ARGS
 }
 
 
@@ -900,13 +1028,14 @@ Rcpp::NumericVector test_persite_collapsed(
 // equals P(const) by JC symmetry (sum over kFull symmetric constant patterns).
 // outConstProb matches the uncollapsed kernel's convention: directly usable
 // as P(constant site), no kFull multiplication or nCat division by caller.
-static double pruning_jc_flat_collapsed(
+template <bool kCheck>
+static double pruning_jc_flat_collapsed_pass(
     IntegerVector parent, IntegerVector child,
     NumericVector edge_length, IntegerMatrix tip_states,
     int kFull, int kObs,
     double* buf, uint8_t* initFlg, int stride,
-    double* outConstProb = nullptr,
-    double* preAscBuf = nullptr, uint8_t* preAscInit = nullptr) {
+    double* outConstProb,
+    double* preAscBuf, uint8_t* preAscInit) {
 
   int nEdge = parent.size();
   int nTip  = tip_states.nrow();
@@ -975,6 +1104,7 @@ static double pruning_jc_flat_collapsed(
 
   const double inv_k = 1.0 / kFull;
   const MkPrime::JCRates jcRates(kFull);
+  EdgeShifts shifts(maxNode, nChar);
 
   for (int e = nEdge - 1; e >= 0; --e) {
     int par = parPtr[e];
@@ -987,12 +1117,17 @@ static double pruning_jc_flat_collapsed(
     double* clPar = buf + par * stride;
     double* clCh  = buf + ch  * stride;
 
+    const bool firstChild = !initFlg[par];
     if (!initFlg[par]) {
       for (int c = 0; c < nChar; ++c) {
         int offset = c * kEff;
         double sum_eff = 0.0;
         for (int j = 0; j < lumpIdx; ++j) sum_eff += clCh[offset + j];
         sum_eff += n_U * clCh[offset + lumpIdx];
+        if (kCheck && sum_eff < MkPrime::kRescaleBelow) {
+          sum_eff = std::ldexp(sum_eff,
+                               shifts.rescale(clCh + offset, kEff, ch, c));
+        }
         for (int i = 0; i < kEff; ++i)
           clPar[offset + i] = p_diff * sum_eff + diff_coeff * clCh[offset + i];
       }
@@ -1003,10 +1138,15 @@ static double pruning_jc_flat_collapsed(
         double sum_eff = 0.0;
         for (int j = 0; j < lumpIdx; ++j) sum_eff += clCh[offset + j];
         sum_eff += n_U * clCh[offset + lumpIdx];
+        if (kCheck && sum_eff < MkPrime::kRescaleBelow) {
+          sum_eff = std::ldexp(sum_eff,
+                               shifts.rescale(clCh + offset, kEff, ch, c));
+        }
         for (int i = 0; i < kEff; ++i)
           clPar[offset + i] *= p_diff * sum_eff + diff_coeff * clCh[offset + i];
       }
     }
+    if (kCheck && shifts.on()) shifts.propagate(par, ch, firstChild);
 
     if (outConstProb) {
       double* aPar = ascBufPtr + par * kEff;
@@ -1034,8 +1174,9 @@ static double pruning_jc_flat_collapsed(
     for (int s = 0; s < lumpIdx; ++s) sum_eff += clRoot[offset + s];
     sum_eff += n_U * clRoot[offset + lumpIdx];
     double sl = inv_k * sum_eff;
+    if (!kCheck && !(sl >= MkPrime::kUncheckedFloor)) return kRecheck;
     if (sl <= 0.0) return R_NegInf;
-    logLik += std::log(sl);
+    logLik += MkPrime::log_scaled(sl, kCheck && shifts.on() ? shifts.shift(root, c) : 0);
   }
 
   if (outConstProb) {
@@ -1050,16 +1191,33 @@ static double pruning_jc_flat_collapsed(
   return logLik;
 }
 
+// Unchecked first; again with rescaling if a character is too small to trust.
+static double pruning_jc_flat_collapsed(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    int kFull, int kObs,
+    double* buf, uint8_t* initFlg, int stride,
+    double* outConstProb = nullptr,
+    double* preAscBuf = nullptr, uint8_t* preAscInit = nullptr) {
+  const double ll = pruning_jc_flat_collapsed_pass<false>(
+      parent, child, edge_length, tip_states, kFull, kObs, buf, initFlg, stride,
+      outConstProb, preAscBuf, preAscInit);
+  return std::isnan(ll) ? pruning_jc_flat_collapsed_pass<true>(
+      parent, child, edge_length, tip_states, kFull, kObs, buf, initFlg, stride,
+      outConstProb, preAscBuf, preAscInit) : ll;
+}
 
-static double pruning_jc_acrv_flat_collapsed(
+
+template <bool kCheck>
+static double pruning_jc_acrv_flat_collapsed_pass(
     IntegerVector parent, IntegerVector child,
     NumericVector edge_length, IntegerMatrix tip_states,
     int kFull, int kObs,
     NumericVector rate_multipliers,
     double* buf, uint8_t* initFlg, int stride,
-    double* outConstProb = nullptr,
-    double* preAscBuf = nullptr, uint8_t* preAscInit = nullptr,
-    double* preSiteLikSum = nullptr) {
+    double* outConstProb,
+    double* preAscBuf, uint8_t* preAscInit,
+    double* preSiteLikSum) {
 
   int nEdge = parent.size();
   int nTip  = tip_states.nrow();
@@ -1095,6 +1253,7 @@ static double pruning_jc_acrv_flat_collapsed(
 
   const double inv_k = 1.0 / kFull;
   const MkPrime::JCRates jcRates(kFull);
+  EdgeShifts shifts(maxNode, nChar);
 
   std::memset(initFlg, 0, (maxNode + 1) * sizeof(uint8_t));
   for (int tip = 1; tip <= nTip; ++tip) {
@@ -1153,12 +1312,17 @@ static double pruning_jc_acrv_flat_collapsed(
       double* clPar = buf + par * stride;
       double* clCh  = buf + ch  * stride;
 
+      const bool firstChild = !initFlg[par];
       if (!initFlg[par]) {
         for (int c = 0; c < nChar; ++c) {
           int offset = c * kEff;
           double sum_eff = 0.0;
           for (int j = 0; j < lumpIdx; ++j) sum_eff += clCh[offset + j];
           sum_eff += n_U * clCh[offset + lumpIdx];
+          if (kCheck && sum_eff < MkPrime::kRescaleBelow) {
+            sum_eff = std::ldexp(sum_eff,
+                                 shifts.rescale(clCh + offset, kEff, ch, c));
+          }
           for (int i = 0; i < kEff; ++i)
             clPar[offset + i] = p_diff * sum_eff + diff_coeff * clCh[offset + i];
         }
@@ -1169,10 +1333,15 @@ static double pruning_jc_acrv_flat_collapsed(
           double sum_eff = 0.0;
           for (int j = 0; j < lumpIdx; ++j) sum_eff += clCh[offset + j];
           sum_eff += n_U * clCh[offset + lumpIdx];
+          if (kCheck && sum_eff < MkPrime::kRescaleBelow) {
+            sum_eff = std::ldexp(sum_eff,
+                                 shifts.rescale(clCh + offset, kEff, ch, c));
+          }
           for (int i = 0; i < kEff; ++i)
             clPar[offset + i] *= p_diff * sum_eff + diff_coeff * clCh[offset + i];
         }
       }
+      if (kCheck && shifts.on()) shifts.propagate(par, ch, firstChild);
 
       if (outConstProb) {
         double* aPar = ascBufPtr + par * kEff;
@@ -1197,7 +1366,13 @@ static double pruning_jc_acrv_flat_collapsed(
       double sum_eff = 0.0;
       for (int s = 0; s < lumpIdx; ++s) sum_eff += clRoot[offset + s];
       sum_eff += n_U * clRoot[offset + lumpIdx];
-      siteLikPtr[c] += inv_k * sum_eff;
+      if (!kCheck && !(inv_k * sum_eff >= MkPrime::kUncheckedFloor)) return kRecheck;
+      if (kCheck && shifts.on()) {
+        shifts.add_site(siteLikPtr[c], c, inv_k * sum_eff,
+                        shifts.shift(root, c));
+      } else {
+        siteLikPtr[c] += inv_k * sum_eff;
+      }
     }
 
     if (outConstProb) {
@@ -1214,13 +1389,32 @@ static double pruning_jc_acrv_flat_collapsed(
   for (int c = 0; c < nChar; ++c) {
     double avg = siteLikPtr[c] * inv_nCat;
     if (avg <= 0.0) return R_NegInf;
-    logLik += std::log(avg);
+    logLik += MkPrime::log_scaled(avg, kCheck && shifts.on() ? shifts.site_shift(c) : 0);
   }
 
   if (outConstProb)
     *outConstProb = constProbCatSum / nCat;
 
   return logLik;
+}
+
+// Unchecked first; again with rescaling if a character is too small to trust.
+static double pruning_jc_acrv_flat_collapsed(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    int kFull, int kObs,
+    NumericVector rate_multipliers,
+    double* buf, uint8_t* initFlg, int stride,
+    double* outConstProb = nullptr,
+    double* preAscBuf = nullptr, uint8_t* preAscInit = nullptr,
+    double* preSiteLikSum = nullptr) {
+  const double ll = pruning_jc_acrv_flat_collapsed_pass<false>(
+      parent, child, edge_length, tip_states, kFull, kObs, rate_multipliers,
+      buf, initFlg, stride, outConstProb, preAscBuf, preAscInit, preSiteLikSum);
+  return std::isnan(ll) ? pruning_jc_acrv_flat_collapsed_pass<true>(
+      parent, child, edge_length, tip_states, kFull, kObs, rate_multipliers,
+      buf, initFlg, stride, outConstProb, preAscBuf, preAscInit, preSiteLikSum)
+      : ll;
 }
 
 
@@ -1309,13 +1503,14 @@ Rcpp::List test_flat_jc_constprob_pair(
 }
 
 
-static double pruning_mkn_flat(
+template <bool kCheck>
+static double pruning_mkn_flat_pass(
     IntegerVector parent, IntegerVector child,
     NumericVector edge_length, IntegerMatrix tip_states,
     double rate_loss, NumericVector root_freqs,
     double* buf, uint8_t* initFlg, int stride,
-    double* outConstProb = nullptr,
-    double* preAscBuf = nullptr, uint8_t* preAscInit = nullptr) {
+    double* outConstProb,
+    double* preAscBuf, uint8_t* preAscInit) {
 
   int nEdge = parent.size();
   int nTip  = tip_states.nrow();
@@ -1385,6 +1580,7 @@ static double pruning_mkn_flat(
   }
 
   const MkPrime::MkNRates mknRates(rate_loss);
+  EdgeShifts shifts(maxNode, nChar);
 
   for (int e = nEdge - 1; e >= 0; --e) {
     int par = parPtr[e];
@@ -1398,9 +1594,12 @@ static double pruning_mkn_flat(
     double* clPar = buf + par * stride;
     double* clCh  = buf + ch  * stride;
 
+    const bool firstChild = !initFlg[par];
     if (!initFlg[par]) {
       for (int c = 0; c < nChar; ++c) {
         int offset = c * kStates;
+        if (kCheck && clCh[offset] + clCh[offset + 1] < MkPrime::kRescaleBelow)
+          shifts.rescale(clCh + offset, kStates, ch, c);
         double cl0 = clCh[offset]; double cl1 = clCh[offset + 1];
         clPar[offset]     = P00 * cl0 + P01 * cl1;
         clPar[offset + 1] = P10 * cl0 + P11 * cl1;
@@ -1409,11 +1608,14 @@ static double pruning_mkn_flat(
     } else {
       for (int c = 0; c < nChar; ++c) {
         int offset = c * kStates;
+        if (kCheck && clCh[offset] + clCh[offset + 1] < MkPrime::kRescaleBelow)
+          shifts.rescale(clCh + offset, kStates, ch, c);
         double cl0 = clCh[offset]; double cl1 = clCh[offset + 1];
         clPar[offset]     *= P00 * cl0 + P01 * cl1;
         clPar[offset + 1] *= P10 * cl0 + P11 * cl1;
       }
     }
+    if (kCheck && shifts.on()) shifts.propagate(par, ch, firstChild);
 
     // M-157: fused ascertainment (2 pseudo-chars, same P matrix)
     if (outConstProb) {
@@ -1440,8 +1642,9 @@ static double pruning_mkn_flat(
   for (int c = 0; c < nChar; ++c) {
     int offset = c * kStates;
     double sl = rfPtr[0] * clRoot[offset] + rfPtr[1] * clRoot[offset + 1];
+    if (!kCheck && !(sl >= MkPrime::kUncheckedFloor)) return kRecheck;
     if (sl <= 0.0) return R_NegInf;
-    logLik += std::log(sl);
+    logLik += MkPrime::log_scaled(sl, kCheck && shifts.on() ? shifts.shift(root, c) : 0);
   }
 
   // M-157: extract fused constant-site probability
@@ -1458,16 +1661,33 @@ static double pruning_mkn_flat(
   return logLik;
 }
 
+// Unchecked first; again with rescaling if a character is too small to trust.
+static double pruning_mkn_flat(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    double rate_loss, NumericVector root_freqs,
+    double* buf, uint8_t* initFlg, int stride,
+    double* outConstProb = nullptr,
+    double* preAscBuf = nullptr, uint8_t* preAscInit = nullptr) {
+  const double ll = pruning_mkn_flat_pass<false>(
+      parent, child, edge_length, tip_states, rate_loss, root_freqs, buf,
+      initFlg, stride, outConstProb, preAscBuf, preAscInit);
+  return std::isnan(ll) ? pruning_mkn_flat_pass<true>(
+      parent, child, edge_length, tip_states, rate_loss, root_freqs, buf,
+      initFlg, stride, outConstProb, preAscBuf, preAscInit) : ll;
+}
 
-static double pruning_mkn_acrv_flat(
+
+template <bool kCheck>
+static double pruning_mkn_acrv_flat_pass(
     IntegerVector parent, IntegerVector child,
     NumericVector edge_length, IntegerMatrix tip_states,
     double rate_loss, NumericVector root_freqs,
     NumericVector rate_multipliers,
     double* buf, uint8_t* initFlg, int stride,
-    double* outConstProb = nullptr,
-    double* preAscBuf = nullptr, uint8_t* preAscInit = nullptr,
-    double* preSiteLikSum = nullptr) {
+    double* outConstProb,
+    double* preAscBuf, uint8_t* preAscInit,
+    double* preSiteLikSum) {
 
   int nEdge = parent.size();
   int nTip  = tip_states.nrow();
@@ -1502,6 +1722,7 @@ static double pruning_mkn_acrv_flat(
     siteLikPtr = siteLikLocal.data();
   }
   const MkPrime::MkNRates mknRates(rate_loss);
+  EdgeShifts shifts(maxNode, nChar);
 
   // OPP-CL: init tips once (constant across rate categories)
   std::memset(initFlg, 0, (maxNode + 1) * sizeof(uint8_t));
@@ -1568,9 +1789,12 @@ static double pruning_mkn_acrv_flat(
       double* clPar = buf + par * stride;
       double* clCh  = buf + ch  * stride;
 
+      const bool firstChild = !initFlg[par];
       if (!initFlg[par]) {
         for (int c = 0; c < nChar; ++c) {
           int offset = c * kStates;
+          if (kCheck && clCh[offset] + clCh[offset + 1] < MkPrime::kRescaleBelow)
+            shifts.rescale(clCh + offset, kStates, ch, c);
           double cl0 = clCh[offset]; double cl1 = clCh[offset + 1];
           clPar[offset]     = P00 * cl0 + P01 * cl1;
           clPar[offset + 1] = P10 * cl0 + P11 * cl1;
@@ -1579,11 +1803,14 @@ static double pruning_mkn_acrv_flat(
       } else {
         for (int c = 0; c < nChar; ++c) {
           int offset = c * kStates;
+          if (kCheck && clCh[offset] + clCh[offset + 1] < MkPrime::kRescaleBelow)
+            shifts.rescale(clCh + offset, kStates, ch, c);
           double cl0 = clCh[offset]; double cl1 = clCh[offset + 1];
           clPar[offset]     *= P00 * cl0 + P01 * cl1;
           clPar[offset + 1] *= P10 * cl0 + P11 * cl1;
         }
       }
+      if (kCheck && shifts.on()) shifts.propagate(par, ch, firstChild);
 
       // M-157: fused ascertainment (2 pseudo-chars, same P matrix)
       if (outConstProb) {
@@ -1608,7 +1835,12 @@ static double pruning_mkn_acrv_flat(
     for (int c = 0; c < nChar; ++c) {
       int offset = c * kStates;
       double sl = rfPtr[0] * clRoot[offset] + rfPtr[1] * clRoot[offset + 1];
-      siteLikPtr[c] += sl;
+      if (!kCheck && !(sl >= MkPrime::kUncheckedFloor)) return kRecheck;
+      if (kCheck && shifts.on()) {
+        shifts.add_site(siteLikPtr[c], c, sl, shifts.shift(root, c));
+      } else {
+        siteLikPtr[c] += sl;
+      }
     }
 
     // M-157: accumulate constant-site prob for this rate category
@@ -1628,13 +1860,33 @@ static double pruning_mkn_acrv_flat(
   for (int c = 0; c < nChar; ++c) {
     double avg = siteLikPtr[c] * inv_nCat;
     if (avg <= 0.0) return R_NegInf;
-    logLik += std::log(avg);
+    logLik += MkPrime::log_scaled(avg, kCheck && shifts.on() ? shifts.site_shift(c) : 0);
   }
 
   if (outConstProb)
     *outConstProb = constProbCatSum / nCat;
 
   return logLik;
+}
+
+// Unchecked first; again with rescaling if a character is too small to trust.
+static double pruning_mkn_acrv_flat(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    double rate_loss, NumericVector root_freqs,
+    NumericVector rate_multipliers,
+    double* buf, uint8_t* initFlg, int stride,
+    double* outConstProb = nullptr,
+    double* preAscBuf = nullptr, uint8_t* preAscInit = nullptr,
+    double* preSiteLikSum = nullptr) {
+  const double ll = pruning_mkn_acrv_flat_pass<false>(
+      parent, child, edge_length, tip_states, rate_loss, root_freqs,
+      rate_multipliers, buf, initFlg, stride, outConstProb, preAscBuf,
+      preAscInit, preSiteLikSum);
+  return std::isnan(ll) ? pruning_mkn_acrv_flat_pass<true>(
+      parent, child, edge_length, tip_states, rate_loss, root_freqs,
+      rate_multipliers, buf, initFlg, stride, outConstProb, preAscBuf,
+      preAscInit, preSiteLikSum) : ll;
 }
 
 
@@ -1705,16 +1957,17 @@ static void compute_het_bins(double alpha, int k, int nBins, double* bins) {
 // Felsenstein pruning of k pseudo-characters alongside the real data.
 // This replaces the separate het_constant_site_prob() call and fixes
 // its incorrect per-edge-product shortcut.
-static double pruning_f81_het_acrv_flat(
+template <bool kCheck>
+static double pruning_f81_het_acrv_flat_pass(
     IntegerVector parent, IntegerVector child,
     NumericVector edge_length, IntegerMatrix tip_states,
     int kStates, double baseRL,
     const double* betaBins, int nBetaCat,
     NumericVector rate_multipliers,
     double* buf, uint8_t* initFlg, int stride,
-    double* outConstProb = nullptr,
-    double* preAscBuf = nullptr, uint8_t* preAscInit = nullptr,
-    double* preSiteLikSum = nullptr) {
+    double* outConstProb,
+    double* preAscBuf, uint8_t* preAscInit,
+    double* preSiteLikSum) {
 
   int nEdge = parent.size();
   int nTip  = tip_states.nrow();
@@ -1814,6 +2067,7 @@ static double pruning_f81_het_acrv_flat(
   }
 
   std::vector<double> pi(kStates);
+  EdgeShifts shifts(maxNode, nChar);
   for (int cat = 0; cat < nCat; ++cat) {
     double acrvRate = rmPtr[cat];
 
@@ -1863,12 +2117,17 @@ static double pruning_f81_het_acrv_flat(
           double* clCh  = buf + ch  * stride;
 
           // OPP-1 (F81): hoist Σ_j π_j·cl_j out of the i-loop → O(k) per char
+          const bool firstChild = !initFlg[par];
           if (!initFlg[par]) {
             for (int c = 0; c < nChar; ++c) {
               int offset = c * kStates;
               double sum_pi_cl = 0.0;
               for (int j = 0; j < kStates; ++j)
                 sum_pi_cl += pi[j] * clCh[offset + j];
+              if (kCheck && sum_pi_cl < MkPrime::kRescaleBelow) {
+                sum_pi_cl = std::ldexp(
+                  sum_pi_cl, f81_rescale(shifts, clCh + offset, kStates, ch, c));
+              }
               double base = one_minus_d * sum_pi_cl;
               for (int i = 0; i < kStates; ++i)
                 clPar[offset + i] = base + d * clCh[offset + i];
@@ -1880,11 +2139,16 @@ static double pruning_f81_het_acrv_flat(
               double sum_pi_cl = 0.0;
               for (int j = 0; j < kStates; ++j)
                 sum_pi_cl += pi[j] * clCh[offset + j];
+              if (kCheck && sum_pi_cl < MkPrime::kRescaleBelow) {
+                sum_pi_cl = std::ldexp(
+                  sum_pi_cl, f81_rescale(shifts, clCh + offset, kStates, ch, c));
+              }
               double base = one_minus_d * sum_pi_cl;
               for (int i = 0; i < kStates; ++i)
                 clPar[offset + i] *= base + d * clCh[offset + i];
             }
           }
+          if (kCheck && shifts.on()) shifts.propagate(par, ch, firstChild);
 
           // M-157: fused ascertainment (k pseudo-chars, F81 transition)
           if (outConstProb) {
@@ -1915,7 +2179,12 @@ static double pruning_f81_het_acrv_flat(
           double sl = 0.0;
           for (int s = 0; s < kStates; ++s)
             sl += pi[s] * clRoot[offset + s];
-          siteLikPtr[c] += sl;
+          if (!kCheck && !(sl >= MkPrime::kUncheckedFloor)) return kRecheck;
+          if (kCheck && shifts.on()) {
+            shifts.add_site(siteLikPtr[c], c, sl, shifts.shift(root, c));
+          } else {
+            siteLikPtr[c] += sl;
+          }
         }
 
         // M-157: accumulate constant-site prob for this component
@@ -1939,7 +2208,7 @@ static double pruning_f81_het_acrv_flat(
   for (int c = 0; c < nChar; ++c) {
     double avg = siteLikPtr[c] * inv_comp;
     if (avg <= 0.0) return R_NegInf;
-    logLik += std::log(avg);
+    logLik += MkPrime::log_scaled(avg, kCheck && shifts.on() ? shifts.site_shift(c) : 0);
   }
 
   if (outConstProb)
@@ -1948,11 +2217,33 @@ static double pruning_f81_het_acrv_flat(
   return logLik;
 }
 
+// Unchecked first; again with rescaling if a character is too small to trust.
+static double pruning_f81_het_acrv_flat(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    int kStates, double baseRL,
+    const double* betaBins, int nBetaCat,
+    NumericVector rate_multipliers,
+    double* buf, uint8_t* initFlg, int stride,
+    double* outConstProb = nullptr,
+    double* preAscBuf = nullptr, uint8_t* preAscInit = nullptr,
+    double* preSiteLikSum = nullptr) {
+  const double ll = pruning_f81_het_acrv_flat_pass<false>(
+      parent, child, edge_length, tip_states, kStates, baseRL, betaBins,
+      nBetaCat, rate_multipliers, buf, initFlg, stride, outConstProb, preAscBuf,
+      preAscInit, preSiteLikSum);
+  return std::isnan(ll) ? pruning_f81_het_acrv_flat_pass<true>(
+      parent, child, edge_length, tip_states, kStates, baseRL, betaBins,
+      nBetaCat, rate_multipliers, buf, initFlg, stride, outConstProb, preAscBuf,
+      preAscInit, preSiteLikSum) : ll;
+}
+
 
 // Per-site variant of pruning_f81_het_acrv_flat: fills siteLL[0..nChar-1]
 // with per-character log(avg_lik) instead of returning the sum.
 // Used by Gibbs kPrime sweep (M-155).
-void pruning_f81_het_acrv_persite(
+template <bool kCheck>
+static bool f81_het_acrv_persite_pass(
     IntegerVector parent, IntegerVector child,
     NumericVector edge_length, IntegerMatrix tip_states,
     int kStates, double baseRL,
@@ -2007,6 +2298,7 @@ void pruning_f81_het_acrv_persite(
   }
 
   std::vector<double> pi(kStates);
+  EdgeShifts shifts(maxNode, nChar);
   for (int cat = 0; cat < nCat; ++cat) {
     double acrvRate = rmPtr[cat];
 
@@ -2048,12 +2340,17 @@ void pruning_f81_het_acrv_persite(
           double* clPar = buf + par * stride;
           double* clCh  = buf + ch  * stride;
 
+          const bool firstChild = !initFlg[par];
           if (!initFlg[par]) {
             for (int c = 0; c < nChar; ++c) {
               int offset = c * kStates;
               double sum_pi_cl = 0.0;
               for (int j = 0; j < kStates; ++j)
                 sum_pi_cl += pi[j] * clCh[offset + j];
+              if (kCheck && sum_pi_cl < MkPrime::kRescaleBelow) {
+                sum_pi_cl = std::ldexp(
+                  sum_pi_cl, f81_rescale(shifts, clCh + offset, kStates, ch, c));
+              }
               double base = one_minus_d * sum_pi_cl;
               for (int i = 0; i < kStates; ++i)
                 clPar[offset + i] = base + d * clCh[offset + i];
@@ -2065,11 +2362,16 @@ void pruning_f81_het_acrv_persite(
               double sum_pi_cl = 0.0;
               for (int j = 0; j < kStates; ++j)
                 sum_pi_cl += pi[j] * clCh[offset + j];
+              if (kCheck && sum_pi_cl < MkPrime::kRescaleBelow) {
+                sum_pi_cl = std::ldexp(
+                  sum_pi_cl, f81_rescale(shifts, clCh + offset, kStates, ch, c));
+              }
               double base = one_minus_d * sum_pi_cl;
               for (int i = 0; i < kStates; ++i)
                 clPar[offset + i] *= base + d * clCh[offset + i];
             }
           }
+          if (kCheck && shifts.on()) shifts.propagate(par, ch, firstChild);
         }
 
         double* clRoot = buf + root * stride;
@@ -2078,7 +2380,12 @@ void pruning_f81_het_acrv_persite(
           double sl = 0.0;
           for (int s = 0; s < kStates; ++s)
             sl += pi[s] * clRoot[offset + s];
-          site_lik_sum[c] += sl;
+          if (!kCheck && !(sl >= MkPrime::kUncheckedFloor)) return true;
+          if (kCheck && shifts.on()) {
+            shifts.add_site(site_lik_sum[c], c, sl, shifts.shift(root, c));
+          } else {
+            site_lik_sum[c] += sl;
+          }
         }
 
       }  // rot
@@ -2088,7 +2395,27 @@ void pruning_f81_het_acrv_persite(
   double inv_comp = 1.0 / totalComp;
   for (int c = 0; c < nChar; ++c) {
     double avg = site_lik_sum[c] * inv_comp;
-    siteLL[c] = (avg > 0.0) ? std::log(avg) : R_NegInf;
+    siteLL[c] = (avg > 0.0)
+      ? MkPrime::log_scaled(avg, kCheck && shifts.on() ? shifts.site_shift(c) : 0)
+      : R_NegInf;
+  }
+  return false;
+}
+
+void pruning_f81_het_acrv_persite(
+    IntegerVector parent, IntegerVector child,
+    NumericVector edge_length, IntegerMatrix tip_states,
+    int kStates, double baseRL,
+    const double* betaBins, int nBetaCat,
+    NumericVector rate_multipliers,
+    double* buf, uint8_t* initFlg, int stride,
+    double* siteLL) {
+  if (f81_het_acrv_persite_pass<false>(
+      parent, child, edge_length, tip_states, kStates, baseRL, betaBins,
+      nBetaCat, rate_multipliers, buf, initFlg, stride, siteLL)) {
+    f81_het_acrv_persite_pass<true>(
+        parent, child, edge_length, tip_states, kStates, baseRL, betaBins,
+        nBetaCat, rate_multipliers, buf, initFlg, stride, siteLL);
   }
 }
 

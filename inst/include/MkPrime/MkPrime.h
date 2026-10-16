@@ -12,6 +12,7 @@
 //   models.h         JCModel, JCLumpedModel, MkNModel, F81Model
 //   pruning.h        Pruner<Model>: cached pruning, checkpoint / reject,
 //                    node marginals (upward pass), edge-aware models
+//   scaling.h        CL rescaling: rescale_cl(), add_scaled(), log_scaled()
 //   acrv.h           lognormal_rates()
 //   corrections.h    relabel_log(), ascertainment_log_correction()
 //   ascertainment.h  constant_patterns()
@@ -23,11 +24,17 @@
 // edge-aware models (transition_edge()), Pruner::invalidate_edge(),
 // Pruner::update_marginals() / node_up() / node_marginals(), and
 // transition_transpose() on JCModel, MkNModel and F81Model.
+//
+// Version 3: Pruner rescales a character's CLs once they fall below 2^-256,
+// so log_likelihood() stays finite where version 2 underflowed to -Inf.
+// node_cl() and node_up() return the rescaled CLs, with shifts from
+// node_shift() and node_up_shift(); log_site_likelihoods() is new.
 
-#define MKPRIME_HEADER_API_VERSION 2
+#define MKPRIME_HEADER_API_VERSION 3
 
 #include "transition.h"
 #include "models.h"
+#include "scaling.h"
 #include "pruning.h"
 #include "acrv.h"
 #include "corrections.h"

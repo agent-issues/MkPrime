@@ -336,8 +336,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // header_site_likelihoods
-Rcpp::NumericVector header_site_likelihoods(std::string model, Rcpp::IntegerVector parent, Rcpp::IntegerVector child, Rcpp::NumericVector edge_length, Rcpp::IntegerMatrix tip_states, int kStates, double param, Rcpp::NumericVector pi, Rcpp::NumericVector rates);
-RcppExport SEXP _MkPrime_header_site_likelihoods(SEXP modelSEXP, SEXP parentSEXP, SEXP childSEXP, SEXP edge_lengthSEXP, SEXP tip_statesSEXP, SEXP kStatesSEXP, SEXP paramSEXP, SEXP piSEXP, SEXP ratesSEXP) {
+Rcpp::NumericVector header_site_likelihoods(std::string model, Rcpp::IntegerVector parent, Rcpp::IntegerVector child, Rcpp::NumericVector edge_length, Rcpp::IntegerMatrix tip_states, int kStates, double param, Rcpp::NumericVector pi, Rcpp::NumericVector rates, bool log);
+RcppExport SEXP _MkPrime_header_site_likelihoods(SEXP modelSEXP, SEXP parentSEXP, SEXP childSEXP, SEXP edge_lengthSEXP, SEXP tip_statesSEXP, SEXP kStatesSEXP, SEXP paramSEXP, SEXP piSEXP, SEXP ratesSEXP, SEXP logSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -350,7 +350,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< double >::type param(paramSEXP);
     Rcpp::traits::input_parameter< Rcpp::NumericVector >::type pi(piSEXP);
     Rcpp::traits::input_parameter< Rcpp::NumericVector >::type rates(ratesSEXP);
-    rcpp_result_gen = Rcpp::wrap(header_site_likelihoods(model, parent, child, edge_length, tip_states, kStates, param, pi, rates));
+    Rcpp::traits::input_parameter< bool >::type log(logSEXP);
+    rcpp_result_gen = Rcpp::wrap(header_site_likelihoods(model, parent, child, edge_length, tip_states, kStates, param, pi, rates, log));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -1455,7 +1456,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_header_lognormal_rates", (DL_FUNC) &_MkPrime_header_lognormal_rates, 2},
     {"_MkPrime_header_constant_patterns", (DL_FUNC) &_MkPrime_header_constant_patterns, 3},
     {"_MkPrime_header_pruner_trace", (DL_FUNC) &_MkPrime_header_pruner_trace, 9},
-    {"_MkPrime_header_site_likelihoods", (DL_FUNC) &_MkPrime_header_site_likelihoods, 9},
+    {"_MkPrime_header_site_likelihoods", (DL_FUNC) &_MkPrime_header_site_likelihoods, 10},
     {"_MkPrime_header_transition_matrices", (DL_FUNC) &_MkPrime_header_transition_matrices, 5},
     {"_MkPrime_header_marginals", (DL_FUNC) &_MkPrime_header_marginals, 10},
     {"_MkPrime_header_edge_renumber", (DL_FUNC) &_MkPrime_header_edge_renumber, 7},
