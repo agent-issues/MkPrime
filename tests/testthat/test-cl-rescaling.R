@@ -166,11 +166,18 @@ test_that("MkN and F81 kernels rescale", {
     .LogPruneRef(tree, states, F81P, freqF81, rates), tolerance = 1e-12
   )
 
-  # Flat kernel behind MkpLogLikelihood()
+  # Flat kernels behind MkpLogLikelihood()
   mkd <- MkPrimeData(MatrixToPhyDat(states), neomorphic = 1:2)
   expect_equal(
     MkpLogLikelihood(tree, mkd, rate_loss = rl, coding = "none"),
     sum(ref), tolerance = 1e-12
+  )
+  acrvRates <- header_lognormal_rates(0.8, qnorm((1:4 - 0.5) / 4))
+  expect_equal(
+    MkpLogLikelihood(tree, mkd, rate_loss = rl, rate_log_sd = 0.8, nCat = 4L,
+                     coding = "none"),
+    sum(.LogPruneRef(tree, states, .MknP(rl), freqs, acrvRates)),
+    tolerance = 1e-12
   )
 })
 
@@ -240,6 +247,13 @@ test_that("Gibbs partial-CL evaluators rescale", {
                             st$betaScale),
     tolerance = 1e-12
   )
+
+  # Ascertainment pseudo-characters take the same partial-CL path
+  variable <- .UnderflowChain(MkPrimeModel(coding = "variable", nCat = 1L))
+  expect_true(all(is.finite(
+    gibbs_spr_enumerate_cpp(variable$dataPtr, variable$statePtr,
+                            pruneRow)$logLik
+  )))
 
   for (nodeA in edge[c(5, 60, 150), 2]) {
     res <- validate_swap_partial_cl(chain$dataPtr, chain$statePtr, nodeA)
