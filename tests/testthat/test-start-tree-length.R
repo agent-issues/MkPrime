@@ -37,6 +37,7 @@ SaturatedData <- function() {
 
 test_that("edge-less start trees total three times expSteps", {
   expect_equal(.StartEdgeLengths(7L, 2.5), rep(7.5 / 7, 7))
+  expect_equal(.StartEdgeLengths(798L, 8.5), rep(0.1, 798))
   tree <- BalancedTree(8)
   tree$edge.length <- NULL
   mkd <- MkPrimeData(MatrixToPhyDat(matrix(
@@ -63,6 +64,7 @@ test_that("default start avoids the short-tree ACRV basin (#474)", {
   post <- allow_warning(RunMkPrime(mkd, mcmc = mcmc), "without stabilisation")
   # Started at 0.1 per edge (tree length 3), chains sit at rate_log_sd ~ 6
   # and tree length ~ 2 for 20 000+ iterations; the posterior is near 1, 16.
+  expect_gt(length(unique(post$samples[, "log_posterior"])), 10)
   expect_lt(median(post$samples[, "rate_log_sd"]), 3)
   expect_gt(median(post$samples[, "tree_length"]), 8)
 })

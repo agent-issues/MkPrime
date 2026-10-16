@@ -27,7 +27,7 @@ RunMkPrime(
 from \code{TreeSearch::AdditionTree()} (a neighbour-joining tree if
 \pkg{TreeSearch} is absent); polytomies are resolved at random, with a
 warning, and missing edge lengths are set equal, summing to three times
-the prior mean tree length (\code{expSteps}).}
+\code{expSteps} (see \code{\link[=MkPrimeModel]{MkPrimeModel()}}) but no shorter than 0.1 each.}
 
 \item{neomorphic, knownStates}{Passed to \code{\link[=MkPrimeData]{MkPrimeData()}} if \code{data} is
 a \code{phyDat} object.}

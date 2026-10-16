@@ -16,7 +16,7 @@
 #'   from `TreeSearch::AdditionTree()` (a neighbour-joining tree if
 #'   \pkg{TreeSearch} is absent); polytomies are resolved at random, with a
 #'   warning, and missing edge lengths are set equal, summing to three times
-#'   the prior mean tree length (`expSteps`).
+#'   `expSteps` (see [MkPrimeModel()]) but no shorter than 0.1 each.
 #' @param neomorphic,knownStates Passed to [MkPrimeData()] if `data` is
 #'   a `phyDat` object.
 #' @param model An `MkPrimeModel` object, or `NULL` for defaults.
@@ -848,12 +848,13 @@ RunMkPrime <- function(data, tree = NULL,
 
 
 # Equal edge lengths for a start tree that has none, summing to three times
-# the prior mean tree length. Parsimony undercounts changes on saturated
-# data, so the posterior tree length can exceed expSteps several-fold; under
-# ACRV a chain that starts below it can stick in a short-tree, high
-# rate_log_sd basin (#474). Starting long costs only a few hundred iterations.
+# expSteps. Parsimony undercounts changes on saturated data, so the posterior
+# tree length can exceed expSteps several-fold; under ACRV a chain that starts
+# below it can stick in a short-tree, high rate_log_sd basin (#474). Edges
+# never start below 0.1: on many-tip trees shorter edges can underflow the
+# start likelihood (#346).
 .StartEdgeLengths <- function(nEdge, expSteps) {
-  rep(3 * expSteps / nEdge, nEdge)
+  rep(max(3 * expSteps / nEdge, 0.1), nEdge)
 }
 
 

@@ -9,9 +9,9 @@
 #' @param data A `phyDat` object or `MkPrimeData` object. To fix the number
 #'   of states of some characters, as `knownStates` does in [RunMkPrime()],
 #'   pass `MkPrimeData(data, knownStates = ...)`.
-#' @param tree A starting tree (`phylo` object), or `NULL` (default) to use a
-#'   neighbour-joining tree built from the data; missing edge lengths are
-#'   set as in [RunMkPrime()].
+#' @param tree `phylo` object giving the starting tree, or `NULL` to start from
+#'   a neighbour-joining tree; missing edge lengths are set as in
+#'   [RunMkPrime()].
 #' @param neomorphic Integer vector of neomorphic character indices (if `data`
 #'   is `phyDat`). Ignored if `data` is `MkPrimeData`.
 #' @param model An `MkPrimeModel` object. Default: `MkPrimeModel()`.
@@ -104,7 +104,7 @@ mkp_stepping_stone <- function(data, tree = NULL,
 
   if (is.null(tree)) {
     njInput <- if (inherits(data, "phyDat")) data else mkd$phyDat
-    tree <- TreeTools::NJTree(njInput, edgeLengths = TRUE)
+    tree <- TreeTools::NJTree(njInput)
     if (verbose) {
       cli::cli_alert_info("No starting tree supplied; using neighbour-joining tree.")
     }
