@@ -88,6 +88,16 @@ test_that("MkPrimeData rejects knownStates < kObs", {
 })
 
 
+test_that("MkPrimeData rejects unnamed knownStates", {
+  mat <- matrix(c(0, 1, 0, 1, 0, 1, 1, 0, 0, 1), nrow = 5, ncol = 2,
+                dimnames = list(paste0("t", 1:5), NULL))
+  pd <- MatrixToPhyDat(mat)
+  expect_error(MkPrimeData(pd, knownStates = rep(4L, 2)), "named")
+  mkd <- MkPrimeData(pd, knownStates = setNames(rep(4L, 2), 1:2))
+  expect_identical(mkd$type, c("known", "known"))
+})
+
+
 test_that("MkPrimeData rejects overlap between neomorphic and knownStates", {
   mat <- matrix(c(0, 1, 0, 1, 0), nrow = 5, ncol = 1,
                 dimnames = list(paste0("t", 1:5), NULL))

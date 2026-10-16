@@ -9,8 +9,8 @@
 #'   (asymmetric binary, 0 = absent, 1 = present). Default: none.
 #' @param knownStates Named integer vector specifying the known true number of
 #'   states for specific characters. Names are character indices (as strings),
-#'   values are the true k. Characters listed here use standard Mk(k) with no
-#'   k' inference.
+#'   values are the true k; an unnamed vector is an error. Characters listed
+#'   here use standard Mk(k) with no k' inference.
 #'
 #' @details
 #' Characters not listed in `neomorphic` or `knownStates` are classified as
@@ -67,6 +67,12 @@ MkPrimeData <- function(data,
 
   # Validate knownStates
   if (length(knownStates)) {
+    if (is.null(names(knownStates))) {
+      cli::cli_abort(c(
+        "{.arg knownStates} must be named by character index.",
+        "i" = "Use e.g. {.code setNames(rep(4L, nChar), seq_len(nChar))}."
+      ))
+    }
     ksIdx <- as.integer(names(knownStates))
     if (any(is.na(ksIdx)) || any(ksIdx < 1) || any(ksIdx > nChar)) {
       cli::cli_abort(
