@@ -46,6 +46,13 @@ outRoot <- {
     "dev/red-team/sbc-results-mixed"
 }
 dir.create(outRoot, recursive = TRUE, showWarnings = FALSE)
+# Stamped into the verdict so aggregate-verdicts.R can tell this run's file from
+# one a previous submission left in the same outRoot.
+runId <- {
+  ix <- which(args == "--run-id")
+  if (length(ix) && length(args) >= ix + 1L) args[ix + 1L] else
+    sprintf("local-%s-%d", format(Sys.time(), "%Y%m%d%H%M%S"), Sys.getpid())
+}
 
 cat(sprintf("SBC mixed harness | mode=%s | seedBase=%d | out=%s\n",
             mode, seedBase, outRoot))
@@ -434,6 +441,7 @@ utils::write.csv(df, file.path(armDir, "rank-matrix.csv"), row.names = FALSE)
 # Top-level verdict (mirroring sbc.R layout)
 topLines <- c(
   "SBC mixed-partition summary",
+  sprintf("run_id:   %s", runId),
   sprintf("mode:     %s", mode),
   sprintf("seedBase: %d", seedBase),
   sprintf("N_sim:    %d  L:%d  thin:%d", N_SIM, L_SAMPLES, N_THIN),

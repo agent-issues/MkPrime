@@ -61,8 +61,9 @@ cat("\n--- (a) GLOBAL pooled AD (>0.05) + per-batch AD (no <0.01) ---\n")
 for (p in params)
   cat(sprintf("  %-12s pooled=%.4f  b1=%.4f  b2=%.4f\n",
               p, pooledAD[[p]], batch1AD[[p]], batch2AD[[p]]))
-clause_a <- all(pooledAD > 0.05, na.rm = TRUE) &&
-            all(c(batch1AD, batch2AD) >= 0.01, na.rm = TRUE)
+# An NA AD (fewer than 4 finite ranks) is no evidence of uniformity: it fails.
+clause_a <- isTRUE(all(pooledAD > 0.05)) &&
+            isTRUE(all(c(batch1AD, batch2AD) >= 0.01))
 
 # ---- (b) TARGETED low-p (the actual fix) ----------------------------------
 p_true  <- vapply(pooled, function(s) s$p_true, numeric(1))

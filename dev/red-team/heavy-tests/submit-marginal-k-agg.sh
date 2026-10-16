@@ -11,8 +11,10 @@
 # Aggregation step for the marginal-k SBC array (submit-marginal-k-sbc.sh).
 # Submit with an afterany dependency on the array job:
 #
-#     ARR=$(sbatch --parsable submit-marginal-k-sbc.sh)
-#     sbatch --dependency=afterany:${ARR} submit-marginal-k-agg.sh
+#     ARR=$(sbatch --parsable --export=ALL,BATCH=1 submit-marginal-k-sbc.sh)
+#     sbatch --dependency=afterany:${ARR} --export=ALL,BATCH=1 submit-marginal-k-agg.sh
+#
+# Pass the SAME BATCH as the array so this reads that batch's shards.
 #
 # afterany (not afterok): a single dead shard then costs its 5 sims, not the
 # whole verdict — the harness' min_good filter tolerates missing shards.
@@ -35,10 +37,21 @@ SRC=${RT}/mkp-source
 export R_LIBS_USER="${RT}/lib:${PROJECT}/lib"
 export R_LIBS="${RT}/lib:${PROJECT}/lib"
 
-mkdir -p "${RT}/logs"
-mkdir -p "${SRC}/dev/red-team/heavy-tests/marginal-k/sbc-results-hamilton"
+# ---- Batch -> seedBase + output dir (MUST match between array and aggregate)
+BATCH="${BATCH:-1}"
+case "${BATCH}" in
+  1) SEEDBASE=20260528; OUTSUB=sbc-results ;;
+  2) SEEDBASE=20260901; OUTSUB=sbc-results-b2 ;;
+  *) echo "Unknown BATCH=${BATCH} (expected 1 or 2)"; exit 1 ;;
+esac
+OUTDIR="${SRC}/dev/red-team/heavy-tests/marginal-k/${OUTSUB}"
+export MARGINAL_K_SBC_SEEDBASE=${SEEDBASE}
+export MARGINAL_K_SBC_OUTDIR="${OUTDIR}"
 
-echo "[$(date)] marginal-k SBC AGGREGATE (job ${SLURM_JOB_ID})"
+mkdir -p "${RT}/logs"
+mkdir -p "${OUTDIR}-hamilton"
+
+echo "[$(date)] marginal-k SBC AGGREGATE BATCH=${BATCH} (job ${SLURM_JOB_ID})  OUTDIR=${OUTDIR}"
 cd "${SRC}"
 
 export MARGINAL_K_SBC_NSHARD=40
@@ -46,8 +59,8 @@ export MARGINAL_K_SBC_AGGREGATE=1
 Rscript "${SRC}/dev/red-team/heavy-tests/marginal-k/T-SBC-marginal-geometric.R"
 
 # Mirror artefacts into the Hamilton-results dir for easier collection.
-RESULTS_SRC="${SRC}/dev/red-team/heavy-tests/marginal-k/sbc-results"
-RESULTS_DST="${SRC}/dev/red-team/heavy-tests/marginal-k/sbc-results-hamilton"
+RESULTS_SRC="${OUTDIR}"
+RESULTS_DST="${OUTDIR}-hamilton"
 if [ -d "${RESULTS_SRC}" ]; then
   cp -r "${RESULTS_SRC}"/* "${RESULTS_DST}/" || true
 fi

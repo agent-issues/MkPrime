@@ -43,6 +43,12 @@
 #   MARGINAL_K_OVL_EXTRA=weightedSpr Rscript T-OVL-sampled-vs-marginal.R
 # With the var unset, both modes run the PRODUCTION gated schedule (what ships).
 #
+# PRIOR VARIANT: pinned, never left to MkPrimeModel()'s default, which changed
+# from "conditional" (Model B) to "unconditional" (Model A) on 2026-06-04 and so
+# silently changed what a rerun tests. Default "unconditional" (what ships);
+# override with MARGINAL_K_PRIOR_VARIANT=conditional. The 2026-06 recorded
+# verdicts were Model B. The value is written into the .rds and verdict file.
+#
 # DO NOT RUN THE FULL GRID INLINE — heavy. Submit to Hamilton via the companion
 # submit-marginal-k-ovl.sh. For a local end-to-end check use MARGINAL_K_OVL_QUICK=1.
 
@@ -83,6 +89,8 @@ P_TRUE     <- 0.25        # k' ~ 2 + Geo(0.25): mean ~5 states. Low p keeps a re
 Z_BAR      <- 3.0         # equivalence band: |Delta| < Z_BAR * combined SE
 ESS_FLOOR  <- 200L        # per param per mode; below => INCONCLUSIVE
 PARAMS     <- c("tree_length", "rate_log_sd", "p")
+MIN_CONCLUSIVE <- 0.5     # PASS needs at least this fraction of params conclusive
+PRIOR_VARIANT <- Sys.getenv("MARGINAL_K_PRIOR_VARIANT", unset = "unconditional")
 
 # Extra MkPrimeMCMC flags to force ON in BOTH modes (Phase 2 move re-enable gate).
 .parse_extra <- function() {
@@ -237,6 +245,7 @@ run_cell <- function(nTip, nChar, rep) {
   run_one <- function(mode) {
     model <- suppressMessages(MkPrimeModel(kPrimePrior    = "geometric",
                                            likelihoodMode = mode,
+                                           priorVariant   = PRIOR_VARIANT,
                                            coding         = "variable"))
     # Pin thinning to store ~2000 draws so the batch-means ESS estimate is not
     # artificially capped below ESS_FLOOR by too few stored samples.
@@ -262,7 +271,16 @@ run_cell <- function(nTip, nChar, rep) {
     }
   }
   list(cell = cell_name, seed = seed, frac_latent = sim$frac_latent,
-       extra = names(EXTRA_MCMC), cmp = cmp)
+       extra = names(EXTRA_MCMC), priorVariant = PRIOR_VARIANT, cmp = cmp)
+}
+
+# Verdict over every cell/param status. INCONCLUSIVE counts as neither PASS nor
+# FAIL, so without a floor one conclusive PASS among dozens of INCONCLUSIVEs
+# would pass the gate on almost no evidence.
+OvlVerdict <- function(statuses, minConclusive = MIN_CONCLUSIVE) {
+  if (any(statuses == "FAIL")) return("FAIL")
+  conclusive <- mean(statuses == "PASS")
+  if (length(statuses) && conclusive >= minConclusive) "PASS" else "INCONCLUSIVE"
 }
 
 # ---------------------------------------------------------------------------
@@ -290,19 +308,15 @@ if (sys.nframe() == 0L) {
     saveRDS(results, out_rds)
   }
 
-  # Verdict: PASS iff every conclusive cell/param PASSes and at least one is
-  # conclusive. INCONCLUSIVE cells do not count as PASS or FAIL.
-  any_fail <- FALSE; any_pass <- FALSE; n_incon <- 0L
-  cat(sprintf("\n[T-OVL] schedule: %s | Z_BAR=%.1f ESS_FLOOR=%d\n",
+  statuses <- character(0L)
+  cat(sprintf("\n[T-OVL] schedule: %s | priorVariant=%s | Z_BAR=%.1f ESS_FLOOR=%d\n",
               if (length(EXTRA_MCMC)) paste(names(EXTRA_MCMC), collapse = "+")
-              else "PRODUCTION (gated)", Z_BAR, ESS_FLOOR))
+              else "PRODUCTION (gated)", PRIOR_VARIANT, Z_BAR, ESS_FLOOR))
   for (cn in names(results)) {
     fl <- results[[cn]]$frac_latent
     for (pn in names(results[[cn]]$cmp)) {
       r <- results[[cn]]$cmp[[pn]]
-      if (identical(r$status, "FAIL")) any_fail <- TRUE
-      if (identical(r$status, "PASS")) any_pass <- TRUE
-      if (identical(r$status, "INCONCLUSIVE")) n_incon <- n_incon + 1L
+      statuses <- c(statuses, r$status)
       cat(sprintf("[T-OVL] %s : %-12s : %-12s d_mean=%5.2f d_sd=%5.2f ESS=(%.0f,%.0f)\n",
                   cn, pn, r$status,
                   ifelse(is.finite(r$d_mean), r$d_mean, NA),
@@ -311,11 +325,19 @@ if (sys.nframe() == 0L) {
                   ifelse(is.finite(r$ess_m), r$ess_m, NA)))
     }
   }
-  verdict <- if (any_fail) "FAIL" else if (any_pass) "PASS" else "INCONCLUSIVE"
-  cat(sprintf("[T-OVL] VERDICT: %s  (inconclusive params: %d)\n", verdict, n_incon))
+  verdict <- OvlVerdict(statuses)
+  n_incon <- sum(statuses == "INCONCLUSIVE")
+  cat(sprintf("[T-OVL] VERDICT: %s  (inconclusive params: %d / %d)\n", verdict,
+              n_incon, length(statuses)))
   # Per-cell array tasks write a per-cell verdict; the gather step aggregates.
   vfile <- if (!is.na(cell_sel))
              sprintf("T-OVL-%s-cell%02d-verdict.txt", tag, cell_sel)
            else sprintf("T-OVL-%s-verdict.txt", tag)
-  writeLines(verdict, file.path(OUT_DIR, vfile))
+  writeLines(c(verdict,
+               sprintf("priorVariant: %s", PRIOR_VARIANT),
+               sprintf("schedule: %s", tag),
+               sprintf("conclusive: %d / %d (PASS needs >= %.0f%%, no FAIL)",
+                       sum(statuses == "PASS"), length(statuses),
+                       100 * MIN_CONCLUSIVE)),
+             file.path(OUT_DIR, vfile))
 }

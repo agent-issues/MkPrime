@@ -34,6 +34,14 @@
 #       Rscript -e 'pkgload::load_all(getwd())'   # NOT devtools (not installed)
 #     mkdir -p dev/red-team/heavy-tests/marginal-k/sbc-results/shards
 #
+# Two disjoint seed batches (the pre-registered two-batch bar) need disjoint
+# output dirs, selected with --export=ALL,BATCH={1,2}:
+#   BATCH=1 -> seedBase 20260528 -> sbc-results/
+#   BATCH=2 -> seedBase 20260901 -> sbc-results-b2/
+#   A1=$(sbatch --parsable --export=ALL,BATCH=1 submit-marginal-k-sbc.sh)
+#   sbatch --dependency=afterany:${A1} --export=ALL,BATCH=1 submit-marginal-k-agg.sh
+#   (likewise BATCH=2)
+#
 # The stale-.so guard below is belt-and-braces: if the pre-build did not take,
 # every task refuses to run rather than 40 of them racing to recompile.
 #
@@ -55,9 +63,20 @@ SRC=${RT}/mkp-source
 export R_LIBS_USER="${RT}/lib:${PROJECT}/lib"
 export R_LIBS="${RT}/lib:${PROJECT}/lib"
 
+# ---- Batch -> seedBase + output dir (MUST match between array and aggregate)
+BATCH="${BATCH:-1}"
+case "${BATCH}" in
+  1) SEEDBASE=20260528; OUTSUB=sbc-results ;;
+  2) SEEDBASE=20260901; OUTSUB=sbc-results-b2 ;;
+  *) echo "Unknown BATCH=${BATCH} (expected 1 or 2)"; exit 1 ;;
+esac
+OUTDIR="${SRC}/dev/red-team/heavy-tests/marginal-k/${OUTSUB}"
+export MARGINAL_K_SBC_SEEDBASE=${SEEDBASE}
+export MARGINAL_K_SBC_OUTDIR="${OUTDIR}"
+
 mkdir -p "${RT}/logs"
 # Submit-side shard dir (idempotent; harness also dir.create()s defensively).
-mkdir -p "${SRC}/dev/red-team/heavy-tests/marginal-k/sbc-results/shards"
+mkdir -p "${OUTDIR}/shards"
 
 # ---- Stale-/missing-.so guard (advisor): never recompile in array context --
 SO="${SRC}/src/MkPrime.so"
@@ -70,7 +89,7 @@ if find "${SRC}/src" \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -newer 
   exit 1
 fi
 
-echo "[$(date)] marginal-k SBC shard ${SLURM_ARRAY_TASK_ID} (geometric arm)"
+echo "[$(date)] marginal-k SBC BATCH=${BATCH} seedBase=${SEEDBASE} shard ${SLURM_ARRAY_TASK_ID} (geometric arm)"
 echo "  array_job=${SLURM_ARRAY_JOB_ID} task=${SLURM_ARRAY_TASK_ID}"
 echo "  TMPDIR=${TMPDIR}  R_LIBS=${R_LIBS}  SRC=${SRC}"
 

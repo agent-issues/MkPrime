@@ -1,5 +1,7 @@
 # MARGINAL-K-CACHE-002 — resume brief (2026-05-29 ~19:30)
 
+The two-batch pass recorded below is not regenerable from committed config: batch 2 ran through `local-full-sbc-b2.sh` and was pooled by `pool-batches.R` and `lowp-subbin.R`, none of which were committed.
+
 > ## ★ CURRENT STATUS 2026-05-30 — STAGE 1 TRUNCATION FIX COMMITTED (e5ebf90) + PRE-REGISTERED 2-BATCH SBC CONFIRMED. NEXT: Stage 1b (wire K from R), then Stage 2 (truncate sampled_k). NOT pushed.
 > COMMITS on feat/marginal-k (NOT pushed): 8a26872 (INIT freeze fix) <- e05c817 (SBC backfill array) <- e5ebf90 (TRUNC-001 cap+Z).
 > e5ebf90 = 5 files: src/mcmc.cpp, src/mcmc_state.h (kprimeTruncK=30), tests/testthat/test-marginal-k-truncation.R,
