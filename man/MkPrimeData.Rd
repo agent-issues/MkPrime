@@ -15,8 +15,7 @@ MkPrimeData(data, neomorphic = integer(0), knownStates = integer(0))
 \item{knownStates}{Named integer vector specifying the known true number of
 states for specific characters. Names are character indices (as strings),
 values are the true k; an unnamed vector is an error. Characters listed
-here use standard Mk(k) with no
-k' inference.}
+here use standard Mk(k) with no k' inference.}
 }
 \value{
 An object of class \code{"MkPrimeData"}, a list with components:

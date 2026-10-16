@@ -186,7 +186,7 @@ Pass the `phyDat` object directly to `RunMkPrime()` together with the
 neomorphic character indices. The function calls `MkPrimeData()` internally if
 you pass a `phyDat` rather than a pre-built `MkPrimeData` object. A
 starting tree is built automatically from the data (an addition tree via
-`TreeSearch::AdditionTree()`, or neighbour-joining if \pkg{TreeSearch} is
+`TreeSearch::AdditionTree()`, or neighbour-joining if \**TreeSearch** is
 unavailable);
 pass `tree =` explicitly if you prefer a different starting topology.
 
