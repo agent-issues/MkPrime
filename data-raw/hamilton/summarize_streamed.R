@@ -147,6 +147,10 @@ invisible(gc(verbose = FALSE))
 # maxRhat = 1.1` is paid for (#102).
 .BURNIN_FRAC <- 0.25
 
+if (utils::packageVersion("data.table") < "1.16.0") {
+  stop("fread(fill = Inf) needs data.table >= 1.16.0; run install_dt.R")
+}
+
 t0 <- Sys.time()
 per_run <- lapply(log_files, function(f) {
   d <- fread(f, sep = "\t", header = TRUE,

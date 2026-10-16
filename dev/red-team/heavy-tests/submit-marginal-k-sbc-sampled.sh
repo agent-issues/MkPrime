@@ -2,7 +2,7 @@
 #SBATCH --job-name=rt-mk-sbc-samp
 #SBATCH --partition=shared
 #SBATCH --array=0-39
-#SBATCH --time=00:15:00
+#SBATCH --time=00:40:00
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=4G
 #SBATCH --gres=tmp:2G

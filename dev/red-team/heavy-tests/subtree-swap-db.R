@@ -1,5 +1,11 @@
 # dev/red-team/heavy-tests/subtree-swap-db.R
 #
+# RETIRED. This harness re-implements the PRE-FIX swap kernels in R, so it
+# no longer tests shipped code (the "SAME functions" claim below is stale).
+# Superseded per dev/red-team/proofs/gibbs-subtree-swap-hastings.md section 4a;
+# the live gates are tests/testthat/test-*-subtree-swap-invariance.R. Kept as
+# the record of how SWAP-001/SWAP-002 were first measured.
+#
 # Sub-harness D2(b): β=0 detailed-balance test for the two subtree-swap
 #                    moves flagged OPEN by L3 (math-prover, Wave 1).
 #
