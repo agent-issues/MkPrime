@@ -23,6 +23,13 @@ namespace MkPrime {
 const double kRescaleBelow = 8.6361685550944446e-78;  // 2^-256
 const double kLn2 = 0.69314718055994530942;
 
+// A kernel may first run without rescaling, and keep the result if every
+// character's root site likelihood is at least kUncheckedFloor (2^-700).
+// Unrescaled CLs are at most 1 and transition rows sum to 1, so the largest
+// entry of a CL vector never increases on the way to the root: nothing that
+// mattered can have underflowed.
+const double kUncheckedFloor = 1.90109156629516e-211;  // 2^-700
+
 // Rescales cl[0..k) so that its largest entry lies in [0.5, 1); returns the
 // shift applied (stored = true * 2^shift), 0 if every entry is zero.
 inline int rescale_cl(double* cl, int k) {

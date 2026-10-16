@@ -61,19 +61,22 @@ struct CLShifts {
 // Shifts of an array of CL vectors, one slot per vector.
 struct ShiftStore {
   int nChar = 0;
-  std::vector<int> v;
+  std::vector<int> v;  // allocated at the first ensure()
   std::vector<uint8_t> on;
 
   void allocate(size_t nSlot, int nChar_) {
     nChar = nChar_;
-    v.assign(nSlot * nChar, 0);
+    v.clear();
     on.assign(nSlot, 0);
   }
+  void clear_all() { std::fill(on.begin(), on.end(), 0); }
+  bool any() const { return std::find(on.begin(), on.end(), 1) != on.end(); }
   const int* get(size_t i) const {
     return on[i] ? v.data() + i * nChar : nullptr;
   }
   void clear(size_t i) { on[i] = 0; }
   int* ensure(size_t i) {
+    if (v.empty()) v.assign(on.size() * nChar, 0);
     int* p = v.data() + i * nChar;
     if (!on[i]) {
       std::fill(p, p + nChar, 0);
@@ -125,18 +128,13 @@ inline void mul_rescale(double* cur, const double* f, int nChar, int k,
   }
 }
 
-// Candidate paths are first multiplied out without rescaling. No entry of a
-// path vector exceeds the largest entry of the vector before it (transition
-// rows sum to 1 and every factor is at most 1), so if each character's root
-// block sums to at least 2^-700, its largest entry is at least 2^-700 / k and
-// any entry that underflowed on the way was negligible beside it. Otherwise
-// the path is recomputed with rescaling.
-inline bool path_needs_check(const double* root, int nChar, int k) {
-  const double kPathRecheckBelow = 1.90109156629516e-211;  // 2^-700
+// Candidate paths are first multiplied out without rescaling, and again with
+// it if any character's root site likelihood is below kUncheckedFloor
+// (scaling.h). Cached CLs are rescaled or sum to at least kRescaleBelow, so
+// the checked pass cannot underflow either.
+inline bool roots_too_small(const double* rootSl, int nChar) {
   for (int c = 0; c < nChar; ++c) {
-    double sum = 0.0;
-    for (int s = 0; s < k; ++s) sum += root[c * k + s];
-    if (!(sum >= kPathRecheckBelow)) return true;
+    if (!(rootSl[c] >= MkPrime::kUncheckedFloor)) return true;
   }
   return false;
 }
@@ -402,10 +400,15 @@ inline double CLGroup::rootSiteLik(const double* rootCL, int c) const {
 // ---------------------------------------------------------------------------
 // Caching downpass: full postorder traversal, storing I, F0, F1 per node
 // ---------------------------------------------------------------------------
-static void caching_downpass(CLGroup& grp, const TreeNav& topo,
-                              const IntegerVector& parent,
-                              const IntegerVector& child,
-                              const NumericVector& rates) {
+// One pass of caching_downpass(). Unchecked, it rescales nothing and returns
+// false if any character's root site likelihood is below kRescaleBelow.
+// Otherwise no node can have fallen below it either (the largest CL entry
+// never increases towards the root), so the result is exactly what a checked
+// pass gives.
+static bool caching_downpass_pass(CLGroup& grp, const TreeNav& topo,
+                                  const IntegerVector& parent,
+                                  const IntegerVector& child,
+                                  const NumericVector& rates, bool check) {
   int nEdge   = parent.size();
   int nTip    = topo.nTip;
   int kStates = grp.kStates;
@@ -447,7 +450,7 @@ static void caching_downpass(CLGroup& grp, const TreeNav& topo,
       double t = topo.edgeLen[e] * rate * grp.rateScale;
 
       // ch_ is complete once its own edge is reached.
-      if (ch_ > nTip) {
+      if (check && ch_ > nTip) {
         const size_t slot = grp.ISlot(cat, ch_);
         rescale_small(grp.I(cat, ch_), nChar, kStates,
                       [&]() { return grp.Ish.ensure(slot); });
@@ -456,11 +459,11 @@ static void caching_downpass(CLGroup& grp, const TreeNav& topo,
       // Compute transition: contrib = P(t) × I[ch_]
       grp.transition(grp.I(cat, ch_), contrib.data(), t);
 
-      // Track how many children have been seen (0, 1, 2 for root's 3rd)
-      if (nChildSeen[par] == 0) {
-        grp.Ish.clear(grp.ISlot(cat, par));
+      if (check) {
+        if (nChildSeen[par] == 0) grp.Ish.clear(grp.ISlot(cat, par));
+        grp.Ish.add(grp.ISlot(cat, par), grp.IS(cat, ch_));
       }
-      grp.Ish.add(grp.ISlot(cat, par), grp.IS(cat, ch_));
+      // Track how many children have been seen (0, 1, 2 for root's 3rd)
       if (nChildSeen[par] == 0) {
         std::memcpy(grp.F0(cat, par), contrib.data(), stride * sizeof(double));
         std::memcpy(grp.I(cat, par),  contrib.data(), stride * sizeof(double));
@@ -476,6 +479,25 @@ static void caching_downpass(CLGroup& grp, const TreeNav& topo,
       }
       nChildSeen[par]++;
     }
+    if (!check) {
+      const double* rootCl = grp.I(cat, topo.root);
+      for (int c = 0; c < nChar; ++c) {
+        if (!(grp.rootSiteLik(rootCl, c) >= MkPrime::kRescaleBelow)) {
+          return false;
+        }
+      }
+    }
+  }
+  if (!check) grp.Ish.clear_all();
+  return true;
+}
+
+static void caching_downpass(CLGroup& grp, const TreeNav& topo,
+                              const IntegerVector& parent,
+                              const IntegerVector& child,
+                              const NumericVector& rates) {
+  if (!caching_downpass_pass(grp, topo, parent, child, rates, false)) {
+    caching_downpass_pass(grp, topo, parent, child, rates, true);
   }
 }
 
@@ -543,11 +565,13 @@ struct ResidualCL {
 };
 
 
-static void compute_residual_cl(
+// One pass of compute_residual_cl(); unchecked as caching_downpass_pass(),
+// which is exact only when the cached group carries no shifts.
+static bool compute_residual_cl_pass(
     ResidualCL& res,
     const CLGroup& grp, const TreeNav& topo,
     const NumericVector& rates,
-    int u, int sibNode, double lMerge)
+    int u, int sibNode, double lMerge, bool check)
 {
   int g = topo.parentNode[u];   // grandparent of pruned subtree
   int stride  = grp.stride;
@@ -605,7 +629,7 @@ static void compute_residual_cl(
     int nChildG = (topo.ch2[g] >= 0) ? 3 : 2;
     grp.productExcluding(cat, g, uSlot, Ig, nChildG);
     for (int i = 0; i < stride; ++i) Ig[i] *= contrib[i];
-    finishPathNode(cat, 0, g, uSlot, grp.IS(cat, sibNode));
+    if (check) finishPathNode(cat, 0, g, uSlot, grp.IS(cat, sibNode));
 
     // Propagate up: for each node on the path from g to root
     for (int pi = 1; pi < res.nPathNodes; ++pi) {
@@ -629,8 +653,30 @@ static void compute_residual_cl(
       int nChild = (topo.ch2[node] >= 0) ? 3 : 2;
       grp.productExcluding(cat, node, prevSlot, Inode, nChild);
       for (int i = 0; i < stride; ++i) Inode[i] *= contrib[i];
-      finishPathNode(cat, pi, node, prevSlot, res.IS(cat, pi - 1));
+      if (check) finishPathNode(cat, pi, node, prevSlot, res.IS(cat, pi - 1));
     }
+    if (!check) {
+      const double* rootCl = res.I(cat, res.nPathNodes - 1);
+      for (int c = 0; c < nChar; ++c) {
+        if (!(grp.rootSiteLik(rootCl, c) >= MkPrime::kRescaleBelow)) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+static void compute_residual_cl(
+    ResidualCL& res,
+    const CLGroup& grp, const TreeNav& topo,
+    const NumericVector& rates,
+    int u, int sibNode, double lMerge)
+{
+  if (grp.Ish.any() ||
+      !compute_residual_cl_pass(res, grp, topo, rates, u, sibNode, lMerge,
+                                false)) {
+    compute_residual_cl_pass(res, grp, topo, rates, u, sibNode, lMerge, true);
   }
 }
 
@@ -699,6 +745,7 @@ static double evaluate_candidate(
   std::vector<double> from_v(stride), from_b(stride), Iu(stride), contrib(stride);
   std::vector<double> curI(stride);
   CLShifts shU(nChar), shCur(nChar), shBelow(nChar);
+  std::vector<double> rootSl(nChar);
   const int k = grp.kStates;
 
   for (int cat = 0; cat < nCat; ++cat) {
@@ -806,13 +853,16 @@ static double evaluate_candidate(
         parNode = topo.parentNode[parNode];
       }
 
-      if (check || !path_needs_check(curI.data(), nChar, k)) break;
+      for (int c = 0; c < nChar; ++c) {
+        rootSl[c] = grp.rootSiteLik(curI.data(), c);
+      }
+      if (check || !roots_too_small(rootSl.data(), nChar)) break;
     }
 
     // curI now holds I_cand[root].  Accumulate per-site likelihood.
     const int* shRoot = shCur.get();
     for (int c = 0; c < nChar; ++c) {
-      const double sl = grp.rootSiteLik(curI.data(), c);
+      const double sl = rootSl[c];
       if (siteLikAccum) {
         accum[c] += unscale(sl, shift_at(shRoot, c));
       } else {
@@ -920,6 +970,7 @@ static double evaluate_const_prob(
   std::vector<double> from_v(stride), from_b(stride), Iu(stride), contrib(stride);
   std::vector<double> curI(stride);
   CLShifts shU(nChar), shCur(nChar), shBelow(nChar);
+  std::vector<double> rootSl(nChar);
   const int k = pg.kStates;
 
   double totalConstProb = 0.0;
@@ -1007,12 +1058,15 @@ static double evaluate_const_prob(
         parNode = topo.parentNode[parNode];
       }
 
-      if (check || !path_needs_check(curI.data(), nChar, k)) break;
+      for (int c = 0; c < nChar; ++c) {
+        rootSl[c] = pg.rootSiteLik(curI.data(), c);
+      }
+      if (check || !roots_too_small(rootSl.data(), nChar)) break;
     }
 
     const int* shRoot = shCur.get();
     for (int c = 0; c < nChar; ++c) {
-      double sl = unscale(pg.rootSiteLik(curI.data(), c), shift_at(shRoot, c));
+      double sl = unscale(rootSl[c], shift_at(shRoot, c));
       if (constProbAccum)
         constProbAccum[c] += sl;
       else
@@ -1097,6 +1151,7 @@ static double evaluate_swap_impl(
   std::vector<double> lastB(stride);
   std::vector<double> prevShared(stride);
   CLShifts shCur(nChar), shLastA(nChar), shLastB(nChar), shPrev(nChar);
+  std::vector<double> rootSl(nChar);
   const int k = grp.kStates;
 
   // Accumulators; only the local one carries shifts (see evaluate_candidate)
@@ -1260,14 +1315,17 @@ static double evaluate_swap_impl(
         std::swap(shPrev, shCur);
       }
 
-      if (check || !path_needs_check(curI.data(), nChar, k)) break;
+      for (int c = 0; c < nChar; ++c) {
+        rootSl[c] = grp.rootSiteLik(curI.data(), c);
+      }
+      if (check || !roots_too_small(rootSl.data(), nChar)) break;
     }
 
     // ============ Root CL → accumulate site likelihoods ============
     // The root's shifts are in shPrev after the last swap.
     const int* shRoot = shPrev.get();
     for (int c = 0; c < nChar; ++c) {
-      double sl = grp.rootSiteLik(curI.data(), c);
+      double sl = rootSl[c];
       if (constProbMode) {
         sl = unscale(sl, shift_at(shRoot, c));
         if (constProbAccum)

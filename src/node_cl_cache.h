@@ -267,11 +267,11 @@ static void init_tips(CacheUnit& unit, int nTip) {
 
 // ---------------------------------------------------------------------------
 // finish_node: after (cat, node)'s CLs are computed from `children`, set its
-// shifts to the sum of theirs and rescale any character that has fallen
-// below MkPrime::kRescaleBelow.
+// shifts to the sum of theirs and, if `check`, rescale any character that
+// has fallen below MkPrime::kRescaleBelow.
 // ---------------------------------------------------------------------------
 static void finish_node(CacheUnit& unit, int cat, int node,
-                        const int* children) {
+                        const int* children, bool check) {
   const int nChar = unit.nChar, k = unit.kStates;
   int* sh = unit.SH(cat, node);
   bool any = false;
@@ -284,7 +284,7 @@ static void finish_node(CacheUnit& unit, int cat, int node,
     for (int c = 0; c < nChar; ++c) sh[c] += shCh[c];
   }
   double* cl = unit.CL(cat, node);
-  for (int c = 0; c < nChar; ++c) {
+  for (int c = 0; check && c < nChar; ++c) {
     double* block = cl + c * k;
     double sum = 0.0;
     for (int s = 0; s < k; ++s) sum += block[s];
@@ -299,12 +299,34 @@ static void finish_node(CacheUnit& unit, int cat, int node,
 
 
 // ---------------------------------------------------------------------------
+// root_too_small: whether any character's root site likelihood is below
+// MkPrime::kRescaleBelow. Unscaled CLs are at most 1 and transition rows sum
+// to 1, so no node's largest entry is below the root's: if this is false,
+// checking every node would have rescaled nothing, and passes that skip the
+// check are exact.
+// ---------------------------------------------------------------------------
+static bool root_too_small(const CacheUnit& unit, int root) {
+  const int k = unit.kStates;
+  const double* rf = unit.rootFreqs.data();
+  for (int cat = 0; cat < unit.nCat; ++cat) {
+    const double* clRoot = unit.CL(cat, root);
+    for (int c = 0; c < unit.nChar; ++c) {
+      double sl = 0.0;
+      for (int s = 0; s < k; ++s) sl += rf[s] * clRoot[c * k + s];
+      if (!(sl >= MkPrime::kRescaleBelow)) return true;
+    }
+  }
+  return false;
+}
+
+
+// ---------------------------------------------------------------------------
 // full_downpass: compute all internal-node CLs for one CacheUnit.
 // Called during cache population.
 // ---------------------------------------------------------------------------
-static void full_downpass(
+static void full_downpass_pass(
     CacheUnit& unit, const TreeNav& topo,
-    const std::vector<double>& rates, double rateLoss) {
+    const std::vector<double>& rates, double rateLoss, bool check) {
   int nCat = unit.nCat;
 
   // Temporary buffer for one child's contribution (one character block)
@@ -374,8 +396,17 @@ static void full_downpass(
             clNode[j] *= contrib[j];
         }
       }
-      finish_node(unit, cat, node, children);
+      finish_node(unit, cat, node, children, check);
     }
+  }
+}
+
+static void full_downpass(
+    CacheUnit& unit, const TreeNav& topo,
+    const std::vector<double>& rates, double rateLoss) {
+  full_downpass_pass(unit, topo, rates, rateLoss, false);
+  if (root_too_small(unit, topo.root)) {
+    full_downpass_pass(unit, topo, rates, rateLoss, true);
   }
 }
 
@@ -1014,41 +1045,46 @@ static void recompute_dirty_nodes(
     if ((int)contrib.size() < maxStride)
       contrib.resize(maxStride);
 
-    for (int cat = 0; cat < unit.nCat; ++cat) {
-      double rate = (unit.nCat > 1) ? cache.rates[cat] : 1.0;
+    // Unchecked first; again with rescaling if root_too_small().
+    for (int pass = 0; pass < 2; ++pass) {
+      const bool check = pass > 0;
+      for (int cat = 0; cat < unit.nCat; ++cat) {
+        double rate = (unit.nCat > 1) ? cache.rates[cat] : 1.0;
 
-      for (int node : dirtyNodes) {
-        if (node <= cache.topo.nTip) continue;  // tips are constant
+        for (int node : dirtyNodes) {
+          if (node <= cache.topo.nTip) continue;  // tips are constant
 
-        double* clNode = unit.CL(cat, node);
-        bool first = true;
+          double* clNode = unit.CL(cat, node);
+          bool first = true;
 
-        int children[3] = {
-          cache.topo.ch0[node],
-          cache.topo.ch1[node],
-          cache.topo.ch2[node]
-        };
+          int children[3] = {
+            cache.topo.ch0[node],
+            cache.topo.ch1[node],
+            cache.topo.ch2[node]
+          };
 
-        for (int ci = 0; ci < 3; ++ci) {
-          int ch = children[ci];
-          if (ch < 0) continue;
+          for (int ci = 0; ci < 3; ++ci) {
+            int ch = children[ci];
+            if (ch < 0) continue;
 
-          double el = cache.topo.nodeEdgeLen[ch];  // M-158
-          const double* childCL = unit.CL(cat, ch);
-          apply_transition(unit, childCL, contrib.data(),
-                           el, rateLoss, rate);
+            double el = cache.topo.nodeEdgeLen[ch];  // M-158
+            const double* childCL = unit.CL(cat, ch);
+            apply_transition(unit, childCL, contrib.data(),
+                             el, rateLoss, rate);
 
-          if (first) {
-            std::memcpy(clNode, contrib.data(),
-                        unit.stride * sizeof(double));
-            first = false;
-          } else {
-            for (int j = 0; j < unit.stride; ++j)
-              clNode[j] *= contrib[j];
+            if (first) {
+              std::memcpy(clNode, contrib.data(),
+                          unit.stride * sizeof(double));
+              first = false;
+            } else {
+              for (int j = 0; j < unit.stride; ++j)
+                clNode[j] *= contrib[j];
+            }
           }
+          finish_node(unit, cat, node, children, check);
         }
-        finish_node(unit, cat, node, children);
       }
+      if (check || !root_too_small(unit, cache.topo.root)) break;
     }
   }
 }
