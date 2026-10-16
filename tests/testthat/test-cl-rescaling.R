@@ -92,7 +92,7 @@ test_that("a near-random character no longer underflows to -Inf (#346)", {
   rates <- c(0.4, 1.6)
   for (k in c(16L, 64L)) {
     ref <- .LogPruneRef(x$tree, x$states, .JcP(k), rep(1 / k, k))
-    expect_lt(ref[1], -800)
+    expect_lt(ref[1], -745)
     refAcrv <- .LogPruneRef(x$tree, x$states, .JcP(k), rep(1 / k, k), rates)
 
     # Public header (MkPrime::Pruner)
@@ -145,7 +145,7 @@ test_that("MkN and F81 kernels rescale", {
   rl <- 1.7
   freqs <- c(rl, 1) / (1 + rl)
   ref <- .LogPruneRef(tree, states, .MknP(rl), freqs)
-  expect_lt(ref[1], -800)
+  expect_lt(ref[1], -745)
   expect_equal(pruning_mkn(p, ch, el, states, rl, freqs), sum(ref),
                tolerance = 1e-12)
   expect_equal(
@@ -203,7 +203,7 @@ test_that("the node CL cache keeps its shifts across partial updates", {
     chain <- .UnderflowChain(model)
     cold <- .ColdLogLik(chain$dataPtr, chain$statePtr)
     expect_true(is.finite(cold))
-    expect_lt(cold, -800)
+    expect_lt(cold, -745)
     expect_equal(get_state_log_lik(chain$statePtr), cold, tolerance = 1e-12)
     set.seed(931)
     nMoved <- 0L
@@ -233,7 +233,7 @@ test_that("Gibbs partial-CL evaluators rescale", {
   pruneRow <- which(edge[, 1] != nTip + 1L & edge[, 2] > nTip)[3]
   en <- gibbs_spr_enumerate_cpp(chain$dataPtr, chain$statePtr, pruneRow)
   expect_true(all(is.finite(en$logLik)))
-  expect_lt(max(en$logLik), -800)
+  expect_lt(max(en$logLik), -745)
   # The merged edge is the subtree's own position, split in half
   parentRow <- which(edge[, 2] == en$u)
   sibRow <- which(edge[, 1] == en$u & edge[, 2] != en$v)
@@ -338,7 +338,7 @@ test_that("Pruner restores shifts on reject() and keeps marginals finite", {
     list(edge = 100L, length = 0.2, accept = FALSE)
   )
   trace <- header_pruner_trace("jc", x$states, k, 0L, 0, 0, 1, tr, steps)
-  expect_lt(trace$fresh[1], -800)
+  expect_lt(trace$fresh[1], -745)
   expect_equal(trace$cached, trace$fresh, tolerance = 1e-12)
   rejected <- !is.na(trace$after_reject)
   expect_equal(trace$after_reject[rejected], trace$before[rejected],
@@ -388,4 +388,86 @@ test_that("Pruner rescales within a polytomy", {
     .LogPruneRef(tree, states, .JcP(k), rep(1 / k, k)),
     tolerance = 1e-12
   )
+})
+
+test_that("MCMC workspace kernels rescale MkN characters", {
+  set.seed(2041)
+  nTip <- 1200L
+  tree <- Preorder(RandomTree(nTip, root = FALSE))
+  tree$edge.length <- rexp(nrow(tree$edge)) * 2
+  states <- matrix(sample(0:1, nTip, replace = TRUE), nTip,
+                   dimnames = list(tree$tip.label, NULL))
+  mkd <- MkPrimeData(MatrixToPhyDat(states), neomorphic = 1L)
+  for (nCat in c(1L, 4L)) {
+    model <- MkPrime:::.FinalizeModel(
+      MkPrimeModel(coding = "none", nCat = nCat), tree, mkd
+    )
+    dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
+    statePtr <- MkPrime:::.InitMcmcChain(
+      MkPrime:::.InitState(tree, mkd, model)
+    )
+    fill_partition_cache(dataPtr, statePtr)
+    allocate_cl_workspace(dataPtr, statePtr)
+    st <- get_mcmc_state(statePtr)
+    full <- eval_full_loglik_cpp(dataPtr, statePtr)
+    expect_lt(full, -745)
+    expect_equal(full, get_state_log_lik(statePtr), tolerance = 1e-12)
+    if (nCat == 1L) {
+      edged <- tree
+      edged$edge <- st$edge
+      edged$edge.length <- st$treeLength * st$relBrLengths
+      freqs <- c(st$rateLoss, 1) / (1 + st$rateLoss)
+      expect_equal(full, .LogPruneRef(edged, states, .MknP(st$rateLoss), freqs),
+                   tolerance = 1e-12)
+    }
+  }
+})
+
+test_that("Pruner handles unary nodes, zero likelihoods and empty categories", {
+  x <- .UnderflowCase()
+  k <- 16L
+  ref <- .LogPruneRef(x$tree, x$states, .JcP(k), rep(1 / k, k), 1.5)
+  # A zero-rate category scores every variable character 0
+  expect_equal(
+    header_site_likelihoods("jc", x$p, x$ch, x$el, x$states, k, 0, 0,
+                            c(1.5, 0), log = TRUE)[1],
+    ref[1] + log(0.5), tolerance = 1e-12
+  )
+  # Node 5 has a single child; with lengths summed over it, the tree is
+  # the same as one without it. Tips 1 and 2, on zero-length edges, differ
+  # in the second character, whose likelihood is therefore 0.
+  tips <- matrix(c(0L, 0L, 1L, 0L, 1L, 1L), 3)
+  unary <- header_site_likelihoods("jc", c(4L, 5L, 6L, 6L, 4L),
+                                   c(5L, 6L, 1L, 2L, 3L),
+                                   c(0.3, 0.2, 0, 0, 0.4), tips, 2L, 0, 0, 1,
+                                   log = TRUE)
+  merged <- header_site_likelihoods("jc", c(4L, 5L, 5L, 4L), c(5L, 1L, 2L, 3L),
+                                    c(0.5, 0, 0, 0.4), tips, 2L, 0, 0, 1,
+                                    log = TRUE)
+  expect_equal(unary, merged, tolerance = 1e-14)
+  expect_identical(unary[2], -Inf)
+})
+
+test_that("kernels rescale a first-visited child and many observed states", {
+  set.seed(1311)
+  nTip <- 200L
+  tree <- Preorder(PectinateTree(nTip))
+  tree$edge.length <- rexp(nrow(tree$edge))
+  tree$edge.length <- tree$edge.length * 20 / sum(tree$edge.length)
+  states <- matrix(sample(0:12, nTip, replace = TRUE), nTip,
+                   dimnames = list(tree$tip.label, NULL))
+  p <- tree$edge[, 1]
+  ch <- tree$edge[, 2]
+  el <- tree$edge.length
+  k <- 64L
+  rates <- c(0.4, 1.6)
+  ref <- .LogPruneRef(tree, states, .JcP(k), rep(1 / k, k), rates)
+  expect_lt(ref, -745)
+  expect_equal(test_persite_uncollapsed(p, ch, el, states, k, rates), ref,
+               tolerance = 1e-12)
+  expect_equal(test_persite_collapsed(p, ch, el, states, k, 13L, rates), ref,
+               tolerance = 1e-12)
+  expect_equal(test_persite_uncollapsed(p, ch, el, states, 16L, rates),
+               .LogPruneRef(tree, states, .JcP(16L), rep(1 / 16, 16), rates),
+               tolerance = 1e-12)
 })

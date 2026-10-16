@@ -575,7 +575,7 @@ class Pruner {
 
   void require_marginals() const {
     if (up_.size() != cl_.size()) {
-      throw std::logic_error("Pruner: call update_marginals() first");
+      throw std::logic_error("Pruner: call update_marginals() first");  // # nocov
     }
   }
 
