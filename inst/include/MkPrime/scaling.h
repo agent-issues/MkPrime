@@ -9,12 +9,12 @@
 // exact: stored CLs are the true ones times 2^shift, and the integer shift
 // is carried alongside them, per (rate category, node, character).
 //
-// kRescaleBelow is 2^-256. A node multiplies the CLs of at most three
-// children (two at a binary node; three at the root of an unrooted tree),
-// none of which has been left below 2^-256, so a product stays above
-// 2^-768 times the spread across states -- far from the subnormal range at
-// 2^-1022. A character must reach a log-likelihood below about -177 before
-// any of its CLs is rescaled.
+// kRescaleBelow is 2^-256. A binary node multiplies the CLs of two
+// children, and the root of an unrooted tree three, none of which has been
+// left below 2^-256, so a product stays above 2^-768 times the spread across
+// states -- far from the subnormal range at 2^-1022. A polytomy of more than
+// three children has less headroom. A character must reach a
+// log-likelihood below about -177 before any of its CLs is rescaled.
 
 #include <cmath>
 

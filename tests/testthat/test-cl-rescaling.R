@@ -154,16 +154,16 @@ test_that("MkN and F81 kernels rescale", {
     tolerance = 1e-12
   )
 
-  pi <- c(0.7, 0.3)
-  mu <- 1 / (1 - sum(pi^2))
-  f81 <- function(t) {
+  freqF81 <- c(0.7, 0.3)
+  mu <- 1 / (1 - sum(freqF81^2))
+  F81P <- function(t) {
     e <- exp(-mu * t)
-    e * diag(2) + (1 - e) * matrix(pi, 2, 2, byrow = TRUE)
+    e * diag(2) + (1 - e) * matrix(freqF81, 2, 2, byrow = TRUE)
   }
   expect_equal(
-    header_site_likelihoods("f81", p, ch, el, states, 2L, mu, pi, rates,
+    header_site_likelihoods("f81", p, ch, el, states, 2L, mu, freqF81, rates,
                             log = TRUE),
-    .LogPruneRef(tree, states, f81, pi, rates), tolerance = 1e-12
+    .LogPruneRef(tree, states, F81P, freqF81, rates), tolerance = 1e-12
   )
 
   # Flat kernel behind MkpLogLikelihood()
@@ -199,16 +199,20 @@ test_that("the node CL cache keeps its shifts across partial updates", {
     expect_lt(cold, -800)
     expect_equal(get_state_log_lik(chain$statePtr), cold, tolerance = 1e-12)
     set.seed(931)
+    nMoved <- 0L
     for (i in seq_len(40)) {
+      before <- get_state_log_lik(chain$statePtr)
       move <- if (i %% 2) 5L else 4L  # NNI, beta_simplex
       do_move_cpp(chain$dataPtr, chain$statePtr, move, 0L, 0.5, 2, 1L, 1.0)
       expect_equal(get_state_log_lik(chain$statePtr),
                    .ColdLogLik(chain$dataPtr, chain$statePtr),
                    tolerance = 1e-12)
+      nMoved <- nMoved + (get_state_log_lik(chain$statePtr) != before)
     }
-    diag <- get_mcmc_state(chain$statePtr)
-    expect_gt(diag$diagNniPartial, 0L)
-    expect_gt(diag$diagBsPartial, 0L)
+    expect_gt(nMoved, 0L)
+    counts <- get_mcmc_state(chain$statePtr)
+    expect_gt(counts$diagNniPartial, 0L)
+    expect_gt(counts$diagBsPartial, 0L)
   }
 })
 

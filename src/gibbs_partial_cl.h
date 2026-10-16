@@ -128,20 +128,6 @@ inline double unscale(double x, int shift) {
   return shift ? std::ldexp(x, -shift) : x;
 }
 
-// unscale() for a caller's accumulator of true site likelihoods (Q-het
-// streaming), which cannot hold one below the normal range. The candidate
-// would silently score -Inf, so stop the run instead.
-inline double unscale_to_accum(double x, int shift, int k) {
-  const double out = unscale(x, shift);
-  if (x > 0.0 && out < std::numeric_limits<double>::min()) {
-    Rcpp::stop(
-      "A character with %d states has a likelihood below 1e-308, which the "
-      "Q-heterogeneity Gibbs topology moves cannot represent (#346). Set "
-      "`gibbs_spr` and `gibbs_subtree_swap` to 0 in `moveWeights`, or drop "
-      "near-random characters with many states.", k);
-  }
-  return out;
-}
 
 // ---------------------------------------------------------------------------
 // TreeNav: parent–child navigation built from canonical preorder edge table
@@ -800,7 +786,7 @@ static double evaluate_candidate(
     for (int c = 0; c < nChar; ++c) {
       const double sl = grp.rootSiteLik(curI.data(), c);
       if (siteLikAccum) {
-        accum[c] += unscale_to_accum(sl, shift_at(shRoot, c), k);
+        accum[c] += unscale(sl, shift_at(shRoot, c));
       } else {
         MkPrime::add_scaled(accum[c], localSiteShift[c], sl,
                             shift_at(shRoot, c));
@@ -1246,7 +1232,7 @@ static double evaluate_swap_impl(
         else
           totalConstProb += sl;
       } else if (siteLikAccum) {
-        accum[c] += unscale_to_accum(sl, shift_at(shRoot, c), k);
+        accum[c] += unscale(sl, shift_at(shRoot, c));
       } else {
         MkPrime::add_scaled(accum[c], localSiteShift[c], sl,
                             shift_at(shRoot, c));
@@ -1364,14 +1350,22 @@ static void set_f81_component(CLGroup& grp, double betaVal, int rot,
 
 // Convert per-site raw likelihood accumulators to log-likelihood.
 // siteLikSum[c] was accumulated across totalComp components; divide by
-// totalComp and take log.  Returns -Inf if any site average is non-positive.
+// totalComp and take log. The accumulators hold true likelihoods, without
+// shifts, so a character below the normal range (~1e-308) cannot be scored:
+// its candidate would silently weigh nothing, so stop the run instead.
 static double siteLikAccum_to_logLik(const double* siteLikSum, int nChar,
                                       int totalComp) {
   double logLik = 0.0;
   double inv_comp = 1.0 / totalComp;
   for (int c = 0; c < nChar; ++c) {
     double avg = siteLikSum[c] * inv_comp;
-    if (avg <= 0.0) return R_NegInf;
+    if (avg < std::numeric_limits<double>::min()) {
+      Rcpp::stop(
+        "A character's likelihood is below 1e-308, which the "
+        "Q-heterogeneity Gibbs topology moves cannot represent (#346). Set "
+        "`gibbs_spr` and `gibbs_subtree_swap` to 0 in `moveWeights`, or drop "
+        "near-random characters with many states.");
+    }
     logLik += std::log(avg);
   }
   return logLik;

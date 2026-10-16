@@ -14,7 +14,7 @@ setTimeLimit(elapsed = 900, transient = FALSE)
 args <- commandArgs(TRUE)
 lib <- args[1]
 label <- if (length(args) > 1) args[2] else "lib"
-rep <- if (length(args) > 2) args[3] else "1"
+repLabel <- if (length(args) > 2) args[3] else "1"
 pkg <- Sys.getenv("MKP_PKG", "MkPrime")
 suppressPackageStartupMessages({
   library(pkg, lib.loc = lib, character.only = TRUE)
@@ -23,7 +23,7 @@ suppressPackageStartupMessages({
 ns <- asNamespace(pkg)
 
 Out <- function(metric, value) {
-  cat(sprintf("%s,%s,%s,%.6g\n", label, rep, metric, value))
+  cat(sprintf("%s,%s,%s,%.6g\n", label, repLabel, metric, value))
 }
 
 # Milliseconds per call of `fn()`, repeated until at least `minTime` s.
@@ -66,8 +66,23 @@ Out("flat_jc_acrv_collapsed_ms", MsPerCall(function() {
 Out("persite_ms", MsPerCall(function() {
   ns$test_persite_uncollapsed(p, ch, el, states, k, rates)
 }))
+Out("persite_collapsed_ms", MsPerCall(function() {
+  ns$test_persite_collapsed(p, ch, el, states, k + 3L, k, rates)
+}))
 Out("pruner_acrv_ms", MsPerCall(function() {
   ns$pruning_jc_acrv(p, ch, el, states, k, rep(1 / k, k), rates)
+}))
+
+# Where rescaling fires: one near-random 8-state character on 200 tips at
+# k' = 64 (-Inf on builds without rescaling).
+nearRandom <- Preorder(RandomTree(200, root = FALSE))
+nearRandom$edge.length <- rexp(nrow(nearRandom$edge))
+nearRandom$edge.length <- nearRandom$edge.length * 20 /
+  sum(nearRandom$edge.length)
+randomChar <- matrix(sample(0:7, 200, replace = TRUE), 200)
+Out("persite_rescaling_ms", MsPerCall(function() {
+  ns$test_persite_uncollapsed(nearRandom$edge[, 1], nearRandom$edge[, 2],
+                              nearRandom$edge.length, randomChar, 64L, rates)
 }))
 
 mkd <- MkPrimeData(pd)

@@ -65,6 +65,13 @@ then also dirties nodes whose child edges were renumbered), `invalidate_edge()`,
 and an upward pass: `update_marginals()`, `node_up()`, `node_marginals()`,
 which need `transition_transpose()` (JC, MkN, F81; not `JCLumpedModel`).
 
+Header API v3 rescales CLs (`scaling.h`, #346): a character's block at a node
+is multiplied by a power of two once its sum is below 2^-256, with an integer
+shift per (category, node, character). `node_cl()`/`node_up()` return scaled
+CLs; `node_shift()`/`node_up_shift()` give the shifts. The same scheme runs in
+the edge-list kernels (`edge_shifts.h`), `NodeCLCache` and the Gibbs partial-CL
+evaluators; ordinary characters never trigger it.
+
 ## Shared file convention
 
 `src/init.cpp` and `RcppExports.cpp` are auto-generated. After running
