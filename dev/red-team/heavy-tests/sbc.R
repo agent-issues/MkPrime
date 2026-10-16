@@ -79,8 +79,7 @@ if (mode == "quick") {
   N_SIM    <- 5L     # SBC simulations per arm
   N_TIP    <- 5L     # tree taxa per simulation
   N_CHAR   <- 8L     # characters per simulation
-  N_ITER   <- 300L   # MCMC iterations per chain
-  N_THIN   <- 3L     # samples kept = 100  (Talts recommend L ~ 100)
+  N_THIN   <- 3L
   N_WARM   <- 200L
   N_RUNS   <- 1L
   N_CHAINS <- 1L
@@ -88,13 +87,15 @@ if (mode == "quick") {
   N_SIM    <- 200L
   N_TIP    <- 8L
   N_CHAR   <- 30L
-  N_ITER   <- 6000L
-  N_THIN   <- 60L    # samples kept = 100
+  N_THIN   <- 60L
   N_WARM   <- 2000L
   N_RUNS   <- 1L
   N_CHAINS <- 1L
 }
-L_SAMPLES <- N_ITER %/% N_THIN  # nominal posterior length per chain
+# Samples kept per chain (Talts et al. recommend L ~ 100). nIter counts the
+# warmup, so it is derived from L rather than the other way round (#467).
+L_SAMPLES <- 100L
+N_ITER    <- N_WARM + L_SAMPLES * N_THIN
 
 # Numerical guards for AD
 if (!requireNamespace("goftest", quietly = TRUE)) {
@@ -137,6 +138,16 @@ N_CAT          <- 4L
   w <- stats::rexp(nEdge, rate = 1)
   tr$edge.length <- tl * w / sum(w)
   TreeTools::Preorder(tr)
+}
+
+# The true topology with every edge at its prior mean length, so the start
+# carries no information about the true lengths. The old start of 0.1 per edge
+# (tree length ~1 against a prior mean of 50) trapped ACRV chains in a
+# short-tree, high-rate_log_sd basin they did not leave during the run (#467).
+.StartTree <- function(trueTree) {
+  nEdge <- nrow(trueTree$edge)
+  trueTree$edge.length <- rep_len(EXPSTEPS_FIXED / nEdge, nEdge)
+  trueTree
 }
 
 # Simulate one character under JC(kTrue) by recursive root-to-tip draws.
@@ -299,8 +310,7 @@ N_CAT          <- 4L
   # for 8 taxa) in nearly every sim, making fixTopology=TRUE condition on
   # the wrong tree. With correct topology the harness tests p(θ|y,T_true),
   # which is the valid SBC target for continuous params under fixed topology.
-  start_tree <- true_tree
-  start_tree$edge.length <- rep_len(0.1, nrow(true_tree$edge))
+  start_tree <- .StartTree(true_tree)
 
   # Step 6. Build the matched inference model. Hyperparameter draws above
   # are matched to inference defaults (Beta(1,1) on p, etc).

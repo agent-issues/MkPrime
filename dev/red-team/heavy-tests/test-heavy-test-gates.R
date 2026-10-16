@@ -172,6 +172,39 @@ naRls <- RunPool(function(i, ranks) NA_real_)
 ok("an NA AD fails clause (a)",
    naRls$status != 0L && grepl("\\(a\\) global AD\\s+: FAIL", naRls$text))
 
+## ---- #467: sbc.R start state and retained draws ------------------------------
+# The configuration block and the lines after it, evaluated as sbc.R would.
+SbcConfig <- function(mode) {
+  exprs <- as.list(parse(sbcR, keep.source = FALSE))
+  first <- which(vapply(exprs, function(e) {
+    is.call(e) && identical(e[[1L]], as.name("if")) &&
+      identical(e[[2L]], quote(mode == "quick"))
+  }, logical(1L)))
+  env <- new.env(parent = globalenv())
+  env$mode <- mode
+  for (e in exprs[first:(first + 2L)]) eval(e, env)
+  env
+}
+RetainedDraws <- function(cfg) ceiling((cfg$N_ITER - cfg$N_WARM) / cfg$N_THIN)
+for (m in c("quick", "full")) {
+  cfg <- SbcConfig(m)
+  ok(sprintf("sbc.R %s mode keeps the nominal L_SAMPLES (nIter counts warmup)", m),
+     RetainedDraws(cfg) == cfg$L_SAMPLES)
+}
+lQuick <- SbcConfig("quick")$L_SAMPLES
+StartTree <- Definition(sbcR, ".StartTree")
+environment(StartTree)$EXPSTEPS_FIXED <- Definition(sbcR, "EXPSTEPS_FIXED")
+shortTree <- ape::read.tree(text = "((a:1,b:2):0.5,(c:3,d:0.1):4);")
+longTree <- shortTree
+longTree$edge.length <- shortTree$edge.length * 40
+ok("sbc.R start lengths carry no information about the true lengths",
+   identical(StartTree(shortTree)$edge.length, StartTree(longTree)$edge.length))
+ok("sbc.R starts at the prior-mean tree length, not 0.1 per edge",
+   isTRUE(all.equal(sum(StartTree(shortTree)$edge.length),
+                    Definition(sbcR, "EXPSTEPS_FIXED"))))
+ok("sbc.R start keeps the true topology",
+   identical(StartTree(longTree)$edge, longTree$edge))
+
 ## ---- HARN2-009: sbc.R simulates from the drawn k and ranks the k' prior ----
 canLoad <- requireNamespace("MkPrime", quietly = TRUE) ||
   requireNamespace("pkgload", quietly = TRUE)
@@ -198,6 +231,8 @@ if (!nzchar(Sys.getenv("MKP_SKIP_SBC_SMOKE")) && canLoad) {
   mknt <- Good("MkNT_geometric")
   ok("MkNT characters are simulated at their drawn k",
      length(mknt) >= 3L && any(unlist(lapply(mknt, `[[`, "kObs")) > 2L))
+  ok("every Mk' chain keeps the L_SAMPLES draws the ranks assume",
+     all(vapply(mkp, `[[`, 0L, "L") == lQuick))
   ok("the verdict is stamped with the run id",
      any(readLines(file.path(smokeOut, "verdict-MkNT_geometric.txt")) ==
            "run_id:   smoke"))
