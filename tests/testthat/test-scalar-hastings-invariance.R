@@ -7,9 +7,9 @@
 # prior mean at every step t whatever the mixing.  The replicate statistic,
 # mean_t(x_t) less the prior mean -- or less x_0 for the sum of k', which the
 # k' moves shift only by a common delta -- is zero in expectation, and as
-# replicates are independent its z-score needs no ESS.  With 100 replicates, |z| < 5 false-fails with
-# probability 2 pt(-5, 99) = 2.4e-6 per coordinate; 3.4e-5 over the 14
-# coordinates checked.
+# replicates are independent its z-score needs no ESS.  With 100 replicates,
+# |z| < 5 false-fails with probability 2 pt(-5, 99) = 2.4e-6 per coordinate;
+# 3.4e-5 over the 14 coordinates checked.
 
 .ScalarFixture <- function() {
   tree <- Preorder(read.tree(
