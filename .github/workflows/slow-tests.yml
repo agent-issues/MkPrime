@@ -62,6 +62,7 @@ jobs:
       RSPM: "https://packagemanager.posit.co/cran/__linux__/noble/latest"
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       MKPRIME_SLOW_TESTS: "true"
+      NOT_CRAN: "true"  # else every skip_on_cran() test is skipped
 
     steps:
       - name: Checkout git repo
