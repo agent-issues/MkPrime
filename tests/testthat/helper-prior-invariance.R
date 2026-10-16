@@ -62,9 +62,11 @@
       MkPrime:::.InitState(tree, mkd, finalModel))
     fill_partition_cache(dataPtr, statePtr)
     allocate_cl_workspace(dataPtr, statePtr)
-    for (i in seq_len(nMove))
-      do_move_cpp(dataPtr, statePtr, moveType, 0L, 0.5, 0.5, intWalkWindow,
-                  0.0)
+    for (i in seq_len(nMove)) {
+      do_move_cpp(
+        dataPtr, statePtr, moveType, 0L, 0.5, 0.5, intWalkWindow, 0.0
+      )
+    }
     st <- get_mcmc_state(statePtr)
     .PriorStats(st$edge, st$relBrLengths)
   }, numeric(6L)))

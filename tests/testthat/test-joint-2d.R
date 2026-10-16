@@ -39,16 +39,16 @@ test_that("2D Bactrian correlation tracks rho parameter", {
   }
 })
 
-test_that("2D Bactrian is point-symmetric: P(z1, z2) = P(-z1, -z2)", {
+test_that("2D Bactrian quadrants and projections are point-symmetric", {
   set.seed(2914)
   draws <- bactrian_2d_draws(100000L, 0.5)
-  # Opposite quadrants are equiprobable and every projection is symmetric
-  # about zero; z1 * z2, being invariant under negation, cannot see either.
+  # P(z1, z2) = P(-z1, -z2) makes opposite quadrants equiprobable and every
+  # projection symmetric about zero; z1 * z2, invariant under negation,
+  # cannot see either.
   pos <- draws > 0
-  expect_gt(binom.test(sum(pos[, 1] & pos[, 2]),
-                       sum(pos[, 1] == pos[, 2]))$p.value, 1e-4)
-  expect_gt(binom.test(sum(pos[, 1] & !pos[, 2]),
-                       sum(pos[, 1] != pos[, 2]))$p.value, 1e-4)
+  same <- pos[, 1] == pos[, 2]
+  expect_gt(binom.test(sum(same & pos[, 1]), sum(same))$p.value, 1e-4)
+  expect_gt(binom.test(sum(!same & pos[, 1]), sum(!same))$p.value, 1e-4)
   expect_gt(wilcox.test(draws[, 1] + draws[, 2])$p.value, 1e-4)
   expect_gt(wilcox.test(draws[, 1] - draws[, 2])$p.value, 1e-4)
 })
@@ -161,25 +161,25 @@ test_that(".BuildJointRhoMatrix fills correctly", {
 
 # --- Integration test ---
 # The kernels are checked at beta = 0 in test-scalar-hastings-invariance.R;
-# here, only that `joint2d` reaches the move schedule.
+# here, that `joint2d` reaches the move schedule and the moves are accepted.
 
 test_that("joint2d switches the joint moves on and off", {
   skip_under_memcheck()
-  tree <- Preorder(read.tree(
-    text = "(((t1:0.1,t2:0.2):0.1,(t3:0.1,t4:0.3):0.2):0.1,(t5:0.2,t6:0.1):0.1);"
-  ))
+  newick <- "(((t1:1,t2:2):1,(t3:1,t4:3):2):1,(t5:2,t6:1):1);"
+  tree <- Preorder(read.tree(text = newick))
   mat <- matrix(c(0, 0, 1, 1, 0, 1,
                   0, 1, 2, 0, 1, 2), 6,
                 dimnames = list(paste0("t", 1:6), NULL))
   mkd <- MkPrimeData(MatrixToPhyDat(mat), neomorphic = 1L)
   jointMoves <- c("joint_tl_rls", "joint_tl_rl", "joint_tl_rn")
-  Moves <- function(joint2d) {
-    cfg <- MkPrimeMCMC(nIter = 100L, nRuns = 1L, nChains = 1L, thin = 10L,
-                       minWarmup = 50L, maxWarmup = 50L, autoTune = FALSE,
-                       maxTime = 30, joint2d = joint2d)
-    res <- allow_warning(RunMkPrime(mkd, tree, mcmc = cfg), "maxWarmup")
-    names(res$acceptance)
+  Acceptance <- function(joint2d) {
+    cfg <- MkPrimeMCMC(
+      nIter = 400L, nRuns = 1L, nChains = 1L, thin = 10L,
+      minWarmup = 50L, maxWarmup = 50L, autoTune = FALSE,
+      maxTime = 30, joint2d = joint2d
+    )
+    allow_warning(RunMkPrime(mkd, tree, mcmc = cfg), "maxWarmup")$acceptance
   }
-  expect_true(all(jointMoves %in% Moves(TRUE)))
-  expect_false(any(jointMoves %in% Moves(FALSE)))
+  expect_true(all(Acceptance(TRUE)[jointMoves] > 0))
+  expect_false(any(jointMoves %in% names(Acceptance(FALSE))))
 })

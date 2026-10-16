@@ -7,14 +7,14 @@
 # prior mean at every step t whatever the mixing.  The replicate statistic,
 # mean_t(x_t) less the prior mean -- or less x_0 for the sum of k', which the
 # k' moves shift only by a common delta -- is zero in expectation, and as
-# replicates are independent its z-score needs no ESS.  With 100 replicates,
-# |z| < 5 false-fails with probability 2 pt(-5, 99) = 2.4e-6 per coordinate;
-# 3.4e-5 over the 14 coordinates checked.
+# replicates are independent its z-score needs no ESS.  |z| < 5 over 100
+# replicates false-fails with probability 2 pt(-5, 99) = 2.4e-6 per normal
+# coordinate, about 2e-5 for the skewed log rate_log_sd, and below 1e-4 over
+# the 15 coordinates checked.
 
 .ScalarFixture <- function() {
-  tree <- Preorder(read.tree(
-    text = "(((t1:0.1,t2:0.2):0.1,(t3:0.1,t4:0.3):0.2):0.1,(t5:0.2,t6:0.1):0.1);"
-  ))
+  newick <- "(((t1:1,t2:2):1,(t3:1,t4:3):2):1,(t5:2,t6:1):1);"
+  tree <- Preorder(read.tree(text = newick))
   mat <- matrix(c(0, 0, 1, 1, 0, 1,
                   1, 0, 0, 1, 1, 0,
                   0, 1, 2, 0, 1, 2,
@@ -23,9 +23,13 @@
                 dimnames = list(paste0("t", 1:6), NULL))
   mkd <- MkPrimeData(MatrixToPhyDat(mat), neomorphic = 1:2)
   model <- .FinalizeModel(MkPrimeModel(kPrimePrior = "geometric"), tree, mkd)
-  list(mkd = mkd, model = model, state = .InitState(tree, mkd, model),
-       dataPtr = .InitMcmcData(mkd, model),
-       trans = which(mkd$type == "transformational"))
+  list(
+    mkd = mkd,
+    model = model,
+    state = .InitState(tree, mkd, model),
+    dataPtr = .InitMcmcData(mkd, model),
+    trans = which(mkd$type == "transformational")
+  )
 }
 
 # Each k'_i has a geometric prior given p, truncated to [kObs_i, K].
@@ -70,26 +74,27 @@
 }
 
 # `nMove` applications of `moveType` at beta = 0 through the production
-# dispatcher.
-.ScalarPath <- function(fx, statePtr, moveType, nMove, rho = 0) {
+# dispatcher; `window` bounds the k' shifts.
+.ScalarPath <- function(fx, statePtr, moveType, nMove, rho = 0, window = 1L) {
   run_mcmc_batch_cpp(
     fx$dataPtr, list(statePtr), 0, moveType, fx$trans - 1L,
-    0L, 1, matrix(1), 10, 1L,
+    0L, 1, matrix(1), 10, window,
     0L, matrix(1), matrix(rho),
-    nMove, 1L, 0L, 1L, TRUE, length(fx$state$rel_br_lengths)
+    nMove, 1L, 0L, 1L, TRUE, length(fx$state$rel_br_lengths),
+    chainBlockKpWins = window
   )$scalar_samples
 }
 
 # z-scores of the replicate statistic over `nReps` replicates.
-.ScalarDriftZ <- function(fx, moveType, p = 0.5, rho = 0, nMove = 200L,
-                          nReps = 100L) {
+.ScalarDriftZ <- function(fx, moveType, p = 0.5, rho = 0, window = 1L,
+                          nMove = 200L, nReps = 100L) {
   priorMean <- .ScalarPriorMean(fx$model)
   drift <- t(vapply(seq_len(nReps), function(r) {
     start <- .ScalarPriorDraw(fx, p)
     statePtr <- .InitMcmcChain(start)
     fill_partition_cache(fx$dataPtr, statePtr)
     allocate_cl_workspace(fx$dataPtr, statePtr)
-    path <- .ScalarPath(fx, statePtr, moveType, nMove, rho)
+    path <- .ScalarPath(fx, statePtr, moveType, nMove, rho, window)
     colMeans(.ScalarTrack(path, length(fx$trans))) -
       c(priorMean, k = sum(start$kPrime[fx$trans]))
   }, numeric(5)))
@@ -97,8 +102,10 @@
 }
 
 .ExpectNoDrift <- function(z, coords) {
-  expect_true(all(abs(z[coords]) < 5),
-              info = paste(names(z), signif(z, 2), collapse = ", "))
+  expect_true(
+    all(abs(z[coords]) < 5),
+    info = paste(names(z), signif(z, 2), collapse = ", ")
+  )
 }
 
 test_that("prior draws start from the prior the moves target", {
@@ -146,4 +153,5 @@ test_that("k' shifts are symmetric: int_walk and block shift hold the prior", {
   set.seed(4504)
   .ExpectNoDrift(.ScalarDriftZ(fx, 7L, p = 0.2), "k")
   .ExpectNoDrift(.ScalarDriftZ(fx, 26L, p = 0.05), "k")
+  .ExpectNoDrift(.ScalarDriftZ(fx, 7L, p = 0.2, window = 3L), "k")
 })
