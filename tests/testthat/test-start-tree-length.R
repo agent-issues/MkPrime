@@ -61,8 +61,8 @@ test_that("default start avoids the short-tree ACRV basin (#474)", {
     autoTune = FALSE, nRuns = 1L, maxTime = 60
   )
   post <- allow_warning(RunMkPrime(mkd, mcmc = mcmc), "without stabilisation")
-  # From 0.1 per edge (tree length 3), chains sat at rate_log_sd ~ 6 and
-  # tree length ~ 2 for 20 000+ iterations; the posterior is near 1 and 16.
+  # Started at 0.1 per edge (tree length 3), chains sit at rate_log_sd ~ 6
+  # and tree length ~ 2 for 20 000+ iterations; the posterior is near 1, 16.
   expect_lt(median(post$samples[, "rate_log_sd"]), 3)
   expect_gt(median(post$samples[, "tree_length"]), 8)
 })

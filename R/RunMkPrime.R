@@ -12,15 +12,11 @@
 #' multiple independent runs, convergence monitoring, and early stopping.
 #'
 #' @param data A `phyDat` object or `MkPrimeData` object.
-#' @param tree A `phylo` object (starting topology), or `NULL` (default)
-#'   to start from a greedy parsimony stepwise-addition tree (via
-#'   `TreeSearch::AdditionTree`) when the `TreeSearch` package is
-#'   installed, falling back to a neighbour-joining tree otherwise.
-#'   The tree must be binary, rooted or unrooted; polytomies are resolved
-#'   at random with [TreeTools::MakeTreeBinary()], with a warning. Edges
-#'   inserted to resolve them get length 1e-8; others keep their lengths.
-#'   A tree without edge lengths, like the default, starts with equal
-#'   lengths totalling three times the prior mean tree length (`expSteps`).
+#' @param tree `phylo` object giving the starting tree, or `NULL` to start
+#'   from `TreeSearch::AdditionTree()` (a neighbour-joining tree if
+#'   \pkg{TreeSearch} is absent); polytomies are resolved at random, with a
+#'   warning, and missing edge lengths are set equal, summing to three times
+#'   the prior mean tree length (`expSteps`).
 #' @param neomorphic,knownStates Passed to [MkPrimeData()] if `data` is
 #'   a `phyDat` object.
 #' @param model An `MkPrimeModel` object, or `NULL` for defaults.
