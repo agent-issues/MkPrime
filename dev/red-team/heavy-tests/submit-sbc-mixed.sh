@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=rt-sbc-mixed
 #SBATCH --partition=shared
-#SBATCH --time=08:00:00
+#SBATCH --time=48:00:00
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=8G
 #SBATCH --gres=tmp:4G
@@ -11,7 +11,9 @@
 # Red-team A3 — SBC on mixed-partition (neo + trans) MkNT data.
 # Validates partition-rate normalisation fix (main 2026-05-27):
 #   neoScale = r/(1+r)*n_total/n_neo;  transScale = 1/(1+r)*n_total/n_trans
-# Single job (not array): one arm, MkNT_mixed, 4 neo + 8 trans chars.
+# Single job (not array): one arm, MkNT_mixed, 30 neo + 70 trans chars on 16 tips.
+# Walltime is a first estimate for the 16x100 regime (13x the old per-iteration
+# cost); size it from a smoke before relying on it.
 #
 # IMPORTANT: pre-build the package once before submitting:
 #   cd ${SRC} && Rscript -e 'devtools::load_all(".")'

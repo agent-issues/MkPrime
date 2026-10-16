@@ -4,11 +4,13 @@
 # Validates the partition-rate normalisation fix (2026-05-27, main):
 #   neoScale   = r/(1+r) * n_total / n_neo
 #   transScale = 1/(1+r) * n_total / n_trans
-# by checking that rate_neo, rate_loss, tree_length, and rate_log_sd all
-# pass Anderson-Darling rank-histogram uniformity (Bonferroni / K_arm at 5%).
+# by checking that rate_neo, rate_loss and tree_length all
+# pass Anderson-Darling rank-histogram uniformity (Bonferroni: FWER 0.001 / K_arm).
+# rate_log_sd is not ranked: nCat = 1, so it never reaches the likelihood.
 #
-# One arm: MkNT_mixed  (4 neo chars + 8 trans chars; both fixed k=2 in sim).
-# Neo chars: asymmetric binary MkN (lambda=2), stationary pi_0=rl/(1+rl).
+# One arm: MkNT_mixed  (N_NEO neo + N_TRANS trans chars; both fixed k=2 in sim).
+# Neo chars: asymmetric binary MkN, mean rate 1 (src/mkn_rates.h): total rate
+#   lambda=(1+rl)^2/(2 rl), stationary pi_0=rl/(1+rl).
 # Trans chars: JC k=2, pSame = 0.5 + 0.5*exp(-2t).  Rate convention matches
 #   inference (`src/likelihood.cpp`); for k=2 the two conventions are identical.
 #
@@ -23,6 +25,9 @@
 #
 # Outputs: dev/red-team/sbc-results-mixed/ (or --out <path>)
 #   verdict.txt, summary.rds, rank-matrix.csv
+#
+# Exit status: 0 PASS / EXEC_OK; 1 FAIL (incl. INSUFFICIENT, a missing
+# parameter, or too many skipped sims).
 
 suppressPackageStartupMessages({
   # Race-safe loader: pkgload compiles into src/ in place, so concurrent
@@ -66,10 +71,10 @@ if (mode == "quick") {
   N_WARM   <- 200L
 } else {
   N_SIM    <- 200L
-  N_TIP    <- 8L
-  N_ITER   <- 6000L
+  N_TIP    <- 16L
+  N_ITER   <- 12000L
   N_THIN   <- 60L
-  N_WARM   <- 2000L
+  N_WARM   <- 4000L
 }
 N_RUNS   <- 1L
 N_CHAINS <- 1L
@@ -77,11 +82,26 @@ L_SAMPLES <- N_ITER %/% N_THIN
 
 # Partition dimensions — must remain constant across all sims so that
 # neoScale/transScale in the forward sim match what the inference computes.
-N_NEO   <- 4L
-N_TRANS <- 8L
+# Full mode: 16 tips x 100 characters at mean tree length 1.4, the informative
+# regime of marginal-k/T-SBC-marginal-geometric.R. The old 8-tip / expSteps = 50
+# regime left tree_length at ~prior sd (posterior sd / prior sd median 0.95).
+if (mode == "quick") {
+  N_NEO   <- 4L
+  N_TRANS <- 8L
+} else {
+  N_NEO   <- 30L
+  N_TRANS <- 70L
+}
+
+# Gate thresholds. A sim skipped by the rejection cap or an MCMC error is
+# dropped non-randomly in theta, so too many skips invalidate the verdict.
+MIN_GOOD_FRAC <- 0.9
+MIN_RANKS     <- 50L
+EXPECTED_PARAMS <- c("tree_length", "rate_neo", "rate_loss")
+FWER <- 0.001
 
 # Tree prior hyperparameters — must match MkPrimeModel() defaults.
-EXPSTEPS_FIXED <- 50
+EXPSTEPS_FIXED <- if (mode == "quick") 50 else 1.4
 TREE_SHAPE     <- 2
 
 # -------------------- AD uniformity test -----------------------
@@ -119,7 +139,8 @@ if (!requireNamespace("goftest", quietly = TRUE)) {
 }
 
 # Simulate one neomorphic (asymmetric binary) character.
-# Model: MkN, lambda=2.  pi_0 = rl/(1+rl), pi_1 = 1/(1+rl).
+# Model: MkN with mean rate 1, i.e. total rate lambda = (1+rl)^2/(2 rl)
+# (src/mkn_rates.h).  pi_0 = rl/(1+rl), pi_1 = 1/(1+rl).
 # Effective branch length = edge * neoScale.
 .simNeoChar <- function(tree, rateLoss_true, neoScale) {
   nTip    <- length(tree$tip.label)
@@ -127,6 +148,7 @@ if (!requireNamespace("goftest", quietly = TRUE)) {
   rootIdx <- nTip + 1L
   pi0 <- rateLoss_true / (1 + rateLoss_true)
   pi1 <- 1            / (1 + rateLoss_true)
+  lambda <- (1 + rateLoss_true)^2 / (2 * rateLoss_true)
   # Root drawn from stationary distribution
   states[rootIdx] <- if (stats::runif(1L) < pi1) 1L else 0L
   edges <- tree$edge
@@ -135,12 +157,12 @@ if (!requireNamespace("goftest", quietly = TRUE)) {
     pa    <- edges[e, 1L]
     ch    <- edges[e, 2L]
     t_eff <- el[e] * neoScale
-    ef    <- exp(-2 * t_eff)
+    ef    <- exp(-lambda * t_eff)
     if (states[pa] == 0L) {
-      # P(0->1) = pi_1 * (1 - exp(-2t))
+      # P(0->1) = pi_1 * (1 - exp(-lambda t))
       states[ch] <- if (stats::runif(1L) < pi1 * (1 - ef)) 1L else 0L
     } else {
-      # P(1->0) = pi_0 * (1 - exp(-2t))
+      # P(1->0) = pi_0 * (1 - exp(-lambda t))
       states[ch] <- if (stats::runif(1L) < pi0 * (1 - ef)) 0L else 1L
     }
   }
@@ -217,6 +239,41 @@ if (!requireNamespace("goftest", quietly = TRUE)) {
        transScale = scales$trans)
 }
 
+# Gate: PASS only if enough sims completed and every expected parameter has
+# enough ranks and a uniform rank histogram. A missing or under-ranked
+# parameter fails; it never passes by omission.
+MixedVerdict <- function(sims, expected, L, fwer, minGoodFrac, minRanks, adP) {
+  skipped <- vapply(sims, function(s) isTRUE(s$skipped), logical(1L))
+  goodSims <- sims[!skipped]
+  nGood <- length(goodSims)
+  threshold <- fwer / length(expected)
+  Ls <- vapply(goodSims, function(s) as.integer(s$L), integer(1L))
+  Ls <- Ls[is.finite(Ls)]
+  lActual <- if (length(Ls)) as.integer(stats::median(Ls)) else as.integer(L)
+  perParam <- lapply(expected, function(nm) {
+    ranks <- unlist(lapply(goodSims, function(s) s$ranks[[nm]]), use.names = FALSE)
+    ranks <- ranks[is.finite(ranks)]
+    if (!length(ranks)) {
+      return(list(p = NA_real_, n = 0L, decision = "MISSING"))
+    }
+    if (length(ranks) < minRanks) {
+      return(list(p = NA_real_, n = length(ranks), decision = "INSUFFICIENT"))
+    }
+    norm <- (ranks + 0.5) / (lActual + 1)
+    norm <- pmin(pmax(norm, .Machine$double.eps), 1 - .Machine$double.eps)
+    p <- adP(norm)
+    decision <- if (is.na(p)) "NA" else if (p > threshold) "PASS" else "FAIL"
+    list(p = p, n = length(ranks), decision = decision)
+  })
+  names(perParam) <- expected
+  decisions <- vapply(perParam, `[[`, character(1L), "decision")
+  enough <- nGood >= minGoodFrac * length(sims)
+  verdict <- if (enough && all(decisions == "PASS")) "PASS" else "FAIL"
+  list(verdict = verdict, perParam = perParam, nGood = nGood,
+       nSkipped = sum(skipped), enough = enough, threshold = threshold,
+       L = lActual)
+}
+
 # ------------------- One SBC simulation ------------------------
 .runOneSim <- function(sim_id, seed) {
   set.seed(seed)
@@ -224,10 +281,8 @@ if (!requireNamespace("goftest", quietly = TRUE)) {
   # --- Prior draws (must match MkPrimeModel() defaults exactly) ---
   # rate_loss ~ LogNormal(0, 2)  (rateLossMeanlog=0, rateLossSdlog=2)
   # rate_neo  ~ LogNormal(0, 2)  (rateNeoMeanlog=0,  rateNeoSdlog=2)
-  # rate_log_sd ~ Gamma(shape=1, rate=1)
   rateLoss_true   <- stats::rlnorm(1, meanlog = 0, sdlog = 2)
   rateNeo_true    <- stats::rlnorm(1, meanlog = 0, sdlog = 2)
-  rateLogSd_true  <- stats::rgamma(1, shape = 1, rate = 1)
 
   # --- Tree ---
   true_tree <- .simTree(N_TIP)
@@ -309,9 +364,8 @@ if (!requireNamespace("goftest", quietly = TRUE)) {
   cn    <- colnames(samples)
   ranks <- list()
   ranks$tree_length <- .rankOf(tl_true,          samples[, "tree_length"])
-  if ("rate_neo"    %in% cn) ranks$rate_neo    <- .rankOf(rateNeo_true,   samples[, "rate_neo"])
-  if ("rate_loss"   %in% cn) ranks$rate_loss   <- .rankOf(rateLoss_true,  samples[, "rate_loss"])
-  if ("rate_log_sd" %in% cn) ranks$rate_log_sd <- .rankOf(rateLogSd_true, samples[, "rate_log_sd"])
+  if ("rate_neo"  %in% cn) ranks$rate_neo  <- .rankOf(rateNeo_true,  samples[, "rate_neo"])
+  if ("rate_loss" %in% cn) ranks$rate_loss <- .rankOf(rateLoss_true, samples[, "rate_loss"])
 
   list(skipped        = FALSE,
        L              = L,
@@ -319,7 +373,6 @@ if (!requireNamespace("goftest", quietly = TRUE)) {
        tl_true        = tl_true,
        rateLoss_true  = rateLoss_true,
        rateNeo_true   = rateNeo_true,
-       rateLogSd_true = rateLogSd_true,
        ranks          = ranks)
 }
 
@@ -345,72 +398,35 @@ for (i in seq_len(N_SIM)) {
   sims[[i]] <- s
 }
 
-# --- Pool ranks ---
-good   <- !vapply(sims, function(s) isTRUE(s$skipped), logical(1L))
-nGood  <- sum(good)
-
-if (nGood < 3L) {
-  msg <- sprintf("FAIL (only %d/%d sims completed)", nGood, N_SIM)
-  writeLines(msg, file.path(armDir, "verdict.txt"))
-  saveRDS(list(sims = sims), file.path(armDir, "summary.rds"))
-  cat(msg, "\n")
-  quit(save = "no", status = 1L)
-}
-goodSims <- sims[good]
-
+# --- Pool ranks and gate ---
+V <- MixedVerdict(sims, EXPECTED_PARAMS, L_SAMPLES, FWER, MIN_GOOD_FRAC,
+                  MIN_RANKS, .adP)
+nGood      <- V$nGood
+per_param  <- V$perParam
+threshold  <- V$threshold
+L_actual   <- V$L
+K_arm      <- length(EXPECTED_PARAMS)
+paramNames <- names(per_param)
+goodSims   <- sims[!vapply(sims, function(s) isTRUE(s$skipped), logical(1L))]
 pool_param <- function(name) {
   out <- unlist(lapply(goodSims, function(s) s$ranks[[name]]), use.names = FALSE)
   out[is.finite(out)]
 }
-paramNames <- unique(unlist(lapply(goodSims, function(s) names(s$ranks))))
-paramNames <- paramNames[!is.na(paramNames)]
-
-K_arm     <- length(paramNames)
-threshold <- 0.001 / max(1L, K_arm)
-
-L_actual <- {
-  Ls <- vapply(goodSims, function(s) as.integer(s$L), integer(1L))
-  Ls <- Ls[is.finite(Ls)]
-  if (length(Ls)) as.integer(stats::median(Ls)) else as.integer(L_SAMPLES)
-}
-
-per_param <- list()
-for (nm in paramNames) {
-  ranks_raw <- pool_param(nm)
-  if (length(ranks_raw) < 4L) {
-    per_param[[nm]] <- list(p = NA_real_, n = length(ranks_raw), decision = "INSUFFICIENT")
-    next
-  }
-  norm <- (ranks_raw + 0.5) / (L_actual + 1)
-  norm <- pmin(pmax(norm, .Machine$double.eps), 1 - .Machine$double.eps)
-  p    <- .adP(norm)
-  per_param[[nm]] <- list(
-    p        = p,
-    n        = length(ranks_raw),
-    decision = if (is.na(p)) "NA" else if (p > threshold) "PASS" else "FAIL"
-  )
-}
-
-decisions   <- vapply(per_param, `[[`, character(1L), "decision")
-armVerdict  <- if (mode == "quick") {
-  "EXEC_OK"
-} else if (all(decisions %in% c("PASS", "INSUFFICIENT"))) {
-  "PASS"
-} else {
-  "FAIL"
-}
+armVerdict <- if (mode == "quick") "EXEC_OK" else V$verdict
 
 # --- Write artefacts ---
 verdictLines <- c(
   sprintf("arm:         MkNT_mixed"),
   sprintf("model:       MkNT  (hasNeo=TRUE, N_NEO=%d, N_TRANS=%d)", N_NEO, N_TRANS),
-  sprintf("neo sim:     MkN lambda=2, pi_0=rl/(1+rl)"),
+  sprintf("neo sim:     MkN mean rate 1, lambda=(1+rl)^2/(2rl), pi_0=rl/(1+rl)"),
   sprintf("trans sim:   JC k=2, pSame=0.5+0.5*exp(-2t)"),
   sprintf("mode:        %s", mode),
-  sprintf("N_sim:       %d (good = %d)", N_SIM, nGood),
+  sprintf("N_sim:       %d (good = %d, skipped = %d; need >= %.0f%% good: %s)",
+          N_SIM, nGood, V$nSkipped, 100 * MIN_GOOD_FRAC,
+          if (V$enough) "ok" else "NOT MET"),
   sprintf("N_tip:       %d", N_TIP),
   sprintf("L_samples:   nominal=%d actual=%d", L_SAMPLES, L_actual),
-  sprintf("K_arm:       %d  (Bonferroni threshold p > %.5g)", K_arm, threshold),
+  sprintf("K_arm:       %d  (Bonferroni FWER %g: p > %.5g)", K_arm, FWER, threshold),
   "",
   "per-parameter AD p-values:",
   unlist(lapply(names(per_param), function(nm) {

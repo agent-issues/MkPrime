@@ -7,6 +7,9 @@
 #SBATCH --output=/nobackup/%u/mkp-study/red-team/logs/swap-db-n6_%j.out
 #SBATCH --error=/nobackup/%u/mkp-study/red-team/logs/swap-db-n6_%j.err
 #
+# RETIRED -- do not submit: subtree-swap-db.R tests pre-fix kernels (see its
+# header). Live gates: tests/testthat/test-*-subtree-swap-invariance.R.
+#
 # D2(b) escalation: n=6 (105 topologies) with the same 1M iter / thin=200
 # budget gives ~48 samples / bucket — sufficient power for chi² to detect
 # the math-prover predicted SWAP-001/SWAP-002 bias if it exists.

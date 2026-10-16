@@ -138,13 +138,8 @@ repo <- tryCatch(system2("git", c("rev-parse", "--show-toplevel"),
 if (!length(repo) || is.na(repo[1]) || !dir.exists(repo[1])) repo <- getwd()
 repo <- repo[1]
 
-if (requireNamespace("pkgload", quietly = TRUE)) {
-  pkgload::load_all(repo, quiet = TRUE)
-} else if (requireNamespace("devtools", quietly = TRUE)) {
-  devtools::load_all(repo, quiet = TRUE)
-} else {
-  stop("Need {pkgload} or {devtools}")
-}
+source(file.path(repo, "dev/red-team/heavy-tests/load-mkprime.R"))
+LoadMkPrime(repo)
 
 outDir <- file.path(repo, "dev/red-team/heavy-tests/gibbs-spr-db-results")
 dir.create(outDir, showWarnings = FALSE, recursive = TRUE)
@@ -550,7 +545,7 @@ powerFloorB <- if (nrow(detRows))
 
 verdict <- if (!genOk || !ctrlOk || !fixedOk) {
   "WARN"
-} else if (q1Fail) {
+} else if (q1Fail || q2Fail) {
   "FAIL"
 } else if (is.na(powerFloorC)) {
   "INCONCLUSIVE"
@@ -768,4 +763,4 @@ cat("\n", paste(lines, collapse = "\n"), "\n", sep = "")
 cat("\nWrote:", file.path(outDir, "verdict.txt"), "\n")
 cat("Wrote:", file.path(outDir, "summary.rds"), "\n")
 
-if (verdict == "FAIL") quit(status = 1L)
+quit(save = "no", status = c(PASS = 0L, FAIL = 1L, WARN = 2L, INCONCLUSIVE = 3L)[[verdict]])

@@ -53,7 +53,8 @@
 # submit-marginal-k-ovl.sh. For a local end-to-end check use MARGINAL_K_OVL_QUICK=1.
 
 suppressPackageStartupMessages({
-  pkgload::load_all(".", quiet = TRUE)
+  source("dev/red-team/heavy-tests/load-mkprime.R")
+  LoadMkPrime(".")
   library("ape")
   library("TreeTools")
 })
