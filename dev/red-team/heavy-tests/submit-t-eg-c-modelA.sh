@@ -9,7 +9,7 @@
 #SBATCH --error=/nobackup/%u/mkp-study/red-team/logs/t_eg_c_%j.err
 #
 # T-EG-C — empirical_geometric Model A SBC.
-# Single non-array task (one configuration: priorVariant="unconditional",
+# Single non-array task (one configuration: Model A, kprimeTruncK=30,
 # N_SIM=200, N_ITER=12000, N_TIP=8, N_CHAR=30).
 #
 # IMPORTANT: pre-build the package once on the login node before submitting:

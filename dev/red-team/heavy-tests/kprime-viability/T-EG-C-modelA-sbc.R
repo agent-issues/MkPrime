@@ -2,9 +2,9 @@
 # T-EG-C — Honest SBC for empirical_geometric under Model A (unconditional).
 #
 # Companion to T0-T4-honest-sbc.R (geometric arm).  Validates the EG arm's
-# sampler+prior+likelihood pipeline by running the chain through the new
-# `priorVariant = "unconditional"` flag (which drops the per-character
-# Z_i(p) subtraction so the prior has a coherent forward-generative joint).
+# sampler+prior+likelihood pipeline under Model A, which has a coherent
+# forward-generative joint (no per-character Z_i(p) subtraction).  Model A
+# is the only k' prior since 186f5a9 retired `priorVariant`.
 #
 # Forward (per simulation):
 #   1. p_true       ~ Beta(a, b)
@@ -17,7 +17,7 @@
 #   5. canonicalise y_i → kObs_i (= number of distinct realised states)
 #
 # Inference: MkPrime with kPrimePrior="empirical_geometric",
-#            priorVariant="unconditional", kprimeTruncK=K_MAX_PRIOR,
+#            kprimeTruncK=K_MAX_PRIOR,
 #            expSteps fixed.  Forward helpers: T-EG-C-forward.R.
 #
 # Rank statistics: kTrue_i (per-char, randomised ties), p (continuous),
@@ -119,7 +119,6 @@ EMP <- MkPrime::empiricalNObs
     coding       = "variable",
     nCat         = 1L,
     kPrimePrior  = "empirical_geometric",
-    priorVariant = "unconditional",
     kprimeHyperA = A_PRIOR,
     kprimeHyperB = B_PRIOR,
     kprimeTruncK = K_MAX_PRIOR,
@@ -246,7 +245,7 @@ cat(sprintf("Mode:          %s\n", mode))
 cat(sprintf("N_SIM:         %d (good = %d)\n", N_SIM, sum(good)))
 cat(sprintf("L_used:        %d\n", L_used))
 cat(sprintf("N_TIP:         %d  N_CHAR (target): %d\n", N_TIP, N_CHAR))
-cat(sprintf("Prior:         empirical_geometric, priorVariant=unconditional\n"))
+cat(sprintf("Prior:         empirical_geometric (Model A)\n"))
 cat(sprintf("Hyperprior:    p ~ Beta(%g, %g)\n", A_PRIOR, B_PRIOR))
 cat(sprintf("Forward draw:  N_obs ~ empiricalNObs (corpus)\n"))
 cat(sprintf("               N_unobs ~ Geo(p_true)\n"))
