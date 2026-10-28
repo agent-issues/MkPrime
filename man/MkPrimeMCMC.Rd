@@ -89,12 +89,9 @@ debugging runs.}
 chain stabilises OR this ceiling is reached (with a warning).
 Default 50 000 when \code{nIter = Inf}; \code{nIter / 2} when finite.}
 
-\item{autoTune}{Logical; enable the tuning phase after warmup
-(default \code{TRUE}). When \code{TRUE}, a short tuning phase optimises
-move weights by maximising min-ESS/s using a perturbation bandit.
-When \code{FALSE}, move weights are frozen at the end of warmup using
-the acceptance-rate heuristic (legacy behaviour). See section
-\strong{Three-phase MCMC} below.}
+\item{autoTune}{Logical; if \code{TRUE}, a tuning phase after warmup optimises
+move weights for min-ESS/s; otherwise they stay as warmup left them
+(see \strong{Three-phase MCMC}).}
 
 \item{tuningBudget}{Integer giving the most iterations the tuning phase may
 use; tuning can end sooner (see \strong{Three-phase MCMC}).}
@@ -233,7 +230,7 @@ updates to tree_length × rate_log_sd (and tree_length × rate_loss
 when neomorphic characters are present) using a bivariate Bactrian
 kernel. The correlation is estimated from the chain's samples, last
 from the first tuning window, or with \code{autoTune = FALSE} from the first
-sampling batch if warmup was too short to estimate it; it is then
+50 samples if warmup was too short to estimate it; it is then
 fixed. No effect when parameters are uncorrelated (degenerates to
 independent proposals).}
 
@@ -313,7 +310,7 @@ scheduler during warmup. Example:
 \code{moveWeights = c(nni = 0.3, spr = 0.2)} fixes NNI at 30\% and SPR at
 20\%, with the remaining 50\% allocated adaptively among other moves.
 To disable adaptive scheduling entirely, pin all moves (sum to 1).
-See section \strong{Adaptive move scheduling} below.}
+See section \strong{Three-phase MCMC} below.}
 
 \item{cacheBonus}{Numeric specifying the factor applied to the weights of
 the moves that reuse cached partial likelihoods (NNI, SPR, \code{beta_simplex},
@@ -485,7 +482,7 @@ a \code{dim} field (= nEdge) in the score formula.
 The MCMC engine runs in three phases, shown in the progress display:
 
 \strong{Warmup.} Tuning parameters (scale, window), move weights
-(acceptance-rate/cost heuristic), and temperatures (parallel
+(acceptances per second of wall-clock time), and temperatures (parallel
 tempering) all adapt. Each chain tunes its own step sizes, but move
 weights are adapted from the cold chain alone and shared by every chain
 in the temperature ladder. The phase ends automatically when the cold
@@ -513,7 +510,9 @@ rather than spend the rest of its iterations without sampling.
 Set \code{autoTune = FALSE} to skip this phase.
 
 \strong{Sample.} Move weights are frozen and posterior samples are
-collected. Convergence is checked every \code{checkEvery} iterations.
+collected; a joint-proposal correlation that warmup could not estimate is
+estimated from the first 50 samples, then fixed. Convergence is checked
+every \code{checkEvery} iterations.
 The run terminates when the stopping criteria are met (see
 \strong{Stopping criteria}), \code{maxTime} is reached, or \code{nIter}
 iterations complete.

@@ -155,15 +155,11 @@
   modelArgs[["kprimeLogseriesC"]] <- NULL
   model <- do.call(MkPrimeModel, modelArgs)
 
-  # nIter / maxWarmup are SHORTER than the plan's nominal "1000 iter" target.
-  # Bisected 2026-05-20: with gibbsSubtreeSwap=FALSE and joint2d=FALSE,
-  # cross-process bit-identity holds at (nIter=100, maxWarmup=50) but breaks
-  # somewhere before (nIter=1000, maxWarmup=200) — a third nondeterminism
-  # source emerges in longer chains. Shortening preserves the §7a contract's
-  # intent (detect drift in the legacy code path after partition-API edits)
-  # without depending on un-tracked-down cross-process nondeterminism in the
-  # existing move set. The remote-agent rule "≤ 1000 generations for smoke
-  # tests" is comfortably satisfied.
+  # Warmup move weights score acceptances per second of wall-clock time, so
+  # they differ between runs (#328) once two moves reach
+  # `.AdaptMoveWeights()`'s `minProposals`, which none does in 50 warmup
+  # iterations; a longer test needing bit-identity must pin every move's
+  # weight.
   mcmc <- MkPrimeMCMC(
     nIter        = 100L,
     maxWarmup    = 50L,
@@ -191,11 +187,6 @@
     # both within and across processes, so this is not strictly required —
     # but the §7a reference was generated with it off, so keep this until
     # the reference is regenerated.
-    #
-    # A SEPARATE, currently-uncharacterised cross-process divergence
-    # emerges at longer chains (≥1000 iter / ≥200 warmup) even with both
-    # gibbsSubtreeSwap and joint2d off. The §7a reference accordingly uses
-    # the short (100 iter / 50 warmup) regime where bit-identity holds.
     #
     # gibbsSpr is pinned off because this reference guards the legacy path as
     # a whole, not any one move. It is also the one move on main known to be

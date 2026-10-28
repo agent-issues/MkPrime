@@ -1746,7 +1746,8 @@ RunMkPrime <- function(data, tree = NULL,
           r$ladder_warning_emitted <- TRUE
         }
       }
-      # Adaptive move weight scheduling (M-092): acceptance-rate heuristic.
+      # Adaptive move weight scheduling (M-092): acceptances per wall-clock
+      # second.
       # Anneal softmax temperature relative to an adaptive warmup horizon:
       # the projected total warmup length based on remaining stabilisation
       # checks.  Monotonic: as iterations grow and stability accumulates,
@@ -2072,7 +2073,6 @@ RunMkPrime <- function(data, tree = NULL,
         r$rhoSampleBuf <- NULL
       }
     }
-    # Sample phase: no other adaptation (weights frozen)
 
     r$tuningRound <- if (phase == "Tuning") {
       list(candidates = tuningCandidates, candIdx = tuningCandIdx,
