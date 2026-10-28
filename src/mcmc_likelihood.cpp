@@ -1641,8 +1641,8 @@ static double pruning_mkn_flat_pass(
     int offset = c * kStates;
     double sl = rfPtr[0] * clRoot[offset] + rfPtr[1] * clRoot[offset + 1];
     if (!kCheck && !(sl >= MkPrime::kUncheckedFloor)) return kRecheck;
-    if (sl <= 0.0) return R_NegInf;
-    logLik += MkPrime::log_scaled(sl, kCheck && shifts.on() ? shifts.shift(root, c) : 0);
+    const int shift = kCheck && shifts.on() ? shifts.shift(root, c) : 0;
+    logLik += sl <= 0.0 ? R_NegInf : MkPrime::log_scaled(sl, shift);
   }
 
   // M-157: extract fused constant-site probability

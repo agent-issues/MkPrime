@@ -73,11 +73,11 @@
 # The issue's case: one near-random 8-state character on 200 tips, total
 # tree length 20, followed by ordinary characters.
 .UnderflowCase <- function(nTip = 200L, nState = 8L, nOrdinary = 3L,
-                           seed = 346L) {
+                           seed = 346L, treeLength = 20) {
   set.seed(seed)
   tree <- Preorder(RandomTree(nTip, root = FALSE))
   tree$edge.length <- rexp(nrow(tree$edge))
-  tree$edge.length <- tree$edge.length * 20 / sum(tree$edge.length)
+  tree$edge.length <- tree$edge.length * treeLength / sum(tree$edge.length)
   ordinary <- matrix(rep(0:1, each = nTip / 2), nTip, nOrdinary)
   states <- cbind(sample(0:(nState - 1), nTip, replace = TRUE), ordinary)
   states[sample(length(states), 10)] <- -1L
@@ -184,8 +184,8 @@ test_that("MkN and F81 kernels rescale", {
 # Pins every character's k, so that the likelihood has no relabelling or
 # ascertainment term and the partial-CL evaluators can be compared with a
 # plain full evaluation.
-.UnderflowChain <- function(model = MkPrimeModel(coding = "none")) {
-  x <- .UnderflowCase()
+.UnderflowChain <- function(model = MkPrimeModel(coding = "none"), ...) {
+  x <- .UnderflowCase(...)
   mkd <- MkPrimeData(MatrixToPhyDat(x$states),
                      knownStates = setNames(c(16L, 2L, 2L, 2L), 1:4))
   model <- MkPrime:::.FinalizeModel(model, x$tree, mkd)
@@ -248,12 +248,26 @@ test_that("Gibbs partial-CL evaluators rescale", {
     tolerance = 1e-12
   )
 
-  # Ascertainment pseudo-characters take the same partial-CL path
-  variable <- .UnderflowChain(MkPrimeModel(coding = "variable", nCat = 1L))
-  expect_true(all(is.finite(
-    gibbs_spr_enumerate_cpp(variable$dataPtr, variable$statePtr,
-                            pruneRow)$logLik
-  )))
+  # Ascertainment pseudo-characters take the same partial-CL path; on 400
+  # tips with long branches the 16-state constant patterns underflow too
+  variable <- .UnderflowChain(MkPrimeModel(coding = "variable", nCat = 1L),
+                              nTip = 400L, treeLength = 800)
+  vst <- get_mcmc_state(variable$statePtr)
+  vEdge <- vst$edge
+  vRow <- which(vEdge[, 1] != 401L & vEdge[, 2] > 400L)[3]
+  ven <- gibbs_spr_enumerate_cpp(variable$dataPtr, variable$statePtr, vRow)
+  expect_true(all(is.finite(ven$logLik)))
+  vMerged <- vst$treeLength * vst$relBrLengths
+  vMerged[c(which(vEdge[, 2] == ven$u),
+            which(vEdge[, 1] == ven$u & vEdge[, 2] != ven$v))] <- ven$lMerge / 2
+  expect_equal(
+    ven$logLik[length(ven$logLik)],
+    cpp_log_likelihood_xptr(variable$dataPtr, vEdge[, 1], vEdge[, 2], vMerged,
+                            vst$kPrime, vst$rateLoss, vst$rateLogSd,
+                            vst$rateNeo, vst$p, vst$kprimeAlpha,
+                            vst$kprimeBeta, vst$betaScale),
+    tolerance = 1e-12
+  )
 
   for (nodeA in edge[c(5, 60, 150), 2]) {
     res <- validate_swap_partial_cl(chain$dataPtr, chain$statePtr, nodeA)
