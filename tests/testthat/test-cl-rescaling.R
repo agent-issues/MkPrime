@@ -73,9 +73,10 @@
 # The issue's case: one near-random 8-state character on 200 tips, total
 # tree length 20, followed by ordinary characters.
 .UnderflowCase <- function(nTip = 200L, nState = 8L, nOrdinary = 3L,
-                           seed = 346L, treeLength = 20) {
+                           seed = 346L, treeLength = 20,
+                           shape = RandomTree) {
   set.seed(seed)
-  tree <- Preorder(RandomTree(nTip, root = FALSE))
+  tree <- Preorder(shape(nTip))
   tree$edge.length <- rexp(nrow(tree$edge))
   tree$edge.length <- tree$edge.length * treeLength / sum(tree$edge.length)
   ordinary <- matrix(rep(0:1, each = nTip / 2), nTip, nOrdinary)
@@ -248,13 +249,15 @@ test_that("Gibbs partial-CL evaluators rescale", {
     tolerance = 1e-12
   )
 
-  # Ascertainment pseudo-characters take the same partial-CL path; on 400
-  # tips with long branches the 16-state constant patterns underflow too
+  # Ascertainment pseudo-characters take the same partial-CL path. Their
+  # cached CLs are rescaled, so only a long path from the regraft point to
+  # the root underflows: prune the deepest clade of a pectinate tree
   variable <- .UnderflowChain(MkPrimeModel(coding = "variable", nCat = 1L),
-                              nTip = 400L, treeLength = 800)
+                              nTip = 400L, treeLength = 800,
+                              shape = PectinateTree)
   vst <- get_mcmc_state(variable$statePtr)
   vEdge <- vst$edge
-  vRow <- which(vEdge[, 1] != 401L & vEdge[, 2] > 400L)[3]
+  vRow <- max(which(vEdge[, 2] > 400L))
   ven <- gibbs_spr_enumerate_cpp(variable$dataPtr, variable$statePtr, vRow)
   expect_true(all(is.finite(ven$logLik)))
   vMerged <- vst$treeLength * vst$relBrLengths
@@ -378,11 +381,13 @@ test_that("Pruner rescales within a polytomy", {
 test_that("MCMC workspace kernels rescale MkN characters", {
   set.seed(2041)
   nTip <- 1200L
-  # A pectinate tree visits an internal child first at most nodes
-  for (tree in list(RandomTree(nTip, root = FALSE), PectinateTree(nTip))) {
+  # A pectinate tree visits an internal child first at most nodes; the small
+  # tree needs no rescaling. The "variable" block below reuses the last tree
+  for (tree in list(RandomTree(20L, root = FALSE),
+                    RandomTree(nTip, root = FALSE), PectinateTree(nTip))) {
     tree <- Preorder(tree)
     tree$edge.length <- rexp(nrow(tree$edge)) * 2
-    states <- matrix(sample(0:1, nTip, replace = TRUE), nTip,
+    states <- matrix(sample(0:1, NTip(tree), replace = TRUE), NTip(tree),
                      dimnames = list(tree$tip.label, NULL))
     mkd <- MkPrimeData(MatrixToPhyDat(states), neomorphic = 1L)
     for (nCat in c(1L, 4L)) {
@@ -404,7 +409,7 @@ test_that("MCMC workspace kernels rescale MkN characters", {
         header_lognormal_rates(st$rateLogSd, qnorm((1:nCat - 0.5) / nCat))
       }
       ref <- .LogPruneRef(edged, states, .MknP(st$rateLoss), freqs, rates)
-      expect_lt(ref, -745)
+      expect_equal(ref < -745, NTip(tree) == nTip)
       expect_equal(eval_full_loglik_cpp(dataPtr, statePtr), ref,
                    tolerance = 1e-12)
     }
@@ -440,15 +445,19 @@ test_that("Pruner handles unary nodes, zero likelihoods and empty categories", {
   # the same as one without it. Tips 1 and 2, on zero-length edges, differ
   # in the second character, whose likelihood is therefore 0.
   tips <- matrix(c(0L, 0L, 1L, 0L, 1L, 1L), 3)
-  unary <- header_site_likelihoods("jc", c(4L, 5L, 6L, 6L, 4L),
-                                   c(5L, 6L, 1L, 2L, 3L),
-                                   c(0.3, 0.2, 0, 0, 0.4), tips, 2L, 0, 0, 1,
-                                   log = TRUE)
-  merged <- header_site_likelihoods("jc", c(4L, 5L, 5L, 4L), c(5L, 1L, 2L, 3L),
-                                    c(0.5, 0, 0, 0.4), tips, 2L, 0, 0, 1,
-                                    log = TRUE)
-  expect_equal(unary, merged, tolerance = 1e-14)
-  expect_identical(unary[2], -Inf)
+  for (model in c("jc", "mkn", "f81")) {
+    param <- if (model == "jc") 0 else 2
+    pi <- if (model == "f81") c(0.3, 0.7) else 0
+    unary <- header_site_likelihoods(model, c(4L, 5L, 6L, 6L, 4L),
+                                     c(5L, 6L, 1L, 2L, 3L),
+                                     c(0.3, 0.2, 0, 0, 0.4), tips, 2L,
+                                     param, pi, 1, log = TRUE)
+    merged <- header_site_likelihoods(model, c(4L, 5L, 5L, 4L),
+                                      c(5L, 1L, 2L, 3L), c(0.5, 0, 0, 0.4),
+                                      tips, 2L, param, pi, 1, log = TRUE)
+    expect_equal(unary, merged, tolerance = 1e-14)
+    expect_identical(unary[2], -Inf)
+  }
 })
 
 test_that("kernels rescale a first-visited child and many observed states", {
