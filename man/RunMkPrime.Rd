@@ -23,13 +23,11 @@ RunMkPrime(
 \arguments{
 \item{data}{A \code{phyDat} object or \code{MkPrimeData} object.}
 
-\item{tree}{A \code{phylo} object (starting topology), or \code{NULL} (default)
-to start from a greedy parsimony stepwise-addition tree (via
-\code{TreeSearch::AdditionTree}) when the \code{TreeSearch} package is
-installed, falling back to a neighbour-joining tree otherwise.
-The tree must be binary, rooted or unrooted; polytomies are resolved
-at random with \code{\link[TreeTools:MakeTreeBinary]{TreeTools::MakeTreeBinary()}}, with a warning. Edges
-inserted to resolve them get length 1e-8; others keep their lengths.}
+\item{tree}{\code{phylo} object giving the starting tree, or \code{NULL} to start
+from \code{TreeSearch::AdditionTree()} (a neighbour-joining tree if
+\pkg{TreeSearch} is absent); polytomies are resolved at random, with a
+warning, and missing edge lengths are set equal, summing to three times
+\code{expSteps} (see \code{\link[=MkPrimeModel]{MkPrimeModel()}}) but no shorter than 0.1 each.}
 
 \item{neomorphic, knownStates}{Passed to \code{\link[=MkPrimeData]{MkPrimeData()}} if \code{data} is
 a \code{phyDat} object.}

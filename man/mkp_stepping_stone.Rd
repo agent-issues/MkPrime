@@ -24,8 +24,9 @@ mkp_stepping_stone(
 of states of some characters, as \code{knownStates} does in \code{\link[=RunMkPrime]{RunMkPrime()}},
 pass \code{MkPrimeData(data, knownStates = ...)}.}
 
-\item{tree}{A starting tree (\code{phylo} object), or \code{NULL} (default) to use a
-neighbour-joining tree built from the data.}
+\item{tree}{\code{phylo} object giving the starting tree, or \code{NULL} to start from
+a neighbour-joining tree; missing edge lengths are set as in
+\code{\link[=RunMkPrime]{RunMkPrime()}}.}
 
 \item{neomorphic}{Integer vector of neomorphic character indices (if \code{data}
 is \code{phyDat}). Ignored if \code{data} is \code{MkPrimeData}.}
