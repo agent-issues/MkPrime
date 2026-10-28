@@ -46,3 +46,9 @@ When \code{nRuns > 1}, trace panels use per-run colors (from
 \code{\link[grDevices:hcl.colors]{grDevices::hcl.colors()}} with the \code{"Set 2"} palette) while the
 ESS panel uses per-parameter colors with a legend.
 }
+\seealso{
+Other mkp_progress:
+\code{\link[=MkpPngProgress]{MkpPngProgress()}},
+\code{\link[=MkpWatchLog]{MkpWatchLog()}}
+}
+\concept{mkp_progress}

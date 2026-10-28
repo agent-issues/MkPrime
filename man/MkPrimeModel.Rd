@@ -223,3 +223,13 @@ See \code{vignette("het-details", package = "MkPrime")} for the full
 mathematical derivation.
 }
 
+\seealso{
+Other mkp_setup:
+\code{\link[=AutoDetectNeomorphic]{AutoDetectNeomorphic()}},
+\code{\link[=MkPrimeData]{MkPrimeData()}},
+\code{\link[=MkPrimeEmpiricalPrior]{MkPrimeEmpiricalPrior()}},
+\code{\link[=MkPrimeExtension]{MkPrimeExtension()}},
+\code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}},
+\code{\link{empiricalNObs}}
+}
+\concept{mkp_setup}

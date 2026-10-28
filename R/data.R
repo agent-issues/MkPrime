@@ -31,6 +31,7 @@
 #'   `https://github.com/ms609/neotrans`.
 #'
 #' @seealso [MkPrimeEmpiricalPrior()], [MkPrimeModel()]
+#' @family mkp_setup
 "empiricalNObs"
 
 
@@ -65,6 +66,7 @@
 #'
 #' # Body plus geometric tail
 #' MkPrimeEmpiricalPrior(body = c(0.6, 0.3), tail_decay = 0.4)
+#' @family mkp_setup
 #' @export
 MkPrimeEmpiricalPrior <- function(body, tail_decay = 0,
                                    tail_start_k = NULL,

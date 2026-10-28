@@ -69,3 +69,11 @@ Lanfear R, Hua X, Warren DL (2016).
 Bayesian phylogenetic analyses."
 \emph{Genome Biology and Evolution}, 8(8), 2319--2332.
 }
+\seealso{
+Other mkp_diagnostics:
+\code{\link[=AutoBurnin]{AutoBurnin()}},
+\code{\link[=ConvergenceDiagnostics]{ConvergenceDiagnostics()}},
+\code{\link[=SetBurnin]{SetBurnin()}},
+\code{\link[=mkp_stepping_stone]{mkp_stepping_stone()}}
+}
+\concept{mkp_diagnostics}

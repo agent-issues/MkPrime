@@ -115,3 +115,11 @@ Xie, W., Lewis, P.O., Fan, Y., Kuo, L., & Chen, M.-H. (2011).
 Improving marginal likelihood estimation for Bayesian phylogenetic model
 selection. \emph{Systematic Biology}, 60(2), 150--160.
 }
+\seealso{
+Other mkp_diagnostics:
+\code{\link[=AutoBurnin]{AutoBurnin()}},
+\code{\link[=ConvergenceDiagnostics]{ConvergenceDiagnostics()}},
+\code{\link[=SetBurnin]{SetBurnin()}},
+\code{\link[=TreeESS]{TreeESS()}}
+}
+\concept{mkp_diagnostics}

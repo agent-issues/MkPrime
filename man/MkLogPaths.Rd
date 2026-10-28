@@ -20,3 +20,11 @@ per-run file paths that \code{\link[=RunMkPrime]{RunMkPrime()}} would create (e.
 \code{c("run_1.log", "run_2.log")}). Useful when constructing the \code{logFiles}
 argument to \code{\link[=MkpWatchLog]{MkpWatchLog()}}.
 }
+\seealso{
+Other mkp_posterior:
+\code{\link[=MkCancelPath]{MkCancelPath()}},
+\code{\link[=MkPrimeRecover]{MkPrimeRecover()}},
+\code{\link[=MkpLogLikelihood]{MkpLogLikelihood()}},
+\code{\link[=ReadMkLog]{ReadMkLog()}}
+}
+\concept{mkp_posterior}

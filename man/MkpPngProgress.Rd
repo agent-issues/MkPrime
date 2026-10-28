@@ -31,3 +31,9 @@ Two files are written on each call:
 \code{warmup}, \code{inWarmup}, \code{elapsed}, and \code{recentAcceptance}.}
 }
 }
+\seealso{
+Other mkp_progress:
+\code{\link[=MkpTracePlot]{MkpTracePlot()}},
+\code{\link[=MkpWatchLog]{MkpWatchLog()}}
+}
+\concept{mkp_progress}

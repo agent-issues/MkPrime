@@ -55,3 +55,13 @@ summary(mkd)
 }
 
 }
+\seealso{
+Other mkp_setup:
+\code{\link[=AutoDetectNeomorphic]{AutoDetectNeomorphic()}},
+\code{\link[=MkPrimeEmpiricalPrior]{MkPrimeEmpiricalPrior()}},
+\code{\link[=MkPrimeExtension]{MkPrimeExtension()}},
+\code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}},
+\code{\link[=MkPrimeModel]{MkPrimeModel()}},
+\code{\link{empiricalNObs}}
+}
+\concept{mkp_setup}

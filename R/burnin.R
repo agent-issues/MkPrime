@@ -12,6 +12,7 @@
 #'   a value < 1 is instead a fraction of the shortest run's sample count.
 #'
 #' @return A new `MkPosterior` with the updated burnin.
+#' @family mkp_diagnostics
 #' @export
 SetBurnin <- function(posterior, burnin) {
   if (!inherits(posterior, "MkPosterior")) {
@@ -62,6 +63,7 @@ SetBurnin <- function(posterior, burnin) {
 #'   `seq(0, 0.5, by = 0.05)`.
 #'
 #' @return A new `MkPosterior` with the selected burnin set.
+#' @family mkp_diagnostics
 #' @export
 AutoBurnin <- function(posterior,
                        rhatThreshold = 1.05,

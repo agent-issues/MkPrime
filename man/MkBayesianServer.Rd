@@ -43,4 +43,12 @@ The \code{processx} package must be installed.  Add it via
 \seealso{
 \code{\link[=MkBayesianUi]{MkBayesianUi()}}, \code{\link[=RunMkPrime]{RunMkPrime()}}, \code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}},
 \code{\link[=ReadMkLog]{ReadMkLog()}}, \code{\link[=MkCancelPath]{MkCancelPath()}}
+
+Other mkp_run:
+\code{\link[=EasyMkPrime]{EasyMkPrime()}},
+\code{\link[=MkBayesianUi]{MkBayesianUi()}},
+\code{\link[=MkPrimeVerbosity]{MkPrimeVerbosity()}},
+\code{\link[=ResumeMkPrime]{ResumeMkPrime()}},
+\code{\link[=RunMkPrime]{RunMkPrime()}}
 }
+\concept{mkp_run}

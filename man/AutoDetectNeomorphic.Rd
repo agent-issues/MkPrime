@@ -19,3 +19,13 @@ Identifies binary characters whose states are \code{0} (absent) and \code{1}
 Characters that contain state \code{0} alongside states other than \code{1} are
 \strong{not} flagged as neomorphic (they remain transformational by default).
 }
+\seealso{
+Other mkp_setup:
+\code{\link[=MkPrimeData]{MkPrimeData()}},
+\code{\link[=MkPrimeEmpiricalPrior]{MkPrimeEmpiricalPrior()}},
+\code{\link[=MkPrimeExtension]{MkPrimeExtension()}},
+\code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}},
+\code{\link[=MkPrimeModel]{MkPrimeModel()}},
+\code{\link{empiricalNObs}}
+}
+\concept{mkp_setup}

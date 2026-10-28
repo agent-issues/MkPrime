@@ -34,4 +34,12 @@ The following packages must be installed (listed in \code{Suggests}):
 }
 \seealso{
 \code{\link[=RunMkPrime]{RunMkPrime()}}, \code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}}
+
+Other mkp_run:
+\code{\link[=MkBayesianServer]{MkBayesianServer()}},
+\code{\link[=MkBayesianUi]{MkBayesianUi()}},
+\code{\link[=MkPrimeVerbosity]{MkPrimeVerbosity()}},
+\code{\link[=ResumeMkPrime]{ResumeMkPrime()}},
+\code{\link[=RunMkPrime]{RunMkPrime()}}
 }
+\concept{mkp_run}
