@@ -582,11 +582,24 @@ class Pruner {
   // Rescales each character block of `cl` that has fallen below
   // kRescaleBelow, adding the shift to shift[c].
   void rescale_node(double* cl, int* shift) const {
+    bool any = true;
+    rescale_node(cl, shift, any);
+  }
+
+  // As above, but setting `any` and zeroing `shift` first if it was not
+  // already in use.
+  void rescale_node(double* cl, int* shift, bool& any) const {
     for (int c = 0; c < nChar_; ++c) {
       double* block = cl + static_cast<std::size_t>(c) * k_;
       double sum = 0.0;
       for (int s = 0; s < k_; ++s) sum += block[s];
-      if (sum < kRescaleBelow) shift[c] += rescale_cl(block, k_);
+      if (sum < kRescaleBelow) {
+        if (!any) {
+          for (int j = 0; j < nChar_; ++j) shift[j] = 0;
+          any = true;
+        }
+        shift[c] += rescale_cl(block, k_);
+      }
     }
   }
 
@@ -741,11 +754,7 @@ class Pruner {
           multiply_rescale(dst, scratch_.data(), shift, any);
         }
       }
-      if (nk.size() == 1) {
-        if (!any) for (int c = 0; c < nChar_; ++c) shift[c] = 0;
-        rescale_node(dst, shift);
-        for (int c = 0; c < nChar_; ++c) any = any || shift[c] != 0;
-      }
+      if (nk.size() == 1) rescale_node(dst, shift, any);
       scaled_[slot] = any;
     }
   }
