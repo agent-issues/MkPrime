@@ -70,9 +70,15 @@ swapSh <- readLines(file.path(hdir, "submit-swap-db-n6.sh"))
 ok("subtree-swap-db.R header says RETIRED", any(grepl("RETIRED", swapR)))
 ok("submit-swap-db-n6.sh says RETIRED", any(grepl("RETIRED", swapSh)))
 sh <- file.path(hdir, "submit-swap-db-n6.sh")
-out <- suppressWarnings(system2("bash", shQuote(sh), stdout = TRUE,
-                                stderr = TRUE,
-                                env = "MKP_RUN_RETIRED="))
+# On Windows, PATH may resolve "bash" to WSL's, which cannot read these paths.
+winBash <- "C:/Program Files/Git/bin/bash.exe"
+bash <- if (file.exists(winBash)) winBash else "bash"
+oldGuard <- Sys.getenv("MKP_RUN_RETIRED", unset = NA)
+Sys.setenv(MKP_RUN_RETIRED = "")
+out <- suppressWarnings(system2(bash, shQuote(sh), stdout = TRUE,
+                                stderr = TRUE))
+if (is.na(oldGuard)) Sys.unsetenv("MKP_RUN_RETIRED") else
+  Sys.setenv(MKP_RUN_RETIRED = oldGuard)
 ok("the submit script refuses to run unless MKP_RUN_RETIRED=1",
    !is.null(attr(out, "status")) && attr(out, "status") != 0L &&
      any(grepl("retired", out)))

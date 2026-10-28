@@ -54,7 +54,8 @@
 #          ranks.rds, rank-histograms.png, verdict.txt.
 
 suppressPackageStartupMessages({
-  pkgload::load_all(".", quiet = TRUE)
+  source("dev/red-team/heavy-tests/load-mkprime.R")
+  LoadMkPrime(".")
   library(ape)
   library(TreeTools)
 })
@@ -346,7 +347,13 @@ good <- sapply(sims, function(s) !isTRUE(s$skipped))
 cat(sprintf("\n[T-SBC-marginal-geometric] Good sims: %d / %d\n", sum(good), N_SIM))
 saveRDS(sims, file.path(OUT_DIR, "sims.rds"))
 
-min_good <- if (mode == "quick") 5L else 20L
+# Skipped and missing-shard sims drop non-randomly in theta, so the full-mode
+# floor is 90% of N_SIM rather than a token count.
+nMissing <- sum(vapply(sims, function(s) identical(s$reason, "missing_shard"),
+                       logical(1L)))
+cat(sprintf("Skipped %d sims, of which %d from missing shards\n",
+            N_SIM - sum(good), nMissing))
+min_good <- if (mode == "quick") 5L else as.integer(ceiling(0.9 * N_SIM))
 if (sum(good) < min_good) {
   cat(sprintf("[T-SBC-marginal-geometric] Too few good sims (need %d); aborting AD analysis.\n",
               min_good))

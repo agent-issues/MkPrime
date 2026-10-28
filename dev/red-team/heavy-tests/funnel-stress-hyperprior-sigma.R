@@ -68,17 +68,16 @@ build_fixture <- function(seed = 20260527L,
 # Run one MCMC under a given prior
 # ----------------------------------------------------------------------------
 
+# Pinned so a change to MkPrimeModel() defaults cannot silently change this
+# stress test; printed with the results.
+MODEL_PIN <- list(nCat = 6L, expSteps = 1.4)
+
 run_one <- function(fixture, prior_kind,
                     n_gen = 20000L, n_warmup = 4000L,
                     seed = 1L) {
   set.seed(seed)
-  # Everything but the sigma prior is pinned, so the contrast does not move when
-  # a package default does: nCat and the pre-3c091f9 expSteps
-  # (total Fitch score of the start tree, not the per-character default).
   model <- MkPrimeModel(kPrimePrior = "geometric",
-                        nCat = 6L,
-                        expSteps = max(1, MkPrime:::.FitchScore(
-                          fixture$tree, fixture$mkd)),
+                        nCat = MODEL_PIN$nCat, expSteps = MODEL_PIN$expSteps,
                         priorOnClassRateLogSd = prior_kind)
   mcmc <- MkPrimeMCMC(
     nIter      = n_gen,
@@ -116,6 +115,8 @@ ess_per_class <- function(samples, n_classes) {
 # Run
 # ----------------------------------------------------------------------------
 
+cat(sprintf("Pinned model: nCat=%d expSteps=%g\n",
+            MODEL_PIN$nCat, MODEL_PIN$expSteps))
 cat("Building fixture: 5 classes, sizes (5, 50, 50, 50, 50)\n")
 fixture <- build_fixture()
 n_classes <- length(unique(fixture$partition))

@@ -23,7 +23,8 @@ ok <- function(label, cond) {
 Definition <- function(path, name, env = new.env(parent = globalenv())) {
   exprs <- parse(path, keep.source = FALSE)
   hit <- Filter(function(e) {
-    is.call(e) && as.character(e[[1L]]) %in% c("<-", "=") &&
+    is.call(e) && (identical(e[[1L]], quote(`<-`)) ||
+                     identical(e[[1L]], quote(`=`))) &&
       identical(as.character(e[[2L]]), name)
   }, as.list(exprs))
   if (length(hit) != 1L) stop(name, " is not defined exactly once in ", path)
@@ -45,30 +46,14 @@ CallsTo <- function(path, fn) {
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
-## ---- HARN2-008: priorVariant pinned in every marginal-k driver -------------
+## ---- HARN2-008: no marginal-k driver passes the retired priorVariant ------
 for (f in list.files(MK, "\\.R$", full.names = TRUE)) {
   calls <- CallsTo(f, "MkPrimeModel")
   if (!length(calls)) next
-  ok(sprintf("%s pins priorVariant", basename(f)),
-     all(vapply(calls, function(cl) "priorVariant" %in% names(cl), logical(1L))))
+  ok(sprintf("%s does not pass priorVariant", basename(f)),
+     !any(vapply(calls, function(cl) "priorVariant" %in% names(cl), logical(1L))))
 }
 ovlDriver <- file.path(MK, "T-OVL-sampled-vs-marginal.R")
-WithPriorVariant <- function(value, code) {
-  old <- Sys.getenv("MARGINAL_K_PRIOR_VARIANT", unset = NA)
-  on.exit(if (is.na(old)) Sys.unsetenv("MARGINAL_K_PRIOR_VARIANT")
-          else Sys.setenv(MARGINAL_K_PRIOR_VARIANT = old))
-  if (is.na(value)) Sys.unsetenv("MARGINAL_K_PRIOR_VARIANT")
-  else Sys.setenv(MARGINAL_K_PRIOR_VARIANT = value)
-  code
-}
-ok("T-OVL defaults to the shipped Model A",
-   identical(WithPriorVariant(NA, Definition(ovlDriver, "PRIOR_VARIANT")), "unconditional"))
-ok("T-OVL prior variant is overridable",
-   identical(WithPriorVariant("conditional", Definition(ovlDriver, "PRIOR_VARIANT")),
-             "conditional"))
-ok("the Phase-2 overnight script reproduces its recorded Model B runs",
-   any(grepl("^export MARGINAL_K_PRIOR_VARIANT=conditional$",
-             readLines(file.path(MK, "run-phase2-overnight.sh")))))
 
 ## ---- HARN2-012: marginal SBC output dir is per batch ----------------------
 sbcDriver <- file.path(MK, "T-SBC-marginal-geometric.R")
@@ -203,5 +188,112 @@ if (!nzchar(Sys.getenv("MKP_SKIP_SBC_SMOKE")) && canLoad) {
 } else {
   cat("(sbc.R smoke skipped: MkPrime not loadable or MKP_SKIP_SBC_SMOKE set)\n")
 }
+
+## ---- HARN3-003/004/005: sbc-mixed simulates the package's MkN and gates hard
+mixedR <- file.path(HT, "sbc-mixed.R")
+SimNeo <- Definition(mixedR, ".simNeoChar")
+# P(tip1 = 0, tip2 = 1) on a two-tip tree, root at stationarity.
+JointPattern <- function(r, t, lambda) {
+  pi <- c(r / (1 + r), 1 / (1 + r))
+  Pr <- function(a, b) {
+    move <- pi[b + 1L] * (1 - exp(-lambda * t))
+    if (a == b) 1 - move else move
+  }
+  sum(vapply(0:1, function(rt) pi[rt + 1L] * Pr(rt, 0L) * Pr(rt, 1L), 0))
+}
+# Package rates (src/mkn_rates.h): rate01 = (1+r)/(2r), rate10 = (1+r)/2.
+PackageP01 <- function(r, t) {
+  Q <- matrix(c(-(1 + r) / (2 * r), (1 + r) / (2 * r),
+                (1 + r) / 2, -(1 + r) / 2), 2L, byrow = TRUE)
+  e <- eigen(Q)
+  (e$vectors %*% diag(exp(e$values * t)) %*% solve(e$vectors))[1L, 2L]
+}
+rTrue <- 4
+tBranch <- 0.3
+lambdaPkg <- (1 + rTrue)^2 / (2 * rTrue)
+ratesH <- readLines("inst/include/MkPrime/transition.h")
+ok("transition.h (mkn_rates) still has the rates the oracle assumes",
+   any(grepl("rate01 = half / rateLoss", ratesH, fixed = TRUE)) &&
+     any(grepl("half = 0.5 * (1.0 + rateLoss)", ratesH, fixed = TRUE)))
+ok("lambda = (1+r)^2/(2r) reproduces the package P01",
+   abs(PackageP01(rTrue, tBranch) -
+         (1 / (1 + rTrue)) * (1 - exp(-lambdaPkg * tBranch))) < 1e-9)
+set.seed(1)
+twoTip <- ape::read.tree(text = sprintf("(t1:%g,t2:%g);", tBranch, tBranch))
+draws <- replicate(40000L, SimNeo(twoTip, rTrue, 1))
+pHat <- mean(draws[1L, ] == 0L & draws[2L, ] == 1L)
+ok("sbc-mixed MkN forward sim matches the package rate",
+   abs(pHat - JointPattern(rTrue, tBranch, lambdaPkg)) < 0.008)
+ok("... and would have rejected the pre-eecee51 lambda = 2",
+   abs(pHat - JointPattern(rTrue, tBranch, 2)) > 0.015)
+
+MixedVerdict <- Definition(mixedR, "MixedVerdict")
+all3 <- c("tree_length", "rate_neo", "rate_loss")
+FakeSims <- function(n, params = all3, nSkip = 0L, L = 100L) {
+  lapply(seq_len(n), function(i) {
+    if (i <= nSkip) return(list(skipped = TRUE, reason = "x"))
+    list(skipped = FALSE, L = L,
+         ranks = stats::setNames(rep(list((i * 37L) %% L), length(params)),
+                                 params))
+  })
+}
+Gate <- function(sims) {
+  MixedVerdict(sims, all3, 100L, 0.001, 0.9, 50L,
+               function(x) suppressWarnings(stats::ks.test(x, "punif"))$p.value)$verdict
+}
+ok("sbc-mixed passes a complete, uniform fixture", identical(Gate(FakeSims(200L)), "PASS"))
+ok("sbc-mixed fails when an expected parameter is missing",
+   identical(Gate(FakeSims(200L, c("tree_length", "rate_neo"))), "FAIL"))
+ok("sbc-mixed fails when ranks are INSUFFICIENT",
+   identical(Gate(FakeSims(40L)), "FAIL"))
+ok("sbc-mixed fails when > 10% of sims are skipped",
+   identical(Gate(FakeSims(200L, nSkip = 30L)), "FAIL"))
+ok("sbc-mixed tolerates a few skips",
+   identical(Gate(FakeSims(200L, nSkip = 10L)), "PASS"))
+ok("sbc-mixed fails on a non-uniform rank histogram",
+   identical(Gate(lapply(FakeSims(200L), function(s) {
+     s$ranks$rate_loss <- 2L
+     s
+   })), "FAIL"))
+mixedLines <- readLines(mixedR)
+ok("sbc-mixed ranks no inert rate_log_sd",
+   !any(grepl("ranks$rate_log_sd", mixedLines, fixed = TRUE)))
+ok("sbc-mixed doc and Bonferroni constant agree",
+   any(grepl("FWER 0.001 / K_arm", mixedLines, fixed = TRUE)) &&
+     identical(Definition(mixedR, "FWER"), 0.001))
+
+## ---- HARN3-008/010/013: other gates ----------------------------------------
+spr <- readLines(file.path(HT, "gibbs-spr-db.R"))
+ok("gibbs-spr-db FAIL also covers the composite br_* arms (q2Fail)",
+   any(grepl("q1Fail || q2Fail", spr, fixed = TRUE)))
+ok("gibbs-spr-db exits non-zero on WARN and INCONCLUSIVE",
+   any(grepl("WARN = 2L, INCONCLUSIVE = 3L", spr, fixed = TRUE)))
+for (f in c("gibbs-spr-db.R", "marginal-k/T-SBC-marginal-geometric.R",
+            "marginal-k/T-SBC-sampled-geometric.R",
+            "marginal-k/T-OVL-sampled-vs-marginal.R")) {
+  src <- readLines(file.path(HT, f))
+  ok(sprintf("%s loads the package through load-mkprime.R", basename(f)),
+     !any(grepl("pkgload::load_all", src)) &&
+       any(grepl("LoadMkPrime(", src, fixed = TRUE)))
+}
+for (f in c("T-SBC-marginal-geometric.R", "T-SBC-sampled-geometric.R")) {
+  ok(sprintf("%s fails when > 10%% of sims are missing", f),
+     any(grepl("ceiling(0.9 * N_SIM)", readLines(file.path(MK, f)),
+               fixed = TRUE)))
+}
+for (f in c("submit-marginal-k-sbc.sh", "submit-marginal-k-sbc-sampled.sh")) {
+  tl <- sub(".*--time=", "",
+            grep("--time=", readLines(file.path(HT, f)), value = TRUE))
+  mins <- sum(as.integer(strsplit(tl, ":")[[1L]]) * c(60L, 1L, 0L))
+  ok(sprintf("%s walltime covers 5 sims at ~3 min plus start-up", f),
+     mins >= 30L)
+}
+funnel <- readLines(file.path(HT, "funnel-stress-hyperprior-sigma.R"))
+ok("funnel-stress pins nCat and expSteps, not priorVariant",
+   any(grepl("MODEL_PIN <- list(nCat", funnel, fixed = TRUE)) &&
+     !any(grepl("priorVariant", funnel, fixed = TRUE)))
+ok("funnel-stress prints no NEWS.md headline", !any(grepl("NEWS", funnel)))
+ok("subtree-swap-db is marked retired",
+   any(grepl("^# RETIRED", readLines(file.path(HT, "subtree-swap-db.R"))[1:6])))
 
 cat("\nALL CHECKS PASSED\n")

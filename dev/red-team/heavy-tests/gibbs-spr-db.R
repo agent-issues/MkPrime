@@ -559,7 +559,7 @@ powerFloorB <- if (nrow(detRows))
 # Only PASS is a pass: a harness that is suspect (WARN) or underpowered
 # (INCONCLUSIVE) has certified nothing, so a CI-style caller must not see 0.
 .VerdictStatus <- function(verdict) {
-  switch(verdict, PASS = 0L, FAIL = 1L, 2L)
+  c(PASS = 0L, FAIL = 1L, WARN = 2L, INCONCLUSIVE = 3L)[[verdict]]
 }
 
 verdict <- .Verdict(genOk, ctrlOk, fixedOk, q1Fail, q2Fail, powerFloorC)
@@ -774,4 +774,4 @@ cat("\n", paste(lines, collapse = "\n"), "\n", sep = "")
 cat("\nWrote:", file.path(outDir, "verdict.txt"), "\n")
 cat("Wrote:", file.path(outDir, "summary.rds"), "\n")
 
-if (.VerdictStatus(verdict) != 0L) quit(status = .VerdictStatus(verdict))
+quit(save = "no", status = .VerdictStatus(verdict))
