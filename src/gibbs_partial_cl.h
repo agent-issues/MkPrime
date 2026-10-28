@@ -799,10 +799,12 @@ static double evaluate_candidate(
             continue;
           }
 
-          // Case 2: sibling node is on the residual path
+          // Case 2: sibling node is on the residual path. Unreached: a path
+          // node's parent is on the path too, where case 1 takes the slot.
           int cn = (sl == 0) ? topo.ch0[par] :
                    (sl == 1) ? topo.ch1[par] : topo.ch2[par];
           int cnResIdx = res.pathIndex(cn);
+          // # nocov start
           if (cnResIdx >= 0) {
             double t_sib = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
             const double* sibI = res.I(cat, cnResIdx);
@@ -811,6 +813,7 @@ static double evaluate_candidate(
             sh.add(res.IS(cat, cnResIdx));
             continue;
           }
+          // # nocov end
 
           // Case 3: use original cached F
           const double* f = grp.Fslot(cat, par, sl);
@@ -1013,9 +1016,12 @@ static double evaluate_const_prob(
             sh.add(res.FS(pg, cat, parResIdx));
             continue;
           }
+          // Case 2: sibling node is on the residual path. Unreached: a path
+          // node's parent is on the path too, where case 1 takes the slot.
           int cn = (sl == 0) ? topo.ch0[par] :
                    (sl == 1) ? topo.ch1[par] : topo.ch2[par];
           int cnResIdx = res.pathIndex(cn);
+          // # nocov start
           if (cnResIdx >= 0) {
             double t_sib = topo.edgeLen[topo.edgeToPar[cn]] * rate * sc;
             const double* sibI = res.I(cat, cnResIdx);
@@ -1024,6 +1030,7 @@ static double evaluate_const_prob(
             sh.add(res.IS(cat, cnResIdx));
             continue;
           }
+          // # nocov end
           const double* f = pg.Fslot(cat, par, sl);
           for (int i = 0; i < stride; ++i) out[i] *= f[i];
           sh.add(pg.IS(cat, cn));

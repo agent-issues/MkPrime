@@ -364,34 +364,52 @@ test_that("Pruner rescales within a polytomy", {
 test_that("MCMC workspace kernels rescale MkN characters", {
   set.seed(2041)
   nTip <- 1200L
-  tree <- Preorder(RandomTree(nTip, root = FALSE))
-  tree$edge.length <- rexp(nrow(tree$edge)) * 2
-  states <- matrix(sample(0:1, nTip, replace = TRUE), nTip,
-                   dimnames = list(tree$tip.label, NULL))
-  mkd <- MkPrimeData(MatrixToPhyDat(states), neomorphic = 1L)
-  for (nCat in c(1L, 4L)) {
-    model <- MkPrime:::.FinalizeModel(
-      MkPrimeModel(coding = "none", nCat = nCat), tree, mkd
-    )
-    dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
-    statePtr <- MkPrime:::.InitMcmcChain(
-      MkPrime:::.InitState(tree, mkd, model)
-    )
-    fill_partition_cache(dataPtr, statePtr)
-    allocate_cl_workspace(dataPtr, statePtr)
-    st <- get_mcmc_state(statePtr)
-    full <- eval_full_loglik_cpp(dataPtr, statePtr)
-    expect_lt(full, -745)
-    expect_equal(full, get_state_log_lik(statePtr), tolerance = 1e-12)
-    if (nCat == 1L) {
+  # A pectinate tree visits an internal child first at most nodes
+  for (tree in list(RandomTree(nTip, root = FALSE), PectinateTree(nTip))) {
+    tree <- Preorder(tree)
+    tree$edge.length <- rexp(nrow(tree$edge)) * 2
+    states <- matrix(sample(0:1, nTip, replace = TRUE), nTip,
+                     dimnames = list(tree$tip.label, NULL))
+    mkd <- MkPrimeData(MatrixToPhyDat(states), neomorphic = 1L)
+    for (nCat in c(1L, 4L)) {
+      model <- MkPrime:::.FinalizeModel(
+        MkPrimeModel(coding = "none", nCat = nCat), tree, mkd
+      )
+      state0 <- MkPrime:::.InitState(tree, mkd, model)
+      if (nCat == 1L) state0$rate_log_sd <- 0
+      dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
+      statePtr <- MkPrime:::.InitMcmcChain(state0)
+      fill_partition_cache(dataPtr, statePtr)
+      allocate_cl_workspace(dataPtr, statePtr)
+      st <- get_mcmc_state(statePtr)
       edged <- tree
       edged$edge <- st$edge
       edged$edge.length <- st$treeLength * st$relBrLengths
       freqs <- c(st$rateLoss, 1) / (1 + st$rateLoss)
-      expect_equal(full, .LogPruneRef(edged, states, .MknP(st$rateLoss), freqs),
+      rates <- if (nCat == 1L) 1 else {
+        header_lognormal_rates(st$rateLogSd, qnorm((1:nCat - 0.5) / nCat))
+      }
+      ref <- .LogPruneRef(edged, states, .MknP(st$rateLoss), freqs, rates)
+      expect_lt(ref, -745)
+      expect_equal(eval_full_loglik_cpp(dataPtr, statePtr), ref,
                    tolerance = 1e-12)
     }
   }
+
+  # Under "variable" coding the constant-pattern pseudo-characters underflow
+  # too, so the Gibbs evaluators take their rescaling pass on them
+  model <- MkPrime:::.FinalizeModel(
+    MkPrimeModel(coding = "variable", nCat = 1L), tree, mkd
+  )
+  dataPtr <- MkPrime:::.InitMcmcData(mkd, model)
+  statePtr <- MkPrime:::.InitMcmcChain(MkPrime:::.InitState(tree, mkd, model))
+  fill_partition_cache(dataPtr, statePtr)
+  allocate_cl_workspace(dataPtr, statePtr)
+  edge <- get_mcmc_state(statePtr)$edge
+  pruneRow <- which(edge[, 1] != nTip + 1L & edge[, 2] > nTip)[2]
+  expect_true(all(is.finite(
+    gibbs_spr_enumerate_cpp(dataPtr, statePtr, pruneRow)$logLik
+  )))
 })
 
 test_that("Pruner handles unary nodes, zero likelihoods and empty categories", {

@@ -32,6 +32,7 @@
 
 #include "models.h"
 #include "scaling.h"
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -742,9 +743,9 @@ class Pruner {
         }
       }
       if (nk.size() == 1) {
-        if (!any) for (int c = 0; c < nChar_; ++c) shift[c] = 0;
+        if (!any) std::fill(shift, shift + nChar_, 0);
         rescale_node(dst, shift);
-        for (int c = 0; c < nChar_; ++c) any = any || shift[c];
+        any = any || std::count(shift, shift + nChar_, 0) < nChar_;
       }
       scaled_[slot] = any;
     }

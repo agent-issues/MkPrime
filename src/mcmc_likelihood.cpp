@@ -690,9 +690,8 @@ static inline bool persite_impl(
   double inv_nCat = 1.0 / nCat;
   for (int c = 0; c < nChar; ++c) {
     double avg = site_lik_sum[c] * inv_nCat;
-    siteLL[c] = (avg > 0.0)
-      ? MkPrime::log_scaled(avg, kCheck && shifts.on() ? shifts.site_shift(c) : 0)
-      : R_NegInf;
+    const int shift = kCheck && shifts.on() ? shifts.site_shift(c) : 0;
+    siteLL[c] = avg > 0.0 ? MkPrime::log_scaled(avg, shift) : R_NegInf;
   }
   return false;
 }
@@ -910,9 +909,8 @@ static inline bool persite_collapsed_impl(
   double inv_nCat = 1.0 / nCat;
   for (int c = 0; c < nChar; ++c) {
     double avg = site_lik_sum[c] * inv_nCat;
-    siteLL[c] = (avg > 0.0)
-      ? MkPrime::log_scaled(avg, kCheck && shifts.on() ? shifts.site_shift(c) : 0)
-      : R_NegInf;
+    const int shift = kCheck && shifts.on() ? shifts.site_shift(c) : 0;
+    siteLL[c] = avg > 0.0 ? MkPrime::log_scaled(avg, shift) : R_NegInf;
   }
   return false;
 }
@@ -2395,9 +2393,8 @@ static bool f81_het_acrv_persite_pass(
   double inv_comp = 1.0 / totalComp;
   for (int c = 0; c < nChar; ++c) {
     double avg = site_lik_sum[c] * inv_comp;
-    siteLL[c] = (avg > 0.0)
-      ? MkPrime::log_scaled(avg, kCheck && shifts.on() ? shifts.site_shift(c) : 0)
-      : R_NegInf;
+    const int shift = kCheck && shifts.on() ? shifts.site_shift(c) : 0;
+    siteLL[c] = avg > 0.0 ? MkPrime::log_scaled(avg, shift) : R_NegInf;
   }
   return false;
 }
