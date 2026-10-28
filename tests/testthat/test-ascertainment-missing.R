@@ -12,15 +12,14 @@
 }
 
 # P(constant [or parsimony-uninformative] among the observed tips), by
-# enumerating every completion of the missing tips: independent of the
-# masked kernels.
+# enumerating every observed pattern and leaving the missing tips ambiguous in
+# plain pruning: independent of the masked kernels.
 .BruteAscProb <- function(tree, missing, k, neo, rateLoss, rates,
                           informative) {
   parent <- tree$edge[, 1]
   child <- tree$edge[, 2]
   nTip <- NTip(tree)
   obs <- which(!missing)
-  mis <- which(missing)
   SiteLik <- function(pattern) {
     m <- matrix(as.integer(pattern), nTip, 1)
     exp(if (neo) {
@@ -35,22 +34,15 @@
   # Uninformative: fewer than two states each occur twice or more.
   obsPatterns <- as.matrix(expand.grid(rep(list(seq_len(k) - 1L),
                                            length(obs))))
-  keep <- apply(obsPatterns, 1, function(x) {
-    counts <- tabulate(x + 1L, k)
-    if (informative) sum(counts >= 2L) < 2L else sum(counts > 0L) == 1L
-  })
-  patterns <- lapply(which(keep), function(i) {
-    p <- integer(nTip)
-    p[obs] <- obsPatterns[i, ]
-    p
-  })
-  fills <- as.matrix(expand.grid(rep(list(seq_len(k) - 1L), length(mis))))
+  counts <- vapply(seq_len(k) - 1L, function(s) rowSums(obsPatterns == s),
+                   double(nrow(obsPatterns)))
+  keep <- if (informative) rowSums(counts >= 2L) < 2L else
+    rowSums(counts > 0L) == 1L
   # Return:
-  sum(vapply(patterns, function(p) {
-    sum(apply(fills, 1, function(f) {
-      p[mis] <- f
-      SiteLik(p)
-    }))
+  sum(vapply(which(keep), function(i) {
+    p <- rep(-1L, nTip)
+    p[obs] <- obsPatterns[i, ]
+    SiteLik(p)
   }, double(1)))
 }
 
@@ -126,33 +118,66 @@ test_that("fixture has missing cells in every partition", {
                   c("neomorphic", "transformational", "known"))
 })
 
+# A transformational character's k' prior: geometric from 2, capped low
+# enough to sum by hand.
+.kMissPrior <- list(p = 0.4, K = 12L)
+
+.MissingModel <- function(coding, ...) {
+  MkPrimeModel(coding = coding, kPrimePrior = "geometric",
+               kprimeTruncK = .kMissPrior$K, ...)
+}
+
 .DirectLogLik <- function(d, coding, rateLoss, rateLogSd, rateNeo,
                           kPrime = d$mkd$kObs) {
-  model <- MkPrime:::.FinalizeModel(MkPrimeModel(coding = coding), d$tree,
-                                    d$mkd)
+  model <- MkPrime:::.FinalizeModel(.MissingModel(coding), d$tree, d$mkd)
   dataPtr <- MkPrime:::.InitMcmcData(d$mkd, model)
   # Return:
   cpp_log_likelihood_xptr(dataPtr, d$tree$edge[, 1], d$tree$edge[, 2],
                           d$tree$edge.length, as.integer(kPrime),
                           rateLoss = rateLoss, rateLogSd = rateLogSd,
-                          rateNeo = rateNeo)
+                          rateNeo = rateNeo, p = .kMissPrior$p,
+                          kprimeAlpha = 1, kprimeBeta = 1)
+}
+
+# log Pr(V) for a transformational character, whose k' is drawn from the
+# prior with its pattern: Pr(V | k) averaged over the prior's support.
+.BruteJointAsc <- function(tree, missing, rates) {
+  k <- 2:.kMissPrior$K
+  w <- (1 - .kMissPrior$p)^(k - 2)
+  pV <- 1 - vapply(k, function(kk) {
+    MkPrime:::asc_site_prob_missing(
+      tree$edge[, 1], tree$edge[, 2], tree$edge.length, NTip(tree), kk, FALSE,
+      1, rates, missing, FALSE)
+  }, double(1))
+  # Return:
+  log(sum(w * pV) / sum(w))
 }
 
 test_that("each character is conditioned on its own observed tips", {
   d <- .MissingData()
-  mkd <- d$mkd
   tree <- d$tree
   nCat <- MkPrimeModel()$nCat
-  kPrime <- mkd$kObs
-  kPrime[mkd$type == "transformational"][1:3] <- 4L
-  isNeo <- mkd$type == "neomorphic"
-  for (par in list(c(rl = 0.4, sd = 0, rn = 1.7),
-                   c(rl = 2.5, sd = 0.6, rn = 0.5))) {
-    rates <- DiscreteLognormalRates(par[["sd"]], nCat)
-    nTotal <- length(isNeo)
-    neoScale <- par[["rn"]] / (1 + par[["rn"]]) * nTotal / sum(isNeo)
-    transScale <- 1 / (1 + par[["rn"]]) * nTotal / sum(!isNeo)
-    for (coding in c("variable", "informative")) {
+  for (coding in c("variable", "informative")) {
+    # Informative coding is available only where k' is fixed.
+    keep <- if (coding == "informative") {
+      MkPrime:::.Informable(d$mkd) & d$mkd$type != "transformational"
+    } else {
+      rep(TRUE, d$mkd$nChar)
+    }
+    dd <- d
+    dd$mkd <- MkPrime:::.SubsetMkPrimeData(d$mkd, keep)
+    mkd <- dd$mkd
+    isNeo <- mkd$type == "neomorphic"
+    isTrans <- mkd$type == "transformational"
+    # The correction of a transformational character does not move with k'.
+    kPrime <- mkd$kObs
+    kPrime[which(isTrans)[1:3]] <- 4L
+    for (par in list(c(rl = 0.4, sd = 0, rn = 1.7),
+                     c(rl = 2.5, sd = 0.6, rn = 0.5))) {
+      rates <- DiscreteLognormalRates(par[["sd"]], nCat)
+      nTotal <- length(isNeo)
+      neoScale <- par[["rn"]] / (1 + par[["rn"]]) * nTotal / sum(isNeo)
+      transScale <- 1 / (1 + par[["rn"]]) * nTotal / sum(!isNeo)
       correction <- sum(vapply(seq_along(isNeo), function(i) {
         part <- mkd$partitions[[which(vapply(
           mkd$partitions, function(p) i %in% p$char_indices, logical(1)))]]
@@ -160,46 +185,61 @@ test_that("each character is conditioned on its own observed tips", {
         scaled <- tree
         scaled$edge.length <- tree$edge.length *
           if (isNeo[i]) neoScale else transScale
-        k <- if (mkd$type[i] == "known") part$k else kPrime[i]
-        log1p(-.BruteAscProb(scaled, is.na(col), k, isNeo[i], par[["rl"]],
-                             rates, coding == "informative"))
+        if (isTrans[i]) {
+          .BruteJointAsc(scaled, is.na(col), rates)
+        } else {
+          k <- if (mkd$type[i] == "known") part$k else 2L
+          log1p(-.BruteAscProb(scaled, is.na(col), k, isNeo[i], par[["rl"]],
+                               rates, coding == "informative"))
+        }
       }, double(1)))
-      raw <- .DirectLogLik(d, "none", par[["rl"]], par[["sd"]], par[["rn"]],
+      raw <- .DirectLogLik(dd, "none", par[["rl"]], par[["sd"]], par[["rn"]],
                            kPrime)
       expect_equal(
-        .DirectLogLik(d, coding, par[["rl"]], par[["sd"]], par[["rn"]],
+        .DirectLogLik(dd, coding, par[["rl"]], par[["sd"]], par[["rn"]],
                       kPrime),
         raw - correction, tolerance = 1e-9, info = coding)
       expect_equal(
         MkpLogLikelihood(tree, mkd, kPrime = kPrime, rate_loss = par[["rl"]],
                          rate_log_sd = par[["sd"]], rate_neo = par[["rn"]],
-                         coding = coding),
+                         coding = coding, model = .MissingModel(coding),
+                         p = .kMissPrior$p),
         raw - correction, tolerance = 1e-9, info = coding)
     }
   }
 })
 
 # The C++ evaluator scores all of a partition's masks in one traversal; the
-# R evaluator scores each character on its own. Varied k' gives the masks
-# different deviant-count widths within one batch.
-test_that("batched masked correction matches per-character scoring", {
-  d <- .MissingData(known = FALSE)
-  isTrans <- d$mkd$type == "transformational"
-  kPrime <- d$mkd$kObs
-  kPrime[isTrans] <- rep_len(4:8, sum(isTrans))
-  for (sd in c(0, 0.6)) {
-    expect_equal(
-      .DirectLogLik(d, "informative", 0.7, sd, 1.2, kPrime),
-      MkpLogLikelihood(d$tree, d$mkd, kPrime = kPrime, rate_loss = 0.7,
-                       rate_log_sd = sd, rate_neo = 1.2,
-                       coding = "informative"),
-      tolerance = 1e-12, info = sd)
+# R evaluator scores each mask on its own. Varied k' spreads one partition's
+# characters across several pruning batches.
+test_that("batched masked correction matches per-mask scoring", {
+  for (coding in c("variable", "informative")) {
+    d <- .MissingData(known = coding == "informative")
+    if (coding == "informative") {
+      d$mkd <- MkPrime:::.SubsetMkPrimeData(
+        d$mkd, MkPrime:::.Informable(d$mkd) & d$mkd$type != "transformational")
+    }
+    isTrans <- d$mkd$type == "transformational"
+    kPrime <- d$mkd$kObs
+    kPrime[isTrans] <- rep_len(4:8, sum(isTrans))
+    for (sd in c(0, 0.6)) {
+      expect_equal(
+        .DirectLogLik(d, coding, 0.7, sd, 1.2, kPrime),
+        MkpLogLikelihood(d$tree, d$mkd, kPrime = kPrime, rate_loss = 0.7,
+                         rate_log_sd = sd, rate_neo = 1.2, coding = coding,
+                         model = .MissingModel(coding), p = .kMissPrior$p),
+        tolerance = 1e-12, info = paste(coding, sd))
+    }
   }
 })
 
 # Cached, partial-CL and Gibbs paths each rebuild the correction; every one
 # must agree with a fresh full evaluation after every move.
 .MissingDrift <- function(d, model, moveNames, nMove = 300L) {
+  if (identical(model$coding, "informative")) {
+    d$mkd <- MkPrime:::.SubsetMkPrimeData(
+      d$mkd, MkPrime:::.Informable(d$mkd) & d$mkd$type != "transformational")
+  }
   model <- MkPrime:::.FinalizeModel(model, d$tree, d$mkd)
   dataPtr <- MkPrime:::.InitMcmcData(d$mkd, model)
   statePtr <- MkPrime:::.InitMcmcChain(
@@ -211,7 +251,7 @@ test_that("batched masked correction matches per-character scoring", {
   for (move in sample(moves, nMove, replace = TRUE)) {
     do_move_cpp(dataPtr, statePtr, move, 0L, 0.5, 10, 1L, 1.0)
     drift <- max(drift, abs(get_state_log_lik(statePtr) -
-                              eval_full_loglik_cpp(dataPtr, statePtr)))
+                              .ColdLogLik(dataPtr, statePtr)))
   }
   # Return:
   drift
@@ -226,9 +266,11 @@ test_that("cached and Gibbs paths carry the per-mask correction", {
     expect_lt(.MissingDrift(d, MkPrimeModel(coding = coding), moveNames),
               1e-6, label = coding)
   }
+  # A qHeterogeneity move costs ~40 ms natively, ~2 s under valgrind.
+  nMoveQ <- if (identical(Sys.getenv("MKPRIME_MEMCHECK"), "true")) 50L else 300L
   expect_lt(.MissingDrift(d, MkPrimeModel(qHeterogeneity = TRUE),
                           c("gibbs_spr", "gibbs_subtree_swap",
-                            "gibbs_kPrime", "branch_lengths")),
+                            "gibbs_kPrime", "branch_lengths"), nMoveQ),
             1e-6, label = "qHeterogeneity")
 })
 
@@ -240,8 +282,7 @@ test_that("the k' sweep conditions each character on its observed tips", {
   Ptrs <- function(mode) {
     model <- MkPrime:::.FinalizeModel(
       MkPrimeModel(kPrimePrior = "geometric", likelihoodMode = mode,
-                   priorVariant = "conditional", coding = "variable",
-                   relabel = FALSE),
+                   coding = "variable"),
       d$tree, d$mkd)
     state <- MkPrime:::.InitState(d$tree, d$mkd, model)
     state$p <- p
@@ -260,17 +301,18 @@ test_that("the k' sweep conditions each character on its observed tips", {
     cpp_log_likelihood_xptr(samp$dataPtr, d$tree$edge[, 1], d$tree$edge[, 2],
                             d$tree$edge.length, as.integer(kPrime),
                             rateLoss = samp$state$rate_loss, rateLogSd = 0,
-                            rateNeo = samp$state$rate_neo, betaScale = 1)
+                            rateNeo = samp$state$rate_neo, p = p,
+                            kprimeAlpha = 1, kprimeBeta = 1, betaScale = 1)
   }
   base <- LogLik(kObs)
-  # Weights p (1 - p)^u, u = k' - kObs; the tail beyond u = 14 is negligible.
+  # Weights p (1 - p)^(k' - 2); the tail beyond k' = kObs + 14 is negligible.
   u <- 0:14
   perChar <- vapply(which(d$mkd$type == "transformational"), function(i) {
     terms <- vapply(u, function(ui) {
       kPrime <- kObs
       kPrime[i] <- kObs[i] + ui
       LogLik(kPrime) - base
-    }, double(1)) + log(p) + u * log1p(-p)
+    }, double(1)) + log(p) + (kObs[i] - 2 + u) * log1p(-p)
     max(terms) + log(sum(exp(terms - max(terms))))
   }, double(1))
   expect_equal(eval_full_loglik_cpp(marg$dataPtr, marg$statePtr),

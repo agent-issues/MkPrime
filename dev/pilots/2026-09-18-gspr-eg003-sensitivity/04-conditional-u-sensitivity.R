@@ -66,9 +66,8 @@ for (ti in 1:4) {
   uA <- CondU(tA, mkd, kObs, p, rls)
   uB <- CondU(tB, mkd, kObs, p, rls)
   uC <- CondU(tC, mkd, kObs, p, rls)
-  ut <- r$gt[as.integer(sub("^chr([0-9]+)\\.nex$", "\\1",
-        sort(list.files(file.path(GT_ROOT, sprintf("tree_%02d/rep_01", ti)),
-                        "^chr[0-9]+\\.nex$")))), ]$u_true
+  stopifnot(all(r$gtAligned$kObs == kObs))
+  ut <- r$gtAligned$u_true
 
   cat(sprintf("\ntree %02d  (p = %.3f, TL = %.3f)\n", ti, p, x$tree_length))
   cat(sprintf("  A uneven fractions : mean u = %+.4f  rho = %+.3f\n", mean(uA), cor(uA, ut, method="spearman")))

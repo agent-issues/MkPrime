@@ -121,7 +121,7 @@ test_that("partial eval Dirichlet gives consistent results in MCMC", {
   # Short run with Dirichlet enabled — should produce valid samples
   mcmc <- MkPrimeMCMC(nIter = 500L, thin = 1L, maxWarmup = 100L,
                        minWarmup = 100L, dirichletBranch = TRUE,
-                       dirichletK = 3L)
+                       dirichletK = 3L, autoTune = FALSE)
   post <- suppressWarnings(RunMkPrime(mkd, tree = tree, model = model, mcmc = mcmc,
                                        fixTopology = TRUE))
   expect_false(any(is.na(post$samples)))

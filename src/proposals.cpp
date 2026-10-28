@@ -9,6 +9,7 @@
 #include <Rcpp.h>
 #include <TreeTools/renumber_tree.h>
 #include <numeric>  // std::accumulate (used by dirichlet_simplex_impl)
+#include <algorithm>  // std::sort (select_neighborhood)
 #include <vector>
 #include <cmath>
 
@@ -362,6 +363,13 @@ bool dirichlet_simplex_impl(NumericVector& x, int nCats, double alpha,
 // ---------------------------------------------------------------------------
 // select_neighborhood: BFS on edge-adjacency graph from a random starting
 // edge. Returns K connected edge indices. Used by local_dirichlet_impl.
+//
+// The BFS stops at K edges, so the set depends on the order in which each
+// node's edges are visited. That order is canonicalised -- parent edge first,
+// then child edges by the lowest tip below them -- so the set depends only
+// on (topology, root, start edge), never on row or sibling order (#335).
+// TreeTools::Preorder already lists edges in this order, so canonical trees
+// select exactly the edges they did before.
 // ---------------------------------------------------------------------------
 static std::vector<int> select_neighborhood(
     const IntegerVector& parent, const IntegerVector& child,
@@ -381,10 +389,41 @@ static std::vector<int> select_neighborhood(
     if (parent[e] > maxNode) maxNode = parent[e];
     if (child[e] > maxNode)  maxNode = child[e];
   }
-  std::vector<std::vector<int>> nodeEdges(maxNode + 1);
+  std::vector<int> parentEdge(maxNode + 1, -1);
+  std::vector<std::vector<int>> childEdges(maxNode + 1);
   for (int e = 0; e < nEdge; ++e) {
-    nodeEdges[parent[e]].push_back(e);
-    nodeEdges[child[e]].push_back(e);
+    parentEdge[child[e]] = e;
+    childEdges[parent[e]].push_back(e);
+  }
+
+  int root = parent[0];
+  while (parentEdge[root] >= 0) root = parent[parentEdge[root]];
+
+  std::vector<int> visitOrder;
+  visitOrder.reserve(nEdge + 1);
+  visitOrder.push_back(root);
+  for (int i = 0; i < (int)visitOrder.size(); ++i) {
+    for (int e : childEdges[visitOrder[i]]) visitOrder.push_back(child[e]);
+  }
+  std::vector<int> minTip(maxNode + 1, 0);
+  for (int i = (int)visitOrder.size() - 1; i >= 0; --i) {
+    const int node = visitOrder[i];
+    std::vector<int>& kids = childEdges[node];
+    if (kids.empty()) {
+      minTip[node] = node;
+      continue;
+    }
+    std::sort(kids.begin(), kids.end(), [&](int a, int b) {
+      return minTip[child[a]] < minTip[child[b]];
+    });
+    minTip[node] = minTip[child[kids[0]]];
+  }
+
+  std::vector<std::vector<int>> nodeEdges(maxNode + 1);
+  for (int node = 0; node <= maxNode; ++node) {
+    if (parentEdge[node] >= 0) nodeEdges[node].push_back(parentEdge[node]);
+    nodeEdges[node].insert(nodeEdges[node].end(),
+                           childEdges[node].begin(), childEdges[node].end());
   }
 
   // Pick a random starting edge

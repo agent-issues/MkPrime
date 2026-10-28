@@ -30,8 +30,7 @@ Per simulation, matching the inference model term by term:
    - Mk' logseries: `P(k) ∝ c^k / k` on `k ≥ 2`.
    - MkNT: `k` is pinned per character through `knownStates = kTrue`, so it is
      data rather than a parameter; the arm's prior merely supplies it.
-   Mk' arms pin `priorVariant = "unconditional"` (Model A), the prior this
-   forward draws from.
+   The Mk' arms draw from Model A, the only k' prior.
 3. Each character is simulated under JC(`k_j`) at a rate multiplier from one
    of `nCat = 4` equiprobable discretised-lognormal categories
    (`DiscreteLognormalRates(rate_log_sd, 4)`), and `(category, data)` are

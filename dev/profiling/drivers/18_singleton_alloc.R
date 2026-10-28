@@ -173,7 +173,8 @@ EvalUs <- function(coding) {
     MkPrime:::cpp_log_likelihood_xptr(dataPtr, parent, child,
                                       tree$edge.length,
                                       as.integer(mkd$kObs), rateLoss = 1,
-                                      rateLogSd = 0.5, rateNeo = 1)
+                                      rateLogSd = 0.5, rateNeo = 1, p = 0.5,
+                                      kprimeAlpha = 1, kprimeBeta = 1)
   }
   invisible(EvalOnce())
   median(replicate(7, system.time(for (i in 1:20) EvalOnce())[[3]])) /

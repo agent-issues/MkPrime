@@ -31,18 +31,21 @@ MkPrimeModel(
   classRateConcentration = 1,
   priorOnClassRateLogSd = c("hyperprior_pooled", "gamma_independent"),
   likelihoodMode = c("sampled_k", "marginal_k"),
-  priorVariant = NULL,
-  kprimeTruncK = 200L
+  kprimeTruncK = 200L,
+  extensions = NULL
 )
 }
 \arguments{
 \item{coding}{Ascertainment bias correction: \code{"variable"} (default),
-\code{"informative"}, or \code{"none"}.}
+\code{"informative"}, or \code{"none"}. Under \code{"informative"}, characters that
+are not parsimony-informative among their observed tips are dropped
+with a message; every character must be neomorphic or of known state.}
 
 \item{nCat}{Number of ACRV rate categories (default 6).}
 
 \item{relabel}{Apply Mk' relabelling correction for transformational
-characters? Default \code{TRUE}.}
+characters? \code{FALSE} needs \code{coding = "none"} when there are
+transformational characters. Default \code{TRUE}.}
 
 \item{treeLengthShape, treeLengthRate}{Shape and rate for the Gamma prior
 on tree length. Defaults: shape = 2, rate = \code{treeLengthShape / expSteps},
@@ -50,9 +53,11 @@ so that the prior mean tree length is \code{expSteps}.}
 
 \item{expSteps}{Expected number of state changes per character: the prior
 mean tree length, in the per-character units of branch length. Default
-\code{NULL} computes it from the data as the parsimony score of the starting
-tree divided by the number of characters. Parsimony misses multiple hits,
-so this underestimates the true tree length.}
+\code{NULL} computes it from the data as the parsimony score of the
+neighbour-joining tree of the data (not the starting tree, so that
+\code{\link[=RunMkPrime]{RunMkPrime()}} and \code{\link[=mkp_stepping_stone]{mkp_stepping_stone()}} share one prior whatever tree
+each starts from) divided by the number of characters. Parsimony misses
+multiple hits, so this underestimates the true tree length.}
 
 \item{rateLossMeanlog, rateLossSdlog}{Parameters for the LogNormal prior
 on \code{rate_loss} (neomorphic asymmetry). Defaults: meanlog = 0, sdlog = 2.}
@@ -70,10 +75,7 @@ Not consulted by the default pooled hyperprior (see
 states with a \code{Geometric(p)} prior on the number of unobserved states,
 so \verb{k' = N_obs + N_unobs}),
 \code{"beta_geometric"} (per-character Beta-Geometric with shared
-hyperparameters \code{alpha}, \code{beta}, on the number of states beyond those
-observed, \verb{k' - kObs_i}; this prior conditions on the data, so the arm
-cannot be calibrated by simulation-based calibration, and it accepts only
-\code{priorVariant = "conditional"}),
+hyperparameters \code{alpha}, \code{beta}, on \verb{k' - 2}),
 \code{"geometric"} (hierarchical geometric with Beta hyperprior on \code{p}),
 or \code{"logseries"} (logarithmic series with fixed parameter \code{c}; matches
 the RevBayes default).
@@ -123,9 +125,15 @@ Ignored when \code{qHeterogeneity = FALSE}.}
 on \code{beta_scale} (the symmetric Dirichlet concentration parameter).
 Defaults: shape = 1, rate = 1. Ignored when \code{qHeterogeneity = FALSE}.}
 
-\item{classRateConcentration}{Numeric specifying the concentration of the
-symmetric Dirichlet prior on per-class relative rate weights; values below
-one favour uneven class rates, values above one pull them together.}
+\item{classRateConcentration}{Positive number specifying the concentration
+of the symmetric Dirichlet prior on per-class relative rate weights \code{w};
+values below one favour uneven class rates, values above one pull them
+together. Used only when the rate multiplier is unlinked. Class \code{c}'s
+effective rate is its rate \code{r_c} times its partition's
+neomorphic or transformational scale, divided by the character-weighted
+mean of that product; so when classes differ in their mix of neomorphic
+and transformational characters, the \code{w_} columns are not exactly the
+relative class rates.}
 
 \item{priorOnClassRateLogSd}{Prior structure on per-class ACRV
 dispersion \code{σ_c = class_rate_log_sd[c]} when \code{unlink = "shape"} is
@@ -157,7 +165,7 @@ marginalised out of the likelihood at every evaluation. The
 posterior is over \verb{(tree, mu, sigma, p)} only; the slow discrete
 coordinate is removed. Required when chain mixing on \verb{k'_i} is
 known to be uninformative (per finding EG-003 in
-\code{dev/red-team/findings.md}). v1 supports
+\code{dev/red-team/findings-archive.md}). v1 supports
 \code{kPrimePrior = "geometric"} only — other arms are §11 follow-ups
 in \code{dev/notes/2026-05-28-marginal-k-plan.md}. Het + marginal-k and
 partition-API + marginal-k are deferred (§13 of the plan).
@@ -167,37 +175,12 @@ carries under about \code{exp(-25)} of that character's largest term (a
 bound that loosens as \code{kObs_i} grows when \code{relabel = TRUE}).
 }}
 
-\item{priorVariant}{Whether the \verb{k'} prior conditions on the observed state
-count \code{kObs_i}. One of \code{"unconditional"} (Model A) or \code{"conditional"}
-(Model B), or \code{NULL} (default) to select per \code{kPrimePrior} (see below).
-A prior is pre-data, so \code{kObs_i} — an observation — should not enter it:
-\itemize{
-\item \code{"unconditional"} (Model A): the prior lives on the full support
-\verb{k' >= 2}, unconditional on \code{kObs_i}. For \code{empirical_geometric} the
-convolution is used with no per-character \code{Z_i(p)} truncation; for
-\code{geometric} the marginal weight for state count \code{k} is \code{p (1-p)^(k - 2)}.
-The \verb{k' >= kObs_i} floor (you cannot have fewer states than observed) is
-enforced by the likelihood, not the prior. This is the correct pre-data
-prior and matches the forward simulator used by the SBC harness.
-\item \code{"conditional"} (Model B): the prior conditions on \code{kObs_i} —
-\verb{k'_i ~ kObs_i + Geometric(p)} for \code{geometric}, and for
-\code{empirical_geometric} the convolution is renormalised by
-\verb{Z_i(p) = sum_\{k >= kObs_i\} P(k | p)}. Model B is data-dependent and
-fails SBC on \code{p} (see \code{project_sbc_kprime_structural}); retained only for
-backward comparison.
-}
+\item{kprimeTruncK}{Integer specifying the cap \code{K} at which every \verb{k'}
+prior is truncated and renormalised, bounded above by the compile-time
+candidate cap of 256. Must be at least the largest observed state count.}
 
-Default (\code{NULL}): \code{"unconditional"} for both \code{"empirical_geometric"} and
-\code{"geometric"} (the correct pre-data prior; the geometric SBC harness uses
-\verb{k' ~ 2 + Geo(p)}, so the default aligns inference with the validated SBC
-forward model); \code{"conditional"} for \code{"beta_geometric"}, which has no
-unconditional form and rejects \code{"unconditional"}. Consulted for
-\code{empirical_geometric} and for \code{geometric} under
-\code{likelihoodMode = "marginal_k"}; ignored for \code{logseries}.}
-
-\item{kprimeTruncK}{Integer specifying the cap \code{K} at which the geometric
-arm's \verb{k'} prior is truncated and renormalised over \verb{[2, K]}, bounded
-above by the compile-time candidate cap of 256.}
+\item{extensions}{List of \code{\link[=MkPrimeExtension]{MkPrimeExtension()}} objects whose parameters,
+and their priors, join the model; \code{NULL} for none.}
 }
 \value{
 An S3 object of class \code{MkPrimeModel}.

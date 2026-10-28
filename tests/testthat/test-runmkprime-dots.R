@@ -2,7 +2,8 @@ test_that("RunMkPrime forwards ... to MkPrimeMCMC", {
   pd   <- .mkp_test_pd()
   tree <- .mkp_test_tree()
   res <- suppressWarnings(RunMkPrime(pd, tree,
-                                     nIter = 500L, maxWarmup = 100L, nRuns = 1L))
+                                     nIter = 500L, maxWarmup = 100L, nRuns = 1L,
+                                     autoTune = FALSE))
   expect_s3_class(res, "MkPosterior")
   expect_gt(nrow(res$samples), 0L)
 })

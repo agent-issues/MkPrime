@@ -70,7 +70,7 @@ build_fixture <- function(seed = 20260527L,
 
 # Pinned so a change to MkPrimeModel() defaults cannot silently change this
 # stress test; printed with the results.
-MODEL_PIN <- list(nCat = 6L, expSteps = 1.4, priorVariant = "unconditional")
+MODEL_PIN <- list(nCat = 6L, expSteps = 1.4)
 
 run_one <- function(fixture, prior_kind,
                     n_gen = 20000L, n_warmup = 4000L,
@@ -78,7 +78,6 @@ run_one <- function(fixture, prior_kind,
   set.seed(seed)
   model <- MkPrimeModel(kPrimePrior = "geometric",
                         nCat = MODEL_PIN$nCat, expSteps = MODEL_PIN$expSteps,
-                        priorVariant = MODEL_PIN$priorVariant,
                         priorOnClassRateLogSd = prior_kind)
   mcmc <- MkPrimeMCMC(
     nIter      = n_gen,
@@ -116,8 +115,8 @@ ess_per_class <- function(samples, n_classes) {
 # Run
 # ----------------------------------------------------------------------------
 
-cat(sprintf("Pinned model: nCat=%d expSteps=%g priorVariant=%s\n",
-            MODEL_PIN$nCat, MODEL_PIN$expSteps, MODEL_PIN$priorVariant))
+cat(sprintf("Pinned model: nCat=%d expSteps=%g\n",
+            MODEL_PIN$nCat, MODEL_PIN$expSteps))
 cat("Building fixture: 5 classes, sizes (5, 50, 50, 50, 50)\n")
 fixture <- build_fixture()
 n_classes <- length(unique(fixture$partition))
@@ -159,7 +158,7 @@ cat("\n================== ESS per class (σ_c) ==================\n")
 print(tbl, row.names = FALSE)
 cat("=========================================================\n\n")
 
-# Headline summary
+# Summary: small-class ESS under each prior
 small_class <- which.min(tbl$size)
 cat(sprintf(
   "Small-class (size %d) ESS: %s (gamma_independent) -> %s (hyperprior_pooled)\n",

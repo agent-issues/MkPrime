@@ -89,7 +89,9 @@ test_that("Sample records each row's true iteration once thin adapts (#91)", {
   expect_gt(max(gaps), min(gaps))
   expect_true(all(gaps > 0L))
   expect_lte(max(iters), res$actual_iter)
-  expect_gt(max(iters) + max(gaps), res$actual_iter)
+  # The adapted thin need not have completed a gap before the run ends.
+  thin <- readRDS(sub("log$", "ckp", log))$runs[[1]]$thin
+  expect_gt(max(iters) + thin, res$actual_iter)
 })
 
 test_that("every checkpoint records each run's adapted thin (#91)", {
@@ -219,6 +221,17 @@ test_that("per-run checkpoints that disagree are not merged (#92)", {
   job <- .TwoRunCheckpoint()
   file.copy(job$perRun[1], job$perRun[2], overwrite = TRUE)
   expect_error(.SynthesiseMasterFromPerRun(job$ckp, 2L), "run index")
+})
+
+test_that("a synthesised master keeps its likelihood version", {
+  job <- .TwoRunCheckpoint()
+  ck <- job$master
+  ck$likelihoodVersion <- NULL
+  saveRDS(ck, job$ckp)
+  .SynthesiseMasterFromPerRun(job$ckp, 2L)
+  expect_identical(readRDS(job$ckp)$likelihoodVersion, 1L)
+  expect_error(ResumeMkPrime(job$ckp, job$pd, mcmc = list(nIter = 600L)),
+               "different likelihood")
 })
 
 test_that(".CheckPerRunCkps compares shapes, not storage types (#92)", {

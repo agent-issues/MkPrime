@@ -10,6 +10,52 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include "joint_asc.h"
+#include "../inst/include/MkPrime/extension.h"
+#include <algorithm>
+
+// Copy an R vector into freshly allocated, plain (non-ALTREP) storage,
+// keeping its attributes (dim, names).
+//
+// Rcpp caches a vector's data pointer when an object is constructed.  An
+// ALTREP wrapper -- which `storage.mode<-`, `dim<-`, `structure()` and
+// friends return for vectors of more than 64 elements -- replaces its
+// payload with a fresh copy on the next writable DATAPTR() once that payload
+// is shared, so an Rcpp object built on the wrapper earlier is left pointing
+// at the old payload, which the GC is then free to collect (#433).  clone()
+// does not help: duplicating a wrapper returns another wrapper.  Anything
+// held across .Call()s (McmcData, McmcState) must therefore own plain
+// storage; build it with these helpers rather than by wrapping the R object.
+inline Rcpp::IntegerVector owned_integer(SEXP x) {
+  Rcpp::Shield<SEXP> s(Rf_coerceVector(x, INTSXP));
+  const R_xlen_t n = Rf_xlength(s);
+  Rcpp::IntegerVector out(n);
+  if (n > 0) {
+    const int* src = INTEGER_RO(s);
+    std::copy(src, src + n, out.begin());
+  }
+  DUPLICATE_ATTRIB(out, s);
+  return out;
+}
+
+inline Rcpp::NumericVector owned_numeric(SEXP x) {
+  Rcpp::Shield<SEXP> s(Rf_coerceVector(x, REALSXP));
+  const R_xlen_t n = Rf_xlength(s);
+  Rcpp::NumericVector out(n);
+  if (n > 0) {
+    const double* src = REAL_RO(s);
+    std::copy(src, src + n, out.begin());
+  }
+  DUPLICATE_ATTRIB(out, s);
+  return out;
+}
+
+inline Rcpp::IntegerMatrix owned_integer_matrix(SEXP x) {
+  if (!Rf_isMatrix(x)) Rcpp::stop("Expected a matrix of tip states.");
+  Rcpp::IntegerVector v = owned_integer(x);
+  return Rcpp::IntegerMatrix(static_cast<SEXP>(v));
+}
+
 
 // Per-partition data: tip states and character mapping.
 struct PartInfo {
@@ -55,6 +101,13 @@ struct BranchBins {
     for (int b = 0; b < n; ++b)
       mids[b] = 0.5 * (breaks[b] + breaks[b + 1]);
   }
+};
+
+// Characters counted by missing-data mask, in increasing mask order.
+struct MaskTally {
+  std::vector<int> ids;
+  std::vector<int> counts;
+  bool complete() const { return ids.size() == 1 && ids[0] == 0; }
 };
 
 // Pre-processed MCMC data: created once before the MCMC loop.
@@ -141,22 +194,11 @@ struct McmcData {
   // the geometric arm only — prepare_mcmc_data enforces this.
   bool marginalK = false;
 
-  // Prior parameterisation for the geometric k' prior under marginal-k.
-  //   false (default) = Model B (conditional): k'_i ~ kObs_i + Geometric(p),
-  //                     marginal weight p (1-p)^(k - kObs_i).
-  //   true            = Model A (unconditional): k'_i ~ 2 + Geometric(p),
-  //                     marginal weight p (1-p)^(k - 2); the weight exponent
-  //                     base shifts from kObs to 2. The sum is capped at
-  //                     k <= kprimeTruncK and renormalised by log Z(p)
-  //                     (MARGINAL-K-TRUNC-001). Model A and Model B differ by
-  //                     a per-character factor (1-p)^(kObs_i - 2).
-  bool unconditionalPrior = false;
-
-  // MARGINAL-K-TRUNC-001: declared truncation cap K on k' for the geometric
-  // prior under BOTH likelihoodModes (sampled_k truncates the prior; marginal_k
-  // truncates the marginal sum). The prior is a truncated geometric on
-  // k' in [2, K], renormalised by log Z(p) (Model A: Z = 1-(1-p)^(K-1), shared;
-  // Model B: Z_i = 1-(1-p)^(K-kObs_i+1), per kObs). MUST equal the SBC forward's
+  // MARGINAL-K-TRUNC-001: declared truncation cap K on k' for every prior
+  // (#392) under BOTH likelihoodModes (sampled_k truncates the prior;
+  // marginal_k, geometric only, truncates the marginal sum). Each prior is
+  // renormalised over its capped support; e.g. the geometric on k' in [2, K]
+  // by log Z(p) = log(1-(1-p)^(K-1)), shared. MUST equal the SBC forward's
   // K_MAX_PRIOR for calibration. Setup must enforce K >= max(kObs) (else a
   // character has empty support -> -Inf).
   //
@@ -174,14 +216,71 @@ struct McmcData {
   // maps a global character to its mask.
   std::vector<std::vector<uint8_t>> missingMasks;
   std::vector<int> charMask;
+  std::vector<MaskTally> partMaskTally;  // by partition
+
+  // Engine extensions (#441), attached by attach_extensions_cpp(). Extension
+  // e owns state.extParams[extOffset[e] .. extOffset[e] + n_params - 1].
+  std::vector<const MkPrimeExtension*> extensions;
+  std::vector<int> extOffset;
+  int nExtParams = 0;
+  // ABI v2: true when any attached extension declares log_lik; then
+  // McmcState::extLogLik holds their sum and moves that score only the core
+  // likelihood are refused. extMoves lists the extensions' own moves, which
+  // move code 41 addresses by position.
+  bool extLik = false;
+  struct ExtMove { int ext; int move; };
+  std::vector<ExtMove> extMoves;
+  // ABI v3: integer parameters, laid out in McmcState::extInts as extIntOffset
+  // describes, with their numbers of levels.
+  std::vector<int> extIntOffset;
+  std::vector<int> extIntLevels;
+  int nExtInts = 0;
+  // ABI v3 claims: the extension that scores the neomorphic characters
+  // (-1 for none), their tip states (nTip x n, column-major) and 1-based
+  // global character numbers. Their partitions are removed from `parts`.
+  int extClaimNeo = -1;
+  std::vector<int> extClaimStates;
+  std::vector<int> extClaimChar;
+  // The extensions' external pointers, kept alive while attached.
+  std::vector<Rcpp::RObject> extKeep;
 };
 
-// Characters counted by missing-data mask, in increasing mask order.
-struct MaskTally {
-  std::vector<int> ids;
-  std::vector<int> counts;
-  bool complete() const { return ids.size() == 1 && ids[0] == 0; }
-};
+// Fields of a later ABI version are read only when the extension was built
+// for it (#441).
+inline bool ext_has_log_lik(const MkPrimeExtension* e) {
+  return (e->abi_version >= 2 && e->log_lik) ||
+    (e->abi_version >= 3 && e->log_lik_ints);
+}
+inline int ext_n_moves(const MkPrimeExtension* e) {
+  return e->abi_version >= 2 ? e->n_moves : 0;
+}
+inline int ext_n_ints(const MkPrimeExtension* e) {
+  return e->abi_version >= 3 ? e->n_ints : 0;
+}
+inline int ext_claims(const MkPrimeExtension* e) {
+  return e->abi_version >= 3 ? e->claims : 0;
+}
+inline double ext_log_prior(const MkPrimeExtension* e, const double* params,
+                            const int* ints) {
+  if (e->abi_version >= 3 && e->log_prior_ints) {
+    return e->log_prior_ints(params, ints, e->user);
+  }
+  return e->log_prior(params, e->user);
+}
+inline double ext_log_lik(const MkPrimeExtension* e, const MkPrimeTreeView* v,
+                          const double* params, const int* ints) {
+  if (e->abi_version >= 3 && e->log_lik_ints) {
+    return e->log_lik_ints(v, params, ints, e->user);
+  }
+  return e->log_lik(v, params, e->user);
+}
+inline double ext_propose(const MkPrimeExtension* e, int move,
+                          const MkPrimeTreeView* v, double* params, int* ints) {
+  if (e->abi_version >= 3 && e->propose_ints) {
+    return e->propose_ints(move, v, params, ints, e->user);
+  }
+  return e->propose(move, v, params, e->user);
+}
 
 template <class GlobalIdx>
 inline MaskTally tally_masks(const McmcData& data, const GlobalIdx& globalIdx,
@@ -279,16 +378,18 @@ static inline double class_rate_norm(
   return sum / static_cast<double>(data.nNeo + data.nTrans);
 }
 
+// classRateNorm is class_rate_norm(data, classRate, rateNeo), computed once
+// per evaluation by the caller: it sums over every partition.
 static inline PartEvalParams partitioned_eval_params(
     const McmcData& data, int partIdx,
     const Rcpp::NumericVector& rateLogSd,
     const Rcpp::NumericVector& classRate,
-    double rateNeo) {
+    double rateNeo, double classRateNorm) {
   const int ci = data.parts[partIdx].classIdx - 1;
   PartEvalParams pe;
   pe.rateLogSd = (rateLogSd.size() == 1) ? rateLogSd[0] : rateLogSd[ci];
   pe.classRate = ((classRate.size() == 1) ? classRate[0] : classRate[ci]) /
-    class_rate_norm(data, classRate, rateNeo);
+    classRateNorm;
   pe.rateNeo   = rateNeo;
   return pe;
 }
@@ -311,6 +412,8 @@ struct ClWorkspace {
   int ascStrideMax = 0;             // max pseudo-char stride
   std::vector<double>  siteLikSum;  // per-character site likelihood accumulator
   int siteLikMax = 0;
+
+  JointAscCache joint;
 
   bool ready() const { return !buf.empty(); }
 
@@ -364,6 +467,7 @@ double cpp_log_likelihood(
     Rcpp::IntegerVector child,
     Rcpp::NumericVector edgeLen,
     const Rcpp::IntegerVector& kPrime,
+    const KprimeHyper& hyper,
     double rateLoss,
     double rateLogSd,
     double rateNeo,
@@ -390,6 +494,7 @@ double cpp_log_likelihood_partitioned(
     Rcpp::IntegerVector child,
     Rcpp::NumericVector edgeLen,
     const Rcpp::IntegerVector& kPrime,
+    const KprimeHyper& hyper,
     double rateLoss,
     Rcpp::NumericVector rateLogSd,    // length 1 (linked) or data.nClasses
     Rcpp::NumericVector classRate,    // length 1 (linked) or data.nClasses
@@ -401,14 +506,27 @@ double cpp_log_likelihood_partitioned(
 
 // Per-partition log-likelihood for partial recomputation (M-064).
 // M-063: optional ClWorkspace* eliminates per-call heap allocation.
+// hyper is the k' prior's, which a transformational partition's joint
+// ascertainment term (joint_asc.h) integrates over.
 double cpp_partition_log_likelihood(
     const McmcData& data, int partIdx,
     Rcpp::IntegerVector parent, Rcpp::IntegerVector child,
     Rcpp::NumericVector edgeLen,
     const Rcpp::IntegerVector& kPrime,
+    const KprimeHyper& hyper,
     double rateLoss, double rateLogSd, double rateNeo,
     double betaScale = 1.0,
     ClWorkspace* ws = nullptr);
+
+// The joint ascertainment term of transformational partition partIdx at
+// edge lengths that carry any class rate but not the partition scale, under
+// the partition's rate parameters.
+double trans_joint_asc(
+    const McmcData& data, int partIdx,
+    const Rcpp::IntegerVector& parent, const Rcpp::IntegerVector& child,
+    const Rcpp::NumericVector& edgeLen,
+    double rateLogSd, double rateNeo, double betaScale,
+    const KprimeHyper& hyper, JointAscCache* cache);
 
 // ACRV rate computation (exposed for Gibbs kPrime sweep).
 Rcpp::NumericVector cpp_acrv_rates(double rateLogSd, int nCat,
@@ -447,15 +565,6 @@ void pruning_jc_acrv_persite_collapsed(
     double* buf, uint8_t* initFlg, int stride,
     double* siteLL);
 
-
-// Constant-site probability for a given kStates (cache helper for Gibbs sweep).
-double const_site_prob_for_k(
-    const McmcData& data,
-    const Rcpp::IntegerVector& parent,
-    const Rcpp::IntegerVector& child,
-    const Rcpp::NumericVector& edgeLen,
-    int kStates, double betaScale,
-    const Rcpp::NumericVector& acrvRates);
 
 // Ascertainment probability (constant, plus singleton under informative
 // coding) for each mask in maskIds, under the model of a partition of type

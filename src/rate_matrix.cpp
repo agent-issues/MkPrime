@@ -1,6 +1,5 @@
 #include <Rcpp.h>
-#include "fast_exp.h"
-#include "mkn_rates.h"
+#include "../inst/include/MkPrime/transition.h"
 #include <cmath>
 #include <vector>
 
@@ -28,18 +27,11 @@ Rcpp::NumericMatrix jc_transition_probs(int k, double t) {
     Rcpp::stop("Branch length t must be >= 0");
   }
 
+  const MkPrime::JCProbs p = MkPrime::jc_probs(k, t);
   Rcpp::NumericMatrix P(k, k);
-  double inv_k = 1.0 / k;
-  // FAST-EXP-001: use expm1 to avoid catastrophic cancellation in (1-exp) at small kt.
-  double arg = -k * t / (k - 1.0);
-  double neg_expm1 = -std::expm1(arg);     // = 1 - exp(arg)
-  double exp_term  = 1.0 - neg_expm1;       // = exp(arg)
-  double diag = inv_k + (1.0 - inv_k) * exp_term;
-  double off_diag = inv_k * neg_expm1;
-
   for (int i = 0; i < k; ++i) {
     for (int j = 0; j < k; ++j) {
-      P(i, j) = (i == j) ? diag : off_diag;
+      P(i, j) = (i == j) ? p.pSame : p.pDiff;
     }
   }
   return P;
@@ -75,22 +67,12 @@ Rcpp::NumericMatrix mkn_transition_probs(double rate_loss, double t) {
     Rcpp::stop("Branch length t must be >= 0");
   }
 
-  double rate01, rate10;
-  mkn_rates(rate_loss, rate01, rate10);
-  double lambda = rate01 + rate10;
-  // FAST-EXP-001: expm1 form avoids cancellation in P01/P10 at small lambda*t.
-  double arg = -lambda * t;
-  double neg_expm1 = -std::expm1(arg);
-  double exp_term  = 1.0 - neg_expm1;
-
-  double inv_lambda_01 = rate01 / lambda;
-  double inv_lambda_10 = rate10 / lambda;
-
+  const MkPrime::MkNProbs p = MkPrime::MkNRates(rate_loss).probs(t);
   Rcpp::NumericMatrix P(2, 2);
-  P(0, 0) = inv_lambda_10 + inv_lambda_01 * exp_term;  // P_00
-  P(0, 1) = inv_lambda_01 * neg_expm1;                 // P_01
-  P(1, 0) = inv_lambda_10 * neg_expm1;                 // P_10
-  P(1, 1) = inv_lambda_01 + inv_lambda_10 * exp_term;  // P_11
+  P(0, 0) = p.p00;
+  P(0, 1) = p.p01;
+  P(1, 0) = p.p10;
+  P(1, 1) = p.p11;
 
   return P;
 }
@@ -106,6 +88,6 @@ Rcpp::NumericVector mkn_stationary_freqs(double rate_loss) {
   if (rate_loss <= 0.0) {
     Rcpp::stop("rate_loss must be > 0");
   }
-  double sum_rl = 1.0 + rate_loss;
-  return Rcpp::NumericVector::create(rate_loss / sum_rl, 1.0 / sum_rl);
+  const MkPrime::MkNRates r(rate_loss);
+  return Rcpp::NumericVector::create(r.pi0(), r.pi1());
 }

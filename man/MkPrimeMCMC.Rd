@@ -17,6 +17,7 @@ MkPrimeMCMC(
   nRuns = 2L,
   nChains = 1L,
   heat = 0.2,
+  heatMax = 0.5,
   maxTime = NULL,
   minEss = NULL,
   maxRhat = NULL,
@@ -88,12 +89,9 @@ debugging runs.}
 chain stabilises OR this ceiling is reached (with a warning).
 Default 50 000 when \code{nIter = Inf}; \code{nIter / 2} when finite.}
 
-\item{autoTune}{Logical; enable the tuning phase after warmup
-(default \code{TRUE}). When \code{TRUE}, a short tuning phase optimises
-move weights by maximising min-ESS/s using a perturbation bandit.
-When \code{FALSE}, move weights are frozen at the end of warmup using
-the acceptance-rate heuristic (legacy behaviour). See section
-\strong{Three-phase MCMC} below.}
+\item{autoTune}{Logical; if \code{TRUE}, a tuning phase after warmup optimises
+move weights for min-ESS/s; otherwise they stay as warmup left them
+(see \strong{Three-phase MCMC}).}
 
 \item{tuningBudget}{Integer giving the most iterations the tuning phase may
 use; tuning can end sooner (see \strong{Three-phase MCMC}).}
@@ -110,13 +108,21 @@ own set of \code{nChains} chains. Convergence diagnostics (R-hat) require
 tempering). Default 1 (no tempering). Set to 4 for typical analyses.
 Chain 1 is the cold chain (beta = 1).}
 
-\item{heat}{Temperature of the hottest chain (0 < heat < 1). Default
-0.2. The temperature ladder uses geometric spacing:
-\code{beta_i = heat^((i-1)/(nChains-1))} for i = 1, ..., nChains.
+\item{heat}{Inverse temperature of the hottest chain (0 < heat < 1),
+from which warmup starts. Default 0.2. The temperature ladder uses
+geometric spacing: \code{beta_i = heat^((i-1)/(nChains-1))} for
+i = 1, ..., nChains. Warmup adapts \code{heat} towards a 25\% swap
+acceptance rate, keeping it between 0.01 and \code{heatMax}: a value outside
+that range is moved into it at the first adaptation, with a warning. The
+ladder is then fixed for the Tuning and Sample phases.
 Ignored when \code{nChains = 1}.}
 
-\item{maxTime}{Maximum wall-clock time in seconds. \code{NULL} (default)
-means no time limit.}
+\item{heatMax}{Numeric in \verb{(0.01, 1)} giving the largest inverse temperature
+that warmup may give the hottest chain; larger values allow a narrower
+ladder. Ignored when \code{nChains = 1}.}
+
+\item{maxTime}{Maximum wall-clock time in seconds for the whole job, shared
+by all its runs. \code{NULL} (default) means no time limit.}
 
 \item{minEss}{Numeric specifying the effective sample size every monitored
 parameter must reach before sampling stops; \code{NULL} disables ESS-based
@@ -136,17 +142,29 @@ pseudo-ESS, via \strong{TreeDist}) each run must reach before it may stop;
 of which two in a row must pass before sampling stops.}
 
 \item{cancelFile}{Path to a cancel-signal file. \code{NULL} (default) disables
-cancel-file checking. When set, \code{\link[=RunMkPrime]{RunMkPrime()}} checks every 200
-iterations whether this file exists. If it does, the run flushes any
-buffered samples, saves a checkpoint (if \code{checkpointFile} is set), and
-exits with \code{stop_reason = "cancelled"}. Create the file to request a
-clean stop: \code{file.create(cancelFile)}. See also \code{\link[=MkCancelPath]{MkCancelPath()}}.}
+cancel-file checking. When set, \code{\link[=RunMkPrime]{RunMkPrime()}} checks whether this file
+exists between batches: every 500 iterations or fewer during warmup and
+tuning, and every 5000 or fewer during sampling. A batch also ends at
+each multiple of \code{checkEvery}, and of \code{plotEvery} when a progress
+callback is set. The \code{maxTime} limit is checked at the same points.
+If the file exists, the run flushes any buffered samples, saves a
+checkpoint (if \code{checkpointFile} is set), and exits with
+\code{stop_reason = "cancelled"}. Create the file to request a clean stop:
+\code{file.create(cancelFile)}. See also \code{\link[=MkCancelPath]{MkCancelPath()}}.
+A resume, or a \code{RunMkPrime(overwrite = TRUE)} over an old checkpoint,
+deletes, with a message, a cancel file that the run which wrote that
+checkpoint stopped for, unless the file has been touched since. Delete
+the file yourself before any other fresh run, or it stops after one
+batch.}
 
 \item{checkpointFile}{Path to write checkpoint RDS files. \code{NULL}
 (default) auto-derives from \code{logFile} when set
 (e.g. \code{"run.log"} -> \code{"run.ckp"}). Set to \code{FALSE} to
 disable checkpointing. Checkpoints are saved at each
-convergence check interval and on cancel.}
+convergence check interval and on cancel.
+Without a \code{logFile}, samples stream to a log beside the checkpoint
+(\code{"run.ckp"} -> \code{"run_mkp_run.log"}), which a resume extends; samples
+are also returned in memory.}
 
 \item{treeFile}{Path to write sampled trees in Newick format.
 \code{NULL} (default) auto-derives from \code{logFile} when set
@@ -210,9 +228,11 @@ See Yang & Rodríguez (2013); Ronquist et al. (2020).}
 correlated parameter pairs (default \code{TRUE}). Proposes correlated
 updates to tree_length × rate_log_sd (and tree_length × rate_loss
 when neomorphic characters are present) using a bivariate Bactrian
-kernel. The correlation is learned adaptively during warmup from
-posterior sample correlations. No effect when parameters are
-uncorrelated (degenerates to independent proposals).}
+kernel. The correlation is estimated from the chain's samples, last
+from the first tuning window, or with \code{autoTune = FALSE} from the first
+50 samples if warmup was too short to estimate it; it is then
+fixed. No effect when parameters are uncorrelated (degenerates to
+independent proposals).}
 
 \item{weightedBranchScale}{Logical; include the weighted branch-length
 scale move (default \code{FALSE}). Cost: O(B) likelihood evaluations, where
@@ -290,7 +310,7 @@ scheduler during warmup. Example:
 \code{moveWeights = c(nni = 0.3, spr = 0.2)} fixes NNI at 30\% and SPR at
 20\%, with the remaining 50\% allocated adaptively among other moves.
 To disable adaptive scheduling entirely, pin all moves (sum to 1).
-See section \strong{Adaptive move scheduling} below.}
+See section \strong{Three-phase MCMC} below.}
 
 \item{cacheBonus}{Numeric specifying the factor applied to the weights of
 the moves that reuse cached partial likelihoods (NNI, SPR, \code{beta_simplex},
@@ -369,7 +389,13 @@ Default tuning values:
 \item \code{scale_p}: 0.5
 \item \code{int_walk_window}: 1
 \item \code{block_kprime_window}: 1
+\item \code{dirichlet_class_w_alpha}: 10, the concentration of the Dirichlet
+proposal on the partition class weights; larger values take smaller
+steps.
 }
+
+Warmup adapts each value towards its move's target acceptance rate, and
+each chain of a tempered ladder adapts its own.
 \subsection{Stopping criteria}{
 
 Sampling stops when two consecutive convergence checks, \code{checkEvery}
@@ -403,12 +429,12 @@ towards the pair only once the logs have gained a \code{checkEvery}'s worth of
 samples.
 
 \code{minTreeEss} is judged per run, on up to \code{max(1000, 1.5 * minTreeEss)}
-evenly spaced trees. Trees are not written to the logs, so the cross-run
-decision rests on \code{minEss} and \code{maxRhat} alone; set one of them when
-running more than one run. A run that has sampled a single topology has
-no tree ESS: it cannot tell a stuck chain from a posterior concentrated on
-one topology, so it cannot meet \code{minTreeEss} until it samples another,
-and warns.
+evenly spaced trees. With \code{nCore > 1}, each run reports its verdict to the
+cross-run check, which stops the job only once every run meets
+\code{minTreeEss}; with \code{minTreeEss} alone, each run stops when it meets it. A
+run that has sampled a single topology has no tree ESS: it cannot tell a
+stuck chain from a posterior concentrated on one topology, so it cannot
+meet \code{minTreeEss} until it samples another, and warns.
 
 A criterion that can never be met -- \code{maxRhat} with one run, or
 \code{minTreeEss} with a fixed topology -- does
@@ -456,7 +482,7 @@ a \code{dim} field (= nEdge) in the score formula.
 The MCMC engine runs in three phases, shown in the progress display:
 
 \strong{Warmup.} Tuning parameters (scale, window), move weights
-(acceptance-rate/cost heuristic), and temperatures (parallel
+(acceptances per second of wall-clock time), and temperatures (parallel
 tempering) all adapt. Each chain tunes its own step sizes, but move
 weights are adapted from the cold chain alone and shared by every chain
 in the temperature ladder. The phase ends automatically when the cold
@@ -469,17 +495,24 @@ size per second across parameters) using a perturbation bandit.
 Each round evaluates the current and perturbed weight vectors
 over short windows, adopting a candidate only when it beats the
 incumbent by more than the noise in its ESS estimate. Tuning samples
-are discarded. Step sizes and joint-proposal correlations are frozen at
-their warmup values. The phase ends after
+are discarded. Step sizes are frozen at their warmup values, and
+joint-proposal correlations at their estimate from the first tuning
+window. The phase ends after
 \code{tuningRounds} rounds or \code{tuningBudget} iterations, or, when \code{minEss}
 is set, sooner once tuning stops paying for itself: when, in two
 consecutive rounds, the
 time already spent on warmup and tuning exceeds the time the best
 kernel needs to collect this run's share of \code{minEss}.
+With finite \code{nIter}, its windows are sized so that it uses at most about
+half the iterations left after warmup. If even one round cannot end before
+\code{nIter}, the run stops there with a warning and \code{stop_reason} \code{"too_short"},
+rather than spend the rest of its iterations without sampling.
 Set \code{autoTune = FALSE} to skip this phase.
 
 \strong{Sample.} Move weights are frozen and posterior samples are
-collected. Convergence is checked every \code{checkEvery} iterations.
+collected; a joint-proposal correlation that warmup could not estimate is
+estimated from the first 50 samples, then fixed. Convergence is checked
+every \code{checkEvery} iterations.
 The run terminates when the stopping criteria are met (see
 \strong{Stopping criteria}), \code{maxTime} is reached, or \code{nIter}
 iterations complete.

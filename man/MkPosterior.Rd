@@ -21,7 +21,8 @@ MkPosterior(
 
 \item{trees}{List of \code{phylo} objects (sampled trees).}
 
-\item{acceptance}{Named numeric vector of acceptance rates per move.}
+\item{acceptance}{Named numeric vector of acceptance rates per move, over
+the Sample phase.}
 
 \item{model}{The \code{MkPrimeModel} used.}
 

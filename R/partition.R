@@ -27,6 +27,12 @@
     partition <- rep(1L, mkd$nChar)
   } else {
     partition <- as.integer(partition)
+    if (length(partition) != mkd$nChar) {
+      cli::cli_abort(c(
+        "{.arg partition} has length {length(partition)} but the data has \\
+         {mkd$nChar} character{?s}."
+      ))
+    }
   }
   nClasses <- max(partition)
 
@@ -123,4 +129,33 @@
     unique_tip_states = tip_states[, unique_cols, drop = FALSE],
     pattern_index     = pattern_index
   )
+}
+
+
+# Subset a user's `partition` to the parsimony-informative characters. The
+# length is checked against the data first, as dropping before checking let a
+# short partition through; an emptied class aborts rather than renumbering,
+# which would silently remap the user's class ids.
+.SubsetInformativePartition <- function(partition, mkd) {
+  if (!is.numeric(partition)) return(partition)
+  if (length(partition) != mkd$nChar) {
+    cli::cli_abort(c(
+      "{.arg partition} has length {length(partition)} but the data has \\
+       {mkd$nChar} character{?s}.",
+      "i" = "Supply one class id per character, before any are dropped as \\
+             parsimony-uninformative."
+    ))
+  }
+  keep <- .Informable(mkd)
+  emptied <- setdiff(unique(partition[!is.na(partition)]),
+                     partition[keep])
+  if (length(emptied)) {
+    cli::cli_abort(c(
+      "{.arg partition} would leave class {.val {emptied}} empty: every \\
+       character assigned to it is parsimony-uninformative.",
+      "i" = "Remove the emptied class(es) from {.arg partition}, or use \\
+             {.code coding = \"variable\"}."
+    ))
+  }
+  partition[keep]
 }

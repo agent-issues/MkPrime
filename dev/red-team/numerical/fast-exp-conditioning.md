@@ -1,3 +1,5 @@
+> Historical: src/fast_exp.h (fast_neg_exp, MKP_EXP) was removed as dead code (agent-issues/MkPrime#349).
+
 # Lane N1 — `fast_neg_exp` + closed-form `P(t)` conditioning audit
 
 ## What this audits

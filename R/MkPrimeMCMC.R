@@ -30,12 +30,9 @@
 #' @param maxWarmup Maximum warmup iterations. Warmup ends when the
 #'   chain stabilises OR this ceiling is reached (with a warning).
 #'   Default 50 000 when `nIter = Inf`; `nIter / 2` when finite.
-#' @param autoTune Logical; enable the tuning phase after warmup
-#'   (default `TRUE`). When `TRUE`, a short tuning phase optimises
-#'   move weights by maximising min-ESS/s using a perturbation bandit.
-#'   When `FALSE`, move weights are frozen at the end of warmup using
-#'   the acceptance-rate heuristic (legacy behaviour). See section
-#'   **Three-phase MCMC** below.
+#' @param autoTune Logical; if `TRUE`, a tuning phase after warmup optimises
+#'   move weights for min-ESS/s; otherwise they stay as warmup left them
+#'   (see **Three-phase MCMC**).
 #' @param tuningBudget Integer giving the most iterations the tuning phase may
 #'   use; tuning can end sooner (see **Three-phase MCMC**).
 #' @param tuningRounds Integer giving the most perturbation-evaluation rounds
@@ -47,12 +44,19 @@
 #' @param nChains Number of chains in the temperature ladder (parallel
 #'   tempering). Default 1 (no tempering). Set to 4 for typical analyses.
 #'   Chain 1 is the cold chain (beta = 1).
-#' @param heat Temperature of the hottest chain (0 < heat < 1). Default
-#'   0.2. The temperature ladder uses geometric spacing:
-#'   `beta_i = heat^((i-1)/(nChains-1))` for i = 1, ..., nChains.
+#' @param heat Inverse temperature of the hottest chain (0 < heat < 1),
+#'   from which warmup starts. Default 0.2. The temperature ladder uses
+#'   geometric spacing: `beta_i = heat^((i-1)/(nChains-1))` for
+#'   i = 1, ..., nChains. Warmup adapts `heat` towards a 25% swap
+#'   acceptance rate, keeping it between 0.01 and `heatMax`: a value outside
+#'   that range is moved into it at the first adaptation, with a warning. The
+#'   ladder is then fixed for the Tuning and Sample phases.
 #'   Ignored when `nChains = 1`.
-#' @param maxTime Maximum wall-clock time in seconds. `NULL` (default)
-#'   means no time limit.
+#' @param heatMax Numeric in `(0.01, 1)` giving the largest inverse temperature
+#'   that warmup may give the hottest chain; larger values allow a narrower
+#'   ladder. Ignored when `nChains = 1`.
+#' @param maxTime Maximum wall-clock time in seconds for the whole job, shared
+#'   by all its runs. `NULL` (default) means no time limit.
 #' @param minEss Numeric specifying the effective sample size every monitored
 #'   parameter must reach before sampling stops; `NULL` disables ESS-based
 #'   stopping.
@@ -67,16 +71,28 @@
 #' @param checkEvery Integer giving the iterations between convergence checks,
 #'   of which two in a row must pass before sampling stops.
 #' @param cancelFile Path to a cancel-signal file. `NULL` (default) disables
-#'   cancel-file checking. When set, [RunMkPrime()] checks every 200
-#'   iterations whether this file exists. If it does, the run flushes any
-#'   buffered samples, saves a checkpoint (if `checkpointFile` is set), and
-#'   exits with `stop_reason = "cancelled"`. Create the file to request a
-#'   clean stop: `file.create(cancelFile)`. See also [MkCancelPath()].
+#'   cancel-file checking. When set, [RunMkPrime()] checks whether this file
+#'   exists between batches: every 500 iterations or fewer during warmup and
+#'   tuning, and every 5000 or fewer during sampling. A batch also ends at
+#'   each multiple of `checkEvery`, and of `plotEvery` when a progress
+#'   callback is set. The `maxTime` limit is checked at the same points.
+#'   If the file exists, the run flushes any buffered samples, saves a
+#'   checkpoint (if `checkpointFile` is set), and exits with
+#'   `stop_reason = "cancelled"`. Create the file to request a clean stop:
+#'   `file.create(cancelFile)`. See also [MkCancelPath()].
+#'   A resume, or a `RunMkPrime(overwrite = TRUE)` over an old checkpoint,
+#'   deletes, with a message, a cancel file that the run which wrote that
+#'   checkpoint stopped for, unless the file has been touched since. Delete
+#'   the file yourself before any other fresh run, or it stops after one
+#'   batch.
 #' @param checkpointFile Path to write checkpoint RDS files. `NULL`
 #'   (default) auto-derives from `logFile` when set
 #'   (e.g. `"run.log"` -> `"run.ckp"`). Set to `FALSE` to
 #'   disable checkpointing. Checkpoints are saved at each
 #'   convergence check interval and on cancel.
+#'   Without a `logFile`, samples stream to a log beside the checkpoint
+#'   (`"run.ckp"` -> `"run_mkp_run.log"`), which a resume extends; samples
+#'   are also returned in memory.
 #' @param treeFile Path to write sampled trees in Newick format.
 #'   `NULL` (default) auto-derives from `logFile` when set
 #'   (e.g. `"run.log"` → `"run_trees.nwk"`). Set to `FALSE` to
@@ -156,9 +172,11 @@
 #'   correlated parameter pairs (default `TRUE`). Proposes correlated
 #'   updates to tree_length × rate_log_sd (and tree_length × rate_loss
 #'   when neomorphic characters are present) using a bivariate Bactrian
-#'   kernel. The correlation is learned adaptively during warmup from
-#'   posterior sample correlations. No effect when parameters are
-#'   uncorrelated (degenerates to independent proposals).
+#'   kernel. The correlation is estimated from the chain's samples, last
+#'   from the first tuning window, or with `autoTune = FALSE` from the first
+#'   50 samples if warmup was too short to estimate it; it is then
+#'   fixed. No effect when parameters are uncorrelated (degenerates to
+#'   independent proposals).
 #' @param blockGibbsBranch Logical; include the block Gibbs branch-length
 #'   sweep move (default `FALSE`). Each call sweeps over all edge pairs
 #'   in random-permutation order, sampling each from an approximate
@@ -203,7 +221,7 @@
 #'   `moveWeights = c(nni = 0.3, spr = 0.2)` fixes NNI at 30% and SPR at
 #'   20%, with the remaining 50% allocated adaptively among other moves.
 #'   To disable adaptive scheduling entirely, pin all moves (sum to 1).
-#'   See section **Adaptive move scheduling** below.
+#'   See section **Three-phase MCMC** below.
 #' @param nCore Integer. Number of parallel worker processes for independent
 #'   runs. Default `getOption("mc.cores", 1L)`, matching the convention used
 #'   by \pkg{TreeDist}. With `nCore = 1` (the default), runs execute serially.
@@ -263,6 +281,12 @@
 #' - `scale_p`: 0.5
 #' - `int_walk_window`: 1
 #' - `block_kprime_window`: 1
+#' - `dirichlet_class_w_alpha`: 10, the concentration of the Dirichlet
+#'   proposal on the partition class weights; larger values take smaller
+#'   steps.
+#'
+#' Warmup adapts each value towards its move's target acceptance rate, and
+#' each chain of a tempered ladder adapts its own.
 #'
 #' ## Stopping criteria
 #'
@@ -297,12 +321,12 @@
 #' samples.
 #'
 #' `minTreeEss` is judged per run, on up to `max(1000, 1.5 * minTreeEss)`
-#' evenly spaced trees. Trees are not written to the logs, so the cross-run
-#' decision rests on `minEss` and `maxRhat` alone; set one of them when
-#' running more than one run. A run that has sampled a single topology has
-#' no tree ESS: it cannot tell a stuck chain from a posterior concentrated on
-#' one topology, so it cannot meet `minTreeEss` until it samples another,
-#' and warns.
+#' evenly spaced trees. With `nCore > 1`, each run reports its verdict to the
+#' cross-run check, which stops the job only once every run meets
+#' `minTreeEss`; with `minTreeEss` alone, each run stops when it meets it. A
+#' run that has sampled a single topology has no tree ESS: it cannot tell a
+#' stuck chain from a posterior concentrated on one topology, so it cannot
+#' meet `minTreeEss` until it samples another, and warns.
 #'
 #' A criterion that can never be met -- `maxRhat` with one run, or
 #' `minTreeEss` with a fixed topology -- does
@@ -347,7 +371,7 @@
 #' The MCMC engine runs in three phases, shown in the progress display:
 #'
 #' **Warmup.** Tuning parameters (scale, window), move weights
-#' (acceptance-rate/cost heuristic), and temperatures (parallel
+#' (acceptances per second of wall-clock time), and temperatures (parallel
 #' tempering) all adapt. Each chain tunes its own step sizes, but move
 #' weights are adapted from the cold chain alone and shared by every chain
 #' in the temperature ladder. The phase ends automatically when the cold
@@ -360,17 +384,24 @@
 #' Each round evaluates the current and perturbed weight vectors
 #' over short windows, adopting a candidate only when it beats the
 #' incumbent by more than the noise in its ESS estimate. Tuning samples
-#' are discarded. Step sizes and joint-proposal correlations are frozen at
-#' their warmup values. The phase ends after
+#' are discarded. Step sizes are frozen at their warmup values, and
+#' joint-proposal correlations at their estimate from the first tuning
+#' window. The phase ends after
 #' `tuningRounds` rounds or `tuningBudget` iterations, or, when `minEss`
 #' is set, sooner once tuning stops paying for itself: when, in two
 #' consecutive rounds, the
 #' time already spent on warmup and tuning exceeds the time the best
 #' kernel needs to collect this run's share of `minEss`.
+#' With finite `nIter`, its windows are sized so that it uses at most about
+#' half the iterations left after warmup. If even one round cannot end before
+#' `nIter`, the run stops there with a warning and `stop_reason` `"too_short"`,
+#' rather than spend the rest of its iterations without sampling.
 #' Set `autoTune = FALSE` to skip this phase.
 #'
 #' **Sample.** Move weights are frozen and posterior samples are
-#' collected. Convergence is checked every `checkEvery` iterations.
+#' collected; a joint-proposal correlation that warmup could not estimate is
+#' estimated from the first 50 samples, then fixed. Convergence is checked
+#' every `checkEvery` iterations.
 #' The run terminates when the stopping criteria are met (see
 #' **Stopping criteria**), `maxTime` is reached, or `nIter`
 #' iterations complete.
@@ -393,6 +424,7 @@ MkPrimeMCMC <- function(
     nRuns = 2L,
     nChains = 1L,
     heat = 0.2,
+    heatMax = 0.5,
     maxTime = NULL,
     minEss = NULL,
     maxRhat = NULL,
@@ -495,8 +527,19 @@ MkPrimeMCMC <- function(
     cli::cli_abort("{.arg nChains} must be at least 1.")
   }
   if (nChains > 1L) {
+    if (!is.numeric(heatMax) || length(heatMax) != 1L || is.na(heatMax) ||
+        heatMax <= 0.01 || heatMax >= 1) {
+      cli::cli_abort("{.arg heatMax} must be a number in (0.01, 1), got {heatMax}.")
+    }
     if (heat <= 0 || heat >= 1) {
       cli::cli_abort("{.arg heat} must be in (0, 1), got {heat}.")
+    }
+    if (heat < 0.01 || heat > heatMax) {
+      cli::cli_warn(c(
+        "{.arg heat} = {heat} lies outside [0.01, {heatMax}].",
+        "i" = "Warmup will move it to {max(0.01, min(heat, heatMax))} when it \\
+               first adapts the temperature ladder."
+      ))
     }
   }
   if (!is.null(cancelFile)) {
@@ -689,7 +732,7 @@ MkPrimeMCMC <- function(
          minWarmup = minWarmup, maxWarmup = maxWarmup,
          autoTune = autoTune, tuningBudget = tuningBudget,
          tuningRounds = tuningRounds,
-         nRuns = nRuns, nChains = nChains, heat = heat,
+         nRuns = nRuns, nChains = nChains, heat = heat, heatMax = heatMax,
          maxTime = maxTime, minEss = minEss, maxRhat = maxRhat,
          minTreeEss = minTreeEss, checkEvery = checkEvery,
          cancelFile = cancelFile, checkpointFile = checkpointFile,

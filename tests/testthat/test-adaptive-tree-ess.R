@@ -349,6 +349,13 @@ test_that("minTreeEss with a fixed topology warns that it can never be met", {
   expect_no_warning(MkPrime:::.WarnUnreachableCriteria(mcmc))
 })
 
+test_that("maxRhat with a single run warns that it can never be met (#196)", {
+  mcmc <- list(maxRhat = 1.05, nRuns = 1L, nIter = 600L)
+  expect_warning(MkPrime:::.WarnUnreachableCriteria(mcmc), "maxRhat.*nRuns")
+  mcmc$nRuns <- 2L
+  expect_no_warning(MkPrime:::.WarnUnreachableCriteria(mcmc))
+})
+
 test_that("one topology flip earns a tuning window no more than it moved (#219)", {
   skip_if_not_installed("TreeDist")
   set.seed(2190)

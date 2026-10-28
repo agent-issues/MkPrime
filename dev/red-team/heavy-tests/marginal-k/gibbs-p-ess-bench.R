@@ -36,7 +36,7 @@ build <- function(nChar, seed) {
   tree  <- TreeTools::Preorder(make_tree()); mkd <- MkPrimeData(make_mkd(nChar, seed))
   model <- MkPrime:::.FinalizeModel(
     MkPrimeModel(kPrimePrior = "geometric", likelihoodMode = "marginal_k",
-                 priorVariant = "conditional", coding = "variable"), tree, mkd)
+                 coding = "variable"), tree, mkd)
   s0 <- MkPrime:::.InitState(tree, mkd, model)
   s0$p <- 0.7; s0$tree_length <- sum(tree$edge.length)
   s0$rel_br_lengths <- tree$edge.length / s0$tree_length

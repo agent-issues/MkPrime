@@ -179,7 +179,8 @@ test_that("Reconnect: no signals + dead PID + no checkpoint → status 'error'",
   dir.create(d, showWarnings = FALSE)
   on.exit(unlink(d, recursive = TRUE))
   # Use an implausibly large PID so .PidIsAlive() returns FALSE
-  saveRDS(.make_test_job(d, pid = .Machine$integer.max), file.path(d, "job.rds"))
+  saveRDS(.make_test_job(d, pid = .Machine$integer.max),
+          file.path(d, "job.rds"))
 
   shiny::testServer(MkBayesianServer,
     args = list(dataset = shiny::reactive(NULL)),
@@ -188,4 +189,95 @@ test_that("Reconnect: no signals + dead PID + no checkpoint → status 'error'",
       expect_equal(rv$status, "error")
     }
   )
+})
+
+
+# ---------------------------------------------------------------------------
+# Live-job guards and launch arguments (#421)
+# ---------------------------------------------------------------------------
+
+test_that("Reconnect: cancel signal + live PID keeps polling, no relaunch", {
+  skip_if_not_installed("shiny")
+  skip_if_not_installed("bslib")
+
+  d <- file.path(tempdir(), "mkp_rc_cancel_live")
+  dir.create(d, showWarnings = FALSE)
+  on.exit(unlink(d, recursive = TRUE))
+  cp <- file.path(d, "checkpoint.rds")
+  file.create(cp)
+  writeLines("stop", file.path(d, "mkp_run.R"))
+  saveRDS(.make_test_job(d, pid = Sys.getpid(), checkpointFile = cp),
+          file.path(d, "job.rds"))
+  cancelFile <- file.path(d, "mkp_cancel.signal")
+  file.create(cancelFile)
+
+  shiny::testServer(MkBayesianServer,
+    args = list(dataset = shiny::reactive(NULL)),
+    expr = {
+      session$setInputs(logDir = d, reconnect = 1L)
+      expect_equal(rv$status, "stopping")
+      expect_true(file.exists(cancelFile))
+      expect_null(rv$proc)
+    }
+  )
+})
+
+test_that("Run refuses to launch over a live job in the log directory", {
+  skip_if_not_installed("shiny")
+  skip_if_not_installed("bslib")
+  skip_if_not_installed("processx")
+
+  d <- file.path(tempdir(), "mkp_run_live")
+  dir.create(d, showWarnings = FALSE)
+  on.exit(unlink(d, recursive = TRUE))
+  saveRDS(.make_test_job(d, pid = Sys.getpid()), file.path(d, "job.rds"))
+  cancelFile <- file.path(d, "mkp_cancel.signal")
+  file.create(cancelFile)
+
+  shiny::testServer(MkBayesianServer,
+    args = list(dataset = shiny::reactive(
+      list(a = c("0", "1", "0"), b = c("1", "0", "0"), c = c("0", "0", "1"),
+           d = c("1", "1", "0")))),
+    expr = {
+      session$setInputs(logDir = d, nRuns = 1L, nChains = 1L, heat = 0.2,
+                        warmup = 100L, minEss = 10L, maxTimeMins = 1,
+                        neomorphic = "", run = 1L)
+      expect_equal(rv$status, "idle")
+      expect_true(file.exists(cancelFile))
+      expect_false(file.exists(file.path(d, "input_mcmc.rds")))
+    }
+  )
+})
+
+test_that(".JobIsLive reflects the recorded PID", {
+  d <- file.path(tempdir(), "mkp_joblive")
+  dir.create(d, showWarnings = FALSE)
+  on.exit(unlink(d, recursive = TRUE))
+  expect_false(.JobIsLive(d))
+  saveRDS(.make_test_job(d, pid = Sys.getpid()), file.path(d, "job.rds"))
+  expect_true(.JobIsLive(d))
+  saveRDS(.make_test_job(d, pid = .Machine$integer.max),
+          file.path(d, "job.rds"))
+  expect_false(.JobIsLive(d))
+})
+
+test_that("GUI launch passes maxWarmup, so autoTune stays on", {
+  expect_no_warning(
+    mcmc <- MkPrimeMCMC(nRuns = 1L, nChains = 1L, maxWarmup = 3000L,
+                        minEss = 10L)
+  )
+  expect_true(mcmc$autoTune)
+  src <- paste(deparse(body(MkBayesianServer)), collapse = "\n")
+  expect_match(src, "maxWarmup\\s*=\\s*maxWarmup")
+  expect_no_match(src, "[^x]warmup\\s*=\\s*warmup")
+})
+
+test_that(".TraceTails keeps the last rows of each run", {
+  m <- cbind(Sample = 1:7, x = 1:7)
+  attr(m, "runRows") <- c(4L, 3L)
+  tails <- .TraceTails(m, n = 2L)
+  expect_length(tails, 2L)
+  expect_equal(tails[[1]][, "Sample"], 3:4)
+  expect_equal(tails[[2]][, "Sample"], 6:7)
+  expect_length(.TraceTails(m[1:3, ], n = 2L), 1L)
 })

@@ -5,12 +5,17 @@
 #   logHastings = ...).
 # The Hastings ratio is log q(current | proposed) - log q(proposed | current).
 #
-# Trees are unrooted binary in ape's rooted encoding: node nTip + 1 is a
-# trifurcation, so nEdge = 2 * nTip - 3.  It is not a biological root -- every
-# model is time-reversible -- but it is not invisible to the moves either:
-# SPR, TBR, pSPR and their Gibbs/weighted variants take prune edges only where
-# parent != nTip + 1, so the three subtrees hanging directly off it are never
-# pruned as units.
+# Trees are binary in ape's rooted encoding, with the root at node nTip + 1
+# in one of two shapes: a trifurcation (nEdge = 2 * nTip - 3; unrooted input)
+# or a degree-2 root (nEdge = 2 * nTip - 2; the default AdditionTree and
+# NJTree start trees, whose rooting .PrepareStartTree keeps).  The root is not
+# biological -- every model is time-reversible -- but it is not invisible to
+# the moves either: SPR, TBR, pSPR and their Gibbs/weighted variants take
+# prune edges only where parent != nTip + 1, so the subtrees hanging directly
+# off it are never pruned as units.  A degree-2 root splits one unrooted edge
+# in two, so the chain walks rooted trees: NNI across a root edge moves the
+# root without changing the unrooted topology, and SPR onto either root edge
+# gives the same unrooted tree rooted in two places.
 
 #' Scale proposal for positive scalars
 #'

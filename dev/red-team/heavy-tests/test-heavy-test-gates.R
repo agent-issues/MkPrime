@@ -46,30 +46,14 @@ CallsTo <- function(path, fn) {
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
-## ---- HARN2-008: priorVariant pinned in every marginal-k driver -------------
+## ---- HARN2-008: no marginal-k driver passes the retired priorVariant ------
 for (f in list.files(MK, "\\.R$", full.names = TRUE)) {
   calls <- CallsTo(f, "MkPrimeModel")
   if (!length(calls)) next
-  ok(sprintf("%s pins priorVariant", basename(f)),
-     all(vapply(calls, function(cl) "priorVariant" %in% names(cl), logical(1L))))
+  ok(sprintf("%s does not pass priorVariant", basename(f)),
+     !any(vapply(calls, function(cl) "priorVariant" %in% names(cl), logical(1L))))
 }
 ovlDriver <- file.path(MK, "T-OVL-sampled-vs-marginal.R")
-WithPriorVariant <- function(value, code) {
-  old <- Sys.getenv("MARGINAL_K_PRIOR_VARIANT", unset = NA)
-  on.exit(if (is.na(old)) Sys.unsetenv("MARGINAL_K_PRIOR_VARIANT")
-          else Sys.setenv(MARGINAL_K_PRIOR_VARIANT = old))
-  if (is.na(value)) Sys.unsetenv("MARGINAL_K_PRIOR_VARIANT")
-  else Sys.setenv(MARGINAL_K_PRIOR_VARIANT = value)
-  code
-}
-ok("T-OVL defaults to the shipped Model A",
-   identical(WithPriorVariant(NA, Definition(ovlDriver, "PRIOR_VARIANT")), "unconditional"))
-ok("T-OVL prior variant is overridable",
-   identical(WithPriorVariant("conditional", Definition(ovlDriver, "PRIOR_VARIANT")),
-             "conditional"))
-ok("the Phase-2 overnight script reproduces its recorded Model B runs",
-   any(grepl("^export MARGINAL_K_PRIOR_VARIANT=conditional$",
-             readLines(file.path(MK, "run-phase2-overnight.sh")))))
 
 ## ---- HARN2-012: marginal SBC output dir is per batch ----------------------
 sbcDriver <- file.path(MK, "T-SBC-marginal-geometric.R")
@@ -227,8 +211,8 @@ PackageP01 <- function(r, t) {
 rTrue <- 4
 tBranch <- 0.3
 lambdaPkg <- (1 + rTrue)^2 / (2 * rTrue)
-ratesH <- readLines("src/mkn_rates.h")
-ok("src/mkn_rates.h still has the rates the oracle assumes",
+ratesH <- readLines("inst/include/MkPrime/transition.h")
+ok("transition.h (mkn_rates) still has the rates the oracle assumes",
    any(grepl("rate01 = half / rateLoss", ratesH, fixed = TRUE)) &&
      any(grepl("half = 0.5 * (1.0 + rateLoss)", ratesH, fixed = TRUE)))
 ok("lambda = (1+r)^2/(2r) reproduces the package P01",
@@ -305,9 +289,9 @@ for (f in c("submit-marginal-k-sbc.sh", "submit-marginal-k-sbc-sampled.sh")) {
      mins >= 30L)
 }
 funnel <- readLines(file.path(HT, "funnel-stress-hyperprior-sigma.R"))
-ok("funnel-stress pins nCat, expSteps and priorVariant",
+ok("funnel-stress pins nCat and expSteps, not priorVariant",
    any(grepl("MODEL_PIN <- list(nCat", funnel, fixed = TRUE)) &&
-     any(grepl("priorVariant = MODEL_PIN", funnel, fixed = TRUE)))
+     !any(grepl("priorVariant", funnel, fixed = TRUE)))
 ok("funnel-stress prints no NEWS.md headline", !any(grepl("NEWS", funnel)))
 ok("subtree-swap-db is marked retired",
    any(grepl("^# RETIRED", readLines(file.path(HT, "subtree-swap-db.R"))[1:6])))

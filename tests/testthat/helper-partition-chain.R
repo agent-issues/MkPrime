@@ -35,7 +35,7 @@
   }
   classZ <- if (hyperprior) classRateLogSd else numeric(0)
   statePtr <- NewState(eval_log_prior_partitioned_cpp(
-    dataPtr, NewState(0), classRateLogSd, classW, 1,
+    dataPtr, NewState(0), classRateLogSd, classW, classRate, 1,
     useHyperpriorOnSigma = hyperprior, hyperTau = 1, classZ = classZ))
   fill_partition_cache(dataPtr, statePtr)
   allocate_cl_workspace(dataPtr, statePtr)
@@ -55,6 +55,6 @@
   # Return:
   cpp_log_likelihood_partitioned_xptr(
     chain$dataPtr, edge[, 1L], edge[, 2L], edgeLen, st$kPrime,
-    st$rateLoss, st$classRateLogSd, st$classRate, st$etaNeo, st$betaScale,
-    st$rateNeo)
+    st$rateLoss, st$classRateLogSd, st$classRate, st$etaNeo, st$p,
+    st$kprimeAlpha, st$kprimeBeta, st$betaScale, st$rateNeo)
 }

@@ -78,10 +78,9 @@ test_that("LogPrior matches manual density calculations", {
 })
 
 
-test_that("LogPrior's truncated geometric separates Model A from Model B", {
-  # At kObs = 2 with K = 200 the two variants coincide: log Z_A underflows to
-  # 0 and Model A's (k' - 2) equals Model B's u.  kObs = 3 and a small K are
-  # what make the branch pair distinguishable.
+test_that("LogPrior's truncated geometric starts at 2, whatever kObs", {
+  # kObs = 3 and a small K make an offset from kObs, or a normaliser over
+  # [kObs, K], visible.
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 2, 0), 4, 1,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -106,28 +105,18 @@ test_that("LogPrior's truncated geometric separates Model A from Model B", {
     dgamma(0.3, shape = 1, rate = 1, log = TRUE) +
     dbeta(p, 1, 1, log = TRUE)
 
-  # Model A: P(k') propto p (1-p)^(k'-2) on k' in [2, K].
-  modelA <- MkPrimeModel(expSteps = 10, kPrimePrior = "geometric",
-                         kprimeTruncK = K)
-  expect_identical(modelA$priorVariant, "unconditional")
+  # P(k') propto p (1-p)^(k'-2) on k' in [2, K].
+  model <- MkPrimeModel(expSteps = 10, kPrimePrior = "geometric",
+                        kprimeTruncK = K)
   expect_equal(
-    MkPrime:::LogPrior(state, modelA, mkd),
+    MkPrime:::LogPrior(state, model, mkd),
     shared + log(p) + (5 - 2) * log1mP - log1p(-exp((K - 1) * log1mP)),
-    tolerance = 1e-12
-  )
-
-  # Model B: P(k') propto p (1-p)^(k' - kObs) on k' in [kObs, K].
-  modelB <- MkPrimeModel(expSteps = 10, kPrimePrior = "geometric",
-                         kprimeTruncK = K, priorVariant = "conditional")
-  expect_equal(
-    MkPrime:::LogPrior(state, modelB, mkd),
-    shared + log(p) + (5 - 3) * log1mP - log1p(-exp((K - 3 + 1) * log1mP)),
     tolerance = 1e-12
   )
 
   # k' outside the truncated support carries no mass.
   state$kPrime <- K + 1L
-  expect_equal(MkPrime:::LogPrior(state, modelA, mkd), -Inf)
+  expect_equal(MkPrime:::LogPrior(state, model, mkd), -Inf)
 })
 
 
@@ -336,29 +325,30 @@ test_that("Per-character expSteps floors at one change per character", {
 })
 
 
-test_that("beta_geometric rejects an unconditional prior (#48)", {
-  expect_error(
-    MkPrimeModel(kPrimePrior = "beta_geometric",
-                 priorVariant = "unconditional"),
-    "no unconditional form"
-  )
-  expect_identical(
-    MkPrimeModel(kPrimePrior = "beta_geometric")$priorVariant,
-    "conditional"
-  )
-  expect_identical(
-    MkPrimeModel(kPrimePrior = "beta_geometric",
-                 priorVariant = "conditional")$priorVariant,
-    "conditional"
-  )
-
+test_that("beta_geometric places its prior on k' - 2 (#48)", {
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
-  mat <- matrix(c(0, 0, 1, 1, 0, 1, 0, 1), 4, 2,
+  mat <- matrix(c(0, 1, 2, 0), 4, 1,
                 dimnames = list(paste0("t", 1:4), NULL))
-  model <- MkPrimeModel(kPrimePrior = "beta_geometric")
-  model$priorVariant <- "unconditional"
-  expect_error(
-    MkPrime:::.FinalizeModel(model, tree, MkPrimeData(MatrixToPhyDat(mat))),
-    "no unconditional form"
+  mkd <- MkPrimeData(MatrixToPhyDat(mat))
+  expect_equal(mkd$kObs, 3L)
+  K <- 6L
+  state <- list(
+    tree_length = 0.5,
+    rel_br_lengths = tree$edge.length / sum(tree$edge.length),
+    rate_loss = 1.5,
+    rate_log_sd = 0.3,
+    kPrime = 5L,
+    kprime_alpha = 0.7,
+    kprime_beta = 2
   )
+  model <- MkPrimeModel(expSteps = 10, kPrimePrior = "beta_geometric",
+                        kprimeTruncK = K)
+  shared <- dgamma(0.5, shape = 2, rate = 2 / 10, log = TRUE) +
+    lfactorial(length(state$rel_br_lengths) - 1L) +
+    dgamma(0.3, shape = 1, rate = 1, log = TRUE) +
+    dexp(0.7, log = TRUE) + dexp(2, log = TRUE)
+  # P(k') propto B(alpha + 1, beta + k' - 2) on k' in [2, K], whatever kObs.
+  w <- beta(0.7 + 1, 2 + (2:K) - 2)
+  expect_equal(MkPrime:::LogPrior(state, model, mkd),
+               shared + log(w[5 - 1] / sum(w)), tolerance = 1e-12)
 })

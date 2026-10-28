@@ -8,8 +8,9 @@
 # Tuning on a 4-tip tree, 20000 iterations after a 500-iteration warmup, so a
 # budget of 9750. The progress callback sleeps once per 2000-iteration window
 # during tuning, so that time charged to a window shows in its `sec`. The pause
-# dwarfs a window's own sampling time (~0.1 s on Linux; more on Windows CI).
-.tuningPause <- 1
+# dwarfs a window's own sampling time (~0.1 s on Linux; up to ~1.1 s seen on
+# Windows CI).
+.tuningPause <- 2.5
 
 .TuningWindows <- function(pause = .tuningPause) {
   if (!is.null(.windowRecord$windows)) return(.windowRecord$windows)
@@ -71,16 +72,21 @@ test_that("tree ESS enters the tuning score without minTreeEss (#222)", {
 test_that("a mid-round resume keeps the round's best so far (#221)", {
   cpFile <- tempfile(fileext = ".ckp")
   snapFile <- tempfile(fileext = ".ckp")
-  on.exit(unlink(c(cpFile, snapFile)), add = TRUE)
+  cancelFile <- tempfile()
+  on.exit(unlink(c(cpFile, snapFile, cancelFile)), add = TRUE)
 
-  # Keep the last checkpoint written during tuning: mid-way through the last
-  # candidate's window, with the incumbent and earlier candidates scored.
+  # Keep the first checkpoint taken mid-way through a candidate's window, with
+  # the incumbent scored, then cancel. A wall-clock limit would let a slow
+  # build (valgrind) stop before any candidate is on trial.
   RealSave <- MkPrime:::.SaveCheckpoint
   local_mocked_bindings(
     .SaveCheckpoint = function(runs, mcmc, iter, paramNames, file, ...) {
       RealSave(runs, mcmc, iter, paramNames, file, ...)
-      if (identical(runs[[1]]$phase, "Tuning")) {
-        file.copy(file, snapFile, overwrite = TRUE)
+      run <- runs[[1]]
+      if (!file.exists(snapFile) && isTRUE(run$tuningRound$candIdx > 0L) &&
+          NROW(run$tuningWindow$buf) > 0L) {
+        file.copy(file, snapFile)
+        file.create(cancelFile)
       }
     },
     .package = "MkPrime"
@@ -92,7 +98,7 @@ test_that("a mid-round resume keeps the round's best so far (#221)", {
                                   maxWarmup = 500L, minWarmup = 500L,
                                   autoTune = TRUE, tuningRounds = 1L,
                                   checkEvery = 500L, checkpointFile = cpFile,
-                                  maxTime = 60)),
+                                  cancelFile = cancelFile)),
     "maxWarmup"
   )
   expect_true(file.exists(snapFile))
@@ -104,10 +110,12 @@ test_that("a mid-round resume keeps the round's best so far (#221)", {
   local_mocked_bindings(
     .BeatsIncumbent = function(candRate, candEss, bestRate, bestEss, ...) {
       if (is.null(seen$bestRate)) seen$bestRate <- bestRate
+      file.create(cancelFile)
       FALSE
     },
     .package = "MkPrime"
   )
+  unlink(cancelFile)
   ResumeMkPrime(snapFile, .tuningData, .tuningTree)
   # The candidate on trial is judged against the best found before the
   # checkpoint, not against nothing.

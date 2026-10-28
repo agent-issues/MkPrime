@@ -44,9 +44,10 @@
 # The platform the stored reference was generated on, and why the comparison
 # is by tolerance rather than by bits.
 #
-# The reference RDS was generated on x86_64 Windows (mingw-w64). Run against
-# it on 2026-09-19 the six CI jobs split cleanly, each group internally
-# bit-identical:
+# The reference RDS was last generated on x86_64 Linux (glibc), on
+# 2026-10-08. The measurements below were taken against its predecessor,
+# generated on x86_64 Windows (mingw-w64). Run against that on 2026-09-19 the
+# six CI jobs split cleanly, each group internally bit-identical:
 #
 #   x86_64 Linux (release and devel) and x86_64 macOS  ->  one element of
 #     result$samples differs from the reference by exactly one ULP:
@@ -128,9 +129,9 @@
     classRateConcentration = 1,
     priorOnClassRateLogSd  = "hyperprior_pooled",
     likelihoodMode         = "sampled_k",
-    # Resolved, not left to MkPrimeModel() to derive from kPrimePrior.
-    priorVariant           = "unconditional",
-    kprimeTruncK           = 200L
+    kprimeTruncK           = 200L,
+    # No extensions (#441): MkPrimeModel() is then identical to before.
+    extensions             = NULL
   )
 }
 
@@ -154,15 +155,11 @@
   modelArgs[["kprimeLogseriesC"]] <- NULL
   model <- do.call(MkPrimeModel, modelArgs)
 
-  # nIter / maxWarmup are SHORTER than the plan's nominal "1000 iter" target.
-  # Bisected 2026-05-20: with gibbsSubtreeSwap=FALSE and joint2d=FALSE,
-  # cross-process bit-identity holds at (nIter=100, maxWarmup=50) but breaks
-  # somewhere before (nIter=1000, maxWarmup=200) — a third nondeterminism
-  # source emerges in longer chains. Shortening preserves the §7a contract's
-  # intent (detect drift in the legacy code path after partition-API edits)
-  # without depending on un-tracked-down cross-process nondeterminism in the
-  # existing move set. The remote-agent rule "≤ 1000 generations for smoke
-  # tests" is comfortably satisfied.
+  # Warmup move weights score acceptances per second of wall-clock time, so
+  # they differ between runs (#328) once two moves reach
+  # `.AdaptMoveWeights()`'s `minProposals`, which none does in 50 warmup
+  # iterations; a longer test needing bit-identity must pin every move's
+  # weight.
   mcmc <- MkPrimeMCMC(
     nIter        = 100L,
     maxWarmup    = 50L,
@@ -191,11 +188,6 @@
     # but the §7a reference was generated with it off, so keep this until
     # the reference is regenerated.
     #
-    # A SEPARATE, currently-uncharacterised cross-process divergence
-    # emerges at longer chains (≥1000 iter / ≥200 warmup) even with both
-    # gibbsSubtreeSwap and joint2d off. The §7a reference accordingly uses
-    # the short (100 iter / 50 warmup) regime where bit-identity holds.
-    #
     # gibbsSpr is pinned off because this reference guards the legacy path as
     # a whole, not any one move. It is also the one move on main known to be
     # incorrect (issue #19: no MH step, so not pi-invariant), and its fix is
@@ -220,6 +212,15 @@
     # hostage to that fix. Its correctness is covered by
     # test-cache-aware-scheduling.R.
     cacheBonus       = 1,
+    #
+    # localDirichlet is pinned off for the same reason: issue #335's fix makes
+    # local_dirichlet choose its edges by tree shape rather than by edge-row
+    # order, so on the non-canonical row orders an in-place NNI or TBR leaves
+    # behind it selects different edges, and leaving it on made the reference
+    # hostage to that fix. local_dirichlet correctness is covered by
+    # test-local-dirichlet-representation.R and
+    # test-branch-hastings-invariance.R.
+    localDirichlet   = FALSE,
     gibbsSubtreeSwap = FALSE,
     joint2d          = FALSE
   )

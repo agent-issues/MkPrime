@@ -4,7 +4,15 @@
 \alias{.InitRun}
 \title{Initialize state for a single run}
 \usage{
-.InitRun(tree, mkd, model, mcmc, moves, partitionSpec = NULL)
+.InitRun(
+  tree,
+  mkd,
+  model,
+  mcmc,
+  moves,
+  partitionSpec = NULL,
+  initValues = NULL
+)
 }
 \description{
 Returns a fully R-serializable run state: \code{chains} holds per-chain

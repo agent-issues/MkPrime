@@ -5,6 +5,17 @@ suppressPackageStartupMessages({
   library(ape); library(TreeTools)
 })
 # No namespace shim needed: nothing here calls MkPrime::: directly.
+source(file.path(Sys.getenv("GSPR_DIR", "."), "align.R"))
+
+# Which build produced a result: package name, commit (RemoteSha, stamped by
+# data-raw/hamilton/install_mkp.sh; NA for an unstamped build) and library path.
+BuildInfo <- function(pkg = "MkPrime.G3") {
+  d <- utils::packageDescription(pkg)
+  list(package = pkg,
+       remoteSha = if (is.null(d$RemoteSha)) NA_character_ else d$RemoteSha,
+       version = d$Version,
+       libPath = dirname(find.package(pkg)))
+}
 
 GT_ROOT <- "C:/Users/pjjg18/GitHub/mkprime/tree-inference"
 
@@ -22,6 +33,8 @@ LoadRep <- function(tree_idx, rep_idx = 1L) {
   pd <- TreeTools::ReadAsPhyDat(tmp)
   file.remove(tmp)
   gt <- read.csv(file.path(d, "ground_truth.csv"))
-  list(pd = pd, gt = gt, mat = m, nexOrder = basename(nex),
+  charIdx <- CharIdxFromFiles(nex)
+  list(pd = pd, gt = gt, gtAligned = AlignGroundTruth(gt, charIdx),
+       charIdx = charIdx, mat = m, nexOrder = basename(nex),
        nChar = ncol(m), nTax = nrow(m))
 }

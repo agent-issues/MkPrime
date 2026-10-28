@@ -57,10 +57,13 @@ test_that("LogPrior: beta_geometric matches manual computation", {
 
   # Manual: kPrime component
   transIdx <- which(f$mkd$type == "transformational")
-  u <- state$kPrime[transIdx] - f$mkd$kObs[transIdx]
+  u <- state$kPrime[transIdx] - 2L
   a <- state$kprime_alpha
   b <- state$kprime_beta
-  kp_part <- sum(lbeta(a + 1, b + u) - lbeta(a, b))
+  # Truncated at K and renormalised over u in [0, K - 2] (#392).
+  K <- f$model$kprimeTruncK
+  logZ <- log(sum(exp(lbeta(a + 1, b + 0:(K - 2)) - lbeta(a, b))))
+  kp_part <- sum(lbeta(a + 1, b + u) - lbeta(a, b) - logZ)
   hyper_part <- dexp(a, 1, log = TRUE) + dexp(b, 1, log = TRUE)
 
   # Other components
@@ -90,12 +93,14 @@ test_that("LogPrior: beta_geometric varies with u", {
 
   # Increase one kPrime by 1
   transIdx <- which(f$mkd$type == "transformational")[1]
+  u <- state$kPrime[transIdx] - 2L
   state$kPrime[transIdx] <- state$kPrime[transIdx] + 1L
   lp1 <- LogPrior(state, f$model, f$mkd)
 
-  # With alpha=beta=1, penalty for u=0→u=1 is lbeta(2,2)-lbeta(2,1)
-  # = log(1/6) - log(1/2) = log(1/3) ≈ -1.099
-  expect_equal(lp1 - lp0, lbeta(2, 2) - lbeta(2, 1), tolerance = 1e-10)
+  # With alpha = beta = 1, u = k' - 2 rising by one costs
+  # lbeta(2, 2 + u) - lbeta(2, 1 + u) = log(u + 1) - log(u + 3).
+  expect_equal(lp1 - lp0, lbeta(2, 2 + u) - lbeta(2, 1 + u), tolerance = 1e-10)
+  expect_equal(lp1 - lp0, log(u + 1) - log(u + 3), tolerance = 1e-10)
 })
 
 # --- C++ cpp_log_prior agreement ----------------------------------------------
@@ -181,7 +186,9 @@ test_that("BuildMoves for geometric registers mh_logit_p, not gibbs_p or BG slic
 
 # --- Gibbs kPrime sweep correctness ------------------------------------------
 
-test_that("Gibbs sweep with beta_geometric samples from correct full conditional", {
+# test-gibbs-kprime-conditional.R checks the draws against the full
+# conditional.
+test_that("Gibbs sweep with beta_geometric keeps k' >= kObs", {
   f <- make_bg_fixture()
   state <- MkPrime:::.InitState(f$tree, f$mkd, f$model)
   mcmcData <- MkPrime:::.InitMcmcData(f$mkd, f$model)
