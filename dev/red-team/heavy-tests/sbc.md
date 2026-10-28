@@ -183,7 +183,7 @@ qualitative signature of miscalibration; the AD p-value formalises it.
 **FAIL on `p` or `kPrime_sum` in an Mk' arm:** the `k'` prior, its
 hyperprior update, or the `k'` moves target the wrong distribution for that
 prior. Check first that the forward in `.drawKPrime()` still matches the
-inference prior (support, truncation, `priorVariant`); this harness family
+inference prior (support, truncation); this harness family
 has had four forward/inference mismatches.
 
 **FAIL on `tree_length` or `rate_log_sd` in any arm:** shared
