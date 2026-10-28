@@ -109,7 +109,10 @@ Out("gibbs_spr_enumerate_ms", MsPerCall(function() {
   ns$gibbs_spr_enumerate_cpp(chain$dataPtr, chain$statePtr, pruneRow)
 }))
 
+# The timing loops above consume a speed-dependent number of random draws;
+# reseed so that every build runs the same chain.
 nIter <- 800L
+set.seed(5813)
 t0 <- proc.time()[["elapsed"]]
 res <- RunMkPrime(
   mkd, tree,
