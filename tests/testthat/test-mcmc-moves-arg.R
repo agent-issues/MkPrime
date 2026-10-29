@@ -4,6 +4,10 @@ toggleNames <- c(
   "blockGibbsBranch", "gibbsPMarginal", "dirichletBranch", "localDirichlet"
 )
 
+test_that("toggleNames covers every move-toggle argument", {
+  expect_setequal(toggleNames, .kMoveToggles)
+})
+
 test_that("moves = list() leaves every toggle at its default", {
   expect_identical(MkPrimeMCMC(moves = list()), MkPrimeMCMC())
   defaults <- unclass(MkPrimeMCMC())[toggleNames]
@@ -56,9 +60,10 @@ test_that("a move given in moves and as an argument must agree", {
     MkPrimeMCMC(tbr = FALSE, moves = list(tbr = FALSE)),
     MkPrimeMCMC(tbr = FALSE)
   )
-  # An argument left at its default value is still "given"
   expect_error(MkPrimeMCMC(tbr = TRUE, moves = list(tbr = FALSE)),
                "moves[$]tbr")
+  wrapper <- function(tbr = TRUE, ...) MkPrimeMCMC(tbr = tbr, ...)
+  expect_error(wrapper(moves = list(tbr = FALSE)), "moves[$]tbr")
 })
 
 test_that("moves combines with arguments for other toggles", {

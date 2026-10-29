@@ -804,7 +804,6 @@ MkPrimeMCMC <- function(
 
 # Validate the `moves` argument of [MkPrimeMCMC()]; returns it unchanged.
 #
-# @importFrom utils adist
 # @keywords internal
 .CheckMoves <- function(moves) {
   if (!is.list(moves)) {
@@ -822,7 +821,7 @@ MkPrimeMCMC <- function(
   bad <- setdiff(nms, .kMoveToggles)
   if (length(bad)) {
     nearest <- vapply(bad, function(b) {
-      d <- adist(b, .kMoveToggles, ignore.case = TRUE)
+      d <- utils::adist(b, .kMoveToggles, ignore.case = TRUE)
       if (min(d) <= 3) .kMoveToggles[which.min(d)] else NA_character_
     }, character(1))
     valid <- .kMoveToggles
