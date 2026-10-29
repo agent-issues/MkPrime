@@ -97,8 +97,8 @@ header_pruner_trace <- function(model, tip_states, kStates, kObs, param, pi, rat
     .Call(`_MkPrime_header_pruner_trace`, model, tip_states, kStates, kObs, param, pi, rates, tree, steps)
 }
 
-header_site_likelihoods <- function(model, parent, child, edge_length, tip_states, kStates, param, pi, rates) {
-    .Call(`_MkPrime_header_site_likelihoods`, model, parent, child, edge_length, tip_states, kStates, param, pi, rates)
+header_site_likelihoods <- function(model, parent, child, edge_length, tip_states, kStates, param, pi, rates, log = FALSE) {
+    .Call(`_MkPrime_header_site_likelihoods`, model, parent, child, edge_length, tip_states, kStates, param, pi, rates, log)
 }
 
 header_transition_matrices <- function(model, kStates, param, pi, t) {
