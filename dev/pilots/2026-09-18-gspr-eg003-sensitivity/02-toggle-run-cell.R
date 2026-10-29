@@ -1,6 +1,9 @@
 # One cell of the gibbsSpr TRUE/FALSE sensitivity experiment.
 # Usage: Rscript run-cell.R <tree_idx> <arm:on|off> <seed> <nIter> <outdir>
-setTimeLimit(elapsed = 1800, transient = FALSE)
+# maxTime overshoots by up to ~2.1x (measured, round #110); the hard limit and the
+# shell timeout in 02b sit outside that worst case so a cell always writes its .rds.
+MAX_TIME <- 1500
+setTimeLimit(elapsed = 3600, transient = FALSE)
 source(file.path(Sys.getenv("GSPR_DIR", "."), "common.R"))
 
 a <- commandArgs(trailingOnly = TRUE)
@@ -13,11 +16,8 @@ if (file.exists(outfile)) { cat("skip (exists)", outfile, "\n"); quit(save = "no
 r   <- LoadRep(tree_idx, 1L)
 mkd <- MkPrimeData(r$pd)
 
-# Ground truth re-aligned to the sampler's (lexical) character order.
-nexf <- sort(list.files(file.path(GT_ROOT, sprintf("tree_%02d/rep_01", tree_idx)),
-                        "^chr[0-9]+\\.nex$"))
-num  <- as.integer(sub("^chr([0-9]+)\\.nex$", "\\1", nexf))
-gtL  <- r$gt[num, ]
+# LoadRep's numeric character order is the sampler's; ground truth joined on char_idx.
+gtL <- r$gtAligned
 stopifnot(all(gtL$kObs == as.integer(mkd$kObs)))
 
 # Start tree: identical across arms and seeds (AdditionTree is deterministic).
@@ -33,7 +33,7 @@ res <- RunMkPrime(
                       minWarmup = 2000L, maxWarmup = 5000L,
                       nRuns = 1L, nChains = 1L,
                       gibbsSpr = identical(arm, "on"),
-                      maxTime = 1500))
+                      maxTime = MAX_TIME))
 elapsed <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
 
 s   <- res$samples
@@ -61,7 +61,8 @@ saveRDS(list(
   tree_length = mean(s[, "tree_length"]),
   log_lik = mean(s[, "log_likelihood"]),
   acceptance = res$acceptance,
-  scalar_cols = colnames(s)
+  scalar_cols = colnames(s),
+  build = BuildInfo()
 ), outfile)
 
 cat(sprintf("t%02d %-3s seed=%d  %.0fs  nsamp=%d  mean_u=%+.4f  rho=%+.3f  stop=%s\n",

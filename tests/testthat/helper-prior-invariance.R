@@ -5,12 +5,29 @@
 # because the moves see the storage root -- a uniformly chosen internal node as
 # the trifurcation.  Starting every replicate from an exact draw tests
 # pi K^n = pi with no burn-in or mixing assumption.
+#
+# `rooted = TRUE` stores the bifurcating rooted trees a production run starts
+# from: a uniform labelled rooted topology with flat Dirichlet fractions on all
+# 2n - 2 stored edges.  Rooting a uniform unrooted topology on a uniformly
+# chosen edge draws it.
 
-.PriorDraw <- function(tipLabel) {
+.PriorDraw <- function(tipLabel, rooted = FALSE) {
   nTip <- length(tipLabel)
   tree <- TreeTools::RandomTree(tipLabel, root = FALSE)
-  tree <- TreeTools::Preorder(ape::root(
-    tree, node = nTip + sample.int(nTip - 2L, 1L), resolve.root = FALSE))
+  tree <- if (rooted) {
+    edge <- tree$edge
+    clade <- edge[sample.int(nrow(edge), 1L), 2]
+    repeat {
+      extra <- setdiff(edge[edge[, 1] %in% clade, 2], clade)
+      if (!length(extra)) break
+      clade <- c(clade, extra)
+    }
+    TreeTools::Preorder(ape::root(tree, outgroup = clade[clade <= nTip],
+                                  resolve.root = TRUE))
+  } else {
+    TreeTools::Preorder(ape::root(
+      tree, node = nTip + sample.int(nTip - 2L, 1L), resolve.root = FALSE))
+  }
   f <- rexp(nrow(tree$edge))
   tree$edge.length <- f / sum(f)
   tree
@@ -27,8 +44,10 @@
 
 # p-values comparing .PriorStats after `nMove` applications of `moveType` at
 # beta = 0 with ten times as many direct draws: KS for the four continuous
-# statistics, chi-squared for the two discrete ones.
-.PriorInvarianceP <- function(moveType, nMove, nReps, nTip = 6L) {
+# statistics, chi-squared for the two discrete ones.  `intWalkWindow` is the
+# block size K of the Dirichlet moves 23 and 24.
+.PriorInvarianceP <- function(moveType, nMove, nReps, nTip = 6L,
+                              rooted = FALSE, intWalkWindow = 1L) {
   tipLabel <- paste0("t", seq_len(nTip))
   mat <- matrix(sample(0:1, nTip * 4L, replace = TRUE), nrow = nTip,
                 dimnames = list(tipLabel, NULL))
@@ -36,21 +55,24 @@
   model <- MkPrimeModel()
 
   sampled <- t(vapply(seq_len(nReps), function(r) {
-    tree <- .PriorDraw(tipLabel)
+    tree <- .PriorDraw(tipLabel, rooted)
     finalModel <- MkPrime:::.FinalizeModel(model, tree, mkd)
     dataPtr  <- MkPrime:::.InitMcmcData(mkd, finalModel)
     statePtr <- MkPrime:::.InitMcmcChain(
       MkPrime:::.InitState(tree, mkd, finalModel))
     fill_partition_cache(dataPtr, statePtr)
     allocate_cl_workspace(dataPtr, statePtr)
-    for (i in seq_len(nMove))
-      do_move_cpp(dataPtr, statePtr, moveType, 0L, 0.5, 0.5, 1L, 0.0)
+    for (i in seq_len(nMove)) {
+      do_move_cpp(
+        dataPtr, statePtr, moveType, 0L, 0.5, 0.5, intWalkWindow, 0.0
+      )
+    }
     st <- get_mcmc_state(statePtr)
     .PriorStats(st$edge, st$relBrLengths)
   }, numeric(6L)))
 
   reference <- t(vapply(seq_len(nReps * 10L), function(i) {
-    tree <- .PriorDraw(tipLabel)
+    tree <- .PriorDraw(tipLabel, rooted)
     .PriorStats(tree$edge, tree$edge.length)
   }, numeric(6L)))
 

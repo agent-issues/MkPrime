@@ -29,6 +29,27 @@ goes on `gh api graphql` for **Discussions** too, not just issues and PRs: a
 discussion posted under the wrong account must be deleted and rewritten, there is
 no re-attribution.
 
+**From a cloud session** neither the prefix nor `gh api graphql` works: the proxy
+blocks GraphQL and replaces any token with the maintainer's, so a finding filed
+with `gh issue create` is authored by `ms609`. Dispatch a workflow, which posts
+as `ms609-agent`:
+
+```bash
+gh api repos/agent-issues/MkPrime/actions/workflows/post-discussion.yml/dispatches --method POST --input payload.json
+```
+
+- **Round record** — `post-discussion.yml`, payload
+  `{"ref":"main","inputs":{"category":"<slug>","title":"...","body":"..."}}`.
+- **Finding or comment** — `post-as-agent.yml`, inputs `action` (`issue` or
+  `comment`), `body`, and `title` + comma-separated `labels` (issue) or `number`
+  (comment).
+- **Confirm** the newest run of that workflow concluded `success`, then read the
+  record back with `gh api repos/agent-issues/MkPrime/discussions` (or the
+  issue's comments) and check its author.
+- **Limit** — the payload must stay under about 65 KB; a 50 KB body worked.
+
+Full recipe: `discussion-categories.md` → *From a cloud session*.
+
 ## Layout
 
 ```
@@ -76,5 +97,12 @@ suspended). There is no project legend; its history is archived in [discussion #
 Run outputs under `heavy-tests/` and `numerical/` (`*-results/`, `*.log`, experiment
 `*.rds`) are regenerable. Only `heavy-tests/*-results/summary.rds` is git-ignored;
 about 25 result files under `numerical/*-results/`, `heavy-tests/gibbs-spr-db-results/`
-and `sbc-results-mixed/` are tracked, and whether each is a fixture or a stray is
-undecided.
+and `sbc-results-mixed/` are tracked (as are eight under `inst/simulations/`), and
+whether each is a fixture or a stray is undecided.
+
+The four remaining `patches/` no longer apply: `D3-*` and `L5-*` were recorded as landed (neither applies forward), and
+`N1-*` and `N2-*` are corrupt. They stay because the frozen archive cites them by path;
+read them as a record of the proposed change, not as something to `git apply`.
+
+Count open findings with the query, never by hand:
+`gh issue list --label red-team --state open --json number --jq length`.

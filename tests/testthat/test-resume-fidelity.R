@@ -138,6 +138,111 @@ test_that("a run with no recorded position resumes from iteration 1 (#94)", {
 })
 
 
+test_that("a never-started run builds its own move weights on resume (#403)", {
+  skip_on_cran()
+  skip_under_memcheck()
+  tree <- .mkp_test_tree()
+  pd   <- .mkp_test_pd()
+
+  ckpFile  <- tempfile(fileext = ".ckp")
+  logFile  <- tempfile(fileext = ".log")
+  logPaths <- .LogFilePaths(logFile, 2L)
+  on.exit(unlink(c(ckpFile, logPaths)), add = TRUE)
+
+  set.seed(403)
+  setTimeLimit(elapsed = 300, transient = TRUE)
+  on.exit(setTimeLimit(elapsed = Inf, transient = TRUE), add = TRUE)
+
+  allow_warning(
+    RunMkPrime(pd, tree,
+      mcmc = MkPrimeMCMC(nRuns = 2L, nIter = 600L, thin = 5L,
+                         maxWarmup = 200L, minWarmup = 200L,
+                         autoTune = FALSE, maxTime = 120, checkEvery = 200L,
+                         checkpointFile = ckpFile, logFile = logFile)),
+    "stabilis"
+  )
+  cp <- readRDS(ckpFile)
+  cp$runs[[2]] <- cp$runs[[2]][c(
+    "chains", "betas", "chain_accept", "chain_propose", "chain_time_ns",
+    "chain_slice_exp", "chain_tuning", "chain_rhos", "swap_accept",
+    "swap_propose"
+  )]
+  # As an in-run checkpoint stores it: the saving run's weights.
+  cp$moveWeights <- cp$runs[[1]]$moveWeights
+  cp$mcmc$nIter <- 1200L
+  saveRDS(cp, ckpFile)
+
+  seen <- new.env()
+  seen$weights <- list()
+  singleRun <- .RunMkPrimeSingleRun
+  local_mocked_bindings(
+    .RunMkPrimeSingleRun = function(mkd, model, mcmc, initialState, moves,
+                                    tipLabels, runIdx, ...,
+                                    resumeMoveWeights = NULL) {
+      seen$weights[[runIdx]] <- list(resumeMoveWeights)
+      singleRun(mkd, model, mcmc, initialState, moves, tipLabels, runIdx, ...,
+                resumeMoveWeights = resumeMoveWeights)
+    }
+  )
+  allow_warning(ResumeMkPrime(ckpFile, pd), "stabilis")
+  expect_false(is.null(seen$weights[[1]][[1]]))
+  expect_null(seen$weights[[2]][[1]])
+})
+
+
+test_that("resumed trees have finite edge lengths on neo-free data (#64)", {
+  skip_on_cran()
+  # A wrong brColStart shifts every edge length by one column and reads past
+  # the end, writing `t_last:NA` into each post-resume tree; the newick still
+  # parses, so nothing downstream fails. Only neo-free data is affected, and
+  # the streaming fixture is all-transformational -- the existing resume tests
+  # walk this path and assert nothing about it.
+  tree <- ape::read.tree(
+    text = "(((t1:0.1,t2:0.2):0.1,t3:0.15):0.1,(t4:0.1,t5:0.2):0.1,t6:0.3);"
+  )
+  mat <- matrix(c(0, 0, 1, 1, 0, 1,
+                  0, 1, 0, 1, 1, 0,
+                  1, 0, 0, 1, 0, 1,
+                  1, 1, 0, 0, 1, 0,
+                  0, 1, 1, 0, 0, 1,
+                  1, 0, 1, 0, 1, 0),
+                nrow = 6, byrow = TRUE,
+                dimnames = list(paste0("t", 1:6), NULL))
+  pd <- MatrixToPhyDat(mat)
+  mkd <- MkPrimeData(pd)
+  expect_false(any(mkd$type == "neomorphic"))
+
+  ckpFile  <- tempfile(fileext = ".ckp")
+  logFile <- tempfile(fileext = ".log")
+  treeFile <- tempfile(fileext = ".trees")
+  on.exit(unlink(c(ckpFile, logFile, treeFile)), add = TRUE)
+
+  set.seed(606)
+  setTimeLimit(elapsed = 300, transient = TRUE)
+  on.exit(setTimeLimit(elapsed = Inf, transient = TRUE), add = TRUE)
+
+  # Stop on the clock so there is sampling left to resume into.
+  first <- allow_warning(RunMkPrime(pd, tree,
+    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 200000L, thin = 5L,
+                       maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
+                       maxTime = 8, checkEvery = 500L,
+                       checkpointFile = ckpFile, logFile = logFile,
+                       treeFile = treeFile)), "stabilis")
+  expect_identical(first$stop_reason, "max_time")
+  expect_false(anyNA(unlist(lapply(first$trees, `[[`, "edge.length"))))
+
+  resumed <- allow_warning(ResumeMkPrime(ckpFile, pd), "stabilis")
+  postEdges <- unlist(lapply(resumed$trees, `[[`, "edge.length"))
+  expect_gt(length(postEdges), 0L)
+  expect_false(anyNA(postEdges))
+
+  # And the newick actually written to disk, which is what a user reads back.
+  written <- ape::read.tree(treeFile)
+  if (inherits(written, "phylo")) written <- list(written)
+  expect_false(anyNA(unlist(lapply(written, `[[`, "edge.length"))))
+})
+
+
 skip_slow_tests()
 
 test_that("a fixTopology run resumes with the same move set (#23)", {
@@ -212,57 +317,6 @@ test_that("maxTime bounds the job, not each run (#13)", {
   # once per sampling batch.
   expect_lt(elapsed, 1.8 * budget)
 })
-
-test_that("resumed trees have finite edge lengths on neo-free data (#64)", {
-  # A wrong brColStart shifts every edge length by one column and reads past
-  # the end, writing `t_last:NA` into each post-resume tree; the newick still
-  # parses, so nothing downstream fails. Only neo-free data is affected, and
-  # the streaming fixture is all-transformational -- the existing resume tests
-  # walk this path and assert nothing about it.
-  tree <- ape::read.tree(
-    text = "(((t1:0.1,t2:0.2):0.1,t3:0.15):0.1,(t4:0.1,t5:0.2):0.1,t6:0.3);"
-  )
-  mat <- matrix(c(0, 0, 1, 1, 0, 1,
-                  0, 1, 0, 1, 1, 0,
-                  1, 0, 0, 1, 0, 1,
-                  1, 1, 0, 0, 1, 0,
-                  0, 1, 1, 0, 0, 1,
-                  1, 0, 1, 0, 1, 0),
-                nrow = 6, byrow = TRUE,
-                dimnames = list(paste0("t", 1:6), NULL))
-  pd <- MatrixToPhyDat(mat)
-  mkd <- MkPrimeData(pd)
-  expect_false(any(mkd$type == "neomorphic"))
-
-  ckpFile  <- tempfile(fileext = ".ckp")
-  logFile <- tempfile(fileext = ".log")
-  treeFile <- tempfile(fileext = ".trees")
-  on.exit(unlink(c(ckpFile, logFile, treeFile)), add = TRUE)
-
-  set.seed(606)
-  setTimeLimit(elapsed = 300, transient = TRUE)
-  on.exit(setTimeLimit(elapsed = Inf, transient = TRUE), add = TRUE)
-
-  # Stop on the clock so there is sampling left to resume into.
-  first <- RunMkPrime(pd, tree,
-    mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 200000L, thin = 5L,
-                       maxWarmup = 200L, minWarmup = 200L, autoTune = FALSE,
-                       maxTime = 8, checkEvery = 500L,
-                       checkpointFile = ckpFile, logFile = logFile,
-                       treeFile = treeFile))
-  expect_false(anyNA(unlist(lapply(first$trees, `[[`, "edge.length"))))
-
-  resumed <- ResumeMkPrime(ckpFile, pd)
-  postEdges <- unlist(lapply(resumed$trees, `[[`, "edge.length"))
-  expect_gt(length(postEdges), 0L)
-  expect_false(anyNA(postEdges))
-
-  # And the newick actually written to disk, which is what a user reads back.
-  written <- ape::read.tree(treeFile)
-  if (inherits(written, "phylo")) written <- list(written)
-  expect_false(anyNA(unlist(lapply(written, `[[`, "edge.length"))))
-})
-
 
 test_that("a never-started run resumes into Warmup, not mid-Sample (#94)", {
   tree <- .mkp_test_tree()
@@ -371,3 +425,4 @@ test_that("interrupting a resumed run does not rewind the checkpoint (#96)", {
   # every later resume of the file.
   expect_false(is.null(after$moveWeights))
 })
+

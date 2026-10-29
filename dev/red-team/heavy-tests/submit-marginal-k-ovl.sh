@@ -18,7 +18,6 @@
 #
 # Single task (the driver loops the 16-cell grid serially at N_ITER = 60000 by
 # default; it saveRDS()s after every cell so a timeout keeps completed cells).
-# The prior variant is MARGINAL_K_PRIOR_VARIANT (default "unconditional").
 # A FAIL here, given the RB proof + both-variant prior bit-check, indicates
 # MIXING/convergence (try longer chains), not a target-posterior difference.
 #

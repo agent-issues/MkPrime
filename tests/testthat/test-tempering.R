@@ -1,6 +1,4 @@
 # Tests for parallel tempering (Phase 5: M-029, M-030)
-skip_slow_tests()
-
 # --- Temperature ladder ---
 
 test_that(".BuildTemperatureLadder gives correct structure", {
@@ -64,6 +62,29 @@ test_that("MkPrimeMCMC stores nChains and heat", {
   cfg <- MkPrimeMCMC(nChains = 4L, heat = 0.3)
   expect_equal(cfg$nChains, 4L)
   expect_equal(cfg$heat, 0.3)
+})
+
+
+test_that("heatMax is validated, stored and bounds the adapted ladder", {
+  expect_identical(MkPrimeMCMC(nChains = 4L)$heatMax, 0.5)
+  expect_identical(MkPrimeMCMC(nChains = 4L, heatMax = 0.8)$heatMax, 0.8)
+  for (bad in list(0.01, 1, -1, NA_real_, c(0.6, 0.7), "0.6")) {
+    expect_error(MkPrimeMCMC(nChains = 4L, heatMax = bad), "heatMax")
+  }
+  expect_no_warning(MkPrimeMCMC(nChains = 4L, heat = 0.7, heatMax = 0.8))
+  expect_warning(MkPrimeMCMC(nChains = 4L, heat = 0.7), "outside \\[0.01, 0.5\\]")
+
+  # No swaps push the hot chain's inverse temperature up, against the clamp.
+  betas <- MkPrime:::.BuildTemperatureLadder(4L, 0.49)
+  accept <- c(0L, 0L, 0L)
+  propose <- c(100L, 100L, 100L)
+  hot <- function(...) {
+    b <- MkPrime:::.AdaptTemperatures(betas, accept, propose, ...)
+    b[length(b)]
+  }
+  expect_equal(hot(), 0.5)
+  expect_identical(hot(heatMax = 0.5), hot())
+  expect_equal(hot(heatMax = 0.9), 0.49 ^ exp(-0.125))
 })
 
 
@@ -148,91 +169,13 @@ test_that("Chain swap acceptance follows correct formula", {
 })
 
 
-# --- Heated MH acceptance in .DoMove ---
-
-test_that("Heated .DoMove is more permissive than cold", {
-  # Use real data to test that heated chains accept more proposals
-  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
-  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
-                dimnames = list(paste0("t", 1:4), NULL))
-  pd <- MatrixToPhyDat(mat)
-  mkd <- MkPrimeData(pd)
-  model <- MkPrimeModel()
-  model <- MkPrime:::.FinalizeModel(model, tree, mkd)
-
-  tree <- Preorder(tree)
-  state <- MkPrime:::.InitState(tree, mkd, model)
-
-  tuning <- list(
-    scale_tree_length = 2.0,
-    beta_simplex = 10,
-    scale_rate_loss = 0.5,
-    scale_rate_log_sd = 0.5,
-    scale_p = 0.5,
-    int_walk_window = 1L
-  )
-
-  # Wide scale proposal to get many rejections for cold chain
-  move <- list(name = "tree_length", type = "scale",
-               target = "tree_length", weight = 1)
-
-  set.seed(7562)
-  n_cold <- 0L
-  for (i in 1:200) {
-    result <- MkPrime:::.DoMove(move, state, mkd, model, tuning, beta = 1.0)
-    if (result$accept) n_cold <- n_cold + 1L
-  }
-
-  set.seed(7562)
-  n_hot <- 0L
-  for (i in 1:200) {
-    result <- MkPrime:::.DoMove(move, state, mkd, model, tuning, beta = 0.1)
-    if (result$accept) n_hot <- n_hot + 1L
-  }
-
-  # Heated chain should accept more (flattened likelihood)
-  expect_gt(n_hot, n_cold)
-})
-
-
-test_that(".DoMove with beta=1 is identical to unheated", {
-  # Verify that beta=1 gives same MH ratio as the old formula
-  tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
-  mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
-                dimnames = list(paste0("t", 1:4), NULL))
-  pd <- MatrixToPhyDat(mat)
-  mkd <- MkPrimeData(pd)
-  model <- MkPrimeModel()
-  model <- MkPrime:::.FinalizeModel(model, tree, mkd)
-  tree <- Preorder(tree)
-  state <- MkPrime:::.InitState(tree, mkd, model)
-  tuning <- MkPrimeMCMC()$tuning
-
-  move <- list(name = "tree_length", type = "scale",
-               target = "tree_length", weight = 1)
-
-  # With beta=1, heated formula reduces to:
-  # 1 * (logLik_new - logLik_old) + (logPrior_new - logPrior_old) + logH
-  # = (logLik_new + logPrior_new) - (logLik_old + logPrior_old) + logH
-  # = logPost_new - logPost_old + logH
-  # which is the original formula
-  set.seed(1294)
-  results_beta1 <- replicate(50, {
-    MkPrime:::.DoMove(move, state, mkd, model, tuning, beta = 1.0)$accept
-  })
-
-  set.seed(1294)
-  results_default <- replicate(50, {
-    MkPrime:::.DoMove(move, state, mkd, model, tuning)$accept
-  })
-
-  expect_identical(results_beta1, results_default)
-})
+# Heated MH acceptance is tested through the C++ engine in test-heated-move.R.
 
 
 # --- Multi-chain MCMC integration ---
 
 test_that("RunMkPrime with nChains=1 matches Phase 4 behavior", {
+  skip_slow_tests()
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -253,6 +196,7 @@ test_that("RunMkPrime with nChains=1 matches Phase 4 behavior", {
 
 
 test_that("RunMkPrime with nChains=4 runs successfully", {
+  skip_slow_tests()
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -280,6 +224,7 @@ test_that("RunMkPrime with nChains=4 runs successfully", {
 
 
 test_that("RunMkPrime with nChains=2 and topology moves works", {
+  skip_slow_tests()
   set.seed(8103)
   tree <- rtree(8)
   tree <- unroot(tree)
@@ -303,6 +248,7 @@ test_that("RunMkPrime with nChains=2 and topology moves works", {
 
 
 test_that("Cold chain samples have valid posteriors under tempering", {
+  skip_slow_tests()
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -393,6 +339,7 @@ test_that(".AdaptTemperatures respects heat bounds", {
 
 
 test_that("Adaptive temps integrated into MCMC warmup", {
+  skip_slow_tests()
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -420,6 +367,7 @@ test_that("MkPrimeMCMC validates nRuns", {
 
 
 test_that("RunMkPrime with nRuns=2 runs successfully", {
+  skip_slow_tests()
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -442,6 +390,7 @@ test_that("RunMkPrime with nRuns=2 runs successfully", {
 
 
 test_that("RunMkPrime with nRuns=1 has no per_run field", {
+  skip_slow_tests()
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -458,6 +407,7 @@ test_that("RunMkPrime with nRuns=1 has no per_run field", {
 
 
 test_that("Independent runs start from different states", {
+  skip_slow_tests()
   set.seed(6334)
   tree <- rtree(6)
   tree <- unroot(tree)
@@ -484,6 +434,7 @@ test_that("Independent runs start from different states", {
 
 
 test_that("Multi-run with tempering works", {
+  skip_slow_tests()
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))
@@ -525,6 +476,7 @@ test_that(".PerturbStart handles small trees", {
 
 
 test_that("Heated chains accept at higher rates", {
+  skip_slow_tests()
   tree <- read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);")
   mat <- matrix(c(0, 1, 0, 1, 0, 0, 1, 1), 4, 2,
                 dimnames = list(paste0("t", 1:4), NULL))

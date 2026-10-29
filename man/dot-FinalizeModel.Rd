@@ -9,7 +9,9 @@
 \arguments{
 \item{model}{An \code{MkPrimeModel} object.}
 
-\item{tree}{A \code{phylo} object (starting tree).}
+\item{tree}{A \code{phylo} object to score for \code{expSteps}, or \code{NULL}, as the
+entry points pass, to score the neighbour-joining tree of the data, so
+that the prior depends on the data alone and not on a start tree.}
 
 \item{mkd}{An \code{MkPrimeData} object.}
 }

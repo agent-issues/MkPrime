@@ -1,10 +1,6 @@
-# Tests for fast_neg_exp() (M-156)
-#
-# Validates that the fast exp() approximation in src/fast_exp.h produces
-# results indistinguishable from std::exp() at the precision levels that
-# matter for MCMC likelihood computation.
+# Accuracy of the closed-form JC and MkN transition probabilities.
 
-test_that("fast_neg_exp matches std::exp for transition probability arguments", {
+test_that("jc_transition_probs is finite over typical branch arguments", {
   # Typical phylogenetic branch lengths × rate multipliers × k/(k-1)
   # produce arguments in approximately [-25, -0.001].
   branch_lengths <- c(0.001, 0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0)
@@ -15,15 +11,13 @@ test_that("fast_neg_exp matches std::exp for transition probability arguments", 
     for (rm in rate_multipliers) {
       for (kf in k_factors) {
         x <- -kf * bl * rm
-        fast_val <- jc_transition_probs(2, -x / 2)  # exercises MKP_EXP internally
-        # Just verify the function doesn't crash and returns valid values
-        expect_true(all(is.finite(fast_val)))
+        expect_true(all(is.finite(jc_transition_probs(2, -x / 2))))
       }
     }
   }
 })
 
-test_that("JC transition probs with fast_exp match analytical formulas", {
+test_that("JC transition probs match analytical formulas", {
   for (k in c(2, 3, 5, 10, 20)) {
     for (t_val in c(0.001, 0.01, 0.1, 0.5, 1.0, 5.0)) {
       P <- jc_transition_probs(k, t_val)
@@ -44,7 +38,7 @@ test_that("JC transition probs with fast_exp match analytical formulas", {
   }
 })
 
-test_that("MkN transition probs with fast_exp match analytical formulas", {
+test_that("MkN transition probs match analytical formulas", {
   for (rl in c(0.5, 1.0, 2.0, 5.0)) {
     for (t_val in c(0.001, 0.01, 0.1, 0.5, 1.0, 5.0)) {
       P <- mkn_transition_probs(rl, t_val)
@@ -58,7 +52,7 @@ test_that("MkN transition probs with fast_exp match analytical formulas", {
   }
 })
 
-test_that("full likelihood with fast_exp matches reference to 1e-10", {
+test_that("pruning_jc gives a finite, negative log-likelihood", {
   skip_if_not_installed("ape")
   tree <- read.tree(text = "((t1:0.3,t2:0.5):0.1,(t3:0.2,t4:0.4):0.2,t5:0.6);")
   tree <- Preorder(tree)

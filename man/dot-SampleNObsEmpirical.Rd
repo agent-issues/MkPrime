@@ -18,9 +18,9 @@ negligible for any realistic \code{tail_decay}).}
 Integer vector of length \code{n}, each entry \verb{>= 2}.
 }
 \description{
-Forward-draw helper for SBC under the Model A (\code{priorVariant = "unconditional"}) \code{empirical_geometric} prior. Draws from the body + the
-geometric tail, truncated at \code{tailMax} (default 200 — far beyond any
-plausible state count and beyond the packaged body). Mirrors the pmf
-convention of \code{\link[=.LogPemp]{.LogPemp()}} (entry \code{i} is \code{P(N_obs = i + 1)}).
+Forward-draw helper for SBC under the \code{empirical_geometric} prior. Draws
+from the body + the geometric tail, truncated at \code{tailMax} (default 200 —
+far beyond any plausible state count and beyond the packaged body). Mirrors
+the pmf convention of \code{\link[=.LogPemp]{.LogPemp()}} (entry \code{i} is \code{P(N_obs = i + 1)}).
 }
 \keyword{internal}

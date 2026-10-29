@@ -7,7 +7,8 @@ NULL
 #'
 #' @param samples Matrix of posterior samples (nSaved x nParams).
 #' @param trees List of `phylo` objects (sampled trees).
-#' @param acceptance Named numeric vector of acceptance rates per move.
+#' @param acceptance Named numeric vector of acceptance rates per move, over
+#'   the Sample phase.
 #' @param model The `MkPrimeModel` used.
 #' @param data The `MkPrimeData` used.
 #' @param mcmc The `MkPrimeMCMC` configuration.

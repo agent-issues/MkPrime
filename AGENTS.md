@@ -19,7 +19,8 @@ only when the human syncs the fork — that sync *is* the "everything on
 
 **Everything you create on GitHub must be authored by `ms609-agent`**.
 `~/.claude/CLAUDE.md` holds the mechanism and the token table; for this repo the token is
-`CLAUDE_GH_TOKEN`:
+`CLAUDE_GH_TOKEN` (cloud sessions: the token route fails silently, use
+[From a cloud session](#from-a-cloud-session)):
 
 ```bash
 GH_TOKEN=$CLAUDE_GH_TOKEN gh pr create --base main --head <branch> --reviewer ms609 ...
@@ -40,6 +41,35 @@ TOKEN="$TOKEN" git -c credential.helper= -c credential.helper='!f() { echo usern
 ```
 
 Keep both the `TOKEN="$TOKEN"` prefix and the empty `credential.helper=`; without either, the push silently goes out as `ms609`.
+
+### From a cloud session
+
+The `GH_TOKEN` prefix does nothing there: the cloud proxy blocks GraphQL and swaps any
+token, `CLAUDE_GH_TOKEN` included, for the maintainer's, so whatever plain `gh` or REST
+creates is authored by `ms609`. Dispatch a workflow instead; it posts as `ms609-agent`:
+
+```bash
+gh api repos/agent-issues/MkPrime/actions/workflows/post-as-agent.yml/dispatches --method POST --input payload.json
+```
+
+| Workflow | `inputs` |
+|----------|----------|
+| `post-as-agent.yml` | `action` (`issue`, `comment` or `pr`) and `body`; plus `title` and comma-separated `labels` for an issue, `number` for a comment, `title` and `head` for a PR |
+| `post-discussion.yml` | `category` (slug), `title` and `body`; or `discussion` (its number) and `body` to comment |
+
+`payload.json` is `{"ref":"main","inputs":{...}}` with every value a string. Keep it under
+about 65 KB; a 50 KB body worked.
+
+The dispatch returns no run id. Confirm the newest run concluded `success`, then read the
+item back and check that its author is `ms609-agent`:
+
+```bash
+gh api "repos/agent-issues/MkPrime/actions/workflows/post-as-agent.yml/runs?per_page=1" --jq '.workflow_runs[0] | {status, conclusion}'
+gh api "repos/agent-issues/MkPrime/issues/<n>/comments?per_page=100" --jq '.[-1] | {user: .user.login, html_url}'
+```
+
+Discussions are read back with `gh api repos/agent-issues/MkPrime/discussions`; the recipe
+is in `dev/red-team/discussion-categories.md`.
 
 **Never commit in `C:/Users/pjjg18/GitHub/mkp` itself.**
 Every change — including documentation — goes on a branch in a worktree under
@@ -211,11 +241,11 @@ mkp/
 │   ├── mcmc_state.h         # McmcData / McmcState structs, function declarations
 │   ├── node_cl_cache.h      # Partial conditional likelihood cache (dirty-flag invalidation)
 │   ├── gibbs_partial_cl.h   # Gibbs topology move CL helpers
-│   ├── likelihood.cpp       # R-callable likelihood functions
+│   ├── likelihood.cpp       # R-callable pruning (wraps MkPrime::Pruner)
 │   ├── rate_matrix.cpp      # JC(k') construction, analytical P(t) = exp(Qt)
+│   ├── header_api.cpp       # Test hooks for the public headers
 │   ├── tree_moves.cpp       # SPR, NNI, TBR, pSPR proposals in C++
 │   ├── proposals.cpp        # Scalar/branch proposals (scale, Dirichlet, etc.)
-│   ├── acrv.cpp             # Among-character rate variation (lognormal)
 │   ├── ascertainment.cpp    # Constant-site / singleton-site corrections
 │   ├── corrections.cpp      # Relabelling correction for Mk'
 │   ├── tree_ess.cpp         # Tree-distance ESS computation
@@ -223,6 +253,7 @@ mkp/
 │   ├── fitch.h              # Fitch parsimony (for starting tree score)
 │   └── RcppExports.cpp      # Auto-generated
 ├── inst/
+│   ├── include/MkPrime/     # Public header-only kernels (LinkingTo: MkPrime)
 │   └── REFERENCES.bib
 ├── tests/testthat/          # ~4000 tests
 ├── man/
@@ -233,6 +264,23 @@ mkp/
 └── vignettes/
     └── hyoliths.qmd         # Full worked example (Sun2018, 54 taxa)
 ```
+
+---
+
+## Public C++ headers (`inst/include/MkPrime`)
+
+Downstream packages (first consumer: EvoTempo) reach the likelihood kernels via
+`LinkingTo: MkPrime` and `#include <MkPrime/MkPrime.h>`. They are header-only,
+C++11, Rcpp-free, in namespace `MkPrime`; `src/` includes the same files
+(`"../inst/include/MkPrime/..."`), so there is one copy of each kernel.
+
+- **Behaviour change = API change.** Any edit that alters a signature *or* a
+  numerical result must bump `MKPRIME_HEADER_API_VERSION` in `MkPrime.h`.
+- `tests/testthat/legacy/pruning-legacy.cpp` is a frozen oracle of the pre-move
+  code; `test-header-legacy.R` requires bit-identical results. Never edit it to
+  make a test pass.
+- JC has two roundings of `p_same - p_diff` in use (`JCProbs::diffCoeff` vs
+  `expTerm`); keep each call site on the one it was validated with.
 
 ---
 

@@ -127,7 +127,7 @@ test_that("Short BG run moves kprime_alpha and kprime_beta", {
   f <- make_bg_fixture()
   mcmc <- suppressWarnings(MkPrimeMCMC(
     nIter = 500, thin = 1, nChains = 1L,
-    maxWarmup = 100, minWarmup = 50
+    maxWarmup = 100, minWarmup = 50, autoTune = FALSE
   ))
 
   post <- suppressWarnings(RunMkPrime(

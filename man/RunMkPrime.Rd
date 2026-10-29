@@ -14,6 +14,7 @@ RunMkPrime(
   fixTopology = FALSE,
   overwrite = FALSE,
   partition = NULL,
+  initValues = NULL,
   unlink = character(0),
   verbosity = MkPrimeVerbosity(),
   ...
@@ -25,7 +26,10 @@ RunMkPrime(
 \item{tree}{A \code{phylo} object (starting topology), or \code{NULL} (default)
 to start from a greedy parsimony stepwise-addition tree (via
 \code{TreeSearch::AdditionTree}) when the \code{TreeSearch} package is
-installed, falling back to a neighbour-joining tree otherwise.}
+installed, falling back to a neighbour-joining tree otherwise.
+The tree must be binary, rooted or unrooted; polytomies are resolved
+at random with \code{\link[TreeTools:MakeTreeBinary]{TreeTools::MakeTreeBinary()}}, with a warning. Edges
+inserted to resolve them get length 1e-8; others keep their lengths.}
 
 \item{neomorphic, knownStates}{Passed to \code{\link[=MkPrimeData]{MkPrimeData()}} if \code{data} is
 a \code{phyDat} object.}
@@ -47,7 +51,8 @@ options passed on to \code{\link[=ResumeMkPrime]{ResumeMkPrime()}}.
 Set to \code{TRUE} to discard the existing checkpoint and start fresh.}
 
 \item{partition}{Optional integer vector of length \code{mkd$nChar} (after
-invariant-character drop) assigning each character to a user class.
+invariant-character drop, but before \code{coding = "informative"} drops
+uninformative characters) assigning each character to a user class.
 Values must form a contiguous range \code{1:nClasses}. \code{NULL} (the default)
 routes through the unchanged legacy code path; see the §7a bit-identity
 contract in \code{NOTES/partition-api-plan.md}.
@@ -56,6 +61,11 @@ rate exactly as without a partition, and class rates act on top of it,
 rescaled so that the rate averaged over characters remains 1.
 \code{rate_neo} is held at 1 unless the data contain both neomorphic and
 other characters, as it cannot then affect the likelihood.}
+
+\item{initValues}{Named list giving starting values for any of
+\code{tree_length}, \code{rel_br_lengths}, \code{rate_loss}, \code{rate_log_sd}, \code{rate_neo}
+and \code{kPrime}, applied to every chain of every run; \code{NULL} uses the
+defaults. Ignored when resuming from a checkpoint.}
 
 \item{unlink}{Character vector of model-component tokens to unlink
 across classes. Layer 1 honours \code{"shape"} (per-class \code{rate_log_sd}) and
@@ -80,7 +90,13 @@ explicit \code{mcmc} argument.}
 \value{
 An \code{MkPosterior} object. Each run adapts its move schedule
 independently, so \verb{$moveWeights} holds run 1's frozen schedule;
-\verb{$runMoveWeights} lists every run's.
+\verb{$runMoveWeights} lists every run's. \verb{$stop_reason} says why the job
+stopped; with \code{nRuns > 1}, each \verb{$per_run} entry's \code{stop_reason} says why
+that run did, and is \code{"cancelled"} for a parallel run stopped by the
+job's own decision. A run stops with \code{"too_short"}, and a warning, when
+a tuning round cannot end before \code{nIter}. \verb{$acceptance}, and with
+\code{nChains > 1} \verb{$chain_acceptance}, give each move's acceptance rate over
+the Sample phase alone.
 }
 \description{
 Metropolis-Hastings MCMC sampling tree topology, branch lengths, model

@@ -138,6 +138,7 @@ repo <- tryCatch(system2("git", c("rev-parse", "--show-toplevel"),
 if (!length(repo) || is.na(repo[1]) || !dir.exists(repo[1])) repo <- getwd()
 repo <- repo[1]
 
+# Race-safe loader: pkgload compiles into src/ in place (#15).
 source(file.path(repo, "dev/red-team/heavy-tests/load-mkprime.R"))
 LoadMkPrime(repo)
 
@@ -543,15 +544,25 @@ powerFloorC <- if (nrow(detRows)) max(detRows$cFrac) else NA_real_
 powerFloorB <- if (nrow(detRows))
   detRows$relB[which.max(detRows$cFrac)] else NA_real_
 
-verdict <- if (!genOk || !ctrlOk || !fixedOk) {
-  "WARN"
-} else if (q1Fail || q2Fail) {
-  "FAIL"
-} else if (is.na(powerFloorC)) {
-  "INCONCLUSIVE"
-} else {
-  "PASS"
+.Verdict <- function(genOk, ctrlOk, fixedOk, q1Fail, q2Fail, powerFloorC) {
+  if (!genOk || !ctrlOk || !fixedOk) {
+    "WARN"
+  } else if (q1Fail || q2Fail) {
+    "FAIL"
+  } else if (is.na(powerFloorC)) {
+    "INCONCLUSIVE"
+  } else {
+    "PASS"
+  }
 }
+
+# Only PASS is a pass: a harness that is suspect (WARN) or underpowered
+# (INCONCLUSIVE) has certified nothing, so a CI-style caller must not see 0.
+.VerdictStatus <- function(verdict) {
+  c(PASS = 0L, FAIL = 1L, WARN = 2L, INCONCLUSIVE = 3L)[[verdict]]
+}
+
+verdict <- .Verdict(genOk, ctrlOk, fixedOk, q1Fail, q2Fail, powerFloorC)
 
 .FmtArm <- function(r) {
   hdr <- sprintf("  %-22s n=%d accept=%.3f  %s%s", r$name, r$n, r$accept,
@@ -763,4 +774,4 @@ cat("\n", paste(lines, collapse = "\n"), "\n", sep = "")
 cat("\nWrote:", file.path(outDir, "verdict.txt"), "\n")
 cat("Wrote:", file.path(outDir, "summary.rds"), "\n")
 
-quit(save = "no", status = c(PASS = 0L, FAIL = 1L, WARN = 2L, INCONCLUSIVE = 3L)[[verdict]])
+quit(save = "no", status = .VerdictStatus(verdict))

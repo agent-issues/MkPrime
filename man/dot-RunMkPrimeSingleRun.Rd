@@ -23,7 +23,9 @@
   convWindowSize = 0L,
   treeFile = NULL,
   shared = NULL,
-  resumeMoveWeights = NULL
+  resumeMoveWeights = NULL,
+  essRuns = 1L,
+  verdictFile = NULL
 )
 }
 \arguments{
@@ -33,6 +35,13 @@
 \item{runIdx}{Integer index of this run (1-based), used for display only.}
 
 \item{startIter}{First iteration to run (1L for fresh, >1 when resuming).}
+
+\item{essRuns}{Integer number of runs whose pooled samples meet
+\code{mcmc$minEss}, so the share of it this run must collect when tuning
+prices its payback.}
+
+\item{verdictFile}{Path to which each convergence check writes the run's
+\code{minTreeEss} verdict for a parallel parent, or \code{NULL}.}
 }
 \description{
 Self-contained: accepts only R-serializable inputs (no XPtrs), reconstructs

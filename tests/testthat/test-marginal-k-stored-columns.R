@@ -76,6 +76,5 @@ test_that("marginal_k stores each parameter in its own column (#266)", {
     "without stabilisation"
   )
   expect_gt(readRDS(ckp)$iter, 200L)
-  .ExpectStoredColumnsCoherent(as.matrix(ReadMkLog(resumed$logFile)),
-                               resumed$trees, ckp)
+  .ExpectStoredColumnsCoherent(resumed$samples, resumed$trees, ckp)
 })

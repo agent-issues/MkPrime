@@ -24,12 +24,12 @@
 # relabel = TRUE (the default) is what makes the corrected LL rise in k' and
 # the truncation error O(1). kprimeHyperB only drives p down from the fill; the
 # LL, and so the oracle, does not depend on it.
-.SupportBuild <- function(p, hyperB = 1000) {
+.SupportBuild <- function(p, hyperB = 1000, hyperA = 1) {
   tree <- .SupportTree()
   mkd <- .SupportData()
   model <- MkPrimeModel(kPrimePrior = "geometric",
                         likelihoodMode = "marginal_k",
-                        kprimeHyperB = hyperB)
+                        kprimeHyperA = hyperA, kprimeHyperB = hyperB)
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)
   state0 <- MkPrime:::.InitState(tree, mkd, model)
   state0$p <- p
@@ -94,4 +94,19 @@ test_that("case 35 imputes over the support at its own p (#255)", {
   pStar <- get_mcmc_state(cold$statePtr)$p
   expect_false(pStar == p)
   expect_equal(get_mcmc_state(stale$statePtr)$p, pStar, tolerance = 1e-12)
+})
+
+test_that("case 35 rejects p* whose support excludes an imputed u (#372)", {
+  # u is imputed over the long support at p = 0.05; a huge kprimeHyperA puts
+  # p* near 1, where the support stops after a few candidates. Z(p) ~ 1 for
+  # both, so the Z ratio alone accepts nearly every such proposal.
+  Accepted <- function(hyperA) {
+    vapply(seq_len(10L), function(seed) {
+      x <- .SupportBuild(0.05, hyperB = 1, hyperA = hyperA)
+      set.seed(seed)
+      .PMove(x, 35L)
+    }, logical(1))
+  }
+  expect_true(any(Accepted(1)))
+  expect_false(any(Accepted(1e5)))
 })

@@ -179,10 +179,10 @@ test_that("empty-string unlink token errors", {
 
 # ---- silent coercion of unlink when partition is trivial --------------
 
-test_that("unlink is coerced to character(0) with cli_alert_info when partition = NULL", {
+test_that("unlink is coerced to character(0) with a warning when partition = NULL", {
   local_mkp_verbosity()
   mkd <- .make_mkd()
-  expect_message(
+  expect_warning(
     spec <- .ValidatePartitionArgs(NULL, c("shape", "ratemultiplier"), mkd),
     regexp = "ignored"
   )
@@ -193,7 +193,7 @@ test_that("unlink is coerced to character(0) with cli_alert_info when partition 
 test_that("unlink is coerced to character(0) when nClasses == 1", {
   local_mkp_verbosity()
   mkd <- .make_mkd()
-  expect_message(
+  expect_warning(
     spec <- .ValidatePartitionArgs(
       partition = rep(1L, mkd$nChar),
       unlink    = "shape",

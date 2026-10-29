@@ -15,12 +15,13 @@
 // For nCand=100, depth=6, nEdge=105: 20× reduction.
 
 #include "mcmc_state.h"
+#include <algorithm>
 #include <cstring>
 #include <array>
 #include <cmath>
-#include "fast_exp.h"
 #include "mkn_rates.h"
 #include "f81.h"
+#include "../inst/include/MkPrime/acrv.h"
 
 using namespace Rcpp;
 
@@ -94,6 +95,9 @@ struct CLGroup {
   int kStates, nChar, nCat, maxNode;
   int stride;       // nChar * kStates
   bool isMkN;       // true → asymmetric binary model (uses rateLoss)
+  // Whether the group carries its own ascertainment term; a transformational
+  // group's is its partition's joint term (joint_asc.h).
+  bool ownAsc = false;
   double rateLoss;  // only for isMkN
   double rateScale; // partition-rate scale (audit Issue 1):
                     //   neoScale = r/(1+r) * (n_neo+n_trans)/n_neo  for neo
@@ -193,78 +197,38 @@ struct GibbsCLCache {
 // ---------------------------------------------------------------------------
 inline NumericVector gibbs_acrv_rates(double rateLogSd, int nCat,
                                        const std::vector<double>& acrvZ) {
-  if (rateLogSd <= 0.0) return NumericVector(nCat, 1.0);
-  double mu = -rateLogSd * rateLogSd / 2.0;
   NumericVector rates(nCat);
-  double total = 0.0;
-  for (int i = 0; i < nCat; ++i) {
-    rates[i] = std::exp(mu + rateLogSd * acrvZ[i]);
-    total += rates[i];
-  }
-  for (int i = 0; i < nCat; ++i) rates[i] *= nCat / total;
+  MkPrime::lognormal_rates(rateLogSd, nCat, acrvZ.data(), rates.begin());
   return rates;
 }
 
 
 // ---------------------------------------------------------------------------
-// JC transition helpers
+// JC / MkN transition helpers (kernels in inst/include/MkPrime/transition.h)
 // ---------------------------------------------------------------------------
 
-// Compute p_diff and diff_coeff for JC(k) with branch length t
+// p_diff and diff_coeff (= exp_term) for JC(k) with branch length t
 inline void jc_trans_params(int k, double t,
                             double& p_diff, double& diff_coeff) {
-  double inv_k = 1.0 / k;
-  // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small kt.
-  double arg = -k * t / (k - 1.0);
-  double neg_expm1 = -std::expm1(arg);
-  double exp_term  = 1.0 - neg_expm1;
-  p_diff     = inv_k * neg_expm1;              // = (1/k)(1 - exp)
-  diff_coeff = exp_term;                       // = p_same - p_diff
+  const MkPrime::JCProbs p = MkPrime::jc_probs(k, t);
+  p_diff     = p.pDiff;
+  diff_coeff = p.expTerm;
 }
 
-// Apply JC transition to child CL → result buf.
-// result[c*k+i] = p_diff * sum(cl[c*k+:]) + diff_coeff * cl[c*k+i]
-inline void jc_transition(const double* cl, double* result,
-                           int nChar, int kStates,
-                           double p_diff, double diff_coeff) {
-  for (int c = 0; c < nChar; ++c) {
-    int off = c * kStates;
-    double s = 0.0;
-    for (int j = 0; j < kStates; ++j) s += cl[off + j];
-    for (int i = 0; i < kStates; ++i)
-      result[off + i] = p_diff * s + diff_coeff * cl[off + i];
-  }
-}
+using MkPrime::jc_transition;
 
 // MkN (asymmetric binary k=2) transition helpers
 inline void mkn_trans_params(double rateLoss, double t,
                               double& P00, double& P01,
                               double& P10, double& P11) {
-  double rate01, rate10;
-  mkn_rates(rateLoss, rate01, rate10);
-  double lambda = rate01 + rate10;
-  // FAST-EXP-001: expm1 form avoids cancellation in P01/P10 at small lambda*t.
-  double arg = -lambda * t;
-  double neg_expm1 = -std::expm1(arg);
-  double exp_t     = 1.0 - neg_expm1;
-  double i01    = rate01 / lambda;
-  double i10    = rate10 / lambda;
-  P00 = i10 + i01 * exp_t;
-  P01 = i01 * neg_expm1;
-  P10 = i10 * neg_expm1;
-  P11 = i01 + i10 * exp_t;
+  const MkPrime::MkNProbs p = MkPrime::MkNRates(rateLoss).probs(t);
+  P00 = p.p00;
+  P01 = p.p01;
+  P10 = p.p10;
+  P11 = p.p11;
 }
 
-inline void mkn_transition(const double* cl, double* result,
-                            int nChar,
-                            double P00, double P01, double P10, double P11) {
-  for (int c = 0; c < nChar; ++c) {
-    int off = c * 2;
-    double c0 = cl[off], c1 = cl[off + 1];
-    result[off]     = P00 * c0 + P01 * c1;
-    result[off + 1] = P10 * c0 + P11 * c1;
-  }
-}
+using MkPrime::mkn_transition;
 
 // --- CLGroup::transition / rootSiteLik implementations ---
 
@@ -1104,7 +1068,8 @@ static void gibbs_compute_het_bins(double alpha, int k, int nBins,
     if (denom < 1e-300) {
       bins[i] = 0.5 * (lo + hi);
     } else {
-      bins[i] = (a / (a + b)) * (p_hi - p_lo) / denom;
+      // A mean can round above 1, whose rate would overflow.
+      bins[i] = std::min(1.0, (a / (a + b)) * (p_hi - p_lo) / denom);
     }
   }
 }

@@ -24,7 +24,7 @@ run, or \code{NULL} if no run has been started.}
 \item{\code{trees}}{A \code{multiPhylo} of post-burnin trees when the run is
 complete, otherwise \code{NULL}.}
 \item{\code{status}}{Character scalar: \code{"idle"}, \code{"running"},
-\code{"done"}, \code{"cancelled"}, or \code{"error"}.}
+\code{"stopping"}, \code{"done"}, \code{"cancelled"}, or \code{"error"}.}
 }
 }
 \description{

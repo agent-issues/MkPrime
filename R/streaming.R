@@ -272,10 +272,43 @@
 }
 
 
+# Bytes after the last newline: a row cut short when a process was killed
+# mid-write. Every row the writers produce ends in a newline.
+.TornTailBytes <- function(file) {
+  size <- file.size(file)
+  if (is.na(size) || size == 0) return(0)
+  con <- file(file, "rb")
+  on.exit(close(con))
+  seek(con, size - 1)
+  if (identical(readBin(con, "raw", 1L), as.raw(10L))) return(0)
+  seek(con, 0)
+  newline <- which(readBin(con, "raw", size) == as.raw(10L))
+  # Return:
+  size - if (length(newline)) max(newline) else 0
+}
+
+
+# Remove an incomplete final row, so that the next append starts a new line
+# rather than extending the torn one.
+.DropTornRow <- function(file) {
+  torn <- .TornTailBytes(file)
+  if (torn > 0) {
+    keep <- file.size(file) - torn
+    writeBin(readBin(file, "raw", keep), file)
+    cli::cli_warn(c(
+      "Dropped an incomplete final row ({torn} byte{?s}) from {.file {file}}.",
+      "i" = "The write was interrupted, e.g. by a job time limit."
+    ))
+  }
+  invisible(torn)
+}
+
+
 # Truncate a log file to exactly nDataRows data lines (plus header).
 # Used on resume to discard samples written after the last checkpoint.
 # @keywords internal
 .TruncateLogToN <- function(logFile, nDataRows) {
+  .DropTornRow(logFile)
   lines <- readLines(logFile, warn = FALSE)
   # Separate header/comment lines from data rows.
   # Move-weight log entries start with "#"; the header starts with "Sample".
@@ -362,8 +395,7 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
     }
 
     # Try to load metadata from checkpoint
-    ckpFile <- checkpointFile %||%
-      sub("(_\\d+)?\\.[^.]+$", ".ckp", logPaths[1])
+    ckpFile <- checkpointFile %||% .DerivedCkpFile(logPaths[1])
     ckp <- NULL
     if (file.exists(ckpFile)) {
       ckp <- tryCatch(readRDS(ckpFile), error = function(e) NULL)
@@ -386,6 +418,7 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
     }
     runTrees <- lapply(treeFiles, .ReadTreeFile)
     trees <- unlist(runTrees, recursive = FALSE) %||% list()
+    runThins <- .RecoveredThins(ckp$runs, mcmc, length(logPaths))
 
     result <- MkPosterior(
       samples    = samples,
@@ -401,26 +434,7 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
     result$nSamples    <- nrow(samples)
     result$stop_reason <- "recovered"
     result$logFile     <- logPaths
-
-    if (length(logPaths) > 1L) {
-      perRun <- lapply(logPaths, function(f) {
-        s <- tryCatch(ReadMkLog(f), error = function(e) {
-          matrix(numeric(0), nrow = 0, ncol = ncol(samples))
-        })
-        list(samples = s, trees = list(), acceptance = numeric(0),
-             saved_idx = nrow(s))
-      })
-      for (i in seq_along(perRun)) {
-        if (i <= length(runTrees)) perRun[[i]]$trees <- runTrees[[i]]
-      }
-      # Drop runs with no samples (e.g. stale log from a prior attempt)
-      hasData <- vapply(perRun, function(r) nrow(r$samples) > 0L, logical(1))
-      perRun <- perRun[hasData]
-      if (length(perRun) > 1L) {
-        result$nRuns   <- length(perRun)
-        result$per_run <- perRun
-      }
-    }
+    result <- .AddRecoveredRuns(result, logPaths, runTrees, runThins)
 
     .AlertSuccess(
       "Recovered {nrow(samples)} sample{?s} from \\
@@ -442,6 +456,7 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
   # Check that the temp log files still exist
   nFiles <- length(rec$logFiles)
   missing <- !file.exists(rec$logFiles)
+  tempFiles <- rec$tempFiles %||% rec$logFiles
   if (all(missing)) {
     .AlertDanger(
       "Temporary log {cli::qty(nFiles)}file{?s} no longer exist{?s/}. \\
@@ -459,6 +474,23 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
     rec$logFiles <- rec$logFiles[!missing]
   }
 
+  # In-memory trees are in the checkpoint written on interrupt.
+  ckpFile <- rec$mcmc$checkpointFile
+  ckp <- if (!is.null(ckpFile) && file.exists(ckpFile)) {
+    tryCatch(readRDS(ckpFile), error = function(e) NULL)
+  }
+  runTrees <- lapply(seq_len(nFiles), function(i) {
+    run <- if (length(ckp$runs) >= i) ckp$runs[[i]]
+    treeFile <- if (length(ckp$treeFilePaths) >= i) ckp$treeFilePaths[[i]]
+    trees <- if (is.null(run$tree_samples) && !is.null(treeFile)) {
+      .ReadTreeFile(treeFile)
+    } else {
+      run$tree_samples[seq_len(run$tree_saved_idx %||% 0L)]
+    }
+    Filter(Negate(is.null), trees)
+  })[!missing]
+  runThins <- .RecoveredThins(ckp$runs, rec$mcmc, nFiles)[!missing]
+
   # Read samples
   samples <- tryCatch(
     ReadMkLog(rec$logFiles),
@@ -475,14 +507,14 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
       "Log {cli::qty(length(rec$logFiles))}file{?s} contain{?s/} no samples \\
        (run may have been interrupted before any were flushed)."
     )
-    .CleanupTempLogs(rec$logFiles)
+    if (isTRUE(rec$isTempLog)) .CleanupTempLogs(tempFiles)
     return(invisible(NULL))
   }
 
   # Build a minimal MkPosterior
   result <- MkPosterior(
     samples    = samples,
-    trees      = list(),
+    trees      = unlist(runTrees, recursive = FALSE) %||% list(),
     acceptance = numeric(0),
     model      = rec$model,
     data       = rec$data,
@@ -493,13 +525,60 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
   result$partial    <- TRUE
   result$nSamples   <- nrow(samples)
   result$stop_reason <- "interrupted"
+  result <- .AddRecoveredRuns(result, rec$logFiles, runTrees, runThins)
 
-  # Clean up
-  .CleanupTempLogs(rec$logFiles)
+  # A log the user named, or one a checkpoint still needs, is not ours to delete.
+  if (isTRUE(rec$isTempLog)) .CleanupTempLogs(tempFiles)
 
   .AlertSuccess(
     "Recovered {nrow(samples)} sample{?s} from interrupted run."
   )
+  result
+}
+
+
+# The checkpoint for a log: `x.ckp` for `x.log` or `x_1.log`, and also for the
+# `x_mkp_run.log` or `x_mkp_run_1.log` that RunMkPrime() writes beside a
+# checkpoint the user named.
+.DerivedCkpFile <- function(logPath) {
+  beside <- sub("_mkp_run(_\\d+)?\\.log$", ".ckp", logPath)
+  if (beside != logPath && file.exists(beside)) return(beside)
+  sub("(_\\d+)?\\.[^.]+$", ".ckp", logPath)
+}
+
+
+# Each run's thin and treeThin, which adapt per run; the job's where the
+# checkpoint holds no run.
+.RecoveredThins <- function(ckpRuns, mcmc, nRuns) {
+  lapply(seq_len(nRuns), function(i) {
+    run <- if (length(ckpRuns) >= i) ckpRuns[[i]]
+    list(thin = run[["thin"]] %||% mcmc[["thin"]],
+         treeThin = run[["treeThin"]] %||% mcmc[["treeThin"]])
+  })
+}
+
+
+# Per-run thin metadata and, for more than one run with samples, `per_run`.
+.AddRecoveredRuns <- function(result, logPaths, runTrees, runThins) {
+  result$thin     <- runThins[[1]]$thin
+  result$treeThin <- runThins[[1]]$treeThin
+  if (length(logPaths) < 2L) return(result)
+  perRun <- lapply(seq_along(logPaths), function(i) {
+    s <- tryCatch(ReadMkLog(logPaths[i]), error = function(e) {
+      matrix(numeric(0), nrow = 0, ncol = ncol(result$samples))
+    })
+    c(list(samples = s, trees = runTrees[[i]] %||% list(),
+           acceptance = numeric(0), saved_idx = nrow(s)),
+      runThins[[i]])
+  })
+  # Drop runs with no samples (e.g. stale log from a prior attempt)
+  hasData <- vapply(perRun, function(r) nrow(r$samples) > 0L, logical(1))
+  perRun <- perRun[hasData]
+  if (length(perRun) > 1L) {
+    result$nRuns   <- length(perRun)
+    result$per_run <- perRun
+  }
+  # Return:
   result
 }
 
@@ -587,8 +666,18 @@ ReadMkLog <- function(logFile) {
     cli::cli_abort("Log file not found: {.file {logFile}}")
   }
 
-  dat <- utils::read.table(logFile, header = TRUE, sep = "\t",
-                           check.names = FALSE, comment.char = "#")
+  input <- list(file = logFile)
+  if (.TornTailBytes(logFile) > 0) {
+    cli::cli_warn(c(
+      "Ignoring an incomplete final row in {.file {logFile}}.",
+      "i" = "The write was interrupted, e.g. by a job time limit."
+    ))
+    lines <- readLines(logFile, warn = FALSE)
+    input <- list(text = lines[-length(lines)])
+  }
+  dat <- do.call(utils::read.table, c(input, list(
+    header = TRUE, sep = "\t", check.names = FALSE, comment.char = "#"
+  )))
 
   if (!"Sample" %in% names(dat)) {
     cli::cli_abort(

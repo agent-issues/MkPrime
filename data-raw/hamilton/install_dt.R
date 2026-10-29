@@ -1,5 +1,6 @@
 .libPaths(c("/nobackup/pjjg18/mkp-study/lib", .libPaths()))
-# fread(fill = Inf) in summarize_streamed.R needs data.table >= 1.16.0.
+# fread(fill = Inf), used by summarize_streamed.R and check_kprime_order.R,
+# needs 1.16.0; an older library would fail every log read.
 if (!requireNamespace("data.table", quietly = TRUE) ||
     packageVersion("data.table") < "1.16.0") {
   install.packages("data.table",

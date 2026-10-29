@@ -29,8 +29,17 @@ ScoresWrittenTree <- function(tree, row, o, model) {
                          rate_log_sd = row[["rate_log_sd"]],
                          nCat = model$nCat, coding = model$coding,
                          rate_neo = Param("rate_neo"),
-                         relabel = model$relabel)
+                         relabel = model$relabel, model = model,
+                         p = if ("p" %in% names(row)) row[["p"]] else 0.5,
+                         kprimeAlpha = Param("kprime_alpha"),
+                         kprimeBeta = Param("kprime_beta"))
   isTRUE(all.equal(ll, row[["log_likelihood"]], tolerance = 1e-8))
+}
+
+# fixTopology = TRUE must leave the topology as given: a tree that scored
+# self-consistently but with the tips renumbered would still be a different one.
+SameTopology <- function(written, input) {
+  isTRUE(ape::all.equal.phylo(written, input, use.edge.length = FALSE))
 }
 
 OracleRun <- function(o, tree, ...) {
@@ -72,6 +81,8 @@ test_that("RunMkPrime() writes trees with their own labels (#224)", {
   expect_true(ScoresWrittenTree(result$trees[[length(result$trees)]],
                                 result$samples[nrow(result$samples), ],
                                 o, result$model))
+  expect_true(SameTopology(result$trees[[length(result$trees)]],
+                           o$scrambled))
 })
 
 
@@ -96,8 +107,6 @@ test_that("Resume keeps the labelling and the prior of the run (#224)", {
   treeFile <- sub("\\.log$", "_trees.nwk", logFile)
   on.exit(unlink(c(ckpFile, logFile, treeFile)), add = TRUE)
 
-  # expSteps is derived from the start tree, which the resume must not
-  # rebuild: start from a poor tree so that a rebuilt one would differ.
   start <- o$scrambled
   start$tip.label <- sample(start$tip.label)
   set.seed(2243)
@@ -106,14 +115,13 @@ test_that("Resume keeps the labelling and the prior of the run (#224)", {
               checkpointFile = ckpFile),
     "without stabilisation")
   ck <- readRDS(ckpFile)
-  nChar <- allow_warning(MkPrimeData(o$pd), "invariant")$nChar
-  expect_gt(ck$model$expSteps, phangorn::parsimony(o$truth, o$pd) / nChar)
   ck$mcmc$nIter <- 400L
   saveRDS(ck, ckpFile)
 
   # A model passed on resume (as the RB harness does) used to trigger a
-  # fresh random-order start tree and a re-derived expSteps.
-  resumed <- ResumeMkPrime(ckpFile, o$pd, model = MkPrimeModel())
+  # fresh random-order start tree.
+  resumed <- allow_warning(ResumeMkPrime(ckpFile, o$pd, model = MkPrimeModel()),
+                           "without stabilisation")
   expect_identical(resumed$model$expSteps, ck$model$expSteps)
   written <- ape::read.tree(treeFile)
   logged <- ReadMkLog(logFile)
@@ -122,5 +130,58 @@ test_that("Resume keeps the labelling and the prior of the run (#224)", {
   for (i in c(1L, nrow(logged))) {
     expect_true(ScoresWrittenTree(written[[i]], logged[i, ], o,
                                   resumed$model))
+    expect_true(SameTopology(written[[i]], start))
   }
+})
+
+
+test_that("The tree-length prior does not depend on the start tree (#280)", {
+  skip_if_not_installed("phangorn")
+  o <- TipOrderOracle()
+  poor <- o$scrambled
+  set.seed(2800)
+  poor$tip.label <- sample(poor$tip.label)
+  result <- allow_warning(OracleRun(o, poor, nIter = 100L),
+                          "without stabilisation")
+  njSteps <- MkPrime:::.FitchScore(TreeTools::NJTree(o$pd), o$mkd)
+  expect_equal(result$model$expSteps, njSteps / o$mkd$nChar)
+})
+
+
+test_that("Resume resolves the rate from a changed treeLengthShape (#280)", {
+  skip_if_not_installed("phangorn")
+  o <- TipOrderOracle()
+  ckpFile <- tempfile(fileext = ".ckp")
+  on.exit(unlink(ckpFile), add = TRUE)
+  set.seed(2801)
+  allow_warning(OracleRun(o, o$truth, nIter = 100L, checkpointFile = ckpFile),
+                "without stabilisation")
+  ck <- readRDS(ckpFile)
+  ck$mcmc$nIter <- 200L
+  saveRDS(ck, ckpFile)
+
+  resumed <- allow_warning(
+    ResumeMkPrime(ckpFile, o$pd, model = MkPrimeModel(treeLengthShape = 3)),
+    "without stabilisation")
+  expect_equal(resumed$model$expSteps, ck$model$expSteps)
+  expect_equal(resumed$model$treeLengthRate, 3 / ck$model$expSteps)
+})
+
+
+test_that("Resume keeps a user-set treeLengthRate (#280)", {
+  skip_if_not_installed("phangorn")
+  o <- TipOrderOracle()
+  ckpFile <- tempfile(fileext = ".ckp")
+  on.exit(unlink(ckpFile), add = TRUE)
+  set.seed(2802)
+  allow_warning(OracleRun(o, o$truth, nIter = 100L, checkpointFile = ckpFile,
+                          model = MkPrimeModel(treeLengthRate = 0.5)),
+                "without stabilisation")
+  ck <- readRDS(ckpFile)
+  ck$mcmc$nIter <- 200L
+  saveRDS(ck, ckpFile)
+
+  resumed <- allow_warning(ResumeMkPrime(ckpFile, o$pd, model = MkPrimeModel()),
+                           "without stabilisation")
+  expect_equal(resumed$model$treeLengthRate, 0.5)
 })

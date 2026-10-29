@@ -40,6 +40,14 @@ reference:
       - MkPrimeData
       - MkPrimeModel
       - MkPrimeMCMC
+      - MkPrimeEmpiricalPrior
+      - MkPrimeExtension
+      - empiricalNObs
+      - AutoDetectNeomorphic
+      - MkPrimeVerbosity
+      - EasyMkPrime
+      - MkBayesianServer
+      - MkBayesianUi
 
   - title: Diagnostics and results
     desc: >
@@ -48,9 +56,19 @@ reference:
       - ConvergenceDiagnostics
       - MkpLogLikelihood
       - ResumeMkPrime
+      - print.MkpDiagnostics
+      - AutoBurnin
+      - SetBurnin
+      - TreeESS
+      - mkp_stepping_stone
+      - MkPrimeRecover
+      - ReadMkLog
+      - MkLogPaths
+      - MkCancelPath
 
   - title: Progress visualization
     desc: Callbacks for monitoring a running MCMC.
     contents:
       - MkpTracePlot
       - MkpPngProgress
+      - MkpWatchLog

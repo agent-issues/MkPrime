@@ -19,6 +19,14 @@ suppressPackageStartupMessages({
 })
 options(warn = 1L)  # print warnings as they happen; avoids spurious parser-error in exit warning summary (mk_ktrue/mk_tlshrink)
 
+# The commit a build came from, once install_mkp.sh stamps RemoteSha into
+# DESCRIPTION (#294); NA for a build without it.
+.BuildSha <- function(libLoc = NULL) {
+  sha <- utils::packageDescription("MkPrime", lib.loc = libLoc)$RemoteSha
+  if (is.null(sha)) NA_character_ else sha
+}
+.BUILD_SHA <- .BuildSha()
+
 args      <- commandArgs(trailingOnly = TRUE)
 tree_idx  <- as.integer(args[1])
 rep_idx   <- as.integer(args[2])
@@ -47,6 +55,29 @@ dir.create(ckp_dir, showWarnings = FALSE)
   }, error = function(e) FALSE)
 }
 
+# A task is finished once its final `<arm>_<tag>.rds` exists, but only a
+# checkpoint lets a fresh submission extend rather than redo it. summarize_
+# streamed.R tells the user to delete checkpoints before its cleanup pass, after
+# which resubmitting the array would silently restart every finished task and
+# overwrite its result (#388). Restarting one on purpose needs MKP_FORCE_RESTART=1.
+.CheckNotFinished <- function(arm, tag, outDir, ckpDir) {
+  final <- file.path(outDir, sprintf("%s_%s.rds", arm, tag))
+  saved <- list.files(ckpDir, sprintf("^%s_checkpoint(_[0-9]+)?\\.rds$", arm))
+  if (file.exists(final) && !length(saved) &&
+      !identical(Sys.getenv("MKP_FORCE_RESTART"), "1")) {
+    stop(sprintf(paste(
+      "Refusing to restart %s %s: %s exists and there is no checkpoint to",
+      "resume, so a fresh start would overwrite a finished result (#388).",
+      "To rerun it from scratch, delete %s and set MKP_FORCE_RESTART=1: a",
+      "log or tree stream left beside a gzipped one makes the summariser",
+      "refuse the task (#289)."),
+      arm, tag, basename(final),
+      paste(basename(.arm_own_files(arm)), collapse = " ")),
+      call. = FALSE)
+  }
+  invisible(NULL)
+}
+
 # Files an arm owns inside the shared `ckp_dir`.
 #
 # `ckp_dir` is per (tree, rep), NOT per arm, so all fourteen arms share one flat
@@ -60,15 +91,20 @@ dir.create(ckp_dir, showWarnings = FALSE)
 # Anchoring on the suffixes this arm actually writes closes that: after
 # `^mk_` the next characters must be one of the three literals below, which
 # `k9_run_1.log` is not. The `_[0-9]+` groups are optional so the pre-2026-05-20
-# single-file layout is covered too.
+# single-file layout is covered too. A log gzipped by summarize_streamed.R must
+# go too, or the summariser pools it with the fresh chain as one run (#289).
 .arm_own_files <- function(arm) {
   list.files(
     ckp_dir,
-    pattern = sprintf("^%s_(checkpoint\\.rds|run(_[0-9]+)?\\.log|trees(_[0-9]+)?\\.nwk)$",
-                      arm),
+    pattern = sprintf(
+      "^%s_(checkpoint(_[0-9]+)?\\.rds|run(_[0-9]+)?\\.log(\\.gz)?|trees(_[0-9]+)?\\.nwk)$",
+      arm
+    ),
     full.names = TRUE
   )
 }
+
+.CheckNotFinished(arm, tag, out_dir, ckp_dir)
 
 .sentinel  <- file.path(ckp_dir, ".slurm_job_id")
 .cur_job   <- Sys.getenv("SLURM_JOB_ID", "")
@@ -158,6 +194,89 @@ if (.cur_job != .prev_job) {
        burninFrac = burninFrac)
 }
 
+# A resumed run restores its per-position k' state unchanged, so resuming under
+# another character order pairs those positions with the wrong characters: the
+# pre- and post-resume segments of one log then describe different characters
+# (#286). The order is recorded at first start and a resume under any other is
+# refused rather than purged -- whether to discard the run is the user's call.
+#
+# Between dcd7398 and 5a890df this file was rewritten on every start, resumes
+# included, so an unstamped record says nothing about the order its checkpoint
+# was born under. Only a fresh start writes the stamped columns, and a resume
+# against an unstamped record is refused unless `check_kprime_order.R` has
+# passed and MKP_ACCEPT_UNSTAMPED_ORDER=1 says so (#388). Unrecorded state
+# predates the record and used lexical order.
+.CHAR_ORDER_STAMP <- "lifecycle"
+.CheckCharOrder <- function(arm, nexFiles) {
+  orderFile <- file.path(ckp_dir, sprintf("%s_char_order.csv", arm))
+  current   <- basename(nexFiles)
+  saved     <- list.files(ckp_dir,
+                          sprintf("^%s_checkpoint(_[0-9]+)?\\.rds$", arm))
+  if (!length(saved)) {
+    write.csv(
+      data.frame(
+        position  = seq_along(current),
+        file      = current,
+        char_idx  = as.integer(sub("^chr([0-9]+)\\.nex$", "\\1", current)),
+        lifecycle = 2L,
+        build_sha = .BUILD_SHA
+      ),
+      orderFile,
+      row.names = FALSE
+    )
+    return(invisible(orderFile))
+  }
+  record   <- if (file.exists(orderFile)) read.csv(orderFile)
+  recorded <- if (!is.null(record)) as.character(record$file)
+  if (!is.null(record) && !(.CHAR_ORDER_STAMP %in% names(record)) &&
+      !identical(Sys.getenv("MKP_ACCEPT_UNSTAMPED_ORDER"), "1")) {
+    stop(sprintf(paste(
+      "Refusing to resume %s in %s: %s was written without a birth stamp, so",
+      "it may have been rewritten by a resume under another character order",
+      "(#388). Run check_kprime_order.R on the results; if it passes, rerun",
+      "with MKP_ACCEPT_UNSTAMPED_ORDER=1. To discard the run instead, delete",
+      "%s."),
+      arm, ckp_dir, basename(orderFile),
+      paste(basename(.arm_own_files(arm)), collapse = " ")),
+      call. = FALSE)
+  }
+  if (!identical(recorded, current)) {
+    Shown <- function(x) paste(c(head(x, 12L), if (length(x) > 12L) "..."),
+                               collapse = " ")
+    stop(sprintf(paste(
+      "Refusing to resume %s in %s: its saved state was written under",
+      "character order [%s], but this start reads [%s]. Resuming would pair",
+      "its kPrime_ columns with the wrong characters (#286). To discard it",
+      "and restart, delete %s."),
+      arm, ckp_dir,
+      if (is.null(recorded)) "unrecorded, so lexical" else Shown(recorded),
+      Shown(current), paste(basename(.arm_own_files(arm)), collapse = " ")),
+      call. = FALSE)
+  }
+  invisible(orderFile)
+}
+
+# MkPrimeData() drops invariant characters without saying which, so the
+# surviving file indices are recomputed under its rule and checked against the
+# kObs it returns. Checked here, before the MCMC, so a mismatch costs nothing.
+.VariableCharIdx <- function(pd, charIdx) {
+  kObs <- apply(MkPrime:::.PhyDatToIntMatrix(pd), 2L,
+                function(col) length(unique(col[!is.na(col)])))
+  stopifnot(length(kObs) == length(charIdx),
+            identical(as.integer(kObs[kObs > 1L]),
+                      as.integer(suppressWarnings(MkPrimeData(pd))$kObs)))
+  charIdx[kObs > 1L]
+}
+
+# Every result carries the file index of each variable character, so a
+# consumer joins on char_idx rather than position, and the build it came from.
+.SaveResult <- function(partial) {
+  partial$char_idx  <- var_char_idx
+  partial$build_sha <- .BUILD_SHA
+  partial$tree_length_prior <- .PIN
+  saveRDS(partial, file.path(out_dir, sprintf("%s_%s.rds", arm, tag)))
+}
+
 # ---- Locate data -------------------------------------------------------------
 dataset_dir <- file.path(data_root,
   sprintf("tree_%02d/rep_%02d", tree_idx, rep_idx))
@@ -200,19 +319,34 @@ cat(sprintf("  Loaded %d characters, %d taxa\n", n_char_raw, n_taxa_raw))
 # sorted numerically used lexical order (chr1, chr10, ..., chr2); pairing those
 # positionally against ground_truth.csv was EG-003 (#54). The file lets a
 # consumer join on char_idx rather than assume either order.
-write.csv(
-  data.frame(
-    position     = seq_along(nex_files),
-    file         = basename(nex_files),
-    char_idx     = as.integer(sub("^chr([0-9]+)\\.nex$", "\\1",
-                                  basename(nex_files)))
-  ),
-  file.path(ckp_dir, sprintf("%s_char_order.csv", arm)),
-  row.names = FALSE
+.CheckCharOrder(arm, nex_files)
+var_char_idx <- .VariableCharIdx(
+  pd, as.integer(sub("^chr([0-9]+)\\.nex$", "\\1", basename(nex_files)))
 )
 
 # ---- Starting tree: NJ ------------------------------------------------------
 start_tree <- NJTree(pd, edgeLengths = TRUE)
+.PIN <- .PinnedTreeLengthPrior(pd, start_tree)
+
+# The tree-length prior every arm fits, pinned to what `.FinalizeModel` derived
+# before 3c091f9 (2026-09-29): expSteps = max(1, total Fitch score of the
+# prepared start tree), rate = shape / expSteps. 3c091f9 divided the default by
+# nChar, so an unpinned arm fits a different prior from the recorded May-June
+# results, and a resume (which keeps the checkpoint's expSteps) would pool two
+# priors in one arm (#389).
+.PinnedTreeLengthPrior <- function(pd, tree, shape = 2) {
+  mkd      <- suppressWarnings(MkPrimeData(pd))
+  tree     <- MkPrime:::.PrepareStartTree(tree, mkd)
+  expSteps <- max(1, MkPrime:::.FitchScore(tree, mkd))
+  list(treeLengthShape = shape, expSteps = expSteps,
+       treeLengthRate = shape / expSteps)
+}
+
+# An arm that sets its own tree-length prior overrides the pin through `...`.
+.PinnedModel <- function(...) {
+  do.call(MkPrimeModel,
+          utils::modifyList(c(list(coding = "variable"), .PIN), list(...)))
+}
 
 # ---- MCMC config ------------------------------------------------------------
 # `thin_iters` used to default to 10 while every arm added since 2026-05 passed
@@ -249,11 +383,18 @@ make_mcmc <- function(prefix, thin_iters = 500L) {
   )
 }
 
+# Only corruption is purged. Matching any error that mentioned "checkpoint" also
+# caught an unsupported version or a changed move set, so a package reinstall
+# silently wiped up to 7.5 h of output (#289); those are the user's call.
+.IsCorruptCheckpoint <- function(e, arm) {
+  !.validate_ckp(file.path(ckp_dir, paste0(arm, "_checkpoint.rds"))) ||
+    grepl("reading from connection|unknown input format", conditionMessage(e))
+}
+
 # Retry wrapper for checkpoint read errors
 .run_arm <- function(call_fn, label) {
   tryCatch(call_fn(), error = function(e) {
-    if (grepl("reading from connection|checkpoint", conditionMessage(e),
-              ignore.case = TRUE)) {
+    if (.IsCorruptCheckpoint(e, label)) {
       message(label, " checkpoint error — purging and retrying: ",
               conditionMessage(e))
       unlink(.arm_own_files(label))
@@ -262,6 +403,14 @@ make_mcmc <- function(prefix, thin_iters = 500L) {
       stop(e)
     }
   })
+}
+
+# The per-tag sentinel is shared by every arm of the task directory, so it
+# cannot say whether THIS arm has started since its result was written; this
+# marker can (#388). Written only now, after every guard that can refuse the
+# start, so a refused resume does not make a finished task look live.
+if (.cur_job != "") {
+  writeLines(.cur_job, file.path(ckp_dir, sprintf(".%s_slurm_job_id", arm)))
 }
 
 # ---- Run the requested arm ---------------------------------------------------
@@ -277,7 +426,7 @@ if (arm == "mk") {
       pd,
       start_tree,
       knownStates = kObs_for_mk,
-      model = MkPrimeModel(coding = "variable"),
+      model = .PinnedModel(),
       mcmc  = make_mcmc("mk")
     )
   }, "mk")
@@ -290,7 +439,7 @@ if (arm == "mk") {
     stop_reason = res$stop_reason,
     acceptance  = res$acceptance
   )
-  saveRDS(partial, file.path(out_dir, sprintf("mk_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mk_kp1") {
   # Mk with knownStates = kObs_i + 1 per character (one unobserved state
@@ -306,7 +455,7 @@ if (arm == "mk") {
       pd,
       start_tree,
       knownStates = kObs_for_mk + 1L,
-      model = MkPrimeModel(coding = "variable"),
+      model = .PinnedModel(),
       mcmc  = make_mcmc("mk_kp1")
     )
   }, "mk_kp1")
@@ -319,7 +468,7 @@ if (arm == "mk") {
     stop_reason = res$stop_reason,
     acceptance  = res$acceptance
   )
-  saveRDS(partial, file.path(out_dir, sprintf("mk_kp1_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mkp") {
   mkd_mkp <- MkPrimeData(pd)
@@ -328,7 +477,7 @@ if (arm == "mk") {
     RunMkPrime(
       mkd_mkp,
       start_tree,
-      model = MkPrimeModel(coding = "variable"),
+      model = .PinnedModel(),
       mcmc  = make_mcmc("mkp")
     )
   }, "mkp")
@@ -353,7 +502,7 @@ if (arm == "mk") {
     n_runs_read    = up$nRuns,
     burnin_frac    = up$burninFrac
   )
-  saveRDS(partial, file.path(out_dir, sprintf("mkp_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mkp_eg") {
   # Mk' with empirical_geometric prior on k' (convolution of empirical N_obs
@@ -365,7 +514,7 @@ if (arm == "mk") {
     RunMkPrime(
       mkd_mkp,
       start_tree,
-      model = MkPrimeModel(coding = "variable",
+      model = .PinnedModel(
                             kPrimePrior = "empirical_geometric"),
       mcmc  = make_mcmc("mkp_eg")
     )
@@ -390,7 +539,7 @@ if (arm == "mk") {
     n_runs_read    = up$nRuns,
     burnin_frac    = up$burninFrac
   )
-  saveRDS(partial, file.path(out_dir, sprintf("mkp_eg_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mkp_geo") {
   # Mk' with plain geometric prior on k' (EG-001 pilot arm).
@@ -404,7 +553,7 @@ if (arm == "mk") {
     RunMkPrime(
       mkd_mkp,
       start_tree,
-      model = MkPrimeModel(coding = "variable",
+      model = .PinnedModel(
                             kPrimePrior = "geometric"),
       mcmc  = make_mcmc("mkp_geo", thin_iters = 500L)
     )
@@ -429,7 +578,7 @@ if (arm == "mk") {
     n_runs_read    = up$nRuns,
     burnin_frac    = up$burninFrac
   )
-  saveRDS(partial, file.path(out_dir, sprintf("mkp_geo_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mk_kp2") {
   # Mk with knownStates = kObs_i + 2 per character (two unobserved states
@@ -444,7 +593,7 @@ if (arm == "mk") {
     RunMkPrime(
       pd, start_tree,
       knownStates = kObs_for_mk + 2L,
-      model = MkPrimeModel(coding = "variable"),
+      model = .PinnedModel(),
       mcmc  = make_mcmc("mk_kp2", thin_iters = 500L)
     )
   }, "mk_kp2")
@@ -454,7 +603,7 @@ if (arm == "mk") {
 
   partial <- list(trees = res$trees, stop_reason = res$stop_reason,
                   acceptance = res$acceptance)
-  saveRDS(partial, file.path(out_dir, sprintf("mk_kp2_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mk_k9") {
   # Mk with knownStates = 9 across all variable characters (fixed ceiling
@@ -469,7 +618,7 @@ if (arm == "mk") {
     RunMkPrime(
       pd, start_tree,
       knownStates = k9_for_mk,
-      model = MkPrimeModel(coding = "variable"),
+      model = .PinnedModel(),
       mcmc  = make_mcmc("mk_k9", thin_iters = 500L)
     )
   }, "mk_k9")
@@ -479,7 +628,7 @@ if (arm == "mk") {
 
   partial <- list(trees = res$trees, stop_reason = res$stop_reason,
                   acceptance = res$acceptance)
-  saveRDS(partial, file.path(out_dir, sprintf("mk_k9_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mk_k15") {
   # Mk with knownStates = 15 across all variable characters. Tests
@@ -494,7 +643,7 @@ if (arm == "mk") {
     RunMkPrime(
       pd, start_tree,
       knownStates = k15_for_mk,
-      model = MkPrimeModel(coding = "variable"),
+      model = .PinnedModel(),
       mcmc  = make_mcmc("mk_k15", thin_iters = 500L)
     )
   }, "mk_k15")
@@ -504,7 +653,7 @@ if (arm == "mk") {
 
   partial <- list(trees = res$trees, stop_reason = res$stop_reason,
                   acceptance = res$acceptance)
-  saveRDS(partial, file.path(out_dir, sprintf("mk_k15_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mk_k24") {
   # Mk with knownStates = 24 across all variable characters. High-k
@@ -518,7 +667,7 @@ if (arm == "mk") {
     RunMkPrime(
       pd, start_tree,
       knownStates = k24_for_mk,
-      model = MkPrimeModel(coding = "variable"),
+      model = .PinnedModel(),
       mcmc  = make_mcmc("mk_k24", thin_iters = 500L)
     )
   }, "mk_k24")
@@ -528,7 +677,7 @@ if (arm == "mk") {
 
   partial <- list(trees = res$trees, stop_reason = res$stop_reason,
                   acceptance = res$acceptance)
-  saveRDS(partial, file.path(out_dir, sprintf("mk_k24_%s.rds", tag)))
+  .SaveResult(partial)
 } else if (arm == "mk_k40") {
   # Mk with knownStates = 40 across all variable characters. Extended
   # endpoint; tests whether the k-ramp continues past k=24.
@@ -541,7 +690,7 @@ if (arm == "mk") {
     RunMkPrime(
       pd, start_tree,
       knownStates = k40_for_mk,
-      model = MkPrimeModel(coding = "variable"),
+      model = .PinnedModel(),
       mcmc  = make_mcmc("mk_k40", thin_iters = 500L)
     )
   }, "mk_k40")
@@ -551,7 +700,7 @@ if (arm == "mk") {
 
   partial <- list(trees = res$trees, stop_reason = res$stop_reason,
                   acceptance = res$acceptance)
-  saveRDS(partial, file.path(out_dir, sprintf("mk_k40_%s.rds", tag)))
+  .SaveResult(partial)
 } else if (arm == "mkp_highk") {
   # Mk' with geometric prior on k' but a STRONG high-k Beta(1, 20) hyperprior
   # on p: E[p] = 1/21 ≈ 0.048, so E[k'] ≈ kObs + 21. Tests whether Mk' can
@@ -563,7 +712,7 @@ if (arm == "mk") {
     RunMkPrime(
       mkd_mkp,
       start_tree,
-      model = MkPrimeModel(coding = "variable",
+      model = .PinnedModel(
                             kPrimePrior = "geometric",
                             kprimeHyperA = 1,
                             kprimeHyperB = 20),
@@ -590,7 +739,7 @@ if (arm == "mk") {
     n_runs_read    = up$nRuns,
     burnin_frac    = up$burninFrac
   )
-  saveRDS(partial, file.path(out_dir, sprintf("mkp_highk_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mkp_logs") {
   # Mk' with logseries prior on k': P(k) ∝ c^k / k with c = 0.95. Much heavier
@@ -603,7 +752,7 @@ if (arm == "mk") {
     RunMkPrime(
       mkd_mkp,
       start_tree,
-      model = MkPrimeModel(coding = "variable",
+      model = .PinnedModel(
                             kPrimePrior = "logseries",
                             kprimeLogseriesC = 0.95),
       mcmc  = make_mcmc("mkp_logs", thin_iters = 500L)
@@ -629,7 +778,7 @@ if (arm == "mk") {
     n_runs_read    = up$nRuns,
     burnin_frac    = up$burninFrac
   )
-  saveRDS(partial, file.path(out_dir, sprintf("mkp_logs_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mk_ktrue") {
   # Mk with knownStates = k_true per character (oracle / ceiling arm).
@@ -664,7 +813,7 @@ if (arm == "mk") {
     RunMkPrime(
       pd, start_tree,
       knownStates = k_for_mk,
-      model = MkPrimeModel(coding = "variable"),
+      model = .PinnedModel(),
       mcmc  = make_mcmc("mk_ktrue", thin_iters = 500L)
     )
   }, "mk_ktrue")
@@ -675,7 +824,7 @@ if (arm == "mk") {
   partial <- list(trees = res$trees, stop_reason = res$stop_reason,
                   acceptance = res$acceptance,
                   k_true = k_for_mk)
-  saveRDS(partial, file.path(out_dir, sprintf("mk_ktrue_%s.rds", tag)))
+  .SaveResult(partial)
 
 } else if (arm == "mk_tlshrink") {
   # Mk (kObs) with an explicit branch-length shrinkage prior.
@@ -701,9 +850,8 @@ if (arm == "mk") {
     RunMkPrime(
       pd, start_tree,
       knownStates = kObs_for_mk,
-      model = MkPrimeModel(coding = "variable",
-                            treeLengthShape = 20,
-                            treeLengthRate  = 20 / 0.7),
+      model = .PinnedModel(treeLengthShape = 20,
+                           treeLengthRate  = 20 / 0.7),
       mcmc  = make_mcmc("mk_tlshrink", thin_iters = 500L)
     )
   }, "mk_tlshrink")
@@ -713,7 +861,7 @@ if (arm == "mk") {
 
   partial <- list(trees = res$trees, stop_reason = res$stop_reason,
                   acceptance = res$acceptance)
-  saveRDS(partial, file.path(out_dir, sprintf("mk_tlshrink_%s.rds", tag)))
+  .SaveResult(partial)
 }
 
 cat("  Done.\n")

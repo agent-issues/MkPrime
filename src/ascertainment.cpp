@@ -1,6 +1,5 @@
 #include <Rcpp.h>
-#include "fast_exp.h"
-#include "mkn_rates.h"
+#include "../inst/include/MkPrime/transition.h"
 #include "ascertainment.h"
 #include <algorithm>
 #include <cmath>
@@ -48,7 +47,7 @@ void constant_site_probs_jc_impl(const Rcpp::IntegerVector& parent,
   const int stride  = nMask * kStates;
 
   const double inv_k = 1.0 / kStates;
-  const double km1   = kStates - 1.0;
+  const MkPrime::JCRates jcRates(kStates);
 
   // OPP-4-lite: one flat allocation reused across all nCat categories
   std::vector<double>  cl_flat((maxNode + 1) * stride, 0.0);
@@ -80,12 +79,9 @@ void constant_site_probs_jc_impl(const Rcpp::IntegerVector& parent,
       const int par = parent[e];
       const int ch  = child[e];
       const double t          = edge_length[e] * rate;
-      // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
-      const double arg        = -kStates * t / km1;
-      const double neg_expm1  = -std::expm1(arg);
-      const double exp_term   = 1.0 - neg_expm1;
-      const double p_same     = inv_k + (1.0 - inv_k) * exp_term;
-      const double p_diff     = inv_k * neg_expm1;
+      const MkPrime::JCProbs jc = jcRates.probs(t);
+      const double p_same   = jc.pSame;
+      const double p_diff   = jc.pDiff;
       const double diff_coeff = p_same - p_diff;  // OPP-1
 
       for (int m = 0; m < nMask; ++m) {
@@ -168,8 +164,7 @@ void singleton_site_probs_jc_impl(const Rcpp::IntegerVector& parent,
   const int block   = 2 * kStates;  // L0 then L1
   const int stride  = nMask * block;
 
-  const double inv_k = 1.0 / kStates;
-  const double km1   = kStates - 1.0;
+  const MkPrime::JCRates jcRates(kStates);
 
   std::vector<double>  cl_flat((maxNode + 1) * stride, 0.0);
   std::vector<uint8_t> cl_init(maxNode + 1, 0u);
@@ -200,12 +195,9 @@ void singleton_site_probs_jc_impl(const Rcpp::IntegerVector& parent,
       const int par = parent[e];
       const int ch  = child[e];
       const double t          = edge_length[e] * rate;
-      // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
-      const double arg        = -kStates * t / km1;
-      const double neg_expm1  = -std::expm1(arg);
-      const double exp_term   = 1.0 - neg_expm1;
-      const double p_same     = inv_k + (1.0 - inv_k) * exp_term;
-      const double p_diff     = inv_k * neg_expm1;
+      const MkPrime::JCProbs jc = jcRates.probs(t);
+      const double p_same   = jc.pSame;
+      const double p_diff   = jc.pDiff;
       const double diff_coeff = p_same - p_diff;  // OPP-1
 
       for (int m = 0; m < nMask; ++m) {
@@ -331,7 +323,7 @@ void uninf_nonconst_probs_jc_impl(const Rcpp::IntegerVector& parent,
   const int nodeStride = nLive * width;
   const double k    = kStates;
   const double inv_k = 1.0 / k;
-  const double km1   = k - 1.0;
+  const MkPrime::JCRates jcRates(kStates);
 
   // Per node and live mask: A, D, F, each of `width`, and the highest m
   // reachable below.
@@ -371,9 +363,9 @@ void uninf_nonconst_probs_jc_impl(const Rcpp::IntegerVector& parent,
       const int par = parent[e];
       const int ch  = child[e];
       const double t         = edge_length[e] * rate;
-      const double neg_expm1 = -std::expm1(-k * t / km1);
-      const double p_same    = inv_k + (1.0 - inv_k) * (1.0 - neg_expm1);
-      const double p_diff    = inv_k * neg_expm1;
+      const MkPrime::JCProbs jc = jcRates.probs(t);
+      const double p_same   = jc.pSame;
+      const double p_diff   = jc.pDiff;
 
       for (int l = 0; l < nLive; ++l) {
         const int chOff  = ch  * nodeStride + l * width;
@@ -500,7 +492,7 @@ double constant_site_prob_jc_collapsed(Rcpp::IntegerVector parent,
   const int stride  = kEff;  // 1 pseudo-character
 
   const double inv_k = 1.0 / kFull;
-  const double km1   = kFull - 1.0;
+  const MkPrime::JCRates jcRates(kFull);
 
   std::vector<double>  cl_flat((maxNode + 1) * stride, 0.0);
   std::vector<uint8_t> cl_init(maxNode + 1, 0u);
@@ -522,12 +514,9 @@ double constant_site_prob_jc_collapsed(Rcpp::IntegerVector parent,
       const int par = parent[e];
       const int ch  = child[e];
       const double t          = edge_length[e] * rate;
-      // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
-      const double arg        = -kFull * t / km1;
-      const double neg_expm1  = -std::expm1(arg);
-      const double exp_term   = 1.0 - neg_expm1;
-      const double p_same     = inv_k + (1.0 - inv_k) * exp_term;
-      const double p_diff     = inv_k * neg_expm1;
+      const MkPrime::JCProbs jc = jcRates.probs(t);
+      const double p_same   = jc.pSame;
+      const double p_diff   = jc.pDiff;
       const double diff_coeff = p_same - p_diff;
       double* clPar = cl_flat.data() + par * stride;
       double* clCh  = cl_flat.data() + ch  * stride;
@@ -597,7 +586,7 @@ double singleton_site_prob_jc_collapsed(Rcpp::IntegerVector parent,
   const int stride  = nChar * kEff;
 
   const double inv_k = 1.0 / kFull;
-  const double km1   = kFull - 1.0;
+  const MkPrime::JCRates jcRates(kFull);
 
   // singleton tip occupies column 1: observed state 1 if kObs >= 2,
   // otherwise the lumped column (also index 1 because kEff = 2).
@@ -629,12 +618,9 @@ double singleton_site_prob_jc_collapsed(Rcpp::IntegerVector parent,
       const int par = parent[e];
       const int ch  = child[e];
       const double t        = edge_length[e] * rate;
-      // FAST-EXP-001: expm1 form avoids cancellation in p_diff at small rt.
-      const double arg      = -kFull * t / km1;
-      const double neg_expm1 = -std::expm1(arg);
-      const double exp_term = 1.0 - neg_expm1;
-      const double p_same   = inv_k + (1.0 - inv_k) * exp_term;
-      const double p_diff   = inv_k * neg_expm1;
+      const MkPrime::JCProbs jc = jcRates.probs(t);
+      const double p_same   = jc.pSame;
+      const double p_diff   = jc.pDiff;
       const double diff_coeff = p_same - p_diff;
       double* clPar = cl_flat.data() + par * stride;
       double* clCh  = cl_flat.data() + ch  * stride;
@@ -707,11 +693,7 @@ void constant_site_probs_mkn_impl(const Rcpp::IntegerVector& parent,
   const int nChar    = nMask * kStates;  // all-0 and all-1 per mask
   const int stride   = nChar * kStates;
 
-  double rate01, rate10;
-  mkn_rates(rate_loss, rate01, rate10);
-  const double lambda     = rate01 + rate10;
-  const double inv_lam_01 = rate01 / lambda;
-  const double inv_lam_10 = rate10 / lambda;
+  const MkPrime::MkNRates mknRates(rate_loss);
 
   // OPP-4-lite: single flat allocation
   std::vector<double>  cl_flat((maxNode + 1) * stride, 0.0);
@@ -743,14 +725,11 @@ void constant_site_probs_mkn_impl(const Rcpp::IntegerVector& parent,
       const int par = parent[e];
       const int ch  = child[e];
       const double t        = edge_length[e] * rate;
-      // FAST-EXP-001: expm1 form avoids cancellation in P01/P10 at small lambda*t.
-      const double arg      = -lambda * t;
-      const double neg_expm1 = -std::expm1(arg);
-      const double exp_term = 1.0 - neg_expm1;
-      const double P00 = inv_lam_10 + inv_lam_01 * exp_term;
-      const double P01 = inv_lam_01 * neg_expm1;
-      const double P10 = inv_lam_10 * neg_expm1;
-      const double P11 = inv_lam_01 + inv_lam_10 * exp_term;
+      const MkPrime::MkNProbs mkn = mknRates.probs(t);
+      const double P00 = mkn.p00;
+      const double P01 = mkn.p01;
+      const double P10 = mkn.p10;
+      const double P11 = mkn.p11;
       double* clPar = cl_flat.data() + par * stride;
       double* clCh  = cl_flat.data() + ch  * stride;
 
@@ -833,11 +812,7 @@ void singleton_site_probs_mkn_impl(const Rcpp::IntegerVector& parent,
   const int block   = 2 * 2 * kStates;
   const int stride  = nMask * block;
 
-  double rate01, rate10;
-  mkn_rates(rate_loss, rate01, rate10);
-  const double lambda     = rate01 + rate10;
-  const double inv_lam_01 = rate01 / lambda;
-  const double inv_lam_10 = rate10 / lambda;
+  const MkPrime::MkNRates mknRates(rate_loss);
 
   std::vector<double>  cl_flat((maxNode + 1) * stride, 0.0);
   std::vector<uint8_t> cl_init(maxNode + 1, 0u);
@@ -870,14 +845,11 @@ void singleton_site_probs_mkn_impl(const Rcpp::IntegerVector& parent,
       const int par = parent[e];
       const int ch  = child[e];
       const double t        = edge_length[e] * rate;
-      // FAST-EXP-001: expm1 form avoids cancellation in P01/P10 at small lambda*t.
-      const double arg      = -lambda * t;
-      const double neg_expm1 = -std::expm1(arg);
-      const double exp_term = 1.0 - neg_expm1;
-      const double P00 = inv_lam_10 + inv_lam_01 * exp_term;
-      const double P01 = inv_lam_01 * neg_expm1;
-      const double P10 = inv_lam_10 * neg_expm1;
-      const double P11 = inv_lam_01 + inv_lam_10 * exp_term;
+      const MkPrime::MkNProbs mkn = mknRates.probs(t);
+      const double P00 = mkn.p00;
+      const double P01 = mkn.p01;
+      const double P10 = mkn.p10;
+      const double P11 = mkn.p11;
 
       for (int h = 0; h < 2 * nMask; ++h) {
         double* clPar = cl_flat.data() + par * stride + h * 2 * kStates;

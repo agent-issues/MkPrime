@@ -48,6 +48,23 @@ R orchestration + Rcpp C++ hot loop, modelled on StratoBayes.
 
 Partitions exist per character type and per k' (or k) bin.
 
+## Public headers
+
+`inst/include/MkPrime/` holds the header-only kernels shared with downstream
+packages: `transition.h` (JCRates, MkNRates, F81), `models.h`, `pruning.h`
+(`Pruner<Model>`: dirty-flag CL cache, checkpoint/accept/reject), `acrv.h`,
+`corrections.h`, `ascertainment.h`. The MCMC hot path (`mcmc_likelihood.cpp`,
+`ascertainment.cpp`, `gibbs_partial_cl.h`, `node_cl_cache.h`) uses the
+transition and ACRV kernels; the R-level `pruning_*()` functions are thin
+`Pruner` wrappers. `NodeCLCache` (MCMC) is separate from `Pruner`: it is bound
+to `McmcData`, k'-grouping and unrooted `TreeNav`.
+
+Header API v2 (`MKPRIME_HEADER_API_VERSION 2`) adds edge-aware models (a
+model defining `transition_edge(edge, ...)` gets the edge index; `set_tree()`
+then also dirties nodes whose child edges were renumbered), `invalidate_edge()`,
+and an upward pass: `update_marginals()`, `node_up()`, `node_marginals()`,
+which need `transition_transpose()` (JC, MkN, F81; not `JCLumpedModel`).
+
 ## Shared file convention
 
 `src/init.cpp` and `RcppExports.cpp` are auto-generated. After running

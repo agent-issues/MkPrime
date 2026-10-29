@@ -218,7 +218,7 @@ this dispute started:
 3. Otherwise, PASS is reported **only** if the power ladder established a
    detection floor; without one the verdict is **INCONCLUSIVE**. PASS is never
    reported without a power statement.
-4. `gibbs_spr+br_*` failing → **Q2 = FAIL**, and the verdict is FAIL. Their
+4. `gibbs_spr+br_1to1` or `gibbs_spr+br_1to10` failing → **Q2 = FAIL**, and the verdict is FAIL. Their
    passing is always reported against the ladder's detection floor, never as a
    bare PASS.
 
@@ -240,12 +240,11 @@ startup. Exactness comes from tiny trees, not long chains.
   its power ladder still establishes a floor (c = 0.50), so quick mode returns
   PASS rather than INCONCLUSIVE on a corrected kernel — it is a usable
   post-fix gate on its own.
-* **Headline configuration** (the committed `verdict.txt` is **not** from it: it
-  is the quick-mode run, 600 replicates × 40 sweeps, at `a1ceb37`; the headline
-  FAIL on the unfixed kernel is the `verdict.txt` of `30e3f98`. A headline rerun
-  at `f71a19a` gave exit 0, `VERDICT: PASS`, power floor |relBias| 0.092,
-  `gibbs_spr` E[int_frac] bias −0.82 %, KS min p 0.169; that run's file is not
-  committed):
+* **Headline configuration** (the committed `verdict.txt` is this
+  configuration, re-run on the corrected kernel: PASS, exit 0; the headline FAIL
+  on the unfixed kernel is the `verdict.txt` of `30e3f98`, and `a1ceb37`'s was a
+  quick-mode 600 × 40 run. A rerun at `f71a19a` gave power floor |relBias|
+  0.092, `gibbs_spr` E[int_frac] bias −0.82 %, KS min p 0.169):
   `Rscript dev/red-team/heavy-tests/gibbs-spr-db.R --reps 5000 --sweeps 150`
   Estimated ~19 min by linear scaling from the quick run (state construction
   1.6 ms/replicate; 0.016–0.036 ms per C++ move; 0.28 ms per `weighted_spr`

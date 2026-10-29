@@ -8,17 +8,12 @@ Validation drivers for the `likelihoodMode = "marginal_k"` feature
 
 ## Prior variant
 
-Every driver pins `priorVariant` rather than inheriting `MkPrimeModel()`'s
-default, which for `geometric` changed from `"conditional"` (Model B) to
-`"unconditional"` (Model A) on 2026-06-04. `T-OVL-sampled-vs-marginal.R` and
-`gibbs-p-fullchain-check.R` default to `"unconditional"` (what ships) and take
-`MARGINAL_K_PRIOR_VARIANT=conditional` to override; the value is written into
-their outputs. The two `T-SBC-*-geometric.R` drivers are fixed at
-`"unconditional"` because their forward model is Model A.
+Model A is the only k' prior (the `priorVariant` argument was retired in
+186f5a9), so no driver passes it.
 
 **The recorded 2026-06 verdicts were Model B:** the T-OVL gated and moves-on
-runs and the 200k p-recheck (2026-06-02; `run-phase2-overnight.sh` now pins
-Model B to reproduce them) and the "3.2x p-ESS" full-chain check (2026-06-03).
+runs and the 200k p-recheck (2026-06-02; the retired Model B cannot be
+reproduced) and the "3.2x p-ESS" full-chain check (2026-06-03).
 They say nothing about the current default.
 
 ## Tests

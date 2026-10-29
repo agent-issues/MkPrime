@@ -5,12 +5,10 @@
 # (which groups characters by (type, kObs) for the C++ pruning loop). The
 # user-class layer wraps that grouping with an additional `classIdx` axis.
 #
-# Layer 1 currently implements:
-#   - argument validation (partition shape, unlink token resolution)
-#   - silent coercion of `unlink` when nothing is partitioned across
-# and routes EVERY partition != NULL case to a deferred-implementation
-# cli_abort. That keeps the §7a bit-identity guarantee for partition = NULL
-# in force while later commits add the user-class state and C++ surface.
+# Layer 1 implements argument validation (partition shape, unlink token
+# resolution), coercion of `unlink` when nothing is partitioned across, and
+# the per-class state, moves and column names for the "shape" and
+# "ratemultiplier" tokens. `partition = NULL` stays on the legacy path (§7a).
 
 # Valid `unlink` tokens for Layer 1. `brlens` is reserved for Layer 2
 # (T3 treatment) and rejected here with a "not yet implemented" message —
@@ -128,7 +126,7 @@
     if (!identical(observed, expected)) {
       missingCls <- setdiff(expected, observed)
       cli::cli_abort(c(
-        "{.arg partition} skips class id{?s} {.val {missingCls}}.",
+        "{.arg partition} skips class id{cli::qty(length(missingCls))}{?s} {.val {missingCls}}.",
         "i" = "Class labels must form a contiguous range {.val 1}:{.val nClasses}."
       ))
     }
@@ -141,7 +139,7 @@
     } else {
       "only one user class in {.arg partition}"
     }
-    .AlertInfo(
+    cli::cli_warn(
       "{.arg unlink} ignored ({why}; nothing to unlink across)."
     )
     unlink <- character(0)
@@ -269,10 +267,11 @@
 # log_lik is recomputed via cpp_log_likelihood_partitioned (sibling) so
 # the initial likelihood reflects the partition-aware path even when
 # class_rate is identically 1 (the §7b numeric-equivalence regime).
-.InitStatePartitioned <- function(tree, mkd, model, partitionSpec) {
+.InitStatePartitioned <- function(tree, mkd, model, partitionSpec,
+                                  initValues = NULL) {
   # Build base state via the existing legacy initializer (bit-identical
   # to the §7a-locked path).
-  state <- .InitState(tree, mkd, model)
+  state <- .InitState(tree, mkd, model, initValues)
 
   # Trivial spec: nothing to add. Caller can treat as legacy.
   if (is.null(partitionSpec$partition) || partitionSpec$nClasses == 1L) {
@@ -351,12 +350,15 @@
 
   state$log_lik <- cpp_log_likelihood_partitioned_xptr(
     dataPtr, parent, child, edgeLen, as.integer(state$kPrime),
-    rateLoss   = state$rate_loss,
-    rateLogSd  = state$class_rate_log_sd,
-    classRate  = state$class_rate,
-    etaNeo     = state$eta_neo,
-    betaScale  = state$beta_scale %||% 1.0,
-    rateNeo    = state$rate_neo %||% 1.0
+    rateLoss    = state$rate_loss,
+    rateLogSd   = state$class_rate_log_sd,
+    classRate   = state$class_rate,
+    etaNeo      = state$eta_neo,
+    p           = state$p %||% 0.5,
+    kprimeAlpha = state$kprime_alpha %||% 1,
+    kprimeBeta  = state$kprime_beta %||% 1,
+    betaScale   = state$beta_scale %||% 1.0,
+    rateNeo     = state$rate_neo %||% 1.0
   )
   # Recompute log_prior with the extended LogPrior() that handles per-class
   # fields (class_w, class_rate_log_sd). At the initial point (class_w ==

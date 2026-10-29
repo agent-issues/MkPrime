@@ -85,7 +85,7 @@ test_that("stepping stone declines the untempered marginal-k p move", {
 
 test_that("stepping stone honours pinned move weights", {
   seen <- DispatchedMoves(FourTipData(), FourTipTree(),
-                          mcmc = MkPrimeMCMC(moveWeights = c(nni = 0.9)))
+                          mcmc = MkPrimeMCMC(moveWeights = c(nni = 0.8)))
   expect_gt(mean(seen == "nni"), 0.7)
 })
 

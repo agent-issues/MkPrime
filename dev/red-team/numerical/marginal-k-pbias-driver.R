@@ -23,8 +23,7 @@
 #               [ rawLL_i(k) + ascCorr_i(k) + relabel(k,kObs_i)
 #                 + log w_k(p) ]
 #
-# with, under priorVariant = "unconditional" (Model A, what the harness
-# uses to match the forward):
+# with the k' prior on k' >= 2, as the forward draws it:
 #   log w_k(p) = log p + (k - 2) * log(1 - p)
 #
 # We build rawLL+asc+relabel via the PRODUCTION per-k path

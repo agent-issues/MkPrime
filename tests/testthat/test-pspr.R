@@ -117,19 +117,22 @@ test_that("pSPR Hastings formula includes normalization correction", {
 test_that("pSPR move produces valid trees", {
   skip_under_memcheck()
   skip_on_cran()
+  skip_if_not_installed("TreeSearch")
 
   nexFile <- system.file("datasets/Sun2018.nex", package = "TreeSearch")
   pd <- ReadAsPhyDat(nexFile)
   mkd <- MkPrimeData(pd)
 
-  # pSPR only (disable other topology moves); long enough that acceptance = 0
-  # would be a genuine bug (no fixed seed — cross-platform RNG differs).
+  # pSPR only (disable other topology moves), pinned at 5% of moves: about 400
+  # proposals, so acceptance = 0 would be a genuine bug. At its default 1% it
+  # sometimes accepted none (#442). No fixed seed: cross-platform RNG differs.
   cfg <- MkPrimeMCMC(
     nIter = 10000L, nRuns = 1L, nChains = 1L,
     minWarmup = 1000L, maxWarmup = 2000L,
     autoTune = FALSE, thin = 10L,
     gibbsSpr = FALSE, gibbsSubtreeSwap = FALSE,
-    tbr = FALSE, pSpr = TRUE
+    tbr = FALSE, pSpr = TRUE,
+    moveWeights = c(pspr = 0.05)
   )
 
   res <- RunMkPrime(mkd, mcmc = cfg)
@@ -145,6 +148,7 @@ test_that("pSPR move produces valid trees", {
 test_that("pSPR can be disabled", {
   skip_under_memcheck()
   skip_on_cran()
+  skip_if_not_installed("TreeSearch")
 
   nexFile <- system.file("datasets/Sun2018.nex", package = "TreeSearch")
   pd <- ReadAsPhyDat(nexFile)

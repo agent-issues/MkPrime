@@ -330,10 +330,6 @@ N_CAT          <- 4L
     if (arm$prior == "geometric") {
       modelArgs$kprimeTruncK <- K_MAX_PRIOR
     }
-    if (arm$prior %in% c("geometric", "empirical_geometric")) {
-      # Pinned: the forward above is Model A whatever the package default.
-      modelArgs$priorVariant <- "unconditional"
-    }
     if (arm$prior == "logseries") {
       modelArgs$kprimeLogseriesC <- model_hp$kprimeLogseriesC
     }

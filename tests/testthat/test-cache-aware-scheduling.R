@@ -13,7 +13,8 @@ test_that("cacheBonus increases partial-CL move selection when cache is valid", 
                       nrow = nTip, ncol = nChar,
                       dimnames = list(tree$tip.label, NULL))
   pd <- MatrixToPhyDat(tipStates)
-  mkd <- MkPrimeData(pd, knownStates = rep(kStates, nChar))
+  ks <- setNames(rep(kStates, nChar), seq_len(nChar))
+  mkd <- MkPrimeData(pd, knownStates = ks)
 
   model <- MkPrimeModel(coding = "variable", nCat = 1L)
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)
@@ -81,7 +82,8 @@ test_that("cacheBonus = 1 reproduces default behaviour", {
                       nrow = nTip, ncol = nChar,
                       dimnames = list(tree$tip.label, NULL))
   pd <- MatrixToPhyDat(tipStates)
-  mkd <- MkPrimeData(pd, knownStates = rep(kStates, nChar))
+  ks <- setNames(rep(kStates, nChar), seq_len(nChar))
+  mkd <- MkPrimeData(pd, knownStates = ks)
 
   model <- MkPrimeModel(coding = "variable", nCat = 1L)
   model <- MkPrime:::.FinalizeModel(model, tree, mkd)
@@ -146,7 +148,10 @@ test_that("cache boost follows the previous move type, not acceptance", {
   tree$edge.length <- tree$edge.length + 0.01
   tipStates <- matrix(sample(0:1, 10 * 4, replace = TRUE), nrow = 10,
                       dimnames = list(tree$tip.label, NULL))
-  mkd <- MkPrimeData(MatrixToPhyDat(tipStates), knownStates = rep(2L, 4))
+  mkd <- MkPrimeData(
+    MatrixToPhyDat(tipStates),
+    knownStates = setNames(rep(2L, 4), 1:4)
+  )
   model <- MkPrime:::.FinalizeModel(MkPrimeModel(coding = "variable",
                                                  nCat = 1L), tree, mkd)
   tree0 <- Preorder(tree)

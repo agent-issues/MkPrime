@@ -60,12 +60,14 @@ test_that("auto thin changes with move configuration", {
   pd <- MatrixToPhyDat(mat)
   tree <- NJTree(pd, edgeLengths = TRUE)
 
+  # No convergence check falls within nIter, so thin keeps its initial,
+  # move-count value rather than adapting to the chain's ACT.
   # Minimal moves: no Gibbs, no TBR
   # Expected: tree_length, branch_lengths, nni, spr,
   #   kPrime, p, rate_log_sd = 7
   mcmc_min <- suppressWarnings(MkPrimeMCMC(
     nIter = 1500L, maxWarmup = 200L, minWarmup = 200L,
-    autoTune = FALSE, nRuns = 1L,
+    autoTune = FALSE, nRuns = 1L, checkEvery = 5000L,
     gibbsSpr = FALSE, gibbsSubtreeSwap = FALSE, tbr = FALSE
   ))
 
@@ -74,7 +76,7 @@ test_that("auto thin changes with move configuration", {
   #   gibbs_spr, gibbs_subtree_swap, tbr, kPrime, p, rate_log_sd = 10
   mcmc_max <- suppressWarnings(MkPrimeMCMC(
     nIter = 1500L, maxWarmup = 200L, minWarmup = 200L,
-    autoTune = FALSE, nRuns = 1L,
+    autoTune = FALSE, nRuns = 1L, checkEvery = 5000L,
     gibbsSpr = TRUE, gibbsSubtreeSwap = TRUE, tbr = TRUE
   ))
 

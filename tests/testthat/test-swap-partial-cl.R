@@ -6,9 +6,9 @@
 
 # Shared fixture
 .swap_fixture <- function(seed, nTip, nChar, maxState,
-                          model = MkPrimeModel()) {
+                          model = MkPrimeModel(), rooted = FALSE) {
   set.seed(seed)
-  tree <- Preorder(rtree(nTip, rooted = FALSE))
+  tree <- Preorder(rtree(nTip, rooted = rooted))
   mat  <- matrix(sample(0:maxState, nTip * nChar, replace = TRUE),
                  nrow = nTip, ncol = nChar,
                  dimnames = list(tree$tip.label, NULL))
@@ -62,4 +62,13 @@ test_that("partial CL matches full eval: 20-tip with ACRV", {
 test_that("partial CL matches full eval: 54-tip tree", {
   fix <- .swap_fixture(seed = 1842, nTip = 54, nChar = 20, maxState = 5)
   .validate_all_swaps(fix)
+})
+
+# The default start trees have a degree-2 root, 2n - 2 edges (#338).
+test_that("partial CL matches full eval on rooted trees", {
+  for (nTip in c(8L, 20L)) {
+    fix <- .swap_fixture(nTip, nTip, 12L, 2L, rooted = TRUE)
+    expect_equal(nrow(fix$tree$edge), 2L * nTip - 2L)
+    expect_gt(.validate_all_swaps(fix), 0L)
+  }
 })

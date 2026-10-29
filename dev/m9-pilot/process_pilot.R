@@ -29,18 +29,38 @@ outgroups <- list(
 outgroup <- outgroups[[pid]]
 stopifnot(!is.null(outgroup))
 
-wcTrees <- setNames(unclass(ape::read.tree(
-  "../neotrans/inst/wct/wellCorroboratedTrees.nwk")),
-  paste0("0720", 0:6))
+# Trees are named by position, in `outgroups` order; the outgroup check below
+# catches a reordered file.
+wcTreesRaw <- unclass(ape::read.tree(
+  "../neotrans/inst/wct/wellCorroboratedTrees.nwk"))
+stopifnot(length(wcTreesRaw) == length(outgroups))
+wcTrees <- setNames(wcTreesRaw, names(outgroups))
 wcTree <- wcTrees[[pid]]
+stopifnot("outgroup missing from the WCT; trees out of order?" =
+            all(outgroup %in% wcTree[["tip.label"]]))
 
 de_zz <- function(tr) {
-  # Mirrors neotrans::DeZZ — strip "zz" prefix and species suffix so tip
-  # labels match the WCT's genus-only labels.
+  # Mirrors neotrans::DeZZ: strip the "zz" prefix only. The species suffix is
+  # kept until ToGenusTree, after the tips have been selected.
   lab <- tr[["tip.label"]]
   zz <- startsWith(lab, "zz")
   lab[zz] <- substr(lab[zz], 3, nchar(lab[zz]))
-  tr[["tip.label"]] <- sub("([^_]+)_.*", "\\1", lab, perl = TRUE)
+  tr[["tip.label"]] <- lab
+  tr
+}
+
+GenusOf <- function(lab) sub("([^_]+)_.*", "\\1", lab, perl = TRUE)
+
+# Keep one tip (the alphabetically first label) per genus in `genera`, then
+# relabel to genus so tips match the WCT's genus-only labels. Collapsing labels
+# first would give KeepTip duplicated tips when congeners are present.
+ToGenusTree <- function(tr, genera) {
+  lab <- tr[["tip.label"]]
+  g <- GenusOf(lab)
+  ord <- order(lab)
+  keep <- lab[ord][g[ord] %in% genera & !duplicated(g[ord])]
+  tr <- KeepTip(tr, keep)
+  tr[["tip.label"]] <- GenusOf(tr[["tip.label"]])
   tr
 }
 
@@ -64,11 +84,11 @@ process_model <- function(model) {
   }
   t1 <- read_rb_trees(f1)
   t2 <- read_rb_trees(f2)
-  commonTips <- intersect(t1[[1]]$tip.label, wcTree$tip.label)
+  commonTips <- intersect(GenusOf(t1[[1]]$tip.label), wcTree$tip.label)
   wcPruned <- KeepTip(wcTree, commonTips) |> RootTree(outgroup)
   prune_and_root <- function(trees) {
     lapply(trees, function(tr) {
-      KeepTip(tr, commonTips) |> RootTree(outgroup)
+      ToGenusTree(tr, commonTips) |> RootTree(outgroup)
     }) |> structure(class = "multiPhylo")
   }
   t1b <- burn(prune_and_root(t1))

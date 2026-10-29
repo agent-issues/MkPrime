@@ -140,7 +140,8 @@ u_rows <- lapply(results, function(r) {
   data.frame(
     tree_idx       = r$tree_idx,
     rep_idx        = r$rep_idx,
-    char_idx       = seq_len(n),
+    char_pos       = seq_len(n),
+    char_idx       = if (length(r$char_idx) == n) r$char_idx else NA_integer_,
     kObs           = r$kObs,
     u_post_mean    = unname(r$u_post_means),
     u_post_mean_eg = u_eg,
@@ -149,7 +150,7 @@ u_rows <- lapply(results, function(r) {
 })
 
 u_df <- do.call(rbind, u_rows)
-u_df <- u_df[order(u_df$tree_idx, u_df$rep_idx, u_df$char_idx), ]
+u_df <- u_df[order(u_df$tree_idx, u_df$rep_idx, u_df$char_pos), ]
 rownames(u_df) <- NULL
 
 # ---- Quality checks ----------------------------------------------------------
