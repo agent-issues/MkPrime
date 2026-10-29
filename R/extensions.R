@@ -34,6 +34,7 @@
 #' @return An `MkPrimeExtension` object, to pass to
 #'   `MkPrimeModel(extensions)`.
 #' @seealso [MkPrimeModel()]
+#' @family model setup
 #' @export
 MkPrimeExtension <- function(pointer) {
   if (!is.function(pointer)) {

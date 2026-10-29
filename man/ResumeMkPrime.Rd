@@ -59,3 +59,12 @@ The remaining iterations will be appended to the existing samples.
 Called automatically by \code{\link[=RunMkPrime]{RunMkPrime()}} when a checkpoint file exists
 and \code{overwrite = FALSE}.
 }
+\seealso{
+Other running analyses:
+\code{\link[=EasyMkPrime]{EasyMkPrime()}},
+\code{\link[=MkBayesianServer]{MkBayesianServer()}},
+\code{\link[=MkBayesianUi]{MkBayesianUi()}},
+\code{\link[=MkPrimeVerbosity]{MkPrimeVerbosity()}},
+\code{\link[=RunMkPrime]{RunMkPrime()}}
+}
+\concept{running analyses}

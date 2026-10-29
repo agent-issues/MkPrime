@@ -160,6 +160,7 @@
 #' mathematical derivation.
 #'
 #' @return An S3 object of class `MkPrimeModel`.
+#' @family model setup
 #' @export
 MkPrimeModel <- function(
     coding = "variable",

@@ -31,44 +31,28 @@ articles:
       - het-details
 
 reference:
-  - title: Running an analysis
-    desc: >
-      The main workflow: prepare data, specify a model, configure MCMC,
-      and run.
+  - title: Model setup
+    desc: Prepare data, specify the model and priors, and configure MCMC.
     contents:
-      - RunMkPrime
-      - MkPrimeData
-      - MkPrimeModel
-      - MkPrimeMCMC
-      - MkPrimeEmpiricalPrior
-      - MkPrimeExtension
-      - empiricalNObs
-      - AutoDetectNeomorphic
-      - MkPrimeVerbosity
-      - EasyMkPrime
-      - MkBayesianServer
-      - MkBayesianUi
+      - has_concept("model setup")
 
-  - title: Diagnostics and results
-    desc: >
-      Assess convergence, inspect the posterior, and resume interrupted runs.
+  - title: Running an analysis
+    desc: Run, resume and configure console output, or use the Shiny interface.
     contents:
-      - ConvergenceDiagnostics
-      - MkpLogLikelihood
-      - ResumeMkPrime
+      - has_concept("running analyses")
+
+  - title: Convergence and model comparison
+    desc: Assess convergence, set burn-in, and estimate marginal likelihoods.
+    contents:
+      - has_concept("diagnostics and model comparison")
       - print.MkpDiagnostics
-      - AutoBurnin
-      - SetBurnin
-      - TreeESS
-      - mkp_stepping_stone
-      - MkPrimeRecover
-      - ReadMkLog
-      - MkLogPaths
-      - MkCancelPath
+
+  - title: Posterior samples and logs
+    desc: Read, recover and inspect streamed MCMC output.
+    contents:
+      - has_concept("posterior logs")
 
   - title: Progress visualization
     desc: Callbacks for monitoring a running MCMC.
     contents:
-      - MkpTracePlot
-      - MkpPngProgress
-      - MkpWatchLog
+      - has_concept("progress monitoring")

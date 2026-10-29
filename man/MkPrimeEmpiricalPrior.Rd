@@ -48,3 +48,13 @@ MkPrimeEmpiricalPrior(body = rep(0.25, 4))
 # Body plus geometric tail
 MkPrimeEmpiricalPrior(body = c(0.6, 0.3), tail_decay = 0.4)
 }
+\seealso{
+Other model setup:
+\code{\link[=AutoDetectNeomorphic]{AutoDetectNeomorphic()}},
+\code{\link[=MkPrimeData]{MkPrimeData()}},
+\code{\link[=MkPrimeExtension]{MkPrimeExtension()}},
+\code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}},
+\code{\link[=MkPrimeModel]{MkPrimeModel()}},
+\code{\link{empiricalNObs}}
+}
+\concept{model setup}

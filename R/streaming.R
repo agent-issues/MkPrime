@@ -360,6 +360,7 @@
 #'   `NULL` (with a message) if no data is available.
 #'
 #' @seealso [RunMkPrime()], [ReadMkLog()]
+#' @family posterior logs
 #' @export
 MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
 
@@ -655,6 +656,7 @@ MkPrimeRecover <- function(logFile = NULL, checkpointFile = NULL) {
 #'   iteration numbers) is stored as the row-names attribute and is not
 #'   included as a data column.
 #'
+#' @family posterior logs
 #' @export
 ReadMkLog <- function(logFile) {
   if (length(logFile) > 1L) {

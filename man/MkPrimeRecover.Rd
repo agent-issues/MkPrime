@@ -36,4 +36,11 @@ from the most recent interrupted run in the current session.  Pass
 }
 \seealso{
 \code{\link[=RunMkPrime]{RunMkPrime()}}, \code{\link[=ReadMkLog]{ReadMkLog()}}
+
+Other posterior logs:
+\code{\link[=MkCancelPath]{MkCancelPath()}},
+\code{\link[=MkLogPaths]{MkLogPaths()}},
+\code{\link[=MkpLogLikelihood]{MkpLogLikelihood()}},
+\code{\link[=ReadMkLog]{ReadMkLog()}}
 }
+\concept{posterior logs}

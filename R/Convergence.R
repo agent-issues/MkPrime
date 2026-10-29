@@ -58,6 +58,7 @@
 #'   - `treeEss`: Named numeric vector with `frechetCorrelationESS` and
 #'     `medianPseudoESS` (or `NULL` if not computed).
 #'     `frechetCorrelationESS` is `NA` unless `frechetESS = TRUE`.
+#' @family diagnostics and model comparison
 #' @export
 ConvergenceDiagnostics <- function(posterior, trees = FALSE,
                                    frechetESS = FALSE) {

@@ -521,3 +521,13 @@ Use \code{moveWeights} to pin specific move frequencies and exclude
 them from adaptation in all phases.
 }
 }
+\seealso{
+Other model setup:
+\code{\link[=AutoDetectNeomorphic]{AutoDetectNeomorphic()}},
+\code{\link[=MkPrimeData]{MkPrimeData()}},
+\code{\link[=MkPrimeEmpiricalPrior]{MkPrimeEmpiricalPrior()}},
+\code{\link[=MkPrimeExtension]{MkPrimeExtension()}},
+\code{\link[=MkPrimeModel]{MkPrimeModel()}},
+\code{\link{empiricalNObs}}
+}
+\concept{model setup}

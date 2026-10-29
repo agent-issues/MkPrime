@@ -20,4 +20,12 @@ files).  Pair with \code{\link[=MkBayesianServer]{MkBayesianServer()}}.
 }
 \seealso{
 \code{\link[=MkBayesianServer]{MkBayesianServer()}}, \code{\link[=RunMkPrime]{RunMkPrime()}}, \code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}}
+
+Other running analyses:
+\code{\link[=EasyMkPrime]{EasyMkPrime()}},
+\code{\link[=MkBayesianServer]{MkBayesianServer()}},
+\code{\link[=MkPrimeVerbosity]{MkPrimeVerbosity()}},
+\code{\link[=ResumeMkPrime]{ResumeMkPrime()}},
+\code{\link[=RunMkPrime]{RunMkPrime()}}
 }
+\concept{running analyses}

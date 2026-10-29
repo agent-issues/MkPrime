@@ -20,4 +20,11 @@ the cancel file alongside the log files in one place.
 }
 \seealso{
 \code{\link[=MkLogPaths]{MkLogPaths()}}, \code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}}
+
+Other posterior logs:
+\code{\link[=MkLogPaths]{MkLogPaths()}},
+\code{\link[=MkPrimeRecover]{MkPrimeRecover()}},
+\code{\link[=MkpLogLikelihood]{MkpLogLikelihood()}},
+\code{\link[=ReadMkLog]{ReadMkLog()}}
 }
+\concept{posterior logs}

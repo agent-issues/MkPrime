@@ -20,7 +20,8 @@ An extension contributes parameters, and their prior, to an MkPrime
 analysis. Each parameter is a positive real that is logged alongside
 MkPrime's own, checkpointed, carried through tempered-chain swaps and
 updated by a Bactrian scale move.
-
+}
+\details{
 An extension may also contribute a log-likelihood term for its own data
 given the tree, and moves of its own on its parameters. Characters an
 extension models are given to the extension, not to \code{\link[=MkPrimeData]{MkPrimeData()}}. Beside
@@ -38,13 +39,21 @@ likelihood and passes their tip states to the extension, which scores
 them, including any ascertainment correction. They still count towards
 the normalisation of \code{rate_neo}, which MkPrime keeps sampling, together
 with \code{rate_loss}. Claims are not available with a user partition.
-}
-\details{
+
 Extensions are written in C or C++ against
 \code{system.file("include/MkPrime/extension.h", package = "MkPrime")}
-(\verb{LinkingTo: MkPrime}): a registered \code{.Call} entry point returns
-\code{MkPrimeExtensionPtr(&ext)} for a static \code{MkPrimeExtension} struct.
+(\code{LinkingTo: MkPrime}): a registered \code{.Call} entry point returns
+\verb{MkPrimeExtensionPtr(&ext)} for a static \code{MkPrimeExtension} struct.
 }
 \seealso{
 \code{\link[=MkPrimeModel]{MkPrimeModel()}}
+
+Other model setup:
+\code{\link[=AutoDetectNeomorphic]{AutoDetectNeomorphic()}},
+\code{\link[=MkPrimeData]{MkPrimeData()}},
+\code{\link[=MkPrimeEmpiricalPrior]{MkPrimeEmpiricalPrior()}},
+\code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}},
+\code{\link[=MkPrimeModel]{MkPrimeModel()}},
+\code{\link{empiricalNObs}}
 }
+\concept{model setup}

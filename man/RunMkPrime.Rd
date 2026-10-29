@@ -141,3 +141,18 @@ times out, and set \code{logFile} to a path on the local node's filesystem.
 }
 }
 
+\seealso{
+Summarise and diagnose with \code{\link[=ConvergenceDiagnostics]{ConvergenceDiagnostics()}}, \code{\link[=AutoBurnin]{AutoBurnin()}},
+\code{\link[=SetBurnin]{SetBurnin()}} and \code{\link[=TreeESS]{TreeESS()}}; read streamed logs with \code{\link[=ReadMkLog]{ReadMkLog()}} and
+\code{\link[=MkPrimeRecover]{MkPrimeRecover()}}; plot with \code{\link[=MkpTracePlot]{MkpTracePlot()}}; estimate marginal
+likelihood with \code{\link[=mkp_stepping_stone]{mkp_stepping_stone()}}; continue a run with
+\code{\link[=ResumeMkPrime]{ResumeMkPrime()}}.
+
+Other running analyses:
+\code{\link[=EasyMkPrime]{EasyMkPrime()}},
+\code{\link[=MkBayesianServer]{MkBayesianServer()}},
+\code{\link[=MkBayesianUi]{MkBayesianUi()}},
+\code{\link[=MkPrimeVerbosity]{MkPrimeVerbosity()}},
+\code{\link[=ResumeMkPrime]{ResumeMkPrime()}}
+}
+\concept{running analyses}

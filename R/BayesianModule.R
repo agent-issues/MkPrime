@@ -203,6 +203,7 @@
 #' @param id Shiny module namespace ID (character scalar).
 #' @return A `tagList` suitable for embedding in a sidebar or tab panel.
 #' @seealso [MkBayesianServer()], [RunMkPrime()], [MkPrimeMCMC()]
+#' @family running analyses
 #' @export
 MkBayesianUi <- function(id) {
   ns <- shiny::NS(id)
@@ -300,6 +301,7 @@ MkBayesianUi <- function(id) {
 #'
 #' @seealso [MkBayesianUi()], [RunMkPrime()], [MkPrimeMCMC()],
 #'   [ReadMkLog()], [MkCancelPath()]
+#' @family running analyses
 #' @export
 MkBayesianServer <- function(id, dataset, startTree = NULL) {
   shiny::moduleServer(id, function(input, output, session) {

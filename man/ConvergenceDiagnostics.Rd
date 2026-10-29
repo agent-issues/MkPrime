@@ -48,3 +48,11 @@ posteriors, and also checks tail convergence.
 Optionally computes topology ESS using the Robinson-Foulds distance
 via \strong{TreeDist}.
 }
+\seealso{
+Other diagnostics and model comparison:
+\code{\link[=AutoBurnin]{AutoBurnin()}},
+\code{\link[=SetBurnin]{SetBurnin()}},
+\code{\link[=TreeESS]{TreeESS()}},
+\code{\link[=mkp_stepping_stone]{mkp_stepping_stone()}}
+}
+\concept{diagnostics and model comparison}

@@ -86,3 +86,11 @@ so the correction does not change with \code{kPrime}.
 \references{
 \insertAllCited{}
 }
+\seealso{
+Other posterior logs:
+\code{\link[=MkCancelPath]{MkCancelPath()}},
+\code{\link[=MkLogPaths]{MkLogPaths()}},
+\code{\link[=MkPrimeRecover]{MkPrimeRecover()}},
+\code{\link[=ReadMkLog]{ReadMkLog()}}
+}
+\concept{posterior logs}

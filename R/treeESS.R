@@ -56,6 +56,7 @@
 #'   class(trees) <- "multiPhylo"
 #'   TreeESS(trees)
 #' }
+#' @family diagnostics and model comparison
 #' @export
 TreeESS <- function(trees, dist_fn = TreeDist::RobinsonFoulds,
                      min_nsamples = 5L, frechet = FALSE,

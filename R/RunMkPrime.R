@@ -112,6 +112,12 @@
 #' For long runs, set `checkpointFile` so the job can be resumed if it
 #' times out, and set `logFile` to a path on the local node's filesystem.
 #'
+#' @seealso Summarise and diagnose with [ConvergenceDiagnostics()], [AutoBurnin()],
+#'   [SetBurnin()] and [TreeESS()]; read streamed logs with [ReadMkLog()] and
+#'   [MkPrimeRecover()]; plot with [MkpTracePlot()]; estimate marginal
+#'   likelihood with [mkp_stepping_stone()]; continue a run with
+#'   [ResumeMkPrime()].
+#' @family running analyses
 #' @export
 RunMkPrime <- function(data, tree = NULL,
                        neomorphic = integer(0),
@@ -4221,6 +4227,7 @@ RunMkPrime <- function(data, tree = NULL,
 #' @inheritParams RunMkPrime
 #'
 #' @return An `MkPosterior` object with combined samples.
+#' @family running analyses
 #' @export
 ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                            neomorphic = integer(0),

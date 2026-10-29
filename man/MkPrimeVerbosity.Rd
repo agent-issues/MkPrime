@@ -57,4 +57,12 @@ MkPrimeVerbosity(old)
 }
 \seealso{
 \code{\link[=RunMkPrime]{RunMkPrime()}}, which takes a \code{verbosity} argument.
+
+Other running analyses:
+\code{\link[=EasyMkPrime]{EasyMkPrime()}},
+\code{\link[=MkBayesianServer]{MkBayesianServer()}},
+\code{\link[=MkBayesianUi]{MkBayesianUi()}},
+\code{\link[=ResumeMkPrime]{ResumeMkPrime()}},
+\code{\link[=RunMkPrime]{RunMkPrime()}}
 }
+\concept{running analyses}

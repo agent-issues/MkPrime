@@ -43,5 +43,14 @@ Users may supply their own object of class \code{"MkPrimeEmpiricalPrior"} via
 }
 \seealso{
 \code{\link[=MkPrimeEmpiricalPrior]{MkPrimeEmpiricalPrior()}}, \code{\link[=MkPrimeModel]{MkPrimeModel()}}
+
+Other model setup:
+\code{\link[=AutoDetectNeomorphic]{AutoDetectNeomorphic()}},
+\code{\link[=MkPrimeData]{MkPrimeData()}},
+\code{\link[=MkPrimeEmpiricalPrior]{MkPrimeEmpiricalPrior()}},
+\code{\link[=MkPrimeExtension]{MkPrimeExtension()}},
+\code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}},
+\code{\link[=MkPrimeModel]{MkPrimeModel()}}
 }
+\concept{model setup}
 \keyword{datasets}

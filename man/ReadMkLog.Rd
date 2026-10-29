@@ -27,3 +27,11 @@ column layout as \code{MkPosterior$samples} and can be assigned directly:
 summary(result)
 }\if{html}{\out{</div>}}
 }
+\seealso{
+Other posterior logs:
+\code{\link[=MkCancelPath]{MkCancelPath()}},
+\code{\link[=MkLogPaths]{MkLogPaths()}},
+\code{\link[=MkPrimeRecover]{MkPrimeRecover()}},
+\code{\link[=MkpLogLikelihood]{MkpLogLikelihood()}}
+}
+\concept{posterior logs}
