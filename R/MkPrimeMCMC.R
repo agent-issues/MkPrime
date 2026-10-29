@@ -128,16 +128,21 @@
 #' @param gibbsSpr Logical; include the Gibbs SPR move (default `TRUE`).
 #'   Cost: O(N) likelihood evaluations per proposal, where N is the number
 #'   of candidate reattachment edges.
+#'   Alternatively, set via `moves`.
 #' @param gibbsSubtreeSwap Logical; include the Gibbs subtree-swap move
 #'   (default `TRUE`). Cost: O(N) likelihood evaluations.
+#'   Alternatively, set via `moves`.
 #' @param weightedBranchScale Logical; include the weighted branch-length
 #'   scale move (default `FALSE`). Cost: O(B) likelihood evaluations, where
 #'   B = `nBranchBins`.
+#'   Alternatively, set via `moves`.
 #' @param weightedSpr Logical; include the weighted SPR move (default
 #'   `FALSE`). Cost: O(N * B) likelihood evaluations. Enable for improved
 #'   mixing on difficult tree spaces at the cost of slower iterations.
+#'   Alternatively, set via `moves`.
 #' @param weightedSubtreeSwap Logical; include the weighted subtree-swap
 #'   move (default `FALSE`). Cost: O(N * B) likelihood evaluations.
+#'   Alternatively, set via `moves`.
 #' @param gibbsPMarginal Logical; use the data-augmentation
 #'   Metropolis-within-Gibbs `p`-update as the PRIMARY `p`-move for
 #'   `likelihoodMode = "marginal_k"` (default `FALSE`; no effect under
@@ -152,18 +157,21 @@
 #'   accepted update, so ESS/second at the >=100-tip scale is unproven and may
 #'   erode the per-iteration gain. A `p`-independent full-support marginal cache
 #'   (deferred) would remove that cost and justify defaulting it on.
+#'   Alternatively, set via `moves`.
 #' @param tbr Logical; include the TBR (Tree Bisection and Reconnection)
 #'   topology move (default `TRUE`). TBR is a superset of SPR: it additionally
 #'   re-roots the pruned subtree at a random internal edge before regrafting,
 #'   enabling larger jumps in tree space. Cost: O(nEdge) per proposal (same
 #'   as SPR). The adaptive scheduler will downweight TBR on small trees where
 #'   SPR is sufficient.
+#'   Alternatively, set via `moves`.
 #' @param pSpr Logical; include the parsimony-guided SPR move (default
 #'   `TRUE`). Like standard SPR but weights candidate regraft positions by
 #'   Fitch parsimony score, so topologically better positions are proposed
 #'   more often. Much cheaper than Gibbs SPR (no likelihood evaluation per
 #'   candidate), but better guided than uniform SPR.
 #'   See Yang & Rodríguez (2013); Ronquist et al. (2020).
+#'   Alternatively, set via `moves`.
 #' @param gibbsWarmupFactor Numeric in (0, 1]; weight of the Gibbs kPrime
 #'   sweep relative to other moves during warmup (default `1/3`). A lower
 #'   value reduces warmup overhead from the sweep; the weight is restored at
@@ -177,6 +185,7 @@
 #'   50 samples if warmup was too short to estimate it; it is then
 #'   fixed. No effect when parameters are uncorrelated (degenerates to
 #'   independent proposals).
+#'   Alternatively, set via `moves`.
 #' @param blockGibbsBranch Logical; include the block Gibbs branch-length
 #'   sweep move (default `FALSE`). Each call sweeps over all edge pairs
 #'   in random-permutation order, sampling each from an approximate
@@ -186,11 +195,13 @@
 #'   mix slowly through the branch-length space. The adaptive scheduler
 #'   accounts for the multi-dimensional nature of this move via its `dim`
 #'   field.
+#'   Alternatively, set via `moves`.
 #' @param dirichletBranch Logical; include the block Dirichlet simplex
 #'   branch-length move (default `TRUE`). Each proposal selects K random
 #'   edges, draws new fractions from a Dirichlet centered on current values,
 #'   and rescales the remaining edges to maintain the simplex. Cost: one
 #'   likelihood evaluation per proposal (same as BetaSimplex).
+#'   Alternatively, set via `moves`.
 #' @param dirichletK Integer or `NULL`; number of edges to update per
 #'   Dirichlet branch proposal. Default `NULL` uses `min(nEdge, 5)`.
 #'   Smaller values give higher acceptance but smaller moves; larger
@@ -200,6 +211,7 @@
 #'   starting edge (default `TRUE`). The connected selection produces
 #'   compact dirty sets for efficient partial CL evaluation, and targets
 #'   correlated local branch lengths.
+#'   Alternatively, set via `moves`.
 #' @param localDirichletK Integer or `NULL`; number of connected edges
 #'   for the localized Dirichlet proposal. Default `NULL` uses
 #'   `min(nEdge, 6)`.
@@ -269,6 +281,19 @@
 #'   proposed; 1 disables the boost, which has no effect when
 #'   [MkPrimeModel()] sets `qHeterogeneity = TRUE` or
 #'   `likelihoodMode = "marginal_k"`.
+#' @param moves Named list of logicals switching moves on or off, keyed by
+#'   the toggle names in the table below; moves not listed keep their default.
+#'   Setting a move both here and as its own argument is an error unless the
+#'   two agree.
+#'
+#'   | Name | Default | Name | Default |
+#'   |------|---------|------|---------|
+#'   | `gibbsSpr` | `TRUE` | `weightedSubtreeSwap` | `FALSE` |
+#'   | `gibbsSubtreeSwap` | `TRUE` | `blockGibbsBranch` | `FALSE` |
+#'   | `tbr` | `TRUE` | `gibbsPMarginal` | `FALSE` |
+#'   | `pSpr` | `TRUE` | `dirichletBranch` | `TRUE` |
+#'   | `joint2d` | `TRUE` | `localDirichlet` | `TRUE` |
+#'   | `weightedBranchScale` | `FALSE` | `weightedSpr` | `FALSE` |
 #' @param tuning Named list of initial tuning parameters for each move
 #'   type. See Details.
 #'
@@ -458,7 +483,8 @@ MkPrimeMCMC <- function(
     nCore = getOption("mc.cores", 1L),
     pollInterval = 10L,
     cancelGrace = 30L,
-    gibbsWarmupFactor = 1/3
+    gibbsWarmupFactor = 1/3,
+    moves = list()
 ) {
   nIter <- if (is.infinite(nIter)) Inf else as.integer(nIter)
   if (!identical(thin, "auto")) {
@@ -572,7 +598,17 @@ MkPrimeMCMC <- function(
     cli::cli_abort("{.arg bufferSize} must be a positive integer.")
   }
 
-  # Validate move toggles
+  moves <- .CheckMoves(moves)
+  given <- intersect(.kMoveToggles, names(match.call()))
+  for (m in names(moves)) {
+    if (m %in% given && !identical(as.logical(get(m)), moves[[m]])) {
+      cli::cli_abort(
+        "{.arg {m}} is {.val {get(m)}} but {.code moves${m}} is          {.val {moves[[m]]}}; set it once."
+      )
+    }
+    assign(m, moves[[m]])
+  }
+
   tbr <- as.logical(tbr)
   pSpr <- as.logical(pSpr)
   joint2d <- as.logical(joint2d)
@@ -758,4 +794,55 @@ MkPrimeMCMC <- function(
          gibbsWarmupFactor = gibbsWarmupFactor),
     class = "MkPrimeMCMC"
   )
+}
+
+.kMoveToggles <- c(
+  "gibbsSpr", "gibbsSubtreeSwap", "tbr", "pSpr", "joint2d",
+  "weightedBranchScale", "weightedSpr", "weightedSubtreeSwap",
+  "blockGibbsBranch", "gibbsPMarginal", "dirichletBranch", "localDirichlet"
+)
+
+# Validate the `moves` argument of [MkPrimeMCMC()]; returns it unchanged.
+#
+# @importFrom utils adist
+# @keywords internal
+.CheckMoves <- function(moves) {
+  if (!is.list(moves)) {
+    cli::cli_abort("{.arg moves} must be a named list of logicals.")
+  }
+  nms <- names(moves) %||% character(length(moves))
+  if (anyNA(nms) || any(!nzchar(nms))) {
+    cli::cli_abort("Every element of {.arg moves} must be named.")
+  }
+  if (anyDuplicated(nms)) {
+    cli::cli_abort(
+      "{.arg moves} names each move once; repeated:        {.val {unique(nms[duplicated(nms)])}}."
+    )
+  }
+  bad <- setdiff(nms, .kMoveToggles)
+  if (length(bad)) {
+    nearest <- vapply(bad, function(b) {
+      d <- adist(b, .kMoveToggles, ignore.case = TRUE)
+      if (min(d) <= 3) .kMoveToggles[which.min(d)] else NA_character_
+    }, character(1))
+    valid <- .kMoveToggles
+    hint <- if (anyNA(nearest)) {
+      c("i" = "Valid moves: {.val {valid}}.")
+    } else {
+      c("i" = "Did you mean {.val {nearest}}?")
+    }
+    cli::cli_abort(c(
+      "{.arg moves} has unknown move{?s}: {.val {bad}}.", hint
+    ))
+  }
+  notLgl <- nms[!vapply(moves, function(v) {
+    is.logical(v) && length(v) == 1L && !is.na(v)
+  }, logical(1))]
+  if (length(notLgl)) {
+    cli::cli_abort(
+      "{.arg moves} values must be {.val TRUE} or {.val FALSE};        check {.val {notLgl}}."
+    )
+  }
+  # Return:
+  moves
 }
