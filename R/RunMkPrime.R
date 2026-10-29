@@ -117,7 +117,7 @@
 #'   [MkPrimeRecover()]; plot with [MkpTracePlot()]; estimate marginal
 #'   likelihood with [mkp_stepping_stone()]; continue a run with
 #'   [ResumeMkPrime()].
-#' @family mkp_run
+#' @family running analyses
 #' @export
 RunMkPrime <- function(data, tree = NULL,
                        neomorphic = integer(0),
@@ -4227,7 +4227,7 @@ RunMkPrime <- function(data, tree = NULL,
 #' @inheritParams RunMkPrime
 #'
 #' @return An `MkPosterior` object with combined samples.
-#' @family mkp_run
+#' @family running analyses
 #' @export
 ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
                            neomorphic = integer(0),

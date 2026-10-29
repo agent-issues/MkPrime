@@ -19,10 +19,10 @@ A new \code{MkPosterior} with the updated burnin.
 Set burnin for a posterior object
 }
 \seealso{
-Other mkp_diagnostics:
+Other diagnostics and model comparison:
 \code{\link[=AutoBurnin]{AutoBurnin()}},
 \code{\link[=ConvergenceDiagnostics]{ConvergenceDiagnostics()}},
 \code{\link[=TreeESS]{TreeESS()}},
 \code{\link[=mkp_stepping_stone]{mkp_stepping_stone()}}
 }
-\concept{mkp_diagnostics}
+\concept{diagnostics and model comparison}

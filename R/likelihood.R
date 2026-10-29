@@ -60,7 +60,7 @@
 #'   beta-geometric \eqn{k'} prior.
 #'
 #' @return Scalar log-likelihood.
-#' @family mkp_posterior
+#' @family posterior logs
 #' @export
 MkpLogLikelihood <- function(tree, mkd,
                                kPrime = NULL,

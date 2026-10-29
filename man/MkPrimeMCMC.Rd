@@ -523,7 +523,7 @@ them from adaptation in all phases.
 }
 }
 \seealso{
-Other mkp_setup:
+Other model setup:
 \code{\link[=AutoDetectNeomorphic]{AutoDetectNeomorphic()}},
 \code{\link[=MkPrimeData]{MkPrimeData()}},
 \code{\link[=MkPrimeEmpiricalPrior]{MkPrimeEmpiricalPrior()}},
@@ -531,4 +531,4 @@ Other mkp_setup:
 \code{\link[=MkPrimeModel]{MkPrimeModel()}},
 \code{\link{empiricalNObs}}
 }
-\concept{mkp_setup}
+\concept{model setup}

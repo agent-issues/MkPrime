@@ -148,11 +148,11 @@ Summarise and diagnose with \code{\link[=ConvergenceDiagnostics]{ConvergenceDiag
 likelihood with \code{\link[=mkp_stepping_stone]{mkp_stepping_stone()}}; continue a run with
 \code{\link[=ResumeMkPrime]{ResumeMkPrime()}}.
 
-Other mkp_run:
+Other running analyses:
 \code{\link[=EasyMkPrime]{EasyMkPrime()}},
 \code{\link[=MkBayesianServer]{MkBayesianServer()}},
 \code{\link[=MkBayesianUi]{MkBayesianUi()}},
 \code{\link[=MkPrimeVerbosity]{MkPrimeVerbosity()}},
 \code{\link[=ResumeMkPrime]{ResumeMkPrime()}}
 }
-\concept{mkp_run}
+\concept{running analyses}

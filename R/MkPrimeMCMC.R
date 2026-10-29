@@ -411,7 +411,7 @@
 #' them from adaptation in all phases.
 #'
 #' @return An S3 object of class `MkPrimeMCMC`.
-#' @family mkp_setup
+#' @family model setup
 #' @export
 MkPrimeMCMC <- function(
     nIter = Inf,

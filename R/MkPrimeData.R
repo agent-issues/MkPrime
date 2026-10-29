@@ -43,7 +43,7 @@
 #' summary(mkd)
 #' }
 #'
-#' @family mkp_setup
+#' @family model setup
 #' @export
 MkPrimeData <- function(data,
                          neomorphic = integer(0),
@@ -272,7 +272,7 @@ summary.MkPrimeData <- function(object, ...) {
 #' @param data A `phyDat` object.
 #' @return Integer vector of character indices suitable for the
 #'   `neomorphic` argument of [MkPrimeData()].
-#' @family mkp_setup
+#' @family model setup
 #' @export
 AutoDetectNeomorphic <- function(data) {
   if (!inherits(data, "phyDat")) {

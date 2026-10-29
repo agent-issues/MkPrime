@@ -49,10 +49,10 @@ Optionally computes topology ESS using the Robinson-Foulds distance
 via \strong{TreeDist}.
 }
 \seealso{
-Other mkp_diagnostics:
+Other diagnostics and model comparison:
 \code{\link[=AutoBurnin]{AutoBurnin()}},
 \code{\link[=SetBurnin]{SetBurnin()}},
 \code{\link[=TreeESS]{TreeESS()}},
 \code{\link[=mkp_stepping_stone]{mkp_stepping_stone()}}
 }
-\concept{mkp_diagnostics}
+\concept{diagnostics and model comparison}

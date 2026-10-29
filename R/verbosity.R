@@ -47,7 +47,7 @@
 #' MkPrimeVerbosity()
 #' MkPrimeVerbosity(old)
 #' @seealso [RunMkPrime()], which takes a `verbosity` argument.
-#' @family mkp_run
+#' @family running analyses
 #' @export
 MkPrimeVerbosity <- function(n) {
   v <- getOption("MkPrime.verbosity", 1L)

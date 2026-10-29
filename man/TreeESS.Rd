@@ -70,10 +70,10 @@ Bayesian phylogenetic analyses."
 \emph{Genome Biology and Evolution}, 8(8), 2319--2332.
 }
 \seealso{
-Other mkp_diagnostics:
+Other diagnostics and model comparison:
 \code{\link[=AutoBurnin]{AutoBurnin()}},
 \code{\link[=ConvergenceDiagnostics]{ConvergenceDiagnostics()}},
 \code{\link[=SetBurnin]{SetBurnin()}},
 \code{\link[=mkp_stepping_stone]{mkp_stepping_stone()}}
 }
-\concept{mkp_diagnostics}
+\concept{diagnostics and model comparison}

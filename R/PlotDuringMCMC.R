@@ -94,7 +94,7 @@
 #'
 #' @return Called for its side effect (drawing a plot). Returns `info`
 #'   invisibly.
-#' @family mkp_progress
+#' @family progress monitoring
 #' @export
 MkpTracePlot <- function(info) {
   nRuns <- info$nRuns
@@ -388,7 +388,7 @@ MkpTracePlot <- function(info) {
 #'   \item{`mkp_progress.json`}{JSON object with fields `iter`, `nIter`,
 #'     `warmup`, `inWarmup`, `elapsed`, and `recentAcceptance`.}
 #' }
-#' @family mkp_progress
+#' @family progress monitoring
 #' @export
 MkpPngProgress <- function(dir, width = 800, height = 600) {
   force(dir)
@@ -469,7 +469,7 @@ MkpPngProgress <- function(dir, width = 800, height = 600) {
 #' @seealso [ReadMkLog()] to read a log file after the run has finished.
 #'   [MkpTracePlot()] for the in-memory callback-based alternative.
 #'
-#' @family mkp_progress
+#' @family progress monitoring
 #' @export
 MkpWatchLog <- function(logFiles,
                          interval   = 2,
@@ -651,7 +651,7 @@ MkpWatchLog <- function(logFiles,
 #' @param logFile Character. Base log file name as passed to [MkPrimeMCMC()].
 #' @param nRuns Integer. Number of runs.
 #' @return Character vector of length `nRuns`.
-#' @family mkp_posterior
+#' @family posterior logs
 #' @export
 MkLogPaths <- function(logFile, nRuns) {
   .LogFilePaths(logFile, as.integer(nRuns))
@@ -668,7 +668,7 @@ MkLogPaths <- function(logFile, nRuns) {
 #' @return Character(1). Full path to the cancel-signal file
 #'   (`<jobDir>/mkp_cancel.signal`).
 #' @seealso [MkLogPaths()], [MkPrimeMCMC()]
-#' @family mkp_posterior
+#' @family posterior logs
 #' @export
 MkCancelPath <- function(jobDir) {
   file.path(jobDir, "mkp_cancel.signal")

@@ -32,8 +32,8 @@ Two files are written on each call:
 }
 }
 \seealso{
-Other mkp_progress:
+Other progress monitoring:
 \code{\link[=MkpTracePlot]{MkpTracePlot()}},
 \code{\link[=MkpWatchLog]{MkpWatchLog()}}
 }
-\concept{mkp_progress}
+\concept{progress monitoring}

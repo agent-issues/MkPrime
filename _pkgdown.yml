@@ -34,25 +34,25 @@ reference:
   - title: Model setup
     desc: Prepare data, specify the model and priors, and configure MCMC.
     contents:
-      - has_concept("mkp_setup")
+      - has_concept("model setup")
 
   - title: Running an analysis
     desc: Run, resume and configure console output, or use the Shiny interface.
     contents:
-      - has_concept("mkp_run")
+      - has_concept("running analyses")
 
   - title: Convergence and model comparison
     desc: Assess convergence, set burn-in, and estimate marginal likelihoods.
     contents:
-      - has_concept("mkp_diagnostics")
+      - has_concept("diagnostics and model comparison")
       - print.MkpDiagnostics
 
   - title: Posterior samples and logs
     desc: Read, recover and inspect streamed MCMC output.
     contents:
-      - has_concept("mkp_posterior")
+      - has_concept("posterior logs")
 
   - title: Progress visualization
     desc: Callbacks for monitoring a running MCMC.
     contents:
-      - has_concept("mkp_progress")
+      - has_concept("progress monitoring")

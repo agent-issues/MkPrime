@@ -24,7 +24,7 @@
 #' @return Opens a Shiny app in the default browser; does not return a
 #'   value.
 #' @seealso [RunMkPrime()], [MkPrimeMCMC()]
-#' @family mkp_run
+#' @family running analyses
 #' @export
 EasyMkPrime <- function() {
   needed <- c("shiny", "bslib", "processx")

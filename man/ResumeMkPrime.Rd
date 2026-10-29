@@ -60,11 +60,11 @@ Called automatically by \code{\link[=RunMkPrime]{RunMkPrime()}} when a checkpoin
 and \code{overwrite = FALSE}.
 }
 \seealso{
-Other mkp_run:
+Other running analyses:
 \code{\link[=EasyMkPrime]{EasyMkPrime()}},
 \code{\link[=MkBayesianServer]{MkBayesianServer()}},
 \code{\link[=MkBayesianUi]{MkBayesianUi()}},
 \code{\link[=MkPrimeVerbosity]{MkPrimeVerbosity()}},
 \code{\link[=RunMkPrime]{RunMkPrime()}}
 }
-\concept{mkp_run}
+\concept{running analyses}

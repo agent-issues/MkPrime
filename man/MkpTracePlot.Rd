@@ -47,8 +47,8 @@ When \code{nRuns > 1}, trace panels use per-run colors (from
 ESS panel uses per-parameter colors with a legend.
 }
 \seealso{
-Other mkp_progress:
+Other progress monitoring:
 \code{\link[=MkpPngProgress]{MkpPngProgress()}},
 \code{\link[=MkpWatchLog]{MkpWatchLog()}}
 }
-\concept{mkp_progress}
+\concept{progress monitoring}

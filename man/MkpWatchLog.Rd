@@ -57,8 +57,8 @@ If the file still does not exist after 30 seconds, the function aborts.
 \code{\link[=ReadMkLog]{ReadMkLog()}} to read a log file after the run has finished.
 \code{\link[=MkpTracePlot]{MkpTracePlot()}} for the in-memory callback-based alternative.
 
-Other mkp_progress:
+Other progress monitoring:
 \code{\link[=MkpPngProgress]{MkpPngProgress()}},
 \code{\link[=MkpTracePlot]{MkpTracePlot()}}
 }
-\concept{mkp_progress}
+\concept{progress monitoring}

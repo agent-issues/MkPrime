@@ -28,10 +28,10 @@ summary(result)
 }\if{html}{\out{</div>}}
 }
 \seealso{
-Other mkp_posterior:
+Other posterior logs:
 \code{\link[=MkCancelPath]{MkCancelPath()}},
 \code{\link[=MkLogPaths]{MkLogPaths()}},
 \code{\link[=MkPrimeRecover]{MkPrimeRecover()}},
 \code{\link[=MkpLogLikelihood]{MkpLogLikelihood()}}
 }
-\concept{mkp_posterior}
+\concept{posterior logs}

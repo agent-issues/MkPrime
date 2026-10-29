@@ -28,10 +28,10 @@ For single-run posteriors (no R-hat available), selects the burnin
 that maximizes min(ESS) across key parameters.
 }
 \seealso{
-Other mkp_diagnostics:
+Other diagnostics and model comparison:
 \code{\link[=ConvergenceDiagnostics]{ConvergenceDiagnostics()}},
 \code{\link[=SetBurnin]{SetBurnin()}},
 \code{\link[=TreeESS]{TreeESS()}},
 \code{\link[=mkp_stepping_stone]{mkp_stepping_stone()}}
 }
-\concept{mkp_diagnostics}
+\concept{diagnostics and model comparison}

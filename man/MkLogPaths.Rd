@@ -21,10 +21,10 @@ per-run file paths that \code{\link[=RunMkPrime]{RunMkPrime()}} would create (e.
 argument to \code{\link[=MkpWatchLog]{MkpWatchLog()}}.
 }
 \seealso{
-Other mkp_posterior:
+Other posterior logs:
 \code{\link[=MkCancelPath]{MkCancelPath()}},
 \code{\link[=MkPrimeRecover]{MkPrimeRecover()}},
 \code{\link[=MkpLogLikelihood]{MkpLogLikelihood()}},
 \code{\link[=ReadMkLog]{ReadMkLog()}}
 }
-\concept{mkp_posterior}
+\concept{posterior logs}

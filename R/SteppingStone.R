@@ -82,7 +82,7 @@
 #' Improving marginal likelihood estimation for Bayesian phylogenetic model
 #' selection. *Systematic Biology*, 60(2), 150--160.
 #'
-#' @family mkp_diagnostics
+#' @family diagnostics and model comparison
 #' @export
 mkp_stepping_stone <- function(data, tree = NULL,
                               neomorphic = integer(0),

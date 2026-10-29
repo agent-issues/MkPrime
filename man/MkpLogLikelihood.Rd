@@ -87,10 +87,10 @@ so the correction does not change with \code{kPrime}.
 \insertAllCited{}
 }
 \seealso{
-Other mkp_posterior:
+Other posterior logs:
 \code{\link[=MkCancelPath]{MkCancelPath()}},
 \code{\link[=MkLogPaths]{MkLogPaths()}},
 \code{\link[=MkPrimeRecover]{MkPrimeRecover()}},
 \code{\link[=ReadMkLog]{ReadMkLog()}}
 }
-\concept{mkp_posterior}
+\concept{posterior logs}
