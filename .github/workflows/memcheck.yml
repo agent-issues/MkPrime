@@ -273,7 +273,15 @@ jobs:
             if ldd "$so" 2>/dev/null | grep -q libasan; then
               pkg=$(basename "$(dirname "$(dirname "$so")")")
               echo "::warning::$pkg links to libasan: reinstalling from source"
-              Rscript -e "install.packages('$pkg', lib = '$r_libs', type = 'source')"
+              # Keep the origin: a plain install.packages() swaps a GitHub
+              # (Remotes:) build for the older CRAN release.
+              Rscript -e "pkg <- '$pkg'; lib <- '$r_libs'
+                d <- packageDescription(pkg, lib.loc = lib)
+                if (identical(d\$RemoteType, 'github')) {
+                  install.packages(sprintf('https://api.github.com/repos/%s/%s/tarball/%s',
+                    d\$RemoteUsername, d\$RemoteRepo, d\$RemoteSha),
+                    lib = lib, repos = NULL, type = 'source')
+                } else install.packages(pkg, lib = lib, type = 'source')"
             fi
           done
 
