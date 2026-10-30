@@ -45,30 +45,35 @@ CallsTo <- function(path, fn) {
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
-## ---- HARN2-008: priorVariant pinned in every marginal-k driver -------------
-for (f in list.files(MK, "\\.R$", full.names = TRUE)) {
-  calls <- CallsTo(f, "MkPrimeModel")
-  if (!length(calls)) next
-  ok(sprintf("%s pins priorVariant", basename(f)),
-     all(vapply(calls, function(cl) "priorVariant" %in% names(cl), logical(1L))))
+## ---- HARN2-008: no driver passes the retired priorVariant ------------------
+## 186f5a9 dropped the argument; MkPrimeModel() has no `...`, so any driver that
+## still passes it (or any other unknown argument) errors before it samples.
+src <- parse("R/MkPrimeModel.R", keep.source = FALSE)
+def <- Filter(function(e) is.call(e) && as.character(e[[1L]]) %in% c("<-", "=") &&
+                identical(as.character(e[[2L]]), "MkPrimeModel"), as.list(src))
+ok("R/MkPrimeModel.R defines MkPrimeModel() exactly once", length(def) == 1L)
+modelFormals <- names(eval(def[[1L]][[3L]], new.env())  |> formals())
+ok("MkPrimeModel() no longer has a priorVariant formal",
+   !"priorVariant" %in% modelFormals)
+drivers <- c(list.files(MK, "\\.R$", full.names = TRUE), file.path(HT, "sbc.R"))
+for (f in drivers) {
+  txt <- paste(readLines(f), collapse = "\n")
+  ok(sprintf("%s does not mention priorVariant", basename(f)),
+     !grepl("priorVariant|PRIOR_VARIANT", txt))
+  for (cl in CallsTo(f, "MkPrimeModel")) {
+    nms <- setdiff(names(cl)[-1L], "")
+    ok(sprintf("%s: MkPrimeModel() call uses only real arguments", basename(f)),
+       all(nms %in% modelFormals))
+  }
 }
 ovlDriver <- file.path(MK, "T-OVL-sampled-vs-marginal.R")
-WithPriorVariant <- function(value, code) {
-  old <- Sys.getenv("MARGINAL_K_PRIOR_VARIANT", unset = NA)
-  on.exit(if (is.na(old)) Sys.unsetenv("MARGINAL_K_PRIOR_VARIANT")
-          else Sys.setenv(MARGINAL_K_PRIOR_VARIANT = old))
-  if (is.na(value)) Sys.unsetenv("MARGINAL_K_PRIOR_VARIANT")
-  else Sys.setenv(MARGINAL_K_PRIOR_VARIANT = value)
-  code
-}
-ok("T-OVL defaults to the shipped Model A",
-   identical(WithPriorVariant(NA, Definition(ovlDriver, "PRIOR_VARIANT")), "unconditional"))
-ok("T-OVL prior variant is overridable",
-   identical(WithPriorVariant("conditional", Definition(ovlDriver, "PRIOR_VARIANT")),
-             "conditional"))
-ok("the Phase-2 overnight script reproduces its recorded Model B runs",
-   any(grepl("^export MARGINAL_K_PRIOR_VARIANT=conditional$",
-             readLines(file.path(MK, "run-phase2-overnight.sh")))))
+## sbc.R builds its model through a `modelArgs` list: check the names it sets.
+sbcTxt <- readLines(file.path(HT, "sbc.R"))
+sbcArgs <- unique(sub("^\\s*modelArgs\\$([A-Za-z0-9_.]+)\\s*<-.*$", "\\1",
+                      grep("^\\s*modelArgs\\$[A-Za-z0-9_.]+\\s*<-", sbcTxt, value = TRUE)))
+ok("sbc.R sets modelArgs entries", length(sbcArgs) > 0L)
+ok("sbc.R modelArgs names are all MkPrimeModel() arguments",
+   all(sbcArgs %in% modelFormals))
 
 ## ---- HARN2-012: marginal SBC output dir is per batch ----------------------
 sbcDriver <- file.path(MK, "T-SBC-marginal-geometric.R")
