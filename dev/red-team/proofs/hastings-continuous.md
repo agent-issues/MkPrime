@@ -553,15 +553,17 @@ $$
    simplex on the $n$-simplex scaled by $C$). For relative branch lengths
    $C = 1$.
 2. $S = \sum_{k\in I} x_k > 0$ (the selected block has positive mass).
-   Enforced at `src/proposals.cpp:284`.
-3. $K \ge 2$. Enforced by caller (`src/mcmc.cpp:4379, 4390`).
+   Enforced in `dirichlet_core` (`src/proposals.cpp`).
+3. $K \ge 2$. `dirichlet_simplex_impl`, `local_dirichlet_impl` and their
+   callers (moves 23 and 24 in `src/mcmc.cpp`) clamp a smaller $K$ to 2.
 4. The set $I$ is drawn from a **state-independent** distribution
    $p_I$ — see the index-selection discussion in §5.4 — that is symmetric
    in the sense $p_I(\cdot \mid x) = p_I(\cdot \mid x')$ for any
    forward/reverse pair $(x, x')$ that has the same elements outside $I$.
-5. The shifted Dirichlet concentration $\alpha\hat z + \mathbf{1}$ has all
-   components $\ge 0.01$ (floor at `src/proposals.cpp:293, 315`); this
-   ensures the density is well-defined and bounded away from singularity.
+5. The shifted Dirichlet concentrations $\alpha\hat x + \mathbf{1}$ and
+   $\alpha\hat z + \mathbf{1}$ have every component $\ge 1$, because
+   $\alpha > 0$ and $\hat x, \hat z \ge 0$. No floor is applied, and none is
+   needed: the densities are bounded on the closed simplex.
 
 ### 5.2 Proof
 
@@ -619,7 +621,7 @@ $$
 
 ### 5.3 Implementation cross-check
 
-`src/proposals.cpp:319-335`:
+`dirichlet_core` (`src/proposals.cpp`):
 
 ```cpp
 double logFwd = 0.0, logRev = 0.0;
@@ -651,50 +653,54 @@ Matches the boxed formula line by line.
 ### 5.4 Index-selection symmetry (subtle point)
 
 **Case 23 (random Dirichlet, `dirichlet_simplex_impl`):**
-Fisher-Yates partial shuffle (`src/proposals.cpp:352-358`) draws a uniformly
+Fisher-Yates partial shuffle in `dirichlet_simplex_impl` draws a uniformly
 random $K$-subset $I$ from $\{1,\dots,n\}$. The probability of drawing the
 *same* subset to go forward and backward is the same constant
 $\binom{n}{K}^{-1}$. ✓ Symmetric.
 
 **Case 24 (local Dirichlet, `local_dirichlet_impl`):**
-`select_neighborhood` (`src/proposals.cpp:369-426`) picks a uniformly random
-starting edge and BFS-expands on the edge-adjacency graph.
-The probability of producing a particular connected subset $I$ depends
-**only on the tree topology**, not on the values $\{x_k\}$.
-Forward and reverse moves apply on the same topology (the simplex move
-does *not* alter the tree), so $p_I(\mathrm{fwd}) = p_I(\mathrm{rev})$. ✓ Symmetric.
+`select_neighborhood` picks a uniformly random starting edge and
+BFS-expands on the edge-adjacency graph in a canonical visiting order.
+The probability of producing a particular connected subset $I$ depends on
+the tree topology **and the position of the storage root** (the BFS order
+starts from the root's edges), but not on the values $\{x_k\}$ nor, since
+#335, on row or sibling order. Forward and reverse moves share topology and
+root (the simplex move alters neither), so
+$p_I(\mathrm{fwd}) = p_I(\mathrm{rev})$. ✓ Symmetric.
 
 In both cases the index-selection factor cancels and only the Dirichlet
 density ratio remains in `logHastings`.
 
 ### 5.5 Edge cases
 
-(a) **`S ≤ 0`** (numerical underflow of an entire block). Rejected at
-`:284`. ✓
+(a) **`S ≤ 0`** (numerical underflow of an entire block). Rejected in
+`dirichlet_core`. ✓
 
-(b) **`α_fwd[i] = 0.01` floor.** When `xK[i] = 0` (numerically), the
-formula would have $\alpha_{\mathrm{fwd}} = 1$ and density well-defined.
-The floor at `:293` protects against `xK[i] < 0` arising from FP error.
-Symmetrically applied to `α_rev` at `:315`. ✓ This preserves detailed
-balance because the floored kernel is itself a valid (different) MH
-kernel.
+(b) **No concentration floor.** `alphaFwd[i] = xK[i] * alpha + 1.0` and
+`alphaRev[i] = zK[i] * alpha + 1.0` are $\ge 1$ whenever `xK`, `zK` are
+non-negative, which they are by construction (a non-negative vector divided
+by its positive sum). When `xK[i] = 0` the component is exactly 1 and the
+density is well-defined. ✓
 
-(c) **`zK[i]` numerical underflow.** Guarded by `std::max(zK[i], 1e-300)` at
-`:301, :330`. The actual gamma draws are bounded by the same floor at `:301`
-before normalisation, so $\hat z_i \ge 10^{-300}/\sum$ which is non-zero.
-The `log` floor at `:330` is an extra safety. **One subtle point:** if the
-floor at `:330` *fires* (i.e. `zK[i] < 1e-300` is materially different
-from `zK[i] = 0`), then `logFwd` uses $\log(10^{-300})$ but the *next*
-draw uses the value actually stored at `zK[i] = 1e-300` from line 301 —
-self-consistent.
+(c) **`zK[i]` numerical underflow.** Each gamma draw is floored at
+$10^{-300}$ *before* normalisation, and the log terms use
+`std::max(zK[i], 1e-300)`. The draw floor does not make the two consistent:
+dividing by the gamma sum, which is $> 1$ in all but negligible cases, takes
+a floored $\hat z_i$ below $10^{-300}$, so `logFwd` evaluates the density at
+$\log(10^{-300})$ while the state stores the smaller $\hat z_i S$. The kernel
+then scores a point it did not propose (same class as #339). This needs a
+gamma draw below $10^{-300}$; with shape $\ge 1$ that has probability
+$\le 10^{-300}$ per component, so the event has measure ~0 and does not
+affect the verdict.
 
 (d) **`K = n`.** Whole-simplex Dirichlet refresh. The Fisher-Yates degenerates
-to identity; `select_neighborhood` returns all edges (`:374-379`). Both
+to identity; `select_neighborhood` returns all edges. Both
 fine. The conserved $S$ is the entire vector sum.
 
-(e) **`K = 1`.** Forbidden by the engine (`if (nCats < 2) return false` at
-`:4379, :4390` for cases 23/24). A single-element "Dirichlet" would be
-deterministic (point mass) and not informative.
+(e) **`K = 1`.** Never reaches the kernel: `dirichlet_simplex_impl`,
+`local_dirichlet_impl` and the move-23/24 dispatch in `src/mcmc.cpp` all
+clamp `nCats < 2` up to 2 rather than returning. (A single-element
+"Dirichlet" would be a point mass.)
 
 ### 5.6 Detailed balance
 
