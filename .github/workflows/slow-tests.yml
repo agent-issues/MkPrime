@@ -47,7 +47,8 @@ jobs:
   slow:
     needs: changes
     if: needs.changes.outputs.run == 'true'
-    # arm: cheapest runner, as the coverage job in R-CMD-check.yml.
+    # arm: cheapest runner, as the coverage job in R-CMD-check.yml. 24.04 to
+    # match that job (its RSPM binaries are noble); 26.04 is not yet used on arm.
     runs-on: ubuntu-24.04-arm
     name: slow tier (arm)
     timeout-minutes: 240
@@ -59,14 +60,13 @@ jobs:
       R_COMPILE_AND_INSTALL_PACKAGES: 'never'
       R_REMOTES_STANDALONE: true
       R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
-      RSPM: "https://packagemanager.posit.co/cran/__linux__/noble/latest"
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       MKPRIME_SLOW_TESTS: "true"
       NOT_CRAN: "true"  # else every skip_on_cran() test is skipped
 
     steps:
       - name: Checkout git repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up R
         uses: r-lib/actions/setup-r@v2
