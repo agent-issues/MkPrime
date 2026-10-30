@@ -36,10 +36,7 @@ List nni_proposal_impl(IntegerVector parent, IntegerVector child,
 List spr_proposal_impl(IntegerVector parent, IntegerVector child,
                        int nTip, double treeLength,
                        NumericVector relBrLengths);
-// M-084: subtree swap helpers (tree_moves.cpp)
-List swap_subtrees_impl(IntegerVector parent, IntegerVector child,
-                        int nTip, double treeLength,
-                        NumericVector relBrLengths, int nodeA, int nodeB);
+// M-084: subtree swap partners (tree_moves.cpp)
 std::vector<int> get_valid_swap_partners_impl(const IntegerVector& parent,
                                               const IntegerVector& child,
                                               int nTip, int pruneNode);
@@ -2431,7 +2428,7 @@ static double swap_neighbourhood_logz(double selfLL, double beta,
   for (double ll : candLL)
     if (R_FINITE(ll)) maxLL = std::max(maxLL, ll);
   if (!R_FINITE(maxLL)) return R_NegInf;
-  double s = std::exp(beta * (selfLL - maxLL));
+  double s = R_FINITE(selfLL) ? std::exp(beta * (selfLL - maxLL)) : 0.0;
   for (double ll : candLL)
     if (R_FINITE(ll)) s += std::exp(beta * (ll - maxLL));
   return beta * maxLL + std::log(s);
@@ -2615,7 +2612,9 @@ static bool gibbs_subtree_swap_impl(McmcData* data, McmcState* state,
   for (int pi = 0; pi < nPart; ++pi)
     if (R_FINITE(candLL[pi])) maxLL = std::max(maxLL, candLL[pi]);
 
-  double wOrig = std::exp(beta * (llOrig - maxLL));
+  // A -Inf current state takes no weight, even at beta = 0 where
+  // exp(0 * -Inf) is NaN, so the move can leave it (#485).
+  double wOrig = R_FINITE(llOrig) ? std::exp(beta * (llOrig - maxLL)) : 0.0;
   std::vector<double> ws(nPart);
   double sumW = wOrig;
   for (int pi = 0; pi < nPart; ++pi) {
@@ -2979,8 +2978,6 @@ static bool weighted_branch_scale_impl(
   if (index >= nEdge) index = nEdge - 1;
   int other = static_cast<int>(R::unif_rand() * (nEdge - 1));
   if (other >= index) ++other;
-  if (other >= nEdge) other = nEdge - 1;
-  if (other == index) other = (index + 1) % nEdge;
 
   const double oldRelA = state->relBrLengths[index];
   const double oldRelB = state->relBrLengths[other];
@@ -3113,8 +3110,6 @@ static bool block_gibbs_branch_sweep_impl(
     // Pick a random partner edge
     int other = static_cast<int>(R::unif_rand() * (nEdge - 1));
     if (other >= index) ++other;
-    if (other >= nEdge) other = nEdge - 1;
-    if (other == index) other = (index + 1) % nEdge;
 
     const double oldRelA = state->relBrLengths[index];
     const double oldRelB = state->relBrLengths[other];
@@ -3622,7 +3617,9 @@ static bool weighted_subtree_swap_impl(McmcData* data, McmcState* state,
     absLen[i] = state->treeLength * state->relBrLengths[i];
 
   // 2. Forward neighbourhood
-  const double logSelf = beta * state->logLik;
+  // A -Inf current state takes no weight, even at beta = 0 (#485)
+  const double logSelf = R_FINITE(state->logLik) ? beta * state->logLik
+                                                 : R_NegInf;
   SwapNeighbourhood fwd;
   weighted_swap_neighbourhood(data, state, state->parent, state->child,
                               absLen, nodeA, logSelf, beta, fwd);
@@ -3885,7 +3882,11 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
   // Work on log scale: u = log(x).
   // Target includes Jacobian: log f(u) = beta*logLik + logPrior + u.
   double u0 = std::log(x0);
-  double logY0 = beta * state->logLik + state->logPrior + u0;
+  // From a -Inf state (where beta = 0 would give 0 * -Inf = NaN), any finite
+  // point is on the slice (#485).
+  double logY0 = R_FINITE(state->logLik)
+    ? beta * state->logLik + state->logPrior + u0
+    : R_NegInf;
 
   // Slice height
   double logZ = logY0 + std::log(R::unif_rand());
@@ -3921,7 +3922,7 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
     double x1 = std::exp(u1);
     set_scalar(state, paramIdx, x1);
     double logTarget1 = eval_slice_target(data, state, paramIdx, beta) + u1;
-    if (logTarget1 >= logZ) {
+    if (R_FINITE(logTarget1) && logTarget1 >= logZ) {
       // Accept — recompute and cache logLik / logPrior / partLogLik
       state->logPrior = compute_log_prior(*data, *state);
 

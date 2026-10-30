@@ -66,20 +66,21 @@ test_that("TBR changes topology on medium tree", {
 })
 
 
-test_that("TBR Hastings ratio is finite", {
+test_that("TBR Hastings ratio is finite on every valid proposal", {
   set.seed(5283)
-  tree <- rtree(15)
-  tree <- unroot(tree)
-  tree <- Preorder(tree)
+  tree <- Preorder(unroot(rtree(15)))
   tl <- sum(tree$edge.length)
   rel_br <- tree$edge.length / tl
+  original <- write.tree(tree)
 
-  for (i in seq_len(30)) {
-    prop <- MkPrime:::ProposeTbr(tree, tl, rel_br)
-    if (is.finite(prop$logHastings)) {
-      expect_false(is.nan(prop$logHastings))
-    }
-  }
+  props <- lapply(seq_len(30), function(i)
+    MkPrime:::ProposeTbr(tree, tl, rel_br))
+  logH <- vapply(props, `[[`, numeric(1), "logHastings")
+  changed <- vapply(props, function(p) write.tree(p$tree) != original,
+                    logical(1))
+  expect_true(all(is.finite(logH) | logH == -Inf))
+  expect_true(all(is.finite(logH[changed])))
+  expect_gt(sum(changed), 0)
 })
 
 
@@ -131,18 +132,24 @@ test_that("TBR chain explores tree space", {
 
 
 test_that("TBR degenerates to SPR-like behavior for tip prune", {
-  # When v is a tip, no subtree re-rooting occurs.
-  # The move should still produce valid trees.
-  tree <- read.tree(text = "(t1:0.1,t2:0.2,t3:0.3);")
-  tree <- Preorder(tree)
+  # Every prune edge whose parent is not the root leads to a tip, so each
+  # valid proposal takes the tip branch (no subtree re-rooting).
+  tree <- Preorder(read.tree(text = "((t1:0.1,t2:0.2):0.3,(t3:0.4,t4:0.5):0.6);"))
   tl <- sum(tree$edge.length)
   rel_br <- tree$edge.length / tl
+  original <- write.tree(tree)
 
-  # 3-tip tree: all prune targets yield tip subtrees
   set.seed(8031)
-  prop <- MkPrime:::ProposeTbr(tree, tl, rel_br)
-  # Should either produce a valid move or return -Inf
-  expect_true(is.numeric(prop$logHastings))
+  props <- lapply(seq_len(50), function(i)
+    MkPrime:::ProposeTbr(tree, tl, rel_br))
+  ok <- vapply(props, function(p) is.finite(p$logHastings), logical(1))
+  expect_gt(sum(ok), 0)
+  for (p in props[ok]) {
+    expect_equal(dim(p$tree$edge), dim(tree$edge))
+    expect_setequal(p$tree$edge[p$tree$edge[, 2] <= 4L, 2], 1:4)
+    expect_equal(sum(p$rel_br_lengths), 1)
+    expect_true(write.tree(p$tree) != original)
+  }
 })
 
 
