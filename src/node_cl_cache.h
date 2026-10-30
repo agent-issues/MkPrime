@@ -1199,6 +1199,10 @@ static void update_topo_spr(TreeNav& topo, SprMeta& m) {
 
 // ---------------------------------------------------------------------------
 // reverse_topo_spr: undo SPR topology change on rejection.
+//
+// Restores parentNode, children and nodeEdgeLen only. It does NOT restore
+// topo.edgeToPar / topo.edgeLen, which treenav_to_preorder rewrites to the
+// proposed row order (see there).
 // ---------------------------------------------------------------------------
 static void reverse_topo_spr(TreeNav& topo, const SprMeta& m) {
   // Reverse step 3: replace b with w in u's children
@@ -1261,6 +1265,13 @@ static std::vector<int> find_dirty_spr(
 //
 // Returns false if reconstruction fails (shouldn't happen with valid TreeNav).
 // Updates topo.edgeToPar and topo.edgeLen to match the new array ordering.
+//
+// Validity window: after this call edgeToPar/edgeLen describe the PROPOSED
+// ordering, valid only until the next commit or reject. reverse_topo_spr
+// does not restore them, so after a rejection they are stale; nothing reads
+// them on nodeCL.topo today. A new reader must rebuild them first (TreeNav
+// constructor logic) rather than trust them. Restoring would cost a per-move
+// snapshot of two vectors on the hot path, hence documented instead (#489).
 // ---------------------------------------------------------------------------
 static bool treenav_to_preorder(
     TreeNav& topo, double treeLength,
