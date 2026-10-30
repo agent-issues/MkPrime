@@ -19,3 +19,8 @@
   # Return:
   paste(sort(rowKeys), collapse = "|")
 }
+
+# Robinson-Foulds distance; ape, unlike TreeDist, is always installed.
+.TopoDist <- function(a, b) {
+  as.numeric(ape::dist.topo(UnrootTree(a), UnrootTree(b)))
+}

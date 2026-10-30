@@ -1386,22 +1386,6 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
-// swap_subtrees_cpp
-List swap_subtrees_cpp(IntegerMatrix edge, int nTip, double treeLength, NumericVector relBrLengths, int nodeA, int nodeB);
-RcppExport SEXP _MkPrime_swap_subtrees_cpp(SEXP edgeSEXP, SEXP nTipSEXP, SEXP treeLengthSEXP, SEXP relBrLengthsSEXP, SEXP nodeASEXP, SEXP nodeBSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< IntegerMatrix >::type edge(edgeSEXP);
-    Rcpp::traits::input_parameter< int >::type nTip(nTipSEXP);
-    Rcpp::traits::input_parameter< double >::type treeLength(treeLengthSEXP);
-    Rcpp::traits::input_parameter< NumericVector >::type relBrLengths(relBrLengthsSEXP);
-    Rcpp::traits::input_parameter< int >::type nodeA(nodeASEXP);
-    Rcpp::traits::input_parameter< int >::type nodeB(nodeBSEXP);
-    rcpp_result_gen = Rcpp::wrap(swap_subtrees_cpp(edge, nTip, treeLength, relBrLengths, nodeA, nodeB));
-    return rcpp_result_gen;
-END_RCPP
-}
 // get_valid_swap_partners_cpp
 IntegerVector get_valid_swap_partners_cpp(IntegerMatrix edge, int nTip, int pruneNode);
 RcppExport SEXP _MkPrime_get_valid_swap_partners_cpp(SEXP edgeSEXP, SEXP nTipSEXP, SEXP pruneNodeSEXP) {
@@ -1524,7 +1508,6 @@ static const R_CallMethodDef CallEntries[] = {
     {"_MkPrime_frechet_correlation_ess_cpp", (DL_FUNC) &_MkPrime_frechet_correlation_ess_cpp, 2},
     {"_MkPrime_median_pseudo_ess_cpp", (DL_FUNC) &_MkPrime_median_pseudo_ess_cpp, 3},
     {"_MkPrime_tbr_proposal", (DL_FUNC) &_MkPrime_tbr_proposal, 4},
-    {"_MkPrime_swap_subtrees_cpp", (DL_FUNC) &_MkPrime_swap_subtrees_cpp, 6},
     {"_MkPrime_get_valid_swap_partners_cpp", (DL_FUNC) &_MkPrime_get_valid_swap_partners_cpp, 3},
     {"_MkPrime_nni_proposal", (DL_FUNC) &_MkPrime_nni_proposal, 4},
     {NULL, NULL, 0}

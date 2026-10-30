@@ -373,10 +373,6 @@ tbr_proposal <- function(edge, nTip, treeLength, relBrLengths) {
     .Call(`_MkPrime_tbr_proposal`, edge, nTip, treeLength, relBrLengths)
 }
 
-swap_subtrees_cpp <- function(edge, nTip, treeLength, relBrLengths, nodeA, nodeB) {
-    .Call(`_MkPrime_swap_subtrees_cpp`, edge, nTip, treeLength, relBrLengths, nodeA, nodeB)
-}
-
 get_valid_swap_partners_cpp <- function(edge, nTip, pruneNode) {
     .Call(`_MkPrime_get_valid_swap_partners_cpp`, edge, nTip, pruneNode)
 }

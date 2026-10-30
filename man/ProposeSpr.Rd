@@ -2,12 +2,12 @@
 % Please edit documentation in R/proposals.R
 \name{ProposeSpr}
 \alias{ProposeSpr}
-\title{SPR proposal on an unrooted binary tree}
+\title{SPR proposal on a binary tree}
 \usage{
 ProposeSpr(tree, tree_length, rel_br_lengths)
 }
 \arguments{
-\item{tree}{A \code{phylo} object in canonical preorder (unrooted binary).}
+\item{tree}{Binary \code{phylo} object in canonical preorder.}
 
 \item{tree_length}{Current total tree length.}
 
