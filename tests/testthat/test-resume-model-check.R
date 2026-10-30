@@ -41,6 +41,10 @@
                  sub("\\.[^.]+$", "_trees.nwk", logFile)))
 }
 
+.TopoDist <- function(a, b) {
+  as.numeric(ape::dist.topo(UnrootTree(a), UnrootTree(b)))
+}
+
 test_that("fixTopology = TRUE holds every run on the supplied tree (#378)", {
   tree <- .ModelCheckTree()
   setTimeLimit(elapsed = 120, transient = TRUE)
@@ -53,7 +57,7 @@ test_that("fixTopology = TRUE holds every run on the supplied tree (#378)", {
                                   nCore = 1L, maxTime = 30))))
   expect_gt(length(result$trees), 0L)
   rf <- vapply(result$trees, function(tr) {
-    TreeDist::RobinsonFoulds(tr, tree)
+    .TopoDist(tr, tree)
   }, numeric(1))
   expect_true(all(rf == 0))
 })
@@ -62,7 +66,7 @@ test_that(".PerturbStart(topology = FALSE) keeps the topology (#378)", {
   tree <- .ModelCheckTree()
   set.seed(378)
   perturbed <- .PerturbStart(tree, topology = FALSE)
-  expect_equal(TreeDist::RobinsonFoulds(perturbed, tree), 0)
+  expect_equal(.TopoDist(perturbed, tree), 0)
   expect_false(isTRUE(all.equal(perturbed$edge.length, tree$edge.length)))
 })
 
