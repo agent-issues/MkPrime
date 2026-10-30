@@ -41,10 +41,6 @@
                  sub("\\.[^.]+$", "_trees.nwk", logFile)))
 }
 
-.TopoDist <- function(a, b) {
-  as.numeric(ape::dist.topo(UnrootTree(a), UnrootTree(b)))
-}
-
 test_that("fixTopology = TRUE holds every run on the supplied tree (#378)", {
   tree <- .ModelCheckTree()
   setTimeLimit(elapsed = 120, transient = TRUE)
