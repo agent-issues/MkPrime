@@ -1,4 +1,4 @@
-# Tests for get_valid_swap_partners (M-084)
+# Tests for get_valid_swap_partners
 #
 # get_valid_swap_partners_cpp(edge, nTip, pruneNode)
 

@@ -110,18 +110,21 @@ test_that("subtree swaps and slice escape a -Inf state at beta = 0", {
   }
 })
 
-test_that("subtree swaps never enter a -Inf state at beta = 0", {
+test_that("subtree swaps stay finite and cache-coherent at beta = 0", {
   fx <- InfStartFixture()
   logLik <- eval_full_loglik_cpp(fx$dataPtr, InfState(fx, fx$mkd$kObs, 0))
   statePtr <- InfState(fx, fx$mkd$kObs, logLik)
 
   set.seed(4850L)
-  for (i in seq_len(40)) {
-    do_move_cpp(fx$dataPtr, statePtr, moveType = c(11L, 14L)[i %% 2 + 1],
-                charIdx = 0L, scaleTuning = 1.0, betaSimplexTuning = 1.0,
-                intWalkWindow = 1L, beta = 0)
+  accepted <- vapply(seq_len(40), function(i) {
+    acc <- do_move_cpp(fx$dataPtr, statePtr,
+                       moveType = c(11L, 14L)[i %% 2 + 1], charIdx = 0L,
+                       scaleTuning = 1.0, betaSimplexTuning = 1.0,
+                       intWalkWindow = 1L, beta = 0)
     expect_true(is.finite(get_state_log_lik(statePtr)))
-  }
+    acc
+  }, logical(1))
+  expect_gt(sum(accepted), 0)
   expect_equal(get_state_log_lik(statePtr),
                eval_full_loglik_cpp(fx$dataPtr, statePtr))
 })

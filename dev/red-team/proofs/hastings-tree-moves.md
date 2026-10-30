@@ -483,6 +483,9 @@ $\log H_{\text{TBR}}$ above.
 
 # 4. Plain subtree swap (`swap_subtrees_impl`)
 
+> `swap_subtrees_impl` was deleted in #484 (it had no caller); line
+> references below are to 9088c9b.
+
 ## Theorem (subtree-swap symmetry).
 The plain subtree swap in `tree_moves.cpp:130–172` is symmetric in
 topology *and* branch lengths (the two edges' lengths swap with their

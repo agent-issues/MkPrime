@@ -101,7 +101,7 @@ test_that("ProposeBoundedIntWalk stays within bounds", {
 
 test_that("ProposeBoundedIntWalk rejects below lower bound", {
   set.seed(7842)
-  # x = 2, lower = 2, window = 1: delta can be -1, 0, 1
+  # x = 2, lower = 2, window = 1: delta is -1 or 1
   # If delta = -1: x' = 1 < 2 → reject (logHastings = -Inf)
   rejected <- FALSE
   for (i in 1:50) {

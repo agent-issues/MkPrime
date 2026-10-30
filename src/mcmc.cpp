@@ -36,7 +36,7 @@ List nni_proposal_impl(IntegerVector parent, IntegerVector child,
 List spr_proposal_impl(IntegerVector parent, IntegerVector child,
                        int nTip, double treeLength,
                        NumericVector relBrLengths);
-// M-084: subtree swap partners (tree_moves.cpp)
+// Subtree swap partners (tree_moves.cpp)
 std::vector<int> get_valid_swap_partners_impl(const IntegerVector& parent,
                                               const IntegerVector& child,
                                               int nTip, int pruneNode);
@@ -3821,7 +3821,10 @@ static double eval_slice_target(McmcData* data, McmcState* state,
 
   // !marginalK mirrors do_move_impl: partLogLik is fixed-kPrime, so the partial
   // update below would evaluate the wrong target under marginal_k.
-  bool hasPLC = !state->partLogLik.empty() && !data->marginalK;
+  // A -Inf state may hold a stale -Inf partition, which a partial update
+  // would carry into every trial value.
+  bool hasPLC = !state->partLogLik.empty() && !data->marginalK &&
+                R_FINITE(state->logLik);
   ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
 
   // rate_loss (1): only neomorphic partitions change. (rate_neo / paramIdx 3
@@ -3932,7 +3935,8 @@ static bool slice_scalar_impl(McmcData* data, McmcState* state,
         edgeLen[i] = state->treeLength * state->relBrLengths[i];
       ClWorkspace* wsPtr = state->clWs.ready() ? &state->clWs : nullptr;
 
-      bool hasPLC = !state->partLogLik.empty() && !data->marginalK;
+      bool hasPLC = !state->partLogLik.empty() && !data->marginalK &&
+                    R_FINITE(state->logLik);
       if (hasPLC && paramIdx == 1) {
         // rate_loss: only neo partitions change. Partial cache update.
         // (paramIdx == 3 / rate_neo intentionally excluded — audit Issue 1:
