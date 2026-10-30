@@ -37,11 +37,14 @@ test_that("block_gibbs_branch samples its edge posterior at beta = 1", {
 # gibbs_spr_enumerate_cpp refuses qHet, so the deterministic forward/reverse
 # weight check in test-gibbs-spr-candidates.R never reaches
 # gibbs_spr_impl_het.  Three-state characters exercise its rotation loop.
+# Alone, gibbs_spr re-splits only two edges per move, so its fractions mix
+# slowly: at 20 000 iterations, 400-iteration batches understate the SE and a
+# correct kernel scored |z| = 8.4; at 80 000 it scores 1.9.
 test_that("gibbs_spr under Q-heterogeneity samples its posterior at beta = 1", {
   skip_slow_tests()
   set.seed(1001L)
   ctx <- .PosteriorContext(.qHetModel(), states = 0:2)
-  z <- .TopologyZ(ctx, moveType = 10L, nIter = 20000L)
+  z <- .TopologyZ(ctx, moveType = 10L, nIter = 80000L)
   expect_lt(max(abs(z)), 4.5)
 })
 
