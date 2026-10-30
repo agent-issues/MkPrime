@@ -4816,8 +4816,8 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 
 
 # Up to `nMax` of the most recently stored trees, pooled across runs, for the
-# progress plot's topology panel. `NULL` when no tree has been stored (warmup,
-# tuning, or trees streamed to `treeFile` only).
+# progress plot's topology panel. `NULL` when no tree has been stored (warmup
+# or tuning, before the first tree is stored).
 .RecentRunTrees <- function(runs, nMax = 12L) {
   perRun <- max(1L, ceiling(nMax / max(1L, length(runs))))
   trees <- unlist(lapply(runs, function(r) {
@@ -4832,12 +4832,12 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 # over the seconds of the current tuning window -- the batches since the last
 # weight change, `tuningWindowSamples` stored samples -- so it is positive by
 # construction. The clamp is defensive: a missing, non-finite or non-positive
-# rate (e.g. a window the chain spent drifting to a better optimum) shows as
+# rate shows as
 # an em dash, never as a negative number.
 .FormatEssPerSec <- function(rate) {
   if (!is.numeric(rate) || length(rate) != 1L || !is.finite(rate) ||
       rate <= 0) {
-    return("—")
+    return("\u2014")
   }
   sprintf("%.2f", rate)
 }
