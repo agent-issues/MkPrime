@@ -13,6 +13,7 @@ mkp_stepping_stone(
   nStones = 50L,
   nIter = 1000L,
   warmup = 200L,
+  burnin = 5L * (nIter + warmup),
   alpha = 0.3,
   fixTopology = FALSE,
   nRuns = 2L,
@@ -45,6 +46,9 @@ a sweep through every move type). Default 1000.}
 \item{warmup}{Warmup iterations per stone (discarded), counted as for
 \code{nIter}. Default 200.}
 
+\item{burnin}{Integer specifying the number of discarded iterations at
+beta = 1 before a descending run (see Details) reaches its first stone.}
+
 \item{alpha}{Shape parameter for the Beta(alpha, 1) quantile schedule.
 Smaller values concentrate more stones near beta = 0 where the integrand
 changes fastest. Default 0.3 (Xie et al. recommendation).}
@@ -52,8 +56,9 @@ changes fastest. Default 0.3 (Xie et al. recommendation).}
 \item{fixTopology}{If \code{TRUE}, fix the tree topology and only sample
 continuous parameters + branch lengths. Default \code{FALSE}.}
 
-\item{nRuns}{Integer specifying the number of independent runs through the
-whole ladder; at least two are needed for a standard error. Default 2.}
+\item{nRuns}{Integer specifying the number of runs through the whole
+ladder, alternately descending and ascending; at least two are needed for
+a standard error. Default 2.}
 
 \item{verbose}{Logical specifying whether to report per-stone progress;
 see \code{\link[=MkPrimeVerbosity]{MkPrimeVerbosity()}}.}
@@ -63,8 +68,8 @@ A list with components:
 \describe{
 \item{log_marginal}{Log marginal likelihood estimate: the mean of
 \code{run_log_marginal}.}
-\item{se}{Standard error of the estimate (see Details); \code{NA} when
-\code{nRuns = 1}.}
+\item{se}{Standard error of the estimate, including any gap between
+descending and ascending runs (see Details); \code{NA} when \code{nRuns = 1}.}
 \item{run_log_marginal}{The estimate from each run alone (length \code{nRuns}).}
 \item{log_ratios}{Per-stone log ratios, averaged over runs (length
 \code{nStones}).}
@@ -96,21 +101,33 @@ the prior-only stone is normalised on \verb{k' >= kObs} alone; the estimate adds
 back the log prior mass of that region, integrated numerically over the
 \verb{k'} prior's hyperparameters.
 
-Each run is one chain that carries its state from stone to stone. The first
-starts from \code{tree}; later runs start from a perturbed copy (a few random
-nearest-neighbour interchanges, unless \code{fixTopology}, and jittered branch
-lengths) and, under a geometric \verb{k'} prior, a random \code{p}, so that their
-spread reflects how far the estimate depends on the start. The estimate is
-the mean of the \code{n = nRuns} runs' own estimates; its standard error is
-\eqn{s / \sqrt{n}}, where \eqn{s} is their standard deviation. Within a
-run, the autocorrelation of the chain commonly outlasts a stone and carries
-into the next, so an error computed from each stone's draws alone (the
-delta method of Xie et al. 2011) can understate the true error
-several-fold; independent runs capture both. With few runs the standard
+Each run is one chain that carries its state from stone to stone.
+Odd-numbered runs first sample the posterior for \code{burnin} iterations, then
+visit the stones from beta = 1 down to the prior; even-numbered runs climb
+from the prior to beta = 1. A stone too short for the chain to equilibrate
+keeps some of the log-likelihood of the stone before it, which biases a
+descending run upwards and an ascending run downwards (Lartillot & Philippe
+2006). With an even \code{nRuns}, half the runs go each way, so their mean cancels
+much of that bias; a single run descends, and is biased upwards when stones
+are short.
+
+The first run starts from \code{tree}; later runs start from a perturbed copy (a
+few random nearest-neighbour interchanges, unless \code{fixTopology}, and jittered
+branch lengths) and, under a geometric \verb{k'} prior, a random \code{p}. The estimate
+is the mean of the \code{n = nRuns} runs' own estimates; its standard error is
+\eqn{s / \sqrt{n}}, where \eqn{s} is their standard deviation. That spread
+includes the gap between descending and ascending runs, so where stones are
+too short to equilibrate the standard error is large, erring on the side of
+caution. An error computed from each stone's draws alone (the delta method of
+Xie et al. 2011) misses the autocorrelation that carries from stone to stone,
+and can understate the true error several-fold. With few runs the standard
 error is itself uncertain: with the default two it rests on one degree of
 freedom.
 }
 \references{
+Lartillot, N., & Philippe, H. (2006). Computing Bayes factors using
+thermodynamic integration. \emph{Systematic Biology}, 55(2), 195--207.
+
 Xie, W., Lewis, P.O., Fan, Y., Kuo, L., & Chen, M.-H. (2011).
 Improving marginal likelihood estimation for Bayesian phylogenetic model
 selection. \emph{Systematic Biology}, 60(2), 150--160.
