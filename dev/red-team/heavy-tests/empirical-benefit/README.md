@@ -11,7 +11,7 @@ true k′ follow it, and what it costs when they do not.
 | | |
 |---|---|
 | Truth | `empirical`: k′ from `empirical_geometric`; `geometric`: k′ from `geometric`. Both truncated to [2, 30], as inference (`kprimeTruncK = 30`). |
-| Data | 30 tips, 100 transformational characters, JC(k′), no rate variation; tree from the inference prior (Gamma(2) length, mean 3; Dirichlet split). An invariant (k′, y) pair is redrawn whole (joint ascertainment). |
+| Data | 30 tips, 100 transformational characters, JC(k′), no rate variation; `ape::rtree` topology, with branch lengths from the inference prior (Gamma(2) length, mean 3; Dirichlet split). An invariant (k′, y) pair is redrawn whole (joint ascertainment). |
 | Fits | Both priors on every dataset; scores are paired by dataset. |
 | k′ scores | Mean per-character log score log Pr(k′ = kTrue) (primary, proper); 90% HPD coverage; bias and RMSE of the posterior mean. |
 | Tree scores | Mean normalized clustering information distance and RF from posterior trees to the true tree; both split-based, so blind to rooting. |
@@ -19,7 +19,9 @@ true k′ follow it, and what it costs when they do not.
 `exact.R` scores the exact k′ posterior on the true tree (per-k′ likelihoods
 enumerated, p integrated on a grid): no sampler, no topology uncertainty,
 seconds per dataset. `mcmc.R` fits with free topology and also records the
-exact score, so sampler error is visible per dataset.
+exact score, so sampler error is visible per dataset. `test-forward.R` checks
+the scorer against `MkpLogLikelihood()` in R; the R and C++ priors are tied
+by `tests/testthat/test-empirical-geometric-prior.R`.
 
 The `empirical` configs with p = 0.6 and expected tree length 3 give recorded
 kObs that match the corpus (two thirds binary); that is the headline.

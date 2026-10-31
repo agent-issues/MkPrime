@@ -89,7 +89,12 @@ set.seed(seed)
 tree <- .SimTree(nTip, shape = 2, expSteps = expSteps)
 d <- .SimDataset(tree, nChar, tk$cfg$truth, tk$cfg$pTrue, EMP, K)
 mkd <- MkPrimeData(TreeTools::MatrixToPhyDat(d$states))
-stopifnot(all(mkd$kObs == d$kObs), all(mkd$type == "transformational"))
+# Column order matters (#54): compare each character's tip partition.
+Partition <- function(m) apply(m, 2, function(x) match(x, unique(x)))
+stopifnot(
+  identical(Partition(mkd$matrix[rownames(d$states), ]), Partition(d$states)),
+  all(mkd$type == "transformational")
+)
 logLik <- .PerCharLogLik(tree, d$states, d$kObs, K)
 logPV <- .LogPVariable(tree, K)
 
