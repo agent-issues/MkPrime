@@ -13,6 +13,7 @@ mkp_stepping_stone(
   nStones = 50L,
   nIter = 1000L,
   warmup = 200L,
+  burnin = 5L * (nIter + warmup),
   alpha = 0.3,
   fixTopology = FALSE,
   nRuns = 2L,
@@ -44,6 +45,9 @@ a sweep through every move type). Default 1000.}
 
 \item{warmup}{Warmup iterations per stone (discarded), counted as for
 \code{nIter}. Default 200.}
+
+\item{burnin}{Integer specifying the number of iterations each run samples
+the posterior (beta = 1), discarded, before its first stone.}
 
 \item{alpha}{Shape parameter for the Beta(alpha, 1) quantile schedule.
 Smaller values concentrate more stones near beta = 0 where the integrand
@@ -96,8 +100,14 @@ the prior-only stone is normalised on \verb{k' >= kObs} alone; the estimate adds
 back the log prior mass of that region, integrated numerically over the
 \verb{k'} prior's hyperparameters.
 
-Each run is one chain that carries its state from stone to stone. The first
-starts from \code{tree}; later runs start from a perturbed copy (a few random
+Each run is one chain that carries its state from stone to stone. It first
+samples the posterior for \code{burnin} iterations, then visits the stones from
+beta = 1 down to the prior, as Xie et al. (2011) do: a chain leaves the
+posterior far faster than it finds it, so the stones near beta = 1, where
+most of the error arises, start close to equilibrium. A stone too short to
+equilibrate keeps some of the higher log-likelihood of the stone before it,
+which biases the estimate upwards. The first run starts from \code{tree};
+later runs start from a perturbed copy (a few random
 nearest-neighbour interchanges, unless \code{fixTopology}, and jittered branch
 lengths) and, under a geometric \verb{k'} prior, a random \code{p}, so that their
 spread reflects how far the estimate depends on the start. The estimate is

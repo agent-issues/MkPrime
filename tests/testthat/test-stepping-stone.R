@@ -346,4 +346,39 @@ test_that("Stepping-stone controls are validated (#380)", {
   expect_error(mkp_stepping_stone(f$pd, f$tree, nStones = 2L, nIter = 5L,
                                   warmup = -1L, verbose = FALSE), "warmup")
   expect_error(SS(model = MkPrimeModel(expSteps = 0)), "expSteps")
+  expect_error(SS(burnin = -1L), "burnin")
+})
+
+
+test_that("Each run burns in at beta = 1, then descends the ladder", {
+  f <- SixTaxonFixture()
+  visited <- numeric(0)
+  local_mocked_bindings(.DoMove = function(move, stateOrPtr, ..., beta) {
+    visited <<- c(visited, beta)
+    list(accept = FALSE, statePtr = stateOrPtr)
+  }, .package = "MkPrime")
+  ss <- mkp_stepping_stone(f$pd, f$tree, nStones = 3L, nIter = 2L,
+                           warmup = 1L, burnin = 4L, nRuns = 1L,
+                           verbose = FALSE)
+  expect_equal(visited, c(rep(1, 4), rep(rev(ss$betas[1:3]), each = 3)))
+})
+
+
+test_that("Stepping-stone matches a brute-force marginal likelihood", {
+  skip_under_memcheck()
+  # Mk with known k = 2 on four unrooted tips: log Z = -8.628 +- 0.002 by
+  # Monte Carlo from the prior (dev/stepping-stone/brute-force-reference.R).
+  mat <- matrix(c(0L, 1L, 0L, 1L,
+                  0L, 0L, 1L, 1L,
+                  0L, 1L, 1L, 1L),
+                nrow = 4, dimnames = list(paste0("t", 1:4), NULL))
+  mkd <- MkPrimeData(MatrixToPhyDat(mat),
+                     knownStates = c("1" = 2L, "2" = 2L, "3" = 2L))
+  tree <- read.tree(text = "(t1:0.2,t2:0.3,(t3:0.15,t4:0.25):0.2);")
+
+  set.seed(5160)
+  ss <- mkp_stepping_stone(mkd, tree, nStones = 20L, nIter = 1000L,
+                           warmup = 200L, verbose = FALSE)
+  # Ten repeats at these budgets scattered with sd 0.08.
+  expect_lt(abs(ss$log_marginal + 8.628), 0.3)
 })

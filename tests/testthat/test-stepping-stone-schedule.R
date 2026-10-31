@@ -29,7 +29,7 @@ DispatchedMoves <- function(pd, tree, model = NULL, mcmc = NULL,
   )
   set.seed(3607)
   mkp_stepping_stone(pd, tree, model = model, mcmc = mcmc, nStones = 2L,
-                     nIter = nIter, warmup = 0L, verbose = FALSE)
+                     nIter = nIter, warmup = 0L, burnin = 0L, verbose = FALSE)
   seen
 }
 

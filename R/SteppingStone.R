@@ -23,6 +23,8 @@
 #'   a sweep through every move type). Default 1000.
 #' @param warmup Warmup iterations per stone (discarded), counted as for
 #'   `nIter`. Default 200.
+#' @param burnin Integer specifying the number of iterations each run samples
+#'   the posterior (beta = 1), discarded, before its first stone.
 #' @param alpha Shape parameter for the Beta(alpha, 1) quantile schedule.
 #'   Smaller values concentrate more stones near beta = 0 where the integrand
 #'   changes fastest. Default 0.3 (Xie et al. recommendation).
@@ -63,8 +65,14 @@
 #' back the log prior mass of that region, integrated numerically over the
 #' `k'` prior's hyperparameters.
 #'
-#' Each run is one chain that carries its state from stone to stone. The first
-#' starts from `tree`; later runs start from a perturbed copy (a few random
+#' Each run is one chain that carries its state from stone to stone. It first
+#' samples the posterior for `burnin` iterations, then visits the stones from
+#' beta = 1 down to the prior, as Xie et al. (2011) do: a chain leaves the
+#' posterior far faster than it finds it, so the stones near beta = 1, where
+#' most of the error arises, start close to equilibrium. A stone too short to
+#' equilibrate keeps some of the higher log-likelihood of the stone before it,
+#' which biases the estimate upwards. The first run starts from `tree`;
+#' later runs start from a perturbed copy (a few random
 #' nearest-neighbour interchanges, unless `fixTopology`, and jittered branch
 #' lengths) and, under a geometric `k'` prior, a random `p`, so that their
 #' spread reflects how far the estimate depends on the start. The estimate is
@@ -91,6 +99,7 @@ mkp_stepping_stone <- function(data, tree = NULL,
                               nStones = 50L,
                               nIter = 1000L,
                               warmup = 200L,
+                              burnin = 5L * (nIter + warmup),
                               alpha = 0.3,
                               fixTopology = FALSE,
                               nRuns = 2L,
@@ -147,6 +156,7 @@ mkp_stepping_stone <- function(data, tree = NULL,
   nStones <- .CheckWholeNumber(nStones, "nStones")
   nIter <- .CheckWholeNumber(nIter, "nIter")
   warmup <- .CheckWholeNumber(warmup, "warmup", minimum = 0L)
+  burnin <- .CheckWholeNumber(burnin, "burnin", minimum = 0L)
   nRuns <- .CheckWholeNumber(nRuns, "nRuns")
   if (!(is.numeric(alpha) && length(alpha) == 1L && is.finite(alpha) &&
         alpha > 0)) {
@@ -200,21 +210,27 @@ mkp_stepping_stone <- function(data, tree = NULL,
     statePtr <- .InitMcmcChain(starts[[run]])
     fill_partition_cache(mcmcData, statePtr)
     allocate_cl_workspace(mcmcData, statePtr)  # M-063
+    Step <- function(beta) {
+      move <- moves[[sample.int(length(moves), 1L, prob = moveWeights)]]
+      .DoMove(move, statePtr, tuning = mcmcTuning,
+              beta = beta, transIdx = transIdx, mcmcData = mcmcData)
+    }
+    if (verbose) {
+      cli::cli_progress_step("Run {run}/{nRuns}: burn-in at beta = 1")
+    }
+    for (iter in seq_len(burnin)) Step(1)
     runLogLiks <- matrix(NA_real_, nIter, nStones)
-    for (stone in seq_len(nStones)) {
+    for (stone in rev(seq_len(nStones))) {
       if (verbose) {
         cli::cli_progress_step(
-          "Run {run}/{nRuns}, stone {stone}/{nStones}: beta = \\
-           [{round(betas[stone], 4)}, {round(betas[stone + 1L], 4)}]"
+          "Run {run}/{nRuns}, stone {nStones - stone + 1L}/{nStones}: \\
+           beta = [{round(betas[stone], 4)}, {round(betas[stone + 1L], 4)}]"
         )
       }
-      for (iter in seq_len(warmup + nIter)) {
-        move <- moves[[sample.int(length(moves), 1L, prob = moveWeights)]]
-        .DoMove(move, statePtr, tuning = mcmcTuning,
-                beta = betas[stone], transIdx = transIdx, mcmcData = mcmcData)
-        if (iter > warmup) {
-          runLogLiks[iter - warmup, stone] <- get_state_log_lik(statePtr)
-        }
+      for (iter in seq_len(warmup)) Step(betas[stone])
+      for (iter in seq_len(nIter)) {
+        Step(betas[stone])
+        runLogLiks[iter, stone] <- get_state_log_lik(statePtr)
       }
     }
     runLogLiks
