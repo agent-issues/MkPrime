@@ -381,6 +381,6 @@ test_that("Stepping-stone matches a brute-force marginal likelihood", {
   set.seed(5160)
   ss <- mkp_stepping_stone(mkd, tree, nStones = 20L, nIter = 1000L,
                            warmup = 200L, verbose = FALSE)
-  # Ten repeats at these budgets scattered with sd 0.11.
+  # Twelve repeats at these budgets scattered with sd 0.11.
   expect_lt(abs(ss$log_marginal + 8.628), 0.5)
 })
