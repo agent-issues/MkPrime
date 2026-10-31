@@ -23,15 +23,16 @@
 #'   a sweep through every move type). Default 1000.
 #' @param warmup Warmup iterations per stone (discarded), counted as for
 #'   `nIter`. Default 200.
-#' @param burnin Integer specifying the number of iterations each descending
-#'   run samples the posterior (beta = 1), discarded, before its first stone.
+#' @param burnin Integer specifying the number of discarded iterations at
+#'   beta = 1 before a descending run (see Details) reaches its first stone.
 #' @param alpha Shape parameter for the Beta(alpha, 1) quantile schedule.
 #'   Smaller values concentrate more stones near beta = 0 where the integrand
 #'   changes fastest. Default 0.3 (Xie et al. recommendation).
 #' @param fixTopology If `TRUE`, fix the tree topology and only sample
 #'   continuous parameters + branch lengths. Default `FALSE`.
-#' @param nRuns Integer specifying the number of independent runs through the
-#'   whole ladder; at least two are needed for a standard error. Default 2.
+#' @param nRuns Integer specifying the number of runs through the whole
+#'   ladder, alternately descending and ascending; at least two are needed for
+#'   a standard error. Default 2.
 #' @param verbose Logical specifying whether to report per-stone progress;
 #'   see [MkPrimeVerbosity()].
 #'
@@ -39,8 +40,8 @@
 #'   \describe{
 #'     \item{log_marginal}{Log marginal likelihood estimate: the mean of
 #'       `run_log_marginal`.}
-#'     \item{se}{Standard error of the estimate (see Details); `NA` when
-#'       `nRuns = 1`.}
+#'     \item{se}{Standard error of the estimate, including any gap between
+#'       descending and ascending runs (see Details); `NA` when `nRuns = 1`.}
 #'     \item{run_log_marginal}{The estimate from each run alone (length `nRuns`).}
 #'     \item{log_ratios}{Per-stone log ratios, averaged over runs (length
 #'       `nStones`).}
@@ -71,19 +72,20 @@
 #' from the prior to beta = 1. A stone too short for the chain to equilibrate
 #' keeps some of the log-likelihood of the stone before it, which biases a
 #' descending run upwards and an ascending run downwards (Lartillot & Philippe
-#' 2006). Their mean cancels much of that bias, and the gap between them,
-#' which enters the standard error, measures it; a single run descends, so is
-#' biased upwards when stones are short. The first run starts from `tree`;
-#' later runs start from a perturbed copy (a few random
-#' nearest-neighbour interchanges, unless `fixTopology`, and jittered branch
-#' lengths) and, under a geometric `k'` prior, a random `p`, so that their
-#' spread reflects how far the estimate depends on the start. The estimate is
-#' the mean of the `n = nRuns` runs' own estimates; its standard error is
-#' \eqn{s / \sqrt{n}}, where \eqn{s} is their standard deviation. Within a
-#' run, the autocorrelation of the chain commonly outlasts a stone and carries
-#' into the next, so an error computed from each stone's draws alone (the
-#' delta method of Xie et al. 2011) can understate the true error
-#' several-fold; independent runs capture both. With few runs the standard
+#' 2006). With an even `nRuns`, half the runs go each way, so their mean cancels
+#' much of that bias; a single run descends, and is biased upwards when stones
+#' are short.
+#'
+#' The first run starts from `tree`; later runs start from a perturbed copy (a
+#' few random nearest-neighbour interchanges, unless `fixTopology`, and jittered
+#' branch lengths) and, under a geometric `k'` prior, a random `p`. The estimate
+#' is the mean of the `n = nRuns` runs' own estimates; its standard error is
+#' \eqn{s / \sqrt{n}}, where \eqn{s} is their standard deviation. That spread
+#' includes the gap between descending and ascending runs, so where stones are
+#' too short to equilibrate the standard error is large, erring on the side of
+#' caution. An error computed from each stone's draws alone (the delta method of
+#' Xie et al. 2011) misses the autocorrelation that carries from stone to stone,
+#' and can understate the true error several-fold. With few runs the standard
 #' error is itself uncertain: with the default two it rests on one degree of
 #' freedom.
 #'
@@ -227,10 +229,10 @@ mkp_stepping_stone <- function(data, tree = NULL,
       }
       for (iter in seq_len(burnin)) Step(1)
     }
-    order <- if (descend) rev(seq_len(nStones)) else seq_len(nStones)
+    visitOrder <- if (descend) rev(seq_len(nStones)) else seq_len(nStones)
     runLogLiks <- matrix(NA_real_, nIter, nStones)
     for (visit in seq_len(nStones)) {
-      stone <- order[visit]
+      stone <- visitOrder[visit]
       if (verbose) {
         cli::cli_progress_step(
           "Run {run}/{nRuns}, stone {visit}/{nStones}: \\
