@@ -46,8 +46,8 @@ a sweep through every move type). Default 1000.}
 \item{warmup}{Warmup iterations per stone (discarded), counted as for
 \code{nIter}. Default 200.}
 
-\item{burnin}{Integer specifying the number of iterations each run samples
-the posterior (beta = 1), discarded, before its first stone.}
+\item{burnin}{Integer specifying the number of iterations each descending
+run samples the posterior (beta = 1), discarded, before its first stone.}
 
 \item{alpha}{Shape parameter for the Beta(alpha, 1) quantile schedule.
 Smaller values concentrate more stones near beta = 0 where the integrand
@@ -100,13 +100,15 @@ the prior-only stone is normalised on \verb{k' >= kObs} alone; the estimate adds
 back the log prior mass of that region, integrated numerically over the
 \verb{k'} prior's hyperparameters.
 
-Each run is one chain that carries its state from stone to stone. It first
-samples the posterior for \code{burnin} iterations, then visits the stones from
-beta = 1 down to the prior, as Xie et al. (2011) do: a chain leaves the
-posterior far faster than it finds it, so the stones near beta = 1, where
-most of the error arises, start close to equilibrium. A stone too short to
-equilibrate keeps some of the higher log-likelihood of the stone before it,
-which biases the estimate upwards. The first run starts from \code{tree};
+Each run is one chain that carries its state from stone to stone.
+Odd-numbered runs first sample the posterior for \code{burnin} iterations, then
+visit the stones from beta = 1 down to the prior; even-numbered runs climb
+from the prior to beta = 1. A stone too short for the chain to equilibrate
+keeps some of the log-likelihood of the stone before it, which biases a
+descending run upwards and an ascending run downwards (Lartillot & Philippe
+2006). Their mean cancels much of that bias, and the gap between them,
+which enters the standard error, measures it; a single run descends, so is
+biased upwards when stones are short. The first run starts from \code{tree};
 later runs start from a perturbed copy (a few random
 nearest-neighbour interchanges, unless \code{fixTopology}, and jittered branch
 lengths) and, under a geometric \verb{k'} prior, a random \code{p}, so that their
@@ -121,6 +123,9 @@ error is itself uncertain: with the default two it rests on one degree of
 freedom.
 }
 \references{
+Lartillot, N., & Philippe, H. (2006). Computing Bayes factors using
+thermodynamic integration. \emph{Systematic Biology}, 55(2), 195--207.
+
 Xie, W., Lewis, P.O., Fan, Y., Kuo, L., & Chen, M.-H. (2011).
 Improving marginal likelihood estimation for Bayesian phylogenetic model
 selection. \emph{Systematic Biology}, 60(2), 150--160.

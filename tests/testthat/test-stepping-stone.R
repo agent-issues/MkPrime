@@ -350,7 +350,7 @@ test_that("Stepping-stone controls are validated (#380)", {
 })
 
 
-test_that("Each run burns in at beta = 1, then descends the ladder", {
+test_that("Odd runs burn in at beta = 1 and descend; even runs ascend", {
   f <- SixTaxonFixture()
   visited <- numeric(0)
   local_mocked_bindings(.DoMove = function(move, stateOrPtr, ..., beta) {
@@ -358,9 +358,11 @@ test_that("Each run burns in at beta = 1, then descends the ladder", {
     list(accept = FALSE, statePtr = stateOrPtr)
   }, .package = "MkPrime")
   ss <- mkp_stepping_stone(f$pd, f$tree, nStones = 3L, nIter = 2L,
-                           warmup = 1L, burnin = 4L, nRuns = 1L,
+                           warmup = 1L, burnin = 4L, nRuns = 2L,
                            verbose = FALSE)
-  expect_equal(visited, c(rep(1, 4), rep(rev(ss$betas[1:3]), each = 3)))
+  stones <- ss$betas[1:3]
+  expect_equal(visited, c(rep(1, 4), rep(rev(stones), each = 3),
+                          rep(stones, each = 3)))
 })
 
 
@@ -379,6 +381,6 @@ test_that("Stepping-stone matches a brute-force marginal likelihood", {
   set.seed(5160)
   ss <- mkp_stepping_stone(mkd, tree, nStones = 20L, nIter = 1000L,
                            warmup = 200L, verbose = FALSE)
-  # Ten repeats at these budgets scattered with sd 0.08.
-  expect_lt(abs(ss$log_marginal + 8.628), 0.3)
+  # Ten repeats at these budgets scattered with sd 0.11.
+  expect_lt(abs(ss$log_marginal + 8.628), 0.5)
 })

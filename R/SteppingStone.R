@@ -23,8 +23,8 @@
 #'   a sweep through every move type). Default 1000.
 #' @param warmup Warmup iterations per stone (discarded), counted as for
 #'   `nIter`. Default 200.
-#' @param burnin Integer specifying the number of iterations each run samples
-#'   the posterior (beta = 1), discarded, before its first stone.
+#' @param burnin Integer specifying the number of iterations each descending
+#'   run samples the posterior (beta = 1), discarded, before its first stone.
 #' @param alpha Shape parameter for the Beta(alpha, 1) quantile schedule.
 #'   Smaller values concentrate more stones near beta = 0 where the integrand
 #'   changes fastest. Default 0.3 (Xie et al. recommendation).
@@ -65,13 +65,15 @@
 #' back the log prior mass of that region, integrated numerically over the
 #' `k'` prior's hyperparameters.
 #'
-#' Each run is one chain that carries its state from stone to stone. It first
-#' samples the posterior for `burnin` iterations, then visits the stones from
-#' beta = 1 down to the prior, as Xie et al. (2011) do: a chain leaves the
-#' posterior far faster than it finds it, so the stones near beta = 1, where
-#' most of the error arises, start close to equilibrium. A stone too short to
-#' equilibrate keeps some of the higher log-likelihood of the stone before it,
-#' which biases the estimate upwards. The first run starts from `tree`;
+#' Each run is one chain that carries its state from stone to stone.
+#' Odd-numbered runs first sample the posterior for `burnin` iterations, then
+#' visit the stones from beta = 1 down to the prior; even-numbered runs climb
+#' from the prior to beta = 1. A stone too short for the chain to equilibrate
+#' keeps some of the log-likelihood of the stone before it, which biases a
+#' descending run upwards and an ascending run downwards (Lartillot & Philippe
+#' 2006). Their mean cancels much of that bias, and the gap between them,
+#' which enters the standard error, measures it; a single run descends, so is
+#' biased upwards when stones are short. The first run starts from `tree`;
 #' later runs start from a perturbed copy (a few random
 #' nearest-neighbour interchanges, unless `fixTopology`, and jittered branch
 #' lengths) and, under a geometric `k'` prior, a random `p`, so that their
@@ -86,6 +88,9 @@
 #' freedom.
 #'
 #' @references
+#' Lartillot, N., & Philippe, H. (2006). Computing Bayes factors using
+#' thermodynamic integration. *Systematic Biology*, 55(2), 195--207.
+#'
 #' Xie, W., Lewis, P.O., Fan, Y., Kuo, L., & Chen, M.-H. (2011).
 #' Improving marginal likelihood estimation for Bayesian phylogenetic model
 #' selection. *Systematic Biology*, 60(2), 150--160.
@@ -215,15 +220,20 @@ mkp_stepping_stone <- function(data, tree = NULL,
       .DoMove(move, statePtr, tuning = mcmcTuning,
               beta = beta, transIdx = transIdx, mcmcData = mcmcData)
     }
-    if (verbose) {
-      cli::cli_progress_step("Run {run}/{nRuns}: burn-in at beta = 1")
+    descend <- run %% 2L == 1L
+    if (descend) {
+      if (verbose) {
+        cli::cli_progress_step("Run {run}/{nRuns}: burn-in at beta = 1")
+      }
+      for (iter in seq_len(burnin)) Step(1)
     }
-    for (iter in seq_len(burnin)) Step(1)
+    order <- if (descend) rev(seq_len(nStones)) else seq_len(nStones)
     runLogLiks <- matrix(NA_real_, nIter, nStones)
-    for (stone in rev(seq_len(nStones))) {
+    for (visit in seq_len(nStones)) {
+      stone <- order[visit]
       if (verbose) {
         cli::cli_progress_step(
-          "Run {run}/{nRuns}, stone {nStones - stone + 1L}/{nStones}: \\
+          "Run {run}/{nRuns}, stone {visit}/{nStones}: \\
            beta = [{round(betas[stone], 4)}, {round(betas[stone + 1L], 4)}]"
         )
       }
