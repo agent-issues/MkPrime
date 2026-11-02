@@ -43,12 +43,6 @@
 #   MARGINAL_K_OVL_EXTRA=weightedSpr Rscript T-OVL-sampled-vs-marginal.R
 # With the var unset, both modes run the PRODUCTION gated schedule (what ships).
 #
-# PRIOR VARIANT: pinned, never left to MkPrimeModel()'s default, which changed
-# from "conditional" (Model B) to "unconditional" (Model A) on 2026-06-04 and so
-# silently changed what a rerun tests. Default "unconditional" (what ships);
-# override with MARGINAL_K_PRIOR_VARIANT=conditional. The 2026-06 recorded
-# verdicts were Model B. The value is written into the .rds and verdict file.
-#
 # DO NOT RUN THE FULL GRID INLINE — heavy. Submit to Hamilton via the companion
 # submit-marginal-k-ovl.sh. For a local end-to-end check use MARGINAL_K_OVL_QUICK=1.
 
@@ -90,7 +84,6 @@ Z_BAR      <- 3.0         # equivalence band: |Delta| < Z_BAR * combined SE
 ESS_FLOOR  <- 200L        # per param per mode; below => INCONCLUSIVE
 PARAMS     <- c("tree_length", "rate_log_sd", "p")
 MIN_CONCLUSIVE <- 0.5     # PASS needs at least this fraction of params conclusive
-PRIOR_VARIANT <- Sys.getenv("MARGINAL_K_PRIOR_VARIANT", unset = "unconditional")
 
 # Extra MkPrimeMCMC flags to force ON in BOTH modes (Phase 2 move re-enable gate).
 .parse_extra <- function() {
@@ -245,7 +238,6 @@ run_cell <- function(nTip, nChar, rep) {
   run_one <- function(mode) {
     model <- suppressMessages(MkPrimeModel(kPrimePrior    = "geometric",
                                            likelihoodMode = mode,
-                                           priorVariant   = PRIOR_VARIANT,
                                            coding         = "variable"))
     # Pin thinning to store ~2000 draws so the batch-means ESS estimate is not
     # artificially capped below ESS_FLOOR by too few stored samples.
@@ -271,7 +263,7 @@ run_cell <- function(nTip, nChar, rep) {
     }
   }
   list(cell = cell_name, seed = seed, frac_latent = sim$frac_latent,
-       extra = names(EXTRA_MCMC), priorVariant = PRIOR_VARIANT, cmp = cmp)
+       extra = names(EXTRA_MCMC), cmp = cmp)
 }
 
 # Verdict over every cell/param status. INCONCLUSIVE counts as neither PASS nor
@@ -309,9 +301,9 @@ if (sys.nframe() == 0L) {
   }
 
   statuses <- character(0L)
-  cat(sprintf("\n[T-OVL] schedule: %s | priorVariant=%s | Z_BAR=%.1f ESS_FLOOR=%d\n",
+  cat(sprintf("\n[T-OVL] schedule: %s | Z_BAR=%.1f ESS_FLOOR=%d\n",
               if (length(EXTRA_MCMC)) paste(names(EXTRA_MCMC), collapse = "+")
-              else "PRODUCTION (gated)", PRIOR_VARIANT, Z_BAR, ESS_FLOOR))
+              else "PRODUCTION (gated)", Z_BAR, ESS_FLOOR))
   for (cn in names(results)) {
     fl <- results[[cn]]$frac_latent
     for (pn in names(results[[cn]]$cmp)) {
@@ -334,7 +326,6 @@ if (sys.nframe() == 0L) {
              sprintf("T-OVL-%s-cell%02d-verdict.txt", tag, cell_sel)
            else sprintf("T-OVL-%s-verdict.txt", tag)
   writeLines(c(verdict,
-               sprintf("priorVariant: %s", PRIOR_VARIANT),
                sprintf("schedule: %s", tag),
                sprintf("conclusive: %d / %d (PASS needs >= %.0f%%, no FAIL)",
                        sum(statuses == "PASS"), length(statuses),

@@ -30,8 +30,7 @@ Per simulation, matching the inference model term by term:
    - Mk' logseries: `P(k) ∝ c^k / k` on `k ≥ 2`.
    - MkNT: `k` is pinned per character through `knownStates = kTrue`, so it is
      data rather than a parameter; the arm's prior merely supplies it.
-   Mk' arms pin `priorVariant = "unconditional"` (Model A), the prior this
-   forward draws from.
+   Mk' arms use Model A, the only k' prior and the one this forward draws from.
 3. Each character is simulated under JC(`k_j`) at a rate multiplier from one
    of `nCat = 4` equiprobable discretised-lognormal categories
    (`DiscreteLognormalRates(rate_log_sd, 4)`), and `(category, data)` are
@@ -184,7 +183,7 @@ qualitative signature of miscalibration; the AD p-value formalises it.
 **FAIL on `p` or `kPrime_sum` in an Mk' arm:** the `k'` prior, its
 hyperprior update, or the `k'` moves target the wrong distribution for that
 prior. Check first that the forward in `.drawKPrime()` still matches the
-inference prior (support, truncation, `priorVariant`); this harness family
+inference prior (support, truncation); this harness family
 has had four forward/inference mismatches.
 
 **FAIL on `tree_length` or `rate_log_sd` in any arm:** shared
