@@ -15,17 +15,20 @@ forward/reverse weight ratio).
 
 | Move | Type | Implementation | Hastings claim |
 |------|------|----------------|----------------|
-| `ProposeNni`              | symmetric MH | `tree_moves.cpp:23–102`     | $\log H = 0$ |
-| `ProposeSpr`              | MH+Jacobian  | `proposals.cpp:22–167`      | $\log H = \log \ell_{\text{reg}}/\ell_{\text{merge}}$ |
-| `ProposeTbr`              | MH+Jacobian  | `tree_moves.cpp:259–500`    | $\log H = \log(\ell_{\text{reg}}/\ell_{\text{merge}}) + \log(\ell_{\text{sub}}/\ell_{\text{mergeSub}})$ |
-| `swap_subtrees_impl`      | symmetric MH | `tree_moves.cpp:130–172`    | $\log H = 0$ |
-| `gibbs_spr_impl`          | Gibbs–MH     | `mcmc.cpp:899–1170`         | exact reversibility (Gibbs) |
-| `gibbs_subtree_swap_impl` | Gibbs–MH     | `mcmc.cpp:1654–1878`        | exact reversibility (Gibbs) |
-| `weighted_spr_impl`       | Gibbs–MH + Jacobian | `mcmc.cpp:2551–2807` | branch-fraction component only |
-| `weighted_subtree_swap_impl` | Gibbs–MH + Jacobian | `mcmc.cpp:2825–3009` | branch-fraction component only |
-| `pspr_proposal_impl`      | parsimony-biased MH | `mcmc.cpp:3288–3465`        | Jacobian + parsimony bias correction |
+| `ProposeNni`              | symmetric MH | `tree_moves.cpp`     | $\log H = 0$ |
+| `ProposeSpr`              | MH+Jacobian  | `proposals.cpp`      | $\log H = \log \ell_{\text{reg}}/\ell_{\text{merge}}$ |
+| `ProposeTbr`              | MH+Jacobian  | `tree_moves.cpp`    | $\log H = \log(\ell_{\text{reg}}/\ell_{\text{merge}}) + \log(\ell_{\text{sub}}/\ell_{\text{mergeSub}})$ |
+| `swap_subtrees_impl`      | symmetric MH | `tree_moves.cpp`    | $\log H = 0$ |
+| `gibbs_spr_impl`          | Gibbs–MH     | `mcmc.cpp`         | exact reversibility (Gibbs) |
+| `gibbs_subtree_swap_impl` | Gibbs–MH     | `mcmc.cpp`        | exact reversibility (Gibbs) |
+| `weighted_spr_impl`       | Gibbs–MH + Jacobian | `mcmc.cpp` | branch-fraction component only |
+| `weighted_subtree_swap_impl` | Gibbs–MH + Jacobian | `mcmc.cpp` | branch-fraction component only |
+| `pspr_proposal_impl`      | parsimony-biased MH | `mcmc.cpp`        | Jacobian + parsimony bias correction |
 
-Proofs are organised in the same order.
+Proofs are organised in the same order. For the four Gibbs and weighted
+moves the "Hastings claim" column is **superseded** (§5–8). Line numbers in
+the body refer to the code as audited in 2026-05 and are stale; locate code by
+function name.
 
 ---
 
@@ -385,7 +388,8 @@ the subtree re-rooting Jacobian.
 ## Lemma T1 (re-rooting preserves $|\text{desc}(v)|$).
 Re-rooting the pruned subtree at one of its internal edges produces a
 new rooted representation with the *same set of tips* below $v$ and the
-same total number of edges (i.e. $2 d(v) - 1$). $\square$ (Direct from
+same total number of edges (i.e. $2 d(v) - 1$, counting the prune edge
+$(u, v)$). $\square$ (Direct from
 the bijection between rooted representations of an unrooted subtree.)
 
 ## Lemma T2 (candidate-count balance).
@@ -393,14 +397,16 @@ Both the forward and reverse moves have:
 
 - Eligible prune edges = $2n - 2\rho$ (Lemma S1; A1).
 - Regraft candidates = $2n - \rho - 1 - 2 d(v)$ (Lemma S1 + T1).
-- Subtree-edge count for re-rooting = $2 d(v) - 1$ (T1).
+- Subtree-edge count for re-rooting = $2 d(v) - 2$: the edges strictly
+  below $v$ (T1 less the prune edge, which `subEdgeRows` in `ProposeTbr`
+  never collects).
 
 All three counts are state-independent given $v$ (which is invariant
 across the move). Thus the candidate-count ratio is identically 1.
 
 ## Lemma T3 (subtree re-rooting Jacobian).
-Re-rooting picks an internal edge $(x, y)$ of the subtree uniformly from
-$2 d(v) - 1$ candidates (`tree_moves.cpp:335–337`), draws
+Re-rooting picks an edge $(x, y)$ strictly below $v$ uniformly from
+$2 d(v) - 2$ candidates (`subEdgeRows` in `ProposeTbr`), draws
 $\sigma \sim U(0, 1)$ (`tree_moves.cpp:382`), and applies:
 
 - $\ell(v \to a_1)$ is absorbed into $\ell(a_1 \to c_{\text{other}})$
@@ -533,6 +539,16 @@ see §6).
 
 # 5. GibbsSPR (`gibbs_spr_impl`)
 
+> **Superseded.** The $\tau = 1/2$, no-MH kernel certified here was not
+> π-invariant (GSPR-001: a deterministic split maps a positive-measure set
+> onto a π-null one). #19 / PR #30 replaced it with a drawn
+> $\tau \sim U(0, 1)$ and an MH step carrying the selection-weight ratio and
+> the SPR Jacobian (`gibbs_spr_finish`). Derivation:
+> `dev/plans/2026-08-12-gibbs-spr-fix-design.md`; non-invariance proof:
+> `esjd-allocation.md` §Q4; regression gate:
+> `dev/red-team/heavy-tests/gibbs-spr-db.R`. The text below is the audit
+> record; do not cite it.
+
 ## Theorem (GibbsSPR reversibility).
 GibbsSPR samples the new topology from the conditional posterior over
 the SPR neighbourhood plus the current state ("self") at inverse
@@ -590,6 +606,12 @@ moves in the chain.
 ---
 
 # 6. GibbsSubtreeSwap (`gibbs_subtree_swap_impl`)
+
+> **Superseded.** The move no longer commits the chosen partner
+> unconditionally: it accepts by MH with $\min(1, Z_x / Z_y)$, $Z$ being the
+> selection normaliser of the anchored neighbourhood (GSWAP-001, #21).
+> Proof: `gibbs-subtree-swap-hastings.md`. The text below is the audit
+> record; do not cite it.
 
 ## Theorem (GibbsSubtreeSwap reversibility).
 For a randomly chosen node $A$ and the enumerated valid partners
@@ -676,6 +698,12 @@ default.
 
 # 7. WeightedSPR (`weighted_spr_impl`)
 
+> **Superseded.** The single-component $\log H$ below is wrong: the bin is
+> auxiliary, so the fraction's proposal density is the Beta mixture over
+> bins, which the code evaluates with `bin_mixture_logdensity` (GSPR-003,
+> #20 / #158). Proof: `weighted-spr-hastings.md`. The text below is the
+> audit record; do not cite it.
+
 ## Construction.
 For each SPR-candidate regraft edge $i$, marginalise the likelihood
 over $B$ branch-fraction bins (Beta-quantile midpoints) to produce a
@@ -758,6 +786,12 @@ forward and reverse marginal weights is not written down here.
 ---
 
 # 8. WeightedSubtreeSwap (`weighted_subtree_swap_impl`)
+
+> **Superseded.** The partner-count term posited below is not the missing
+> correction. The correct terms are the bin mixture in each direction and
+> the ratio of selection normalisers $Z_x / Z_y$ (WSWAP-001, #158). Proof:
+> `weighted-subtree-swap-hastings.md` §3. The text below is the audit
+> record; do not cite it.
 
 Analogous to WeightedSPR. The MH step at `mcmc.cpp:2996` corrects for
 proposal-density mismatches.
@@ -888,13 +922,16 @@ implementation met P0's precondition only from `fix/pspr-preorder-scoring`.
 | SPR | Watertight |
 | TBR | Watertight |
 | swap_subtrees_impl | Watertight |
-| GibbsSPR | Watertight with caveats (fixed $\tau = 1/2$) |
-| GibbsSubtreeSwap | **Open question** — partner-set asymmetry not closed |
-| WeightedSPR | Watertight with caveats (topology-cancellation argument informal) |
-| WeightedSubtreeSwap | **Open question / potential bug** — partner-set size correction may be missing |
+| GibbsSPR | Superseded (§5) |
+| GibbsSubtreeSwap | Superseded (§6) |
+| WeightedSPR | Superseded (§7) |
+| WeightedSubtreeSwap | Superseded (§8) |
 | pSPR | Watertight |
 
 ## Headline finding
+
+> **Superseded.** Both questions are settled by the proofs cited in §6 and
+> §8; item 2's partner-count term is not the fix.
 
 Two open questions deserve follow-up:
 
