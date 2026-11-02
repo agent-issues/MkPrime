@@ -432,9 +432,12 @@ samples.
 evenly spaced trees. With \code{nCore > 1}, each run reports its verdict to the
 cross-run check, which stops the job only once every run meets
 \code{minTreeEss}; with \code{minTreeEss} alone, each run stops when it meets it. A
-run that has sampled a single topology has no tree ESS: it cannot tell a
-stuck chain from a posterior concentrated on one topology, so it cannot
-meet \code{minTreeEss} until it samples another, and warns.
+run that has sampled a single topology has no tree ESS, and warns: one run
+cannot tell a stuck chain from a posterior concentrated on one topology.
+Runs, which start apart, can: once every run has settled on the same
+topology, \code{minTreeEss} is met. With \code{nCore = 1}, a run that meets every
+other criterion stops so that the next can start; if the runs then disagree,
+or \code{nRuns = 1}, the job stops as \code{"single_topology"}, unconverged.
 
 A criterion that can never be met -- \code{maxRhat} with one run, or
 \code{minTreeEss} with a fixed topology -- does

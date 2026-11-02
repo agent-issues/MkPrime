@@ -20,7 +20,8 @@ List with \code{ess}, the minimum median pseudo-ESS or \code{NA_real_}, and
 \code{status}:
 \itemize{
 \item \code{ok}: \code{ess} is the minimum over runs;
-\item \code{stuck}: a lone run has sampled one topology;
+\item \code{stuck}: a lone run has sampled one topology, whose \code{\link[=.TopologyFingerprint]{.TopologyFingerprint()}}
+is returned as \code{topology};
 \item \code{agree}: every run has sampled the same single topology;
 \item \code{disagree}: some run has sampled one topology and the others differ;
 \item \code{unavailable}: too few trees, or the computation failed.

@@ -321,11 +321,26 @@ print.MkpDiagnostics <- function(x, ...) {
 }
 
 
+#' Fingerprint of an unrooted topology
+#'
+#' @param tree A `phylo` object.
+#' @return Character scalar, identical for two trees exactly when they share
+#' an unrooted topology, whatever their rooting or tip order.
+#' @keywords internal
+.TopologyFingerprint <- function(tree) {
+  tree <- TreeTools::RenumberTips(tree, sort(tree[["tip.label"]]))
+  splits <- TreeTools::PolarizeSplits(TreeTools::as.Splits(tree), 1L)
+  # Return:
+  paste(sort(as.character(splits)), collapse = ";")
+}
+
+
 #' Record whether a parallel worker's run meets `minTreeEss`
 #'
 #' Trees are not in the logs, so a parallel parent cannot judge `minTreeEss`
 #' itself. Each worker writes its run's tree verdict at every check, and the
-#' parent stops on convergence only once every run's verdict is met.
+#' parent stops on convergence only once [.TreeVerdictsMet()] holds for
+#' every run.
 #'
 #' @param verdictFile Path to write, or `NULL` to do nothing.
 #' @param diagCheck A [.CheckConvergence()] result for one run.
@@ -335,12 +350,15 @@ print.MkpDiagnostics <- function(x, ...) {
 #' @keywords internal
 .WriteTreeVerdict <- function(verdictFile, diagCheck, mcmc, iter) {
   if (is.null(verdictFile)) return(invisible())
+  stuck <- identical(diagCheck$treeEssStatus, "stuck")
   verdict <- list(
     iter = iter,
     treeEss = diagCheck$treeEss,
     met = is.null(mcmc$minTreeEss) ||
       identical(diagCheck$treeEssStatus, "agree") ||
-      isTRUE(diagCheck$treeEss >= mcmc$minTreeEss)
+      isTRUE(diagCheck$treeEss >= mcmc$minTreeEss),
+    stuck = stuck,
+    topology = if (stuck) diagCheck$treeTopology else NA_character_
   )
   # The parent may read at any moment, so it must never see a partial file.
   tmp <- paste0(verdictFile, ".tmp")
@@ -356,21 +374,86 @@ print.MkpDiagnostics <- function(x, ...) {
 #' @return Logical, one per file; `FALSE` where no verdict is readable yet.
 #' @keywords internal
 .ReadTreeVerdicts <- function(verdictFiles) {
-  vapply(verdictFiles, function(f) {
-    verdict <- if (file.exists(f)) {
-      tryCatch(readRDS(f), error = function(e) NULL)
-    }
-    isTRUE(verdict$met)
-  }, logical(1L), USE.NAMES = FALSE)
+  .TreeVerdictsMet(lapply(verdictFiles, function(f) {
+    if (file.exists(f)) tryCatch(readRDS(f), error = function(e) NULL)
+  }))
+}
+
+#' @describeIn dot-ReadTreeVerdicts Judge verdicts already read.
+#' @param verdicts List of verdicts written by [.WriteTreeVerdict()], `NULL`
+#'   where none is readable.
+#' @details A run stuck on one topology cannot meet `minTreeEss` alone, but
+#' two or more runs that started apart and settled on the same topology agree,
+#' so tree ESS does not apply to any of them (#195).
+#' @keywords internal
+.TreeVerdictsMet <- function(verdicts) {
+  met <- vapply(verdicts, function(v) isTRUE(v$met), logical(1L))
+  keys <- vapply(verdicts, function(v) {
+    if (isTRUE(v$stuck)) v$topology %||% NA_character_ else NA_character_
+  }, character(1L))
+  if (length(keys) > 1L && !anyNA(keys) && length(unique(keys)) == 1L) {
+    met[] <- TRUE
+  }
+  # Return:
+  met
+}
+
+
+#' Compare serial runs that stopped on a single topology
+#'
+#' A serial run that meets every criterion except tree ESS, because it has
+#' sampled one topology, stops as `"single_topology"`. Once every run has
+#' done so on the same topology, the runs agree and have converged; otherwise
+#' they have not, and a warning says why.
+#'
+#' @param runs List of finished run states.
+#' @param mcmc The `MkPrimeMCMC` settings.
+#' @param isStreaming Logical; `TRUE` where trees are held as a flat list.
+#' @return List with `runs`, each marked `"converged"` where the runs agree,
+#' and the job's `stopReason`; `NULL` where no run stopped on one topology.
+#' @keywords internal
+.SingleTopologyStop <- function(runs, mcmc, isStreaming = TRUE) {
+  reasons <- vapply(runs, function(r) r$stop_reason %||% "max_iter",
+                    character(1L))
+  single <- reasons == "single_topology"
+  if (!any(single)) return(list(runs = runs, stopReason = NULL))
+  agree <- length(runs) > 1L && length(runs) == mcmc$nRuns && all(single) &&
+    identical(.ComputeTreeEssInLoop(
+      runs, .FineTreesPerRun(mcmc$minTreeEss), isStreaming
+    )[["status"]], "agree")
+  if (!agree) {
+    cli::cli_warn(if (mcmc$nRuns == 1L) {
+      c("The run has sampled a single topology, so {.arg minTreeEss} \\
+         cannot be met.",
+        "i" = "Use {.arg nRuns} >= 2 to compare runs that start apart, or \\
+               drop {.arg minTreeEss} if the posterior is concentrated on \\
+               one topology.")
+    } else {
+      c("{.arg minTreeEss} is not met: the runs have not all settled on one \\
+         shared topology.",
+        "i" = "{sum(single)} of {mcmc$nRuns} runs sampled a single topology; \\
+               a run stuck where the others are not has not mixed.")
+    })
+    return(list(runs = runs,
+                stopReason = .WorkersStopReason(reasons, mcmc$nRuns)))
+  }
+  # Return:
+  list(
+    runs = lapply(runs, function(r) {
+      r$stop_reason <- "converged"
+      r
+    }),
+    stopReason = "converged"
+  )
 }
 
 
 #' Stop reason of a parallel job whose workers all stopped on their own
 #'
 #' The job converged only if every requested run returned and converged.
-#' Otherwise the first of `"cancelled"`, `"max_time"`, `"too_short"` that a
-#' run reports explains why the job stopped short, and `"max_iter"` is the
-#' default.
+#' Otherwise the first of `"cancelled"`, `"max_time"`, `"too_short"`,
+#' `"single_topology"` that a run reports explains why the job stopped short,
+#' and `"max_iter"` is the default.
 #'
 #' @param runReasons Character `stop_reason` of each returned run.
 #' @param nRuns Integer number of runs requested.
@@ -380,7 +463,7 @@ print.MkpDiagnostics <- function(x, ...) {
   if (length(runReasons) == nRuns && all(runReasons == "converged")) {
     return("converged")
   }
-  for (reason in c("cancelled", "max_time", "too_short")) {
+  for (reason in c("cancelled", "max_time", "too_short", "single_topology")) {
     if (reason %in% runReasons) return(reason)
   }
   # Return:
