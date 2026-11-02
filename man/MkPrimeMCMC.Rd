@@ -494,7 +494,11 @@ are optimised to maximise min-ESS/s (minimum effective sample
 size per second across parameters) using a perturbation bandit.
 Each round evaluates the current and perturbed weight vectors
 over short windows, adopting a candidate only when it beats the
-incumbent by more than the noise in its ESS estimate. Tuning samples
+incumbent by more than the noise in its ESS estimate. The min-ESS/s
+shown in the progress ticker is the ESS of the current window alone (the
+samples stored since the last weight change) over that window's wall-clock
+seconds; ESS is floored at 1, so the rate is never negative, and a
+window with no usable estimate is not reported. Tuning samples
 are discarded. Step sizes are frozen at their warmup values, and
 joint-proposal correlations at their estimate from the first tuning
 window. The phase ends after

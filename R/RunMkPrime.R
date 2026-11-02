@@ -1355,6 +1355,7 @@ RunMkPrime <- function(data, tree = NULL,
   # M-141: wall-clock start of sample phase (for ETA estimation)
   sampleWallStart <- if (phase == "Sample") startTime else NA_real_
   etaStr          <- NULL
+  lastTreeEss     <- NA_real_
 
   # Stabilisation detector state (Warmup phase)
   logPostHistory     <- r$logPostHistory %||% numeric(0)
@@ -1955,7 +1956,7 @@ RunMkPrime <- function(data, tree = NULL,
         currentEssPerSec <- currentRate[["rate"]]
 
         if (!is.na(currentEssPerSec)) {
-          tickerPages <- sprintf("minESS/s: %.2f", currentEssPerSec)
+          tickerPages <- paste("minESS/s:", .FormatEssPerSec(currentEssPerSec))
           topologyCut <- sum(moveWeights[topologyMoves]) <
             sum(bestWeights[topologyMoves]) * (1 - sqrt(.Machine$double.eps))
           if (.BeatsIncumbent(currentEssPerSec, currentRate[["ess"]],
@@ -2165,7 +2166,8 @@ RunMkPrime <- function(data, tree = NULL,
     if (hasProgressFn &&
         (batchEnd %/% mcmc$plotEvery) > ((batchStart - 1L) %/% mcmc$plotEvery)) {
       info <- .BuildProgressInfo(list(r), batchEnd, mcmc, startTime,
-                                 recentAcc, paramNames, phase = batchPhase)
+                                 recentAcc, paramNames, phase = batchPhase,
+                                 treeEss = lastTreeEss)
       mcmc$progressFn(info)
     }
 
@@ -2213,6 +2215,7 @@ RunMkPrime <- function(data, tree = NULL,
                                      essRuns)
       if (!is.null(diagCheck)) {
         .WriteTreeVerdict(verdictFile, diagCheck, mcmc, batchEnd)
+        lastTreeEss <- diagCheck$treeEss %||% NA_real_
         elapsedSample <- proc.time()["elapsed"] - sampleWallStart
 
         # M-141: ETA from worst-case ESS accumulation rate, projected against
@@ -4771,7 +4774,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
 #' @keywords internal
 .BuildProgressInfo <- function(runs, iter, mcmc, startTime,
                                recentAcc, paramNames,
-                               phase = "Sample") {
+                               phase = "Sample", treeEss = NA_real_) {
   nRuns       <- length(runs)
   isStreaming <- !is.null(mcmc$logFile)
   runSamples <- lapply(runs, function(r) {
@@ -4805,8 +4808,38 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
     currentState = currentState,
     recentAcceptance = recentAcc,
     elapsed = as.numeric(proc.time()["elapsed"] - startTime),
-    paramNames = paramNames
+    paramNames = paramNames,
+    recentTrees = .RecentRunTrees(runs),
+    treeEss = treeEss
   )
+}
+
+
+# Up to `nMax` of the most recently stored trees, pooled across runs, for the
+# progress plot's topology panel. `NULL` when no tree has been stored (warmup
+# or tuning, before the first tree is stored).
+.RecentRunTrees <- function(runs, nMax = 12L) {
+  perRun <- max(1L, ceiling(nMax / max(1L, length(runs))))
+  trees <- unlist(lapply(runs, function(r) {
+    ts <- Filter(Negate(is.null), r$tree_samples[seq_len(r$tree_saved_idx %||% 0L)])
+    utils::tail(ts, perRun)
+  }), recursive = FALSE)
+  if (length(trees) == 0L) NULL else utils::tail(trees, nMax)
+}
+
+
+# Display form of a min-ESS/s rate. The rate is ESS (floored at 1 by `.Ess()`)
+# over the seconds of the current tuning window -- the batches since the last
+# weight change, `tuningWindowSamples` stored samples -- so it is positive by
+# construction. The clamp is defensive: a missing, non-finite or non-positive
+# rate shows as
+# an em dash, never as a negative number.
+.FormatEssPerSec <- function(rate) {
+  if (!is.numeric(rate) || length(rate) != 1L || !is.finite(rate) ||
+      rate <= 0) {
+    return("\u2014")
+  }
+  sprintf("%.2f", rate)
 }
 
 
