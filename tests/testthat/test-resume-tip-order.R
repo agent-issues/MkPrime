@@ -112,8 +112,8 @@ test_that("A checkpoint without tip labels pairs tips by position (#343)", {
   expect_identical(readRDS(ck$cpFile)$mcmc$tipLabels, rownames(mat))
 })
 
-# #346: pruning does not rescale, so a near-random many-state character on
-# enough tips underflows the starting state to -Inf.
+# A near-random many-state character on enough tips once underflowed the
+# starting state to -Inf (#346); conditional likelihoods are now rescaled.
 test_that("RunMkPrime aborts when the starting log-likelihood is -Inf (#346)", {
   set.seed(346)
   nTip <- 300
@@ -121,6 +121,12 @@ test_that("RunMkPrime aborts when the starting log-likelihood is -Inf (#346)", {
                 dimnames = list(paste0("t", seq_len(nTip)), NULL))
   tree <- ape::rtree(nTip, tip.label = rownames(mat))
   tree$edge.length <- tree$edge.length * 20 / sum(tree$edge.length)
+  logLik <- MkpLogLikelihood(tree, MkPrimeData(MatrixToPhyDat(mat)),
+                             model = MkPrimeModel(nCat = 1L))
+  expect_true(is.finite(logLik))
+  expect_lt(logLik, -700)
+
+  local_mocked_bindings(.MkpLogLikelihood = function(...) -Inf)
   err <- expect_error(
     RunMkPrime(MatrixToPhyDat(mat), tree, model = MkPrimeModel(nCat = 1L),
                mcmc = MkPrimeMCMC(nRuns = 1L, nIter = 20L, minWarmup = 10L,

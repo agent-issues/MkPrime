@@ -1,0 +1,79 @@
+# Before/after timings for CL rescaling (#346): main and `ref`, installed
+# side by side and benchmarked in alternation on one runner.
+on:
+  push:
+    branches:
+      - claude/cl-rescaling-346-68fdba
+    paths:
+      - ".github/workflows/bench-cl-rescaling.yml"
+      - "dev/profiling/drivers/23_cl_rescaling.R"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or SHA to compare with main"
+        required: true
+        default: "claude/cl-rescaling-346-68fdba"
+
+name: bench-cl-rescaling
+
+jobs:
+  bench:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+
+    env:
+      R_REMOTES_STANDALONE: true
+      RSPM: "https://packagemanager.posit.co/cran/__linux__/noble/latest"
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - uses: r-lib/actions/setup-r@v2
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          cache-version: 1-${{ runner.arch }}
+          dependencies: '"hard"'
+          extra-packages: any::TreeSearch
+
+      - name: Install main and this commit
+        run: |
+          git worktree add ../main origin/main
+          mkdir -p ../lib-main ../lib-branch
+          R CMD INSTALL --library=../lib-main ../main
+          R CMD INSTALL --library=../lib-branch .
+
+      - name: Benchmark
+        run: |
+          nproc
+          cp dev/profiling/drivers/23_cl_rescaling.R ../bench.R
+          echo "label,rep,metric,value" > ../bench.csv
+          for rep in 1 2 3 4 5; do
+            for v in main branch; do
+              timeout 900 Rscript ../bench.R ../lib-$v $v $rep \
+                | grep -E "^(main|branch)," >> ../bench.csv
+            done
+          done
+          cat ../bench.csv
+
+      - name: Summarise
+        shell: Rscript {0}
+        run: |
+          x <- read.csv("../bench.csv")
+          med <- tapply(x$value, list(x$metric, x$label), median)
+          out <- data.frame(metric = rownames(med), main = med[, "main"],
+                            branch = med[, "branch"])
+          out$ratio <- out$branch / out$main
+          lines <- c(
+            paste("Runner:", Sys.getenv("RUNNER_OS"), Sys.getenv("RUNNER_ARCH"),
+                  "- medians of 5 alternating runs"),
+            "", "| metric | main | branch | branch / main |",
+            "|---|---|---|---|",
+            sprintf("| %s | %.4g | %.4g | %.3f |", out$metric, out$main,
+                    out$branch, out$ratio))
+          writeLines(lines)
+          cat(lines, file = Sys.getenv("GITHUB_STEP_SUMMARY"), sep = "\n")

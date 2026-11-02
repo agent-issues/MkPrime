@@ -182,8 +182,8 @@ Rcpp::List header_pruner_trace(std::string model, Rcpp::IntegerMatrix tip_states
   Rcpp::stop("Unknown model `%s`.", model);
 }
 
-// Per-character likelihoods from a one-off Pruner (for checks against
-// independent R implementations).
+// Per-character likelihoods (log likelihoods if `log`) from a one-off Pruner
+// (for checks against independent R implementations).
 // [[Rcpp::export]]
 Rcpp::NumericVector header_site_likelihoods(std::string model,
                                             Rcpp::IntegerVector parent,
@@ -192,7 +192,8 @@ Rcpp::NumericVector header_site_likelihoods(std::string model,
                                             Rcpp::IntegerMatrix tip_states,
                                             int kStates, double param,
                                             Rcpp::NumericVector pi,
-                                            Rcpp::NumericVector rates) {
+                                            Rcpp::NumericVector rates,
+                                            bool log = false) {
   const std::vector<double> r(rates.begin(), rates.end());
   Rcpp::NumericVector out(tip_states.ncol());
   const int nTip = tip_states.nrow(), nChar = tip_states.ncol();
@@ -200,18 +201,18 @@ Rcpp::NumericVector header_site_likelihoods(std::string model,
     MkPrime::Pruner<MkPrime::JCModel> pr(MkPrime::JCModel(kStates), nTip, nChar,
                                          tip_states.begin(), r);
     pr.set_tree(parent.begin(), child.begin(), edge_length.begin(), parent.size());
-    pr.site_likelihoods(out.begin());
+    log ? pr.log_site_likelihoods(out.begin()) : pr.site_likelihoods(out.begin());
   } else if (model == "mkn") {
     MkPrime::Pruner<MkPrime::MkNModel> pr(MkPrime::MkNModel(param), nTip, nChar,
                                           tip_states.begin(), r);
     pr.set_tree(parent.begin(), child.begin(), edge_length.begin(), parent.size());
-    pr.site_likelihoods(out.begin());
+    log ? pr.log_site_likelihoods(out.begin()) : pr.site_likelihoods(out.begin());
   } else if (model == "f81") {
     MkPrime::Pruner<MkPrime::F81Model> pr(
       MkPrime::F81Model(pi.begin(), pi.size(), param), nTip, nChar,
       tip_states.begin(), r);
     pr.set_tree(parent.begin(), child.begin(), edge_length.begin(), parent.size());
-    pr.site_likelihoods(out.begin());
+    log ? pr.log_site_likelihoods(out.begin()) : pr.site_likelihoods(out.begin());
   } else {
     Rcpp::stop("Unknown model `%s`.", model);
   }
@@ -269,9 +270,12 @@ Rcpp::List marginals_of(const Model& model, const Rcpp::IntegerVector& parent,
     for (int cat = 0; cat < nCat; ++cat) {
       const double* down = pr.node_cl(cat, node);
       const double* up = pr.node_up(cat, node);
+      const int* downShift = pr.node_shift(cat, node);
+      const int* upShift = pr.node_up_shift(cat, node);
       for (int c = 0; c < nChar; ++c) {
         double s = 0.0;
         for (int x = 0; x < k; ++x) s += down[c * k + x] * up[c * k + x];
+        s = std::ldexp(s, -downShift[c] - upShift[c]);
         nodeLik(c, node - 1) += s / nCat;
       }
     }

@@ -15,6 +15,7 @@
 
 #include "mcmc_state.h"
 #include "gibbs_partial_cl.h"  // TreeNav
+#include "../inst/include/MkPrime/scaling.h"
 #include <cstring>
 #include <map>
 #include <cmath>
@@ -86,6 +87,12 @@ struct CacheUnit {
   // Tips + internal nodes.  Tips are constant (set once at init).
   std::vector<double> cl;
 
+  // CL rescaling (scaling.h): character c's block of (cat, node) is scaled
+  // by 2^SH(cat, node)[c]. SH is read only where isScaled(cat, node);
+  // elsewhere every shift is 0.
+  std::vector<int> shift;
+  std::vector<uint8_t> scaled;
+
   int maxNode;  // allocated size (1-indexed: slots 0..maxNode)
 
   // Accessor: pointer to CL of (cat, node)
@@ -95,12 +102,26 @@ struct CacheUnit {
   const double* CL(int cat, int node) const {
     return cl.data() + ((size_t)cat * (maxNode + 1) + node) * stride;
   }
+  int* SH(int cat, int node) {
+    return shift.data() + ((size_t)cat * (maxNode + 1) + node) * nChar;
+  }
+  const int* SH(int cat, int node) const {
+    return shift.data() + ((size_t)cat * (maxNode + 1) + node) * nChar;
+  }
+  uint8_t& isScaled(int cat, int node) {
+    return scaled[(size_t)cat * (maxNode + 1) + node];
+  }
+  uint8_t isScaled(int cat, int node) const {
+    return scaled[(size_t)cat * (maxNode + 1) + node];
+  }
 
   void allocate(int maxNode_, int nCat_) {
     maxNode = maxNode_;
     nCat = nCat_;
     stride = nChar * kStates;
     cl.assign((size_t)nCat * (maxNode + 1) * stride, 0.0);
+    shift.assign((size_t)nCat * (maxNode + 1) * nChar, 0);
+    scaled.assign((size_t)nCat * (maxNode + 1), 0);
   }
 };
 
@@ -132,6 +153,8 @@ struct NodeCLCache {
 
   // Rollback scratch (reused across iterations to avoid allocation)
   std::vector<double> savedCL;
+  std::vector<int>    savedShift;
+  std::vector<uint8_t> savedScaled;
   std::vector<int>    dirtyNodes;
   double savedLogLik = 0.0;  // total log-lik before partial update
 
@@ -243,12 +266,67 @@ static void init_tips(CacheUnit& unit, int nTip) {
 
 
 // ---------------------------------------------------------------------------
+// finish_node: after (cat, node)'s CLs are computed from `children`, set its
+// shifts to the sum of theirs and, if `check`, rescale any character that
+// has fallen below MkPrime::kRescaleBelow.
+// ---------------------------------------------------------------------------
+static void finish_node(CacheUnit& unit, int cat, int node,
+                        const int* children, bool check) {
+  const int nChar = unit.nChar, k = unit.kStates;
+  int* sh = unit.SH(cat, node);
+  bool any = false;
+  for (int ci = 0; ci < 3; ++ci) {
+    const int ch = children[ci];
+    if (ch < 0 || !unit.isScaled(cat, ch)) continue;
+    if (!any) std::fill(sh, sh + nChar, 0);
+    any = true;
+    const int* shCh = unit.SH(cat, ch);
+    for (int c = 0; c < nChar; ++c) sh[c] += shCh[c];
+  }
+  double* cl = unit.CL(cat, node);
+  for (int c = 0; check && c < nChar; ++c) {
+    double* block = cl + c * k;
+    double sum = 0.0;
+    for (int s = 0; s < k; ++s) sum += block[s];
+    if (sum < MkPrime::kRescaleBelow) {
+      if (!any) std::fill(sh, sh + nChar, 0);
+      any = true;
+      sh[c] += MkPrime::rescale_cl(block, k);
+    }
+  }
+  unit.isScaled(cat, node) = any;
+}
+
+
+// ---------------------------------------------------------------------------
+// root_too_small: whether any character's root site likelihood is below
+// MkPrime::kRescaleBelow. Unscaled CLs are at most 1 and transition rows sum
+// to 1, so no node's largest entry is below the root's: if this is false,
+// checking every node would have rescaled nothing, and passes that skip the
+// check are exact.
+// ---------------------------------------------------------------------------
+static bool root_too_small(const CacheUnit& unit, int root) {
+  const int k = unit.kStates;
+  const double* rf = unit.rootFreqs.data();
+  for (int cat = 0; cat < unit.nCat; ++cat) {
+    const double* clRoot = unit.CL(cat, root);
+    for (int c = 0; c < unit.nChar; ++c) {
+      double sl = 0.0;
+      for (int s = 0; s < k; ++s) sl += rf[s] * clRoot[c * k + s];
+      if (!(sl >= MkPrime::kRescaleBelow)) return true;
+    }
+  }
+  return false;
+}
+
+
+// ---------------------------------------------------------------------------
 // full_downpass: compute all internal-node CLs for one CacheUnit.
 // Called during cache population.
 // ---------------------------------------------------------------------------
-static void full_downpass(
+static void full_downpass_pass(
     CacheUnit& unit, const TreeNav& topo,
-    const std::vector<double>& rates, double rateLoss) {
+    const std::vector<double>& rates, double rateLoss, bool check) {
   int nCat = unit.nCat;
 
   // Temporary buffer for one child's contribution (one character block)
@@ -318,7 +396,17 @@ static void full_downpass(
             clNode[j] *= contrib[j];
         }
       }
+      finish_node(unit, cat, node, children, check);
     }
+  }
+}
+
+static void full_downpass(
+    CacheUnit& unit, const TreeNav& topo,
+    const std::vector<double>& rates, double rateLoss) {
+  full_downpass_pass(unit, topo, rates, rateLoss, false);
+  if (root_too_small(unit, topo.root)) {
+    full_downpass_pass(unit, topo, rates, rateLoss, true);
   }
 }
 
@@ -336,6 +424,7 @@ static double unit_root_loglik(const CacheUnit& unit, int root) {
   if (nCat == 1) {
     // No ACRV: single category
     const double* clRoot = unit.CL(0, root);
+    const int* shRoot = unit.isScaled(0, root) ? unit.SH(0, root) : nullptr;
     double logLik = 0.0;
     for (int c = 0; c < nChar; ++c) {
       int offset = c * k;
@@ -343,20 +432,24 @@ static double unit_root_loglik(const CacheUnit& unit, int root) {
       for (int s = 0; s < k; ++s)
         sl += rf[s] * clRoot[offset + s];
       if (sl <= 0.0) return R_NegInf;
-      logLik += std::log(sl);
+      logLik += MkPrime::log_scaled(sl, shRoot ? shRoot[c] : 0);
     }
     return logLik;
   } else {
     // ACRV: average site likelihoods across categories
     std::vector<double> siteLikSum(nChar, 0.0);
+    std::vector<int> siteShift(nChar, 0);
     for (int cat = 0; cat < nCat; ++cat) {
       const double* clRoot = unit.CL(cat, root);
+      const int* shRoot = unit.isScaled(cat, root) ? unit.SH(cat, root)
+                                                   : nullptr;
       for (int c = 0; c < nChar; ++c) {
         int offset = c * k;
         double sl = 0.0;
         for (int s = 0; s < k; ++s)
           sl += rf[s] * clRoot[offset + s];
-        siteLikSum[c] += sl;
+        MkPrime::add_scaled(siteLikSum[c], siteShift[c], sl,
+                            shRoot ? shRoot[c] : 0);
       }
     }
     double inv_nCat = 1.0 / nCat;
@@ -364,7 +457,7 @@ static double unit_root_loglik(const CacheUnit& unit, int root) {
     for (int c = 0; c < nChar; ++c) {
       double avg = siteLikSum[c] * inv_nCat;
       if (avg <= 0.0) return R_NegInf;
-      logLik += std::log(avg);
+      logLik += MkPrime::log_scaled(avg, siteShift[c]);
     }
     return logLik;
   }
@@ -881,14 +974,28 @@ static void save_dirty_cls(
 
   cache.savedCL.resize(totalSize);
   cache.dirtyNodes = dirtyNodes;
+  size_t shiftSize = 0, flagSize = 0;
+  for (const auto& unit : cache.units) {
+    shiftSize += (size_t)unit.nCat * dirtyNodes.size() * unit.nChar;
+    flagSize += (size_t)unit.nCat * dirtyNodes.size();
+  }
+  cache.savedShift.resize(shiftSize);
+  cache.savedScaled.resize(flagSize);
 
   double* dst = cache.savedCL.data();
+  int* shDst = cache.savedShift.data();
+  uint8_t* flagDst = cache.savedScaled.data();
   for (const auto& unit : cache.units) {
     for (int cat = 0; cat < unit.nCat; ++cat) {
       for (int node : dirtyNodes) {
         const double* src = unit.CL(cat, node);
         std::memcpy(dst, src, unit.stride * sizeof(double));
         dst += unit.stride;
+        *flagDst = unit.isScaled(cat, node);
+        if (*flagDst++) {
+          std::memcpy(shDst, unit.SH(cat, node), unit.nChar * sizeof(int));
+        }
+        shDst += unit.nChar;
       }
     }
   }
@@ -902,12 +1009,19 @@ static void restore_dirty_cls(
     NodeCLCache& cache, const std::vector<int>& dirtyNodes) {
 
   const double* src = cache.savedCL.data();
+  const int* shSrc = cache.savedShift.data();
+  const uint8_t* flagSrc = cache.savedScaled.data();
   for (auto& unit : cache.units) {
     for (int cat = 0; cat < unit.nCat; ++cat) {
       for (int node : dirtyNodes) {
         double* dst = unit.CL(cat, node);
         std::memcpy(dst, src, unit.stride * sizeof(double));
         src += unit.stride;
+        unit.isScaled(cat, node) = *flagSrc;
+        if (*flagSrc++) {
+          std::memcpy(unit.SH(cat, node), shSrc, unit.nChar * sizeof(int));
+        }
+        shSrc += unit.nChar;
       }
     }
   }
@@ -931,40 +1045,46 @@ static void recompute_dirty_nodes(
     if ((int)contrib.size() < maxStride)
       contrib.resize(maxStride);
 
-    for (int cat = 0; cat < unit.nCat; ++cat) {
-      double rate = (unit.nCat > 1) ? cache.rates[cat] : 1.0;
+    // Unchecked first; again with rescaling if root_too_small().
+    for (int pass = 0; pass < 2; ++pass) {
+      const bool check = pass > 0;
+      for (int cat = 0; cat < unit.nCat; ++cat) {
+        double rate = (unit.nCat > 1) ? cache.rates[cat] : 1.0;
 
-      for (int node : dirtyNodes) {
-        if (node <= cache.topo.nTip) continue;  // tips are constant
+        for (int node : dirtyNodes) {
+          if (node <= cache.topo.nTip) continue;  // tips are constant
 
-        double* clNode = unit.CL(cat, node);
-        bool first = true;
+          double* clNode = unit.CL(cat, node);
+          bool first = true;
 
-        int children[3] = {
-          cache.topo.ch0[node],
-          cache.topo.ch1[node],
-          cache.topo.ch2[node]
-        };
+          int children[3] = {
+            cache.topo.ch0[node],
+            cache.topo.ch1[node],
+            cache.topo.ch2[node]
+          };
 
-        for (int ci = 0; ci < 3; ++ci) {
-          int ch = children[ci];
-          if (ch < 0) continue;
+          for (int ci = 0; ci < 3; ++ci) {
+            int ch = children[ci];
+            if (ch < 0) continue;
 
-          double el = cache.topo.nodeEdgeLen[ch];  // M-158
-          const double* childCL = unit.CL(cat, ch);
-          apply_transition(unit, childCL, contrib.data(),
-                           el, rateLoss, rate);
+            double el = cache.topo.nodeEdgeLen[ch];  // M-158
+            const double* childCL = unit.CL(cat, ch);
+            apply_transition(unit, childCL, contrib.data(),
+                             el, rateLoss, rate);
 
-          if (first) {
-            std::memcpy(clNode, contrib.data(),
-                        unit.stride * sizeof(double));
-            first = false;
-          } else {
-            for (int j = 0; j < unit.stride; ++j)
-              clNode[j] *= contrib[j];
+            if (first) {
+              std::memcpy(clNode, contrib.data(),
+                          unit.stride * sizeof(double));
+              first = false;
+            } else {
+              for (int j = 0; j < unit.stride; ++j)
+                clNode[j] *= contrib[j];
+            }
           }
+          finish_node(unit, cat, node, children, check);
         }
       }
+      if (check || !root_too_small(unit, cache.topo.root)) break;
     }
   }
 }

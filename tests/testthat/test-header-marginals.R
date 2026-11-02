@@ -62,7 +62,7 @@
 }
 
 test_that("transition_transpose() applies P(t)'", {
-  expect_identical(header_api_version(), 2L)
+  expect_identical(header_api_version(), 3L)
   pi <- c(0.2, 0.5, 0.3)
   for (spec in list(list("jc", 4L, 0), list("mkn", 2L, 0.7),
                     list("f81", 3L, 1.3))) {
