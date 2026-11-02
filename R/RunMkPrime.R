@@ -70,7 +70,8 @@
 #'   stopped; with `nRuns > 1`, each `$per_run` entry's `stop_reason` says why
 #'   that run did, and is `"cancelled"` for a parallel run stopped by the
 #'   job's own decision. A run stops with `"too_short"`, and a warning, when
-#'   a tuning round cannot end before `nIter`. `$acceptance`, and with
+#'   a tuning round cannot end before `nIter`, and with `"single_topology"`
+#'   when stuck on one topology (see [MkPrimeMCMC()]). `$acceptance`, and with
 #'   `nChains > 1` `$chain_acceptance`, give each move's acceptance rate over
 #'   the Sample phase alone.
 #'
@@ -558,6 +559,7 @@ RunMkPrime <- function(data, tree = NULL,
       # Simple sequential path (1 run or no maxRhat)
       startTime <- proc.time()["elapsed"]
       runMcmc   <- mcmc
+      runMcmc$stuckHandOff <- TRUE
       lastRun   <- nRuns
       for (run in seq_len(nRuns)) {
         # maxTime bounds the job, not each run (#13).
@@ -588,6 +590,11 @@ RunMkPrime <- function(data, tree = NULL,
           lastRun <- run
           break
         }
+      }
+      if (!stopReason %in% c("cancelled", "max_time")) {
+        verdict <- .SingleTopologyStop(runs, mcmc)
+        runs <- verdict[["runs"]]
+        stopReason <- verdict[["stopReason"]] %||% stopReason
       }
 
       # Unstarted runs stay in the checkpoint, so a resume can run them.
@@ -1168,9 +1175,11 @@ RunMkPrime <- function(data, tree = NULL,
   mcmcData <- .InitMcmcData(mkd, model)
   set_branch_bins(mcmcData, mcmc$nBranchBins)
   r <- initialState
-  # A converged run that is carried on was asked for more than it met, so its
-  # streak must be earned afresh.
-  if (identical(r$stop_reason, "converged")) r$convStreak <- 0L
+  # A run that stopped on its criteria and is carried on was asked for more
+  # than it met, so its streak must be earned afresh.
+  if (isTRUE(r$stop_reason %in% c("converged", "single_topology"))) {
+    r$convStreak <- 0L
+  }
   r$stop_reason <- NULL
   r$chainStates <- vector("list", nChains)
   for (ch in seq_len(nChains)) {
@@ -2227,19 +2236,29 @@ RunMkPrime <- function(data, tree = NULL,
           r$warnedStuckTopology <- TRUE
           cli::cli_warn(c(
             "Run {runIdx} has sampled a single tree topology, so its tree \\
-             ESS cannot be assessed and {.arg minTreeEss} cannot be met.",
-            "i" = "The run continues until it samples another topology, or \\
-                   stops at {.arg nIter}, {.arg maxTime} or a cancel file.",
+             ESS cannot be assessed on its own.",
+            "i" = if (isTRUE(mcmc$stuckHandOff) && mcmc$nRuns > 1L) {
+              "Once its other criteria are met, it stops and is compared \\
+               with the other runs."
+            } else if (isTRUE(mcmc$stuckHandOff)) {
+              "Once its other criteria are met, it stops."
+            } else {
+              "It continues until it samples another topology, or until \\
+               every run has settled on the same one."
+            },
             "i" = "One run cannot tell a stuck chain from a posterior \\
-                   concentrated on one topology; if the posterior is \\
-                   concentrated, drop {.arg minTreeEss}."
+                   concentrated on one topology; runs that start apart and \\
+                   settle on the same topology can."
           ))
         }
-        convVerdict  <- .ConvergenceStreak(convStreak, diagCheck$converged)
+        convVerdict  <- .ConvergenceStreak(
+          convStreak, diagCheck$converged || diagCheck$singleTopology
+        )
         convStreak   <- convVerdict[["streak"]]
         r$convStreak <- convStreak
         if (convVerdict[["stop"]]) {
-          stopReason <- "converged"
+          stopReason <- if (diagCheck$converged) "converged"
+                        else "single_topology"
           actualIter <- batchEnd
           # Recorded, so that a resume does not run a converged run again.
           r$stop_reason   <- stopReason
@@ -2434,6 +2453,7 @@ RunMkPrime <- function(data, tree = NULL,
     # With no per-run criterion left, run 1 would sample until nIter or maxTime
     # and Phase 2 would never check R-hat.
     innerMcmc$handOff <- is.null(mcmc$minEss) && is.null(mcmc$minTreeEss)
+    innerMcmc$stuckHandOff <- TRUE
 
     for (run in seq_len(nRuns)) {
       if (.StillConverged(runs[[run]], innerMcmc)) next
@@ -2478,6 +2498,13 @@ RunMkPrime <- function(data, tree = NULL,
                     stopReason = "max_time",
                     actualIter = runs[[run]]$actual_iter))
       }
+    }
+
+    verdict <- .SingleTopologyStop(runs, mcmc)
+    runs <- verdict[["runs"]]
+    if (identical(verdict[["stopReason"]], "single_topology")) {
+      return(list(runs = runs, stopReason = "single_topology",
+                  actualIter = max(vapply(runs, `[[`, 0, "actual_iter"))))
     }
 
     # No cross-run convergence needed when nRuns < 2 or no maxRhat
@@ -2832,7 +2859,8 @@ RunMkPrime <- function(data, tree = NULL,
       elStr  <- .FormatElapsed(elapsed)
       essStr <- round(diagCheck$minEss)
       etaCrit <- .EtaCriterion(diagCheck, mcmc)
-      treeMet <- .ReadTreeVerdicts(verdictFiles)
+      verdicts <- .ReadVerdictFiles(verdictFiles)
+      treeMet <- .TreeVerdictsMet(verdicts)
       # The scalars cannot say when the runs' tree ESS will be met.
       etaStr <- if (all(treeMet)) {
         .EstimateEta(etaCrit$current, etaCrit$target,
@@ -2883,8 +2911,12 @@ RunMkPrime <- function(data, tree = NULL,
 
       fresh <- sum(diagCheck$nRows) - checkedRows >= freshRows
       if (fresh) checkedRows <- sum(diagCheck$nRows)
+      # With minTreeEss alone the logs judge nothing; runs that agree on one
+      # topology never stop themselves, so the parent must stop them.
+      scalarsMet <- diagCheck$converged || .TreeVerdictsAgree(verdicts) &&
+        is.null(mcmc$minEss) && is.null(mcmc$maxRhat)
       convVerdict <- .ConvergenceStreak(
-        convStreak, diagCheck$converged && all(treeMet), fresh
+        convStreak, scalarsMet && all(treeMet), fresh
       )
       convStreak  <- convVerdict[["streak"]]
       if (convVerdict[["stop"]]) {
@@ -3140,7 +3172,9 @@ RunMkPrime <- function(data, tree = NULL,
   # binding constraint.
   treeEss <- NA_real_
   treeEssStatus <- NA_character_
+  treeTopology <- NA_character_
   treeEssPrecision <- "skip"
+  scalarsConverged <- FALSE
   if (!is.null(mcmc$minTreeEss) &&
       requireNamespace("TreeDist", quietly = TRUE)) {
 
@@ -3173,6 +3207,7 @@ RunMkPrime <- function(data, tree = NULL,
       }
       treeEss <- tree[["ess"]]
       treeEssStatus <- tree[["status"]]
+      treeTopology <- tree[["topology"]] %||% NA_character_
     }
   }
 
@@ -3192,9 +3227,16 @@ RunMkPrime <- function(data, tree = NULL,
     isTRUE(mcmc$handOff)
   }
 
-  list(converged = converged, minEss = minEss, maxRhat = maxRhat,
+  # A serial run that meets every criterion but stays on one topology hands
+  # over to the cross-run check (#195).
+  singleTopology <- !converged && isTRUE(mcmc$stuckHandOff) &&
+    scalarsConverged && identical(treeEssStatus, "stuck")
+
+  list(converged = converged, singleTopology = singleTopology,
+       minEss = minEss, maxRhat = maxRhat,
        treeEss = treeEss, treeEssPrecision = treeEssPrecision,
-       treeEssStatus = treeEssStatus, ess = ess, rhat = rhat)
+       treeEssStatus = treeEssStatus, treeTopology = treeTopology,
+       ess = ess, rhat = rhat)
 }
 
 
@@ -3287,7 +3329,8 @@ RunMkPrime <- function(data, tree = NULL,
 #' @return List with `ess`, the minimum median pseudo-ESS or `NA_real_`, and
 #' `status`:
 #'  - `ok`: `ess` is the minimum over runs;
-#'  - `stuck`: a lone run has sampled one topology;
+#'  - `stuck`: a lone run has sampled one topology, returned as `topology`
+#'    by [.TopologyFingerprint()];
 #'  - `agree`: every run has sampled the same single topology;
 #'  - `disagree`: some run has sampled one topology and the others differ;
 #'  - `unavailable`: too few trees, or the computation failed.
@@ -3338,7 +3381,8 @@ RunMkPrime <- function(data, tree = NULL,
 
     if (any(stuck)) {
       if (length(perRunTrees) == 1L) {
-        return(list(ess = NA_real_, status = "stuck"))
+        return(list(ess = NA_real_, status = "stuck",
+                    topology = .TopologyFingerprint(perRunTrees[[1]][[1]])))
       }
       firstTrees <- structure(lapply(perRunTrees, `[[`, 1L),
                               class = "multiPhylo")
@@ -4600,6 +4644,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       # it only if it never started sampling.
       startTime <- proc.time()["elapsed"]
       runMcmc   <- mcmc
+      runMcmc$stuckHandOff <- TRUE
       for (run in seq_len(nRuns)) {
         if (.StillConverged(runs[[run]], mcmc)) {
           actualIter <- runs[[run]]$actual_iter
@@ -4636,6 +4681,7 @@ ResumeMkPrime <- function(checkpointFile, data, tree = NULL,
       }
       # The job converged only if every run did, not only the last.
       if (run == nRuns && !stopReason %in% c("cancelled", "max_time")) {
+        runs <- .SingleTopologyStop(runs, mcmc, isStreaming)[["runs"]]
         stopReason <- .WorkersStopReason(
           vapply(runs, function(r) r$stop_reason %||% "max_iter",
                  character(1L)),

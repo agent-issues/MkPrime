@@ -191,3 +191,211 @@ test_that("a parallel job whose runs all converge reports it (#355)", {
   expect_identical(vapply(res$per_run, `[[`, "", "stop_reason"),
                    c("converged", "converged"))
 })
+
+# --- #195: runs stuck on one topology are compared across runs ---
+
+# 6 tips, 160 characters each congruent with one tree: every run settles on it.
+.CongruentData <- function() {
+  tree <- BalancedTree(6)
+  splits <- as.logical(as.Splits(tree))
+  mat <- t(splits[rep_len(seq_len(nrow(splits)), 160L), ]) * 1L
+  rownames(mat) <- TipLabels(tree)
+  MatrixToPhyDat(mat)
+}
+
+.StuckRun195 <- function(tree, reason = "single_topology", n = 50L) {
+  list(stop_reason = reason, tree_samples = rep(list(tree), n),
+       tree_saved_idx = n, actual_iter = 1000L)
+}
+
+test_that(".TopologyFingerprint() ignores rooting and tip order (#195)", {
+  tree <- as.phylo(0, 8)
+  key <- .TopologyFingerprint(tree)
+  expect_identical(.TopologyFingerprint(RootTree(tree, "t5")), key)
+  expect_identical(.TopologyFingerprint(UnrootTree(tree)), key)
+  expect_identical(.TopologyFingerprint(RenumberTips(tree, rev(TipLabels(tree)))), key)
+  expect_false(identical(.TopologyFingerprint(as.phylo(1, 8)), key))
+})
+
+test_that("runs stuck on one shared topology meet minTreeEss (#195)", {
+  t1 <- .TopologyFingerprint(as.phylo(0, 8))
+  t2 <- .TopologyFingerprint(as.phylo(1, 8))
+  Stuck <- function(key) list(met = FALSE, stuck = TRUE, topology = key)
+  moving <- list(met = FALSE, stuck = FALSE, topology = NA_character_)
+
+  expect_identical(.TreeVerdictsMet(list(Stuck(t1), Stuck(t1))), c(TRUE, TRUE))
+  expect_true(.TreeVerdictsAgree(list(Stuck(t1), Stuck(t1))))
+  # Runs that met minTreeEss by moving stop themselves, as before.
+  expect_false(.TreeVerdictsAgree(list(list(met = TRUE), list(met = TRUE))))
+  expect_identical(.TreeVerdictsMet(list(Stuck(t1), Stuck(t2))),
+                   c(FALSE, FALSE))
+  expect_identical(.TreeVerdictsMet(list(Stuck(t1), moving)), c(FALSE, FALSE))
+  expect_identical(.TreeVerdictsMet(list(Stuck(t1), NULL)), c(FALSE, FALSE))
+  # One run alone cannot agree with anything.
+  expect_false(.TreeVerdictsMet(list(Stuck(t1))))
+  # A verdict from before #195 carries no topology.
+  expect_identical(.TreeVerdictsMet(list(list(met = TRUE), list(met = FALSE))),
+                   c(TRUE, FALSE))
+})
+
+test_that("a stuck worker's topology reaches the parallel parent (#195)", {
+  skip_if_not_installed("TreeDist")
+  files <- replicate(2L, tempfile())
+  on.exit(unlink(files), add = TRUE)
+  mcmc <- list(minTreeEss = 100)
+  run <- list(saved_idx = 50L, tree_saved_idx = 50L,
+              tree_samples = rep(list(as.phylo(0, 8)), 50L),
+              samples = matrix(rnorm(50), 50, 1,
+                               dimnames = list(NULL, "log_posterior")))
+  diag <- .CheckConvergence(list(run), "log_posterior", mcmc)
+  expect_identical(diag$treeEssStatus, "stuck")
+  expect_identical(diag$treeTopology, .TopologyFingerprint(as.phylo(0, 8)))
+  # Workers never hand over: the parent decides.
+  expect_false(diag$singleTopology)
+
+  .WriteTreeVerdict(files[1], diag, mcmc, 1000L)
+  .WriteTreeVerdict(files[2], diag, mcmc, 1000L)
+  expect_identical(.ReadTreeVerdicts(files), c(TRUE, TRUE))
+  run$tree_samples <- rep(list(as.phylo(1, 8)), 50L)
+  .WriteTreeVerdict(files[2], .CheckConvergence(list(run), "log_posterior",
+                                                mcmc), mcmc, 2000L)
+  expect_identical(.ReadTreeVerdicts(files), c(FALSE, FALSE))
+})
+
+test_that("a serial run hands over only once its scalars are met (#195)", {
+  skip_if_not_installed("TreeDist")
+  set.seed(195)
+  run <- list(saved_idx = 50L, tree_saved_idx = 50L,
+              tree_samples = rep(list(as.phylo(0, 8)), 50L),
+              samples = matrix(rnorm(50), 50, 1,
+                               dimnames = list(NULL, "log_posterior")))
+  Check <- function(...) {
+    .CheckConvergence(list(run), "log_posterior",
+                      list(minTreeEss = 100, stuckHandOff = TRUE, ...))
+  }
+  expect_true(Check()$singleTopology)
+  expect_true(Check(minEss = 20)$singleTopology)
+  expect_false(Check(minEss = 1000)$singleTopology)
+  expect_false(Check(minEss = 20)$converged)
+})
+
+test_that(".SingleTopologyStop() compares the runs (#195)", {
+  skip_if_not_installed("TreeDist")
+  t1 <- as.phylo(0, 8)
+  t2 <- as.phylo(1, 8)
+  mcmc <- list(nRuns = 2L, minTreeEss = 100)
+
+  none <- .SingleTopologyStop(list(.StuckRun195(t1, "max_iter")), mcmc)
+  expect_null(none$stopReason)
+
+  agree <- .SingleTopologyStop(list(.StuckRun195(t1), .StuckRun195(t1)), mcmc)
+  expect_identical(agree$stopReason, "converged")
+  expect_identical(vapply(agree$runs, `[[`, "", "stop_reason"),
+                   c("converged", "converged"))
+
+  expect_warning(
+    apart <- .SingleTopologyStop(list(.StuckRun195(t1), .StuckRun195(t2)),
+                                 mcmc),
+    "settled"
+  )
+  expect_identical(apart$stopReason, "single_topology")
+  expect_identical(apart$runs[[1]]$stop_reason, "single_topology")
+
+  expect_warning(
+    mixed <- .SingleTopologyStop(
+      list(.StuckRun195(t1), .StuckRun195(t1, "converged")), mcmc
+    ),
+    "1 of 2"
+  )
+  expect_identical(mixed$stopReason, "single_topology")
+
+  expect_warning(
+    alone <- .SingleTopologyStop(list(.StuckRun195(t1)),
+                                 list(nRuns = 1L, minTreeEss = 100)),
+    "nRuns"
+  )
+  expect_identical(alone$stopReason, "single_topology")
+  expect_identical(.WorkersStopReason(c("single_topology", "converged"), 2L),
+                   "single_topology")
+})
+
+test_that("serial runs on one shared topology converge (#195)", {
+  skip_if_not_installed("TreeDist")
+  pd <- .CongruentData()
+  .SetHangGuard(180)
+  on.exit(setTimeLimit(elapsed = Inf, transient = TRUE), add = TRUE)
+  Run <- function(...) {
+    set.seed(195)
+    RunMkPrime(pd, mcmc = MkPrimeMCMC(
+      nIter = 1e7, thin = 1L, minWarmup = 200L, maxWarmup = 200L,
+      autoTune = FALSE, checkEvery = 200L, minTreeEss = 100, maxTime = 40,
+      nCore = 1L, ...
+    ))
+  }
+
+  warns <- testthat::capture_warnings(alone <- Run(nRuns = 1L))
+  expect_identical(alone$stop_reason, "single_topology")
+  expect_true(any(grepl("nRuns", warns)))
+
+  allow_warning(both <- Run(nRuns = 2L), "single tree topology|maxWarmup")
+  expect_identical(both$stop_reason, "converged")
+  expect_identical(vapply(both$per_run, `[[`, "", "stop_reason"),
+                   c("converged", "converged"))
+})
+
+test_that("parallel runs on one shared topology converge (#195)", {
+  skip_on_cran()
+  skip_if_not_installed("callr")
+  skip_if_not_installed("TreeDist")
+  skip_if_not(.IsMkPrimeInstalled(),
+              "MkPrime not installed; callr workers need the installed package")
+  pd <- .CongruentData()
+  .SetHangGuard(180)
+  on.exit(setTimeLimit(elapsed = Inf, transient = TRUE), add = TRUE)
+  set.seed(195)
+  allow_warning(
+    res <- RunMkPrime(pd, mcmc = MkPrimeMCMC(
+      nRuns = 2L, nCore = 2L, nIter = 1e7, thin = 1L, minWarmup = 200L,
+      maxWarmup = 200L, autoTune = FALSE, checkEvery = 200L,
+      minTreeEss = 100, pollInterval = 1L, maxTime = 90
+    )),
+    "single tree topology|maxWarmup"
+  )
+  expect_identical(res$stop_reason, "converged")
+})
+
+test_that("serial runs reach the R-hat phase only if they agree (#195)", {
+  skip_if_not_installed("TreeDist")
+  Serial <- function(trees) {
+    phase2 <- new.env()
+    phase2$calls <- 0L
+    local_mocked_bindings(
+      .RunMkPrimeSingleRun = function(mkd, model, mcmc, initialState, moves,
+                                      tipLabels, runIdx, ..., startIter = 1L) {
+        run <- .StuckRun195(trees[[runIdx]])
+        run$actual_iter <- min(mcmc$nIter, startIter + 999L)
+        run
+      },
+      .CheckConvergenceFromLogs = function(...) {
+        phase2$calls <- phase2$calls + 1L
+        list(converged = TRUE, maxRhat = 1)
+      }
+    )
+    mcmc <- list(nRuns = 2L, nIter = 5000L, checkEvery = 1000L,
+                 maxRhat = 1.01, minTreeEss = 100)
+    runs <- list(list(actual_iter = 0L), list(actual_iter = 0L))
+    out <- .RunSerialRuns(NULL, NULL, mcmc, runs, NULL, NULL, NULL, 0L, 0L,
+                          logFilePaths = c("a", "b"), convWindowSize = 0L,
+                          treeFilePaths = NULL)
+    c(out, phase2Calls = phase2$calls)
+  }
+  t1 <- as.phylo(0, 8)
+
+  agree <- Serial(list(t1, t1))
+  expect_identical(agree$stopReason, "converged")
+  expect_gt(agree$phase2Calls, 0L)
+
+  expect_warning(apart <- Serial(list(t1, as.phylo(1, 8))), "settled")
+  expect_identical(apart$stopReason, "single_topology")
+  expect_identical(apart$phase2Calls, 0L)
+})

@@ -2,12 +2,24 @@
 % Please edit documentation in R/Convergence.R
 \name{.ReadTreeVerdicts}
 \alias{.ReadTreeVerdicts}
+\alias{.ReadVerdictFiles}
+\alias{.TreeVerdictsMet}
+\alias{.TreeVerdictsAgree}
 \title{Which parallel runs have met \code{minTreeEss}?}
 \usage{
 .ReadTreeVerdicts(verdictFiles)
+
+.ReadVerdictFiles(verdictFiles)
+
+.TreeVerdictsMet(verdicts)
+
+.TreeVerdictsAgree(verdicts)
 }
 \arguments{
 \item{verdictFiles}{Paths written by \code{\link[=.WriteTreeVerdict]{.WriteTreeVerdict()}}.}
+
+\item{verdicts}{List of verdicts written by \code{\link[=.WriteTreeVerdict]{.WriteTreeVerdict()}}, \code{NULL}
+where none is readable.}
 }
 \value{
 Logical, one per file; \code{FALSE} where no verdict is readable yet.
@@ -15,4 +27,19 @@ Logical, one per file; \code{FALSE} where no verdict is readable yet.
 \description{
 Which parallel runs have met \code{minTreeEss}?
 }
+\details{
+A run stuck on one topology cannot meet \code{minTreeEss} alone, but
+two or more runs that started apart and settled on the same topology agree,
+so tree ESS does not apply to any of them (#195).
+}
+\section{Functions}{
+\itemize{
+\item \code{.ReadVerdictFiles()}: Each verdict, or \code{NULL} where none is
+readable.
+
+\item \code{.TreeVerdictsMet()}: Judge verdicts already read.
+
+\item \code{.TreeVerdictsAgree()}: Have all runs settled on one topology?
+
+}}
 \keyword{internal}

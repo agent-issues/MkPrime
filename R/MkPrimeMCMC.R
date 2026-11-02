@@ -324,9 +324,12 @@
 #' evenly spaced trees. With `nCore > 1`, each run reports its verdict to the
 #' cross-run check, which stops the job only once every run meets
 #' `minTreeEss`; with `minTreeEss` alone, each run stops when it meets it. A
-#' run that has sampled a single topology has no tree ESS: it cannot tell a
-#' stuck chain from a posterior concentrated on one topology, so it cannot
-#' meet `minTreeEss` until it samples another, and warns.
+#' run that has sampled a single topology has no tree ESS, and warns: one run
+#' cannot tell a stuck chain from a posterior concentrated on one topology.
+#' Runs, which start apart, can: once every run has settled on the same
+#' topology, `minTreeEss` is met. With `nCore = 1`, a run that meets every
+#' other criterion stops so that the next can start; if the runs then disagree,
+#' or `nRuns = 1`, the job stops as `"single_topology"`, unconverged.
 #'
 #' A criterion that can never be met -- `maxRhat` with one run, or
 #' `minTreeEss` with a fixed topology -- does

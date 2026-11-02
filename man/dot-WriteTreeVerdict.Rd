@@ -21,6 +21,7 @@
 \description{
 Trees are not in the logs, so a parallel parent cannot judge \code{minTreeEss}
 itself. Each worker writes its run's tree verdict at every check, and the
-parent stops on convergence only once every run's verdict is met.
+parent stops on convergence only once \code{\link[=.TreeVerdictsMet]{.TreeVerdictsMet()}} holds for
+every run.
 }
 \keyword{internal}

@@ -92,7 +92,8 @@ independently, so \verb{$moveWeights} holds run 1's frozen schedule;
 stopped; with \code{nRuns > 1}, each \verb{$per_run} entry's \code{stop_reason} says why
 that run did, and is \code{"cancelled"} for a parallel run stopped by the
 job's own decision. A run stops with \code{"too_short"}, and a warning, when
-a tuning round cannot end before \code{nIter}. \verb{$acceptance}, and with
+a tuning round cannot end before \code{nIter}, and with \code{"single_topology"}
+when stuck on one topology (see \code{\link[=MkPrimeMCMC]{MkPrimeMCMC()}}). \verb{$acceptance}, and with
 \code{nChains > 1} \verb{$chain_acceptance}, give each move's acceptance rate over
 the Sample phase alone.
 }
