@@ -798,6 +798,11 @@ case 7: { // int_walk kPrime
 - Below-lower → `return false` (immediate rejection). ✓
 - Otherwise `logHastings = 0`. ✓
 
+> Superseded: both sides now draw a nonzero shift (`draw_nonzero_shift`,
+> #304; `ProposeBoundedIntWalk`, #484), and `window` is floored at 1, so
+> edge case (b) below no longer arises. Symmetry, and so logHastings = 0,
+> is unchanged.
+
 The R-side wrapper `ProposeBoundedIntWalk` in `R/proposals.R:80-90`
 implements the same semantics with `sample(-window:window, 1L)` and
 `return(list(value = x, logHastings = -Inf))` on out-of-bounds.

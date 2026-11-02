@@ -105,14 +105,6 @@ List nni_proposal_impl(IntegerVector parent, IntegerVector child,
 // ---------------------------------------------------------------------------
 // Subtree swap (M-084)
 //
-// swap_subtrees_impl: exchange the positions of two subtrees.
-//   nodeA and nodeB are child nodes (each has a parent edge).
-//   Their parent connections are swapped; branch lengths swap with them so
-//   total tree length is unchanged and the Jacobian is 1 (logHastings = 0).
-//   Result is reordered to canonical preorder.
-//   Caller must ensure nodeA/nodeB are non-nested, non-sibling, non-root
-//   (use get_valid_swap_partners_impl).
-//
 // get_valid_swap_partners_impl: return all nodes w that are valid swap
 //   partners for pruneNode — i.e. non-descendant, non-ancestor, non-sibling
 //   of pruneNode (and pruneNode must not be the root).
@@ -123,52 +115,6 @@ static int find_child_row(const IntegerVector& child, int node) {
   for (int i = 0; i < child.size(); ++i)
     if (child[i] == node) return i;
   return -1;
-}
-
-
-// Internal impl: used by GibbsSubtreeSwap (M-086) and WeightedSubtreeSwap (M-089).
-List swap_subtrees_impl(IntegerVector parent, IntegerVector child,
-                        int nTip, double treeLength,
-                        NumericVector relBrLengths,
-                        int nodeA, int nodeB) {
-  int nEdge = parent.size();
-  int rowA  = find_child_row(child, nodeA);
-  int rowB  = find_child_row(child, nodeB);
-
-  if (rowA < 0 || rowB < 0 || rowA == rowB) {
-    return List::create(_["parent"] = parent,
-                        _["child"] = child,
-                        _["rel_br_lengths"] = relBrLengths,
-                        _["logHastings"] = R_NegInf);
-  }
-
-  // Swap parent assignments and branch lengths
-  IntegerVector newParent  = clone(parent);
-  NumericVector newRelBr   = clone(relBrLengths);
-  newParent[rowA] = parent[rowB];
-  newParent[rowB] = parent[rowA];
-  newRelBr[rowA]  = relBrLengths[rowB];
-  newRelBr[rowB]  = relBrLengths[rowA];
-
-  // Reorder to canonical preorder; preorder_weighted_impl handles both
-  // topology and branch lengths in one pass.
-  NumericVector absLen(nEdge);
-  for (int i = 0; i < nEdge; ++i) absLen[i] = treeLength * newRelBr[i];
-
-  auto po = TreeTools::preorder_weighted_impl(newParent, child, absLen);
-  IntegerMatrix ordEdge = po.first;
-  NumericVector ordAbs  = po.second;
-  IntegerVector ordParent(nEdge), ordChild(nEdge);
-  for (int i = 0; i < nEdge; ++i) {
-    ordParent[i] = ordEdge(i, 0);
-    ordChild[i]  = ordEdge(i, 1);
-  }
-  NumericVector ordRelBr = ordAbs / treeLength;
-
-  return List::create(_["parent"]        = ordParent,
-                      _["child"]         = ordChild,
-                      _["rel_br_lengths"] = ordRelBr,
-                      _["logHastings"]   = 0.0);
 }
 
 
@@ -303,7 +249,7 @@ List tbr_proposal_impl(IntegerVector parent, IntegerVector child,
     while (!queue.empty()) {
       int cur = queue.back(); queue.pop_back();
       for (int i = 0; i < nEdge; ++i) {
-        if (parent[i] == cur && isDesc[parent[i]]) {
+        if (parent[i] == cur) {
           isDesc[child[i]] = true;
           subEdgeRows.push_back(i);
           if (child[i] > nTip) queue.push_back(child[i]);
@@ -521,26 +467,6 @@ List tbr_proposal(IntegerMatrix edge, int nTip, double treeLength,
   return List::create(_["edge"]           = outEdge,
                       _["rel_br_lengths"] = result["rel_br_lengths"],
                       _["logHastings"]    = result["logHastings"]);
-}
-
-
-// Rcpp-exported wrapper: swap by node IDs (R testing / M-086/M-089 dispatch).
-// [[Rcpp::export]]
-List swap_subtrees_cpp(IntegerMatrix edge, int nTip, double treeLength,
-                       NumericVector relBrLengths, int nodeA, int nodeB) {
-  int nEdge = edge.nrow();
-  IntegerVector par(nEdge), ch(nEdge);
-  for (int i = 0; i < nEdge; ++i) { par[i] = edge(i,0); ch[i] = edge(i,1); }
-
-  List res = swap_subtrees_impl(par, ch, nTip, treeLength, relBrLengths,
-                                 nodeA, nodeB);
-  // Reconstruct edge matrix for R compatibility
-  IntegerVector rp = res["parent"], rc = res["child"];
-  IntegerMatrix outEdge(nEdge, 2);
-  for (int i = 0; i < nEdge; ++i) { outEdge(i,0) = rp[i]; outEdge(i,1) = rc[i]; }
-  return List::create(_["edge"]           = outEdge,
-                      _["rel_br_lengths"] = res["rel_br_lengths"],
-                      _["logHastings"]    = res["logHastings"]);
 }
 
 

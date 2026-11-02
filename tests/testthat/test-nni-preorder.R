@@ -41,16 +41,14 @@ test_that("NNI moves always produce valid preorder", {
                label = "Number of NNI proposals with invalid preorder")
 })
 
-test_that("In-place NNI likelihood matches full-reorder NNI likelihood", {
+test_that("NNI proposal edge order gives the reordered tree's likelihood", {
   skip_if_not_installed("TreeTools")
 
-  # Build a small dataset to compute likelihoods
   set.seed(6293)
   tree <- Preorder(RandomTree(8, root = TRUE))
   nTip <- NTip(tree)
   nEdge <- nrow(tree$edge)
 
-  # Generate random binary tip data (4 characters)
   tipMat <- matrix(sample(0:1, nTip * 4, replace = TRUE),
                    nrow = nTip, ncol = 4)
   kStates <- 2L
@@ -59,21 +57,23 @@ test_that("In-place NNI likelihood matches full-reorder NNI likelihood", {
   relBr <- runif(nEdge, 0.01, 0.5)
   relBr <- relBr / sum(relBr)
   treeLength <- 2.0
-  edgeLen <- treeLength * relBr
 
-  # Reference likelihood with original tree
-  ll_orig <- pruning_jc(tree$edge[, 1], tree$edge[, 2],
-                        edgeLen, tipMat, kStates, rootFreqs)
-
-  # Run many NNI proposals and verify the edge ordering is valid
+  nChecked <- 0L
   for (i in seq_len(100)) {
     res <- nni_proposal(tree$edge, nTip, treeLength, relBr)
-    if (is.finite(res$logHastings)) {
-      newEdgeLen <- treeLength * res$rel_br_lengths
-      ll_new <- pruning_jc(res$edge[, 1], res$edge[, 2],
-                           newEdgeLen, tipMat, kStates, rootFreqs)
-      expect_true(is.finite(ll_new),
-                  info = paste("NNI proposal", i, "gave non-finite likelihood"))
-    }
+    if (!is.finite(res$logHastings)) next
+    newEdgeLen <- treeLength * res$rel_br_lengths
+    llNew <- pruning_jc(res$edge[, 1], res$edge[, 2],
+                         newEdgeLen, tipMat, kStates, rootFreqs)
+    ref <- tree
+    ref$edge <- res$edge
+    ref$edge.length <- newEdgeLen
+    attr(ref, "order") <- NULL
+    ref <- Preorder(ref)
+    llRef <- pruning_jc(ref$edge[, 1], ref$edge[, 2],
+                         ref$edge.length, tipMat, kStates, rootFreqs)
+    expect_equal(llNew, llRef, info = paste("NNI proposal", i))
+    nChecked <- nChecked + 1L
   }
+  expect_gt(nChecked, 0L)
 })

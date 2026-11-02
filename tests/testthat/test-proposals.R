@@ -101,7 +101,7 @@ test_that("ProposeBoundedIntWalk stays within bounds", {
 
 test_that("ProposeBoundedIntWalk rejects below lower bound", {
   set.seed(7842)
-  # x = 2, lower = 2, window = 1: delta can be -1, 0, 1
+  # x = 2, lower = 2, window = 1: delta is -1 or 1
   # If delta = -1: x' = 1 < 2 → reject (logHastings = -Inf)
   rejected <- FALSE
   for (i in 1:50) {
@@ -118,22 +118,15 @@ test_that("ProposeBoundedIntWalk rejects below lower bound", {
 test_that("ProposeBoundedIntWalk is symmetric (Hastings = 0)", {
   set.seed(4556)
   result <- MkPrime:::ProposeBoundedIntWalk(5L, lower = 2L, window = 2L)
-  if (is.finite(result$logHastings)) {
-    expect_equal(result$logHastings, 0)
-  }
+  expect_equal(result$logHastings, 0)
 })
 
-test_that("ProposeBoundedIntWalk can propose delta = 0", {
+test_that("ProposeBoundedIntWalk never proposes delta = 0", {
   set.seed(2001)
-  found_zero <- FALSE
-  for (i in 1:100) {
-    result <- MkPrime:::ProposeBoundedIntWalk(5L, lower = 2L, window = 1L)
-    if (result$value == 5L && is.finite(result$logHastings)) {
-      found_zero <- TRUE
-      break
-    }
-  }
-  expect_true(found_zero)
+  values <- vapply(seq_len(200), function(i)
+    MkPrime:::ProposeBoundedIntWalk(5L, lower = 2L, window = 2L)$value,
+    numeric(1))
+  expect_setequal(values, c(3, 4, 6, 7))
 })
 
 

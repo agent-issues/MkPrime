@@ -2,12 +2,12 @@
 % Please edit documentation in R/proposals.R
 \name{ProposeNni}
 \alias{ProposeNni}
-\title{NNI proposal on an unrooted binary tree}
+\title{NNI proposal on a binary tree}
 \usage{
 ProposeNni(tree, tree_length, rel_br_lengths)
 }
 \arguments{
-\item{tree}{A \code{phylo} object in canonical preorder (unrooted binary).}
+\item{tree}{Binary \code{phylo} object in canonical preorder.}
 
 \item{tree_length}{Current total tree length.}
 

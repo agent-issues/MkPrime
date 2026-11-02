@@ -78,7 +78,7 @@ test_that("ResumeMkPrime accepts identical data in another tip order, pairing ti
   expect_equal(labelled$logLik, chain$log_lik, tolerance = 1e-8)
 
   lastTree <- result$trees[[length(result$trees)]]
-  expect_equal(TreeDist::RobinsonFoulds(lastTree, labelled$tree), 0)
+  expect_equal(.TopoDist(lastTree, labelled$tree), 0)
 })
 
 test_that("ResumeMkPrime refuses data on different taxa (#343)", {

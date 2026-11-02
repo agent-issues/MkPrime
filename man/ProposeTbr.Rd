@@ -7,7 +7,7 @@
 ProposeTbr(tree, tree_length, rel_br_lengths)
 }
 \arguments{
-\item{tree}{A \code{phylo} object in canonical preorder (unrooted binary).}
+\item{tree}{Binary \code{phylo} object in canonical preorder.}
 
 \item{tree_length}{Current total tree length.}
 

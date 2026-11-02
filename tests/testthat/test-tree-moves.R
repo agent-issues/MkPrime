@@ -211,21 +211,15 @@ test_that("SPR changes topology on medium tree", {
 })
 
 
-test_that("SPR Hastings ratio is finite", {
+test_that("SPR Hastings ratio is finite on every valid proposal", {
   set.seed(3819)
-  tree <- rtree(15)
-  tree <- unroot(tree)
-  tree <- Preorder(tree)
+  tree <- Preorder(unroot(rtree(15)))
   tl <- sum(tree$edge.length)
-  rel_br <- tree$edge.length / tl
-
-  for (i in seq_len(30)) {
-    prop <- MkPrime:::ProposeSpr(tree, tl, rel_br)
-    # Should be finite (not NaN or Inf) unless the move was rejected
-    if (is.finite(prop$logHastings)) {
-      expect_false(is.nan(prop$logHastings))
-    }
-  }
+  logH <- vapply(seq_len(30), function(i) {
+    spr_proposal(tree$edge, NTip(tree), tl, tree$edge.length / tl)$logHastings
+  }, numeric(1))
+  expect_true(all(is.finite(logH) | logH == -Inf))
+  expect_gt(sum(is.finite(logH)), 0)
 })
 
 

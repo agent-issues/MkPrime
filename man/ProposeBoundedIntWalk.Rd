@@ -17,7 +17,8 @@ ProposeBoundedIntWalk(x, lower, window = 1L)
 \code{list(value, logHastings)}.
 }
 \description{
-Proposes x' = x + delta where delta ~ Uniform(-window, ..., window).
+Proposes x' = x + delta, where delta is a nonzero integer drawn uniformly
+from \code{-window:window}, as in the C++ engine.
 Rejects (returns current value with logHastings = -Inf) if x' < lower.
 }
 \keyword{internal}

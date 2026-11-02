@@ -97,7 +97,8 @@ ProposeDirichletSimplex <- function(x, nCats = min(length(x), 10L),
 
 #' BoundedIntegerWalk proposal
 #'
-#' Proposes x' = x + delta where delta ~ Uniform(-window, ..., window).
+#' Proposes x' = x + delta, where delta is a nonzero integer drawn uniformly
+#' from `-window:window`, as in the C++ engine.
 #' Rejects (returns current value with logHastings = -Inf) if x' < lower.
 #'
 #' @param x Current integer value.
@@ -106,7 +107,8 @@ ProposeDirichletSimplex <- function(x, nCats = min(length(x), 10L),
 #' @return `list(value, logHastings)`.
 #' @keywords internal
 ProposeBoundedIntWalk <- function(x, lower, window = 1L) {
-  delta <- sample(-window:window, 1L)
+  window <- max(window, 1L)
+  delta <- sample(c(-window:-1L, seq_len(window)), 1L)
   xNew <- x + delta
 
   if (xNew < lower) {
@@ -118,7 +120,7 @@ ProposeBoundedIntWalk <- function(x, lower, window = 1L) {
 }
 
 
-#' NNI proposal on an unrooted binary tree
+#' NNI proposal on a binary tree
 #'
 #' Picks a random internal edge and swaps one subtree from each side,
 #' producing a nearest-neighbor interchange. The proposal is symmetric
@@ -127,7 +129,7 @@ ProposeBoundedIntWalk <- function(x, lower, window = 1L) {
 #' Delegates to C++ (\code{nni_proposal} in tree_moves.cpp) for edge
 #' manipulation and canonical preorder reordering.
 #'
-#' @param tree A `phylo` object in canonical preorder (unrooted binary).
+#' @param tree Binary `phylo` object in canonical preorder.
 #' @param tree_length Current total tree length.
 #' @param rel_br_lengths Current relative branch lengths (simplex).
 #' @return `list(tree, rel_br_lengths, logHastings)`. The returned tree
@@ -151,7 +153,7 @@ ProposeNni <- function(tree, tree_length, rel_br_lengths) {
 }
 
 
-#' SPR proposal on an unrooted binary tree
+#' SPR proposal on a binary tree
 #'
 #' Subtree pruning and regrafting. Picks a random edge (u->v), detaches v's
 #' subtree, suppresses u (merging its parent and sibling edges), then
@@ -163,7 +165,7 @@ ProposeNni <- function(tree, tree_length, rel_br_lengths) {
 #' The Hastings ratio includes a Jacobian correction for the edge length
 #' redistribution: `log(lRegraft) - log(lMerge)`.
 #'
-#' @param tree A `phylo` object in canonical preorder (unrooted binary).
+#' @param tree Binary `phylo` object in canonical preorder.
 #' @param tree_length Current total tree length.
 #' @param rel_br_lengths Current relative branch lengths (simplex).
 #' @return `list(tree, rel_br_lengths, logHastings)`. The returned tree
@@ -192,7 +194,7 @@ ProposeSpr <- function(tree, tree_length, rel_br_lengths) {
 #' Tree Bisection and Reconnection. Extends SPR by additionally re-rooting
 #' the pruned subtree at a random internal edge before regrafting.
 #'
-#' @param tree A `phylo` object in canonical preorder (unrooted binary).
+#' @param tree Binary `phylo` object in canonical preorder.
 #' @param tree_length Current total tree length.
 #' @param rel_br_lengths Current relative branch lengths (simplex).
 #' @return `list(tree, rel_br_lengths, logHastings)`. The returned tree

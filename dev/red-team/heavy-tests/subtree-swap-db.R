@@ -6,7 +6,8 @@
 # tests/testthat/test-*-subtree-swap-invariance.R. It does not exercise the
 # shipped moves, so a pass here says nothing about them. Kept as the record of
 # how SWAP-001 / SWAP-002 were found; submit-swap-db-n6.sh refuses to run it
-# unless MKP_RUN_RETIRED=1.
+# unless MKP_RUN_RETIRED=1. It calls swap_subtrees_cpp, deleted in #484, so it
+# runs only against a build of 9088c9b or earlier.
 #
 # Sub-harness D2(b): β=0 detailed-balance test for the two subtree-swap
 #                    moves flagged OPEN by L3 (math-prover, Wave 1).

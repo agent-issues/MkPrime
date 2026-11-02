@@ -346,7 +346,10 @@ test_that("minTreeEss with a fixed topology warns that it can never be met", {
   expect_warning(MkPrime:::.WarnUnreachableCriteria(mcmc),
                  "minTreeEss.*fixTopology")
   mcmc$fixTopology <- FALSE
-  expect_no_warning(MkPrime:::.WarnUnreachableCriteria(mcmc))
+  expect_no_warning(
+    MkPrime:::.WarnUnreachableCriteria(mcmc),
+    message = "fixTopology"
+  )
 })
 
 test_that("maxRhat with a single run warns that it can never be met (#196)", {

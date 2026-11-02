@@ -9,8 +9,6 @@
 # Testing strategy:
 #   - Structural: output is valid (simplex preserved, tree length unchanged)
 #   - Functional: does change branch lengths; does not mutate topology/scalars
-#   - Statistical: accepted moves shift branch proportions toward
-#     likelihood-improving fractions
 
 # ---------------------------------------------------------------------------
 # Shared fixture (reuses pattern from test-gibbs-spr.R)
