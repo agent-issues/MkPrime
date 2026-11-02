@@ -51,7 +51,8 @@ MkPrimeMCMC(
   nCore = getOption("mc.cores", 1L),
   pollInterval = 10L,
   cancelGrace = 30L,
-  gibbsWarmupFactor = 1/3
+  gibbsWarmupFactor = 1/3,
+  moves = list()
 )
 }
 \arguments{
@@ -205,24 +206,28 @@ accept a single argument: a named list with fields \code{iter}, \code{nIter},
 
 \item{gibbsSpr}{Logical; include the Gibbs SPR move (default \code{TRUE}).
 Cost: O(N) likelihood evaluations per proposal, where N is the number
-of candidate reattachment edges.}
+of candidate reattachment edges.
+Alternatively, set via \code{moves}.}
 
 \item{gibbsSubtreeSwap}{Logical; include the Gibbs subtree-swap move
-(default \code{TRUE}). Cost: O(N) likelihood evaluations.}
+(default \code{TRUE}). Cost: O(N) likelihood evaluations.
+Alternatively, set via \code{moves}.}
 
 \item{tbr}{Logical; include the TBR (Tree Bisection and Reconnection)
 topology move (default \code{TRUE}). TBR is a superset of SPR: it additionally
 re-roots the pruned subtree at a random internal edge before regrafting,
 enabling larger jumps in tree space. Cost: O(nEdge) per proposal (same
 as SPR). The adaptive scheduler will downweight TBR on small trees where
-SPR is sufficient.}
+SPR is sufficient.
+Alternatively, set via \code{moves}.}
 
 \item{pSpr}{Logical; include the parsimony-guided SPR move (default
 \code{TRUE}). Like standard SPR but weights candidate regraft positions by
 Fitch parsimony score, so topologically better positions are proposed
 more often. Much cheaper than Gibbs SPR (no likelihood evaluation per
 candidate), but better guided than uniform SPR.
-See Yang & Rodríguez (2013); Ronquist et al. (2020).}
+See Yang & Rodríguez (2013); Ronquist et al. (2020).
+Alternatively, set via \code{moves}.}
 
 \item{joint2d}{Logical; include 2D joint Bactrian proposals for
 correlated parameter pairs (default \code{TRUE}). Proposes correlated
@@ -232,18 +237,22 @@ kernel. The correlation is estimated from the chain's samples, last
 from the first tuning window, or with \code{autoTune = FALSE} from the first
 50 samples if warmup was too short to estimate it; it is then
 fixed. No effect when parameters are uncorrelated (degenerates to
-independent proposals).}
+independent proposals).
+Alternatively, set via \code{moves}.}
 
 \item{weightedBranchScale}{Logical; include the weighted branch-length
 scale move (default \code{FALSE}). Cost: O(B) likelihood evaluations, where
-B = \code{nBranchBins}.}
+B = \code{nBranchBins}.
+Alternatively, set via \code{moves}.}
 
 \item{weightedSpr}{Logical; include the weighted SPR move (default
 \code{FALSE}). Cost: O(N * B) likelihood evaluations. Enable for improved
-mixing on difficult tree spaces at the cost of slower iterations.}
+mixing on difficult tree spaces at the cost of slower iterations.
+Alternatively, set via \code{moves}.}
 
 \item{weightedSubtreeSwap}{Logical; include the weighted subtree-swap
-move (default \code{FALSE}). Cost: O(N * B) likelihood evaluations.}
+move (default \code{FALSE}). Cost: O(N * B) likelihood evaluations.
+Alternatively, set via \code{moves}.}
 
 \item{blockGibbsBranch}{Logical; include the block Gibbs branch-length
 sweep move (default \code{FALSE}). Each call sweeps over all edge pairs
@@ -253,7 +262,8 @@ accept/reject. Cost: O(nEdge * B) likelihood evaluations per call.
 Useful when single-edge moves (BetaSimplex, weighted branch scale)
 mix slowly through the branch-length space. The adaptive scheduler
 accounts for the multi-dimensional nature of this move via its \code{dim}
-field.}
+field.
+Alternatively, set via \code{moves}.}
 
 \item{gibbsPMarginal}{Logical; use the data-augmentation
 Metropolis-within-Gibbs \code{p}-update as the PRIMARY \code{p}-move for
@@ -268,13 +278,15 @@ boundary), measured apples-to-apples on an n16_c48 free-topology run
 and the move forces a cold (full-pruning) likelihood evaluation on every
 accepted update, so ESS/second at the >=100-tip scale is unproven and may
 erode the per-iteration gain. A \code{p}-independent full-support marginal cache
-(deferred) would remove that cost and justify defaulting it on.}
+(deferred) would remove that cost and justify defaulting it on.
+Alternatively, set via \code{moves}.}
 
 \item{dirichletBranch}{Logical; include the block Dirichlet simplex
 branch-length move (default \code{TRUE}). Each proposal selects K random
 edges, draws new fractions from a Dirichlet centered on current values,
 and rescales the remaining edges to maintain the simplex. Cost: one
-likelihood evaluation per proposal (same as BetaSimplex).}
+likelihood evaluation per proposal (same as BetaSimplex).
+Alternatively, set via \code{moves}.}
 
 \item{dirichletK}{Integer or \code{NULL}; number of edges to update per
 Dirichlet branch proposal. Default \code{NULL} uses \code{min(nEdge, 5)}.
@@ -285,7 +297,8 @@ values give bolder moves at the cost of lower acceptance.}
 proposal that selects K \emph{connected} edges via BFS from a random
 starting edge (default \code{TRUE}). The connected selection produces
 compact dirty sets for efficient partial CL evaluation, and targets
-correlated local branch lengths.}
+correlated local branch lengths.
+Alternatively, set via \code{moves}.}
 
 \item{localDirichletK}{Integer or \code{NULL}; number of connected edges
 for the localized Dirichlet proposal. Default \code{NULL} uses
@@ -372,6 +385,19 @@ Ignored when \code{nCore = 1}.}
 sweep relative to other moves during warmup (default \code{1/3}). A lower
 value reduces warmup overhead from the sweep; the weight is restored at
 the warmup-to-tuning transition.}
+
+\item{moves}{Named list of logicals switching moves on or off, keyed by
+the toggle names in the table below; moves not listed keep their default.
+Setting a move both here and as its own argument is an error unless the
+two agree.\tabular{llll}{
+   Name \tab Default \tab Name \tab Default \cr
+   \code{gibbsSpr} \tab \code{TRUE} \tab \code{weightedSubtreeSwap} \tab \code{FALSE} \cr
+   \code{gibbsSubtreeSwap} \tab \code{TRUE} \tab \code{blockGibbsBranch} \tab \code{FALSE} \cr
+   \code{tbr} \tab \code{TRUE} \tab \code{gibbsPMarginal} \tab \code{FALSE} \cr
+   \code{pSpr} \tab \code{TRUE} \tab \code{dirichletBranch} \tab \code{TRUE} \cr
+   \code{joint2d} \tab \code{TRUE} \tab \code{localDirichlet} \tab \code{TRUE} \cr
+   \code{weightedBranchScale} \tab \code{FALSE} \tab \code{weightedSpr} \tab \code{FALSE} \cr
+}}
 }
 \value{
 An S3 object of class \code{MkPrimeMCMC}.
