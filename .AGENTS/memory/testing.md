@@ -41,7 +41,8 @@ subprocess must be triple-guarded. For tests that run MCMC:
 
 **Expensive optional computations** (tree-ESS via distance matrices, etc.)
 belong in the slow tier (`skip_slow_tests()`, `MKPRIME_SLOW_TESTS=true`); do
-not add a second env-var gate, which nothing would ever set.
+not add a second env-var gate, which nothing would ever set. CI runs the
+slow tier weekly (`slow-tests.yml`; also on dispatch or a `slow-tests` PR label).
 
 ## Targeted test runs
 

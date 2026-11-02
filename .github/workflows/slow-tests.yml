@@ -1,0 +1,89 @@
+# Periodic run of the slow test tier (MKPRIME_SLOW_TESTS=true; see
+# tests/testthat/helper-slow.R). Never on push or ordinary PR events: weekly,
+# on demand, or when a pull request is given the `slow-tests` label.
+name: slow-tests
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 0'  # Sundays, 3am
+  pull_request:
+    types: [labeled]
+
+jobs:
+  changes:
+    name: detect changes since last slow run
+    if: github.event_name != 'pull_request' || github.event.label.name == 'slow-tests'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Only the weekly schedule is skipped; a manual or labelled run is
+          # an explicit request.
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          last=$(gh run list --workflow slow-tests.yml --status success \
+            --limit 20 --json headSha,event \
+            --jq '[.[] | select(.event == "schedule")][0].headSha // ""')
+          if [ "$last" = "${{ github.sha }}" ]; then
+            echo "main unchanged since last successful scheduled run ($last); skipping."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "last successful scheduled run: ${last:-none}; running."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  slow:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    # arm: cheapest runner, as the coverage job in R-CMD-check.yml. 24.04 to
+    # match that job (its RSPM binaries are noble); 26.04 is not yet used on arm.
+    runs-on: ubuntu-24.04-arm
+    name: slow tier (arm)
+    timeout-minutes: 240
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+
+    env:
+      R_COMPILE_AND_INSTALL_PACKAGES: 'never'
+      R_REMOTES_STANDALONE: true
+      R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      MKPRIME_SLOW_TESTS: "true"
+      NOT_CRAN: "true"  # else every skip_on_cran() test is skipped
+
+    steps:
+      - name: Checkout git repo
+        uses: actions/checkout@v7
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+
+      - name: Set up R dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          cache-version: 1-${{ runner.arch }}
+          extra-packages: any::testthat
+
+      - name: Install package
+        run: R CMD INSTALL .
+
+      - name: Run tests, slow tier enabled
+        # The slow tests are skipped unless MKPRIME_SLOW_TESTS is "true"; the
+        # fast tests run too, which costs little against the MCMC blocks.
+        run: |
+          testthat::test_local(".", load_package = "installed",
+                               reporter = "summary", stop_on_failure = TRUE)
+        shell: Rscript {0}
