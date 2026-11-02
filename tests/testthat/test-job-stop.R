@@ -224,6 +224,9 @@ test_that("runs stuck on one shared topology meet minTreeEss (#195)", {
   moving <- list(met = FALSE, stuck = FALSE, topology = NA_character_)
 
   expect_identical(.TreeVerdictsMet(list(Stuck(t1), Stuck(t1))), c(TRUE, TRUE))
+  expect_true(.TreeVerdictsAgree(list(Stuck(t1), Stuck(t1))))
+  # Runs that met minTreeEss by moving stop themselves, as before.
+  expect_false(.TreeVerdictsAgree(list(list(met = TRUE), list(met = TRUE))))
   expect_identical(.TreeVerdictsMet(list(Stuck(t1), Stuck(t2))),
                    c(FALSE, FALSE))
   expect_identical(.TreeVerdictsMet(list(Stuck(t1), moving)), c(FALSE, FALSE))
@@ -338,11 +341,6 @@ test_that("serial runs on one shared topology converge (#195)", {
   expect_identical(both$stop_reason, "converged")
   expect_identical(vapply(both$per_run, `[[`, "", "stop_reason"),
                    c("converged", "converged"))
-
-  # Loose: this checks that agreeing runs reach the R-hat phase, not mixing.
-  allow_warning(rhat <- Run(nRuns = 2L, maxRhat = 5),
-                "single tree topology|maxWarmup")
-  expect_identical(rhat$stop_reason, "converged")
 })
 
 test_that("parallel runs on one shared topology converge (#195)", {

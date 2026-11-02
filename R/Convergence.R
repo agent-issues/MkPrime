@@ -374,9 +374,16 @@ print.MkpDiagnostics <- function(x, ...) {
 #' @return Logical, one per file; `FALSE` where no verdict is readable yet.
 #' @keywords internal
 .ReadTreeVerdicts <- function(verdictFiles) {
-  .TreeVerdictsMet(lapply(verdictFiles, function(f) {
+  .TreeVerdictsMet(.ReadVerdictFiles(verdictFiles))
+}
+
+#' @describeIn dot-ReadTreeVerdicts Each verdict, or `NULL` where none is
+#'   readable.
+#' @keywords internal
+.ReadVerdictFiles <- function(verdictFiles) {
+  lapply(verdictFiles, function(f) {
     if (file.exists(f)) tryCatch(readRDS(f), error = function(e) NULL)
-  }))
+  })
 }
 
 #' @describeIn dot-ReadTreeVerdicts Judge verdicts already read.
@@ -388,14 +395,18 @@ print.MkpDiagnostics <- function(x, ...) {
 #' @keywords internal
 .TreeVerdictsMet <- function(verdicts) {
   met <- vapply(verdicts, function(v) isTRUE(v$met), logical(1L))
+  # Return:
+  met | .TreeVerdictsAgree(verdicts)
+}
+
+#' @describeIn dot-ReadTreeVerdicts Have all runs settled on one topology?
+#' @keywords internal
+.TreeVerdictsAgree <- function(verdicts) {
   keys <- vapply(verdicts, function(v) {
     if (isTRUE(v$stuck)) v$topology %||% NA_character_ else NA_character_
   }, character(1L))
-  if (length(keys) > 1L && !anyNA(keys) && length(unique(keys)) == 1L) {
-    met[] <- TRUE
-  }
   # Return:
-  met
+  length(keys) > 1L && !anyNA(keys) && length(unique(keys)) == 1L
 }
 
 

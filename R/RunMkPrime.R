@@ -2237,9 +2237,11 @@ RunMkPrime <- function(data, tree = NULL,
           cli::cli_warn(c(
             "Run {runIdx} has sampled a single tree topology, so its tree \\
              ESS cannot be assessed on its own.",
-            "i" = if (isTRUE(mcmc$stuckHandOff)) {
+            "i" = if (isTRUE(mcmc$stuckHandOff) && mcmc$nRuns > 1L) {
               "Once its other criteria are met, it stops and is compared \\
                with the other runs."
+            } else if (isTRUE(mcmc$stuckHandOff)) {
+              "Once its other criteria are met, it stops."
             } else {
               "It continues until it samples another topology, or until \\
                every run has settled on the same one."
@@ -2857,7 +2859,8 @@ RunMkPrime <- function(data, tree = NULL,
       elStr  <- .FormatElapsed(elapsed)
       essStr <- round(diagCheck$minEss)
       etaCrit <- .EtaCriterion(diagCheck, mcmc)
-      treeMet <- .ReadTreeVerdicts(verdictFiles)
+      verdicts <- .ReadVerdictFiles(verdictFiles)
+      treeMet <- .TreeVerdictsMet(verdicts)
       # The scalars cannot say when the runs' tree ESS will be met.
       etaStr <- if (all(treeMet)) {
         .EstimateEta(etaCrit$current, etaCrit$target,
@@ -2908,9 +2911,9 @@ RunMkPrime <- function(data, tree = NULL,
 
       fresh <- sum(diagCheck$nRows) - checkedRows >= freshRows
       if (fresh) checkedRows <- sum(diagCheck$nRows)
-      # With minTreeEss alone the logs judge nothing, and runs that agree on
-      # one topology never stop themselves.
-      scalarsMet <- diagCheck$converged || !is.null(mcmc$minTreeEss) &&
+      # With minTreeEss alone the logs judge nothing; runs that agree on one
+      # topology never stop themselves, so the parent must stop them.
+      scalarsMet <- diagCheck$converged || .TreeVerdictsAgree(verdicts) &&
         is.null(mcmc$minEss) && is.null(mcmc$maxRhat)
       convVerdict <- .ConvergenceStreak(
         convStreak, scalarsMet && all(treeMet), fresh
