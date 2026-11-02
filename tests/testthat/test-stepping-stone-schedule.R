@@ -28,8 +28,9 @@ DispatchedMoves <- function(pd, tree, model = NULL, mcmc = NULL,
     .package = "MkPrime"
   )
   set.seed(3607)
+  # No burn-in: these tests check the schedule, which the burn-in shares.
   mkp_stepping_stone(pd, tree, model = model, mcmc = mcmc, nStones = 2L,
-                     nIter = nIter, warmup = 0L, verbose = FALSE)
+                     nIter = nIter, warmup = 0L, burnin = 0L, verbose = FALSE)
   seen
 }
 

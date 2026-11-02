@@ -93,7 +93,8 @@ test_that("More stones with more iterations gives consistent results", {
 
   # Two independent estimates should be in the same ballpark. The tolerance
   # is the estimator's measured spread (a run-to-run sd of 0.68 over eight
-  # seeds at these budgets), not a multiple of `se`, which is tested below.
+  # seeds at these budgets, with every run ascending), not a multiple of `se`,
+  # which is tested below.
   expect_lt(abs(ss1$log_marginal - ss2$log_marginal), 3)
 })
 
@@ -238,9 +239,11 @@ test_that("Stepping-stone SE matches the spread of independent estimates (#279)"
                 dimnames = list(c("t1", "t2", "t3", "t4"), NULL))
   pd <- MatrixToPhyDat(mat)
   # sd over seeds 1:40 of run_log_marginal[2] at these budgets with
-  # nRuns = 2: single runs from independently perturbed starts (#382).
+  # nRuns = 2: single runs from independently perturbed starts (#382), all
+  # ascending. On four tips the gap between directions is negligible, so the
+  # same sd holds for the descending runs; on larger trees it inflates `se`.
   singleRunSd <- 0.428
-  nRuns <- 3L
+  nRuns <- 4L
   se <- vapply(1:6, function(seed) {
     set.seed(2790 + seed)
     mkp_stepping_stone(pd, tree, nStones = 15L, nIter = 500L, warmup = 200L,
@@ -346,4 +349,65 @@ test_that("Stepping-stone controls are validated (#380)", {
   expect_error(mkp_stepping_stone(f$pd, f$tree, nStones = 2L, nIter = 5L,
                                   warmup = -1L, verbose = FALSE), "warmup")
   expect_error(SS(model = MkPrimeModel(expSteps = 0)), "expSteps")
+  expect_error(SS(burnin = -1L), "burnin")
+})
+
+
+test_that("Odd runs burn in at beta = 1 and descend; even runs ascend", {
+  f <- SixTaxonFixture()
+  visited <- numeric(0)
+  local_mocked_bindings(.DoMove = function(move, stateOrPtr, ..., beta) {
+    visited <<- c(visited, beta)
+    list(accept = FALSE, statePtr = stateOrPtr)
+  }, .package = "MkPrime")
+  ss <- mkp_stepping_stone(f$pd, f$tree, nStones = 3L, nIter = 2L,
+                           warmup = 1L, burnin = 4L, nRuns = 2L,
+                           verbose = FALSE)
+  stones <- ss$betas[1:3]
+  expect_equal(visited, c(rep(1, 4), rep(rev(stones), each = 3),
+                          rep(stones, each = 3)))
+})
+
+
+test_that("Stepping-stone matches a brute-force marginal likelihood", {
+  skip_under_memcheck()
+  # Mk with known k = 2 on four unrooted tips: log Z = -8.628 +- 0.002 by
+  # Monte Carlo from the prior (dev/stepping-stone/brute-force-reference.R).
+  # An accuracy check: on four tips the lag between directions is too small
+  # to see, and the next test guards the order in which stones are stored.
+  mat <- matrix(c(0L, 1L, 0L, 1L,
+                  0L, 0L, 1L, 1L,
+                  0L, 1L, 1L, 1L),
+                nrow = 4, dimnames = list(paste0("t", 1:4), NULL))
+  mkd <- MkPrimeData(MatrixToPhyDat(mat),
+                     knownStates = c("1" = 2L, "2" = 2L, "3" = 2L))
+  tree <- read.tree(text = "(t1:0.2,t2:0.3,(t3:0.15,t4:0.25):0.2);")
+
+  set.seed(5160)
+  ss <- mkp_stepping_stone(mkd, tree, nStones = 20L, nIter = 500L,
+                           warmup = 100L, verbose = FALSE)
+  # Sixteen repeats at these budgets scattered with sd 0.09.
+  expect_lt(abs(ss$log_marginal + 8.628), 0.5)
+})
+
+
+test_that("Each stone's draws are stored, and paired, at its own beta", {
+  f <- SixTaxonFixture()
+  current <- NA_real_
+  LogLik <- function(b) -1 - 100 * b
+  local_mocked_bindings(
+    .DoMove = function(move, stateOrPtr, ..., beta) {
+      current <<- beta
+      list(accept = FALSE, statePtr = stateOrPtr)
+    },
+    get_state_log_lik = function(statePtr) LogLik(current),
+    .package = "MkPrime"
+  )
+  for (nRuns in 1:3) {
+    ss <- mkp_stepping_stone(f$pd, f$tree, nStones = 4L, nIter = 2L,
+                             warmup = 1L, burnin = 2L, nRuns = nRuns,
+                             verbose = FALSE)
+    lower <- ss$betas[-length(ss$betas)]
+    expect_equal(ss$log_ratios, diff(ss$betas) * LogLik(lower))
+  }
 })
