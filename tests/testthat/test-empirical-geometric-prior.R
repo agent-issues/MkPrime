@@ -269,89 +269,35 @@ test_that("empirical_geometric prior runs short MCMC end-to-end", {
 })
 
 
-test_that("empirical_geometric keeps posterior u off zero when true k' > kObs", {
-  skip_slow_tests()
-  # Construct a scenario where the true number of states (k' = 5) exceeds
-  # the typically observed count: with only 6 tips on a short tree, JC(5)
-  # rarely realises all 5 states in a single character.  The empirical
-  # prior should refuse to collapse u to 0.
-  set.seed(2026)
-  nTip <- 6
-  nChar <- 80
-  kTrue <- 5L
-  true_tree <- rtree(nTip, tip.label = paste0("t", seq_len(nTip)))
-  true_tree$edge.length <- runif(nrow(true_tree$edge), 0.05, 0.2)
-  true_tree <- Preorder(true_tree)
-
-  sim_mat <- matrix(NA_integer_, nTip, nChar,
-                     dimnames = list(true_tree$tip.label, NULL))
-  for (ch in seq_len(nChar)) {
-    node_states <- integer(2 * nTip - 1)
-    root_idx <- nTip + 1L
-    node_states[root_idx] <- sample.int(kTrue, 1L) - 1L
-    edges <- true_tree$edge
-    el    <- true_tree$edge.length
-    for (e in rev(seq_len(nrow(edges)))) {
-      pa <- edges[e, 1]; ch2 <- edges[e, 2]; t <- el[e]
-      pSame <- 1 / kTrue + (1 - 1 / kTrue) * exp(-kTrue * t)
-      if (runif(1) < pSame) {
-        node_states[ch2] <- node_states[pa]
-      } else {
-        node_states[ch2] <- sample(setdiff(seq.int(0, kTrue - 1L),
-                                            node_states[pa]), 1L)
-      }
-    }
-    sim_mat[, ch] <- node_states[seq_len(nTip)]
-  }
-  variable <- apply(sim_mat, 2, function(x) length(unique(x)) > 1)
-  sim_mat <- sim_mat[, variable, drop = FALSE]
-
-  pd <- MatrixToPhyDat(sim_mat)
-  mkd <- MkPrimeData(pd)
-  # Restrict to characters where kObs < kTrue — the interesting ones.
-  partialObs <- which(mkd$kObs < kTrue)
-  expect_true(length(partialObs) > 5L,
-              info = "simulated dataset should contain partial-observation chars")
-
-  run <- function(prior, seed) {
-    set.seed(seed)
-    allow_warning(
-      RunMkPrime(
-        mkd, true_tree,
-        model = MkPrimeModel(kPrimePrior = prior,
-                             expSteps = sum(true_tree$edge.length)),
-        mcmc = MkPrimeMCMC(nIter = 3000L, thin = 10L,
-                           maxWarmup = 1500L, minWarmup = 1500L,
-                           autoTune = FALSE)
-      ),
-      "without stabilisation"
+test_that("empirical_geometric carries the corpus pmf into the k' prior", {
+  # What the prior encodes is the corpus distribution of observed state
+  # counts: k' = N_obs + N_unobs, so at every p the prior puts no more mass on
+  # few states than the corpus does, and it reaches the corpus pmf as p -> 1,
+  # where the geometric prior collapses onto k' = 2. Its posterior payoff is a
+  # small, simulation-scale effect (#179): see
+  # dev/red-team/heavy-tests/empirical-benefit/.
+  tree <- Preorder(
+    read.tree(text = "((t1:0.1,t2:0.2):0.15,(t3:0.1,t4:0.3):0.2);"))
+  mkd <- MkPrimeData(MatrixToPhyDat(matrix(
+    c(0, 1, 0, 1), 4, 1, dimnames = list(paste0("t", 1:4), NULL)
+  )))
+  K <- 200L
+  Table <- function(arm, p) {
+    model <- MkPrime:::.FinalizeModel(
+      MkPrimeModel(kPrimePrior = arm, kprimeTruncK = K), tree, mkd
     )
+    ptr <- MkPrime:::.InitMcmcData(mkd, model)
+    exp(as.numeric(MkPrime:::kprime_log_prior_table_cpp(ptr, p, 1, 1)))
   }
+  corpus <- exp(MkPrime:::.LogPemp(K, empiricalNObs))
 
-  # `kPrime_<i>` carries the GLOBAL character index, so look the column up by
-  # name: positional indexing into the transformational-only column vector
-  # agrees only while every character is transformational.
-  uMedian <- function(res) {
-    vapply(partialObs, function(i) {
-      median(res$samples[, paste0("kPrime_", i)] - mkd$kObs[[i]])
-    }, numeric(1))
+  for (p in c(0.1, 0.5, 0.9)) {
+    expect_true(all(cumsum(Table("empirical_geometric", p)) <=
+                      cumsum(corpus) + 1e-9), info = p)
   }
-
-  resEmp <- run("empirical_geometric", 101L)
-  resGeo <- run("geometric", 101L)
-  uMedEmp <- uMedian(resEmp)
-  uMedGeo <- uMedian(resGeo)
-
-  # Every draw stays in support, and the prior's stated purpose holds: it does
-  # not let u collapse to 0 on a character whose states are under-observed.
-  for (i in partialObs) {
-    expect_true(all(resEmp$samples[, paste0("kPrime_", i)] >= mkd$kObs[[i]]))
-  }
-  expect_gt(mean(uMedEmp > 0), 0.9)
-
-  # The choice of prior must reach the sampler: the two arms disagree on some
-  # character by at least a whole state.
-  expect_gte(max(abs(uMedEmp - uMedGeo)), 1)
+  expect_equal(Table("empirical_geometric", 1 - 1e-9), corpus / sum(corpus),
+               tolerance = 1e-6)
+  expect_equal(Table("geometric", 1 - 1e-9)[[1]], 1, tolerance = 1e-6)
 })
 
 
